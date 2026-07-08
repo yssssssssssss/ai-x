@@ -65,6 +65,26 @@ export async function createUser(input: {
   return rows[0];
 }
 
+// 登录校验专用:返回含 password_hash 的行(其它读取路径不暴露 hash)。
+export async function getUserByEmail(
+  email: string,
+): Promise<(UserRow & { password_hash: string }) | null> {
+  const { rows } = await pool.query<UserRow & { password_hash: string }>(
+    `SELECT id, email, display_name, role, status, password_hash
+     FROM users WHERE email = $1`,
+    [email],
+  );
+  return rows[0] ?? null;
+}
+
+export async function getUserById(id: string): Promise<UserRow | null> {
+  const { rows } = await pool.query<UserRow>(
+    `SELECT id, email, display_name, role, status FROM users WHERE id = $1`,
+    [id],
+  );
+  return rows[0] ?? null;
+}
+
 // ---- 会话 ----
 export async function createConversation(input: {
   ownerUserId: string;

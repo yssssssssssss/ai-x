@@ -1,0 +1,94 @@
+:root {
+  /* B 稿暗色靛蓝色板 */
+  --bg: #0b0f19;
+  --bg-elev: #131826;
+  --bg-card: #171d2e;
+  --border: #232a3d;
+  --text: #e6e9f0;
+  --text-dim: #9aa3b8;
+  --text-faint: #6b7488;
+  --primary: #6366f1;
+  --primary-dim: #4b4fd6;
+
+  /* 语义色:完成/进行/需补充/需审批/阻断 */
+  --ok: #34d399;
+  --running: #6366f1;
+  --warn: #fbbf24;
+  --danger: #f87171;
+  --muted: #6b7488;
+
+  /* 能力徽章:SKILL 靛蓝 / TOOL 琥珀 */
+  --skill-bg: rgba(99, 102, 241, 0.15);
+  --skill-fg: #a5b4fc;
+  --tool-bg: rgba(251, 191, 36, 0.15);
+  --tool-fg: #fcd34d;
+
+  /* 来源标注色 */
+  --src-user: #60a5fa;
+  --src-kb: #34d399;
+  --src-tool: #fcd34d;
+  --src-llm: #a78bfa;
+  --src-pending: #f87171;
+
+  --radius: 10px;
+  --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, "PingFang SC", "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+button { font-family: inherit; cursor: pointer; }
+code, .mono { font-family: var(--mono); font-size: 12px; }
+
+/* 焦点可见性(无障碍基线) */
+:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+
+/* ---- 通用组件类 ---- */
+.badge {
+  display: inline-block; padding: 1px 8px; border-radius: 6px;
+  font-size: 11px; font-weight: 600; font-family: var(--mono);
+}
+.badge-skill { background: var(--skill-bg); color: var(--skill-fg); }
+.badge-tool { background: var(--tool-bg); color: var(--tool-fg); }
+.badge-llm { background: rgba(167,139,250,.15); color: #c4b5fd; }
+.badge-reviewer { background: rgba(148,163,184,.15); color: #cbd5e1; }
+
+.src-tag {
+  display: inline-block; padding: 0 6px; border-radius: 4px;
+  font-size: 10px; font-family: var(--mono); margin-left: 6px;
+}
+.src-user_input { background: rgba(96,165,250,.15); color: var(--src-user); }
+.src-knowledge_base { background: rgba(52,211,153,.15); color: var(--src-kb); }
+.src-tool_result { background: rgba(252,211,77,.15); color: var(--src-tool); }
+.src-llm_inference { background: rgba(167,139,250,.15); color: var(--src-llm); }
+.src-pending_human_review { background: rgba(248,113,113,.15); color: var(--src-pending); }
+
+.btn-primary {
+  background: var(--primary); color: #fff; border: none;
+  padding: 10px 18px; border-radius: var(--radius); font-weight: 600;
+}
+.btn-primary:hover { background: var(--primary-dim); }
+.btn-primary:disabled { background: var(--border); color: var(--text-faint); cursor: not-allowed; }
+.btn-ghost {
+  background: transparent; color: var(--text-dim); border: 1px solid var(--border);
+  padding: 8px 14px; border-radius: var(--radius);
+}
+.btn-ghost:hover { border-color: var(--primary); color: var(--text); }
+
+.spinner {
+  display: inline-block; width: 14px; height: 14px;
+  border: 2px solid var(--border); border-top-color: var(--primary);
+  border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle;
+}
+@keyframes spin { to { transform: rotate(360deg); } }

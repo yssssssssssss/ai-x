@@ -12,15 +12,21 @@
     "lint:registry": "tsx harness/linters/registry-linter.ts",
     "spike:plan": "tsx apps/orchestrator-runtime/src/spike-plan.ts",
     "spike:execute": "tsx apps/orchestrator-runtime/src/spike-execute.ts",
+    "api:dev": "tsx watch apps/agent-api/src/server.ts",
     "test": "tsx --test tests/*.test.ts"
   },
   "dependencies": {
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
+    "bcryptjs": "^3.0.3",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
     "pg": "^8.13.1",
     "yaml": "^2.6.1"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20.17.0",
     "@types/pg": "^8.11.10",
     "tsx": "^4.19.2",
