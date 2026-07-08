@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "research-report.schema.json",
+  "title": "ResearchReport",
+  "description": "段4 交付的可落地方案。写入 artifacts(artifact_type=report)。扩展交付物 A2:timeline/deliverables/capability_orchestration。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["task_id", "research_goal", "findings", "timeline", "deliverables", "capability_orchestration"],
+  "properties": {
+    "task_id": { "type": "string", "minLength": 1 },
+    "research_goal": { "type": "string", "minLength": 1 },
+    "findings": {
+      "type": "array",
+      "description": "关键结论,每条必须带来源标注(report-linter 强制)。",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/finding" }
+    },
+    "timeline": {
+      "type": "array",
+      "description": "执行流程 + 周次。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["phase", "activity"],
+        "properties": {
+          "phase": { "type": "string", "description": "阶段,如 W28。" },
+          "activity": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "deliverables": {
+      "type": "array",
+      "description": "产出物清单。",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "capability_orchestration": {
+      "type": "array",
+      "description": "能力编排:本次调用了哪些 skill/tool 及其用途。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["capability_id", "capability_type", "purpose"],
+        "properties": {
+          "capability_id": { "type": "string", "minLength": 1 },
+          "capability_type": { "type": "string", "enum": ["skill", "tool"] },
+          "purpose": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "risks_and_open_issues": {
+      "type": "array",
+      "description": "风险与待人工确认项(need_annotate/need_approval 沉淀于此)。",
+      "items": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["statement", "source"],
+      "properties": {
+        "statement": { "type": "string", "minLength": 1 },
+        "source": {
+          "type": "string",
+          "description": "来源标注,report-linter 强制存在。",
+          "enum": ["user_input", "knowledge_base", "tool_result", "llm_inference", "pending_human_review"]
+        },
+        "source_ref": {
+          "type": "string",
+          "description": "来源可反查引用,如 knowledge id / tool output ref。"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "research-task.schema.json",
+  "title": "ResearchTask",
+  "description": "段1 任务理解产出:一句话 → 结构化研究任务。由 LLM 生成,必须过此校验后写入 research_tasks.structured_task。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["task_type", "business_domain", "research_goal", "assumptions", "confirmations", "blocking_issues", "sensitivity", "pii_detected"],
+  "properties": {
+    "task_type": {
+      "type": "string",
+      "description": "任务类型,用于决策节点池按 applies_to 分流。V0 只支持 competitive_research。",
+      "enum": ["competitive_research", "user_research_planning", "voc_diagnosis", "design_audit", "a11y_audit"]
+    },
+    "business_domain": {
+      "type": "string",
+      "description": "业务场域,如 live_commerce / retail / logistics。",
+      "minLength": 1
+    },
+    "research_goal": {
+      "type": "string",
+      "description": "研究目标一句话描述。",
+      "minLength": 1
+    },
+    "assumptions": {
+      "type": "array",
+      "description": "可假设的缺失信息(默认清单/格式/时间窗口),允许用户确认或修改,不阻断流程。",
+      "items": { "$ref": "#/$defs/assumption" }
+    },
+    "confirmations": {
+      "type": "array",
+      "description": "需用户确认的关键输入(研究目标/目标用户/样本规模/研究周期)。",
+      "items": { "$ref": "#/$defs/confirmation" }
+    },
+    "blocking_issues": {
+      "type": "array",
+      "description": "必须阻断的问题(敏感数据授权/高风险 tool/隐私合规/外部发布)。",
+      "items": { "$ref": "#/$defs/blocking_issue" }
+    },
+    "sensitivity": {
+      "type": "string",
+      "description": "数据分级,与知识库 metadata 一致。",
+      "enum": ["public", "internal", "confidential"]
+    },
+    "pii_detected": {
+      "type": "boolean",
+      "description": "是否检出个人身份/联系方式/原始访谈内容等 PII。"
+    }
+  },
+  "$defs": {
+    "assumption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "value", "editable"],
+      "properties": {
+        "key": { "type": "string", "minLength": 1 },
+        "value": { "type": "string" },
+        "editable": { "type": "boolean", "description": "用户是否可就地修改此假设。" }
+      }
+    },
+    "confirmation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "question"],
+      "properties": {
+        "key": { "type": "string", "minLength": 1 },
+        "question": { "type": "string", "minLength": 1 },
+        "suggestion": { "type": "string", "description": "系统给出的默认建议,用户可接受。" }
+      }
+    },
+    "blocking_issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "reason", "kind"],
+      "properties": {
+        "key": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 },
+        "kind": {
+          "type": "string",
+          "enum": ["sensitive_data_auth", "high_risk_tool", "privacy_compliance", "external_publish"]
+        }
+      }
+    }
+  }
+}

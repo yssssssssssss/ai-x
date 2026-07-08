@@ -1,0 +1,15 @@
+{
+  "eval_id": "dh-eval-01-given-competitors",
+  "description": "给定竞品清单时,输出对比矩阵每条带 source,且覆盖所给竞品",
+  "input": {
+    "business_domain": "live_commerce",
+    "competitors": ["竞品A", "竞品B"],
+    "dimensions": ["交互体验"]
+  },
+  "assertions": [
+    "output 通过 output.schema.json 校验",
+    "comparison_matrix 每条都有非空 source",
+    "comparison_matrix 覆盖 competitors 中的每个竞品",
+    "sources 非空"
+  ]
+}

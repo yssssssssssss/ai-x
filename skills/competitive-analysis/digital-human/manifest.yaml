@@ -1,0 +1,14 @@
+id: digital-human-competitive-analysis
+name: 数字人竞品分析
+path: skills/competitive-analysis/digital-human/SKILL.md
+when_to_use: 用户需要分析数字人、虚拟主播、直播竞品时使用
+owner: 竞品分析组
+status: active
+task_types: [competitive_research, user_research_planning]
+intent_tags: [digital_human, live_commerce, competitive]
+input_schema: skills/competitive-analysis/digital-human/input.schema.json
+output_schema: skills/competitive-analysis/digital-human/output.schema.json
+required_tools:
+  - o2-web-search
+cost_level: medium
+risk_level: low

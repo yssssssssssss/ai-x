@@ -1,0 +1,14 @@
+# tool 轻量索引卡(方案 §2.3)
+# 只保留发现/治理/预筛所需字段;执行边界(超时/重试/脱敏)在各 tool 的 manifest.yaml。
+# 业务判断"什么任务该调我"不写在这里,由 LLM + skill 决定。
+
+version: 1
+
+tools:
+  - id: o2-web-search
+    name: o2 网页检索
+    path: tools/o2-web-search/manifest.yaml
+    adapter_type: o2
+    auth_required: true
+    risk_level: low
+    status: active

@@ -1,0 +1,1670 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>用研智能调度台 Demo</title>
+  <style>
+    :root {
+      --bg: #f7f6f3;
+      --side: #efede8;
+      --surface: #fffefa;
+      --surface-2: #f1efea;
+      --ink: #1f2328;
+      --muted: #69707a;
+      --line: #dedbd3;
+      --line-strong: #c9c5bb;
+      --accent: #c8161d;
+      --accent-dark: #941217;
+      --blue: #2f6bff;
+      --green: #13795b;
+      --amber: #a76709;
+      --red: #b42318;
+      --gray: #7a7f87;
+      --shadow: 0 20px 70px rgba(31, 35, 40, .08);
+      --radius: 8px;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        linear-gradient(90deg, rgba(31, 35, 40, .03) 1px, transparent 1px),
+        linear-gradient(0deg, rgba(31, 35, 40, .03) 1px, transparent 1px),
+        var(--bg);
+      background-size: 28px 28px;
+    }
+
+    button,
+    textarea,
+    input {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    .app {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 286px minmax(0, 1fr);
+    }
+
+    .sidebar {
+      min-height: 100vh;
+      background: rgba(239, 237, 232, .9);
+      border-right: 1px solid var(--line);
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr) auto;
+      padding: 16px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 4px 18px;
+    }
+
+    .brand-mark {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      background: var(--ink);
+      color: white;
+      font-weight: 900;
+    }
+
+    .brand strong {
+      display: block;
+      font-size: 15px;
+      line-height: 1.1;
+    }
+
+    .brand span {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .new-task {
+      height: 40px;
+      border: 1px solid var(--accent);
+      border-radius: 7px;
+      color: white;
+      background: var(--accent);
+      font-weight: 800;
+      transition: background .18s ease, transform .18s ease;
+    }
+
+    .new-task:hover {
+      background: var(--accent-dark);
+      transform: translateY(-1px);
+    }
+
+    .nav-group {
+      margin-top: 18px;
+      display: grid;
+      gap: 4px;
+    }
+
+    .nav-title {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      padding: 10px 8px 6px;
+      letter-spacing: .03em;
+    }
+
+    .nav-item {
+      border: 0;
+      background: transparent;
+      text-align: left;
+      min-height: 36px;
+      border-radius: 7px;
+      color: var(--ink);
+      padding: 0 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .nav-item:hover,
+    .nav-item.active {
+      background: var(--surface);
+    }
+
+    .nav-item span:last-child {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .history {
+      overflow: auto;
+      margin-top: 16px;
+      padding-right: 2px;
+    }
+
+    .history-item {
+      border: 1px solid transparent;
+      background: transparent;
+      border-radius: 7px;
+      padding: 10px;
+      width: 100%;
+      text-align: left;
+      color: var(--ink);
+      line-height: 1.45;
+    }
+
+    .history-item:hover {
+      border-color: var(--line);
+      background: rgba(255, 254, 250, .7);
+    }
+
+    .history-item strong {
+      display: block;
+      font-size: 13px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .history-item span {
+      color: var(--muted);
+      display: block;
+      margin-top: 4px;
+      font-size: 12px;
+    }
+
+    .sidebar-foot {
+      border-top: 1px solid var(--line);
+      padding-top: 14px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .main {
+      min-width: 0;
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: 58px minmax(0, 1fr) auto;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 0 24px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 254, 250, .78);
+      backdrop-filter: blur(18px);
+      position: sticky;
+      top: 0;
+      z-index: 5;
+    }
+
+    .topbar h1 {
+      margin: 0;
+      font-size: 15px;
+      letter-spacing: 0;
+    }
+
+    .topbar p {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .top-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .ghost-button {
+      height: 34px;
+      padding: 0 12px;
+      border-radius: 7px;
+      border: 1px solid var(--line-strong);
+      background: var(--surface);
+      color: var(--ink);
+    }
+
+    .chat {
+      overflow: auto;
+      padding: 32px 24px 24px;
+    }
+
+    .chat-inner {
+      max-width: 920px;
+      margin: 0 auto;
+      display: grid;
+      gap: 22px;
+    }
+
+    .empty {
+      min-height: calc(100vh - 250px);
+      display: grid;
+      align-content: center;
+      justify-items: center;
+      text-align: center;
+      gap: 22px;
+    }
+
+    .empty h2 {
+      margin: 0;
+      font-size: clamp(28px, 5vw, 54px);
+      line-height: 1.08;
+      letter-spacing: 0;
+      max-width: 760px;
+    }
+
+    .empty p {
+      margin: 0;
+      color: var(--muted);
+      max-width: 560px;
+      line-height: 1.7;
+    }
+
+    .examples {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      width: min(860px, 100%);
+      margin-top: 6px;
+    }
+
+    .example {
+      border: 1px solid var(--line);
+      background: rgba(255, 254, 250, .74);
+      border-radius: var(--radius);
+      padding: 14px;
+      min-height: 92px;
+      text-align: left;
+      transition: border-color .18s ease, transform .18s ease, background .18s ease;
+    }
+
+    .example:hover {
+      background: var(--surface);
+      border-color: var(--line-strong);
+      transform: translateY(-2px);
+    }
+
+    .example strong {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 7px;
+    }
+
+    .example span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .message {
+      display: grid;
+      grid-template-columns: 36px minmax(0, 1fr);
+      gap: 14px;
+      align-items: start;
+      animation: enter .36s ease both;
+    }
+
+    .avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      background: var(--ink);
+      color: white;
+      font-weight: 900;
+      font-size: 13px;
+    }
+
+    .message.user .avatar {
+      background: var(--accent);
+    }
+
+    .bubble {
+      min-width: 0;
+      background: rgba(255, 254, 250, .82);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 16px;
+      box-shadow: 0 1px 0 rgba(31, 35, 40, .03);
+    }
+
+    .message.user .bubble {
+      background: var(--surface);
+      border-color: var(--line-strong);
+    }
+
+    .bubble p {
+      margin: 0;
+      line-height: 1.75;
+      font-size: 14px;
+    }
+
+    .answer-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 14px;
+    }
+
+    .answer-head h3 {
+      margin: 0;
+      font-size: 17px;
+    }
+
+    .answer-head p {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 5px;
+    }
+
+    .confidence {
+      min-width: 92px;
+      color: var(--green);
+      font-weight: 900;
+      font-size: 13px;
+      text-align: right;
+    }
+
+    .strategy-summary {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1px;
+      background: var(--line);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin: 14px 0;
+    }
+
+    .summary-cell {
+      background: var(--surface);
+      padding: 13px;
+    }
+
+    .summary-cell span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 5px;
+    }
+
+    .summary-cell strong {
+      display: block;
+      font-size: 14px;
+    }
+
+    .summary-cell select,
+    .node-edit select,
+    .node-edit input {
+      width: 100%;
+      height: 34px;
+      border: 1px solid var(--line-strong);
+      background: var(--surface);
+      color: var(--ink);
+      border-radius: 7px;
+      padding: 0 9px;
+      outline: 0;
+    }
+
+    .summary-cell select:focus,
+    .node-edit select:focus,
+    .node-edit input:focus {
+      border-color: rgba(200, 22, 29, .65);
+      box-shadow: 0 0 0 3px rgba(200, 22, 29, .10);
+    }
+
+    .block {
+      border-top: 1px solid var(--line);
+      padding-top: 15px;
+      margin-top: 15px;
+    }
+
+    .block h4 {
+      margin: 0 0 11px;
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: .03em;
+    }
+
+    .node-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .node-row {
+      display: grid;
+      grid-template-columns: 40px minmax(0, 1fr) 156px;
+      gap: 12px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(247, 246, 243, .7);
+      padding: 11px;
+    }
+
+    .node-key {
+      width: 34px;
+      height: 34px;
+      border-radius: 7px;
+      display: grid;
+      place-items: center;
+      background: var(--surface-2);
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .node-copy strong {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 3px;
+    }
+
+    .node-copy span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .node-edit {
+      grid-column: 2 / -1;
+      display: none;
+      grid-template-columns: 156px minmax(0, 1fr);
+      gap: 10px;
+      padding-top: 2px;
+    }
+
+    .bubble.editing .node-edit {
+      display: grid;
+    }
+
+    .status {
+      justify-self: end;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--gray);
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .status::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 99px;
+      background: currentColor;
+    }
+
+    .status.need-execute { color: var(--blue); }
+    .status.need-clarify { color: var(--amber); }
+    .status.need-human-review { color: var(--red); }
+    .status.satisfied { color: var(--green); }
+    .status.skipped { color: var(--gray); }
+
+    .capability-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 30px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface);
+      padding: 0 10px;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .chip::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--accent);
+    }
+
+    .chip small {
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .skill-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 32px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface);
+      padding: 0 10px;
+      font-size: 12px;
+      font-weight: 800;
+      user-select: none;
+    }
+
+    .skill-toggle input {
+      accent-color: var(--accent);
+    }
+
+    .override-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 15px;
+      padding-top: 15px;
+      border-top: 1px solid var(--line);
+    }
+
+    .manual-panel {
+      display: none;
+      margin-top: 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(247, 246, 243, .72);
+      padding: 14px;
+    }
+
+    .bubble.editing .manual-panel {
+      display: grid;
+      gap: 14px;
+      animation: enter .24s ease both;
+    }
+
+    .manual-row {
+      display: grid;
+      gap: 8px;
+    }
+
+    .manual-row strong {
+      font-size: 13px;
+    }
+
+    .strategy-options {
+      display: grid;
+      gap: 8px;
+    }
+
+    .strategy-option {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 9px;
+      align-items: start;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface);
+      padding: 10px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .strategy-option input {
+      margin-top: 3px;
+      accent-color: var(--accent);
+    }
+
+    .strategy-option span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 3px;
+    }
+
+    .manual-text {
+      width: 100%;
+      min-height: 68px;
+      resize: vertical;
+      border: 1px solid var(--line-strong);
+      border-radius: 7px;
+      background: var(--surface);
+      color: var(--ink);
+      padding: 10px;
+      outline: 0;
+      line-height: 1.55;
+    }
+
+    .manual-text:focus {
+      border-color: rgba(200, 22, 29, .65);
+      box-shadow: 0 0 0 3px rgba(200, 22, 29, .10);
+    }
+
+    .override-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .small-button,
+    .danger-button {
+      min-height: 34px;
+      border-radius: 7px;
+      border: 1px solid var(--line-strong);
+      background: var(--surface);
+      color: var(--ink);
+      padding: 0 11px;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .danger-button {
+      border-color: rgba(200, 22, 29, .45);
+      color: var(--accent);
+    }
+
+    .override-note {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .replan-log {
+      margin-top: 12px;
+      border-left: 3px solid var(--green);
+      background: rgba(19, 121, 91, .08);
+      border-radius: 0 7px 7px 0;
+      padding: 10px 12px;
+      color: var(--ink);
+      font-size: 13px;
+      line-height: 1.6;
+      display: none;
+    }
+
+    .replan-log.show {
+      display: block;
+      animation: enter .28s ease both;
+    }
+
+    .question-panel {
+      display: grid;
+      gap: 10px;
+    }
+
+    .question-card {
+      border: 1px solid rgba(167, 103, 9, .32);
+      border-left: 3px solid var(--amber);
+      border-radius: 0 7px 7px 0;
+      background: rgba(167, 103, 9, .06);
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .question-card.resolved {
+      border-color: rgba(19, 121, 91, .25);
+      border-left-color: var(--green);
+      background: rgba(19, 121, 91, .06);
+    }
+
+    .question-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .question-card p {
+      margin: 0;
+      line-height: 1.65;
+      font-size: 13px;
+    }
+
+    .question-card textarea {
+      width: 100%;
+      min-height: 54px;
+      resize: vertical;
+      border: 1px solid var(--line-strong);
+      border-radius: 7px;
+      background: var(--surface);
+      color: var(--ink);
+      padding: 9px 10px;
+      outline: 0;
+      line-height: 1.55;
+    }
+
+    .question-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .resolved-note {
+      display: none;
+      color: var(--green);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .question-card.resolved .resolved-note {
+      display: block;
+    }
+
+    .primary-execute {
+      min-height: 36px;
+      border-radius: 7px;
+      border: 1px solid var(--accent);
+      background: var(--accent);
+      color: white;
+      padding: 0 13px;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .primary-execute:disabled {
+      border-color: var(--line-strong);
+      background: var(--surface-2);
+      color: var(--muted);
+      cursor: not-allowed;
+    }
+
+    .plan-list {
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    .plan-list li {
+      margin: 8px 0;
+      line-height: 1.65;
+      font-size: 13px;
+    }
+
+    .result-card {
+      border: 1px solid rgba(19, 121, 91, .24);
+      border-radius: var(--radius);
+      background: rgba(255, 254, 250, .92);
+      overflow: hidden;
+    }
+
+    .result-hero {
+      padding: 16px;
+      background: rgba(19, 121, 91, .07);
+      border-bottom: 1px solid rgba(19, 121, 91, .18);
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+    }
+
+    .result-hero h4 {
+      margin: 0 0 6px;
+      color: var(--ink);
+      font-size: 16px;
+    }
+
+    .result-hero p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.6;
+      font-size: 13px;
+    }
+
+    .result-badge {
+      color: var(--green);
+      font-size: 12px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .result-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1px;
+      background: var(--line);
+    }
+
+    .result-metric {
+      background: var(--surface);
+      padding: 13px;
+    }
+
+    .result-metric strong {
+      display: block;
+      font-size: 20px;
+      line-height: 1.1;
+    }
+
+    .result-metric span {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .result-body {
+      padding: 16px;
+      display: grid;
+      gap: 16px;
+    }
+
+    .output-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .output-row {
+      display: grid;
+      grid-template-columns: 118px minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 10px;
+      background: rgba(247, 246, 243, .55);
+      font-size: 13px;
+    }
+
+    .output-row strong {
+      font-size: 13px;
+    }
+
+    .output-row span {
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .artifact-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .feedback-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      border-top: 1px solid var(--line);
+      padding-top: 14px;
+    }
+
+    .composer-wrap {
+      padding: 16px 24px 24px;
+      background: linear-gradient(180deg, rgba(247, 246, 243, 0), var(--bg) 22%);
+    }
+
+    .composer {
+      max-width: 920px;
+      margin: 0 auto;
+      border: 1px solid var(--line-strong);
+      background: rgba(255, 254, 250, .96);
+      border-radius: 10px;
+      box-shadow: var(--shadow);
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      padding: 10px;
+    }
+
+    .composer textarea {
+      width: 100%;
+      min-height: 54px;
+      max-height: 160px;
+      border: 0;
+      background: transparent;
+      outline: 0;
+      resize: vertical;
+      padding: 8px 10px;
+      line-height: 1.55;
+      color: var(--ink);
+    }
+
+    .send {
+      align-self: end;
+      width: 42px;
+      height: 42px;
+      border: 0;
+      border-radius: 8px;
+      background: var(--accent);
+      color: white;
+      font-size: 18px;
+      font-weight: 900;
+      transition: transform .18s ease, background .18s ease;
+    }
+
+    .send:hover {
+      transform: translateY(-1px);
+      background: var(--accent-dark);
+    }
+
+    .composer-meta {
+      max-width: 920px;
+      margin: 8px auto 0;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    @keyframes enter {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @media (max-width: 980px) {
+      .app {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        display: none;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .topbar {
+        align-items: flex-start;
+        height: auto;
+        padding: 12px;
+      }
+
+      .top-actions {
+        display: none;
+      }
+
+      .chat {
+        padding: 22px 12px;
+      }
+
+      .examples,
+      .strategy-summary,
+      .result-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .message {
+        grid-template-columns: 1fr;
+      }
+
+      .avatar {
+        display: none;
+      }
+
+      .node-row {
+        grid-template-columns: 34px minmax(0, 1fr);
+      }
+
+      .status {
+        grid-column: 2;
+        justify-self: start;
+      }
+
+      .node-edit {
+        grid-template-columns: 1fr;
+      }
+
+      .output-row {
+        grid-template-columns: 1fr;
+      }
+
+      .composer-wrap {
+        padding: 12px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <aside class="sidebar" aria-label="侧边导航">
+      <div>
+        <div class="brand">
+          <div class="brand-mark">研</div>
+          <div>
+            <strong>用研智能调度台</strong>
+            <span>用研能力编排系统</span>
+          </div>
+        </div>
+        <button class="new-task" id="newTask" type="button">新建任务</button>
+      </div>
+
+      <nav class="nav-group">
+        <div class="nav-title">工作区</div>
+        <button class="nav-item active" type="button"><span>新建任务</span><span>⌘N</span></button>
+        <button class="nav-item" type="button"><span>历史任务</span><span>24</span></button>
+        <button class="nav-item" type="button"><span>能力库</span><span>18</span></button>
+        <button class="nav-item" type="button"><span>案例库</span><span>42</span></button>
+        <button class="nav-item" type="button"><span>反馈看板</span><span>7</span></button>
+      </nav>
+
+      <div class="history">
+        <div class="nav-title">最近任务</div>
+        <button class="history-item" type="button" data-query="我要为直播场域做一次用户体验研究">
+          <strong>直播场域用户体验研究</strong>
+          <span>用研规划 · 18 分钟前</span>
+        </button>
+        <button class="history-item" type="button" data-query="帮我做数字人导购竞品分析">
+          <strong>数字人导购竞品分析</strong>
+          <span>竞品分析 · 昨天</span>
+        </button>
+        <button class="history-item" type="button" data-query="帮我分析这批用户访谈记录">
+          <strong>用户访谈记录分析</strong>
+          <span>访谈分析 · 周一</span>
+        </button>
+      </div>
+
+      <div class="sidebar-foot">
+        策略不会固定写死。系统先识别意图，再从策略库中选择或组合适合的分析路径。
+      </div>
+    </aside>
+
+    <section class="main">
+      <header class="topbar">
+        <div>
+          <h1>新建用研任务</h1>
+          <p>输入需求后，系统才会展示任务类型、决策策略和分析结果。</p>
+        </div>
+        <div class="top-actions">
+          <button class="ghost-button" type="button">导出文档</button>
+          <button class="ghost-button" type="button">同步飞书</button>
+        </div>
+      </header>
+
+      <section class="chat" id="chat">
+        <div class="chat-inner" id="chatInner">
+          <div class="empty" id="emptyState">
+            <h2>今天要完成哪类用研任务？</h2>
+            <p>系统会先理解你的需求，再选择合适的分析路径和能力组合。没有输入前，不预设任务类型，也不展示固定 7 问。</p>
+            <div class="examples">
+              <button class="example" type="button" data-query="我要为直播场域做一次用户体验研究">
+                <strong>制定用研方案</strong>
+                <span>识别为“用研方案规划”后，才展示对应分析路径。</span>
+              </button>
+              <button class="example" type="button" data-query="帮我做数字人导购竞品分析">
+                <strong>竞品分析</strong>
+                <span>识别为“竞品分析”，展示竞品对象、维度和采集策略。</span>
+              </button>
+              <button class="example" type="button" data-query="帮我分析这批用户访谈记录">
+                <strong>访谈分析</strong>
+                <span>识别为“访谈分析”，展示材料完整性、聚类和洞察节点。</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div class="composer-wrap">
+        <form class="composer" id="composer">
+          <textarea id="query" placeholder="例如：我要为直播场域做一次用户体验研究"></textarea>
+          <button class="send" type="submit" aria-label="发送">↑</button>
+        </form>
+        <div class="composer-meta">
+          <span>分析路径来自策略库，能力来自能力注册表</span>
+          <span>系统负责初判，后端负责格式、权限和风险约束</span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const chatInner = document.querySelector("#chatInner");
+    const emptyState = document.querySelector("#emptyState");
+    const composer = document.querySelector("#composer");
+    const queryInput = document.querySelector("#query");
+    const newTask = document.querySelector("#newTask");
+
+    const strategyMap = [
+      {
+        match: ["竞品", "数字人"],
+        taskType: "竞品分析",
+        strategy: "竞品分析路径",
+        confidence: "判断置信度 88%",
+        summary: "我判断这是一次数字人导购竞品分析，重点不是完整用研规划，而是明确竞品对象、分析维度和素材采集方式。",
+        basis: "需求中出现“数字人导购”和“竞品分析”，意图边界较明确。",
+        alternatives: [
+          ["保持系统推荐", "继续按竞品分析路径推进。"],
+          ["加入用户体验诊断", "如果你已经有页面或设计稿，可补充设计走查。"],
+          ["改为用研方案规划", "如果目标是制定完整研究计划，而不只是竞品对照。"]
+        ],
+        questions: [
+          ["竞品清单", "这次希望对比哪些竞品？如果不确定，我可以先按抖音、快手、淘宝直播和内部相似能力作为默认参照。", "采用系统推荐竞品清单"]
+        ],
+        review: "若需要调用外部素材采集工具，建议由竞品分析负责人确认采集范围和合规边界。",
+        nodes: [
+          ["C1", "竞品清单需要补齐", "数字人导购方向明确，但还需要确认具体竞品名单。", "need_clarify"],
+          ["C2", "分析维度建议覆盖四类", "建议覆盖界面体验、功能链路、商业化方式和转化引导。", "need_execute"],
+          ["C3", "素材采集需要启动", "需要收集截图、视频、入口链路和关键交互样本。", "need_execute"],
+          ["C4", "输出应采用对比矩阵", "建议输出竞品矩阵、机会点和可复用案例。", "need_execute"]
+        ],
+        skills: [
+          ["数字人竞品分析", "聚焦数字人导购形态与链路"],
+          ["界面竞品对照", "对比关键页面和交互结构"],
+          ["功能竞品对照", "对比能力边界和任务完成路径"],
+          ["商业化竞品分析", "对比成交引导和转化机制"],
+          ["报告生成", "汇总为竞品分析报告"]
+        ],
+        plan: [
+          "先确认竞品名单：京东内同类、淘宝、抖音、快手及垂类数字人导购。",
+          "采集入口链路、对话流程、商品推荐、成交引导和失败兜底样本。",
+          "输出竞品对比矩阵、机会点和下一轮验证建议。"
+        ]
+      },
+      {
+        match: ["访谈", "记录", "转写"],
+        taskType: "访谈资料分析",
+        strategy: "访谈分析路径",
+        confidence: "判断置信度 82%",
+        summary: "我判断你已经有访谈材料，当前重点是整理、聚类和提炼洞察，不需要重新套完整用研规划。",
+        basis: "需求中出现“访谈记录”，说明输入材料可能已经存在。",
+        alternatives: [
+          ["保持系统推荐", "继续按访谈分析路径推进。"],
+          ["加入报告生成", "如果你需要直接输出汇报材料，可加强报告结构。"],
+          ["改为用研方案规划", "如果访谈还没开始，需要先回到研究设计。"]
+        ],
+        questions: [
+          ["材料范围", "请确认访谈记录是否包含访谈对象、问题大纲和完整转写。如果材料不完整，我会先安排资料清洗。", "先按材料不完整处理，执行资料清洗"]
+        ],
+        review: "若访谈内容涉及敏感用户信息，建议由资料 owner 确认脱敏范围后再执行分析。",
+        nodes: [
+          ["A1", "材料完整性需要确认", "需要确认访谈对象、问题大纲和转写质量。", "need_clarify"],
+          ["A2", "转写清洗建议先执行", "如果存在口语噪音、缺段或重复，需要先清洗材料。", "need_execute"],
+          ["A3", "主题聚类适合启动", "适合先做主题聚类和高频问题归纳。", "need_execute"],
+          ["A4", "洞察需要转成设计机会点", "需要把原始观点提炼成可行动的设计建议。", "need_execute"]
+        ],
+        skills: [
+          ["资料清洗", "整理访谈转写和噪音内容"],
+          ["主题聚类", "归纳高频主题和问题模式"],
+          ["洞察提炼", "转化为设计机会点"],
+          ["报告生成", "输出访谈分析报告"]
+        ],
+        plan: [
+          "先校验访谈材料完整性和转写质量。",
+          "按主题、情绪、任务阶段和用户分层做聚类。",
+          "输出洞察摘要、证据引用和设计建议。"
+        ]
+      },
+      {
+        match: [],
+        taskType: "用研方案规划",
+        strategy: "用研规划路径",
+        confidence: "判断置信度 84%",
+        summary: "我判断这是一次新的用研方案规划任务，需要先收敛目标、人群、方法和产出标准。这里才启用用研规划节点。",
+        basis: "需求中只有研究主题和场景，尚未给出研究阶段、目标用户和已有材料。",
+        alternatives: [
+          ["保持系统推荐", "继续按用研规划路径推进。"],
+          ["加入竞品分析", "直播场域通常需要补充竞品参照。"],
+          ["加入用户之声分析", "如果已有线上反馈，可先用用户之声缩小问题范围。"]
+        ],
+        questions: [
+          ["研究目标", "这次研究更偏新方向探索、现有体验诊断，还是上线前验证？如果不确定，我会先按“现有体验诊断”推进。", "按现有体验诊断推进"],
+          ["目标用户", "是否已有目标用户定义？如果没有，我会先让人群标签能力输出样本分层建议。", "先由人群标签能力推荐样本分层"]
+        ],
+        review: "研究目标和目标用户会影响样本设计，建议 PMO / 用研老师在执行前确认一次。",
+        nodes: [
+          ["D1", "研究目标需要补充", "当前目标较泛，需要补充业务问题和成功标准。", "need_clarify"],
+          ["D2", "用户人群需要分层", "直播用户分层会影响样本设计和研究方法。", "need_execute"],
+          ["D3", "研究方法需要推荐", "需要根据项目阶段推荐访谈、焦点小组或日记研究组合。", "need_execute"],
+          ["D4", "体验现状需要先诊断", "建议结合设计走查和用户之声缩小问题范围。", "need_execute"],
+          ["D5", "竞品参照建议加入", "直播场域建议加入抖音、快手、淘宝直播作为参照。", "need_execute"],
+          ["D6", "采集分析暂缓执行", "当前信息不足，先生成工具调用计划，不直接采集。", "skipped"],
+          ["D7", "产出标准需要约束", "需要输出标准研究方案，并沉淀到对应 Wiki 板块。", "need_execute"]
+        ],
+        skills: [
+          ["研究启动", "收敛目标、范围和成功标准"],
+          ["人群标签", "定义目标用户和样本分层"],
+          ["方法选择", "推荐研究方法组合"],
+          ["设计走查", "诊断现有体验问题"],
+          ["竞品参照", "对比直播场域关键竞品"],
+          ["报告生成", "生成研究方案和沉淀内容"]
+        ],
+        plan: [
+          "先追问研究阶段、业务目标和已有材料。",
+          "并行启动人群分层、方法推荐、设计走查与竞品参照。",
+          "汇总为研究方案初稿，并标注需要人工校准的负责人。"
+        ]
+      }
+    ];
+
+    function pickStrategy(query) {
+      return strategyMap.find((item) => item.match.some((word) => query.includes(word))) || strategyMap[strategyMap.length - 1];
+    }
+
+    const statusLabels = {
+      satisfied: "已满足",
+      need_clarify: "需要补充",
+      need_execute: "建议执行",
+      need_human_review: "需要专家确认",
+      skipped: "暂不处理"
+    };
+
+    function statusOptions(activeStatus) {
+      const statuses = ["satisfied", "need_clarify", "need_execute", "need_human_review", "skipped"];
+      return statuses.map((status) => `
+        <option value="${status}" ${status === activeStatus ? "selected" : ""}>${statusLabels[status]}</option>
+      `).join("");
+    }
+
+    function addUserMessage(text) {
+      const el = document.createElement("article");
+      el.className = "message user";
+      el.innerHTML = `
+        <div class="avatar">你</div>
+        <div class="bubble"><p>${escapeHtml(text)}</p></div>
+      `;
+      chatInner.appendChild(el);
+    }
+
+    function addAssistantMessage(query, result) {
+      const el = document.createElement("article");
+      el.className = "message assistant";
+      el.innerHTML = `
+        <div class="avatar">研</div>
+        <div class="bubble">
+          <div class="answer-head">
+            <div>
+              <h3>已完成意图识别，并给出推荐分析路径</h3>
+              <p>${result.summary}</p>
+            </div>
+            <div class="confidence">${result.confidence}</div>
+          </div>
+
+          <div class="strategy-summary">
+            <div class="summary-cell">
+              <span>任务类型</span>
+              <strong>${result.taskType}</strong>
+            </div>
+            <div class="summary-cell">
+              <span>推荐分析路径</span>
+              <strong>${result.strategy}</strong>
+            </div>
+            <div class="summary-cell">
+              <span>推荐依据</span>
+              <strong>${result.basis}</strong>
+            </div>
+          </div>
+
+          <div class="block">
+            <h4>策略节点分析</h4>
+            <div class="node-list">
+              ${result.nodes.map(([key, title, reason, status]) => `
+                <div class="node-row" data-node="${key}">
+                  <div class="node-key">${key}</div>
+                  <div class="node-copy">
+                    <strong>${title}</strong>
+                    <span>${reason}</span>
+                  </div>
+                  <div class="status ${status.replaceAll("_", "-")}">${statusLabels[status]}</div>
+                  <div class="node-edit">
+                    <select class="node-status-select" aria-label="${key} 状态">
+                      ${statusOptions(status)}
+                    </select>
+                    <input class="override-reason" aria-label="${key} 修正原因" placeholder="补充输入或说明人工修正原因" />
+                  </div>
+                </div>
+              `).join("")}
+            </div>
+          </div>
+
+          ${result.questions?.length ? `
+            <div class="block">
+              <h4>待补充信息</h4>
+              <div class="question-panel">
+                ${result.questions.map(([label, question, suggestion], index) => `
+                  <div class="question-card" data-question-index="${index}">
+                    <div class="question-head">
+                      <span>${label}</span>
+                      <span>执行前需要确认</span>
+                    </div>
+                    <p>${question}</p>
+                    <textarea placeholder="也可以在这里手动补充信息"></textarea>
+                    <div class="question-actions">
+                      <button class="small-button use-suggestion-button" type="button" data-suggestion="${suggestion}">采用系统建议</button>
+                      <button class="small-button save-question-button" type="button">保存补充</button>
+                      <button class="small-button skip-question-button" type="button">暂时跳过</button>
+                    </div>
+                    <div class="resolved-note">已处理，执行计划会基于该补充重新计算。</div>
+                  </div>
+                `).join("")}
+              </div>
+            </div>
+          ` : ""}
+
+          <div class="block">
+            <h4>推荐能力 / 工具</h4>
+            <div class="capability-list">
+              ${result.skills.map(([name, desc]) => `<span class="chip">${name}<small>${desc}</small></span>`).join("")}
+            </div>
+          </div>
+
+          <div class="manual-panel">
+            <div class="manual-row">
+              <strong>修正分析路径</strong>
+              <div class="strategy-options">
+                ${result.alternatives.map(([name, desc], index) => `
+                  <label class="strategy-option">
+                    <input type="radio" name="strategy-${Date.now()}" ${index === 0 ? "checked" : ""} />
+                    <span><b>${name}</b><span>${desc}</span></span>
+                  </label>
+                `).join("")}
+              </div>
+            </div>
+
+            <div class="manual-row">
+              <strong>调整推荐能力</strong>
+              <div class="capability-list">
+                ${result.skills.map(([name]) => `
+                  <label class="skill-toggle">
+                    <input type="checkbox" checked />
+                    <span>${name}</span>
+                  </label>
+                `).join("")}
+                <label class="skill-toggle">
+                  <input type="checkbox" />
+                  <span>用户之声分析</span>
+                </label>
+                <label class="skill-toggle">
+                  <input type="checkbox" />
+                  <span>专家确认</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="manual-row">
+              <strong>补充说明</strong>
+              <textarea class="manual-text" placeholder="例如：业务目标已明确，本次只需要做竞品参照和设计走查，不需要重新做人群分层。"></textarea>
+            </div>
+          </div>
+
+          <div class="block">
+            <h4>分析结果与下一步</h4>
+            <ol class="plan-list">
+              ${result.plan.map((item) => `<li>${item}</li>`).join("")}
+            </ol>
+          </div>
+
+          <div class="override-bar">
+            <div class="override-note">系统先给出专业初判。需要时可以进入人工校准，修改会被记录为人工修正，并用于重新生成最终执行计划。</div>
+            <div class="override-actions">
+              <button class="small-button edit-button" type="button">人工校准</button>
+              <button class="small-button replan-button" type="button">重新生成执行计划</button>
+              <button class="small-button save-override-button" type="button">保存人工修正</button>
+              <button class="danger-button review-button" type="button">请求负责人确认</button>
+              <button class="primary-execute execute-button" type="button" ${result.questions?.length ? "disabled" : ""}>${result.questions?.length ? "补充必要信息后执行" : "确认方案并开始执行"}</button>
+            </div>
+          </div>
+          <div class="replan-log">已基于人工修正重新生成执行计划：系统会保留系统初判、人工修正和最终计划三层记录。</div>
+          <div class="replan-log review-log">已生成负责人确认请求：${result.review}</div>
+        </div>
+      `;
+      chatInner.appendChild(el);
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    function submitQuery(text) {
+      const value = text.trim();
+      if (!value) return;
+      emptyState?.remove();
+      addUserMessage(value);
+      const thinking = document.createElement("article");
+      thinking.className = "message assistant";
+      thinking.innerHTML = `
+        <div class="avatar">研</div>
+        <div class="bubble"><p>正在识别任务意图，匹配分析路径和可用能力...</p></div>
+      `;
+      chatInner.appendChild(thinking);
+      thinking.scrollIntoView({ behavior: "smooth", block: "start" });
+      window.setTimeout(() => {
+        thinking.remove();
+        addAssistantMessage(value, pickStrategy(value));
+      }, 700);
+    }
+
+    composer.addEventListener("submit", (event) => {
+      event.preventDefault();
+      submitQuery(queryInput.value);
+      queryInput.value = "";
+    });
+
+    chatInner.addEventListener("change", (event) => {
+      const target = event.target;
+      if (target.classList.contains("node-status-select")) {
+        const row = target.closest(".node-row");
+        const status = row.querySelector(".status");
+        status.className = `status ${target.value.replaceAll("_", "-")}`;
+        status.textContent = statusLabels[target.value];
+      }
+    });
+
+    chatInner.addEventListener("click", (event) => {
+      const editButton = event.target.closest(".edit-button");
+      const replanButton = event.target.closest(".replan-button");
+      const saveButton = event.target.closest(".save-override-button");
+      const suggestionButton = event.target.closest(".use-suggestion-button");
+      const saveQuestionButton = event.target.closest(".save-question-button");
+      const skipQuestionButton = event.target.closest(".skip-question-button");
+      const reviewButton = event.target.closest(".review-button");
+      const executeButton = event.target.closest(".execute-button");
+      if (editButton) {
+        const bubble = event.target.closest(".bubble");
+        bubble.classList.toggle("editing");
+        editButton.textContent = bubble.classList.contains("editing") ? "收起校准" : "人工校准";
+      }
+      if (suggestionButton || saveQuestionButton || skipQuestionButton) {
+        const card = event.target.closest(".question-card");
+        const textarea = card.querySelector("textarea");
+        if (suggestionButton) textarea.value = suggestionButton.dataset.suggestion || "";
+        if (skipQuestionButton) textarea.value = "本轮暂不补充，先按系统默认假设推进。";
+        if (saveQuestionButton && !textarea.value.trim()) {
+          textarea.focus();
+          textarea.placeholder = "请先补充信息，或选择采用系统建议";
+          return;
+        }
+        card.classList.add("resolved");
+        updateExecutionState(event.target.closest(".bubble"));
+      }
+      if (reviewButton) {
+        const bubble = event.target.closest(".bubble");
+        const log = bubble.querySelector(".review-log");
+        log.classList.add("show");
+      }
+      if (executeButton) {
+        const bubble = event.target.closest(".bubble");
+        const unresolved = bubble.querySelectorAll(".question-card:not(.resolved)").length;
+        const log = bubble.querySelector(".replan-log");
+        if (unresolved > 0) {
+          log.textContent = `还有 ${unresolved} 项必要信息未处理，请先补充、采用系统建议或暂时跳过。`;
+          log.classList.add("show");
+          return;
+        }
+        executeButton.textContent = "执行中";
+        executeButton.disabled = true;
+        window.setTimeout(() => {
+          log.textContent = "已开始执行：系统已锁定当前方案版本，并开始运行可自动执行的能力；需要人工确认的步骤会进入待办。";
+          log.classList.add("show");
+          executeButton.textContent = "执行已启动";
+        }, 500);
+        window.setTimeout(() => {
+          appendExecutionResult(bubble);
+        }, 1350);
+      }
+      if (replanButton || saveButton) {
+        const bubble = event.target.closest(".bubble");
+        const log = bubble.querySelector(".replan-log");
+        const enabledSkills = Array.from(bubble.querySelectorAll(".skill-toggle input:checked"))
+          .map((input) => input.closest(".skill-toggle").innerText.trim());
+        const selectedStrategy = bubble.querySelector(".strategy-option input:checked");
+        const strategy = selectedStrategy ? selectedStrategy.closest(".strategy-option").innerText.trim().split("\n")[0] : "保持系统推荐";
+        const action = replanButton ? "重新生成执行计划" : "保存人工修正";
+        log.textContent = `${action}完成：当前采用「${strategy}」，已启用 ${enabledSkills.length} 项能力。系统会保留系统初判、人工修正和最终计划三层记录。`;
+        log.classList.add("show");
+      }
+    });
+
+    function updateExecutionState(bubble) {
+      const unresolved = bubble.querySelectorAll(".question-card:not(.resolved)").length;
+      const executeButton = bubble.querySelector(".execute-button");
+      if (!executeButton) return;
+      if (unresolved > 0) {
+        executeButton.disabled = true;
+        executeButton.textContent = `还需处理 ${unresolved} 项信息`;
+      } else {
+        executeButton.disabled = false;
+        executeButton.textContent = "确认方案并开始执行";
+      }
+    }
+
+    function appendExecutionResult(bubble) {
+      if (bubble.querySelector(".result-card")) return;
+      const enabledSkills = Array.from(bubble.querySelectorAll(".skill-toggle input:checked"))
+        .map((input) => input.closest(".skill-toggle").innerText.trim());
+      const visibleSkills = enabledSkills.length ? enabledSkills : Array.from(bubble.querySelectorAll(".chip"))
+        .map((chip) => chip.childNodes[0].textContent.trim());
+      const result = document.createElement("div");
+      result.className = "block result-card";
+      result.innerHTML = `
+        <div class="result-hero">
+          <div>
+            <h4>执行完成，已生成本次用研产物</h4>
+            <p>系统已汇总能力输出，形成研究方案、报告草稿和 Wiki 沉淀建议。需要人工确认的内容已保留为待办。</p>
+          </div>
+          <div class="result-badge">已完成</div>
+        </div>
+        <div class="result-grid">
+          <div class="result-metric">
+            <strong>${Math.min(visibleSkills.length, 6)}</strong>
+            <span>已执行能力</span>
+          </div>
+          <div class="result-metric">
+            <strong>3</strong>
+            <span>已生成产物</span>
+          </div>
+          <div class="result-metric">
+            <strong>1</strong>
+            <span>待确认项</span>
+          </div>
+        </div>
+        <div class="result-body">
+          <div>
+            <h4>能力输出摘要</h4>
+            <div class="output-list">
+              ${visibleSkills.slice(0, 5).map((skill, index) => `
+                <div class="output-row">
+                  <strong>${skill}</strong>
+                  <span>${resultSummary(index)}</span>
+                  <span class="status satisfied">已完成</span>
+                </div>
+              `).join("")}
+            </div>
+          </div>
+          <div>
+            <h4>最终产物</h4>
+            <div class="artifact-actions">
+              <button class="small-button" type="button">查看研究方案</button>
+              <button class="small-button" type="button">导出报告</button>
+              <button class="small-button" type="button">生成 Wiki 草稿</button>
+              <button class="small-button" type="button">同步飞书看板</button>
+            </div>
+          </div>
+          <div>
+            <h4>下一步建议</h4>
+            <ol class="plan-list">
+              <li>确认样本规模和研究周期。</li>
+              <li>联系对应负责人确认待办项。</li>
+              <li>将研究方案草稿沉淀到 Wiki 对应板块。</li>
+            </ol>
+          </div>
+          <div class="feedback-actions">
+            <button class="primary-execute" type="button">采纳本次方案</button>
+            <button class="small-button" type="button">需要调整</button>
+            <button class="small-button" type="button">归档任务</button>
+          </div>
+        </div>
+      `;
+      bubble.appendChild(result);
+      result.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    function resultSummary(index) {
+      const summaries = [
+        "已收敛任务目标、范围和关键待确认项。",
+        "已给出目标用户分层和样本建议。",
+        "已推荐研究方法组合和执行顺序。",
+        "已输出竞品参照方向和采集建议。",
+        "已生成报告结构和沉淀路径。"
+      ];
+      return summaries[index] || "已完成结构化输出。";
+    }
+
+    document.querySelectorAll("[data-query]").forEach((button) => {
+      button.addEventListener("click", () => {
+        queryInput.value = button.dataset.query;
+        queryInput.focus();
+      });
+    });
+
+    newTask.addEventListener("click", () => {
+      chatInner.innerHTML = `
+        <div class="empty" id="emptyState">
+          <h2>今天要完成哪类用研任务？</h2>
+          <p>系统会先理解你的需求，再选择合适的分析路径和能力组合。没有输入前，不预设任务类型，也不展示固定 7 问。</p>
+          <div class="examples">
+            <button class="example" type="button" data-query="我要为直播场域做一次用户体验研究">
+              <strong>制定用研方案</strong>
+              <span>识别为“用研方案规划”后，才展示对应分析路径。</span>
+            </button>
+            <button class="example" type="button" data-query="帮我做数字人导购竞品分析">
+              <strong>竞品分析</strong>
+              <span>识别为“竞品分析”，展示竞品对象、维度和采集策略。</span>
+            </button>
+            <button class="example" type="button" data-query="帮我分析这批用户访谈记录">
+              <strong>访谈分析</strong>
+              <span>识别为“访谈分析”，展示材料完整性、聚类和洞察节点。</span>
+            </button>
+          </div>
+        </div>
+      `;
+      document.querySelectorAll("[data-query]").forEach((button) => {
+        button.addEventListener("click", () => {
+          queryInput.value = button.dataset.query;
+          queryInput.focus();
+        });
+      });
+    });
+
+    function escapeHtml(value) {
+      return value
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+  </script>
+</body>
+</html>

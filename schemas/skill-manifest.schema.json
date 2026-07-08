@@ -1,0 +1,50 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "skill-manifest.schema.json",
+  "title": "SkillManifest",
+  "description": "skill 能力元数据。registry 只摘录轻量字段;此 schema 定义完整 manifest.yaml 结构。字段对齐方案 §2.3。",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["id", "name", "path", "when_to_use", "owner", "status", "input_schema", "output_schema", "risk_level"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "path": {
+      "type": "string",
+      "description": "SKILL.md 相对路径。",
+      "minLength": 1
+    },
+    "when_to_use": {
+      "type": "string",
+      "description": "何时使用,供 LLM 语义发现。",
+      "minLength": 1
+    },
+    "owner": {
+      "type": "string",
+      "description": "能力维护方/团队(非调用时找的人)。",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "active", "deprecated"]
+    },
+    "task_types": {
+      "type": "array",
+      "description": "运营辅助字段,仅用于检索/统计,不做硬路由。",
+      "items": { "type": "string" }
+    },
+    "intent_tags": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "input_schema": { "type": "string", "description": "输入 schema 相对路径。", "minLength": 1 },
+    "output_schema": { "type": "string", "description": "输出 schema 相对路径。", "minLength": 1 },
+    "required_tools": {
+      "type": "array",
+      "description": "该 skill 需要的 tool id 列表。",
+      "items": { "type": "string" }
+    },
+    "cost_level": { "type": "string", "enum": ["low", "medium", "high"] },
+    "risk_level": { "type": "string", "enum": ["low", "medium", "high"] }
+  }
+}

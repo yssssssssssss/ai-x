@@ -1,0 +1,37 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "digital-human/output.schema.json",
+  "title": "DigitalHumanCompetitiveOutput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["comparison_matrix", "differentiation_opportunities", "sources"],
+  "properties": {
+    "comparison_matrix": {
+      "type": "array",
+      "description": "竞品 × 维度对比。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["competitor", "dimension", "assessment", "source"],
+        "properties": {
+          "competitor": { "type": "string", "minLength": 1 },
+          "dimension": { "type": "string", "minLength": 1 },
+          "assessment": { "type": "string", "minLength": 1 },
+          "source": {
+            "type": "string",
+            "enum": ["tool_result", "knowledge_base", "llm_inference", "pending_human_review"]
+          }
+        }
+      }
+    },
+    "differentiation_opportunities": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "sources": {
+      "type": "array",
+      "description": "证据来源引用。",
+      "items": { "type": "string" }
+    }
+  }
+}

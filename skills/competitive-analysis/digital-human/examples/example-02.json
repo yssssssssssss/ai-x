@@ -1,0 +1,13 @@
+{
+  "note": "脱敏样例 2:竞品清单为空,触发默认头部清单假设",
+  "input": {
+    "business_domain": "live_commerce"
+  },
+  "output": {
+    "comparison_matrix": [
+      { "competitor": "默认头部竞品1", "dimension": "功能能力", "assessment": "覆盖数字人形象定制 + 自动直播", "source": "tool_result" }
+    ],
+    "differentiation_opportunities": ["头部产品同质化高,细分行业模板可差异化"],
+    "sources": ["o2-web-search: 应用商店榜单"]
+  }
+}

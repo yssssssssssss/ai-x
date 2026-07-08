@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "execution-plan.schema.json",
+  "title": "ExecutionPlan",
+  "description": "段2 产出的待确认执行计划。写入 run-workspaces/{task_id}/plan.json。用户确认后段3 才据此执行。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["task_id", "task_type", "steps", "activated_nodes", "assumptions"],
+  "properties": {
+    "task_id": { "type": "string", "minLength": 1 },
+    "task_type": { "type": "string", "minLength": 1 },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "description": "编号步骤,每步绑定要调用的能力。",
+      "items": { "$ref": "#/$defs/step" }
+    },
+    "activated_nodes": {
+      "type": "array",
+      "description": "本次激活的决策节点 key 列表(按 applies_to 过滤后的子集)。",
+      "items": { "type": "string" }
+    },
+    "assumptions": {
+      "type": "array",
+      "description": "计划所依赖的系统假设,用户可就地改。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "value", "editable"],
+        "properties": {
+          "key": { "type": "string" },
+          "value": { "type": "string" },
+          "editable": { "type": "boolean" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["step_no", "step_name", "actor_type", "actor_id"],
+      "properties": {
+        "step_no": { "type": "integer", "minimum": 1 },
+        "step_name": { "type": "string", "minLength": 1 },
+        "actor_type": {
+          "type": "string",
+          "enum": ["skill", "tool", "llm", "reviewer"]
+        },
+        "actor_id": {
+          "type": "string",
+          "description": "skill/tool 的 registry id,或 llm/reviewer 步骤名。",
+          "minLength": 1
+        },
+        "purpose": { "type": "string", "description": "这一步做什么、为什么。" },
+        "requires_approval": {
+          "type": "boolean",
+          "description": "是否高风险需审批(need_approval)。默认 false。"
+        }
+      }
+    }
+  }
+}

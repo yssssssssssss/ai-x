@@ -1,0 +1,22 @@
+# skill 发现索引 + 治理索引(方案 §2.2 / §2.3)
+# 只登记机器需校验的轻量字段;能力逻辑/prompt/判断标准都在 SKILL.md 里。
+# task_types/intent_tags 仅辅助检索与运营,不做硬路由。
+# 若运行时支持原生 discovery,此文件可由 SKILL.md + manifest.yaml 自动生成。
+
+version: 1
+
+skills:
+  - id: digital-human-competitive-analysis
+    name: 数字人竞品分析
+    path: skills/competitive-analysis/digital-human/SKILL.md
+    when_to_use: 用户需要分析数字人、虚拟主播、直播竞品时使用
+    owner: 竞品分析组
+    status: active
+    task_types: [competitive_research, user_research_planning]
+    intent_tags: [digital_human, live_commerce, competitive]
+    input_schema: skills/competitive-analysis/digital-human/input.schema.json
+    output_schema: skills/competitive-analysis/digital-human/output.schema.json
+    required_tools:
+      - o2-web-search
+    cost_level: medium
+    risk_level: low

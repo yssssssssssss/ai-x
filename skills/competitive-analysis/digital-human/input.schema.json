@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "digital-human/input.schema.json",
+  "title": "DigitalHumanCompetitiveInput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["business_domain"],
+  "properties": {
+    "business_domain": { "type": "string", "minLength": 1, "description": "业务场域,如 live_commerce" },
+    "competitors": {
+      "type": "array",
+      "description": "对标竞品清单;为空则用该域头部默认清单。",
+      "items": { "type": "string" }
+    },
+    "dimensions": {
+      "type": "array",
+      "description": "对比维度;为空则用默认五维。",
+      "items": { "type": "string" }
+    }
+  }
+}

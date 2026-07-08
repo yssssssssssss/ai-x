@@ -1,0 +1,16 @@
+{
+  "note": "脱敏样例 1:直播场域数字人竞品,给定竞品清单",
+  "input": {
+    "business_domain": "live_commerce",
+    "competitors": ["竞品A数字人", "竞品B虚拟主播", "竞品C直播AI"],
+    "dimensions": ["功能能力", "交互体验", "内容质量", "商业化路径", "技术形态"]
+  },
+  "output": {
+    "comparison_matrix": [
+      { "competitor": "竞品A数字人", "dimension": "交互体验", "assessment": "支持实时语音打断,响应延迟约 1s", "source": "tool_result" },
+      { "competitor": "竞品B虚拟主播", "dimension": "内容质量", "assessment": "口播脚本模板化明显,个性化不足", "source": "llm_inference" }
+    ],
+    "differentiation_opportunities": ["实时多模态互动是普遍短板,可作为切入点"],
+    "sources": ["o2-web-search: 竞品A 官网产品页", "o2-web-search: 行业评测文章"]
+  }
+}

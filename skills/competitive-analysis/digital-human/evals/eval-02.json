@@ -1,0 +1,12 @@
+{
+  "eval_id": "dh-eval-02-empty-competitors",
+  "description": "竞品清单为空时,应产出默认头部清单假设而非报错",
+  "input": {
+    "business_domain": "live_commerce"
+  },
+  "assertions": [
+    "output 通过 output.schema.json 校验",
+    "comparison_matrix 至少覆盖 1 个默认竞品",
+    "结论中若含推断,source 标记为 llm_inference"
+  ]
+}

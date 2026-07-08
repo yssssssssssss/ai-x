@@ -1,0 +1,29 @@
+{
+  "name": "user-research-ai",
+  "version": "0.0.1",
+  "private": true,
+  "description": "用研 AI 专项 · Agent Harness + Skill Orchestrator 底座(V0/P0)",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "db:migrate": "tsx database/run-migrations.ts",
+    "lint:registry": "tsx harness/linters/registry-linter.ts",
+    "spike:plan": "tsx apps/orchestrator-runtime/src/spike-plan.ts",
+    "spike:execute": "tsx apps/orchestrator-runtime/src/spike-execute.ts",
+    "test": "tsx --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "pg": "^8.13.1",
+    "yaml": "^2.6.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

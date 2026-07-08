@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "decision-state.schema.json",
+  "title": "DecisionState",
+  "description": "段2 决策节点判定结果。每个被激活的决策节点由 LLM 判成一个状态,写入 task_decision_states。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["node_key", "state", "reason", "final_state"],
+  "properties": {
+    "node_key": {
+      "type": "string",
+      "description": "对应 decision-graph.yaml 中的节点 key,如 D1_research_goal。",
+      "minLength": 1
+    },
+    "state": {
+      "type": "string",
+      "description": "LLM 初判状态(6 态,见方案 §2.1)。",
+      "enum": ["satisfied", "need_clarify", "need_execute", "need_annotate", "need_approval", "blocked"]
+    },
+    "reason": {
+      "type": "string",
+      "description": "判成该状态的依据。复盘核心字段,不可空。",
+      "minLength": 1
+    },
+    "confidence": {
+      "type": "number",
+      "description": "判定置信度 0-1。",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "user_override": {
+      "description": "用户对该节点的修正(如改假设)。无则为 null。",
+      "type": ["object", "null"]
+    },
+    "final_state": {
+      "type": "string",
+      "description": "结合用户修正后的最终状态。",
+      "enum": ["satisfied", "need_clarify", "need_execute", "need_annotate", "need_approval", "blocked"]
+    }
+  }
+}
