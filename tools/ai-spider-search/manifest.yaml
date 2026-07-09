@@ -9,8 +9,8 @@ timeout_seconds: 30
 retry_policy:
   max_attempts: 2
   backoff_seconds: 3
-input_schema: ./input.schema.json
-output_schema: ./output.schema.json
+input_schema: tools/ai-spider-search/input.schema.json
+output_schema: tools/ai-spider-search/output.schema.json
 redaction_policy:
   pii: mask
   sensitive_business_data: block

@@ -204,7 +204,9 @@ export class Orchestrator {
           const manifest = loadToolManifest(tool.path);
           const res = await toolAdapter.invoke({ toolId: step.actor_id, input: { query: '直播 数字人 竞品' }, manifest });
           // tool 的 output schema 在 tool 目录下,按文件路径校验
-          validator.validateFileOrThrow(join(getConfigRoot(), manifest.output_schema), res.output);
+          // output_schema 是相对项目根的路径(如 tools/xxx/output.schema.json)
+          const outSchemaPath = join(getConfigRoot(), manifest.output_schema);
+          validator.validateFileOrThrow(outSchemaPath, res.output);
           outputRef = ws.writeToolOutput(step.step_no, res.output);
           manifestHashes.push(hashFile(tool.path));
           usedCapabilities.push({ id: step.actor_id, type: 'tool' });
