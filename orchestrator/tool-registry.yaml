@@ -12,3 +12,11 @@ tools:
     auth_required: true
     risk_level: low
     status: active
+
+  - id: ai-spider-search
+    name: 竞品截图库检索
+    path: tools/ai-spider-search/manifest.yaml
+    adapter_type: internal_api
+    auth_required: true
+    risk_level: low
+    status: active

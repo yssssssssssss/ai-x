@@ -18,5 +18,6 @@ skills:
     output_schema: skills/competitive-analysis/digital-human/output.schema.json
     required_tools:
       - o2-web-search
+      - ai-spider-search
     cost_level: medium
     risk_level: low

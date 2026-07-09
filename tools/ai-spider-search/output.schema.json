@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "ai-spider-search/output.schema.json",
+  "title": "AiSpiderSearchOutput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["results"],
+  "properties": {
+    "results": {
+      "type": "array",
+      "description": "检索命中的竞品截图 + 设计/运营分析",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "source_app": { "type": ["string", "null"], "description": "竞品来源 App" },
+          "scenario": { "type": ["string", "null"], "description": "场景(如商详/大促弹窗)" },
+          "oss_url": { "type": ["string", "null"], "description": "截图 OSS 地址(来源可反查)" },
+          "design_analysis": { "type": ["string", "null"], "description": "LLM 设计分析" },
+          "ops_analysis": { "type": ["string", "null"], "description": "LLM 运营分析" },
+          "search_mode": { "type": ["string", "null"], "description": "vector | text" }
+        }
+      }
+    }
+  }
+}

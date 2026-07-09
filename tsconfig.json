@@ -14,9 +14,11 @@
     "forceConsistentCasingInFileNames": true
   },
   "include": [
-    "apps/**/*.ts",
+    "apps/agent-api/**/*.ts",
+    "apps/orchestrator-runtime/**/*.ts",
     "database/**/*.ts",
     "harness/**/*.ts",
     "tests/**/*.ts"
-  ]
+  ],
+  "exclude": ["node_modules", "apps/web"]
 }

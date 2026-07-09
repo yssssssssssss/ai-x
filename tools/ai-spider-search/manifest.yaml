@@ -1,0 +1,16 @@
+id: ai-spider-search
+name: 竞品截图库检索
+adapter_type: internal_api        # 走 HttpApiAdapter,消费 ai-spider-app 的 /api/search
+entrypoint: /api/search           # 相对 SPIDER_BASE_URL 的检索端点
+auth_required: true               # 需先 POST /api/auth/login 拿 JWT
+risk_level: low
+approver_rule: none
+timeout_seconds: 30
+retry_policy:
+  max_attempts: 2
+  backoff_seconds: 3
+input_schema: ./input.schema.json
+output_schema: ./output.schema.json
+redaction_policy:
+  pii: mask
+  sensitive_business_data: block

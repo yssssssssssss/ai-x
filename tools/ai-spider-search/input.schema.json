@@ -1,0 +1,13 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "ai-spider-search/input.schema.json",
+  "title": "AiSpiderSearchInput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["query"],
+  "properties": {
+    "query": { "type": "string", "minLength": 1, "description": "检索关键词(向量/文本检索竞品截图库)" },
+    "limit": { "type": "integer", "minimum": 1, "maximum": 50, "default": 10 },
+    "offset": { "type": "integer", "minimum": 0, "default": 0 }
+  }
+}

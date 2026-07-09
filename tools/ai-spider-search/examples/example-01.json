@@ -1,0 +1,16 @@
+{
+  "note": "脱敏样例:检索直播数字人竞品截图",
+  "input": { "query": "直播 数字人 商详页", "limit": 2 },
+  "output": {
+    "results": [
+      {
+        "source_app": "某竞品App",
+        "scenario": "商品详情页",
+        "oss_url": "https://oss.example.com/competitor/xxx.png",
+        "design_analysis": "顶部沉浸式视频 + 悬浮购买栏,信息层级清晰",
+        "ops_analysis": "强调限时折扣与库存紧张,促转化",
+        "search_mode": "vector"
+      }
+    ]
+  }
+}
