@@ -68,6 +68,19 @@ function injectToolResultFinding<T>(schemaName: string, context: object | undefi
   return out;
 }
 
+// skill 步执行(schemaName 以 skill: 开头)在 mock 下返回符合 digital-human output schema 的最小 fixture,
+// 避免 mock 因无预置 fixture 抛错。真实价值在 gateway:GPT-5.5 读 SKILL.md + tool_outputs 真产出。
+function skillFixtureFor(schemaName: string): unknown | undefined {
+  if (!schemaName.startsWith('skill:')) return undefined;
+  return {
+    comparison_matrix: [
+      { competitor: '竞品A', dimension: '交互体验', assessment: 'mock:实时互动可用', source: 'llm_inference' },
+    ],
+    differentiation_opportunities: ['mock:低延迟实时互动可作为差异化方向'],
+    sources: ['mock'],
+  };
+}
+
 export type FixtureMap = Record<string, unknown>;
 
 export class MockLLMClient implements LLMClient {
@@ -79,7 +92,7 @@ export class MockLLMClient implements LLMClient {
   async generateStructured<T>(opts: {
     prompt: string; schema: object; schemaName: string; context?: object;
   }): Promise<LLMResult<T>> {
-    const data = this.fixtures[opts.schemaName];
+    const data = this.fixtures[opts.schemaName] ?? skillFixtureFor(opts.schemaName);
     if (data === undefined) {
       throw new Error(`MockLLMClient: 没有为 schemaName="${opts.schemaName}" 预置 fixture`);
     }

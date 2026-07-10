@@ -37,9 +37,13 @@ function readConfig(): GatewayConfig {
   return { baseUrl, apiKey, model, timeoutMs: Number(process.env.LLM_GATEWAY_TIMEOUT_MS ?? 30000) };
 }
 
-// 结构化输出的 schema 说明:按 schemaName 从 schemas/ 加载真实 JSON Schema 塞进 prompt,
-// 让 LLM 精确按结构产出。decision-states 是 decision-state 的数组(无独立文件),特殊处理。
-function schemaHint(schemaName: string): string {
+// 结构化输出的 schema 说明:优先用传入的 schema 对象(如 skill 目录下的 output schema,不在 schemas/);
+// 否则按 schemaName 从 schemas/ 加载。decision-states 是 decision-state 的数组(无独立文件),特殊处理。
+function schemaHint(schemaName: string, schema?: object): string {
+  // schema 对象非空(如 skill:xxx)→ 直接用它,不查 schemas/ 文件
+  if (schema && Object.keys(schema).length > 0) {
+    return `输出的 JSON 必须严格符合以下 JSON Schema:\n${JSON.stringify(schema)}`;
+  }
   const dir = join(process.cwd(), 'schemas');
   if (schemaName === 'decision-states') {
     const one = readFileSync(join(dir, 'decision-state.schema.json'), 'utf8');
@@ -137,7 +141,7 @@ export class GatewayLLMClient implements LLMClient {
     const messages = [
       {
         role: 'system',
-        content: `你是用研任务编排器。只输出 JSON,不要任何解释或 markdown 代码块。\n${schemaHint(opts.schemaName)}`,
+        content: `你是用研任务编排器。只输出 JSON,不要任何解释或 markdown 代码块。\n${schemaHint(opts.schemaName, opts.schema)}`,
       },
       {
         role: 'user',

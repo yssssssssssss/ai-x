@@ -204,6 +204,7 @@ export class Orchestrator {
       try {
         let outputRef: string | undefined;
         const manifestHashes: string[] = [];
+        let stepTokens: { prompt: number; completion: number; total: number } | undefined;
 
         if (step.actor_type === 'tool') {
           const tool = skillLoader.getTool(step.actor_id);
@@ -219,9 +220,24 @@ export class Orchestrator {
           manifestHashes.push(hashFile(tool.path));
           usedCapabilities.push({ id: step.actor_id, type: 'tool' });
         } else if (step.actor_type === 'skill') {
-          // V0:skill 执行由 LLM 承载(真实实现里 skill 会内部调 tool);此处记录留痕
-          skillLoader.loadSkillBody(step.actor_id); // 第二层加载,验证可读
-          manifestHashes.push(hashFile(skillLoader.getSkill(step.actor_id)!.path));
+          // skill 真执行:加载 SKILL.md 全文 + output schema,调 LLM 按工作流基于已有 tool 输出产出结构化结果。
+          const skillEntry = skillLoader.getSkill(step.actor_id);
+          if (!skillEntry) throw new Error(`skill 非 active 或不存在: ${step.actor_id}`);
+          const { body } = skillLoader.loadSkillBody(step.actor_id);
+          const { output } = skillLoader.loadSkillSchemas(step.actor_id);
+          const skillGen = await llm.generateStructured<object>({
+            prompt:
+              `你是「${skillEntry.name}」能力。严格按以下 SKILL.md 的工作流与质量门禁执行,` +
+              `基于提供的检索数据(tool_outputs)产出结构化结果;无数据支撑的判断标 llm_inference,不得冒充事实。\n\n${body}`,
+            schema: output,
+            schemaName: `skill:${step.actor_id}`,
+            context: { research_goal: researchGoal, tool_outputs: toolOutputs },
+          });
+          validator.validateFileOrThrow(join(getConfigRoot(), skillEntry.output_schema), skillGen.data);
+          outputRef = ws.writeToolOutput(step.step_no, skillGen.data);
+          toolOutputs.push({ toolId: step.actor_id, output: skillGen.data });
+          manifestHashes.push(hashFile(skillEntry.path));
+          stepTokens = skillGen.tokens;
           usedCapabilities.push({ id: step.actor_id, type: 'skill' });
         }
 
@@ -229,6 +245,7 @@ export class Orchestrator {
           taskId: input.taskId, stepNo: step.step_no, stepName: step.step_name,
           actorType: step.actor_type, actorId: step.actor_id, status: 'succeeded',
           outputRef, startedAt, finishedAt: new Date(),
+          tokensJson: stepTokens,
           contextManifestRef: `${ws.uri}/context_manifest.json`,
           decisionGraphHash: graphHash,
           skillManifestHashes: step.actor_type === 'skill' ? manifestHashes : [],
