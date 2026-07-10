@@ -239,6 +239,28 @@ export class Orchestrator {
           manifestHashes.push(hashFile(skillEntry.path));
           stepTokens = skillGen.tokens;
           usedCapabilities.push({ id: step.actor_id, type: 'skill' });
+        } else if (step.actor_type === 'llm') {
+          // 中间 LLM 步:基于已累积的 tool/skill 输出产出简洁小结,push 进 toolOutputs 供后续 + synthesis
+          const gen = await llm.generateText({
+            prompt:
+              `你是研究编排中的一步:「${step.step_name}」。${step.purpose ?? ''}\n` +
+              `基于已有执行结果(检索数据 + 竞品分析)完成这一步,产出简洁小结;` +
+              `凡引用数据的结论标明来源,无据推断需说明。`,
+            context: { research_goal: researchGoal, tool_outputs: toolOutputs },
+          });
+          outputRef = ws.writeToolOutput(step.step_no, { text: gen.text });
+          toolOutputs.push({ toolId: step.actor_id, output: { note: gen.text } });
+          stepTokens = gen.tokens;
+        } else if (step.actor_type === 'reviewer') {
+          // reviewer 步:轻量复核——检查来源标注/数据缺口,产出复核意见(只留痕,不改前序产出,不进 toolOutputs)
+          const gen = await llm.generateText({
+            prompt:
+              `你是质量复核者:「${step.step_name}」。审查已有执行结果的来源标注是否完整、` +
+              `有无把推断当事实、数据缺口是否说明。产出复核意见,不改写前序结论。`,
+            context: { research_goal: researchGoal, tool_outputs: toolOutputs },
+          });
+          outputRef = ws.writeToolOutput(step.step_no, { review: gen.text });
+          stepTokens = gen.tokens;
         }
 
         await checkpointStore.writeExecutionLog({
@@ -318,6 +340,7 @@ interface PlanStep {
   step_name: string;
   actor_type: 'skill' | 'tool' | 'llm' | 'reviewer';
   actor_id: string;
+  purpose?: string;
   requires_approval?: boolean;
 }
 
