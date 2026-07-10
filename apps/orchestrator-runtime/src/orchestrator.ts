@@ -179,11 +179,18 @@ export class Orchestrator {
     const { llm, validator, checkpointStore, skillLoader, toolAdapter } = this.rt.deps;
     const ws = new RunWorkspace(input.taskId);
     const plan = ws.readPlan<{ steps: PlanStep[]; task_id: string }>();
+    // 读回结构化任务,供 synthesis 用真实研究目标 + 检索词
+    const taskRow = await checkpointStore.getTask(input.taskId);
+    const researchGoal =
+      (taskRow?.structured_task as { research_goal?: string } | undefined)?.research_goal ??
+      taskRow?.original_input ?? '';
 
     await checkpointStore.updateTaskStatus(input.taskId, 'executing', 'confirmed');
 
     const graphHash = hashFile(CONFIG_PATHS.decisionGraph);
     const usedCapabilities: Array<{ id: string; type: string }> = [];
+    // 累积各 tool 步的真实输出,段4 synthesis 据此生成引用真实数据的报告
+    const toolOutputs: Array<{ toolId: string; output: unknown }> = [];
 
     // 段3:逐步执行,每步写 execution_log + tool 输出;失败停在该步、写 failures.jsonl
     for (const step of plan.steps) {
@@ -202,12 +209,13 @@ export class Orchestrator {
           const tool = skillLoader.getTool(step.actor_id);
           if (!tool) throw new Error(`tool 非 active 或不存在: ${step.actor_id}`);
           const manifest = loadToolManifest(tool.path);
-          const res = await toolAdapter.invoke({ toolId: step.actor_id, input: { query: '直播 数字人 竞品' }, manifest });
+          const res = await toolAdapter.invoke({ toolId: step.actor_id, input: { query: researchGoal || '直播 数字人 竞品' }, manifest });
           // tool 的 output schema 在 tool 目录下,按文件路径校验
           // output_schema 是相对项目根的路径(如 tools/xxx/output.schema.json)
           const outSchemaPath = join(getConfigRoot(), manifest.output_schema);
           validator.validateFileOrThrow(outSchemaPath, res.output);
           outputRef = ws.writeToolOutput(step.step_no, res.output);
+          toolOutputs.push({ toolId: step.actor_id, output: res.output });
           manifestHashes.push(hashFile(tool.path));
           usedCapabilities.push({ id: step.actor_id, type: 'tool' });
         } else if (step.actor_type === 'skill') {
@@ -249,10 +257,15 @@ export class Orchestrator {
     }
 
     // 段4:synthesis → report → 过 schema → 写 artifact
+    // 把段3 真实 tool 输出喂给 LLM,报告据此生成引用真实数据的结论
     const reportGen = await llm.generateStructured<Record<string, unknown>>({
-      prompt: '综合执行结果生成可落地研究方案报告',
+      prompt:
+        '基于以下真实执行结果生成可落地竞品研究方案报告。' +
+        'findings 中凡来自 tool_outputs 检索数据的结论,source 必须标 tool_result,' +
+        '并在 statement 中引用具体竞品名称/来源;无数据支撑的判断标 llm_inference,不得冒充事实;' +
+        '若 tool_outputs 为空则如实说明数据缺口。',
       schema: {}, schemaName: 'research-report',
-      context: { task_id: input.taskId },
+      context: { task_id: input.taskId, research_goal: researchGoal, tool_outputs: toolOutputs },
     });
     const report = { ...reportGen.data, task_id: input.taskId };
     validator.validateOrThrow('research-report', report);

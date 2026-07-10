@@ -47,6 +47,27 @@ function traceFrom(prompt: string, schemaName: string): string {
 
 // Mock 返回的 fixture 由调用方按 schemaName 决定;这里给出竞品研究主链路所需的默认集。
 // 允许注入自定义 fixtures(测试 schema 不合规重试/降级用)。
+// report 生成时,若 context 带非空 tool_outputs,把首条检索结果作为 tool_result 结论注入 findings 头部。
+// 仅 mock 用:证明"报告确实消费了真实检索数据"这条链路通;gateway 真实 LLM 会自行据 context 生成。
+function injectToolResultFinding<T>(schemaName: string, context: object | undefined, out: T): T {
+  if (schemaName !== 'research-report' || !context) return out;
+  const toolOutputs = (context as { tool_outputs?: Array<{ output?: unknown }> }).tool_outputs;
+  if (!Array.isArray(toolOutputs) || toolOutputs.length === 0) return out;
+  const first = (toolOutputs[0]?.output as { results?: Array<Record<string, unknown>> })?.results?.[0];
+  if (!first) return out;
+  const app = first.source_app ?? first.title ?? '竞品';
+  const detail = first.design_analysis ?? first.snippet ?? '检索到竞品页面';
+  const report = out as { findings?: Array<Record<string, unknown>> };
+  if (Array.isArray(report.findings)) {
+    report.findings.unshift({
+      statement: `检索到竞品「${String(app)}」:${String(detail).slice(0, 60)}`,
+      source: 'tool_result',
+      source_ref: 'run/tool_outputs',
+    });
+  }
+  return out;
+}
+
 export type FixtureMap = Record<string, unknown>;
 
 export class MockLLMClient implements LLMClient {
@@ -62,8 +83,12 @@ export class MockLLMClient implements LLMClient {
     if (data === undefined) {
       throw new Error(`MockLLMClient: 没有为 schemaName="${opts.schemaName}" 预置 fixture`);
     }
+    let out = structuredClone(data) as T;
+    // report 生成时若 context 带非空 tool_outputs,注入一条来自检索数据的 tool_result 结论,
+    // 让 mock 也体现"报告用了真实检索数据"(与 gateway 真实 LLM 行为一致的最小证明)。
+    out = injectToolResultFinding(opts.schemaName, opts.context, out);
     return {
-      data: structuredClone(data) as T,
+      data: out,
       promptHash: hashPrompt(opts.prompt, opts.context),
       modelName: this.model.name,
       modelVersion: this.model.version,
