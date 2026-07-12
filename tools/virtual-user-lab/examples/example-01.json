@@ -1,0 +1,9 @@
+{
+  "input": {
+    "scenario": "直播间商品详情页首次浏览",
+    "productDescription": "数字人主播实时讲解的商详页,含限时优惠弹窗",
+    "targetUserGroups": ["价格敏感型用户", "尝鲜型年轻用户"],
+    "reviewDimensions": ["usability", "trust", "conversionIntent"]
+  },
+  "note": "最小示例:用内置人格对商详页做模拟评审。"
+}

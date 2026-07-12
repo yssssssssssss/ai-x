@@ -1,0 +1,18 @@
+{
+  "name": "vision-brand-lab",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev:server": "npm --workspace @vision-brand-lab/server run dev",
+    "dev:web": "npm --workspace @vision-brand-lab/web run dev",
+    "build": "npm run build --workspace @vision-brand-lab/core --workspace @vision-brand-lab/server --workspace @vision-brand-lab/web",
+    "typecheck": "npm run typecheck --workspace @vision-brand-lab/core --workspace @vision-brand-lab/server --workspace @vision-brand-lab/web",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.2"
+  }
+}

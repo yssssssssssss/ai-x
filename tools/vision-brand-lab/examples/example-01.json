@@ -1,0 +1,10 @@
+{
+  "input": {
+    "designImages": [{ "dataUrl": "data:image/png;base64,iVBORw0KGgo=" }],
+    "brandReferenceImages": [{ "dataUrl": "data:image/png;base64,iVBORw0KGgo=" }],
+    "businessGoal": "强化年轻潮流的品牌调性",
+    "targetBrandName": "示例品牌",
+    "enabledModules": { "visualReview": true, "brandAssociation": true }
+  },
+  "note": "最小示例:1 张设计稿 + 1 张品牌参考图,开启视觉评审与品牌联想。真实 dataUrl 应为完整 base64。"
+}

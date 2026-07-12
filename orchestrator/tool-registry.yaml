@@ -20,3 +20,44 @@ tools:
     auth_required: true
     risk_level: low
     status: active
+
+  # external-tools/*-lab:无鉴权 REST 工具,走 RestJsonAdapter(rest_json)。
+  - id: aesthetic-quant-lab
+    name: 美学量化实验室
+    path: tools/aesthetic-quant-lab/manifest.yaml
+    adapter_type: rest_json
+    auth_required: false
+    risk_level: low
+    status: active
+
+  - id: attention-analysis-lab
+    name: 视觉注意力分析实验室
+    path: tools/attention-analysis-lab/manifest.yaml
+    adapter_type: rest_json
+    auth_required: false
+    risk_level: low
+    status: active
+
+  - id: experience-model-lab
+    name: 体验模型实验室
+    path: tools/experience-model-lab/manifest.yaml
+    adapter_type: rest_json
+    auth_required: false
+    risk_level: low
+    status: active
+
+  - id: virtual-user-lab
+    name: 虚拟用户实验室
+    path: tools/virtual-user-lab/manifest.yaml
+    adapter_type: rest_json
+    auth_required: false
+    risk_level: low
+    status: active
+
+  - id: vision-brand-lab
+    name: 视觉品牌实验室
+    path: tools/vision-brand-lab/manifest.yaml
+    adapter_type: rest_json
+    auth_required: false
+    risk_level: low
+    status: active

@@ -1,0 +1,17 @@
+id: aesthetic-quant-lab
+name: 美学量化实验室
+adapter_type: rest_json            # 无鉴权 REST,走 RestJsonAdapter,body/返回原样透传
+entrypoint: /api/analyze           # 相对 base_url_env 指向的服务
+base_url_env: AESTHETIC_QUANT_BASE_URL
+auth_required: false
+risk_level: low
+approver_rule: none
+timeout_seconds: 60
+retry_policy:
+  max_attempts: 2
+  backoff_seconds: 3
+input_schema: tools/aesthetic-quant-lab/input.schema.json
+output_schema: tools/aesthetic-quant-lab/output.schema.json
+redaction_policy:
+  pii: mask
+  sensitive_business_data: block

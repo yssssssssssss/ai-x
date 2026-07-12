@@ -1,0 +1,8 @@
+{
+  "input": {
+    "image": { "dataUrl": "data:image/png;base64,iVBORw0KGgo=" },
+    "mode": "hybrid",
+    "includeCenterBias": true
+  },
+  "note": "最小示例:传一张页面截图 base64,用 hybrid 模式分析注意力。真实 dataUrl 应为完整 base64。"
+}

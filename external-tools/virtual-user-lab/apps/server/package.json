@@ -1,0 +1,21 @@
+{
+  "name": "@virtual-user-lab/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/apps/server/src/index.js"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.2.0",
+    "@virtual-user-lab/core": "0.1.0",
+    "fastify": "^5.2.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}

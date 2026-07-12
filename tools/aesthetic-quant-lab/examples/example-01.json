@@ -1,0 +1,9 @@
+{
+  "input": {
+    "designImage": { "dataUrl": "data:image/png;base64,iVBORw0KGgo=" },
+    "profileId": "balanced",
+    "depth": "standard",
+    "enableAttention": true
+  },
+  "note": "最小示例:传一张设计稿 base64,用 balanced 画像做标准深度分析。真实 dataUrl 应为完整 base64。"
+}

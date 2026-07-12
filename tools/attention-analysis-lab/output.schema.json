@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "attention-analysis-lab/output.schema.json",
+  "title": "AttentionAnalysisOutput",
+  "description": "视觉注意力分析结果(原样透传)。",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["status"],
+  "properties": {
+    "status": { "type": "string", "enum": ["available", "failed", "insufficient_inputs"] },
+    "mode": { "type": "string" },
+    "summary": { "type": "string" },
+    "heatmap": { "type": "array", "description": "二维热力值矩阵" },
+    "hotspots": { "type": "array" },
+    "peakAttentionScore": { "type": "number" },
+    "focusBalanceScore": { "type": "number" },
+    "distractionRiskScore": { "type": "number" },
+    "roiAttentionRanking": { "type": "array" },
+    "warnings": { "type": "array", "items": { "type": "string" } }
+  }
+}

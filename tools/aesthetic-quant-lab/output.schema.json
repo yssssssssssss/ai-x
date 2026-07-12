@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "aesthetic-quant-lab/output.schema.json",
+  "title": "AestheticQuantOutput",
+  "description": "美学量化分析结果(服务返回原样透传)。结构较复杂,仅约束关键字段。",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["status"],
+  "properties": {
+    "status": { "type": "string", "enum": ["available", "failed", "insufficient_inputs"] },
+    "summary": { "type": "string" },
+    "overallScore": { "type": "number" },
+    "dimensionScores": { "type": "object" },
+    "wholeImage": { "type": "object" },
+    "roiResults": { "type": "array" },
+    "attentionResult": { "type": "object" },
+    "findings": { "type": "array", "items": { "type": "string" } },
+    "recommendations": { "type": "array", "items": { "type": "string" } },
+    "warnings": { "type": "array", "items": { "type": "string" } }
+  }
+}

@@ -1,0 +1,17 @@
+id: virtual-user-lab
+name: 虚拟用户实验室
+adapter_type: rest_json
+entrypoint: /api/simulate
+base_url_env: VIRTUAL_USER_BASE_URL
+auth_required: false
+risk_level: low
+approver_rule: none
+timeout_seconds: 90
+retry_policy:
+  max_attempts: 2
+  backoff_seconds: 3
+input_schema: tools/virtual-user-lab/input.schema.json
+output_schema: tools/virtual-user-lab/output.schema.json
+redaction_policy:
+  pii: mask
+  sensitive_business_data: block

@@ -1,0 +1,17 @@
+id: vision-brand-lab
+name: 视觉品牌实验室
+adapter_type: rest_json
+entrypoint: /api/analyze
+base_url_env: VISION_BRAND_BASE_URL
+auth_required: false
+risk_level: low
+approver_rule: none
+timeout_seconds: 60
+retry_policy:
+  max_attempts: 2
+  backoff_seconds: 3
+input_schema: tools/vision-brand-lab/input.schema.json
+output_schema: tools/vision-brand-lab/output.schema.json
+redaction_policy:
+  pii: mask
+  sensitive_business_data: block

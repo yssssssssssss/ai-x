@@ -1,6 +1,6 @@
 import { type LLMClient, MockLLMClient } from './llm-client.ts';
 import { GatewayLLMClient } from './gateway-llm-client.ts';
-import { type ToolAdapter, FakeO2Adapter, HttpApiAdapter, ToolRouter } from './tool-adapter.ts';
+import { type ToolAdapter, FakeO2Adapter, HttpApiAdapter, RestJsonAdapter, ToolRouter } from './tool-adapter.ts';
 import { SkillLoader } from './skill-loader.ts';
 import { CheckpointStore } from './checkpoint-store.ts';
 import { SchemaValidator } from '../schema/validator.ts';
@@ -58,6 +58,7 @@ function buildToolAdapter(channel: string): ToolAdapter {
   router.registerAs('fake', fake);
   router.registerAs('o2', fake);
   router.registerAs('internal_api', new HttpApiAdapter());
+  router.registerAs('rest_json', new RestJsonAdapter());
   void channel;
   return router;
 }

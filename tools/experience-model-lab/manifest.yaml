@@ -1,0 +1,17 @@
+id: experience-model-lab
+name: 体验模型实验室
+adapter_type: rest_json
+entrypoint: /api/analyze
+base_url_env: EXPERIENCE_MODEL_BASE_URL
+auth_required: false
+risk_level: low
+approver_rule: none
+timeout_seconds: 60
+retry_policy:
+  max_attempts: 2
+  backoff_seconds: 3
+input_schema: tools/experience-model-lab/input.schema.json
+output_schema: tools/experience-model-lab/output.schema.json
+redaction_policy:
+  pii: mask
+  sensitive_business_data: block

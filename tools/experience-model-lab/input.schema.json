@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "experience-model-lab/input.schema.json",
+  "title": "ExperienceModelInput",
+  "description": "体验模型匹配入参(POST /api/analyze,body 原样透传)。按研究诉求匹配 HEART/GSM/Kano 等模型。",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "query": { "type": "string", "description": "研究诉求/场景描述,用于匹配模型" },
+    "taskMode": { "type": "string" },
+    "inputType": { "type": "string" },
+    "preferredModelIds": { "type": "array", "items": { "type": "string" } },
+    "manualOverrideModelIds": { "type": "array", "items": { "type": "string" } }
+  }
+}

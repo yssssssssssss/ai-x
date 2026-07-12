@@ -2,7 +2,20 @@ node_modules/
 .env
 *.log
 .DS_Store
+*.tsbuildinfo
 
 # 运行期工作区:中间文件/tool 输出/失败记录,不入库、不进 git
 run-workspaces/*
 !run-workspaces/README.md
+
+# 集中管理的独立工具项目(external-tools/):只提交源码,排除依赖/构建产物/env/缓存
+external-tools/**/node_modules/
+external-tools/**/.venv/
+external-tools/**/venv/
+external-tools/**/__pycache__/
+external-tools/**/dist/
+external-tools/**/build/
+external-tools/**/.next/
+external-tools/**/.env
+external-tools/**/*.log
+

@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "vision-brand-lab/input.schema.json",
+  "title": "VisionBrandInput",
+  "description": "视觉品牌评审入参(POST /api/analyze,body 原样透传)。多图评审 + 品牌联想。",
+  "type": "object",
+  "additionalProperties": false,
+  "definitions": {
+    "imageRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "fileName": { "type": "string" },
+        "path": { "type": "string" },
+        "url": { "type": "string" },
+        "dataUrl": { "type": "string", "description": "data:image/*;base64,..." }
+      }
+    }
+  },
+  "properties": {
+    "designImages": { "type": "array", "items": { "$ref": "#/definitions/imageRef" } },
+    "brandReferenceImages": { "type": "array", "items": { "$ref": "#/definitions/imageRef" } },
+    "businessGoal": { "type": "string" },
+    "reviewFocus": { "type": "array", "items": { "type": "string" } },
+    "targetBrandName": { "type": "string" },
+    "enabledModules": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "visualReview": { "type": "boolean" },
+        "brandAssociation": { "type": "boolean" }
+      }
+    }
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "aesthetic-quant-lab/input.schema.json",
+  "title": "AestheticQuantInput",
+  "description": "美学量化分析入参(对应 POST /api/analyze,body 原样透传)。图像用 dataUrl(base64) 或已上传 path。",
+  "type": "object",
+  "additionalProperties": false,
+  "definitions": {
+    "imageRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "fileName": { "type": "string" },
+        "path": { "type": "string" },
+        "url": { "type": "string" },
+        "dataUrl": { "type": "string", "description": "data:image/*;base64,... 优先透传" }
+      }
+    },
+    "roi": {
+      "type": "object",
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "id": { "type": "string" },
+        "label": { "type": "string" },
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "width": { "type": "number" },
+        "height": { "type": "number" }
+      }
+    }
+  },
+  "properties": {
+    "designImage": { "$ref": "#/definitions/imageRef" },
+    "rois": { "type": "array", "items": { "$ref": "#/definitions/roi" } },
+    "foregroundImage": { "$ref": "#/definitions/imageRef" },
+    "backgroundImage": { "$ref": "#/definitions/imageRef" },
+    "profileId": { "type": "string", "enum": ["balanced", "readability_first", "marketing_impact"] },
+    "depth": { "type": "string", "enum": ["lite", "standard", "deep"] },
+    "enableAttention": { "type": "boolean" },
+    "includeAttentionInOverallScore": { "type": "boolean" }
+  }
+}

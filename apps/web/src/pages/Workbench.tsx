@@ -6,11 +6,15 @@ import { Stage1Understand } from '../components/stages/Stage1Understand.tsx';
 import { Stage2Plan } from '../components/stages/Stage2Plan.tsx';
 import { Stage3Execute } from '../components/stages/Stage3Execute.tsx';
 import { Stage4Report } from '../components/stages/Stage4Report.tsx';
+import { Labs } from './Labs.tsx';
 
 // 四段流的会话状态。一次任务从 plan → 确认 → execute。
 type Phase = 'idle' | 'planning' | 'planned' | 'executing' | 'done' | 'error';
+// 主视图:任务工作台 | 工具箱。
+type View = 'task' | 'labs';
 
 export function Workbench({ user, onLogout }: { user: User; onLogout: () => void }) {
+  const [view, setView] = useState<View>('task');
   const [phase, setPhase] = useState<Phase>('idle');
   const [plan, setPlan] = useState<PlanResponse | null>(null);
   const [exec, setExec] = useState<ExecuteResponse | null>(null);
@@ -23,7 +27,7 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
   useEffect(refreshHistory, [refreshHistory]);
 
   function newTask() {
-    setPhase('idle'); setPlan(null); setExec(null); setError('');
+    setView('task'); setPhase('idle'); setPlan(null); setExec(null); setError('');
   }
 
   async function submitInput(text: string) {
@@ -49,7 +53,12 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '264px 1fr', height: '100%' }}>
-      <Sidebar user={user} history={history} onNewTask={newTask} onLogout={onLogout} />
+      <Sidebar user={user} history={history} onNewTask={newTask} onOpenLabs={() => setView('labs')} onLogout={onLogout} />
+      {view === 'labs' ? (
+        <main style={{ height: '100%', overflow: 'hidden' }}>
+          <Labs />
+        </main>
+      ) : (
       <main style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
         <div style={{ flex: 1, overflowY: 'auto', padding: '24px 0' }}>
           <div style={{ maxWidth: 860, margin: '0 auto', padding: '0 24px' }} aria-live="polite">
@@ -85,6 +94,7 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
         </div>
         <Composer disabled={phase === 'planning' || phase === 'executing'} onSubmit={submitInput} />
       </main>
+      )}
     </div>
   );
 }

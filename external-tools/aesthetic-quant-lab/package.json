@@ -1,0 +1,22 @@
+{
+  "name": "aesthetic-quant-lab",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:server": "npm --workspace @aesthetic-quant-lab/server run dev",
+    "dev:web": "npm --workspace @aesthetic-quant-lab/web run dev",
+    "build": "npm run build --workspace @aesthetic-quant-lab/core --workspace @aesthetic-quant-lab/server --workspace @aesthetic-quant-lab/web",
+    "typecheck": "npm run typecheck --workspace @aesthetic-quant-lab/core --workspace @aesthetic-quant-lab/server --workspace @aesthetic-quant-lab/web",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.2"
+  }
+}

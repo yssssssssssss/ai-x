@@ -127,6 +127,46 @@ export class HttpApiAdapter implements ToolAdapter {
   }
 }
 
+// RestJsonAdapter:无鉴权 REST 工具的通用通道(external-tools/*-lab 均走此)。
+// 与 HttpApiAdapter 的区别:不登录、不做结果映射——body/返回都原样透传。
+// base_url 从 manifest.base_url_env 指定的环境变量读(如 EXPERIENCE_MODEL_BASE_URL);
+// entrypoint 由 manifest 声明(如 /api/analyze);超时取 manifest.timeout_seconds。
+export class RestJsonAdapter implements ToolAdapter {
+  readonly adapterType = 'rest_json' as const;
+
+  async invoke(opts: { toolId: string; input: object; manifest: ToolManifest }): Promise<ToolInvokeResult> {
+    const start = performance.now();
+    const envKey = opts.manifest.base_url_env;
+    const baseUrl = (envKey ? process.env[envKey] : undefined)?.replace(/\/$/, '');
+    if (!baseUrl) {
+      throw new ToolInvocationError(opts.toolId, `缺少 base_url:请设置环境变量 ${envKey ?? '(manifest 未声明 base_url_env)'}`);
+    }
+    const path = opts.manifest.entrypoint || '/api/analyze';
+    const timeoutMs = (opts.manifest.timeout_seconds ?? 60) * 1000;
+
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${baseUrl}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(opts.input),
+        signal: ac.signal,
+      });
+      if (!res.ok) {
+        throw new ToolInvocationError(opts.toolId, `HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      }
+      const output = (await res.json()) as object;
+      return { output, latencyMs: Math.round(performance.now() - start) };
+    } catch (err) {
+      if (err instanceof ToolInvocationError) throw err;
+      throw new ToolInvocationError(opts.toolId, err instanceof Error ? err.message : String(err));
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
+
 // 把 ai-spider-app 的 SearchResult[] 映射为 ai-spider-search/output.schema.json 结构。
 function mapSearchResults(raw: unknown): object {
   const arr = Array.isArray(raw) ? raw : [];

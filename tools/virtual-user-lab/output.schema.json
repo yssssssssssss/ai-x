@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "virtual-user-lab/output.schema.json",
+  "title": "VirtualUserSimulateOutput",
+  "description": "虚拟用户模拟结果(原样透传)。isSimulated 恒为 true,结果为模型推演非真实用户。",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["status"],
+  "properties": {
+    "status": { "type": "string", "enum": ["available", "failed", "insufficient_inputs"] },
+    "isSimulated": { "type": "boolean" },
+    "summary": { "type": "string" },
+    "digitalPersonas": { "type": "array" },
+    "reviews": { "type": "array", "description": "各数字人格的评审与评分" },
+    "aggregate": { "type": "object" },
+    "recommendations": { "type": "array", "items": { "type": "string" } },
+    "warnings": { "type": "array", "items": { "type": "string" } }
+  }
+}

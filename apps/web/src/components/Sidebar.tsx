@@ -1,10 +1,10 @@
 import type { User, TaskSummary } from '../api/client.ts';
 
-// 左侧栏:新建任务 + 历史任务 + 能力库/案例库入口(V1 入口占位)+ 用户/登出。
+// 左侧栏:新建任务 + 历史任务 + 工具箱入口 + 用户/登出。
 export function Sidebar({
-  user, history, onNewTask, onLogout,
+  user, history, onNewTask, onOpenLabs, onLogout,
 }: {
-  user: User; history: TaskSummary[]; onNewTask: () => void; onLogout: () => void;
+  user: User; history: TaskSummary[]; onNewTask: () => void; onOpenLabs: () => void; onLogout: () => void;
 }) {
   return (
     <aside style={{ background: 'var(--bg-elev)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -23,7 +23,9 @@ export function Sidebar({
         ))}
 
         <SectionLabel>资源库</SectionLabel>
-        <Entry>能力库 · skill/tool</Entry>
+        <button className="btn-ghost" style={{ width: '100%', textAlign: 'left', padding: '8px 10px', fontSize: 13 }} onClick={onOpenLabs}>
+          🧰 工具箱 · Labs
+        </button>
         <Entry>案例库</Entry>
       </div>
 

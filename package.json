@@ -13,6 +13,8 @@
     "spike:plan": "tsx apps/orchestrator-runtime/src/spike-plan.ts",
     "spike:execute": "tsx apps/orchestrator-runtime/src/spike-execute.ts",
     "api:dev": "tsx watch apps/agent-api/src/server.ts",
+    "labs:install": "for d in external-tools/*-lab; do (echo \"npm install @ $d\" && cd \"$d\" && npm install); done",
+    "labs:dev": "node scripts/start-labs.mjs",
     "test": "tsx --test tests/*.test.ts"
   },
   "dependencies": {
