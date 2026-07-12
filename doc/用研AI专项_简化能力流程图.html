@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>用研 AI 专项 · 简化能力模块与分析流程图</title>
+  <style>
+    :root {
+      --bg: #f7f8fb;
+      --panel: #ffffff;
+      --text: #1f2937;
+      --muted: #667085;
+      --border: #d9e1ec;
+    }
+
+    body {
+      margin: 0;
+      padding: 32px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif;
+    }
+
+    .diagram-card {
+      width: 1700px;
+      margin: 0 0 32px;
+      padding: 28px 32px 32px;
+      box-sizing: border-box;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 16px 40px rgba(31, 41, 55, 0.08);
+    }
+
+    .diagram-card.tall {
+      width: 1800px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 30px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin: 0 0 24px;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.6;
+    }
+
+    .mermaid {
+      background: #fff;
+      border-radius: 8px;
+    }
+
+    .footer-note {
+      margin-top: 20px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+  </style>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+
+    mermaid.initialize({
+      startOnLoad: true,
+      securityLevel: "loose",
+      theme: "base",
+      themeVariables: {
+        fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, Microsoft YaHei, Arial, sans-serif",
+        primaryColor: "#eff6ff",
+        primaryTextColor: "#1f2937",
+        primaryBorderColor: "#93c5fd",
+        secondaryColor: "#f8fafc",
+        tertiaryColor: "#eef2ff",
+        lineColor: "#475467",
+        clusterBkg: "#f8fafc",
+        clusterBorder: "#cbd5e1"
+      },
+      flowchart: {
+        htmlLabels: true,
+        curve: "basis",
+        nodeSpacing: 54,
+        rankSpacing: 70
+      }
+    });
+  </script>
+</head>
+<body>
+  <section class="diagram-card" id="capability-modules">
+    <h1>用研 AI 专项 · 简化能力模块图</h1>
+    <p class="subtitle">从用户视角看,系统不是固定流程工具,而是由任务理解、决策编排、能力调用、知识检索、报告交付和复盘治理组成的用研任务操作系统。</p>
+    <pre class="mermaid">
+flowchart LR
+  User["用户问题<br/>用研需求"]
+
+  subgraph Product["产品入口"]
+    Chat["ChatGPT 式对话工作台"]
+    History["历史任务"]
+    CapabilityView["能力库"]
+    CaseView["案例库"]
+  end
+
+  subgraph Brain["Research Orchestrator Agent 核心能力"]
+    Understand["任务理解<br/>识别 task_type / 目标 / 领域 / 缺失信息"]
+    Decision["决策节点池<br/>按任务类型激活相关护栏"]
+    Match["方案匹配<br/>选择 skill / tool / 知识"]
+    Plan["计划确认<br/>假设 / 需补充 / 审批 / 阻断"]
+    Execute["执行编排<br/>自动调用普通能力<br/>高风险能力走审批"]
+    Synthesis["结果综合<br/>报告 / 时间线 / 产出物 / 能力编排"]
+  end
+
+  subgraph Assets["能力资产"]
+    Skills["Skill 库<br/>竞品分析<br/>用户之声<br/>人群审查<br/>眼动分析<br/>报告生成"]
+    Tools["Tool 库<br/>o2<br/>内部 API<br/>MCP<br/>script"]
+    Knowledge["知识库<br/>方法论<br/>历史案例<br/>报告模板<br/>术语 / 人群标签"]
+  end
+
+  subgraph Guard["工程治理"]
+    Schemas["Schema 校验"]
+    Linters["Context / Risk / Report / Registry Linter"]
+    Memory["Research Memory DB<br/>会话 / 任务 / 决策 / 执行 / 产物 / 反馈"]
+    Workspace["Run Workspace<br/>plan / context_manifest / failures / artifacts"]
+  end
+
+  User --> Chat
+  Chat --> Understand
+  History -.回看.-> Chat
+  CapabilityView -.查看.-> Skills
+  CaseView -.查看.-> Knowledge
+
+  Understand --> Decision
+  Decision --> Match
+  Match --> Plan
+  Plan --> Execute
+  Execute --> Synthesis
+
+  Match --> Skills
+  Match --> Tools
+  Match --> Knowledge
+  Execute --> Skills
+  Execute --> Tools
+  Synthesis --> Knowledge
+
+  Brain -.结构校验.-> Schemas
+  Brain -.风险/报告校验.-> Linters
+  Brain -.运行留痕.-> Memory
+  Execute -.中间产物.-> Workspace
+    </pre>
+    <div class="footer-note">关键点:用户不需要手动选择所有 skill/tool,系统先理解需求,再按任务意图和项目能力动态匹配。</div>
+  </section>
+
+  <section class="diagram-card tall" id="analysis-matching">
+    <h1>用研 AI 专项 · 用户问题拆解与解决方案匹配图</h1>
+    <p class="subtitle">系统先把一句话需求拆成结构化任务,再判断缺失信息、激活必要决策节点、匹配能力,最后形成可确认的执行方案。</p>
+    <pre class="mermaid">
+flowchart TB
+  Input["用户输入<br/>例如: 我要为直播场域做一次用户体验研究"]
+
+  Parse["1. 任务理解<br/>LLM 输出 ResearchTask"]
+  Struct["结构化字段<br/>task_type / business_domain / research_goal / audience / constraints"]
+
+  Missing["2. 缺失信息分级"]
+  Assumption["可假设<br/>默认竞品清单 / 默认时间窗口 / 默认报告格式"]
+  Confirm["需确认<br/>研究目标 / 目标用户 / 样本规模 / 研究周期"]
+  Block["必须阻断<br/>敏感数据授权 / 高风险工具 / 外部发布"]
+
+  Decision["3. 激活决策节点子集<br/>不是固定 7 步"]
+  Core["核心节点<br/>研究目标 / 产出标准"]
+  Optional["场景节点<br/>竞品 / 用户人群 / 体验现状 / 数据来源"]
+
+  Capability["4. 匹配解决方案能力"]
+  SkillMatch["匹配 Skill<br/>方法选择 / 竞品分析 / 人群审查 / 用户之声 / 报告生成"]
+  ToolMatch["匹配 Tool<br/>o2 查询 / 页面抓取 / 数据查询 / 文件处理"]
+  KnowledgeMatch["匹配知识<br/>历史案例 / 方法模板 / 术语 / 人群标签"]
+
+  Plan["5. 生成待确认计划"]
+  PlanCard["计划卡片<br/>步骤 / 调用能力 / 系统假设 / 需补充项 / 风险说明"]
+  UserConfirm["用户确认或修改"]
+
+  Execute["6. 执行与交付"]
+  Run["按计划调用 skill/tool"]
+  Report["输出报告<br/>来源标注 / 时间线 / 产出物清单 / 能力编排"]
+  Memory["写入 DB<br/>任务 / 决策 / 执行 / 产物 / 反馈"]
+
+  Input --> Parse --> Struct --> Missing
+  Missing --> Assumption
+  Missing --> Confirm
+  Missing --> Block
+
+  Assumption --> Decision
+  Confirm --> Plan
+  Block --> Stop["停止对应步骤<br/>等待授权或审批"]
+
+  Decision --> Core
+  Decision --> Optional
+  Core --> Capability
+  Optional --> Capability
+
+  Capability --> SkillMatch
+  Capability --> ToolMatch
+  Capability --> KnowledgeMatch
+
+  SkillMatch --> Plan
+  ToolMatch --> Plan
+  KnowledgeMatch --> Plan
+
+  Plan --> PlanCard --> UserConfirm
+  UserConfirm --> Run
+  Run --> Execute
+  Execute --> Report
+  Execute --> Memory
+    </pre>
+    <div class="footer-note">关键点:方案不是预设模板,而是由 ResearchTask、决策节点状态、候选能力和知识召回共同生成。</div>
+  </section>
+
+  <section class="diagram-card tall" id="progressive-loading">
+    <h1>用研 AI 专项 · 能力发现与渐进加载流程图</h1>
+    <p class="subtitle">系统不会一次性把所有 skill、tool、案例塞进上下文,而是先读轻量索引,命中后再加载完整能力,执行时再加载资源。</p>
+    <pre class="mermaid">
+flowchart TB
+  Need["结构化用户需求<br/>ResearchTask"]
+
+  Index["第一层:轻量发现索引"]
+  SkillIndex["Skill 摘要<br/>name / description / when_to_use / owner / status"]
+  ToolIndex["Tool 摘要<br/>adapter_type / auth_required / risk_level / status"]
+  DecisionIndex["Decision 摘要<br/>applies_to / tier / trigger_conditions"]
+  KnowledgeIndex["Knowledge 摘要<br/>title / summary / tags / sensitivity / source_hash"]
+
+  Shortlist["LLM 语义判断<br/>生成候选 skill/tool/knowledge"]
+  RiskFilter["权限与风险预筛<br/>tool 可用性 / risk_level / approver_rule / sensitivity"]
+
+  Candidate["第二层:候选能力加载"]
+  LoadSkill["加载少量 SKILL.md<br/>适用边界 / 执行步骤 / 输入输出 / 失败降级"]
+  LoadTool["加载 tool manifest<br/>调用方式 / schema / timeout / retry / redaction"]
+  LoadKnowledge["加载知识摘要或片段<br/>只加载 top 5,保留 source/hash"]
+
+  Plan["生成待确认执行计划<br/>步骤 + 能力 + 假设 + 风险"]
+  Gate["用户确认闸门<br/>确认前不执行"]
+
+  Execute["第三层:执行期资源加载"]
+  Schema["加载 schema<br/>input / output / report"]
+  Examples["加载 examples / templates"]
+  Adapter["加载 tool adapter<br/>o2 / API / MCP / script"]
+  Run["执行 skill/tool"]
+
+  Trace["全链路留痕"]
+  Log["execution_log<br/>状态 / 耗时 / tokens / trace_id"]
+  Hash["版本追溯<br/>config commit / manifest hash / prompt hash / model version"]
+  Artifact["artifacts / context_manifest / failures"]
+
+  Need --> Index
+  Index --> SkillIndex
+  Index --> ToolIndex
+  Index --> DecisionIndex
+  Index --> KnowledgeIndex
+
+  SkillIndex --> Shortlist
+  ToolIndex --> Shortlist
+  DecisionIndex --> Shortlist
+  KnowledgeIndex --> Shortlist
+
+  Shortlist --> RiskFilter --> Candidate
+  Candidate --> LoadSkill
+  Candidate --> LoadTool
+  Candidate --> LoadKnowledge
+
+  LoadSkill --> Plan
+  LoadTool --> Plan
+  LoadKnowledge --> Plan
+
+  Plan --> Gate --> Execute
+  Execute --> Schema
+  Execute --> Examples
+  Execute --> Adapter
+  Schema --> Run
+  Examples --> Run
+  Adapter --> Run
+
+  Run --> Trace
+  Trace --> Log
+  Trace --> Hash
+  Trace --> Artifact
+    </pre>
+    <div class="footer-note">关键点:registry 只做发现和治理索引,不做硬编码路由规则;真正的能力逻辑留在 SKILL.md 和 tool manifest 中。</div>
+  </section>
+
+  <section class="diagram-card tall" id="demand-capability-composition">
+    <h1>用研 AI 专项 · 用户需求分析与能力组合架构图</h1>
+    <p class="subtitle">用户输入先被拆成结构化 ResearchTask,系统再根据任务类型、业务领域、缺失信息和风险等级,动态组合 Skill、Tool、Knowledge 与治理能力。</p>
+    <pre class="mermaid">
+flowchart TB
+  Input["用户原始需求<br/>一句话 / 多轮补充 / 历史任务继续"]
+
+  Analyze["需求分析层<br/>LLM 结构化为 ResearchTask"]
+  Fields["关键识别字段<br/>task_type / business_domain / research_goal<br/>target_user / data_source / constraints / risk_level"]
+  Missing["缺失信息处理<br/>可假设 / 需确认 / 必须阻断"]
+
+  Router["能力组合决策层<br/>按需求动态选择能力组合<br/>不是固定 7 步流程"]
+
+  subgraph Types["常见需求类型"]
+    T1["竞品研究<br/>competitive_research"]
+    T2["用户之声诊断<br/>voc_diagnosis"]
+    T3["人群/样本审查<br/>audience_review"]
+    T4["体验走查/眼动分析<br/>experience_audit"]
+    T5["研究计划设计<br/>research_planning"]
+    T6["报告生成与沉淀<br/>report_synthesis"]
+  end
+
+  subgraph Combos["对应能力组合"]
+    C1["竞品研究组合<br/>Skill: 竞品分析 / 对标框架<br/>Tool: o2 查询 / 页面抓取<br/>Knowledge: 竞品案例 / 行业术语"]
+    C2["用户之声组合<br/>Skill: VOC 归因 / 情绪主题聚类<br/>Tool: 用户反馈查询 / 文本处理<br/>Knowledge: 过往问题库 / 业务词典"]
+    C3["人群审查组合<br/>Skill: 人群定义 / 样本合理性审查<br/>Tool: 人群标签查询 / 样本校验<br/>Knowledge: 用户分层 / 招募规范"]
+    C4["体验审查组合<br/>Skill: UI 走查 / 眼动 review / 可用性判断<br/>Tool: 页面截图 / 设计稿读取 / 眼动数据处理<br/>Knowledge: 体验规范 / 走查案例"]
+    C5["研究计划组合<br/>Skill: 方法选择 / 访谈提纲 / 调研排期<br/>Tool: 模板生成 / 日程与文档工具<br/>Knowledge: 方法论 / 计划模板"]
+    C6["报告交付组合<br/>Skill: 报告生成 / 结论归纳 / 风险标注<br/>Tool: 文件导出 / Wiki 沉淀<br/>Knowledge: 报告模板 / 优秀案例"]
+  end
+
+  subgraph Shared["所有组合共用能力"]
+    Decision["决策节点池<br/>完备性护栏"]
+    Approval["审批与风险控制<br/>need_approval / blocked"]
+    Source["来源标注<br/>用户输入 / 知识库 / Tool / LLM 推断"]
+    Memory["运行记忆<br/>DB / execution_log / artifacts / feedback"]
+  end
+
+  Plan["生成待确认方案<br/>步骤 + 能力组合 + 系统假设 + 风险说明"]
+  Execute["确认后执行<br/>普通能力自动调用<br/>高风险能力先审批"]
+  Output["最终交付<br/>研究方案 / 分析报告 / 时间线 / 产出物清单 / 能力编排"]
+
+  Input --> Analyze --> Fields --> Missing --> Router
+
+  Router --> T1 --> C1
+  Router --> T2 --> C2
+  Router --> T3 --> C3
+  Router --> T4 --> C4
+  Router --> T5 --> C5
+  Router --> T6 --> C6
+
+  C1 --> Plan
+  C2 --> Plan
+  C3 --> Plan
+  C4 --> Plan
+  C5 --> Plan
+  C6 --> Plan
+
+  Shared --> Plan
+  Decision --> Router
+  Approval --> Execute
+  Source --> Output
+  Memory --> Output
+
+  Plan --> Execute --> Output
+    </pre>
+    <div class="footer-note">关键点:同一个用户需求可以命中多个能力组合。例如"直播场域体验研究"可能同时组合研究计划、竞品研究、体验审查和报告生成能力。</div>
+  </section>
+</body>
+</html>

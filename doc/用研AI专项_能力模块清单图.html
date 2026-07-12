@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>用研 AI 专项 · 能力模块清单图</title>
+  <style>
+    :root {
+      --bg: #f7f8fb;
+      --panel: #ffffff;
+      --text: #1f2937;
+      --muted: #667085;
+      --border: #d9e1ec;
+      --blue: #eff6ff;
+      --blue-border: #93c5fd;
+      --green: #ecfdf3;
+      --green-border: #86efac;
+      --amber: #fff7ed;
+      --amber-border: #fdba74;
+      --slate: #f8fafc;
+      --slate-border: #cbd5e1;
+      --violet: #f5f3ff;
+      --violet-border: #c4b5fd;
+      --rose: #fff1f2;
+      --rose-border: #fda4af;
+    }
+
+    body {
+      margin: 0;
+      padding: 32px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif;
+    }
+
+    .canvas {
+      width: 1800px;
+      box-sizing: border-box;
+      padding: 36px 40px 40px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 18px 44px rgba(31, 41, 55, 0.08);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 34px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin: 0 0 28px;
+      color: var(--muted);
+      font-size: 17px;
+      line-height: 1.65;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+    }
+
+    .module {
+      min-height: 220px;
+      padding: 20px 22px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--slate);
+      box-sizing: border-box;
+    }
+
+    .module.blue {
+      background: var(--blue);
+      border-color: var(--blue-border);
+    }
+
+    .module.green {
+      background: var(--green);
+      border-color: var(--green-border);
+    }
+
+    .module.amber {
+      background: var(--amber);
+      border-color: var(--amber-border);
+    }
+
+    .module.violet {
+      background: var(--violet);
+      border-color: var(--violet-border);
+    }
+
+    .module.rose {
+      background: var(--rose);
+      border-color: var(--rose-border);
+    }
+
+    .module h2 {
+      margin: 0 0 14px;
+      font-size: 21px;
+      line-height: 1.35;
+      letter-spacing: 0;
+    }
+
+    .module ul {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      gap: 9px;
+    }
+
+    .module li {
+      position: relative;
+      padding-left: 16px;
+      font-size: 15px;
+      line-height: 1.55;
+      color: #344054;
+    }
+
+    .module li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0.72em;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #2563eb;
+    }
+
+    .note {
+      margin-top: 26px;
+      padding-top: 18px;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+  <main class="canvas" id="capability-list">
+    <h1>用研 AI 专项 · 能力模块清单图</h1>
+    <p class="subtitle">本图仅列出项目具备的能力模块,不表达模块之间的调用顺序或流程关系。实际执行时由 Orchestrator 根据用户需求动态组合。</p>
+
+    <section class="grid">
+      <article class="module blue">
+        <h2>一、用户入口与任务管理</h2>
+        <ul>
+          <li>ChatGPT 式用研任务对话工作台</li>
+          <li>新建任务、历史任务、任务恢复</li>
+          <li>能力库与案例库查看入口</li>
+          <li>计划确认、执行进度、最终报告展示</li>
+          <li>用户反馈与采纳记录</li>
+        </ul>
+      </article>
+
+      <article class="module green">
+        <h2>二、需求理解能力</h2>
+        <ul>
+          <li>一句话需求结构化为 ResearchTask</li>
+          <li>识别 task_type、业务领域、研究目标</li>
+          <li>识别目标用户、数据来源、限制条件</li>
+          <li>缺失信息分级:可假设、需确认、必须阻断</li>
+          <li>敏感数据与风险等级识别</li>
+        </ul>
+      </article>
+
+      <article class="module amber">
+        <h2>三、决策与方案编排能力</h2>
+        <ul>
+          <li>决策节点池按任务类型动态激活</li>
+          <li>不固定 7 步,不做硬编码流程</li>
+          <li>生成待确认执行计划</li>
+          <li>支持用户修改假设与补充信息</li>
+          <li>计划确认后才执行 skill/tool</li>
+        </ul>
+      </article>
+
+      <article class="module violet">
+        <h2>四、Skill 能力库</h2>
+        <ul>
+          <li>竞品分析 Skill</li>
+          <li>用户之声/VOC 诊断 Skill</li>
+          <li>人群审查与样本合理性 Skill</li>
+          <li>体验走查、UI 审查、眼动 review Skill</li>
+          <li>研究计划、访谈提纲、报告生成 Skill</li>
+        </ul>
+      </article>
+
+      <article class="module rose">
+        <h2>五、Tool 执行能力</h2>
+        <ul>
+          <li>o2 查询与自动化操作</li>
+          <li>竞品页面抓取与页面截图</li>
+          <li>用户反馈、VOC、业务数据查询</li>
+          <li>文件处理、报告导出、Wiki 沉淀</li>
+          <li>内部 API / MCP / script 适配扩展</li>
+        </ul>
+      </article>
+
+      <article class="module blue">
+        <h2>六、知识库能力</h2>
+        <ul>
+          <li>用研方法论与判断标准</li>
+          <li>历史案例、优秀报告、失败案例</li>
+          <li>研究计划、访谈提纲、报告模板</li>
+          <li>业务术语、人群标签、用户分层</li>
+          <li>metadata + BM25/关键词检索,MVP 后可接 pgvector</li>
+        </ul>
+      </article>
+
+      <article class="module green">
+        <h2>七、执行与运行记忆能力</h2>
+        <ul>
+          <li>按确认计划执行 skill/tool</li>
+          <li>记录 execution_log、context_manifest、trace_id</li>
+          <li>运行工作区保存 plan、tool_outputs、failures、artifacts</li>
+          <li>支持失败复盘、重试、跳过、终止</li>
+          <li>Research Memory DB 保存会话、任务、决策、执行、产物、反馈</li>
+        </ul>
+      </article>
+
+      <article class="module amber">
+        <h2>八、质量与安全治理能力</h2>
+        <ul>
+          <li>ResearchTask、Plan、DecisionState、Report schema 校验</li>
+          <li>registry / risk / report / context linter</li>
+          <li>高风险 tool 审批与 blocked 状态</li>
+          <li>PII / confidential 数据分级、脱敏与审批</li>
+          <li>来源标注:用户输入、知识库、Tool、LLM 推断、待人工确认</li>
+        </ul>
+      </article>
+
+      <article class="module violet">
+        <h2>九、能力接入与运营能力</h2>
+        <ul>
+          <li>Skill/Tool manifest + schema + examples + evals 接入</li>
+          <li>draft / active / deprecated 状态管理</li>
+          <li>owner、reviewer、approver 角色语义</li>
+          <li>能力迁移 checklist 与种子 skill 模板</li>
+          <li>后续支持 skill 质量评估、成本看板、文档园丁/规则园丁</li>
+        </ul>
+      </article>
+    </section>
+
+    <p class="note">核心原则:配置、skill、tool、知识库放 Git;运行时数据放 DB;大文件和中间产物放对象存储;Orchestrator 负责加载、校验、调用、留痕,不把业务判断写死在代码里。</p>
+  </main>
+</body>
+</html>

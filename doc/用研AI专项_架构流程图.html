@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>用研 AI 专项 · 架构图与流程图</title>
+  <style>
+    :root {
+      --bg: #f7f8fb;
+      --panel: #ffffff;
+      --text: #1f2937;
+      --muted: #667085;
+      --border: #d9e1ec;
+      --accent: #2563eb;
+    }
+
+    body {
+      margin: 0;
+      padding: 32px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif;
+    }
+
+    .diagram-card {
+      width: 1600px;
+      margin: 0 0 32px;
+      padding: 28px 32px 32px;
+      box-sizing: border-box;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 16px 40px rgba(31, 41, 55, 0.08);
+    }
+
+    .diagram-card.wide {
+      width: 1900px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 30px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin: 0 0 24px;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.6;
+    }
+
+    .mermaid {
+      background: #fff;
+      border-radius: 8px;
+    }
+
+    .footer-note {
+      margin-top: 20px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+  </style>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+
+    mermaid.initialize({
+      startOnLoad: true,
+      securityLevel: "loose",
+      theme: "base",
+      themeVariables: {
+        fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, Microsoft YaHei, Arial, sans-serif",
+        primaryColor: "#eff6ff",
+        primaryTextColor: "#1f2937",
+        primaryBorderColor: "#93c5fd",
+        lineColor: "#475467",
+        secondaryColor: "#f8fafc",
+        tertiaryColor: "#eef2ff",
+        noteBkgColor: "#fff7ed",
+        noteTextColor: "#7c2d12",
+        clusterBkg: "#f8fafc",
+        clusterBorder: "#cbd5e1",
+        actorBkg: "#eff6ff",
+        actorBorder: "#93c5fd",
+        actorTextColor: "#1f2937",
+        signalColor: "#344054",
+        signalTextColor: "#1f2937"
+      },
+      flowchart: {
+        htmlLabels: true,
+        curve: "basis",
+        nodeSpacing: 56,
+        rankSpacing: 72
+      },
+      sequence: {
+        actorMargin: 50,
+        messageMargin: 48,
+        boxMargin: 12,
+        boxTextMargin: 8,
+        noteMargin: 12,
+        mirrorActors: false
+      }
+    });
+
+    window.__diagramReady = new Promise((resolve) => {
+      window.addEventListener("load", () => {
+        setTimeout(resolve, 1800);
+      });
+    });
+  </script>
+</head>
+<body>
+  <section class="diagram-card" id="architecture">
+    <h1>用研 AI 专项 · 整体架构图</h1>
+    <p class="subtitle">三组件主干: agent-api 统一入口、orchestrator-runtime 统一编排、Research Memory DB 存运行时数据。配置、能力和知识沉淀在 Git。</p>
+    <pre class="mermaid">
+flowchart TB
+  subgraph Entry["入口层"]
+    Web["Web 门户"]
+    Bot["咚咚 Bot"]
+    Wiki["AgentWiki / 其他入口"]
+  end
+
+  API["agent-api<br/>统一入口层<br/>鉴权 / 会话 / 写库 / 返回结果"]
+
+  subgraph RuntimeLayer["编排运行时"]
+    Runtime["orchestrator-runtime<br/>统一编排容器"]
+    AgentRuntime["agent-runtime<br/>封装 OpenAI / Claude / Pi 差异"]
+    LLMClient["llm-client<br/>模型通道统一接口"]
+    SkillLoader["skill-loader<br/>渐进加载 Skill"]
+    ToolAdapter["tool-adapter<br/>o2 / API / MCP / script"]
+    Checkpoint["checkpoint-store<br/>会话与步骤状态写 DB"]
+  end
+
+  subgraph ConfigLayer["配置与能力层 / Git"]
+    DecisionGraph["decision-graph.yaml<br/>决策节点池"]
+    SkillRegistry["skill-registry.yaml<br/>Skill 发现与治理"]
+    ToolRegistry["tool-registry.yaml<br/>Tool 发现与治理"]
+    Skills["skills/*<br/>SKILL.md + manifest + schema + evals"]
+    Tools["tools/*<br/>manifest + adapter + schema"]
+    KB["knowledge-base/*<br/>方法 / 案例 / 模板 / 术语"]
+    KBIndex["knowledge-index.json<br/>metadata + BM25 / 关键词索引"]
+  end
+
+  subgraph StorageLayer["存储层"]
+    DB["Research Memory DB<br/>PostgreSQL<br/>用户 / 会话 / 任务 / 决策 / 执行 / 产物 / 反馈"]
+    ObjectStore["对象存储 / run-workspaces<br/>plan / context_manifest / tool_outputs / artifacts / failures"]
+  end
+
+  Web --> API
+  Bot --> API
+  Wiki --> API
+  API --> Runtime
+
+  Runtime --> AgentRuntime
+  Runtime --> LLMClient
+  Runtime --> SkillLoader
+  Runtime --> ToolAdapter
+  Runtime --> Checkpoint
+
+  Runtime --> DecisionGraph
+  Runtime --> SkillRegistry
+  Runtime --> ToolRegistry
+  SkillLoader --> Skills
+  ToolAdapter --> Tools
+  Runtime --> KBIndex
+  KB --> KBIndex
+
+  API --> DB
+  Runtime --> DB
+  Runtime --> ObjectStore
+    </pre>
+    <div class="footer-note">原则:业务判断交给 LLM + 配置;执行边界、schema 校验、权限、审计和状态流转交给后端。</div>
+  </section>
+
+  <section class="diagram-card wide" id="runtime-flow">
+    <h1>用研 AI 专项 · 核心运行流程图</h1>
+    <p class="subtitle">四段协作流:任务理解 → 待确认计划 → 执行 → 交付。计划确认是硬闸门,未确认不执行 skill/tool。</p>
+    <pre class="mermaid">
+sequenceDiagram
+  participant U as 用户
+  participant UI as Web门户/咚咚Bot
+  participant API as agent-api
+  participant OR as Orchestrator Runtime
+  participant CFG as Registry/DecisionGraph/Knowledge
+  participant LLM as LLM Client
+  participant TOOL as Tool Adapter
+  participant DB as Research Memory DB
+  participant WS as Run Workspace/Object Store
+
+  U->>UI: 输入一句用研需求
+  UI->>API: 提交消息
+  API->>DB: 写 conversations / messages
+  API->>OR: 创建 research_task
+
+  OR->>LLM: 结构化理解用户需求
+  LLM-->>OR: ResearchTask JSON
+  OR->>DB: 写 research_tasks
+
+  OR->>CFG: 读取 decision-graph / skill-registry / tool-registry
+  OR->>LLM: 激活决策节点 + 选择候选 skill/tool
+  LLM-->>OR: DecisionState + 候选能力
+  OR->>DB: 写 task_decision_states
+
+  OR->>CFG: 渐进加载候选 SKILL.md
+  OR->>LLM: 生成待确认执行计划
+  LLM-->>OR: Execution Plan
+  OR->>WS: 写 plan.json
+  OR->>API: 返回待确认计划
+  API->>UI: 展示计划卡片
+
+  U->>UI: 确认计划 / 修改假设
+  UI->>API: 确认执行
+  API->>OR: 开始执行
+
+  loop 每个执行步骤
+    OR->>DB: 写 execution_log = running
+    OR->>CFG: 按需加载 schema / examples / templates
+    OR->>TOOL: 调用 skill/tool
+    TOOL-->>OR: Tool output / error
+    OR->>WS: 写 tool_outputs / context_manifest / failures
+    OR->>DB: 更新 execution_log status
+  end
+
+  OR->>LLM: synthesis 汇总报告
+  LLM-->>OR: Research Report
+  OR->>DB: 写 artifacts
+  OR->>API: 返回最终报告
+  API->>UI: 展示报告 + 来源标注 + 反馈入口
+
+  U->>UI: 提交反馈
+  UI->>API: rating / adopted / comment
+  API->>DB: 写 user_feedback
+    </pre>
+    <div class="footer-note">失败处理:步骤失败只停在该步骤,写 failures.jsonl 与 context_manifest_ref,人工确认后重试、跳过或终止。</div>
+  </section>
+
+  <section class="diagram-card" id="data-config">
+    <h1>用研 AI 专项 · 数据与配置关系图</h1>
+    <p class="subtitle">配置不进运行时 DB。DB 存用户、会话、任务、执行、产物和反馈;对象存储保存大文件与中间产物。</p>
+    <pre class="mermaid">
+flowchart LR
+  subgraph RuntimeData["运行时数据 / PostgreSQL"]
+    Users["users<br/>注册用户"]
+    Conversations["conversations<br/>会话"]
+    Messages["messages<br/>消息"]
+    Tasks["research_tasks<br/>结构化任务"]
+    Decisions["task_decision_states<br/>决策节点状态"]
+    Logs["execution_log<br/>执行日志"]
+    Artifacts["artifacts<br/>报告 / 文件 / 工具输出索引"]
+    Feedback["user_feedback<br/>用户反馈"]
+  end
+
+  subgraph GitConfig["配置与知识 / Git"]
+    DecisionGraph["decision-graph.yaml"]
+    SkillRegistry["skill-registry.yaml"]
+    ToolRegistry["tool-registry.yaml"]
+    SkillPkg["skills/*"]
+    ToolPkg["tools/*"]
+    Knowledge["knowledge-base/*"]
+    Schemas["schemas/*"]
+  end
+
+  subgraph Workspace["运行工作区 / 对象存储"]
+    Plan["plan.json"]
+    Context["context_manifest.json"]
+    ToolOutputs["tool_outputs/*"]
+    Failures["failures.jsonl"]
+    ArtifactFiles["artifact files"]
+  end
+
+  Users --> Conversations
+  Conversations --> Messages
+  Conversations --> Tasks
+  Tasks --> Decisions
+  Tasks --> Logs
+  Tasks --> Artifacts
+  Tasks --> Feedback
+  Logs --> Context
+  Logs --> ToolOutputs
+  Logs --> Failures
+  Artifacts --> ArtifactFiles
+
+  DecisionGraph -.被读取.-> Tasks
+  SkillRegistry -.被读取.-> Logs
+  ToolRegistry -.被读取.-> Logs
+  SkillPkg -.渐进加载.-> Logs
+  ToolPkg -.执行边界.-> Logs
+  Knowledge -.检索引用.-> Artifacts
+  Schemas -.校验.-> Tasks
+  Schemas -.校验.-> Artifacts
+    </pre>
+    <div class="footer-note">版本追溯底线:每次执行记录 config_git_commit、manifest hash、prompt hash、model version 和 trace_id。</div>
+  </section>
+</body>
+</html>

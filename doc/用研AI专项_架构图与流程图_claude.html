@@ -1,0 +1,578 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>用研 AI 专项 · 架构图与流程图</title>
+  <style>
+    :root {
+      --bg: #f7f8fb;
+      --panel: #ffffff;
+      --ink: #1f2937;
+      --muted: #667085;
+      --line: #e2e8f0;
+      --line-strong: #cbd5e1;
+      --accent: #2563eb;
+      --accent-soft: #eff6ff;
+      /* 语义色:稳定,一眼区分状态 */
+      --ok: #16a34a;
+      --run: #2563eb;
+      --gate: #d97706;
+      --danger: #dc2626;
+      --radius: 12px;
+      --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.6;
+    }
+
+    header.page-head {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: rgba(255, 255, 255, .92);
+      backdrop-filter: saturate(180%) blur(8px);
+      border-bottom: 1px solid var(--line);
+      padding: 16px 32px;
+    }
+
+    .head-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .head-inner h1 {
+      margin: 0;
+      font-size: 20px;
+      letter-spacing: .2px;
+    }
+
+    .head-inner .tag {
+      font-size: 12px;
+      color: var(--accent);
+      background: var(--accent-soft);
+      border: 1px solid #bfdbfe;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-family: var(--mono);
+    }
+
+    nav.toc {
+      margin-left: auto;
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+
+    nav.toc a {
+      font-size: 13px;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 6px 12px;
+      border-radius: 8px;
+      transition: background .15s ease, color .15s ease;
+    }
+
+    nav.toc a:hover,
+    nav.toc a:focus-visible {
+      color: var(--accent);
+      background: var(--accent-soft);
+      outline: none;
+    }
+
+    main {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 28px 32px 80px;
+    }
+
+    .intro {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-left: 3px solid var(--accent);
+      border-radius: var(--radius);
+      padding: 18px 22px;
+      margin-bottom: 28px;
+      color: var(--muted);
+      font-size: 14.5px;
+    }
+
+    .intro strong {
+      color: var(--ink);
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: 0 10px 30px rgba(31, 41, 55, .05);
+      padding: 24px 28px 28px;
+      margin-bottom: 28px;
+      scroll-margin-top: 88px;
+    }
+
+    .card h2 {
+      margin: 0 0 6px;
+      font-size: 22px;
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+    }
+
+    .card h2 .idx {
+      font-family: var(--mono);
+      font-size: 14px;
+      color: #fff;
+      background: var(--accent);
+      border-radius: 6px;
+      padding: 2px 9px;
+      line-height: 1.5;
+    }
+
+    .card .desc {
+      margin: 0 0 18px;
+      color: var(--muted);
+      font-size: 14.5px;
+    }
+
+    .card .desc code {
+      font-family: var(--mono);
+      font-size: 12.5px;
+      background: #f1f5f9;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 1px 5px;
+    }
+
+    .mermaid-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background:
+        linear-gradient(90deg, rgba(148, 163, 184, .06) 1px, transparent 1px),
+        linear-gradient(0deg, rgba(148, 163, 184, .06) 1px, transparent 1px),
+        #fff;
+      background-size: 24px 24px;
+      padding: 20px;
+    }
+
+    .mermaid {
+      display: flex;
+      justify-content: center;
+      min-width: min-content;
+    }
+
+    .note {
+      margin-top: 16px;
+      padding-top: 14px;
+      border-top: 1px dashed var(--line-strong);
+      color: var(--muted);
+      font-size: 13.5px;
+    }
+
+    .note b {
+      color: var(--ink);
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin: 4px 0 18px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .legend .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .legend .dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+      border: 1px solid rgba(0, 0, 0, .12);
+    }
+
+    footer.page-foot {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 32px 48px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media print {
+
+      header.page-head,
+      nav.toc {
+        position: static;
+      }
+
+      .card {
+        break-inside: avoid;
+        box-shadow: none;
+      }
+    }
+  </style>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({
+      startOnLoad: true,
+      securityLevel: "loose",
+      theme: "base",
+      themeVariables: {
+        fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, Microsoft YaHei, Arial, sans-serif",
+        primaryColor: "#eff6ff",
+        primaryTextColor: "#1f2937",
+        primaryBorderColor: "#93c5fd",
+        lineColor: "#64748b",
+        secondaryColor: "#f8fafc",
+        tertiaryColor: "#eef2ff",
+        clusterBkg: "#f8fafc",
+        clusterBorder: "#cbd5e1"
+      },
+      flowchart: { htmlLabels: true, curve: "basis", nodeSpacing: 46, rankSpacing: 60 }
+    });
+  </script>
+</head>
+
+<body>
+  <header class="page-head">
+    <div class="head-inner">
+      <h1>用研 AI 专项 · 架构图与流程图</h1>
+      <span class="tag">底座搭建方案 · _claude</span>
+      <nav class="toc" aria-label="图目录">
+        <a href="#arch">① 系统架构</a>
+        <a href="#flow">② 四段协作流</a>
+        <a href="#route">③ 渐进加载</a>
+        <a href="#data">④ 数据模型</a>
+        <a href="#func">⑤ 功能架构</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <p class="intro">
+      <strong>一条主原则:</strong>业务判断交给 LLM + 配置(放 Git/YAML),执行边界与质量门禁交给后端(schema/权限/风控/审计/状态流转/版本追溯),运行时数据放 DB。
+      下面四张图分别覆盖<strong>架构(图 ①④)</strong>与<strong>流程(图 ②③)</strong>两侧,均基于权威方案文档
+      <code style="font-family:var(--mono);font-size:12px">doc/用研AI专项_底座搭建方案_优化版_claude.md</code>。
+    </p>
+
+    <!-- ① 系统架构 -->
+    <section class="card" id="arch">
+      <h2><span class="idx">01</span>系统架构 · 分层组件与数据流</h2>
+      <p class="desc">
+        三个真实组件:<code>agent-api</code>(统一入口)、<code>Orchestrator</code>(编排运行时,全项目最重)、<code>Research Memory DB</code>(只存运行时数据)。
+        判断力全在配置层,后端不含业务 if-else。
+      </p>
+      <pre class="mermaid">
+flowchart TB
+  subgraph ENTRY["入口层 · 多端"]
+    Portal["Web 门户"]
+    Bot["咚咚 Bot"]
+    Wiki["AgentWiki"]
+  end
+
+  subgraph API["agent-api · 统一入口(薄:鉴权/会话/写库)"]
+    Auth["鉴权 ERP-SSO"]
+    Sess["会话管理"]
+    WriteDB["写库"]
+  end
+
+  subgraph ORCH["Orchestrator · 编排运行时(全项目最重)"]
+    OSkill["装载 orchestrator SKILL"]
+    LLMC["llm-client 抽象<br/>内网网关 / Claude / OpenAI"]
+    ADP["tool-adapter<br/>o2 / 内部API / MCP / script"]
+    GUARD["schema校验·重试·审计<br/>状态流转·context_manifest·failures"]
+  end
+
+  subgraph CONF["配置层 · Git+YAML(判断力所在,可 diff/回滚)"]
+    DG["decision-graph.yaml"]
+    SR["skill-registry.yaml"]
+    TR["tool-registry.yaml"]
+    PR["prompts + SKILL.md"]
+  end
+
+  subgraph CAP["能力层 · Git 交付包"]
+    SK["skills/**<br/>SKILL.md+manifest+schema+evals"]
+    TL["tools/**<br/>manifest+adapter"]
+  end
+
+  subgraph KNOW["知识层"]
+    KB["knowledge-base<br/>MVP Markdown+metadata"]
+    PGV["pgvector(二期)"]
+  end
+
+  subgraph DATA["数据层 · 运行时"]
+    PG["PostgreSQL 5表+会话表"]
+    OSS["对象存储<br/>run-workspace / artifacts"]
+  end
+
+  subgraph EXT["外部系统"]
+    O2["o2 能力"]
+    FS["飞书多维表<br/>看板真相源"]
+    SSO["京东 ERP/SSO"]
+  end
+
+  LNT["4 linters<br/>registry/risk/report/context"]
+
+  ENTRY --> API --> ORCH
+  ORCH -. 读轻量索引 .-> CONF
+  ORCH -. 三层渐进加载 .-> CAP
+  ORCH -. 检索并留痕 .-> KNOW
+  ADP --> O2
+  ORCH --> DATA
+  WriteDB -. 行ID引用 .-> FS
+  Auth --> SSO
+  CONF -. 合并前校验 .-> LNT
+  ORCH -. 运行时 guard .-> LNT
+
+  classDef conf fill:#fff7ed,stroke:#f59e0b,color:#7c2d12;
+  classDef data fill:#ecfdf5,stroke:#10b981,color:#065f46;
+  classDef ext fill:#f1f5f9,stroke:#94a3b8,color:#334155;
+  class DG,SR,TR,PR,SK,TL conf
+  class PG,OSS data
+  class O2,FS,SSO ext
+      </pre>
+      <p class="note"><b>硬边界:</b>后端可读 <code>task_type</code> 做日志/权限,但不能写成 <code>if task_type == xxx then ...</code> 的领域分支——一旦沉淀 if-else 即架构跑偏。</p>
+    </section>
+
+    <!-- ② 四段协作流 -->
+    <section class="card" id="flow">
+      <h2><span class="idx">02</span>四段协作运行流程 · 计划→确认→执行→交付</h2>
+      <p class="desc">
+        核心是段 2 后的<b style="color:var(--gate)">硬闸门</b>:未确认不执行。段 3 每步按风险走审批 / 标注 / 阻断三分支,失败入 <code>failures.jsonl</code> 可断点续跑。
+      </p>
+      <div class="legend" aria-hidden="true">
+        <span class="chip"><span class="dot" style="background:#fef3c7;border-color:#d97706"></span>硬闸门 / 审批</span>
+        <span class="chip"><span class="dot" style="background:#fee2e2;border-color:#dc2626"></span>阻断 / 失败</span>
+        <span class="chip"><span class="dot" style="background:#dcfce7;border-color:#16a34a"></span>交付完成</span>
+      </div>
+      <pre class="mermaid">
+flowchart TD
+  Start(["用户一句话输入"]) --> S0["段0 · agent-api 建 research_task<br/>创建 run-workspace,开会话"]
+  S0 --> S1["段1 · 任务理解<br/>LLM 结构化为 ResearchTask"]
+  S1 --> Miss{"关键信息严重缺失<br/>且给不出合理假设?"}
+  Miss -->|是| Ask["段1↔2 追问 1-2 轮<br/>写入会话记忆"]
+  Ask --> S2
+  Miss -->|否| S2["段2 · 待执行计划<br/>task_type 分流激活节点子集<br/>粗筛→加载候选 SKILL.md→LLM 精选<br/>缺失信息→可改假设"]
+  S2 --> Gate{"⏸ 硬闸门<br/>用户确认计划?"}
+  Gate -->|改假设| S2
+  Gate -->|确认| S3["段3 · 执行<br/>逐步自动调用 skill/tool"]
+  S3 --> Risk{"步骤风险判定"}
+  Risk -->|need_approval| Appr{"approver 审批"}
+  Appr -->|通过| Exec
+  Appr -->|拒绝/超时| Blocked["blocked · 停在该步"]
+  Risk -->|need_annotate| Note["标注待人工确认<br/>不阻塞"]
+  Risk -->|正常执行| Exec["写 execution_log<br/>+ context_manifest"]
+  Note --> Exec
+  S3 -->|步骤失败| Fail["写 failures.jsonl<br/>人工 重试/跳过/终止"]
+  Exec --> More{"还有步骤?"}
+  More -->|是| S3
+  More -->|否| S4["段4 · synthesis 交付<br/>结论带来源标注"]
+  S4 --> RL["report linter 校验来源完整"]
+  RL --> Art["存 artifacts"]
+  Art --> FB(["返回方案 + 采纳/导出/沉淀 Wiki<br/>开放 user_feedback"])
+
+  classDef gate fill:#fef3c7,stroke:#d97706,color:#7c2d12;
+  classDef danger fill:#fee2e2,stroke:#dc2626,color:#7f1d1d;
+  classDef ok fill:#dcfce7,stroke:#16a34a,color:#14532d;
+  class Gate,Appr gate
+  class Blocked,Fail danger
+  class S4,FB ok
+      </pre>
+      <p class="note"><b>缺失信息分三级:</b>可假设(写入 assumptions,不打断)/ 需确认(进计划确认页)/ 必须阻断(<code>need_approval</code> 或 <code>blocked</code>)。</p>
+    </section>
+
+    <!-- ③ 渐进加载 -->
+    <section class="card" id="route">
+      <h2><span class="idx">03</span>能力发现与三层渐进加载 · 路由机制</h2>
+      <p class="desc">
+        YAML 只负责"找到谁",<code>SKILL.md</code> 负责"怎么做"。先发现 → 再理解 → 最后执行,避免一次性把全量能力塞进上下文。
+      </p>
+      <pre class="mermaid">
+flowchart LR
+  Req["用户需求"] --> Task["LLM 结构化<br/>ResearchTask"]
+  Task --> L1["① 轻量索引<br/>skill/tool/decision-graph 摘要"]
+  L1 --> Node["激活决策节点<br/>task_type 分流·略过无关"]
+  Node --> Filter["规则粗筛<br/>候选 skill/tool"]
+  Filter --> L2["② 候选能力<br/>加载 2-5 个 SKILL.md"]
+  L2 --> Plan["LLM 生成<br/>待确认计划"]
+  Plan --> Confirm{"⏸ 用户确认"}
+  Confirm --> L3["③ 执行期资源<br/>schema/examples/templates/adapter"]
+  L3 --> Call["skill 经 tool-adapter 调 tool"]
+  Call --> Log["写 execution_log + artifacts<br/>留 manifest/prompt/model hash"]
+
+  classDef l1 fill:#eff6ff,stroke:#3b82f6,color:#1e3a8a;
+  classDef l2 fill:#faf5ff,stroke:#a855f7,color:#581c87;
+  classDef l3 fill:#fff7ed,stroke:#f59e0b,color:#7c2d12;
+  classDef gate fill:#fef3c7,stroke:#d97706,color:#7c2d12;
+  class L1 l1
+  class L2 l2
+  class L3 l3
+  class Confirm gate
+      </pre>
+      <p class="note"><b>三层加载边界:</b>第一层轻量索引发现候选 → 第二层候选 <code>SKILL.md</code> 理解边界 → 第三层执行期才加载 schema/examples/adapter。skill 数十个时 LLM 可一次读完轻量 registry;上百再引 pgvector 语义召回。</p>
+    </section>
+
+    <!-- ④ 数据模型 -->
+    <section class="card" id="data">
+      <h2><span class="idx">04</span>数据模型 · MVP 运行时表</h2>
+      <p class="desc">
+        配置<b>不入库</b>(归 Git/YAML,可 diff/回滚);大对象只存 <code>uri</code>,PG 不放 blob;飞书是看板真相源,PG 存行 ID 引用。
+      </p>
+      <pre class="mermaid">
+erDiagram
+  RESEARCH_TASKS {
+    uuid id PK
+    string owner_user_id "ERP账号·发起人"
+    uuid conversation_id FK
+    string task_type
+    jsonb structured_understanding
+    jsonb assumptions
+    string approval_state
+    string run_workspace_uri
+    string feishu_row_ref
+  }
+  TASK_DECISION_STATES {
+    uuid id PK
+    uuid task_id FK
+    string node_key
+    string state "satisfied..blocked 6态"
+    text reason
+    float confidence
+  }
+  EXECUTION_LOG {
+    uuid id PK
+    uuid task_id FK
+    string skill_or_tool
+    string status "pending..skipped"
+    int tokens "二期成本核算"
+    jsonb manifest_refs "commit/hash/snapshot"
+    string context_manifest_ref
+  }
+  ARTIFACTS {
+    uuid id PK
+    uuid task_id FK
+    string type "report 是其中一种"
+    string uri
+    jsonb source_refs_json
+  }
+  USER_FEEDBACK {
+    uuid id PK
+    uuid task_id FK
+    bool adopted
+    int rating
+    text comment
+  }
+  CONVERSATIONS {
+    uuid id PK
+    string owner_user_id
+  }
+  MESSAGES {
+    uuid id PK
+    uuid conversation_id FK
+    string role
+    text content
+  }
+  ERP_USER ||--o{ RESEARCH_TASKS : owns
+  CONVERSATIONS ||--o{ RESEARCH_TASKS : derives
+  CONVERSATIONS ||--o{ MESSAGES : contains
+  RESEARCH_TASKS ||--o{ TASK_DECISION_STATES : has
+  RESEARCH_TASKS ||--o{ EXECUTION_LOG : has
+  RESEARCH_TASKS ||--o{ ARTIFACTS : produces
+  RESEARCH_TASKS ||--o{ USER_FEEDBACK : receives
+      </pre>
+      <p class="note"><b>未画的二期表:</b><code>ERP_USER</code> 为外部 SSO 实体,不自建用户表;<code>knowledge_items/embeddings</code>、<code>skill_evaluations</code>、<code>runtime_snapshots</code>、<code>failure_events</code> 待二期按触发条件加。</p>
+    </section>
+
+    <!-- ⑤ 功能架构 -->
+    <section class="card" id="func">
+      <h2><span class="idx">05</span>功能架构 · 需求分析 → 差异化能力组合</h2>
+      <p class="desc">
+        同一入口进,LLM 先把一句话解析为 <code>task_type</code> / <code>business_domain</code> / 完备性节点,再按<b>不同需求类型</b>激活<b>不同的决策节点子集</b>并命中<b>对应的 skill/tool 组合</b>——竞品任务不出现"用户人群"节点,用户之声不出现"竞品"节点。能力目录持续可增,命中逻辑全由 LLM + 配置驱动,不写死分支。
+      </p>
+      <pre class="mermaid">
+flowchart TB
+  IN["用户一句话需求"] --> ANALYZE["LLM 需求分析<br/>结构化为 ResearchTask<br/>task_type · business_domain · research_goal"]
+  ANALYZE --> ROUTE{"按 task_type 分流<br/>激活相关决策节点子集"}
+
+  ROUTE -->|竞品研究| C1["竞品研究"]
+  ROUTE -->|用研规划| C2["用户研究规划"]
+  ROUTE -->|用户之声| C3["用户之声诊断"]
+  ROUTE -->|设计走查| C4["设计/体验审查"]
+
+  subgraph POOL["决策节点池 · 按需激活(core 必检 / optional 场景相关)"]
+    direction LR
+    D1["D1 研究目标<br/>core"]
+    D7["D7 产出标准<br/>core"]
+    D2["D2 用户人群<br/>optional"]
+    D4["D4 体验现状<br/>optional"]
+    D5["D5 竞品参照<br/>optional"]
+  end
+
+  C1 -.激活.-> D1
+  C1 -.激活.-> D5
+  C1 -.激活.-> D7
+  C2 -.激活.-> D1
+  C2 -.激活.-> D2
+  C2 -.激活.-> D7
+  C3 -.激活.-> D1
+  C3 -.激活.-> D4
+  C3 -.激活.-> D7
+  C4 -.激活.-> D1
+  C4 -.激活.-> D4
+  C4 -.激活.-> D7
+
+  POOL --> PICK["规则粗筛 + LLM 精选<br/>读 skill-registry / tool-registry"]
+
+  subgraph COMBO["差异化能力组合(示例,可持续增补)"]
+    direction TB
+    K1["竞品组合<br/>skill: digital-human / ui / business competitive<br/>tool: o2-web-search · competitor-page-capture"]
+    K2["规划组合<br/>skill: method-selection · data-collection · report-gen<br/>tool: persona-query"]
+    K3["之声组合<br/>skill: voc-monitoring · sentiment-analysis<br/>tool: voc-data-query"]
+    K4["走查组合<br/>skill: ui-audit · eye-tracking-audit<br/>tool: screenshot-capture"]
+  end
+
+  PICK --> K1 & K2 & K3 & K4
+  K1 & K2 & K3 & K4 --> PLAN["段2 · 待确认执行计划<br/>每步绑定 skill/tool + 系统假设"]
+  PLAN --> GATE{"⏸ 用户确认(硬闸门)"}
+  GATE --> RUN["段3 · 自动编排执行 → 段4 · 交付方案"]
+
+  classDef core fill:#dbeafe,stroke:#2563eb,color:#1e3a8a;
+  classDef opt fill:#f1f5f9,stroke:#94a3b8,color:#334155;
+  classDef combo fill:#faf5ff,stroke:#a855f7,color:#581c87;
+  classDef gate fill:#fef3c7,stroke:#d97706,color:#7c2d12;
+  class D1,D7 core
+  class D2,D4,D5 opt
+  class K1,K2,K3,K4 combo
+  class GATE gate
+      </pre>
+      <p class="note"><b>加需求类型不改代码:</b>未来加"无障碍审查",只需在 <code>decision-graph.yaml</code> 引入 D8 节点声明 <code>applies_to: [a11y_audit]</code> + 在 registry 登记对应 skill/tool,不碰其他任务分支。<b>能力选择不必都过决策节点:</b>部分 skill 由需求语义直接命中,决策节点主要管完备性把关与待人工确认标注。</p>
+    </section>
+  </main>
+
+  <footer class="page-foot">
+    版本追溯底线:每次执行须记录 config_git_commit / decision_graph_hash / skill&amp;tool manifest hash / prompt hash / model version —— 没有这些字段,历史任务无法解释。
+  </footer>
+</body>
+
+</html>
