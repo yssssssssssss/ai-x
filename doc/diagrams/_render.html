@@ -287,6 +287,52 @@ flowchart TB
   class GATE gate
     </pre>
   </div>
+
+  <div class="shot" id="shot-06">
+    <pre class="mermaid">
+flowchart TB
+  subgraph USE["两种使用方式(双通道)"]
+    direction LR
+    ORCH["🤖 编排自动调用<br/>orchestrator → skill.required_tools<br/>→ RestJsonAdapter(rest_json)"]
+    WEB["🖥️ 门户网页直用<br/>apps/web「工具箱」→ iframe 内嵌"]
+  end
+
+  ORCH -->|"POST 后端 :880x · body/返回透传"| LABS
+  WEB -->|"iframe 前端 :580x · 各工具自带 UI"| LABS
+
+  subgraph LABS["5 个能力实验室 · 独立 Fastify 服务 · 纯本地算法(无大模型)"]
+    direction LR
+    subgraph G1["方法层 · 选研究框架"]
+      T3["📐 体验模型实验室<br/>:8803 · /api/analyze<br/>—<br/>文本诉求 → 推荐体验模型 + 问卷模板<br/>HEART / GSM / JTBD / Kano / SUS /<br/>NPS / TAM / 认知负荷 … 共 10 个<br/><i>关键词·标签匹配打分</i>"]
+    end
+    subgraph G2["预评审层 · 低成本模拟"]
+      T4["👥 虚拟用户实验室<br/>:8804 · /api/simulate<br/>—<br/>产品/设计 → 数字人格模拟评审<br/>多维评分 · 共性痛点 · 改进建议<br/><i>规则化推演 · isSimulated=true</i>"]
+    end
+    subgraph G3["设计量化层 · 客观视角(需图像)"]
+      direction TB
+      T1["🎨 美学量化实验室<br/>:8801 · /api/analyze<br/>—<br/>设计图 → 美学总分 + 分维度<br/>色彩/色温/丰富度/和谐/对比<br/><i>sharp 像素统计</i>"]
+      T2["👁️ 视觉注意力分析<br/>:8802 · /api/analyze<br/>—<br/>页面图 → 注意力热力图 + 热点<br/>峰值 / 焦点平衡 / 干扰风险<br/><i>启发式显著性</i>"]
+      T5["🏷️ 视觉品牌实验室<br/>:8805 · /api/analyze<br/>—<br/>设计图 + 品牌参考图 → 多角色评审<br/>+ 品牌联想一致性<br/><i>图像特征距离</i>"]
+    end
+  end
+
+  REG["tool-registry.yaml<br/>登记 5 条 · rest_json · low risk"]
+  ADP["各工具接入声明 tools/{id}/<br/>manifest + in/out schema + adapter.md"]
+  ORCH -.发现/治理.- REG
+  REG -.-> ADP
+
+  classDef ch fill:#eef2ff,stroke:#6366f1,color:#312e81;
+  classDef method fill:#dbeafe,stroke:#2563eb,color:#1e3a8a;
+  classDef sim fill:#fef3c7,stroke:#d97706,color:#7c2d12;
+  classDef vis fill:#dcfce7,stroke:#16a34a,color:#14532d;
+  classDef meta fill:#f8fafc,stroke:#94a3b8,color:#334155;
+  class ORCH,WEB ch
+  class T3 method
+  class T4 sim
+  class T1,T2,T5 vis
+  class REG,ADP meta
+    </pre>
+  </div>
 </body>
 
 </html>
