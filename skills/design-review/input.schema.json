@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "design-review/input.schema.json",
+  "title": "DesignExperienceReviewInput",
+  "type": "object",
+  "additionalProperties": false,
+  "definitions": {
+    "imageRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": { "type": "string" },
+        "dataUrl": { "type": "string" },
+        "path": { "type": "string" }
+      }
+    }
+  },
+  "properties": {
+    "designImage": { "$ref": "#/definitions/imageRef", "description": "待评设计稿(dataUrl 或可访问 url)" },
+    "brandReferenceImage": { "$ref": "#/definitions/imageRef", "description": "品牌参考图,做品牌一致性时用" },
+    "goal": { "type": "string", "description": "评估目标/业务诉求" },
+    "focus": {
+      "type": "array",
+      "description": "评估重点;为空则三项全做。",
+      "items": { "type": "string", "enum": ["aesthetic", "attention", "brand"] }
+    }
+  }
+}

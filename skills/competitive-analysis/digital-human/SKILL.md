@@ -24,6 +24,11 @@ owner: 竞品分析组
 3. **逐维打分与举证**:每个维度给出竞品表现描述 + 证据来源。无证据的判断标注为 `llm_inference`,不得冒充事实。
 4. **差异化机会归纳**:基于对比,归纳我方可切入的差异化点。
 
+### 可选支撑步骤(按需)
+
+- **选评估模型**:若需系统评估竞品体验,用 `experience-model-lab` tool(`step.input = { query: <评估诉求>, preferredModelIds?: [...] }`)推荐 HEART/SUS 等模型与问卷模板。
+- **虚拟用户预评审**:低成本预判竞品体验时,用 `virtual-user-lab` tool(`step.input = { scenario, productDescription, reviewDimensions? }`)做数字人格模拟评审。结果为模拟推演(`isSimulated`),须在报告标注,不替代真实用研。
+
 ## 默认假设
 
 - 竞品清单为空 → 取该业务域头部 3 家(在计划阶段作为 assumption 呈现,用户可改)。

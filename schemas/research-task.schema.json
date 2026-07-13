@@ -9,7 +9,7 @@
   "properties": {
     "task_type": {
       "type": "string",
-      "description": "任务类型,用于决策节点池按 applies_to 分流。V0 只支持 competitive_research。",
+      "description": "任务类型,用于决策节点池按 applies_to 分流。competitive_research=竞品研究;user_research_planning=用研规划;voc_diagnosis=用户之声诊断;design_audit=设计/体验走查(对设计稿做美学/注意力/品牌等评估);a11y_audit=无障碍审查。按用户诉求语义判定,勿默认竞品。",
       "enum": ["competitive_research", "user_research_planning", "voc_diagnosis", "design_audit", "a11y_audit"]
     },
     "business_domain": {

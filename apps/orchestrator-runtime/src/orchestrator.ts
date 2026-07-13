@@ -3,6 +3,7 @@ import { RunWorkspace } from './run-workspace.ts';
 import {
   loadDecisionGraph,
   loadToolManifest,
+  loadToolInputSchema,
   hashFile,
   getConfigRoot,
   CONFIG_PATHS,
@@ -25,11 +26,21 @@ export interface ResearchTaskData {
   pii_detected: boolean;
 }
 
+export interface PendingUpload {
+  step_no: number;
+  tool_id: string;
+  tool_name: string;
+  field: string;
+  multiple: boolean;
+  label: string;
+}
+
 export interface PlanResult {
   taskId: string;
   task: ResearchTaskData;
   activatedNodes: string[];
   plan: unknown;
+  pendingUploads: PendingUpload[];
   workspaceUri: string;
 }
 
@@ -80,18 +91,25 @@ export class Orchestrator {
     const activeTools = skillLoader.listActiveTools();
     const skillIds = activeSkills.map((s) => s.id);
     const toolIds = activeTools.map((t) => t.id);
+    // 喂给 LLM 每个 tool 的 input.schema,让它按 schema 为 tool 步生成 input 入参。
+    const toolCtx = activeTools.map((t) => {
+      const manifest = loadToolManifest(t.path);
+      return { id: t.id, name: t.name, input_schema: loadToolInputSchema(manifest.input_schema) };
+    });
     const planGen = await llm.generateStructured<Record<string, unknown>>({
       prompt:
         `基于任务与候选能力生成待确认执行计划。\n` +
         `硬约束:actor_type=skill 的步骤,actor_id 只能取以下 skill id 之一:[${skillIds.join(', ')}];\n` +
         `actor_type=tool 的步骤,actor_id 只能取以下 tool id 之一:[${toolIds.join(', ')}]。\n` +
-        `禁止编造不在上述清单中的 skill/tool id。若需 LLM 自身推理步骤(如汇总/提炼),用 actor_type=llm。`,
+        `禁止编造不在上述清单中的 skill/tool id。若需 LLM 自身推理步骤(如汇总/提炼),用 actor_type=llm。\n` +
+        `tool 步必须在 step.input 里按该 tool 的 input_schema(见 context.tools[].input_schema)生成入参。\n` +
+        `若某 tool 需要图像但任务未提供图像(dataUrl/url),不要编造 base64:把该图像字段留空,并在 assumptions 标注『需用户提供设计稿』。`,
       schema: {},
       schemaName: 'execution-plan',
       context: {
         task,
         skills: activeSkills.map((s) => ({ id: s.id, when_to_use: s.when_to_use, required_tools: s.required_tools })),
-        tools: activeTools.map((t) => ({ id: t.id, name: t.name })),
+        tools: toolCtx,
       },
     });
 
@@ -133,6 +151,28 @@ export class Orchestrator {
       );
     }
 
+    // 扫描 tool 步的图像入参:manifest 声明 image_input_fields 且 step.input 未提供图 → 待用户在确认闸门上传。
+    const pendingUploads: PendingUpload[] = [];
+    for (const s of planSteps) {
+      if (s.actor_type !== 'tool') continue;
+      const tool = skillLoader.getTool(s.actor_id);
+      if (!tool) continue;
+      const manifest = loadToolManifest(tool.path);
+      for (const f of manifest.image_input_fields ?? []) {
+        const provided = (s.input as Record<string, unknown> | undefined)?.[f.field];
+        const hasImage = Array.isArray(provided)
+          ? provided.length > 0
+          : !!(provided && ((provided as { dataUrl?: string; url?: string }).dataUrl || (provided as { url?: string }).url));
+        if (!hasImage) {
+          pendingUploads.push({
+            step_no: s.step_no, tool_id: s.actor_id, tool_name: tool.name,
+            field: f.field, multiple: !!f.multiple,
+            label: `步骤${s.step_no} · ${tool.name} 需要设计稿`,
+          });
+        }
+      }
+    }
+
     // 落库:决策状态 + 计划落盘 + context_manifest
     for (const s of decisionStates) {
       await checkpointStore.writeDecisionState({
@@ -170,12 +210,13 @@ export class Orchestrator {
       task,
       activatedNodes: activated.map((n) => n.key),
       plan,
+      pendingUploads,
       workspaceUri: ws.uri,
     };
   }
 
   // ---- 段3 + 段4:执行 → 交付(用户确认后)----
-  async executePhase(input: { taskId: string; conversationId: string }): Promise<{ reportArtifactId: string }> {
+  async executePhase(input: { taskId: string; conversationId: string; uploads?: Array<{ step_no: number; field: string; dataUrl: string }> }): Promise<{ reportArtifactId: string }> {
     const { llm, validator, checkpointStore, skillLoader, toolAdapter } = this.rt.deps;
     const ws = new RunWorkspace(input.taskId);
     const plan = ws.readPlan<{ steps: PlanStep[]; task_id: string }>();
@@ -210,7 +251,17 @@ export class Orchestrator {
           const tool = skillLoader.getTool(step.actor_id);
           if (!tool) throw new Error(`tool 非 active 或不存在: ${step.actor_id}`);
           const manifest = loadToolManifest(tool.path);
-          const res = await toolAdapter.invoke({ toolId: step.actor_id, input: { query: researchGoal || '直播 数字人 竞品' }, manifest });
+          // 入参:优先用计划里 LLM 生成的 step.input;缺省回落 {query}(兼容 o2/ai-spider 检索类)。
+          const toolInput: Record<string, unknown> = { ...(step.input ?? { query: researchGoal || '直播 数字人 竞品' }) };
+          // 回填用户在确认闸门上传的图:按 manifest.image_input_fields 注入(multiple 包成数组)。
+          const stepUploads = (input.uploads ?? []).filter((u) => u.step_no === step.step_no);
+          for (const f of manifest.image_input_fields ?? []) {
+            const up = stepUploads.find((u) => u.field === f.field);
+            if (up) toolInput[f.field] = f.multiple ? [{ dataUrl: up.dataUrl }] : { dataUrl: up.dataUrl };
+          }
+          // 调用前按该 tool 的 input.schema 校验:非法入参在计划质量层拦下,不打到工具。
+          validator.validateFileOrThrow(join(getConfigRoot(), manifest.input_schema), toolInput);
+          const res = await toolAdapter.invoke({ toolId: step.actor_id, input: toolInput, manifest });
           // tool 的 output schema 在 tool 目录下,按文件路径校验
           // output_schema 是相对项目根的路径(如 tools/xxx/output.schema.json)
           const outSchemaPath = join(getConfigRoot(), manifest.output_schema);
@@ -341,6 +392,7 @@ interface PlanStep {
   actor_type: 'skill' | 'tool' | 'llm' | 'reviewer';
   actor_id: string;
   purpose?: string;
+  input?: Record<string, unknown>;
   requires_approval?: boolean;
 }
 

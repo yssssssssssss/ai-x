@@ -46,10 +46,16 @@ export interface ResearchTask {
   assumptions: Assumption[]; confirmations: unknown[]; blocking_issues: unknown[];
   sensitivity: string; pii_detected: boolean;
 }
+export interface PendingUpload {
+  step_no: number; tool_id: string; tool_name: string;
+  field: string; multiple: boolean; label: string;
+}
+export interface Upload { step_no: number; field: string; dataUrl: string; }
 export interface PlanResponse {
   conversationId: string; taskId: string;
   task: ResearchTask; activatedNodes: string[];
   plan: { steps: PlanStep[]; activated_nodes: string[]; assumptions: Assumption[] };
+  pendingUploads: PendingUpload[];
 }
 export interface Finding { statement: string; source: string; source_ref?: string; }
 export interface Report {
@@ -79,8 +85,8 @@ export const api = {
 
   plan: (b: { originalInput: string; conversationId?: string }) =>
     req<PlanResponse>('/tasks/plan', { method: 'POST', body: b }),
-  execute: (taskId: string) =>
-    req<ExecuteResponse>(`/tasks/${taskId}/execute`, { method: 'POST' }),
+  execute: (taskId: string, uploads?: Upload[]) =>
+    req<ExecuteResponse>(`/tasks/${taskId}/execute`, { method: 'POST', body: uploads?.length ? { uploads } : {} }),
   listTasks: () => req<{ tasks: TaskSummary[] }>('/tasks'),
   taskDetail: (id: string) =>
     req<{ task: unknown; decisionStates: unknown[]; executionLog: ExecLogRow[]; report: Report | null }>(`/tasks/${id}`),

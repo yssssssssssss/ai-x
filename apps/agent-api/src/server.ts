@@ -8,7 +8,7 @@ import { tasksRouter } from './routes/tasks.ts';
 import { feedbackRouter } from './routes/feedback.ts';
 
 const app = express();
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '12mb' })); // execute 可携带设计稿 base64(图像工具 upload 上限 10MB + base64 膨胀)
 
 app.get('/api/healthz', (_req, res) => res.json({ ok: true }));
 app.use('/api/auth', authRouter);

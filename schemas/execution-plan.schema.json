@@ -53,6 +53,10 @@
           "minLength": 1
         },
         "purpose": { "type": "string", "description": "这一步做什么、为什么。" },
+        "input": {
+          "type": "object",
+          "description": "actor_type=tool 时传给该工具的入参,须符合该 tool 的 input.schema;缺省时执行器回落 {query}。其它 actor_type 忽略。"
+        },
         "requires_approval": {
           "type": "boolean",
           "description": "是否高风险需审批(need_approval)。默认 false。"

@@ -15,3 +15,6 @@ output_schema: tools/vision-brand-lab/output.schema.json
 redaction_policy:
   pii: mask
   sensitive_business_data: block
+image_input_fields:
+  - field: designImages
+    multiple: true

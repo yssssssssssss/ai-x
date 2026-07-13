@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, type User, type PlanResponse, type ExecuteResponse, type TaskSummary, ApiError } from '../api/client.ts';
+import { api, type User, type PlanResponse, type ExecuteResponse, type TaskSummary, type Upload, ApiError } from '../api/client.ts';
 import { Sidebar } from '../components/Sidebar.tsx';
 import { Composer } from '../components/Composer.tsx';
 import { Stage1Understand } from '../components/stages/Stage1Understand.tsx';
@@ -40,11 +40,11 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
     }
   }
 
-  async function confirmAndExecute() {
+  async function confirmAndExecute(uploads: Upload[] = []) {
     if (!plan) return;
     setPhase('executing'); setError('');
     try {
-      const r = await api.execute(plan.taskId);
+      const r = await api.execute(plan.taskId, uploads);
       setExec(r); setPhase('done'); refreshHistory();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : '执行失败'); setPhase('error');
@@ -89,7 +89,7 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
                 <Stage4Report report={exec.report} taskId={exec.taskId} />
               </>
             )}
-            {phase === 'error' && <ErrorCard msg={error} onRetry={plan ? confirmAndExecute : undefined} />}
+            {phase === 'error' && <ErrorCard msg={error} onRetry={plan ? () => confirmAndExecute() : undefined} />}
           </div>
         </div>
         <Composer disabled={phase === 'planning' || phase === 'executing'} onSubmit={submitInput} />

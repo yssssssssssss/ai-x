@@ -1,0 +1,16 @@
+id: design-experience-review
+name: 设计体验走查
+path: skills/design-review/SKILL.md
+when_to_use: 用户需要对设计稿/页面做美学、注意力、品牌视觉走查或体验评估时使用(需用户提供设计稿图像)
+owner: 体验设计组
+status: active
+task_types: [design_audit, user_research_planning]
+intent_tags: [design_review, aesthetic, attention, brand, visual]
+input_schema: skills/design-review/input.schema.json
+output_schema: skills/design-review/output.schema.json
+required_tools:
+  - aesthetic-quant-lab
+  - attention-analysis-lab
+  - vision-brand-lab
+cost_level: low
+risk_level: low

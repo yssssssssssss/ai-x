@@ -55,6 +55,7 @@ tasksRouter.post('/plan', async (req, res) => {
       task: result.task,
       activatedNodes: result.activatedNodes,
       plan: result.plan,
+      pendingUploads: result.pendingUploads,
     });
   } catch (err) {
     res.status(502).json({ error: `规划失败: ${err instanceof Error ? err.message : String(err)}` });
@@ -73,6 +74,7 @@ tasksRouter.post('/:id/execute', async (req, res) => {
     const { reportArtifactId } = await orch.executePhase({
       taskId: task.id,
       conversationId: task.conversation_id,
+      uploads: req.body?.uploads,   // [{ step_no, field, dataUrl }] — 确认闸门收的图,回填 step.input
     });
     res.json({
       taskId: task.id,

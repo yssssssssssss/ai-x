@@ -79,6 +79,8 @@ export interface ToolManifest {
   input_schema: string;
   output_schema: string;
   redaction_policy?: Record<string, string>;
+  // 声明该 tool 的图像入参字段,供编排在"确认计划"闸门向用户收图并回填 step.input。
+  image_input_fields?: Array<{ field: string; multiple?: boolean }>;
 }
 
 export interface SkillManifest {
@@ -119,6 +121,12 @@ export function loadToolManifest(relPath: string): ToolManifest {
 
 export function loadSkillManifest(relPath: string): SkillManifest {
   return loadYaml(join(root, relPath));
+}
+
+// 读某个 tool 的 input.schema(相对项目根路径,如 tools/xxx/input.schema.json)。
+// 规划阶段喂给 LLM,让它按 schema 为 tool 步生成 input 入参。
+export function loadToolInputSchema(inputSchemaRelPath: string): object {
+  return JSON.parse(readFileSync(join(root, inputSchemaRelPath), 'utf8')) as object;
 }
 
 // 版本追溯:文件内容 sha256,写入 execution_log 的 *_manifest_hashes / decision_graph_hash。
