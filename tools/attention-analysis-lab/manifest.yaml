@@ -17,3 +17,4 @@ redaction_policy:
   sensitive_business_data: block
 image_input_fields:
   - field: image
+    role: design

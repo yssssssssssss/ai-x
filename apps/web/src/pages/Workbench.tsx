@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, type User, type PlanResponse, type ExecuteResponse, type TaskSummary, type Upload, ApiError } from '../api/client.ts';
+import { api, type User, type PlanResponse, type ExecuteResponse, type TaskSummary, type TaskDetail, type PlanStep, type Upload, ApiError } from '../api/client.ts';
 import { Sidebar } from '../components/Sidebar.tsx';
 import { Composer } from '../components/Composer.tsx';
 import { Stage1Understand } from '../components/stages/Stage1Understand.tsx';
@@ -10,8 +10,8 @@ import { Labs } from './Labs.tsx';
 
 // 四段流的会话状态。一次任务从 plan → 确认 → execute。
 type Phase = 'idle' | 'planning' | 'planned' | 'executing' | 'done' | 'error';
-// 主视图:任务工作台 | 工具箱。
-type View = 'task' | 'labs';
+// 主视图:任务工作台 | 工具箱 | 历史任务详情。
+type View = 'task' | 'labs' | 'history';
 
 export function Workbench({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [view, setView] = useState<View>('task');
@@ -20,6 +20,8 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
   const [exec, setExec] = useState<ExecuteResponse | null>(null);
   const [error, setError] = useState('');
   const [history, setHistory] = useState<TaskSummary[]>([]);
+  const [detail, setDetail] = useState<TaskDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
 
   const refreshHistory = useCallback(() => {
     api.listTasks().then((r) => setHistory(r.tasks)).catch(() => {});
@@ -27,7 +29,18 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
   useEffect(refreshHistory, [refreshHistory]);
 
   function newTask() {
-    setView('task'); setPhase('idle'); setPlan(null); setExec(null); setError('');
+    setView('task'); setPhase('idle'); setPlan(null); setExec(null); setError(''); setDetail(null);
+  }
+
+  async function openTask(id: string) {
+    setView('history'); setDetail(null); setDetailLoading(true); setError('');
+    try {
+      setDetail(await api.taskDetail(id));
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : '打开历史任务失败');
+    } finally {
+      setDetailLoading(false);
+    }
   }
 
   async function submitInput(text: string) {
@@ -53,10 +66,20 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '264px 1fr', height: '100%' }}>
-      <Sidebar user={user} history={history} onNewTask={newTask} onOpenLabs={() => setView('labs')} onLogout={onLogout} />
+      <Sidebar user={user} history={history} onNewTask={newTask} onOpenLabs={() => setView('labs')} onOpenTask={openTask} onLogout={onLogout} />
       {view === 'labs' ? (
         <main style={{ height: '100%', overflow: 'hidden' }}>
           <Labs />
+        </main>
+      ) : view === 'history' ? (
+        <main style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+          <div style={{ flex: 1, overflowY: 'auto', padding: '24px 0' }}>
+            <div style={{ maxWidth: 860, margin: '0 auto', padding: '0 24px' }}>
+              {detailLoading && <Loading text="加载历史任务…" />}
+              {error && <ErrorCard msg={error} />}
+              {detail && <HistoryDetail detail={detail} />}
+            </div>
+          </div>
         </main>
       ) : (
       <main style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -96,6 +119,26 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
       </main>
       )}
     </div>
+  );
+}
+
+// 历史任务只读详情:复用 Stage1(理解) + Stage3(执行日志重建步骤) + Stage4(报告)。
+// 计划步骤未单独持久化,用 executionLog 重建(含 step_no/name/actor/status)。
+function HistoryDetail({ detail }: { detail: TaskDetail }) {
+  const steps = detail.executionLog.map((l) => ({
+    step_no: l.step_no, step_name: l.step_name,
+    actor_type: l.actor_type as PlanStep['actor_type'], actor_id: l.actor_id,
+  }));
+  const activatedNodes = detail.decisionStates.map((d) => d.node_key);
+  return (
+    <>
+      <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 12 }}>
+        历史任务 · {detail.task.status} · <span className="mono">{detail.task.id}</span>
+      </div>
+      <Stage1Understand task={detail.task.structured_task} activatedNodes={activatedNodes} />
+      {steps.length > 0 && <Stage3Execute steps={steps} log={detail.executionLog} />}
+      <Stage4Report report={detail.report} taskId={detail.task.id} />
+    </>
   );
 }
 

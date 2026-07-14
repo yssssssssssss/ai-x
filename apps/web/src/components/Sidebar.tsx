@@ -2,9 +2,9 @@ import type { User, TaskSummary } from '../api/client.ts';
 
 // 左侧栏:新建任务 + 历史任务 + 工具箱入口 + 用户/登出。
 export function Sidebar({
-  user, history, onNewTask, onOpenLabs, onLogout,
+  user, history, onNewTask, onOpenLabs, onOpenTask, onLogout,
 }: {
-  user: User; history: TaskSummary[]; onNewTask: () => void; onOpenLabs: () => void; onLogout: () => void;
+  user: User; history: TaskSummary[]; onNewTask: () => void; onOpenLabs: () => void; onOpenTask: (id: string) => void; onLogout: () => void;
 }) {
   return (
     <aside style={{ background: 'var(--bg-elev)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -16,7 +16,14 @@ export function Sidebar({
         <SectionLabel>历史任务</SectionLabel>
         {history.length === 0 && <Empty>暂无历史</Empty>}
         {history.map((t) => (
-          <div key={t.id} style={{ padding: '8px 10px', borderRadius: 8, marginBottom: 4, fontSize: 13, color: 'var(--text-dim)', cursor: 'default' }} title={t.original_input}>
+          <div
+            key={t.id}
+            onClick={() => onOpenTask(t.id)}
+            style={{ padding: '8px 10px', borderRadius: 8, marginBottom: 4, fontSize: 13, color: 'var(--text-dim)', cursor: 'pointer' }}
+            title={t.original_input}
+            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg)')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+          >
             <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.original_input}</div>
             <span className="mono" style={{ fontSize: 10, color: 'var(--text-faint)' }}>{t.task_type ?? '-'} · {t.status}</span>
           </div>

@@ -27,12 +27,10 @@ export interface ResearchTaskData {
 }
 
 export interface PendingUpload {
-  step_no: number;
-  tool_id: string;
-  tool_name: string;
-  field: string;
-  multiple: boolean;
+  role: string;                 // 图像角色(如 design=主设计稿);同 role 只需上传一次
   label: string;
+  multiple: boolean;            // 该 role 是否有 multiple 字段(展示提示用)
+  targets: Array<{ step_no: number; tool_id: string; field: string; multiple: boolean }>;
 }
 
 export interface PlanResult {
@@ -151,8 +149,14 @@ export class Orchestrator {
       );
     }
 
-    // 扫描 tool 步的图像入参:manifest 声明 image_input_fields 且 step.input 未提供图 → 待用户在确认闸门上传。
-    const pendingUploads: PendingUpload[] = [];
+    // 扫描 tool 步图像入参:按 role 聚合(同 role 只需上传一次),step.input 缺图才收集。
+    // hasRealImage:数组须有真图元素([{}] 视为无图),对象须有 dataUrl/url。
+    const hasRealImage = (v: unknown): boolean => {
+      const one = (e: unknown) => !!(e && typeof e === 'object' && ((e as { dataUrl?: string }).dataUrl || (e as { url?: string }).url));
+      return Array.isArray(v) ? v.some(one) : one(v);
+    };
+    const roleLabels: Record<string, string> = { design: '设计稿', brand_reference: '品牌参考图' };
+    const byRole = new Map<string, PendingUpload>();
     for (const s of planSteps) {
       if (s.actor_type !== 'tool') continue;
       const tool = skillLoader.getTool(s.actor_id);
@@ -160,18 +164,15 @@ export class Orchestrator {
       const manifest = loadToolManifest(tool.path);
       for (const f of manifest.image_input_fields ?? []) {
         const provided = (s.input as Record<string, unknown> | undefined)?.[f.field];
-        const hasImage = Array.isArray(provided)
-          ? provided.length > 0
-          : !!(provided && ((provided as { dataUrl?: string; url?: string }).dataUrl || (provided as { url?: string }).url));
-        if (!hasImage) {
-          pendingUploads.push({
-            step_no: s.step_no, tool_id: s.actor_id, tool_name: tool.name,
-            field: f.field, multiple: !!f.multiple,
-            label: `步骤${s.step_no} · ${tool.name} 需要设计稿`,
-          });
-        }
+        if (hasRealImage(provided)) continue;
+        const role = f.role ?? f.field;
+        if (!byRole.has(role)) byRole.set(role, { role, label: roleLabels[role] ?? role, multiple: false, targets: [] });
+        const pu = byRole.get(role)!;
+        pu.targets.push({ step_no: s.step_no, tool_id: s.actor_id, field: f.field, multiple: !!f.multiple });
+        if (f.multiple) pu.multiple = true;
       }
     }
+    const pendingUploads: PendingUpload[] = [...byRole.values()];
 
     // 落库:决策状态 + 计划落盘 + context_manifest
     for (const s of decisionStates) {
@@ -216,7 +217,7 @@ export class Orchestrator {
   }
 
   // ---- 段3 + 段4:执行 → 交付(用户确认后)----
-  async executePhase(input: { taskId: string; conversationId: string; uploads?: Array<{ step_no: number; field: string; dataUrl: string }> }): Promise<{ reportArtifactId: string }> {
+  async executePhase(input: { taskId: string; conversationId: string; uploads?: Array<{ role: string; dataUrl: string }> }): Promise<{ reportArtifactId: string }> {
     const { llm, validator, checkpointStore, skillLoader, toolAdapter } = this.rt.deps;
     const ws = new RunWorkspace(input.taskId);
     const plan = ws.readPlan<{ steps: PlanStep[]; task_id: string }>();
@@ -253,11 +254,22 @@ export class Orchestrator {
           const manifest = loadToolManifest(tool.path);
           // 入参:优先用计划里 LLM 生成的 step.input;缺省回落 {query}(兼容 o2/ai-spider 检索类)。
           const toolInput: Record<string, unknown> = { ...(step.input ?? { query: researchGoal || '直播 数字人 竞品' }) };
-          // 回填用户在确认闸门上传的图:按 manifest.image_input_fields 注入(multiple 包成数组)。
-          const stepUploads = (input.uploads ?? []).filter((u) => u.step_no === step.step_no);
+          // 回填用户在确认闸门上传的图:按字段 role 匹配上传项(同 role 一次上传回填到所有步骤)。
           for (const f of manifest.image_input_fields ?? []) {
-            const up = stepUploads.find((u) => u.field === f.field);
+            const up = (input.uploads ?? []).find((u) => u.role === (f.role ?? f.field));
             if (up) toolInput[f.field] = f.multiple ? [{ dataUrl: up.dataUrl }] : { dataUrl: up.dataUrl };
+          }
+          // 清理 LLM 生成的空占位:顶层空对象(如 foregroundImage:{})与数组内空对象(如 designImages:[{}])都剔除,
+          // 避免图像工具把空占位当图解码而 500;清理后无图字段缺省,工具按无图优雅降级。
+          for (const k of Object.keys(toolInput)) {
+            const v = toolInput[k];
+            if (Array.isArray(v)) {
+              const filtered = v.filter((e) => !(e && typeof e === 'object' && !Array.isArray(e) && Object.keys(e).length === 0));
+              if (filtered.length === 0) delete toolInput[k];
+              else toolInput[k] = filtered;
+            } else if (v && typeof v === 'object' && Object.keys(v).length === 0) {
+              delete toolInput[k];
+            }
           }
           // 调用前按该 tool 的 input.schema 校验:非法入参在计划质量层拦下,不打到工具。
           validator.validateFileOrThrow(join(getConfigRoot(), manifest.input_schema), toolInput);

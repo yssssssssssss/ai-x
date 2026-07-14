@@ -80,7 +80,8 @@ export interface ToolManifest {
   output_schema: string;
   redaction_policy?: Record<string, string>;
   // 声明该 tool 的图像入参字段,供编排在"确认计划"闸门向用户收图并回填 step.input。
-  image_input_fields?: Array<{ field: string; multiple?: boolean }>;
+  // role:同一 role 的字段共享一次上传(如 design=主设计稿),用户传一次回填到所有步骤。
+  image_input_fields?: Array<{ field: string; multiple?: boolean; role?: string }>;
 }
 
 export interface SkillManifest {

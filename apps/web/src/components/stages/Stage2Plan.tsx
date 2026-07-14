@@ -11,7 +11,7 @@ export function Stage2Plan({
 }) {
   const [assumptions, setAssumptions] = useState(plan.task.assumptions);
   const [confirmed, setConfirmed] = useState(false);
-  const [images, setImages] = useState<Record<string, string>>({}); // `${step_no}:${field}` → dataUrl
+  const [images, setImages] = useState<Record<string, string>>({}); // role → dataUrl
 
   function edit(key: string, value: string) {
     setAssumptions((prev) => prev.map((a) => (a.key === key ? { ...a, value } : a)));
@@ -19,13 +19,13 @@ export function Stage2Plan({
 
   function pickImage(pu: PendingUpload, file: File) {
     const reader = new FileReader();
-    reader.onload = () => setImages((prev) => ({ ...prev, [`${pu.step_no}:${pu.field}`]: String(reader.result) }));
+    reader.onload = () => setImages((prev) => ({ ...prev, [pu.role]: String(reader.result) }));
     reader.readAsDataURL(file);
   }
 
   function confirm() {
     const uploads: Upload[] = pending
-      .map((pu) => ({ step_no: pu.step_no, field: pu.field, dataUrl: images[`${pu.step_no}:${pu.field}`] }))
+      .map((pu) => ({ role: pu.role, dataUrl: images[pu.role] }))
       .filter((u): u is Upload => !!u.dataUrl);
     setConfirmed(true);
     onConfirm(uploads);
@@ -61,24 +61,24 @@ export function Stage2Plan({
 
       {pending.length > 0 && !locked && (
         <div style={{ marginTop: 16 }}>
-          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待上传设计稿(部分工具需要图像;不传将跳过该项)</div>
-          {pending.map((pu) => {
-            const key = `${pu.step_no}:${pu.field}`;
-            return (
-              <div key={key} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6, fontSize: 13 }}>
-                <span style={{ color: 'var(--text-dim)', flex: 1 }}>{pu.label}</span>
-                {images[key] ? (
-                  <img src={images[key]} alt="" style={{ height: 34, borderRadius: 4, border: '1px solid var(--border)' }} />
-                ) : null}
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => { const f = e.target.files?.[0]; if (f) pickImage(pu, f); }}
-                  style={{ fontSize: 12, color: 'var(--text-dim)' }}
-                />
-              </div>
-            );
-          })}
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待上传图片(同一张图会自动用于所有需要它的步骤;不传将跳过该项)</div>
+          {pending.map((pu) => (
+            <div key={pu.role} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6, fontSize: 13 }}>
+              <span style={{ color: 'var(--text-dim)', flex: 1 }}>
+                {pu.label}
+                <span style={{ color: 'var(--text-faint)', fontSize: 11 }}> · 用于步骤 {pu.targets.map((t) => t.step_no).join('/')}</span>
+              </span>
+              {images[pu.role] ? (
+                <img src={images[pu.role]} alt="" style={{ height: 34, borderRadius: 4, border: '1px solid var(--border)' }} />
+              ) : null}
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) pickImage(pu, f); }}
+                style={{ fontSize: 12, color: 'var(--text-dim)' }}
+              />
+            </div>
+          ))}
         </div>
       )}
 

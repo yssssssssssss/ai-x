@@ -47,10 +47,10 @@ export interface ResearchTask {
   sensitivity: string; pii_detected: boolean;
 }
 export interface PendingUpload {
-  step_no: number; tool_id: string; tool_name: string;
-  field: string; multiple: boolean; label: string;
+  role: string; label: string; multiple: boolean;
+  targets: Array<{ step_no: number; tool_id: string; field: string; multiple: boolean }>;
 }
-export interface Upload { step_no: number; field: string; dataUrl: string; }
+export interface Upload { role: string; dataUrl: string; }
 export interface PlanResponse {
   conversationId: string; taskId: string;
   task: ResearchTask; activatedNodes: string[];
@@ -71,6 +71,12 @@ export interface ExecLogRow {
 export interface ExecuteResponse {
   taskId: string; reportArtifactId: string; executionLog: ExecLogRow[]; report: Report | null;
 }
+export interface TaskDetail {
+  task: { id: string; original_input: string; task_type: string | null; structured_task: ResearchTask; status: string };
+  decisionStates: Array<{ node_key: string }>;
+  executionLog: ExecLogRow[];
+  report: Report | null;
+}
 export interface TaskSummary {
   id: string; original_input: string; task_type: string | null; status: string; created_at?: string;
 }
@@ -89,7 +95,7 @@ export const api = {
     req<ExecuteResponse>(`/tasks/${taskId}/execute`, { method: 'POST', body: uploads?.length ? { uploads } : {} }),
   listTasks: () => req<{ tasks: TaskSummary[] }>('/tasks'),
   taskDetail: (id: string) =>
-    req<{ task: unknown; decisionStates: unknown[]; executionLog: ExecLogRow[]; report: Report | null }>(`/tasks/${id}`),
+    req<TaskDetail>(`/tasks/${id}`),
   feedback: (id: string, b: { rating?: number; adopted?: boolean; comment?: string }) =>
     req<{ id: string }>(`/tasks/${id}/feedback`, { method: 'POST', body: b }),
 };
