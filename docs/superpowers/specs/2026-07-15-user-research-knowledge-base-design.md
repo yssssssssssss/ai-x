@@ -152,8 +152,8 @@ updated_at: 2026-07-15
 | id | type + 文件名,冲突报错 |
 | content_hash | 正文(去 frontmatter)sha256 |
 | title | 正文首个 `#` |
-| tags/guide_stage | LLM 生成后**归一到 taxonomy.yaml**,越界项人工修正 |
-| task_types/inputs/outputs(skills) | LLM 从 SKILL.md 正文抽取 + 人工校对 |
+| tags/guide_stage | 规则种子(路径+标题关键词映射)优先 → 归一到 taxonomy.yaml;LLM 增强可选,不阻塞首次导入 |
+| task_types/inputs/outputs(skills) | 规则种子 + 可选 LLM 从正文抽取 + 人工校对 |
 | status | 默认 approved |
 
 ## 7. 萃取流水线(normalizer)
@@ -182,6 +182,8 @@ updated_at: 2026-07-15
 - registry 从此**只读派生**,不手写(消除现有手写 registry 与 SKILL.md 不同步的隐患)。
 - `resolve_skill(name)` 定位 SKILL.md 文件夹,交 agent 现有三层渐进加载执行(SKILL.md→references→scripts)。
 - generate-* 类是主力:需求收敛后产出调研方案与子产物。
+
+**registry 派生的契约调整(计划阶段确认):** 现有 `config-loader.ts` 的 `SkillRegistryEntry` 把 `input_schema`/`output_schema` 列为必填 string,而 KB skill 是 markdown 过程式(references/skeleton),无 JSON schema。故**放宽契约**:这两字段转可选、新增 `entry`(SKILL.md 文件夹路径),`registry-linter` 对 KB 来源 skill 不强制 JSON schema。indexer 派生映射:`id`←name、`path`/`entry`←SKILL.md 路径、`when_to_use`←description、`owner`←默认"用研团队"、`risk_level`←默认 low、`task_types/inputs/outputs`←萃取补齐。现有 2 条手写 registry 被派生结果取代,消除现存不一致。
 
 **两条触发路径,同一出口:** skill 既可被编排器路由激活,也可被用户直呼,二者**最终都落到 `resolve_skill(name)` → 加载执行**,不是两套系统。
 
@@ -231,7 +233,8 @@ pgvector 语义检索触发条件(满足其一):知识条目 > 200 且结构化+
 2. **镜像 wiki 目录**并入 knowledge-base。
 3. **registry 改为 indexer 派生**。
 4. **新增 taxonomy.yaml 受控词表**,tags/guide_stage 强约束并对齐 decision-graph.related_tags。
-5. **skills 补 task_types/inputs/outputs**(靠 LLM 抽取 + 人工校对)。
+5. **skills 补 task_types/inputs/outputs**(规则种子 + 可选 LLM + 人工校对)。
+6. **放宽 loader 契约**:`SkillRegistryEntry.input_schema/output_schema` 转可选、加 `entry`,linter 对 KB skill 不强制 JSON schema(改 config-loader.ts + registry-linter.ts)。
 
 ## 15. 验收标准
 
