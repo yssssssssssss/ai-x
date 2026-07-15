@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { lintRegistries } from '../harness/linters/registry-linter.ts';
-import { setConfigRoot, getConfigRoot } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import { setConfigRoot, getConfigRoot, type SkillRegistryEntry } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 
 // P0-03 验收:registry-linter 能拦截 缺字段 / 高风险无 approver / decision 缺 tier。
 // 每个用例在临时 fixture 根构造配置,setConfigRoot 指过去。
@@ -88,4 +88,21 @@ test('decision node 缺 tier 被拒', () => {
   const issues = lintRegistries();
   rmSync(dir, { recursive: true, force: true });
   assert.ok(issues.some((i) => i.message.includes('tier')), '应报缺 tier');
+});
+
+test('KB skill(无 JSON schema)满足 active 契约类型', () => {
+  const kbSkill: SkillRegistryEntry = {
+    id: 'generate-research-plan',
+    name: 'generate-research-plan',
+    path: 'knowledge-base/skills/generate-research-plan',
+    entry: 'knowledge-base/skills/generate-research-plan/SKILL.md',
+    when_to_use: '生成完整调研方案',
+    owner: '用研团队',
+    risk_level: 'low',
+    task_types: ['user_research_planning'],
+    status: 'active',
+  };
+  // 无 input_schema/output_schema 也应类型合法(可选)
+  assert.equal(kbSkill.input_schema, undefined);
+  assert.equal(kbSkill.status, 'active');
 });

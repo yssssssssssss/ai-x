@@ -22,7 +22,7 @@ export interface LintIssue {
 }
 
 const SKILL_ACTIVE_REQUIRED: (keyof SkillRegistryEntry)[] = [
-  'id', 'name', 'path', 'when_to_use', 'owner', 'input_schema', 'output_schema', 'risk_level',
+  'id', 'name', 'path', 'when_to_use', 'owner', 'risk_level',
 ];
 const TOOL_ACTIVE_REQUIRED: (keyof ToolRegistryEntry)[] = [
   'id', 'name', 'path', 'adapter_type', 'auth_required', 'risk_level',
@@ -41,8 +41,9 @@ function lintSkills(issues: LintIssue[]): void {
         issues.push({ level: 'error', target: tgt, message: `active skill 缺必填字段 "${String(f)}"` });
       }
     }
-    if (s.path && !fileExists(s.path)) {
-      issues.push({ level: 'error', target: tgt, message: `path 不存在: ${s.path}` });
+    const skillPath = s.path ?? s.entry;
+    if (skillPath && !fileExists(skillPath)) {
+      issues.push({ level: 'error', target: tgt, message: `path/entry 不存在: ${skillPath}` });
     }
     if (s.input_schema && !fileExists(s.input_schema)) {
       issues.push({ level: 'error', target: tgt, message: `input_schema 不存在: ${s.input_schema}` });
