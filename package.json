@@ -10,6 +10,7 @@
   "scripts": {
     "db:migrate": "tsx database/run-migrations.ts",
     "lint:registry": "tsx harness/linters/registry-linter.ts",
+    "lint:knowledge": "tsx harness/linters/knowledge-linter.ts",
     "spike:plan": "tsx apps/orchestrator-runtime/src/spike-plan.ts",
     "spike:execute": "tsx apps/orchestrator-runtime/src/spike-execute.ts",
     "api:dev": "tsx watch apps/agent-api/src/server.ts",
