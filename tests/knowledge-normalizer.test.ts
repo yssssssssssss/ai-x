@@ -24,6 +24,12 @@ test('scenarios 从二级目录推断 domain', () => {
   );
 });
 
+test('无 H1 标题时 title 落为文件名 stem(不是正文)', () => {
+  const { md } = normalizeEntry('models/jtbd.md', '这是一段没有 H1 标题的正文内容, 不应被当作 title。');
+  const { frontmatter } = parseFrontmatter(md);
+  assert.equal(frontmatter.title, 'jtbd', 'title 兜底为文件名 stem');
+});
+
 test('normalizeEntry 补机械 frontmatter(无 frontmatter 兜底)', () => {
   const { md } = normalizeEntry('models/jtbd.md', '# JTBD (Jobs To Be Done)\n\n核心概念…');
   const { frontmatter } = parseFrontmatter(md);

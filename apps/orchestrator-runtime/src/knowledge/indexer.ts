@@ -5,7 +5,7 @@ export interface KnowledgeIndexItem {
   id: string;
   type: string;
   title: string;
-  domain: string;
+  domain: string[];
   tags: string[];           // wiki 原生自由中文标签(关键词检索)
   guide_tags: string[];     // 受控引导标签(decision-graph 召回)
   research_type?: string[]; // wiki 原生, 可选
@@ -44,11 +44,16 @@ export function buildIndex(entries: Array<{ relPath: string; md: string }>): {
         status: toRegistryStatus(fm.status),
       });
     } else if (fm.id && fm.type !== 'asset') {
+      const domain = Array.isArray(fm.domain)
+        ? fm.domain.map(String)
+        : fm.domain != null
+          ? [String(fm.domain)]
+          : [];
       knowledge.push({
         id: fm.id as string,
         type: fm.type as string,
         title: (fm.title as string) ?? '',
-        domain: (fm.domain as string) ?? 'general',
+        domain,
         tags: (fm.tags as string[]) ?? [],
         guide_tags: (fm.guide_tags as string[]) ?? [],
         research_type: fm.research_type as string[] | undefined,

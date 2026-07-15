@@ -33,9 +33,9 @@ function fileStem(relPath: string): string {
   return file.replace(/\.md$/i, '');
 }
 
-function firstHeading(content: string): string {
+function firstHeading(content: string, relPath: string): string {
   const m = content.match(/^#\s+(.+)$/m);
-  return m ? m[1].trim() : fileStem(content);
+  return m ? m[1].trim() : fileStem(relPath);
 }
 
 // 补机械 frontmatter + 受控 guide_tags/guide_stage 种子。
@@ -46,7 +46,7 @@ export function normalizeEntry(relPath: string, rawMd: string): { md: string; ch
 
   const { frontmatter: existing, content } = parseFrontmatter(rawMd);
   const hash = contentHash(content);
-  const title = firstHeading(content);
+  const title = firstHeading(content, relPath);
   // skill 的身份是其所在文件夹(SKILL.md 恒为同名), 用文件夹名而非文件名 stem, 否则所有 skill id 都塌成 skill_SKILL
   const stem = td.type === 'skill' ? (relPath.split('/').slice(-2)[0] ?? fileStem(relPath)) : fileStem(relPath);
   const id = `${td.type.replace(/-/g, '_')}_${stem.replace(/-/g, '_')}`;

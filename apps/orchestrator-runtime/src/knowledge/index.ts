@@ -17,7 +17,7 @@ export interface SearchOpts {
 // 纯函数:可注入数据测试,不碰磁盘。
 export function filterKnowledge(items: KnowledgeIndexItem[], opts: SearchOpts): KnowledgeIndexItem[] {
   let out = items.filter((i) => i.status !== 'deprecated');
-  if (opts.domain) out = out.filter((i) => i.domain === opts.domain);
+  if (opts.domain) out = out.filter((i) => i.domain.includes(opts.domain!));
   // 结构化过滤走受控 guide_tags(对齐 decision-graph related_tags)
   if (opts.guide_tags?.length) out = out.filter((i) => i.guide_tags.some((t) => opts.guide_tags!.includes(t)));
   if (opts.guide_stage?.length) out = out.filter((i) => i.guide_stage.some((s) => opts.guide_stage!.includes(s)));

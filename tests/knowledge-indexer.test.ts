@@ -30,6 +30,7 @@ test('知识条目进 knowledge 索引,skill 进 skills,asset 被排除', () => 
   ]);
   assert.equal(knowledge.length, 1, 'asset 不进 knowledge 索引');
   assert.equal(knowledge[0].id, 'model_jtbd');
+  assert.deepEqual(knowledge[0].domain, ['general'], 'domain 规整为 string[]');
   assert.deepEqual(knowledge[0].guide_stage, ['need-discovery']);
   assert.deepEqual(knowledge[0].guide_tags, ['framework'], '受控 guide_tags 入索引');
   assert.deepEqual(knowledge[0].tags, ['需求框架', '用户目标'], 'wiki 原生 tags 保留');
