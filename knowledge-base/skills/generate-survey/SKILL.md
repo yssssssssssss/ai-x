@@ -1,21 +1,4 @@
 ---
-id: skill_generate_survey
-type: skill
-title: Generate Survey — 研究目标 → 合规问卷草稿（编排 wiki 正典）
-domain: general
-tags:
-  - quantitative
-  - method
-  - research_goal
-  - privacy
-  - compliance
-guide_stage: []
-summary: ""
-source: xingyun_wiki
-source_path: skills/generate-survey/SKILL.md
-content_hash: sha256:3992ac0225c2f9107a20cfb8f39606b2892b4d570fba13f6b62f0da5727333a5
-status: approved
-updated_at: 2026-07-15
 name: generate-survey
 description: 吃一个研究 brief（研究目标 + 目标人群 + 要测维度 + 约束如题量/渠道）→
   实时调用用研知识库（research-wiki）里的问卷设计规范、标准化体验量表与问卷方法 → 产出一份合规的问卷草稿（封面信 / 指导语 /
@@ -23,10 +6,25 @@ description: 吃一个研究 brief（研究目标 + 目标人群 + 要测维度 
   / 出一份满意度或 NPS 问卷 / 设计量表题 / 把研究目标变成问卷」时，主动使用本
   skill——哪怕用户只给一句研究目标、没点名「问卷」二字，只要意图是把一个（偏定量、可统计的）测量目标转成可投放的结构化题目清单，就应触发。偏定性深挖、要的是开放追问的访谈，则用
   generate-interview-guide。
+id: skill_generate_survey
+source: xingyun_wiki
+source_path: skills/generate-survey/SKILL.md
+content_hash: sha256:3992ac0225c2f9107a20cfb8f39606b2892b4d570fba13f6b62f0da5727333a5
+guide_tags:
+  - quantitative
+  - method
+  - research_goal
+  - privacy
+  - compliance
+guide_stage: []
+type: skill
+domain: general
+title: Generate Survey — 研究目标 → 合规问卷草稿（编排 wiki 正典）
 task_types:
   - user_research_planning
 inputs: []
 outputs: []
+status: approved
 ---
 
 # Generate Survey — 研究目标 → 合规问卷草稿（编排 wiki 正典）

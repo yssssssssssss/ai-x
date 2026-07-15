@@ -1,19 +1,35 @@
 ---
-id: toolbox_analysis_rfm
-type: analysis
 title: RFM 模型用户分群
+type: analysis
 domain:
   - 通用
+research_type:
+  - 定量
+  - 度量
+  - 评估
 tags:
-  - framework
-guide_stage:
-  - method-selection
-summary: ""
+  - RFM
+  - 用户分群
+  - 用户分层
+  - 客户价值
+  - Recency
+  - Frequency
+  - Monetary
+  - 八大群体
+status: draft
+sensitivity: internal
+owner: 李笑欣
+updated: 2026-06-25
+related:
+  - models/user-personas-segmentation.md
+id: toolbox_analysis_rfm
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/rfm.md
 content_hash: sha256:03fcfa6c9462754e74b0b4b59e4f08e3e50400429c44a9a8afbbbf50d95ce508
-status: draft
-updated_at: 2026-07-15
+guide_tags:
+  - framework
+guide_stage:
+  - method-selection
 ---
 
 # RFM 模型用户分群

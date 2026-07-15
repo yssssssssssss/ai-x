@@ -1,19 +1,34 @@
 ---
-id: model_nielsen_heuristics
-type: model
 title: 尼尔森十大可用性启发式（Nielsen's 10 Usability Heuristics）
+type: model
 domain:
   - 通用
+research_type:
+  - 评估
 tags:
-  - ux-audit
-guide_stage:
-  - need-discovery
-summary: ""
+  - 启发式
+  - 可用性
+  - 体验设计原则
+  - 专家评审
+  - 启发式评估
+  - 走查
+  - 尼尔森
+status: draft
+sensitivity: internal
+owner: null
+updated: 2026-06-30
+related:
+  - methods/toolbox/collection/heuristic-evaluation.md
+  - methods/toolbox/collection/usability-testing.md
+  - methods/toolbox/analysis/issue-prioritization.md
+id: model_nielsen_heuristics
 source: xingyun_wiki
 source_path: models/nielsen-heuristics.md
 content_hash: sha256:f40e931422cc6073e150c62410af75ec790bef3bbb66dfca4435e5b2e8b650fc
-status: draft
-updated_at: 2026-07-15
+guide_tags:
+  - ux-audit
+guide_stage:
+  - need-discovery
 ---
 
 # 尼尔森十大可用性启发式（Nielsen's 10 Usability Heuristics）

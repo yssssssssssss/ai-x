@@ -8,7 +8,8 @@ const GOOD = [
   'type: model',
   'title: JTBD',
   'domain: general',
-  'tags: [persona]',
+  'tags: [用户画像, 需求框架]',           // wiki 原生自由中文 tags(不校验)
+  'guide_tags: [persona]',                 // 受控引导标签(校验)
   'guide_stage: [need-discovery]',
   'source: xingyun_wiki',
   'source_path: models/jtbd.md',
@@ -29,12 +30,19 @@ test('合法条目无 issue', async () => {
   assert.deepEqual(issues, []);
 });
 
-test('越界 tag 报错', async () => {
+test('wiki 自由中文 tags 不报越界', async () => {
   const { contentHash } = await import('../apps/orchestrator-runtime/src/knowledge/normalizer.ts');
-  const md = GOOD.replace('tags: [persona]', 'tags: [not_a_real_tag]')
+  const md = GOOD.replace('PLACEHOLDER', contentHash('# JTBD\n\n正文'));
+  const issues = lintEntry('models/jtbd.md', md, new Set());
+  assert.ok(!issues.some((i) => i.message.includes('tag')), 'wiki 中文 tags 不应报越界');
+});
+
+test('越界 guide_tag 报错', async () => {
+  const { contentHash } = await import('../apps/orchestrator-runtime/src/knowledge/normalizer.ts');
+  const md = GOOD.replace('guide_tags: [persona]', 'guide_tags: [not_a_real_tag]')
                  .replace('PLACEHOLDER', contentHash('# JTBD\n\n正文'));
   const issues = lintEntry('models/jtbd.md', md, new Set());
-  assert.ok(issues.some((i) => i.message.includes('tag')), '应报越界 tag');
+  assert.ok(issues.some((i) => i.message.includes('guide_tag')), '应报越界 guide_tag');
 });
 
 test('id 重复报错', async () => {
@@ -47,7 +55,7 @@ test('id 重复报错', async () => {
 
 test('缺必填字段报错', async () => {
   const { contentHash } = await import('../apps/orchestrator-runtime/src/knowledge/normalizer.ts');
-  const md = GOOD.replace('status: approved\n', '')
+  const md = GOOD.replace('title: JTBD\n', '')
                  .replace('PLACEHOLDER', contentHash('# JTBD\n\n正文'));
   const issues = lintEntry('models/jtbd.md', md, new Set());
   assert.ok(issues.some((i) => i.message.includes('必填')), '应报缺必填字段');

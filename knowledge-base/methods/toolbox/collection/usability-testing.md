@@ -1,19 +1,35 @@
 ---
-id: toolbox_collection_usability_testing
-type: method
 title: 可用性测试
+type: method
 domain:
   - 通用
+research_type:
+  - 定性
+  - 评估
+method_family:
+  - 可用性测试
 tags:
-  - ux-audit
-guide_stage:
-  - method-selection
-summary: ""
+  - 可用性测试
+  - 设计验证
+  - 任务设计
+  - 出声思考
+  - B端
+status: draft
+sensitivity: internal
+owner: 郭振男
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/eye-tracking.md
+  - methods/toolbox/collection/interviews.md
+  - methods/scenarios/product-experience/iteration/iteration-evaluation-diagnosis.md
+id: toolbox_collection_usability_testing
 source: xingyun_wiki
 source_path: methods/toolbox/collection/usability-testing.md
 content_hash: sha256:a8fc840976f0ab1cf7e3b9ad78dc930f729804a5905abdde5d4f0a7f2232678b
-status: draft
-updated_at: 2026-07-15
+guide_tags:
+  - ux-audit
+guide_stage:
+  - method-selection
 ---
 
 # 可用性测试

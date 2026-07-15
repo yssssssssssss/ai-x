@@ -1,18 +1,30 @@
 ---
-id: toolbox_analysis_psm_price_sensitivity
-type: analysis
 title: PSM 价格敏感度测试
+type: analysis
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定量
+tags:
+  - PSM
+  - 价格敏感度
+  - 定价
+  - 价格测试
+  - Van Westendorp
+status: draft
+sensitivity: internal
+owner: 翁鸿诚
+updated: 2026-06-24
+related:
+  - methods/toolbox/analysis/conjoint-analysis.md
+  - methods/toolbox/collection/satisfaction-survey.md
+id: toolbox_analysis_psm_price_sensitivity
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/psm-price-sensitivity.md
 content_hash: sha256:3b94b57842f53eba49eea83b9dd784538fe855c9154235afe22c2ed89a0aa7dc
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # PSM 价格敏感度测试

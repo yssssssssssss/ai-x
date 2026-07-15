@@ -1,22 +1,41 @@
 ---
-id: standard_sampling
-type: standard
 title: 抽样与样本量规范
+type: standard
 domain:
   - 通用
+research_type:
+  - 定性
+  - 定量
 tags:
+  - 抽样
+  - 样本量
+  - 饱和
+  - 代码饱和
+  - 意义饱和
+  - 理论抽样
+  - 定性样本量
+  - 定量样本量
+  - 招募
+status: draft
+sensitivity: internal
+owner: null
+updated: 2026-06-25
+related:
+  - methods/toolbox/collection/interviews.md
+  - methods/toolbox/collection/participant-recruitment.md
+  - methods/standards/questionnaire-design.md
+  - methods/toolbox/collection/satisfaction-survey.md
+id: standard_sampling
+source: xingyun_wiki
+source_path: methods/standards/sampling.md
+content_hash: sha256:f3fbb6dbb97722f0f3870fc4f921b742e9d8d578d541705e7571945456cdee5e
+guide_tags:
   - audience
   - method
   - privacy
   - compliance
 guide_stage:
   - output-standard
-summary: ""
-source: xingyun_wiki
-source_path: methods/standards/sampling.md
-content_hash: sha256:f3fbb6dbb97722f0f3870fc4f921b742e9d8d578d541705e7571945456cdee5e
-status: draft
-updated_at: 2026-07-15
 ---
 
 # 抽样与样本量规范

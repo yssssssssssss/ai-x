@@ -1,19 +1,29 @@
 ---
-id: model_golden_circle
-type: model
 title: 黄金圈模型（Golden Circle）
+type: model
 domain:
   - 通用
+research_type: []
 tags:
-  - framework
-guide_stage:
-  - need-discovery
-summary: ""
+  - 黄金圈
+  - WHY-HOW-WHAT
+  - 品牌建设
+  - Sinek
+status: draft
+sensitivity: internal
+owner: 乔露
+updated: 2026-06-24
+related:
+  - models/user-insight.md
+  - methods/toolbox/analysis/competitive-analysis.md
+id: model_golden_circle
 source: xingyun_wiki
 source_path: models/golden-circle.md
 content_hash: sha256:ff12096735fc8785b1248036d77b975ef8e86207d44b72cc9c735b882b2ba1e8
-status: draft
-updated_at: 2026-07-15
+guide_tags:
+  - framework
+guide_stage:
+  - need-discovery
 ---
 
 # 黄金圈模型（Golden Circle）

@@ -1,21 +1,33 @@
 ---
-id: model_g7_brand_segmentation
-type: model
 title: G7 品牌人群细分模型
+type: model
 domain:
   - 通用
+research_type:
+  - 定量
 tags:
+  - G7
+  - 品牌人群细分
+  - 品牌态度
+  - A值
+  - 人群细分
+status: draft
+sensitivity: internal
+owner: 翁鸿诚
+updated: 2026-06-24
+related:
+  - methods/toolbox/analysis/key-driver-analysis.md
+  - methods/toolbox/collection/scale-development.md
+id: model_g7_brand_segmentation
+source: xingyun_wiki
+source_path: models/g7-brand-segmentation.md
+content_hash: sha256:2d859b69a75cee5482227914f2230603b31764801dc34076ea0d9f875ef24feb
+guide_tags:
   - persona
   - audience
   - framework
 guide_stage:
   - need-discovery
-summary: ""
-source: xingyun_wiki
-source_path: models/g7-brand-segmentation.md
-content_hash: sha256:2d859b69a75cee5482227914f2230603b31764801dc34076ea0d9f875ef24feb
-status: draft
-updated_at: 2026-07-15
 ---
 
 # G7 品牌人群细分模型

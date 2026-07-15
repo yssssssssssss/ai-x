@@ -1,20 +1,41 @@
 ---
-id: toolbox_collection_projective_techniques
-type: method
 title: 投射技术在用户访谈中的应用
+type: method
 domain:
   - 通用
+research_type:
+  - 定性
+  - 探索
+method_family:
+  - 访谈
+  - 焦点小组
 tags:
+  - 投射技术
+  - projective techniques
+  - 拟人法
+  - 联想法
+  - 词语联想
+  - 完成法
+  - 第三人称法
+  - 弗洛伊德
+  - 无意识
+  - 隐性需求
+status: draft
+sensitivity: internal
+owner: 赵真真
+updated: 2026-06-25
+related:
+  - methods/toolbox/collection/interviews.md
+  - models/user-needs.md
+id: toolbox_collection_projective_techniques
+source: xingyun_wiki
+source_path: methods/toolbox/collection/projective-techniques.md
+content_hash: sha256:8743f4a5045082aa968dcabebf93df481423a08dd58c66d8fe345193bb58a543
+guide_tags:
   - qualitative
   - method
 guide_stage:
   - method-selection
-summary: ""
-source: xingyun_wiki
-source_path: methods/toolbox/collection/projective-techniques.md
-content_hash: sha256:8743f4a5045082aa968dcabebf93df481423a08dd58c66d8fe345193bb58a543
-status: draft
-updated_at: 2026-07-15
 ---
 
 # 投射技术在用户访谈中的应用

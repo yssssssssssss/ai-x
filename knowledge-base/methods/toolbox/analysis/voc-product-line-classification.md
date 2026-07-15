@@ -1,18 +1,37 @@
 ---
-id: toolbox_analysis_voc_product_line_classification
-type: analysis
 title: VOC 产品线/模块分类法（京东 App 体验反馈）
+type: analysis
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定性
+  - 定量
+tags:
+  - VOC
+  - 产品线分类
+  - 模块分类
+  - 编码本
+  - 标签体系
+  - 体验维度
+  - 优先级
+  - 京东
+  - B2C
+  - O2O
+  - 防幻觉
+status: draft
+sensitivity: internal
+owner: 王仰龙
+updated: 2026-06-25
+related:
+  - methods/toolbox/analysis/voc-analysis.md
+  - methods/toolbox/analysis/issue-prioritization.md
+id: toolbox_analysis_voc_product_line_classification
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/voc-product-line-classification.md
 content_hash: sha256:bff55de91f93bec8ff09c89c52d41ab2e22dde83ae8deac84795afe9cc138966
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # VOC 产品线/模块分类法（京东 App 体验反馈）

@@ -1,21 +1,35 @@
 ---
-id: standard_questionnaire_design
-type: standard
 title: 问卷设计规范
+type: standard
 domain:
   - 通用
+research_type:
+  - 定量
 tags:
+  - 问卷设计
+  - 问卷规范
+  - 题目编写
+  - 选项
+  - 量表
+  - 常见错误
+status: draft
+sensitivity: internal
+owner: 江竹
+updated: 2026-06-25
+related:
+  - methods/toolbox/collection/satisfaction-survey.md
+  - methods/toolbox/collection/qualitative-questionnaire.md
+  - methods/toolbox/collection/scale-development.md
+id: standard_questionnaire_design
+source: xingyun_wiki
+source_path: methods/standards/questionnaire-design.md
+content_hash: sha256:ac33e4818c3f309369de14d325ec1b4954b76d348bdff20bb27872c55a01bea6
+guide_tags:
   - quantitative
   - method
   - research_goal
 guide_stage:
   - output-standard
-summary: ""
-source: xingyun_wiki
-source_path: methods/standards/questionnaire-design.md
-content_hash: sha256:ac33e4818c3f309369de14d325ec1b4954b76d348bdff20bb27872c55a01bea6
-status: draft
-updated_at: 2026-07-15
 ---
 
 # 问卷设计规范

@@ -1,20 +1,42 @@
 ---
-id: toolbox_collection_accessibility_audit
-type: method
 title: 无障碍走查 / 无障碍审查（Accessibility Audit）
+type: method
 domain:
   - 通用
+research_type:
+  - 定性
+  - 评估
+method_family: []
 tags:
+  - 无障碍
+  - accessibility
+  - 无障碍走查
+  - 读屏
+  - VoiceOver
+  - TalkBack
+  - WCAG
+  - 专家评审
+  - 信息无障碍
+  - 整改清单
+status: draft
+sensitivity: internal
+owner: null
+updated: 2026-07-07
+related:
+  - methods/standards/accessibility-adaptation.md
+  - methods/toolbox/analysis/issue-prioritization.md
+  - methods/toolbox/collection/usability-testing.md
+  - methods/toolbox/collection/heuristic-evaluation.md
+  - models/nielsen-heuristics.md
+id: toolbox_collection_accessibility_audit
+source: xingyun_wiki
+source_path: methods/toolbox/collection/accessibility-audit.md
+content_hash: sha256:d8428c8d0568fe68b9ac9f08a97c6bf0998362ace4a3d356c6fe8d0f56db0814
+guide_tags:
   - a11y
   - ux-audit
 guide_stage:
   - method-selection
-summary: ""
-source: xingyun_wiki
-source_path: methods/toolbox/collection/accessibility-audit.md
-content_hash: sha256:d8428c8d0568fe68b9ac9f08a97c6bf0998362ace4a3d356c6fe8d0f56db0814
-status: draft
-updated_at: 2026-07-15
 ---
 
 # 无障碍走查 / 无障碍审查（Accessibility Audit）

@@ -20,3 +20,6 @@ external-tools/**/.next/
 external-tools/**/.env
 external-tools/**/*.log
 
+
+# 外部参考文档(只读镜像),不入库
+references/

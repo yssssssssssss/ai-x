@@ -1,18 +1,33 @@
 ---
-id: toolbox_collection_brand_naming_research
-type: method
 title: 品牌命名研究与测评
+type: method
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定性
+  - 定量
+  - 评估
+method_family: []
+tags:
+  - 品牌命名
+  - 命名测评
+  - 品牌研究
+  - 命名验证
+status: draft
+sensitivity: internal
+owner: 赵真真
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/scale-development.md
+  - methods/toolbox/analysis/ab-testing.md
+  - models/g7-brand-segmentation.md
+id: toolbox_collection_brand_naming_research
 source: xingyun_wiki
 source_path: methods/toolbox/collection/brand-naming-research.md
 content_hash: sha256:cfab2f22b7ef8f62e861594d7bb3a0d74b5a67faef53e93d2e24914233086803
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 品牌命名研究与测评

@@ -1,18 +1,4 @@
 ---
-id: skill_generate_usability_test
-type: skill
-title: Generate Usability Test — 测试对象 + 研究目标 → 可用性测试执行包（编排 wiki 正典）
-domain: general
-tags:
-  - ux-audit
-  - research_goal
-guide_stage: []
-summary: ""
-source: xingyun_wiki
-source_path: skills/generate-usability-test/SKILL.md
-content_hash: sha256:58e228e23eeac3ee0e5c55046b00ef5522772fbef0d1f096998a630b58e0c898
-status: approved
-updated_at: 2026-07-15
 name: generate-usability-test
 description: 吃一个测试对象（产品/功能/原型）+ 研究目标 →
   实时调用用研知识库（research-wiki）里的可用性测试方法、标准化体验量表（SEQ/SUS）、受访者偏误规范与抽样/招募规范 →
@@ -23,10 +9,22 @@ description: 吃一个测试对象（产品/功能/原型）+ 研究目标 →
   skill——哪怕用户只给一句「让用户试试我们新改的页面顺不顺手」、没点名「可用性测试」四个字，只要意图是**给用户布置任务、观察其操作、度量能否顺利完成并定位可用性问题**，就应触发。若用户要的是不带任务的开放访谈挖
   why，用 generate-interview-guide；要的是大规模可统计的问卷，用
   generate-survey；要的是「该用什么方法」的整体研究方案，用 generate-research-plan。
+id: skill_generate_usability_test
+source: xingyun_wiki
+source_path: skills/generate-usability-test/SKILL.md
+content_hash: sha256:58e228e23eeac3ee0e5c55046b00ef5522772fbef0d1f096998a630b58e0c898
+guide_tags:
+  - ux-audit
+  - research_goal
+guide_stage: []
+type: skill
+domain: general
+title: Generate Usability Test — 测试对象 + 研究目标 → 可用性测试执行包（编排 wiki 正典）
 task_types:
   - design_audit
 inputs: []
 outputs: []
+status: approved
 ---
 
 # Generate Usability Test — 测试对象 + 研究目标 → 可用性测试执行包（编排 wiki 正典）

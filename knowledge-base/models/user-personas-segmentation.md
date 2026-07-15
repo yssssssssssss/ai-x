@@ -1,20 +1,39 @@
 ---
-id: model_user_personas_segmentation
-type: model
 title: 用户画像 / 用户分层 / 用户分群（三概念辨析）
+type: model
 domain:
   - 通用
+research_type:
+  - 定量
+  - 度量
 tags:
+  - 用户画像
+  - 用户分层
+  - 用户分群
+  - persona
+  - profile
+  - segmentation
+  - 精细化运营
+  - AARRR
+  - RFM
+  - 标签体系
+  - MECE
+status: draft
+sensitivity: internal
+owner: 李笑欣
+updated: 2026-06-25
+related:
+  - methods/toolbox/analysis/rfm.md
+  - methods/toolbox/analysis/persona-building.md
+id: model_user_personas_segmentation
+source: xingyun_wiki
+source_path: models/user-personas-segmentation.md
+content_hash: sha256:557a3153e6fa24f47f29e8eaa5f3003427d2581acc2781feda617813c044971c
+guide_tags:
   - persona
   - audience
 guide_stage:
   - need-discovery
-summary: ""
-source: xingyun_wiki
-source_path: models/user-personas-segmentation.md
-content_hash: sha256:557a3153e6fa24f47f29e8eaa5f3003427d2581acc2781feda617813c044971c
-status: draft
-updated_at: 2026-07-15
 ---
 
 # 用户画像 / 用户分层 / 用户分群（三概念辨析）

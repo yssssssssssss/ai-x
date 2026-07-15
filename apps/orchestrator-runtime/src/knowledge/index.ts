@@ -6,7 +6,7 @@ import type { KnowledgeIndexItem } from './indexer.ts';
 import type { SkillRegistryEntry } from '../runtime/config-loader.ts';
 
 export interface SearchOpts {
-  tags?: string[];
+  guide_tags?: string[];
   guide_stage?: string[];
   task_type?: string;
   domain?: string;
@@ -18,10 +18,12 @@ export interface SearchOpts {
 export function filterKnowledge(items: KnowledgeIndexItem[], opts: SearchOpts): KnowledgeIndexItem[] {
   let out = items.filter((i) => i.status !== 'deprecated');
   if (opts.domain) out = out.filter((i) => i.domain === opts.domain);
-  if (opts.tags?.length) out = out.filter((i) => i.tags.some((t) => opts.tags!.includes(t)));
+  // 结构化过滤走受控 guide_tags(对齐 decision-graph related_tags)
+  if (opts.guide_tags?.length) out = out.filter((i) => i.guide_tags.some((t) => opts.guide_tags!.includes(t)));
   if (opts.guide_stage?.length) out = out.filter((i) => i.guide_stage.some((s) => opts.guide_stage!.includes(s)));
   if (opts.query) {
     const q = opts.query.toLowerCase();
+    // 关键词匹配含 wiki 原生 tags(丰富中文标签, 召回更强)
     out = out.filter((i) => `${i.title} ${i.summary} ${i.tags.join(' ')}`.toLowerCase().includes(q));
   }
   return opts.limit ? out.slice(0, opts.limit) : out;

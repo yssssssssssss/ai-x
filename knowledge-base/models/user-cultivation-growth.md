@@ -1,19 +1,29 @@
 ---
-id: model_user_cultivation_growth
-type: model
 title: 用户养成运营模型
+type: model
 domain:
   - 通用
+research_type: []
 tags:
-  - framework
-guide_stage:
-  - need-discovery
-summary: ""
+  - 用户养成
+  - 用户增长
+  - 进化式运营
+  - 用户生命周期
+status: draft
+sensitivity: internal
+owner: 邱伟雄
+updated: 2026-06-24
+related:
+  - methods/toolbox/analysis/feature-adoption.md
+  - models/ect.md
+id: model_user_cultivation_growth
 source: xingyun_wiki
 source_path: models/user-cultivation-growth.md
 content_hash: sha256:0fbe04675e4e3ddc4264ef4818d01e2c929a548478f3d882f0b41020da38f769
-status: draft
-updated_at: 2026-07-15
+guide_tags:
+  - framework
+guide_stage:
+  - need-discovery
 ---
 
 # 用户养成运营模型

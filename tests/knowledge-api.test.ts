@@ -4,13 +4,13 @@ import { filterKnowledge } from '../apps/orchestrator-runtime/src/knowledge/inde
 import type { KnowledgeIndexItem } from '../apps/orchestrator-runtime/src/knowledge/indexer.ts';
 
 const items: KnowledgeIndexItem[] = [
-  { id: 'model_jtbd', type: 'model', title: 'JTBD', domain: 'general', tags: ['persona', 'framework'], guide_stage: ['need-discovery'], summary: '需求框架', source_path: 'models/jtbd.md', content_hash: 'sha256:x', status: 'approved' },
-  { id: 'std_report', type: 'standard', title: '报告规范', domain: 'general', tags: ['report', 'output'], guide_stage: ['output-standard'], summary: '', source_path: 'methods/standards/research-report-writing.md', content_hash: 'sha256:y', status: 'approved' },
-  { id: 'dep_x', type: 'model', title: '弃用', domain: 'general', tags: ['persona'], guide_stage: [], summary: '', source_path: 'models/x.md', content_hash: 'sha256:z', status: 'deprecated' },
+  { id: 'model_jtbd', type: 'model', title: 'JTBD', domain: 'general', tags: ['需求框架'], guide_tags: ['persona', 'framework'], guide_stage: ['need-discovery'], summary: '需求框架', source_path: 'models/jtbd.md', content_hash: 'sha256:x', status: 'approved' },
+  { id: 'std_report', type: 'standard', title: '报告规范', domain: 'general', tags: ['报告'], guide_tags: ['report', 'output'], guide_stage: ['output-standard'], summary: '', source_path: 'methods/standards/research-report-writing.md', content_hash: 'sha256:y', status: 'approved' },
+  { id: 'dep_x', type: 'model', title: '弃用', domain: 'general', tags: ['画像'], guide_tags: ['persona'], guide_stage: [], summary: '', source_path: 'models/x.md', content_hash: 'sha256:z', status: 'deprecated' },
 ];
 
-test('按 tags 召回(决策节点 related_tags)', () => {
-  const r = filterKnowledge(items, { tags: ['persona'] });
+test('按 guide_tags 召回(决策节点 related_tags)', () => {
+  const r = filterKnowledge(items, { guide_tags: ['persona'] });
   const ids = r.map((i) => i.id);
   assert.ok(ids.includes('model_jtbd'));
   assert.ok(!ids.includes('dep_x'), 'deprecated 不召回');

@@ -1,26 +1,24 @@
 ---
-id: skill_generate_research_plan
-type: skill
-title: Generate Research Plan — 研究需求 →（对齐）研究 brief →（展开）可执行研究方案
-domain: general
-tags: []
-guide_stage: []
-summary: ""
-source: xingyun_wiki
-source_path: skills/generate-research-plan/SKILL.md
-content_hash: sha256:3b07113d20a872720ff6273292dbfe3c642ba2888d3a8ab94c484e1b4fafd19f
-status: approved
-updated_at: 2026-07-15
 name: generate-research-plan
 description: 吃一个研究需求（可能很碎、很模糊，甚至只有一句话）→ 先用用研知识库（research-wiki）的需求沟通规范把它拆解、对齐成结构化
   brief（需求不清就停下来追问，绝不带臆断硬出方案）→ 需求清晰后实时编排 wiki 的方法正典、场景打法与执行规范，展开成一份可执行研究方案（研究目的
   / 研究内容 / 方法选型+理由 / 样本与配额 / 成本 / 排期 / 交付物），并附方案自检与《本次运行说明》。当用户要「做研究方案 / 调研方案 /
   研究设计 / 规划一次用户研究 / 设计一次调研 / 把（模糊的）研究需求变成可执行方案 / 接了个调研需求不知怎么下手」时，主动使用本
   skill——哪怕需求还很含糊、只有一句话，也应触发（把模糊需求问清正是第一阶段的职责，不要因为需求不完整就拒绝启动）。
+id: skill_generate_research_plan
+source: xingyun_wiki
+source_path: skills/generate-research-plan/SKILL.md
+content_hash: sha256:3b07113d20a872720ff6273292dbfe3c642ba2888d3a8ab94c484e1b4fafd19f
+guide_tags: []
+guide_stage: []
+type: skill
+domain: general
+title: Generate Research Plan — 研究需求 →（对齐）研究 brief →（展开）可执行研究方案
 task_types:
   - user_research_planning
 inputs: []
 outputs: []
+status: approved
 ---
 
 # Generate Research Plan — 研究需求 →（对齐）研究 brief →（展开）可执行研究方案

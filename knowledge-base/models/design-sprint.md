@@ -1,18 +1,30 @@
 ---
-id: model_design_sprint
-type: model
 title: 设计冲刺（Design Sprint）
+type: model
 domain:
   - 通用
-tags: []
-guide_stage:
-  - need-discovery
-summary: ""
+research_type:
+  - 探索
+tags:
+  - 设计冲刺
+  - Design Sprint
+  - GV
+  - 5天
+  - 三钻
+status: draft
+sensitivity: internal
+owner: 吴佳毅
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/co-creation-workshop.md
+  - methods/scenarios/product-experience/iteration/continuous-discovery.md
+id: model_design_sprint
 source: xingyun_wiki
 source_path: models/design-sprint.md
 content_hash: sha256:d32cffd512867488166b93f879ccfbac086942dd87eb154b7d6065b4fc510b6f
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - need-discovery
 ---
 
 # 设计冲刺（Design Sprint）

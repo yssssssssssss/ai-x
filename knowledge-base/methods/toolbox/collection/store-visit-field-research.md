@@ -1,18 +1,34 @@
 ---
-id: toolbox_collection_store_visit_field_research
-type: method
 title: 巡店与场域调研
+type: method
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定性
+  - 探索
+method_family:
+  - 现场观察
+tags:
+  - 巡店
+  - 场域研究
+  - 田野观察
+  - 5W1H
+  - 线下
+status: draft
+sensitivity: internal
+owner: 孙文佳
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/intercept-interview.md
+  - methods/toolbox/collection/scenario-based-need-discovery.md
+  - methods/toolbox/collection/interviews.md
+id: toolbox_collection_store_visit_field_research
 source: xingyun_wiki
 source_path: methods/toolbox/collection/store-visit-field-research.md
 content_hash: sha256:43f95f247560896159debe7c638aa71423c8549282619d494296fac9f1274478
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 巡店与场域调研

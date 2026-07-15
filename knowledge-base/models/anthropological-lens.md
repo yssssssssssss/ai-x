@@ -1,18 +1,41 @@
 ---
-id: model_anthropological_lens
-type: model
 title: 人类学视角（厚数据与文化透镜）
+type: model
 domain:
   - 通用
-tags: []
-guide_stage:
-  - need-discovery
-summary: ""
+research_type:
+  - 定性
+  - 探索
+tags:
+  - 人类学
+  - 民族志
+  - 厚数据
+  - thick data
+  - 大数据
+  - 文化相对论
+  - 民族中心主义
+  - 去熟悉化
+  - defamiliarization
+  - 反身性
+  - reflexivity
+  - 他者与自我
+  - 文化震撼
+status: draft
+sensitivity: internal
+owner: null
+updated: 2026-06-25
+related:
+  - methods/toolbox/collection/ethnography-field-research.md
+  - methods/toolbox/collection/in-product-longitudinal-tracking.md
+  - methods/toolbox/collection/interviews.md
+  - models/user-insight.md
+id: model_anthropological_lens
 source: xingyun_wiki
 source_path: models/anthropological-lens.md
 content_hash: sha256:cef7481e55b3328f6e5b9831a70d23c2039d43822ff42cd61c96819d401b148d
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - need-discovery
 ---
 
 # 人类学视角（厚数据与文化透镜）

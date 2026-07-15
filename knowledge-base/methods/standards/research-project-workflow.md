@@ -1,18 +1,28 @@
 ---
-id: standard_research_project_workflow
-type: standard
 title: 用研项目流程与角色规范
+type: standard
 domain:
   - 通用
-tags: []
-guide_stage:
-  - output-standard
-summary: ""
+research_type: []
+tags:
+  - 项目流程
+  - 岗位角色
+  - 用研流程
+  - 协作分工
+status: draft
+sensitivity: internal
+owner: 郭振男
+updated: 2026-06-24
+related:
+  - methods/standards/requirement-elicitation.md
+  - methods/standards/research-report-writing.md
+id: standard_research_project_workflow
 source: xingyun_wiki
 source_path: methods/standards/research-project-workflow.md
 content_hash: sha256:fa16e405cbf486d64351c8b095e0e99c681f2c283ff5b5da1b2ffbd3e5a8d76c
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - output-standard
 ---
 
 # 用研项目流程与角色规范

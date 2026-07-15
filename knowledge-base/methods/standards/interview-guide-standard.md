@@ -1,20 +1,38 @@
 ---
-id: standard_interview_guide_standard
-type: standard
 title: 访谈提纲设计规范
+type: standard
 domain: []
+research_type:
+  - 定性
+method_family:
+  - 访谈
+  - 焦点小组
 tags:
+  - 提纲规范
+  - 访谈物料
+  - 开场规则
+  - 问题设计
+  - 互动话术
+  - 结语规则
+  - interview guide standard
+status: draft
+sensitivity: internal
+owner: 郭振男
+related:
+  - methods/toolbox/collection/interview-guide-design.md
+  - methods/toolbox/collection/interviews.md
+  - methods/toolbox/collection/online-focus-group.md
+  - methods/toolbox/collection/focus-group.md
+source:
+  - https://joyspace.jd.com/pages/CpLsCXJaYqwW8WktJMAO
+id: standard_interview_guide_standard
+source_path: methods/standards/interview-guide-standard.md
+content_hash: sha256:fb4cdde35c483767a1046c465a48e90648ce19d2d33fb6b5af771b34c5e8d5c7
+guide_tags:
   - qualitative
   - method
 guide_stage:
   - output-standard
-summary: ""
-source:
-  - https://joyspace.jd.com/pages/CpLsCXJaYqwW8WktJMAO
-source_path: methods/standards/interview-guide-standard.md
-content_hash: sha256:fb4cdde35c483767a1046c465a48e90648ce19d2d33fb6b5af771b34c5e8d5c7
-status: draft
-updated_at: 2026-07-15
 ---
 
 # 访谈提纲设计规范

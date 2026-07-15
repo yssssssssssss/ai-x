@@ -1,19 +1,38 @@
 ---
-id: toolbox_collection_heuristic_evaluation
-type: method
 title: 启发式评估 / 体验走查（Heuristic Evaluation）
+type: method
 domain:
   - 通用
+research_type:
+  - 定性
+  - 评估
+method_family: []
 tags:
-  - ux-audit
-guide_stage:
-  - method-selection
-summary: ""
+  - 启发式评估
+  - 专家评审
+  - 体验走查
+  - 可用性
+  - 可用性检查
+  - 严重度评级
+  - 尼尔森
+status: draft
+sensitivity: internal
+owner: null
+updated: 2026-06-30
+related:
+  - models/nielsen-heuristics.md
+  - methods/toolbox/collection/usability-testing.md
+  - methods/toolbox/analysis/issue-prioritization.md
+  - methods/standards/sampling.md
+  - methods/toolbox/collection/experience-evaluation-rating.md
+id: toolbox_collection_heuristic_evaluation
 source: xingyun_wiki
 source_path: methods/toolbox/collection/heuristic-evaluation.md
 content_hash: sha256:74aca85ca79881eafd2f8f6e7bd4a5e87af7e9a3d7c277c671be505253274857
-status: draft
-updated_at: 2026-07-15
+guide_tags:
+  - ux-audit
+guide_stage:
+  - method-selection
 ---
 
 # 启发式评估 / 体验走查（Heuristic Evaluation）

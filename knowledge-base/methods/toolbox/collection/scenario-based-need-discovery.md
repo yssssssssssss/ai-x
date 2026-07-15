@@ -1,18 +1,35 @@
 ---
-id: toolbox_collection_scenario_based_need_discovery
-type: method
 title: 用户场景洞察需求
+type: method
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定性
+  - 探索
+method_family:
+  - 现场观察
+tags:
+  - 用户场景
+  - 需求洞察
+  - 陪访
+  - 观察
+  - 示卡
+status: draft
+sensitivity: internal
+owner: 刘植嘉
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/interviews.md
+  - methods/toolbox/collection/store-visit-field-research.md
+  - methods/toolbox/collection/persona.md
+  - methods/toolbox/collection/experience-map.md
+id: toolbox_collection_scenario_based_need_discovery
 source: xingyun_wiki
 source_path: methods/toolbox/collection/scenario-based-need-discovery.md
 content_hash: sha256:2d0165c0d74e0e2216d97b4977cc6a539bfff1797e27641925b0d53c1df496c6
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 用户场景洞察需求

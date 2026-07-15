@@ -1,19 +1,31 @@
 ---
-id: toolbox_analysis_tgi_index
-type: analysis
 title: 目标群体指数（TGI）
+type: analysis
 domain:
   - 通用
+research_type:
+  - 定量
 tags:
-  - research_goal
-guide_stage:
-  - method-selection
-summary: ""
+  - TGI
+  - 目标群体指数
+  - 人群特征
+  - 强势指数
+  - 广告投放
+status: draft
+sensitivity: internal
+owner: 顾小妍
+updated: 2026-06-24
+related:
+  - methods/toolbox/analysis/data-standardization.md
+  - methods/toolbox/analysis/key-driver-analysis.md
+id: toolbox_analysis_tgi_index
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/tgi-index.md
 content_hash: sha256:bc2c33c0cbc33f973284306bf54e32cab195587e2e65804cf815af294c31808a
-status: draft
-updated_at: 2026-07-15
+guide_tags:
+  - research_goal
+guide_stage:
+  - method-selection
 ---
 
 # 目标群体指数（TGI）

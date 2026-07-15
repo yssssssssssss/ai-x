@@ -10,7 +10,7 @@ export interface LintIssue {
   message: string;
 }
 
-const REQUIRED = ['id', 'type', 'title', 'source_path', 'content_hash', 'status'];
+const REQUIRED = ['id', 'type', 'title', 'source_path', 'content_hash'];
 
 export function lintEntry(relPath: string, rawMd: string, seenIds: Set<string>): LintIssue[] {
   const issues: LintIssue[] = [];
@@ -30,8 +30,9 @@ export function lintEntry(relPath: string, rawMd: string, seenIds: Set<string>):
     if (seenIds.has(id)) issues.push({ level: 'error', target: tgt, message: `id 重复: ${id}` });
     else seenIds.add(id);
   }
-  for (const t of (fm.tags as string[] | undefined) ?? []) {
-    if (!tagVocab.has(t)) issues.push({ level: 'error', target: tgt, message: `越界 tag: ${t}` });
+  // 只校验受控 guide_tags(引导召回用);wiki 原生 tags 是自由中文词表, 不校验。
+  for (const t of (fm.guide_tags as string[] | undefined) ?? []) {
+    if (!tagVocab.has(t)) issues.push({ level: 'error', target: tgt, message: `越界 guide_tag: ${t}` });
   }
   for (const s of (fm.guide_stage as string[] | undefined) ?? []) {
     if (!stageVocab.has(s)) issues.push({ level: 'error', target: tgt, message: `越界 guide_stage: ${s}` });

@@ -1,18 +1,32 @@
 ---
-id: toolbox_analysis_promo_copy_iat
-type: analysis
 title: 优惠文案内隐联结测试（IAT）
+type: analysis
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定量
+  - 评估
+tags:
+  - IAT
+  - 内隐联结
+  - 潜意识
+  - 优惠文案
+  - 反应时
+  - 文案测试
+status: draft
+sensitivity: internal
+owner: 文子亦
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/copy-content-testing.md
+  - methods/toolbox/analysis/ab-testing.md
+id: toolbox_analysis_promo_copy_iat
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/promo-copy-iat.md
 content_hash: sha256:0a58b33e1e7b1bb131332e9bad3640e996158ecbcd029555e116637040875b0a
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 优惠文案内隐联结测试（IAT）

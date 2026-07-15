@@ -1,18 +1,36 @@
 ---
-id: toolbox_collection_copy_content_testing
-type: method
 title: 文案内容测试
+type: method
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定性
+  - 定量
+  - 评估
+method_family: []
+tags:
+  - 文案测试
+  - 内容测试
+  - 五秒测试
+  - MaxDiff
+  - 卡片分类
+  - 完形填空
+  - 出声思考
+status: draft
+sensitivity: internal
+owner: 赵真真
+updated: 2026-06-24
+related:
+  - methods/toolbox/analysis/ab-testing.md
+  - methods/toolbox/analysis/promo-copy-iat.md
+  - methods/toolbox/collection/usability-testing.md
+id: toolbox_collection_copy_content_testing
 source: xingyun_wiki
 source_path: methods/toolbox/collection/copy-content-testing.md
 content_hash: sha256:776e3a48354b4541eb4ae402ad0ca72e85570d007ab3018f6bb00e4b298cd68f
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 文案内容测试

@@ -1,18 +1,39 @@
 ---
-id: toolbox_analysis_conversion_funnel
-type: analysis
 title: 转化漏斗分析（Conversion Funnel Analysis）
+type: analysis
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定量
+  - 评估
+tags:
+  - 转化漏斗
+  - 流失
+  - 分步转化率
+  - 微转化
+  - 宏转化
+  - GA4
+  - Fogg
+  - B=MAP
+status: draft
+sensitivity: internal
+owner: 王仰龙
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/interviews.md
+  - methods/toolbox/analysis/voc-analysis.md
+  - methods/toolbox/analysis/issue-prioritization.md
+  - methods/toolbox/analysis/ab-testing.md
+  - methods/toolbox/analysis/experience-metrics-heart.md
+  - methods/toolbox/analysis/feature-adoption.md
+  - models/fogg-behavior-model.md
+id: toolbox_analysis_conversion_funnel
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/conversion-funnel.md
 content_hash: sha256:e5244746fbc6c00d3eac619c4068c3fe30b6f9511d2b1c9fe237e7d303bea00b
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 转化漏斗分析（Conversion Funnel Analysis）

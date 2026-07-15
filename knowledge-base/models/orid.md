@@ -1,18 +1,30 @@
 ---
-id: model_orid
-type: model
 title: ORID 焦点式呈现法
+type: model
 domain:
   - 通用
-tags: []
-guide_stage:
-  - need-discovery
-summary: ""
+research_type:
+  - 定性
+tags:
+  - ORID
+  - 焦点式呈现法
+  - 提问框架
+  - 客观感受理解决定
+  - 访谈
+status: draft
+sensitivity: internal
+owner: 吴佳毅
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/interview-guide-design.md
+  - methods/toolbox/collection/interviews.md
+id: model_orid
 source: xingyun_wiki
 source_path: models/orid.md
 content_hash: sha256:2ca0aa993061867731cc85e127bd1c598423cd7cb18732f5b6146604a25075ea
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - need-discovery
 ---
 
 # ORID 焦点式呈现法

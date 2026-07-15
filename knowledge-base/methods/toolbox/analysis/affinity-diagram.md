@@ -1,18 +1,30 @@
 ---
-id: toolbox_analysis_affinity_diagram
-type: analysis
 title: 亲和图法（Affinity Diagram）
+type: analysis
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定性
+tags:
+  - 亲和图
+  - KJ法
+  - 访谈数据处理
+  - 主题归并
+  - 定性分析
+status: draft
+sensitivity: internal
+owner: 赵真真
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/interviews.md
+  - methods/toolbox/analysis/qualitative-insight-frameworks.md
+id: toolbox_analysis_affinity_diagram
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/affinity-diagram.md
 content_hash: sha256:1114bf609e6b394a60899e20993bfea873a0a21429c148342b10780df902f38a
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 亲和图法（Affinity Diagram）

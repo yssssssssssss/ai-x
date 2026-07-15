@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import { parseFrontmatter, serializeFrontmatter } from './frontmatter.ts';
 import { seedTagsGuideStage, seedSkillTaskTypes } from './seed.ts';
-import { loadTaxonomy } from './taxonomy.ts';
 
 const NAV_FILES = new Set(['index.md', 'readme.md']);
 
@@ -39,7 +38,8 @@ function firstHeading(content: string): string {
   return m ? m[1].trim() : fileStem(content);
 }
 
-// 补机械 frontmatter + 规则种子 tags/guide_stage。正文原样保留。
+// 补机械 frontmatter + 受控 guide_tags/guide_stage 种子。
+// 原则:wiki 原生 frontmatter 全量保留(尤其 research_type/owner/related/中文 tags),只增量补齐机械字段。
 export function normalizeEntry(relPath: string, rawMd: string): { md: string; changed: boolean } {
   const td = inferTypeDomain(relPath);
   if (!td) return { md: rawMd, changed: false }; // 导航文件不处理
@@ -52,41 +52,31 @@ export function normalizeEntry(relPath: string, rawMd: string): { md: string; ch
   const id = `${td.type.replace(/-/g, '_')}_${stem.replace(/-/g, '_')}`;
   const seed = seedTagsGuideStage(td.type, stem, title);
 
-  // tags 归一: wiki 原生 tags 多为受控词表之外的自定义标签(linter 会拦),
-  // 保留其中在词表内的 + 并入规则种子(种子供 decision-graph 召回), 其余丢弃。
-  const { tags: vocab } = loadTaxonomy();
-  const tagVocab = new Set(vocab);
-  const reconciledTags = existing.tags
-    ? [...new Set([...(existing.tags as string[]).filter((t) => tagVocab.has(t)), ...seed.tags])]
-    : seed.tags;
-
-  // 已有字段不覆盖(尤其 skills 的 name/description 与人工修正过的字段)
-  const fm: Record<string, unknown> = {
-    id: existing.id ?? id,
-    type: existing.type ?? td.type,
-    title: existing.title ?? title,
-    domain: existing.domain ?? td.domain,
-    tags: reconciledTags,
-    guide_stage: existing.guide_stage ?? seed.guide_stage,
-    summary: existing.summary ?? '',
-    source: existing.source ?? 'xingyun_wiki',
-    source_path: relPath,
-    content_hash: hash,
-    status: existing.status ?? 'approved',
-    updated_at: existing.updated_at ?? new Date().toISOString().slice(0, 10),
-  };
-
   const changed = existing.content_hash !== hash
     || existing.source_path !== relPath
     || existing.id === undefined;
 
-  // skill 额外补路由字段(spec §6.2):wiki SKILL.md 无 task_types/inputs/outputs
+  // 保留 wiki 原生 frontmatter 全量, 只增量补齐机械/受控字段。
+  const fm: Record<string, unknown> = { ...existing };
+  fm.id ??= id;
+  fm.source ??= 'xingyun_wiki';
+  fm.source_path = relPath;       // 始终覆盖为实际路径
+  fm.content_hash = hash;         // 始终
+  fm.guide_tags = existing.guide_tags ?? seed.guideTags;   // 受控引导标签(独立于 wiki tags)
+  fm.guide_stage = existing.guide_stage ?? seed.guide_stage;
+  // 无 frontmatter 文件兜底:补最小可索引字段
+  fm.type ??= td.type;
+  fm.domain ??= td.domain;
+  fm.title ??= title;
+
+  // skill 额外补路由字段(spec §6.2):wiki SKILL.md 无 task_types/inputs/outputs/status
   if (td.type === 'skill') {
-    fm.name = existing.name ?? title;
-    fm.description = existing.description ?? '';
-    fm.task_types = existing.task_types ?? seedSkillTaskTypes(stem, title);
-    fm.inputs = existing.inputs ?? [];
-    fm.outputs = existing.outputs ?? [];
+    fm.name ??= title;
+    fm.description ??= '';
+    fm.task_types ??= seedSkillTaskTypes(stem, title);
+    fm.inputs ??= [];
+    fm.outputs ??= [];
+    fm.status ??= 'approved'; // registry 需要 status 映射为 active;wiki SKILL.md 缺省视为已发布
   }
 
   const md = serializeFrontmatter(fm, content);

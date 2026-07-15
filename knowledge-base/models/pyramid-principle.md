@@ -1,20 +1,31 @@
 ---
-id: model_pyramid_principle
-type: model
 title: 金字塔原理
+type: model
 domain:
   - 通用
+research_type: []
 tags:
+  - 思考框架
+  - 表达框架
+  - 报告写作
+  - 结论先行
+  - SCQA
+  - 演绎归纳
+  - MECE
+status: draft
+sensitivity: internal
+owner: 曾雨雯
+updated: 2026-06-25
+related: []
+id: model_pyramid_principle
+source: xingyun_wiki
+source_path: models/pyramid-principle.md
+content_hash: sha256:c5d4ca1a4e83bd7ea472fc54ba035097822ce31e149dad701bf6fefaea4482c3
+guide_tags:
   - report
   - output
 guide_stage:
   - need-discovery
-summary: ""
-source: xingyun_wiki
-source_path: models/pyramid-principle.md
-content_hash: sha256:c5d4ca1a4e83bd7ea472fc54ba035097822ce31e149dad701bf6fefaea4482c3
-status: draft
-updated_at: 2026-07-15
 ---
 
 # 金字塔原理

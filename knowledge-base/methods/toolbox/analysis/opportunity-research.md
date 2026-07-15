@@ -1,18 +1,33 @@
 ---
-id: toolbox_analysis_opportunity_research
-type: analysis
 title: 机会点研究
+type: analysis
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 探索
+  - 评估
+tags:
+  - 机会点
+  - 增长
+  - 找亮点
+  - 标杆学习
+  - 空白市场
+  - 幸存者偏差
+status: draft
+sensitivity: internal
+owner: 曾雨雯
+updated: 2026-06-24
+related:
+  - methods/toolbox/analysis/feature-adoption.md
+  - methods/toolbox/analysis/key-driver-analysis.md
+  - methods/toolbox/analysis/competitive-analysis.md
+id: toolbox_analysis_opportunity_research
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/opportunity-research.md
 content_hash: sha256:d13848dbdcca9daf9117c56b1408922d465e903debb09d4f659fd35e13017dde
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 机会点研究

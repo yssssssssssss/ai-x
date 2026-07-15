@@ -1,18 +1,31 @@
 ---
-id: toolbox_analysis_paired_comparison
-type: analysis
 title: 对偶比较法
+type: analysis
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定量
+  - 定性
+tags:
+  - 对偶比较
+  - 两两比较
+  - 趋中效应
+  - 偏好矩阵
+  - 相对优先级
+status: draft
+sensitivity: internal
+owner: 江竹
+updated: 2026-06-24
+related:
+  - methods/toolbox/analysis/key-driver-analysis.md
+  - methods/toolbox/collection/scale-development.md
+id: toolbox_analysis_paired_comparison
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/paired-comparison.md
 content_hash: sha256:0d4d6a99769dde36ee91e5e97ef42751bf36404be1996da29277c89ead15183f
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 对偶比较法

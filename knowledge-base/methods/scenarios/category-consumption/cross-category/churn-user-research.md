@@ -1,19 +1,45 @@
 ---
-id: scenario_churn_user_research
-type: scenario-guide
 title: 流失用户调研打法
+type: scenario-guide
 domain:
   - 品类消费-跨品类方法
-tags: []
-guide_stage:
-  - intent
-  - goal-definition
-summary: ""
+research_type:
+  - 定性
+  - 定量
+  - 探索
+  - 评估
+method_family:
+  - 访谈
+  - 问卷
+  - 日志/行为数据分析
+tags:
+  - 流失用户
+  - 流失调研
+  - 召回策略
+  - 分层抽样
+  - 加权
+  - 留存
+  - 真假流失
+status: draft
+sensitivity: internal
+owner: 王仰龙
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/interviews.md
+  - methods/toolbox/collection/satisfaction-survey.md
+  - methods/toolbox/analysis/voc-analysis.md
+  - methods/toolbox/analysis/key-driver-analysis.md
+  - assets/templates/churn-phone-interview-script.md
+  - assets/templates/churn-survey-framework.md
+  - assets/playbooks/growth-platform-low-stickiness-churn.md
+id: scenario_churn_user_research
 source: xingyun_wiki
 source_path: methods/scenarios/category-consumption/cross-category/churn-user-research.md
 content_hash: sha256:158a39dce251fe94c8ae8f58a77d74ce984f5365d10ce3f41dc109ee8e75d6a0
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - intent
+  - goal-definition
 ---
 
 # 流失用户调研打法

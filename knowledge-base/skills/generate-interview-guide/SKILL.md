@@ -1,29 +1,27 @@
 ---
-id: skill_generate_interview_guide
-type: skill
-title: Generate Interview Guide — 研究目标 → 结构化访谈提纲（编排 wiki 正典）
-domain: general
-tags:
-  - qualitative
-  - method
-  - research_goal
-guide_stage: []
-summary: ""
-source: xingyun_wiki
-source_path: skills/generate-interview-guide/SKILL.md
-content_hash: sha256:c57843769357f223204d554035b43795700ce7a678033fe9eb790bf2a6ebfeee
-status: approved
-updated_at: 2026-07-15
 name: generate-interview-guide
 description: 吃一个定性研究目标（含目标用户、研究阶段、访谈形式）→ 实时调用用研知识库（research-wiki）里的访谈提纲设计方法、ORID
   提问框架与受访者偏误规范 → 产出一份结构化、可直接拿去用的访谈提纲（开场暖场 / 主问题模块[每块含主问 + 追问梯度] /
   收尾），并附追问时机提示与《本次运行说明》。当用户要「做访谈提纲 / 设计访谈问题 / 写访谈大纲 / 准备用户访谈或深访 / 把研究目标拆成要问用户的问题
   / 拟焦点小组或拦访提问」时，主动使用本
   skill——哪怕用户只给了一句访谈目标、没点名「提纲」二字，只要意图是把一个定性研究目标转成可问出口的问题清单，就应触发。
+id: skill_generate_interview_guide
+source: xingyun_wiki
+source_path: skills/generate-interview-guide/SKILL.md
+content_hash: sha256:c57843769357f223204d554035b43795700ce7a678033fe9eb790bf2a6ebfeee
+guide_tags:
+  - qualitative
+  - method
+  - research_goal
+guide_stage: []
+type: skill
+domain: general
+title: Generate Interview Guide — 研究目标 → 结构化访谈提纲（编排 wiki 正典）
 task_types:
   - user_research_planning
 inputs: []
 outputs: []
+status: approved
 ---
 
 # Generate Interview Guide — 研究目标 → 结构化访谈提纲（编排 wiki 正典）

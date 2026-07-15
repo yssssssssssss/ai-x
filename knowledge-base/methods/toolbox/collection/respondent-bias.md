@@ -1,18 +1,34 @@
 ---
-id: toolbox_collection_respondent_bias
-type: method
 title: 受访者认知偏误与规避
+type: method
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定性
+method_family:
+  - 访谈
+tags:
+  - 认知偏误
+  - 社会期许
+  - 友善偏误
+  - 从众
+  - 霍桑效应
+  - 锚定
+  - 访谈失真
+status: draft
+sensitivity: internal
+owner: 翁鸿诚
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/interviews.md
+  - methods/toolbox/collection/qualitative-questionnaire.md
+id: toolbox_collection_respondent_bias
 source: xingyun_wiki
 source_path: methods/toolbox/collection/respondent-bias.md
 content_hash: sha256:9c535c03eb318f1095223b130c74f60542c5a9ac3c558b190ded5912839d826b
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 受访者认知偏误与规避

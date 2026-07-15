@@ -1,20 +1,37 @@
 ---
-id: toolbox_collection_scale_development
-type: method
 title: 量表编制（量表设计与分析）
+type: method
 domain:
   - 通用
+research_type:
+  - 定量
+method_family:
+  - 问卷
 tags:
+  - 量表
+  - 量表编制
+  - 信度
+  - 效度
+  - Cronbach
+  - 因子分析
+  - 聚类
+status: draft
+sensitivity: internal
+owner: 王仰龙
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/satisfaction-survey.md
+  - assets/scales/standardized-ux-scales.md
+  - methods/toolbox/analysis/data-standardization.md
+id: toolbox_collection_scale_development
+source: xingyun_wiki
+source_path: methods/toolbox/collection/scale-development.md
+content_hash: sha256:e6e616751b0c80bdae7db742b1ebdf1a51f3ae8e3151d200e6279fde6b7e6fa4
+guide_tags:
   - quantitative
   - method
 guide_stage:
   - method-selection
-summary: ""
-source: xingyun_wiki
-source_path: methods/toolbox/collection/scale-development.md
-content_hash: sha256:e6e616751b0c80bdae7db742b1ebdf1a51f3ae8e3151d200e6279fde6b7e6fa4
-status: draft
-updated_at: 2026-07-15
 ---
 
 # 量表编制（量表设计与分析）

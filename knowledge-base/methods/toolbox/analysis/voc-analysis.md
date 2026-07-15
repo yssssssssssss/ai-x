@@ -1,18 +1,38 @@
 ---
-id: toolbox_analysis_voc_analysis
-type: analysis
 title: VOC 用户之声分析（Voice of Customer）
+type: analysis
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定性
+  - 定量
+  - 度量
+tags:
+  - VOC
+  - 用户之声
+  - 文本分析
+  - 主题分析
+  - 情感分析
+  - 编码本
+  - 闭环
+status: draft
+sensitivity: internal
+owner: 王仰龙
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/satisfaction-survey.md
+  - methods/toolbox/analysis/issue-prioritization.md
+  - methods/toolbox/analysis/key-driver-analysis.md
+  - methods/toolbox/collection/interviews.md
+  - methods/toolbox/analysis/ab-testing.md
+  - methods/toolbox/analysis/voc-product-line-classification.md
+id: toolbox_analysis_voc_analysis
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/voc-analysis.md
 content_hash: sha256:31a235e210cbb303b4cefedbf7459bebe6dd03799bc6cd23129bb3661a4ed4d6
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # VOC 用户之声分析（Voice of Customer）

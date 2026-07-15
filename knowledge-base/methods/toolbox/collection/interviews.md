@@ -1,20 +1,44 @@
 ---
-id: toolbox_collection_interviews
-type: method
 title: 用户深度访谈
+type: method
 domain:
   - 通用
+research_type:
+  - 定性
+  - 探索
+method_family:
+  - 访谈
 tags:
+  - 深度访谈
+  - 用户访谈
+  - 访谈技巧
+  - 情绪洞察
+  - B端访谈
+  - 半结构化
+  - 访问法
+  - interview method
+  - 社会建构主义
+  - 芝加哥学派
+status: draft
+sensitivity: internal
+owner: 用研团队
+updated: 2026-06-25
+related:
+  - methods/toolbox/collection/interview-guide-design.md
+  - methods/toolbox/collection/participant-recruitment.md
+  - methods/toolbox/collection/respondent-bias.md
+  - models/orid.md
+  - methods/scenarios/category-consumption/cross-category/churn-user-research.md
+  - methods/scenarios/product-experience/iteration/continuous-discovery.md
+id: toolbox_collection_interviews
+source: xingyun_wiki
+source_path: methods/toolbox/collection/interviews.md
+content_hash: sha256:e3cb6397a46181a8e17dde4dc41abe472e655033bf0466330ecf83d416a889ca
+guide_tags:
   - qualitative
   - method
 guide_stage:
   - method-selection
-summary: ""
-source: xingyun_wiki
-source_path: methods/toolbox/collection/interviews.md
-content_hash: sha256:e3cb6397a46181a8e17dde4dc41abe472e655033bf0466330ecf83d416a889ca
-status: draft
-updated_at: 2026-07-15
 ---
 
 # 用户深度访谈

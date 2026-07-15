@@ -1,19 +1,33 @@
 ---
-id: model_user_needs
-type: model
 title: 用户需求的本质（三层模型）
+type: model
 domain:
   - 通用
+research_type:
+  - 定性
+  - 探索
 tags:
-  - framework
-guide_stage:
-  - need-discovery
-summary: ""
+  - 用户需求
+  - 需求三层模型
+  - 表层中层深层
+  - JTBD
+  - 痛点vs需求
+  - 显性诉求
+  - 任务场景
+  - 目标动机
+status: draft
+sensitivity: internal
+owner: 李笑欣
+updated: 2026-06-25
+related: []
+id: model_user_needs
 source: xingyun_wiki
 source_path: models/user-needs.md
 content_hash: sha256:4cb63a508fc6e7b039c9189cae33aa2a479a8e329081b7ed77915a4d4e8f48b4
-status: draft
-updated_at: 2026-07-15
+guide_tags:
+  - framework
+guide_stage:
+  - need-discovery
 ---
 
 # 用户需求的本质（三层模型）

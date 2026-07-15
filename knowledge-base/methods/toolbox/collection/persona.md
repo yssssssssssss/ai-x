@@ -1,20 +1,35 @@
 ---
-id: toolbox_collection_persona
-type: method
 title: 人物角色（Persona）
+type: method
 domain:
   - 通用
+research_type:
+  - 定性
+  - 定量
+method_family: []
 tags:
+  - 人物角色
+  - persona
+  - 用户画像
+  - 用户细分
+  - 角色创建
+status: draft
+sensitivity: internal
+owner: 焦玉霞
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/interviews.md
+  - methods/toolbox/collection/experience-map.md
+  - methods/toolbox/collection/scenario-based-need-discovery.md
+id: toolbox_collection_persona
+source: xingyun_wiki
+source_path: methods/toolbox/collection/persona.md
+content_hash: sha256:44585abfdf646543731c92fabef2ed4ec2bca1da3242fe16907a5bc320a60058
+guide_tags:
   - persona
   - audience
 guide_stage:
   - method-selection
-summary: ""
-source: xingyun_wiki
-source_path: methods/toolbox/collection/persona.md
-content_hash: sha256:44585abfdf646543731c92fabef2ed4ec2bca1da3242fe16907a5bc320a60058
-status: draft
-updated_at: 2026-07-15
 ---
 
 # 人物角色（Persona）

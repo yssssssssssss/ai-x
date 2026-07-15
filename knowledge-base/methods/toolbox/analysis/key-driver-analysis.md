@@ -1,18 +1,41 @@
 ---
-id: toolbox_analysis_key_driver_analysis
-type: analysis
 title: 满意度驱动因素分析（Key Driver Analysis）
+type: analysis
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定量
+  - 评估
+tags:
+  - KDA
+  - 驱动因素分析
+  - 关键驱动
+  - 派生重要性
+  - 相对权重
+  - Shapley
+  - IPA
+  - 满意度
+status: draft
+sensitivity: internal
+owner: 王仰龙
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/satisfaction-survey.md
+  - methods/toolbox/analysis/experience-metrics-heart.md
+  - models/ect.md
+  - methods/toolbox/analysis/voc-analysis.md
+  - methods/toolbox/analysis/issue-prioritization.md
+  - methods/toolbox/analysis/ab-testing.md
+  - methods/toolbox/collection/interviews.md
+  - models/kano.md
+  - methods/toolbox/analysis/ipa-matrix.md
+id: toolbox_analysis_key_driver_analysis
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/key-driver-analysis.md
 content_hash: sha256:aea203b572744bb9ebf83bdc330ffad3db9d7820c39c7d8f282121616f25116d
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 满意度驱动因素分析（Key Driver Analysis）

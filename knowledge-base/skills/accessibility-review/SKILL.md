@@ -1,18 +1,4 @@
 ---
-id: skill_accessibility_review
-type: skill
-title: Accessibility Review — 评估对象 + 范围 → 无障碍走查（编排 wiki 正典）
-domain: general
-tags:
-  - a11y
-  - ux-audit
-guide_stage: []
-summary: ""
-source: xingyun_wiki
-source_path: skills/accessibility-review/SKILL.md
-content_hash: sha256:cb3d02d27dcf10bc41922d6f82159be3dded40213d2fdb4d125deb0472efc4a9
-status: approved
-updated_at: 2026-07-15
 name: accessibility-review
 description: 吃一个评估对象（App/页面/原型/设计稿/H5/小程序，可附截图·原型链接·线上页面·读屏录音录屏·流程或文字描述）+ 评估范围 →
   编排 research-wiki 的无障碍产品体验与适配规范（accessibility-adaptation：POUR 四原则、四类要求、9
@@ -29,10 +15,22 @@ description: 吃一个评估对象（App/页面/原型/设计稿/H5/小程序，
   run-heuristic-evaluation；让真实用户（含视障）做任务并观察 → generate-usability-test；竞品战略意图对比 →
   competitive-analysis；把海量反馈打标归类 → code-open-feedback；把文档/PPT/PDF
   做成无障碍版（补替代文本、阅读顺序等，非界面走查）不属本 skill。
+id: skill_accessibility_review
+source: xingyun_wiki
+source_path: skills/accessibility-review/SKILL.md
+content_hash: sha256:cb3d02d27dcf10bc41922d6f82159be3dded40213d2fdb4d125deb0472efc4a9
+guide_tags:
+  - a11y
+  - ux-audit
+guide_stage: []
+type: skill
+domain: general
+title: Accessibility Review — 评估对象 + 范围 → 无障碍走查（编排 wiki 正典）
 task_types:
   - a11y_audit
 inputs: []
 outputs: []
+status: approved
 ---
 
 # Accessibility Review — 评估对象 + 范围 → 无障碍走查（编排 wiki 正典）

@@ -1,18 +1,35 @@
 ---
-id: model_means_end_laddering
-type: model
 title: 梯子理论（手段-目的链 / Means-End Laddering）
+type: model
 domain:
   - 通用
-tags: []
-guide_stage:
-  - need-discovery
-summary: ""
+research_type:
+  - 定性
+tags:
+  - 梯子理论
+  - 手段目的链
+  - Means-End Chain
+  - laddering
+  - 阶梯式追问
+  - 属性-利益-价值观
+  - 价值观挖掘
+  - 动机洞察
+status: draft
+sensitivity: internal
+owner: null
+updated: 2026-06-25
+related:
+  - methods/toolbox/collection/interviews.md
+  - models/orid.md
+  - methods/toolbox/collection/scenario-based-need-discovery.md
+  - models/user-insight.md
+id: model_means_end_laddering
 source: xingyun_wiki
 source_path: models/means-end-laddering.md
 content_hash: sha256:a1ff7826566028aafa837d786841f26e106d6a12f03e604e4c7deb8527f87e41
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - need-discovery
 ---
 
 # 梯子理论（手段-目的链 / Means-End Laddering）

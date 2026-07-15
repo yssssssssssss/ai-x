@@ -1,19 +1,41 @@
 ---
-id: scenario_continuous_discovery
-type: scenario-guide
 title: 持续发现（Continuous Discovery）
+type: scenario-guide
 domain:
   - 产品体验
-tags: []
-guide_stage:
-  - intent
-  - goal-definition
-summary: ""
+research_type:
+  - 定性
+  - 探索
+stage:
+  - 迭代
+tags:
+  - 持续发现
+  - Continuous Discovery
+  - 产品三人组
+  - OST
+  - 每周访谈
+  - 双轨
+  - Teresa Torres
+status: draft
+sensitivity: internal
+owner: 王仰龙
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/interviews.md
+  - methods/toolbox/analysis/issue-prioritization.md
+  - methods/toolbox/analysis/longitudinal-benchmark-tracking.md
+  - methods/toolbox/collection/in-product-longitudinal-tracking.md
+  - methods/toolbox/analysis/experience-metrics-heart.md
+  - methods/toolbox/analysis/ab-testing.md
+  - assets/templates/opportunity-solution-tree.md
+id: scenario_continuous_discovery
 source: xingyun_wiki
 source_path: methods/scenarios/product-experience/iteration/continuous-discovery.md
 content_hash: sha256:6571aa6d3f0ff0e49faad1e55618670e754fca43987109a854271f897b6a5ba4
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - intent
+  - goal-definition
 ---
 
 # 持续发现（Continuous Discovery）打法

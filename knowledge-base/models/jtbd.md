@@ -1,19 +1,33 @@
 ---
-id: model_jtbd
-type: model
 title: Jobs To Be Done（JTBD）
+type: model
 domain:
   - 通用
+research_type:
+  - 定性
+  - 探索
+  - 概念验证
 tags:
-  - framework
-guide_stage:
-  - need-discovery
-summary: ""
+  - JTBD
+  - Jobs-to-be-Done
+  - 待办任务
+  - Outcome-Driven Innovation
+  - 雇佣理论
+  - 跨品类竞争
+  - 功能层情感层
+status: draft
+sensitivity: internal
+owner: 李笑欣
+updated: 2026-06-25
+related: []
+id: model_jtbd
 source: xingyun_wiki
 source_path: models/jtbd.md
 content_hash: sha256:f9d651044dfcece1b62823ce5ce260cf66bed526371acab2e8ac59df55a76343
-status: draft
-updated_at: 2026-07-15
+guide_tags:
+  - framework
+guide_stage:
+  - need-discovery
 ---
 
 # Jobs To Be Done（JTBD）

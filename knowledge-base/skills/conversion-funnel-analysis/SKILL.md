@@ -1,16 +1,4 @@
 ---
-id: skill_conversion_funnel_analysis
-type: skill
-title: Conversion Funnel Analysis — 分步数据 + 转化路径 → 漏斗诊断（编排 wiki 正典）
-domain: general
-tags: []
-guide_stage: []
-summary: ""
-source: xingyun_wiki
-source_path: skills/conversion-funnel-analysis/SKILL.md
-content_hash: sha256:16f8beafc1448b2f25afb99ebe46f28cf76cc7f2e6c161288baf8494b6b85ced
-status: approved
-updated_at: 2026-07-15
 name: conversion-funnel-analysis
 description: 吃一个转化/流失诊断诉求（拆哪条关键路径 +
   分步数据：埋点分步人数·分步转化率·分群明细[渠道/设备/新老/版本]·改版前后对比，或足够具体的流程与数字）+ 转化目标与口径 → 编排
@@ -25,10 +13,20 @@ description: 吃一个转化/流失诊断诉求（拆哪条关键路径 +
   analyze-satisfaction；给产品搭长期体验指标体系/看板/北极星 →
   build-experience-metrics；拿尼尔森十大原则走查界面找可用性问题 →
   run-heuristic-evaluation。漏斗只答"在哪流失、流失多少"，答不了"为什么"——归因接定性方法（深访/VOC/可用性测试/录屏）。
+id: skill_conversion_funnel_analysis
+source: xingyun_wiki
+source_path: skills/conversion-funnel-analysis/SKILL.md
+content_hash: sha256:16f8beafc1448b2f25afb99ebe46f28cf76cc7f2e6c161288baf8494b6b85ced
+guide_tags: []
+guide_stage: []
+type: skill
+domain: general
+title: Conversion Funnel Analysis — 分步数据 + 转化路径 → 漏斗诊断（编排 wiki 正典）
 task_types:
   - user_research_planning
 inputs: []
 outputs: []
+status: approved
 ---
 
 # Conversion Funnel Analysis — 分步数据 + 转化路径 → 漏斗诊断（编排 wiki 正典）

@@ -1,20 +1,33 @@
 ---
-id: standard_accessibility_adaptation
-type: standard
 title: 无障碍产品体验与适配规范
+type: standard
 domain:
   - 通用
+research_type:
+  - 评估
 tags:
+  - 无障碍
+  - accessibility
+  - WCAG
+  - 适配规范
+  - 信息无障碍
+  - checklist
+status: draft
+sensitivity: internal
+owner: 金菁
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/usability-testing.md
+  - methods/toolbox/analysis/issue-prioritization.md
+id: standard_accessibility_adaptation
+source: xingyun_wiki
+source_path: methods/standards/accessibility-adaptation.md
+content_hash: sha256:248be3f5ed0a96fb137ae6a47acbd8afec0a7a7ba87121e3cbcafe6aeb6d1689
+guide_tags:
   - a11y
   - ux-audit
 guide_stage:
   - output-standard
-summary: ""
-source: xingyun_wiki
-source_path: methods/standards/accessibility-adaptation.md
-content_hash: sha256:248be3f5ed0a96fb137ae6a47acbd8afec0a7a7ba87121e3cbcafe6aeb6d1689
-status: draft
-updated_at: 2026-07-15
 ---
 
 # 无障碍产品体验与适配规范

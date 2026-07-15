@@ -1,18 +1,31 @@
 ---
-id: toolbox_analysis_systems_thinking_research
-type: analysis
 title: 系统思维做业务调研
+type: analysis
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定性
+  - 探索
+tags:
+  - 系统思维
+  - 因果回路图
+  - UBP
+  - B端业务调研
+  - 全局分析
+status: draft
+sensitivity: internal
+owner: 乔露
+updated: 2026-06-24
+related:
+  - methods/toolbox/analysis/competitive-analysis.md
+  - methods/scenarios/comprehensive-business/cross-line-topics/b-end-experience-measurement.md
+id: toolbox_analysis_systems_thinking_research
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/systems-thinking-research.md
 content_hash: sha256:c2fc160183ec7432c8f9cd0980d147e2b460ab33554838e3bc21aa21e5eda90b
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 系统思维做业务调研

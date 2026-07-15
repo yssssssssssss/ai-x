@@ -1,18 +1,44 @@
 ---
-id: toolbox_collection_ethnography_field_research
-type: method
 title: 民族志与田野调查（参与观察）
+type: method
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定性
+  - 探索
+method_family:
+  - 现场观察
+tags:
+  - 民族志
+  - 田野调查
+  - 参与观察
+  - participant observation
+  - 深描
+  - thick description
+  - 情境访谈
+  - contextual inquiry
+  - 报道人
+  - 口述史
+  - 生活史
+  - 沉浸式观察
+status: draft
+sensitivity: internal
+owner: null
+updated: 2026-06-25
+related:
+  - models/anthropological-lens.md
+  - methods/toolbox/collection/store-visit-field-research.md
+  - methods/toolbox/collection/scenario-based-need-discovery.md
+  - methods/toolbox/collection/interviews.md
+  - methods/toolbox/collection/in-product-longitudinal-tracking.md
+  - methods/toolbox/collection/respondent-bias.md
+id: toolbox_collection_ethnography_field_research
 source: xingyun_wiki
 source_path: methods/toolbox/collection/ethnography-field-research.md
 content_hash: sha256:f362e40a728263726bffdb95dafdbbe64c3bcdac56495359b569f2fd8960aca4
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 民族志与田野调查（参与观察）

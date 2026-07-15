@@ -1,18 +1,4 @@
 ---
-id: skill_competitive_analysis
-type: skill
-title: Competitive Analysis — 竞品素材 + 知己 → 竞品分析（编排 wiki 正典）
-domain: general
-tags:
-  - business-competitive
-  - ui-competitive
-guide_stage: []
-summary: ""
-source: xingyun_wiki
-source_path: skills/competitive-analysis/SKILL.md
-content_hash: sha256:23578375f868f72fd868d7c10b19f708d67ad7ba14ebc3894ca2dc2038e837c4
-status: approved
-updated_at: 2026-07-15
 name: competitive-analysis
 description: 吃一个竞品分析诉求（分析/对比哪些竞品 +
   可观测素材：功能更新·截图·信息架构·运营活动·价格会员补贴·用户评价，或足够具体的文字描述）+ 我方定位·生命周期阶段·用户特征（先知己再知彼）→ 编排
@@ -28,10 +14,22 @@ description: 吃一个竞品分析诉求（分析/对比哪些竞品 +
   generate-usability-test；给自己产品搭长期体验指标体系/看板 →
   build-experience-metrics；脱离竞品系统挖增长机会点 → opportunity-research；对策略型产品做微观量化评测/GSB
   打分（图搜/推荐评测）不在本 skill。
+id: skill_competitive_analysis
+source: xingyun_wiki
+source_path: skills/competitive-analysis/SKILL.md
+content_hash: sha256:23578375f868f72fd868d7c10b19f708d67ad7ba14ebc3894ca2dc2038e837c4
+guide_tags:
+  - business-competitive
+  - ui-competitive
+guide_stage: []
+type: skill
+domain: general
+title: Competitive Analysis — 竞品素材 + 知己 → 竞品分析（编排 wiki 正典）
 task_types:
   - competitive_research
 inputs: []
 outputs: []
+status: approved
 ---
 
 # Competitive Analysis — 竞品素材 + 知己 → 竞品分析（编排 wiki 正典）

@@ -1,18 +1,32 @@
 ---
-id: toolbox_collection_desk_research
-type: method
 title: 桌面研究
+type: method
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 探索
+  - 定性
+method_family:
+  - 桌面研究
+tags:
+  - 桌面研究
+  - 二手资料
+  - 文献检索
+  - 竞品资料
+status: draft
+sensitivity: internal
+owner: 吉国杰
+updated: 2026-06-24
+related:
+  - methods/toolbox/analysis/competitive-analysis.md
+  - methods/toolbox/collection/interviews.md
+id: toolbox_collection_desk_research
 source: xingyun_wiki
 source_path: methods/toolbox/collection/desk-research.md
 content_hash: sha256:6289beac5c773755577272e24d717024cbe90a188db3d958cfed4a72b47f49fa
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 桌面研究

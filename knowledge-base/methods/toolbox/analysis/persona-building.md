@@ -1,20 +1,35 @@
 ---
-id: toolbox_analysis_persona_building
-type: analysis
 title: Persona 构建（Cooper 法）
+type: analysis
 domain:
   - 通用
+research_type:
+  - 定性
+  - 探索
 tags:
+  - Persona
+  - 用户角色
+  - Cooper
+  - PERSONA七要素
+  - 用户画像
+  - 同理心地图
+  - 人物角色卡片
+status: draft
+sensitivity: internal
+owner: 李笑欣
+updated: 2026-06-25
+related:
+  - models/user-personas-segmentation.md
+  - methods/toolbox/collection/interviews.md
+id: toolbox_analysis_persona_building
+source: xingyun_wiki
+source_path: methods/toolbox/analysis/persona-building.md
+content_hash: sha256:4b96eb23e362c6adfd2654b183adfc316130a0a6f061e11fe2547e59529d4cca
+guide_tags:
   - persona
   - audience
 guide_stage:
   - method-selection
-summary: ""
-source: xingyun_wiki
-source_path: methods/toolbox/analysis/persona-building.md
-content_hash: sha256:4b96eb23e362c6adfd2654b183adfc316130a0a6f061e11fe2547e59529d4cca
-status: draft
-updated_at: 2026-07-15
 ---
 
 # Persona 构建（Cooper 法）

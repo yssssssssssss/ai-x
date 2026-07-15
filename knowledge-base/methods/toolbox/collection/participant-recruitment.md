@@ -1,10 +1,31 @@
 ---
-id: toolbox_collection_participant_recruitment
-type: method
 title: 用户招募（访谈/调研）
+type: method
 domain:
   - 通用
+research_type:
+  - 定性
+method_family:
+  - 访谈
 tags:
+  - 用户招募
+  - 甄别问卷
+  - 筛选
+  - 电话复核
+  - 配额
+status: draft
+sensitivity: internal
+owner: 贺兆铎
+updated: 2026-06-25
+related:
+  - methods/toolbox/collection/interviews.md
+  - methods/toolbox/collection/interview-guide-design.md
+  - methods/standards/sampling.md
+id: toolbox_collection_participant_recruitment
+source: xingyun_wiki
+source_path: methods/toolbox/collection/participant-recruitment.md
+content_hash: sha256:b9f12336dffe37c5737a46555d979f081e509f73298fbe2c2639ad8dfa8b5f5e
+guide_tags:
   - qualitative
   - method
   - audience
@@ -12,12 +33,6 @@ tags:
   - compliance
 guide_stage:
   - method-selection
-summary: ""
-source: xingyun_wiki
-source_path: methods/toolbox/collection/participant-recruitment.md
-content_hash: sha256:b9f12336dffe37c5737a46555d979f081e509f73298fbe2c2639ad8dfa8b5f5e
-status: draft
-updated_at: 2026-07-15
 ---
 
 # 用户招募（访谈/调研）

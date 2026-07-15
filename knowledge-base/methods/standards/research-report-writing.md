@@ -1,20 +1,30 @@
 ---
-id: standard_research_report_writing
-type: standard
 title: 调研报告撰写规范
+type: standard
 domain:
   - 通用
+research_type: []
 tags:
+  - 报告撰写
+  - 研究报告
+  - 结构
+  - 论点论据
+  - 排版
+status: draft
+sensitivity: internal
+owner: 吉国杰
+updated: 2026-06-24
+related:
+  - methods/standards/research-project-workflow.md
+id: standard_research_report_writing
+source: xingyun_wiki
+source_path: methods/standards/research-report-writing.md
+content_hash: sha256:4a0b38ded92385538520f10f3d115ae6e8992196203f6ece402e5ce2bd80ab16
+guide_tags:
   - report
   - output
 guide_stage:
   - output-standard
-summary: ""
-source: xingyun_wiki
-source_path: methods/standards/research-report-writing.md
-content_hash: sha256:4a0b38ded92385538520f10f3d115ae6e8992196203f6ece402e5ce2bd80ab16
-status: draft
-updated_at: 2026-07-15
 ---
 
 # 调研报告撰写规范

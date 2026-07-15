@@ -1,18 +1,37 @@
 ---
-id: toolbox_analysis_journey_map
-type: analysis
 title: 用户旅程图（CJM）
+type: analysis
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定性
+  - 评估
+tags:
+  - 用户旅程图
+  - CJM
+  - Customer Journey Map
+  - 旅程阶段
+  - 接触点
+  - 情感曲线
+  - 体验地图
+  - 服务蓝图
+  - 用户故事地图
+  - 移情图
+  - 线框图
+status: draft
+sensitivity: internal
+owner: 江竹、李笑欣
+updated: 2026-06-25
+related:
+  - models/jtbd.md
+  - models/job-map.md
+id: toolbox_analysis_journey_map
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/journey-map.md
 content_hash: sha256:10f43a1c5ce9340e8c8073a985773e72a60e36e10f0d925acf11644f33f9c361
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 用户旅程图（CJM）

@@ -1,19 +1,35 @@
 ---
-id: toolbox_analysis_qualitative_insight_frameworks
-type: analysis
 title: 定性洞察分析框架
+type: analysis
 domain:
   - 通用
+research_type:
+  - 定性
 tags:
-  - framework
-guide_stage:
-  - method-selection
-summary: ""
+  - 定性洞察
+  - 用户旅程
+  - 价值主张
+  - 同理心地图
+  - ABC
+  - 洞察方法论
+status: draft
+sensitivity: internal
+owner: 邱伟雄
+updated: 2026-06-25
+related:
+  - methods/toolbox/analysis/affinity-diagram.md
+  - methods/toolbox/analysis/qualitative-coding.md
+  - methods/toolbox/collection/experience-map.md
+  - methods/toolbox/collection/interviews.md
+  - methods/standards/research-report-writing.md
+id: toolbox_analysis_qualitative_insight_frameworks
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/qualitative-insight-frameworks.md
 content_hash: sha256:69dfb5a8706c21646b3ed4e39d0aa90882dd2969fdb575e4e4c4291f5734136b
-status: draft
-updated_at: 2026-07-15
+guide_tags:
+  - framework
+guide_stage:
+  - method-selection
 ---
 
 # 定性洞察分析框架

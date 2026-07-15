@@ -1,18 +1,34 @@
 ---
-id: model_psychophysics
-type: model
 title: 心理物理学（阈限与信号检测论）
+type: model
 domain:
   - 通用
-tags: []
-guide_stage:
-  - need-discovery
-summary: ""
+research_type:
+  - 定量
+tags:
+  - 心理物理学
+  - 感觉阈限
+  - 绝对阈限
+  - 差别阈限
+  - JND
+  - 信号检测论
+  - SDT
+  - d'
+  - ROC
+status: draft
+sensitivity: internal
+owner: 赵真真
+updated: 2026-06-24
+related:
+  - methods/toolbox/analysis/paired-comparison.md
+  - methods/toolbox/collection/scale-development.md
+id: model_psychophysics
 source: xingyun_wiki
 source_path: models/psychophysics.md
 content_hash: sha256:6b6825c88d47d3d41f904bb6a7d59b272292361a240e6b794f9d8a64449e2a71
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - need-discovery
 ---
 
 # 心理物理学（阈限与信号检测论）

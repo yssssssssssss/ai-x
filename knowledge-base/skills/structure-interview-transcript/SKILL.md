@@ -1,18 +1,4 @@
 ---
-id: skill_structure_interview_transcript
-type: skill
-title: Structure Interview Transcript — 单场访谈逐字稿 → 结构化小结（降噪整理版）
-domain: general
-tags:
-  - qualitative
-  - method
-guide_stage: []
-summary: ""
-source: xingyun_wiki
-source_path: skills/structure-interview-transcript/SKILL.md
-content_hash: sha256:4f387525363a940a5cd83493a186085c3e5a6d58d56e73473bb2f8da79b08aec
-status: approved
-updated_at: 2026-07-15
 name: structure-interview-transcript
 description: 把研究员上传的**单场**用户访谈逐字稿 / 录音转写，结合本次研究目的与研究内容，**围绕需求方关心的研究问题**调用研究 Wiki
   的访谈记录结构与定性洞察框架，**降噪整理**成一份结构化访谈小结（受访者背景 + 访谈执行信息 + 以研究内容为主干的分主题发现〔每点配关键原话〕+ 痛点
@@ -21,10 +7,22 @@ description: 把研究员上传的**单场**用户访谈逐字稿 / 录音转写
   skill——哪怕用户只是把一段逐字稿丢过来让你"整理一下"。**只做单场整理，不做跨场归纳 / 拔总洞察**（多场综合属
   `synthesize-qualitative-insights`）；也不要与"出访谈提纲"（`generate-interview-guide`）、"出问卷"（`generate-survey`）混用。逐字稿属敏感原始数据：**只在会话内临时处理、绝不写入
   Wiki、引用原话时匿名化**。
+id: skill_structure_interview_transcript
+source: xingyun_wiki
+source_path: skills/structure-interview-transcript/SKILL.md
+content_hash: sha256:4f387525363a940a5cd83493a186085c3e5a6d58d56e73473bb2f8da79b08aec
+guide_tags:
+  - qualitative
+  - method
+guide_stage: []
+type: skill
+domain: general
+title: Structure Interview Transcript — 单场访谈逐字稿 → 结构化小结（降噪整理版）
 task_types:
   - user_research_planning
 inputs: []
 outputs: []
+status: approved
 ---
 
 # Structure Interview Transcript — 单场访谈逐字稿 → 结构化小结（降噪整理版）

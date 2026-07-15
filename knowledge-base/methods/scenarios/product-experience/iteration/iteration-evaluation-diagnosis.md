@@ -1,19 +1,57 @@
 ---
-id: scenario_iteration_evaluation_diagnosis
-type: scenario-guide
 title: 产品迭代期·效果评估与问题诊断打法
+type: scenario-guide
 domain:
   - 产品体验
-tags: []
-guide_stage:
-  - intent
-  - goal-definition
-summary: ""
+research_type:
+  - 评估
+  - 度量
+  - 定量
+  - 定性
+method_family:
+  - 问卷
+  - 日志/行为数据分析
+  - 访谈
+stage:
+  - 迭代
+tags:
+  - 迭代期
+  - 效果评估
+  - 诊断归因
+  - 效果验证
+  - 北极星
+  - 编排打法
+  - 产品迭代
+  - 用研方法论
+status: draft
+sensitivity: internal
+owner: 王仰龙
+updated: 2026-06-24
+related:
+  - methods/toolbox/analysis/experience-metrics-heart.md
+  - methods/toolbox/collection/satisfaction-survey.md
+  - models/ect.md
+  - methods/toolbox/analysis/longitudinal-benchmark-tracking.md
+  - methods/toolbox/analysis/conversion-funnel.md
+  - methods/toolbox/analysis/feature-adoption.md
+  - methods/toolbox/analysis/satisfaction-drop-attribution.md
+  - methods/toolbox/analysis/key-driver-analysis.md
+  - methods/toolbox/analysis/voc-analysis.md
+  - methods/toolbox/analysis/issue-prioritization.md
+  - methods/toolbox/analysis/ab-testing.md
+  - methods/scenarios/product-experience/iteration/continuous-discovery.md
+  - methods/toolbox/collection/in-product-longitudinal-tracking.md
+  - methods/toolbox/collection/interviews.md
+  - assets/scales/standardized-ux-scales.md
+  - assets/templates/opportunity-solution-tree.md
+id: scenario_iteration_evaluation_diagnosis
 source: xingyun_wiki
 source_path: methods/scenarios/product-experience/iteration/iteration-evaluation-diagnosis.md
 content_hash: sha256:99f46804825e27d609fdf6fcb80e4012696d4f06e11574d019602d0c36358d35
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - intent
+  - goal-definition
 ---
 
 # 产品迭代期·效果评估与问题诊断打法

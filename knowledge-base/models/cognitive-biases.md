@@ -1,18 +1,31 @@
 ---
-id: model_cognitive_biases
-type: model
 title: 认知偏见与用户决策
+type: model
 domain:
   - 通用
-tags: []
-guide_stage:
-  - need-discovery
-summary: ""
+research_type: []
+tags:
+  - 认知偏见
+  - 诱饵效应
+  - 锚定效应
+  - 鸟笼效应
+  - 禀赋效应
+  - 行为经济学
+  - 助推
+status: draft
+sensitivity: internal
+owner: 吴佳毅
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/respondent-bias.md
+  - models/ect.md
+id: model_cognitive_biases
 source: xingyun_wiki
 source_path: models/cognitive-biases.md
 content_hash: sha256:8b8e750803a75c2179f25fcc3884addc9e7be30c7d8d4fa63f0a51204f4a1728
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - need-discovery
 ---
 
 # 认知偏见与用户决策

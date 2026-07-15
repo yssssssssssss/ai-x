@@ -1,18 +1,36 @@
 ---
-id: toolbox_collection_online_focus_group
-type: method
 title: 在线焦点小组
+type: method
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定性
+  - 探索
+method_family:
+  - 焦点小组
+tags:
+  - 焦点小组
+  - 在线
+  - 群体访谈
+  - 主持
+  - FGD
+  - focus group
+  - 群体互动
+  - 从众效应
+status: draft
+sensitivity: internal
+owner: 孙文佳
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/interviews.md
+  - methods/toolbox/collection/co-creation-workshop.md
+id: toolbox_collection_online_focus_group
 source: xingyun_wiki
 source_path: methods/toolbox/collection/online-focus-group.md
 content_hash: sha256:c82fb4cbf354babdbc399885526c4d2e6df1ada722492665983173a8640f9312
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 在线焦点小组

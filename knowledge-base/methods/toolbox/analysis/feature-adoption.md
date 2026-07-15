@@ -1,18 +1,38 @@
 ---
-id: toolbox_analysis_feature_adoption
-type: analysis
 title: 功能采纳分析（Feature Adoption Analysis）
+type: analysis
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定量
+  - 度量
+  - 评估
+tags:
+  - 功能采纳
+  - Adoption
+  - 采纳漏斗
+  - 采纳率
+  - 功能留存
+  - cohort
+  - 同期群
+status: draft
+sensitivity: internal
+owner: 王仰龙
+updated: 2026-06-24
+related:
+  - methods/toolbox/analysis/conversion-funnel.md
+  - methods/toolbox/analysis/ab-testing.md
+  - methods/toolbox/collection/interviews.md
+  - methods/toolbox/analysis/voc-analysis.md
+  - methods/toolbox/analysis/experience-metrics-heart.md
+  - models/ect.md
+id: toolbox_analysis_feature_adoption
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/feature-adoption.md
 content_hash: sha256:92704d9de4b3041a27a1385b262007b782529795c63b284f96920e320d88e84f
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 功能采纳分析（Feature Adoption Analysis）

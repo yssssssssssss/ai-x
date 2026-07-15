@@ -1,20 +1,45 @@
 ---
-id: toolbox_collection_surveys
-type: method
 title: 问卷调研（Survey）
+type: method
 domain:
   - 通用
+research_type:
+  - 定量
+  - 度量
+  - 评估
+method_family:
+  - 问卷
 tags:
+  - 问卷
+  - survey
+  - 量表
+  - 信度
+  - 效度
+  - 题目设计
+  - 评分量表
+  - Likert
+  - 6W框架
+  - Francis Galton
+  - 标准化
+  - 概念操作化
+  - 抽样推论
+  - questionnaire method
+status: draft
+sensitivity: internal
+owner: 李笑欣
+updated: 2026-06-25
+related:
+  - methods/toolbox/analysis/survey-statistics.md
+  - methods/toolbox/collection/usage-attitude-research.md
+id: toolbox_collection_surveys
+source: xingyun_wiki
+source_path: methods/toolbox/collection/surveys.md
+content_hash: sha256:d466b99124b03a17489a5f31186fed73e19b0d9b399e6ad74fe163ccc9800ab5
+guide_tags:
   - quantitative
   - method
 guide_stage:
   - method-selection
-summary: ""
-source: xingyun_wiki
-source_path: methods/toolbox/collection/surveys.md
-content_hash: sha256:d466b99124b03a17489a5f31186fed73e19b0d9b399e6ad74fe163ccc9800ab5
-status: draft
-updated_at: 2026-07-15
 ---
 
 # 问卷调研（Survey）

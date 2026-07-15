@@ -1,18 +1,31 @@
 ---
-id: toolbox_analysis_click_hotzone_experiment
-type: analysis
 title: 控件热区点击实验
+type: analysis
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定量
+  - 评估
+tags:
+  - 点击准确率
+  - 控件热区
+  - 费茨定律
+  - 实验
+  - 触控尺寸
+status: draft
+sensitivity: internal
+owner: 吴佳毅
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/usability-testing.md
+  - methods/toolbox/collection/eye-tracking.md
+id: toolbox_analysis_click_hotzone_experiment
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/click-hotzone-experiment.md
 content_hash: sha256:42fa3bb9051edeb21fc19b6da0f87f7be4c4b996fc40669929804cda04726a6c
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 控件热区点击实验

@@ -1,18 +1,32 @@
 ---
-id: toolbox_analysis_behavioral_data_augmented_research
-type: analysis
 title: 行为数据辅助用研
+type: analysis
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定量
+tags:
+  - 行为数据
+  - 日志分析
+  - 埋点
+  - 粘性
+  - 关键环节
+  - 定量定性结合
+status: draft
+sensitivity: internal
+owner: 孙文佳
+updated: 2026-06-24
+related:
+  - methods/toolbox/analysis/conversion-funnel.md
+  - methods/toolbox/analysis/feature-adoption.md
+  - methods/toolbox/collection/interviews.md
+id: toolbox_analysis_behavioral_data_augmented_research
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/behavioral-data-augmented-research.md
 content_hash: sha256:dbf7c5a950f657d2e73abd22ffc25b16a712c771ebc4af4cdf53eeb2988284cf
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 行为数据辅助用研

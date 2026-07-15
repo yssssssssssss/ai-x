@@ -4,15 +4,15 @@ import { searchKnowledge, resolveSkill, listSkills } from '../apps/orchestrator-
 import { loadDecisionGraph } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 
 // 前置:已跑 npm run kb:import && npm run kb:build
-test('每个决策节点的 related_tags 都能召回到条目', () => {
+test('每个决策节点的 related_tags 都能经 guide_tags 召回到条目', () => {
   const { nodes } = loadDecisionGraph();
   const empty: string[] = [];
   for (const n of nodes) {
     const tags = n.related_tags ?? [];
     if (tags.length === 0) continue;
-    if (searchKnowledge({ tags }).length === 0) empty.push(n.key);
+    if (searchKnowledge({ guide_tags: tags }).length === 0) empty.push(n.key);
   }
-  assert.deepEqual(empty, [], `这些节点召回为空(需补种子 tag 或知识条目): ${empty.join(', ')}`);
+  assert.deepEqual(empty, [], `这些节点召回为空(需补种子 guide_tag 或知识条目): ${empty.join(', ')}`);
 });
 
 test('resolveSkill 能定位 generate-research-plan', () => {

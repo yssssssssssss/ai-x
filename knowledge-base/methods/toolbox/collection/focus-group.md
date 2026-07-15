@@ -1,18 +1,34 @@
 ---
-id: toolbox_collection_focus_group
-type: method
 title: 焦点小组（Focus Group）
+type: method
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定性
+  - 探索
+method_family:
+  - 焦点小组
+tags:
+  - 焦点小组
+  - Focus Group
+  - 小组座谈
+  - 群体访谈
+  - 主持人
+  - 团体动力
+status: draft
+sensitivity: internal
+owner: 李笑欣
+updated: 2026-06-25
+related:
+  - methods/toolbox/collection/interviews.md
+  - methods/standards/need-discovery-sampling.md
+id: toolbox_collection_focus_group
 source: xingyun_wiki
 source_path: methods/toolbox/collection/focus-group.md
 content_hash: sha256:7c412ebda4edb052f020a597216e093582bff91c54d0e48d65338ad85f32f0a0
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 焦点小组（Focus Group）

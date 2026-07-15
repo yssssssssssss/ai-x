@@ -1,19 +1,36 @@
 ---
-id: model_four_forces
-type: model
 title: 四力模型（推力 / 拉力 / 焦虑 / 惯性）
+type: model
 domain:
   - 通用
+research_type:
+  - 定性
+  - 探索
 tags:
-  - framework
-guide_stage:
-  - need-discovery
-summary: ""
+  - 四力模型
+  - Four Forces
+  - 推力
+  - 拉力
+  - 焦虑
+  - 惯性
+  - JTBD
+  - 决策驱动力
+  - 切换行为
+status: draft
+sensitivity: internal
+owner: 李笑欣
+updated: 2026-06-25
+related:
+  - models/jtbd.md
+  - methods/toolbox/collection/switch-interview.md
+id: model_four_forces
 source: xingyun_wiki
 source_path: models/four-forces.md
 content_hash: sha256:bc5e6831cedbb3127d1df017b9200957373d1c87a77394c6655a1790398246fd
-status: draft
-updated_at: 2026-07-15
+guide_tags:
+  - framework
+guide_stage:
+  - need-discovery
 ---
 
 # 四力模型（推力 / 拉力 / 焦虑 / 惯性）

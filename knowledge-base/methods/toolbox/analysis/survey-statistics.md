@@ -1,20 +1,35 @@
 ---
-id: toolbox_analysis_survey_statistics
-type: analysis
 title: 问卷数据统计分析（差异性与关联性）
+type: analysis
 domain:
   - 通用
+research_type:
+  - 定量
 tags:
+  - 统计分析
+  - 差异性分析
+  - 关联性分析
+  - T检验
+  - 方差分析
+  - 相关分析
+  - Pearson
+  - 卡方
+  - SPSS
+status: draft
+sensitivity: internal
+owner: 李笑欣
+updated: 2026-06-25
+related:
+  - methods/toolbox/collection/surveys.md
+id: toolbox_analysis_survey_statistics
+source: xingyun_wiki
+source_path: methods/toolbox/analysis/survey-statistics.md
+content_hash: sha256:23ef4ef4eb60b4c5d3ea54bde237a2be2e06d856136fd9f1ef2202155db5095f
+guide_tags:
   - quantitative
   - method
 guide_stage:
   - method-selection
-summary: ""
-source: xingyun_wiki
-source_path: methods/toolbox/analysis/survey-statistics.md
-content_hash: sha256:23ef4ef4eb60b4c5d3ea54bde237a2be2e06d856136fd9f1ef2202155db5095f
-status: draft
-updated_at: 2026-07-15
 ---
 
 # 问卷数据统计分析（差异性与关联性）

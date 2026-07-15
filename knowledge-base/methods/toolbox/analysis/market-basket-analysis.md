@@ -1,18 +1,32 @@
 ---
-id: toolbox_analysis_market_basket_analysis
-type: analysis
 title: 购物篮分析（关联分析）
+type: analysis
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定量
+tags:
+  - 购物篮分析
+  - 关联规则
+  - Apriori
+  - 支持度
+  - 置信度
+  - 提升度
+  - 跨品类选品
+status: draft
+sensitivity: internal
+owner: 吴佳毅
+updated: 2026-06-24
+related:
+  - methods/toolbox/analysis/turf-analysis.md
+  - methods/toolbox/analysis/tgi-index.md
+id: toolbox_analysis_market_basket_analysis
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/market-basket-analysis.md
 content_hash: sha256:fb968a1ba7776f379b52b1243cb2f35bf463a3e77d92e9b3e69c3b75580e08cc
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 购物篮分析（关联分析）

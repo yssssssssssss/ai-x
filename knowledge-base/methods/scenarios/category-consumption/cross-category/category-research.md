@@ -1,19 +1,39 @@
 ---
-id: scenario_category_research
-type: scenario-guide
 title: 品类研究打法
+type: scenario-guide
 domain:
   - 品类消费-跨品类方法
-tags: []
-guide_stage:
-  - intent
-  - goal-definition
-summary: ""
+research_type:
+  - 探索
+  - 定性
+  - 定量
+method_family:
+  - 桌面研究
+  - 问卷
+  - 访谈
+tags:
+  - 品类研究
+  - 品类洞察
+  - 市场理解
+  - 研究视角
+status: draft
+sensitivity: internal
+owner: 翁鸿诚
+updated: 2026-06-24
+related:
+  - methods/scenarios/category-consumption/cross-category/churn-user-research.md
+  - methods/toolbox/collection/desk-research.md
+  - methods/toolbox/analysis/competitive-analysis.md
+  - methods/toolbox/analysis/key-driver-analysis.md
+  - methods/toolbox/collection/interviews.md
+id: scenario_category_research
 source: xingyun_wiki
 source_path: methods/scenarios/category-consumption/cross-category/category-research.md
 content_hash: sha256:2a28ced8f77cbfdded502b690788968b8033ce43be76614ace9236133d43075c
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - intent
+  - goal-definition
 ---
 
 # 品类研究打法

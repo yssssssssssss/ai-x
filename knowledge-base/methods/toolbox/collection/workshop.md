@@ -1,18 +1,35 @@
 ---
-id: toolbox_collection_workshop
-type: method
 title: 共创工作坊（盖房子六步法）
+type: method
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定性
+  - 探索
+method_family:
+  - 工作坊
+tags:
+  - 工作坊
+  - workshop
+  - 共创
+  - 设计冲刺
+  - design sprint
+  - 结构化头脑风暴
+  - 盖房子六步
+  - 云工作坊
+status: draft
+sensitivity: internal
+owner: 李笑欣
+updated: 2026-06-25
+related:
+  - methods/toolbox/collection/focus-group.md
+id: toolbox_collection_workshop
 source: xingyun_wiki
 source_path: methods/toolbox/collection/workshop.md
 content_hash: sha256:9b701d2f4252e7bcb82f4e60d361aebfe60280ef1f70a2f3ff9f66819c3c9a9a
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 共创工作坊（盖房子六步法）

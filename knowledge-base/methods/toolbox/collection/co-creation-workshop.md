@@ -1,18 +1,34 @@
 ---
-id: toolbox_collection_co_creation_workshop
-type: method
 title: 共创工作坊
+type: method
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定性
+  - 探索
+method_family:
+  - 焦点小组
+tags:
+  - 共创工作坊
+  - workshop
+  - 设计冲刺
+  - 发散收敛
+  - 主持
+status: draft
+sensitivity: internal
+owner: 李笑欣
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/online-focus-group.md
+  - models/design-sprint.md
+  - methods/scenarios/product-experience/iteration/continuous-discovery.md
+id: toolbox_collection_co_creation_workshop
 source: xingyun_wiki
 source_path: methods/toolbox/collection/co-creation-workshop.md
 content_hash: sha256:04027d37c36e61c86bfa4175d408d58183882ece91db1c44ae7e28a4168e2b3b
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 共创工作坊

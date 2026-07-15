@@ -1,18 +1,30 @@
 ---
-id: toolbox_analysis_turf_analysis
-type: analysis
 title: TURF 分析
+type: analysis
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定量
+tags:
+  - TURF
+  - 触达频次
+  - 不重复到达
+  - 产品组合
+  - 渠道组合
+status: draft
+sensitivity: internal
+owner: 顾小妍
+updated: 2026-06-24
+related:
+  - methods/toolbox/analysis/market-basket-analysis.md
+  - methods/toolbox/analysis/key-driver-analysis.md
+id: toolbox_analysis_turf_analysis
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/turf-analysis.md
 content_hash: sha256:129e00b0a89f8b82aa384afb2d817f25e31057d4c6adb2f0b97b772d721c76a6
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # TURF 分析

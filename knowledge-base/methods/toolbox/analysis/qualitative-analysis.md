@@ -1,19 +1,35 @@
 ---
-id: toolbox_analysis_qualitative_analysis
-type: analysis
 title: 质性资料分析（Miles & Huberman 框架）
+type: analysis
 domain:
   - 通用
+research_type:
+  - 定性
 tags:
-  - framework
-guide_stage:
-  - method-selection
-summary: ""
+  - 质性分析
+  - 定性分析
+  - 编码
+  - 初始编码
+  - 模式编码
+  - 备忘录
+  - 矩阵表
+  - Miles
+  - Huberman
+  - 接触摘要单
+status: draft
+sensitivity: internal
+owner: 李笑欣
+updated: 2026-06-25
+related:
+  - methods/toolbox/collection/interviews.md
+id: toolbox_analysis_qualitative_analysis
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/qualitative-analysis.md
 content_hash: sha256:66af9d40a47fa9215ddeaa5112dfbf1644236ec229dc0f8ecdf5464f440740d5
-status: draft
-updated_at: 2026-07-15
+guide_tags:
+  - framework
+guide_stage:
+  - method-selection
 ---
 
 # 质性资料分析（Miles & Huberman 框架）

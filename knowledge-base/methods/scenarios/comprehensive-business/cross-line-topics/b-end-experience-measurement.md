@@ -1,19 +1,42 @@
 ---
-id: scenario_b_end_experience_measurement
-type: scenario-guide
 title: B 端系统体验度量打法
+type: scenario-guide
 domain:
   - 综合业务-跨业务专题
-tags: []
-guide_stage:
-  - intent
-  - goal-definition
-summary: ""
+research_type:
+  - 定量
+  - 度量
+  - 评估
+method_family:
+  - 问卷
+  - 可用性测试
+tags:
+  - B端
+  - 体验度量
+  - 净满意度
+  - NSS
+  - 北极星指标
+  - 因子分解
+  - 客户旅程
+  - 频控
+status: draft
+sensitivity: internal
+owner: 王仰龙
+updated: 2026-06-24
+related:
+  - methods/toolbox/analysis/experience-metrics-heart.md
+  - methods/toolbox/collection/satisfaction-survey.md
+  - methods/toolbox/analysis/satisfaction-drop-attribution.md
+  - methods/toolbox/analysis/ab-testing.md
+  - assets/scales/standardized-ux-scales.md
+id: scenario_b_end_experience_measurement
 source: xingyun_wiki
 source_path: methods/scenarios/comprehensive-business/cross-line-topics/b-end-experience-measurement.md
 content_hash: sha256:3c67fca180ed3dc38fde734ba70187d1429493e6a5e9f3d86db59aa51abbba23
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - intent
+  - goal-definition
 ---
 
 # B 端系统体验度量打法

@@ -1,20 +1,34 @@
 ---
-id: toolbox_collection_interview_guide_design
-type: method
 title: 访谈提纲设计
+type: method
 domain:
   - 通用
+research_type:
+  - 定性
+method_family:
+  - 访谈
 tags:
+  - 访谈提纲
+  - discussion guide
+  - 提问设计
+  - ORID
+status: draft
+sensitivity: internal
+owner: 贺兆铎
+updated: 2026-06-25
+related:
+  - methods/toolbox/collection/interviews.md
+  - models/orid.md
+  - methods/toolbox/collection/participant-recruitment.md
+id: toolbox_collection_interview_guide_design
+source: xingyun_wiki
+source_path: methods/toolbox/collection/interview-guide-design.md
+content_hash: sha256:bc53d31178838ad4454004c9d9f6b048eaa7420d72983369c3032a08e3af050a
+guide_tags:
   - qualitative
   - method
 guide_stage:
   - method-selection
-summary: ""
-source: xingyun_wiki
-source_path: methods/toolbox/collection/interview-guide-design.md
-content_hash: sha256:bc53d31178838ad4454004c9d9f6b048eaa7420d72983369c3032a08e3af050a
-status: draft
-updated_at: 2026-07-15
 ---
 
 # 访谈提纲设计

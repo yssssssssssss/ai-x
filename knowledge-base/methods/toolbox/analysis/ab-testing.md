@@ -1,18 +1,42 @@
 ---
-id: toolbox_analysis_ab_testing
-type: analysis
 title: A/B 测试与在线对照实验（A/B Testing / OCE）
+type: analysis
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定量
+  - 评估
+  - 概念验证
+tags:
+  - AB测试
+  - 在线对照实验
+  - OEC
+  - MDE
+  - 显著性
+  - 置信区间
+  - SRM
+  - 辛普森悖论
+  - 灰度
+status: draft
+sensitivity: internal
+owner: 王仰龙
+updated: 2026-06-24
+related:
+  - methods/toolbox/analysis/issue-prioritization.md
+  - methods/toolbox/analysis/key-driver-analysis.md
+  - methods/toolbox/collection/interviews.md
+  - methods/toolbox/analysis/voc-analysis.md
+  - methods/toolbox/analysis/conversion-funnel.md
+  - methods/toolbox/analysis/experience-metrics-heart.md
+  - methods/toolbox/collection/satisfaction-survey.md
+  - models/ect.md
+id: toolbox_analysis_ab_testing
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/ab-testing.md
 content_hash: sha256:c2ef04c09bf98895be371473b181bdba032233b8f7511d2183791d64b8a441d6
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # A/B 测试与在线对照实验（A/B Testing / OCE）

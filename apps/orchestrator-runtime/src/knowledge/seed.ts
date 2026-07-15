@@ -26,24 +26,26 @@ const TYPE_GUIDE_STAGE: Record<string, string[]> = {
   skill: [],
 };
 
+// 产出受控 guide_tags(对齐 decision-graph related_tags)+ guide_stage。
+// 注意:guideTags 是受控引导标签, 与 wiki 原生自由中文 tags 是两个独立字段。
 export function seedTagsGuideStage(
   type: string,
   stem: string,
   title: string,
-): { tags: string[]; guide_stage: string[] } {
+): { guideTags: string[]; guide_stage: string[] } {
   const { tags: vocab, guide_stages } = loadTaxonomy();
   const tagVocab = new Set(vocab);
   const stageVocab = new Set(guide_stages);
   const hay = `${stem} ${title}`;
 
-  const tags = new Set<string>();
+  const guideTags = new Set<string>();
   for (const [re, ts] of KEYWORD_TAG) {
-    if (re.test(hay)) ts.forEach((t) => tags.add(t));
+    if (re.test(hay)) ts.forEach((t) => guideTags.add(t));
   }
   // 归一:丢弃 taxonomy 之外的
-  const normTags = [...tags].filter((t) => tagVocab.has(t));
+  const normTags = [...guideTags].filter((t) => tagVocab.has(t));
   const normStage = (TYPE_GUIDE_STAGE[type] ?? []).filter((s) => stageVocab.has(s));
-  return { tags: normTags, guide_stage: normStage };
+  return { guideTags: normTags, guide_stage: normStage };
 }
 
 // skill 文件名/标题 → ResearchTask.task_type 种子(供 router 精准路由)。

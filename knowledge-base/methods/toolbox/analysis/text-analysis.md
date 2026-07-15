@@ -1,18 +1,33 @@
 ---
-id: toolbox_analysis_text_analysis
-type: analysis
 title: 文本分析
+type: analysis
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定性
+  - 定量
+tags:
+  - 文本分析
+  - 分词
+  - 关键词
+  - TF-IDF
+  - 情感分析
+  - 语义网络
+  - KH Coder
+status: draft
+sensitivity: internal
+owner: 焦玉霞
+updated: 2026-06-24
+related:
+  - methods/toolbox/analysis/voc-analysis.md
+  - methods/toolbox/collection/qualitative-questionnaire.md
+id: toolbox_analysis_text_analysis
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/text-analysis.md
 content_hash: sha256:a88d1e3171a956a6a62a7a63912a7b53ca27b9eaa11a5e689aba64d9e7641b80
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 文本分析

@@ -1,22 +1,37 @@
 ---
-id: standard_need_discovery_sampling
-type: standard
 title: 需求洞察的样本选择
+type: standard
 domain:
   - 通用
+research_type:
+  - 定性
+  - 探索
+method_family:
+  - 抽样
 tags:
+  - 样本选择
+  - 招募
+  - 极端用户
+  - 趋势用户
+  - 关联专家
+  - 典型用户
+  - 样本结构
+status: draft
+sensitivity: internal
+owner: 文子亦
+updated: 2026-06-25
+related: []
+id: standard_need_discovery_sampling
+source: xingyun_wiki
+source_path: methods/standards/need-discovery-sampling.md
+content_hash: sha256:ee8284730757caa62f7ac6845949e9e9f08e09cb05a746f5872d26b5623d937c
+guide_tags:
   - audience
   - method
   - privacy
   - compliance
 guide_stage:
   - output-standard
-summary: ""
-source: xingyun_wiki
-source_path: methods/standards/need-discovery-sampling.md
-content_hash: sha256:ee8284730757caa62f7ac6845949e9e9f08e09cb05a746f5872d26b5623d937c
-status: draft
-updated_at: 2026-07-15
 ---
 
 # 需求洞察的样本选择

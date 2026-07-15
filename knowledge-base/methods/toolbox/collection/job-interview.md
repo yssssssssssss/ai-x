@@ -1,20 +1,40 @@
 ---
-id: toolbox_collection_job_interview
-type: method
 title: Job Interview 任务访谈
+type: method
 domain:
   - 通用
+research_type:
+  - 定性
+  - 探索
+method_family:
+  - 访谈
 tags:
+  - Job Interview
+  - ODI
+  - 成果驱动创新
+  - JTBD
+  - Job Map
+  - 任务流程拆解
+  - 期待效果
+  - Outcome-Driven Innovation
+  - Ulwick
+status: draft
+sensitivity: internal
+owner: 李笑欣
+updated: 2026-06-25
+related:
+  - models/jtbd.md
+  - models/job-map.md
+  - methods/toolbox/collection/switch-interview.md
+id: toolbox_collection_job_interview
+source: xingyun_wiki
+source_path: methods/toolbox/collection/job-interview.md
+content_hash: sha256:4904163bf1c407db72e5ee809042fd8eeffe3df4eb8c584283051e52f5914aa7
+guide_tags:
   - qualitative
   - method
 guide_stage:
   - method-selection
-summary: ""
-source: xingyun_wiki
-source_path: methods/toolbox/collection/job-interview.md
-content_hash: sha256:4904163bf1c407db72e5ee809042fd8eeffe3df4eb8c584283051e52f5914aa7
-status: draft
-updated_at: 2026-07-15
 ---
 
 # Job Interview 任务访谈

@@ -1,20 +1,42 @@
 ---
-id: toolbox_analysis_qualitative_coding
-type: analysis
 title: 质性编码与访谈资料分析
+type: analysis
 domain:
   - 通用
+research_type:
+  - 定性
 tags:
+  - 质性编码
+  - 开放式编码
+  - 主轴式编码
+  - 选择式编码
+  - 扎根理论
+  - 归纳推理
+  - 演绎推理
+  - 意义分析
+  - 信度
+  - 效度
+  - 访谈分析
+  - 逐字稿
+status: draft
+sensitivity: internal
+owner: null
+updated: 2026-06-25
+related:
+  - methods/toolbox/collection/interviews.md
+  - models/interview-epistemology.md
+  - methods/toolbox/analysis/affinity-diagram.md
+  - methods/toolbox/analysis/qualitative-insight-frameworks.md
+  - methods/toolbox/analysis/voc-analysis.md
+id: toolbox_analysis_qualitative_coding
+source: xingyun_wiki
+source_path: methods/toolbox/analysis/qualitative-coding.md
+content_hash: sha256:1ac8eff3abe3088ec9de8c916da65f00f07ea778e9e0bb543ef942eb1a8e95b5
+guide_tags:
   - qualitative
   - method
 guide_stage:
   - method-selection
-summary: ""
-source: xingyun_wiki
-source_path: methods/toolbox/analysis/qualitative-coding.md
-content_hash: sha256:1ac8eff3abe3088ec9de8c916da65f00f07ea778e9e0bb543ef942eb1a8e95b5
-status: draft
-updated_at: 2026-07-15
 ---
 
 # 质性编码与访谈资料分析

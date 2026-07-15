@@ -1,19 +1,31 @@
 ---
-id: standard_research_question_definition
-type: standard
 title: 研究问题定义规范（业务问题 vs 研究问题）
+type: standard
 domain:
   - 通用
+research_type: []
 tags:
-  - research_goal
-guide_stage:
-  - output-standard
-summary: ""
+  - 问题定义
+  - 业务问题
+  - 研究问题
+  - 需求拆解
+  - 调研启动
+  - 需求洞察
+status: draft
+sensitivity: internal
+owner: 李笑欣
+updated: 2026-06-25
+related:
+  - models/pyramid-principle.md
+  - models/jtbd.md
+id: standard_research_question_definition
 source: xingyun_wiki
 source_path: methods/standards/research-question-definition.md
 content_hash: sha256:76a604cfb36f586608afd882013476b98f5ba6daea48c4c1519fd07e388f628a
-status: draft
-updated_at: 2026-07-15
+guide_tags:
+  - research_goal
+guide_stage:
+  - output-standard
 ---
 
 # 研究问题定义规范（业务问题 vs 研究问题）

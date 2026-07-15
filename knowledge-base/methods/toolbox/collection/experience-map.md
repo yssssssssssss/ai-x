@@ -1,18 +1,33 @@
 ---
-id: toolbox_collection_experience_map
-type: method
 title: 用户体验地图
+type: method
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定性
+method_family: []
+tags:
+  - 体验地图
+  - 用户旅程
+  - 痛点
+  - 机会点
+  - journey map
+status: draft
+sensitivity: internal
+owner: 刘植嘉
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/persona.md
+  - methods/toolbox/collection/scenario-based-need-discovery.md
+  - methods/toolbox/collection/interviews.md
+  - methods/toolbox/analysis/qualitative-insight-frameworks.md
+id: toolbox_collection_experience_map
 source: xingyun_wiki
 source_path: methods/toolbox/collection/experience-map.md
 content_hash: sha256:0802c4894c1e825ce1c2a0e610f3af12ce724ecffd8d5a2b10ebf70a67f3c55e
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 用户体验地图

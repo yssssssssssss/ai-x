@@ -1,18 +1,30 @@
 ---
-id: model_user_insight
-type: model
 title: 用户洞察（认知与误区）
+type: model
 domain:
   - 通用
-tags: []
-guide_stage:
-  - need-discovery
-summary: ""
+research_type:
+  - 定性
+tags:
+  - 用户洞察
+  - 洞察认知
+  - 结果结论洞察
+  - 把自己作为方法
+  - 认知误区
+status: draft
+sensitivity: internal
+owner: 李笑欣
+updated: 2026-06-24
+related:
+  - methods/toolbox/analysis/qualitative-insight-frameworks.md
+  - methods/toolbox/collection/interviews.md
+id: model_user_insight
 source: xingyun_wiki
 source_path: models/user-insight.md
 content_hash: sha256:eba867fa5c195e5037247715f8bbdbc37337a093e24b742c6a9d1753b8ca1aa0
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - need-discovery
 ---
 
 # 用户洞察（认知与误区）

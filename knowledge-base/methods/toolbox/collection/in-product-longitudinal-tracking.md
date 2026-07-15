@@ -1,18 +1,41 @@
 ---
-id: toolbox_collection_in_product_longitudinal_tracking
-type: method
 title: 线上在用追踪 / 迭代式研究设计（日记研究 · ESM）
+type: method
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定性
+  - 定量
+  - 度量
+method_family:
+  - 日记研究
+tags:
+  - 日记研究
+  - 经验取样
+  - ESM
+  - 纵向追踪
+  - 迭代式研究
+  - qual-quant
+  - 混合方法
+status: draft
+sensitivity: internal
+owner: 王仰龙
+updated: 2026-06-25
+related:
+  - methods/toolbox/collection/interviews.md
+  - methods/toolbox/analysis/experience-metrics-heart.md
+  - methods/toolbox/analysis/voc-analysis.md
+  - methods/scenarios/category-consumption/cross-category/churn-user-research.md
+  - methods/toolbox/analysis/longitudinal-benchmark-tracking.md
+  - models/anthropological-lens.md
+  - methods/toolbox/collection/ethnography-field-research.md
+id: toolbox_collection_in_product_longitudinal_tracking
 source: xingyun_wiki
 source_path: methods/toolbox/collection/in-product-longitudinal-tracking.md
 content_hash: sha256:fcf66ddd19bf97a2bed7c8307d39f4c865ffff326071f9b541832103591aec03
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 线上在用追踪 / 迭代式研究设计（日记研究 · ESM）

@@ -1,18 +1,31 @@
 ---
-id: toolbox_analysis_conjoint_analysis
-type: analysis
 title: 联合分析（Conjoint Analysis）
+type: analysis
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定量
+tags:
+  - 联合分析
+  - conjoint
+  - 正交设计
+  - 属性效用
+  - 权衡
+  - banner优化
+status: draft
+sensitivity: internal
+owner: 王仰龙
+updated: 2026-06-24
+related:
+  - methods/toolbox/analysis/psm-price-sensitivity.md
+  - methods/toolbox/analysis/key-driver-analysis.md
+id: toolbox_analysis_conjoint_analysis
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/conjoint-analysis.md
 content_hash: sha256:671de697a4118a3e5e82c7a76acc1796bd1407cbf456378b2045322c5c83ad23
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 联合分析（Conjoint Analysis）

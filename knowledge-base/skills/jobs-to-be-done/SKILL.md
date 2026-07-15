@@ -1,16 +1,4 @@
 ---
-id: skill_jobs_to_be_done
-type: skill
-title: Jobs To Be Done — 需求（功能设想 / 表层诉求）→ 用户真正的 Job（编排 wiki 正典）
-domain: general
-tags: []
-guide_stage: []
-summary: ""
-source: xingyun_wiki
-source_path: skills/jobs-to-be-done/SKILL.md
-content_hash: sha256:ac2caa1d1dca5204abaf16f66ba551b2493ae65132bbfe4c1a5d5ffc595958e7
-status: approved
-updated_at: 2026-07-15
 name: jobs-to-be-done
 description: 吃一条待定义的需求（PM 的功能设想/一句业务问题/用户的一个诉求）+ 可选研究材料（Switch/Job
   访谈、用户反馈、流失原声、后台或竞品信息）→ 编排 research-wiki 的 JTBD 雇佣理论、用户需求三层模型、手段-目的链（梯子理论）、Job
@@ -26,10 +14,20 @@ description: 吃一条待定义的需求（PM 的功能设想/一句业务问题
   synthesize-qualitative-insights；要整份研究方案或能跑的访谈提纲 →
   generate-research-plan/generate-interview-guide；系统比较竞对功能与战略意图（非只盘替代方案）→
   competitive-analysis。
+id: skill_jobs_to_be_done
+source: xingyun_wiki
+source_path: skills/jobs-to-be-done/SKILL.md
+content_hash: sha256:ac2caa1d1dca5204abaf16f66ba551b2493ae65132bbfe4c1a5d5ffc595958e7
+guide_tags: []
+guide_stage: []
+type: skill
+domain: general
+title: Jobs To Be Done — 需求（功能设想 / 表层诉求）→ 用户真正的 Job（编排 wiki 正典）
 task_types:
   - user_research_planning
 inputs: []
 outputs: []
+status: approved
 ---
 
 # Jobs To Be Done — 需求（功能设想 / 表层诉求）→ 用户真正的 Job（编排 wiki 正典）

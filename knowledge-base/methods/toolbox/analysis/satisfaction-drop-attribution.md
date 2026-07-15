@@ -1,18 +1,39 @@
 ---
-id: toolbox_analysis_satisfaction_drop_attribution
-type: analysis
 title: 满意度异动归因（满意度下降如何分析）
+type: analysis
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定量
+  - 定性
+  - 评估
+tags:
+  - NSS
+  - 满意度归因
+  - 异动归因
+  - 显著性检验
+  - 卡方检验
+  - 置信区间
+  - 下钻分析
+  - 低分回访
+status: draft
+sensitivity: internal
+owner: 王仰龙
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/satisfaction-survey.md
+  - methods/toolbox/analysis/key-driver-analysis.md
+  - methods/toolbox/analysis/voc-analysis.md
+  - methods/toolbox/analysis/experience-metrics-heart.md
+  - methods/toolbox/analysis/issue-prioritization.md
+  - methods/toolbox/collection/interviews.md
+id: toolbox_analysis_satisfaction_drop_attribution
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/satisfaction-drop-attribution.md
 content_hash: sha256:c47ee85e866fad79b58ed5c12d149e6270f0ec9f44bf9947905ece7075f3b9dd
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 满意度异动归因（满意度下降如何分析）

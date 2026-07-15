@@ -1,16 +1,4 @@
 ---
-id: skill_analyze_satisfaction
-type: skill
-title: Analyze Satisfaction — 满意度数据 → 关键驱动 + IPA 改进优先级 + 掉分归因（编排 wiki 正典）
-domain: general
-tags: []
-guide_stage: []
-summary: ""
-source: xingyun_wiki
-source_path: skills/analyze-satisfaction/SKILL.md
-content_hash: sha256:257addb7cd32961d1a13e164a424cec7fabad708693ea190e2ae7265a93a5d8c
-status: approved
-updated_at: 2026-07-15
 name: analyze-satisfaction
 description: 吃一批满意度调研数据——总体满意度 / NSS / NPS / CSAT / CES
   加各属性（体验维度）评分的截面数据，或同一指标的多期时间序列——加一个分析目标 →
@@ -25,10 +13,20 @@ description: 吃一批满意度调研数据——总体满意度 / NSS / NPS / C
   工单的文字编码成痛点清单（纯定性文本、不是分数）→ code-open-feedback；③ 通用问卷交叉表分群显著性对比（如「会员 vs
   非会员谁更满意」这类与满意度诊断流程无关的列联表检验）→ survey-crosstab-analysis。本 skill
   专做满意度分数的定量诊断与归因；若用户给的数据不足以支撑所问分析（要找驱动却只给汇总均值没有逐份行级数据、要归因却没给样本量与可下钻维度、要算落差却缺期望或感知），会先列《数据补充请求》请其补齐再分析，绝不靠假设硬出结论。
+id: skill_analyze_satisfaction
+source: xingyun_wiki
+source_path: skills/analyze-satisfaction/SKILL.md
+content_hash: sha256:257addb7cd32961d1a13e164a424cec7fabad708693ea190e2ae7265a93a5d8c
+guide_tags: []
+guide_stage: []
+type: skill
+domain: general
+title: Analyze Satisfaction — 满意度数据 → 关键驱动 + IPA 改进优先级 + 掉分归因（编排 wiki 正典）
 task_types:
   - voc_diagnosis
 inputs: []
 outputs: []
+status: approved
 ---
 
 # Analyze Satisfaction — 满意度数据 → 关键驱动 + IPA 改进优先级 + 掉分归因（编排 wiki 正典）

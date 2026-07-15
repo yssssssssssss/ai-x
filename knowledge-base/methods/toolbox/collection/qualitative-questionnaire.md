@@ -1,21 +1,36 @@
 ---
-id: toolbox_collection_qualitative_questionnaire
-type: method
 title: 定性问卷
+type: method
 domain:
   - 通用
+research_type:
+  - 定性
+  - 探索
+method_family:
+  - 问卷
 tags:
+  - 定性问卷
+  - 开放题
+  - 前瞻探索
+  - 场景挖掘
+status: draft
+sensitivity: internal
+owner: 孙文佳
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/interviews.md
+  - methods/toolbox/collection/satisfaction-survey.md
+  - methods/toolbox/analysis/text-analysis.md
+id: toolbox_collection_qualitative_questionnaire
+source: xingyun_wiki
+source_path: methods/toolbox/collection/qualitative-questionnaire.md
+content_hash: sha256:f3212d61f78fddf8bb4de4222fb6ee100a62d137f5a41836fee72d6b6162f114
+guide_tags:
   - quantitative
   - method
   - research_goal
 guide_stage:
   - method-selection
-summary: ""
-source: xingyun_wiki
-source_path: methods/toolbox/collection/qualitative-questionnaire.md
-content_hash: sha256:f3212d61f78fddf8bb4de4222fb6ee100a62d137f5a41836fee72d6b6162f114
-status: draft
-updated_at: 2026-07-15
 ---
 
 # 定性问卷

@@ -1,18 +1,4 @@
 ---
-id: skill_build_experience_metrics
-type: skill
-title: Build Experience Metrics — 产品/系统 + 业务目标 → HEART 度量体系（北极星·护栏 + 采集口径 +
-  纵向追踪）（编排 wiki 正典）
-domain: general
-tags:
-  - research_goal
-guide_stage: []
-summary: ""
-source: xingyun_wiki
-source_path: skills/build-experience-metrics/SKILL.md
-content_hash: sha256:5c29ba09002454b793b19d882b9d183e20af58d675745dcb9cf05eb97177bd1a
-status: approved
-updated_at: 2026-07-15
 name: build-experience-metrics
 description: 吃一个产品/系统 + 业务目标（要达成什么、哪些底线不可恶化）→
   实时调用用研知识库（research-wiki）的体验度量（HEART/GSM）、跨版本纵向/基准追踪、数据标准化、B 端体验度量打法、标准化体验量表等正典
@@ -26,10 +12,22 @@ description: 吃一个产品/系统 + 业务目标（要达成什么、哪些底
   `generate-usability-test`；④ 要把海量评价/工单文本编码成痛点 → `code-open-feedback`；⑤
   要的是通用业务/销售/经营看板（GMV、DAU、转化、库存等）或 OKR/KPI 绩效考核——与体验无关、不属本 skill；本 skill
   只建「用户体验」度量（HEART：愉悦/参与/采纳/留存/任务成功），北极星是体验北极星、非 DAU/GMV 增长北极星。
+id: skill_build_experience_metrics
+source: xingyun_wiki
+source_path: skills/build-experience-metrics/SKILL.md
+content_hash: sha256:5c29ba09002454b793b19d882b9d183e20af58d675745dcb9cf05eb97177bd1a
+guide_tags:
+  - research_goal
+guide_stage: []
+type: skill
+domain: general
+title: Build Experience Metrics — 产品/系统 + 业务目标 → HEART 度量体系（北极星·护栏 + 采集口径 +
+  纵向追踪）（编排 wiki 正典）
 task_types:
   - user_research_planning
 inputs: []
 outputs: []
+status: approved
 ---
 
 # Build Experience Metrics — 产品/系统 + 业务目标 → HEART 度量体系（北极星·护栏 + 采集口径 + 纵向追踪）（编排 wiki 正典）

@@ -1,19 +1,38 @@
 ---
-id: model_kano
-type: model
 title: KANO 模型
+type: model
 domain:
   - 通用
+research_type:
+  - 定性
+  - 定量
+  - 评估
+  - 概念验证
 tags:
-  - framework
-guide_stage:
-  - need-discovery
-summary: ""
+  - KANO
+  - 狩野模型
+  - 需求分类
+  - 优先级
+  - 五类质量特性
+  - 基本型
+  - 期望型
+  - 魅力型
+  - 双因素理论
+  - 满意度二维模式
+status: draft
+sensitivity: internal
+owner: 李笑欣
+updated: 2026-06-25
+related:
+  - models/user-needs.md
+id: model_kano
 source: xingyun_wiki
 source_path: models/kano.md
 content_hash: sha256:f44f2b18ccd70f319e691066443da1a482ed375650da40838633e35f7813416c
-status: draft
-updated_at: 2026-07-15
+guide_tags:
+  - framework
+guide_stage:
+  - need-discovery
 ---
 
 # KANO 模型

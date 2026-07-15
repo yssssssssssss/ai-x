@@ -1,20 +1,35 @@
 ---
-id: toolbox_collection_intercept_interview
-type: method
 title: 拦访（街头/现场拦截访谈）
+type: method
 domain:
   - 通用
+research_type:
+  - 定性
+  - 定量
+method_family:
+  - 访谈
 tags:
+  - 拦访
+  - 街头访谈
+  - 触达
+  - 选址选人
+status: draft
+sensitivity: internal
+owner: 吴佳毅
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/interviews.md
+  - methods/toolbox/collection/store-visit-field-research.md
+  - methods/toolbox/collection/participant-recruitment.md
+id: toolbox_collection_intercept_interview
+source: xingyun_wiki
+source_path: methods/toolbox/collection/intercept-interview.md
+content_hash: sha256:02efdde48a58c702b96f02a9e021edd58114bc15211a6edefaeda30e11b67f5c
+guide_tags:
   - qualitative
   - method
 guide_stage:
   - method-selection
-summary: ""
-source: xingyun_wiki
-source_path: methods/toolbox/collection/intercept-interview.md
-content_hash: sha256:02efdde48a58c702b96f02a9e021edd58114bc15211a6edefaeda30e11b67f5c
-status: draft
-updated_at: 2026-07-15
 ---
 
 # 拦访（街头/现场拦截访谈）

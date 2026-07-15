@@ -1,18 +1,35 @@
 ---
-id: toolbox_analysis_priority_quadrant_method
-type: analysis
 title: 四象限优先级决策法
+type: analysis
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 评估
+tags:
+  - 优先级排序
+  - 四象限
+  - 用户价值
+  - 商业价值
+  - 实现成本
+  - 战略契合度
+  - 决策框架
+  - 必做
+  - 规划做
+  - 观察
+  - 放弃
+status: draft
+sensitivity: internal
+owner: 曾雨雯
+updated: 2026-06-25
+related:
+  - models/kano.md
+id: toolbox_analysis_priority_quadrant_method
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/priority-quadrant-method.md
 content_hash: sha256:1e1b04648b7767f91afa9f91cdf95f6761c8e9861e3d5e4a1b3f752b0a90ef53
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 四象限优先级决策法

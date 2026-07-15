@@ -1,18 +1,28 @@
 ---
-id: standard_requirement_elicitation
-type: standard
 title: 用研需求分析与沟通规范
+type: standard
 domain:
   - 通用
-tags: []
-guide_stage:
-  - output-standard
-summary: ""
+research_type: []
+tags:
+  - 需求分析
+  - 需求沟通
+  - 五个坑
+  - 真正提出者
+  - 目标拆解
+status: draft
+sensitivity: internal
+owner: 翁鸿诚
+updated: 2026-06-24
+related:
+  - methods/standards/research-project-workflow.md
+id: standard_requirement_elicitation
 source: xingyun_wiki
 source_path: methods/standards/requirement-elicitation.md
 content_hash: sha256:9d00d73be53ad2bd17bfe6c1610c2a2eb6ed9b89161864cd50d973e630d15d72
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - output-standard
 ---
 
 # 用研需求分析与沟通规范

@@ -1,21 +1,44 @@
 ---
-id: standard_questionnaire_experience_audit
-type: standard
 title: 问卷体验审核规范
+type: standard
 domain:
   - 通用
+research_type:
+  - 定量
+method_family:
+  - 问卷
 tags:
+  - 问卷审核
+  - 体验审核
+  - 问卷投放
+  - 欢迎语
+  - 结束语
+  - 招募问卷
+  - 奖品发放
+  - 投放文案
+  - 数据隐私
+  - APPPush
+  - 短信文案
+status: draft
+sensitivity: internal
+owner: 用研团队
+updated: 2026-06-25
+related:
+  - methods/standards/questionnaire-design.md
+  - methods/toolbox/collection/satisfaction-survey.md
+  - methods/toolbox/collection/qualitative-questionnaire.md
+  - methods/toolbox/collection/participant-recruitment.md
+  - assets/scales/standardized-ux-scales.md
+id: standard_questionnaire_experience_audit
+source: xingyun_wiki
+source_path: methods/standards/questionnaire-experience-audit.md
+content_hash: sha256:61d52c4f6068d86635636150c1d58c081b43c27e6f278ad227914ae7535a054e
+guide_tags:
   - quantitative
   - method
   - research_goal
 guide_stage:
   - output-standard
-summary: ""
-source: xingyun_wiki
-source_path: methods/standards/questionnaire-experience-audit.md
-content_hash: sha256:61d52c4f6068d86635636150c1d58c081b43c27e6f278ad227914ae7535a054e
-status: draft
-updated_at: 2026-07-15
 ---
 
 # 问卷体验审核规范

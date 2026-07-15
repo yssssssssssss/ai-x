@@ -1,20 +1,40 @@
 ---
-id: model_interview_epistemology
-type: model
 title: 访谈认识论（知识建构观）
+type: model
 domain:
   - 通用
+research_type:
+  - 定性
 tags:
+  - 访谈认识论
+  - 知识建构
+  - 矿工与旅行者
+  - 知识七特征
+  - 符号互动论
+  - 常人方法论
+  - 结构主义
+  - 现象学
+  - 诠释学
+  - 人种学访谈
+  - Kvale
+status: draft
+sensitivity: internal
+owner: null
+updated: 2026-06-25
+related:
+  - methods/toolbox/collection/interviews.md
+  - methods/toolbox/analysis/qualitative-coding.md
+  - models/orid.md
+  - methods/toolbox/collection/scenario-based-need-discovery.md
+id: model_interview_epistemology
+source: xingyun_wiki
+source_path: models/interview-epistemology.md
+content_hash: sha256:24e11cc4eb99a39ea9a5b750411792d152766554579b3eedf5c036056c020ae2
+guide_tags:
   - qualitative
   - method
 guide_stage:
   - need-discovery
-summary: ""
-source: xingyun_wiki
-source_path: models/interview-epistemology.md
-content_hash: sha256:24e11cc4eb99a39ea9a5b750411792d152766554579b3eedf5c036056c020ae2
-status: draft
-updated_at: 2026-07-15
 ---
 
 # 访谈认识论（知识建构观）

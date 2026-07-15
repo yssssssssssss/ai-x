@@ -1,18 +1,35 @@
 ---
-id: toolbox_collection_experience_evaluation_rating
-type: method
 title: 产品体验评测
+type: method
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 评估
+  - 定性
+  - 定量
+method_family:
+  - 可用性测试
+tags:
+  - 体验评测
+  - 评测标准
+  - 分档
+  - 专家评测
+  - 体验问题
+status: draft
+sensitivity: internal
+owner: 吉国杰
+updated: 2026-06-24
+related:
+  - methods/toolbox/analysis/issue-prioritization.md
+  - methods/toolbox/analysis/experience-metrics-heart.md
+  - methods/toolbox/collection/usability-testing.md
+id: toolbox_collection_experience_evaluation_rating
 source: xingyun_wiki
 source_path: methods/toolbox/collection/experience-evaluation-rating.md
 content_hash: sha256:6f88d44f1a8f6ff668969bf402fefcb30c23852483f54cf276ef91b6964c9c85
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 产品体验评测

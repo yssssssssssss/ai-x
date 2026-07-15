@@ -1,20 +1,39 @@
 ---
-id: toolbox_collection_switch_interview
-type: method
 title: Switch Interview 转换访谈
+type: method
 domain:
   - 通用
+research_type:
+  - 定性
+  - 探索
+method_family:
+  - 访谈
 tags:
+  - Switch Interview
+  - 转换访谈
+  - JTBD
+  - 四力模型
+  - 决策历程
+  - 时间线还原
+  - 流失分析
+  - 增长
+status: draft
+sensitivity: internal
+owner: 李笑欣
+updated: 2026-06-25
+related:
+  - models/jtbd.md
+  - models/four-forces.md
+  - methods/standards/need-discovery-sampling.md
+id: toolbox_collection_switch_interview
+source: xingyun_wiki
+source_path: methods/toolbox/collection/switch-interview.md
+content_hash: sha256:a66d2be36b0798f8be26234dd8926f0792194424fbffdedb52c2f57ea653d332
+guide_tags:
   - qualitative
   - method
 guide_stage:
   - method-selection
-summary: ""
-source: xingyun_wiki
-source_path: methods/toolbox/collection/switch-interview.md
-content_hash: sha256:a66d2be36b0798f8be26234dd8926f0792194424fbffdedb52c2f57ea653d332
-status: draft
-updated_at: 2026-07-15
 ---
 
 # Switch Interview 转换访谈

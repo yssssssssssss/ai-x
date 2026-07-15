@@ -1,18 +1,35 @@
 ---
-id: toolbox_collection_mood_board
-type: method
 title: 情绪板（Mood Board）
+type: method
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定性
+  - 探索
+  - 概念验证
+method_family:
+  - 视觉风格研究
+tags:
+  - 情绪板
+  - Mood Board
+  - 视觉风格研究
+  - 概念设计
+  - 关键词映射
+  - 风格板
+  - 视觉设计前期
+  - 六步法
+status: draft
+sensitivity: internal
+owner: 李思薇、李笑欣
+updated: 2026-06-25
+related: []
+id: toolbox_collection_mood_board
 source: xingyun_wiki
 source_path: methods/toolbox/collection/mood-board.md
 content_hash: sha256:a9049d753dc1fbc6c32b6c6bf7ed7e623cfd2d45f6b44d9d15085609b44f31b8
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 情绪板（Mood Board）

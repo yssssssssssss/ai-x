@@ -1,19 +1,42 @@
 ---
-id: toolbox_analysis_experience_metrics_heart
-type: analysis
 title: 体验度量方法（HEART 框架与体验量化）
+type: analysis
 domain:
   - 通用
+research_type:
+  - 定量
+  - 度量
+  - 评估
 tags:
-  - framework
-guide_stage:
-  - method-selection
-summary: ""
+  - HEART
+  - 体验度量
+  - UX Metrics
+  - GSM
+  - 北极星指标
+  - 护栏指标
+  - SUS
+  - NPS
+status: draft
+sensitivity: internal
+owner: 王仰龙
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/satisfaction-survey.md
+  - models/ect.md
+  - methods/toolbox/analysis/key-driver-analysis.md
+  - methods/toolbox/analysis/feature-adoption.md
+  - methods/toolbox/analysis/conversion-funnel.md
+  - methods/toolbox/analysis/ab-testing.md
+  - methods/toolbox/analysis/voc-analysis.md
+  - assets/scales/standardized-ux-scales.md
+id: toolbox_analysis_experience_metrics_heart
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/experience-metrics-heart.md
 content_hash: sha256:36bc48d82fc0724f4df2d44289245c29093ec62cc3ee8138b83e3b2821e4a649
-status: draft
-updated_at: 2026-07-15
+guide_tags:
+  - framework
+guide_stage:
+  - method-selection
 ---
 
 # 体验度量方法（HEART 框架与体验量化）

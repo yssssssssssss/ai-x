@@ -1,18 +1,30 @@
 ---
-id: toolbox_analysis_bayesian_platform_category_comparison
-type: analysis
 title: 贝叶斯平台间品类优势对比
+type: analysis
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定量
+tags:
+  - 贝叶斯
+  - 条件概率
+  - 平台对比
+  - 品类优势
+  - 规模修正
+status: draft
+sensitivity: internal
+owner: 贺兆铎
+updated: 2026-06-24
+related:
+  - methods/toolbox/analysis/data-standardization.md
+  - methods/toolbox/analysis/key-driver-analysis.md
+id: toolbox_analysis_bayesian_platform_category_comparison
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/bayesian-platform-category-comparison.md
 content_hash: sha256:0534884eea66422b3d7233b85be7c7c537d5461a70c0ec65c481eaf70a7b98a0
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 贝叶斯平台间品类优势对比

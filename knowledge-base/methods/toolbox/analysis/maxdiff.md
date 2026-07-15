@@ -1,18 +1,30 @@
 ---
-id: toolbox_analysis_maxdiff
-type: analysis
 title: MaxDiff 最大差异缩放
+type: analysis
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定量
+  - 评估
+tags:
+  - MaxDiff
+  - 最大差异缩放
+  - 偏好排序
+  - 优先级
+  - 强制选择
+  - 属性评估
+status: draft
+sensitivity: internal
+owner: 李笑欣
+updated: 2026-06-25
+related: []
+id: toolbox_analysis_maxdiff
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/maxdiff.md
 content_hash: sha256:289f3d5d1cc2c8d999be8da30f449b5c3c1030dff244623cf9c2f10e118961ad
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # MaxDiff 最大差异缩放

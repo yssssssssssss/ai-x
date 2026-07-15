@@ -1,18 +1,37 @@
 ---
-id: toolbox_collection_usage_attitude_research
-type: method
 title: U&A 使用习惯与态度研究
+type: method
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定量
+  - 度量
+  - 评估
+method_family:
+  - 问卷
+tags:
+  - U&A
+  - Usage and Attitude
+  - 消费者特征
+  - 消费者态度
+  - 消费者行为
+  - 市场细分
+  - 市场表现
+  - 品牌渗透
+  - 快消品
+status: draft
+sensitivity: internal
+owner: 曾雨雯
+updated: 2026-06-25
+related:
+  - models/user-personas-segmentation.md
+id: toolbox_collection_usage_attitude_research
 source: xingyun_wiki
 source_path: methods/toolbox/collection/usage-attitude-research.md
 content_hash: sha256:6fe7ecd306a0f8299cbfeb544ade4efa6685eaf24df98cd266d12c3efe1430e5
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # U&A 使用习惯与态度研究

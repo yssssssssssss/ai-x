@@ -1,18 +1,37 @@
 ---
-id: toolbox_analysis_longitudinal_benchmark_tracking
-type: analysis
 title: 跨版本纵向 / 基准追踪（Longitudinal / Benchmark Tracking）
+type: analysis
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定量
+  - 度量
+  - 评估
+tags:
+  - UX基准
+  - 纵向追踪
+  - 跨版本
+  - 变化厌恶
+  - summative
+  - 树测试
+  - 可寻性
+  - ROI
+status: draft
+sensitivity: internal
+owner: 王仰龙
+updated: 2026-06-24
+related:
+  - methods/toolbox/analysis/experience-metrics-heart.md
+  - methods/toolbox/collection/satisfaction-survey.md
+  - methods/toolbox/analysis/ab-testing.md
+  - methods/scenarios/product-experience/iteration/continuous-discovery.md
+id: toolbox_analysis_longitudinal_benchmark_tracking
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/longitudinal-benchmark-tracking.md
 content_hash: sha256:d6aae88af9debc8896e3aad57ece972242d9626315bef599b3bb462effe2ea2f
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 跨版本纵向 / 基准追踪（Longitudinal / Benchmark Tracking）

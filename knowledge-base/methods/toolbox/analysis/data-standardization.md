@@ -1,18 +1,34 @@
 ---
-id: toolbox_analysis_data_standardization
-type: analysis
 title: 数据标准化与跨维度对比
+type: analysis
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定量
+tags:
+  - 数据标准化
+  - 归一化
+  - Z-score
+  - 双重标准化
+  - 卡方
+  - 正态变换
+  - 基准值
+  - 赋分
+status: draft
+sensitivity: internal
+owner: 王仰龙
+updated: 2026-06-24
+related:
+  - methods/toolbox/analysis/tgi-index.md
+  - methods/toolbox/analysis/key-driver-analysis.md
+  - methods/toolbox/collection/scale-development.md
+id: toolbox_analysis_data_standardization
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/data-standardization.md
 content_hash: sha256:8553f5f2555261cfbe5614e02d0f1d5784c5cb6ae7219ea5244e3314285e1424
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 数据标准化与跨维度对比

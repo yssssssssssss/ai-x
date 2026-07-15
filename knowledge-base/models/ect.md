@@ -1,18 +1,40 @@
 ---
-id: model_ect
-type: model
 title: 期望确认理论（ECT）
+type: model
 domain:
   - 通用
-tags: []
-guide_stage:
-  - need-discovery
-summary: ""
+research_type:
+  - 定性
+  - 定量
+  - 评估
+tags:
+  - ECT
+  - 期望确认理论
+  - ECM
+  - Expectation Confirmation
+  - 满意度
+  - 落差
+  - Gap
+  - Kano
+  - SERVQUAL
+status: draft
+sensitivity: internal
+owner: 王仰龙
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/interviews.md
+  - methods/toolbox/analysis/key-driver-analysis.md
+  - methods/toolbox/collection/satisfaction-survey.md
+  - methods/toolbox/analysis/experience-metrics-heart.md
+  - methods/toolbox/analysis/issue-prioritization.md
+  - models/kano.md
+id: model_ect
 source: xingyun_wiki
 source_path: models/ect.md
 content_hash: sha256:d6916632fdde4d3363835455b218080c9192a45643a8b06990ed58b1159d297d
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - need-discovery
 ---
 
 # 期望确认理论（ECT）

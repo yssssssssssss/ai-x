@@ -1,19 +1,36 @@
 ---
-id: toolbox_analysis_satisfaction_analysis_models
-type: analysis
 title: 满意度分析模型（四分图/Kano/AHP/SEM）
+type: analysis
 domain:
   - 通用
+research_type:
+  - 定量
 tags:
-  - framework
-guide_stage:
-  - method-selection
-summary: ""
+  - 满意度分析
+  - 四分图
+  - IPA
+  - Kano
+  - 层次分析法
+  - AHP
+  - 结构方程
+  - SEM
+status: draft
+sensitivity: internal
+owner: 顾小妍
+updated: 2026-06-24
+related:
+  - methods/toolbox/analysis/key-driver-analysis.md
+  - models/kano.md
+  - models/ect.md
+  - methods/toolbox/collection/satisfaction-survey.md
+id: toolbox_analysis_satisfaction_analysis_models
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/satisfaction-analysis-models.md
 content_hash: sha256:2efd74bbac0cb2d3689efd0fb83a0d9289b5f50f18827691d3e0415d637fe715
-status: draft
-updated_at: 2026-07-15
+guide_tags:
+  - framework
+guide_stage:
+  - method-selection
 ---
 
 # 满意度分析模型（四分图/Kano/AHP/SEM）

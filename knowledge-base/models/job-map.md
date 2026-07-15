@@ -1,19 +1,34 @@
 ---
-id: model_job_map
-type: model
 title: Job Map（任务地图，ODI 8 步框架）
+type: model
 domain:
   - 通用
+research_type:
+  - 定性
+  - 探索
 tags:
-  - framework
-guide_stage:
-  - need-discovery
-summary: ""
+  - Job Map
+  - ODI
+  - 成果驱动创新
+  - JTBD
+  - 任务地图
+  - 8步框架
+  - Ulwick
+status: draft
+sensitivity: internal
+owner: 李笑欣
+updated: 2026-06-25
+related:
+  - models/jtbd.md
+  - methods/toolbox/collection/job-interview.md
+id: model_job_map
 source: xingyun_wiki
 source_path: models/job-map.md
 content_hash: sha256:68f44935ad90ad27744a1986c30318c5f17eda15016147400c97633d36789841
-status: draft
-updated_at: 2026-07-15
+guide_tags:
+  - framework
+guide_stage:
+  - need-discovery
 ---
 
 # Job Map（任务地图，ODI 8 步框架）

@@ -1,18 +1,34 @@
 ---
-id: toolbox_collection_eye_tracking
-type: method
 title: 眼动研究
+type: method
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 定量
+  - 定性
+  - 评估
+method_family:
+  - 可用性测试
+tags:
+  - 眼动
+  - 热力图
+  - 注视轨迹
+  - 广告素材
+  - AOI
+status: draft
+sensitivity: internal
+owner: 乔露
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/usability-testing.md
+  - methods/toolbox/analysis/ab-testing.md
+id: toolbox_collection_eye_tracking
 source: xingyun_wiki
 source_path: methods/toolbox/collection/eye-tracking.md
 content_hash: sha256:4a034aeeb3d709918f2a489a9ca608dd6763f3c3d35397628d47dddb3ddd38b0
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 眼动研究

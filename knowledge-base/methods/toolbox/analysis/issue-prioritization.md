@@ -1,18 +1,41 @@
 ---
-id: toolbox_analysis_issue_prioritization
-type: analysis
 title: 问题分层与优先级评估（Issue Severity & Prioritization）
+type: analysis
 domain:
   - 通用
-tags: []
-guide_stage:
-  - method-selection
-summary: ""
+research_type:
+  - 评估
+tags:
+  - 问题分层
+  - 严重度
+  - 优先级
+  - RICE
+  - ICE
+  - P0
+  - 快赢
+  - 影响难度矩阵
+status: draft
+sensitivity: internal
+owner: 王仰龙
+updated: 2026-06-24
+related:
+  - methods/toolbox/analysis/conversion-funnel.md
+  - methods/toolbox/analysis/feature-adoption.md
+  - methods/toolbox/analysis/voc-analysis.md
+  - methods/toolbox/collection/interviews.md
+  - methods/toolbox/analysis/experience-metrics-heart.md
+  - models/ect.md
+  - methods/toolbox/collection/satisfaction-survey.md
+  - methods/toolbox/analysis/key-driver-analysis.md
+  - methods/toolbox/analysis/ab-testing.md
+  - models/kano.md
+id: toolbox_analysis_issue_prioritization
 source: xingyun_wiki
 source_path: methods/toolbox/analysis/issue-prioritization.md
 content_hash: sha256:24ccbf7844537dd43385c87ea75dcca3e4b7a550eccc5218cb1bfe10ca24b6f2
-status: draft
-updated_at: 2026-07-15
+guide_tags: []
+guide_stage:
+  - method-selection
 ---
 
 # 问题分层与优先级评估（Issue Severity & Prioritization）

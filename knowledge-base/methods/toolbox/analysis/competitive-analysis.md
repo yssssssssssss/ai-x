@@ -1,20 +1,35 @@
 ---
-id: toolbox_analysis_competitive_analysis
-type: analysis
 title: 竞品分析
+type: analysis
 domain:
   - 通用
+research_type:
+  - 定性
+  - 探索
+  - 评估
 tags:
+  - 竞品分析
+  - 用户体验五要素
+  - 战略意图
+  - AARRR
+  - SWOT
+  - 分层监控
+status: draft
+sensitivity: internal
+owner: 夏凡舒
+updated: 2026-06-24
+related:
+  - methods/toolbox/collection/desk-research.md
+  - methods/toolbox/analysis/key-driver-analysis.md
+id: toolbox_analysis_competitive_analysis
+source: xingyun_wiki
+source_path: methods/toolbox/analysis/competitive-analysis.md
+content_hash: sha256:748775cf866a3b868a568e2b8b7167c7d899fb91a66a5012b61cb1bc8b3d6e68
+guide_tags:
   - business-competitive
   - ui-competitive
 guide_stage:
   - method-selection
-summary: ""
-source: xingyun_wiki
-source_path: methods/toolbox/analysis/competitive-analysis.md
-content_hash: sha256:748775cf866a3b868a568e2b8b7167c7d899fb91a66a5012b61cb1bc8b3d6e68
-status: draft
-updated_at: 2026-07-15
 ---
 
 # 竞品分析

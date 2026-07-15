@@ -1,20 +1,46 @@
 ---
-id: toolbox_collection_satisfaction_survey
-type: method
 title: 满意度问卷设计与数据清洗
+type: method
 domain:
   - 通用
+research_type:
+  - 定量
+  - 评估
+method_family:
+  - 问卷
 tags:
+  - 满意度
+  - 问卷设计
+  - CSAT
+  - NPS
+  - NSS
+  - CES
+  - Likert量表
+  - 数据清洗
+  - 信效度
+  - Cronbach α
+status: draft
+sensitivity: internal
+owner: 王仰龙
+updated: 2026-06-24
+related:
+  - methods/toolbox/analysis/key-driver-analysis.md
+  - methods/toolbox/analysis/issue-prioritization.md
+  - methods/toolbox/analysis/voc-analysis.md
+  - methods/toolbox/analysis/ab-testing.md
+  - models/ect.md
+  - methods/toolbox/analysis/satisfaction-drop-attribution.md
+  - methods/toolbox/collection/interviews.md
+  - methods/standards/questionnaire-design.md
+id: toolbox_collection_satisfaction_survey
+source: xingyun_wiki
+source_path: methods/toolbox/collection/satisfaction-survey.md
+content_hash: sha256:b28ddf9637c3fdbd45d5a81fbfba97836a3df87c3caa09fa285e32a449481a5a
+guide_tags:
   - quantitative
   - method
 guide_stage:
   - method-selection
-summary: ""
-source: xingyun_wiki
-source_path: methods/toolbox/collection/satisfaction-survey.md
-content_hash: sha256:b28ddf9637c3fdbd45d5a81fbfba97836a3df87c3caa09fa285e32a449481a5a
-status: draft
-updated_at: 2026-07-15
 ---
 
 # 满意度问卷设计与数据清洗

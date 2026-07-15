@@ -6,7 +6,18 @@
     "domain": [
       "品类消费-跨品类方法"
     ],
-    "tags": [],
+    "tags": [
+      "品类研究",
+      "品类洞察",
+      "市场理解",
+      "研究视角"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "探索",
+      "定性",
+      "定量"
+    ],
     "guide_stage": [
       "intent",
       "goal-definition"
@@ -23,7 +34,22 @@
     "domain": [
       "品类消费-跨品类方法"
     ],
-    "tags": [],
+    "tags": [
+      "流失用户",
+      "流失调研",
+      "召回策略",
+      "分层抽样",
+      "加权",
+      "留存",
+      "真假流失"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定性",
+      "定量",
+      "探索",
+      "评估"
+    ],
     "guide_stage": [
       "intent",
       "goal-definition"
@@ -40,7 +66,22 @@
     "domain": [
       "综合业务-跨业务专题"
     ],
-    "tags": [],
+    "tags": [
+      "B端",
+      "体验度量",
+      "净满意度",
+      "NSS",
+      "北极星指标",
+      "因子分解",
+      "客户旅程",
+      "频控"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定量",
+      "度量",
+      "评估"
+    ],
     "guide_stage": [
       "intent",
       "goal-definition"
@@ -57,7 +98,20 @@
     "domain": [
       "产品体验"
     ],
-    "tags": [],
+    "tags": [
+      "持续发现",
+      "Continuous Discovery",
+      "产品三人组",
+      "OST",
+      "每周访谈",
+      "双轨",
+      "Teresa Torres"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定性",
+      "探索"
+    ],
     "guide_stage": [
       "intent",
       "goal-definition"
@@ -74,7 +128,23 @@
     "domain": [
       "产品体验"
     ],
-    "tags": [],
+    "tags": [
+      "迭代期",
+      "效果评估",
+      "诊断归因",
+      "效果验证",
+      "北极星",
+      "编排打法",
+      "产品迭代",
+      "用研方法论"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "评估",
+      "度量",
+      "定量",
+      "定性"
+    ],
     "guide_stage": [
       "intent",
       "goal-definition"
@@ -92,8 +162,19 @@
       "通用"
     ],
     "tags": [
+      "无障碍",
+      "accessibility",
+      "WCAG",
+      "适配规范",
+      "信息无障碍",
+      "checklist"
+    ],
+    "guide_tags": [
       "a11y",
       "ux-audit"
+    ],
+    "research_type": [
+      "评估"
     ],
     "guide_stage": [
       "output-standard"
@@ -109,8 +190,20 @@
     "title": "访谈提纲设计规范",
     "domain": [],
     "tags": [
+      "提纲规范",
+      "访谈物料",
+      "开场规则",
+      "问题设计",
+      "互动话术",
+      "结语规则",
+      "interview guide standard"
+    ],
+    "guide_tags": [
       "qualitative",
       "method"
+    ],
+    "research_type": [
+      "定性"
     ],
     "guide_stage": [
       "output-standard"
@@ -128,10 +221,23 @@
       "通用"
     ],
     "tags": [
+      "样本选择",
+      "招募",
+      "极端用户",
+      "趋势用户",
+      "关联专家",
+      "典型用户",
+      "样本结构"
+    ],
+    "guide_tags": [
       "audience",
       "method",
       "privacy",
       "compliance"
+    ],
+    "research_type": [
+      "定性",
+      "探索"
     ],
     "guide_stage": [
       "output-standard"
@@ -149,9 +255,20 @@
       "通用"
     ],
     "tags": [
+      "问卷设计",
+      "问卷规范",
+      "题目编写",
+      "选项",
+      "量表",
+      "常见错误"
+    ],
+    "guide_tags": [
       "quantitative",
       "method",
       "research_goal"
+    ],
+    "research_type": [
+      "定量"
     ],
     "guide_stage": [
       "output-standard"
@@ -169,9 +286,25 @@
       "通用"
     ],
     "tags": [
+      "问卷审核",
+      "体验审核",
+      "问卷投放",
+      "欢迎语",
+      "结束语",
+      "招募问卷",
+      "奖品发放",
+      "投放文案",
+      "数据隐私",
+      "APPPush",
+      "短信文案"
+    ],
+    "guide_tags": [
       "quantitative",
       "method",
       "research_goal"
+    ],
+    "research_type": [
+      "定量"
     ],
     "guide_stage": [
       "output-standard"
@@ -188,7 +321,15 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "需求分析",
+      "需求沟通",
+      "五个坑",
+      "真正提出者",
+      "目标拆解"
+    ],
+    "guide_tags": [],
+    "research_type": [],
     "guide_stage": [
       "output-standard"
     ],
@@ -204,7 +345,14 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "项目流程",
+      "岗位角色",
+      "用研流程",
+      "协作分工"
+    ],
+    "guide_tags": [],
+    "research_type": [],
     "guide_stage": [
       "output-standard"
     ],
@@ -221,8 +369,17 @@
       "通用"
     ],
     "tags": [
+      "问题定义",
+      "业务问题",
+      "研究问题",
+      "需求拆解",
+      "调研启动",
+      "需求洞察"
+    ],
+    "guide_tags": [
       "research_goal"
     ],
+    "research_type": [],
     "guide_stage": [
       "output-standard"
     ],
@@ -239,9 +396,17 @@
       "通用"
     ],
     "tags": [
+      "报告撰写",
+      "研究报告",
+      "结构",
+      "论点论据",
+      "排版"
+    ],
+    "guide_tags": [
       "report",
       "output"
     ],
+    "research_type": [],
     "guide_stage": [
       "output-standard"
     ],
@@ -258,10 +423,25 @@
       "通用"
     ],
     "tags": [
+      "抽样",
+      "样本量",
+      "饱和",
+      "代码饱和",
+      "意义饱和",
+      "理论抽样",
+      "定性样本量",
+      "定量样本量",
+      "招募"
+    ],
+    "guide_tags": [
       "audience",
       "method",
       "privacy",
       "compliance"
+    ],
+    "research_type": [
+      "定性",
+      "定量"
     ],
     "guide_stage": [
       "output-standard"
@@ -278,7 +458,23 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "AB测试",
+      "在线对照实验",
+      "OEC",
+      "MDE",
+      "显著性",
+      "置信区间",
+      "SRM",
+      "辛普森悖论",
+      "灰度"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定量",
+      "评估",
+      "概念验证"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -294,7 +490,17 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "亲和图",
+      "KJ法",
+      "访谈数据处理",
+      "主题归并",
+      "定性分析"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定性"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -310,7 +516,17 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "贝叶斯",
+      "条件概率",
+      "平台对比",
+      "品类优势",
+      "规模修正"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定量"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -326,7 +542,18 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "行为数据",
+      "日志分析",
+      "埋点",
+      "粘性",
+      "关键环节",
+      "定量定性结合"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定量"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -342,7 +569,18 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "点击准确率",
+      "控件热区",
+      "费茨定律",
+      "实验",
+      "触控尺寸"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定量",
+      "评估"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -359,8 +597,21 @@
       "通用"
     ],
     "tags": [
+      "竞品分析",
+      "用户体验五要素",
+      "战略意图",
+      "AARRR",
+      "SWOT",
+      "分层监控"
+    ],
+    "guide_tags": [
       "business-competitive",
       "ui-competitive"
+    ],
+    "research_type": [
+      "定性",
+      "探索",
+      "评估"
     ],
     "guide_stage": [
       "method-selection"
@@ -377,7 +628,18 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "联合分析",
+      "conjoint",
+      "正交设计",
+      "属性效用",
+      "权衡",
+      "banner优化"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定量"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -393,7 +655,21 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "转化漏斗",
+      "流失",
+      "分步转化率",
+      "微转化",
+      "宏转化",
+      "GA4",
+      "Fogg",
+      "B=MAP"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定量",
+      "评估"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -409,7 +685,20 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "数据标准化",
+      "归一化",
+      "Z-score",
+      "双重标准化",
+      "卡方",
+      "正态变换",
+      "基准值",
+      "赋分"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定量"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -426,7 +715,22 @@
       "通用"
     ],
     "tags": [
+      "HEART",
+      "体验度量",
+      "UX Metrics",
+      "GSM",
+      "北极星指标",
+      "护栏指标",
+      "SUS",
+      "NPS"
+    ],
+    "guide_tags": [
       "framework"
+    ],
+    "research_type": [
+      "定量",
+      "度量",
+      "评估"
     ],
     "guide_stage": [
       "method-selection"
@@ -443,7 +747,21 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "功能采纳",
+      "Adoption",
+      "采纳漏斗",
+      "采纳率",
+      "功能留存",
+      "cohort",
+      "同期群"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定量",
+      "度量",
+      "评估"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -459,7 +777,20 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "问题分层",
+      "严重度",
+      "优先级",
+      "RICE",
+      "ICE",
+      "P0",
+      "快赢",
+      "影响难度矩阵"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "评估"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -475,7 +806,24 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "用户旅程图",
+      "CJM",
+      "Customer Journey Map",
+      "旅程阶段",
+      "接触点",
+      "情感曲线",
+      "体验地图",
+      "服务蓝图",
+      "用户故事地图",
+      "移情图",
+      "线框图"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定性",
+      "评估"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -491,7 +839,21 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "KDA",
+      "驱动因素分析",
+      "关键驱动",
+      "派生重要性",
+      "相对权重",
+      "Shapley",
+      "IPA",
+      "满意度"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定量",
+      "评估"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -507,7 +869,22 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "UX基准",
+      "纵向追踪",
+      "跨版本",
+      "变化厌恶",
+      "summative",
+      "树测试",
+      "可寻性",
+      "ROI"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定量",
+      "度量",
+      "评估"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -523,7 +900,19 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "购物篮分析",
+      "关联规则",
+      "Apriori",
+      "支持度",
+      "置信度",
+      "提升度",
+      "跨品类选品"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定量"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -539,7 +928,19 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "MaxDiff",
+      "最大差异缩放",
+      "偏好排序",
+      "优先级",
+      "强制选择",
+      "属性评估"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定量",
+      "评估"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -555,7 +956,19 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "机会点",
+      "增长",
+      "找亮点",
+      "标杆学习",
+      "空白市场",
+      "幸存者偏差"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "探索",
+      "评估"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -571,7 +984,18 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "对偶比较",
+      "两两比较",
+      "趋中效应",
+      "偏好矩阵",
+      "相对优先级"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定量",
+      "定性"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -588,8 +1012,21 @@
       "通用"
     ],
     "tags": [
+      "Persona",
+      "用户角色",
+      "Cooper",
+      "PERSONA七要素",
+      "用户画像",
+      "同理心地图",
+      "人物角色卡片"
+    ],
+    "guide_tags": [
       "persona",
       "audience"
+    ],
+    "research_type": [
+      "定性",
+      "探索"
     ],
     "guide_stage": [
       "method-selection"
@@ -606,7 +1043,23 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "优先级排序",
+      "四象限",
+      "用户价值",
+      "商业价值",
+      "实现成本",
+      "战略契合度",
+      "决策框架",
+      "必做",
+      "规划做",
+      "观察",
+      "放弃"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "评估"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -622,7 +1075,19 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "IAT",
+      "内隐联结",
+      "潜意识",
+      "优惠文案",
+      "反应时",
+      "文案测试"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定量",
+      "评估"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -638,7 +1103,17 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "PSM",
+      "价格敏感度",
+      "定价",
+      "价格测试",
+      "Van Westendorp"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定量"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -655,7 +1130,22 @@
       "通用"
     ],
     "tags": [
+      "质性分析",
+      "定性分析",
+      "编码",
+      "初始编码",
+      "模式编码",
+      "备忘录",
+      "矩阵表",
+      "Miles",
+      "Huberman",
+      "接触摘要单"
+    ],
+    "guide_tags": [
       "framework"
+    ],
+    "research_type": [
+      "定性"
     ],
     "guide_stage": [
       "method-selection"
@@ -673,8 +1163,25 @@
       "通用"
     ],
     "tags": [
+      "质性编码",
+      "开放式编码",
+      "主轴式编码",
+      "选择式编码",
+      "扎根理论",
+      "归纳推理",
+      "演绎推理",
+      "意义分析",
+      "信度",
+      "效度",
+      "访谈分析",
+      "逐字稿"
+    ],
+    "guide_tags": [
       "qualitative",
       "method"
+    ],
+    "research_type": [
+      "定性"
     ],
     "guide_stage": [
       "method-selection"
@@ -692,7 +1199,18 @@
       "通用"
     ],
     "tags": [
+      "定性洞察",
+      "用户旅程",
+      "价值主张",
+      "同理心地图",
+      "ABC",
+      "洞察方法论"
+    ],
+    "guide_tags": [
       "framework"
+    ],
+    "research_type": [
+      "定性"
     ],
     "guide_stage": [
       "method-selection"
@@ -710,7 +1228,22 @@
       "通用"
     ],
     "tags": [
+      "RFM",
+      "用户分群",
+      "用户分层",
+      "客户价值",
+      "Recency",
+      "Frequency",
+      "Monetary",
+      "八大群体"
+    ],
+    "guide_tags": [
       "framework"
+    ],
+    "research_type": [
+      "定量",
+      "度量",
+      "评估"
     ],
     "guide_stage": [
       "method-selection"
@@ -728,7 +1261,20 @@
       "通用"
     ],
     "tags": [
+      "满意度分析",
+      "四分图",
+      "IPA",
+      "Kano",
+      "层次分析法",
+      "AHP",
+      "结构方程",
+      "SEM"
+    ],
+    "guide_tags": [
       "framework"
+    ],
+    "research_type": [
+      "定量"
     ],
     "guide_stage": [
       "method-selection"
@@ -745,7 +1291,22 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "NSS",
+      "满意度归因",
+      "异动归因",
+      "显著性检验",
+      "卡方检验",
+      "置信区间",
+      "下钻分析",
+      "低分回访"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定量",
+      "定性",
+      "评估"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -762,8 +1323,22 @@
       "通用"
     ],
     "tags": [
+      "统计分析",
+      "差异性分析",
+      "关联性分析",
+      "T检验",
+      "方差分析",
+      "相关分析",
+      "Pearson",
+      "卡方",
+      "SPSS"
+    ],
+    "guide_tags": [
       "quantitative",
       "method"
+    ],
+    "research_type": [
+      "定量"
     ],
     "guide_stage": [
       "method-selection"
@@ -780,7 +1355,18 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "系统思维",
+      "因果回路图",
+      "UBP",
+      "B端业务调研",
+      "全局分析"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定性",
+      "探索"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -796,7 +1382,20 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "文本分析",
+      "分词",
+      "关键词",
+      "TF-IDF",
+      "情感分析",
+      "语义网络",
+      "KH Coder"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定性",
+      "定量"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -813,7 +1412,17 @@
       "通用"
     ],
     "tags": [
+      "TGI",
+      "目标群体指数",
+      "人群特征",
+      "强势指数",
+      "广告投放"
+    ],
+    "guide_tags": [
       "research_goal"
+    ],
+    "research_type": [
+      "定量"
     ],
     "guide_stage": [
       "method-selection"
@@ -830,7 +1439,17 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "TURF",
+      "触达频次",
+      "不重复到达",
+      "产品组合",
+      "渠道组合"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定量"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -846,7 +1465,21 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "VOC",
+      "用户之声",
+      "文本分析",
+      "主题分析",
+      "情感分析",
+      "编码本",
+      "闭环"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定性",
+      "定量",
+      "度量"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -862,7 +1495,24 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "VOC",
+      "产品线分类",
+      "模块分类",
+      "编码本",
+      "标签体系",
+      "体验维度",
+      "优先级",
+      "京东",
+      "B2C",
+      "O2O",
+      "防幻觉"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定性",
+      "定量"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -879,8 +1529,24 @@
       "通用"
     ],
     "tags": [
+      "无障碍",
+      "accessibility",
+      "无障碍走查",
+      "读屏",
+      "VoiceOver",
+      "TalkBack",
+      "WCAG",
+      "专家评审",
+      "信息无障碍",
+      "整改清单"
+    ],
+    "guide_tags": [
       "a11y",
       "ux-audit"
+    ],
+    "research_type": [
+      "定性",
+      "评估"
     ],
     "guide_stage": [
       "method-selection"
@@ -897,7 +1563,18 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "品牌命名",
+      "命名测评",
+      "品牌研究",
+      "命名验证"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定性",
+      "定量",
+      "评估"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -913,7 +1590,18 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "共创工作坊",
+      "workshop",
+      "设计冲刺",
+      "发散收敛",
+      "主持"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定性",
+      "探索"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -929,7 +1617,21 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "文案测试",
+      "内容测试",
+      "五秒测试",
+      "MaxDiff",
+      "卡片分类",
+      "完形填空",
+      "出声思考"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定性",
+      "定量",
+      "评估"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -945,7 +1647,17 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "桌面研究",
+      "二手资料",
+      "文献检索",
+      "竞品资料"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "探索",
+      "定性"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -961,7 +1673,25 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "民族志",
+      "田野调查",
+      "参与观察",
+      "participant observation",
+      "深描",
+      "thick description",
+      "情境访谈",
+      "contextual inquiry",
+      "报道人",
+      "口述史",
+      "生活史",
+      "沉浸式观察"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定性",
+      "探索"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -977,7 +1707,19 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "体验评测",
+      "评测标准",
+      "分档",
+      "专家评测",
+      "体验问题"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "评估",
+      "定性",
+      "定量"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -993,7 +1735,17 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "体验地图",
+      "用户旅程",
+      "痛点",
+      "机会点",
+      "journey map"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定性"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -1009,7 +1761,19 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "眼动",
+      "热力图",
+      "注视轨迹",
+      "广告素材",
+      "AOI"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定量",
+      "定性",
+      "评估"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -1025,7 +1789,19 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "焦点小组",
+      "Focus Group",
+      "小组座谈",
+      "群体访谈",
+      "主持人",
+      "团体动力"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定性",
+      "探索"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -1042,7 +1818,20 @@
       "通用"
     ],
     "tags": [
+      "启发式评估",
+      "专家评审",
+      "体验走查",
+      "可用性",
+      "可用性检查",
+      "严重度评级",
+      "尼尔森"
+    ],
+    "guide_tags": [
       "ux-audit"
+    ],
+    "research_type": [
+      "定性",
+      "评估"
     ],
     "guide_stage": [
       "method-selection"
@@ -1059,7 +1848,21 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "日记研究",
+      "经验取样",
+      "ESM",
+      "纵向追踪",
+      "迭代式研究",
+      "qual-quant",
+      "混合方法"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定性",
+      "定量",
+      "度量"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -1076,8 +1879,18 @@
       "通用"
     ],
     "tags": [
+      "拦访",
+      "街头访谈",
+      "触达",
+      "选址选人"
+    ],
+    "guide_tags": [
       "qualitative",
       "method"
+    ],
+    "research_type": [
+      "定性",
+      "定量"
     ],
     "guide_stage": [
       "method-selection"
@@ -1095,8 +1908,17 @@
       "通用"
     ],
     "tags": [
+      "访谈提纲",
+      "discussion guide",
+      "提问设计",
+      "ORID"
+    ],
+    "guide_tags": [
       "qualitative",
       "method"
+    ],
+    "research_type": [
+      "定性"
     ],
     "guide_stage": [
       "method-selection"
@@ -1114,8 +1936,24 @@
       "通用"
     ],
     "tags": [
+      "深度访谈",
+      "用户访谈",
+      "访谈技巧",
+      "情绪洞察",
+      "B端访谈",
+      "半结构化",
+      "访问法",
+      "interview method",
+      "社会建构主义",
+      "芝加哥学派"
+    ],
+    "guide_tags": [
       "qualitative",
       "method"
+    ],
+    "research_type": [
+      "定性",
+      "探索"
     ],
     "guide_stage": [
       "method-selection"
@@ -1133,8 +1971,23 @@
       "通用"
     ],
     "tags": [
+      "Job Interview",
+      "ODI",
+      "成果驱动创新",
+      "JTBD",
+      "Job Map",
+      "任务流程拆解",
+      "期待效果",
+      "Outcome-Driven Innovation",
+      "Ulwick"
+    ],
+    "guide_tags": [
       "qualitative",
       "method"
+    ],
+    "research_type": [
+      "定性",
+      "探索"
     ],
     "guide_stage": [
       "method-selection"
@@ -1151,7 +2004,22 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "情绪板",
+      "Mood Board",
+      "视觉风格研究",
+      "概念设计",
+      "关键词映射",
+      "风格板",
+      "视觉设计前期",
+      "六步法"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定性",
+      "探索",
+      "概念验证"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -1167,7 +2035,21 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "焦点小组",
+      "在线",
+      "群体访谈",
+      "主持",
+      "FGD",
+      "focus group",
+      "群体互动",
+      "从众效应"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定性",
+      "探索"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -1184,11 +2066,21 @@
       "通用"
     ],
     "tags": [
+      "用户招募",
+      "甄别问卷",
+      "筛选",
+      "电话复核",
+      "配额"
+    ],
+    "guide_tags": [
       "qualitative",
       "method",
       "audience",
       "privacy",
       "compliance"
+    ],
+    "research_type": [
+      "定性"
     ],
     "guide_stage": [
       "method-selection"
@@ -1206,8 +2098,19 @@
       "通用"
     ],
     "tags": [
+      "人物角色",
+      "persona",
+      "用户画像",
+      "用户细分",
+      "角色创建"
+    ],
+    "guide_tags": [
       "persona",
       "audience"
+    ],
+    "research_type": [
+      "定性",
+      "定量"
     ],
     "guide_stage": [
       "method-selection"
@@ -1225,8 +2128,24 @@
       "通用"
     ],
     "tags": [
+      "投射技术",
+      "projective techniques",
+      "拟人法",
+      "联想法",
+      "词语联想",
+      "完成法",
+      "第三人称法",
+      "弗洛伊德",
+      "无意识",
+      "隐性需求"
+    ],
+    "guide_tags": [
       "qualitative",
       "method"
+    ],
+    "research_type": [
+      "定性",
+      "探索"
     ],
     "guide_stage": [
       "method-selection"
@@ -1244,9 +2163,19 @@
       "通用"
     ],
     "tags": [
+      "定性问卷",
+      "开放题",
+      "前瞻探索",
+      "场景挖掘"
+    ],
+    "guide_tags": [
       "quantitative",
       "method",
       "research_goal"
+    ],
+    "research_type": [
+      "定性",
+      "探索"
     ],
     "guide_stage": [
       "method-selection"
@@ -1263,7 +2192,19 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "认知偏误",
+      "社会期许",
+      "友善偏误",
+      "从众",
+      "霍桑效应",
+      "锚定",
+      "访谈失真"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定性"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -1280,8 +2221,24 @@
       "通用"
     ],
     "tags": [
+      "满意度",
+      "问卷设计",
+      "CSAT",
+      "NPS",
+      "NSS",
+      "CES",
+      "Likert量表",
+      "数据清洗",
+      "信效度",
+      "Cronbach α"
+    ],
+    "guide_tags": [
       "quantitative",
       "method"
+    ],
+    "research_type": [
+      "定量",
+      "评估"
     ],
     "guide_stage": [
       "method-selection"
@@ -1299,8 +2256,20 @@
       "通用"
     ],
     "tags": [
+      "量表",
+      "量表编制",
+      "信度",
+      "效度",
+      "Cronbach",
+      "因子分析",
+      "聚类"
+    ],
+    "guide_tags": [
       "quantitative",
       "method"
+    ],
+    "research_type": [
+      "定量"
     ],
     "guide_stage": [
       "method-selection"
@@ -1317,7 +2286,18 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "用户场景",
+      "需求洞察",
+      "陪访",
+      "观察",
+      "示卡"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定性",
+      "探索"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -1333,7 +2313,18 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "巡店",
+      "场域研究",
+      "田野观察",
+      "5W1H",
+      "线下"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定性",
+      "探索"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -1350,8 +2341,29 @@
       "通用"
     ],
     "tags": [
+      "问卷",
+      "survey",
+      "量表",
+      "信度",
+      "效度",
+      "题目设计",
+      "评分量表",
+      "Likert",
+      "6W框架",
+      "Francis Galton",
+      "标准化",
+      "概念操作化",
+      "抽样推论",
+      "questionnaire method"
+    ],
+    "guide_tags": [
       "quantitative",
       "method"
+    ],
+    "research_type": [
+      "定量",
+      "度量",
+      "评估"
     ],
     "guide_stage": [
       "method-selection"
@@ -1369,8 +2381,22 @@
       "通用"
     ],
     "tags": [
+      "Switch Interview",
+      "转换访谈",
+      "JTBD",
+      "四力模型",
+      "决策历程",
+      "时间线还原",
+      "流失分析",
+      "增长"
+    ],
+    "guide_tags": [
       "qualitative",
       "method"
+    ],
+    "research_type": [
+      "定性",
+      "探索"
     ],
     "guide_stage": [
       "method-selection"
@@ -1388,7 +2414,18 @@
       "通用"
     ],
     "tags": [
+      "可用性测试",
+      "设计验证",
+      "任务设计",
+      "出声思考",
+      "B端"
+    ],
+    "guide_tags": [
       "ux-audit"
+    ],
+    "research_type": [
+      "定性",
+      "评估"
     ],
     "guide_stage": [
       "method-selection"
@@ -1405,7 +2442,23 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "U&A",
+      "Usage and Attitude",
+      "消费者特征",
+      "消费者态度",
+      "消费者行为",
+      "市场细分",
+      "市场表现",
+      "品牌渗透",
+      "快消品"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定量",
+      "度量",
+      "评估"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -1421,7 +2474,21 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "工作坊",
+      "workshop",
+      "共创",
+      "设计冲刺",
+      "design sprint",
+      "结构化头脑风暴",
+      "盖房子六步",
+      "云工作坊"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定性",
+      "探索"
+    ],
     "guide_stage": [
       "method-selection"
     ],
@@ -1438,8 +2505,21 @@
       "通用"
     ],
     "tags": [
+      "5W2H",
+      "七何分析法",
+      "情境洞察",
+      "用户行为分析",
+      "需求分析框架",
+      "访谈框架",
+      "SCQA"
+    ],
+    "guide_tags": [
       "research_goal",
       "framework"
+    ],
+    "research_type": [
+      "定性",
+      "探索"
     ],
     "guide_stage": [
       "need-discovery"
@@ -1456,7 +2536,26 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "人类学",
+      "民族志",
+      "厚数据",
+      "thick data",
+      "大数据",
+      "文化相对论",
+      "民族中心主义",
+      "去熟悉化",
+      "defamiliarization",
+      "反身性",
+      "reflexivity",
+      "他者与自我",
+      "文化震撼"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定性",
+      "探索"
+    ],
     "guide_stage": [
       "need-discovery"
     ],
@@ -1472,7 +2571,17 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "认知偏见",
+      "诱饵效应",
+      "锚定效应",
+      "鸟笼效应",
+      "禀赋效应",
+      "行为经济学",
+      "助推"
+    ],
+    "guide_tags": [],
+    "research_type": [],
     "guide_stage": [
       "need-discovery"
     ],
@@ -1488,7 +2597,17 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "设计冲刺",
+      "Design Sprint",
+      "GV",
+      "5天",
+      "三钻"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "探索"
+    ],
     "guide_stage": [
       "need-discovery"
     ],
@@ -1504,7 +2623,23 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "ECT",
+      "期望确认理论",
+      "ECM",
+      "Expectation Confirmation",
+      "满意度",
+      "落差",
+      "Gap",
+      "Kano",
+      "SERVQUAL"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定性",
+      "定量",
+      "评估"
+    ],
     "guide_stage": [
       "need-discovery"
     ],
@@ -1521,7 +2656,22 @@
       "通用"
     ],
     "tags": [
+      "四力模型",
+      "Four Forces",
+      "推力",
+      "拉力",
+      "焦虑",
+      "惯性",
+      "JTBD",
+      "决策驱动力",
+      "切换行为"
+    ],
+    "guide_tags": [
       "framework"
+    ],
+    "research_type": [
+      "定性",
+      "探索"
     ],
     "guide_stage": [
       "need-discovery"
@@ -1539,9 +2689,19 @@
       "通用"
     ],
     "tags": [
+      "G7",
+      "品牌人群细分",
+      "品牌态度",
+      "A值",
+      "人群细分"
+    ],
+    "guide_tags": [
       "persona",
       "audience",
       "framework"
+    ],
+    "research_type": [
+      "定量"
     ],
     "guide_stage": [
       "need-discovery"
@@ -1559,8 +2719,15 @@
       "通用"
     ],
     "tags": [
+      "黄金圈",
+      "WHY-HOW-WHAT",
+      "品牌建设",
+      "Sinek"
+    ],
+    "guide_tags": [
       "framework"
     ],
+    "research_type": [],
     "guide_stage": [
       "need-discovery"
     ],
@@ -1577,8 +2744,24 @@
       "通用"
     ],
     "tags": [
+      "访谈认识论",
+      "知识建构",
+      "矿工与旅行者",
+      "知识七特征",
+      "符号互动论",
+      "常人方法论",
+      "结构主义",
+      "现象学",
+      "诠释学",
+      "人种学访谈",
+      "Kvale"
+    ],
+    "guide_tags": [
       "qualitative",
       "method"
+    ],
+    "research_type": [
+      "定性"
     ],
     "guide_stage": [
       "need-discovery"
@@ -1596,7 +2779,20 @@
       "通用"
     ],
     "tags": [
+      "Job Map",
+      "ODI",
+      "成果驱动创新",
+      "JTBD",
+      "任务地图",
+      "8步框架",
+      "Ulwick"
+    ],
+    "guide_tags": [
       "framework"
+    ],
+    "research_type": [
+      "定性",
+      "探索"
     ],
     "guide_stage": [
       "need-discovery"
@@ -1614,7 +2810,21 @@
       "通用"
     ],
     "tags": [
+      "JTBD",
+      "Jobs-to-be-Done",
+      "待办任务",
+      "Outcome-Driven Innovation",
+      "雇佣理论",
+      "跨品类竞争",
+      "功能层情感层"
+    ],
+    "guide_tags": [
       "framework"
+    ],
+    "research_type": [
+      "定性",
+      "探索",
+      "概念验证"
     ],
     "guide_stage": [
       "need-discovery"
@@ -1632,7 +2842,25 @@
       "通用"
     ],
     "tags": [
+      "KANO",
+      "狩野模型",
+      "需求分类",
+      "优先级",
+      "五类质量特性",
+      "基本型",
+      "期望型",
+      "魅力型",
+      "双因素理论",
+      "满意度二维模式"
+    ],
+    "guide_tags": [
       "framework"
+    ],
+    "research_type": [
+      "定性",
+      "定量",
+      "评估",
+      "概念验证"
     ],
     "guide_stage": [
       "need-discovery"
@@ -1649,7 +2877,20 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "梯子理论",
+      "手段目的链",
+      "Means-End Chain",
+      "laddering",
+      "阶梯式追问",
+      "属性-利益-价值观",
+      "价值观挖掘",
+      "动机洞察"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定性"
+    ],
     "guide_stage": [
       "need-discovery"
     ],
@@ -1666,7 +2907,19 @@
       "通用"
     ],
     "tags": [
+      "启发式",
+      "可用性",
+      "体验设计原则",
+      "专家评审",
+      "启发式评估",
+      "走查",
+      "尼尔森"
+    ],
+    "guide_tags": [
       "ux-audit"
+    ],
+    "research_type": [
+      "评估"
     ],
     "guide_stage": [
       "need-discovery"
@@ -1683,7 +2936,17 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "ORID",
+      "焦点式呈现法",
+      "提问框架",
+      "客观感受理解决定",
+      "访谈"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定性"
+    ],
     "guide_stage": [
       "need-discovery"
     ],
@@ -1699,7 +2962,21 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "心理物理学",
+      "感觉阈限",
+      "绝对阈限",
+      "差别阈限",
+      "JND",
+      "信号检测论",
+      "SDT",
+      "d'",
+      "ROC"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定量"
+    ],
     "guide_stage": [
       "need-discovery"
     ],
@@ -1716,9 +2993,19 @@
       "通用"
     ],
     "tags": [
+      "思考框架",
+      "表达框架",
+      "报告写作",
+      "结论先行",
+      "SCQA",
+      "演绎归纳",
+      "MECE"
+    ],
+    "guide_tags": [
       "report",
       "output"
     ],
+    "research_type": [],
     "guide_stage": [
       "need-discovery"
     ],
@@ -1735,8 +3022,15 @@
       "通用"
     ],
     "tags": [
+      "用户养成",
+      "用户增长",
+      "进化式运营",
+      "用户生命周期"
+    ],
+    "guide_tags": [
       "framework"
     ],
+    "research_type": [],
     "guide_stage": [
       "need-discovery"
     ],
@@ -1752,7 +3046,17 @@
     "domain": [
       "通用"
     ],
-    "tags": [],
+    "tags": [
+      "用户洞察",
+      "洞察认知",
+      "结果结论洞察",
+      "把自己作为方法",
+      "认知误区"
+    ],
+    "guide_tags": [],
+    "research_type": [
+      "定性"
+    ],
     "guide_stage": [
       "need-discovery"
     ],
@@ -1769,7 +3073,21 @@
       "通用"
     ],
     "tags": [
+      "用户需求",
+      "需求三层模型",
+      "表层中层深层",
+      "JTBD",
+      "痛点vs需求",
+      "显性诉求",
+      "任务场景",
+      "目标动机"
+    ],
+    "guide_tags": [
       "framework"
+    ],
+    "research_type": [
+      "定性",
+      "探索"
     ],
     "guide_stage": [
       "need-discovery"
@@ -1787,8 +3105,25 @@
       "通用"
     ],
     "tags": [
+      "用户画像",
+      "用户分层",
+      "用户分群",
+      "persona",
+      "profile",
+      "segmentation",
+      "精细化运营",
+      "AARRR",
+      "RFM",
+      "标签体系",
+      "MECE"
+    ],
+    "guide_tags": [
       "persona",
       "audience"
+    ],
+    "research_type": [
+      "定量",
+      "度量"
     ],
     "guide_stage": [
       "need-discovery"
