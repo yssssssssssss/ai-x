@@ -38,22 +38,25 @@ export class SkillLoader {
     return this.listActiveTools().find((t) => t.id === id) ?? null;
   }
 
-  // 第二层:读命中的 SKILL.md 全文
+  // 第二层:读命中的 SKILL.md 全文。
+  // 原生 skill 的 path 直接指向 SKILL.md;KB 派生 skill 的 path 是目录、entry 才是 SKILL.md。
   loadSkillBody(id: string): { body: string; hash: string; path: string } {
     const entry = this.getSkill(id);
     if (!entry) throw new Error(`skill 未找到或非 active: ${id}`);
-    const body = readFileSync(join(getConfigRoot(), entry.path), 'utf8');
-    return { body, hash: hashFile(entry.path), path: entry.path };
+    const rel = entry.entry ?? entry.path;
+    const body = readFileSync(join(getConfigRoot(), rel), 'utf8');
+    return { body, hash: hashFile(rel), path: rel };
   }
 
-  // 第三层:执行期加载 skill 的 input/output schema
-  loadSkillSchemas(id: string): { input: object; output: object } {
+  // 第三层:执行期加载 skill 的 input/output schema。
+  // KB 派生 skill 无 JSON schema(markdown 过程式),对应字段返回 undefined,不抛。
+  loadSkillSchemas(id: string): { input?: object; output?: object } {
     const entry = this.getSkill(id);
     if (!entry) throw new Error(`skill 未找到或非 active: ${id}`);
     const root = getConfigRoot();
     return {
-      input: JSON.parse(readFileSync(join(root, entry.input_schema), 'utf8')),
-      output: JSON.parse(readFileSync(join(root, entry.output_schema), 'utf8')),
+      input: entry.input_schema ? JSON.parse(readFileSync(join(root, entry.input_schema), 'utf8')) : undefined,
+      output: entry.output_schema ? JSON.parse(readFileSync(join(root, entry.output_schema), 'utf8')) : undefined,
     };
   }
 }

@@ -331,22 +331,26 @@ export class Orchestrator {
           usedCapabilities.push({ id: step.actor_id, type: 'tool' });
         } else if (step.actor_type === 'skill') {
           // skill 真执行:加载 SKILL.md 全文 + output schema,调 LLM 按工作流基于已有 tool 输出产出结构化结果。
+          // KB 派生 skill 无 JSON schema:schema 传 {}(同 planPhase 无严格结构化),产出直接落盘。
           const skillEntry = skillLoader.getSkill(step.actor_id);
           if (!skillEntry) throw new Error(`skill 非 active 或不存在: ${step.actor_id}`);
-          const { body } = skillLoader.loadSkillBody(step.actor_id);
+          const { body, hash: skillManifestHash } = skillLoader.loadSkillBody(step.actor_id);
           const { output } = skillLoader.loadSkillSchemas(step.actor_id);
           const skillGen = await llm.generateStructured<object>({
             prompt:
               `你是「${skillEntry.name}」能力。严格按以下 SKILL.md 的工作流与质量门禁执行,` +
               `基于提供的检索数据(tool_outputs)产出结构化结果;无数据支撑的判断标 llm_inference,不得冒充事实。\n\n${body}`,
-            schema: output,
+            schema: output ?? {},
             schemaName: `skill:${step.actor_id}`,
             context: { research_goal: researchGoal, tool_outputs: toolOutputs },
           });
-          validator.validateFileOrThrow(join(getConfigRoot(), skillEntry.output_schema), skillGen.data);
+          // 仅原生带 output_schema 的 skill 才校验;KB skill 无 schema,产出作为自由结构化结果直接落盘。
+          if (skillEntry.output_schema) {
+            validator.validateFileOrThrow(join(getConfigRoot(), skillEntry.output_schema), skillGen.data);
+          }
           outputRef = ws.writeToolOutput(step.step_no, skillGen.data);
           toolOutputs.push({ toolId: step.actor_id, output: skillGen.data });
-          manifestHashes.push(hashFile(skillEntry.path));
+          manifestHashes.push(skillManifestHash);
           stepTokens = skillGen.tokens;
           usedCapabilities.push({ id: step.actor_id, type: 'skill' });
         } else if (step.actor_type === 'llm') {
