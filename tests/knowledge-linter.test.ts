@@ -45,6 +45,14 @@ test('id 重复报错', async () => {
   assert.ok(issues.some((i) => i.message.includes('id')), '应报 id 重复');
 });
 
+test('缺必填字段报错', async () => {
+  const { contentHash } = await import('../apps/orchestrator-runtime/src/knowledge/normalizer.ts');
+  const md = GOOD.replace('status: approved\n', '')
+                 .replace('PLACEHOLDER', contentHash('# JTBD\n\n正文'));
+  const issues = lintEntry('models/jtbd.md', md, new Set());
+  assert.ok(issues.some((i) => i.message.includes('必填')), '应报缺必填字段');
+});
+
 test('hash 不匹配报错', () => {
   const md = GOOD.replace('PLACEHOLDER', 'sha256:deadbeef');
   const issues = lintEntry('models/jtbd.md', md, new Set());
