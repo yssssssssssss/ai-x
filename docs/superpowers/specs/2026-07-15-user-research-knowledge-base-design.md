@@ -176,21 +176,31 @@ updated_at: 2026-07-15
 - 返回条目**带 source_path + content_hash**,agent 引用方法论时可溯源。
 - 主调用姿势:引导循环里 `search_knowledge(tags=D_x.related_tags, guide_stage=…, task_type=…)`。
 
-## 9. 能力层:skills → registry
+## 9. 能力层:skills → registry(双入口,共用底座)
 
 - `indexer` 把 `skills/*/SKILL.md` 的 frontmatter(含补齐的 task_types/inputs/outputs)派生进 `skill-registry.yaml`;router 只读派生结果,精准路由。
 - registry 从此**只读派生**,不手写(消除现有手写 registry 与 SKILL.md 不同步的隐患)。
 - `resolve_skill(name)` 定位 SKILL.md 文件夹,交 agent 现有三层渐进加载执行(SKILL.md→references→scripts)。
 - generate-* 类是主力:需求收敛后产出调研方案与子产物。
 
-## 10. 运行时集成:引导链路 API 消费点
+**两条触发路径,同一出口:** skill 既可被编排器路由激活,也可被用户直呼,二者**最终都落到 `resolve_skill(name)` → 加载执行**,不是两套系统。
+
+| 路径 | 谁指定 name | 触发 | 引导循环 | 本期 |
+|---|---|---|---|---|
+| ① 编排器路由(隐式) | router(LLM 按 task_type) | 自然语言诉求 | 走(D1~D7 引导→收敛) | ✅ 实现 |
+| ② 用户直呼(显式 `$name`) | 用户点名 | `$competitive-analysis` | 跳过 | ⏳ 二期,**仅预留接口** |
+
+**本期只保证接口不堵死:** `resolve_skill(name)` 以 `name` 为稳定调用契约,直呼二期只需在入口层加"`$<name>` 解析 → 直连 resolve_skill",核心逻辑不改。直呼落地时须补:`inputs` 缺参的最小澄清/assumption 兜底、`list_skills` 做补全清单、**直呼仍过 D6 敏感数据/合规闸门(不绕过)**。符号 `$`/`/` 是产品约定,架构层只认"按 name 直呼"。
+
+## 10. 运行时集成:调用链路 API 消费点
 
 | 链路节点 | 调用 | 用途 |
 |---|---|---|
 | 意图识别 | (可选) list_skills / domain 语义 | 辅助判定 task_type/domain |
 | 引导循环·每个决策节点 | **search_knowledge(related_tags, guide_stage)** | 召回引导框架,驱动提问/建议 |
-| 能力路由 | router 读派生 skill-registry | 按 task_types 激活 generate-* 等 |
+| 能力路由(路径①) | router 读派生 skill-registry | 按 task_types 激活 generate-* 等 |
 | 方案产出 | **resolve_skill(name)** → 加载执行 | 生成完整调研方案 |
+| 用户直呼(路径②,二期) | 入口解析 `$name` → **resolve_skill(name)** | 用户跳过引导直调某能力 |
 | 溯源 | 条目携带 source_path+hash | 方案中标注方法论来源 |
 
 ## 11. 可持续维护:git PR + linter 双闸
@@ -212,6 +222,8 @@ MCP 薄壳(后话):四个函数一一映射为 MCP tool,核心逻辑不改。
 ## 13. 二期 / YAGNI 边界
 
 pgvector 语义检索触发条件(满足其一):知识条目 > 200 且结构化+关键词召回不准;或出现跨条目语义关联召回的真实需求。其余不做:MCP、LLM 正文重构、知识图谱、embedding。
+
+**二期(仅预留接口,本期不实现):** 用户 `$<name>` 直呼 skill——入口层 `$` 解析 + inputs 缺参澄清 + list_skills 补全清单;底座 `resolve_skill(name)` 本期已就绪,直呼不改核心逻辑(见 §9)。
 
 ## 14. 已定默认(评审确认,可推翻)
 
