@@ -1,0 +1,26 @@
+# 受控标签词表。tags 必须涵盖 decision-graph.yaml 全部 related_tags(否则"节点→条目"召回断裂)。
+# guide_stage: 引导阶段枚举。normalizer 补元数据须归一到本表,linter 卡越界。
+version: 1
+tags:
+  - research_goal
+  - persona
+  - audience
+  - method
+  - ux-audit
+  - a11y
+  - ui-competitive
+  - business-competitive
+  - digital_human
+  - privacy
+  - compliance
+  - output
+  - report
+  - framework
+  - qualitative
+  - quantitative
+guide_stages:
+  - intent
+  - goal-definition
+  - need-discovery
+  - method-selection
+  - output-standard
