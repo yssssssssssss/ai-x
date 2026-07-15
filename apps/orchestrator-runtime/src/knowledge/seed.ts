@@ -9,7 +9,8 @@ const KEYWORD_TAG: Array<[RegExp, string[]]> = [
   [/a11y|accessibility|无障碍/i, ['a11y', 'ux-audit']],
   [/heuristic|usability|可用性|走查|启发/i, ['ux-audit']],
   [/report|报告|pyramid|金字塔/i, ['report', 'output']],
-  [/sampling|抽样|recruit|招募/i, ['audience', 'method']],
+  // 抽样/招募/知情同意天然涉及数据敏感与合规, 一并种 privacy/compliance 供 D6_data_sensitivity 召回
+  [/sampling|抽样|recruit|招募|consent|授权|知情/i, ['audience', 'method', 'privacy', 'compliance']],
   [/goal|目标|question|问题定义|5w2h/i, ['research_goal']],
   [/privacy|隐私|compliance|合规/i, ['privacy', 'compliance']],
   [/digital.?human|数字人/i, ['digital_human']],

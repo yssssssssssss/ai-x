@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { parseFrontmatter, serializeFrontmatter } from './frontmatter.ts';
 import { seedTagsGuideStage, seedSkillTaskTypes } from './seed.ts';
+import { loadTaxonomy } from './taxonomy.ts';
 
 const NAV_FILES = new Set(['index.md', 'readme.md']);
 
@@ -46,17 +47,26 @@ export function normalizeEntry(relPath: string, rawMd: string): { md: string; ch
   const { frontmatter: existing, content } = parseFrontmatter(rawMd);
   const hash = contentHash(content);
   const title = firstHeading(content);
-  const stem = fileStem(relPath);
+  // skill 的身份是其所在文件夹(SKILL.md 恒为同名), 用文件夹名而非文件名 stem, 否则所有 skill id 都塌成 skill_SKILL
+  const stem = td.type === 'skill' ? (relPath.split('/').slice(-2)[0] ?? fileStem(relPath)) : fileStem(relPath);
   const id = `${td.type.replace(/-/g, '_')}_${stem.replace(/-/g, '_')}`;
   const seed = seedTagsGuideStage(td.type, stem, title);
 
-  // 已有字段不覆盖(尤其 skills 的 name/description 与人工修正过的 tags)
+  // tags 归一: wiki 原生 tags 多为受控词表之外的自定义标签(linter 会拦),
+  // 保留其中在词表内的 + 并入规则种子(种子供 decision-graph 召回), 其余丢弃。
+  const { tags: vocab } = loadTaxonomy();
+  const tagVocab = new Set(vocab);
+  const reconciledTags = existing.tags
+    ? [...new Set([...(existing.tags as string[]).filter((t) => tagVocab.has(t)), ...seed.tags])]
+    : seed.tags;
+
+  // 已有字段不覆盖(尤其 skills 的 name/description 与人工修正过的字段)
   const fm: Record<string, unknown> = {
     id: existing.id ?? id,
     type: existing.type ?? td.type,
     title: existing.title ?? title,
     domain: existing.domain ?? td.domain,
-    tags: existing.tags ?? seed.tags,
+    tags: reconciledTags,
     guide_stage: existing.guide_stage ?? seed.guide_stage,
     summary: existing.summary ?? '',
     source: existing.source ?? 'xingyun_wiki',

@@ -1,0 +1,1801 @@
+[
+  {
+    "id": "scenario_category_research",
+    "type": "scenario-guide",
+    "title": "品类研究打法",
+    "domain": [
+      "品类消费-跨品类方法"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "intent",
+      "goal-definition"
+    ],
+    "summary": "",
+    "source_path": "methods/scenarios/category-consumption/cross-category/category-research.md",
+    "content_hash": "sha256:2a28ced8f77cbfdded502b690788968b8033ce43be76614ace9236133d43075c",
+    "status": "draft"
+  },
+  {
+    "id": "scenario_churn_user_research",
+    "type": "scenario-guide",
+    "title": "流失用户调研打法",
+    "domain": [
+      "品类消费-跨品类方法"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "intent",
+      "goal-definition"
+    ],
+    "summary": "",
+    "source_path": "methods/scenarios/category-consumption/cross-category/churn-user-research.md",
+    "content_hash": "sha256:158a39dce251fe94c8ae8f58a77d74ce984f5365d10ce3f41dc109ee8e75d6a0",
+    "status": "draft"
+  },
+  {
+    "id": "scenario_b_end_experience_measurement",
+    "type": "scenario-guide",
+    "title": "B 端系统体验度量打法",
+    "domain": [
+      "综合业务-跨业务专题"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "intent",
+      "goal-definition"
+    ],
+    "summary": "",
+    "source_path": "methods/scenarios/comprehensive-business/cross-line-topics/b-end-experience-measurement.md",
+    "content_hash": "sha256:3c67fca180ed3dc38fde734ba70187d1429493e6a5e9f3d86db59aa51abbba23",
+    "status": "draft"
+  },
+  {
+    "id": "scenario_continuous_discovery",
+    "type": "scenario-guide",
+    "title": "持续发现（Continuous Discovery）",
+    "domain": [
+      "产品体验"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "intent",
+      "goal-definition"
+    ],
+    "summary": "",
+    "source_path": "methods/scenarios/product-experience/iteration/continuous-discovery.md",
+    "content_hash": "sha256:6571aa6d3f0ff0e49faad1e55618670e754fca43987109a854271f897b6a5ba4",
+    "status": "draft"
+  },
+  {
+    "id": "scenario_iteration_evaluation_diagnosis",
+    "type": "scenario-guide",
+    "title": "产品迭代期·效果评估与问题诊断打法",
+    "domain": [
+      "产品体验"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "intent",
+      "goal-definition"
+    ],
+    "summary": "",
+    "source_path": "methods/scenarios/product-experience/iteration/iteration-evaluation-diagnosis.md",
+    "content_hash": "sha256:99f46804825e27d609fdf6fcb80e4012696d4f06e11574d019602d0c36358d35",
+    "status": "draft"
+  },
+  {
+    "id": "standard_accessibility_adaptation",
+    "type": "standard",
+    "title": "无障碍产品体验与适配规范",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "a11y",
+      "ux-audit"
+    ],
+    "guide_stage": [
+      "output-standard"
+    ],
+    "summary": "",
+    "source_path": "methods/standards/accessibility-adaptation.md",
+    "content_hash": "sha256:248be3f5ed0a96fb137ae6a47acbd8afec0a7a7ba87121e3cbcafe6aeb6d1689",
+    "status": "draft"
+  },
+  {
+    "id": "standard_interview_guide_standard",
+    "type": "standard",
+    "title": "访谈提纲设计规范",
+    "domain": [],
+    "tags": [
+      "qualitative",
+      "method"
+    ],
+    "guide_stage": [
+      "output-standard"
+    ],
+    "summary": "",
+    "source_path": "methods/standards/interview-guide-standard.md",
+    "content_hash": "sha256:fb4cdde35c483767a1046c465a48e90648ce19d2d33fb6b5af771b34c5e8d5c7",
+    "status": "draft"
+  },
+  {
+    "id": "standard_need_discovery_sampling",
+    "type": "standard",
+    "title": "需求洞察的样本选择",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "audience",
+      "method",
+      "privacy",
+      "compliance"
+    ],
+    "guide_stage": [
+      "output-standard"
+    ],
+    "summary": "",
+    "source_path": "methods/standards/need-discovery-sampling.md",
+    "content_hash": "sha256:ee8284730757caa62f7ac6845949e9e9f08e09cb05a746f5872d26b5623d937c",
+    "status": "draft"
+  },
+  {
+    "id": "standard_questionnaire_design",
+    "type": "standard",
+    "title": "问卷设计规范",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "quantitative",
+      "method",
+      "research_goal"
+    ],
+    "guide_stage": [
+      "output-standard"
+    ],
+    "summary": "",
+    "source_path": "methods/standards/questionnaire-design.md",
+    "content_hash": "sha256:ac33e4818c3f309369de14d325ec1b4954b76d348bdff20bb27872c55a01bea6",
+    "status": "draft"
+  },
+  {
+    "id": "standard_questionnaire_experience_audit",
+    "type": "standard",
+    "title": "问卷体验审核规范",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "quantitative",
+      "method",
+      "research_goal"
+    ],
+    "guide_stage": [
+      "output-standard"
+    ],
+    "summary": "",
+    "source_path": "methods/standards/questionnaire-experience-audit.md",
+    "content_hash": "sha256:61d52c4f6068d86635636150c1d58c081b43c27e6f278ad227914ae7535a054e",
+    "status": "draft"
+  },
+  {
+    "id": "standard_requirement_elicitation",
+    "type": "standard",
+    "title": "用研需求分析与沟通规范",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "output-standard"
+    ],
+    "summary": "",
+    "source_path": "methods/standards/requirement-elicitation.md",
+    "content_hash": "sha256:9d00d73be53ad2bd17bfe6c1610c2a2eb6ed9b89161864cd50d973e630d15d72",
+    "status": "draft"
+  },
+  {
+    "id": "standard_research_project_workflow",
+    "type": "standard",
+    "title": "用研项目流程与角色规范",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "output-standard"
+    ],
+    "summary": "",
+    "source_path": "methods/standards/research-project-workflow.md",
+    "content_hash": "sha256:fa16e405cbf486d64351c8b095e0e99c681f2c283ff5b5da1b2ffbd3e5a8d76c",
+    "status": "draft"
+  },
+  {
+    "id": "standard_research_question_definition",
+    "type": "standard",
+    "title": "研究问题定义规范（业务问题 vs 研究问题）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "research_goal"
+    ],
+    "guide_stage": [
+      "output-standard"
+    ],
+    "summary": "",
+    "source_path": "methods/standards/research-question-definition.md",
+    "content_hash": "sha256:76a604cfb36f586608afd882013476b98f5ba6daea48c4c1519fd07e388f628a",
+    "status": "draft"
+  },
+  {
+    "id": "standard_research_report_writing",
+    "type": "standard",
+    "title": "调研报告撰写规范",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "report",
+      "output"
+    ],
+    "guide_stage": [
+      "output-standard"
+    ],
+    "summary": "",
+    "source_path": "methods/standards/research-report-writing.md",
+    "content_hash": "sha256:4a0b38ded92385538520f10f3d115ae6e8992196203f6ece402e5ce2bd80ab16",
+    "status": "draft"
+  },
+  {
+    "id": "standard_sampling",
+    "type": "standard",
+    "title": "抽样与样本量规范",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "audience",
+      "method",
+      "privacy",
+      "compliance"
+    ],
+    "guide_stage": [
+      "output-standard"
+    ],
+    "summary": "",
+    "source_path": "methods/standards/sampling.md",
+    "content_hash": "sha256:f3fbb6dbb97722f0f3870fc4f921b742e9d8d578d541705e7571945456cdee5e",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_ab_testing",
+    "type": "analysis",
+    "title": "A/B 测试与在线对照实验（A/B Testing / OCE）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/ab-testing.md",
+    "content_hash": "sha256:c2ef04c09bf98895be371473b181bdba032233b8f7511d2183791d64b8a441d6",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_affinity_diagram",
+    "type": "analysis",
+    "title": "亲和图法（Affinity Diagram）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/affinity-diagram.md",
+    "content_hash": "sha256:1114bf609e6b394a60899e20993bfea873a0a21429c148342b10780df902f38a",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_bayesian_platform_category_comparison",
+    "type": "analysis",
+    "title": "贝叶斯平台间品类优势对比",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/bayesian-platform-category-comparison.md",
+    "content_hash": "sha256:0534884eea66422b3d7233b85be7c7c537d5461a70c0ec65c481eaf70a7b98a0",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_behavioral_data_augmented_research",
+    "type": "analysis",
+    "title": "行为数据辅助用研",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/behavioral-data-augmented-research.md",
+    "content_hash": "sha256:dbf7c5a950f657d2e73abd22ffc25b16a712c771ebc4af4cdf53eeb2988284cf",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_click_hotzone_experiment",
+    "type": "analysis",
+    "title": "控件热区点击实验",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/click-hotzone-experiment.md",
+    "content_hash": "sha256:42fa3bb9051edeb21fc19b6da0f87f7be4c4b996fc40669929804cda04726a6c",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_competitive_analysis",
+    "type": "analysis",
+    "title": "竞品分析",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "business-competitive",
+      "ui-competitive"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/competitive-analysis.md",
+    "content_hash": "sha256:748775cf866a3b868a568e2b8b7167c7d899fb91a66a5012b61cb1bc8b3d6e68",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_conjoint_analysis",
+    "type": "analysis",
+    "title": "联合分析（Conjoint Analysis）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/conjoint-analysis.md",
+    "content_hash": "sha256:671de697a4118a3e5e82c7a76acc1796bd1407cbf456378b2045322c5c83ad23",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_conversion_funnel",
+    "type": "analysis",
+    "title": "转化漏斗分析（Conversion Funnel Analysis）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/conversion-funnel.md",
+    "content_hash": "sha256:e5244746fbc6c00d3eac619c4068c3fe30b6f9511d2b1c9fe237e7d303bea00b",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_data_standardization",
+    "type": "analysis",
+    "title": "数据标准化与跨维度对比",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/data-standardization.md",
+    "content_hash": "sha256:8553f5f2555261cfbe5614e02d0f1d5784c5cb6ae7219ea5244e3314285e1424",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_experience_metrics_heart",
+    "type": "analysis",
+    "title": "体验度量方法（HEART 框架与体验量化）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "framework"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/experience-metrics-heart.md",
+    "content_hash": "sha256:36bc48d82fc0724f4df2d44289245c29093ec62cc3ee8138b83e3b2821e4a649",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_feature_adoption",
+    "type": "analysis",
+    "title": "功能采纳分析（Feature Adoption Analysis）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/feature-adoption.md",
+    "content_hash": "sha256:92704d9de4b3041a27a1385b262007b782529795c63b284f96920e320d88e84f",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_issue_prioritization",
+    "type": "analysis",
+    "title": "问题分层与优先级评估（Issue Severity & Prioritization）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/issue-prioritization.md",
+    "content_hash": "sha256:24ccbf7844537dd43385c87ea75dcca3e4b7a550eccc5218cb1bfe10ca24b6f2",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_journey_map",
+    "type": "analysis",
+    "title": "用户旅程图（CJM）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/journey-map.md",
+    "content_hash": "sha256:10f43a1c5ce9340e8c8073a985773e72a60e36e10f0d925acf11644f33f9c361",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_key_driver_analysis",
+    "type": "analysis",
+    "title": "满意度驱动因素分析（Key Driver Analysis）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/key-driver-analysis.md",
+    "content_hash": "sha256:aea203b572744bb9ebf83bdc330ffad3db9d7820c39c7d8f282121616f25116d",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_longitudinal_benchmark_tracking",
+    "type": "analysis",
+    "title": "跨版本纵向 / 基准追踪（Longitudinal / Benchmark Tracking）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/longitudinal-benchmark-tracking.md",
+    "content_hash": "sha256:d6aae88af9debc8896e3aad57ece972242d9626315bef599b3bb462effe2ea2f",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_market_basket_analysis",
+    "type": "analysis",
+    "title": "购物篮分析（关联分析）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/market-basket-analysis.md",
+    "content_hash": "sha256:fb968a1ba7776f379b52b1243cb2f35bf463a3e77d92e9b3e69c3b75580e08cc",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_maxdiff",
+    "type": "analysis",
+    "title": "MaxDiff 最大差异缩放",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/maxdiff.md",
+    "content_hash": "sha256:289f3d5d1cc2c8d999be8da30f449b5c3c1030dff244623cf9c2f10e118961ad",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_opportunity_research",
+    "type": "analysis",
+    "title": "机会点研究",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/opportunity-research.md",
+    "content_hash": "sha256:d13848dbdcca9daf9117c56b1408922d465e903debb09d4f659fd35e13017dde",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_paired_comparison",
+    "type": "analysis",
+    "title": "对偶比较法",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/paired-comparison.md",
+    "content_hash": "sha256:0d4d6a99769dde36ee91e5e97ef42751bf36404be1996da29277c89ead15183f",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_persona_building",
+    "type": "analysis",
+    "title": "Persona 构建（Cooper 法）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "persona",
+      "audience"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/persona-building.md",
+    "content_hash": "sha256:4b96eb23e362c6adfd2654b183adfc316130a0a6f061e11fe2547e59529d4cca",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_priority_quadrant_method",
+    "type": "analysis",
+    "title": "四象限优先级决策法",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/priority-quadrant-method.md",
+    "content_hash": "sha256:1e1b04648b7767f91afa9f91cdf95f6761c8e9861e3d5e4a1b3f752b0a90ef53",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_promo_copy_iat",
+    "type": "analysis",
+    "title": "优惠文案内隐联结测试（IAT）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/promo-copy-iat.md",
+    "content_hash": "sha256:0a58b33e1e7b1bb131332e9bad3640e996158ecbcd029555e116637040875b0a",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_psm_price_sensitivity",
+    "type": "analysis",
+    "title": "PSM 价格敏感度测试",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/psm-price-sensitivity.md",
+    "content_hash": "sha256:3b94b57842f53eba49eea83b9dd784538fe855c9154235afe22c2ed89a0aa7dc",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_qualitative_analysis",
+    "type": "analysis",
+    "title": "质性资料分析（Miles & Huberman 框架）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "framework"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/qualitative-analysis.md",
+    "content_hash": "sha256:66af9d40a47fa9215ddeaa5112dfbf1644236ec229dc0f8ecdf5464f440740d5",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_qualitative_coding",
+    "type": "analysis",
+    "title": "质性编码与访谈资料分析",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "qualitative",
+      "method"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/qualitative-coding.md",
+    "content_hash": "sha256:1ac8eff3abe3088ec9de8c916da65f00f07ea778e9e0bb543ef942eb1a8e95b5",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_qualitative_insight_frameworks",
+    "type": "analysis",
+    "title": "定性洞察分析框架",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "framework"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/qualitative-insight-frameworks.md",
+    "content_hash": "sha256:69dfb5a8706c21646b3ed4e39d0aa90882dd2969fdb575e4e4c4291f5734136b",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_rfm",
+    "type": "analysis",
+    "title": "RFM 模型用户分群",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "framework"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/rfm.md",
+    "content_hash": "sha256:03fcfa6c9462754e74b0b4b59e4f08e3e50400429c44a9a8afbbbf50d95ce508",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_satisfaction_analysis_models",
+    "type": "analysis",
+    "title": "满意度分析模型（四分图/Kano/AHP/SEM）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "framework"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/satisfaction-analysis-models.md",
+    "content_hash": "sha256:2efd74bbac0cb2d3689efd0fb83a0d9289b5f50f18827691d3e0415d637fe715",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_satisfaction_drop_attribution",
+    "type": "analysis",
+    "title": "满意度异动归因（满意度下降如何分析）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/satisfaction-drop-attribution.md",
+    "content_hash": "sha256:c47ee85e866fad79b58ed5c12d149e6270f0ec9f44bf9947905ece7075f3b9dd",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_survey_statistics",
+    "type": "analysis",
+    "title": "问卷数据统计分析（差异性与关联性）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "quantitative",
+      "method"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/survey-statistics.md",
+    "content_hash": "sha256:23ef4ef4eb60b4c5d3ea54bde237a2be2e06d856136fd9f1ef2202155db5095f",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_systems_thinking_research",
+    "type": "analysis",
+    "title": "系统思维做业务调研",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/systems-thinking-research.md",
+    "content_hash": "sha256:c2fc160183ec7432c8f9cd0980d147e2b460ab33554838e3bc21aa21e5eda90b",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_text_analysis",
+    "type": "analysis",
+    "title": "文本分析",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/text-analysis.md",
+    "content_hash": "sha256:a88d1e3171a956a6a62a7a63912a7b53ca27b9eaa11a5e689aba64d9e7641b80",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_tgi_index",
+    "type": "analysis",
+    "title": "目标群体指数（TGI）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "research_goal"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/tgi-index.md",
+    "content_hash": "sha256:bc2c33c0cbc33f973284306bf54e32cab195587e2e65804cf815af294c31808a",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_turf_analysis",
+    "type": "analysis",
+    "title": "TURF 分析",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/turf-analysis.md",
+    "content_hash": "sha256:129e00b0a89f8b82aa384afb2d817f25e31057d4c6adb2f0b97b772d721c76a6",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_voc_analysis",
+    "type": "analysis",
+    "title": "VOC 用户之声分析（Voice of Customer）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/voc-analysis.md",
+    "content_hash": "sha256:31a235e210cbb303b4cefedbf7459bebe6dd03799bc6cd23129bb3661a4ed4d6",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_analysis_voc_product_line_classification",
+    "type": "analysis",
+    "title": "VOC 产品线/模块分类法（京东 App 体验反馈）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/analysis/voc-product-line-classification.md",
+    "content_hash": "sha256:bff55de91f93bec8ff09c89c52d41ab2e22dde83ae8deac84795afe9cc138966",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_accessibility_audit",
+    "type": "method",
+    "title": "无障碍走查 / 无障碍审查（Accessibility Audit）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "a11y",
+      "ux-audit"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/accessibility-audit.md",
+    "content_hash": "sha256:d8428c8d0568fe68b9ac9f08a97c6bf0998362ace4a3d356c6fe8d0f56db0814",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_brand_naming_research",
+    "type": "method",
+    "title": "品牌命名研究与测评",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/brand-naming-research.md",
+    "content_hash": "sha256:cfab2f22b7ef8f62e861594d7bb3a0d74b5a67faef53e93d2e24914233086803",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_co_creation_workshop",
+    "type": "method",
+    "title": "共创工作坊",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/co-creation-workshop.md",
+    "content_hash": "sha256:04027d37c36e61c86bfa4175d408d58183882ece91db1c44ae7e28a4168e2b3b",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_copy_content_testing",
+    "type": "method",
+    "title": "文案内容测试",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/copy-content-testing.md",
+    "content_hash": "sha256:776e3a48354b4541eb4ae402ad0ca72e85570d007ab3018f6bb00e4b298cd68f",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_desk_research",
+    "type": "method",
+    "title": "桌面研究",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/desk-research.md",
+    "content_hash": "sha256:6289beac5c773755577272e24d717024cbe90a188db3d958cfed4a72b47f49fa",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_ethnography_field_research",
+    "type": "method",
+    "title": "民族志与田野调查（参与观察）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/ethnography-field-research.md",
+    "content_hash": "sha256:f362e40a728263726bffdb95dafdbbe64c3bcdac56495359b569f2fd8960aca4",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_experience_evaluation_rating",
+    "type": "method",
+    "title": "产品体验评测",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/experience-evaluation-rating.md",
+    "content_hash": "sha256:6f88d44f1a8f6ff668969bf402fefcb30c23852483f54cf276ef91b6964c9c85",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_experience_map",
+    "type": "method",
+    "title": "用户体验地图",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/experience-map.md",
+    "content_hash": "sha256:0802c4894c1e825ce1c2a0e610f3af12ce724ecffd8d5a2b10ebf70a67f3c55e",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_eye_tracking",
+    "type": "method",
+    "title": "眼动研究",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/eye-tracking.md",
+    "content_hash": "sha256:4a034aeeb3d709918f2a489a9ca608dd6763f3c3d35397628d47dddb3ddd38b0",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_focus_group",
+    "type": "method",
+    "title": "焦点小组（Focus Group）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/focus-group.md",
+    "content_hash": "sha256:7c412ebda4edb052f020a597216e093582bff91c54d0e48d65338ad85f32f0a0",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_heuristic_evaluation",
+    "type": "method",
+    "title": "启发式评估 / 体验走查（Heuristic Evaluation）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "ux-audit"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/heuristic-evaluation.md",
+    "content_hash": "sha256:74aca85ca79881eafd2f8f6e7bd4a5e87af7e9a3d7c277c671be505253274857",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_in_product_longitudinal_tracking",
+    "type": "method",
+    "title": "线上在用追踪 / 迭代式研究设计（日记研究 · ESM）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/in-product-longitudinal-tracking.md",
+    "content_hash": "sha256:fcf66ddd19bf97a2bed7c8307d39f4c865ffff326071f9b541832103591aec03",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_intercept_interview",
+    "type": "method",
+    "title": "拦访（街头/现场拦截访谈）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "qualitative",
+      "method"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/intercept-interview.md",
+    "content_hash": "sha256:02efdde48a58c702b96f02a9e021edd58114bc15211a6edefaeda30e11b67f5c",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_interview_guide_design",
+    "type": "method",
+    "title": "访谈提纲设计",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "qualitative",
+      "method"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/interview-guide-design.md",
+    "content_hash": "sha256:bc53d31178838ad4454004c9d9f6b048eaa7420d72983369c3032a08e3af050a",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_interviews",
+    "type": "method",
+    "title": "用户深度访谈",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "qualitative",
+      "method"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/interviews.md",
+    "content_hash": "sha256:e3cb6397a46181a8e17dde4dc41abe472e655033bf0466330ecf83d416a889ca",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_job_interview",
+    "type": "method",
+    "title": "Job Interview 任务访谈",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "qualitative",
+      "method"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/job-interview.md",
+    "content_hash": "sha256:4904163bf1c407db72e5ee809042fd8eeffe3df4eb8c584283051e52f5914aa7",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_mood_board",
+    "type": "method",
+    "title": "情绪板（Mood Board）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/mood-board.md",
+    "content_hash": "sha256:a9049d753dc1fbc6c32b6c6bf7ed7e623cfd2d45f6b44d9d15085609b44f31b8",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_online_focus_group",
+    "type": "method",
+    "title": "在线焦点小组",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/online-focus-group.md",
+    "content_hash": "sha256:c82fb4cbf354babdbc399885526c4d2e6df1ada722492665983173a8640f9312",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_participant_recruitment",
+    "type": "method",
+    "title": "用户招募（访谈/调研）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "qualitative",
+      "method",
+      "audience",
+      "privacy",
+      "compliance"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/participant-recruitment.md",
+    "content_hash": "sha256:b9f12336dffe37c5737a46555d979f081e509f73298fbe2c2639ad8dfa8b5f5e",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_persona",
+    "type": "method",
+    "title": "人物角色（Persona）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "persona",
+      "audience"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/persona.md",
+    "content_hash": "sha256:44585abfdf646543731c92fabef2ed4ec2bca1da3242fe16907a5bc320a60058",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_projective_techniques",
+    "type": "method",
+    "title": "投射技术在用户访谈中的应用",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "qualitative",
+      "method"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/projective-techniques.md",
+    "content_hash": "sha256:8743f4a5045082aa968dcabebf93df481423a08dd58c66d8fe345193bb58a543",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_qualitative_questionnaire",
+    "type": "method",
+    "title": "定性问卷",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "quantitative",
+      "method",
+      "research_goal"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/qualitative-questionnaire.md",
+    "content_hash": "sha256:f3212d61f78fddf8bb4de4222fb6ee100a62d137f5a41836fee72d6b6162f114",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_respondent_bias",
+    "type": "method",
+    "title": "受访者认知偏误与规避",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/respondent-bias.md",
+    "content_hash": "sha256:9c535c03eb318f1095223b130c74f60542c5a9ac3c558b190ded5912839d826b",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_satisfaction_survey",
+    "type": "method",
+    "title": "满意度问卷设计与数据清洗",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "quantitative",
+      "method"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/satisfaction-survey.md",
+    "content_hash": "sha256:b28ddf9637c3fdbd45d5a81fbfba97836a3df87c3caa09fa285e32a449481a5a",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_scale_development",
+    "type": "method",
+    "title": "量表编制（量表设计与分析）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "quantitative",
+      "method"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/scale-development.md",
+    "content_hash": "sha256:e6e616751b0c80bdae7db742b1ebdf1a51f3ae8e3151d200e6279fde6b7e6fa4",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_scenario_based_need_discovery",
+    "type": "method",
+    "title": "用户场景洞察需求",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/scenario-based-need-discovery.md",
+    "content_hash": "sha256:2d0165c0d74e0e2216d97b4977cc6a539bfff1797e27641925b0d53c1df496c6",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_store_visit_field_research",
+    "type": "method",
+    "title": "巡店与场域调研",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/store-visit-field-research.md",
+    "content_hash": "sha256:43f95f247560896159debe7c638aa71423c8549282619d494296fac9f1274478",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_surveys",
+    "type": "method",
+    "title": "问卷调研（Survey）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "quantitative",
+      "method"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/surveys.md",
+    "content_hash": "sha256:d466b99124b03a17489a5f31186fed73e19b0d9b399e6ad74fe163ccc9800ab5",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_switch_interview",
+    "type": "method",
+    "title": "Switch Interview 转换访谈",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "qualitative",
+      "method"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/switch-interview.md",
+    "content_hash": "sha256:a66d2be36b0798f8be26234dd8926f0792194424fbffdedb52c2f57ea653d332",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_usability_testing",
+    "type": "method",
+    "title": "可用性测试",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "ux-audit"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/usability-testing.md",
+    "content_hash": "sha256:a8fc840976f0ab1cf7e3b9ad78dc930f729804a5905abdde5d4f0a7f2232678b",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_usage_attitude_research",
+    "type": "method",
+    "title": "U&A 使用习惯与态度研究",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/usage-attitude-research.md",
+    "content_hash": "sha256:6fe7ecd306a0f8299cbfeb544ade4efa6685eaf24df98cd266d12c3efe1430e5",
+    "status": "draft"
+  },
+  {
+    "id": "toolbox_collection_workshop",
+    "type": "method",
+    "title": "共创工作坊（盖房子六步法）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "",
+    "source_path": "methods/toolbox/collection/workshop.md",
+    "content_hash": "sha256:9b701d2f4252e7bcb82f4e60d361aebfe60280ef1f70a2f3ff9f66819c3c9a9a",
+    "status": "draft"
+  },
+  {
+    "id": "model_5w2h",
+    "type": "model",
+    "title": "5W2H 模型",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "research_goal",
+      "framework"
+    ],
+    "guide_stage": [
+      "need-discovery"
+    ],
+    "summary": "",
+    "source_path": "models/5w2h.md",
+    "content_hash": "sha256:b2ff40de62f4d2fb5076c2740d97b8f466ff4d462e0c60348da51aeb795e5f5a",
+    "status": "draft"
+  },
+  {
+    "id": "model_anthropological_lens",
+    "type": "model",
+    "title": "人类学视角（厚数据与文化透镜）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "need-discovery"
+    ],
+    "summary": "",
+    "source_path": "models/anthropological-lens.md",
+    "content_hash": "sha256:cef7481e55b3328f6e5b9831a70d23c2039d43822ff42cd61c96819d401b148d",
+    "status": "draft"
+  },
+  {
+    "id": "model_cognitive_biases",
+    "type": "model",
+    "title": "认知偏见与用户决策",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "need-discovery"
+    ],
+    "summary": "",
+    "source_path": "models/cognitive-biases.md",
+    "content_hash": "sha256:8b8e750803a75c2179f25fcc3884addc9e7be30c7d8d4fa63f0a51204f4a1728",
+    "status": "draft"
+  },
+  {
+    "id": "model_design_sprint",
+    "type": "model",
+    "title": "设计冲刺（Design Sprint）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "need-discovery"
+    ],
+    "summary": "",
+    "source_path": "models/design-sprint.md",
+    "content_hash": "sha256:d32cffd512867488166b93f879ccfbac086942dd87eb154b7d6065b4fc510b6f",
+    "status": "draft"
+  },
+  {
+    "id": "model_ect",
+    "type": "model",
+    "title": "期望确认理论（ECT）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "need-discovery"
+    ],
+    "summary": "",
+    "source_path": "models/ect.md",
+    "content_hash": "sha256:d6916632fdde4d3363835455b218080c9192a45643a8b06990ed58b1159d297d",
+    "status": "draft"
+  },
+  {
+    "id": "model_four_forces",
+    "type": "model",
+    "title": "四力模型（推力 / 拉力 / 焦虑 / 惯性）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "framework"
+    ],
+    "guide_stage": [
+      "need-discovery"
+    ],
+    "summary": "",
+    "source_path": "models/four-forces.md",
+    "content_hash": "sha256:bc5e6831cedbb3127d1df017b9200957373d1c87a77394c6655a1790398246fd",
+    "status": "draft"
+  },
+  {
+    "id": "model_g7_brand_segmentation",
+    "type": "model",
+    "title": "G7 品牌人群细分模型",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "persona",
+      "audience",
+      "framework"
+    ],
+    "guide_stage": [
+      "need-discovery"
+    ],
+    "summary": "",
+    "source_path": "models/g7-brand-segmentation.md",
+    "content_hash": "sha256:2d859b69a75cee5482227914f2230603b31764801dc34076ea0d9f875ef24feb",
+    "status": "draft"
+  },
+  {
+    "id": "model_golden_circle",
+    "type": "model",
+    "title": "黄金圈模型（Golden Circle）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "framework"
+    ],
+    "guide_stage": [
+      "need-discovery"
+    ],
+    "summary": "",
+    "source_path": "models/golden-circle.md",
+    "content_hash": "sha256:ff12096735fc8785b1248036d77b975ef8e86207d44b72cc9c735b882b2ba1e8",
+    "status": "draft"
+  },
+  {
+    "id": "model_interview_epistemology",
+    "type": "model",
+    "title": "访谈认识论（知识建构观）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "qualitative",
+      "method"
+    ],
+    "guide_stage": [
+      "need-discovery"
+    ],
+    "summary": "",
+    "source_path": "models/interview-epistemology.md",
+    "content_hash": "sha256:24e11cc4eb99a39ea9a5b750411792d152766554579b3eedf5c036056c020ae2",
+    "status": "draft"
+  },
+  {
+    "id": "model_job_map",
+    "type": "model",
+    "title": "Job Map（任务地图，ODI 8 步框架）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "framework"
+    ],
+    "guide_stage": [
+      "need-discovery"
+    ],
+    "summary": "",
+    "source_path": "models/job-map.md",
+    "content_hash": "sha256:68f44935ad90ad27744a1986c30318c5f17eda15016147400c97633d36789841",
+    "status": "draft"
+  },
+  {
+    "id": "model_jtbd",
+    "type": "model",
+    "title": "Jobs To Be Done（JTBD）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "framework"
+    ],
+    "guide_stage": [
+      "need-discovery"
+    ],
+    "summary": "",
+    "source_path": "models/jtbd.md",
+    "content_hash": "sha256:f9d651044dfcece1b62823ce5ce260cf66bed526371acab2e8ac59df55a76343",
+    "status": "draft"
+  },
+  {
+    "id": "model_kano",
+    "type": "model",
+    "title": "KANO 模型",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "framework"
+    ],
+    "guide_stage": [
+      "need-discovery"
+    ],
+    "summary": "",
+    "source_path": "models/kano.md",
+    "content_hash": "sha256:f44f2b18ccd70f319e691066443da1a482ed375650da40838633e35f7813416c",
+    "status": "draft"
+  },
+  {
+    "id": "model_means_end_laddering",
+    "type": "model",
+    "title": "梯子理论（手段-目的链 / Means-End Laddering）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "need-discovery"
+    ],
+    "summary": "",
+    "source_path": "models/means-end-laddering.md",
+    "content_hash": "sha256:a1ff7826566028aafa837d786841f26e106d6a12f03e604e4c7deb8527f87e41",
+    "status": "draft"
+  },
+  {
+    "id": "model_nielsen_heuristics",
+    "type": "model",
+    "title": "尼尔森十大可用性启发式（Nielsen's 10 Usability Heuristics）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "ux-audit"
+    ],
+    "guide_stage": [
+      "need-discovery"
+    ],
+    "summary": "",
+    "source_path": "models/nielsen-heuristics.md",
+    "content_hash": "sha256:f40e931422cc6073e150c62410af75ec790bef3bbb66dfca4435e5b2e8b650fc",
+    "status": "draft"
+  },
+  {
+    "id": "model_orid",
+    "type": "model",
+    "title": "ORID 焦点式呈现法",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "need-discovery"
+    ],
+    "summary": "",
+    "source_path": "models/orid.md",
+    "content_hash": "sha256:2ca0aa993061867731cc85e127bd1c598423cd7cb18732f5b6146604a25075ea",
+    "status": "draft"
+  },
+  {
+    "id": "model_psychophysics",
+    "type": "model",
+    "title": "心理物理学（阈限与信号检测论）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "need-discovery"
+    ],
+    "summary": "",
+    "source_path": "models/psychophysics.md",
+    "content_hash": "sha256:6b6825c88d47d3d41f904bb6a7d59b272292361a240e6b794f9d8a64449e2a71",
+    "status": "draft"
+  },
+  {
+    "id": "model_pyramid_principle",
+    "type": "model",
+    "title": "金字塔原理",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "report",
+      "output"
+    ],
+    "guide_stage": [
+      "need-discovery"
+    ],
+    "summary": "",
+    "source_path": "models/pyramid-principle.md",
+    "content_hash": "sha256:c5d4ca1a4e83bd7ea472fc54ba035097822ce31e149dad701bf6fefaea4482c3",
+    "status": "draft"
+  },
+  {
+    "id": "model_user_cultivation_growth",
+    "type": "model",
+    "title": "用户养成运营模型",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "framework"
+    ],
+    "guide_stage": [
+      "need-discovery"
+    ],
+    "summary": "",
+    "source_path": "models/user-cultivation-growth.md",
+    "content_hash": "sha256:0fbe04675e4e3ddc4264ef4818d01e2c929a548478f3d882f0b41020da38f769",
+    "status": "draft"
+  },
+  {
+    "id": "model_user_insight",
+    "type": "model",
+    "title": "用户洞察（认知与误区）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [],
+    "guide_stage": [
+      "need-discovery"
+    ],
+    "summary": "",
+    "source_path": "models/user-insight.md",
+    "content_hash": "sha256:eba867fa5c195e5037247715f8bbdbc37337a093e24b742c6a9d1753b8ca1aa0",
+    "status": "draft"
+  },
+  {
+    "id": "model_user_needs",
+    "type": "model",
+    "title": "用户需求的本质（三层模型）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "framework"
+    ],
+    "guide_stage": [
+      "need-discovery"
+    ],
+    "summary": "",
+    "source_path": "models/user-needs.md",
+    "content_hash": "sha256:4cb63a508fc6e7b039c9189cae33aa2a479a8e329081b7ed77915a4d4e8f48b4",
+    "status": "draft"
+  },
+  {
+    "id": "model_user_personas_segmentation",
+    "type": "model",
+    "title": "用户画像 / 用户分层 / 用户分群（三概念辨析）",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "persona",
+      "audience"
+    ],
+    "guide_stage": [
+      "need-discovery"
+    ],
+    "summary": "",
+    "source_path": "models/user-personas-segmentation.md",
+    "content_hash": "sha256:557a3153e6fa24f47f29e8eaa5f3003427d2581acc2781feda617813c044971c",
+    "status": "draft"
+  }
+]
