@@ -109,20 +109,29 @@ knowledge-base/
 ## 6. 统一元数据 Schema
 
 ### 6.1 知识条目(models / methods)
+
+**真相源 = wiki 自带 frontmatter,全量保留、不 strip 不 rewrite。** wiki 147/178 文件本就有成熟 frontmatter(`title/type/domain/research_type/tags/status/sensitivity/owner/updated/related`),这些**原样保留**。normalizer 只做**增量补齐**:
+
 ```yaml
-id: model_jtbd
-type: model                    # model | standard | toolbox-collection | toolbox-analysis | scenario
-title: JTBD (Jobs To Be Done)
-domain: general
-tags: [persona, audience]      # 必须取自 taxonomy.yaml 受控词表
-guide_stage: [need-discovery]  # 该条目适合的引导阶段(见 §6.3),供按需求缺口召回
-summary: 从"用户雇佣产品完成任务"视角理解需求的框架
-source: xingyun_wiki
-source_path: models/jtbd.md
-content_hash: sha256:…
-status: approved               # draft | approved | deprecated
-updated_at: 2026-07-15
+# —— wiki 原生字段, 保留不动 ——
+title:          RFM 模型用户分群
+type:           analysis          # wiki 自有词表: analysis/method/model/standard/scenario-guide/asset
+domain:         [通用]
+research_type:  [定量, 度量, 评估]
+tags:           [RFM, 用户分群, 客户价值, ...]   # wiki 精编中文标签, 自由词表, 不归一不校验
+status:         draft
+owner:          李笑欣
+related:        [models/user-personas-segmentation.md]
+# —— normalizer 增量补齐(缺则加, 不覆盖原生)——
+id:             analysis_rfm       # 缺失才生成
+source:         xingyun_wiki
+source_path:    methods/toolbox/analysis/rfm.md   # 始终设为实际路径
+content_hash:   sha256:…           # 始终计算
+guide_tags:     [method]           # 新增: 受控词表, 对齐 decision-graph related_tags, 供引导召回
+guide_stage:    [method-selection] # 新增: 受控引导阶段
 ```
+
+**关键:`tags`(wiki 原生,自由中文)与 `guide_tags`(受控,对齐 decision-graph)是两个不同字段。** 前者保留 wiki 的检索价值(关键词/BM25 召回更强),后者做"决策节点→条目"的引导召回钩子。互不覆盖。
 
 ### 6.2 能力条目(skills)
 ```yaml
@@ -140,41 +149,39 @@ updated_at: 2026-07-15
 ```
 > **相比 v1 的关键补充:** skills 必须补 `task_types`/`inputs`/`outputs`——现有 `router` 靠 `task_types` 精准路由,wiki 原始 SKILL.md 无此字段,需在萃取阶段用轻量 LLM 从正文抽取 + 人工校对。
 
-### 6.3 受控标签词表 `taxonomy.yaml`(新增,关键)
-- 定义全库合法 `tags` 与 `guide_stage` 取值,`tags` **必须涵盖 `decision-graph.yaml` 现有全部 `related_tags`**(research_goal/persona/audience/method/ux-audit/a11y/ui-competitive/business-competitive/digital_human/privacy/compliance/output/report),可再扩展。
-- `guide_stage` 枚举(引导阶段):`intent`(意图澄清)、`goal-definition`(目标定义)、`need-discovery`(需求挖掘)、`method-selection`(方法选择)、`output-standard`(产出规范)。
-- 作用:决策节点与知识条目共用这套词表,是"节点→条目"召回钩子的契约;萃取补 tag 时 LLM 产出必须**归一到词表**,越界报错。
+### 6.3 受控词表 `taxonomy.yaml`(约束 guide_tags,不约束 wiki tags)
+- 定义合法 **`guide_tags`** 与 `guide_stage` 取值。`guide_tags` **必须涵盖 `decision-graph.yaml` 全部 `related_tags`**(research_goal/persona/audience/method/ux-audit/a11y/ui-competitive/business-competitive/digital_human/privacy/compliance/output/report),可再扩展。
+- `guide_stage` 枚举:`intent`/`goal-definition`/`need-discovery`/`method-selection`/`output-standard`。
+- 作用:决策节点与条目的 `guide_tags` 共用这套词表,是"节点→条目"召回钩子的契约。**wiki 原生 `tags` 不受此约束**(自由中文,只用于关键词检索,linter 不校验)。
 
-### 6.4 字段生成规则
+### 6.4 字段生成规则(增量补齐,不覆盖 wiki 原生)
 | 字段 | 来源 |
 |---|---|
-| type/domain | 路径推断 |
-| id | type + 文件名,冲突报错 |
-| content_hash | 正文(去 frontmatter)sha256 |
-| title | 正文首个 `#` |
-| tags/guide_stage | 规则种子(路径+标题关键词映射)优先 → 归一到 taxonomy.yaml;LLM 增强可选,不阻塞首次导入 |
-| task_types/inputs/outputs(skills) | 规则种子 + 可选 LLM 从正文抽取 + 人工校对 |
-| status | 默认 approved |
+| title/type/domain/research_type/tags/status/owner/related | **wiki 原生,保留不动**;缺失时 type/domain 由路径推断兜底 |
+| id | 缺失才生成(type + 文件夹/文件名);冲突报错 |
+| source_path | 始终设为实际相对路径 |
+| content_hash | 始终对正文(去 frontmatter)算 sha256 |
+| guide_tags/guide_stage | 规则种子(关键词/type 映射)→ 归一到 taxonomy.yaml;LLM 增强可选 |
+| task_types/inputs/outputs(skills) | 规则种子 + 可选 LLM + 人工校对 |
 
 ## 7. 萃取流水线(normalizer)
 
 首次全量与增量同一套逻辑:
 1. 遍历文档(首次=本地 wiki 副本;后续=新增/更新 md)。
-2. **正文原样保留**,不重写。
-3. 路径推断 type/domain;取首 `#` 作 title;正文算 content_hash。
-4. LLM 补 `tags`/`guide_stage`/`summary`,**归一到 taxonomy.yaml**;skills 另补 `task_types`/`inputs`/`outputs`。
-5. 已有 frontmatter 的只补缺失字段,不覆盖 `name`/`description`。
-6. 写回带 frontmatter 的 md 到对应分区。
+2. **正文与 wiki 原生 frontmatter 全量保留**,不重写、不 strip。
+3. **增量补齐**:缺 id 则生成;始终设 source_path、算 content_hash;补受控 `guide_tags`/`guide_stage`(规则种子→归一 taxonomy);skills 另补 `task_types`/`inputs`/`outputs`。无 frontmatter 的文件用路径推断兜 type/domain。
+4. 已有字段一律不覆盖(尤其 wiki 的 tags/research_type/owner/related 与 skills 的 name/description)。
+5. 写回。
 
-**导航文件例外:** `index.md`/`README.md` 保留原样作导航,不视为条目、不强制 frontmatter、不进索引;`.gitkeep` 忽略。
-**幂等:** content_hash 未变则跳过 LLM 与写回。
+**导航文件例外:** `index.md`/`README.md` 保留原样作导航,不视为条目、不进索引;`.gitkeep` 忽略;`type: asset`(25 个媒体素材)不进知识索引。
+**幂等:** content_hash 未变则不改写。
 
 ## 8. 检索设计(面向引导)
 
-- `indexer` 扫全部 frontmatter → `.index/knowledge.json`(id/type/domain/tags/guide_stage/summary/source_path/content_hash/status;skills 另含 task_types/inputs/outputs)。正文不入索引。
-- `search_knowledge` 支持按 **`tags`(决策节点 related_tags)+ `guide_stage`(需求缺口所处阶段)+ `task_type`/`domain`** 结构化过滤,再对 title/tags/summary 关键词/BM25 排序;`deprecated` 剔除。
-- 返回条目**带 source_path + content_hash**,agent 引用方法论时可溯源。
-- 主调用姿势:引导循环里 `search_knowledge(tags=D_x.related_tags, guide_stage=…, task_type=…)`。
+- `indexer` 扫全部 frontmatter → `.index/knowledge.json`(含 id/type/domain/**tags(wiki)**/**guide_tags(受控)**/guide_stage/title/summary/research_type/source_path/content_hash/status)。正文不入索引。
+- `search_knowledge` 结构化过滤:**`guide_tags`(决策节点 related_tags)** + `guide_stage` + `type`/`domain`,再对 title/**tags(wiki 精编中文标签,关键词召回强)**/summary 做关键词/BM25;`deprecated` 剔除。
+- 返回条目**带 source_path + content_hash** 溯源。
+- 主调用姿势:引导循环 `search_knowledge(guide_tags=D_x.related_tags, guide_stage=…)`。
 
 ## 9. 能力层:skills → registry(双入口,共用底座)
 
