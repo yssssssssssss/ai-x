@@ -1,5 +1,6 @@
 import { AgentRuntime, buildRuntime } from './runtime/agent-runtime.ts';
 import { RunWorkspace } from './run-workspace.ts';
+import { parseDirectInvoke } from './runtime/direct-invoke.ts';
 import {
   loadDecisionGraph,
   loadToolManifest,
@@ -53,63 +54,109 @@ export class Orchestrator {
   }): Promise<PlanResult> {
     const { llm, validator, checkpointStore, skillLoader } = this.rt.deps;
 
+    // $ 直呼:命中则跳过引导循环 + 路由 LLM,确定性产出单步 skill 计划(仍走确认闸门)。
+    // 对"参数文字"(rest)做任务理解,无参数时退回 skillName;非直呼时理解原始输入。
+    const direct = parseDirectInvoke(input.originalInput);
+    const understandInput = direct ? (direct.rest || direct.skillName) : input.originalInput;
+
     // 段1 任务理解:一句话 → ResearchTask,过 schema
     const taskGen = await llm.generateStructured<ResearchTaskData>({
-      prompt: `将用户需求结构化为 ResearchTask:${input.originalInput}`,
+      prompt: `将用户需求结构化为 ResearchTask:${understandInput}`,
       schema: {},
       schemaName: 'research-task',
-      context: { input: input.originalInput },
+      context: { input: understandInput },
     });
     validator.validateOrThrow('research-task', taskGen.data);
     const task = taskGen.data;
 
-    // 段2a 决策节点激活:按 applies_to 过滤(数据驱动,非领域分支)
-    const graph = loadDecisionGraph();
-    const activated: DecisionNode[] = graph.nodes.filter((n) =>
-      n.applies_to.includes(task.task_type),
-    );
     const graphHash = hashFile(CONFIG_PATHS.decisionGraph);
 
-    // 段2b 决策状态判定:LLM 对激活节点逐一判 6 态,过 schema
-    const statesGen = await llm.generateStructured<
-      Array<{ node_key: string; state: string; reason: string; confidence?: number; user_override: unknown; final_state: string }>
-    >({
-      prompt: `对以下激活的决策节点逐一判定状态:${activated.map((n) => n.key).join(', ')}`,
-      schema: {},
-      schemaName: 'decision-states',
-      context: { activated: activated.map((n) => n.key), task },
-    });
-    // 只保留本次实际激活的节点状态(防 fixture 含多余节点)
-    const activatedKeys = new Set(activated.map((n) => n.key));
-    const decisionStates = statesGen.data.filter((s) => activatedKeys.has(s.node_key));
-    for (const s of decisionStates) validator.validateOrThrow('decision-state', s);
+    // 两支路统一产出:activated / decisionStates / planBody / planProvenance,落库段共用。
+    type DecisionStateRec = { node_key: string; state: string; reason: string; confidence?: number; user_override: unknown; final_state: string };
+    let activated: DecisionNode[];
+    let decisionStates: DecisionStateRec[];
+    let planBody: Record<string, unknown>;
+    let planProvenance: { modelName: string; modelVersion: string; promptHash: string; traceId: string };
 
-    // 段2c 能力路由 + 计划生成:LLM 读 skill 摘要选候选,生成 execution-plan
-    const activeSkills = skillLoader.listActiveSkills();
-    const activeTools = skillLoader.listActiveTools();
-    const skillIds = activeSkills.map((s) => s.id);
-    const toolIds = activeTools.map((t) => t.id);
-    // 喂给 LLM 每个 tool 的 input.schema,让它按 schema 为 tool 步生成 input 入参。
-    const toolCtx = activeTools.map((t) => {
-      const manifest = loadToolManifest(t.path);
-      return { id: t.id, name: t.name, input_schema: loadToolInputSchema(manifest.input_schema) };
-    });
-    const planGen = await llm.generateStructured<Record<string, unknown>>({
-      prompt:
-        `基于任务与候选能力生成待确认执行计划。\n` +
-        `硬约束:actor_type=skill 的步骤,actor_id 只能取以下 skill id 之一:[${skillIds.join(', ')}];\n` +
-        `actor_type=tool 的步骤,actor_id 只能取以下 tool id 之一:[${toolIds.join(', ')}]。\n` +
-        `禁止编造不在上述清单中的 skill/tool id。若需 LLM 自身推理步骤(如汇总/提炼),用 actor_type=llm。\n` +
-        `tool 步必须在 step.input 里按该 tool 的 input_schema(见 context.tools[].input_schema)生成入参。\n` +
-        `若某 tool 需要图像但任务未提供图像(dataUrl/url),不要编造 base64:把该图像字段留空,并在 assumptions 标注『需用户提供设计稿』。`,
-      schema: {},
-      schemaName: 'execution-plan',
-      context: {
-        task,
-        skills: activeSkills.map((s) => ({ id: s.id, when_to_use: s.when_to_use, required_tools: s.required_tools })),
-        tools: toolCtx,
-      },
-    });
+    if (direct) {
+      // 直呼支路:确定性单步计划,不激活决策节点、不判状态、不走路由 LLM。
+      const skill = skillLoader.getSkill(direct.skillName);
+      if (!skill) {
+        throw new Error(
+          `未知 skill "$${direct.skillName}"。可用 skill: ${skillLoader.listActiveSkills().map((s) => s.id).join(', ')}`,
+        );
+      }
+      activated = [];
+      decisionStates = [];
+      planBody = {
+        task_type: task.task_type,
+        steps: [
+          {
+            step_no: 1,
+            step_name: `直呼 ${skill.id}`,
+            actor_type: 'skill',
+            actor_id: skill.id,
+            purpose: `用户 $ 直呼技能 ${skill.name}`,
+            input: { research_goal: task.research_goal, brief: direct.rest },
+          },
+        ],
+        activated_nodes: [],
+        assumptions: task.assumptions ?? [],
+      };
+      // 直呼无路由 LLM(planGen),provenance 用段1 taskGen 兜底。
+      planProvenance = {
+        modelName: taskGen.modelName, modelVersion: taskGen.modelVersion,
+        promptHash: taskGen.promptHash, traceId: taskGen.traceId,
+      };
+    } else {
+      // 段2a 决策节点激活:按 applies_to 过滤(数据驱动,非领域分支)
+      const graph = loadDecisionGraph();
+      activated = graph.nodes.filter((n) => n.applies_to.includes(task.task_type));
+
+      // 段2b 决策状态判定:LLM 对激活节点逐一判 6 态,过 schema
+      const statesGen = await llm.generateStructured<DecisionStateRec[]>({
+        prompt: `对以下激活的决策节点逐一判定状态:${activated.map((n) => n.key).join(', ')}`,
+        schema: {},
+        schemaName: 'decision-states',
+        context: { activated: activated.map((n) => n.key), task },
+      });
+      // 只保留本次实际激活的节点状态(防 fixture 含多余节点)
+      const activatedKeys = new Set(activated.map((n) => n.key));
+      decisionStates = statesGen.data.filter((s) => activatedKeys.has(s.node_key));
+      for (const s of decisionStates) validator.validateOrThrow('decision-state', s);
+
+      // 段2c 能力路由 + 计划生成:LLM 读 skill 摘要选候选,生成 execution-plan
+      const activeSkills = skillLoader.listActiveSkills();
+      const activeTools = skillLoader.listActiveTools();
+      const skillIds = activeSkills.map((s) => s.id);
+      const toolIds = activeTools.map((t) => t.id);
+      // 喂给 LLM 每个 tool 的 input.schema,让它按 schema 为 tool 步生成 input 入参。
+      const toolCtx = activeTools.map((t) => {
+        const manifest = loadToolManifest(t.path);
+        return { id: t.id, name: t.name, input_schema: loadToolInputSchema(manifest.input_schema) };
+      });
+      const planGen = await llm.generateStructured<Record<string, unknown>>({
+        prompt:
+          `基于任务与候选能力生成待确认执行计划。\n` +
+          `硬约束:actor_type=skill 的步骤,actor_id 只能取以下 skill id 之一:[${skillIds.join(', ')}];\n` +
+          `actor_type=tool 的步骤,actor_id 只能取以下 tool id 之一:[${toolIds.join(', ')}]。\n` +
+          `禁止编造不在上述清单中的 skill/tool id。若需 LLM 自身推理步骤(如汇总/提炼),用 actor_type=llm。\n` +
+          `tool 步必须在 step.input 里按该 tool 的 input_schema(见 context.tools[].input_schema)生成入参。\n` +
+          `若某 tool 需要图像但任务未提供图像(dataUrl/url),不要编造 base64:把该图像字段留空,并在 assumptions 标注『需用户提供设计稿』。`,
+        schema: {},
+        schemaName: 'execution-plan',
+        context: {
+          task,
+          skills: activeSkills.map((s) => ({ id: s.id, when_to_use: s.when_to_use, required_tools: s.required_tools })),
+          tools: toolCtx,
+        },
+      });
+      planBody = planGen.data;
+      planProvenance = {
+        modelName: planGen.modelName, modelVersion: planGen.modelVersion,
+        promptHash: planGen.promptHash, traceId: planGen.traceId,
+      };
+    }
 
     // 落库:研究任务
     const workspace = new RunWorkspace('__pending__');
@@ -130,7 +177,7 @@ export class Orchestrator {
     // 用真实 task_id 建 workspace,回填 plan 的 task_id
     const ws = new RunWorkspace(taskRow.id);
     ws.ensure();
-    const plan = { ...planGen.data, task_id: taskRow.id };
+    const plan = { ...planBody, task_id: taskRow.id };
     validator.validateOrThrow('execution-plan', plan);
 
     // 能力真实性校验:真实 LLM 可能编造不存在的 skill/tool id(幻觉)。
@@ -196,10 +243,10 @@ export class Orchestrator {
         { type: 'registry', ref: 'orchestrator/skill-registry.yaml', hash: hashFile(CONFIG_PATHS.skillRegistry) },
         { type: 'decision_graph', ref: 'orchestrator/decision-graph.yaml', hash: graphHash },
       ],
-      model_name: planGen.modelName,
-      model_version: planGen.modelVersion,
-      prompt_hash: planGen.promptHash,
-      trace_id: planGen.traceId,
+      model_name: planProvenance.modelName,
+      model_version: planProvenance.modelVersion,
+      prompt_hash: planProvenance.promptHash,
+      trace_id: planProvenance.traceId,
     });
 
     // 更新 run_workspace_uri + 状态(等待确认)
