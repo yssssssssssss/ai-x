@@ -11,6 +11,37 @@ import {
   type DecisionNode,
 } from './runtime/config-loader.ts';
 import { join } from 'node:path';
+import { searchKnowledge } from './knowledge/index.ts';
+
+// 引导召回:对每个激活的决策节点,用其 related_tags 从知识库召回方法论/模型(每节点 top-3),
+// 供"决策状态判定"与"计划生成"两个 LLM 调用作正典依据,并进 context_manifest 溯源。纯函数,可测。
+export interface GuidanceRef {
+  node: string;
+  id: string;
+  title: string;
+  summary: string;
+  source_path: string;
+  content_hash: string;
+}
+
+export function retrieveGuidance(nodes: DecisionNode[]): GuidanceRef[] {
+  const out: GuidanceRef[] = [];
+  for (const n of nodes) {
+    const tags = n.related_tags ?? [];
+    if (tags.length === 0) continue;
+    for (const h of searchKnowledge({ guide_tags: tags, limit: 3 })) {
+      out.push({
+        node: n.key,
+        id: h.id,
+        title: h.title,
+        summary: h.summary ?? '',
+        source_path: h.source_path,
+        content_hash: h.content_hash,
+      });
+    }
+  }
+  return out;
+}
 
 // 四段流编排壳(方案 §五)。判断全在 skill/配置/LLM,壳只做装配、校验、留痕。
 // 严禁在此写 `if task_type == 'competitive_research'` 类领域分支:
@@ -77,6 +108,8 @@ export class Orchestrator {
     let decisionStates: DecisionStateRec[];
     let planBody: Record<string, unknown>;
     let planProvenance: { modelName: string; modelVersion: string; promptHash: string; traceId: string };
+    // 引导召回的知识来源(仅 else 支路;去重后进 context_manifest 溯源)。direct 支路留空。
+    let guidanceSources: Array<{ type: 'knowledge'; ref: string; hash: string }> = [];
 
     if (direct) {
       // 直呼支路:确定性单步计划,不激活决策节点、不判状态、不走路由 LLM。
@@ -113,12 +146,20 @@ export class Orchestrator {
       const graph = loadDecisionGraph();
       activated = graph.nodes.filter((n) => n.applies_to.includes(task.task_type));
 
+      // 引导召回:按激活节点的 related_tags 从知识库取方法论,喂给下面两个 LLM 调用作正典依据。
+      const guidance = retrieveGuidance(activated);
+      guidanceSources = guidance
+        .filter((g, i, arr) => arr.findIndex((x) => x.id === g.id) === i) // 按 id 去重
+        .map((g) => ({ type: 'knowledge' as const, ref: g.source_path, hash: g.content_hash }));
+
       // 段2b 决策状态判定:LLM 对激活节点逐一判 6 态,过 schema
       const statesGen = await llm.generateStructured<DecisionStateRec[]>({
-        prompt: `对以下激活的决策节点逐一判定状态:${activated.map((n) => n.key).join(', ')}`,
+        prompt:
+          `对以下激活的决策节点逐一判定状态:${activated.map((n) => n.key).join(', ')}\n` +
+          `结合 context.guidance 里按节点召回的用研方法论/模型判断每个节点状态与 reason,引用方法论时点名(如 JTBD/5W2H)。`,
         schema: {},
         schemaName: 'decision-states',
-        context: { activated: activated.map((n) => n.key), task },
+        context: { activated: activated.map((n) => n.key), task, guidance },
       });
       // 只保留本次实际激活的节点状态(防 fixture 含多余节点)
       const activatedKeys = new Set(activated.map((n) => n.key));
@@ -142,13 +183,15 @@ export class Orchestrator {
           `actor_type=tool 的步骤,actor_id 只能取以下 tool id 之一:[${toolIds.join(', ')}]。\n` +
           `禁止编造不在上述清单中的 skill/tool id。若需 LLM 自身推理步骤(如汇总/提炼),用 actor_type=llm。\n` +
           `tool 步必须在 step.input 里按该 tool 的 input_schema(见 context.tools[].input_schema)生成入参。\n` +
-          `若某 tool 需要图像但任务未提供图像(dataUrl/url),不要编造 base64:把该图像字段留空,并在 assumptions 标注『需用户提供设计稿』。`,
+          `若某 tool 需要图像但任务未提供图像(dataUrl/url),不要编造 base64:把该图像字段留空,并在 assumptions 标注『需用户提供设计稿』。\n` +
+          `选方法/排步骤时参考 context.guidance 召回的方法卡片, 使方法选择有正典依据。`,
         schema: {},
         schemaName: 'execution-plan',
         context: {
           task,
           skills: activeSkills.map((s) => ({ id: s.id, when_to_use: s.when_to_use, required_tools: s.required_tools })),
           tools: toolCtx,
+          guidance,
         },
       });
       planBody = planGen.data;
@@ -242,6 +285,7 @@ export class Orchestrator {
         { type: 'research_task', ref: `research_tasks.${taskRow.id}` },
         { type: 'registry', ref: 'orchestrator/skill-registry.yaml', hash: hashFile(CONFIG_PATHS.skillRegistry) },
         { type: 'decision_graph', ref: 'orchestrator/decision-graph.yaml', hash: graphHash },
+        ...guidanceSources,
       ],
       model_name: planProvenance.modelName,
       model_version: planProvenance.modelVersion,
