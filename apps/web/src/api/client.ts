@@ -98,4 +98,7 @@ export const api = {
     req<TaskDetail>(`/tasks/${id}`),
   feedback: (id: string, b: { rating?: number; adopted?: boolean; comment?: string }) =>
     req<{ id: string }>(`/tasks/${id}/feedback`, { method: 'POST', body: b }),
+  skills: () => req<{ skills: SkillItem[] }>('/skills'),
 };
+
+export interface SkillItem { id: string; name: string; description: string; domain: string[]; }
