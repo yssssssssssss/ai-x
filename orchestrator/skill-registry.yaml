@@ -23,6 +23,42 @@ skills:
       - virtual-user-lab
     cost_level: medium
     risk_level: low
+  - id: competitive-web-research
+    name: 竞品分析·Web搜索
+    path: skills/competitive-analysis/web-research/SKILL.md
+    when_to_use: 竞品分析且以网络公开资料为主要信息源(官网/发布会/评测/应用商店/新闻/口碑);查竞品在做什么、战略意图、市场动态。无竞品 app 截图诉求时用本 skill。
+    owner: 竞品分析组
+    status: active
+    task_types:
+      - competitive_research
+    intent_tags:
+      - competitive
+      - web-research
+      - business-competitive
+    required_tools:
+      - o2-web-search
+    cost_level: low
+    risk_level: low
+  - id: competitive-app-analysis
+    name: 竞品分析·App截图
+    path: skills/competitive-analysis/app-analysis/SKILL.md
+    when_to_use: 对竞品 app 界面做截图级分析——视觉美学、注意力热区、品牌视觉一致性、信息架构;诉求提到看竞品页面/界面/截图/设计怎么做的。以竞品截图为信息源时用本 skill。
+    owner: 竞品分析组
+    status: active
+    task_types:
+      - competitive_research
+    intent_tags:
+      - competitive
+      - ui-competitive
+      - screenshot
+      - app-teardown
+    required_tools:
+      - ai-spider-search
+      - aesthetic-quant-lab
+      - attention-analysis-lab
+      - vision-brand-lab
+    cost_level: medium
+    risk_level: low
   - id: design-experience-review
     name: 设计体验走查
     path: skills/design-review/SKILL.md
