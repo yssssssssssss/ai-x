@@ -1,22 +1,262 @@
-body { margin: 0; background: #f7f8fa; color: #1f2937; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-.shell { max-width: 1180px; margin: 0 auto; padding: 32px 24px 64px; }
-.toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding-bottom: 24px; border-bottom: 1px solid #e5e7eb; }
-h1 { margin: 0 0 8px; font-size: 34px; line-height: 1.1; letter-spacing: 0; }
-p { color: #4b5563; }
-button { border: 0; border-radius: 6px; padding: 12px 20px; background: #111827; color: white; font-weight: 700; cursor: pointer; }
-button:disabled { opacity: 0.45; cursor: not-allowed; }
-.workspace { display: grid; grid-template-columns: 320px 1fr; gap: 24px; margin-top: 24px; align-items: start; }
-.sidebar { border-right: 1px solid #e5e7eb; padding-right: 20px; }
-h2 { margin: 0 0 14px; font-size: 18px; }
-.model { padding: 12px 0; border-bottom: 1px solid #e5e7eb; display: grid; gap: 4px; }
-.model span, small { color: #6b7280; }
-.main-panel { display: grid; gap: 22px; }
-label { display: grid; gap: 8px; font-weight: 700; }
-textarea { width: 100%; box-sizing: border-box; resize: vertical; border: 1px solid #d1d5db; border-radius: 6px; padding: 12px; font: inherit; }
-.error { color: #991b1b; white-space: pre-wrap; }
-.result { display: grid; gap: 16px; }
-.cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
-.card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; background: white; }
-.score { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 6px; background: #eef2ff; color: #3730a3; font-weight: 800; }
-.card h3 { margin: 12px 0 8px; }
-@media (max-width: 860px) { .toolbar { display: grid; } .workspace { grid-template-columns: 1fr; } .sidebar { border-right: 0; padding-right: 0; } .cards { grid-template-columns: 1fr; } }
+/* experience-model-lab web — 引 antd 高还原复刻主产品原版视觉与布局
+   shell / hero / card token 与其它 lab 一致;体验模型主题用蓝色 hero */
+
+:root {
+  font-family: 'SF Pro Display', 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', -apple-system, BlinkMacSystemFont, sans-serif;
+  color: #111827;
+  background: #f4f1eb;
+}
+
+body {
+  margin: 0;
+  min-width: 1280px;
+  background:
+    radial-gradient(circle at top left, rgba(255, 244, 214, 0.75), transparent 28%),
+    linear-gradient(180deg, #f6f3ef 0%, #f4f7fb 40%, #eef3f9 100%);
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* ---------- 布局壳 ---------- */
+.app-shell {
+  min-height: 100vh;
+  background: transparent !important;
+}
+
+.app-shell-sider.ant-layout-sider {
+  background: rgba(251, 249, 244, 0.86) !important;
+  border-right: 1px solid rgba(31, 41, 55, 0.08);
+  box-shadow: 12px 0 40px rgba(15, 23, 42, 0.04);
+}
+
+.app-shell-brand {
+  padding: 22px 20px 18px;
+}
+
+.app-shell-brand-kicker {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #9a7b42;
+}
+
+.app-shell-brand-title {
+  margin-top: 6px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: #1f2937;
+}
+
+.app-shell-sider .ant-menu {
+  padding: 8px 12px;
+  border-inline-end: none !important;
+  background: transparent !important;
+}
+
+.app-shell-sider .ant-menu-item {
+  height: 44px;
+  margin: 6px 0;
+  border-radius: 12px;
+  line-height: 44px;
+}
+
+.app-shell-sider .ant-menu-item-selected {
+  background: linear-gradient(90deg, rgba(22, 119, 255, 0.12), rgba(255, 255, 255, 0.7)) !important;
+}
+
+.app-shell-main {
+  background: transparent !important;
+}
+
+.app-shell-header.ant-layout-header {
+  height: auto;
+  padding: 20px 28px 10px;
+  background: transparent !important;
+  line-height: normal;
+}
+
+.app-shell-header-kicker {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #7c889d;
+}
+
+.app-shell-header-title {
+  margin-top: 4px;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  color: #111827;
+}
+
+.app-shell-header-subtitle {
+  margin-top: 4px;
+  max-width: 640px;
+  font-size: 14px;
+  color: #6b7280;
+}
+
+.app-shell-content.ant-layout-content {
+  padding: 0 24px 28px;
+}
+
+.app-shell-content-inner {
+  width: min(1480px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* ---------- 卡片基座 ---------- */
+.page-card {
+  border-radius: 16px;
+}
+
+.module-section-card {
+  border-radius: 22px;
+  border: 1px solid rgba(31, 41, 55, 0.08);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.05);
+}
+
+.module-section-card .ant-card-head {
+  border-bottom: 1px solid rgba(31, 41, 55, 0.06);
+}
+
+.module-section-card .ant-card-head-title {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.module-section-card .ant-card-body {
+  border-top: 0;
+}
+
+/* ---------- module hero(体验模型=蓝) ---------- */
+.module-hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+  padding: 24px 28px;
+  border: 1px solid rgba(27, 31, 59, 0.08);
+  border-radius: 24px;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.06);
+}
+
+.module-hero-experience {
+  background:
+    radial-gradient(circle at top right, rgba(22, 119, 255, 0.14), transparent 24%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.84) 0%, rgba(246, 251, 255, 0.96) 100%);
+}
+
+.module-hero-main {
+  min-width: 0;
+}
+
+.module-hero-kicker {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #97713a;
+}
+
+.module-hero-title {
+  margin: 8px 0 10px !important;
+}
+
+.module-hero-description {
+  margin-bottom: 0 !important;
+  max-width: 760px;
+  color: #4b5563;
+}
+
+.module-hero-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.module-hero-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(31, 41, 55, 0.1);
+  color: #374151;
+}
+
+/* ---------- 模型目录 chip ---------- */
+.exp-model-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.exp-model-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  border: 1px solid #e6ecf5;
+  background: #f7faff;
+  min-width: 160px;
+  max-width: 240px;
+}
+
+.exp-model-chip strong {
+  font-size: 14px;
+  color: #1f2937;
+}
+
+.exp-model-chip span {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+/* ---------- 已选模型卡 ---------- */
+.exp-selected-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.exp-selected-card {
+  border-radius: 16px;
+  border: 1px solid #d6e4ff;
+  background: linear-gradient(180deg, #fcfdff 0%, #f5faff 100%);
+}
+
+.exp-selected-card .ant-card-head {
+  min-height: 52px;
+}
+
+.exp-two-col {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+}
+
+/* ---------- 断点 ---------- */
+@media (max-width: 1280px) {
+  body {
+    min-width: 0;
+  }
+
+  .exp-selected-grid,
+  .exp-two-col {
+    grid-template-columns: 1fr;
+  }
+}

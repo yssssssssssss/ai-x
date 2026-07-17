@@ -1,6 +1,15 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "portal-web", "autoPort": true, "runtimeExecutable": "npm", "runtimeArgs": ["--prefix", "apps/web", "run", "dev"], "port": 5173 }
+    { "name": "portal-web", "autoPort": true, "runtimeExecutable": "npm", "runtimeArgs": ["--prefix", "apps/web", "run", "dev"], "port": 5173 },
+    { "name": "vision-brand-web", "runtimeExecutable": "npm", "runtimeArgs": ["--prefix", "external-tools/vision-brand-lab/apps/web", "run", "dev", "--", "--port", "5906"], "port": 5906 },
+    { "name": "vision-brand-server", "runtimeExecutable": "npm", "runtimeArgs": ["--prefix", "external-tools/vision-brand-lab/apps/server", "run", "dev"], "port": 8805 },
+    { "name": "attention-web", "runtimeExecutable": "npm", "runtimeArgs": ["--prefix", "external-tools/attention-analysis-lab/apps/web", "run", "dev", "--", "--port", "5902"], "port": 5902 },
+    { "name": "virtual-user-web", "runtimeExecutable": "npm", "runtimeArgs": ["--prefix", "external-tools/virtual-user-lab/apps/web", "run", "dev", "--", "--port", "5904"], "port": 5904 },
+    { "name": "aesthetic-web", "runtimeExecutable": "npm", "runtimeArgs": ["--prefix", "external-tools/aesthetic-quant-lab/apps/web", "run", "dev", "--", "--port", "5901"], "port": 5901 },
+    { "name": "experience-web", "runtimeExecutable": "npm", "runtimeArgs": ["--prefix", "external-tools/experience-model-lab/apps/web", "run", "dev", "--", "--port", "5903"], "port": 5903 },
+    { "name": "orig-web", "runtimeExecutable": "npm", "runtimeArgs": ["--prefix", "external-tools/users-research-all/apps/web", "run", "dev", "--", "--port", "5910"], "port": 5910 },
+    { "name": "static-preview", "runtimeExecutable": "python3", "runtimeArgs": ["-m", "http.server", "4599"], "port": 4599 },
+    { "name": "static-preview-2", "autoPort": true, "runtimeExecutable": "python3", "runtimeArgs": ["-m", "http.server"], "port": 4610 }
   ]
 }

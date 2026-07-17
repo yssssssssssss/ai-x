@@ -1,17 +1,444 @@
-body { margin: 0; background: #f8fafc; color: #111827; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-.shell { max-width: 1120px; margin: 0 auto; padding: 32px 24px 64px; }
-.toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding-bottom: 22px; border-bottom: 1px solid #e5e7eb; }
-h1 { margin: 0 0 8px; font-size: 34px; line-height: 1.1; letter-spacing: 0; }
-p { color: #4b5563; }
-button { border: 0; border-radius: 6px; padding: 12px 20px; background: #0f172a; color: white; font-weight: 700; cursor: pointer; }
-button:disabled { opacity: 0.45; cursor: not-allowed; }
-.inputs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 24px; }
-label { display: grid; gap: 8px; font-weight: 700; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; background: white; }
-.error { color: #991b1b; white-space: pre-wrap; }
-.result { display: grid; gap: 16px; margin-top: 24px; }
-.summary, .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; background: white; }
-.cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
-.score { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 6px; background: #e0f2fe; color: #075985; font-weight: 800; }
-.card h3 { margin: 12px 0 8px; }
-small { color: #64748b; }
-@media (max-width: 860px) { .toolbar, .inputs { grid-template-columns: 1fr; display: grid; } .cards { grid-template-columns: 1fr; } }
+/* vision-brand-lab web — 引 antd 高还原复刻主产品原版视觉与布局
+   token 摘自 users-research-all/apps/web/src/styles.css(仅保留本页用到的选择器) */
+
+:root {
+  font-family: 'SF Pro Display', 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', -apple-system, BlinkMacSystemFont, sans-serif;
+  color: #111827;
+  background: #f4f1eb;
+}
+
+body {
+  margin: 0;
+  min-width: 1280px;
+  background:
+    radial-gradient(circle at top left, rgba(255, 244, 214, 0.75), transparent 28%),
+    linear-gradient(180deg, #f6f3ef 0%, #f4f7fb 40%, #eef3f9 100%);
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* ---------- 布局壳 ---------- */
+.app-shell {
+  min-height: 100vh;
+  background: transparent !important;
+}
+
+.app-shell-sider.ant-layout-sider {
+  background: rgba(251, 249, 244, 0.86) !important;
+  border-right: 1px solid rgba(31, 41, 55, 0.08);
+  box-shadow: 12px 0 40px rgba(15, 23, 42, 0.04);
+}
+
+.app-shell-brand {
+  padding: 22px 20px 18px;
+}
+
+.app-shell-brand-kicker {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #9a7b42;
+}
+
+.app-shell-brand-title {
+  margin-top: 6px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: #1f2937;
+}
+
+.app-shell-sider .ant-menu {
+  padding: 8px 12px;
+  border-inline-end: none !important;
+  background: transparent !important;
+}
+
+.app-shell-sider .ant-menu-item {
+  height: 44px;
+  margin: 6px 0;
+  border-radius: 12px;
+  line-height: 44px;
+}
+
+.app-shell-sider .ant-menu-item-selected {
+  background: linear-gradient(90deg, rgba(22, 119, 255, 0.12), rgba(255, 255, 255, 0.7)) !important;
+}
+
+.app-shell-main {
+  background: transparent !important;
+}
+
+.app-shell-header.ant-layout-header {
+  height: auto;
+  padding: 20px 28px 10px;
+  background: transparent !important;
+  line-height: normal;
+}
+
+.app-shell-header-kicker {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #7c889d;
+}
+
+.app-shell-header-title {
+  margin-top: 4px;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  color: #111827;
+}
+
+.app-shell-header-subtitle {
+  margin-top: 4px;
+  max-width: 640px;
+  font-size: 14px;
+  color: #6b7280;
+}
+
+.app-shell-content.ant-layout-content {
+  padding: 0 24px 28px;
+}
+
+.app-shell-content-inner {
+  width: min(1480px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* ---------- 卡片基座 ---------- */
+.page-card {
+  border-radius: 16px;
+}
+
+.module-toolbar-card,
+.module-section-card {
+  border-radius: 22px;
+  border: 1px solid rgba(31, 41, 55, 0.08);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.05);
+}
+
+.module-toolbar-card {
+  background: rgba(255, 255, 255, 0.76);
+  backdrop-filter: blur(8px);
+}
+
+.module-section-card .ant-card-head {
+  border-bottom: 1px solid rgba(31, 41, 55, 0.06);
+}
+
+.module-section-card .ant-card-head-title {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.module-section-card .ant-card-body {
+  border-top: 0;
+}
+
+/* ---------- 操作区上传 ---------- */
+.lab-uploader-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.lab-uploader {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid #edf2ff;
+  background: #fafcff;
+}
+
+.lab-uploader-preview {
+  max-width: 100%;
+  max-height: 180px;
+  object-fit: contain;
+  border-radius: 12px;
+  background: rgba(241, 245, 249, 0.7);
+}
+
+/* ---------- module hero ---------- */
+.module-hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+  padding: 24px 28px;
+  border: 1px solid rgba(27, 31, 59, 0.08);
+  border-radius: 24px;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.06);
+}
+
+.module-hero-vision {
+  background:
+    radial-gradient(circle at top right, rgba(22, 119, 255, 0.14), transparent 24%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.84) 0%, rgba(246, 251, 255, 0.96) 100%);
+}
+
+.module-hero-main {
+  min-width: 0;
+}
+
+.module-hero-kicker {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #97713a;
+}
+
+.module-hero-title {
+  margin: 8px 0 10px !important;
+}
+
+.module-hero-description {
+  margin-bottom: 0 !important;
+  max-width: 760px;
+  color: #4b5563;
+}
+
+.module-hero-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.module-hero-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(31, 41, 55, 0.1);
+  color: #374151;
+}
+
+/* ---------- vision 优先动作 callout ---------- */
+.vision-toolbar-layout {
+  display: flex;
+  align-items: stretch;
+  gap: 16px;
+}
+
+.vision-toolbar-priority-callout {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  min-height: 72px;
+  padding: 14px 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(114, 46, 209, 0.22);
+  background: linear-gradient(180deg, rgba(250, 245, 255, 0.96) 0%, rgba(245, 238, 255, 0.96) 100%);
+}
+
+.vision-toolbar-priority-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6d28d9;
+}
+
+.vision-toolbar-priority-text {
+  font-size: 20px;
+  line-height: 1.45;
+  font-weight: 600;
+  color: #312e81;
+}
+
+/* ---------- vision 简报 ---------- */
+.vision-briefing-card {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.vision-briefing-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vision-briefing-highlight {
+  padding: 18px 20px;
+  border-radius: 18px;
+  border: 1px solid rgba(59, 130, 246, 0.14);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(244, 248, 255, 0.96) 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+.vision-briefing-text {
+  margin-bottom: 0 !important;
+  color: #374151;
+  line-height: 1.75;
+}
+
+.vision-briefing-chip-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.vision-briefing-chip {
+  margin: 0 !important;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border-color: rgba(31, 41, 55, 0.12);
+  background: rgba(248, 250, 252, 0.9);
+}
+
+/* ---------- vision 网格 ---------- */
+.vision-top-grid,
+.vision-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.vision-reviewer-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.vision-reviewer-card {
+  border-radius: 16px;
+}
+
+.vision-reviewer-card .ant-card-head {
+  min-height: 56px;
+}
+
+.vision-reviewer-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ---------- 设计稿预览 ---------- */
+.vision-preview-card .ant-card-body {
+  padding: 16px;
+}
+
+.vision-preview-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 420px;
+  padding: 12px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.96) 0%, rgba(241, 245, 249, 0.96) 100%);
+  border: 1px solid rgba(31, 41, 55, 0.08);
+  overflow: hidden;
+}
+
+.vision-preview-image {
+  max-width: 100%;
+}
+
+.vision-preview-image .ant-image-img {
+  max-height: 520px;
+  width: auto;
+  object-fit: contain;
+}
+
+/* ---------- 执行概览 stat ---------- */
+.vision-stat-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.vision-stat-card {
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid #edf2ff;
+  background: #fafcff;
+}
+
+.vision-priority-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.vision-priority-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: #f3e8ff;
+  color: #6d28d9;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* ---------- 品牌联想度 ---------- */
+.brand-hero-score {
+  font-size: 48px;
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  color: #111827;
+}
+
+.brand-hero-caption {
+  margin-bottom: 0 !important;
+  color: #6b7280;
+}
+
+/* ---------- 通用 ---------- */
+.experience-cell-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7280;
+}
+
+/* ---------- 断点 ---------- */
+@media (max-width: 1280px) {
+  body {
+    min-width: 0;
+  }
+
+  .lab-uploader-grid,
+  .vision-top-grid,
+  .vision-summary-grid,
+  .vision-stat-row,
+  .vision-reviewer-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .vision-toolbar-layout {
+    flex-direction: column;
+  }
+
+  .vision-toolbar-priority-text {
+    font-size: 18px;
+  }
+
+  .brand-hero-score {
+    font-size: 40px;
+  }
+}
