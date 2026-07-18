@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AI 批量打标 · 生成结果 · 三种设计风格</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root { --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", system-ui, sans-serif; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: var(--sans); background: #eceef1; color: #1a1a1a;
+    min-height: 100vh; padding: 40px 20px 100px;
+    display: flex; flex-direction: column; align-items: center;
+  }
+  .page-head { text-align: center; margin-bottom: 24px; max-width: 560px; }
+  .page-head h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+  .page-head p { margin-top: 8px; color: #6b7280; font-size: 14px; line-height: 1.5; }
+
+  .switch { display: inline-flex; background: #dcdfe4; padding: 4px; border-radius: 999px; margin-bottom: 28px; gap: 2px; }
+  .switch button { border: 0; background: transparent; font-family: var(--sans); font-size: 14px; font-weight: 600; color: #4b5563; padding: 9px 22px; border-radius: 999px; cursor: pointer; transition: background .22s, color .22s, box-shadow .22s; }
+  .switch button:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+  .switch button[aria-selected="true"] { background: #fff; color: #111; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+
+  .stage-wrap { width: 100%; max-width: 840px; }
+  .stage { display: none; animation: fade .35s ease; }
+  .stage.active { display: block; }
+  @keyframes fade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  svg { display: block; }
+  @media (prefers-reduced-motion: reduce) { .stage { animation: none; } * { transition: none !important; } }
+
+  /* shared row skeleton */
+  .rowgrid { display: grid; grid-template-columns: 44px 1.5fr 92px 92px 128px; align-items: center; gap: 12px; }
+  .thumb { width: 66px; height: 66px; border-radius: 12px; position: relative; overflow: hidden; display: grid; place-items: center; font-size: 26px; }
+  .thumb .band { position: absolute; left: 0; right: 0; bottom: 0; padding: 3px 0; text-align: center; font-size: 8px; font-weight: 700; color: #fff; background: linear-gradient(90deg,#ff5a2c,#ff2d55); letter-spacing: .02em; }
+  .thumb.empty { font-size: 11px; color: #b0b0b8; background: repeating-linear-gradient(45deg,#f3f3f5,#f3f3f5 6px,#ececef 6px,#ececef 12px); }
+  .selbox { width: 20px; height: 20px; border-radius: 6px; display: grid; place-items: center; cursor: pointer; flex: none; }
+
+  /* ============================================================ APPLE ============================================================ */
+  .apple { --card:#fff; --text:#1d1d1f; --muted:#86868b; --line:#e6e6e9; --fill:#f0f0f3; --accent:#0071e3; font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","PingFang SC","Noto Sans SC",sans-serif; color:var(--text); }
+  .apple .card { background:var(--card); border-radius:24px; padding:22px; box-shadow:0 18px 50px -20px rgba(0,0,0,.22),0 2px 6px rgba(0,0,0,.04); }
+  .apple .top-title { font-size:21px; font-weight:600; letter-spacing:-.02em; margin-bottom:16px; }
+  .apple .ctx { background:var(--fill); border-radius:16px; padding:16px 18px; margin-bottom:24px; }
+  .apple .ctx h3 { font-size:12px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-bottom:12px; }
+  .apple .ctx .grid { display:grid; grid-template-columns:repeat(2,1fr); gap:10px 24px; }
+  .apple .ctx .item { display:flex; justify-content:space-between; gap:12px; font-size:14px; }
+  .apple .ctx .item .k { color:var(--muted); flex:none; }
+  .apple .ctx .item .v { font-weight:590; text-align:right; }
+  .apple .res-head { display:flex; align-items:baseline; gap:10px; margin-bottom:14px; }
+  .apple .res-head h2 { font-size:18px; font-weight:600; }
+  .apple .res-head .sel { color:var(--muted); font-size:13px; }
+  .apple .thead { color:var(--muted); font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.04em; padding:0 4px 10px; border-bottom:1px solid var(--line); }
+  .apple .trow { padding:14px 4px; border-bottom:1px solid var(--line); }
+  .apple .pname { font-size:15px; font-weight:590; }
+  .apple .psku { font-size:12px; color:var(--muted); margin-top:3px; }
+  .apple .thumb { background:linear-gradient(135deg,#eef1f5,#e0e5ec); }
+  .apple .selbox { border:1.5px solid #c7c7cc; }
+  .apple .selbox[aria-checked="true"] { background:var(--accent); border-color:var(--accent); }
+  .apple .op { display:inline-flex; align-items:center; gap:5px; color:var(--accent); font-size:13px; font-weight:590; cursor:pointer; background:none; border:0; font-family:inherit; }
+  .apple .pager { display:flex; align-items:center; justify-content:center; gap:14px; color:var(--muted); font-size:13px; padding:16px 0 4px; }
+  .apple .pager .pg { width:28px; height:28px; border-radius:8px; border:1px solid var(--line); background:#fff; display:grid; place-items:center; }
+  .apple .pager .cur { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .apple .footer { display:flex; align-items:center; gap:10px; justify-content:flex-end; margin-top:22px; flex-wrap:wrap; }
+  .apple .btn { font-family:inherit; font-size:15px; font-weight:590; border-radius:12px; padding:12px 20px; cursor:pointer; transition:filter .2s,background .2s; }
+  .apple .btn.ghost { background:var(--fill); color:var(--text); border:0; }
+  .apple .btn.primary { background:var(--accent); color:#fff; border:0; }
+  .apple .btn.primary:hover { filter:brightness(1.06); }
+
+  /* ============================================================ GOOGLE M3 ============================================================ */
+  .gmd { --surface:#fff; --text:#1f1f1f; --muted:#5f6368; --line:#dadce0; --accent:#1a73e8; --tonal:#e8f0fe; --bg:#f8f9fa; font-family:"Roboto","Noto Sans SC","PingFang SC",system-ui,sans-serif; color:var(--text); }
+  .gmd .card { background:var(--surface); border-radius:28px; padding:24px; box-shadow:0 1px 2px rgba(60,64,67,.3),0 6px 20px -8px rgba(60,64,67,.25); }
+  .gmd .top-title { display:flex; align-items:center; gap:12px; font-size:22px; font-weight:500; margin-bottom:18px; }
+  .gmd .top-title .badge { width:40px; height:40px; border-radius:999px; background:var(--tonal); color:var(--accent); display:grid; place-items:center; font-weight:700; }
+  .gmd .ctx { background:var(--tonal); border-radius:20px; padding:18px; margin-bottom:24px; }
+  .gmd .ctx h3 { font-size:13px; font-weight:500; color:var(--accent); margin-bottom:12px; }
+  .gmd .ctx .grid { display:flex; flex-wrap:wrap; gap:8px; }
+  .gmd .ctx .item { background:var(--surface); border-radius:999px; padding:8px 14px; font-size:13px; display:inline-flex; gap:6px; }
+  .gmd .ctx .item .k { color:var(--muted); }
+  .gmd .ctx .item .v { font-weight:500; }
+  .gmd .res-head { display:flex; align-items:baseline; gap:10px; margin-bottom:14px; }
+  .gmd .res-head h2 { font-size:18px; font-weight:500; }
+  .gmd .res-head .sel { color:var(--accent); font-size:13px; font-weight:500; }
+  .gmd .thead { color:var(--muted); font-size:12px; font-weight:500; padding:0 4px 12px; }
+  .gmd .trow { padding:14px 4px; border-radius:16px; }
+  .gmd .trow:nth-child(even) { background:var(--bg); }
+  .gmd .pname { font-size:15px; font-weight:500; }
+  .gmd .psku { font-size:12px; color:var(--muted); margin-top:3px; }
+  .gmd .thumb { background:linear-gradient(135deg,#e8f0fe,#d2e3fc); }
+  .gmd .selbox { border:2px solid var(--muted); border-radius:4px; }
+  .gmd .selbox[aria-checked="true"] { background:var(--accent); border-color:var(--accent); }
+  .gmd .op { display:inline-flex; align-items:center; gap:6px; color:var(--accent); font-size:13px; font-weight:500; cursor:pointer; background:none; border:0; font-family:inherit; padding:8px 12px; border-radius:999px; transition:background .2s; }
+  .gmd .op:hover { background:var(--tonal); }
+  .gmd .pager { display:flex; align-items:center; justify-content:center; gap:14px; color:var(--muted); font-size:13px; padding:18px 0 4px; }
+  .gmd .pager .pg { width:32px; height:32px; border-radius:999px; border:1px solid var(--line); background:#fff; display:grid; place-items:center; }
+  .gmd .pager .cur { background:var(--tonal); color:var(--accent); border-color:var(--tonal); font-weight:500; }
+  .gmd .footer { display:flex; align-items:center; gap:10px; justify-content:flex-end; margin-top:24px; flex-wrap:wrap; }
+  .gmd .btn { font-family:inherit; font-size:14px; font-weight:500; border-radius:999px; padding:12px 24px; cursor:pointer; transition:box-shadow .2s,background .2s; }
+  .gmd .btn.ghost { background:transparent; color:var(--accent); border:1px solid var(--line); }
+  .gmd .btn.ghost:hover { background:var(--tonal); }
+  .gmd .btn.primary { background:var(--accent); color:#fff; border:0; box-shadow:0 3px 10px -2px rgba(26,115,232,.5); }
+  .gmd .btn.primary:hover { box-shadow:0 6px 16px -3px rgba(26,115,232,.55); }
+
+  /* ============================================================ CHATGPT ============================================================ */
+  .oai { --bg:#fff; --soft:#f7f7f8; --text:#0d0d0d; --muted:#8e8ea0; --line:#e5e5e5; --accent:#10a37f; font-family:"Inter","PingFang SC","Noto Sans SC",system-ui,sans-serif; color:var(--text); }
+  .oai .card { background:var(--bg); border:1px solid var(--line); border-radius:16px; padding:24px; box-shadow:0 6px 30px -18px rgba(0,0,0,.25); }
+  .oai .top-title { display:flex; align-items:center; gap:10px; font-size:18px; font-weight:600; letter-spacing:-.01em; margin-bottom:18px; }
+  .oai .top-title .mark { width:24px; height:24px; }
+  .oai .ctx { background:var(--soft); border:1px solid var(--line); border-radius:14px; padding:16px 18px; margin-bottom:24px; }
+  .oai .ctx h3 { font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin-bottom:12px; }
+  .oai .ctx .grid { display:flex; flex-wrap:wrap; gap:8px 10px; }
+  .oai .ctx .item { font-size:13px; display:inline-flex; gap:6px; }
+  .oai .ctx .item .k { color:var(--muted); }
+  .oai .ctx .item .v { font-weight:600; }
+  .oai .ctx .item + .item::before { content:"·"; color:var(--line); margin-right:10px; }
+  .oai .res-head { display:flex; align-items:baseline; gap:10px; margin-bottom:14px; }
+  .oai .res-head h2 { font-size:16px; font-weight:600; }
+  .oai .res-head .sel { color:var(--muted); font-size:13px; }
+  .oai .thead { color:var(--muted); font-size:12px; font-weight:600; padding:0 4px 10px; border-bottom:1px solid var(--line); }
+  .oai .trow { padding:14px 4px; border-bottom:1px solid var(--line); }
+  .oai .pname { font-size:14px; font-weight:600; }
+  .oai .psku { font-size:12px; color:var(--muted); margin-top:3px; }
+  .oai .thumb { background:linear-gradient(135deg,#f0f4f2,#e3ece8); }
+  .oai .selbox { border:1.5px solid #c5c5d0; border-radius:5px; }
+  .oai .selbox[aria-checked="true"] { background:var(--accent); border-color:var(--accent); }
+  .oai .op { display:inline-flex; align-items:center; gap:5px; color:var(--text); font-size:13px; font-weight:500; cursor:pointer; background:none; border:1px solid var(--line); border-radius:8px; padding:6px 12px; font-family:inherit; transition:background .2s; }
+  .oai .op:hover { background:var(--soft); }
+  .oai .pager { display:flex; align-items:center; justify-content:center; gap:12px; color:var(--muted); font-size:13px; padding:16px 0 4px; }
+  .oai .pager .pg { width:28px; height:28px; border-radius:8px; border:1px solid var(--line); background:#fff; display:grid; place-items:center; }
+  .oai .pager .cur { background:var(--text); color:#fff; border-color:var(--text); }
+  .oai .footer { display:flex; align-items:center; gap:10px; justify-content:flex-end; margin-top:22px; flex-wrap:wrap; }
+  .oai .btn { font-family:inherit; font-size:14px; font-weight:600; border-radius:10px; padding:11px 18px; cursor:pointer; transition:filter .2s,background .2s; }
+  .oai .btn.ghost { background:var(--bg); color:var(--text); border:1px solid var(--line); }
+  .oai .btn.ghost:hover { background:var(--soft); }
+  .oai .btn.primary { background:var(--accent); color:#fff; border:0; }
+  .oai .btn.primary:hover { filter:brightness(1.05); }
+
+  /* responsive: stack rows on narrow screens */
+  @media (max-width: 640px) {
+    .rowgrid { grid-template-columns: 32px 1fr; grid-auto-rows:auto; row-gap:10px; }
+    .thead { display:none !important; }
+    .col-orig, .col-patch, .col-op { grid-column: 2; }
+    .row-media { display:flex; gap:16px; align-items:center; }
+  }
+</style>
+</head>
+<body>
+  <div class="page-head">
+    <h1>AI 批量打标 · 生成结果</h1>
+    <p>同一套结果，三种设计语言。切换查看 Apple、Google、ChatGPT 风格。</p>
+  </div>
+
+  <div class="switch" role="tablist" aria-label="设计风格切换">
+    <button role="tab" aria-selected="true" data-target="apple">Apple</button>
+    <button role="tab" aria-selected="false" data-target="gmd">Google</button>
+    <button role="tab" aria-selected="false" data-target="oai">ChatGPT</button>
+  </div>
+
+  <div class="stage-wrap">
+    <section class="stage apple active" id="apple" data-theme="apple"></section>
+    <section class="stage gmd" id="gmd" data-theme="gmd"></section>
+    <section class="stage oai" id="oai" data-theme="oai"></section>
+  </div>
+
+<script>
+  // ---- shared data ----
+  const ctx = [
+    { k: "活动名称", v: "618 开门红" },
+    { k: "利益点", v: "满 300 减 50 · 前 N 件半价" },
+    { k: "起止时间", v: "07/17 00:00 → 07/30 24:00" },
+    { k: "打标模板", v: "底部腰带" },
+    { k: "附加要求", v: "突出大促氛围" },
+  ];
+  const products = [
+    { name: "健身手套", sku: "100212833490", emoji: "🧤", ok: true },
+    { name: "跳绳 · 专业款", sku: "10218179204205", emoji: "🪢", ok: true },
+    { name: "运动护膝 Pro", sku: "100127405757", emoji: "🦵", ok: false },
+    { name: "瑜伽垫 · 紫色", sku: "10211345394575", emoji: "🧘", ok: true },
+    { name: "健腹轮", sku: "10211345394575", emoji: "🎡", ok: true },
+  ];
+
+  const icons = {
+    chevL: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    chevR: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    tick: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4L19 6" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    eye: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="2.6" stroke="currentColor" stroke-width="1.8"/></svg>',
+    redo: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M4 4v6h6M20 20v-6h-6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 10a8 8 0 0 0-14.5-3M4 14a8 8 0 0 0 14.5 3" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>',
+    chat: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>',
+    check: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4L19 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  };
+  const oaiMark = '<svg class="mark" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#10a37f" stroke-width="2"/><path d="M8 12l2.5 2.5L16 9" stroke="#10a37f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+  function thumb(p, sticker) {
+    if (sticker && !p.ok) return '<div class="thumb empty">暂无结果</div>';
+    const band = sticker ? '<span class="band">满300减50</span>' : '';
+    return '<div class="thumb">' + p.emoji + band + '</div>';
+  }
+
+  function ctxBlock(theme) {
+    const items = ctx.map(c => `<div class="item"><span class="k">${c.k}</span><span class="v">${c.v}</span></div>`).join("");
+    return `<div class="ctx"><h3>任务信息（上下文）</h3><div class="grid">${items}</div></div>`;
+  }
+
+  function rows(theme) {
+    const head = `<div class="rowgrid thead">
+        <div></div><div>商品信息</div>
+        <div class="col-orig">原图</div><div class="col-patch">贴片版</div><div class="col-op">操作</div>
+      </div>`;
+    const body = products.map(p => `
+      <div class="rowgrid trow">
+        <div class="selbox" role="checkbox" aria-checked="true" tabindex="0">${icons.tick}</div>
+        <div><div class="pname">${p.name}</div><div class="psku">SKU ${p.sku}</div></div>
+        <div class="col-orig row-media">${thumb(p, false)}</div>
+        <div class="col-patch">${thumb(p, true)}</div>
+        <div class="col-op"><button class="op">${icons.eye}查看生成过程</button></div>
+      </div>`).join("");
+    return head + body;
+  }
+
+  function pager(theme) {
+    return `<div class="pager">
+      <span>共 5 条</span>
+      <span class="pg">${icons.chevL}</span>
+      <span class="pg cur">1</span>
+      <span class="pg">${icons.chevR}</span>
+      <span>5 条/页</span>
+    </div>`;
+  }
+
+  function footer(theme) {
+    const redo = theme === "oai" ? icons.chat : icons.redo;
+    return `<div class="footer">
+      <button class="btn ghost">${redo}&nbsp;反馈意见重新生成</button>
+      <button class="btn ghost">修改样式重新生成</button>
+      <button class="btn primary">${icons.check}&nbsp;确认采纳并投放</button>
+    </div>`;
+  }
+
+  function topTitle(theme) {
+    if (theme === "gmd") return `<div class="top-title"><span class="badge">618</span>AI 批量打标</div>`;
+    if (theme === "oai") return `<div class="top-title">${oaiMark}AI 批量打标</div>`;
+    return `<div class="top-title">AI 批量打标</div>`;
+  }
+
+  document.querySelectorAll(".stage").forEach(st => {
+    const t = st.dataset.theme;
+    st.innerHTML = `<div class="card">
+      ${topTitle(t)}
+      ${ctxBlock(t)}
+      <div class="res-head"><h2>生成结果</h2><span class="sel">已选择 5 条</span></div>
+      ${rows(t)}
+      ${pager(t)}
+      ${footer(t)}
+    </div>`;
+  });
+
+  // switcher
+  const tabs = document.querySelectorAll(".switch button");
+  const stages = document.querySelectorAll(".stage");
+  tabs.forEach(t => t.addEventListener("click", () => {
+    tabs.forEach(x => x.setAttribute("aria-selected", "false"));
+    t.setAttribute("aria-selected", "true");
+    stages.forEach(s => s.classList.remove("active"));
+    document.getElementById(t.dataset.target).classList.add("active");
+  }));
+
+  // checkbox toggle
+  document.addEventListener("click", e => {
+    const box = e.target.closest(".selbox");
+    if (box) box.setAttribute("aria-checked", box.getAttribute("aria-checked") === "true" ? "false" : "true");
+  });
+</script>
+</body>
+</html>

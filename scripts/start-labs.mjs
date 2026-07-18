@@ -6,13 +6,28 @@
 //   node scripts/start-labs.mjs --web      # 只起前端
 // Ctrl-C 一并退出所有子进程。
 import { spawn } from 'node:child_process';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readFileSync, existsSync } from 'node:fs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const arg = process.argv[2];
 const runServer = arg !== '--web';
 const runWeb = arg !== '--server';
+
+// 读主项目 .env 注入工具子进程——让工具用上 LLM 网关等配置(工具 server 只读 process.env,不自载 .env)。
+// 工具自身若有独立 .env(工具 server 会 loadEnvFile 加载),优先级更高。
+function loadRootEnv() {
+  const p = join(root, '.env');
+  if (!existsSync(p)) return {};
+  const out = {};
+  for (const line of readFileSync(p, 'utf8').split('\n')) {
+    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+    if (m) out[m[1]] = m[2].replace(/^["']|["']$/g, '').trim();
+  }
+  return out;
+}
+const rootEnv = loadRootEnv();
 
 // id / 后端口 / 前端口(与各工具 config/env.ts、package.json 的 vite --port 对应)。
 const LABS = [
@@ -36,7 +51,7 @@ console.log('');
 const children = [];
 const launch = (id, script) => {
   const cwd = resolve(root, 'external-tools', id);
-  const child = spawn('npm', ['run', script], { cwd, stdio: 'inherit', env: process.env });
+  const child = spawn('npm', ['run', script], { cwd, stdio: 'inherit', env: { ...process.env, ...rootEnv } });
   child.on('error', (err) => console.error(`[${id} ${script}] 启动失败:`, err.message));
   children.push(child);
 };

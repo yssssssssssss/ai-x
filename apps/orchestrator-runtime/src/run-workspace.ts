@@ -38,6 +38,17 @@ export class RunWorkspace {
     return JSON.parse(readFileSync(p, 'utf8')) as T;
   }
 
+  // 候选计划:planPhase 一次产出 N 份候选,selectPlan 选中后再 writePlan。
+  writeCandidates(candidates: unknown): string {
+    return this.writeJson('plan_candidates.json', candidates);
+  }
+
+  readCandidates<T>(): T {
+    const p = join(this.dir, 'plan_candidates.json');
+    if (!existsSync(p)) throw new Error(`plan_candidates.json 不存在: ${p}`);
+    return JSON.parse(readFileSync(p, 'utf8')) as T;
+  }
+
   writeDecisionStates(states: unknown): string {
     return this.writeJson('decision_states.json', states);
   }
@@ -51,6 +62,24 @@ export class RunWorkspace {
     const p = join(this.dir, 'tool_outputs', `step${stepNo}.json`);
     writeFileSync(p, JSON.stringify(output, null, 2));
     return p;
+  }
+
+  // resume 时读回单步已落盘输出,重建 toolOutputs(不重放前序步)。
+  readToolOutput<T>(stepNo: number): T {
+    const p = join(this.dir, 'tool_outputs', `step${stepNo}.json`);
+    if (!existsSync(p)) throw new Error(`tool_outputs/step${stepNo}.json 不存在: ${p}`);
+    return JSON.parse(readFileSync(p, 'utf8')) as T;
+  }
+
+  // run_state:执行中断点。停在失败步时落盘,resume 据此重建上下文并从下一步续跑。
+  writeRunState(state: unknown): string {
+    return this.writeJson('run_state.json', state);
+  }
+
+  readRunState<T>(): T {
+    const p = join(this.dir, 'run_state.json');
+    if (!existsSync(p)) throw new Error(`run_state.json 不存在(任务未处于可恢复状态): ${p}`);
+    return JSON.parse(readFileSync(p, 'utf8')) as T;
   }
 
   writeArtifactFile(name: string, content: string): string {

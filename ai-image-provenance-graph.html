@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>生图溯源 · 召回决策拓扑图</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --paper:#eef0f3; --surface:#fff; --ink:#181a1f; --ink-2:#3a3f47;
+    --muted:#6b7280; --faint:#9aa0aa; --line:#e2e5ea; --line-2:#eef0f3;
+    --pf:#c0392b; --pf-wash:#fbecea; --pf-line:#eecac5;
+    --ct:#1f6fb8; --ct-wash:#e8f1fb; --ct-line:#cfe1f4;
+    --br:#6b46c1; --br-wash:#efecfb; --br-line:#dcd5f4;
+    --sp:#5a6470; --sp-wash:#eef0f3; --sp-line:#dbe0e6;
+    --green:#0a7a57; --green-wash:#e7f4ee; --green-line:#bfe3d4;
+    --red:#d92d20; --over:#aab0ba; --amber:#a86a0b; --amber-wash:#fbf2d8; --amber-line:#e7c766;
+    --sans:"Inter","PingFang SC","Noto Sans SC",system-ui,sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{-webkit-text-size-adjust:100%}
+  body{font-family:var(--sans);color:var(--ink);background:var(--paper);min-height:100vh;padding:30px 22px 70px;-webkit-font-smoothing:antialiased;line-height:1.45}
+  .mono{font-family:var(--mono);font-feature-settings:"tnum" 1}
+  .wrap{max-width:1280px;margin:0 auto}
+
+  /* header */
+  .head{display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:6px}
+  .head .eyebrow{font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--faint)}
+  .head h1{font-size:21px;font-weight:700;letter-spacing:-.015em;margin-top:4px}
+  .head .sub{font-size:12.5px;color:var(--muted);padding-bottom:2px}
+  .legend{margin-left:auto;display:flex;gap:16px;flex-wrap:wrap;padding-bottom:2px}
+  .legend .grp{display:flex;gap:10px;align-items:center}
+  .legend .li{font-size:11px;color:var(--muted);display:inline-flex;align-items:center;gap:6px}
+  .swatch{width:10px;height:10px;border-radius:3px;flex:none}
+  .linekey{width:22px;height:0;flex:none}
+
+  /* stage: horizontal-scroll canvas */
+  .stage{margin-top:16px;background:var(--surface);border:1px solid var(--line);border-radius:18px;box-shadow:0 1px 0 rgba(24,26,31,.02),0 20px 46px -30px rgba(24,26,31,.32);padding:22px 8px 22px 22px;overflow-x:auto}
+  .graph{position:relative;min-width:1160px}
+  .colcap{display:grid;grid-template-columns:var(--cols);gap:var(--gap);margin-bottom:14px}
+  .colcap .cc{font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);display:flex;align-items:center;gap:8px}
+  .colcap .cc .idx{width:18px;height:18px;border-radius:5px;background:var(--paper);color:var(--ink-2);display:grid;place-items:center;font-size:10px}
+
+  .grid{display:grid;grid-template-columns:var(--cols);gap:var(--gap);align-items:center;position:relative;z-index:2}
+  .col{display:flex;flex-direction:column;gap:10px;min-width:0}
+
+  svg.wires{position:absolute;inset:0;width:100%;height:100%;z-index:1;pointer-events:none;overflow:visible}
+  .wire{fill:none;stroke:var(--over);stroke-width:1.6;opacity:.5;transition:opacity .18s,stroke-width .18s}
+  .wire.inject{stroke:var(--green);opacity:.55}
+  .wire.redline{stroke:var(--red);opacity:.4;stroke-dasharray:1 5;stroke-linecap:round}
+  .wire.over{stroke:var(--over);stroke-dasharray:4 4;opacity:.7}
+  .graph.focus .wire{opacity:.08}
+  .graph.focus .wire.hot{opacity:1;stroke-width:2.4}
+
+  /* nodes */
+  .node{border:1px solid var(--line);border-radius:11px;background:var(--surface);padding:9px 11px;cursor:pointer;transition:box-shadow .16s,border-color .16s,transform .12s,opacity .16s;position:relative}
+  .node:hover{transform:translateY(-1px)}
+  .graph.focus .node{opacity:.32}
+  .graph.focus .node.hot{opacity:1}
+  .node .ntop{display:flex;align-items:center;gap:7px}
+  .node .rid{font-family:var(--mono);font-size:9px;color:var(--faint);margin-left:auto}
+  .node .ntitle{font-size:12.5px;font-weight:600;letter-spacing:-.01em;margin-top:5px}
+  .node .nsub{font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:3px}
+  .node .nsub b{color:var(--green);font-weight:600}
+  .lchip{font-family:var(--mono);font-size:9px;font-weight:600;padding:2px 6px;border-radius:4px}
+  .lchip.pf{color:var(--pf);background:var(--pf-wash)} .lchip.ct{color:var(--ct);background:var(--ct-wash)}
+  .lchip.br{color:var(--br);background:var(--br-wash)} .lchip.sp{color:var(--sp);background:var(--sp-wash)}
+
+  .node.rule.pf{border-left:3px solid var(--pf)} .node.rule.ct{border-left:3px solid var(--ct)}
+  .node.rule.br{border-left:3px solid var(--br)} .node.rule.sp{border-left:3px solid var(--sp)}
+  .node.over-rule{opacity:.72}
+  .node.over-rule .ntitle{color:var(--muted);text-decoration:line-through;text-decoration-color:var(--over)}
+  .node .cutflag{margin-top:6px;font-size:9.5px;color:var(--amber);background:var(--amber-wash);border:1px solid var(--amber-line);border-radius:5px;padding:2px 6px;display:inline-flex;gap:5px;align-items:center;font-family:var(--mono)}
+
+  /* layer swimlane label in col1 */
+  .lane{display:flex;flex-direction:column;gap:10px}
+  .lane .lanehd{font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.1em;color:var(--faint);padding:2px 0 1px;border-bottom:1px dashed var(--line);margin-bottom:2px}
+
+  /* dimension (verdict) node */
+  .node.dim{background:linear-gradient(180deg,#fff,#fafbfc);border-color:var(--line);padding:11px 12px}
+  .node.dim .dname{font-size:13.5px;font-weight:700;letter-spacing:-.01em}
+  .node.dim .verdict{margin-top:7px;font-size:10px;font-family:var(--mono);display:inline-flex;align-items:center;gap:5px;padding:3px 7px;border-radius:999px}
+  .node.dim .verdict.arb{color:var(--amber);background:var(--amber-wash);border:1px solid var(--amber-line)}
+  .node.dim .verdict.clean{color:var(--green);background:var(--green-wash);border:1px solid var(--green-line)}
+  .node.dim .verdict.hard{color:var(--red);background:var(--pf-wash);border:1px solid var(--pf-line)}
+
+  /* product node */
+  .node.prod{background:var(--green-wash);border-color:var(--green-line)}
+  .node.prod.neg{background:#fbf1f0;border-color:var(--pf-line)}
+  .node.prod .toks{display:flex;flex-wrap:wrap;gap:4px;margin-top:2px}
+  .node.prod .tok{font-family:var(--mono);font-size:10px;color:#065a41;background:rgba(255,255,255,.7);border:1px solid var(--green-line);border-radius:5px;padding:2px 6px}
+  .node.prod.neg .tok{color:#9a2b22;border-color:var(--pf-line)}
+
+  /* image sink node */
+  .node.sink{border:1px solid var(--line);background:linear-gradient(180deg,#fafbfc,#f2f3f6);padding:12px;text-align:center;border-radius:14px}
+  .node.sink .imgframe{border-radius:10px;background:linear-gradient(180deg,#f6f7f9,#e9ebef);border:1px solid var(--line);aspect-ratio:4/5;display:grid;grid-template-rows:auto 1fr auto;overflow:hidden;position:relative}
+  .node.sink .brand{padding-top:14px;font-weight:700;font-size:14px;letter-spacing:.24em;color:#2b2e34;text-indent:.24em}
+  .node.sink .shirt{align-self:center;justify-self:center;color:#aab0ba}
+  .node.sink .cap{padding-bottom:9px;font-family:var(--mono);font-size:8.5px;letter-spacing:.1em;color:var(--faint)}
+  .node.sink .sinklabel{font-size:11.5px;font-weight:600;margin-top:9px}
+  .node.sink .sinksub{font-family:var(--mono);font-size:9.5px;color:var(--muted);margin-top:3px}
+
+  .hint{margin-top:12px;font-size:11.5px;color:var(--faint);display:flex;align-items:center;gap:7px}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="head">
+    <div>
+      <div class="eyebrow">生图溯源 · 召回决策拓扑</div>
+      <h1>纯棉基础款女士衬衫 · 为什么生成这张图</h1>
+    </div>
+    <span class="sub">召回源 → 维度裁决 → 编译产物 → 图片</span>
+    <div class="legend">
+      <div class="grp">
+        <span class="li"><i class="swatch" style="background:var(--pf)"></i>平台</span>
+        <span class="li"><i class="swatch" style="background:var(--ct)"></i>品类</span>
+        <span class="li"><i class="swatch" style="background:var(--br)"></i>品牌</span>
+        <span class="li"><i class="swatch" style="background:var(--sp)"></i>SPU</span>
+      </div>
+      <div class="grp">
+        <span class="li"><svg class="linekey" viewBox="0 0 22 6"><line x1="0" y1="3" x2="22" y2="3" stroke="var(--green)" stroke-width="2"/></svg>注入</span>
+        <span class="li"><svg class="linekey" viewBox="0 0 22 6"><line x1="0" y1="3" x2="22" y2="3" stroke="var(--over)" stroke-width="2" stroke-dasharray="4 4"/></svg>被覆盖</span>
+        <span class="li"><svg class="linekey" viewBox="0 0 22 6"><line x1="0" y1="3" x2="22" y2="3" stroke="var(--red)" stroke-width="2" stroke-dasharray="1 4" stroke-linecap="round"/></svg>红线约束</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="graph" id="graph" style="--cols:270px 168px 250px 176px;--gap:56px">
+      <div class="colcap">
+        <div class="cc"><span class="idx">1</span>召回源 · 规则</div>
+        <div class="cc"><span class="idx">2</span>维度裁决</div>
+        <div class="cc"><span class="idx">3</span>编译产物</div>
+        <div class="cc"><span class="idx">4</span>最终图片</div>
+      </div>
+
+      <svg class="wires" id="wires"></svg>
+
+      <div class="grid" id="grid">
+        <div class="col" id="col-src"></div>
+        <div class="col" id="col-dim"></div>
+        <div class="col" id="col-prod"></div>
+        <div class="col" id="col-sink"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="hint">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 3l8 4v5c0 5-3.4 8-8 9-4.6-1-8-4-8-9V7l8-4z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+    悬停任意节点点亮整条因果路径 · 断裂虚线＝该规则被同维度高优先级规则覆盖，未进入产物
+  </div>
+</div>
+
+<script>
+/* ---------- graph model ---------- */
+const shirt='<svg class="shirt" width="70" height="76" viewBox="0 0 120 128" fill="none"><path d="M42 14l-26 14 8 20 12-5v66h48V57l12 5 8-20-26-14-9 8h-18l-9-8z" fill="#dfe3e9" stroke="#c4cad3" stroke-width="1.5" stroke-linejoin="round"/><path d="M51 14c0 6 4 10 9 10s9-4 9-10" stroke="#c4cad3" stroke-width="1.5" fill="none"/></svg>';
+
+// column 1: rules, grouped into layer swimlanes
+const lanes=[
+  { layer:"pf", label:"平台层 · PLATFORM", rules:[
+     {id:"R-PF-06",dim:"主体",title:"纯商品实拍，不引入模特",sub:"高级简约默认 · 覆盖 R-CT-01"},
+     {id:"R-PF-04",dim:"主体",title:"加购页强化信任特写",sub:"加购转化 <b>+11%</b>"},
+     {id:"R-PF-01",dim:"合规",title:"禁绝对化限词 / 医疗功效词",sub:"强制拦截",redline:true},
+     {id:"R-PF-02",dim:"合规",title:"禁非授权 Logo / 明星 / 版权",sub:"强制拦截",redline:true},
+     {id:"R-PF-03",dim:"合规",title:"禁纯黑 / 纯红违规底色",sub:"强制拦截",redline:true},
+  ]},
+  { layer:"ct", label:"品类层 · CATEGORY", rules:[
+     {id:"R-CT-01",dim:"主体",title:"模特实拍上身转化更高",sub:"商详转化 +22%",over:"R-PF-06"},
+     {id:"R-CT-02",dim:"背景",title:"夏季冰丝 / 凉感清凉场景",sub:"搜索热度 +180%",over:"R-BR-01"},
+  ]},
+  { layer:"br", label:"品牌层 · BRAND", rules:[
+     {id:"R-BR-01",dim:"背景",title:"简约风浅灰纯色 + 居中留白",sub:"品牌硬约束 · CTR <b>+14%</b>"},
+     {id:"R-BR-02",dim:"版式",title:"thin sans-serif · 克制间距",sub:"品牌视觉一致性"},
+  ]},
+  { layer:"sp", label:"SPU 层 · ITEM", rules:[
+     {id:"R-SP-01",dim:"主体",title:"纯棉基础款女士衬衫",sub:"SKU 结构化属性"},
+  ]},
+];
+
+// column 2: dimension verdict nodes
+const dims=[
+  {id:"D-主体",name:"商品主体",verdict:"arb",vtext:"R-PF-06 胜出"},
+  {id:"D-背景",name:"背景场景",verdict:"arb",vtext:"R-BR-01 胜出"},
+  {id:"D-版式",name:"版式",verdict:"clean",vtext:"无冲突"},
+  {id:"D-合规",name:"合规红线",verdict:"hard",vtext:"3 条硬拦截"},
+];
+
+// column 3: compiled product nodes
+const prods=[
+  {id:"P-主体",dim:"D-主体",toks:["product photography","size reference","fabric close-up","detail shots","纯棉基础款女士衬衫"]},
+  {id:"P-背景",dim:"D-背景",toks:["clean light-gray background","centered composition","premium negative space"]},
+  {id:"P-版式",dim:"D-版式",toks:["thin sans-serif","calm spacing"]},
+  {id:"P-合规",dim:"D-合规",neg:true,toks:["no superlative","no brand logo","no celebrity","no black/red bg","…"]},
+];
+
+const SINK="SINK";
+
+/* ---------- edges ---------- */
+const edges=[]; // {from,to,type}
+lanes.forEach(l=>l.rules.forEach(r=>{
+  const dimId="D-"+r.dim;
+  if(r.over) edges.push({from:r.id,to:dimId,type:"over"});
+  else if(r.redline) edges.push({from:r.id,to:dimId,type:"redline"});
+  else edges.push({from:r.id,to:dimId,type:"inject"});
+}));
+prods.forEach(p=>{
+  edges.push({from:p.dim,to:p.id,type:p.neg?"redline":"inject"});
+  edges.push({from:p.id,to:SINK,type:p.neg?"redline":"inject"});
+});
+
+/* ---------- render nodes ---------- */
+const lchip=(l,t)=>`<span class="lchip ${l}">${t}</span>`;
+const LMAP={pf:"平台",ct:"品类",br:"品牌",sp:"SPU"};
+
+document.getElementById("col-src").innerHTML=lanes.map(l=>`
+  <div class="lane">
+    <div class="lanehd">${l.label}</div>
+    ${l.rules.map(r=>`
+      <div class="node rule ${l.layer} ${r.over?'over-rule':''}" id="n-${r.id}" data-node="${r.id}">
+        <div class="ntop">${lchip(l.layer,LMAP[l.layer])}<span class="rid">${r.id}</span></div>
+        <div class="ntitle">${r.title}</div>
+        <div class="nsub">${r.sub}</div>
+        ${r.over?`<div class="cutflag">⊗ 被 ${r.over} 覆盖</div>`:''}
+      </div>`).join("")}
+  </div>`).join("");
+
+document.getElementById("col-dim").innerHTML=dims.map(d=>`
+  <div class="node dim" id="n-${d.id}" data-node="${d.id}">
+    <div class="dname">${d.name}</div>
+    <div class="verdict ${d.verdict}">${d.verdict==='clean'?'✓':(d.verdict==='hard'?'●':'⚖')} ${d.vtext}</div>
+  </div>`).join("");
+
+document.getElementById("col-prod").innerHTML=prods.map(p=>`
+  <div class="node prod ${p.neg?'neg':''}" id="n-${p.id}" data-node="${p.id}">
+    <div class="toks">${p.toks.map(t=>`<span class="tok">${t}</span>`).join("")}</div>
+  </div>`).join("");
+
+document.getElementById("col-sink").innerHTML=`
+  <div class="node sink" id="n-${SINK}" data-node="${SINK}">
+    <div class="imgframe"><div class="brand">PRADA</div>${shirt}<div class="cap">简约风 · 基础百搭</div></div>
+    <div class="sinklabel">生成主图</div>
+    <div class="sinksub">4 维度 · 命中 10 · 取舍 2</div>
+  </div>`;
+
+/* ---------- draw wires ---------- */
+const graph=document.getElementById("graph");
+const svg=document.getElementById("wires");
+const NS="http://www.w3.org/2000/svg";
+let pathEls=[];
+
+function anchor(id,side){
+  const el=document.getElementById("n-"+id);
+  const g=graph.getBoundingClientRect();
+  const r=el.getBoundingClientRect();
+  const y=r.top - g.top + r.height/2;
+  const x=side==="r" ? r.right - g.left : r.left - g.left;
+  return {x,y};
+}
+function draw(){
+  svg.innerHTML="";pathEls=[];
+  edges.forEach((e,i)=>{
+    const a=anchor(e.from,"r"), b=anchor(e.to,"l");
+    const dx=Math.max(28,(b.x-a.x)*0.5);
+    const d=`M ${a.x} ${a.y} C ${a.x+dx} ${a.y}, ${b.x-dx} ${b.y}, ${b.x} ${b.y}`;
+    const p=document.createElementNS(NS,"path");
+    p.setAttribute("d",d);
+    p.setAttribute("class","wire "+e.type);
+    p.dataset.from=e.from;p.dataset.to=e.to;
+    svg.appendChild(p);pathEls.push(p);
+  });
+}
+
+/* ---------- adjacency + hover trace ---------- */
+const adj={},radj={};
+edges.forEach(e=>{(adj[e.from]=adj[e.from]||[]).push(e.to);(radj[e.from]=radj[e.from]||[]);(radj[e.to]=radj[e.to]||[]).push(e.from);(adj[e.to]=adj[e.to]||[])});
+function reach(start,map){const seen=new Set(),st=[start];while(st.length){const n=st.pop();(map[n]||[]).forEach(m=>{if(!seen.has(m)){seen.add(m);st.push(m)}})}return seen;}
+function hot(id){
+  const set=new Set([id]);reach(id,adj).forEach(x=>set.add(x));reach(id,radj).forEach(x=>set.add(x));
+  graph.classList.add("focus");
+  document.querySelectorAll(".node").forEach(n=>n.classList.toggle("hot",set.has(n.dataset.node)));
+  pathEls.forEach(p=>p.classList.toggle("hot",set.has(p.dataset.from)&&set.has(p.dataset.to)));
+}
+function clearHot(){graph.classList.remove("focus");document.querySelectorAll(".node.hot").forEach(n=>n.classList.remove("hot"));pathEls.forEach(p=>p.classList.remove("hot"));}
+
+document.querySelectorAll(".node").forEach(n=>{
+  n.addEventListener("mouseenter",()=>hot(n.dataset.node));
+  n.addEventListener("mouseleave",clearHot);
+  n.tabIndex=0;
+  n.addEventListener("focus",()=>hot(n.dataset.node));
+  n.addEventListener("blur",clearHot);
+});
+
+/* ---------- redraw timing ---------- */
+function redraw(){requestAnimationFrame(draw);}
+window.addEventListener("load",redraw);
+window.addEventListener("resize",redraw);
+if(document.fonts&&document.fonts.ready)document.fonts.ready.then(redraw);
+new ResizeObserver(redraw).observe(document.getElementById("grid"));
+redraw();
+</script>
+</body>
+</html>

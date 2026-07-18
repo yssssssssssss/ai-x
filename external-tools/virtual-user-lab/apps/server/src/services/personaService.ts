@@ -1,4 +1,5 @@
 import type { PersonaProfile, PersonaReview, VirtualUserSimulateRequest, VirtualUserSimulateResult } from '@virtual-user-lab/core';
+import { chatJSON, isLLMEnabled } from './llmClient.js';
 
 const builtInPersonas: PersonaProfile[] = [
   {
@@ -95,13 +96,78 @@ const buildReview = (persona: PersonaProfile, text: string): PersonaReview => {
 
 export const listPersonas = () => builtInPersonas;
 
-export const simulateVirtualUsers = (request: VirtualUserSimulateRequest): VirtualUserSimulateResult => {
+// LLM 扮演全部人格,一次调用生成评审。返回规整后的 PersonaReview[];失败由调用方降级。
+async function buildReviewsViaLLM(
+  personas: PersonaProfile[],
+  materials: string,
+  dimensions: string[],
+): Promise<PersonaReview[]> {
+  const dims = dimensions.length ? dimensions.join('、') : 'usability、attractiveness、trust、conversionIntent、emotionalResonance';
+  const messages = [
+    {
+      role: 'system',
+      content:
+        '你是用户体验研究中的「数字用户」模拟器。你将分别扮演给定的多个用户人格,基于产品素材以第一人称给出真实、具体、差异化的体验评审。' +
+        '不同人格的关注点和结论要有明显差异,结合素材细节,勿套话。只输出 JSON,不要 markdown。',
+    },
+    {
+      role: 'user',
+      content:
+        `产品/场景素材:\n${materials}\n\n` +
+        `评审维度:${dims}\n\n` +
+        `需要扮演的人格:\n${personas
+          .map((p) => `- ${p.id} ${p.name}(${p.type}):${p.description};目标:${p.goals.join('/')};顾虑:${p.concerns.join('/')}`)
+          .join('\n')}\n\n` +
+        `为每个人格输出一条评审,返回 JSON:\n` +
+        `{"reviews":[{"profileId":"<人格id>","firstImpression":"一句话初印象","detailedExperience":"结合素材的详细体验(2-4句)","scores":{"usability":0-1,"attractiveness":0-1,"trust":0-1,"conversionIntent":0-1,"emotionalResonance":0-1},"overallScore":0-1,"topChangeRequest":"最想要的一个改进","stance":"positive|mixed|negative"}]}\n` +
+        `所有分值为 0~1 小数;profileId 必须用上面给的 id;评审要体现该人格独有视角。`,
+    },
+  ];
+  const out = await chatJSON<{ reviews?: Array<Record<string, unknown>> }>(messages);
+  const arr = Array.isArray(out?.reviews) ? out.reviews : [];
+  const num = (v: unknown, d = 0.6) => (typeof v === 'number' && Number.isFinite(v) ? clamp(v) : d);
+  const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+  return personas.map((p) => {
+    const r = (arr.find((x) => x?.profileId === p.id) ?? {}) as Record<string, unknown>;
+    const s = (r.scores ?? {}) as Record<string, unknown>;
+    const scores = {
+      usability: round(num(s.usability)),
+      attractiveness: round(num(s.attractiveness)),
+      trust: round(num(s.trust)),
+      conversionIntent: round(num(s.conversionIntent)),
+      emotionalResonance: round(num(s.emotionalResonance)),
+    };
+    const overallScore = round(
+      typeof r.overallScore === 'number' && Number.isFinite(r.overallScore)
+        ? clamp(r.overallScore as number)
+        : average(Object.values(scores)) || 0.6,
+    );
+    const stance = (['positive', 'mixed', 'negative'] as const).includes(r.stance as PersonaReview['stance'])
+      ? (r.stance as PersonaReview['stance'])
+      : stanceFromScore(overallScore);
+    return {
+      profileId: p.id,
+      personaName: p.name,
+      personaType: p.type,
+      firstImpression: str(r.firstImpression) || `作为「${p.type}」,我的初步印象比较一般。`,
+      detailedExperience: str(r.detailedExperience) || `从「${p.type}」视角看,该方案与我的目标和顾虑相关。`,
+      scores,
+      overallScore,
+      topChangeRequest: str(r.topChangeRequest) || `优化与「${p.concerns[0]}」相关的体验。`,
+      stance,
+      isSimulated: true,
+    };
+  });
+}
+
+export const simulateVirtualUsers = async (request: VirtualUserSimulateRequest): Promise<VirtualUserSimulateResult> => {
   const scenario = request.scenario?.trim();
   const text = [request.scenario, request.productDescription, request.artifactText, ...(request.targetUserGroups || [])]
     .filter(Boolean)
     .join(' ');
   const boundaryNotes = [
     '本结果是虚拟用户模拟，不是真实用户访谈、问卷或实验数据。',
+    '评审由 LLM 扮演数字人格生成（LLM 不可用时降级为规则模拟），仍非真实用户数据。',
     '建议把输出作为假设和评审线索，再用真实用户研究验证。',
   ];
   if (!scenario) {
@@ -118,7 +184,17 @@ export const simulateVirtualUsers = (request: VirtualUserSimulateRequest): Virtu
     };
   }
   const personas = request.personaProfiles?.length ? request.personaProfiles : builtInPersonas;
-  const reviews = personas.map((persona) => buildReview(persona, text));
+  // 优先 LLM 扮演人格生成评审;未配置或调用失败 → 降级现有规则模拟(不阻断)。
+  let reviews: PersonaReview[];
+  if (isLLMEnabled()) {
+    try {
+      reviews = await buildReviewsViaLLM(personas, text, request.reviewDimensions ?? []);
+    } catch {
+      reviews = personas.map((persona) => buildReview(persona, text));
+    }
+  } else {
+    reviews = personas.map((persona) => buildReview(persona, text));
+  }
   const aggregate = {
     scoreSummary: {
       usability: average(reviews.map((review) => review.scores.usability)),

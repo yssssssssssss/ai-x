@@ -12,4 +12,11 @@ export const env = {
   port: intFromEnv('SERVER_PORT', 8805),
   uploadDir: resolve(process.cwd(), process.env.UPLOAD_DIR || 'tmp/uploads'),
   maxUploadBytes: intFromEnv('MAX_UPLOAD_BYTES', 10 * 1024 * 1024),
+  // LLM 网关(OpenAI 兼容,多模态);三者齐全才走真实 VLM 评审,否则降级 sharp 启发式。值同主项目,经 start-labs 注入根 .env。
+  llm: {
+    baseUrl: process.env.LLM_GATEWAY_BASE_URL || '',
+    apiKey: process.env.LLM_GATEWAY_API_KEY || '',
+    model: process.env.LLM_MODEL_NAME || '',
+    timeoutMs: intFromEnv('LLM_GATEWAY_TIMEOUT_MS', 120000),
+  },
 };

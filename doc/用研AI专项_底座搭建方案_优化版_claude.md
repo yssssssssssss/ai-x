@@ -309,6 +309,19 @@ prompt_hash: sha256:...
 - MVP 的恢复方式=**人工确认后重试该步**(用户在对话里看到"第 3 步失败,重试/跳过/终止")。自动 saga / 补偿事务列为非目标(见 [§八](#八已知边界与非目标mvp-不做什么--二期触发条件))。
 - 单 tool 层的瞬时错误仍由 tool manifest 的 `retry_policy` 兜底(§2.3);编排层只处理"重试耗尽后"的步骤级失败。
 
+**①·补 执行细化(融合·MVP):停步 + 一键跳过 → 缺口透明。**
+
+> 上一版实现把"某步失败"直接 `throw` 成整任务 `failed`,后续步骤全不执行、到不了报告合成。这是与本节"停在该步、不整体崩"原则的**实现缺口**。本补节把原则落成可运行机制,恢复动作 MVP 只做**跳过 / 终止**,重试留二期(理由:编排层失败是 tool `retry_policy` 耗尽后的失败,再重试大概率仍失败)。
+
+- **停步不崩**:执行遇失败步时,`execution_log` 该步标 `failed`,任务置 `paused`(新增运行态,DB `status` 无 CHECK 约束,直接用),记录 `failed_step_no`。已完成步的产出已由 `run-workspace` 逐步 `writeToolOutput` 落盘,**不丢、不回滚**。
+- **两个恢复动作**(`resumePhase(taskId, action)`):
+  - `skip`:失败步标 `skipped` → **从各步已落盘 output 文件重建 `toolOutputs`**(不重放前序步)→ 从 `failed_step_no + 1` 继续执行。
+  - `abort`:任务置 `failed` 收尾,不产报告。
+- **缺口透明**:跳过产生的失败/跳过步,其覆盖维度的数据缺口,由段4 synthesis **如实写入 `report.risks_and_open_issues`**(schema 已有该字段,无需改);reviewer 复核意见的未解决项一并沉淀于此。不得静默出"看似完整实则缺数据"的报告。
+- **reviewer 回流**:复核步产出收集为 `review_notes` 喂给 synthesis(仍不改写前序结论,只影响报告的风险段)。
+- **终态三分**:全步成功 → `completed`;有 `skipped`/`failed` 步但合成成功 → `completed_with_gaps`(前端显式提示"部分完成·N 步缺失");无任何成功产出(`toolOutputs` 空)→ `failed`,不硬合成(受 `research-report.findings` `minItems:1` 约束,空数据合不出合法报告)。
+- **不做(YAGNI 边界)**:①不做失败步"重试"(留二期,需重放上下文);②不引入 step `required/optional` 分级(等真出现"可选步"诉求再加);③不改 skill 的 LLM 驱动执行本质。
+
 **② LLM 非确定性治理:把 schema 校验从 tool 层扩到决策层。**
 
 - 非确定性是 agent 稳定性的头号敌人:同一需求两次跑可能激活不同节点、选不同 skill。目前 schema 强校验只覆盖 tool 输入输出,**必须扩到 LLM 的结构化输出**——ResearchTask、决策节点状态、执行计划都要过对应 schema,不合规则**自动重试**(重试仍失败则降级为 `need_clarify` 交人工)。

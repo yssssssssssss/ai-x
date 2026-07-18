@@ -6,7 +6,8 @@ import { analyzeVisionBrand } from './services/visionBrandService.js';
 import { saveUpload } from './services/uploadService.js';
 
 export const buildApp = async () => {
-  const app = Fastify({ logger: true });
+  // bodyLimit 放大:/api/analyze 以 JSON 承载设计图 dataUrl(base64,可达数 MB),编排注入图像同理。
+  const app = Fastify({ logger: true, bodyLimit: 24 * 1024 * 1024 });
   await app.register(cors, { origin: true });
   await app.register(multipart, { limits: { fileSize: env.maxUploadBytes, files: 8 } });
 

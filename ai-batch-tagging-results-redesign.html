@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AI 批量打标 · 生成结果</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --ground:#eef1f5;
+    --surface:#ffffff;
+    --ink:#14161c;
+    --muted:#737b8a;
+    --faint:#9aa1ae;
+    --line:#e6eaf0;
+    --line-2:#eef1f6;
+    --red:#e1251b;
+    --red-press:#c11d14;
+    --red-wash:#fdeceb;
+    --amber:#b7791f;
+    --sans:"Inter","PingFang SC","Noto Sans SC",system-ui,sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    font-family:var(--sans);
+    color:var(--ink);
+    background:
+      radial-gradient(120% 60% at 100% 0%, #f6f2f1 0%, rgba(246,242,241,0) 55%),
+      var(--ground);
+    min-height:100vh;
+    padding:48px 20px 96px;
+    display:flex;justify-content:center;
+    -webkit-font-smoothing:antialiased;
+  }
+  svg{display:block}
+  .mono{font-family:var(--mono);font-feature-settings:"tnum" 1}
+
+  .console{width:100%;max-width:840px}
+
+  /* ---- card shell ---- */
+  .card{
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:18px;
+    overflow:hidden;
+    box-shadow:0 1px 0 rgba(20,22,28,.02), 0 24px 60px -32px rgba(20,22,28,.28);
+  }
+
+  /* ---- self-referential campaign band (the "底部腰带" the tool stamps) ---- */
+  .band{
+    background:linear-gradient(96deg,var(--red) 0%, #ff4133 100%);
+    color:#fff;
+    display:flex;align-items:center;gap:14px;
+    padding:11px 22px;
+    position:relative;
+  }
+  .band::after{
+    content:"";position:absolute;left:0;right:0;bottom:0;height:3px;
+    background:repeating-linear-gradient(90deg,rgba(255,255,255,.55) 0 10px,transparent 10px 20px);
+  }
+  .band .tag{
+    font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.12em;
+    text-transform:uppercase;
+    border:1px solid rgba(255,255,255,.55);border-radius:5px;padding:3px 8px;flex:none;
+  }
+  .band .copy{font-weight:600;font-size:14.5px;letter-spacing:.01em}
+  .band .copy b{font-family:var(--mono);font-weight:600}
+  .band .spec{margin-left:auto;font-family:var(--mono);font-size:12px;opacity:.9;letter-spacing:.02em;flex:none}
+
+  /* ---- header ---- */
+  .head{padding:22px 26px 0}
+  .eyebrow{font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:.22em;text-transform:uppercase;color:var(--faint)}
+  .head h1{font-size:25px;font-weight:700;letter-spacing:-.02em;margin-top:6px}
+
+  /* ---- context spec-sheet ---- */
+  .ctx{margin:20px 26px 0;border-left:3px solid var(--red);padding-left:16px}
+  .ctx .lbl{font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.02em;margin-bottom:12px}
+  .ctx .sheet{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 32px}
+  .ctx .kv{display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:9px 0;border-bottom:1px solid var(--line-2)}
+  .ctx .kv:nth-last-child(-n+1){border-bottom:0}
+  .ctx .k{color:var(--muted);font-size:13px;flex:none}
+  .ctx .v{font-size:13.5px;font-weight:600;text-align:right}
+  .ctx .v.data{font-family:var(--mono);font-weight:500;letter-spacing:-.01em}
+
+  /* ---- results ---- */
+  .res{padding:24px 26px 8px}
+  .res-bar{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:4px}
+  .res-bar .t{display:flex;align-items:baseline;gap:12px}
+  .res-bar h2{font-size:16px;font-weight:700;letter-spacing:-.01em}
+  .res-bar .count{font-family:var(--mono);font-size:12px;color:var(--muted)}
+  .res-bar .count b{color:var(--red);font-weight:600}
+
+  .grid{display:grid;grid-template-columns:36px minmax(150px,1.5fr) 66px 66px 132px;align-items:center;gap:16px}
+
+  .thead{padding:14px 4px 12px;border-bottom:1px solid var(--line)}
+  .thead > div{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--faint)}
+
+  .row{position:relative;padding:16px 4px;border-bottom:1px solid var(--line-2);transition:background .18s ease}
+  .row::before{content:"";position:absolute;left:-14px;top:calc(50% - 9px);width:3px;height:18px;border-radius:2px;background:var(--red);opacity:0;transition:opacity .18s ease}
+  .row.sel::before{opacity:1}
+  .row:hover{background:#fafbfc}
+
+  .cbx{width:20px;height:20px;border-radius:6px;border:1.6px solid #c3cad6;display:grid;place-items:center;cursor:pointer;transition:background .15s,border-color .15s}
+  .cbx[aria-checked="true"]{background:var(--red);border-color:var(--red)}
+  .cbx:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+
+  .pname{font-size:15px;font-weight:600;letter-spacing:-.01em}
+  .psku{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-top:4px;letter-spacing:-.01em}
+
+  .thumb{width:60px;height:60px;border-radius:11px;position:relative;overflow:hidden;display:grid;place-items:center;font-size:26px;background:linear-gradient(150deg,#f4f6f9,#e9edf3);border:1px solid var(--line)}
+  .thumb .b{position:absolute;left:0;right:0;bottom:0;padding:3px 0;text-align:center;font-family:var(--mono);font-size:7.5px;font-weight:600;color:#fff;background:linear-gradient(90deg,var(--red),#ff4133);letter-spacing:.02em}
+  .thumb.empty{background:repeating-linear-gradient(45deg,#f4f6f9,#f4f6f9 5px,#eceff4 5px,#eceff4 10px);font-family:var(--mono);font-size:10px;color:var(--amber);border-color:#f0e2c8}
+  /* before -> after seam */
+  .col-patch{position:relative}
+  .col-patch::before{content:"";position:absolute;left:-16px;top:50%;width:14px;height:1.6px;background:var(--red);opacity:.55}
+  .col-patch::after{content:"";position:absolute;left:-6px;top:50%;width:6px;height:6px;border-top:1.6px solid var(--red);border-right:1.6px solid var(--red);transform:translateY(-50%) rotate(45deg);opacity:.55}
+  .row.failed .col-patch::before,.row.failed .col-patch::after{opacity:.2;background:var(--faint);border-color:var(--faint)}
+
+  .op{display:inline-flex;align-items:center;gap:7px;font-family:inherit;font-size:13px;font-weight:600;color:var(--ink);background:none;border:0;cursor:pointer;padding:6px 2px;border-radius:6px}
+  .op svg{color:var(--muted);transition:color .15s,transform .15s}
+  .op:hover svg{color:var(--red);transform:translateX(1px)}
+  .op:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+
+  /* ---- pager ---- */
+  .pager{display:flex;align-items:center;justify-content:center;gap:16px;padding:20px 0 6px;font-family:var(--mono);font-size:12.5px;color:var(--muted)}
+  .pager .pg{width:30px;height:30px;border-radius:8px;border:1px solid var(--line);background:#fff;display:grid;place-items:center;cursor:pointer;color:var(--ink)}
+  .pager .pg.cur{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .pager .pg[aria-disabled]{color:var(--faint);cursor:default}
+
+  /* ---- footer ---- */
+  .foot{display:flex;align-items:center;gap:10px;justify-content:flex-end;flex-wrap:wrap;padding:18px 26px 26px;border-top:1px solid var(--line);background:#fcfcfd}
+  .btn{font-family:inherit;font-size:14px;font-weight:600;border-radius:10px;padding:11px 18px;cursor:pointer;display:inline-flex;align-items:center;gap:8px;transition:background .16s,border-color .16s,filter .16s,transform .06s}
+  .btn:active{transform:translateY(.5px)}
+  .btn.ghost{background:#fff;color:var(--ink);border:1px solid var(--line)}
+  .btn.ghost svg{color:var(--muted)}
+  .btn.ghost:hover{border-color:#cfd6e0;background:#fafbfc}
+  .btn.primary{background:var(--red);color:#fff;border:1px solid var(--red);box-shadow:0 8px 20px -10px rgba(225,37,27,.7)}
+  .btn.primary:hover{background:var(--red-press);border-color:var(--red-press)}
+  .btn.primary:focus-visible,.btn.ghost:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+
+  /* ---- restyle drawer ---- */
+  .scrim{position:fixed;inset:0;background:rgba(20,22,28,.28);opacity:0;visibility:hidden;transition:opacity .28s ease,visibility .28s;z-index:40}
+  .scrim.open{opacity:1;visibility:visible}
+  .drawer{
+    position:fixed;top:0;right:0;bottom:0;width:440px;max-width:92vw;z-index:50;
+    background:var(--surface);border-left:1px solid var(--line);
+    box-shadow:-24px 0 60px -30px rgba(20,22,28,.4);
+    display:flex;flex-direction:column;
+    transform:translateX(100%);transition:transform .3s cubic-bezier(.4,0,.2,1);
+  }
+  .drawer.open{transform:none}
+  .dwr-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:22px 24px 16px}
+  .dwr-head h2{font-size:18px;font-weight:700;letter-spacing:-.01em;margin-top:4px}
+  .dwr-scope{font-size:12.5px;color:var(--muted);margin-top:6px}
+  .dwr-scope b{font-family:var(--mono);color:var(--red);font-weight:600}
+  .dwr-x{flex:none;width:32px;height:32px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--muted);display:grid;place-items:center;cursor:pointer;transition:background .15s}
+  .dwr-x:hover{background:#f5f6f8}
+  .dwr-x:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+
+  .dwr-base{display:flex;flex-wrap:wrap;gap:8px;padding:0 24px 18px;border-bottom:1px solid var(--line)}
+  .base-chip{font-family:var(--mono);font-size:11.5px;color:var(--muted);background:#f4f6f9;border:1px solid var(--line);border-radius:999px;padding:5px 11px}
+
+  .dwr-thread{flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:14px}
+  .msg{font-size:14px;line-height:1.65;border-radius:14px;padding:12px 15px;max-width:88%}
+  .msg.bot{background:#f4f6f9;color:var(--ink);align-self:flex-start;border-bottom-left-radius:5px}
+  .msg.me{background:var(--red);color:#fff;align-self:flex-end;border-bottom-right-radius:5px}
+  .quick{display:flex;flex-wrap:wrap;gap:8px}
+  .quick .q{font-family:inherit;font-size:12.5px;color:var(--ink);background:#fff;border:1px solid var(--line);border-radius:999px;padding:7px 13px;cursor:pointer;transition:background .15s,border-color .15s}
+  .quick .q:hover{background:var(--red-wash);border-color:#f3c7c4;color:var(--red-press)}
+
+  .dwr-composer{padding:16px 24px 22px;border-top:1px solid var(--line);background:#fcfcfd}
+  .composer-box{border:1px solid var(--line);border-radius:16px;padding:12px 14px;background:#fff;box-shadow:0 2px 8px rgba(20,22,28,.04)}
+  .composer-box:focus-within{border-color:#c9d1dc}
+  .composer-box textarea{width:100%;border:0;outline:0;resize:none;font-family:inherit;font-size:14px;line-height:1.5;color:var(--ink);background:transparent;max-height:120px}
+  .composer-box textarea::placeholder{color:var(--faint)}
+  .composer-bar{display:flex;align-items:center;gap:8px;margin-top:10px}
+  .c-chip{display:inline-flex;align-items:center;gap:6px;font-family:inherit;font-size:12.5px;color:var(--muted);background:#f4f6f9;border:1px solid var(--line);border-radius:999px;padding:6px 11px;cursor:pointer}
+  .c-chip:hover{color:var(--ink)}
+  .c-send{margin-left:auto;flex:none;width:32px;height:32px;border-radius:999px;border:0;background:var(--ink);color:#fff;display:grid;place-items:center;cursor:pointer}
+  .c-send:hover{background:#000}
+  .dwr-go{width:100%;justify-content:center;margin-top:14px}
+
+  /* ---- responsive ---- */
+  @media (max-width:640px){
+    .ctx .sheet{grid-template-columns:1fr;gap:0}
+    .grid{grid-template-columns:32px 1fr auto;grid-auto-rows:auto;row-gap:12px;column-gap:12px}
+    .thead{display:none}
+    .col-orig{grid-column:2}
+    .col-patch{grid-column:3}
+    .col-patch::before,.col-patch::after{display:none}
+    .col-op{grid-column:2 / -1;justify-self:start}
+    .band{flex-wrap:wrap;gap:8px}
+    .band .spec{margin-left:0;width:100%}
+    .foot{justify-content:stretch}
+    .foot .btn{flex:1;justify-content:center}
+  }
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+  <main class="console">
+    <div class="card">
+
+      <!-- self-referential 底部腰带 -->
+      <div class="band">
+        <span class="tag">618</span>
+        <span class="copy">满 300 减 50 · 前 N 件半价</span>
+        <span class="spec">模板 底部腰带 · 1:1</span>
+      </div>
+
+      <header class="head">
+        <div class="eyebrow">Batch Tagging</div>
+        <h1>AI 批量打标</h1>
+      </header>
+
+      <section class="ctx">
+        <div class="lbl">任务信息（上下文）</div>
+        <div class="sheet">
+          <div class="kv"><span class="k">活动名称</span><span class="v">618 开门红</span></div>
+          <div class="kv"><span class="k">利益点</span><span class="v">满 300 减 50 · 前 N 件半价</span></div>
+          <div class="kv"><span class="k">起止时间</span><span class="v data">07/17 00:00 → 07/30 24:00</span></div>
+          <div class="kv"><span class="k">打标模板</span><span class="v">底部腰带</span></div>
+          <div class="kv"><span class="k">附加要求</span><span class="v">突出大促氛围</span></div>
+        </div>
+      </section>
+
+      <section class="res">
+        <div class="res-bar">
+          <div class="t"><h2>生成结果</h2></div>
+          <span class="count">已选择 <b>5</b> / 5 条</span>
+        </div>
+
+        <div class="grid thead">
+          <div></div>
+          <div>商品信息</div>
+          <div class="col-orig">原图</div>
+          <div class="col-patch" style="position:static">贴片版</div>
+          <div class="col-op">操作</div>
+        </div>
+
+        <div id="rows"></div>
+
+        <div class="pager">
+          <span>共 5 条</span>
+          <span class="pg" aria-disabled="true"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <span class="pg cur">1</span>
+          <span class="pg"><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <span>5 条/页</span>
+        </div>
+      </section>
+
+      <footer class="foot">
+        <button class="btn ghost">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+          反馈意见重新生成
+        </button>
+        <button class="btn ghost" id="btn-restyle">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M4 4v6h6M20 20v-6h-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 10a8 8 0 0 0-14.5-3M4 14a8 8 0 0 0 14.5 3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          修改样式重新生成
+        </button>
+        <button class="btn primary">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4L19 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          确认采纳并投放
+        </button>
+      </footer>
+
+    </div>
+  </main>
+
+  <!-- ===== 修改样式重新生成 · 右侧对话抽屉 ===== -->
+  <div class="scrim" id="scrim"></div>
+  <aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="dwr-title" aria-hidden="true">
+    <header class="dwr-head">
+      <div>
+        <div class="eyebrow">Restyle</div>
+        <h2 id="dwr-title">修改样式重新生成</h2>
+        <p class="dwr-scope">将对已选 <b>5</b> 条重新生成</p>
+      </div>
+      <button class="dwr-x" id="dwr-close" aria-label="关闭">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </header>
+
+    <div class="dwr-base">
+      <span class="base-chip">模板 · 底部腰带</span>
+      <span class="base-chip">活动 · 618</span>
+      <span class="base-chip">尺寸 · 1:1</span>
+    </div>
+
+    <div class="dwr-thread" id="thread">
+      <div class="msg bot">描述你想调整的样式，我会据此重新生成这 5 张贴片。比如配色更喜庆、腰带换到顶部、放大优惠数字。</div>
+      <div class="quick">
+        <button class="q">配色更喜庆热烈</button>
+        <button class="q">腰带移到顶部</button>
+        <button class="q">放大「满300减50」</button>
+        <button class="q">换高对比配色</button>
+      </div>
+    </div>
+
+    <div class="dwr-composer">
+      <div class="composer-box">
+        <textarea id="dwr-input" rows="1" placeholder="输入样式调整要求…"></textarea>
+        <div class="composer-bar">
+          <button class="c-chip">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M21 12.5V17a4 4 0 0 1-8 0V7a2.5 2.5 0 0 1 5 0v9.5a1 1 0 0 1-2 0V8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+            上传参考图
+          </button>
+          <button class="c-send" id="dwr-send" aria-label="发送">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+      </div>
+      <button class="btn primary dwr-go" id="dwr-go">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M4 4v6h6M20 20v-6h-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 10a8 8 0 0 0-14.5-3M4 14a8 8 0 0 0 14.5 3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        重新生成 5 条
+      </button>
+    </div>
+  </aside>
+
+<script>
+  const products=[
+    {name:"健身手套",sku:"100212833490",emoji:"🧤",ok:true},
+    {name:"跳绳 · 专业款",sku:"10218179204205",emoji:"🪢",ok:true},
+    {name:"运动护膝 Pro",sku:"100127405757",emoji:"🦵",ok:false},
+    {name:"瑜伽垫 · 紫色",sku:"10211345394575",emoji:"🧘",ok:true},
+    {name:"健腹轮",sku:"10211345394575",emoji:"🎡",ok:true},
+  ];
+  const tick='<svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4L19 6" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const eye='<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="2.6" stroke="currentColor" stroke-width="1.8"/></svg>';
+
+  const orig=p=>`<div class="thumb">${p.emoji}</div>`;
+  const patch=p=>p.ok?`<div class="thumb">${p.emoji}<span class="b">满300减50</span></div>`:`<div class="thumb empty">暂无结果</div>`;
+
+  document.getElementById("rows").innerHTML=products.map(p=>`
+    <div class="grid row sel ${p.ok?"":"failed"}">
+      <div class="cbx" role="checkbox" aria-checked="true" tabindex="0">${tick}</div>
+      <div><div class="pname">${p.name}</div><div class="psku">SKU ${p.sku}</div></div>
+      <div class="col-orig">${orig(p)}</div>
+      <div class="col-patch">${patch(p)}</div>
+      <div class="col-op"><button class="op">${eye}查看生成过程</button></div>
+    </div>`).join("");
+
+  // checkbox + row selection tick
+  document.addEventListener("click",e=>{
+    const b=e.target.closest(".cbx");if(!b)return;
+    const on=b.getAttribute("aria-checked")!=="true";
+    b.setAttribute("aria-checked",on);
+    b.closest(".row").classList.toggle("sel",on);
+  });
+
+  // ---- restyle drawer ----
+  const drawer=document.getElementById("drawer"),scrim=document.getElementById("scrim");
+  const input=document.getElementById("dwr-input"),thread=document.getElementById("thread");
+  function openDrawer(){drawer.classList.add("open");scrim.classList.add("open");drawer.setAttribute("aria-hidden","false");setTimeout(()=>input.focus(),320);}
+  function closeDrawer(){drawer.classList.remove("open");scrim.classList.remove("open");drawer.setAttribute("aria-hidden","true");}
+  document.getElementById("btn-restyle").addEventListener("click",openDrawer);
+  document.getElementById("dwr-close").addEventListener("click",closeDrawer);
+  scrim.addEventListener("click",closeDrawer);
+  document.addEventListener("keydown",e=>{if(e.key==="Escape"&&drawer.classList.contains("open"))closeDrawer();});
+
+  function pushMe(text){
+    const m=document.createElement("div");m.className="msg me";m.textContent=text;thread.appendChild(m);
+    const r=document.createElement("div");r.className="msg bot";r.textContent="已记录调整：「"+text+"」。点「重新生成 5 条」按此样式重跑，或继续补充要求。";thread.appendChild(r);
+    thread.scrollTop=thread.scrollHeight;
+  }
+  function send(){const t=input.value.trim();if(!t)return;pushMe(t);input.value="";input.style.height="auto";}
+  document.getElementById("dwr-send").addEventListener("click",send);
+  input.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}});
+  input.addEventListener("input",()=>{input.style.height="auto";input.style.height=Math.min(input.scrollHeight,120)+"px";});
+  thread.addEventListener("click",e=>{const q=e.target.closest(".q");if(q){input.value=q.textContent;input.focus();}});
+</script>
+</body>
+</html>

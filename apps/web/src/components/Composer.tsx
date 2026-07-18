@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, type FormEvent, type KeyboardEvent } from 'react';
 import { api, type SkillItem } from '../api/client.ts';
+import { LABS, type Lab } from '../pages/Labs.tsx';
 
 // 底部 sticky 输入框。Enter 提交,Shift+Enter 换行。
 // 输入以 $ 开头(尚未输入空格)时,弹出 skill 命令菜单,随输入实时筛选;选中插入 $<id> 。
@@ -8,6 +9,7 @@ export function Composer({ disabled, onSubmit }: { disabled: boolean; onSubmit: 
   const [skills, setSkills] = useState<SkillItem[]>([]);
   const [sel, setSel] = useState(0);
   const [dismissed, setDismissed] = useState(false); // Esc 关闭,直到下次改动
+  const [activeLab, setActiveLab] = useState<Lab | null>(null); // 工具弹窗
   const taRef = useRef<HTMLTextAreaElement>(null);
 
   // 首次挂载拉一次可直呼 skill 列表(登录态)
@@ -59,8 +61,8 @@ export function Composer({ disabled, onSubmit }: { disabled: boolean; onSubmit: 
   }
 
   return (
-    <form onSubmit={submit} style={{ borderTop: '1px solid var(--border)', padding: 16, background: 'var(--bg)' }}>
-      <div style={{ maxWidth: 860, margin: '0 auto', position: 'relative' }}>
+    <form onSubmit={submit} style={{ borderTop: '1px solid var(--border-soft)', padding: '18px 20px 22px', background: 'var(--bg)' }}>
+      <div style={{ maxWidth: 760, margin: '0 auto', position: 'relative' }}>
         {menuOpen && (
           <div
             role="listbox"
@@ -107,6 +109,23 @@ export function Composer({ disabled, onSubmit }: { disabled: boolean; onSubmit: 
             ))}
           </div>
         )}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+          {LABS.map((lab) => (
+            <button
+              key={lab.id}
+              type="button"
+              onClick={() => setActiveLab(lab)}
+              title={lab.desc}
+              style={{
+                fontSize: 12, padding: '5px 12px', borderRadius: 999,
+                background: 'var(--bg-card)', border: '1px solid var(--border-soft)',
+                color: 'var(--text-dim)', cursor: 'pointer',
+              }}
+            >
+              🧪 {lab.name}
+            </button>
+          ))}
+        </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
           <textarea
             ref={taRef}
@@ -117,14 +136,38 @@ export function Composer({ disabled, onSubmit }: { disabled: boolean; onSubmit: 
             rows={1}
             placeholder={disabled ? 'AI 处理中…' : '输入一句用研需求,或输入 $ 唤起技能,Enter 发送'}
             style={{
-              flex: 1, resize: 'none', minHeight: 44, maxHeight: 160, padding: '11px 14px',
-              background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)',
-              color: 'var(--text)', fontSize: 14, fontFamily: 'inherit',
+              flex: 1, resize: 'none', minHeight: 52, maxHeight: 180, padding: '14px 16px',
+              background: 'var(--bg-card)', border: '1px solid var(--border-soft)', borderRadius: 16,
+              color: 'var(--text)', fontSize: 15, fontFamily: 'inherit', lineHeight: 1.55,
+              boxShadow: '0 1px 2px rgba(0,0,0,0.2)',
             }}
           />
           <button className="btn-primary" disabled={disabled || !text.trim()}>发送</button>
         </div>
       </div>
+
+      {activeLab && (
+        <div
+          onClick={() => setActiveLab(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 50, display: 'grid', placeItems: 'center' }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '90vw', height: '85vh', display: 'flex', flexDirection: 'column',
+              background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', borderBottom: '1px solid var(--border)' }}>
+              <strong style={{ fontSize: 14 }}>{activeLab.name}</strong>
+              <span className="mono" style={{ fontSize: 11, color: 'var(--text-faint)' }}>{activeLab.url}</span>
+              <a className="btn-ghost" href={activeLab.url} target="_blank" rel="noreferrer" style={{ marginLeft: 'auto', fontSize: 12 }}>新标签打开 ↗</a>
+              <button type="button" className="btn-ghost" onClick={() => setActiveLab(null)} style={{ fontSize: 16, lineHeight: 1, padding: '2px 10px' }}>×</button>
+            </div>
+            <iframe title={activeLab.name} src={activeLab.url} style={{ flex: 1, border: 'none', width: '100%' }} />
+          </div>
+        </div>
+      )}
     </form>
   );
 }

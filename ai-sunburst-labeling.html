@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>旭日图 · 文字信息展示策略</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --paper:#f3f4f7; --surface:#fff; --ink:#1a1c22; --ink-2:#3a3f47;
+    --muted:#6b7280; --faint:#9aa0aa; --line:#e5e7eb; --line-2:#eef0f3;
+    --acc:#5847d6; --acc-wash:#edeafb; --acc-line:#d8d2f5; --acc-ink:#3d2fb0;
+    --green:#0a7a57; --green-wash:#e7f4ee; --amber:#a86a0b; --amber-wash:#fbf2d8; --gray:#8b919b; --gray-wash:#f0f1f4;
+    --m1:#7c3aed; --m2:#2563eb; --m3:#0d9488; --m4:#0891b2; --m5:#ca8a04;
+    --sans:"Inter","PingFang SC","Noto Sans SC",system-ui,sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{-webkit-text-size-adjust:100%}
+  body{font-family:var(--sans);color:var(--ink);background:var(--paper);min-height:100vh;padding:32px 22px 70px;-webkit-font-smoothing:antialiased;line-height:1.45}
+  .mono{font-family:var(--mono);font-feature-settings:"tnum" 1}
+  .wrap{max-width:1120px;margin:0 auto}
+  svg{display:block}
+
+  .top{margin-bottom:18px}
+  .eyebrow{font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:var(--acc)}
+  .top h1{font-size:22px;font-weight:700;letter-spacing:-.02em;margin-top:6px}
+  .top p{font-size:13px;color:var(--muted);margin-top:6px;max-width:620px}
+
+  .tabs{display:inline-flex;gap:4px;background:#e7e9ee;padding:4px;border-radius:12px;margin:16px 0 14px}
+  .tabs button{border:0;background:none;font-family:inherit;font-size:13px;font-weight:600;color:var(--muted);padding:8px 16px;border-radius:9px;cursor:pointer;transition:background .18s,color .18s}
+  .tabs button[aria-selected="true"]{background:var(--surface);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+  .tabs button:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+
+  .view{display:none}
+  .view.on{display:block}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:0 1px 0 rgba(26,28,34,.02),0 22px 48px -32px rgba(26,28,34,.34)}
+
+  .strategy-note{font-size:12px;color:var(--muted);margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .strategy-note .tag{font-family:var(--mono);font-size:10px;font-weight:600;color:var(--acc);background:var(--acc-wash);border:1px solid var(--acc-line);border-radius:6px;padding:3px 8px}
+
+  /* ===== enhanced sunburst layout ===== */
+  .sun{display:grid;grid-template-columns:400px 1fr;gap:0}
+  .sun-left{padding:20px;border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;gap:12px}
+  .sb-arc{cursor:pointer;transition:opacity .16s;stroke:#fff;stroke-width:1.3}
+  .sun.focus .sb-arc{opacity:.26}
+  .sun.focus .sb-arc.hot{opacity:1}
+  .center-name{font-size:14px;font-weight:700;fill:var(--ink)}
+  .center-sub{font-size:10.5px;fill:var(--muted)}
+  .center-big{font-family:var(--mono);font-size:30px;font-weight:600;fill:var(--ink)}
+  .ring-legend{display:flex;gap:14px;font-size:11px;color:var(--muted);flex-wrap:wrap;justify-content:center}
+  .ring-legend span{display:inline-flex;align-items:center;gap:5px}
+  .ring-legend i{width:9px;height:9px;border-radius:3px}
+
+  /* right panel = the text carrier (like tree expansion) */
+  .sun-right{padding:16px 18px;max-height:520px;overflow-y:auto}
+  .panel-h{display:flex;align-items:center;gap:9px;margin-bottom:10px}
+  .panel-h .pt{font-size:13px;font-weight:700;letter-spacing:-.01em}
+  .panel-h .hint{margin-left:auto;font-size:11px;color:var(--faint)}
+  .pmod{border:1px solid var(--line);border-radius:11px;margin-bottom:9px;overflow:hidden;transition:border-color .14s,box-shadow .14s}
+  .pmod.hot{border-color:var(--acc-line);box-shadow:0 0 0 1px var(--acc-line)}
+  .pmod-h{display:flex;align-items:center;gap:9px;padding:11px 13px;cursor:pointer;font-size:13.5px;font-weight:700;letter-spacing:-.01em}
+  .pmod-h .mdot{width:9px;height:9px;border-radius:3px;flex:none}
+  .pmod-h .count{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--faint);font-weight:600}
+  .pmod-h .caret{color:var(--faint);transition:transform .2s}
+  .pmod.open .pmod-h .caret{transform:rotate(90deg);color:var(--acc)}
+  .pmod-body{display:none;padding:2px 13px 11px 30px}
+  .pmod.open .pmod-body{display:block}
+  .psub{font-family:var(--mono);font-size:10.5px;font-weight:600;color:var(--muted);margin:9px 0 5px}
+  .pleaf{display:flex;align-items:flex-start;gap:9px;padding:7px 0;border-top:1px solid var(--line-2)}
+  .pleaf:first-of-type{border-top:0}
+  .pleaf .body{min-width:0}
+  .pleaf .t{font-size:13px;font-weight:500}
+  .pleaf .meta{display:flex;align-items:center;gap:8px;margin-top:4px;flex-wrap:wrap}
+  .st{font-family:var(--mono);font-size:9.5px;font-weight:600;padding:2px 6px;border-radius:4px}
+  .st.run{color:var(--green);background:var(--green-wash)} .st.off{color:var(--gray);background:var(--gray-wash)} .st.pend{color:var(--amber);background:var(--amber-wash)}
+  .src{font-family:var(--mono);font-size:9px;color:var(--muted)}
+  .metric{font-family:var(--mono);font-size:10px;color:var(--green);font-weight:600}
+
+  /* ===== icicle (contrast) ===== */
+  .ice{padding:18px}
+  .ice-grid{display:flex;gap:5px;height:600px}
+  .ice-col{display:flex;flex-direction:column;gap:5px}
+  .ice-col.c3{overflow-y:auto}
+  .ice-col.c1{flex:0 0 190px} .ice-col.c2{flex:0 0 210px} .ice-col.c3{flex:1}
+  .ice-cell{border-radius:9px;padding:9px 11px;display:flex;flex-direction:column;justify-content:center;overflow:hidden;color:#fff;position:relative}
+  .ice-cell .nm{font-size:12.5px;font-weight:700;letter-spacing:-.01em}
+  .ice-cell .cc{font-family:var(--mono);font-size:9.5px;opacity:.85;margin-top:2px}
+  .ice-sub{background:var(--surface);color:var(--ink);border:1px solid var(--line);display:flex;flex-direction:column;gap:4px;justify-content:center}
+  .ice-sub .nm{font-size:11.5px;color:var(--ink-2);font-weight:600}
+  .ice-leaf{background:var(--surface);border:1px solid var(--line);color:var(--ink);flex:1;min-height:44px;display:flex;flex-direction:column;justify-content:center;gap:3px;padding:7px 10px 7px 12px}
+  .ice-leaf .nm{font-size:12px;font-weight:500}
+  .ice-leaf .meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .ice-leaf::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:0 3px 3px 0;background:var(--h)}
+  .ice-note{font-size:12px;color:var(--muted);margin-top:12px}
+  .ice-note b{color:var(--ink);font-weight:600}
+
+  @media (max-width:840px){.sun{grid-template-columns:1fr}.sun-left{border-right:0;border-bottom:1px solid var(--line)}.ice-grid{flex-direction:column;height:auto}.ice-col.c1,.ice-col.c2,.ice-col.c3{flex:auto}}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="eyebrow">Sunburst · 文字信息展示策略</div>
+    <h1>旭日图如何高效展示每个模块的文字信息</h1>
+    <p>扇区塞不下完整文字。正解是让图形管「占比与结构」，文字交给圆心焦点区与侧边联动面板——图选分支、面板读文字。</p>
+  </div>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-v="sun">增强旭日图（圆心焦点 + 联动面板）</button>
+    <button role="tab" aria-selected="false" data-v="ice">冰柱图对照（文字刚需时）</button>
+  </div>
+
+  <!-- ===== view 1: enhanced sunburst ===== -->
+  <div class="view on" id="v-sun">
+    <div class="strategy-note">
+      <span class="tag">圆心焦点</span>悬停扇区 → 圆心显示该项信息
+      <span class="tag">侧边面板</span>点模块扇区 → 右侧展开完整文字（等价树形展开）
+      <span class="tag">下钻</span>面板可逐级折叠
+    </div>
+    <div class="card sun" id="sun">
+      <div class="sun-left">
+        <svg width="380" height="380" viewBox="0 0 380 380" id="sbsvg"></svg>
+        <div class="ring-legend">
+          <span><i style="background:var(--m1)"></i>内环 模块</span>
+          <span><i style="background:var(--m1);opacity:.6"></i>中环 子模块</span>
+          <span><i style="background:var(--m1);opacity:.38"></i>外环 内容</span>
+        </div>
+      </div>
+      <div class="sun-right">
+        <div class="panel-h"><span class="pt">内容详情</span><span class="hint">悬停高亮 · 点击展开</span></div>
+        <div id="panel"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== view 2: icicle ===== -->
+  <div class="view" id="v-ice">
+    <div class="strategy-note"><span class="tag">冰柱图 Icicle</span>旭日图掰直成矩形，面积仍编码数量，但文字可横向常驻显示</div>
+    <div class="card ice">
+      <div class="ice-grid" id="ice"></div>
+      <div class="ice-note"><b>何时选它：</b>当「每个叶子的文字都要常驻可见」是刚需时，冰柱图比旭日图更合适——它保留了面积=数量的量感，又像树形一样让文字横向铺开。</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const modules=[
+  { name:"选品策略", hue:"--m1", subs:[
+    { name:"新品发现", leaves:[{t:"高潜新品圈选",st:"run",src:"专家复用",m:"预计毛利 +1.5%"},{t:"首发节奏排期",st:"off",src:"平台通用"}]},
+    { name:"爆款与主推", leaves:[{t:"竞品爆款对标发现",st:"pend",src:"个人积累",m:"访客 UV +1.1%"},{t:"主推款梯队规划",st:"run",src:"专家复用"}]},
+    { name:"季节与趋势", leaves:[{t:"季节品智能备货",st:"off",src:"个人积累",m:"单品降本 ¥3.1K"},{t:"趋势词挖掘",st:"run",src:"平台通用"}]},
+    { name:"清仓与长尾", leaves:[{t:"长尾货盘齐",st:"off",src:"平台通用",m:"节约流量成本 ¥3.1K"}]},
+  ]},
+  { name:"商品策略", hue:"--m2", subs:[
+    { name:"主图优化", leaves:[{t:"主图三七构图",st:"run",src:"专家复用",m:"CTR +8%"},{t:"场景化背景",st:"run",src:"平台通用",m:"转化 +16%"}]},
+    { name:"详情页", leaves:[{t:"信任特写强化",st:"run",src:"专家复用",m:"加购 +11%"}]},
+    { name:"标题关键词", leaves:[{t:"长尾词覆盖",st:"off",src:"平台通用"}]},
+    { name:"价格带", leaves:[{t:"价格锚点设计",st:"pend",src:"个人积累",m:"客单 +4%"}]},
+  ]},
+  { name:"商家策略", hue:"--m3", subs:[
+    { name:"店铺装修", leaves:[{t:"首页动线优化",st:"run",src:"专家复用"}]},
+    { name:"会员运营", leaves:[{t:"复购唤醒",st:"run",src:"平台通用",m:"复购 +6%"}]},
+    { name:"私域触达", leaves:[{t:"咚咚触达节奏",st:"off",src:"个人积累"}]},
+  ]},
+  { name:"数据策略", hue:"--m4", subs:[
+    { name:"流量诊断", leaves:[{t:"流量结构诊断",st:"run",src:"平台通用"}]},
+    { name:"转化漏斗", leaves:[{t:"漏斗断点定位",st:"run",src:"专家复用",m:"转化 +2.2pp"}]},
+    { name:"竞品对标", leaves:[{t:"竞品价格监控",st:"pend",src:"个人积累"}]},
+    { name:"大促复盘", leaves:[{t:"618 复盘归因",st:"run",src:"专家复用"}]},
+  ]},
+  { name:"库存策略", hue:"--m5", subs:[
+    { name:"备货预测", leaves:[{t:"销量预测备货",st:"run",src:"平台通用",m:"周转 +7 天"}]},
+    { name:"调拨", leaves:[{t:"区域调拨优化",st:"off",src:"个人积累"}]},
+    { name:"滞销预警", leaves:[{t:"滞销 SKU 预警",st:"run",src:"专家复用",m:"减损 ¥12K"}]},
+  ]},
+];
+modules.forEach(m=>{m.count=m.subs.reduce((s,x)=>s+x.leaves.length,0);m.on=m.subs.reduce((s,x)=>s+x.leaves.filter(l=>l.st==='run').length,0)});
+const MHEX={"--m1":"#7c3aed","--m2":"#2563eb","--m3":"#0d9488","--m4":"#0891b2","--m5":"#ca8a04"};
+const TOTAL=modules.reduce((s,m)=>s+m.count,0);
+const STL={run:"运行中",off:"未启用",pend:"待确认"};
+const st=s=>`<span class="st ${s}">${STL[s]}</span>`;
+const metric=m=>m?`<span class="metric">${m}</span>`:"";
+
+/* ---------- sunburst ---------- */
+const CX=190,CY=190,R0=66,R1=112,R2=150,R3=185,TAU=Math.PI*2,START=-Math.PI/2;
+const polar=(r,a)=>[CX+r*Math.cos(a),CY+r*Math.sin(a)];
+function seg(r0,r1,a0,a1){const lg=(a1-a0)>Math.PI?1:0;const[x0,y0]=polar(r1,a0),[x1,y1]=polar(r1,a1),[x2,y2]=polar(r0,a1),[x3,y3]=polar(r0,a0);
+  return `M${x0.toFixed(2)} ${y0.toFixed(2)} A${r1} ${r1} 0 ${lg} 1 ${x1.toFixed(2)} ${y1.toFixed(2)} L${x2.toFixed(2)} ${y2.toFixed(2)} A${r0} ${r0} 0 ${lg} 0 ${x3.toFixed(2)} ${y3.toFixed(2)} Z`;}
+let arcs=[],a=START;
+modules.forEach((m,mi)=>{
+  const hex=MHEX[m.hue],span=m.count/TOTAL*TAU,mEnd=a+span;
+  arcs.push({d:seg(R0,R1,a,mEnd),fill:hex,op:1,mi,type:"mod",name:m.name,count:m.count,mid:(a+mEnd)/2,r:(R0+R1)/2,label:m.name});
+  let b=a;
+  m.subs.forEach(s=>{const sspan=s.leaves.length/TOTAL*TAU,sEnd=b+sspan;
+    arcs.push({d:seg(R1+2,R2,b,sEnd),fill:hex,op:.6,mi,type:"sub",name:s.name,count:s.leaves.length});
+    let c=b;s.leaves.forEach(l=>{const lspan=1/TOTAL*TAU,lEnd=c+lspan;
+      arcs.push({d:seg(R2+2,R3,c,lEnd),fill:hex,op:l.st==='off'?.3:.4,mi,type:"leaf",name:l.t,leaf:l});c=lEnd;});
+    b=sEnd;});
+  a=mEnd;
+});
+const paths=arcs.map((x,i)=>`<path class="sb-arc" data-i="${i}" data-mi="${x.mi}" d="${x.d}" fill="${x.fill}" fill-opacity="${x.op}"/>`).join("");
+const labels=arcs.filter(x=>x.type==="mod"&&x.count>=3).map(x=>{const[lx,ly]=polar(x.r,x.mid);return `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" font-size="10" font-weight="700" fill="#fff" text-anchor="middle" dominant-baseline="middle">${x.label}</text>`;}).join("");
+const centerDefault=`<text x="${CX}" y="${CY-6}" class="center-big" text-anchor="middle">${TOTAL}</text><text x="${CX}" y="${CY+15}" class="center-sub" text-anchor="middle">条策略 · 5 模块</text>`;
+document.getElementById("sbsvg").innerHTML=paths+labels+`<g id="center" text-anchor="middle">${centerDefault}</g>`;
+
+/* center focus text (wrap up to 8 chars/line) */
+function setCenter(node){
+  const c=document.getElementById("center");
+  if(!node){c.innerHTML=centerDefault;return;}
+  const name=node.name, line1=name.slice(0,7), line2=name.slice(7,14);
+  const sub = node.type==="leaf" ? STL[node.leaf.st]+(node.leaf.m?" · "+node.leaf.m:"")
+            : node.count+" 条内容";
+  c.innerHTML=`<text x="${CX}" y="${line2?CY-14:CY-6}" class="center-name" text-anchor="middle">${line1}</text>`
+    +(line2?`<text x="${CX}" y="${CY+2}" class="center-name" text-anchor="middle">${line2}</text>`:"")
+    +`<text x="${CX}" y="${line2?CY+18:CY+13}" class="center-sub" text-anchor="middle">${sub}</text>`;
+}
+
+/* ---------- right panel (text carrier) ---------- */
+function renderPanel(){
+  document.getElementById("panel").innerHTML=modules.map((m,i)=>`
+    <div class="pmod ${i===0?'open':''}" data-mi="${i}">
+      <div class="pmod-h"><svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="mdot" style="background:${MHEX[m.hue]}"></span>${m.name}<span class="count">${m.on}/${m.count} 运行</span></div>
+      <div class="pmod-body">${m.subs.map(s=>`<div class="psub">${s.name} · ${s.leaves.length}</div>
+        ${s.leaves.map(l=>`<div class="pleaf"><span class="mdot" style="background:${MHEX[m.hue]};opacity:.5;margin-top:5px"></span>
+          <div class="body"><div class="t">${l.t}</div><div class="meta">${st(l.st)}<span class="src">${l.src}</span>${metric(l.m)}</div></div></div>`).join("")}`).join("")}</div>
+    </div>`).join("");
+}
+renderPanel();
+
+const sun=document.getElementById("sun");
+function focusModule(mi,node){
+  sun.classList.add("focus");
+  sun.querySelectorAll(".sb-arc").forEach(p=>p.classList.toggle("hot",+p.dataset.mi===mi));
+  document.querySelectorAll(".pmod").forEach(p=>p.classList.toggle("hot",+p.dataset.mi===mi));
+  setCenter(node);
+}
+function clearFocus(){sun.classList.remove("focus");sun.querySelectorAll(".sb-arc.hot").forEach(p=>p.classList.remove("hot"));document.querySelectorAll(".pmod.hot").forEach(p=>p.classList.remove("hot"));setCenter(null);}
+
+document.getElementById("sbsvg").addEventListener("mouseover",e=>{const p=e.target.closest(".sb-arc");if(!p)return;focusModule(+p.dataset.mi,arcs[+p.dataset.i]);});
+document.getElementById("sbsvg").addEventListener("mouseleave",clearFocus);
+document.getElementById("sbsvg").addEventListener("click",e=>{const p=e.target.closest(".sb-arc");if(!p)return;
+  const mi=+p.dataset.mi;const pm=document.querySelector(`.pmod[data-mi="${mi}"]`);
+  document.querySelectorAll(".pmod").forEach(x=>x.classList.toggle("open",x===pm));
+  pm.scrollIntoView({block:"nearest"});
+});
+document.getElementById("panel").addEventListener("click",e=>{const h=e.target.closest(".pmod-h");if(h)h.parentElement.classList.toggle("open");});
+document.getElementById("panel").addEventListener("mouseover",e=>{const pm=e.target.closest(".pmod");if(pm)focusModule(+pm.dataset.mi,{name:modules[+pm.dataset.mi].name,type:"mod",count:modules[+pm.dataset.mi].count});});
+document.getElementById("panel").addEventListener("mouseleave",clearFocus);
+
+/* ---------- icicle ---------- */
+document.getElementById("ice").innerHTML=`
+  <div class="ice-col c1">${modules.map(m=>`<div class="ice-cell" style="flex:${m.count} 1 0;background:${MHEX[m.hue]}"><div class="nm">${m.name}</div><div class="cc">${m.count} 条 · 运行 ${m.on}</div></div>`).join("")}</div>
+  <div class="ice-col c2">${modules.flatMap(m=>m.subs.map(s=>`<div class="ice-cell ice-sub" style="flex:${s.leaves.length} 1 0"><div class="nm">${s.name}</div><div class="cc mono" style="opacity:.6">${s.leaves.length}</div></div>`)).join("")}</div>
+  <div class="ice-col c3">${modules.flatMap(m=>m.subs.flatMap(s=>s.leaves.map(l=>`<div class="ice-cell ice-leaf" style="--h:${MHEX[m.hue]}"><div class="nm">${l.t}</div><div class="meta">${st(l.st)}<span class="src">${l.src}</span>${metric(l.m)}</div></div>`))).join("")}</div>`;
+
+/* ---------- tabs ---------- */
+document.querySelector(".tabs").addEventListener("click",e=>{const b=e.target.closest("[data-v]");if(!b)return;
+  document.querySelectorAll(".tabs button").forEach(x=>x.setAttribute("aria-selected",x===b));
+  document.querySelectorAll(".view").forEach(v=>v.classList.toggle("on",v.id==="v-"+b.dataset.v));
+});
+</script>
+</body>
+</html>

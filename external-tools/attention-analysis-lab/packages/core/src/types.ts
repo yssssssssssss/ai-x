@@ -34,6 +34,8 @@ export interface AttentionHotspot {
   height: number;
   score: number;
   reason: string;
+  label?: string;
+  attentionShare?: number;
 }
 
 export interface RoiAttentionResult {
@@ -52,8 +54,10 @@ export interface RoiAttentionResult {
 export interface AttentionAnalyzeResult {
   status: AttentionStatus;
   mode: AttentionMode;
+  engine?: 'vlm' | 'heuristic';
   summary: string;
   heatmap: number[][];
+  heatmapImage?: string;
   hotspots: AttentionHotspot[];
   peakAttentionScore: number;
   focusBalanceScore: number;

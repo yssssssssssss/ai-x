@@ -3,9 +3,9 @@ import { useState } from 'react';
 // 工具箱:统一入口,内嵌各 external-tools/*-lab 自带前端(通道 B「Web 单独调用」)。
 // 每个工具是独立服务,门户不重写其 UI,只用 iframe 内嵌 / 新标签打开。
 // dev 端口对应各工具 package.json 的 vite --port。
-type Lab = { id: string; name: string; desc: string; url: string };
+export type Lab = { id: string; name: string; desc: string; url: string };
 
-const LABS: Lab[] = [
+export const LABS: Lab[] = [
   { id: 'aesthetic-quant-lab', name: '美学量化实验室', desc: '设计稿色彩/构图/对比度美学量化打分,可选注意力热区', url: 'http://127.0.0.1:5801' },
   { id: 'attention-analysis-lab', name: '视觉注意力分析', desc: '注意力热力图、热点、焦点平衡与干扰风险评分', url: 'http://127.0.0.1:5802' },
   { id: 'experience-model-lab', name: '体验模型实验室', desc: '按研究诉求匹配 HEART/GSM/Kano 等体验模型与问卷', url: 'http://127.0.0.1:5803' },

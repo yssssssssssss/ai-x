@@ -14,7 +14,7 @@ export function Stage3Execute({
   };
 
   return (
-    <section style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 18, marginBottom: 16 }}>
+    <section className="stage-card">
       <Header n="3" title="执行进度" />
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {steps.map((s) => {

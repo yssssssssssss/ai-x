@@ -33,17 +33,21 @@ async function main(): Promise<void> {
   console.log('\n===== 段2 · 激活的决策节点(按 applies_to 过滤,非固定 7 步)=====');
   console.log(`  ${result.activatedNodes.join(', ')}`);
 
-  console.log('\n===== 段2 · 待确认计划(HITL 闸门,未执行)=====');
-  const plan = result.plan as { steps: Array<{ step_no: number; step_name: string; actor_type: string; actor_id: string }> };
-  for (const s of plan.steps) {
-    console.log(`  ${s.step_no}. [${s.actor_type.toUpperCase()}] ${s.step_name} → ${s.actor_id}`);
+  console.log('\n===== 段2 · 待选候选计划(HITL 闸门,未执行)=====');
+  for (const cand of result.candidates) {
+    console.log(`\n[${cand.id.toUpperCase()}] ${cand.title}`);
+    console.log(`  理由: ${cand.rationale}`);
+    console.log(`  代价: ${cand.tradeoffs}`);
+    for (const s of cand.steps) {
+      console.log(`  ${s.step_no}. [${s.actor_type.toUpperCase()}] ${s.step_name} → ${s.actor_id}`);
+    }
   }
 
-  console.log('\n计划已写入 run workspace,等待确认。');
+  console.log('\n候选已写入 run workspace,等待用户选一份。');
   console.log(`task_id       : ${result.taskId}`);
   console.log(`conversation  : ${conv.id}`);
   console.log(`workspace     : ${result.workspaceUri}`);
-  console.log(`\n确认后执行: pnpm spike:execute ${result.taskId} ${conv.id}`);
+  console.log(`\n选中后执行: pnpm spike:execute ${result.taskId} ${conv.id} <depth|speed>`);
 }
 
 main()

@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AI 批量打标 · 三种设计风格</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: var(--sans);
+    background: #eceef1;
+    color: #1a1a1a;
+    min-height: 100vh;
+    padding: 40px 20px 80px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  /* ---------- Page chrome & switcher ---------- */
+  .page-head { text-align: center; margin-bottom: 28px; max-width: 480px; }
+  .page-head h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+  .page-head p { margin-top: 8px; color: #6b7280; font-size: 14px; line-height: 1.5; }
+
+  .switch {
+    display: inline-flex;
+    background: #dcdfe4;
+    padding: 4px;
+    border-radius: 999px;
+    margin-bottom: 32px;
+    gap: 2px;
+  }
+  .switch button {
+    border: 0;
+    background: transparent;
+    font-family: var(--sans);
+    font-size: 14px;
+    font-weight: 600;
+    color: #4b5563;
+    padding: 9px 22px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background .22s ease, color .22s ease, box-shadow .22s ease;
+  }
+  .switch button:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+  .switch button[aria-selected="true"] {
+    background: #fff;
+    color: #111;
+    box-shadow: 0 1px 3px rgba(0,0,0,.12);
+  }
+
+  .stage-wrap { width: 100%; max-width: 420px; }
+  .stage { display: none; animation: fade .35s ease; }
+  .stage.active { display: block; }
+  @keyframes fade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+  /* shared inner structure */
+  .card { width: 100%; }
+  .sec { }
+  .sec-title { display: flex; align-items: center; gap: 6px; }
+  .row { display: flex; align-items: center; }
+  .grow { flex: 1; min-width: 0; }
+  .muted { color: var(--muted); }
+  .info-ic { width: 15px; height: 15px; opacity: .55; }
+  svg { display: block; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .stage { animation: none; }
+    * { transition: none !important; }
+  }
+
+  /* ============================================================
+     APPLE — Human Interface
+     ============================================================ */
+  .apple {
+    --bg: #f5f5f7;
+    --card: #ffffff;
+    --text: #1d1d1f;
+    --muted: #86868b;
+    --line: #e6e6e9;
+    --fill: #f0f0f3;
+    --accent: #0071e3;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Noto Sans SC", sans-serif;
+    color: var(--text);
+  }
+  .apple .card {
+    background: var(--card);
+    border-radius: 24px;
+    padding: 8px 22px 22px;
+    box-shadow: 0 18px 50px -20px rgba(0,0,0,.22), 0 2px 6px rgba(0,0,0,.04);
+  }
+  .apple .app-top { padding: 16px 0 6px; }
+  .apple .app-top h2 { font-size: 21px; font-weight: 600; letter-spacing: -0.02em; }
+  .apple .sec { padding: 18px 0; border-bottom: 1px solid var(--line); }
+  .apple .sec:last-child { border-bottom: 0; }
+  .apple .sec-title { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 12px; }
+
+  .apple .kv { display: flex; justify-content: space-between; align-items: baseline; padding: 9px 0; }
+  .apple .kv + .kv { border-top: 1px solid var(--line); }
+  .apple .kv .k { color: var(--muted); font-size: 15px; }
+  .apple .kv .v { font-size: 15px; font-weight: 590; text-align: right; }
+
+  .apple .list-row {
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--fill); border-radius: 14px; padding: 14px 16px;
+    font-size: 15px; font-weight: 500; cursor: pointer;
+  }
+  .apple .list-row .sub { color: var(--muted); font-weight: 400; display: flex; align-items: center; gap: 6px; }
+
+  .apple .time { display: flex; align-items: center; gap: 10px; }
+  .apple .time .pill { flex: 1; background: var(--fill); border-radius: 12px; padding: 12px 14px; font-size: 15px; font-weight: 500; text-align: center; }
+  .apple .time .pill span { display: block; color: var(--muted); font-size: 12px; font-weight: 400; margin-top: 2px; }
+  .apple .time .arr { color: var(--muted); }
+
+  .apple .seg { display: flex; background: #e9e9eb; border-radius: 11px; padding: 3px; gap: 3px; }
+  .apple .seg button {
+    flex: 1; border: 0; background: transparent; font-family: inherit;
+    font-size: 14px; font-weight: 500; color: var(--text); padding: 9px 0;
+    border-radius: 9px; cursor: pointer; transition: background .2s, box-shadow .2s;
+  }
+  .apple .seg button[aria-checked="true"] { background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.14); font-weight: 600; }
+  .apple .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .apple .opt { display: flex; align-items: center; gap: 12px; padding: 13px 2px; cursor: pointer; }
+  .apple .opt + .opt { border-top: 1px solid var(--line); }
+  .apple .opt .dot { width: 22px; height: 22px; border-radius: 999px; border: 1.5px solid #c7c7cc; flex: none; display: grid; place-items: center; }
+  .apple .opt[aria-checked="true"] .dot { border-color: var(--accent); background: var(--accent); }
+  .apple .opt[aria-checked="true"] .dot::after { content: ""; width: 8px; height: 8px; border-radius: 999px; background: #fff; }
+  .apple .opt .lab { font-size: 15px; font-weight: 500; }
+
+  .apple .tabs { display: flex; gap: 6px; background: var(--fill); border-radius: 12px; padding: 3px; margin-bottom: 14px; }
+  .apple .tabs button { flex: 1; border: 0; background: transparent; font-family: inherit; font-size: 14px; font-weight: 500; color: var(--muted); padding: 9px 0; border-radius: 9px; cursor: pointer; }
+  .apple .tabs button[aria-selected="true"] { background: #fff; color: var(--text); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+
+  .apple .drop { border: 1.5px dashed #cfcfd4; border-radius: 16px; padding: 22px; text-align: center; color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+  .apple .drop strong { color: var(--accent); font-weight: 600; }
+
+  .apple .prompt { background: var(--fill); border-radius: 16px; padding: 15px; font-size: 14.5px; line-height: 1.7; color: var(--text); }
+  .apple .prompt .tk { color: var(--accent); font-weight: 600; }
+  .apple .prompt .ph { color: #b0b0b5; }
+  .apple .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .apple .chip { display: inline-flex; align-items: center; gap: 5px; background: var(--fill); border-radius: 999px; padding: 7px 13px; font-size: 13px; font-weight: 500; }
+
+  .apple .cta { width: 100%; border: 0; background: var(--accent); color: #fff; font-family: inherit; font-size: 17px; font-weight: 600; padding: 15px; border-radius: 14px; margin-top: 22px; cursor: pointer; transition: filter .2s, transform .1s; }
+  .apple .cta:hover { filter: brightness(1.06); }
+  .apple .cta:active { transform: scale(.985); }
+  .apple .cta:focus-visible { outline: 3px solid rgba(0,113,227,.4); outline-offset: 2px; }
+
+  /* ============================================================
+     GOOGLE — Material Design 3
+     ============================================================ */
+  .gmd {
+    --bg: #f8f9fa;
+    --surface: #ffffff;
+    --text: #1f1f1f;
+    --muted: #5f6368;
+    --line: #dadce0;
+    --accent: #1a73e8;
+    --tonal: #e8f0fe;
+    font-family: "Roboto", "Noto Sans SC", "PingFang SC", system-ui, sans-serif;
+    color: var(--text);
+  }
+  .gmd .card { background: var(--surface); border-radius: 28px; padding: 8px 20px 24px; box-shadow: 0 1px 2px rgba(60,64,67,.3), 0 6px 20px -8px rgba(60,64,67,.25); }
+  .gmd .g-top { padding: 22px 4px 8px; display: flex; align-items: center; gap: 12px; }
+  .gmd .g-top .badge { width: 40px; height: 40px; border-radius: 999px; background: var(--tonal); color: var(--accent); display: grid; place-items: center; font-weight: 700; flex: none; }
+  .gmd .g-top h2 { font-size: 22px; font-weight: 500; }
+  .gmd .sec { padding: 16px 4px; }
+  .gmd .sec-title { font-size: 14px; font-weight: 500; color: var(--accent); letter-spacing: .02em; margin-bottom: 14px; }
+
+  .gmd .tf {
+    position: relative; border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px 14px 14px; margin-bottom: 12px; transition: border-color .2s, box-shadow .2s;
+  }
+  .gmd .tf:last-child { margin-bottom: 0; }
+  .gmd .tf.focus { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .gmd .tf label { position: absolute; top: -8px; left: 12px; background: var(--surface); padding: 0 5px; font-size: 12px; color: var(--accent); font-weight: 500; }
+  .gmd .tf .val { font-size: 16px; color: var(--text); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .gmd .tf .val .end { color: var(--muted); display: flex; align-items: center; gap: 6px; }
+
+  .gmd .time-grid { display: flex; align-items: center; gap: 10px; }
+  .gmd .time-grid .tf { flex: 1; margin-bottom: 0; }
+  .gmd .time-grid .arr { color: var(--muted); }
+
+  .gmd .mseg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+  .gmd .mseg button { border: 0; background: transparent; font-family: inherit; font-size: 14px; color: var(--text); padding: 10px 22px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: background .2s; }
+  .gmd .mseg button + button { border-left: 1px solid var(--line); }
+  .gmd .mseg button[aria-checked="true"] { background: var(--tonal); color: var(--accent); font-weight: 500; }
+  .gmd .mseg button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+  .gmd .m-chipset { display: flex; flex-wrap: wrap; gap: 8px; }
+  .gmd .m-chip {
+    display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line);
+    border-radius: 8px; padding: 9px 14px; font-size: 14px; color: var(--text); cursor: pointer;
+    background: var(--surface); transition: background .2s, border-color .2s;
+  }
+  .gmd .m-chip[aria-checked="true"] { background: var(--tonal); border-color: var(--tonal); color: var(--accent); font-weight: 500; }
+  .gmd .m-chip .tick { width: 16px; height: 16px; }
+
+  .gmd .m-tabs { display: flex; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
+  .gmd .m-tabs button { flex: 1; border: 0; background: transparent; font-family: inherit; font-size: 14px; font-weight: 500; color: var(--muted); padding: 12px 0; cursor: pointer; position: relative; }
+  .gmd .m-tabs button[aria-selected="true"] { color: var(--accent); }
+  .gmd .m-tabs button[aria-selected="true"]::after { content: ""; position: absolute; left: 20%; right: 20%; bottom: -1px; height: 3px; border-radius: 3px 3px 0 0; background: var(--accent); }
+
+  .gmd .drop { border: 1.5px dashed var(--line); border-radius: 16px; padding: 24px; text-align: center; color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+  .gmd .drop strong { color: var(--accent); }
+
+  .gmd .prompt { background: var(--bg); border: 1px solid var(--line); border-radius: 16px; padding: 16px; font-size: 14.5px; line-height: 1.75; }
+  .gmd .prompt .tk { color: var(--accent); font-weight: 500; }
+  .gmd .prompt .ph { color: #9aa0a6; }
+
+  .gmd .fab {
+    display: inline-flex; align-items: center; gap: 10px; margin: 24px auto 0; width: 100%; justify-content: center;
+    border: 0; background: var(--accent); color: #fff; font-family: inherit; font-size: 16px; font-weight: 500;
+    padding: 16px; border-radius: 16px; cursor: pointer; box-shadow: 0 4px 12px -2px rgba(26,115,232,.5); transition: box-shadow .2s, filter .2s;
+  }
+  .gmd .fab:hover { box-shadow: 0 8px 20px -3px rgba(26,115,232,.55); filter: brightness(1.04); }
+  .gmd .fab:focus-visible { outline: 3px solid rgba(26,115,232,.4); outline-offset: 2px; }
+
+  /* ============================================================
+     CHATGPT — OpenAI
+     ============================================================ */
+  .oai {
+    --bg: #ffffff;
+    --soft: #f7f7f8;
+    --text: #0d0d0d;
+    --muted: #8e8ea0;
+    --line: #e5e5e5;
+    --accent: #10a37f;
+    font-family: "Inter", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+    color: var(--text);
+  }
+  .oai .card { background: var(--bg); border: 1px solid var(--line); border-radius: 16px; padding: 6px 22px 22px; box-shadow: 0 6px 30px -18px rgba(0,0,0,.25); }
+  .oai .o-top { padding: 20px 0 6px; display: flex; align-items: center; gap: 10px; }
+  .oai .o-top .mark { width: 26px; height: 26px; }
+  .oai .o-top h2 { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+  .oai .sec { padding: 16px 0; border-top: 1px solid var(--line); }
+  .oai .o-top + .sec { border-top: 0; }
+  .oai .sec-title { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: .06em; text-transform: uppercase; margin-bottom: 12px; }
+
+  .oai .kv { display: flex; justify-content: space-between; align-items: baseline; padding: 8px 0; font-size: 14px; }
+  .oai .kv .k { color: var(--muted); }
+  .oai .kv .v { font-weight: 600; text-align: right; }
+
+  .oai .list-row { display: flex; align-items: center; justify-content: space-between; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font-size: 14px; font-weight: 500; cursor: pointer; }
+  .oai .list-row .sub { color: var(--muted); font-weight: 400; display: flex; align-items: center; gap: 6px; }
+
+  .oai .time { display: flex; align-items: center; gap: 8px; }
+  .oai .time .pill { flex: 1; border: 1px solid var(--line); border-radius: 10px; padding: 11px 12px; font-size: 14px; font-weight: 500; }
+  .oai .time .pill small { display: block; color: var(--muted); font-weight: 400; margin-top: 2px; }
+  .oai .time .arr { color: var(--muted); }
+
+  .oai .toggle-grp { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; padding: 3px; gap: 3px; }
+  .oai .toggle-grp button { border: 0; background: transparent; font-family: inherit; font-size: 14px; font-weight: 500; color: var(--muted); padding: 8px 18px; border-radius: 7px; cursor: pointer; }
+  .oai .toggle-grp button[aria-checked="true"] { background: var(--text); color: #fff; }
+  .oai .toggle-grp button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .oai .pill-opts { display: flex; flex-wrap: wrap; gap: 8px; }
+  .oai .pill-opt { border: 1px solid var(--line); border-radius: 999px; padding: 9px 15px; font-size: 13.5px; font-weight: 500; color: var(--text); cursor: pointer; background: var(--bg); }
+  .oai .pill-opt[aria-checked="true"] { border-color: var(--accent); background: rgba(16,163,127,.08); color: var(--accent); }
+
+  .oai .o-tabs { display: inline-flex; gap: 4px; background: var(--soft); border-radius: 10px; padding: 4px; margin-bottom: 14px; }
+  .oai .o-tabs button { border: 0; background: transparent; font-family: inherit; font-size: 13.5px; font-weight: 500; color: var(--muted); padding: 8px 14px; border-radius: 7px; cursor: pointer; }
+  .oai .o-tabs button[aria-selected="true"] { background: var(--bg); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+
+  /* ChatGPT composer-style prompt box */
+  .oai .composer { border: 1px solid var(--line); border-radius: 24px; padding: 14px 16px; box-shadow: 0 2px 8px rgba(0,0,0,.05); }
+  .oai .composer .txt { font-size: 14.5px; line-height: 1.7; color: var(--text); }
+  .oai .composer .tk { color: var(--accent); font-weight: 600; }
+  .oai .composer .ph { color: #b4b4c0; }
+  .oai .composer .bar { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+  .oai .composer .chip { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 999px; padding: 6px 11px; font-size: 12.5px; color: var(--muted); cursor: pointer; }
+  .oai .composer .send { margin-left: auto; width: 34px; height: 34px; border-radius: 999px; border: 0; background: var(--text); color: #fff; display: grid; place-items: center; cursor: pointer; flex: none; }
+
+  .oai .cta { width: 100%; border: 0; background: var(--accent); color: #fff; font-family: inherit; font-size: 15px; font-weight: 600; padding: 14px; border-radius: 12px; margin-top: 20px; cursor: pointer; transition: filter .2s; }
+  .oai .cta:hover { filter: brightness(1.05); }
+  .oai .cta:focus-visible { outline: 3px solid rgba(16,163,127,.4); outline-offset: 2px; }
+</style>
+</head>
+<body>
+  <div class="page-head">
+    <h1>AI 批量打标</h1>
+    <p>同一套任务配置，三种设计语言。切换查看 Apple、Google、ChatGPT 风格。</p>
+  </div>
+
+  <div class="switch" role="tablist" aria-label="设计风格切换">
+    <button role="tab" aria-selected="true" data-target="apple">Apple</button>
+    <button role="tab" aria-selected="false" data-target="gmd">Google</button>
+    <button role="tab" aria-selected="false" data-target="oai">ChatGPT</button>
+  </div>
+
+  <div class="stage-wrap">
+
+    <!-- ============ APPLE ============ -->
+    <section class="stage apple active" id="apple">
+      <div class="card">
+        <div class="app-top"><h2>AI 批量打标</h2></div>
+
+        <div class="sec">
+          <div class="sec-title">任务信息</div>
+          <div class="kv"><span class="k">活动名称</span><span class="v">618 开门红</span></div>
+          <div class="kv"><span class="k">活动收益</span><span class="v">满 300 减 50 · 前 N 件半价</span></div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-title">选择商品</div>
+          <div class="list-row" role="button" tabindex="0">
+            <span>已选择 5 件商品</span>
+            <span class="sub">更改
+              <svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </span>
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-title">活动时间</div>
+          <div class="time">
+            <div class="pill">2026/07/17<span>00:00</span></div>
+            <span class="arr">→</span>
+            <div class="pill">2026/07/30<span>24:00</span></div>
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-title">图片尺寸</div>
+          <div class="seg" role="radiogroup">
+            <button role="radio" aria-checked="true">1 : 1</button>
+            <button role="radio" aria-checked="false">3 : 4</button>
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-title">底图选择</div>
+          <div class="opt" role="radio" aria-checked="true" tabindex="0"><span class="dot"></span><span class="lab">使用原素材</span></div>
+          <div class="opt" role="radio" aria-checked="false" tabindex="0"><span class="dot"></span><span class="lab">AI 擦除原贴片</span></div>
+          <div class="opt" role="radio" aria-checked="false" tabindex="0"><span class="dot"></span><span class="lab">AI 重新生成底图</span></div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-title">贴片模板</div>
+          <div class="tabs" role="tablist">
+            <button role="tab" aria-selected="true">上传模板</button>
+            <button role="tab" aria-selected="false">AI 生成模板</button>
+            <button role="tab" aria-selected="false">历史模板</button>
+          </div>
+          <div class="drop">拖拽或 <strong>点击上传</strong> 参考模板图<br>支持 JPG / PNG，建议 ≥ 800px</div>
+          <div class="prompt">为 <span class="tk">618 活动</span> 生成贴片模板，版式为 <span class="tk">底部腰带</span>，必须包含 <span class="ph">文案要求</span>，突出 <span class="ph">视觉与氛围</span>。</div>
+          <div class="chips">
+            <span class="chip">📎 上传参考图</span>
+            <span class="chip">活动类型 · 618</span>
+            <span class="chip">版式 · 底部腰带</span>
+          </div>
+        </div>
+
+        <button class="cta">生成贴片</button>
+      </div>
+    </section>
+
+    <!-- ============ GOOGLE / MATERIAL 3 ============ -->
+    <section class="stage gmd" id="gmd">
+      <div class="card">
+        <div class="g-top"><span class="badge">618</span><h2>AI 批量打标</h2></div>
+
+        <div class="sec">
+          <div class="sec-title">任务信息</div>
+          <div class="tf"><label>活动名称</label><div class="val">618 开门红</div></div>
+          <div class="tf"><label>活动收益</label><div class="val">满 300 减 50 · 前 N 件半价</div></div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-title">选择商品</div>
+          <div class="tf">
+            <label>已选商品</label>
+            <div class="val">5 件商品
+              <span class="end">更改
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M7 10l5 5 5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-title">活动时间</div>
+          <div class="time-grid">
+            <div class="tf"><label>开始</label><div class="val">07/17 00:00</div></div>
+            <span class="arr">→</span>
+            <div class="tf"><label>结束</label><div class="val">07/30 24:00</div></div>
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-title">图片尺寸</div>
+          <div class="mseg" role="radiogroup">
+            <button role="radio" aria-checked="true">
+              <svg class="tick" viewBox="0 0 24 24" fill="none" width="16" height="16"><path d="M5 12l4 4L19 6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>1 : 1</button>
+            <button role="radio" aria-checked="false">3 : 4</button>
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-title">底图选择</div>
+          <div class="m-chipset" role="radiogroup">
+            <button class="m-chip" role="radio" aria-checked="true">
+              <svg class="tick" viewBox="0 0 24 24" fill="none"><path d="M5 12l4 4L19 6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>使用原素材</button>
+            <button class="m-chip" role="radio" aria-checked="false">AI 擦除原贴片</button>
+            <button class="m-chip" role="radio" aria-checked="false">AI 重新生成底图</button>
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-title">贴片模板</div>
+          <div class="m-tabs" role="tablist">
+            <button role="tab" aria-selected="true">上传模板</button>
+            <button role="tab" aria-selected="false">AI 生成模板</button>
+            <button role="tab" aria-selected="false">历史模板</button>
+          </div>
+          <div class="drop">拖拽或 <strong>点击上传</strong> 参考模板图<br>支持 JPG / PNG，建议 ≥ 800px</div>
+          <div class="prompt">为 <span class="tk">618 活动</span> 生成贴片模板，版式为 <span class="tk">底部腰带</span>，必须包含 <span class="ph">文案要求</span>，突出 <span class="ph">视觉与氛围</span>。</div>
+        </div>
+
+        <button class="fab">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 3v18M3 12h18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+          生成贴片
+        </button>
+      </div>
+    </section>
+
+    <!-- ============ CHATGPT / OPENAI ============ -->
+    <section class="stage oai" id="oai">
+      <div class="card">
+        <div class="o-top">
+          <svg class="mark" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#10a37f" stroke-width="2"/><path d="M8 12l2.5 2.5L16 9" stroke="#10a37f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <h2>AI 批量打标</h2>
+        </div>
+
+        <div class="sec">
+          <div class="sec-title">任务信息</div>
+          <div class="kv"><span class="k">活动名称</span><span class="v">618 开门红</span></div>
+          <div class="kv"><span class="k">活动收益</span><span class="v">满 300 减 50 · 前 N 件半价</span></div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-title">选择商品</div>
+          <div class="list-row" role="button" tabindex="0">
+            <span>已选择 5 件商品</span>
+            <span class="sub">更改
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </span>
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-title">活动时间</div>
+          <div class="time">
+            <div class="pill">2026/07/17<small>00:00</small></div>
+            <span class="arr">→</span>
+            <div class="pill">2026/07/30<small>24:00</small></div>
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-title">图片尺寸</div>
+          <div class="toggle-grp" role="radiogroup">
+            <button role="radio" aria-checked="true">1 : 1</button>
+            <button role="radio" aria-checked="false">3 : 4</button>
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-title">底图选择</div>
+          <div class="pill-opts" role="radiogroup">
+            <button class="pill-opt" role="radio" aria-checked="true">使用原素材</button>
+            <button class="pill-opt" role="radio" aria-checked="false">AI 擦除原贴片</button>
+            <button class="pill-opt" role="radio" aria-checked="false">AI 重新生成底图</button>
+          </div>
+        </div>
+
+        <div class="sec">
+          <div class="sec-title">贴片模板</div>
+          <div class="o-tabs" role="tablist">
+            <button role="tab" aria-selected="true">上传模板</button>
+            <button role="tab" aria-selected="false">AI 生成模板</button>
+            <button role="tab" aria-selected="false">历史模板</button>
+          </div>
+          <div class="composer">
+            <div class="txt">为 <span class="tk">618 活动</span> 生成贴片模板，版式为 <span class="tk">底部腰带</span>，必须包含 <span class="ph">文案要求</span>，突出 <span class="ph">视觉与氛围</span>。</div>
+            <div class="bar">
+              <span class="chip">📎 上传参考图</span>
+              <span class="chip">618</span>
+              <span class="chip">底部腰带</span>
+              <button class="send" aria-label="生成">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <button class="cta">生成贴片</button>
+      </div>
+    </section>
+
+  </div>
+
+<script>
+  const tabs = document.querySelectorAll('.switch button');
+  const stages = document.querySelectorAll('.stage');
+  tabs.forEach(t => t.addEventListener('click', () => {
+    tabs.forEach(x => x.setAttribute('aria-selected', 'false'));
+    t.setAttribute('aria-selected', 'true');
+    stages.forEach(s => s.classList.remove('active'));
+    document.getElementById(t.dataset.target).classList.add('active');
+  }));
+
+  // radio-group behaviour (segmented / pills / chips)
+  document.querySelectorAll('[role="radiogroup"]').forEach(grp => {
+    grp.querySelectorAll('[role="radio"]').forEach(r => {
+      r.addEventListener('click', () => {
+        grp.querySelectorAll('[role="radio"]').forEach(x => x.setAttribute('aria-checked', 'false'));
+        r.setAttribute('aria-checked', 'true');
+      });
+    });
+  });
+
+  // tablist behaviour inside each template selector
+  document.querySelectorAll('[role="tablist"]').forEach(tl => {
+    if (tl.classList.contains('switch')) return;
+    tl.querySelectorAll('[role="tab"]').forEach(tab => {
+      tab.addEventListener('click', () => {
+        tl.querySelectorAll('[role="tab"]').forEach(x => x.setAttribute('aria-selected', 'false'));
+        tab.setAttribute('aria-selected', 'true');
+      });
+    });
+  });
+</script>
+</body>
+</html>

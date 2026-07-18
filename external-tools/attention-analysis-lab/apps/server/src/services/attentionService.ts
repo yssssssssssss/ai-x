@@ -10,6 +10,7 @@ import type {
   UploadedImageRef,
 } from '@attention-analysis-lab/core';
 import { assertInsideUploadDir } from './uploadService.js';
+import { isLLMEnabled, chatVisionJSON } from './llmClient.js';
 
 const GRID_SIZE = 32;
 
@@ -160,14 +161,124 @@ const analyzeRois = (heatmap: number[][], rois: RoiInput[]): RoiAttentionResult[
     .map((roi, index) => ({ ...roi, attentionRank: index + 1 }));
 };
 
-const buildSemanticPlaceholder = (mode: AttentionMode, warnings: string[]) => {
-  if (mode === 'heuristic') return;
-  warnings.push('semantic/hybrid 模式当前 MVP 未接入 VLM，已回退为 heuristic 结果。');
+// ===== VLM 语义显著性路径(照原版 attentionSimulationService 规格移植) =====
+const resolveImageDataUrl = async (image?: UploadedImageRef): Promise<string | undefined> => {
+  if (!image) return undefined;
+  if (image.dataUrl) return image.dataUrl;
+  if (image.url && (image.url.startsWith('http') || image.url.startsWith('data:'))) return image.url;
+  if (image.path) {
+    const buf = await readFile(assertInsideUploadDir(image.path));
+    const b64 = buf.toString('base64');
+    const mime = b64.startsWith('/9j/') ? 'image/jpeg' : b64.startsWith('iVBORw0') ? 'image/png' : 'image/png';
+    return `data:${mime};base64,${b64}`;
+  }
+  return undefined;
 };
 
+// 8×8(或任意)热力网格 → 放大的热力图 PNG dataUrl。
+const createHeatmapDataUrl = async (grid: number[][]): Promise<string | undefined> => {
+  if (!grid.length || !grid[0]?.length) return undefined;
+  const h = grid.length, w = grid[0].length;
+  const rgba = Buffer.alloc(w * h * 4);
+  for (let y = 0; y < h; y += 1) for (let x = 0; x < w; x += 1) {
+    const v = clamp(grid[y][x] || 0);
+    const o = (y * w + x) * 4;
+    rgba[o] = Math.round(255 * Math.min(1, v * 1.15));
+    rgba[o + 1] = Math.round(180 * (1 - Math.abs(v - 0.45) * 1.8));
+    rgba[o + 2] = Math.round(255 * (1 - Math.min(1, v * 0.9)));
+    rgba[o + 3] = Math.round(120 + 120 * v);
+  }
+  const png = await sharp(rgba, { raw: { width: w, height: h, channels: 4 } }).resize(w * 24, h * 24, { kernel: 'nearest' }).png().toBuffer();
+  return `data:image/png;base64,${png.toString('base64')}`;
+};
+
+const buildVLMPrompt = (rois: RoiInput[]) => [
+  '你是一个"视觉注意力模拟器",任务不是审美点评,而是估计用户第一眼更可能先看哪里。',
+  '请基于图片内容,从尺寸、对比、颜色跳出、文字层级、主体语义、视觉中心和留白环境出发进行模拟。',
+  '坐标规则:xRatio/yRatio 是热点框左上角相对整图坐标,widthRatio/heightRatio 是相对整图比例,所有值在 0-1 之间。热点框要紧贴真实吸睛区域,不确定就给更小更保守的框。',
+  '优先输出 3-4 个最关键热点。可把整图理解为 8x8 网格定位,heatmapGrid 输出 8×8 的 0-1 值(越大越吸睛)。',
+  '只输出合法 JSON,不要任何额外解释。',
+  rois.length ? `ROI 列表:\n${rois.map((r) => `- ${r.id} | ${r.label} | x=${r.x},y=${r.y},w=${r.width},h=${r.height}`).join('\n')}` : '当前没有 ROI。',
+  `JSON schema:\n{"summary":"","hotspots":[{"label":"","xRatio":0,"yRatio":0,"widthRatio":0,"heightRatio":0,"score":0,"reason":""}],"gridSize":8,"heatmapGrid":[[0]]}`,
+].join('\n\n');
+
+interface VLMPayload {
+  summary?: string;
+  hotspots?: Array<{ label?: string; xRatio?: number; yRatio?: number; widthRatio?: number; heightRatio?: number; score?: number; reason?: string }>;
+  heatmapGrid?: number[][];
+}
+
+const analyzeAttentionVLM = async (request: AttentionAnalyzeRequest, imageUrl: string): Promise<AttentionAnalyzeResult> => {
+  const mode = request.mode || 'hybrid';
+  const rois = request.rois || [];
+  const prompt = buildVLMPrompt(rois);
+  const messages = [
+    { role: 'system', content: '你是一个严格输出 JSON 的视觉注意力模拟器。' },
+    { role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: imageUrl } }] },
+  ];
+  const parsed = await chatVisionJSON<VLMPayload>(messages);
+
+  const gridSize = 8;
+  const heatmap = Array.isArray(parsed.heatmapGrid) && parsed.heatmapGrid.length
+    ? parsed.heatmapGrid.slice(0, gridSize).map((row) => (Array.isArray(row) ? row.slice(0, gridSize).map((v) => round(clamp(Number(v) || 0))) : Array(gridSize).fill(0)))
+    : [];
+  const hotspots: AttentionHotspot[] = (parsed.hotspots || []).slice(0, 4).map((h, i) => ({
+    id: `vlm_hotspot_${i + 1}`,
+    label: h?.label || `热点 ${i + 1}`,
+    x: round(clamp(h?.xRatio || 0)),
+    y: round(clamp(h?.yRatio || 0)),
+    width: round(clamp(h?.widthRatio || 0.1)),
+    height: round(clamp(h?.heightRatio || 0.1)),
+    score: round(clamp(h?.score ?? 0.5)),
+    attentionShare: round(clamp((h?.score ?? 0.5) * 0.35)),
+    reason: (h?.reason || '该区域在语义与对比上更易成为第一眼焦点。').slice(0, 120),
+  }));
+  const flat = heatmap.flat();
+  const peak = Math.max(...hotspots.map((h) => h.score), ...flat, 0);
+  const mean = average(flat.length ? flat : hotspots.map((h) => h.score));
+  const roiAttentionRanking = heatmap.length ? analyzeRois(heatmap, rois) : [];
+  const distractionRisk = clamp(mean * 0.65 + hotspots.filter((h) => h.score >= 0.82).length * 0.07);
+
+  return {
+    status: 'available',
+    mode,
+    engine: 'vlm',
+    summary: (parsed.summary || `VLM 语义注意力:峰值 ${round(peak)},识别 ${hotspots.length} 个吸睛热点。`).slice(0, 200),
+    heatmap,
+    heatmapImage: heatmap.length ? await createHeatmapDataUrl(heatmap) : undefined,
+    hotspots,
+    peakAttentionScore: round(peak),
+    focusBalanceScore: round(clamp(1 - Math.abs(peak - mean) * 0.8)),
+    distractionRiskScore: round(distractionRisk),
+    roiAttentionRanking,
+    warnings: ['VLM 语义注意力属于语义近似,不等同真实眼动或正式 saliency 模型。'],
+    boundaryNotes: [
+      '结果是 AI 语义注意力模拟,不是眼动实验。',
+      '仅辅助判断视觉刺激分布,不代表真实用户注意力数据。',
+    ],
+  };
+};
+
+// ===== 入口:mode=semantic/hybrid 且 LLM 可用 → VLM(失败降级),否则 sharp 启发式 =====
 export const analyzeAttention = async (request: AttentionAnalyzeRequest): Promise<AttentionAnalyzeResult> => {
+  const wantVLM = (request.mode === 'semantic' || request.mode === 'hybrid') && isLLMEnabled();
+  if (wantVLM) {
+    try {
+      const imageUrl = await resolveImageDataUrl(request.image);
+      if (imageUrl) return await analyzeAttentionVLM(request, imageUrl);
+    } catch {
+      const fallback = await analyzeAttentionHeuristic(request);
+      fallback.warnings = [...fallback.warnings, 'VLM 语义注意力失败,已降级启发式。'];
+      return fallback;
+    }
+  }
+  return analyzeAttentionHeuristic(request);
+};
+
+const analyzeAttentionHeuristic = async (request: AttentionAnalyzeRequest): Promise<AttentionAnalyzeResult> => {
   const mode = request.mode || 'heuristic';
   const warnings: string[] = [];
+  if (mode !== 'heuristic') warnings.push('未启用 VLM,已用启发式估计。');
   const boundaryNotes = [
     '当前结果是启发式注意力估计，不是眼动实验。',
     '结果只能辅助判断视觉刺激分布，不能代表真实用户注意力数据。',
@@ -177,6 +288,7 @@ export const analyzeAttention = async (request: AttentionAnalyzeRequest): Promis
     return {
       status: 'insufficient_inputs',
       mode,
+      engine: 'heuristic',
       summary: '缺少图片，无法执行注意力分析。',
       heatmap: [],
       hotspots: [],
@@ -188,7 +300,6 @@ export const analyzeAttention = async (request: AttentionAnalyzeRequest): Promis
       boundaryNotes,
     };
   }
-  buildSemanticPlaceholder(mode, warnings);
   const heatmap = await buildHeatmap(buffer, request.includeCenterBias ?? true);
   const flat = heatmap.flat();
   const peak = Math.max(...flat, 0);
@@ -200,6 +311,7 @@ export const analyzeAttention = async (request: AttentionAnalyzeRequest): Promis
   return {
     status: 'available',
     mode,
+    engine: 'heuristic',
     summary: `启发式注意力峰值 ${round(peak)}，分散风险 ${round(distractionRisk)}。`,
     heatmap,
     hotspots,

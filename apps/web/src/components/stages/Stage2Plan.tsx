@@ -34,7 +34,7 @@ export function Stage2Plan({
   const pending = plan.pendingUploads ?? [];
 
   return (
-    <section style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 18, marginBottom: 16 }}>
+    <section className="stage-card">
       <Header n="2" title="待执行计划" note="确认前不执行" />
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

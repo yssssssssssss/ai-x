@@ -10,10 +10,15 @@ const SRC_LABEL: Record<string, string> = {
 // 段4 · 交付:可落地方案。findings 带来源标注,附时间线/产出物/能力编排 + 反馈入口。
 export function Stage4Report({ report, taskId }: { report: Report | null; taskId: string }) {
   if (!report) {
-    return <section style={box}><Header n="4" title="交付方案" /><div style={{ color: 'var(--text-dim)' }}>报告未生成</div></section>;
+    return (
+      <section className="stage-card">
+        <Header n="4" title="交付方案" />
+        <div style={{ color: 'var(--text-dim)' }}>报告未生成</div>
+      </section>
+    );
   }
   return (
-    <section style={box}>
+    <section className="stage-card">
       <Header n="4" title="交付方案" note="每条结论带来源标注" />
 
       <Block title="研究目标">{report.research_goal}</Block>
@@ -65,16 +70,11 @@ export function Stage4Report({ report, taskId }: { report: Report | null; taskId
   );
 }
 
-const box: React.CSSProperties = {
-  background: 'var(--bg-card)', border: '1px solid var(--border)',
-  borderRadius: 'var(--radius)', padding: 18, marginBottom: 16,
-};
-
 function Block({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div style={{ marginBottom: 14 }}>
-      <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>{title}</div>
-      <div style={{ fontSize: 13, lineHeight: 1.7 }}>{children}</div>
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.8, fontWeight: 600 }}>{title}</div>
+      <div style={{ fontSize: 14, lineHeight: 1.7 }}>{children}</div>
     </div>
   );
 }
@@ -83,7 +83,7 @@ function Feedback({ taskId }: { taskId: string }) {
   const [done, setDone] = useState(false);
   if (done) return <div style={{ marginTop: 10, fontSize: 13, color: 'var(--ok)' }}>✓ 感谢反馈</div>;
   return (
-    <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--border)', display: 'flex', gap: 10, alignItems: 'center' }}>
+    <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--border-soft)', display: 'flex', gap: 10, alignItems: 'center' }}>
       <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>这份方案有用吗?</span>
       <button className="btn-ghost" style={{ fontSize: 12, padding: '5px 12px' }}
         onClick={() => api.feedback(taskId, { rating: 5, adopted: true }).then(() => setDone(true)).catch(() => setDone(true))}>

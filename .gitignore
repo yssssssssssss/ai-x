@@ -23,3 +23,6 @@ external-tools/**/*.log
 
 # 外部参考文档(只读镜像),不入库
 references/
+
+# 独立子仓库(自带 .git / node_modules / .venv / 3.3G 临时文件),不纳入主仓库
+external-tools/users-research-all/

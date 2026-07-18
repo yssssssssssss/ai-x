@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>融合评分引擎 · Graph View</title>
+<style>
+  :root {
+    --bg: #1e1e26;
+    --bg-2: #17171d;
+    --text: #d8d8df;
+    --muted: #7a7a88;
+    --accent: #7c8cff;
+    --green: #4ec9a0;
+    --orange: #e0a458;
+    --blue: #6aa6ff;
+    --gold: #ffd166;
+    --edge: rgba(140, 160, 220, 0.28);
+    --edge-hi: rgba(200, 220, 255, 0.9);
+  }
+  html, body {
+    margin: 0; height: 100%;
+    background: radial-gradient(ellipse at center, #23232e 0%, var(--bg-2) 70%);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif;
+    overflow: hidden;
+  }
+  #stage { width: 100vw; height: 100vh; display: block; cursor: grab; }
+  #stage:active { cursor: grabbing; }
+
+  .hud {
+    position: fixed; top: 16px; left: 20px;
+    font-size: 12px; color: var(--muted);
+    letter-spacing: 0.04em;
+    pointer-events: none;
+    z-index: 5;
+  }
+  .hud .title {
+    font-size: 13px; color: var(--text);
+    font-weight: 600; margin-bottom: 4px;
+  }
+
+  .legend {
+    position: fixed; bottom: 20px; left: 20px;
+    display: flex; gap: 16px; font-size: 11px; color: var(--muted);
+    background: rgba(30, 30, 38, 0.6);
+    backdrop-filter: blur(8px);
+    padding: 8px 14px; border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.05);
+    z-index: 5;
+  }
+  .legend .dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    margin-right: 6px; vertical-align: middle;
+    box-shadow: 0 0 8px currentColor;
+  }
+  .legend .g1 { color: var(--green); }
+  .legend .g2 { color: var(--orange); }
+  .legend .g3 { color: var(--blue); }
+  .legend .g4 { color: var(--gold); }
+
+  .controls {
+    position: fixed; top: 16px; right: 20px;
+    display: flex; gap: 6px; z-index: 5;
+  }
+  .controls button {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: var(--muted);
+    width: 28px; height: 28px; border-radius: 6px;
+    cursor: pointer; font-size: 14px;
+    transition: all 0.15s;
+  }
+  .controls button:hover {
+    color: var(--text);
+    background: rgba(255,255,255,0.08);
+  }
+</style>
+</head>
+<body>
+<div class="hud">
+  <div class="title">融合评分引擎</div>
+  <div>Graph View · 12 nodes · 16 links</div>
+</div>
+
+<div class="controls">
+  <button id="btn-zoom-in" title="放大">+</button>
+  <button id="btn-zoom-out" title="缩小">−</button>
+  <button id="btn-reset" title="重置">⟲</button>
+</div>
+
+<div class="legend">
+  <span><span class="dot g1"></span>视觉维度</span>
+  <span><span class="dot g2"></span>规则约束</span>
+  <span><span class="dot g3"></span>评分引擎</span>
+  <span><span class="dot g4"></span>输出策略</span>
+</div>
+
+<canvas id="stage"></canvas>
+
+<script>
+const canvas = document.getElementById('stage');
+const ctx = canvas.getContext('2d');
+let W, H, DPR = window.devicePixelRatio || 1;
+
+function resize() {
+  W = canvas.clientWidth = window.innerWidth;
+  H = canvas.clientHeight = window.innerHeight;
+  canvas.width = W * DPR; canvas.height = H * DPR;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+window.addEventListener('resize', resize); resize();
+
+const nodes = [
+  { id: 'v1', label: '主体', sub: '单品高占比', group: 'green', r: 26 },
+  { id: 'v2', label: '背景', sub: '清凉水感',   group: 'green', r: 26 },
+  { id: 'v3', label: '版式', sub: '大字ICON',   group: 'green', r: 26 },
+  { id: 'v4', label: '文案', sub: '适干适气',   group: 'green', r: 26 },
+
+  { id: 'r1', label: '平台层', sub: '合规红线',     group: 'orange', r: 24 },
+  { id: 'r2', label: '频道层', sub: '场域偏好',     group: 'orange', r: 24 },
+  { id: 'r3', label: '品类层', sub: '运动T恤规则',  group: 'orange', r: 24 },
+  { id: 'r4', label: 'SPU层',  sub: '实验校验',     group: 'orange', r: 24 },
+
+  { id: 'engine', label: '融合评分', sub: '引擎', group: 'blue',  r: 38 },
+  { id: 'out',    label: '策略A',   sub: '科技功能型 · 94分', group: 'gold', r: 32 },
+];
+
+const links = [
+  ['v1','r1'], ['v1','r2'], ['v1','engine'],
+  ['v2','r2'], ['v2','r3'], ['v2','engine'],
+  ['v3','r1'], ['v3','r3'], ['v3','engine'],
+  ['v4','r2'], ['v4','r3'], ['v4','engine'],
+  ['r1','engine'], ['r2','engine'], ['r3','engine'], ['r4','engine'],
+  ['engine','out'],
+];
+
+const colorMap = {
+  green:  { fill:'#3fa885', ring:'#4ec9a0', glow:'rgba(78,201,160,0.35)' },
+  orange: { fill:'#c8874a', ring:'#e0a458', glow:'rgba(224,164,88,0.35)' },
+  blue:   { fill:'#4a7fd6', ring:'#6aa6ff', glow:'rgba(106,166,255,0.45)' },
+  gold:   { fill:'#d4a94a', ring:'#ffd166', glow:'rgba(255,209,102,0.45)' },
+};
+
+// initial layout — force sim seed
+const cx = () => W / 2, cy = () => H / 2;
+function seed() {
+  const layout = {
+    v1: [-380, -180], v2: [-380,  -60], v3: [-380,   60], v4: [-380,  180],
+    r1: [-100, -180], r2: [-100,  -60], r3: [-100,   60], r4: [-100,  180],
+    engine: [180, 0], out: [440, -40],
+  };
+  nodes.forEach(n => {
+    const [x,y] = layout[n.id];
+    n.x = cx() + x; n.y = cy() + y;
+    n.vx = 0; n.vy = 0;
+  });
+}
+seed();
+
+// physics
+const REPEL = 3800, SPRING = 0.012, DAMP = 0.86, LEN = 150;
+function tick() {
+  for (let i=0;i<nodes.length;i++) {
+    for (let j=i+1;j<nodes.length;j++) {
+      const a = nodes[i], b = nodes[j];
+      const dx = b.x-a.x, dy = b.y-a.y;
+      const d2 = dx*dx+dy*dy+0.01;
+      const f = REPEL / d2;
+      const d = Math.sqrt(d2);
+      const fx = f*dx/d, fy = f*dy/d;
+      a.vx -= fx; a.vy -= fy; b.vx += fx; b.vy += fy;
+    }
+  }
+  links.forEach(([sa,sb]) => {
+    const a = nodes.find(n=>n.id===sa), b = nodes.find(n=>n.id===sb);
+    const dx = b.x-a.x, dy = b.y-a.y;
+    const d = Math.sqrt(dx*dx+dy*dy)||1;
+    const f = (d-LEN)*SPRING;
+    a.vx += f*dx/d; a.vy += f*dy/d;
+    b.vx -= f*dx/d; b.vy -= f*dy/d;
+  });
+  nodes.forEach(n => {
+    if (n === dragging) return;
+    n.vx *= DAMP; n.vy *= DAMP;
+    n.x += n.vx; n.y += n.vy;
+  });
+}
+
+// view transform
+let scale = 1, offX = 0, offY = 0;
+let mx = 0, my = 0, hover = null, dragging = null, panning = false, panStart = null;
+
+function toWorld(px, py) {
+  return { x: (px - offX) / scale, y: (py - offY) / scale };
+}
+
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  mx = e.clientX - rect.left; my = e.clientY - rect.top;
+  const w = toWorld(mx, my);
+  if (dragging) {
+    dragging.x = w.x; dragging.y = w.y;
+    dragging.vx = 0; dragging.vy = 0;
+    return;
+  }
+  if (panning) {
+    offX = panStart.ox + (mx - panStart.mx);
+    offY = panStart.oy + (my - panStart.my);
+    return;
+  }
+  hover = null;
+  for (const n of nodes) {
+    const dx = w.x - n.x, dy = w.y - n.y;
+    if (dx*dx+dy*dy < (n.r+4)*(n.r+4)) { hover = n; break; }
+  }
+  canvas.style.cursor = hover ? 'pointer' : 'grab';
+});
+canvas.addEventListener('mousedown', e => {
+  if (hover) dragging = hover;
+  else { panning = true; panStart = { mx, my, ox: offX, oy: offY }; }
+});
+window.addEventListener('mouseup', () => { dragging = null; panning = false; });
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const factor = e.deltaY < 0 ? 1.1 : 0.9;
+  const w = toWorld(mx, my);
+  scale *= factor;
+  scale = Math.max(0.3, Math.min(3, scale));
+  offX = mx - w.x * scale;
+  offY = my - w.y * scale;
+}, { passive: false });
+
+document.getElementById('btn-zoom-in').onclick = () => { scale = Math.min(3, scale*1.2); };
+document.getElementById('btn-zoom-out').onclick = () => { scale = Math.max(0.3, scale/1.2); };
+document.getElementById('btn-reset').onclick = () => { scale = 1; offX = 0; offY = 0; seed(); };
+
+function highlightSet() {
+  if (!hover) return null;
+  const set = new Set([hover.id]);
+  links.forEach(([a,b]) => {
+    if (a === hover.id) set.add(b);
+    if (b === hover.id) set.add(a);
+  });
+  return set;
+}
+
+function draw() {
+  ctx.clearRect(0,0,W,H);
+  ctx.save();
+  ctx.translate(offX, offY); ctx.scale(scale, scale);
+
+  const hi = highlightSet();
+
+  // edges
+  links.forEach(([sa,sb]) => {
+    const a = nodes.find(n=>n.id===sa), b = nodes.find(n=>n.id===sb);
+    const active = hi && hi.has(sa) && hi.has(sb);
+    const dim = hi && !active;
+    ctx.beginPath();
+    const mx1 = (a.x+b.x)/2, my1 = (a.y+b.y)/2;
+    const dx = b.x-a.x, dy = b.y-a.y;
+    const nx = -dy, ny = dx;
+    const len = Math.sqrt(nx*nx+ny*ny)||1;
+    const bend = 20;
+    const cx1 = mx1 + nx/len*bend, cy1 = my1 + ny/len*bend;
+    ctx.moveTo(a.x, a.y);
+    ctx.quadraticCurveTo(cx1, cy1, b.x, b.y);
+    ctx.lineWidth = active ? 1.6 : 1;
+    ctx.strokeStyle = active ? 'var(--edge-hi)' : (dim ? 'rgba(140,160,220,0.08)' : 'rgba(140,160,220,0.28)');
+    // canvas doesn't read CSS vars — inline:
+    ctx.strokeStyle = active ? 'rgba(200,220,255,0.9)' : (dim ? 'rgba(140,160,220,0.08)' : 'rgba(140,160,220,0.28)');
+    ctx.stroke();
+  });
+
+  // nodes
+  nodes.forEach(n => {
+    const c = colorMap[n.group];
+    const active = hi && hi.has(n.id);
+    const dim = hi && !active;
+    const alpha = dim ? 0.25 : 1;
+
+    // glow
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    const grad = ctx.createRadialGradient(n.x, n.y, n.r*0.4, n.x, n.y, n.r*2.4);
+    grad.addColorStop(0, c.glow);
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.arc(n.x, n.y, n.r*2.4, 0, Math.PI*2); ctx.fill();
+
+    // body
+    ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI*2);
+    ctx.fillStyle = c.fill; ctx.fill();
+
+    // ring
+    ctx.lineWidth = active ? 2.2 : 1.2;
+    ctx.strokeStyle = c.ring;
+    ctx.stroke();
+
+    // label
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = `600 ${Math.max(10, n.r*0.42)}px -apple-system, "PingFang SC", sans-serif`;
+    ctx.fillText(n.label, n.x, n.y - n.r*0.18);
+    ctx.font = `400 ${Math.max(9, n.r*0.32)}px -apple-system, "PingFang SC", sans-serif`;
+    ctx.fillStyle = 'rgba(255,255,255,0.82)';
+    ctx.fillText(n.sub, n.x, n.y + n.r*0.28);
+    ctx.restore();
+  });
+
+  ctx.restore();
+}
+
+function loop() {
+  tick();
+  draw();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>

@@ -161,6 +161,35 @@ export const defaultFixtures: FixtureMap = {
       { key: 'competitors', value: '默认取该域头部 3 家', editable: true },
     ],
   },
+  // 段2c 候选计划(candidates,恰好 2 份 depth/speed);steps 只用真实存在的能力(过幻觉校验)。
+  // depth = tool + skill + reviewer(可测复核回流);speed = tool + llm(可测 llm 步)。
+  'execution-plan-candidates': {
+    candidates: [
+      {
+        id: 'depth',
+        title: '深度优先·方法论覆盖',
+        rationale: '按 JTBD 全维度对比 + 质量复核,覆盖广、结论可追溯。',
+        tradeoffs: '耗时约翻倍,步骤多。',
+        steps: [
+          { step_no: 1, step_name: '竞品公开资料检索', actor_type: 'tool', actor_id: 'o2-web-search', purpose: '采集竞品公开能力与评测', requires_approval: false },
+          { step_no: 2, step_name: '数字人竞品分析', actor_type: 'skill', actor_id: 'competitive-analysis', purpose: '逐维对比并归纳差异化', requires_approval: false },
+          { step_no: 3, step_name: '质量复核', actor_type: 'reviewer', actor_id: '质量复核', purpose: '检查来源标注与数据缺口', requires_approval: false },
+        ],
+        assumptions: [{ key: 'competitors', value: '默认取该域头部 3 家', editable: true }],
+      },
+      {
+        id: 'speed',
+        title: '速度优先·关键结论',
+        rationale: '最短路径:检索后直接归纳关键差异。',
+        tradeoffs: '省去复核,覆盖窄可能漏点。',
+        steps: [
+          { step_no: 1, step_name: '竞品公开资料检索', actor_type: 'tool', actor_id: 'o2-web-search', purpose: '采集竞品公开信息', requires_approval: false },
+          { step_no: 2, step_name: '快速差异化归纳', actor_type: 'llm', actor_id: '快速归纳', purpose: '基于检索直接归纳', requires_approval: false },
+        ],
+        assumptions: [{ key: 'competitors', value: '默认取该域头部 3 家', editable: true }],
+      },
+    ],
+  },
   'research-report': {
     task_id: '__RUNTIME__',
     research_goal: '了解直播场域数字人竞品的能力与体验差异,识别差异化机会',

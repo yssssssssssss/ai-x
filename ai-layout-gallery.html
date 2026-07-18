@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>层级内容 · 布局范式参考册</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --paper:#f3f4f7; --surface:#fff; --ink:#1a1c22; --ink-2:#3a3f47;
+    --muted:#6b7280; --faint:#9aa0aa; --line:#e5e7eb; --line-2:#eef0f3;
+    --acc:#5847d6; --acc-wash:#edeafb; --acc-line:#d8d2f5; --acc-ink:#3d2fb0;
+    --green:#0a7a57; --green-wash:#e7f4ee; --green-line:#bfe3d4;
+    --amber:#a86a0b; --amber-wash:#fbf2d8; --amber-line:#e7c766;
+    --gray:#8b919b; --gray-wash:#f0f1f4;
+    --m1:#7c3aed; --m2:#2563eb; --m3:#0d9488; --m4:#0891b2; --m5:#ca8a04;
+    --sans:"Inter","PingFang SC","Noto Sans SC",system-ui,sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{-webkit-text-size-adjust:100%}
+  body{font-family:var(--sans);color:var(--ink);background:var(--paper);min-height:100vh;padding:32px 22px 80px;-webkit-font-smoothing:antialiased;line-height:1.45}
+  .mono{font-family:var(--mono);font-feature-settings:"tnum" 1}
+  .wrap{max-width:1200px;margin:0 auto}
+  svg{display:block}
+
+  .top{margin-bottom:20px}
+  .eyebrow{font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:var(--acc)}
+  .top h1{font-size:24px;font-weight:700;letter-spacing:-.02em;margin-top:6px}
+  .top p{font-size:13.5px;color:var(--muted);margin-top:7px;max-width:660px}
+
+  /* ---- picker ---- */
+  .pgroup{margin-top:18px}
+  .pglabel{font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin:0 2px 9px}
+  .picker{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
+  .picker.small{grid-template-columns:repeat(6,1fr);max-width:calc(50% - 5px)}
+  .pt{background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:12px 12px 11px;cursor:pointer;text-align:left;transition:border-color .16s,box-shadow .16s,transform .1s;font-family:inherit}
+  .pt:hover{transform:translateY(-2px);box-shadow:0 12px 26px -18px rgba(26,28,34,.4)}
+  .pt:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+  .pt[aria-selected="true"]{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc),0 14px 30px -20px rgba(88,71,214,.6)}
+  .pt .no{font-family:var(--mono);font-size:9.5px;color:var(--faint);font-weight:600}
+  .pt .schem{width:100%;height:38px;margin:7px 0 8px;color:var(--faint)}
+  .pt[aria-selected="true"] .schem{color:var(--acc)}
+  .pt .nm{font-size:12.5px;font-weight:600;letter-spacing:-.01em}
+  .pt .en{font-family:var(--mono);font-size:8.5px;color:var(--faint);margin-top:2px;letter-spacing:.02em}
+
+  .stage-meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:20px 0 12px;padding:0 2px}
+  .stage-meta .fit{font-size:12px;color:var(--ink-2)}
+  .stage-meta .fit b{color:var(--acc);font-weight:600}
+  .stage-meta .tradeoff{font-size:11.5px;color:var(--muted);margin-left:auto}
+  .stage{background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:0 1px 0 rgba(26,28,34,.02),0 22px 48px -32px rgba(26,28,34,.34);overflow:hidden}
+  .demo{display:none;padding:18px}
+  .demo.on{display:block}
+
+  .st{font-family:var(--mono);font-size:9.5px;font-weight:600;padding:2px 6px;border-radius:4px;white-space:nowrap}
+  .st.run{color:var(--green);background:var(--green-wash)}
+  .st.off{color:var(--gray);background:var(--gray-wash)}
+  .st.pend{color:var(--amber);background:var(--amber-wash)}
+  .src{font-family:var(--mono);font-size:9px;color:var(--muted)}
+  .metric{font-family:var(--mono);font-size:10px;color:var(--green);font-weight:600}
+  .mdot{width:8px;height:8px;border-radius:3px;flex:none}
+  .count{font-family:var(--mono);font-size:10px;color:var(--faint);font-weight:600}
+
+  /* ===== 1 KANBAN ===== */
+  .kan{display:flex;gap:14px;overflow-x:auto;padding-bottom:6px}
+  .kan-col{flex:0 0 232px;background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:11px;display:flex;flex-direction:column;gap:11px}
+  .kan-h{display:flex;align-items:center;gap:8px}
+  .kan-h .nm{font-size:13px;font-weight:700;letter-spacing:-.01em}
+  .kan-h .count{margin-left:auto}
+  .kan-sub .sh{font-family:var(--mono);font-size:10px;font-weight:600;color:var(--muted);letter-spacing:.04em;margin-bottom:6px;display:flex;gap:6px}
+  .kan-card{background:var(--surface);border:1px solid var(--line);border-radius:9px;padding:9px 10px;margin-bottom:6px}
+  .kan-card .t{font-size:12px;font-weight:600;letter-spacing:-.01em}
+  .kan-card .r{display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap}
+
+  /* ===== 2 ACCORDION ===== */
+  .acc details{border:1px solid var(--line);border-radius:11px;margin-bottom:8px;overflow:hidden;background:var(--surface)}
+  .acc details[open]{border-color:var(--acc-line)}
+  .acc summary{list-style:none;cursor:pointer;padding:13px 15px;display:flex;align-items:center;gap:10px;font-size:14px;font-weight:600;letter-spacing:-.01em}
+  .acc summary::-webkit-details-marker{display:none}
+  .acc summary:focus-visible{outline:2px solid var(--acc);outline-offset:-3px}
+  .acc .caret{transition:transform .2s;color:var(--faint)}
+  .acc details[open]>summary .caret{transform:rotate(90deg);color:var(--acc)}
+  .acc .m-body{padding:0 15px 10px 40px}
+  .acc .sub2{border-radius:8px;margin:3px 0}
+  .acc .sub2 summary{padding:9px 10px;font-size:12.5px;font-weight:600;color:var(--ink-2);background:var(--paper);border-radius:8px}
+  .acc .leaves{padding:6px 4px 6px 22px;display:flex;flex-direction:column;gap:5px}
+  .acc-leaf{display:flex;align-items:center;gap:9px;font-size:12.5px;padding:5px 2px}
+  .acc-leaf .t{font-weight:500}
+  .acc-leaf .sp{margin-left:auto;display:flex;align-items:center;gap:8px}
+
+  /* ===== 3 BENTO ===== */
+  .bento{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;grid-auto-rows:minmax(70px,auto)}
+  .be{border:1px solid var(--line);border-radius:13px;padding:13px;background:var(--surface);position:relative;overflow:hidden}
+  .be::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--h)}
+  .be .bh{display:flex;align-items:center;gap:8px;margin-bottom:9px}
+  .be .bh .nm{font-size:13.5px;font-weight:700;letter-spacing:-.01em}
+  .be .bh .count{margin-left:auto}
+  .be .subline{font-family:var(--mono);font-size:10px;color:var(--muted);margin-bottom:8px}
+  .be .chips{display:flex;flex-wrap:wrap;gap:5px}
+  .be .chip{font-size:11px;background:var(--paper);border:1px solid var(--line);border-radius:7px;padding:4px 8px;display:inline-flex;align-items:center;gap:6px}
+  .be .chip .d{width:5px;height:5px;border-radius:99px}
+  .be.wide{grid-column:span 4} .be.mid{grid-column:span 3} .be.tall{grid-column:span 2}
+
+  /* ===== 4 MILLER (optimised) ===== */
+  .mil-crumb{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);margin-bottom:12px;flex-wrap:wrap}
+  .mil-crumb b{color:var(--acc-ink);font-weight:600}
+  .mil-crumb .sepc{color:var(--faint)}
+  .mil-crumb .kbd{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--faint)}
+  .mil{display:grid;grid-template-columns:210px 214px 1fr;border:1px solid var(--line);border-radius:12px;overflow:hidden;min-height:360px}
+  .mil-col{border-right:1px solid var(--line);display:flex;flex-direction:column}
+  .mil-col:last-child{border-right:0}
+  .mil-col .colcap{font-family:var(--mono);font-size:9px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);padding:11px 13px 8px;display:flex;align-items:center;gap:7px}
+  .mil-col.active .colcap{color:var(--acc)}
+  .mil-col.active .colcap::after{content:"";width:6px;height:6px;border-radius:99px;background:var(--acc)}
+  .mil-list{overflow-y:auto;flex:1}
+  .mil-item{display:flex;align-items:center;gap:9px;padding:10px 13px;cursor:pointer;font-size:13px;border-left:2px solid transparent;transition:background .12s}
+  .mil-item:hover{background:var(--paper)}
+  .mil-item[aria-selected="true"]{background:var(--acc-wash);border-left-color:var(--acc);color:var(--acc-ink);font-weight:600}
+  .mil-item .count{margin-left:auto}
+  .mil-item .chev{color:var(--faint)}
+  .mil-item[aria-selected="true"] .chev{color:var(--acc)}
+  .dots{display:inline-flex;gap:3px}
+  .dots i{width:5px;height:5px;border-radius:99px}
+  .dots i.run{background:var(--green)} .dots i.off{background:var(--gray)} .dots i.pend{background:var(--amber)}
+  .mil-filter{display:flex;gap:6px;padding:10px 13px 8px;border-bottom:1px solid var(--line-2);flex-wrap:wrap}
+  .mil-fchip{font-family:var(--mono);font-size:10px;color:var(--muted);border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:3px 9px;cursor:pointer}
+  .mil-fchip[aria-selected="true"]{color:var(--acc);border-color:var(--acc-line);background:var(--acc-wash)}
+  .mil-leaf{display:flex;align-items:center;gap:9px;padding:9px 13px;cursor:pointer;font-size:12.5px;border-left:2px solid transparent}
+  .mil-leaf:hover{background:var(--paper)}
+  .mil-leaf[aria-selected="true"]{background:var(--acc-wash);border-left-color:var(--acc);color:var(--acc-ink);font-weight:600}
+  .mil-leaf .st{margin-left:auto}
+  .mil-detail{border-top:1px solid var(--line);padding:15px 16px;background:linear-gradient(180deg,#fbfbfd,#fff)}
+  .mil-detail .dt{font-size:15.5px;font-weight:700;letter-spacing:-.01em}
+  .mil-detail .drow{display:flex;align-items:center;gap:8px;margin:10px 0 4px;flex-wrap:wrap}
+  .mil-detail .kv{font-size:12px;color:var(--muted);margin-top:8px;display:flex;flex-direction:column;gap:8px}
+  .mil-detail .kv div{display:flex;gap:10px;align-items:baseline}
+  .mil-detail .kv .k{font-family:var(--mono);font-size:11px;color:var(--faint);width:52px;flex:none}
+  .mil-acts{display:flex;gap:8px;margin-top:14px}
+  .mil-btn{font-family:inherit;font-size:12px;font-weight:600;border-radius:8px;padding:7px 13px;cursor:pointer;border:1px solid var(--line);background:var(--surface);color:var(--ink-2)}
+  .mil-btn.prim{background:var(--acc);color:#fff;border-color:var(--acc)}
+
+  /* ===== 5 OUTLINE ===== */
+  .out{font-size:13px}
+  .out-m{display:flex;align-items:center;gap:9px;padding:10px 6px;border-bottom:1px solid var(--line);font-weight:700;font-size:14px;letter-spacing:-.01em}
+  .out-m .count{margin-left:auto}
+  .out-s{display:flex;align-items:center;gap:8px;padding:7px 6px 7px 26px;color:var(--ink-2);font-weight:600;font-size:12.5px}
+  .out-s::before{content:"";width:14px;height:1px;background:var(--line);flex:none;margin-left:-16px}
+  .out-l{display:flex;align-items:center;gap:9px;padding:5px 6px 5px 46px;color:var(--muted)}
+  .out-l .t{color:var(--ink);font-weight:500}
+  .out-l .sp{margin-left:auto;display:flex;align-items:center;gap:8px}
+
+  /* ===== 6 TAB LAYERS ===== */
+  .tl-tabs{display:flex;gap:8px;border-bottom:1px solid var(--line);margin-bottom:16px;overflow-x:auto}
+  .tl-tab{border:0;background:none;font-family:inherit;font-size:13.5px;font-weight:600;color:var(--muted);padding:10px 4px;cursor:pointer;position:relative;white-space:nowrap;display:flex;align-items:center;gap:8px}
+  .tl-tab[aria-selected="true"]{color:var(--acc)}
+  .tl-tab[aria-selected="true"]::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2.5px;border-radius:3px 3px 0 0;background:var(--acc)}
+  .tl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+  .tl-card{border:1px solid var(--line);border-radius:12px;padding:13px;background:var(--surface)}
+  .tl-card .ch{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+  .tl-card .ch .nm{font-size:13px;font-weight:700}
+  .tl-card .ch .count{margin-left:auto}
+  .tl-card .lf{display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--line-2);font-size:12.5px}
+  .tl-card .lf:first-of-type{border-top:0}
+  .tl-card .lf .t{font-weight:500}
+  .tl-card .lf .sp{margin-left:auto}
+
+  /* ===== 7 TREE (horizontal, collapsible) ===== */
+  .tw-scroll{overflow-x:auto;padding:8px 4px 14px}
+  .tw{display:flex;align-items:center;min-width:max-content}
+  .tw ul{list-style:none;display:flex;flex-direction:column;justify-content:center}
+  .tw li{display:flex;align-items:center;position:relative}
+  .tw-node{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin:5px 0;cursor:pointer;transition:border-color .14s,box-shadow .14s;white-space:nowrap;position:relative;z-index:1}
+  .tw-node:hover{border-color:var(--acc-line);box-shadow:0 6px 16px -12px rgba(88,71,214,.6)}
+  .tw-node .nm{font-size:12.5px;font-weight:600;letter-spacing:-.01em;display:flex;align-items:center;gap:8px}
+  .tw-node.root{background:var(--ink);color:#fff;border-color:var(--ink);border-radius:12px;padding:12px 15px}
+  .tw-node.root .nm{font-size:13.5px;font-weight:700}
+  .tw-node.mod{border-left:3px solid var(--h)}
+  .tw-node.leaf{padding:7px 11px}
+  .tw-node.leaf .nm{font-weight:500;color:var(--ink)}
+  .tw-node .lmeta{display:flex;align-items:center;gap:7px;margin-top:5px}
+  .tw-node .fold{font-family:var(--mono);font-size:9px;color:var(--faint);margin-left:6px}
+  /* connectors */
+  .tw li > .connect{width:26px;height:2px;background:var(--line);flex:none}
+  .tw ul.kids{position:relative;padding-left:26px}
+  .tw ul.kids::before{content:"";position:absolute;left:0;top:var(--t,0);bottom:var(--b,0);width:2px;background:var(--line)}
+  .tw ul.kids > li::before{content:"";position:absolute;left:-26px;width:26px;height:2px;background:var(--line);top:50%}
+  .tw li.collapsed > ul{display:none}
+  .tw li.collapsed > .tw-node .fold::after{content:"＋"}
+  .tw li.has-kids:not(.collapsed) > .tw-node .fold::after{content:"－"}
+
+  /* ===== 8 TREEMAP (flex-proportional) ===== */
+  .tm{display:flex;gap:5px;height:440px}
+  .tm-mod{display:flex;flex-direction:column;gap:4px;border-radius:11px;padding:9px;overflow:hidden;background:var(--mw);border:1px solid var(--ml)}
+  .tm-mh{display:flex;align-items:center;gap:7px;flex:none}
+  .tm-mh .nm{font-size:12.5px;font-weight:700;letter-spacing:-.01em}
+  .tm-mh .count{margin-left:auto}
+  .tm-subs{flex:1;display:flex;flex-direction:column;gap:4px;min-height:0}
+  .tm-sub{flex:var(--g) 1 0;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:6px 7px;min-height:0;overflow:hidden}
+  .tm-sub .sn{font-size:10.5px;font-weight:600;color:var(--ink-2);margin-bottom:4px;flex:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tm-leaves{flex:1;display:flex;gap:4px;min-height:0}
+  .tm-leaf{flex:1;border-radius:6px;padding:5px 6px;font-size:10px;color:#fff;display:flex;align-items:flex-end;overflow:hidden;line-height:1.25;min-width:0;cursor:default;transition:filter .14s}
+  .tm-leaf:hover{filter:brightness(1.08)}
+  .tm-leaf span{overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+
+  /* ===== 9 SUNBURST ===== */
+  .sb{display:flex;gap:26px;align-items:center;flex-wrap:wrap;justify-content:center}
+  .sb-svg{flex:none}
+  .sb-arc{cursor:pointer;transition:opacity .16s;stroke:#fff;stroke-width:1.4}
+  .sb.focus .sb-arc{opacity:.28}
+  .sb.focus .sb-arc.hot{opacity:1}
+  .sb-center .big{font-family:var(--mono);font-size:26px;font-weight:600;fill:var(--ink)}
+  .sb-center .lbl{font-size:10px;fill:var(--muted)}
+  .sb-legend{display:flex;flex-direction:column;gap:9px;font-size:12.5px}
+  .sb-legend .li{display:flex;align-items:center;gap:9px}
+  .sb-legend .sw{width:12px;height:12px;border-radius:4px;flex:none}
+  .sb-legend .li .n{font-weight:600}
+  .sb-legend .li .c{font-family:var(--mono);font-size:10px;color:var(--faint);margin-left:auto}
+  .sb-tip{font-size:12px;color:var(--muted);min-height:18px;margin-top:4px}
+  .sb-tip b{color:var(--ink);font-weight:600}
+
+  @media (max-width:820px){
+    .picker,.picker.small{grid-template-columns:repeat(3,1fr);max-width:none}
+    .mil{grid-template-columns:1fr}
+    .mil-col{border-right:0;border-bottom:1px solid var(--line)}
+    .mil-list{max-height:180px}
+    .bento{grid-template-columns:1fr}
+    .be.wide,.be.mid,.be.tall{grid-column:auto}
+    .tm{flex-direction:column;height:auto}
+    .tm-mod{height:150px}
+  }
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <div class="eyebrow">Layout Lab · 层级内容展示范式</div>
+    <h1>同一份「模块 → 子模块 → 内容」，九种展示形式</h1>
+    <p>列表卡片型便于操作与检索，图形可视化型便于把握全局与量感。选一种查看用真实策略数据渲染的实样。</p>
+  </div>
+
+  <div class="pgroup">
+    <div class="pglabel">列表 · 卡片型</div>
+    <div class="picker" id="picker-a" role="tablist" aria-label="列表卡片型范式"></div>
+  </div>
+  <div class="pgroup">
+    <div class="pglabel">图形 · 可视化型</div>
+    <div class="picker small" id="picker-b" role="tablist" aria-label="图形可视化型范式"></div>
+  </div>
+
+  <div class="stage-meta">
+    <span class="fit">适合：<b id="fit"></b></span>
+    <span class="tradeoff" id="tradeoff"></span>
+  </div>
+
+  <div class="stage">
+    <div class="demo on" data-pat="kan" id="d-kan"></div>
+    <div class="demo" data-pat="acc" id="d-acc"></div>
+    <div class="demo" data-pat="bento" id="d-bento"></div>
+    <div class="demo" data-pat="mil" id="d-mil"></div>
+    <div class="demo" data-pat="out" id="d-out"></div>
+    <div class="demo" data-pat="tl" id="d-tl"></div>
+    <div class="demo" data-pat="tree" id="d-tree"></div>
+    <div class="demo" data-pat="tm" id="d-tm"></div>
+    <div class="demo" data-pat="sb" id="d-sb"></div>
+  </div>
+</div>
+
+<script>
+/* ---------- data ---------- */
+const modules=[
+  { name:"选品策略", hue:"--m1", subs:[
+    { name:"新品发现", leaves:[{t:"高潜新品圈选",st:"run",src:"专家复用",m:"预计毛利 +1.5%"},{t:"首发节奏排期",st:"off",src:"平台通用"}]},
+    { name:"爆款与主推", leaves:[{t:"竞品爆款对标发现",st:"pend",src:"个人积累",m:"访客 UV +1.1%"},{t:"主推款梯队规划",st:"run",src:"专家复用"}]},
+    { name:"季节与趋势", leaves:[{t:"季节品智能备货",st:"off",src:"个人积累",m:"单品降本 ¥3.1K"},{t:"趋势词挖掘",st:"run",src:"平台通用"}]},
+    { name:"清仓与长尾", leaves:[{t:"长尾货盘齐",st:"off",src:"平台通用",m:"节约流量成本 ¥3.1K"}]},
+  ]},
+  { name:"商品策略", hue:"--m2", subs:[
+    { name:"主图优化", leaves:[{t:"主图三七构图",st:"run",src:"专家复用",m:"CTR +8%"},{t:"场景化背景",st:"run",src:"平台通用",m:"转化 +16%"}]},
+    { name:"详情页", leaves:[{t:"信任特写强化",st:"run",src:"专家复用",m:"加购 +11%"}]},
+    { name:"标题关键词", leaves:[{t:"长尾词覆盖",st:"off",src:"平台通用"}]},
+    { name:"价格带", leaves:[{t:"价格锚点设计",st:"pend",src:"个人积累",m:"客单 +4%"}]},
+  ]},
+  { name:"商家策略", hue:"--m3", subs:[
+    { name:"店铺装修", leaves:[{t:"首页动线优化",st:"run",src:"专家复用"}]},
+    { name:"会员运营", leaves:[{t:"复购唤醒",st:"run",src:"平台通用",m:"复购 +6%"}]},
+    { name:"私域触达", leaves:[{t:"咚咚触达节奏",st:"off",src:"个人积累"}]},
+  ]},
+  { name:"数据策略", hue:"--m4", subs:[
+    { name:"流量诊断", leaves:[{t:"流量结构诊断",st:"run",src:"平台通用"}]},
+    { name:"转化漏斗", leaves:[{t:"漏斗断点定位",st:"run",src:"专家复用",m:"转化 +2.2pp"}]},
+    { name:"竞品对标", leaves:[{t:"竞品价格监控",st:"pend",src:"个人积累"}]},
+    { name:"大促复盘", leaves:[{t:"618 复盘归因",st:"run",src:"专家复用"}]},
+  ]},
+  { name:"库存策略", hue:"--m5", subs:[
+    { name:"备货预测", leaves:[{t:"销量预测备货",st:"run",src:"平台通用",m:"周转 +7 天"}]},
+    { name:"调拨", leaves:[{t:"区域调拨优化",st:"off",src:"个人积累"}]},
+    { name:"滞销预警", leaves:[{t:"滞销 SKU 预警",st:"run",src:"专家复用",m:"减损 ¥12K"}]},
+  ]},
+];
+modules.forEach(m=>{m.count=m.subs.reduce((s,x)=>s+x.leaves.length,0);m.on=m.subs.reduce((s,x)=>s+x.leaves.filter(l=>l.st==='run').length,0)});
+const MHEX={"--m1":"#7c3aed","--m2":"#2563eb","--m3":"#0d9488","--m4":"#0891b2","--m5":"#ca8a04"};
+
+/* ---------- helpers ---------- */
+const STLABEL={run:"运行中",off:"未启用",pend:"待确认"};
+const st=s=>`<span class="st ${s}">${STLABEL[s]}</span>`;
+const src=s=>`<span class="src">${s}</span>`;
+const metric=m=>m?`<span class="metric">${m}</span>`:"";
+const dot=h=>`<span class="mdot" style="background:var(${h})"></span>`;
+const cnt=n=>`<span class="count">${n}</span>`;
+const dots=leaves=>`<span class="dots">${leaves.map(l=>`<i class="${l.st}"></i>`).join("")}</span>`;
+const CARET='<svg class="caret" width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const CHEV='<svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+/* ---------- 1 KANBAN ---------- */
+document.getElementById("d-kan").innerHTML=`<div class="kan">${modules.map(m=>`<div class="kan-col">
+  <div class="kan-h">${dot(m.hue)}<span class="nm">${m.name}</span>${cnt(m.count)}</div>
+  ${m.subs.map(s=>`<div class="kan-sub"><div class="sh">${s.name}${cnt(s.leaves.length)}</div>
+    ${s.leaves.map(l=>`<div class="kan-card"><div class="t">${l.t}</div><div class="r">${st(l.st)}${src(l.src)}${metric(l.m)}</div></div>`).join("")}</div>`).join("")}
+</div>`).join("")}</div>`;
+
+/* ---------- 2 ACCORDION ---------- */
+document.getElementById("d-acc").innerHTML=`<div class="acc">${modules.map((m,i)=>`<details ${i===0?"open":""}>
+  <summary>${CARET}${dot(m.hue)}${m.name}${cnt(m.count)}</summary>
+  <div class="m-body">${m.subs.map((s,j)=>`<details class="sub2" ${i===0&&j===0?"open":""}><summary>${s.name}${cnt(s.leaves.length)}</summary>
+    <div class="leaves">${s.leaves.map(l=>`<div class="acc-leaf"><span class="t">${l.t}</span><span class="sp">${st(l.st)}${src(l.src)}${metric(l.m)}</span></div>`).join("")}</div>
+  </details>`).join("")}</div></details>`).join("")}</div>`;
+
+/* ---------- 3 BENTO ---------- */
+const SPAN=["wide","mid","tall","mid","wide"];
+document.getElementById("d-bento").innerHTML=`<div class="bento">${modules.map((m,i)=>`<div class="be ${SPAN[i]}" style="--h:var(${m.hue})">
+  <div class="bh">${dot(m.hue)}<span class="nm">${m.name}</span>${cnt(m.count)}</div>
+  ${m.subs.map(s=>`<div class="subline">${s.name} · ${s.leaves.length}</div><div class="chips">${s.leaves.map(l=>`<span class="chip"><span class="d" style="background:${l.st==='run'?'var(--green)':l.st==='pend'?'var(--amber)':'var(--gray)'}"></span>${l.t}</span>`).join("")}</div>`).join("")}
+</div>`).join("")}</div>`;
+
+/* ---------- 4 MILLER (optimised) ---------- */
+const mil=document.getElementById("d-mil");
+let milM=0,milS=0,milL=0,milCol=0,milFilter="all";
+function visLeaves(){const lv=modules[milM].subs[milS].leaves;return milFilter==="all"?lv.map((l,i)=>({l,i})):lv.map((l,i)=>({l,i})).filter(o=>o.l.st===milFilter);}
+function renderMil(){
+  const m=modules[milM],s=m.subs[milS],l=s.leaves[milL];
+  const vis=visLeaves();
+  mil.innerHTML=`
+  <div class="mil-crumb">${dot(m.hue)}<b>${m.name}</b><span class="sepc">›</span><b>${s.name}</b><span class="sepc">›</span>${l.t}
+    <span class="kbd">← → 切换列 · ↑ ↓ 选择</span></div>
+  <div class="mil" tabindex="0" id="milbox">
+    <div class="mil-col ${milCol===0?'active':''}"><div class="colcap">大模块</div><div class="mil-list">${
+      modules.map((x,i)=>`<div class="mil-item" data-m="${i}" aria-selected="${i===milM}">${dot(x.hue)}${x.name}<span class="count">${x.on}/${x.count}</span>${CHEV}</div>`).join("")}</div></div>
+    <div class="mil-col ${milCol===1?'active':''}"><div class="colcap">子模块</div><div class="mil-list">${
+      m.subs.map((x,i)=>`<div class="mil-item" data-s="${i}" aria-selected="${i===milS}">${x.name}${dots(x.leaves)}${CHEV}</div>`).join("")}</div></div>
+    <div class="mil-col ${milCol===2?'active':''}"><div class="colcap">内容 · ${vis.length}</div>
+      <div class="mil-filter">${["all","run","pend","off"].map(f=>`<span class="mil-fchip" data-f="${f}" aria-selected="${f===milFilter}">${f==="all"?"全部":STLABEL[f]}</span>`).join("")}</div>
+      <div class="mil-list">${vis.map(o=>`<div class="mil-leaf" data-l="${o.i}" aria-selected="${o.i===milL}"><span>${o.l.t}</span>${st(o.l.st)}</div>`).join("")||'<div style="padding:16px 13px;color:var(--faint);font-size:12px">该筛选下暂无内容</div>'}</div>
+      <div class="mil-detail">
+        <div class="dt">${l.t}</div>
+        <div class="drow">${st(l.st)}${src(l.src)}${metric(l.m)}</div>
+        <div class="kv">
+          <div><span class="k">路径</span><span>${m.name} › ${s.name}</span></div>
+          <div><span class="k">来源</span><span>${l.src}</span></div>
+          <div><span class="k">效果</span><span>${l.m||"—"}</span></div>
+        </div>
+        <div class="mil-acts"><button class="mil-btn prim">试跑</button><button class="mil-btn">编辑</button><button class="mil-btn">${l.st==='run'?'停用':'启用'}</button></div>
+      </div>
+    </div>
+  </div>`;
+}
+renderMil();
+mil.addEventListener("click",e=>{
+  const mi=e.target.closest("[data-m]");if(mi){milM=+mi.dataset.m;milS=0;milL=0;milCol=0;milFilter="all";renderMil();return;}
+  const si=e.target.closest("[data-s]");if(si){milS=+si.dataset.s;milL=0;milCol=1;milFilter="all";renderMil();return;}
+  const li=e.target.closest("[data-l]");if(li){milL=+li.dataset.l;milCol=2;renderMil();return;}
+  const fi=e.target.closest("[data-f]");if(fi){milFilter=fi.dataset.f;const v=visLeaves();if(!v.some(o=>o.i===milL)&&v.length)milL=v[0].i;renderMil();return;}
+});
+mil.addEventListener("keydown",e=>{
+  if(!["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.key))return;e.preventDefault();
+  if(e.key==="ArrowLeft"){milCol=Math.max(0,milCol-1);renderMil();document.getElementById("milbox").focus();return;}
+  if(e.key==="ArrowRight"){milCol=Math.min(2,milCol+1);renderMil();document.getElementById("milbox").focus();return;}
+  const d=e.key==="ArrowDown"?1:-1;
+  if(milCol===0){milM=Math.min(modules.length-1,Math.max(0,milM+d));milS=0;milL=0;}
+  else if(milCol===1){milS=Math.min(modules[milM].subs.length-1,Math.max(0,milS+d));milL=0;}
+  else{const v=visLeaves();const pos=v.findIndex(o=>o.i===milL);const np=Math.min(v.length-1,Math.max(0,pos+d));if(v[np])milL=v[np].i;}
+  renderMil();document.getElementById("milbox").focus();
+});
+
+/* ---------- 5 OUTLINE ---------- */
+document.getElementById("d-out").innerHTML=`<div class="out">${modules.map(m=>`<div class="out-m">${dot(m.hue)}${m.name}${cnt(m.count)}</div>
+  ${m.subs.map(s=>`<div class="out-s">${s.name}${cnt(s.leaves.length)}</div>
+    ${s.leaves.map(l=>`<div class="out-l"><span class="t">${l.t}</span><span class="sp">${st(l.st)}${src(l.src)}${metric(l.m)}</span></div>`).join("")}`).join("")}`).join("")}</div>`;
+
+/* ---------- 6 TAB LAYERS ---------- */
+const tl=document.getElementById("d-tl");let tlA=0;
+function renderTL(){const m=modules[tlA];tl.innerHTML=`<div class="tl-tabs" role="tablist">${modules.map((x,i)=>`<button class="tl-tab" role="tab" aria-selected="${i===tlA}" data-t="${i}">${dot(x.hue)}${x.name} ${cnt(x.count)}</button>`).join("")}</div>
+  <div class="tl-grid">${m.subs.map(s=>`<div class="tl-card"><div class="ch"><span class="nm">${s.name}</span>${cnt(s.leaves.length)}</div>
+    ${s.leaves.map(l=>`<div class="lf"><span class="t">${l.t}</span><span class="sp">${st(l.st)}</span></div>`).join("")}</div>`).join("")}</div>`;}
+renderTL();
+tl.addEventListener("click",e=>{const b=e.target.closest("[data-t]");if(b){tlA=+b.dataset.t;renderTL();}});
+
+/* ---------- 7 TREE (horizontal collapsible) ---------- */
+const tree=document.getElementById("d-tree");
+function renderTree(){
+  tree.innerHTML=`<div class="tw-scroll"><div class="tw">
+    <div class="tw-node root"><span class="nm">经营策略${cnt(modules.reduce((s,m)=>s+m.count,0))}</span></div>
+    <div class="connect"></div>
+    <ul class="kids">${modules.map((m,i)=>`<li class="has-kids" data-lvl="m" data-i="${i}">
+      <div class="tw-node mod" style="--h:var(${m.hue})"><span class="nm">${dot(m.hue)}${m.name}${cnt(m.count)}<span class="fold"></span></span></div>
+      <ul class="kids">${m.subs.map((s,j)=>`<li class="has-kids collapsed" data-lvl="s" data-i="${i}-${j}">
+        <div class="tw-node"><span class="nm">${s.name}${cnt(s.leaves.length)}<span class="fold"></span></span></div>
+        <ul class="kids">${s.leaves.map(l=>`<li><div class="connect" style="display:none"></div><div class="tw-node leaf"><span class="nm">${l.t}</span><span class="lmeta">${st(l.st)}${metric(l.m)}</span></div></li>`).join("")}</ul>
+      </li>`).join("")}</ul>
+    </li>`).join("")}</ul>
+  </div></div>`;
+}
+renderTree();
+tree.addEventListener("click",e=>{
+  const node=e.target.closest(".tw-node");if(!node)return;
+  const li=node.closest("li");if(li&&li.classList.contains("has-kids"))li.classList.toggle("collapsed");
+});
+
+/* ---------- 8 TREEMAP (flex-proportional, area = count) ---------- */
+function shade(hex,leaf){ // lighten for leaf tiles by state handled separately; base module color
+  return hex;
+}
+document.getElementById("d-tm").innerHTML=`<div class="tm">${modules.map(m=>{
+  const h=MHEX[m.hue];
+  return `<div class="tm-mod" style="flex:${m.count} 1 0;--mw:${h}12;--ml:${h}33;background:${h}14;border-color:${h}30">
+    <div class="tm-mh">${dot(m.hue)}<span class="nm">${m.name}</span>${cnt(m.count)}</div>
+    <div class="tm-subs">${m.subs.map(s=>`<div class="tm-sub" style="--g:${s.leaves.length}">
+      <div class="sn">${s.name}</div>
+      <div class="tm-leaves">${s.leaves.map(l=>{const op=l.st==='run'?'ee':l.st==='pend'?'bb':'88';return `<div class="tm-leaf" style="background:${h}${op}" title="${l.t} · ${STLABEL[l.st]}${l.m?' · '+l.m:''}"><span>${l.t}</span></div>`;}).join("")}</div>
+    </div>`).join("")}</div>
+  </div>`;}).join("")}</div>
+  <div class="sb-tip" style="margin-top:12px">面积 = 内容条数 · 色深 = 状态（深｜运行中，中｜待确认，浅｜未启用）· 悬停看详情</div>`;
+
+/* ---------- 9 SUNBURST ---------- */
+const sb=document.getElementById("d-sb");
+(function(){
+  const CX=210,CY=210,R0=46,R1=110,R2=160,R3=205;
+  const TOTAL=modules.reduce((s,m)=>s+m.count,0);
+  const TAU=Math.PI*2, START=-Math.PI/2;
+  function polar(r,a){return [CX+r*Math.cos(a),CY+r*Math.sin(a)];}
+  function seg(r0,r1,a0,a1){const lg=(a1-a0)>Math.PI?1:0;const[x0,y0]=polar(r1,a0),[x1,y1]=polar(r1,a1),[x2,y2]=polar(r0,a1),[x3,y3]=polar(r0,a0);
+    return `M${x0.toFixed(2)} ${y0.toFixed(2)} A${r1} ${r1} 0 ${lg} 1 ${x1.toFixed(2)} ${y1.toFixed(2)} L${x2.toFixed(2)} ${y2.toFixed(2)} A${r0} ${r0} 0 ${lg} 0 ${x3.toFixed(2)} ${y3.toFixed(2)} Z`;}
+  let arcs=[],a=START;
+  modules.forEach((m,mi)=>{
+    const hex=MHEX[m.hue],span=m.count/TOTAL*TAU,mEnd=a+span;
+    arcs.push({d:seg(R0,R1,a,mEnd),fill:hex,op:1,key:"m"+mi,label:m.name,mid:(a+mEnd)/2,r:(R0+R1)/2,count:m.count,name:m.name});
+    let b=a;
+    m.subs.forEach((s,si)=>{
+      const sspan=s.leaves.length/TOTAL*TAU,sEnd=b+sspan;
+      arcs.push({d:seg(R1+2,R2,b,sEnd),fill:hex,op:.62,key:"m"+mi,name:s.name,count:s.leaves.length});
+      let c=b;
+      s.leaves.forEach(l=>{const lspan=1/TOTAL*TAU,lEnd=c+lspan;
+        arcs.push({d:seg(R2+2,R3,c,lEnd),fill:hex,op:l.st==='off'?.28:.4,key:"m"+mi,name:l.t,count:null});c=lEnd;});
+      b=sEnd;
+    });
+    a=mEnd;
+  });
+  const paths=arcs.map((x,i)=>`<path class="sb-arc" data-i="${i}" data-key="${x.key}" d="${x.d}" fill="${x.fill}" fill-opacity="${x.op}"/>`).join("");
+  const labels=arcs.filter(x=>x.label&&x.count>=3).map(x=>{const[lx,ly]=polar(x.r,x.mid);return `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" font-size="10.5" font-weight="600" fill="#fff" text-anchor="middle" dominant-baseline="middle">${x.label}</text>`;}).join("");
+  sb.innerHTML=`<div class="sb"><div><svg class="sb-svg" width="420" height="420" viewBox="0 0 420 420">
+      ${paths}${labels}
+      <g class="sb-center" text-anchor="middle"><text x="${CX}" y="${CY-4}" class="big">${TOTAL}</text><text x="${CX}" y="${CY+16}" class="lbl">条策略内容</text></g>
+    </svg><div class="sb-tip" id="sb-tip">内环＝大模块 · 中环＝子模块 · 外环＝内容 · 角度 = 条数占比</div></div>
+    <div class="sb-legend">${modules.map((m,i)=>`<div class="li" data-key="m${i}"><span class="sw" style="background:${MHEX[m.hue]}"></span><span class="n">${m.name}</span><span class="c">${m.count} 条 · 运行 ${m.on}</span></div>`).join("")}</div>
+  </div>`;
+  const svg=sb.querySelector(".sb"),tip=sb.querySelector("#sb-tip");
+  function focus(key,label){svg.classList.add("focus");sb.querySelectorAll(".sb-arc").forEach(p=>p.classList.toggle("hot",p.dataset.key===key));if(label)tip.innerHTML=label;}
+  function clear(){svg.classList.remove("focus");sb.querySelectorAll(".sb-arc.hot").forEach(p=>p.classList.remove("hot"));tip.innerHTML="内环＝大模块 · 中环＝子模块 · 外环＝内容 · 角度 = 条数占比";}
+  sb.querySelectorAll(".sb-arc").forEach(p=>{const x=arcs[+p.dataset.i];
+    p.addEventListener("mouseenter",()=>focus(x.key,`<b>${x.name}</b>${x.count?" · "+x.count+" 条":""}`));
+    p.addEventListener("mouseleave",clear);});
+  sb.querySelectorAll(".sb-legend .li").forEach(li=>{li.addEventListener("mouseenter",()=>focus(li.dataset.key));li.addEventListener("mouseleave",clear);});
+})();
+
+/* ---------- picker ---------- */
+const SCHEM={
+  kan:'<svg viewBox="0 0 96 38" fill="none"><rect x="4" y="4" width="18" height="30" rx="2" stroke="currentColor" stroke-width="1.6"/><rect x="27" y="4" width="18" height="30" rx="2" stroke="currentColor" stroke-width="1.6"/><rect x="50" y="4" width="18" height="30" rx="2" stroke="currentColor" stroke-width="1.6"/><rect x="73" y="4" width="18" height="30" rx="2" stroke="currentColor" stroke-width="1.6"/></svg>',
+  acc:'<svg viewBox="0 0 96 38" fill="none"><rect x="8" y="4" width="80" height="8" rx="2" stroke="currentColor" stroke-width="1.6"/><rect x="8" y="15" width="80" height="8" rx="2" fill="currentColor" opacity=".14"/><rect x="8" y="15" width="80" height="8" rx="2" stroke="currentColor" stroke-width="1.6"/><rect x="16" y="26" width="64" height="7" rx="2" stroke="currentColor" stroke-width="1.4"/></svg>',
+  bento:'<svg viewBox="0 0 96 38" fill="none"><rect x="4" y="4" width="40" height="18" rx="2" stroke="currentColor" stroke-width="1.6"/><rect x="48" y="4" width="44" height="11" rx="2" stroke="currentColor" stroke-width="1.6"/><rect x="4" y="26" width="24" height="8" rx="2" stroke="currentColor" stroke-width="1.6"/><rect x="48" y="19" width="44" height="15" rx="2" stroke="currentColor" stroke-width="1.6"/><rect x="32" y="26" width="12" height="8" rx="2" stroke="currentColor" stroke-width="1.6"/></svg>',
+  mil:'<svg viewBox="0 0 96 38" fill="none"><rect x="4" y="4" width="26" height="30" rx="2" stroke="currentColor" stroke-width="1.6"/><rect x="34" y="4" width="26" height="30" rx="2" stroke="currentColor" stroke-width="1.6"/><rect x="64" y="4" width="28" height="30" rx="2" fill="currentColor" opacity=".14"/><rect x="64" y="4" width="28" height="30" rx="2" stroke="currentColor" stroke-width="1.6"/></svg>',
+  out:'<svg viewBox="0 0 96 38" fill="none"><line x1="8" y1="7" x2="70" y2="7" stroke="currentColor" stroke-width="1.8"/><line x1="20" y1="15" x2="66" y2="15" stroke="currentColor" stroke-width="1.5"/><line x1="30" y1="22" x2="60" y2="22" stroke="currentColor" stroke-width="1.3"/><line x1="30" y1="28" x2="56" y2="28" stroke="currentColor" stroke-width="1.3"/><line x1="20" y1="34" x2="66" y2="34" stroke="currentColor" stroke-width="1.5"/></svg>',
+  tl:'<svg viewBox="0 0 96 38" fill="none"><line x1="6" y1="10" x2="90" y2="10" stroke="currentColor" stroke-width="1.4"/><rect x="10" y="4" width="20" height="6" rx="1.5" fill="currentColor" opacity=".3"/><rect x="6" y="16" width="26" height="18" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="35" y="16" width="26" height="18" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="64" y="16" width="26" height="18" rx="2" stroke="currentColor" stroke-width="1.5"/></svg>',
+  tree:'<svg viewBox="0 0 96 38" fill="none"><rect x="4" y="15" width="16" height="9" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M20 19h10M30 11v16M30 11h10M30 19h10M30 27h10" stroke="currentColor" stroke-width="1.3"/><rect x="40" y="7" width="16" height="8" rx="2" stroke="currentColor" stroke-width="1.4"/><rect x="40" y="15" width="16" height="8" rx="2" stroke="currentColor" stroke-width="1.4"/><rect x="40" y="23" width="16" height="8" rx="2" stroke="currentColor" stroke-width="1.4"/></svg>',
+  tm:'<svg viewBox="0 0 96 38" fill="none"><rect x="4" y="4" width="34" height="30" rx="2" stroke="currentColor" stroke-width="1.6"/><rect x="41" y="4" width="24" height="16" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="41" y="22" width="24" height="12" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="68" y="4" width="24" height="12" rx="2" stroke="currentColor" stroke-width="1.5"/><rect x="68" y="18" width="24" height="16" rx="2" stroke="currentColor" stroke-width="1.5"/></svg>',
+  sb:'<svg viewBox="0 0 96 38" fill="none"><circle cx="48" cy="19" r="6" stroke="currentColor" stroke-width="1.5"/><path d="M48 3a16 16 0 0 1 14 8" stroke="currentColor" stroke-width="1.5"/><path d="M62 11a16 16 0 0 1-6 22" stroke="currentColor" stroke-width="1.5"/><path d="M34 11a16 16 0 0 0-2 16" stroke="currentColor" stroke-width="1.5"/><circle cx="48" cy="19" r="15.5" stroke="currentColor" stroke-width="1" opacity=".5"/></svg>',
+};
+const PATS=[
+  {id:"kan",g:"a",no:"01",nm:"泳道看板",en:"KANBAN",fit:"模块并列、横向对比全景",to:"取舍：模块多时需横向滚动"},
+  {id:"acc",g:"a",no:"02",nm:"嵌套手风琴",en:"ACCORDION",fit:"内容极多、需要收纳",to:"取舍：全貌需逐层展开"},
+  {id:"bento",g:"a",no:"03",nm:"Bento 宫格",en:"BENTO",fit:"概览首屏、视觉分区",to:"取舍：叶子多时卡片会拥挤"},
+  {id:"mil",g:"a",no:"04",nm:"列式下钻",en:"MILLER",fit:"逐级深挖 + 详情阅读（键盘可导航）",to:"取舍：一次只见一条路径"},
+  {id:"out",g:"a",no:"05",nm:"大纲目录",en:"OUTLINE",fit:"高密度扫描、快速检索",to:"取舍：视觉层次较弱"},
+  {id:"tl",g:"a",no:"06",nm:"分层 Tab 网格",en:"TAB LAYERS",fit:"模块多、聚焦单模块深看",to:"取舍：跨模块对比需切换"},
+  {id:"tree",g:"b",no:"07",nm:"横向树形",en:"TREE",fit:"表达从属层级、可折叠展开",to:"取舍：层级深时横向很宽"},
+  {id:"tm",g:"b",no:"08",nm:"矩形树图",en:"TREEMAP",fit:"用面积表达各模块的内容量占比",to:"取舍：叶子过多时小格难读"},
+  {id:"sb",g:"b",no:"09",nm:"旭日图",en:"SUNBURST",fit:"径向呈现层级 + 占比全景",to:"取舍：细分文字承载弱，重概览"},
+];
+function ptHTML(p){return `<button class="pt" role="tab" aria-selected="false" data-go="${p.id}"><div class="no">${p.no}</div><div class="schem">${SCHEM[p.id]}</div><div class="nm">${p.nm}</div><div class="en">${p.en}</div></button>`;}
+document.getElementById("picker-a").innerHTML=PATS.filter(p=>p.g==="a").map(ptHTML).join("");
+document.getElementById("picker-b").innerHTML=PATS.filter(p=>p.g==="b").map(ptHTML).join("");
+document.querySelector('[data-go="kan"]').setAttribute("aria-selected","true");
+
+const fitEl=document.getElementById("fit"),toEl=document.getElementById("tradeoff");
+function setFit(id){const p=PATS.find(x=>x.id===id);fitEl.textContent=p.fit;toEl.textContent=p.to;}
+setFit("kan");
+document.querySelectorAll(".picker").forEach(pk=>pk.addEventListener("click",e=>{
+  const b=e.target.closest("[data-go]");if(!b)return;const id=b.dataset.go;
+  document.querySelectorAll(".pt").forEach(x=>x.setAttribute("aria-selected",x.dataset.go===id));
+  document.querySelectorAll(".demo").forEach(d=>d.classList.toggle("on",d.dataset.pat===id));
+  setFit(id);
+}));
+</script>
+</body>
+</html>

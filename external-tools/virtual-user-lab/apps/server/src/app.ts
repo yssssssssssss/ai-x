@@ -10,7 +10,7 @@ export const buildApp = async () => {
   app.get('/api/personas', async () => ({ personas: listPersonas() }));
   app.post('/api/simulate', async (request, reply) => {
     try {
-      return simulateVirtualUsers(request.body || {});
+      return await simulateVirtualUsers(request.body || {});
     } catch (error) {
       request.log.error({ error }, 'persona simulation failed');
       return reply.code(500).send({ status: 'failed', isSimulated: true, error: error instanceof Error ? error.message : String(error) });

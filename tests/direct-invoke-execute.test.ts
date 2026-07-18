@@ -35,8 +35,11 @@ test('$ 直呼无 schema KB skill → executePhase 跑完、有 report、skill �
   });
   cleanupDirs.push(plan.workspaceUri);
 
-  const steps = (plan.plan as { steps: Array<{ actor_type: string; actor_id: string }> }).steps;
+  const steps = plan.candidates[0].steps;
   assert.equal(steps[0].actor_id, 'competitive-analysis', '直呼应命中该 KB skill');
+
+  // 选中直呼那份候选(直呼支路 id='depth'),finalize 出 plan.json
+  await orch.selectPlan({ taskId: plan.taskId, candidateId: 'depth' });
 
   // 执行:模拟确认后执行。修复前会崩在 loadSkillBody(读目录 EISDIR)/loadSkillSchemas(undefined path)。
   const { reportArtifactId } = await orch.executePhase({ taskId: plan.taskId, conversationId: convId });
