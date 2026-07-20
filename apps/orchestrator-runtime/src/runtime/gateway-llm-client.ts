@@ -111,7 +111,7 @@ function buildOpenAIBody(model: string, messages: object[], jsonMode: boolean): 
 function parseOpenAI(raw: any): { content: string; model: string; traceId: string; usage: TokenUsage } {
   const msg = raw?.choices?.[0]?.message;
   const content = msg?.content || msg?.reasoning_content || '';
-  if (!content) throw new Error(`OpenAI 响应缺 content/reasoning_content: ${JSON.stringify(raw).slice(0, 200)}`);
+  if (!content) throw new Error(`OpenAI 响应缺 content/reasoning_content: ${String(JSON.stringify(raw) ?? 'undefined').slice(0, 200)}`);
   return {
     content,
     model: raw?.model ?? '',
@@ -134,17 +134,15 @@ function buildGeminiBody(model: string, messages: Array<{ role: string; content:
     if (i === 0 && sys) text = `${sys}\n\n${text}`;
     return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text }] };
   });
-  return {
-    model,
-    contents,
-    stream: false,
-    ...(jsonMode ? { generationConfig: { responseMimeType: 'application/json' } } : {}),
-  };
+  // Gemini 网关默认 maxOutputTokens 偏小,长 JSON/长文本会被截断(finishReason=MAX_TOKENS);显式放大。
+  const generationConfig: Record<string, unknown> = { maxOutputTokens: 16384 };
+  if (jsonMode) generationConfig.responseMimeType = 'application/json';
+  return { model, contents, stream: false, generationConfig };
 }
 function parseGemini(raw: any): { content: string; model: string; traceId: string; usage: TokenUsage } {
   const parts = raw?.candidates?.[0]?.content?.parts ?? [];
   const content = parts.map((p: any) => p?.text ?? '').join('').trim();
-  if (!content) throw new Error(`Gemini 响应缺 candidates[0].content.parts[*].text: ${JSON.stringify(raw).slice(0, 200)}`);
+  if (!content) throw new Error(`Gemini 响应缺 candidates[0].content.parts[*].text: ${String(JSON.stringify(raw) ?? 'undefined').slice(0, 200)}`);
   const meta = raw?.usageMetadata ?? {};
   return {
     content,
@@ -257,7 +255,7 @@ export class GatewayLLMClient implements LLMClient {
     const norm = await this.call(messages, true);
     let parsed: unknown;
     try { parsed = JSON.parse(norm.content); }
-    catch { throw new Error(`网关返回非法 JSON(schemaName=${opts.schemaName}, model=${norm.modelName}): ${norm.content.slice(0, 200)}`); }
+    catch { throw new Error(`网关返回非法 JSON(schemaName=${opts.schemaName}, model=${norm.modelName}): ${String(norm?.content ?? '').slice(0, 200)}`); }
     const data = opts.schemaName === 'decision-states' && parsed && typeof parsed === 'object' && 'items' in parsed
       ? (parsed as { items: unknown }).items
       : parsed;
