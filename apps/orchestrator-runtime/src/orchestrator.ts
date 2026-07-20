@@ -448,7 +448,15 @@ export class Orchestrator {
       task_type: taskType,
       steps: cand.steps.map(cleanStep),
       activated_nodes: cand.activated_nodes,
-      assumptions: (cand.assumptions ?? []).map(cleanAssumption),
+      // LLM 偶尔把 assumptions 返成对象(如 {a1:"...", a2:"..."})或字符串,而非数组;先规整成数组再 map
+      assumptions: (Array.isArray(cand.assumptions)
+        ? cand.assumptions
+        : cand.assumptions && typeof cand.assumptions === 'object'
+          ? Object.entries(cand.assumptions).map(([k, v]) => ({ key: k, value: String(v), editable: true }))
+          : typeof cand.assumptions === 'string'
+            ? [cand.assumptions]
+            : []
+      ).map(cleanAssumption),
     };
     validator.validateOrThrow('execution-plan', plan);
 
