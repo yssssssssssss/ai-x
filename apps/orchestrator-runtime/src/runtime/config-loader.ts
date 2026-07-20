@@ -48,6 +48,7 @@ export interface SkillRegistryEntry {
   status: 'draft' | 'active' | 'deprecated';
   task_types?: string[];
   intent_tags?: string[];
+  domain?: string[];      // registry YAML 里的领域标签,M1.1 编排层按此预筛能力池
   input_schema?: string; // KB skill 为 markdown 过程式, 无 JSON schema
   output_schema?: string;
   entry?: string; // SKILL.md 文件夹路径(KB 派生)
@@ -60,7 +61,7 @@ export interface ToolRegistryEntry {
   id: string;
   name: string;
   path: string;
-  adapter_type: 'o2' | 'internal_api' | 'rest_json' | 'mcp' | 'script' | 'fake';
+  adapter_type: 'o2' | 'webcli' | 'internal_api' | 'rest_json' | 'mcp' | 'script' | 'fake';
   auth_required: boolean;
   risk_level: 'low' | 'medium' | 'high';
   status: 'draft' | 'active' | 'deprecated';
@@ -69,7 +70,7 @@ export interface ToolRegistryEntry {
 export interface ToolManifest {
   id: string;
   name: string;
-  adapter_type: 'o2' | 'internal_api' | 'rest_json' | 'mcp' | 'script' | 'fake';
+  adapter_type: 'o2' | 'webcli' | 'internal_api' | 'rest_json' | 'mcp' | 'script' | 'fake';
   entrypoint?: string;
   base_url_env?: string;
   auth_required: boolean;

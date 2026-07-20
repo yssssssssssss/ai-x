@@ -1,4 +1,5 @@
 import { type ToolManifest } from './config-loader.ts';
+import { spawn } from 'node:child_process';
 
 // tool 调用统一接口。业务/skill 只经此调用 tool,不直接 shell out / import SDK。
 // V0 实现 = FakeO2Adapter;二期加 O2Adapter(真实 o2)/ InternalApiAdapter / McpAdapter / ScriptAdapter。
@@ -144,13 +145,21 @@ export class RestJsonAdapter implements ToolAdapter {
     const path = opts.manifest.entrypoint || '/api/analyze';
     const timeoutMs = (opts.manifest.timeout_seconds ?? 60) * 1000;
 
+    // body_inject:从 env 读值注入 body,支持 API key 等鉴权字段(如 { api_key: 'TAVILY_API_KEY' })
+    const inject = (opts.manifest as ToolManifest & { body_inject?: Record<string, string> }).body_inject ?? {};
+    const body = { ...(opts.input as Record<string, unknown>) };
+    for (const [field, env] of Object.entries(inject)) {
+      const v = process.env[env];
+      if (v) body[field] = v;
+    }
+
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), timeoutMs);
     try {
       const res = await fetch(`${baseUrl}${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(opts.input),
+        body: JSON.stringify(body),
         signal: ac.signal,
       });
       if (!res.ok) {
@@ -164,6 +173,137 @@ export class RestJsonAdapter implements ToolAdapter {
     } finally {
       clearTimeout(timer);
     }
+  }
+}
+
+// O2LaunchAdapter:通过 o2 CLI 生态调用真实检索能力。
+// 契约:tool manifest 声明 o2_cli(如 metasearch)+ o2_subcommand(如 search)+ arg_template(参数占位);
+// 输出走 stdout JSON,按 output_path(如 "data.products")取出主字段,套上 manifest 声明的 output_field(如 "products")。
+// 认证:各 o2 CLI 有自己的鉴权(env token / SSO 登录态),由 CLI 自行读;adapter 只是 spawn。
+export class O2LaunchAdapter implements ToolAdapter {
+  readonly adapterType = 'o2' as const;
+
+  async invoke(opts: { toolId: string; input: object; manifest: ToolManifest }): Promise<ToolInvokeResult> {
+    const start = performance.now();
+    const m = opts.manifest as ToolManifest & {
+      o2_cli?: string;
+      o2_subcommand?: string;
+      o2_arg_map?: Record<string, string>;    // { queryInputField: 'query' } → arg 从 input.<field> 取值
+      o2_extra_args?: string[];               // 附加参数如 ["--output","json"]
+      o2_output_path?: string;                // 从 stdout JSON 取哪一路径(如 "data.products")
+      o2_output_field?: string;               // 打包 output 的 field 名(如 "products")
+    };
+    const cli = m.o2_cli;
+    const sub = m.o2_subcommand;
+    if (!cli) throw new ToolInvocationError(opts.toolId, 'manifest 缺 o2_cli');
+
+    // 组装命令:o2 launch <cli> [subcommand] <args> [extra_args]
+    const args = ['launch', cli];
+    if (sub) args.push(sub);
+    const input = opts.input as Record<string, unknown>;
+    // arg_map 未声明时,默认把 input.query 作为主要位置参数(与 metasearch/o2-crawler 语义一致)
+    const argMap = m.o2_arg_map ?? { query: 'query' };
+    for (const [inputField] of Object.entries(argMap)) {
+      const v = input[inputField];
+      if (v !== undefined && v !== null && v !== '') args.push(String(v));
+    }
+    for (const a of m.o2_extra_args ?? ['--output', 'json']) args.push(a);
+
+    const timeoutMs = (m.timeout_seconds ?? 60) * 1000;
+    return new Promise((resolve, reject) => {
+      const child = spawn('o2', args, { env: process.env });
+      let stdout = '', stderr = '';
+      const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new ToolInvocationError(opts.toolId, `o2 launch 超时 ${timeoutMs}ms`)); }, timeoutMs);
+      child.stdout.on('data', (b) => { stdout += b.toString('utf8'); });
+      child.stderr.on('data', (b) => { stderr += b.toString('utf8'); });
+      child.on('error', (err) => { clearTimeout(timer); reject(new ToolInvocationError(opts.toolId, `spawn o2 失败: ${err.message}`)); });
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        if (code !== 0) return reject(new ToolInvocationError(opts.toolId, `o2 exit=${code}: ${stderr.slice(0, 300) || stdout.slice(0, 300)}`));
+        let parsed: unknown;
+        try { parsed = JSON.parse(stdout); }
+        catch (e) { return reject(new ToolInvocationError(opts.toolId, `o2 stdout 非 JSON: ${stdout.slice(0, 200)}`)); }
+        const p = parsed as Record<string, unknown>;
+        if (p.ok === false) return reject(new ToolInvocationError(opts.toolId, `o2 返回 ok=false: ${JSON.stringify(p).slice(0, 200)}`));
+
+        // 按 o2_output_path 取主字段(如 "data.products");未声明则原样透传
+        const path = m.o2_output_path;
+        let picked: unknown = parsed;
+        if (path) {
+          picked = path.split('.').reduce((acc: any, k) => (acc && typeof acc === 'object' ? acc[k] : undefined), parsed);
+        }
+        const field = m.o2_output_field ?? 'results';
+        const output = { [field]: picked ?? [] };
+        resolve({ output, latencyMs: Math.round(performance.now() - start) });
+      });
+    });
+  }
+}
+
+// WebcliAdapter:通过 webcli(Make any website your CLI)生态调用真实检索能力。
+// 与 O2LaunchAdapter 的区别:二进制是 `webcli`,调用形态 `webcli <adapter> <command> <位置参数> --flags`,
+// 输出多为裸 JSON 数组(如 joyspace search 返回 [{title,url,...}])。复用浏览器 SSO 登录态,无需单独申请数据权限。
+// 契约(manifest 字段):
+//   webcli_adapter    如 "joyspace"     → 第一段
+//   webcli_command    如 "search"       → 第二段
+//   webcli_arg_map    { query: 'query' }→ 按声明顺序把 input.<field> 追加为位置参数
+//   webcli_flag_map   { limit: '--limit' } → input.<field> 有值时追加 "--limit <value>"
+//   webcli_extra_args 默认 ['-f','json','--window','background']
+//   webcli_output_field 裸数组时打包字段名(如 "results"/"notes");未声明则原样透传
+// 部署注意:webcli 依赖浏览器桥 daemon + Chrome 扩展常驻;生产 Linux 需无头 Chrome + 扩展。
+export class WebcliAdapter implements ToolAdapter {
+  readonly adapterType = 'webcli' as const;
+
+  async invoke(opts: { toolId: string; input: object; manifest: ToolManifest }): Promise<ToolInvokeResult> {
+    const start = performance.now();
+    const m = opts.manifest as ToolManifest & {
+      webcli_adapter?: string;
+      webcli_command?: string;
+      webcli_arg_map?: Record<string, string>;
+      webcli_flag_map?: Record<string, string>;
+      webcli_extra_args?: string[];
+      webcli_output_field?: string;
+    };
+    const adapter = m.webcli_adapter;
+    const command = m.webcli_command;
+    if (!adapter || !command) throw new ToolInvocationError(opts.toolId, 'manifest 缺 webcli_adapter / webcli_command');
+
+    const input = opts.input as Record<string, unknown>;
+    const args = [adapter, command];
+    // 位置参数:按 arg_map 声明顺序
+    for (const [inputField] of Object.entries(m.webcli_arg_map ?? { query: 'query' })) {
+      const v = input[inputField];
+      if (v !== undefined && v !== null && v !== '') args.push(String(v));
+    }
+    // flag 参数:仅在 input 有值时追加
+    for (const [inputField, flag] of Object.entries(m.webcli_flag_map ?? {})) {
+      const v = input[inputField];
+      if (v !== undefined && v !== null && v !== '') args.push(flag, String(v));
+    }
+    for (const a of m.webcli_extra_args ?? ['-f', 'json', '--window', 'background']) args.push(a);
+
+    const timeoutMs = (m.timeout_seconds ?? 90) * 1000; // 浏览器自动化偏慢,默认 90s
+    const outputField = m.webcli_output_field;
+    return new Promise((resolve, reject) => {
+      const child = spawn('webcli', args, { env: process.env });
+      let stdout = '', stderr = '';
+      const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new ToolInvocationError(opts.toolId, `webcli 超时 ${timeoutMs}ms`)); }, timeoutMs);
+      child.stdout.on('data', (b) => { stdout += b.toString('utf8'); });
+      child.stderr.on('data', (b) => { stderr += b.toString('utf8'); });
+      child.on('error', (err) => { clearTimeout(timer); reject(new ToolInvocationError(opts.toolId, `spawn webcli 失败: ${err.message}`)); });
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        let parsed: unknown;
+        try { parsed = JSON.parse(stdout); }
+        catch { return reject(new ToolInvocationError(opts.toolId, `webcli 非 JSON 输出(exit=${code}): ${(stderr || stdout).slice(0, 300)}`)); }
+        // webcli 失败契约:{ ok:false, error:{...} }
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && (parsed as Record<string, unknown>).ok === false) {
+          return reject(new ToolInvocationError(opts.toolId, `webcli 返回 ok=false: ${JSON.stringify(parsed).slice(0, 200)}`));
+        }
+        const output = outputField ? { [outputField]: parsed } : (Array.isArray(parsed) ? { results: parsed } : (parsed as object));
+        resolve({ output, latencyMs: Math.round(performance.now() - start) });
+      });
+    });
   }
 }
 

@@ -223,8 +223,18 @@ export class Orchestrator {
       // depth = 覆盖广、有交叉验证/复核,步骤数偏多;speed = 最短路径拿关键结论,可略过 reviewer/合成型 LLM 步。
       // 两份候选应有明显 skill/tool 差异,不能只是同一计划步骤数缩水。
       emit({ phase: 'candidates', status: 'start', label: '生成候选方案' });
-      const activeSkills = skillLoader.listActiveSkills();
-      const activeTools = skillLoader.listActiveTools();
+      // 按 task_type 数据驱动预筛能力池,收敛候选发散(不写场景特判):
+      // 保留 domain 命中 task_type 或 cross_cutting 的 skill,再保留这些 skill 的 required_tools 覆盖的 tool。
+      // 预筛为空(未知 task_type)则回退全集,不破坏原路径。
+      const allSkills = skillLoader.listActiveSkills();
+      const allTools = skillLoader.listActiveTools();
+      const relevantSkills = allSkills.filter(
+        (s) => (s.domain ?? []).includes(task.task_type) || (s.domain ?? []).includes('cross_cutting'),
+      );
+      const activeSkills = relevantSkills.length > 0 ? relevantSkills : allSkills;
+      const neededTools = new Set(activeSkills.flatMap((s) => s.required_tools ?? []));
+      const relevantTools = allTools.filter((t) => neededTools.has(t.id));
+      const activeTools = relevantTools.length > 0 ? relevantTools : allTools;
       const skillIds = activeSkills.map((s) => s.id);
       const toolIds = activeTools.map((t) => t.id);
       const toolCtx = activeTools.map((t) => {
@@ -376,7 +386,8 @@ export class Orchestrator {
       step_no: i + 1,
       step_name: s.step_name || s.actor_id || `步骤 ${i + 1}`,
       actor_type: s.actor_type,
-      actor_id: s.actor_id,
+      // llm/reviewer 步 LLM 常不给 actor_id,兜底用 actor_type 名(如 "llm" / "reviewer");skill/tool 必须有真实 id
+      actor_id: s.actor_id || (s.actor_type === 'llm' ? 'llm' : s.actor_type === 'reviewer' ? 'reviewer' : `unknown-${i + 1}`),
       ...(typeof s.purpose === 'string' ? { purpose: s.purpose } : {}),
       ...(isPlainObject(s.input) ? { input: s.input } : {}),   // 非纯对象(字符串/数组/null)丢弃,执行时回落 {query}
       ...(typeof s.requires_approval === 'boolean' ? { requires_approval: s.requires_approval } : {}),
@@ -557,14 +568,23 @@ export class Orchestrator {
         const up = (ctx.uploads ?? []).find((u) => u.role === (f.role ?? f.field));
         if (up) toolInput[f.field] = f.multiple ? [{ dataUrl: up.dataUrl }] : { dataUrl: up.dataUrl };
       }
-      // 清理 LLM 生成的空占位:顶层空对象与数组内空对象都剔除,避免图像工具把空占位当图解码而 500。
+      // 清理 LLM 生成的空占位:①空对象 ②数组内空对象 ③"字段全空"的假对象(键有值全为 ""/null/undefined)。
+      // 场景:LLM 常生成 `{id:"",fileName:"",path:"",url:"",dataUrl:""}` 这种"看起来是图对象、其实字段全空"的假图,
+      // 服务端会当真图解码而 throw。清理后无图字段缺省,工具按无图优雅降级(返回 insufficient_inputs 等)。
+      const isBlank = (v: unknown): boolean =>
+        v === null || v === undefined || (typeof v === 'string' && v === '');
+      const isEmptyLikeObject = (v: unknown): boolean => {
+        if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+        const entries = Object.entries(v as Record<string, unknown>);
+        return entries.length === 0 || entries.every(([, val]) => isBlank(val));
+      };
       for (const k of Object.keys(toolInput)) {
         const v = toolInput[k];
         if (Array.isArray(v)) {
-          const filtered = v.filter((e) => !(e && typeof e === 'object' && !Array.isArray(e) && Object.keys(e).length === 0));
+          const filtered = v.filter((e) => !isEmptyLikeObject(e));
           if (filtered.length === 0) delete toolInput[k];
           else toolInput[k] = filtered;
-        } else if (v && typeof v === 'object' && Object.keys(v).length === 0) {
+        } else if (isEmptyLikeObject(v)) {
           delete toolInput[k];
         }
       }
@@ -584,13 +604,34 @@ export class Orchestrator {
       if (!skillEntry) throw new Error(`skill 非 active 或不存在: ${step.actor_id}`);
       const { body, hash: skillManifestHash } = skillLoader.loadSkillBody(step.actor_id);
       const { output } = skillLoader.loadSkillSchemas(step.actor_id);
+      // user_materials 预处理:text 类 dataUrl 解码成明文(LLM 直读,省推理时间);image/pdf 保留 dataUrl。
+      // 避免把 base64 直接喂 LLM——它得先解码再理解,浪费 token 且触发 gateway 超时。
+      const decodedMaterials = (ctx.uploads ?? []).map((u) => {
+        if (!u.dataUrl) return { role: u.role };
+        const mimeMatch = u.dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+        if (!mimeMatch) return { role: u.role, dataUrl: u.dataUrl };
+        const [, mime, b64] = mimeMatch;
+        // text/plain / text/markdown / application/json 等文本类 → 解成明文
+        if (mime.startsWith('text/') || mime === 'application/json') {
+          try { return { role: u.role, mime, text: Buffer.from(b64, 'base64').toString('utf8') }; }
+          catch { return { role: u.role, dataUrl: u.dataUrl }; }
+        }
+        // 图片/PDF/其它二进制:保留 dataUrl 让 skill/VLM 自行处理
+        return { role: u.role, mime, dataUrl: u.dataUrl };
+      });
       const skillGen = await llm.generateStructured<object>({
         prompt:
           `你是「${skillEntry.name}」能力。严格按以下 SKILL.md 的工作流与质量门禁执行,` +
-          `基于提供的检索数据(tool_outputs)产出结构化结果;无数据支撑的判断标 llm_inference,不得冒充事实。\n\n${body}`,
+          `基于提供的检索数据(tool_outputs)与用户上传资料(user_materials)产出结构化结果;` +
+          `user_materials 是用户在确认闸门附上的原始素材(按 role 归类,text 字段是明文,dataUrl 是图片/PDF 的 base64),` +
+          `凡引用其内容需明确来源;无数据支撑的判断标 llm_inference,不得冒充事实。\n\n${body}`,
         schema: output ?? {},
         schemaName: `skill:${step.actor_id}`,
-        context: { research_goal: ctx.researchGoal, tool_outputs: ctx.toolOutputs },
+        context: {
+          research_goal: ctx.researchGoal,
+          tool_outputs: ctx.toolOutputs,
+          user_materials: decodedMaterials,
+        },
       });
       if (skillEntry.output_schema) {
         validator.validateFileOrThrow(join(getConfigRoot(), skillEntry.output_schema), skillGen.data);
@@ -672,6 +713,12 @@ export class Orchestrator {
       context: {
         task_id: ctx.taskId, research_goal: ctx.researchGoal, tool_outputs: ctx.toolOutputs,
         step_failures: ctx.stepFailures, review_notes: ctx.reviewNotes,
+        // synthesis 只需知道"用户提供了什么类型的资料",完整 dataUrl 已被 skill/tool 消费,无需重传省 context
+        user_materials_summary: (ctx.uploads ?? []).map((u) => ({
+          role: u.role,
+          has_data: !!u.dataUrl,
+          data_size: u.dataUrl?.length ?? 0,
+        })),
       },
     });
     const report = { ...reportGen.data, task_id: ctx.taskId };
