@@ -72,7 +72,7 @@ test('executePhase:确认后执行,每步 succeeded,产出 report artifact', asy
 
 test('失败回放:tool 失败 → 该步 failed + failures.jsonl,停步 paused(不整体重跑)', async () => {
   // 注入会失败的 FakeO2Adapter
-  const orch = buildOrchestrator({ toolAdapter: new FakeO2Adapter({ failOnToolIds: ['o2-web-search'] }) });
+  const orch = buildOrchestrator({ toolAdapter: new FakeO2Adapter({ failOnToolIds: ['tavily-web-search'] }) });
   const r = await orch.planPhase({
     originalInput: '直播数字人竞品研究(失败用例)',
     conversationId: convId, ownerUserId: userId,
@@ -96,6 +96,6 @@ test('失败回放:tool 失败 → 该步 failed + failures.jsonl,停步 paused(
   assert.ok(existsSync(failPath), 'failures.jsonl 应存在');
   const line = readFileSync(failPath, 'utf8').trim().split('\n')[0];
   const rec = JSON.parse(line);
-  assert.equal(rec.selected_tool, 'o2-web-search');
+  assert.equal(rec.selected_tool, 'tavily-web-search');
   assert.ok(rec.context_manifest_ref, '失败记录应含 context_manifest_ref 供回放');
 });

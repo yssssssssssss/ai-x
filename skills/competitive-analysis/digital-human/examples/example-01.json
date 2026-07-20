@@ -11,6 +11,6 @@
       { "competitor": "竞品B虚拟主播", "dimension": "内容质量", "assessment": "口播脚本模板化明显,个性化不足", "source": "llm_inference" }
     ],
     "differentiation_opportunities": ["实时多模态互动是普遍短板,可作为切入点"],
-    "sources": ["o2-web-search: 竞品A 官网产品页", "o2-web-search: 行业评测文章"]
+    "sources": ["tavily-web-search: 竞品A 官网产品页", "tavily-web-search: 行业评测文章"]
   }
 }

@@ -17,7 +17,6 @@ skills:
     input_schema: skills/competitive-analysis/digital-human/input.schema.json
     output_schema: skills/competitive-analysis/digital-human/output.schema.json
     required_tools:
-      - o2-web-search
       - jd-product-search
       - tavily-web-search
       - ai-spider-search
@@ -39,7 +38,6 @@ skills:
       - web-research
       - business-competitive
     required_tools:
-      - o2-web-search
       - jd-product-search
       - tavily-web-search
       - joyspace-search

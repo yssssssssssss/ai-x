@@ -123,7 +123,7 @@ export class MockLLMClient implements LLMClient {
 }
 
 // 竞品研究主链路默认 fixture:段1 ResearchTask、段2 决策状态与计划、段4 报告。
-// 内容均能通过对应 schema 校验,且命中 digital-human skill / o2-web-search tool。
+// 内容均能通过对应 schema 校验,且命中 digital-human skill / tavily-web-search tool。
 export const defaultFixtures: FixtureMap = {
   'research-task': {
     task_type: 'competitive_research',
@@ -153,7 +153,7 @@ export const defaultFixtures: FixtureMap = {
     task_id: '__RUNTIME__',
     task_type: 'competitive_research',
     steps: [
-      { step_no: 1, step_name: '竞品公开资料检索', actor_type: 'tool', actor_id: 'o2-web-search', purpose: '采集竞品公开能力与评测信息', requires_approval: false },
+      { step_no: 1, step_name: '竞品公开资料检索', actor_type: 'tool', actor_id: 'tavily-web-search', purpose: '采集竞品公开能力与评测信息', requires_approval: false },
       { step_no: 2, step_name: '数字人竞品分析', actor_type: 'skill', actor_id: 'digital-human-competitive-analysis', purpose: '逐维对比并归纳差异化机会', requires_approval: false },
     ],
     activated_nodes: ['D1_research_goal', 'D3_method_selection', 'D5_competitive', 'D6_data_sensitivity', 'D7_output_standard'],
@@ -171,7 +171,7 @@ export const defaultFixtures: FixtureMap = {
         rationale: '按 JTBD 全维度对比 + 质量复核,覆盖广、结论可追溯。',
         tradeoffs: '耗时约翻倍,步骤多。',
         steps: [
-          { step_no: 1, step_name: '竞品公开资料检索', actor_type: 'tool', actor_id: 'o2-web-search', purpose: '采集竞品公开能力与评测', requires_approval: false },
+          { step_no: 1, step_name: '竞品公开资料检索', actor_type: 'tool', actor_id: 'tavily-web-search', purpose: '采集竞品公开能力与评测', requires_approval: false },
           { step_no: 2, step_name: '数字人竞品分析', actor_type: 'skill', actor_id: 'competitive-analysis', purpose: '逐维对比并归纳差异化', requires_approval: false },
           { step_no: 3, step_name: '质量复核', actor_type: 'reviewer', actor_id: '质量复核', purpose: '检查来源标注与数据缺口', requires_approval: false },
         ],
@@ -183,7 +183,7 @@ export const defaultFixtures: FixtureMap = {
         rationale: '最短路径:检索后直接归纳关键差异。',
         tradeoffs: '省去复核,覆盖窄可能漏点。',
         steps: [
-          { step_no: 1, step_name: '竞品公开资料检索', actor_type: 'tool', actor_id: 'o2-web-search', purpose: '采集竞品公开信息', requires_approval: false },
+          { step_no: 1, step_name: '竞品公开资料检索', actor_type: 'tool', actor_id: 'tavily-web-search', purpose: '采集竞品公开信息', requires_approval: false },
           { step_no: 2, step_name: '快速差异化归纳', actor_type: 'llm', actor_id: '快速归纳', purpose: '基于检索直接归纳', requires_approval: false },
         ],
         assumptions: [{ key: 'competitors', value: '默认取该域头部 3 家', editable: true }],
@@ -205,7 +205,7 @@ export const defaultFixtures: FixtureMap = {
     ],
     deliverables: ['竞品对比矩阵', '差异化机会建议'],
     capability_orchestration: [
-      { capability_id: 'o2-web-search', capability_type: 'tool', purpose: '采集竞品公开信息' },
+      { capability_id: 'tavily-web-search', capability_type: 'tool', purpose: '采集竞品公开信息' },
       { capability_id: 'digital-human-competitive-analysis', capability_type: 'skill', purpose: '逐维对比并归纳差异化' },
     ],
     risks_and_open_issues: ['部分竞品能力为推断,需人工确认'],

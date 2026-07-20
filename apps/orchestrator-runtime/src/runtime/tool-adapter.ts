@@ -33,7 +33,7 @@ export class FakeO2Adapter implements ToolAdapter {
     if (this.opts.failOnToolIds?.includes(opts.toolId)) {
       throw new ToolInvocationError(opts.toolId, '模拟失败(FakeO2Adapter.failOnToolIds)');
     }
-    // 与 o2-web-search/output.schema.json 对齐的预置结果
+    // 预置检索结果(仅用于测试/失败回放,不对应真实 tool)
     const output = {
       results: [
         { title: '竞品A数字人产品页', url: 'https://example.com/a', snippet: '支持实时语音互动与形象定制' },

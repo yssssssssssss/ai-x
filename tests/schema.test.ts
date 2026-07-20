@@ -40,7 +40,7 @@ test('DecisionState 6 态枚举生效', () => {
 test('ExecutionPlan 至少一步且步骤字段完整', () => {
   const ok = {
     task_id: 't1', task_type: 'competitive_research',
-    steps: [{ step_no: 1, step_name: '竞品检索', actor_type: 'tool', actor_id: 'o2-web-search' }],
+    steps: [{ step_no: 1, step_name: '竞品检索', actor_type: 'tool', actor_id: 'tavily-web-search' }],
     activated_nodes: ['D1_research_goal'],
     assumptions: [],
   };
@@ -55,7 +55,7 @@ test('ResearchReport finding 必须带来源标注', () => {
     findings: [{ statement: '结论A', source: 'tool_result', source_ref: 'run/x' }],
     timeline: [{ phase: 'W28', activity: '竞品检索' }],
     deliverables: ['竞品对比报告'],
-    capability_orchestration: [{ capability_id: 'o2-web-search', capability_type: 'tool', purpose: '检索' }],
+    capability_orchestration: [{ capability_id: 'tavily-web-search', capability_type: 'tool', purpose: '检索' }],
   };
   assert.deepEqual(v.validate('research-report', ok), []);
   // 缺 source 的 finding 被拒

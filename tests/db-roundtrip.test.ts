@@ -58,7 +58,7 @@ test('决策状态 + 执行日志按 task_id 查', async () => {
   });
   await writeExecutionLog({
     taskId, stepNo: 1, stepName: 'search', actorType: 'tool',
-    actorId: 'o2-web-search', status: 'succeeded', modelName: 'mock-llm',
+    actorId: 'tavily-web-search', status: 'succeeded', modelName: 'mock-llm',
   });
   const states = await listDecisionStates(taskId);
   const log = await listExecutionLog(taskId);
@@ -81,7 +81,7 @@ test('产物 + 反馈', async () => {
 });
 
 test('execution_log UNIQUE(task_id, step_no) upsert 生效', async () => {
-  await writeExecutionLog({ taskId, stepNo: 1, stepName: 'search', actorType: 'tool', actorId: 'o2-web-search', status: 'failed' });
+  await writeExecutionLog({ taskId, stepNo: 1, stepName: 'search', actorType: 'tool', actorId: 'tavily-web-search', status: 'failed' });
   const log = await listExecutionLog(taskId);
   const step1 = log.filter((l) => l.step_no === 1);
   assert.equal(step1.length, 1, 'step_no=1 应只有一行(upsert 而非重复插入)');

@@ -9,7 +9,7 @@ intent_tags: [digital_human, live_commerce, competitive]
 input_schema: skills/competitive-analysis/digital-human/input.schema.json
 output_schema: skills/competitive-analysis/digital-human/output.schema.json
 required_tools:
-  - o2-web-search
+  - tavily-web-search
   - ai-spider-search
   - experience-model-lab
   - virtual-user-lab
