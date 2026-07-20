@@ -1,0 +1,27 @@
+id: joyspace-search
+name: JoySpace 内部知识检索
+adapter_type: webcli
+webcli_adapter: joyspace
+webcli_command: search
+webcli_arg_map:
+  query: query
+webcli_flag_map:
+  limit: --limit
+  scope: --scope
+  type: --type
+  time: --time
+webcli_extra_args:
+  - -f
+  - json
+  - --window
+  - background
+webcli_output_field: results
+auth_required: true
+risk_level: low
+approver_rule: none
+timeout_seconds: 90
+retry_policy:
+  max_attempts: 2
+  backoff_seconds: 3
+input_schema: tools/joyspace-search/input.schema.json
+output_schema: tools/joyspace-search/output.schema.json

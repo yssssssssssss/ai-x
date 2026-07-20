@@ -18,9 +18,12 @@ skills:
     output_schema: skills/competitive-analysis/digital-human/output.schema.json
     required_tools:
       - o2-web-search
+      - jd-product-search
+      - tavily-web-search
       - ai-spider-search
       - experience-model-lab
       - virtual-user-lab
+      - joyspace-search
     cost_level: medium
     risk_level: low
   - id: competitive-web-research
@@ -37,6 +40,9 @@ skills:
       - business-competitive
     required_tools:
       - o2-web-search
+      - jd-product-search
+      - tavily-web-search
+      - joyspace-search
     cost_level: low
     risk_level: low
   - id: competitive-app-analysis

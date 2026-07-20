@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "jd-product-search/input.schema.json",
+  "title": "JDProductSearchInput",
+  "description": "京东商品检索入参。query 是主检索词,直接传给 metasearch CLI。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["query"],
+  "properties": {
+    "query": {
+      "type": "string",
+      "minLength": 1,
+      "description": "检索关键词,如竞品名/品类/关键词"
+    }
+  }
+}

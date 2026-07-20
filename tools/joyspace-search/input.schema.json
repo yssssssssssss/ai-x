@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "joyspace-search/input.schema.json",
+  "title": "JoyspaceSearchInput",
+  "description": "JoySpace 内部知识检索入参。query 必填,其余可选筛选。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["query"],
+  "properties": {
+    "query": { "type": "string", "description": "搜索关键词" },
+    "limit": { "type": "integer", "minimum": 1, "maximum": 50, "description": "返回条数,默认 20" },
+    "scope": {
+      "type": "string",
+      "enum": ["auto", "related", "all", "team"],
+      "description": "检索范围:auto=全部来源(默认),related=与我相关,all=全部公开,team=团队空间"
+    },
+    "type": {
+      "type": "string",
+      "description": "按类型过滤:doc/sheet/mind/meeting/slide/file/folder 等"
+    },
+    "time": {
+      "type": "string",
+      "description": "按更新时间过滤:day/week/month/quarter"
+    }
+  }
+}

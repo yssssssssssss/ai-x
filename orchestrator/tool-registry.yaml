@@ -8,7 +8,31 @@ tools:
   - id: o2-web-search
     name: o2 网页检索
     path: tools/o2-web-search/manifest.yaml
+    adapter_type: fake
+    auth_required: true
+    risk_level: low
+    status: active
+
+  - id: jd-product-search
+    name: 京东商品检索
+    path: tools/jd-product-search/manifest.yaml
     adapter_type: o2
+    auth_required: true
+    risk_level: low
+    status: active
+
+  - id: tavily-web-search
+    name: Tavily 通用网页搜索
+    path: tools/tavily-web-search/manifest.yaml
+    adapter_type: rest_json
+    auth_required: true
+    risk_level: low
+    status: active
+
+  - id: joyspace-search
+    name: JoySpace 内部知识检索
+    path: tools/joyspace-search/manifest.yaml
+    adapter_type: webcli
     auth_required: true
     risk_level: low
     status: active

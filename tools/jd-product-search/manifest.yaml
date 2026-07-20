@@ -1,0 +1,21 @@
+id: jd-product-search
+name: 京东商品检索
+adapter_type: o2
+o2_cli: metasearch
+o2_subcommand: search
+o2_arg_map:
+  query: query
+o2_extra_args:
+  - --output
+  - json
+o2_output_path: data.products
+o2_output_field: products
+auth_required: true
+risk_level: low
+approver_rule: none
+timeout_seconds: 45
+retry_policy:
+  max_attempts: 2
+  backoff_seconds: 3
+input_schema: tools/jd-product-search/input.schema.json
+output_schema: tools/jd-product-search/output.schema.json

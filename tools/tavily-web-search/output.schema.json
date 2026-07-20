@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "tavily-web-search/output.schema.json",
+  "title": "TavilyWebSearchOutput",
+  "description": "Tavily 搜索输出,原样透传(含 results/answer/images 等)。",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["results"],
+  "properties": {
+    "query": { "type": "string" },
+    "answer": { "type": ["string", "null"], "description": "AI 生成的直接摘要,可能为 null" },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "title": { "type": "string" },
+          "url": { "type": "string" },
+          "content": { "type": "string", "description": "网页正文摘录" },
+          "score": { "type": "number" },
+          "raw_content": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "images": { "type": "array" },
+    "follow_up_questions": { "type": ["array", "null"] },
+    "response_time": { "type": "number" },
+    "request_id": { "type": "string" }
+  }
+}

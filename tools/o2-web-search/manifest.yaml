@@ -1,6 +1,6 @@
 id: o2-web-search
 name: o2 网页检索
-adapter_type: o2
+adapter_type: fake
 entrypoint: o2 web-search
 auth_required: true
 risk_level: low

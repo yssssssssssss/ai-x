@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "tavily-web-search/input.schema.json",
+  "title": "TavilyWebSearchInput",
+  "description": "Tavily 通用网页搜索入参。api_key 由 adapter 从环境变量注入,不由上层传。",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["query"],
+  "properties": {
+    "query": {
+      "type": "string",
+      "minLength": 1,
+      "description": "搜索关键词"
+    },
+    "search_depth": {
+      "type": "string",
+      "enum": ["basic", "advanced"],
+      "description": "basic=快速,advanced=更深入(消耗更多 credit)"
+    },
+    "max_results": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 20,
+      "description": "返回结果数量,默认 5"
+    },
+    "include_answer": {
+      "type": "boolean",
+      "description": "是否要求 AI 生成的摘要"
+    },
+    "include_domains": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "限定检索域名白名单"
+    },
+    "exclude_domains": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "屏蔽域名"
+    }
+  }
+}

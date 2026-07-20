@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "jd-product-search/output.schema.json",
+  "title": "JDProductSearchOutput",
+  "description": "京东商品检索输出(metasearch data.products 数组透传)。",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["products"],
+  "properties": {
+    "products": {
+      "type": "array",
+      "description": "京东商品列表",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "sku_id": { "type": "string" },
+          "name": { "type": "string" },
+          "price": { "type": "string" },
+          "image": { "type": "string" },
+          "item_url": { "type": "string" },
+          "shop_name": { "type": "string" },
+          "is_self": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}
