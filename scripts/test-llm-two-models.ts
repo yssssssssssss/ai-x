@@ -9,8 +9,8 @@ interface CaseResult { name: string; ok: boolean; ms: number; model?: string; to
 
 async function runAll(): Promise<Record<string, CaseResult[]>> {
   const targets = [
-    { label: 'Kimi-K2.6-joybuilder',              env: 'Kimi-K2.6-joybuilder' },
-    { label: 'Gemini-3.1-Pro-Preview-joybuilder', env: 'Gemini-3.1-Pro-Preview-joybuilder' },
+    { label: 'GPT-5.4-joybuilder',                env: 'GPT-5.4-joybuilder' },
+    { label: 'GPT-5-joybuilder',                  env: 'GPT-5-joybuilder' },
   ];
   const out: Record<string, CaseResult[]> = {};
 

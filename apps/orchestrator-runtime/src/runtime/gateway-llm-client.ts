@@ -19,9 +19,9 @@ interface ModelSpec {
 
 // 已知模型注册表(未列入的默认按 OpenAI 处理)。
 const MODEL_TABLE: Record<string, Omit<ModelSpec, 'name'>> = {
+  'GPT-5.4-joybuilder':                 { endpoint: '/chat/completions', protocol: 'openai' },
+  'GPT-5-joybuilder':                   { endpoint: '/chat/completions', protocol: 'openai' },
   'GPT-5.2-joybuilder':                 { endpoint: '/chat/completions', protocol: 'openai' },
-  'Kimi-K2.6-joybuilder':               { endpoint: '/chat/completions', protocol: 'openai' },
-  'Gemini-3.1-Pro-Preview-joybuilder':  { endpoint: '/responses',         protocol: 'gemini' },
 };
 
 function resolveModel(name: string): ModelSpec {
