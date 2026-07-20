@@ -107,7 +107,7 @@ for (const [idx, c] of CASES.entries()) {
     const execP = req(`/api/tasks/${plan.taskId}/execute`, { method: 'POST', token, body: {} }).catch(() => null);
     const reportPath = `run-workspaces/${plan.taskId}/artifacts/report.json`;
     let report: any = null;
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 200; i++) {   // 200 × 6s = 1200s 上限,应对 12-13 步深流水线
       await new Promise((r) => setTimeout(r, 6_000));
       if (existsSync(reportPath)) {
         try { report = JSON.parse(readFileSync(reportPath, 'utf8')); if (report.findings) break; } catch {}
