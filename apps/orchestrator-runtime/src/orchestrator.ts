@@ -13,6 +13,7 @@ import {
 import { join } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
 import { searchKnowledge } from './knowledge/index.ts';
+import { renderReportHtml } from './report-renderer.ts';
 
 // user_research 域 skill 运行时读到的 KB 导航(collection/analysis/models/assets 四区叶子索引)。
 // 只喂索引不喂正文——129 篇正文全喂会触发 gateway 超时(见交接文档踩过的坑);
@@ -284,11 +285,15 @@ export class Orchestrator {
           `- 每个 step 必须含字段:step_no(从 1 递增的整数)、step_name(该步中文简述)、actor_type、actor_id;可选 purpose/input/requires_approval。禁止用 step_id,禁止省略 step_no 或 step_name。\n` +
           `- 第 1 项 id="depth"(深度优先:方法论完整、覆盖广、含复核/交叉验证),第 2 项 id="speed"(速度优先:最短路径拿关键结论)。\n` +
           `- 两份 steps 必须在 skill/tool 组合上存在明显差异(不同能力或不同顺序),不允许只是 speed 版把 depth 版删几行。\n` +
+          `- **步数硬上限**:depth 方案总步数 ≤ 8(建议 5-7),speed 方案总步数 ≤ 4(建议 2-3);超过一律裁掉最弱相关的 skill/tool,不允许"多多益善"。\n` +
+          `- **拒绝堆叠**:候选 skill 池里的所有 skill 不必都用上。只选与用户具体任务目标最相关的少数 skill(depth 通常 2-4 个 skill,speed 通常 1-2 个);判断相关性时以 skill.when_to_use 与用户 research_goal 的语义匹配度为准,拒绝"顺便也做一下"式追加。\n` +
           `- actor_type=skill 步的 actor_id 只能取:[${skillIds.join(', ')}];actor_type=tool 步的 actor_id 只能取:[${toolIds.join(', ')}];禁止编造清单外 id。\n` +
           `- 若需 LLM 自身推理步骤(汇总/提炼)用 actor_type=llm;质量复核用 actor_type=reviewer。\n` +
           `- tool 步必须在 step.input 里按该 tool 的 input_schema(见 context.tools[].input_schema)生成入参;无图字段留空,并在 assumptions 标注『需用户提供设计稿』。\n` +
           `- rationale(为什么这样组合,引用方法论点名如 JTBD/5W2H)与 tradeoffs(明显代价,如"耗时约翻倍"/"覆盖窄可能漏点")必填,各控制在 1-2 句。\n` +
           `- title 用中文短语,例如"深度优先·方法论覆盖" / "速度优先·关键结论"。\n` +
+          `- 步骤排序硬约束:skill 步如果需要读取某 tool 的输出(参见 context.skills[].required_tools),该 skill 步必须排在其 required_tools 中所有被纳入本方案的 tool 步之后;reviewer 步必须排在所有被复核步之后。违反此约束的计划不可执行。\n` +
+          `- 若 speed 方案省略了某 skill 的 required_tools 中的 tool,则该 skill 的对应维度将无数据——要么一并省略该 skill,要么补回被依赖的 tool。\n` +
           `选方法/排步骤时参考 context.guidance 召回的方法卡片,使方法选择有正典依据。`,
         schema: {},
         schemaName: 'execution-plan-candidates',
@@ -327,6 +332,8 @@ export class Orchestrator {
               bad.map((s) => `${s.actor_type}:${s.actor_id}`).join(', '),
           );
         }
+        // 步骤依赖排序修复(纯函数,可独立测试)
+        fixStepOrdering(cand.steps, skillLoader);
       }
       planProvenance = {
         modelName: planGen.modelName, modelVersion: planGen.modelVersion,
@@ -774,9 +781,14 @@ export class Orchestrator {
 
     const reportGen = await llm.generateStructured<Record<string, unknown>>({
       prompt:
-        '基于以下真实执行结果生成可落地竞品研究方案报告。' +
+        '基于以下真实执行结果生成可落地研究方案报告。\n' +
+        '必填字段:research_goal, findings, timeline, deliverables, capability_orchestration。\n' +
+        '新增字段(必须填写):\n' +
+        '- executive_summary: 2-4句核心结论摘要,直击要害,让决策者30秒内明确"做不做、怎么做"。\n' +
+        '- core_issues: 核心问题清单,每项含 title(问题名)、severity(critical/major/minor)、description(现象+影响)、evidence_source(数据来源)、recommendation(改进建议)。按 severity 降序排列。\n' +
+        '- dimension_analyses: 各评估维度的详细解读,每项含 dimension(如 aesthetic/attention/brand/usability)、status(complete/partial/data_incomplete)、summary(该维度结论)、metrics(关键指标键值对,如 {distractionRiskScore:0.457})、data_source(数据来源 tool/skill id)。\n\n' +
         'findings 中凡来自 tool_outputs 检索数据的结论,source 必须标 tool_result,' +
-        '并在 statement 中引用具体竞品名称/来源;无数据支撑的判断标 llm_inference,不得冒充事实;' +
+        '并在 statement 中引用具体数据/来源;无数据支撑的判断标 llm_inference,不得冒充事实;' +
         '若 tool_outputs 为空则如实说明数据缺口。' +
         gapNote + reviewNote,
       schema: {}, schemaName: 'research-report',
@@ -807,6 +819,9 @@ export class Orchestrator {
     });
 
     const reportPath = ctx.ws.writeArtifactFile('report.json', JSON.stringify(report, null, 2));
+    // 生成自包含 HTML 报告(供下载)
+    const htmlContent = renderReportHtml({ report: report as any, toolOutputs: ctx.toolOutputs, uploads: ctx.uploads });
+    ctx.ws.writeArtifactFile('report.html', htmlContent);
     const artifact = await checkpointStore.writeArtifact({
       taskId: ctx.taskId, conversationId: ctx.conversationId,
       artifactType: 'report', title: '竞品研究方案', storageUri: reportPath,
@@ -896,4 +911,47 @@ export class AllStepsFailedError extends Error {
 
 export function buildOrchestrator(overrides = {}): Orchestrator {
   return new Orchestrator(buildRuntime(overrides));
+}
+
+// 步骤依赖排序修复:skill 步必须在其 required_tools 中所有已纳入方案的 tool 步之后。
+// LLM 偶尔违反排序约束,这里做确定性拓扑修复而不是 throw(用户体验优先)。
+// 纯函数,就地修改 steps 数组;返回是否做了修复。
+export function fixStepOrdering(
+  steps: Array<{ step_no: number; actor_type: string; actor_id: string; step_name?: string; purpose?: string; input?: Record<string, unknown>; requires_approval?: boolean }>,
+  skillLoader: { getSkill(id: string): { required_tools?: string[] } | null },
+): boolean {
+  const toolStepIndices = new Map<string, number>();
+  for (let si = 0; si < steps.length; si++) {
+    if (steps[si].actor_type === 'tool') toolStepIndices.set(steps[si].actor_id, si);
+  }
+  let reordered = false;
+  for (let si = 0; si < steps.length; si++) {
+    const step = steps[si];
+    if (step.actor_type !== 'skill') continue;
+    const skillEntry = skillLoader.getSkill(step.actor_id);
+    if (!skillEntry?.required_tools?.length) continue;
+    const depToolMaxIdx = Math.max(
+      ...skillEntry.required_tools
+        .filter((tid: string) => toolStepIndices.has(tid))
+        .map((tid: string) => toolStepIndices.get(tid)!),
+      -1,
+    );
+    if (depToolMaxIdx > si) {
+      const [moved] = steps.splice(si, 1);
+      const insertAt = depToolMaxIdx; // splice 后原 depToolMaxIdx 位置 = "紧跟被依赖 tool 之后"
+      steps.splice(insertAt, 0, moved);
+      toolStepIndices.clear();
+      for (let ri = 0; ri < steps.length; ri++) {
+        if (steps[ri].actor_type === 'tool') toolStepIndices.set(steps[ri].actor_id, ri);
+      }
+      si--;
+      reordered = true;
+    }
+  }
+  if (reordered) {
+    for (let si = 0; si < steps.length; si++) {
+      steps[si].step_no = si + 1;
+    }
+  }
+  return reordered;
 }
