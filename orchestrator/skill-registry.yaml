@@ -5,6 +5,7 @@ skills:
     name: 数字人竞品分析
     path: skills/competitive-analysis/digital-human/SKILL.md
     when_to_use: 用户需要分析数字人、虚拟主播、直播竞品时使用
+    domain: [competitive_research, cross_cutting]
     owner: 竞品分析组
     status: active
     task_types:
@@ -29,6 +30,7 @@ skills:
     name: 竞品分析·Web搜索
     path: skills/competitive-analysis/web-research/SKILL.md
     when_to_use: 竞品分析且以网络公开资料为主要信息源(官网/发布会/评测/应用商店/新闻/口碑);查竞品在做什么、战略意图、市场动态。无竞品 app 截图诉求时用本 skill。
+    domain: [competitive_research, cross_cutting]
     owner: 竞品分析组
     status: active
     task_types:
@@ -47,6 +49,7 @@ skills:
     name: 竞品分析·App截图
     path: skills/competitive-analysis/app-analysis/SKILL.md
     when_to_use: 对竞品 app 界面做截图级分析——视觉美学、注意力热区、品牌视觉一致性、信息架构;诉求提到看竞品页面/界面/截图/设计怎么做的。以竞品截图为信息源时用本 skill。
+    domain: [competitive_research, cross_cutting]
     owner: 竞品分析组
     status: active
     task_types:
@@ -67,6 +70,7 @@ skills:
     name: 设计体验走查
     path: skills/design-review/SKILL.md
     when_to_use: 用户需要对设计稿/页面做美学、注意力、品牌视觉走查或体验评估时使用(需用户提供设计稿图像)
+    domain: [design_audit, cross_cutting]
     owner: 体验设计组
     status: active
     task_types:
@@ -105,6 +109,7 @@ skills:
       run-heuristic-evaluation；让真实用户（含视障）做任务并观察 →
       generate-usability-test；竞品战略意图对比 → competitive-analysis；把海量反馈打标归类 →
       code-open-feedback；把文档/PPT/PDF 做成无障碍版（补替代文本、阅读顺序等，非界面走查）不属本 skill。
+    domain: [design_audit, user_research]
     owner: 用研团队
     risk_level: low
     task_types:
@@ -127,6 +132,7 @@ skills:
       工单的文字编码成痛点清单（纯定性文本、不是分数）→ code-open-feedback；③ 通用问卷交叉表分群显著性对比（如「会员 vs
       非会员谁更满意」这类与满意度诊断流程无关的列联表检验）→ survey-crosstab-analysis。本 skill
       专做满意度分数的定量诊断与归因；若用户给的数据不足以支撑所问分析（要找驱动却只给汇总均值没有逐份行级数据、要归因却没给样本量与可下钻维度、要算落差却缺期望或感知），会先列《数据补充请求》请其补齐再分析，绝不靠假设硬出结论。
+    domain: [user_research]
     owner: 用研团队
     risk_level: low
     task_types:
@@ -150,6 +156,7 @@ skills:
       `code-open-feedback`；⑤ 要的是通用业务/销售/经营看板（GMV、DAU、转化、库存等）或 OKR/KPI
       绩效考核——与体验无关、不属本 skill；本 skill
       只建「用户体验」度量（HEART：愉悦/参与/采纳/留存/任务成功），北极星是体验北极星、非 DAU/GMV 增长北极星。
+    domain: [user_research]
     owner: 用研团队
     risk_level: low
     task_types:
@@ -168,6 +175,7 @@ skills:
       结构化问卷交叉表/列联表要做显著性检验与平台优劣势，用 survey-crosstab-analysis（本 skill
       只做计数、不做统计检验）；② 少量访谈逐字稿要做深读、三进程编码与意义诠释（小样本定性纵深），那是 qualitative-coding 的活；③
       设计问卷/访谈题目（还没有数据的采集阶段）用 generate-survey / generate-interview-guide。
+    domain: [user_research]
     owner: 用研团队
     risk_level: low
     task_types:
@@ -191,10 +199,15 @@ skills:
       generate-usability-test；给自己产品搭长期体验指标体系/看板 →
       build-experience-metrics；脱离竞品系统挖增长机会点 →
       opportunity-research；对策略型产品做微观量化评测/GSB 打分（图搜/推荐评测）不在本 skill。
+    domain: [user_research, cross_cutting]
     owner: 用研团队
     risk_level: low
     task_types:
       - competitive_research
+    required_tools:
+      - tavily-web-search
+      - jd-product-search
+      - joyspace-search
     status: active
   - id: conversion-funnel-analysis
     name: conversion-funnel-analysis
@@ -213,6 +226,7 @@ skills:
       analyze-satisfaction；给产品搭长期体验指标体系/看板/北极星 →
       build-experience-metrics；拿尼尔森十大原则走查界面找可用性问题 →
       run-heuristic-evaluation。漏斗只答"在哪流失、流失多少"，答不了"为什么"——归因接定性方法（深访/VOC/可用性测试/录屏）。
+    domain: [user_research]
     owner: 用研团队
     risk_level: low
     task_types:
@@ -233,6 +247,7 @@ skills:
       分数驱动或掉分归因 → analyze-satisfaction；从零搭体验指标体系/看板 →
       build-experience-metrics；设计对照实验判增量 → ab-testing；开放题/工单文字编码成痛点 →
       code-open-feedback。数据不足以支撑所问诊断时先列《数据补充请求》或出工具包，绝不编造采纳率/转化率/留存数字。
+    domain: [user_research]
     owner: 用研团队
     risk_level: low
     task_types:
@@ -247,6 +262,7 @@ skills:
       收尾），并附追问时机提示与《本次运行说明》。当用户要「做访谈提纲 / 设计访谈问题 / 写访谈大纲 / 准备用户访谈或深访 /
       把研究目标拆成要问用户的问题 / 拟焦点小组或拦访提问」时，主动使用本
       skill——哪怕用户只给了一句访谈目标、没点名「提纲」二字，只要意图是把一个定性研究目标转成可问出口的问题清单，就应触发。
+    domain: [user_research, cross_cutting]
     owner: 用研团队
     risk_level: low
     task_types:
@@ -265,6 +281,7 @@ skills:
       + 提炼洞察（而非拟人化角色）→ 用
       synthesize-qualitative-insights；要的是给海量真实用户逐个打标签的「用户画像（user
       profile）标签体系」（一种后台数据工程，不是研究产出）→ 不属本 skill。
+    domain: [user_research, cross_cutting]
     owner: 用研团队
     risk_level: low
     task_types:
@@ -280,6 +297,7 @@ skills:
       交付物），并附方案自检与《本次运行说明》。当用户要「做研究方案 / 调研方案 / 研究设计 / 规划一次用户研究 / 设计一次调研 /
       把（模糊的）研究需求变成可执行方案 / 接了个调研需求不知怎么下手」时，主动使用本
       skill——哪怕需求还很含糊、只有一句话，也应触发（把模糊需求问清正是第一阶段的职责，不要因为需求不完整就拒绝启动）。
+    domain: [user_research, cross_cutting]
     owner: 用研团队
     risk_level: low
     task_types:
@@ -295,6 +313,7 @@ skills:
       写问卷题目 / 出一份满意度或 NPS 问卷 / 设计量表题 / 把研究目标变成问卷」时，主动使用本
       skill——哪怕用户只给一句研究目标、没点名「问卷」二字，只要意图是把一个（偏定量、可统计的）测量目标转成可投放的结构化题目清单，就应触发。偏定性深挖、要的是开放追问的访谈，则用
       generate-interview-guide。
+    domain: [user_research, cross_cutting]
     owner: 用研团队
     risk_level: low
     task_types:
@@ -313,6 +332,7 @@ skills:
       skill——哪怕用户只给一句「让用户试试我们新改的页面顺不顺手」、没点名「可用性测试」四个字，只要意图是**给用户布置任务、观察其操作、度量能否顺利完成并定位可用性问题**，就应触发。若用户要的是不带任务的开放访谈挖
       why，用 generate-interview-guide；要的是大规模可统计的问卷，用
       generate-survey；要的是「该用什么方法」的整体研究方案，用 generate-research-plan。
+    domain: [user_research, cross_cutting]
     owner: 用研团队
     risk_level: low
     task_types:
@@ -334,6 +354,7 @@ skills:
       找关键驱动、判先改哪个属性 → analyze-satisfaction；把海量原始反馈打标归类成主题 →
       code-open-feedback；跨多份定性材料归纳主题与洞察 → synthesize-qualitative-insights。本
       skill 聚焦「已有一批问题/需求 → 分层定级排序 → 先做哪个」。
+    domain: [user_research]
     owner: 用研团队
     risk_level: low
     task_types:
@@ -358,6 +379,7 @@ skills:
       synthesize-qualitative-insights；要整份研究方案或能跑的访谈提纲 →
       generate-research-plan/generate-interview-guide；系统比较竞对功能与战略意图（非只盘替代方案）→
       competitive-analysis。
+    domain: [user_research, cross_cutting]
     owner: 用研团队
     risk_level: low
     task_types:
@@ -382,6 +404,7 @@ skills:
       synthesize-qualitative-insights；要的是给产品定一套可长期追踪的体验指标体系 / 看板 → 用
       build-experience-metrics；要的是整体研究方案或访谈提纲 → 用 generate-research-plan /
       generate-interview-guide。
+    domain: [user_research, cross_cutting]
     owner: 用研团队
     risk_level: low
     task_types:
@@ -401,6 +424,7 @@ skills:
       skill——哪怕用户只丢来一句「帮我看看这个页面有什么体验问题」并附几张截图、没点名「启发式评估」五个字，只要意图是**拿公认可用性准则、由专家视角逐条检视界面、找问题并定严重度**，就应触发。若用户要的是**让真实用户做任务、观察其操作**的可用性测试，用
       generate-usability-test；要可投放可统计的问卷，用 generate-survey；要「整体该用什么方法」的研究方案，用
       generate-research-plan；要把海量用户反馈/评价打标归类，用 code-open-feedback。
+    domain: [design_audit, user_research]
     owner: 用研团队
     risk_level: low
     task_types:
@@ -417,6 +441,7 @@ skills:
       skill——哪怕用户只是把一段逐字稿丢过来让你"整理一下"。**只做单场整理，不做跨场归纳 / 拔总洞察**（多场综合属
       `synthesize-qualitative-insights`）；也不要与"出访谈提纲"（`generate-interview-guide`）、"出问卷"（`generate-survey`）混用。逐字稿属敏感原始数据：**只在会话内临时处理、绝不写入
       Wiki、引用原话时匿名化**。
+    domain: [user_research]
     owner: 用研团队
     risk_level: low
     task_types:
@@ -434,6 +459,7 @@ skills:
       skill——哪怕用户只是丢来几份访谈记录问「能看出什么」、没点名「亲和图」或「洞察」二字，只要意图是把多份定性资料横向归纳、再向上提炼成洞察，就应触发。交付时默认产出「剥离方法论、按用户研究问题组织、结论先行」的交付稿，方法论痕迹与《本次运行说明》收进后置的「分析底稿」附录；洞察之后若用户要「机会
       / 方向 / 落地 / 命名」，再按需编排既有正典延伸出轻量落地建议（机会-解决方案树 OST，方案标为待验证假设），并可给可视化摘要（一页纸 /
       PPT 大纲 / 结论示意图）。
+    domain: [user_research]
     owner: 用研团队
     risk_level: low
     task_types:

@@ -11,7 +11,31 @@ import {
   type DecisionNode,
 } from './runtime/config-loader.ts';
 import { join } from 'node:path';
+import { readFileSync, existsSync } from 'node:fs';
 import { searchKnowledge } from './knowledge/index.ts';
+
+// user_research 域 skill 运行时读到的 KB 导航(collection/analysis/models/assets 四区叶子索引)。
+// 只喂索引不喂正文——129 篇正文全喂会触发 gateway 超时(见交接文档踩过的坑);
+// SKILL.md 里已点出关键方法名,LLM 有导航即可引用具体方法路径,不需要现读全文。
+// 只在 skillEntry.domain 含 user_research 时注入,避免污染竞品/设计走查 skill。
+let _kbIndexCache: string | null = null;
+function loadResearchWikiIndex(): string {
+  if (_kbIndexCache !== null) return _kbIndexCache;
+  const root = getConfigRoot();
+  const parts: string[] = [];
+  const indexPaths: Array<[string, string]> = [
+    ['methods/toolbox/collection', 'knowledge-base/methods/toolbox/collection/index.md'],
+    ['methods/toolbox/analysis',   'knowledge-base/methods/toolbox/analysis/index.md'],
+    ['models',                     'knowledge-base/models/index.md'],
+    ['assets',                     'knowledge-base/assets/index.md'],
+  ];
+  for (const [label, rel] of indexPaths) {
+    const p = join(root, rel);
+    if (existsSync(p)) parts.push(`## ${label}\n\n${readFileSync(p, 'utf8')}`);
+  }
+  _kbIndexCache = parts.join('\n\n---\n\n');
+  return _kbIndexCache;
+}
 
 // 引导召回:对每个激活的决策节点,用其 related_tags 从知识库召回方法论/模型(每节点 top-3),
 // 供"决策状态判定"与"计划生成"两个 LLM 调用作正典依据,并进 context_manifest 溯源。纯函数,可测。
@@ -91,6 +115,17 @@ export interface PlanProgress {
   status: 'start' | 'done';
   label: string;      // 中文阶段名
   detail?: string;    // 简要内容(如 task_type、节点数)
+}
+
+// executePhase/resumePhase 阶段进度事件(SSE 流式用):同步回调,事件发出时对应日志/状态已落库。
+export interface ExecuteProgress {
+  type: 'step_started' | 'step_succeeded' | 'step_failed' | 'step_skipped' | 'synthesis_started' | 'completed' | 'paused' | 'failed';
+  status: 'running' | 'succeeded' | 'failed' | 'skipped' | 'completed' | 'completed_with_gaps' | 'paused';
+  stepNo?: number;
+  stepName?: string;
+  actorType?: PlanStep['actor_type'];
+  actorId?: string;
+  detail?: string;
 }
 
 // selectPlan 返回:选中后 finalize 出的可执行 plan + 该 plan 需要的图像上传项。
@@ -443,7 +478,7 @@ export class Orchestrator {
   // ---- 段3 + 段4:执行 → 交付(用户确认后)----
   // 融合·MVP 容错(方案 §2.5①·补):遇失败步停在该步(paused),不整体崩;
   // 用户 resume(skip) 从下一步续跑,失败/跳过维度的缺口如实进报告 risks_and_open_issues。
-  async executePhase(input: { taskId: string; conversationId: string; uploads?: Array<{ role: string; dataUrl: string }> }): Promise<ExecuteResult> {
+  async executePhase(input: { taskId: string; conversationId: string; uploads?: Array<{ role: string; dataUrl: string }> }, onProgress?: (ev: ExecuteProgress) => void): Promise<ExecuteResult> {
     const { checkpointStore } = this.rt.deps;
     const ws = new RunWorkspace(input.taskId);
     const plan = ws.readPlan<{ steps: PlanStep[]; task_id: string }>();
@@ -460,18 +495,20 @@ export class Orchestrator {
       uploads: input.uploads,
       toolOutputs: [], reviewNotes: [], stepFailures: [], usedCapabilities: [], toolOutputRefs: [],
     };
-    return this.runFrom(0, ctx);
+    return this.runFrom(0, ctx, onProgress);
   }
 
   // ---- resume:失败步 skip(续跑) / abort(收尾)----
-  async resumePhase(input: { taskId: string; conversationId: string; action: 'skip' | 'abort' }): Promise<ExecuteResult> {
+  async resumePhase(input: { taskId: string; conversationId: string; action: 'skip' | 'abort' }, onProgress?: (ev: ExecuteProgress) => void): Promise<ExecuteResult> {
     const { checkpointStore } = this.rt.deps;
     const ws = new RunWorkspace(input.taskId);
     const state = ws.readRunState<RunState>();
 
     if (input.action === 'abort') {
       await checkpointStore.updateTaskStatus(input.taskId, 'failed');
-      return { status: 'failed', failedStepNo: state.failedStepNo, failedStepName: state.failedStepName };
+      const result: ExecuteResult = { status: 'failed', failedStepNo: state.failedStepNo, failedStepName: state.failedStepName };
+      onProgress?.({ type: 'failed', status: 'failed', stepNo: state.failedStepNo, stepName: state.failedStepName, actorType: state.failedActorType, actorId: state.failedActorId });
+      return result;
     }
 
     // skip:失败步标 skipped,从各步已落盘 output 重建 toolOutputs,从下一步续跑。
@@ -486,6 +523,10 @@ export class Orchestrator {
       actorType: state.failedActorType, actorId: state.failedActorId, status: 'skipped',
       finishedAt: new Date(), decisionGraphHash: hashFile(CONFIG_PATHS.decisionGraph),
     });
+    onProgress?.({
+      type: 'step_skipped', status: 'skipped', stepNo: state.failedStepNo, stepName: state.failedStepName,
+      actorType: state.failedActorType, actorId: state.failedActorId,
+    });
 
     const ctx: ExecCtx = {
       taskId: input.taskId, conversationId: input.conversationId, researchGoal, ws, plan,
@@ -499,16 +540,16 @@ export class Orchestrator {
 
     await checkpointStore.updateTaskStatus(input.taskId, 'executing');
     const failedIdx = plan.steps.findIndex((s) => s.step_no === state.failedStepNo);
-    return this.runFrom(failedIdx + 1, ctx);
+    return this.runFrom(failedIdx + 1, ctx, onProgress);
   }
 
   // 从 startIdx 顺序执行剩余步:遇失败停在该步(paused + 落 run_state);全过 → finalizeReport。
-  private async runFrom(startIdx: number, ctx: ExecCtx): Promise<ExecuteResult> {
+  private async runFrom(startIdx: number, ctx: ExecCtx, onProgress?: (ev: ExecuteProgress) => void): Promise<ExecuteResult> {
     const { checkpointStore } = this.rt.deps;
     for (let i = startIdx; i < ctx.plan.steps.length; i++) {
       const step = ctx.plan.steps[i];
       try {
-        await this.runStep(step, ctx);
+        await this.runStep(step, ctx, onProgress);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         // 失败:标 failed、写 failures.jsonl、停在该步(不整体崩、不重跑)
@@ -517,6 +558,10 @@ export class Orchestrator {
           actorType: step.actor_type, actorId: step.actor_id, status: 'failed',
           errorJson: { message }, finishedAt: new Date(),
           contextManifestRef: `${ctx.ws.uri}/context_manifest.json`,
+        });
+        onProgress?.({
+          type: 'step_failed', status: 'failed', stepNo: step.step_no, stepName: step.step_name,
+          actorType: step.actor_type, actorId: step.actor_id, detail: message,
         });
         ctx.ws.appendFailure({
           task_id: ctx.taskId, stage: 'execution',
@@ -537,20 +582,29 @@ export class Orchestrator {
         };
         ctx.ws.writeRunState(runState);
         await checkpointStore.updateTaskStatus(ctx.taskId, 'paused');
-        return { status: 'paused', failedStepNo: step.step_no, failedStepName: step.step_name };
+        const result: ExecuteResult = { status: 'paused', failedStepNo: step.step_no, failedStepName: step.step_name };
+        onProgress?.({
+          type: 'paused', status: 'paused', stepNo: step.step_no, stepName: step.step_name,
+          actorType: step.actor_type, actorId: step.actor_id, detail: message,
+        });
+        return result;
       }
     }
-    return this.finalizeReport(ctx);
+    return this.finalizeReport(ctx, onProgress);
   }
 
   // 单步执行:成功则写 execution_log(succeeded) 并累积产出;失败 throw(由 runFrom 处理)。
-  private async runStep(step: PlanStep, ctx: ExecCtx): Promise<void> {
+  private async runStep(step: PlanStep, ctx: ExecCtx, onProgress?: (ev: ExecuteProgress) => void): Promise<void> {
     const { llm, validator, skillLoader, toolAdapter, checkpointStore } = this.rt.deps;
     const startedAt = new Date();
     await checkpointStore.writeExecutionLog({
       taskId: ctx.taskId, stepNo: step.step_no, stepName: step.step_name,
       actorType: step.actor_type, actorId: step.actor_id, status: 'running',
       startedAt, decisionGraphHash: ctx.graphHash,
+    });
+    onProgress?.({
+      type: 'step_started', status: 'running', stepNo: step.step_no, stepName: step.step_name,
+      actorType: step.actor_type, actorId: step.actor_id,
     });
 
     let outputRef: string | undefined;
@@ -624,13 +678,23 @@ export class Orchestrator {
           `你是「${skillEntry.name}」能力。严格按以下 SKILL.md 的工作流与质量门禁执行,` +
           `基于提供的检索数据(tool_outputs)与用户上传资料(user_materials)产出结构化结果;` +
           `user_materials 是用户在确认闸门附上的原始素材(按 role 归类,text 字段是明文,dataUrl 是图片/PDF 的 base64),` +
-          `凡引用其内容需明确来源;无数据支撑的判断标 llm_inference,不得冒充事实。\n\n${body}`,
+          `凡引用其内容需明确来源;无数据支撑的判断标 llm_inference,不得冒充事实。` +
+          ((skillEntry.domain ?? []).includes('user_research')
+            ? `\n\ncontext.research_wiki_index 是用研知识库(research-wiki)的方法/模型/素材导航;` +
+              `SKILL.md 中提到的"实时调用 research-wiki 里的 XX 方法/模型"就是查这个索引,` +
+              `引用某方法时请写清其名称与相对路径(如 knowledge-base/methods/toolbox/collection/deep-interview.md),` +
+              `不要凭记忆虚构方法名。`
+            : '') +
+          `\n\n${body}`,
         schema: output ?? {},
         schemaName: `skill:${step.actor_id}`,
         context: {
           research_goal: ctx.researchGoal,
           tool_outputs: ctx.toolOutputs,
           user_materials: decodedMaterials,
+          ...((skillEntry.domain ?? []).includes('user_research')
+            ? { research_wiki_index: loadResearchWikiIndex() }
+            : {}),
         },
       });
       if (skillEntry.output_schema) {
@@ -680,10 +744,14 @@ export class Orchestrator {
       skillManifestHashes: step.actor_type === 'skill' ? manifestHashes : [],
       toolManifestHashes: step.actor_type === 'tool' ? manifestHashes : [],
     });
+    onProgress?.({
+      type: 'step_succeeded', status: 'succeeded', stepNo: step.step_no, stepName: step.step_name,
+      actorType: step.actor_type, actorId: step.actor_id,
+    });
   }
 
   // 段4:synthesis → report → 过 schema → 写 artifact。失败/跳过步的缺口 + 复核意见注入 prompt。
-  private async finalizeReport(ctx: ExecCtx): Promise<ExecuteResult> {
+  private async finalizeReport(ctx: ExecCtx, onProgress?: (ev: ExecuteProgress) => void): Promise<ExecuteResult> {
     const { llm, validator, checkpointStore } = this.rt.deps;
 
     // 数据闸门:无任何成功产出则不硬合成(research-report.findings minItems:1,空数据合不出合法报告)。
@@ -691,6 +759,8 @@ export class Orchestrator {
       await checkpointStore.updateTaskStatus(ctx.taskId, 'failed');
       throw new AllStepsFailedError(ctx.stepFailures);
     }
+
+    onProgress?.({ type: 'synthesis_started', status: 'running', stepName: '报告合成', actorType: 'llm', actorId: 'synthesis' });
 
     const gapNote =
       ctx.stepFailures.length > 0
@@ -747,7 +817,9 @@ export class Orchestrator {
     const gapCount = ctx.stepFailures.length;
     const status: ExecuteResult['status'] = gapCount > 0 ? 'completed_with_gaps' : 'completed';
     await checkpointStore.updateTaskStatus(ctx.taskId, status);
-    return { status, reportArtifactId: artifact.id, gapCount };
+    const result: ExecuteResult = { status, reportArtifactId: artifact.id, gapCount };
+    onProgress?.({ type: 'completed', status, detail: artifact.id });
+    return result;
   }
 }
 
