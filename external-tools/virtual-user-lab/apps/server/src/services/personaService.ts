@@ -186,14 +186,17 @@ export const simulateVirtualUsers = async (request: VirtualUserSimulateRequest):
   const personas = request.personaProfiles?.length ? request.personaProfiles : builtInPersonas;
   // 优先 LLM 扮演人格生成评审;未配置或调用失败 → 降级现有规则模拟(不阻断)。
   let reviews: PersonaReview[];
+  let degradationReason: 'llm_not_configured' | 'llm_failed' | undefined;
   if (isLLMEnabled()) {
     try {
       reviews = await buildReviewsViaLLM(personas, text, request.reviewDimensions ?? []);
     } catch {
       reviews = personas.map((persona) => buildReview(persona, text));
+      degradationReason = 'llm_failed';
     }
   } else {
     reviews = personas.map((persona) => buildReview(persona, text));
+    degradationReason = 'llm_not_configured';
   }
   const aggregate = {
     scoreSummary: {
@@ -211,12 +214,12 @@ export const simulateVirtualUsers = async (request: VirtualUserSimulateRequest):
   return {
     status: 'available',
     isSimulated: true,
-    summary: `已生成 ${reviews.length} 个虚拟用户模拟反馈。`,
+    summary: `已生成 ${reviews.length} 个虚拟用户模拟反馈。${degradationReason ? '当前结果为规则降级模拟。' : ''}`,
     digitalPersonas: personas,
     reviews,
     aggregate,
     recommendations: aggregate.sharedPainPoints,
-    warnings: [],
+    warnings: degradationReason ? [`reasonCode=${degradationReason}`, 'engine=rule_simulation'] : [],
     boundaryNotes,
   };
 };

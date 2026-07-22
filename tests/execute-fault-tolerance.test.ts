@@ -58,6 +58,16 @@ test('全成功 → completed(回归)', async () => {
   assert.ok(r.reportArtifactId, '应产出 report');
   const arts = await listArtifacts(taskId);
   assert.ok(arts.some((a) => a.artifact_type === 'report'));
+  const workspace = cleanupDirs[cleanupDirs.length - 1];
+  const ledger = JSON.parse(readFileSync(join(workspace, 'artifacts', 'evidence-ledger.json'), 'utf8')) as { sources: unknown[]; entries: unknown[] };
+  assert.ok(ledger.sources.length >= 2, '每个成功 tool/skill 步都应进入证据台账');
+  assert.ok(ledger.entries.length >= 1, '证据台账应提供可引用条目');
+  const report = JSON.parse(readFileSync(join(workspace, 'artifacts', 'report.json'), 'utf8')) as {
+    report_metadata?: { generation_mode?: string };
+    evidence_summary?: { ledger_entry_count?: number };
+  };
+  assert.equal(report.report_metadata?.generation_mode, 'mock_demo');
+  assert.equal(report.evidence_summary?.ledger_entry_count, ledger.entries.length);
 });
 
 // B · tool 步失败 → paused,停在该步,后续步未执行,落 run_state。
@@ -99,8 +109,9 @@ test('resume(skip) → 续跑、失败步 skipped、completed_with_gaps、缺口
 
   const report = JSON.parse(
     readFileSync(join(cleanupDirs[cleanupDirs.length - 1], 'artifacts', 'report.json'), 'utf8'),
-  ) as { risks_and_open_issues?: string[] };
+  ) as { risks_and_open_issues?: string[]; evidence_summary?: { source_count?: number } };
   assert.ok(Array.isArray(report.risks_and_open_issues) && report.risks_and_open_issues.length > 0, '缺口应进 risks_and_open_issues');
+  assert.equal(report.evidence_summary?.source_count, 1, '跳过的工具步骤不得伪装为报告证据来源');
 });
 
 // D · resume(abort) → failed,不再产新 report。
@@ -149,4 +160,58 @@ test('全产出步失败/跳过 → AllStepsFailedError + failed', async () => {
   );
   const task = await getResearchTask(taskId);
   assert.equal(task?.status, 'failed');
+});
+
+// F · 执行进度回调:前端 SSE 需要真实 step 级进度,不能只等最终 executionLog。
+test('execute/resume 通过 onProgress 推送 step、synthesis 与暂停进度', async () => {
+  const successEvents: Array<{ type: string; stepNo?: number; status?: string }> = [];
+  const okTaskId = await planAndSelectDepth(buildOrchestrator());
+
+  await buildOrchestrator().executePhase(
+    { taskId: okTaskId, conversationId: convId },
+    (ev) => successEvents.push(ev),
+  );
+
+  assert.deepEqual(
+    successEvents.map((e) => `${e.type}:${e.stepNo ?? ''}:${e.status ?? ''}`),
+    [
+      'step_started:1:running',
+      'step_succeeded:1:succeeded',
+      'step_started:2:running',
+      'step_succeeded:2:succeeded',
+      'step_started:3:running',
+      'step_succeeded:3:succeeded',
+      'synthesis_started::running',
+      'completed::completed',
+    ],
+  );
+
+  const failing = orchFailingTool(['tavily-web-search']);
+  const failTaskId = await planAndSelectDepth(failing);
+  const failEvents: Array<{ type: string; stepNo?: number; status?: string }> = [];
+  await failing.executePhase({ taskId: failTaskId, conversationId: convId }, (ev) => failEvents.push(ev));
+
+  assert.deepEqual(
+    failEvents.map((e) => `${e.type}:${e.stepNo ?? ''}:${e.status ?? ''}`),
+    ['step_started:1:running', 'step_failed:1:failed', 'paused:1:paused'],
+  );
+
+  const resumeEvents: Array<{ type: string; stepNo?: number; status?: string }> = [];
+  await failing.resumePhase(
+    { taskId: failTaskId, conversationId: convId, action: 'skip' },
+    (ev) => resumeEvents.push(ev),
+  );
+
+  assert.deepEqual(
+    resumeEvents.map((e) => `${e.type}:${e.stepNo ?? ''}:${e.status ?? ''}`),
+    [
+      'step_skipped:1:skipped',
+      'step_started:2:running',
+      'step_succeeded:2:succeeded',
+      'step_started:3:running',
+      'step_succeeded:3:succeeded',
+      'synthesis_started::running',
+      'completed::completed_with_gaps',
+    ],
+  );
 });

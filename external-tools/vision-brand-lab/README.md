@@ -27,6 +27,17 @@ npm run dev:web
 npm run smoke
 ```
 
+### VLM 图片链路
+
+在 `vision-brand-lab/.env` 配置 `VLM_USE_TEXT_GATEWAY=true`、网关地址和密钥，以及视觉候选模型后，启动服务并执行：
+
+```bash
+npm run dev:server
+VLM_E2E_SMOKE=1 npm --workspace @vision-brand-lab/server run smoke:vlm
+```
+
+该冒烟会先验证健康接口中的独立视觉候选顺序，再发送内置 PNG 到 `/api/analyze`；只有响应为 `engine: "vlm"` 且未降级才会通过。
+
 ## 能力边界
 
 - 当前 MVP 使用本地图像统计和启发式规则，不替代专业设计评审。

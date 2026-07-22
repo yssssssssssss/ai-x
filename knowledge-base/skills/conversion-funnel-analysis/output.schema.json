@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ConversionFunnelAnalysisPayload",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["analysis_status", "data_requests", "stages", "drop_off_hypotheses"],
+  "properties": {
+    "analysis_status": { "type": "string", "enum": ["complete", "degraded", "needs_data"] },
+    "data_requests": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "stages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["stage", "observation", "evidence_refs"],
+        "properties": {
+          "stage": { "type": "string", "minLength": 1 },
+          "conversion_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+          "observation": { "type": "string", "minLength": 1 },
+          "evidence_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+        }
+      }
+    },
+    "drop_off_hypotheses": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+  }
+}

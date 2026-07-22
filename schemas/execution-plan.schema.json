@@ -60,6 +60,12 @@
         "requires_approval": {
           "type": "boolean",
           "description": "是否高风险需审批(need_approval)。默认 false。"
+        },
+        "depends_on": {
+          "type": "array",
+          "description": "显式依赖的前置 step_no。省略时沿用旧计划的串行语义；仅 tool 且显式 [] 的连续步骤可并发。",
+          "items": { "type": "integer", "minimum": 1 },
+          "uniqueItems": true
         }
       }
     }

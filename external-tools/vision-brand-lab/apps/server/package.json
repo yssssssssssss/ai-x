@@ -7,7 +7,8 @@
     "dev": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "start": "node dist/apps/server/src/index.js"
+    "start": "node dist/apps/server/src/index.js",
+    "smoke:vlm": "node ../../scripts/vision-brand-vlm-smoke.mjs"
   },
   "dependencies": {
     "@fastify/cors": "^11.2.0",

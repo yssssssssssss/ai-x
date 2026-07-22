@@ -55,6 +55,10 @@ export interface AttentionAnalyzeResult {
   status: AttentionStatus;
   mode: AttentionMode;
   engine?: 'vlm' | 'heuristic';
+  degraded?: boolean;
+  reasonCode?: 'vlm_not_configured' | 'vlm_failed';
+  model?: string;
+  attempts?: number;
   summary: string;
   heatmap: number[][];
   heatmapImage?: string;

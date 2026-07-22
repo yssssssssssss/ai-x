@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>设计走查研究报告</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #0f1419;
+  --surface: #1c2128;
+  --surface-2: #252c35;
+  --text: #e6edf3;
+  --text-dim: #8b949e;
+  --accent: #58a6ff;
+  --green: #3fb950;
+  --yellow: #d29922;
+  --red: #f85149;
+  --border: #30363d;
+  --radius: 10px;
+}
+body { font-family: -apple-system, "SF Pro Text", "PingFang SC", sans-serif; background: var(--bg); color: var(--text); line-height: 1.7; }
+
+.dashboard { display: grid; grid-template-columns: 280px 1fr; min-height: 100vh; }
+
+/* 侧栏 */
+.sidebar { background: var(--surface); padding: 32px 24px; border-right: 1px solid var(--border); position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+.sidebar .logo { font-size: 14px; font-weight: 700; color: var(--accent); margin-bottom: 32px; letter-spacing: 1px; text-transform: uppercase; }
+.sidebar nav a { display: block; padding: 10px 14px; margin-bottom: 4px; border-radius: 6px; font-size: 13px; color: var(--text-dim); text-decoration: none; transition: all 0.15s; }
+.sidebar nav a:hover, .sidebar nav a.active { background: var(--surface-2); color: var(--text); }
+.sidebar .stats { margin-top: 32px; padding-top: 20px; border-top: 1px solid var(--border); }
+.sidebar .stat { margin-bottom: 16px; }
+.sidebar .stat-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+.sidebar .stat-value { font-size: 24px; font-weight: 700; margin-top: 2px; }
+.sidebar .stat-value.warn { color: var(--yellow); }
+.sidebar .stat-value.ok { color: var(--green); }
+
+/* 主区 */
+.main { padding: 40px 48px; }
+.main h1 { font-size: 24px; font-weight: 700; margin-bottom: 8px; }
+.main .desc { font-size: 14px; color: var(--text-dim); margin-bottom: 32px; }
+
+/* 指标卡片行 */
+.metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 40px; }
+.metric-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
+.metric-card .label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+.metric-card .value { font-size: 28px; font-weight: 700; }
+.metric-card .sub { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+.metric-card .value.red { color: var(--red); }
+.metric-card .value.yellow { color: var(--yellow); }
+.metric-card .value.green { color: var(--green); }
+.metric-card .value.blue { color: var(--accent); }
+
+/* 热力图占位 */
+.heatmap-section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; margin-bottom: 32px; }
+.heatmap-section h2 { font-size: 15px; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+.heatmap-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.hotspot-chart { background: var(--surface-2); border-radius: 8px; padding: 16px; height: 200px; display: flex; align-items: center; justify-content: center; position: relative; }
+.hotspot-bar { position: absolute; bottom: 16px; left: 16px; right: 16px; display: flex; align-items: flex-end; gap: 8px; height: 140px; }
+.hotspot-bar .bar { flex: 1; background: var(--accent); border-radius: 4px 4px 0 0; position: relative; transition: all 0.3s; opacity: 0.7; }
+.hotspot-bar .bar:hover { opacity: 1; }
+.hotspot-bar .bar-label { position: absolute; bottom: -20px; left: 50%; transform: translateX(-50%); font-size: 10px; color: var(--text-dim); white-space: nowrap; }
+.hotspot-list table { width: 100%; font-size: 12px; }
+.hotspot-list th { text-align: left; padding: 8px; color: var(--text-dim); font-size: 10px; text-transform: uppercase; border-bottom: 1px solid var(--border); }
+.hotspot-list td { padding: 8px; border-bottom: 1px solid var(--border); }
+.score-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+
+/* 发现列表 */
+.findings-section { margin-bottom: 40px; }
+.findings-section h2 { font-size: 16px; margin-bottom: 16px; }
+.finding-row { display: grid; grid-template-columns: 80px 1fr 120px; gap: 16px; padding: 16px 20px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 10px; align-items: center; }
+.finding-row .idx { font-size: 22px; font-weight: 700; color: var(--text-dim); text-align: center; }
+.finding-row .text { font-size: 13px; line-height: 1.7; }
+.finding-row .tag { font-size: 10px; padding: 4px 10px; border-radius: 20px; text-align: center; font-weight: 600; }
+.tag-tool { background: rgba(88,166,255,0.15); color: var(--accent); }
+.tag-llm { background: rgba(210,153,34,0.15); color: var(--yellow); }
+
+/* 风险 */
+.risk-section { background: rgba(248,81,73,0.08); border: 1px solid rgba(248,81,73,0.3); border-radius: var(--radius); padding: 24px; }
+.risk-section h2 { font-size: 15px; color: var(--red); margin-bottom: 16px; }
+.risk-section li { font-size: 13px; margin-bottom: 8px; color: #ffa198; line-height: 1.7; }
+
+/* 能力 */
+.cap-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-bottom: 40px; }
+.cap-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+.cap-card .name { font-size: 12px; font-weight: 600; color: var(--accent); margin-bottom: 6px; font-family: monospace; }
+.cap-card .type { font-size: 10px; color: var(--text-dim); text-transform: uppercase; margin-bottom: 6px; }
+.cap-card .purpose { font-size: 12px; color: var(--text-dim); line-height: 1.6; }
+</style>
+</head>
+<body>
+
+<div class="dashboard">
+  <aside class="sidebar">
+    <div class="logo">用研 AI · 报告</div>
+    <nav>
+      <a class="active" href="#overview">概览</a>
+      <a href="#findings">关键发现</a>
+      <a href="#attention">注意力分析</a>
+      <a href="#capabilities">能力编排</a>
+      <a href="#timeline">时间线</a>
+      <a href="#risks">风险项</a>
+    </nav>
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-label">发现总数</div>
+        <div class="stat-value">9</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">工具证据占比</div>
+        <div class="stat-value ok">89%</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">数据缺口</div>
+        <div class="stat-value warn">3</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">调用工具</div>
+        <div class="stat-value">5</div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <h1>电商 APP 首屏设计走查</h1>
+    <div class="desc">对现有设计稿进行走查分析与评估，识别主要体验/视觉问题并给出优化建议 · 任务 8c27b81a · 2026-07-20</div>
+
+    <div class="metrics">
+      <div class="metric-card">
+        <div class="label">分散风险指数</div>
+        <div class="value yellow">0.457</div>
+        <div class="sub">distractionRiskScore</div>
+      </div>
+      <div class="metric-card">
+        <div class="label">焦点平衡</div>
+        <div class="value yellow">0.504</div>
+        <div class="sub">focusBalanceScore</div>
+      </div>
+      <div class="metric-card">
+        <div class="label">高分热点数</div>
+        <div class="value red">5</div>
+        <div class="sub">score ≥ 0.8</div>
+      </div>
+      <div class="metric-card">
+        <div class="label">维度完整率</div>
+        <div class="value blue">2/5</div>
+        <div class="sub">attention + experience</div>
+      </div>
+    </div>
+
+    <!-- 热力图区 -->
+    <div class="heatmap-section" id="attention">
+      <h2>🎯 注意力热点分布</h2>
+      <div class="heatmap-grid">
+        <div class="hotspot-chart">
+          <div class="hotspot-bar">
+            <div class="bar" style="height:100%"><span class="bar-label">h1</span></div>
+            <div class="bar" style="height:84.7%"><span class="bar-label">h2</span></div>
+            <div class="bar" style="height:83.6%"><span class="bar-label">h3</span></div>
+            <div class="bar" style="height:81.3%"><span class="bar-label">h4</span></div>
+            <div class="bar" style="height:80.5%"><span class="bar-label">h5</span></div>
+          </div>
+        </div>
+        <div class="hotspot-list">
+          <table>
+            <thead><tr><th>热点</th><th>分数</th><th>状态</th></tr></thead>
+            <tbody>
+              <tr><td><span class="score-dot" style="background:#f85149"></span>hotspot_1</td><td>1.000</td><td>⚠️ 最高</td></tr>
+              <tr><td><span class="score-dot" style="background:#f85149"></span>hotspot_2</td><td>0.847</td><td>⚠️ 高</td></tr>
+              <tr><td><span class="score-dot" style="background:#d29922"></span>hotspot_3</td><td>0.836</td><td>中高</td></tr>
+              <tr><td><span class="score-dot" style="background:#d29922"></span>hotspot_4</td><td>0.813</td><td>中高</td></tr>
+              <tr><td><span class="score-dot" style="background:#d29922"></span>hotspot_5</td><td>0.805</td><td>中高</td></tr>
+            </tbody>
+          </table>
+          <div style="margin-top:12px;font-size:11px;color:var(--text-dim);padding:8px;background:var(--surface-2);border-radius:6px;">
+            ⚠️ 启发式估计，非真实眼动实验。只能辅助判断视觉刺激分布。
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 发现 -->
+    <div class="findings-section" id="findings">
+      <h2>关键发现</h2>
+      <div class="finding-row"><div class="idx">#1</div><div class="text">竞品研究数据缺口：无"检索数据/行业报告/外部链接"可引用材料，无法产出竞品结论。</div><div class="tag tag-tool">工具产出</div></div>
+      <div class="finding-row"><div class="idx">#2</div><div class="text">注意力分散风险：distractionRiskScore=0.457，页面可能存在"多点抢注意力"。</div><div class="tag tag-tool">工具产出</div></div>
+      <div class="finding-row"><div class="idx">#3</div><div class="text">5个高分热点形成视觉竞争，缺少"热点-UI元素映射"无法判定是否压制主CTA。</div><div class="tag tag-tool">工具产出</div></div>
+      <div class="finding-row"><div class="idx">#4</div><div class="text">美学维度 data_incomplete：缺少 aesthetic-quant-lab 评分/分项指标。</div><div class="tag tag-tool">工具产出</div></div>
+      <div class="finding-row"><div class="idx">#5</div><div class="text">品牌一致性 data_incomplete：缺少 vision-brand-lab 与品牌参考素材。</div><div class="tag tag-tool">工具产出</div></div>
+      <div class="finding-row"><div class="idx">#6</div><div class="text">无法问题分层/排序：缺关键输入(业务目标/用户/任务路径/指标)。</div><div class="tag tag-tool">工具产出</div></div>
+      <div class="finding-row"><div class="idx">#7</div><div class="text">方法论可用但非证据：体验模型是框架，需真实数据验证。</div><div class="tag tag-tool">工具产出</div></div>
+      <div class="finding-row"><div class="idx">#8</div><div class="text">落地优先应"输入补齐→清单结构化→排序"，否则结论停在假设层。</div><div class="tag tag-llm">LLM 推断</div></div>
+    </div>
+
+    <!-- 能力编排 -->
+    <h2 id="capabilities">能力编排</h2>
+    <div class="cap-grid">
+      <div class="cap-card"><div class="name">experience-model-lab</div><div class="type">tool</div><div class="purpose">选择体验分析框架(美学可用性/认知负荷/GSM)</div></div>
+      <div class="cap-card"><div class="name">design-experience-review</div><div class="type">tool</div><div class="purpose">识别评估数据缺口，输出补齐工具与输入清单</div></div>
+      <div class="cap-card"><div class="name">attention-analysis-lab</div><div class="type">tool</div><div class="purpose">启发式注意力热区、峰值与分散风险指标</div></div>
+      <div class="cap-card"><div class="name">issue-prioritization</div><div class="type">tool</div><div class="purpose">字段模板、证据清单、排序进入条件</div></div>
+      <div class="cap-card"><div class="name">llm_synthesis</div><div class="type">skill</div><div class="purpose">编排工具输出为可落地研究计划</div></div>
+    </div>
+
+    <!-- 风险 -->
+    <div class="risk-section" id="risks">
+      <h2>⚠️ 风险与待确认</h2>
+      <ul>
+        <li>缺少"检索数据+竞品分析"原始材料，无法产出竞品结论</li>
+        <li>缺少业务目标/主CTA/任务路径，无法判定P0阻断点</li>
+        <li>ICE/RICE精排需团队提供正典口径</li>
+        <li>attention-analysis-lab 为启发式估计，重要决策需结合埋点验证</li>
+        <li>vision-brand-lab 需品牌参考图；aesthetic-quant-lab 需明确评估对象</li>
+      </ul>
+    </div>
+
+  </main>
+</div>
+
+</body>
+</html>

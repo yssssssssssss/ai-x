@@ -8,6 +8,7 @@ skills:
     domain: [competitive_research, cross_cutting]
     owner: 竞品分析组
     status: active
+    output_schema: schemas/skill-result-envelope.schema.json
     task_types:
       - competitive_research
       - user_research_planning
@@ -16,7 +17,7 @@ skills:
       - live_commerce
       - competitive
     input_schema: skills/competitive-analysis/digital-human/input.schema.json
-    output_schema: skills/competitive-analysis/digital-human/output.schema.json
+    payload_schema: skills/competitive-analysis/digital-human/output.schema.json
     required_tools:
       - jd-product-search
       - tavily-web-search
@@ -33,6 +34,7 @@ skills:
     domain: [competitive_research, cross_cutting]
     owner: 竞品分析组
     status: active
+    output_schema: schemas/skill-result-envelope.schema.json
     task_types:
       - competitive_research
     intent_tags:
@@ -52,6 +54,8 @@ skills:
     domain: [competitive_research, cross_cutting]
     owner: 竞品分析组
     status: active
+    output_schema: schemas/skill-result-envelope.schema.json
+    payload_schema: skills/competitive-analysis/app-analysis/output.schema.json
     task_types:
       - competitive_research
     intent_tags:
@@ -73,6 +77,7 @@ skills:
     domain: [design_audit, cross_cutting]
     owner: 体验设计组
     status: active
+    output_schema: schemas/skill-result-envelope.schema.json
     task_types:
       - design_audit
       - user_research_planning
@@ -83,7 +88,7 @@ skills:
       - brand
       - visual
     input_schema: skills/design-review/input.schema.json
-    output_schema: skills/design-review/output.schema.json
+    payload_schema: skills/design-review/output.schema.json
     required_tools:
       - aesthetic-quant-lab
       - attention-analysis-lab
@@ -115,6 +120,7 @@ skills:
     task_types:
       - a11y_audit
     status: active
+    output_schema: schemas/skill-result-envelope.schema.json
   - id: analyze-satisfaction
     name: analyze-satisfaction
     path: knowledge-base/skills/analyze-satisfaction
@@ -138,6 +144,8 @@ skills:
     task_types:
       - voc_diagnosis
     status: active
+    output_schema: schemas/skill-result-envelope.schema.json
+    payload_schema: knowledge-base/skills/analyze-satisfaction/output.schema.json
   - id: build-experience-metrics
     name: build-experience-metrics
     path: knowledge-base/skills/build-experience-metrics
@@ -162,6 +170,7 @@ skills:
     task_types:
       - user_research_planning
     status: active
+    output_schema: schemas/skill-result-envelope.schema.json
   - id: code-open-feedback
     name: code-open-feedback
     path: knowledge-base/skills/code-open-feedback
@@ -181,6 +190,7 @@ skills:
     task_types:
       - voc_diagnosis
     status: active
+    output_schema: schemas/skill-result-envelope.schema.json
   - id: competitive-analysis
     name: competitive-analysis
     path: knowledge-base/skills/competitive-analysis
@@ -209,6 +219,7 @@ skills:
       - jd-product-search
       - joyspace-search
     status: active
+    output_schema: schemas/skill-result-envelope.schema.json
   - id: conversion-funnel-analysis
     name: conversion-funnel-analysis
     path: knowledge-base/skills/conversion-funnel-analysis
@@ -232,6 +243,8 @@ skills:
     task_types:
       - user_research_planning
     status: active
+    output_schema: schemas/skill-result-envelope.schema.json
+    payload_schema: knowledge-base/skills/conversion-funnel-analysis/output.schema.json
   - id: feature-adoption-analysis
     name: feature-adoption-analysis
     path: knowledge-base/skills/feature-adoption-analysis
@@ -253,6 +266,8 @@ skills:
     task_types:
       - user_research_planning
     status: active
+    output_schema: schemas/skill-result-envelope.schema.json
+    payload_schema: knowledge-base/skills/feature-adoption-analysis/output.schema.json
   - id: generate-interview-guide
     name: generate-interview-guide
     path: knowledge-base/skills/generate-interview-guide
@@ -268,6 +283,7 @@ skills:
     task_types:
       - user_research_planning
     status: active
+    output_schema: schemas/skill-result-envelope.schema.json
   - id: generate-persona
     name: generate-persona
     path: knowledge-base/skills/generate-persona
@@ -287,6 +303,7 @@ skills:
     task_types:
       - user_research_planning
     status: active
+    output_schema: schemas/skill-result-envelope.schema.json
   - id: generate-research-plan
     name: generate-research-plan
     path: knowledge-base/skills/generate-research-plan
@@ -303,6 +320,7 @@ skills:
     task_types:
       - user_research_planning
     status: active
+    output_schema: schemas/skill-result-envelope.schema.json
   - id: generate-survey
     name: generate-survey
     path: knowledge-base/skills/generate-survey
@@ -319,6 +337,7 @@ skills:
     task_types:
       - user_research_planning
     status: active
+    output_schema: schemas/skill-result-envelope.schema.json
   - id: generate-usability-test
     name: generate-usability-test
     path: knowledge-base/skills/generate-usability-test
@@ -338,6 +357,7 @@ skills:
     task_types:
       - design_audit
     status: active
+    output_schema: schemas/skill-result-envelope.schema.json
   - id: issue-prioritization
     name: issue-prioritization
     path: knowledge-base/skills/issue-prioritization
@@ -360,6 +380,7 @@ skills:
     task_types:
       - user_research_planning
     status: active
+    output_schema: schemas/skill-result-envelope.schema.json
   - id: jobs-to-be-done
     name: jobs-to-be-done
     path: knowledge-base/skills/jobs-to-be-done
@@ -385,6 +406,7 @@ skills:
     task_types:
       - user_research_planning
     status: active
+    output_schema: schemas/skill-result-envelope.schema.json
   - id: journey-map
     name: journey-map
     path: knowledge-base/skills/journey-map
@@ -410,6 +432,7 @@ skills:
     task_types:
       - user_research_planning
     status: active
+    output_schema: schemas/skill-result-envelope.schema.json
   - id: run-heuristic-evaluation
     name: run-heuristic-evaluation
     path: knowledge-base/skills/run-heuristic-evaluation
@@ -430,6 +453,7 @@ skills:
     task_types:
       - design_audit
     status: active
+    output_schema: schemas/skill-result-envelope.schema.json
   - id: structure-interview-transcript
     name: structure-interview-transcript
     path: knowledge-base/skills/structure-interview-transcript
@@ -447,6 +471,8 @@ skills:
     task_types:
       - user_research_planning
     status: active
+    output_schema: schemas/skill-result-envelope.schema.json
+    payload_schema: knowledge-base/skills/structure-interview-transcript/output.schema.json
   - id: synthesize-qualitative-insights
     name: synthesize-qualitative-insights
     path: knowledge-base/skills/synthesize-qualitative-insights
@@ -465,3 +491,5 @@ skills:
     task_types:
       - user_research_planning
     status: active
+    output_schema: schemas/skill-result-envelope.schema.json
+    payload_schema: knowledge-base/skills/synthesize-qualitative-insights/output.schema.json

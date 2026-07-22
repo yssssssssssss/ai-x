@@ -17,6 +17,7 @@ export interface LLMResult<T> {
   modelVersion: string;
   traceId: string;
   tokens?: TokenUsage;
+  isMock?: boolean;
 }
 
 export interface LLMClient {
@@ -47,38 +48,94 @@ function traceFrom(prompt: string, schemaName: string): string {
 
 // Mock 返回的 fixture 由调用方按 schemaName 决定;这里给出竞品研究主链路所需的默认集。
 // 允许注入自定义 fixtures(测试 schema 不合规重试/降级用)。
-// report 生成时,若 context 带非空 tool_outputs,把首条检索结果作为 tool_result 结论注入 findings 头部。
-// 仅 mock 用:证明"报告确实消费了真实检索数据"这条链路通;gateway 真实 LLM 会自行据 context 生成。
+// report 生成时,若 context 带证据台账,把首条可回链工具证据注入报告闭环。
+// 仅 mock 用:证明报告消费的是台账而非固定摘要;gateway 真实 LLM 会自行据 context 生成。
 function injectToolResultFinding<T>(schemaName: string, context: object | undefined, out: T): T {
   if (schemaName !== 'research-report' || !context) return out;
-  const toolOutputs = (context as { tool_outputs?: Array<{ output?: unknown }> }).tool_outputs;
-  if (!Array.isArray(toolOutputs) || toolOutputs.length === 0) return out;
-  const first = (toolOutputs[0]?.output as { results?: Array<Record<string, unknown>> })?.results?.[0];
-  if (!first) return out;
-  const app = first.source_app ?? first.title ?? '竞品';
-  const detail = first.design_analysis ?? first.snippet ?? '检索到竞品页面';
-  const report = out as { findings?: Array<Record<string, unknown>> };
+  const entries = (context as { evidence_ledger?: { entries?: Array<{ id?: unknown; statement?: unknown; source_type?: unknown }> } }).evidence_ledger?.entries;
+  const first = entries?.find((entry) => entry.source_type === 'tool_result' && typeof entry.id === 'string' && typeof entry.statement === 'string');
+  if (!first || typeof first.id !== 'string' || typeof first.statement !== 'string') return out;
+  const report = out as {
+    findings?: Array<Record<string, unknown>>;
+    core_issues?: Array<Record<string, unknown>>;
+    recommendations?: Array<Record<string, unknown>>;
+  };
   if (Array.isArray(report.findings)) {
     report.findings.unshift({
-      statement: `检索到竞品「${String(app)}」:${String(detail).slice(0, 60)}`,
+      statement: `证据台账显示：${first.statement.slice(0, 100)}`,
       source: 'tool_result',
-      source_ref: 'run/tool_outputs',
+      source_ref: first.id,
     });
+  }
+  if (Array.isArray(report.core_issues) && report.core_issues[0]) {
+    report.core_issues[0].evidence_basis = 'evidence';
+    report.core_issues[0].evidence_refs = [first.id];
+  }
+  if (Array.isArray(report.recommendations) && report.recommendations[0]) {
+    report.recommendations[0].evidence_basis = 'evidence';
+    report.recommendations[0].evidence_refs = [first.id];
   }
   return out;
 }
 
-// skill 步执行(schemaName 以 skill: 开头)在 mock 下返回符合 digital-human output schema 的最小 fixture,
-// 避免 mock 因无预置 fixture 抛错。真实价值在 gateway:GPT-5.5 读 SKILL.md + tool_outputs 真产出。
+// skill 步执行(schemaName 以 skill: 开头)在 mock 下返回统一结果信封，
+// 避免 mock 因无预置 fixture 抛错。真实价值在 gateway 读 SKILL.md + tool_outputs 真产出。
 function skillFixtureFor(schemaName: string): unknown | undefined {
   if (!schemaName.startsWith('skill:')) return undefined;
   return {
-    comparison_matrix: [
-      { competitor: '竞品A', dimension: '交互体验', assessment: 'mock:实时互动可用', source: 'llm_inference' },
+    version: '1.0',
+    status: 'succeeded',
+    summary: 'mock:已完成结构化 Skill 分析。',
+    findings: [
+      { id: 'F-001', statement: 'mock:实时互动可作为差异化方向。', confidence: 0.5, evidence_refs: ['E-001'] },
     ],
-    differentiation_opportunities: ['mock:低延迟实时互动可作为差异化方向'],
-    sources: ['mock'],
+    evidence: [{ id: 'E-001', source_type: 'llm_inference', trace_id: 'mock' }],
+    assumptions: ['mock 环境不包含外部检索结果。'],
+    limitations: ['仅用于离线测试，不代表真实研究结论。'],
+    recommendations: ['mock:补充真实证据后复核。'],
+    payload: skillPayloadFixture(schemaName),
   };
+}
+
+function skillPayloadFixture(schemaName: string): Record<string, unknown> {
+  switch (schemaName) {
+    case 'skill:design-experience-review':
+      return {
+        assessments: [{ dimension: 'aesthetic', finding: 'mock:视觉层级可用', score: 0.5, status: 'data_incomplete', source: 'llm_inference' }],
+        priority_actions: ['mock:补充设计稿后复核。'],
+        sources: ['mock'],
+      };
+    case 'skill:competitive-app-analysis':
+      return {
+        screen_comparisons: [{ competitor: '竞品A', scene: '首页', summary: 'mock:缺少真实截图，不能形成量化对比。', evidence_refs: ['E-001'] }],
+        recommendations: ['mock:补充可追溯竞品截图后复核。'],
+      };
+    case 'skill:analyze-satisfaction':
+      return { analysis_status: 'needs_data', data_requests: ['补充行级满意度与属性评分数据。'], driver_priorities: [], ipa_priorities: [] };
+    case 'skill:conversion-funnel-analysis':
+      return { analysis_status: 'needs_data', data_requests: ['补充各漏斗阶段人数与时间范围。'], stages: [], drop_off_hypotheses: [] };
+    case 'skill:feature-adoption-analysis':
+      return { analysis_status: 'needs_data', data_requests: ['补充功能曝光、使用和留存事件。'], segments: [], adoption_barriers: [] };
+    case 'skill:structure-interview-transcript':
+      return {
+        transcript_status: 'degraded',
+        transcript_summary: 'mock:未提供完整逐字稿，仅验证结构化输出契约。',
+        turns: [{ turn_no: 1, speaker: '受访者A', text: 'mock:我希望流程更清晰。', tags: ['mock'] }],
+        open_questions: ['补充完整逐字稿后进行真实编码。'],
+      };
+    case 'skill:synthesize-qualitative-insights':
+      return {
+        themes: [{ id: 'T-001', label: '流程清晰度', summary: 'mock:材料不足，主题仅用于契约验证。', evidence_refs: ['E-001'] }],
+        insights: ['mock:补充多份材料后再形成跨场洞察。'],
+        open_questions: ['样本是否覆盖关键用户群？'],
+      };
+    default:
+      return {
+        comparison_matrix: [{ competitor: '竞品A', dimension: '交互体验', assessment: 'mock:实时互动可用', source: 'llm_inference' }],
+        differentiation_opportunities: ['mock:低延迟实时互动可作为差异化方向'],
+        sources: ['mock'],
+      };
+  }
 }
 
 export type FixtureMap = Record<string, unknown>;
@@ -107,6 +164,7 @@ export class MockLLMClient implements LLMClient {
       modelVersion: this.model.version,
       traceId: traceFrom(opts.prompt, opts.schemaName),
       tokens: { prompt: 0, completion: 0, total: 0 },
+      isMock: true,
     };
   }
 
@@ -118,6 +176,7 @@ export class MockLLMClient implements LLMClient {
       modelVersion: this.model.version,
       traceId: traceFrom(opts.prompt, 'text'),
       tokens: { prompt: 0, completion: 0, total: 0 },
+      isMock: true,
     };
   }
 }
@@ -193,10 +252,37 @@ export const defaultFixtures: FixtureMap = {
   'research-report': {
     task_id: '__RUNTIME__',
     research_goal: '了解直播场域数字人竞品的能力与体验差异,识别差异化机会',
+    executive_summary: '现有公开证据表明实时互动与体验质量仍是主要差异点。应先补齐对标证据，再以低延迟互动能力验证差异化机会。',
     findings: [
-      { statement: '实时多模态互动是普遍短板,响应延迟集中在 1-3s', source: 'tool_result', source_ref: 'run/tool_outputs/step1.json' },
+      { statement: '实时多模态互动是需要优先验证的差异化方向。', source: 'llm_inference' },
       { statement: '竞品研究应区分事实与推断,仅凭推断的判断须显式标注', source: 'knowledge_base', source_ref: 'knowledge-base/methods/competitive-research-method.md' },
       { statement: '低延迟实时互动 + 行业垂直内容模板是可切入的差异化方向', source: 'llm_inference' },
+    ],
+    core_issues: [
+      {
+        title: '实时互动证据不足',
+        severity: 'major',
+        description: '当前离线环境缺少稳定、可横向比较的真实竞品体验数据。',
+        impact: '若直接确定产品优先级，可能将假设误判为市场事实。',
+        evidence_source: 'mock 环境限制',
+        evidence_basis: 'inference',
+        recommendation: '补充目标竞品的可回链资料后复核。',
+      },
+    ],
+    dimension_analyses: [
+      { dimension: '对标范围', status: 'partial', summary: '当前仅覆盖可获得的公开资料，具体竞品范围需要业务确认。' },
+      { dimension: '能力对比', status: 'partial', summary: '实时互动和内容模板是待验证的关键比较维度。' },
+      { dimension: '体验差异', status: 'data_incomplete', summary: '缺少真实体验或用户测试数据，不能做确定性体验优劣判断。' },
+      { dimension: '机会判断', status: 'partial', summary: '低延迟互动方向具备假设价值，仍需用真实证据验证。' },
+    ],
+    recommendations: [
+      {
+        priority: 'P0',
+        action: '补齐目标竞品公开资料与体验样本，建立可回链对比矩阵。',
+        expected_impact: '将关键机会从假设转化为可验证的优先级判断。',
+        validation: '由研究人员复核每个对比维度的来源和时间范围。',
+        evidence_basis: 'inference',
+      },
     ],
     timeline: [
       { phase: 'W1', activity: '界定对标范围与维度' },

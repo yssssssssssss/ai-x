@@ -15,6 +15,10 @@ const connectionString =
   process.env.DATABASE_URL ?? 'postgres://localhost:5432/user_research_ai';
 
 export const pool = new Pool({ connectionString });
+// 防止无 DB 时 unhandled error 崩溃进程;实际查询仍会报错。
+pool.on('error', (err) => {
+  console.warn('[db] pool idle-client error (non-fatal):', err.message);
+});
 
 export async function closePool(): Promise<void> {
   await pool.end();

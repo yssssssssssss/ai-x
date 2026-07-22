@@ -34,6 +34,9 @@ interface GatewayConfig {
   apiKey: string;
   chain: ModelSpec[];   // 尝试链:主 + fallbacks
   timeoutMs: number;
+  rateLimitBackoffMs: number;
+  circuitFailureThreshold: number;
+  circuitCooldownMs: number;
 }
 
 class RateLimitError extends Error {
@@ -47,7 +50,25 @@ class SwitchModelError extends Error {
   constructor(public readonly reason: string) { super(reason); this.name = 'SwitchModelError'; }
 }
 
+class RetryableGatewayError extends Error {
+  constructor(message: string) { super(message); this.name = 'RetryableGatewayError'; }
+}
+
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+function positiveInt(raw: string | undefined, fallback: number): number {
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+
+function uniqueModelNames(names: string[]): string[] {
+  const seen = new Set<string>();
+  return names.filter((name) => {
+    if (seen.has(name)) return false;
+    seen.add(name);
+    return true;
+  });
+}
 
 function readConfig(): GatewayConfig {
   const baseUrl = process.env.LLM_GATEWAY_BASE_URL;
@@ -57,9 +78,17 @@ function readConfig(): GatewayConfig {
   if (!apiKey) throw new Error('GatewayLLMClient: 缺少 LLM_GATEWAY_API_KEY');
   if (!primary) throw new Error('GatewayLLMClient: 缺少 LLM_MODEL_NAME');
   const fbRaw = process.env.LLM_MODEL_FALLBACKS ?? '';
-  const chainNames = [primary, ...fbRaw.split(',').map((s) => s.trim()).filter(Boolean)];
+  const chainNames = uniqueModelNames([primary, ...fbRaw.split(',').map((s) => s.trim()).filter(Boolean)]);
   const chain = chainNames.map(resolveModel);
-  return { baseUrl, apiKey, chain, timeoutMs: Number(process.env.LLM_GATEWAY_TIMEOUT_MS ?? 30000) };
+  return {
+    baseUrl,
+    apiKey,
+    chain,
+    timeoutMs: positiveInt(process.env.LLM_GATEWAY_TIMEOUT_MS, 30000),
+    rateLimitBackoffMs: positiveInt(process.env.LLM_RATE_LIMIT_BACKOFF_MS, 5000),
+    circuitFailureThreshold: positiveInt(process.env.LLM_CIRCUIT_FAILURE_THRESHOLD, 2),
+    circuitCooldownMs: positiveInt(process.env.LLM_CIRCUIT_COOLDOWN_MS, 30000),
+  };
 }
 
 // schema 提示词构造(所有模型统一走 prompt 引导,不依赖 response_format)。
@@ -98,6 +127,75 @@ function isQuotaExhausted(status: number, bodyText: string): boolean {
   } catch { return false; }
 }
 
+// ─── 多模态支持:从 context 中提取 image dataUrl,构造 image_url content part ───
+// 避免将 base64 作为文本 stringify 进 prompt(Kimi tokenizer ~1.5 chars/token 导致 310K+ tokens 溢出)。
+// OpenAI 兼容端: content = [{ type:'text', text }, { type:'image_url', image_url:{ url, detail } }]
+// Gemini 端: parts = [{ text }, { inlineData:{ mimeType, data } }]
+
+interface ExtractedImage {
+  dataUrl: string;  // 完整 data:image/...;base64,...
+  mime: string;
+  index: number;    // 在原始 user_materials 中的位置
+}
+
+/**
+ * 深度遍历 context 对象,提取所有 image/pdf 的 dataUrl 字段,
+ * 原位替换为 `[image_ref:N]` 占位符,返回提取列表。
+ * 仅提取 data:image/* 和 data:application/pdf 开头的 base64 dataUrl。
+ */
+function extractImagesFromContext(context: object): { cleaned: object; images: ExtractedImage[] } {
+  const images: ExtractedImage[] = [];
+  const IMAGE_RE = /^data:(image\/[^;]+|application\/pdf);base64,.{100,}/;
+
+  function walk(val: unknown): unknown {
+    if (val === null || val === undefined) return val;
+    if (Array.isArray(val)) return val.map(walk);
+    if (typeof val === 'object') {
+      const obj = val as Record<string, unknown>;
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(obj)) {
+        if (k === 'dataUrl' && typeof v === 'string' && IMAGE_RE.test(v)) {
+          const mimeMatch = v.match(/^data:([^;]+);base64,/);
+          const mime = mimeMatch?.[1] ?? 'image/png';
+          // PDF 不走 vision 通道(多数模型不支持 PDF image_url)
+          // 标记其存在性与大小,避免信息丢失也避免 base64 膨胀 context
+          if (mime === 'application/pdf') {
+            const sizeKB = Math.round((v.length - v.indexOf(',') - 1) * 0.75 / 1024);
+            out[k] = `[pdf_attachment omitted: ~${sizeKB}KB, 二进制内容未进入文本上下文]`;
+          } else {
+            const idx = images.length;
+            images.push({ dataUrl: v, mime, index: idx });
+            out[k] = `[image_ref:${idx}]`;
+          }
+        } else {
+          out[k] = walk(v);
+        }
+      }
+      return out;
+    }
+    return val;
+  }
+
+  const cleaned = walk(context) as object;
+  return { cleaned, images };
+}
+
+/** 构建 OpenAI 兼容多模态 user message content(text + image_url parts) */
+function buildMultimodalUserContent(text: string, images: ExtractedImage[]): object[] {
+  const parts: object[] = [{ type: 'text', text }];
+  for (const img of images) {
+    // 只发 image/* ;PDF 不走 vision(大多数模型不支持 PDF image_url)
+    if (img.mime.startsWith('image/')) {
+      // base64 超过 200KB 时降为 low detail(固定 85 tokens vs high 的 ~765 tokens/tile × N)
+      // 保留图片可用性但大幅削减 token 消耗,避免 vision token 超限
+      const b64Length = img.dataUrl.length - img.dataUrl.indexOf(',') - 1;
+      const detail = b64Length > 200_000 ? 'low' : 'auto';
+      parts.push({ type: 'image_url', image_url: { url: img.dataUrl, detail } });
+    }
+  }
+  return parts;
+}
+
 // OpenAI 兼容(GPT-5.2 / Kimi):body = {model, messages, ...};响应 = {choices[0].message.content}
 // Kimi 特色:content 空时读 reasoning_content 兜底。
 function buildOpenAIBody(model: string, messages: object[], jsonMode: boolean): object {
@@ -125,14 +223,38 @@ function parseOpenAI(raw: any): { content: string; model: string; traceId: strin
 }
 
 // Gemini 原生(/responses):body = {model, contents:[{role, parts:[{text}]}]};响应 = {candidates[0].content.parts[*].text}
-function buildGeminiBody(model: string, messages: Array<{ role: string; content: string }>, jsonMode: boolean): object {
+// 支持多模态:若 message.content 是 object[](OpenAI multimodal 格式),转为 Gemini parts。
+function buildGeminiBody(model: string, messages: Array<{ role: string; content: string | object[] }>, jsonMode: boolean): object {
   // 拍平 system → 融入第一条 user;role: user/assistant/system → user/model
-  const sys = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');
+  const sys = messages.filter((m) => m.role === 'system').map((m) => {
+    return typeof m.content === 'string' ? m.content : '';
+  }).join('\n\n');
   const rest = messages.filter((m) => m.role !== 'system');
   const contents = rest.map((m, i) => {
-    let text = m.content;
-    if (i === 0 && sys) text = `${sys}\n\n${text}`;
-    return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text }] };
+    if (typeof m.content === 'string') {
+      const text = i === 0 && sys ? `${sys}\n\n${m.content}` : m.content;
+      return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text }] };
+    }
+    // 多模态 content: 转为 Gemini parts (text + inlineData)
+    const parts: object[] = [];
+    for (const part of m.content as Array<Record<string, unknown>>) {
+      if (part.type === 'text') {
+        const text = i === 0 && sys && parts.length === 0
+          ? `${sys}\n\n${part.text as string}`
+          : part.text as string;
+        parts.push({ text });
+      } else if (part.type === 'image_url') {
+        const imgObj = part.image_url as Record<string, unknown> | undefined;
+        const url = imgObj?.url as string | undefined;
+        if (url?.startsWith('data:')) {
+          const mimeMatch = url.match(/^data:([^;]+);base64,(.+)$/);
+          if (mimeMatch) {
+            parts.push({ inlineData: { mimeType: mimeMatch[1], data: mimeMatch[2] } });
+          }
+        }
+      }
+    }
+    return { role: m.role === 'assistant' ? 'model' : 'user', parts };
   });
   // Gemini 网关默认 maxOutputTokens 偏小,长 JSON/长文本会被截断(finishReason=MAX_TOKENS);显式放大。
   const generationConfig: Record<string, unknown> = { maxOutputTokens: 16384 };
@@ -158,29 +280,65 @@ function parseGemini(raw: any): { content: string; model: string; traceId: strin
 
 export class GatewayLLMClient implements LLMClient {
   private readonly cfg: GatewayConfig;
+  private readonly modelHealth = new Map<string, { consecutiveFailures: number; openUntil: number }>();
 
   constructor(cfg?: Partial<GatewayConfig>) {
-    this.cfg = { ...readConfig(), ...cfg };
+    // 测试和受控探针可完整注入连接信息,不依赖进程环境；生产路径仍从环境读取。
+    const injectedBase = cfg?.baseUrl && cfg.apiKey && cfg.chain
+      ? {
+        baseUrl: cfg.baseUrl,
+        apiKey: cfg.apiKey,
+        chain: cfg.chain,
+        timeoutMs: 30000,
+        rateLimitBackoffMs: 5000,
+        circuitFailureThreshold: 2,
+        circuitCooldownMs: 30000,
+      }
+      : readConfig();
+    this.cfg = { ...injectedBase, ...cfg };
   }
 
-  // 一次逻辑请求 = 遍历 chain,当前模型失败(quota/5xx/timeout)则切下一个。同模型内 429 临时限流按 3 次退避。
+  // 一次逻辑请求 = 遍历健康候选。临时 429 先有限退避,仍失败则切换；连续失败候选进入冷却。
   private async call(messages: object[], jsonMode: boolean): Promise<Normalized> {
     const errs: string[] = [];
-    for (const model of this.cfg.chain) {
+    const now = Date.now();
+    const healthyChain = this.cfg.chain.filter((model) => (this.modelHealth.get(model.name)?.openUntil ?? 0) <= now);
+    // 所有候选都在冷却时允许一次半开探测,避免永久不可恢复。
+    const chain = healthyChain.length > 0 ? healthyChain : this.cfg.chain;
+
+    for (const model of chain) {
       try {
-        return await this.callWithBackoff(model, messages, jsonMode);
+        const result = await this.callWithBackoff(model, messages, jsonMode);
+        this.modelHealth.delete(model.name);
+        return result;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         errs.push(`[${model.name}] ${msg}`);
-        // 只有"配额耗尽 / 5xx / 超时 / SwitchModel"才切下个;其它错误(如响应缺字段)不该跨模型重试
-        if (err instanceof RateLimitError && err.quotaExhausted) continue;
-        if (err instanceof SwitchModelError) continue;
-        // 未知错但网关侧(fetch/5xx/timeout)也切
-        if (err instanceof Error && /HTTP 5\d\d|AbortError|timed?\s*out|fetch failed/i.test(err.message)) continue;
+        if (this.isSwitchable(err)) {
+          this.recordFailure(model.name);
+          continue;
+        }
         throw err;
       }
     }
     throw new Error(`所有模型均失败:\n${errs.join('\n')}`);
+  }
+
+  private isSwitchable(err: unknown): boolean {
+    if (err instanceof RateLimitError || err instanceof SwitchModelError || err instanceof RetryableGatewayError) return true;
+    if (!(err instanceof Error)) return false;
+    return err.name === 'AbortError' || /timed?\s*out|fetch failed|network/i.test(err.message);
+  }
+
+  private recordFailure(modelName: string): void {
+    const previous = this.modelHealth.get(modelName) ?? { consecutiveFailures: 0, openUntil: 0 };
+    const consecutiveFailures = previous.consecutiveFailures + 1;
+    this.modelHealth.set(modelName, {
+      consecutiveFailures,
+      openUntil: consecutiveFailures >= this.cfg.circuitFailureThreshold
+        ? Date.now() + this.cfg.circuitCooldownMs
+        : 0,
+    });
   }
 
   private async callWithBackoff(model: ModelSpec, messages: object[], jsonMode: boolean): Promise<Normalized> {
@@ -195,7 +353,7 @@ export class GatewayLLMClient implements LLMClient {
         if (err instanceof RateLimitError && err.quotaExhausted) throw err;
         // 临时 429 才退避
         if (err instanceof RateLimitError && attempt < maxAttempts) {
-          await sleep(err.retryAfterMs ?? attempt * 5000);
+          await sleep(err.retryAfterMs ?? attempt * this.cfg.rateLimitBackoffMs);
           continue;
         }
         throw err;
@@ -228,6 +386,9 @@ export class GatewayLLMClient implements LLMClient {
           isQuotaExhausted(429, text),
         );
       }
+      if (res.status >= 500) {
+        throw new RetryableGatewayError(`${model.name} 网关 HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+      }
       if (!res.ok) {
         throw new Error(`${model.name} 网关 HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
       }
@@ -248,17 +409,31 @@ export class GatewayLLMClient implements LLMClient {
   async generateStructured<T>(opts: {
     prompt: string; schema: object; schemaName: string; context?: object;
   }): Promise<LLMResult<T>> {
+    // 从 context 提取 image dataUrl → 多模态 content part,避免 base64 按文本 tokenize 溢出
+    // 先截断过大的 tool_outputs,再提取图片
+    let userContent: string | object[];
+    if (opts.context) {
+      const { cleaned, images } = extractImagesFromContext(opts.context);
+      const textPart = `${opts.prompt}\n\n上下文:\n${JSON.stringify(cleaned)}`;
+      userContent = images.length > 0
+        ? buildMultimodalUserContent(textPart, images)
+        : textPart;
+    } else {
+      userContent = opts.prompt;
+    }
     const messages = [
       { role: 'system', content: `你是用研任务编排器。只输出 JSON,不要任何解释或 markdown 代码块。\n${schemaHint(opts.schemaName, opts.schema)}` },
-      { role: 'user', content: opts.context ? `${opts.prompt}\n\n上下文:\n${JSON.stringify(opts.context)}` : opts.prompt },
+      { role: 'user', content: userContent },
     ];
     const norm = await this.call(messages, true);
     let parsed: unknown;
     try { parsed = JSON.parse(norm.content); }
     catch { throw new Error(`网关返回非法 JSON(schemaName=${opts.schemaName}, model=${norm.modelName}): ${String(norm?.content ?? '').slice(0, 200)}`); }
-    const data = opts.schemaName === 'decision-states' && parsed && typeof parsed === 'object' && 'items' in parsed
-      ? (parsed as { items: unknown }).items
-      : parsed;
+    // decision-states 响应可能被包裹在 { items: [...] } 中,需解包
+    let data: unknown = parsed;
+    if (opts.schemaName === 'decision-states' && parsed && typeof parsed === 'object' && 'items' in parsed) {
+      data = (parsed as Record<string, unknown>).items;
+    }
     return {
       data: data as T,
       promptHash: hashPrompt(opts.prompt, opts.context),
@@ -270,8 +445,18 @@ export class GatewayLLMClient implements LLMClient {
   }
 
   async generateText(opts: { prompt: string; context?: object }) {
+    let userContent: string | object[];
+    if (opts.context) {
+      const { cleaned, images } = extractImagesFromContext(opts.context);
+      const textPart = `${opts.prompt}\n\n上下文:\n${JSON.stringify(cleaned)}`;
+      userContent = images.length > 0
+        ? buildMultimodalUserContent(textPart, images)
+        : textPart;
+    } else {
+      userContent = opts.prompt;
+    }
     const messages = [
-      { role: 'user', content: opts.context ? `${opts.prompt}\n\n上下文:\n${JSON.stringify(opts.context)}` : opts.prompt },
+      { role: 'user', content: userContent },
     ];
     const norm = await this.call(messages, false);
     return {

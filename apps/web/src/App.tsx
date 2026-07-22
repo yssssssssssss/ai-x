@@ -2,11 +2,15 @@ import { useEffect, useState } from 'react';
 import { api, getToken, clearToken, type User } from './api/client.ts';
 import { Login } from './pages/Login.tsx';
 import { Workbench } from './pages/Workbench.tsx';
+import { FlowChartDemo } from './pages/FlowChartDemo.tsx';
 
 // 轻量路由:不引 react-router。按登录态切换 Login / Workbench。
 export function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // #demo 直接展示流程图 demo,跳过鉴权
+  if (window.location.hash === '#demo') return <FlowChartDemo />;
 
   useEffect(() => {
     if (!getToken()) {

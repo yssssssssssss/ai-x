@@ -10,7 +10,7 @@ import type {
   BrandAssociationResult,
 } from '@vision-brand-lab/core';
 import { assertInsideUploadDir } from './uploadService.js';
-import { isLLMEnabled, chatVisionJSON } from './llmClient.js';
+import { isLLMEnabled, configuredModelCount, chatVisionJSON } from './llmClient.js';
 
 // ===== 通用工具 =====
 const clamp = (value: number, min = 0, max = 1) => Math.min(max, Math.max(min, value));
@@ -43,12 +43,31 @@ const bufToDataUrl = (buf: Buffer): string => {
 };
 
 // UploadedImageRef → 可直接塞进 image_url.url 的字符串(data URL 或 http 直链)。
+// VLM 路径专用:统一转为 JPEG；大图缩放到 ≤1280px 长边，避免 data URL 的 MIME 与实际图像字节不一致。
+const VLM_MAX_DIMENSION = 1280;
+
+const compressForVLM = async (buf: Buffer): Promise<Buffer> => {
+  const meta = await sharp(buf).metadata();
+  const width = meta.width ?? 0;
+  const height = meta.height ?? 0;
+  const image = sharp(buf);
+  if (Math.max(width, height) > VLM_MAX_DIMENSION) {
+    image.resize(VLM_MAX_DIMENSION, VLM_MAX_DIMENSION, { fit: 'inside', withoutEnlargement: true });
+  }
+  return image.jpeg({ quality: 85 }).toBuffer();
+};
+
 const resolveImageDataUrl = async (image?: UploadedImageRef): Promise<string | undefined> => {
   if (!image) return undefined;
-  if (image.dataUrl) return image.dataUrl;
-  if (image.url && (image.url.startsWith('http') || image.url.startsWith('data:'))) return image.url;
-  if (image.path) return bufToDataUrl(await readFile(assertInsideUploadDir(image.path)));
-  return undefined;
+  // 优先解析为 buffer 再压缩,确保发给 VLM 的图片尺寸可控
+  const buf = await resolveImageBuffer(image);
+  if (!buf) {
+    // fallback: http 直链不压缩(模型侧会处理)
+    if (image.url?.startsWith('http')) return image.url;
+    return undefined;
+  }
+  const compressed = await compressForVLM(buf);
+  return `data:image/jpeg;base64,${compressed.toString('base64')}`;
 };
 
 // ===================================================================
@@ -61,6 +80,8 @@ const ROLES = [
 ] as const;
 
 const REVIEW_JSON_SHAPE = `{"dimensions":[{"name":"","score":0,"evidence":"","suggestion":""}],"issues":[{"severity":"low|medium|high","issue":"","suggestion":""}],"overallScore":0,"topSuggestion":""}`;
+interface VlmTrace { models: Set<string>; attempts: number }
+const traceOptions = (trace: VlmTrace) => ({ onAttempt: (model: string) => { trace.models.add(model); trace.attempts += 1; } });
 
 interface RolePayload {
   dimensions?: Array<{ name?: string; score?: number; evidence?: string; suggestion?: string }>;
@@ -96,6 +117,7 @@ const reviewOneRole = async (
   goal: string,
   focus: string[],
   imageUrls: string[],
+  trace: VlmTrace,
 ): Promise<VisualReviewerResult> => {
   const system = `${role.system}\n当前评审角色:${role.label}。\n你只能输出 JSON,不要输出任何解释或 markdown。\n所有观察必须基于图像中的具体元素;依据不足时必须保守表达。`;
   const userText = [
@@ -109,8 +131,8 @@ const reviewOneRole = async (
     { role: 'system', content: system },
     { role: 'user', content: [{ type: 'text', text: userText }, ...imageUrls.map((url) => ({ type: 'image_url', image_url: { url } }))] },
   ];
-  const raw = await chatVisionJSON<RolePayload>(messages);
-  return normalizeReviewer(role, raw);
+  const result = await chatVisionJSON<RolePayload>(messages, traceOptions(trace));
+  return { ...normalizeReviewer(role, result.data), actualModel: result.model, vlmAttempts: result.attempts };
 };
 
 // 品牌联想度:VLM 16 轴风格向量(降级路径,不依赖 DINOv2),余弦相似度。
@@ -129,7 +151,7 @@ const meanNormalized = (vs: number[][]): number[] => {
 };
 const cosine = (a: number[], b: number[]) => a.reduce((s, x, i) => s + x * b[i], 0);
 
-const extractDescriptorVectors = async (imageUrls: string[]): Promise<number[][]> => {
+const extractDescriptorVectors = async (imageUrls: string[], trace: VlmTrace): Promise<number[][]> => {
   const system = '你是品牌视觉向量抽取器,把每张图片映射到固定的 16 轴视觉风格向量,每个维度输出 0 到 1 的小数。只输出 JSON,不要解释。';
   const userText = [
     `16 个维度(按此顺序):${DESCRIPTOR_AXES.join(', ')}`,
@@ -140,19 +162,19 @@ const extractDescriptorVectors = async (imageUrls: string[]): Promise<number[][]
     { role: 'system', content: system },
     { role: 'user', content: [{ type: 'text', text: userText }, ...imageUrls.map((url) => ({ type: 'image_url', image_url: { url } }))] },
   ];
-  const raw = await chatVisionJSON<{ items?: Array<{ vector?: Record<string, number> }> }>(messages);
-  const items = Array.isArray(raw.items) ? raw.items : [];
+  const result = await chatVisionJSON<{ items?: Array<{ vector?: Record<string, number> }> }>(messages, traceOptions(trace));
+  const items = Array.isArray(result.data.items) ? result.data.items : [];
   return items.map((it) => DESCRIPTOR_AXES.map((axis) => clamp(Number(it?.vector?.[axis]) || 0)));
 };
 
-const brandAssociationVLM = async (designUrls: string[], referenceUrls: string[]): Promise<BrandAssociationResult> => {
+const brandAssociationVLM = async (designUrls: string[], referenceUrls: string[], trace: VlmTrace): Promise<BrandAssociationResult> => {
   if (!referenceUrls.length) {
     return { status: 'insufficient_inputs', summary: '缺少品牌参考图,未执行品牌联想度。', referenceSampleCount: 0, designSampleCount: designUrls.length, warnings: ['brandReferenceImages is empty'] };
   }
   const refSample = referenceUrls.slice(0, 4);
   const [designVecs, refVecs] = await Promise.all([
-    extractDescriptorVectors(designUrls.slice(0, 3)),
-    extractDescriptorVectors(refSample),
+    extractDescriptorVectors(designUrls.slice(0, 3), trace),
+    extractDescriptorVectors(refSample, trace),
   ]);
   if (!designVecs.length || !refVecs.length) {
     return { status: 'failed', summary: '向量抽取失败。', referenceSampleCount: refSample.length, designSampleCount: designUrls.length, warnings: ['descriptor vector extraction returned empty'] };
@@ -173,7 +195,7 @@ const brandAssociationVLM = async (designUrls: string[], referenceUrls: string[]
   };
 };
 
-const analyzeVisionBrandLLM = async (request: VisionBrandAnalyzeRequest): Promise<VisionBrandAnalyzeResult> => {
+const analyzeVisionBrandLLM = async (request: VisionBrandAnalyzeRequest, trace: VlmTrace): Promise<VisionBrandAnalyzeResult> => {
   const designUrls = (await Promise.all((request.designImages || []).map(resolveImageDataUrl))).filter((u): u is string => Boolean(u));
   if (!designUrls.length) {
     return { status: 'insufficient_inputs', engine: 'vlm', summary: '缺少设计图,无法执行视觉与品牌分析。', findings: [], recommendations: ['上传至少 1 张设计图。'], warnings: ['designImages is required'], boundaryNotes };
@@ -183,14 +205,21 @@ const analyzeVisionBrandLLM = async (request: VisionBrandAnalyzeRequest): Promis
   const focus = request.reviewFocus || [];
   const reviewImages = designUrls.slice(0, 3);
 
-  // 3 角色各自 VLM 评审:独立 try,失败跳过;全失败则抛错由上层回退启发式。
-  const settled = await Promise.allSettled(ROLES.map((r) => reviewOneRole(r, goal, focus, reviewImages)));
+  // 3 角色各自 VLM 评审:独立 try,失败跳过;全失败则抛错(含各角色失败原因)由上层回退启发式。
+  const settled = await Promise.allSettled(ROLES.map((r) => reviewOneRole(r, goal, focus, reviewImages, trace)));
   const reviewers = settled.filter((s): s is PromiseFulfilledResult<VisualReviewerResult> => s.status === 'fulfilled').map((s) => s.value);
-  if (!reviewers.length) throw new Error('all VLM reviewers failed');
+  if (!reviewers.length) {
+    // 收集每个角色的失败原因,便于排查 VLM 配置/模型/超时问题
+    const reasons = settled
+      .filter((s): s is PromiseRejectedResult => s.status === 'rejected')
+      .map((s, i) => `[${ROLES[i]?.label ?? i}] ${s.reason instanceof Error ? s.reason.message : String(s.reason)}`)
+      .join('; ');
+    throw new Error(`all VLM reviewers failed: ${reasons}`);
+  }
 
   let brand: BrandAssociationResult;
   try {
-    brand = await brandAssociationVLM(designUrls, referenceUrls);
+    brand = await brandAssociationVLM(designUrls, referenceUrls, trace);
   } catch (err) {
     brand = { status: 'failed', summary: '品牌联想度计算失败。', referenceSampleCount: referenceUrls.length, designSampleCount: designUrls.length, warnings: [err instanceof Error ? err.message : String(err)] };
   }
@@ -216,6 +245,9 @@ const analyzeVisionBrandLLM = async (request: VisionBrandAnalyzeRequest): Promis
   return {
     status,
     engine: 'vlm',
+    degraded: false,
+    model: [...trace.models].join(','),
+    attempts: trace.attempts,
     summary: `真实 VLM 三角色评审完成(${reviewers.length}/3 角色)${brand.status === 'available' ? ' + 品牌联想度' : ',品牌联想度未执行'}。`,
     visualReview: { reviewers, consensus, conflicts, priorityActions },
     brandAssociation: brand,
@@ -308,14 +340,23 @@ const analyzeVisionBrandHeuristic = async (request: VisionBrandAnalyzeRequest): 
 // 入口:LLM 可用则走真实 VLM,失败或未配置回退启发式。
 // ===================================================================
 export const analyzeVisionBrand = async (request: VisionBrandAnalyzeRequest): Promise<VisionBrandAnalyzeResult> => {
+  const trace: VlmTrace = { models: new Set(), attempts: 0 };
   if (isLLMEnabled()) {
     try {
-      return await analyzeVisionBrandLLM(request);
+      return await analyzeVisionBrandLLM(request, trace);
     } catch (err) {
       const fallback = await analyzeVisionBrandHeuristic(request);
+      fallback.degraded = true;
+      fallback.reasonCode = 'vlm_failed';
+      fallback.model = [...trace.models].join(',') || undefined;
+      fallback.attempts = trace.attempts || configuredModelCount();
       fallback.warnings = uniqueStrings([...fallback.warnings, `VLM 评审失败,已降级启发式:${err instanceof Error ? err.message : String(err)}`]);
       return fallback;
     }
   }
-  return analyzeVisionBrandHeuristic(request);
+  const fallback = await analyzeVisionBrandHeuristic(request);
+  fallback.degraded = true;
+  fallback.reasonCode = 'vlm_not_configured';
+  fallback.attempts = 0;
+  return fallback;
 };

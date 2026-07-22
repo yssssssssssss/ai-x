@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SatisfactionAnalysisPayload",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["analysis_status", "data_requests", "driver_priorities", "ipa_priorities"],
+  "properties": {
+    "analysis_status": { "type": "string", "enum": ["complete", "degraded", "needs_data"] },
+    "data_requests": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "driver_priorities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["attribute", "rationale", "evidence_refs"],
+        "properties": {
+          "attribute": { "type": "string", "minLength": 1 },
+          "importance": { "type": "number" },
+          "performance": { "type": "number" },
+          "rationale": { "type": "string", "minLength": 1 },
+          "evidence_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+        }
+      }
+    },
+    "ipa_priorities": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+  }
+}

@@ -5,14 +5,16 @@ const intFromEnv = (name: string, fallback: number): number => {
   return Number.isFinite(value) ? value : fallback;
 };
 
+const unique = (models: string[]) => [...new Set(models.map((model) => model.trim()).filter(Boolean))];
+
 export const env = {
   host: process.env.SERVER_HOST || '127.0.0.1',
   port: intFromEnv('SERVER_PORT', 8804),
-  // LLM 网关(OpenAI 兼容);三者齐全才启用真实 LLM 评审,否则降级规则模拟。值同主项目。
+  // LLM 网关(OpenAI 兼容);候选顺序与主项目一致,所有候选失败才降级规则模拟。
   llm: {
     baseUrl: process.env.LLM_GATEWAY_BASE_URL || '',
     apiKey: process.env.LLM_GATEWAY_API_KEY || '',
-    model: process.env.LLM_MODEL_NAME || '',
+    models: unique([process.env.LLM_MODEL_NAME || '', ...(process.env.LLM_MODEL_FALLBACKS || '').split(',')]),
     timeoutMs: intFromEnv('LLM_GATEWAY_TIMEOUT_MS', 60000),
   },
 };

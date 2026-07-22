@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CompetitiveAppAnalysisPayload",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["screen_comparisons", "recommendations"],
+  "properties": {
+    "screen_comparisons": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["competitor", "scene", "summary", "evidence_refs"],
+        "properties": {
+          "competitor": { "type": "string", "minLength": 1 },
+          "scene": { "type": "string", "minLength": 1 },
+          "summary": { "type": "string", "minLength": 1 },
+          "metrics": { "type": "object", "additionalProperties": { "type": "number" } },
+          "evidence_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+        }
+      }
+    },
+    "recommendations": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+  }
+}

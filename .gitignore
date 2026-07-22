@@ -1,6 +1,8 @@
 node_modules/
 .env
 .env.bak
+.env.bak-*
+.pids/
 *.log
 .DS_Store
 *.tsbuildinfo
@@ -27,3 +29,7 @@ references/
 
 # 独立子仓库(自带 .git / node_modules / .venv / 3.3G 临时文件),不纳入主仓库
 external-tools/users-research-all/apps/web/dist/
+external-tools/users-research-all/
+
+# Web 构建产物由 Vite 生成，不作为源码提交
+apps/web/dist/

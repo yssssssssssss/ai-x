@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>设计走查研究报告</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --ink: #1a1a2e;
+  --paper: #fafaf9;
+  --accent: #2563eb;
+  --accent-soft: #dbeafe;
+  --warn: #dc2626;
+  --warn-soft: #fef2f2;
+  --dim: #6b7280;
+  --border: #e5e7eb;
+  --card: #ffffff;
+  --radius: 12px;
+}
+body { font-family: -apple-system, "SF Pro Text", "PingFang SC", sans-serif; background: var(--paper); color: var(--ink); line-height: 1.8; }
+
+/* 头部英雄区 */
+.hero { background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%); color: #fff; padding: 80px 60px 60px; }
+.hero h1 { font-size: 32px; font-weight: 700; margin-bottom: 12px; letter-spacing: -0.5px; }
+.hero .subtitle { font-size: 15px; opacity: 0.7; margin-bottom: 24px; }
+.hero .meta { display: flex; gap: 24px; font-size: 13px; opacity: 0.6; }
+.hero .meta span { display: flex; align-items: center; gap: 6px; }
+
+/* 摘要条 */
+.summary-bar { background: var(--accent); color: #fff; padding: 20px 60px; font-size: 14px; line-height: 1.9; }
+
+/* 主内容区 */
+.content { max-width: 820px; margin: 0 auto; padding: 48px 60px 80px; }
+
+/* 章节标题 */
+h2 { font-size: 20px; font-weight: 700; color: var(--ink); margin: 48px 0 20px; padding-bottom: 10px; border-bottom: 2px solid var(--accent); display: inline-block; }
+h3 { font-size: 15px; font-weight: 600; color: var(--dim); margin: 24px 0 12px; text-transform: uppercase; letter-spacing: 1px; }
+
+/* 发现卡片 */
+.finding { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; margin-bottom: 16px; position: relative; }
+.finding::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; border-radius: var(--radius) 0 0 var(--radius); }
+.finding.tool::before { background: var(--accent); }
+.finding.llm::before { background: #f59e0b; }
+.finding.human::before { background: var(--warn); }
+.finding .badge { font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px; display: inline-block; margin-bottom: 10px; }
+.finding.tool .badge { background: var(--accent-soft); color: var(--accent); }
+.finding.llm .badge { background: #fef3c7; color: #92400e; }
+.finding.human .badge { background: var(--warn-soft); color: var(--warn); }
+.finding p { font-size: 14px; line-height: 1.9; color: #374151; }
+.finding .ref { font-size: 11px; color: var(--dim); margin-top: 10px; font-family: "SF Mono", monospace; }
+
+/* 时间线 */
+.timeline { position: relative; padding-left: 28px; }
+.timeline::before { content: ''; position: absolute; left: 8px; top: 4px; bottom: 4px; width: 2px; background: var(--border); }
+.timeline-item { position: relative; margin-bottom: 20px; }
+.timeline-item::before { content: ''; position: absolute; left: -24px; top: 8px; width: 12px; height: 12px; border-radius: 50%; background: var(--accent); border: 3px solid var(--accent-soft); }
+.timeline-item .phase { font-size: 12px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 0.5px; }
+.timeline-item .desc { font-size: 13px; color: #4b5563; margin-top: 4px; line-height: 1.7; }
+
+/* 能力表格 */
+table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 16px 0; }
+th { text-align: left; padding: 10px 14px; background: #f3f4f6; font-weight: 600; color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+td { padding: 12px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+td code { font-size: 12px; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; }
+
+/* 风险区 */
+.risk-box { background: #fffbeb; border: 1px solid #fde68a; border-radius: var(--radius); padding: 20px 24px; margin-top: 24px; }
+.risk-box h3 { color: #92400e; margin-top: 0; }
+.risk-box li { font-size: 13px; color: #78350f; margin-bottom: 8px; line-height: 1.7; }
+
+/* 产出物 */
+.deliverable { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; font-size: 13px; }
+.deliverable::before { content: '📄'; flex-shrink: 0; }
+
+/* 页脚 */
+.footer { text-align: center; padding: 40px; font-size: 12px; color: var(--dim); border-top: 1px solid var(--border); margin-top: 60px; }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1>电商 APP 首屏设计走查</h1>
+  <div class="subtitle">对现有设计稿进行走查分析与评估，识别主要体验/视觉问题并给出优化建议</div>
+  <div class="meta">
+    <span>任务 8c27b81a</span>
+    <span>2026-07-20</span>
+    <span>5 工具 · 9 条发现</span>
+    <span>~350s 执行</span>
+  </div>
+</div>
+
+<div class="summary-bar">
+  <strong>核心结论:</strong> 首屏注意力存在分散风险(distractionRiskScore=0.457),多个高分热点形成视觉竞争;美学与品牌维度因缺少量化工具接入数据不全,需补齐后复测。当前最优先动作:补齐研究输入 → 结构化问题清单 → 再做优先级排序。
+</div>
+
+<div class="content">
+
+<h2>关键发现</h2>
+
+<div class="finding tool">
+  <span class="badge">工具产出</span>
+  <p>竞品研究数据缺口：本次 tool_outputs 未包含任何"检索数据/行业报告/外部链接"或"竞品对标名单+对标页面+差异点"的可引用材料，因此无法产出基于竞品/检索证据的竞品结论。</p>
+  <div class="ref">tool_outputs.llm.output.note</div>
+</div>
+
+<div class="finding tool">
+  <span class="badge">工具产出</span>
+  <p>注意力存在一定分散风险：启发式注意力分析输出 distractionRiskScore=0.457、focusBalanceScore=0.504，提示页面可能存在"多点抢注意力"的风险。</p>
+  <div class="ref">tool_outputs.attention-analysis-lab.summary</div>
+</div>
+
+<div class="finding tool">
+  <span class="badge">工具产出</span>
+  <p>存在多个高分热点，可能造成视觉竞争：hotspot_1 score=1、hotspot_2=0.847、hotspot_3=0.836、hotspot_4=0.813、hotspot_5=0.805。但由于缺少"热点-UI元素映射/主CTA标注"，无法判定是否压制主CTA。</p>
+  <div class="ref">tool_outputs.attention-analysis-lab.hotspots</div>
+</div>
+
+<div class="finding tool">
+  <span class="badge">工具产出</span>
+  <p>注意力结论边界：attention-analysis-lab 明确声明"当前结果是启发式注意力估计，不是眼动实验；只能辅助判断视觉刺激分布"。</p>
+  <div class="ref">tool_outputs.attention-analysis-lab.boundaryNotes</div>
+</div>
+
+<div class="finding tool">
+  <span class="badge">工具产出</span>
+  <p>美学维度数据不全：design-experience-review 标记 aesthetic 维度为 data_incomplete，指出缺少 aesthetic-quant-lab 的评分/分项指标。</p>
+  <div class="ref">tool_outputs.design-experience-review.output.assessments[aesthetic]</div>
+</div>
+
+<div class="finding tool">
+  <span class="badge">工具产出</span>
+  <p>品牌一致性数据不全：design-experience-review 标记 brand 维度为 data_incomplete，指出缺少 vision-brand-lab 输出与品牌参考素材。</p>
+  <div class="ref">tool_outputs.design-experience-review.output.assessments[brand]</div>
+</div>
+
+<div class="finding tool">
+  <span class="badge">工具产出</span>
+  <p>当前无法进行"问题分层/定级/排序"：issue-prioritization 指出 has_issue_list=false 且缺少关键输入，本轮更适合先交付"补齐清单与模板"。</p>
+  <div class="ref">tool_outputs.issue-prioritization.output.brief.input_status</div>
+</div>
+
+<div class="finding tool">
+  <span class="badge">工具产出</span>
+  <p>方法论可用但不能当证据：experience-model-lab 推荐美学可用性效应、认知负荷理论、GSM 模型用于走查分析，但同时提示"体验模型是方法论框架，不是事实证据"。</p>
+  <div class="ref">tool_outputs.experience-model-lab.output</div>
+</div>
+
+<div class="finding llm">
+  <span class="badge">LLM 推断</span>
+  <p>在缺少竞品/检索数据与业务定义的情况下，落地优先应先完成"研究输入补齐→问题清单结构化→再做优先级排序"的闭环；否则任何"竞品最佳实践/行业结论"只能停留在假设层。</p>
+  <div class="ref">inferred_from_tool_gaps_and_workflow_constraints</div>
+</div>
+
+<h2>执行时间线</h2>
+
+<div class="timeline">
+  <div class="timeline-item">
+    <div class="phase">W30</div>
+    <div class="desc">研究启动与对齐：确认本次评估对象、确认截图灰块是否脱敏/占位/异常；确定竞品清单与对标维度。</div>
+  </div>
+  <div class="timeline-item">
+    <div class="phase">W30</div>
+    <div class="desc">样本与数据补齐：获取线上可点链接/录屏；拉取关键楼层数据；补齐品牌/设计系统与运营素材规范。</div>
+  </div>
+  <div class="timeline-item">
+    <div class="phase">W31</div>
+    <div class="desc">竞品样本采集（最小可用集）：选3-5个对标竞品各取首屏截图与关键链路录屏。</div>
+  </div>
+  <div class="timeline-item">
+    <div class="phase">W31</div>
+    <div class="desc">量化与规范核验：对自家与竞品同口径测量对比度/字号/触达区。</div>
+  </div>
+  <div class="timeline-item">
+    <div class="phase">W32</div>
+    <div class="desc">产出"差距-机会-方案"闭环：输出两档改版（快赢微调 vs 结构重构）与组件/文案规范。</div>
+  </div>
+</div>
+
+<h2>能力编排</h2>
+
+<table>
+  <thead><tr><th>能力</th><th>类型</th><th>用途</th></tr></thead>
+  <tbody>
+    <tr><td><code>experience-model-lab</code></td><td>tool</td><td>选择合适体验分析框架（美学可用性效应/认知负荷/GSM）</td></tr>
+    <tr><td><code>design-experience-review</code></td><td>tool</td><td>识别本轮评估数据缺口并给出需补齐的工具与输入清单</td></tr>
+    <tr><td><code>attention-analysis-lab</code></td><td>tool</td><td>输出启发式注意力热区、峰值与分散风险指标</td></tr>
+    <tr><td><code>issue-prioritization</code></td><td>tool</td><td>提供字段模板、所需证据清单与分层排序进入条件</td></tr>
+    <tr><td><code>llm_synthesis</code></td><td>skill</td><td>将工具输出编排为可落地的研究计划</td></tr>
+  </tbody>
+</table>
+
+<h2>产出物清单</h2>
+
+<div class="deliverable">竞品研究设计：竞品池与选择理由、对标页面清单、关键任务路径与成功指标定义</div>
+<div class="deliverable">证据库：检索数据摘要（带来源链接/报告名）、竞品截图/录屏与差异点标注</div>
+<div class="deliverable">工具化评估包：attention-analysis-lab 基线与复跑对比；aesthetic-quant-lab 分项评分</div>
+<div class="deliverable">结构化问题清单：按 issue_list_template 字段齐全，可直接导入Jira/飞书</div>
+<div class="deliverable">优先级与排期建议：影响×难度矩阵 + ICE/RICE 排序结果</div>
+<div class="deliverable">落地改版规格：每个Top问题的修改点、验收标准、依赖与风险</div>
+<div class="deliverable">一页摘要：关键结论Top5（带来源）、Top机会点、下一步决策建议</div>
+
+<div class="risk-box">
+  <h3>风险与待确认</h3>
+  <ul>
+    <li>缺少"检索数据+竞品分析"原始材料与来源链接，无法产出竞品结论</li>
+    <li>缺少页面/流程节点信息、业务目标、主CTA，无法判定P0阻断点</li>
+    <li>如需采用ICE/RICE精排，需团队提供正典口径</li>
+    <li>attention-analysis-lab 为启发式估计，重要决策需结合埋点/可用性测试验证</li>
+    <li>vision-brand-lab 需要品牌参考图/规范；aesthetic-quant-lab 需要明确评估对象</li>
+  </ul>
+</div>
+
+</div>
+
+<div class="footer">
+  用研 AI · 自动生成 · 2026-07-20
+</div>
+
+</body>
+</html>

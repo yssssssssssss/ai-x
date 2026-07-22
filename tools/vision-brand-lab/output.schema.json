@@ -9,6 +9,11 @@
   "properties": {
     "status": { "type": "string", "enum": ["available", "partial_failed", "failed", "insufficient_inputs"] },
     "summary": { "type": "string" },
+    "engine": { "type": "string", "enum": ["vlm", "heuristic"] },
+    "degraded": { "type": "boolean" },
+    "reasonCode": { "type": "string", "enum": ["vlm_not_configured", "vlm_failed"] },
+    "model": { "type": "string" },
+    "attempts": { "type": "integer", "minimum": 0 },
     "visualReview": { "type": "object", "description": "多角色评审:reviewers/consensus/conflicts/priorityActions" },
     "brandAssociation": { "type": "object" },
     "findings": { "type": "array", "items": { "type": "string" } },

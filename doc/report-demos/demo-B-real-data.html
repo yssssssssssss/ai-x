@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>对现有设计稿进行走查分析与评估，识别主要体验/视觉问题并给出优化建议。</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #0f1419;
+  --surface: #1c2128;
+  --surface-2: #252c35;
+  --text: #e6edf3;
+  --text-dim: #8b949e;
+  --accent: #58a6ff;
+  --green: #3fb950;
+  --yellow: #d29922;
+  --red: #f85149;
+  --border: #30363d;
+  --radius: 10px;
+}
+body { font-family: -apple-system, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif; background: var(--bg); color: var(--text); line-height: 1.7; }
+.dashboard { display: grid; grid-template-columns: 260px 1fr; min-height: 100vh; }
+
+/* 侧栏 */
+.sidebar { background: var(--surface); padding: 28px 20px; border-right: 1px solid var(--border); position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+.sidebar .logo { font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 28px; letter-spacing: 1px; text-transform: uppercase; }
+.sidebar nav a { display: block; padding: 9px 12px; margin-bottom: 3px; border-radius: 6px; font-size: 13px; color: var(--text-dim); text-decoration: none; transition: background 0.15s; }
+.sidebar nav a:hover { background: var(--surface-2); color: var(--text); }
+.sidebar .stats { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--border); }
+.sidebar .stat { margin-bottom: 14px; }
+.sidebar .stat-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+.sidebar .stat-value { font-size: 22px; font-weight: 700; margin-top: 2px; }
+.stat-value.warn { color: var(--yellow); }
+.stat-value.ok { color: var(--green); }
+.stat-value.blue { color: var(--accent); }
+
+/* 主区 */
+.main { padding: 36px 44px; max-width: 1100px; }
+.main h1 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
+.main .desc { font-size: 13px; color: var(--text-dim); margin-bottom: 28px; }
+h2 { font-size: 15px; font-weight: 600; margin: 36px 0 14px; color: var(--text); }
+
+/* 摘要 */
+.summary-card { background: linear-gradient(135deg, #1a3a5c 0%, #1c2128 100%); border: 1px solid #264d73; border-radius: var(--radius); padding: 20px 24px; margin-bottom: 28px; font-size: 13px; line-height: 1.9; color: #c8ddf0; }
+.summary-card strong { color: var(--accent); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; display: block; margin-bottom: 8px; }
+
+/* 指标卡片 */
+.metrics { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; margin-bottom: 32px; }
+.metric-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; }
+.metric-card .label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+.metric-card .value { font-size: 26px; font-weight: 700; }
+.metric-card .sub { font-size: 11px; color: var(--text-dim); margin-top: 3px; }
+.value.red { color: var(--red); }
+.value.yellow { color: var(--yellow); }
+.value.green { color: var(--green); }
+.value.blue { color: var(--accent); }
+
+/* 热力图区 */
+.heatmap-section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; margin-bottom: 28px; }
+.heatmap-section h2 { margin: 0 0 14px; }
+.heatmap-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.hotspot-chart { background: var(--surface-2); border-radius: 8px; padding: 16px; height: 180px; position: relative; }
+.hotspot-bar { position: absolute; bottom: 16px; left: 16px; right: 16px; display: flex; align-items: flex-end; gap: 6px; height: 130px; }
+.hotspot-bar .bar { flex: 1; background: var(--accent); border-radius: 3px 3px 0 0; opacity: 0.7; position: relative; }
+.hotspot-bar .bar-label { position: absolute; bottom: -18px; left: 50%; transform: translateX(-50%); font-size: 9px; color: var(--text-dim); white-space: nowrap; }
+.hotspot-list table { width: 100%; font-size: 12px; }
+.hotspot-list th { text-align: left; padding: 7px 8px; color: var(--text-dim); font-size: 10px; text-transform: uppercase; border-bottom: 1px solid var(--border); }
+.hotspot-list td { padding: 7px 8px; border-bottom: 1px solid var(--border); }
+.score-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; }
+.note-box { margin-top: 10px; font-size: 11px; color: var(--text-dim); padding: 8px 10px; background: var(--surface-2); border-radius: 6px; }
+
+/* 核心问题 */
+.issue-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 20px; margin-bottom: 10px; border-left: 4px solid var(--border); }
+.issue-card.critical { border-left-color: var(--red); }
+.issue-card.major { border-left-color: var(--yellow); }
+.issue-card.minor { border-left-color: var(--text-dim); }
+.issue-card .header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.issue-card .sev { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; padding: 2px 8px; border-radius: 3px; }
+.issue-card .sev.critical { background: rgba(248,81,73,0.15); color: var(--red); }
+.issue-card .sev.major { background: rgba(210,153,34,0.15); color: var(--yellow); }
+.issue-card .sev.minor { background: rgba(139,148,158,0.15); color: var(--text-dim); }
+.issue-card .title { font-size: 14px; font-weight: 600; }
+.issue-card .body { font-size: 12px; color: var(--text-dim); line-height: 1.7; }
+.issue-card .rec { margin-top: 8px; font-size: 12px; color: var(--accent); }
+.issue-card .src { margin-top: 6px; font-size: 10px; color: #555d66; }
+
+/* 维度 */
+.dim-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 20px; margin-bottom: 10px; }
+.dim-card .header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.dim-card .dim-name { font-size: 13px; font-weight: 600; text-transform: capitalize; }
+.dim-status { font-size: 9px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+.dim-status.complete { background: rgba(63,185,80,0.15); color: var(--green); }
+.dim-status.partial { background: rgba(210,153,34,0.15); color: var(--yellow); }
+.dim-status.data_incomplete { background: rgba(248,81,73,0.15); color: var(--red); }
+.dim-card .summary { font-size: 12px; color: var(--text-dim); line-height: 1.7; }
+.dim-card .metrics-row { margin-top: 8px; display: flex; gap: 10px; flex-wrap: wrap; }
+.dim-card .m { font-size: 11px; padding: 3px 8px; background: var(--surface-2); border-radius: 4px; }
+.dim-card .m strong { color: var(--accent); }
+
+/* 发现列表 */
+.finding-row { display: grid; grid-template-columns: 48px 1fr 90px; gap: 14px; padding: 14px 18px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px; align-items: center; }
+.finding-row .idx { font-size: 18px; font-weight: 700; color: var(--text-dim); text-align: center; }
+.finding-row .text { font-size: 12px; line-height: 1.7; }
+.finding-row .ref { display: block; margin-top: 4px; font-size: 10px; color: #555d66; font-family: "SF Mono", Menlo, monospace; }
+.tag { font-size: 9px; padding: 3px 8px; border-radius: 12px; text-align: center; font-weight: 600; white-space: nowrap; }
+.tag-tool { background: rgba(88,166,255,0.15); color: var(--accent); }
+.tag-llm { background: rgba(210,153,34,0.15); color: var(--yellow); }
+.tag-human { background: rgba(248,81,73,0.15); color: var(--red); }
+
+/* 能力网格 */
+.cap-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin-bottom: 32px; }
+.cap-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
+.cap-card .name { font-size: 11px; font-weight: 600; color: var(--accent); margin-bottom: 4px; font-family: "SF Mono", Menlo, monospace; }
+.cap-card .type { font-size: 9px; color: var(--text-dim); text-transform: uppercase; margin-bottom: 4px; }
+.cap-card .purpose { font-size: 11px; color: var(--text-dim); line-height: 1.6; }
+
+/* 时间线 */
+.timeline-table { width: 100%; font-size: 12px; border-collapse: collapse; margin-bottom: 28px; }
+.timeline-table th { text-align: left; padding: 8px 12px; color: var(--text-dim); font-size: 10px; text-transform: uppercase; border-bottom: 1px solid var(--border); background: var(--surface); }
+.timeline-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.timeline-table td:first-child { font-weight: 600; color: var(--accent); width: 70px; }
+
+/* 产出物 */
+.deliverables li { font-size: 12px; margin-bottom: 6px; line-height: 1.7; color: var(--text-dim); }
+.deliverables { padding-left: 18px; margin-bottom: 28px; }
+
+/* 风险 */
+.risk-section { background: rgba(248,81,73,0.06); border: 1px solid rgba(248,81,73,0.25); border-radius: var(--radius); padding: 20px 22px; margin-bottom: 28px; }
+.risk-section h2 { color: var(--red); margin: 0 0 12px; }
+.risk-section li { font-size: 12px; margin-bottom: 8px; color: #ffa198; line-height: 1.7; }
+.risk-section ul { padding-left: 16px; }
+
+/* 图片 */
+.upload-section img { max-width: 100%; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 12px; }
+
+/* 页脚 */
+.footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--border); font-size: 11px; color: var(--text-dim); text-align: center; }
+
+@media (max-width: 768px) {
+  .dashboard { grid-template-columns: 1fr; }
+  .sidebar { position: static; height: auto; }
+  .metrics { grid-template-columns: repeat(2, 1fr); }
+  .heatmap-grid { grid-template-columns: 1fr; }
+  .cap-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="dashboard">
+<aside class="sidebar">
+<div class="logo">用研 AI · 报告</div>
+<nav>
+<a href="#metrics">指标概览</a>
+<a href="#findings">关键发现</a>
+<a href="#timeline">时间线</a>
+<a href="#capabilities">能力编排</a>
+<a href="#risks">风险项</a>
+</nav>
+<div class="stats">
+<div class="stat"><div class="stat-label">发现总数</div><div class="stat-value">9</div></div>
+<div class="stat"><div class="stat-label">工具证据占比</div><div class="stat-value ok">89%</div></div>
+<div class="stat"><div class="stat-label">风险/待确认</div><div class="stat-value warn">5</div></div>
+<div class="stat"><div class="stat-label">调用能力</div><div class="stat-value blue">5</div></div>
+</div>
+</aside>
+<main class="main">
+<h1>对现有设计稿进行走查分析与评估，识别主要体验/视觉问题并给出优化建议。</h1>
+<div class="desc">任务 8c27b81a · 2026-07-20 · 9 条发现 · 5 项能力</div>
+<div class="metrics" id="metrics">
+<div class="metric-card"><div class="label">工具证据率</div><div class="value green">89%</div><div class="sub">8/9 tool_result</div></div>
+</div>
+<h2 id="findings">关键发现</h2>
+<div class="finding-row">
+<div class="idx">#1</div>
+<div class="text">竞品研究数据缺口：本次 tool_outputs 未包含任何“检索数据/行业报告/外部链接”或“竞品对标名单+对标页面+差异点”的可引用材料，因此无法产出“基于竞品/检索证据”的竞品结论（来源：tool_outputs.llm.output.note 对缺失材料的明确声明；tool_outputs 列表中亦无竞品条目）。<span class="ref">tool_outputs.llm.output.note</span></div>
+<div class="tag tag-tool">工具产出</div>
+</div>
+<div class="finding-row">
+<div class="idx">#2</div>
+<div class="text">注意力存在一定分散风险：启发式注意力分析输出 distractionRiskScore=0.457、focusBalanceScore=0.504，提示页面可能存在“多点抢注意力”的风险（来源：attention-analysis-lab.summary/distractionRiskScore 与 focusBalanceScore；注意：为启发式估计非真实眼动）。<span class="ref">tool_outputs.attention-analysis-lab.summary</span></div>
+<div class="tag tag-tool">工具产出</div>
+</div>
+<div class="finding-row">
+<div class="idx">#3</div>
+<div class="text">存在多个高分热点，可能造成视觉竞争：hotspot_1 score=1、hotspot_2=0.847、hotspot_3=0.836、hotspot_4=0.813、hotspot_5=0.805（来源：attention-analysis-lab.hotspots）。但由于缺少“热点-UI元素映射/主CTA标注”，无法判定是否压制主CTA。<span class="ref">tool_outputs.attention-analysis-lab.hotspots</span></div>
+<div class="tag tag-tool">工具产出</div>
+</div>
+<div class="finding-row">
+<div class="idx">#4</div>
+<div class="text">注意力结论边界：attention-analysis-lab 明确声明“当前结果是启发式注意力估计，不是眼动实验；只能辅助判断视觉刺激分布”（来源：attention-analysis-lab.boundaryNotes）。<span class="ref">tool_outputs.attention-analysis-lab.boundaryNotes</span></div>
+<div class="tag tag-tool">工具产出</div>
+</div>
+<div class="finding-row">
+<div class="idx">#5</div>
+<div class="text">美学维度数据不全：design-experience-review 标记 aesthetic 维度为 data_incomplete，指出缺少 aesthetic-quant-lab 的评分/分项指标，因此无法给出基于数据的美学结论与评分（来源：design-experience-review.assessments[d=aesthetic]）。<span class="ref">tool_outputs.design-experience-review.output.assessments[aesthetic]</span></div>
+<div class="tag tag-tool">工具产出</div>
+</div>
+<div class="finding-row">
+<div class="idx">#6</div>
+<div class="text">品牌一致性数据不全：design-experience-review 标记 brand 维度为 data_incomplete，指出缺少 vision-brand-lab 输出与品牌参考素材（brandReferenceImage/品牌规范），因此无法基于数据判断品牌一致性与偏差点（来源：design-experience-review.assessments[d=brand]）。<span class="ref">tool_outputs.design-experience-review.output.assessments[brand]</span></div>
+<div class="tag tag-tool">工具产出</div>
+</div>
+<div class="finding-row">
+<div class="idx">#7</div>
+<div class="text">当前无法进行“问题分层/定级/排序”：issue-prioritization 指出 has_issue_list=false 且缺少关键输入（业务目标、目标用户、关键任务路径、成功指标、问题清单、Reach/Effort 等），因此本轮更适合先交付“补齐清单与模板”，再进入排序（来源：issue-prioritization.brief.input_status.missing_critical_inputs 与 has_issue_list）。<span class="ref">tool_outputs.issue-prioritization.output.brief.input_status</span></div>
+<div class="tag tag-tool">工具产出</div>
+</div>
+<div class="finding-row">
+<div class="idx">#8</div>
+<div class="text">方法论可用但不能当证据：experience-model-lab 推荐美学可用性效应、认知负荷理论、GSM 模型用于走查分析，但该工具同时提示“体验模型是方法论框架，不是事实证据；需要结合真实数据验证”（来源：experience-model-lab.boundaryNotes 与 selectedModels）。<span class="ref">tool_outputs.experience-model-lab.output</span></div>
+<div class="tag tag-tool">工具产出</div>
+</div>
+<div class="finding-row">
+<div class="idx">#9</div>
+<div class="text">在缺少竞品/检索数据与业务定义的情况下，落地优先应先完成“研究输入补齐→问题清单结构化→再做优先级排序”的闭环；否则任何“竞品最佳实践/行业结论”只能停留在假设层（无证据不应当作事实）。<span class="ref">inferred_from_tool_gaps_and_workflow_constraints</span></div>
+<div class="tag tag-llm">LLM 推断</div>
+</div>
+<h2 id="timeline">执行时间线</h2>
+<table class="timeline-table"><thead><tr><th>阶段</th><th>活动</th></tr></thead><tbody>
+<tr><td>W1</td><td>研究启动与对齐：锁定评估对象（页面/流程节点/端类型）、业务目标、主CTA、关键任务路径1–2条与成功指标1–2个；建立竞品池（同类3–8个+跨品类2–3个）与对标范围（同一任务页/同一漏斗节点）。</td></tr>
+<tr><td>W1</td><td>证据补齐（内部+外部）：收集并结构化“已有执行结果”（检索数据要点+链接/报告名；既有竞品分析要点+截图/录屏链接）；同时导出本次设计稿关键页面列表与版本号，建立可追溯材料索引。</td></tr>
+<tr><td>W2</td><td>工具化预检（设计稿层）：复跑/固化 attention-analysis-lab 基线结果；补齐 aesthetic-quant-lab（balanced）与 vision-brand-lab（需品牌参考素材）；产出“风险热区与待验证点”列表（仅基于工具证据）。</td></tr>
+<tr><td>W2</td><td>竞品走查执行：按关键任务路径对每个竞品完成同页对标（信息结构/CTA层级/默认值/错误处理/信任要素/成本提示/文案）；每条差异点要求截图证据与可复制做法。</td></tr>
+<tr><td>W3</td><td>问题清单沉淀与优先级：用 issue_list_template 汇总本品问题（现象/影响任务/证据/Reach/Impact/Confidence/Effort）；优先采用“严重度×难度矩阵”初排，若补齐Reach/Effort再做RICE/ICE精排（公式口径待团队正典确认）。</td></tr>
+<tr><td>W3</td><td>形成可落地改版方案：输出Top问题的改版原则与组件级改动清单（文案/层级/布局/视觉权重/交互反馈），并对高风险改动给出AB/灰度验证建议与埋点需求（如转化/点击/完成率）。</td></tr>
+<tr><td>W4</td><td>复核与验收：对改版稿复跑注意力/美学/品牌工具基线对比；组织评审（设计/产品/研发/品牌/合规）；冻结迭代范围与排期，输出最终研究报告与可执行任务单。</td></tr>
+</tbody></table>
+<h2>产出物清单</h2><ul class="deliverables">
+<li>竞品研究设计（Research Plan）：竞品池与选择理由、对标页面清单、关键任务路径与成功指标定义</li>
+<li>证据库（Evidence Pack）：检索数据摘要（带来源链接/报告名）、竞品截图/录屏与差异点标注、材料索引表</li>
+<li>工具化评估包：attention-analysis-lab 基线与复跑对比；aesthetic-quant-lab 分项评分；vision-brand-lab 一致性偏差清单（需品牌参考素材）</li>
+<li>结构化问题清单（Issue Backlog）：按 issue_list_template 字段齐全，可直接导入Jira/飞书多维表</li>
+<li>优先级与排期建议：影响×难度矩阵 +（数据具备时）ICE/RICE 排序结果与假设说明</li>
+<li>落地改版规格（Design Change Spec）：每个Top问题的修改点、验收标准、依赖与风险、需要新增/调整的埋点</li>
+<li>一页摘要（One-pager）：关键结论Top5（带来源）、Top机会点、下一步决策建议</li>
+</ul>
+<h2 id="capabilities">能力编排</h2><div class="cap-grid">
+<div class="cap-card">
+<div class="name">experience-model-lab</div>
+<div class="type">tool</div>
+<div class="purpose">为“设计稿走查”选择合适体验分析框架（美学可用性效应/认知负荷/GSM），用于组织观察点与问题归类（非事实证据）。</div>
+</div>
+<div class="cap-card">
+<div class="name">design-experience-review</div>
+<div class="type">tool</div>
+<div class="purpose">识别本轮评估数据缺口（美学量化/注意力/品牌一致性）并给出需要补齐的工具与输入清单。</div>
+</div>
+<div class="cap-card">
+<div class="name">attention-analysis-lab</div>
+<div class="type">tool</div>
+<div class="purpose">输出启发式注意力热区、峰值与分散风险指标，用于形成“注意力竞争/主次层级待验证”的候选问题与改版验证闭环。</div>
+</div>
+<div class="cap-card">
+<div class="name">issue-prioritization</div>
+<div class="type">tool</div>
+<div class="purpose">在缺少问题清单与业务定义时，提供可执行的字段模板、所需证据清单与分层排序的进入条件，避免无依据排序。</div>
+</div>
+<div class="cap-card">
+<div class="name">llm_synthesis</div>
+<div class="type">skill</div>
+<div class="purpose">将工具输出编排为可落地的研究计划（排期/产出物/依赖/风险），并严格区分 tool_result 与 llm_inference，避免伪造竞品事实。</div>
+</div>
+</div>
+<div class="risk-section" id="risks">
+<h2>⚠️ 风险与待确认</h2><ul>
+<li>need_annotate：缺少“检索数据+竞品分析”原始材料与来源链接（当前 tool_outputs 无竞品条目），无法按要求产出“引用具体竞品名称/来源”的竞品结论。</li>
+<li>need_annotate：缺少页面/流程节点信息、业务目标、主CTA、关键任务路径与成功指标，导致无法判定P0阻断点与转化相关影响。</li>
+<li>need_approval：如需采用ICE/RICE进行精排，需团队提供正典口径（公式、取值档位、P0–P3定义）；本次运行环境无法访问research-wiki正典。</li>
+<li>risk：attention-analysis-lab 为启发式估计，存在与真实眼动/真实用户行为不一致的风险；重要决策需结合埋点/可用性测试验证。</li>
+<li>dependency：vision-brand-lab 需要品牌参考图/规范；aesthetic-quant-lab 需要明确的评估对象页面与一致的截图尺度，否则横向对比不稳定。</li>
+</ul></div>
+<div class="footer">用研 AI · 自动生成 · 2026-07-20 · 任务 8c27b81a-a68a-425a-b5c2-6896f8f10050</div>
+</main></div></body></html>

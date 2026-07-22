@@ -52,10 +52,21 @@ test('ExecutionPlan 至少一步且步骤字段完整', () => {
 test('ResearchReport finding 必须带来源标注', () => {
   const ok = {
     task_id: 't1', research_goal: 'g',
+    executive_summary: '这是一份可回链证据驱动的完整报告摘要。',
     findings: [{ statement: '结论A', source: 'tool_result', source_ref: 'run/x' }],
+    core_issues: [{
+      title: '问题A', severity: 'major', description: '问题描述', impact: '业务影响', evidence_basis: 'evidence', evidence_refs: ['run/x'],
+    }],
+    dimension_analyses: [{ dimension: '体验', status: 'complete', summary: '维度分析' }],
+    recommendations: [{
+      priority: 'P0', action: '执行动作', expected_impact: '预期影响', validation: '验证方式', evidence_basis: 'evidence', evidence_refs: ['run/x'],
+    }],
     timeline: [{ phase: 'W28', activity: '竞品检索' }],
     deliverables: ['竞品对比报告'],
     capability_orchestration: [{ capability_id: 'tavily-web-search', capability_type: 'tool', purpose: '检索' }],
+    risks_and_open_issues: [],
+    report_metadata: { version: '2.0', task_type: 'competitive_research', blueprint_id: 'competitive-research-v2', generation_mode: 'production', evidence_ledger_ref: 'artifacts/evidence-ledger.json' },
+    evidence_summary: { ledger_entry_count: 1, source_count: 1, cited_evidence_count: 1, limitations: [] },
   };
   assert.deepEqual(v.validate('research-report', ok), []);
   // 缺 source 的 finding 被拒

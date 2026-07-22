@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FeatureAdoptionAnalysisPayload",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["analysis_status", "data_requests", "segments", "adoption_barriers"],
+  "properties": {
+    "analysis_status": { "type": "string", "enum": ["complete", "degraded", "needs_data"] },
+    "data_requests": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "segments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["segment", "observation", "evidence_refs"],
+        "properties": {
+          "segment": { "type": "string", "minLength": 1 },
+          "adoption_rate": { "type": "number", "minimum": 0, "maximum": 1 },
+          "observation": { "type": "string", "minLength": 1 },
+          "evidence_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+        }
+      }
+    },
+    "adoption_barriers": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+  }
+}

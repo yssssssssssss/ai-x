@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { PlanResponse, PlanStep, PendingUpload, Upload } from '../../api/client.ts';
+import { api, ApiError, type MediaAssetRef, type PlanResponse, type PlanStep, type PendingUpload, type Upload } from '../../api/client.ts';
 import { Header } from './Stage1Understand.tsx';
 
 // 段2 · 待执行计划(HITL 硬闸门):步骤列表 + 假设可就地编辑 + 待传图片 + 确认按钮。
@@ -11,27 +11,46 @@ export function Stage2Plan({
 }) {
   const [assumptions, setAssumptions] = useState(plan.task.assumptions);
   const [confirmed, setConfirmed] = useState(false);
-  const [images, setImages] = useState<Record<string, string>>({}); // role → dataUrl
+  const [images, setImages] = useState<Record<string, Array<{ asset: MediaAssetRef; previewUrl: string }>>>({});
+  const [uploadingRole, setUploadingRole] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState('');
 
   function edit(key: string, value: string) {
     setAssumptions((prev) => prev.map((a) => (a.key === key ? { ...a, value } : a)));
   }
 
-  function pickImage(pu: PendingUpload, file: File) {
-    const reader = new FileReader();
-    reader.onload = () => setImages((prev) => ({ ...prev, [pu.role]: String(reader.result) }));
-    reader.readAsDataURL(file);
+  async function pickImages(pu: PendingUpload, files: File[]) {
+    if (!files.length) return;
+    setUploadingRole(pu.role);
+    setUploadError('');
+    try {
+      const selected = files.slice(0, pu.maxItems);
+      const uploaded = await Promise.all(selected.map(async (file) => ({
+        asset: await api.uploadMedia(plan.taskId, pu.role, file),
+        previewUrl: URL.createObjectURL(file),
+      })));
+      setImages((prev) => {
+        for (const old of prev[pu.role] ?? []) URL.revokeObjectURL(old.previewUrl);
+        return { ...prev, [pu.role]: uploaded };
+      });
+    } catch (err) {
+      setUploadError(err instanceof ApiError ? err.message : '图片上传失败');
+    } finally {
+      setUploadingRole(null);
+    }
   }
 
   function confirm() {
-    const uploads: Upload[] = pending
-      .map((pu) => ({ role: pu.role, dataUrl: images[pu.role] }))
-      .filter((u): u is Upload => !!u.dataUrl);
+    const uploads: Upload[] = pending.flatMap((pu) =>
+      (images[pu.role] ?? []).map(({ asset }) => ({ role: pu.role, assetId: asset.id })),
+    );
     setConfirmed(true);
     onConfirm(uploads);
   }
 
   const pending = plan.pendingUploads ?? [];
+  const allUploaded = pending.every((pu) => !pu.required || (images[pu.role]?.length ?? 0) >= pu.minItems);
+  const uploading = uploadingRole !== null;
 
   return (
     <section className="stage-card">
@@ -61,32 +80,41 @@ export function Stage2Plan({
 
       {pending.length > 0 && !locked && (
         <div style={{ marginTop: 16 }}>
-          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待上传图片(同一张图会自动用于所有需要它的步骤;不传将跳过该项)</div>
+          <div style={{ fontSize: 12, color: allUploaded ? 'var(--text-faint)' : 'var(--warn, #e67e22)', marginBottom: 6 }}>参考图片</div>
           {pending.map((pu) => (
             <div key={pu.role} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6, fontSize: 13 }}>
               <span style={{ color: 'var(--text-dim)', flex: 1 }}>
-                {pu.label}
+                {pu.label} {pu.required ? '(必填)' : '(可选)'}
                 <span style={{ color: 'var(--text-faint)', fontSize: 11 }}> · 用于步骤 {pu.targets.map((t) => t.step_no).join('/')}</span>
               </span>
-              {images[pu.role] ? (
-                <img src={images[pu.role]} alt="" style={{ height: 34, borderRadius: 4, border: '1px solid var(--border)' }} />
-              ) : null}
+              {(images[pu.role] ?? []).map(({ asset, previewUrl }) => (
+                <img key={asset.id} src={previewUrl} alt="" style={{ height: 34, borderRadius: 4, border: '1px solid var(--border)' }} />
+              ))}
               <input
                 type="file"
-                accept="image/*"
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) pickImage(pu, f); }}
+                accept={pu.acceptedMimeTypes.join(',')}
+                multiple={pu.multiple}
+                disabled={uploading}
+                onChange={(e) => void pickImages(pu, Array.from(e.target.files ?? []))}
                 style={{ fontSize: 12, color: 'var(--text-dim)' }}
               />
+              {uploadingRole === pu.role && <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>上传中...</span>}
             </div>
           ))}
+          {uploadError && <div style={{ fontSize: 12, color: 'var(--danger)' }}>{uploadError}</div>}
         </div>
       )}
 
       {!locked && !confirmed && (
-        <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
-          <button className="btn-primary" onClick={confirm}>
+        <div style={{ display: 'flex', gap: 10, marginTop: 18, alignItems: 'center' }}>
+          <button className="btn-primary" onClick={confirm} disabled={!allUploaded || uploading}>
             ✓ 确认计划,开始执行
           </button>
+          {!allUploaded && (
+            <span style={{ fontSize: 12, color: 'var(--warn, #e67e22)' }}>
+              请先上传所有必需图片({pending.filter((pu) => pu.required && (images[pu.role]?.length ?? 0) < pu.minItems).length} 项待上传)
+            </span>
+          )}
         </div>
       )}
       {(locked || confirmed) && (

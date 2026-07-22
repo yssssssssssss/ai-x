@@ -10,7 +10,7 @@ import type {
   UploadedImageRef,
 } from '@attention-analysis-lab/core';
 import { assertInsideUploadDir } from './uploadService.js';
-import { isLLMEnabled, chatVisionJSON } from './llmClient.js';
+import { isLLMEnabled, configuredModelCount, chatVisionJSON } from './llmClient.js';
 
 const GRID_SIZE = 32;
 
@@ -164,15 +164,17 @@ const analyzeRois = (heatmap: number[][], rois: RoiInput[]): RoiAttentionResult[
 // ===== VLM 语义显著性路径(照原版 attentionSimulationService 规格移植) =====
 const resolveImageDataUrl = async (image?: UploadedImageRef): Promise<string | undefined> => {
   if (!image) return undefined;
-  if (image.dataUrl) return image.dataUrl;
-  if (image.url && (image.url.startsWith('http') || image.url.startsWith('data:'))) return image.url;
-  if (image.path) {
-    const buf = await readFile(assertInsideUploadDir(image.path));
-    const b64 = buf.toString('base64');
-    const mime = b64.startsWith('/9j/') ? 'image/jpeg' : b64.startsWith('iVBORw0') ? 'image/png' : 'image/png';
-    return `data:${mime};base64,${b64}`;
-  }
-  return undefined;
+  if (image.url?.startsWith('http')) return image.url;
+  const buffer = await resolveImageBuffer(image);
+  if (!buffer) return undefined;
+  const metadata = await sharp(buffer).metadata();
+  const compressed = Math.max(metadata.width ?? 0, metadata.height ?? 0) > 1280 || buffer.length > 150_000
+    ? await sharp(buffer).resize(1280, 1280, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer()
+    : buffer;
+  const mime = compressed === buffer
+    ? (buffer.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff])) ? 'image/jpeg' : 'image/png')
+    : 'image/jpeg';
+  return `data:${mime};base64,${compressed.toString('base64')}`;
 };
 
 // 8×8(或任意)热力网格 → 放大的热力图 PNG dataUrl。
@@ -216,7 +218,8 @@ const analyzeAttentionVLM = async (request: AttentionAnalyzeRequest, imageUrl: s
     { role: 'system', content: '你是一个严格输出 JSON 的视觉注意力模拟器。' },
     { role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: imageUrl } }] },
   ];
-  const parsed = await chatVisionJSON<VLMPayload>(messages);
+  const result = await chatVisionJSON<VLMPayload>(messages);
+  const parsed = result.data;
 
   const gridSize = 8;
   const heatmap = Array.isArray(parsed.heatmapGrid) && parsed.heatmapGrid.length
@@ -243,6 +246,9 @@ const analyzeAttentionVLM = async (request: AttentionAnalyzeRequest, imageUrl: s
     status: 'available',
     mode,
     engine: 'vlm',
+    degraded: false,
+    model: result.model,
+    attempts: result.attempts,
     summary: (parsed.summary || `VLM 语义注意力:峰值 ${round(peak)},识别 ${hotspots.length} 个吸睛热点。`).slice(0, 200),
     heatmap,
     heatmapImage: heatmap.length ? await createHeatmapDataUrl(heatmap) : undefined,
@@ -268,11 +274,20 @@ export const analyzeAttention = async (request: AttentionAnalyzeRequest): Promis
       if (imageUrl) return await analyzeAttentionVLM(request, imageUrl);
     } catch {
       const fallback = await analyzeAttentionHeuristic(request);
+      fallback.degraded = true;
+      fallback.reasonCode = 'vlm_failed';
+      fallback.attempts = configuredModelCount();
       fallback.warnings = [...fallback.warnings, 'VLM 语义注意力失败,已降级启发式。'];
       return fallback;
     }
   }
-  return analyzeAttentionHeuristic(request);
+  const fallback = await analyzeAttentionHeuristic(request);
+  if (request.mode === 'semantic' || request.mode === 'hybrid') {
+    fallback.degraded = true;
+    fallback.reasonCode = 'vlm_not_configured';
+    fallback.attempts = 0;
+  }
+  return fallback;
 };
 
 const analyzeAttentionHeuristic = async (request: AttentionAnalyzeRequest): Promise<AttentionAnalyzeResult> => {

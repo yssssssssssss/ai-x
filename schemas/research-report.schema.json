@@ -2,10 +2,10 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "research-report.schema.json",
   "title": "ResearchReport",
-  "description": "段4 交付的可落地方案。写入 artifacts(artifact_type=report)。扩展交付物 A2:timeline/deliverables/capability_orchestration。",
+  "description": "段4 交付的证据台账驱动研究报告。写入 artifacts(artifact_type=report)。",
   "type": "object",
   "additionalProperties": false,
-  "required": ["task_id", "research_goal", "findings", "timeline", "deliverables", "capability_orchestration"],
+  "required": ["task_id", "research_goal", "executive_summary", "findings", "core_issues", "dimension_analyses", "recommendations", "timeline", "deliverables", "capability_orchestration", "risks_and_open_issues", "report_metadata", "evidence_summary"],
   "properties": {
     "task_id": { "type": "string", "minLength": 1 },
     "research_goal": { "type": "string", "minLength": 1 },
@@ -51,6 +51,116 @@
       "type": "array",
       "description": "风险与待人工确认项(need_annotate/need_approval 沉淀于此)。",
       "items": { "type": "string" }
+    },
+    "executive_summary": {
+      "type": "string",
+      "description": "2-4句核心结论摘要。",
+      "minLength": 10
+    },
+    "core_issues": {
+      "type": "array",
+      "description": "核心问题列表,每项含严重程度与建议。",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "severity", "description", "impact", "evidence_basis"],
+        "properties": {
+          "title": { "type": "string", "minLength": 1 },
+          "severity": { "type": "string", "enum": ["critical", "major", "minor"] },
+          "description": { "type": "string", "minLength": 1 },
+          "impact": { "type": "string", "minLength": 1 },
+          "evidence_source": { "type": "string", "minLength": 1 },
+          "evidence_basis": { "type": "string", "enum": ["evidence", "inference"] },
+          "evidence_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "recommendation": { "type": "string", "minLength": 1 }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "evidence_basis": { "const": "evidence" } }, "required": ["evidence_basis"] },
+            "then": { "required": ["evidence_refs"] }
+          }
+        ]
+      }
+    },
+    "dimension_analyses": {
+      "type": "array",
+      "description": "按维度拆分的分析结果。",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["dimension", "status", "summary"],
+        "properties": {
+          "dimension": { "type": "string", "minLength": 1 },
+          "status": { "type": "string", "enum": ["complete", "partial", "data_incomplete"] },
+          "summary": { "type": "string", "minLength": 1 },
+          "metrics": {
+            "type": "object",
+            "description": "维度相关指标 Record<string,number>。",
+            "additionalProperties": { "type": "number" }
+          },
+          "data_source": { "type": "string" },
+          "image_ref": { "type": "string" }
+        }
+      }
+    },
+    "recommendations": {
+      "type": "array",
+      "description": "按优先级排序的行动建议，必须说明预期影响与验证方式。",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["priority", "action", "expected_impact", "validation", "evidence_basis"],
+        "properties": {
+          "priority": { "type": "string", "enum": ["P0", "P1", "P2"] },
+          "action": { "type": "string", "minLength": 1 },
+          "expected_impact": { "type": "string", "minLength": 1 },
+          "validation": { "type": "string", "minLength": 1 },
+          "evidence_basis": { "type": "string", "enum": ["evidence", "inference"] },
+          "evidence_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "evidence_basis": { "const": "evidence" } }, "required": ["evidence_basis"] },
+            "then": { "required": ["evidence_refs"] }
+          }
+        ]
+      }
+    },
+    "report_metadata": {
+      "type": "object",
+      "description": "由运行时确定性补充的报告版本、模板和生成模式。",
+      "additionalProperties": false,
+      "required": ["version", "task_type", "blueprint_id", "generation_mode", "evidence_ledger_ref"],
+      "properties": {
+        "version": { "type": "string", "const": "2.0" },
+        "task_type": { "type": "string", "minLength": 1 },
+        "blueprint_id": { "type": "string", "minLength": 1 },
+        "generation_mode": { "type": "string", "enum": ["production", "mock_demo"] },
+        "evidence_ledger_ref": { "type": "string", "minLength": 1 }
+      }
+    },
+    "evidence_summary": {
+      "type": "object",
+      "description": "由运行时从证据台账计算的覆盖情况。",
+      "additionalProperties": false,
+      "required": ["ledger_entry_count", "source_count", "cited_evidence_count", "limitations"],
+      "properties": {
+        "ledger_entry_count": { "type": "integer", "minimum": 0 },
+        "source_count": { "type": "integer", "minimum": 0 },
+        "cited_evidence_count": { "type": "integer", "minimum": 0 },
+        "limitations": { "type": "array", "items": { "type": "string" } }
+      }
     }
   },
   "$defs": {
@@ -69,7 +179,13 @@
           "type": "string",
           "description": "来源可反查引用,如 knowledge id / tool output ref。"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "source": { "const": "tool_result" } } },
+          "then": { "required": ["source_ref"] }
+        }
+      ]
     }
   }
 }

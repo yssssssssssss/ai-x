@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { api, type User, type PlanCandidatesResponse, type PlanCandidate, type PlanResponse, type ExecuteResponse, type TaskSummary, type TaskDetail, type PlanStep, type Upload, type PlanProgress, ApiError } from '../api/client.ts';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { api, type User, type PlanCandidatesResponse, type PlanCandidate, type PlanResponse, type ExecuteResponse, type TaskSummary, type TaskDetail, type PlanStep, type Upload, type PlanProgress, type ExecuteProgress, type ExecLogRow, ApiError } from '../api/client.ts';
 import { Sidebar } from '../components/Sidebar.tsx';
 import { Composer } from '../components/Composer.tsx';
 import { Stage1Understand } from '../components/stages/Stage1Understand.tsx';
@@ -8,6 +8,7 @@ import { Stage2Plan } from '../components/stages/Stage2Plan.tsx';
 import { Stage3Execute } from '../components/stages/Stage3Execute.tsx';
 import { Stage4Report } from '../components/stages/Stage4Report.tsx';
 import { Labs } from './Labs.tsx';
+import { FlowChart } from '../components/FlowChart.tsx';
 
 // 状态机:idle → planning → picking(选候选)→ selecting(POST select) → planned(确认闸门) → executing → (paused 失败步待决策) → done。
 type Phase = 'idle' | 'planning' | 'picking' | 'selecting' | 'planned' | 'executing' | 'paused' | 'done' | 'error';
@@ -26,6 +27,29 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [progress, setProgress] = useState<PlanProgress[]>([]);   // 规划阶段流式进度
+  const [execProgress, setExecProgress] = useState<ExecLogRow[]>([]);   // 执行阶段流式进度
+
+  // 从 execProgress 推导架构图的活跃/完成/失败节点(映射 actor_type+actor_id → topology node id)
+  const topoNodeId = (actorType: string, actorId: string): string => {
+    if (actorType === 'tool') return `tool:${actorId}`;
+    if (actorType === 'skill') return `skill:${actorId}`;
+    return actorType === 'llm' ? 'llm-agent' : actorId;
+  };
+  const activeNodeIds = useMemo(() => {
+    const running = execProgress.filter((r) => r.status === 'running');
+    if (!running.length) return undefined;
+    // 正在执行的步 + 固定活跃的系统节点
+    const ids = running.map((r) => topoNodeId(r.actor_type, r.actor_id));
+    ids.push('gateway', 'working-memory', 'llm-agent'); // 编排壳总在活跃
+    return ids;
+  }, [execProgress]);
+  const failedNodeId = useMemo(() => {
+    const failed = execProgress.find((r) => r.status === 'failed');
+    return failed ? topoNodeId(failed.actor_type, failed.actor_id) : undefined;
+  }, [execProgress]);
+  const completedNodeIds = useMemo(() => {
+    return execProgress.filter((r) => r.status === 'succeeded').map((r) => topoNodeId(r.actor_type, r.actor_id));
+  }, [execProgress]);
 
   const refreshHistory = useCallback(() => {
     api.listTasks().then((r) => setHistory(r.tasks)).catch(() => {});
@@ -35,7 +59,7 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
   function newTask() {
     setView('task'); setPhase('idle');
     setCandidatesResp(null); setSelectedCandidateId(null); setPlan(null); setExec(null);
-    setOriginalInput(''); setError(''); setDetail(null); setProgress([]);
+    setOriginalInput(''); setError(''); setDetail(null); setProgress([]); setExecProgress([]);
   }
 
   async function openTask(id: string) {
@@ -95,13 +119,36 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
     }
   }
 
+  function applyExecProgress(ev: ExecuteProgress) {
+    if (!ev.stepNo || !ev.stepName || !ev.actorType || !ev.actorId) return;
+    const row: ExecLogRow = {
+      step_no: ev.stepNo,
+      step_name: ev.stepName,
+      actor_type: ev.actorType,
+      actor_id: ev.actorId,
+      status: ev.status,
+    };
+    setExecProgress((prev) => {
+      const i = prev.findIndex((p) => p.step_no === row.step_no);
+      if (i >= 0) { const next = [...prev]; next[i] = row; return next; }
+      return [...prev, row];
+    });
+  }
+
   async function confirmAndExecute(uploads: Upload[] = []) {
     if (!plan) return;
-    setPhase('executing'); setError('');
+    setPhase('executing'); setError(''); setExecProgress([]);
     try {
-      const r = await api.execute(plan.taskId, uploads);
-      setExec(r); refreshHistory();
-      setPhase(r.status === 'paused' ? 'paused' : 'done');
+      await api.executeStream(plan.taskId, uploads, (type, data) => {
+        if (type === 'progress') applyExecProgress(data as unknown as ExecuteProgress);
+        else if (type === 'result') {
+          const r = data as unknown as ExecuteResponse;
+          setExec(r); setExecProgress(r.executionLog); refreshHistory();
+          setPhase(r.status === 'paused' ? 'paused' : 'done');
+        } else if (type === 'error') {
+          setError(String(data.error ?? '执行失败')); setPhase('error');
+        }
+      });
     } catch (e) {
       setError(e instanceof ApiError ? e.message : '执行失败'); setPhase('error');
     }
@@ -110,11 +157,18 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
   // 失败步恢复:skip=跳过该步续跑,abort=终止任务。
   async function resumeStep(action: 'skip' | 'abort') {
     if (!plan) return;
-    setPhase('executing'); setError('');
+    setPhase('executing'); setError(''); setExecProgress(exec?.executionLog ?? []);
     try {
-      const r = await api.resume(plan.taskId, action);
-      setExec(r); refreshHistory();
-      setPhase(r.status === 'paused' ? 'paused' : 'done');
+      await api.resumeStream(plan.taskId, action, (type, data) => {
+        if (type === 'progress') applyExecProgress(data as unknown as ExecuteProgress);
+        else if (type === 'result') {
+          const r = data as unknown as ExecuteResponse;
+          setExec(r); setExecProgress(r.executionLog); refreshHistory();
+          setPhase(r.status === 'paused' ? 'paused' : 'done');
+        } else if (type === 'error') {
+          setError(String(data.error ?? '恢复失败')); setPhase('error');
+        }
+      });
     } catch (e) {
       setError(e instanceof ApiError ? e.message : '恢复失败'); setPhase('error');
     }
@@ -145,6 +199,15 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
 
             {originalInput && phase !== 'idle' && <UserBubble text={originalInput} />}
 
+            {phase !== 'idle' && (
+              <FlowChart
+                phase={phase}
+                activeNodeIds={activeNodeIds}
+                failedNodeId={failedNodeId}
+                completedNodeIds={completedNodeIds}
+              />
+            )}
+
             {candidatesResp && (
               <>
                 <Stage1Understand task={candidatesResp.task} activatedNodes={candidatesResp.activatedNodes} />
@@ -173,7 +236,7 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
             {phase === 'planning' && <PlanProgressCard steps={progress} />}
             {phase === 'executing' && (
               <>
-                {plan && <Stage3Execute steps={plan.plan.steps} running />}
+                {plan && <Stage3Execute steps={plan.plan.steps} log={execProgress} running={execProgress.length === 0} />}
                 <Loading text="执行中…报告合成较慢,请稍候" />
               </>
             )}
@@ -292,8 +355,7 @@ function PlanProgressCard({ steps }: { steps: PlanProgress[] }) {
   return (
     <section className="stage-card" aria-live="polite">
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-        <span className="spinner" />
-        <b style={{ fontSize: 15 }}>AI 规划中</b>
+        <b className="planning-title-shimmer">AI 规划中</b>
         <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>· 正在分步处理,请稍候</span>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>

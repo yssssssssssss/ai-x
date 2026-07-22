@@ -50,13 +50,14 @@ export class SkillLoader {
 
   // 第三层:执行期加载 skill 的 input/output schema。
   // KB 派生 skill 无 JSON schema(markdown 过程式),对应字段返回 undefined,不抛。
-  loadSkillSchemas(id: string): { input?: object; output?: object } {
+  loadSkillSchemas(id: string): { input?: object; output?: object; payload?: object } {
     const entry = this.getSkill(id);
     if (!entry) throw new Error(`skill 未找到或非 active: ${id}`);
     const root = getConfigRoot();
     return {
       input: entry.input_schema ? JSON.parse(readFileSync(join(root, entry.input_schema), 'utf8')) : undefined,
       output: entry.output_schema ? JSON.parse(readFileSync(join(root, entry.output_schema), 'utf8')) : undefined,
+      payload: entry.payload_schema ? JSON.parse(readFileSync(join(root, entry.payload_schema), 'utf8')) : undefined,
     };
   }
 }

@@ -51,6 +51,7 @@ export interface SkillRegistryEntry {
   domain?: string[];      // registry YAML 里的领域标签,M1.1 编排层按此预筛能力池
   input_schema?: string; // KB skill 为 markdown 过程式, 无 JSON schema
   output_schema?: string;
+  payload_schema?: string;
   entry?: string; // SKILL.md 文件夹路径(KB 派生)
   required_tools?: string[];
   cost_level?: string;
@@ -83,7 +84,15 @@ export interface ToolManifest {
   redaction_policy?: Record<string, string>;
   // 声明该 tool 的图像入参字段,供编排在"确认计划"闸门向用户收图并回填 step.input。
   // role:同一 role 的字段共享一次上传(如 design=主设计稿),用户传一次回填到所有步骤。
-  image_input_fields?: Array<{ field: string; multiple?: boolean; role?: string }>;
+  image_input_fields?: Array<{
+    field: string;
+    multiple?: boolean;
+    role?: string;
+    required?: boolean;
+    min_items?: number;
+    max_items?: number;
+    accepted_mime_types?: string[];
+  }>;
 }
 
 export interface SkillManifest {

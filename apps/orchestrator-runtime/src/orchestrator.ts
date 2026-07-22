@@ -13,7 +13,11 @@ import {
 import { join } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
 import { searchKnowledge } from './knowledge/index.ts';
+import { buildEvidenceLedger, factualEvidenceReferenceIds } from './evidence-ledger.ts';
 import { renderReportHtml } from './report-renderer.ts';
+import { getReportBlueprint } from './report-blueprint.ts';
+import { buildEvidenceContext } from './runtime/context-builder.ts';
+import { ReportSynthesisAgent } from './report-synthesis-agent.ts';
 
 // user_research 域 skill 运行时读到的 KB 导航(collection/analysis/models/assets 四区叶子索引)。
 // 只喂索引不喂正文——129 篇正文全喂会触发 gateway 超时(见交接文档踩过的坑);
@@ -87,6 +91,10 @@ export interface PendingUpload {
   role: string;                 // 图像角色(如 design=主设计稿);同 role 只需上传一次
   label: string;
   multiple: boolean;            // 该 role 是否有 multiple 字段(展示提示用)
+  required: boolean;
+  minItems: number;
+  maxItems: number;
+  acceptedMimeTypes: string[];
   targets: Array<{ step_no: number; tool_id: string; field: string; multiple: boolean }>;
 }
 
@@ -282,7 +290,7 @@ export class Orchestrator {
           `基于任务与候选能力,生成 2 份"待用户挑选"的执行计划候选,分别对应 depth 与 speed 两种取向。\n` +
           `硬约束:\n` +
           `- 顶层结构 { candidates: [ {id, title, rationale, tradeoffs, steps, assumptions}, ... ] },且必须恰好 2 项。\n` +
-          `- 每个 step 必须含字段:step_no(从 1 递增的整数)、step_name(该步中文简述)、actor_type、actor_id;可选 purpose/input/requires_approval。禁止用 step_id,禁止省略 step_no 或 step_name。\n` +
+          `- 每个 step 必须含字段:step_no(从 1 递增的整数)、step_name(该步中文简述)、actor_type、actor_id;可选 purpose/input/requires_approval/depends_on。禁止用 step_id,禁止省略 step_no 或 step_name。\n` +
           `- 第 1 项 id="depth"(深度优先:方法论完整、覆盖广、含复核/交叉验证),第 2 项 id="speed"(速度优先:最短路径拿关键结论)。\n` +
           `- 两份 steps 必须在 skill/tool 组合上存在明显差异(不同能力或不同顺序),不允许只是 speed 版把 depth 版删几行。\n` +
           `- **步数硬上限**:depth 方案总步数 ≤ 8(建议 5-7),speed 方案总步数 ≤ 4(建议 2-3);超过一律裁掉最弱相关的 skill/tool,不允许"多多益善"。\n` +
@@ -293,6 +301,7 @@ export class Orchestrator {
           `- rationale(为什么这样组合,引用方法论点名如 JTBD/5W2H)与 tradeoffs(明显代价,如"耗时约翻倍"/"覆盖窄可能漏点")必填,各控制在 1-2 句。\n` +
           `- title 用中文短语,例如"深度优先·方法论覆盖" / "速度优先·关键结论"。\n` +
           `- 步骤排序硬约束:skill 步如果需要读取某 tool 的输出(参见 context.skills[].required_tools),该 skill 步必须排在其 required_tools 中所有被纳入本方案的 tool 步之后;reviewer 步必须排在所有被复核步之后。违反此约束的计划不可执行。\n` +
+          `- 并发是例外:只有互不依赖的纯 tool 步可以显式标 depends_on: []，并且必须连续排列；其他步骤省略 depends_on 以保持串行。skill/reviewer/llm 步不得标 depends_on: []。\n` +
           `- 若 speed 方案省略了某 skill 的 required_tools 中的 tool,则该 skill 的对应维度将无数据——要么一并省略该 skill,要么补回被依赖的 tool。\n` +
           `选方法/排步骤时参考 context.guidance 召回的方法卡片,使方法选择有正典依据。`,
         schema: {},
@@ -433,6 +442,9 @@ export class Orchestrator {
       ...(typeof s.purpose === 'string' ? { purpose: s.purpose } : {}),
       ...(isPlainObject(s.input) ? { input: s.input } : {}),   // 非纯对象(字符串/数组/null)丢弃,执行时回落 {query}
       ...(typeof s.requires_approval === 'boolean' ? { requires_approval: s.requires_approval } : {}),
+      ...(Array.isArray(s.depends_on) && s.depends_on.every((dependency) => Number.isInteger(dependency) && dependency >= 1)
+        ? { depends_on: [...new Set(s.depends_on)].sort((a, b) => a - b) }
+        : {}),
     });
     const cleanAssumption = (a: unknown, i: number): { key: string; value: string; editable: boolean } => {
       if (typeof a === 'string') return { key: `假设 ${i + 1}`, value: a, editable: true };
@@ -459,27 +471,35 @@ export class Orchestrator {
       ).map(cleanAssumption),
     };
     validator.validateOrThrow('execution-plan', plan);
+    validatePlanDependencies(plan.steps);
 
     // 扫描 tool 步图像入参,聚合 pendingUploads(每候选可能不同,选中后才知道要什么图)。
-    const hasRealImage = (v: unknown): boolean => {
-      const one = (e: unknown) => !!(e && typeof e === 'object' && ((e as { dataUrl?: string }).dataUrl || (e as { url?: string }).url));
-      return Array.isArray(v) ? v.some(one) : one(v);
-    };
     const roleLabels: Record<string, string> = { design: '设计稿', brand_reference: '品牌参考图' };
     const byRole = new Map<string, PendingUpload>();
-    for (const s of cand.steps) {
+    for (const s of plan.steps) {
       if (s.actor_type !== 'tool') continue;
       const tool = skillLoader.getTool(s.actor_id);
       if (!tool) continue;
       const manifest = loadToolManifest(tool.path);
       for (const f of manifest.image_input_fields ?? []) {
-        const provided = (s.input as Record<string, unknown> | undefined)?.[f.field];
-        if (hasRealImage(provided)) continue;
         const role = f.role ?? f.field;
-        if (!byRole.has(role)) byRole.set(role, { role, label: roleLabels[role] ?? role, multiple: false, targets: [] });
+        if (!byRole.has(role)) byRole.set(role, {
+          role,
+          label: roleLabels[role] ?? role,
+          multiple: false,
+          required: false,
+          minItems: 0,
+          maxItems: 1,
+          acceptedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+          targets: [],
+        });
         const pu = byRole.get(role)!;
         pu.targets.push({ step_no: s.step_no, tool_id: s.actor_id, field: f.field, multiple: !!f.multiple });
         if (f.multiple) pu.multiple = true;
+        pu.required ||= !!f.required;
+        pu.minItems = Math.max(pu.minItems, f.min_items ?? (f.required ? 1 : 0));
+        pu.maxItems = Math.max(pu.maxItems, f.max_items ?? (f.multiple ? 10 : 1));
+        if (f.accepted_mime_types?.length) pu.acceptedMimeTypes = f.accepted_mime_types;
       }
     }
     const pendingUploads: PendingUpload[] = [...byRole.values()];
@@ -493,10 +513,10 @@ export class Orchestrator {
   // ---- 段3 + 段4:执行 → 交付(用户确认后)----
   // 融合·MVP 容错(方案 §2.5①·补):遇失败步停在该步(paused),不整体崩;
   // 用户 resume(skip) 从下一步续跑,失败/跳过维度的缺口如实进报告 risks_and_open_issues。
-  async executePhase(input: { taskId: string; conversationId: string; uploads?: Array<{ role: string; dataUrl: string }> }, onProgress?: (ev: ExecuteProgress) => void): Promise<ExecuteResult> {
-    const { checkpointStore } = this.rt.deps;
+  async executePhase(input: { taskId: string; conversationId: string; uploads?: MediaAssetRef[] }, onProgress?: (ev: ExecuteProgress) => void): Promise<ExecuteResult> {
+    const { checkpointStore, skillLoader } = this.rt.deps;
     const ws = new RunWorkspace(input.taskId);
-    const plan = ws.readPlan<{ steps: PlanStep[]; task_id: string }>();
+    const plan = ws.readPlan<{ steps: PlanStep[]; task_id: string; task_type: string }>();
     const taskRow = await checkpointStore.getTask(input.taskId);
     const researchGoal =
       (taskRow?.structured_task as { research_goal?: string } | undefined)?.research_goal ??
@@ -504,10 +524,35 @@ export class Orchestrator {
 
     await checkpointStore.updateTaskStatus(input.taskId, 'executing', 'confirmed');
 
+    const uploads = (input.uploads ?? []).filter((upload, index, all) =>
+      all.findIndex((item) => item.role === upload.role && item.assetId === upload.assetId) === index,
+    ).map((upload) => {
+      const asset = ws.readMediaAsset(upload.assetId);
+      if (asset.role !== upload.role) throw new Error(`媒体角色不匹配: ${upload.assetId}`);
+      return upload;
+    });
+    for (const step of plan.steps) {
+      if (step.actor_type !== 'tool') continue;
+      const tool = skillLoader.getTool(step.actor_id);
+      if (!tool) continue;
+      const manifest = loadToolManifest(tool.path);
+      for (const field of manifest.image_input_fields ?? []) {
+        const role = field.role ?? field.field;
+        const matching = uploads.filter((upload) => upload.role === role);
+        const minItems = field.min_items ?? (field.required ? 1 : 0);
+        if (matching.length < minItems) throw new Error(`缺少必需媒体: ${role} 至少需要 ${minItems} 张`);
+        for (const upload of matching) {
+          const mimeType = ws.readMediaAsset(upload.assetId).mimeType;
+          if (field.accepted_mime_types?.length && !field.accepted_mime_types.includes(mimeType)) {
+            throw new Error(`媒体类型不符合 ${step.actor_id}.${field.field}: ${mimeType}`);
+          }
+        }
+      }
+    }
     const ctx: ExecCtx = {
       taskId: input.taskId, conversationId: input.conversationId, researchGoal, ws, plan,
       graphHash: hashFile(CONFIG_PATHS.decisionGraph),
-      uploads: input.uploads,
+      uploads,
       toolOutputs: [], reviewNotes: [], stepFailures: [], usedCapabilities: [], toolOutputRefs: [],
     };
     return this.runFrom(0, ctx, onProgress);
@@ -527,7 +572,7 @@ export class Orchestrator {
     }
 
     // skip:失败步标 skipped,从各步已落盘 output 重建 toolOutputs,从下一步续跑。
-    const plan = ws.readPlan<{ steps: PlanStep[]; task_id: string }>();
+    const plan = ws.readPlan<{ steps: PlanStep[]; task_id: string; task_type: string }>();
     const taskRow = await checkpointStore.getTask(input.taskId);
     const researchGoal =
       (taskRow?.structured_task as { research_goal?: string } | undefined)?.research_goal ??
@@ -548,7 +593,12 @@ export class Orchestrator {
       graphHash: hashFile(CONFIG_PATHS.decisionGraph),
       uploads: state.uploads,
       // 从落盘重建已完成步的上下文(不重放前序步)
-      toolOutputs: state.toolOutputRefs.map((r) => ({ toolId: r.toolId, output: ws.readToolOutput<unknown>(r.stepNo) })),
+      toolOutputs: state.toolOutputRefs.map((r) => ({
+        toolId: r.toolId,
+        stepNo: r.stepNo,
+        outputRef: join(ws.uri, 'tool_outputs', `step${r.stepNo}.json`),
+        output: ws.readToolOutput<unknown>(r.stepNo),
+      })),
       reviewNotes: state.reviewNotes, stepFailures: state.stepFailures,
       usedCapabilities: state.usedCapabilities, toolOutputRefs: state.toolOutputRefs,
     };
@@ -558,11 +608,50 @@ export class Orchestrator {
     return this.runFrom(failedIdx + 1, ctx, onProgress);
   }
 
-  // 从 startIdx 顺序执行剩余步:遇失败停在该步(paused + 落 run_state);全过 → finalizeReport。
+  // 默认串行执行。只有显式标记 depends_on: [] 的连续 tool 步才组成受控并发批次，避免旧计划行为改变。
   private async runFrom(startIdx: number, ctx: ExecCtx, onProgress?: (ev: ExecuteProgress) => void): Promise<ExecuteResult> {
     const { checkpointStore } = this.rt.deps;
     for (let i = startIdx; i < ctx.plan.steps.length; i++) {
       const step = ctx.plan.steps[i];
+      // 并发批次中已有成功产出时，resume 不得重复执行同一工具。
+      if (ctx.toolOutputRefs.some((ref) => ref.stepNo === step.step_no)) continue;
+      const parallelBatch = collectParallelToolBatch(ctx.plan.steps, i);
+      if (parallelBatch.length > 1) {
+        const result = await this.runParallelToolBatch(parallelBatch, ctx, onProgress);
+        if (result.failure) {
+          const { failedStep, error, contextManifestRef } = result.failure;
+          const message = error instanceof Error ? error.message : String(error);
+          await checkpointStore.writeExecutionLog({
+            taskId: ctx.taskId, stepNo: failedStep.step_no, stepName: failedStep.step_name,
+            actorType: failedStep.actor_type, actorId: failedStep.actor_id, status: 'failed',
+            errorJson: { message }, finishedAt: new Date(), contextManifestRef,
+          });
+          onProgress?.({
+            type: 'step_failed', status: 'failed', stepNo: failedStep.step_no, stepName: failedStep.step_name,
+            actorType: failedStep.actor_type, actorId: failedStep.actor_id, detail: message,
+          });
+          ctx.ws.appendFailure({
+            task_id: ctx.taskId, stage: 'execution', selected_tool: failedStep.actor_id,
+            error_type: error instanceof Error ? error.name : 'Error', error_message: message,
+            context_manifest_ref: contextManifestRef,
+          });
+          ctx.stepFailures.push({ stepNo: failedStep.step_no, stepName: failedStep.step_name, actorType: failedStep.actor_type, actorId: failedStep.actor_id, message });
+          ctx.ws.writeRunState({
+            failedStepNo: failedStep.step_no, failedStepName: failedStep.step_name,
+            failedActorType: failedStep.actor_type, failedActorId: failedStep.actor_id,
+            toolOutputRefs: ctx.toolOutputRefs, reviewNotes: ctx.reviewNotes,
+            stepFailures: ctx.stepFailures, usedCapabilities: ctx.usedCapabilities, uploads: ctx.uploads,
+          });
+          await checkpointStore.updateTaskStatus(ctx.taskId, 'paused');
+          onProgress?.({
+            type: 'paused', status: 'paused', stepNo: failedStep.step_no, stepName: failedStep.step_name,
+            actorType: failedStep.actor_type, actorId: failedStep.actor_id, detail: message,
+          });
+          return { status: 'paused', failedStepNo: failedStep.step_no, failedStepName: failedStep.step_name };
+        }
+        i += parallelBatch.length - 1;
+        continue;
+      }
       try {
         await this.runStep(step, ctx, onProgress);
       } catch (err) {
@@ -572,7 +661,7 @@ export class Orchestrator {
           taskId: ctx.taskId, stepNo: step.step_no, stepName: step.step_name,
           actorType: step.actor_type, actorId: step.actor_id, status: 'failed',
           errorJson: { message }, finishedAt: new Date(),
-          contextManifestRef: `${ctx.ws.uri}/context_manifest.json`,
+          contextManifestRef: ctx.currentContextManifestRef,
         });
         onProgress?.({
           type: 'step_failed', status: 'failed', stepNo: step.step_no, stepName: step.step_name,
@@ -584,7 +673,7 @@ export class Orchestrator {
           selected_tool: step.actor_type === 'tool' ? step.actor_id : undefined,
           error_type: err instanceof Error ? err.name : 'Error',
           error_message: message,
-          context_manifest_ref: `${ctx.ws.uri}/context_manifest.json`,
+          context_manifest_ref: ctx.currentContextManifestRef,
         });
         ctx.stepFailures.push({ stepNo: step.step_no, stepName: step.step_name, actorType: step.actor_type, actorId: step.actor_id, message });
         // 落断点:resume 据此重建上下文
@@ -608,6 +697,40 @@ export class Orchestrator {
     return this.finalizeReport(ctx, onProgress);
   }
 
+  private async runParallelToolBatch(steps: PlanStep[], ctx: ExecCtx, onProgress?: (ev: ExecuteProgress) => void): Promise<{
+    failure?: { failedStep: PlanStep; error: unknown; contextManifestRef?: string };
+  }> {
+    const baselineOutputCount = ctx.toolOutputs.length;
+    const locals = steps.map((): ExecCtx => ({
+      ...ctx,
+      toolOutputs: [...ctx.toolOutputs],
+      reviewNotes: [...ctx.reviewNotes],
+      stepFailures: [...ctx.stepFailures],
+      usedCapabilities: [],
+      toolOutputRefs: [],
+      currentContextManifestRef: undefined,
+    }));
+    const settled = await Promise.allSettled(steps.map((step, index) => this.runStep(step, locals[index], onProgress)));
+
+    const completed = locals.flatMap((local) => local.toolOutputs.slice(baselineOutputCount));
+    const refs = locals.flatMap((local) => local.toolOutputRefs);
+    const capabilities = locals.flatMap((local) => local.usedCapabilities);
+    ctx.toolOutputs.push(...completed.sort((a, b) => a.stepNo - b.stepNo));
+    ctx.toolOutputRefs.push(...refs.sort((a, b) => a.stepNo - b.stepNo));
+    ctx.usedCapabilities.push(...capabilities.sort((a, b) => a.id.localeCompare(b.id)));
+
+    const failedIndex = settled.findIndex((item) => item.status === 'rejected');
+    if (failedIndex < 0) return {};
+    const failed = settled[failedIndex] as PromiseRejectedResult;
+    return {
+      failure: {
+        failedStep: steps[failedIndex],
+        error: failed.reason,
+        contextManifestRef: locals[failedIndex].currentContextManifestRef,
+      },
+    };
+  }
+
   // 单步执行:成功则写 execution_log(succeeded) 并累积产出;失败 throw(由 runFrom 处理)。
   private async runStep(step: PlanStep, ctx: ExecCtx, onProgress?: (ev: ExecuteProgress) => void): Promise<void> {
     const { llm, validator, skillLoader, toolAdapter, checkpointStore } = this.rt.deps;
@@ -623,8 +746,10 @@ export class Orchestrator {
     });
 
     let outputRef: string | undefined;
+    let contextManifestRef: string | undefined;
     const manifestHashes: string[] = [];
     let stepTokens: { prompt: number; completion: number; total: number } | undefined;
+    ctx.currentContextManifestRef = undefined;
 
     if (step.actor_type === 'tool') {
       const tool = skillLoader.getTool(step.actor_id);
@@ -632,10 +757,26 @@ export class Orchestrator {
       const manifest = loadToolManifest(tool.path);
       // 入参:优先用计划里 LLM 生成的 step.input;缺省回落 {query}(兼容 o2/ai-spider 检索类)。
       const toolInput: Record<string, unknown> = { ...(step.input ?? { query: ctx.researchGoal || '直播 数字人 竞品' }) };
-      // 回填用户在确认闸门上传的图:按字段 role 匹配上传项(同 role 一次上传回填到所有步骤)。
+      const mediaRefs = (ctx.uploads ?? []).map((u) => {
+        const asset = ctx.ws.readMediaAsset(u.assetId);
+        return { role: u.role, assetId: u.assetId, mimeType: asset.mimeType, bytes: asset.bytes, sha256: asset.sha256 };
+      });
+      const built = buildEvidenceContext({
+        callId: `step-${step.step_no}-tool-${step.actor_id}`,
+        base: { tool_id: step.actor_id, planned_input: toolInput, media_refs: mediaRefs },
+      });
+      contextManifestRef = ctx.ws.writeInvocationContextManifest(built.manifest.callId, built.manifest);
+      ctx.currentContextManifestRef = contextManifestRef;
+      // 仅在视觉工具调用边界把受控资产物化为 Data URL；运行状态与模型文本上下文始终只保留 assetId。
       for (const f of manifest.image_input_fields ?? []) {
-        const up = (ctx.uploads ?? []).find((u) => u.role === (f.role ?? f.field));
-        if (up) toolInput[f.field] = f.multiple ? [{ dataUrl: up.dataUrl }] : { dataUrl: up.dataUrl };
+        delete toolInput[f.field];
+        const matching = (ctx.uploads ?? []).filter((u) => u.role === (f.role ?? f.field));
+        const maxItems = f.max_items ?? (f.multiple ? matching.length : 1);
+        const materialized = matching.slice(0, maxItems).map((u) => ({
+          id: u.assetId,
+          dataUrl: ctx.ws.readMediaDataUrl(u.assetId),
+        }));
+        if (materialized.length > 0) toolInput[f.field] = f.multiple ? materialized : materialized[0];
       }
       // 清理 LLM 生成的空占位:①空对象 ②数组内空对象 ③"字段全空"的假对象(键有值全为 ""/null/undefined)。
       // 场景:LLM 常生成 `{id:"",fileName:"",path:"",url:"",dataUrl:""}` 这种"看起来是图对象、其实字段全空"的假图,
@@ -663,7 +804,7 @@ export class Orchestrator {
       const outSchemaPath = join(getConfigRoot(), manifest.output_schema);
       validator.validateFileOrThrow(outSchemaPath, res.output);
       outputRef = ctx.ws.writeToolOutput(step.step_no, res.output);
-      ctx.toolOutputs.push({ toolId: step.actor_id, output: res.output });
+      ctx.toolOutputs.push({ toolId: step.actor_id, stepNo: step.step_no, outputRef, output: res.output });
       ctx.toolOutputRefs.push({ stepNo: step.step_no, toolId: step.actor_id });
       manifestHashes.push(hashFile(tool.path));
       ctx.usedCapabilities.push({ id: step.actor_id, type: 'tool' });
@@ -672,28 +813,33 @@ export class Orchestrator {
       const skillEntry = skillLoader.getSkill(step.actor_id);
       if (!skillEntry) throw new Error(`skill 非 active 或不存在: ${step.actor_id}`);
       const { body, hash: skillManifestHash } = skillLoader.loadSkillBody(step.actor_id);
-      const { output } = skillLoader.loadSkillSchemas(step.actor_id);
-      // user_materials 预处理:text 类 dataUrl 解码成明文(LLM 直读,省推理时间);image/pdf 保留 dataUrl。
-      // 避免把 base64 直接喂 LLM——它得先解码再理解,浪费 token 且触发 gateway 超时。
-      const decodedMaterials = (ctx.uploads ?? []).map((u) => {
-        if (!u.dataUrl) return { role: u.role };
-        const mimeMatch = u.dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-        if (!mimeMatch) return { role: u.role, dataUrl: u.dataUrl };
-        const [, mime, b64] = mimeMatch;
-        // text/plain / text/markdown / application/json 等文本类 → 解成明文
-        if (mime.startsWith('text/') || mime === 'application/json') {
-          try { return { role: u.role, mime, text: Buffer.from(b64, 'base64').toString('utf8') }; }
-          catch { return { role: u.role, dataUrl: u.dataUrl }; }
-        }
-        // 图片/PDF/其它二进制:保留 dataUrl 让 skill/VLM 自行处理
-        return { role: u.role, mime, dataUrl: u.dataUrl };
+      const { output, payload } = skillLoader.loadSkillSchemas(step.actor_id);
+      if (!output || !skillEntry.output_schema) {
+        throw new Error(`skill 缺少输出 Schema: ${step.actor_id}`);
+      }
+      const userMaterials = (ctx.uploads ?? []).map((u) => {
+        const asset = ctx.ws.readMediaAsset(u.assetId);
+        return { role: u.role, assetId: u.assetId, mimeType: asset.mimeType, bytes: asset.bytes, sha256: asset.sha256 };
       });
+      const built = buildEvidenceContext({
+        callId: `step-${step.step_no}-skill-${step.actor_id}`,
+        base: {
+          research_goal: ctx.researchGoal,
+          user_materials: userMaterials,
+          ...((skillEntry.domain ?? []).includes('user_research') ? { research_wiki_index: loadResearchWikiIndex() } : {}),
+        },
+        toolOutputs: ctx.toolOutputs,
+      });
+      contextManifestRef = ctx.ws.writeInvocationContextManifest(built.manifest.callId, built.manifest);
+      ctx.currentContextManifestRef = contextManifestRef;
       const skillGen = await llm.generateStructured<object>({
         prompt:
           `你是「${skillEntry.name}」能力。严格按以下 SKILL.md 的工作流与质量门禁执行,` +
-          `基于提供的检索数据(tool_outputs)与用户上传资料(user_materials)产出结构化结果;` +
-          `user_materials 是用户在确认闸门附上的原始素材(按 role 归类,text 字段是明文,dataUrl 是图片/PDF 的 base64),` +
+          `基于提供的证据投影(tool_outputs)与用户素材清单(user_materials)产出结构化结果;` +
+          `user_materials 只包含受控资产元数据,视觉事实必须引用前序视觉工具产出,` +
           `凡引用其内容需明确来源;无数据支撑的判断标 llm_inference,不得冒充事实。` +
+          `\n\n输出必须是版本为 1.0 的统一结果信封，包含 status、summary、findings、evidence、assumptions、limitations、recommendations 和 payload。` +
+          `findings 的 evidence_refs 只能引用 evidence.id；没有外部证据的结论使用 source_type=llm_inference。` +
           ((skillEntry.domain ?? []).includes('user_research')
             ? `\n\ncontext.research_wiki_index 是用研知识库(research-wiki)的方法/模型/素材导航;` +
               `SKILL.md 中提到的"实时调用 research-wiki 里的 XX 方法/模型"就是查这个索引,` +
@@ -701,48 +847,57 @@ export class Orchestrator {
               `不要凭记忆虚构方法名。`
             : '') +
           `\n\n${body}`,
-        schema: output ?? {},
+        schema: output,
         schemaName: `skill:${step.actor_id}`,
-        context: {
-          research_goal: ctx.researchGoal,
-          tool_outputs: ctx.toolOutputs,
-          user_materials: decodedMaterials,
-          ...((skillEntry.domain ?? []).includes('user_research')
-            ? { research_wiki_index: loadResearchWikiIndex() }
-            : {}),
-        },
+        context: built.context,
       });
-      if (skillEntry.output_schema) {
-        validator.validateFileOrThrow(join(getConfigRoot(), skillEntry.output_schema), skillGen.data);
+      validator.validateFileOrThrow(join(getConfigRoot(), skillEntry.output_schema), skillGen.data);
+      if (payload) {
+        const value = skillGen.data as { payload?: unknown };
+        validator.validateFileOrThrow(join(getConfigRoot(), skillEntry.payload_schema!), value.payload);
       }
       outputRef = ctx.ws.writeToolOutput(step.step_no, skillGen.data);
-      ctx.toolOutputs.push({ toolId: step.actor_id, output: skillGen.data });
+      ctx.toolOutputs.push({ toolId: step.actor_id, stepNo: step.step_no, outputRef, output: skillGen.data });
       ctx.toolOutputRefs.push({ stepNo: step.step_no, toolId: step.actor_id });
       manifestHashes.push(skillManifestHash);
       stepTokens = skillGen.tokens;
       ctx.usedCapabilities.push({ id: step.actor_id, type: 'skill' });
     } else if (step.actor_type === 'llm') {
       // 中间 LLM 步:基于已累积输出产出简洁小结,push 进 toolOutputs 供后续 + synthesis
+      const built = buildEvidenceContext({
+        callId: `step-${step.step_no}-llm-${step.actor_id}`,
+        base: { research_goal: ctx.researchGoal },
+        toolOutputs: ctx.toolOutputs,
+      });
+      contextManifestRef = ctx.ws.writeInvocationContextManifest(built.manifest.callId, built.manifest);
+      ctx.currentContextManifestRef = contextManifestRef;
       const gen = await llm.generateText({
         prompt:
           `你是研究编排中的一步:「${step.step_name}」。${step.purpose ?? ''}\n` +
           `基于已有执行结果(检索数据 + 竞品分析)完成这一步,产出简洁小结;` +
           `凡引用数据的结论标明来源,无据推断需说明。`,
-        context: { research_goal: ctx.researchGoal, tool_outputs: ctx.toolOutputs },
+        context: built.context,
       });
       // 落盘与内存保持同一结构(供 resume 重建一致)
       const out = { note: gen.text };
       outputRef = ctx.ws.writeToolOutput(step.step_no, out);
-      ctx.toolOutputs.push({ toolId: step.actor_id, output: out });
+      ctx.toolOutputs.push({ toolId: step.actor_id, stepNo: step.step_no, outputRef, output: out });
       ctx.toolOutputRefs.push({ stepNo: step.step_no, toolId: step.actor_id });
       stepTokens = gen.tokens;
     } else if (step.actor_type === 'reviewer') {
       // reviewer 步:轻量复核,收进 reviewNotes 供 synthesis(不改前序产出,不进 toolOutputs)
+      const built = buildEvidenceContext({
+        callId: `step-${step.step_no}-reviewer-${step.actor_id}`,
+        base: { research_goal: ctx.researchGoal },
+        toolOutputs: ctx.toolOutputs,
+      });
+      contextManifestRef = ctx.ws.writeInvocationContextManifest(built.manifest.callId, built.manifest);
+      ctx.currentContextManifestRef = contextManifestRef;
       const gen = await llm.generateText({
         prompt:
           `你是质量复核者:「${step.step_name}」。审查已有执行结果的来源标注是否完整、` +
           `有无把推断当事实、数据缺口是否说明。产出复核意见,不改写前序结论。`,
-        context: { research_goal: ctx.researchGoal, tool_outputs: ctx.toolOutputs },
+        context: built.context,
       });
       outputRef = ctx.ws.writeToolOutput(step.step_no, { review: gen.text });
       ctx.reviewNotes.push(gen.text);
@@ -754,7 +909,7 @@ export class Orchestrator {
       actorType: step.actor_type, actorId: step.actor_id, status: 'succeeded',
       outputRef, startedAt, finishedAt: new Date(),
       tokensJson: stepTokens,
-      contextManifestRef: `${ctx.ws.uri}/context_manifest.json`,
+      contextManifestRef,
       decisionGraphHash: ctx.graphHash,
       skillManifestHashes: step.actor_type === 'skill' ? manifestHashes : [],
       toolManifestHashes: step.actor_type === 'tool' ? manifestHashes : [],
@@ -775,64 +930,69 @@ export class Orchestrator {
       throw new AllStepsFailedError(ctx.stepFailures);
     }
 
-    onProgress?.({ type: 'synthesis_started', status: 'running', stepName: '报告合成', actorType: 'llm', actorId: 'synthesis' });
+    onProgress?.({ type: 'synthesis_started', status: 'running', stepName: '报告合成', actorType: 'llm', actorId: 'report_synthesis' });
 
-    const gapNote =
-      ctx.stepFailures.length > 0
-        ? `\n以下步骤失败或被跳过,其覆盖维度数据缺失,必须在 risks_and_open_issues 中如实说明缺口,不得假装有数据:` +
-          ctx.stepFailures.map((f) => `[step ${f.stepNo} ${f.actorType}:${f.actorId} — ${f.message}]`).join('; ')
-        : '';
-    const reviewNote =
-      ctx.reviewNotes.length > 0
-        ? `\n以下为质量复核意见,未解决项写入 risks_and_open_issues:` + ctx.reviewNotes.map((r, i) => `[复核${i + 1}] ${r}`).join('; ')
-        : '';
-
-    const reportGen = await llm.generateStructured<Record<string, unknown>>({
-      prompt:
-        '基于以下真实执行结果生成可落地研究方案报告。\n' +
-        '必填字段:research_goal, findings, timeline, deliverables, capability_orchestration。\n' +
-        '新增字段(必须填写):\n' +
-        '- executive_summary: 2-4句核心结论摘要,直击要害,让决策者30秒内明确"做不做、怎么做"。\n' +
-        '- core_issues: 核心问题清单,每项含 title(问题名)、severity(critical/major/minor)、description(现象+影响)、evidence_source(数据来源)、recommendation(改进建议)。按 severity 降序排列。\n' +
-        '- dimension_analyses: 各评估维度的详细解读,每项含 dimension(如 aesthetic/attention/brand/usability)、status(complete/partial/data_incomplete)、summary(该维度结论)、metrics(关键指标键值对,如 {distractionRiskScore:0.457})、data_source(数据来源 tool/skill id)。\n\n' +
-        'findings 中凡来自 tool_outputs 检索数据的结论,source 必须标 tool_result,' +
-        '并在 statement 中引用具体数据/来源;无数据支撑的判断标 llm_inference,不得冒充事实;' +
-        '若 tool_outputs 为空则如实说明数据缺口。' +
-        gapNote + reviewNote,
-      schema: {}, schemaName: 'research-report',
-      context: {
-        task_id: ctx.taskId, research_goal: ctx.researchGoal, tool_outputs: ctx.toolOutputs,
-        step_failures: ctx.stepFailures, review_notes: ctx.reviewNotes,
-        // synthesis 只需知道"用户提供了什么类型的资料",完整 dataUrl 已被 skill/tool 消费,无需重传省 context
-        user_materials_summary: (ctx.uploads ?? []).map((u) => ({
-          role: u.role,
-          has_data: !!u.dataUrl,
-          data_size: u.dataUrl?.length ?? 0,
-        })),
+    const blueprint = getReportBlueprint(ctx.plan.task_type);
+    const evidenceLedger = buildEvidenceLedger(ctx.toolOutputs);
+    ctx.ws.writeArtifactFile('evidence-ledger.json', JSON.stringify(evidenceLedger, null, 2));
+    const capabilityOrchestration = buildCapabilityOrchestration(ctx.plan.steps, ctx.usedCapabilities);
+    const built = buildEvidenceContext({
+      callId: 'synthesis',
+      base: {
+        task_id: ctx.taskId,
+        task_type: ctx.plan.task_type,
+        research_goal: ctx.researchGoal,
+        report_blueprint: blueprint,
+        evidence_ledger: evidenceLedger,
+        step_failures: ctx.stepFailures,
+        review_notes: ctx.reviewNotes,
+        user_materials_summary: (ctx.uploads ?? []).map((u) => {
+          const asset = ctx.ws.readMediaAsset(u.assetId);
+          return { role: u.role, assetId: u.assetId, mimeType: asset.mimeType, bytes: asset.bytes };
+        }),
       },
+      // 报告模型只消费台账，不直接读取异构工具输出；原始输出仍独立保存在 tool_outputs。
+      toolOutputs: [],
     });
-    const report = { ...reportGen.data, task_id: ctx.taskId };
-    validator.validateOrThrow('research-report', report);
+    const contextManifestRef = ctx.ws.writeInvocationContextManifest(built.manifest.callId, built.manifest);
+    ctx.currentContextManifestRef = contextManifestRef;
+    const synthesis = await new ReportSynthesisAgent(llm, validator).synthesize({
+      taskId: ctx.taskId,
+      taskType: ctx.plan.task_type,
+      researchGoal: ctx.researchGoal,
+      evidenceContext: built.context,
+      evidenceRefs: factualEvidenceReferenceIds(evidenceLedger),
+      evidenceLedger,
+      blueprint,
+      capabilityOrchestration,
+      stepFailures: ctx.stepFailures,
+      reviewNotes: ctx.reviewNotes,
+    });
+    const report = synthesis.report;
 
     const synthStepNo = ctx.plan.steps.length + 1;
     await checkpointStore.writeExecutionLog({
       taskId: ctx.taskId, stepNo: synthStepNo, stepName: '报告合成', actorType: 'llm',
-      actorId: 'synthesis', status: 'succeeded',
-      tokensJson: reportGen.tokens,
-      promptHash: reportGen.promptHash,
-      modelName: reportGen.modelName, modelVersion: reportGen.modelVersion,
-      traceId: reportGen.traceId,
-      contextManifestRef: `${ctx.ws.uri}/context_manifest.json`,
+      actorId: 'report_synthesis', status: 'succeeded',
+      tokensJson: synthesis.generation.tokens,
+      promptHash: synthesis.generation.promptHash,
+      modelName: synthesis.generation.modelName, modelVersion: synthesis.generation.modelVersion,
+      traceId: synthesis.generation.traceId,
+      contextManifestRef,
       finishedAt: new Date(),
     });
 
     const reportPath = ctx.ws.writeArtifactFile('report.json', JSON.stringify(report, null, 2));
     // 生成自包含 HTML 报告(供下载)
-    const htmlContent = renderReportHtml({ report: report as any, toolOutputs: ctx.toolOutputs, uploads: ctx.uploads });
+    const reportUploads = (ctx.uploads ?? []).flatMap((u) => {
+      const asset = ctx.ws.readMediaAsset(u.assetId);
+      return asset.bytes <= 300_000 ? [{ role: u.role, dataUrl: ctx.ws.readMediaDataUrl(u.assetId) }] : [];
+    });
+    const htmlContent = renderReportHtml({ report: report as any, toolOutputs: ctx.toolOutputs, uploads: reportUploads });
     ctx.ws.writeArtifactFile('report.html', htmlContent);
     const artifact = await checkpointStore.writeArtifact({
       taskId: ctx.taskId, conversationId: ctx.conversationId,
-      artifactType: 'report', title: '竞品研究方案', storageUri: reportPath,
+      artifactType: 'report', title: blueprint.title, storageUri: reportPath,
       contentSummary: (report as { research_goal?: string }).research_goal,
       sourceRefs: ctx.usedCapabilities,
     });
@@ -846,20 +1006,46 @@ export class Orchestrator {
   }
 }
 
+// 报告中的能力清单以实际成功执行的步骤为准，不接受汇总模型补写未调用的能力。
+function buildCapabilityOrchestration(
+  steps: PlanStep[],
+  usedCapabilities: Array<{ id: string; type: string }>,
+): Array<{ capability_id: string; capability_type: 'skill' | 'tool'; purpose: string }> {
+  const executed = new Set(usedCapabilities.map((capability) => `${capability.type}:${capability.id}`));
+  const seen = new Set<string>();
+  return steps.flatMap((step) => {
+    if (step.actor_type !== 'skill' && step.actor_type !== 'tool') return [];
+    const key = `${step.actor_type}:${step.actor_id}`;
+    if (!executed.has(key) || seen.has(key)) return [];
+    seen.add(key);
+    return [{
+      capability_id: step.actor_id,
+      capability_type: step.actor_type,
+      purpose: step.purpose ?? step.step_name,
+    }];
+  });
+}
+
 // 执行累积上下文:execute 与 resume 共用,携带跨步的产出/缺口/复核/溯源。
 interface ExecCtx {
   taskId: string;
   conversationId: string;
   researchGoal: string;
   ws: RunWorkspace;
-  plan: { steps: PlanStep[]; task_id: string };
+  plan: { steps: PlanStep[]; task_id: string; task_type: string };
   graphHash: string;
-  uploads?: Array<{ role: string; dataUrl: string }>;
-  toolOutputs: Array<{ toolId: string; output: unknown }>;
+  uploads?: MediaAssetRef[];
+  toolOutputs: Array<{ toolId: string; stepNo: number; outputRef: string; output: unknown }>;
   reviewNotes: string[];
   stepFailures: StepFailure[];
   usedCapabilities: Array<{ id: string; type: string }>;
   toolOutputRefs: Array<{ stepNo: number; toolId: string }>;
+  currentContextManifestRef?: string;
+}
+
+interface MediaAssetRef {
+  role: string;
+  assetId: string;
 }
 
 interface StepFailure {
@@ -880,7 +1066,7 @@ interface RunState {
   reviewNotes: string[];
   stepFailures: StepFailure[];
   usedCapabilities: Array<{ id: string; type: string }>;
-  uploads?: Array<{ role: string; dataUrl: string }>;
+  uploads?: MediaAssetRef[];
 }
 
 // executePhase / resumePhase 的返回:paused=停在失败步待用户决策;completed_with_gaps=有缺口但已合成。
@@ -892,7 +1078,7 @@ export interface ExecuteResult {
   gapCount?: number;
 }
 
-interface PlanStep {
+export interface PlanStep {
   step_no: number;
   step_name: string;
   actor_type: 'skill' | 'tool' | 'llm' | 'reviewer';
@@ -900,6 +1086,32 @@ interface PlanStep {
   purpose?: string;
   input?: Record<string, unknown>;
   requires_approval?: boolean;
+  depends_on?: number[];
+}
+
+// 未声明 depends_on 的遗留计划保持串行。只有连续、无依赖、纯工具步骤才允许并发。
+export function collectParallelToolBatch(steps: PlanStep[], startIdx: number, maxParallel = Number(process.env.ORCHESTRATOR_TOOL_PARALLELISM ?? 3)): PlanStep[] {
+  const limit = Number.isFinite(maxParallel) ? Math.max(1, Math.floor(maxParallel)) : 3;
+  const first = steps[startIdx];
+  if (!first || first.actor_type !== 'tool' || !Array.isArray(first.depends_on) || first.depends_on.length !== 0) return [first].filter(Boolean) as PlanStep[];
+  const batch: PlanStep[] = [];
+  for (let index = startIdx; index < steps.length && batch.length < limit; index += 1) {
+    const step = steps[index];
+    if (step.actor_type !== 'tool' || !Array.isArray(step.depends_on) || step.depends_on.length !== 0) break;
+    batch.push(step);
+  }
+  return batch;
+}
+
+function validatePlanDependencies(steps: PlanStep[]): void {
+  const stepNos = new Set(steps.map((step) => step.step_no));
+  for (const step of steps) {
+    if (!step.depends_on) continue;
+    for (const dependency of step.depends_on) {
+      if (!stepNos.has(dependency)) throw new Error(`step ${step.step_no} 依赖不存在的步骤 ${dependency}`);
+      if (dependency >= step.step_no) throw new Error(`step ${step.step_no} 的依赖必须位于其之前，实际为 ${dependency}`);
+    }
+  }
 }
 
 export class StepFailedError extends Error {

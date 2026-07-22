@@ -18,6 +18,9 @@
     "api:dev": "tsx watch apps/agent-api/src/server.ts",
     "labs:install": "for d in external-tools/*-lab; do (echo \"npm install @ $d\" && cd \"$d\" && npm install); done",
     "labs:dev": "node scripts/start-labs.mjs",
+    "models:probe": "MODEL_CAPABILITY_PROBE=1 tsx scripts/model-capability-probe.ts",
+    "models:vision-smoke": "MODEL_VISION_SMOKE=1 tsx scripts/vision-model-smoke.ts",
+    "report:replay": "tsx scripts/replay-report-v2.ts",
     "test": "tsx --test tests/*.test.ts"
   },
   "dependencies": {

@@ -22,7 +22,7 @@ export interface LintIssue {
 }
 
 const SKILL_ACTIVE_REQUIRED: (keyof SkillRegistryEntry)[] = [
-  'id', 'name', 'path', 'when_to_use', 'owner', 'risk_level',
+  'id', 'name', 'path', 'when_to_use', 'owner', 'risk_level', 'output_schema',
 ];
 const TOOL_ACTIVE_REQUIRED: (keyof ToolRegistryEntry)[] = [
   'id', 'name', 'path', 'adapter_type', 'auth_required', 'risk_level',
@@ -51,6 +51,9 @@ function lintSkills(issues: LintIssue[]): void {
     if (s.output_schema && !fileExists(s.output_schema)) {
       issues.push({ level: 'error', target: tgt, message: `output_schema 不存在: ${s.output_schema}` });
     }
+    if (s.payload_schema && !fileExists(s.payload_schema)) {
+      issues.push({ level: 'error', target: tgt, message: `payload_schema 不存在: ${s.payload_schema}` });
+    }
     for (const t of s.required_tools ?? []) {
       if (!knownTools.has(t)) {
         issues.push({ level: 'error', target: tgt, message: `required_tools 引用了未登记的 tool: ${t}` });
@@ -74,9 +77,26 @@ function lintTools(issues: LintIssue[]): void {
       issues.push({ level: 'error', target: tgt, message: `path 不存在: ${t.path}` });
       continue; // 读不到 manifest,后续 approver 校验跳过
     }
+    const manifest = loadToolManifest(t.path);
+    for (const field of manifest.image_input_fields ?? []) {
+      const fieldTarget = `${tgt}.image_input_fields.${field.field ?? '(no-field)'}`;
+      if (!field.field || !field.role) {
+        issues.push({ level: 'error', target: fieldTarget, message: '图片字段必须声明 field 和 role' });
+      }
+      const min = field.min_items ?? (field.required ? 1 : 0);
+      const max = field.max_items ?? (field.multiple ? 10 : 1);
+      if (min < 0 || max < 1 || min > max) {
+        issues.push({ level: 'error', target: fieldTarget, message: '图片字段数量约束非法(min_items/max_items)' });
+      }
+      if (!field.multiple && max > 1) {
+        issues.push({ level: 'error', target: fieldTarget, message: 'multiple=false 时 max_items 不能大于 1' });
+      }
+      if (field.accepted_mime_types?.some((mime) => !mime.startsWith('image/'))) {
+        issues.push({ level: 'error', target: fieldTarget, message: 'accepted_mime_types 当前仅允许 image/*' });
+      }
+    }
     // 高风险 tool 必须在其 manifest 里配置非 none 的 approver_rule
     if (t.risk_level === 'high') {
-      const manifest = loadToolManifest(t.path);
       if (!manifest.approver_rule || manifest.approver_rule === 'none') {
         issues.push({
           level: 'error',

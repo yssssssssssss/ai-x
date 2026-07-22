@@ -144,6 +144,8 @@ export class RestJsonAdapter implements ToolAdapter {
     }
     const path = opts.manifest.entrypoint || '/api/analyze';
     const timeoutMs = (opts.manifest.timeout_seconds ?? 60) * 1000;
+    const maxAttempts = Math.max(1, opts.manifest.retry_policy?.max_attempts ?? 1);
+    const backoffMs = Math.max(0, opts.manifest.retry_policy?.backoff_seconds ?? 0) * 1000;
 
     // body_inject:从 env 读值注入 body,支持 API key 等鉴权字段(如 { api_key: 'TAVILY_API_KEY' })
     const inject = (opts.manifest as ToolManifest & { body_inject?: Record<string, string> }).body_inject ?? {};
@@ -153,27 +155,47 @@ export class RestJsonAdapter implements ToolAdapter {
       if (v) body[field] = v;
     }
 
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), timeoutMs);
-    try {
-      const res = await fetch(`${baseUrl}${path}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: ac.signal,
-      });
-      if (!res.ok) {
-        throw new ToolInvocationError(opts.toolId, `HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), timeoutMs);
+      try {
+        const res = await fetch(`${baseUrl}${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: ac.signal,
+        });
+        if (!res.ok) {
+          const detail = (await res.text()).slice(0, 200);
+          if (attempt < maxAttempts && isTransientStatus(res.status)) {
+            if (backoffMs > 0) await sleep(backoffMs * attempt);
+            continue;
+          }
+          throw new ToolInvocationError(opts.toolId, `HTTP ${res.status}: ${detail}`);
+        }
+        const output = (await res.json()) as object;
+        return { output, latencyMs: Math.round(performance.now() - start) };
+      } catch (err) {
+        if (err instanceof ToolInvocationError) throw err;
+        if (attempt < maxAttempts) {
+          if (backoffMs > 0) await sleep(backoffMs * attempt);
+          continue;
+        }
+        throw new ToolInvocationError(opts.toolId, err instanceof Error ? err.message : String(err));
+      } finally {
+        clearTimeout(timer);
       }
-      const output = (await res.json()) as object;
-      return { output, latencyMs: Math.round(performance.now() - start) };
-    } catch (err) {
-      if (err instanceof ToolInvocationError) throw err;
-      throw new ToolInvocationError(opts.toolId, err instanceof Error ? err.message : String(err));
-    } finally {
-      clearTimeout(timer);
     }
+    throw new ToolInvocationError(opts.toolId, '重试次数耗尽');
   }
+}
+
+function isTransientStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // O2LaunchAdapter:通过 o2 CLI 生态调用真实检索能力。

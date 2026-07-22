@@ -2,16 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 
-// Task A 单测:executePhase 容忍无 JSON schema 的 KB 派生 skill。
-// KB skill(registry path=目录、entry=SKILL.md、无 input_schema/output_schema)执行期加载不应崩。
+// 所有 active skill 使用统一结果信封；KB skill 保持无输入 Schema，但不得缺输出契约。
 
 const sl = new SkillLoader();
 
-test('loadSkillSchemas:无 schema 的 KB skill 返回 undefined,不抛', () => {
-  // competitive-analysis 是 active KB 派生 skill,registry 无 input_schema/output_schema 字段。
+test('loadSkillSchemas:KB skill 无 input schema 但有统一输出契约', () => {
   const s = sl.loadSkillSchemas('competitive-analysis');
   assert.equal(s.input, undefined, 'KB skill 无 input_schema → undefined');
-  assert.equal(s.output, undefined, 'KB skill 无 output_schema → undefined');
+  assert.equal(typeof s.output, 'object', 'KB skill 必须有 output_schema');
 });
 
 test('loadSkillBody:KB skill 读 entry(SKILL.md)而非 path(目录),不崩', () => {
@@ -22,10 +20,11 @@ test('loadSkillBody:KB skill 读 entry(SKILL.md)而非 path(目录),不崩', () 
   assert.ok(b.path.endsWith('SKILL.md'), 'path 应指向 SKILL.md 文件');
 });
 
-test('loadSkillSchemas:原生带 schema 的 skill 仍返回 schema 对象(不回归)', () => {
-  // digital-human-competitive-analysis 是原生 skill,带 input/output schema。
+test('loadSkillSchemas:原生 skill 保留 payload schema', () => {
+  // digital-human-competitive-analysis 的输入与领域 payload schema 都应保留。
   const s = sl.loadSkillSchemas('digital-human-competitive-analysis');
   assert.equal(typeof s.input, 'object', '原生 skill input schema 应为对象');
-  assert.equal(typeof s.output, 'object', '原生 skill output schema 应为对象');
-  assert.ok(s.input !== null && s.output !== null);
+  assert.equal(typeof s.output, 'object', '原生 skill output envelope 应为对象');
+  assert.equal(typeof s.payload, 'object', '原生 skill payload schema 应为对象');
+  assert.ok(s.input !== null && s.output !== null && s.payload !== null);
 });

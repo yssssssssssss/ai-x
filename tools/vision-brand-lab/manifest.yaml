@@ -19,3 +19,14 @@ image_input_fields:
   - field: designImages
     multiple: true
     role: design
+    required: false
+    min_items: 0
+    max_items: 3
+    accepted_mime_types: [image/jpeg, image/png, image/webp]
+  - field: brandReferenceImages
+    multiple: true
+    role: brand_reference
+    required: false
+    min_items: 0
+    max_items: 3
+    accepted_mime_types: [image/jpeg, image/png, image/webp]

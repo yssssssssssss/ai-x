@@ -11,9 +11,14 @@ import { fileURLToPath } from 'node:url';
 import { readFileSync, existsSync } from 'node:fs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const arg = process.argv[2];
-const runServer = arg !== '--web';
-const runWeb = arg !== '--server';
+const args = process.argv.slice(2);
+const runServer = !args.includes('--web');
+const runWeb = !args.includes('--server');
+const selectedIds = args.find((arg) => arg.startsWith('--labs='))
+  ?.slice('--labs='.length)
+  .split(',')
+  .map((id) => id.trim())
+  .filter(Boolean);
 
 // 读主项目 .env 注入工具子进程——让工具用上 LLM 网关等配置(工具 server 只读 process.env,不自载 .env)。
 // 工具自身若有独立 .env(工具 server 会 loadEnvFile 加载),优先级更高。
@@ -37,9 +42,16 @@ const LABS = [
   { id: 'virtual-user-lab', server: 8804, web: 5804 },
   { id: 'vision-brand-lab', server: 8805, web: 5805 },
 ];
+const labs = selectedIds?.length
+  ? LABS.filter((lab) => selectedIds.includes(lab.id))
+  : LABS;
+if (selectedIds?.length) {
+  const unknown = selectedIds.filter((id) => !LABS.some((lab) => lab.id === id));
+  if (unknown.length) throw new Error(`未知实验室: ${unknown.join(', ')}`);
+}
 
 console.log('拉起 external-tools 工具(Ctrl-C 全部退出):');
-for (const l of LABS) {
+for (const l of labs) {
   console.log(
     `  ${l.id.padEnd(24)} ` +
       (runServer ? `后端 http://127.0.0.1:${l.server}  ` : '') +
@@ -56,7 +68,7 @@ const launch = (id, script) => {
   children.push(child);
 };
 
-for (const l of LABS) {
+for (const l of labs) {
   if (runServer) launch(l.id, 'dev:server');
   if (runWeb) launch(l.id, 'dev:web');
 }

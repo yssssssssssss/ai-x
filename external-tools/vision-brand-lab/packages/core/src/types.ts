@@ -43,6 +43,7 @@ export interface VisualReviewerResult {
   overallScore?: number;            // 0-10
   topSuggestion?: string;
   actualModel?: string;
+  vlmAttempts?: number;
 }
 
 export interface BrandAssociationResult {
@@ -61,6 +62,10 @@ export interface VisionBrandAnalyzeResult {
   status: 'available' | 'partial_failed' | 'failed' | 'insufficient_inputs';
   summary: string;
   engine?: 'vlm' | 'heuristic';     // 本次分析用真实 VLM 还是降级启发式
+  degraded?: boolean;
+  reasonCode?: 'vlm_not_configured' | 'vlm_failed';
+  model?: string;
+  attempts?: number;
   visualReview?: {
     reviewers: VisualReviewerResult[];
     consensus: string[];

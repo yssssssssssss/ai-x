@@ -18,3 +18,7 @@ redaction_policy:
 image_input_fields:
   - field: image
     role: design
+    required: false
+    min_items: 0
+    max_items: 1
+    accepted_mime_types: [image/jpeg, image/png, image/webp]

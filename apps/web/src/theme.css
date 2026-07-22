@@ -104,6 +104,24 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
   border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+.planning-title-shimmer {
+  position: relative;
+  display: inline-block;
+  overflow: hidden;
+  font-size: 15px;
+  color: var(--text);
+}
+.planning-title-shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-130%);
+  background: linear-gradient(110deg, transparent 0%, transparent 35%, rgba(255,255,255,.85) 50%, transparent 65%, transparent 100%);
+  mix-blend-mode: screen;
+  animation: title-shimmer 1.8s ease-in-out infinite;
+}
+@keyframes title-shimmer { to { transform: translateX(130%); } }
+
 
 /* ---- 聊天流布局 ---- */
 .chat-column {
@@ -285,4 +303,30 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
   margin-top: 4px;
   padding-top: 10px;
   border-top: 1px solid var(--border-soft);
+}
+
+/* ---- Architecture Chart (ReactFlow) ---- */
+.arch-chart {
+  position: relative;
+  overflow: hidden;
+  border-radius: 12px;
+}
+.arch-chart .react-flow__node {
+  cursor: pointer !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+.arch-chart .react-flow__attribution {
+  display: none;
+}
+.arch-chart .react-flow__background {
+  opacity: 0.4;
+}
+.arch-chart .react-flow__edge-text {
+  font-size: 9px;
+}
+.arch-chart .react-flow__edge path {
+  transition: stroke 0.3s ease, stroke-width 0.3s ease;
 }
