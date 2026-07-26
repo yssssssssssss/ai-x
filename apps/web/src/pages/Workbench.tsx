@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, type User, type PlanCandidatesResponse, type PlanCandidate, type PlanResponse, type ExecuteResponse, type TaskSummary, type TaskDetail, type PlanStep, type Upload, type PlanProgress, ApiError } from '../api/client.ts';
+import { api, type User, type TaskSummary, type TaskDetail, type PlanStep, type PlanProgress, ApiError } from '../api/client.ts';
+import { useTaskFlow } from '../hooks/useTaskFlow.ts';
 import { Sidebar } from '../components/Sidebar.tsx';
 import { Composer } from '../components/Composer.tsx';
 import { Stage1Understand } from '../components/stages/Stage1Understand.tsx';
@@ -9,114 +10,37 @@ import { Stage3Execute } from '../components/stages/Stage3Execute.tsx';
 import { Stage4Report } from '../components/stages/Stage4Report.tsx';
 import { Labs } from './Labs.tsx';
 
-// 状态机:idle → planning → picking(选候选)→ selecting(POST select) → planned(确认闸门) → executing → (paused 失败步待决策) → done。
-type Phase = 'idle' | 'planning' | 'picking' | 'selecting' | 'planned' | 'executing' | 'paused' | 'done' | 'error';
 type View = 'task' | 'labs' | 'history';
 
 export function Workbench({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [view, setView] = useState<View>('task');
-  const [phase, setPhase] = useState<Phase>('idle');
-  const [candidatesResp, setCandidatesResp] = useState<PlanCandidatesResponse | null>(null);
-  const [selectedCandidateId, setSelectedCandidateId] = useState<PlanCandidate['id'] | null>(null);
-  const [plan, setPlan] = useState<PlanResponse | null>(null);   // finalize 后
-  const [originalInput, setOriginalInput] = useState('');
-  const [exec, setExec] = useState<ExecuteResponse | null>(null);
-  const [error, setError] = useState('');
   const [history, setHistory] = useState<TaskSummary[]>([]);
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [progress, setProgress] = useState<PlanProgress[]>([]);   // 规划阶段流式进度
+  const [detailError, setDetailError] = useState(''); // 历史打开失败(与任务流 error 分离)
 
   const refreshHistory = useCallback(() => {
     api.listTasks().then((r) => setHistory(r.tasks)).catch(() => {});
   }, []);
   useEffect(refreshHistory, [refreshHistory]);
 
+  // 任务执行流(状态机 + 4 个 action)全部收进 useTaskFlow;执行成功后回调刷新历史。
+  const flow = useTaskFlow({ onExecuted: refreshHistory });
+  const { phase, candidatesResp, selectedCandidateId, plan, originalInput, exec, error, progress } = flow;
+
   function newTask() {
-    setView('task'); setPhase('idle');
-    setCandidatesResp(null); setSelectedCandidateId(null); setPlan(null); setExec(null);
-    setOriginalInput(''); setError(''); setDetail(null); setProgress([]);
+    setView('task'); setDetail(null); setDetailError('');
+    flow.reset();
   }
 
   async function openTask(id: string) {
-    setView('history'); setDetail(null); setDetailLoading(true); setError('');
+    setView('history'); setDetail(null); setDetailLoading(true); setDetailError('');
     try {
       setDetail(await api.taskDetail(id));
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : '打开历史任务失败');
+      setDetailError(e instanceof ApiError ? e.message : '打开历史任务失败');
     } finally {
       setDetailLoading(false);
-    }
-  }
-
-  async function submitInput(text: string) {
-    setPhase('planning'); setCandidatesResp(null); setPlan(null); setExec(null); setError('');
-    setSelectedCandidateId(null); setOriginalInput(text); setProgress([]);
-    try {
-      await api.planStream({ originalInput: text }, (type, data) => {
-        if (type === 'progress') {
-          const ev = data as unknown as PlanProgress;
-          // start 追加占位;done 更新同 phase 的最后一条为完成态
-          setProgress((prev) => {
-            const i = prev.findIndex((p) => p.phase === ev.phase);
-            if (i >= 0) { const next = [...prev]; next[i] = ev; return next; }
-            return [...prev, ev];
-          });
-        } else if (type === 'result') {
-          setCandidatesResp(data as unknown as PlanCandidatesResponse);
-          setPhase('picking');
-        } else if (type === 'error') {
-          setError(String(data.error ?? '规划失败')); setPhase('error');
-        }
-      });
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : '规划失败'); setPhase('error');
-    }
-  }
-
-  async function pickCandidate(candidateId: PlanCandidate['id']) {
-    if (!candidatesResp) return;
-    setSelectedCandidateId(candidateId); setPhase('selecting'); setError('');
-    try {
-      const r = await api.selectCandidate(candidatesResp.taskId, candidateId);
-      // 拼成 Stage2Plan 期望的 PlanResponse 形状(复用现成组件)。
-      setPlan({
-        conversationId: candidatesResp.conversationId,
-        taskId: candidatesResp.taskId,
-        task: candidatesResp.task,
-        activatedNodes: candidatesResp.activatedNodes,
-        plan: r.plan,
-        pendingUploads: r.pendingUploads,
-      });
-      setPhase('planned');
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : '候选选择失败');
-      setSelectedCandidateId(null); setPhase('picking'); // 回到选择态,让用户重选
-    }
-  }
-
-  async function confirmAndExecute(uploads: Upload[] = []) {
-    if (!plan) return;
-    setPhase('executing'); setError('');
-    try {
-      const r = await api.execute(plan.taskId, uploads);
-      setExec(r); refreshHistory();
-      setPhase(r.status === 'paused' ? 'paused' : 'done');
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : '执行失败'); setPhase('error');
-    }
-  }
-
-  // 失败步恢复:skip=跳过该步续跑,abort=终止任务。
-  async function resumeStep(action: 'skip' | 'abort') {
-    if (!plan) return;
-    setPhase('executing'); setError('');
-    try {
-      const r = await api.resume(plan.taskId, action);
-      setExec(r); refreshHistory();
-      setPhase(r.status === 'paused' ? 'paused' : 'done');
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : '恢复失败'); setPhase('error');
     }
   }
 
@@ -132,7 +56,7 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
           <div style={{ flex: 1, overflowY: 'auto', padding: '32px 0' }}>
             <div className="chat-column">
               {detailLoading && <Loading text="加载历史任务…" />}
-              {error && <ErrorCard msg={error} />}
+              {detailError && <ErrorCard msg={detailError} />}
               {detail && <HistoryDetail detail={detail} />}
             </div>
           </div>
@@ -141,7 +65,7 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
       <main style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
         <div style={{ flex: 1, overflowY: 'auto', padding: '32px 0' }}>
           <div className="chat-column" aria-live="polite">
-            {phase === 'idle' && <Welcome onPick={submitInput} />}
+            {phase === 'idle' && <Welcome onPick={flow.submitInput} />}
 
             {originalInput && phase !== 'idle' && <UserBubble text={originalInput} />}
 
@@ -153,7 +77,7 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
                     {error && phase === 'picking' && <InlineError msg={error} />}
                     <Stage2Candidates
                       candidates={candidatesResp.candidates}
-                      onSelect={pickCandidate}
+                      onSelect={flow.pickCandidate}
                       selectedId={selectedCandidateId ?? undefined}
                       loading={phase === 'selecting'}
                     />
@@ -166,7 +90,7 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
               <Stage2Plan
                 plan={plan}
                 locked={phase !== 'planned'}
-                onConfirm={confirmAndExecute}
+                onConfirm={flow.confirmAndExecute}
               />
             )}
 
@@ -183,8 +107,8 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
                 <FailureActionCard
                   stepNo={exec.failedStepNo ?? undefined}
                   stepName={exec.failedStepName ?? undefined}
-                  onSkip={() => resumeStep('skip')}
-                  onAbort={() => resumeStep('abort')}
+                  onSkip={() => flow.resumeStep('skip')}
+                  onAbort={() => flow.resumeStep('abort')}
                 />
               </>
             )}
@@ -197,10 +121,10 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
                   : <Stage4Report report={exec.report} taskId={exec.taskId} />}
               </>
             )}
-            {phase === 'error' && <ErrorCard msg={error} onRetry={plan ? () => confirmAndExecute() : undefined} />}
+            {phase === 'error' && <ErrorCard msg={error} onRetry={plan ? () => flow.confirmAndExecute() : undefined} />}
           </div>
         </div>
-        <Composer disabled={phase === 'planning' || phase === 'selecting' || phase === 'executing'} onSubmit={submitInput} />
+        <Composer disabled={phase === 'planning' || phase === 'selecting' || phase === 'executing'} onSubmit={flow.submitInput} />
       </main>
       )}
     </div>
