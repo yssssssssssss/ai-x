@@ -108,5 +108,5 @@ export interface SkillItem {
   id: string;
   name: string;
   description: string;
-  domain: string[];
+  task_types: string[];
 }

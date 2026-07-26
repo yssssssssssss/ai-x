@@ -103,7 +103,7 @@ export function Composer({ disabled, onSubmit }: { disabled: boolean; onSubmit: 
                   {s.name !== s.id ? `${s.name} · ` : ''}{s.description}
                 </span>
                 <span style={{ fontSize: 11, color: 'var(--text-faint)', flexShrink: 0 }}>
-                  {s.domain[0] ?? '技能'}
+                  {s.task_types[0] ?? '技能'}
                 </span>
               </div>
             ))}
