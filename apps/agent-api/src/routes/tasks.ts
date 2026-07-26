@@ -7,10 +7,19 @@ import {
   getResearchTask,
   listDecisionStates,
   listExecutionLog,
-  listArtifacts,
 } from '../../../../database/repository.ts';
 import { buildOrchestrator } from '../../../orchestrator-runtime/src/orchestrator.ts';
 import { requireAuth } from '../middleware.ts';
+import type { ResearchTaskData } from '../../../../packages/api-contract/plan.ts';
+import type {
+  PlanCandidatesResponse,
+  SelectResponse,
+  FinalizedPlan,
+  ExecuteResponse,
+  TaskDetail,
+  TaskSummary,
+  Report,
+} from '../../../../packages/api-contract/http.ts';
 
 // 任务路由:四段流的 HTTP 入口。plan=段1-2,execute=段3-4。
 // 薄入口:只做鉴权/会话/转发/读库,判断全在 orchestrator+LLM。
@@ -25,9 +34,9 @@ async function getOwnedTask(taskId: string, userId: string) {
   return task;
 }
 
-function readReport(taskId: string): unknown | null {
+function readReport(taskId: string): Report | null {
   const p = join(process.cwd(), 'run-workspaces', taskId, 'artifacts', 'report.json');
-  return existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : null;
+  return existsSync(p) ? (JSON.parse(readFileSync(p, 'utf8')) as Report) : null;
 }
 
 // 段1+2:一句话 → 候选计划(2 份,停在候选选择闸门,不执行)
@@ -49,13 +58,14 @@ tasksRouter.post('/plan', async (req, res) => {
       conversationId: convId,
       ownerUserId: req.userId!,
     });
-    res.json({
+    const body: PlanCandidatesResponse = {
       conversationId: convId,
       taskId: result.taskId,
       task: result.task,
       activatedNodes: result.activatedNodes,
       candidates: result.candidates,
-    });
+    };
+    res.json(body);
   } catch (err) {
     res.status(502).json({ error: `规划失败: ${err instanceof Error ? err.message : String(err)}` });
   }
@@ -90,13 +100,14 @@ tasksRouter.post('/plan/stream', async (req, res) => {
       { originalInput, conversationId: convId, ownerUserId: req.userId! },
       (ev) => send('progress', ev),
     );
-    send('result', {
+    const body: PlanCandidatesResponse = {
       conversationId: convId,
       taskId: result.taskId,
       task: result.task,
       activatedNodes: result.activatedNodes,
       candidates: result.candidates,
-    });
+    };
+    send('result', body);
   } catch (err) {
     send('error', { error: `规划失败: ${err instanceof Error ? err.message : String(err)}` });
   } finally {
@@ -119,12 +130,13 @@ tasksRouter.post('/:id/select', async (req, res) => {
   try {
     const orch = buildOrchestrator();
     const result = await orch.selectPlan({ taskId: task.id, candidateId });
-    res.json({
+    const body: SelectResponse = {
       taskId: result.taskId,
       candidateId: result.candidateId,
-      plan: result.plan,
+      plan: result.plan as FinalizedPlan,
       pendingUploads: result.pendingUploads,
-    });
+    };
+    res.json(body);
   } catch (err) {
     res.status(502).json({ error: `候选选择失败: ${err instanceof Error ? err.message : String(err)}` });
   }
@@ -144,7 +156,7 @@ tasksRouter.post('/:id/execute', async (req, res) => {
       conversationId: task.conversation_id,
       uploads: req.body?.uploads,   // [{ role, dataUrl }] — 确认闸门收的图,回填 step.input
     });
-    res.json({
+    const body: ExecuteResponse = {
       taskId: task.id,
       status: result.status,
       reportArtifactId: result.reportArtifactId ?? null,
@@ -153,7 +165,8 @@ tasksRouter.post('/:id/execute', async (req, res) => {
       gapCount: result.gapCount ?? 0,
       executionLog: await listExecutionLog(task.id),
       report: readReport(task.id),
-    });
+    };
+    res.json(body);
   } catch (err) {
     res.status(502).json({ error: `执行失败: ${err instanceof Error ? err.message : String(err)}` });
   }
@@ -178,7 +191,7 @@ tasksRouter.post('/:id/resume', async (req, res) => {
       conversationId: task.conversation_id,
       action,
     });
-    res.json({
+    const body: ExecuteResponse = {
       taskId: task.id,
       status: result.status,
       reportArtifactId: result.reportArtifactId ?? null,
@@ -187,7 +200,8 @@ tasksRouter.post('/:id/resume', async (req, res) => {
       gapCount: result.gapCount ?? 0,
       executionLog: await listExecutionLog(task.id),
       report: readReport(task.id),
-    });
+    };
+    res.json(body);
   } catch (err) {
     res.status(502).json({ error: `恢复失败: ${err instanceof Error ? err.message : String(err)}` });
   }
@@ -195,8 +209,8 @@ tasksRouter.post('/:id/resume', async (req, res) => {
 
 // 历史任务(owner 隔离)
 tasksRouter.get('/', async (req, res) => {
-  const tasks = await listRecentTasks(req.userId!);
-  res.json({ tasks });
+  const body: { tasks: TaskSummary[] } = { tasks: await listRecentTasks(req.userId!) };
+  res.json(body);
 });
 
 // 任务详情:task + 决策状态 + 执行日志 + 报告(复盘用)
@@ -206,11 +220,17 @@ tasksRouter.get('/:id', async (req, res) => {
     res.status(404).json({ error: '任务不存在' });
     return;
   }
-  res.json({
-    task,
+  const body: TaskDetail = {
+    task: {
+      id: task.id,
+      original_input: task.original_input,
+      task_type: task.task_type,
+      structured_task: task.structured_task as ResearchTaskData,
+      status: task.status,
+    },
     decisionStates: await listDecisionStates(task.id),
     executionLog: await listExecutionLog(task.id),
-    artifacts: await listArtifacts(task.id),
     report: readReport(task.id),
-  });
+  };
+  res.json(body);
 });
