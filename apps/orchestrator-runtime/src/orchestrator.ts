@@ -12,17 +12,35 @@ import {
 } from './runtime/config-loader.ts';
 import { join } from 'node:path';
 import { searchKnowledge } from './knowledge/index.ts';
+import type {
+  GuidanceRef,
+  ResearchTaskData,
+  PendingUpload,
+  PlanCandidate,
+  PlanResult,
+  PlanPhaseKey,
+  PlanProgress,
+  SelectResult,
+  PlanStep,
+  ExecuteResult,
+} from './plan-types.ts';
+
+// 对外契约集中在 plan-types.ts,这里 re-export 让老 import 路径继续可用。
+export type {
+  GuidanceRef,
+  ResearchTaskData,
+  PendingUpload,
+  PlanCandidate,
+  PlanResult,
+  PlanPhaseKey,
+  PlanProgress,
+  SelectResult,
+  PlanStep,
+  ExecuteResult,
+} from './plan-types.ts';
 
 // 引导召回:对每个激活的决策节点,用其 related_tags 从知识库召回方法论/模型(每节点 top-3),
 // 供"决策状态判定"与"计划生成"两个 LLM 调用作正典依据,并进 context_manifest 溯源。纯函数,可测。
-export interface GuidanceRef {
-  node: string;
-  id: string;
-  title: string;
-  summary: string;
-  source_path: string;
-  content_hash: string;
-}
 
 export function retrieveGuidance(nodes: DecisionNode[]): GuidanceRef[] {
   const out: GuidanceRef[] = [];
@@ -46,60 +64,6 @@ export function retrieveGuidance(nodes: DecisionNode[]): GuidanceRef[] {
 // 四段流编排壳(方案 §五)。判断全在 skill/配置/LLM,壳只做装配、校验、留痕。
 // 严禁在此写 `if task_type == 'competitive_research'` 类领域分支:
 //   节点激活 = 纯数据过滤(applies_to.includes(task_type)),加 task_type 只需改 YAML。
-
-export interface ResearchTaskData {
-  task_type: string;
-  business_domain: string;
-  research_goal: string;
-  assumptions: Array<{ key: string; value: string; editable: boolean }>;
-  confirmations: unknown[];
-  blocking_issues: unknown[];
-  sensitivity: string;
-  pii_detected: boolean;
-}
-
-export interface PendingUpload {
-  role: string;                 // 图像角色(如 design=主设计稿);同 role 只需上传一次
-  label: string;
-  multiple: boolean;            // 该 role 是否有 multiple 字段(展示提示用)
-  targets: Array<{ step_no: number; tool_id: string; field: string; multiple: boolean }>;
-}
-
-// 候选计划:planPhase 一次产 N 份(当前 2 份,depth/speed);用户选中后再 finalize。
-export interface PlanCandidate {
-  id: 'depth' | 'speed';
-  title: string;              // 展示名,如"深度优先方案"
-  rationale: string;          // 为什么这样组合(方法论理由)
-  tradeoffs: string;          // 明显的代价(耗时长/覆盖窄等)
-  steps: PlanStep[];
-  assumptions: Array<{ key: string; value: string; editable: boolean }>;
-  activated_nodes: string[];
-}
-
-export interface PlanResult {
-  taskId: string;
-  task: ResearchTaskData;
-  activatedNodes: string[];
-  candidates: PlanCandidate[];   // 用户从中选一;直呼支路也统一走这里(只有 1 个)
-  workspaceUri: string;
-}
-
-// planPhase 阶段进度事件(SSE 流式用):不传 onProgress 时非流式调用不受影响。
-export type PlanPhaseKey = 'understand' | 'activate' | 'guidance' | 'states' | 'candidates' | 'persist';
-export interface PlanProgress {
-  phase: PlanPhaseKey;
-  status: 'start' | 'done';
-  label: string;      // 中文阶段名
-  detail?: string;    // 简要内容(如 task_type、节点数)
-}
-
-// selectPlan 返回:选中后 finalize 出的可执行 plan + 该 plan 需要的图像上传项。
-export interface SelectResult {
-  taskId: string;
-  candidateId: PlanCandidate['id'];
-  plan: unknown;
-  pendingUploads: PendingUpload[];
-}
 
 export class Orchestrator {
   constructor(private readonly rt: AgentRuntime) {}
@@ -741,24 +705,7 @@ interface RunState {
   uploads?: Array<{ role: string; dataUrl: string }>;
 }
 
-// executePhase / resumePhase 的返回:paused=停在失败步待用户决策;completed_with_gaps=有缺口但已合成。
-export interface ExecuteResult {
-  status: 'completed' | 'completed_with_gaps' | 'paused' | 'failed';
-  reportArtifactId?: string;
-  failedStepNo?: number;
-  failedStepName?: string;
-  gapCount?: number;
-}
-
-interface PlanStep {
-  step_no: number;
-  step_name: string;
-  actor_type: 'skill' | 'tool' | 'llm' | 'reviewer';
-  actor_id: string;
-  purpose?: string;
-  input?: Record<string, unknown>;
-  requires_approval?: boolean;
-}
+// executePhase / resumePhase 的返回类型见 plan-types.ts。
 
 export class StepFailedError extends Error {
   constructor(public readonly stepNo: number, public readonly actorId: string, message: string) {
