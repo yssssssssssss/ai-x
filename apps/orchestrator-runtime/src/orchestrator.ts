@@ -668,29 +668,9 @@ export class Orchestrator {
   }
 }
 
-// 执行累积上下文:execute 与 resume 共用,携带跨步的产出/缺口/复核/溯源。
-interface ExecCtx {
-  taskId: string;
-  conversationId: string;
-  researchGoal: string;
-  ws: RunWorkspace;
-  plan: { steps: PlanStep[]; task_id: string };
-  graphHash: string;
-  uploads?: Array<{ role: string; dataUrl: string }>;
-  toolOutputs: Array<{ toolId: string; output: unknown }>;
-  reviewNotes: string[];
-  stepFailures: StepFailure[];
-  usedCapabilities: Array<{ id: string; type: string }>;
-  toolOutputRefs: Array<{ stepNo: number; toolId: string }>;
-}
-
-interface StepFailure {
-  stepNo: number;
-  stepName: string;
-  actorType: PlanStep['actor_type'];
-  actorId: string;
-  message: string;
-}
+// 执行累积上下文与 StepFailure:契约见 runners/actor-runner.ts,orchestrator 在此
+// 落 run_state / commit artifact 时消费,不额外再声明。
+import type { ExecCtx, StepFailure } from './runners/actor-runner.ts';
 
 // run_state.json:停在失败步时落盘的断点,resume 据此重建上下文并从下一步续跑。
 interface RunState {
