@@ -33,85 +33,45 @@ export class ApiError extends Error {
   }
 }
 
-// ---- 类型(与后端返回对齐)----
-export interface User { id: string; email: string; display_name: string; role?: string; }
-export interface Assumption { key: string; value: string; editable: boolean; }
-export interface PlanStep {
-  step_no: number; step_name: string;
-  actor_type: 'skill' | 'tool' | 'llm' | 'reviewer'; actor_id: string;
-  purpose?: string; requires_approval?: boolean;
-}
-export interface ResearchTask {
-  task_type: string; business_domain: string; research_goal: string;
-  assumptions: Assumption[]; confirmations: unknown[]; blocking_issues: unknown[];
-  sensitivity: string; pii_detected: boolean;
-}
-export interface PendingUpload {
-  role: string; label: string; multiple: boolean;
-  targets: Array<{ step_no: number; tool_id: string; field: string; multiple: boolean }>;
-}
-export interface Upload { role: string; dataUrl: string; }
-export interface PlanCandidate {
-  id: 'depth' | 'speed';
-  title: string;
-  rationale: string;
-  tradeoffs: string;
-  steps: PlanStep[];
-  assumptions: Assumption[];
-  activated_nodes: string[];
-}
-export interface PlanCandidatesResponse {
-  conversationId: string; taskId: string;
-  task: ResearchTask; activatedNodes: string[];
-  candidates: PlanCandidate[];
-}
-export interface PlanProgress {
-  phase: 'understand' | 'activate' | 'guidance' | 'states' | 'candidates' | 'persist';
-  status: 'start' | 'done';
-  label: string;
-  detail?: string;
-}
-export interface PlanResponse {
-  conversationId: string; taskId: string;
-  task: ResearchTask; activatedNodes: string[];
-  plan: { steps: PlanStep[]; activated_nodes: string[]; assumptions: Assumption[] };
-  pendingUploads: PendingUpload[];
-}
-export interface SelectResponse {
-  taskId: string; candidateId: 'depth' | 'speed';
-  plan: { steps: PlanStep[]; activated_nodes: string[]; assumptions: Assumption[] };
-  pendingUploads: PendingUpload[];
-}
-export interface Finding { statement: string; source: string; source_ref?: string; }
-export interface Report {
-  research_goal: string; findings: Finding[];
-  timeline: Array<{ phase: string; activity: string }>;
-  deliverables: string[];
-  capability_orchestration: Array<{ capability_id: string; capability_type: string; purpose: string }>;
-  risks_and_open_issues?: string[];
-}
-export interface ExecLogRow {
-  step_no: number; step_name: string; actor_type: string; actor_id: string; status: string;
-}
-export interface ExecuteResponse {
-  taskId: string;
-  status?: 'completed' | 'completed_with_gaps' | 'paused' | 'failed';
-  reportArtifactId: string | null;
-  failedStepNo?: number | null;
-  failedStepName?: string | null;
-  gapCount?: number;
-  executionLog: ExecLogRow[];
-  report: Report | null;
-}
-export interface TaskDetail {
-  task: { id: string; original_input: string; task_type: string | null; structured_task: ResearchTask; status: string };
-  decisionStates: Array<{ node_key: string }>;
-  executionLog: ExecLogRow[];
-  report: Report | null;
-}
-export interface TaskSummary {
-  id: string; original_input: string; task_type: string | null; status: string; created_at?: string;
-}
+// ---- 类型 ----
+// 契约类型集中在 packages/api-contract(前后端共享同一份,漂移编译期即炸)。
+// 这里 re-export,让前端各组件的 import 路径('./api/client.ts')保持不变。
+export type {
+  Assumption,
+  PlanStep,
+  ResearchTaskData,
+  PendingUpload,
+  PlanCandidate,
+  PlanPhaseKey,
+  PlanProgress,
+} from '../../../../packages/api-contract/plan.ts';
+export type {
+  User,
+  Upload,
+  Finding,
+  Report,
+  ExecLogRow,
+  FinalizedPlan,
+  PlanCandidatesResponse,
+  SelectResponse,
+  PlanResponse,
+  ExecuteResponse,
+  TaskDetail,
+  TaskSummary,
+  SkillItem,
+} from '../../../../packages/api-contract/http.ts';
+
+// api 方法体实际引用的类型(export type 只做 re-export、不引入本地绑定,故这里单独 import)。
+import type {
+  User,
+  Upload,
+  PlanCandidatesResponse,
+  SelectResponse,
+  ExecuteResponse,
+  TaskDetail,
+  TaskSummary,
+  SkillItem,
+} from '../../../../packages/api-contract/http.ts';
 
 // ---- API ----
 export const api = {
@@ -167,5 +127,3 @@ export const api = {
     req<{ id: string }>(`/tasks/${id}/feedback`, { method: 'POST', body: b }),
   skills: () => req<{ skills: SkillItem[] }>('/skills'),
 };
-
-export interface SkillItem { id: string; name: string; description: string; domain: string[]; }
