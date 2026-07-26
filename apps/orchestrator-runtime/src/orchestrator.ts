@@ -24,6 +24,11 @@ import type {
   PlanStep,
   ExecuteResult,
 } from './plan-types.ts';
+import type { ActorRunner, StepArtifact } from './runners/actor-runner.ts';
+import { ToolActorRunner } from './runners/tool-runner.ts';
+import { SkillActorRunner } from './runners/skill-runner.ts';
+import { LlmActorRunner } from './runners/llm-runner.ts';
+import { ReviewerActorRunner } from './runners/reviewer-runner.ts';
 
 // 对外契约集中在 plan-types.ts,这里 re-export 让老 import 路径继续可用。
 export type {
@@ -66,7 +71,17 @@ export function retrieveGuidance(nodes: DecisionNode[]): GuidanceRef[] {
 //   节点激活 = 纯数据过滤(applies_to.includes(task_type)),加 task_type 只需改 YAML。
 
 export class Orchestrator {
-  constructor(private readonly rt: AgentRuntime) {}
+  private readonly runners: Record<PlanStep['actor_type'], ActorRunner>;
+
+  constructor(private readonly rt: AgentRuntime) {
+    const { llm, validator, skillLoader, toolAdapter } = rt.deps;
+    this.runners = {
+      tool: new ToolActorRunner(skillLoader, toolAdapter, validator),
+      skill: new SkillActorRunner(llm, skillLoader, validator),
+      llm: new LlmActorRunner(llm),
+      reviewer: new ReviewerActorRunner(llm),
+    };
+  }
 
   // ---- 段1 + 段2:理解 → 计划 → 停(HITL 闸门,不执行)----
   // onProgress:可选阶段进度回调(SSE 流式用);不传则非流式,现有调用不受影响。
@@ -496,9 +511,10 @@ export class Orchestrator {
     return this.finalizeReport(ctx);
   }
 
-  // 单步执行:成功则写 execution_log(succeeded) 并累积产出;失败 throw(由 runFrom 处理)。
+  // 单步执行:装配 → 分派到 Runner → 落 artifact 累积 → 写 execution_log(succeeded)。
+  // Runner 只负责"这一步做什么";这里负责编排、日志、累积。失败一律 throw(由 runFrom 处理)。
   private async runStep(step: PlanStep, ctx: ExecCtx): Promise<void> {
-    const { llm, validator, skillLoader, toolAdapter, checkpointStore } = this.rt.deps;
+    const { checkpointStore } = this.rt.deps;
     const startedAt = new Date();
     await checkpointStore.writeExecutionLog({
       taskId: ctx.taskId, stepNo: step.step_no, stepName: step.step_name,
@@ -506,103 +522,48 @@ export class Orchestrator {
       startedAt, decisionGraphHash: ctx.graphHash,
     });
 
-    let outputRef: string | undefined;
-    const manifestHashes: string[] = [];
-    let stepTokens: { prompt: number; completion: number; total: number } | undefined;
-
-    if (step.actor_type === 'tool') {
-      const tool = skillLoader.getTool(step.actor_id);
-      if (!tool) throw new Error(`tool 非 active 或不存在: ${step.actor_id}`);
-      const manifest = loadToolManifest(tool.path);
-      // 入参:优先用计划里 LLM 生成的 step.input;缺省回落 {query}(兼容 o2/ai-spider 检索类)。
-      const toolInput: Record<string, unknown> = { ...(step.input ?? { query: ctx.researchGoal || '直播 数字人 竞品' }) };
-      // 回填用户在确认闸门上传的图:按字段 role 匹配上传项(同 role 一次上传回填到所有步骤)。
-      for (const f of manifest.image_input_fields ?? []) {
-        const up = (ctx.uploads ?? []).find((u) => u.role === (f.role ?? f.field));
-        if (up) toolInput[f.field] = f.multiple ? [{ dataUrl: up.dataUrl }] : { dataUrl: up.dataUrl };
-      }
-      // 清理 LLM 生成的空占位:顶层空对象与数组内空对象都剔除,避免图像工具把空占位当图解码而 500。
-      for (const k of Object.keys(toolInput)) {
-        const v = toolInput[k];
-        if (Array.isArray(v)) {
-          const filtered = v.filter((e) => !(e && typeof e === 'object' && !Array.isArray(e) && Object.keys(e).length === 0));
-          if (filtered.length === 0) delete toolInput[k];
-          else toolInput[k] = filtered;
-        } else if (v && typeof v === 'object' && Object.keys(v).length === 0) {
-          delete toolInput[k];
-        }
-      }
-      // 调用前按该 tool 的 input.schema 校验:非法入参在计划质量层拦下,不打到工具。
-      validator.validateFileOrThrow(join(getConfigRoot(), manifest.input_schema), toolInput);
-      const res = await toolAdapter.invoke({ toolId: step.actor_id, input: toolInput, manifest });
-      const outSchemaPath = join(getConfigRoot(), manifest.output_schema);
-      validator.validateFileOrThrow(outSchemaPath, res.output);
-      outputRef = ctx.ws.writeToolOutput(step.step_no, res.output);
-      ctx.toolOutputs.push({ toolId: step.actor_id, output: res.output });
-      ctx.toolOutputRefs.push({ stepNo: step.step_no, toolId: step.actor_id });
-      manifestHashes.push(hashFile(tool.path));
-      ctx.usedCapabilities.push({ id: step.actor_id, type: 'tool' });
-    } else if (step.actor_type === 'skill') {
-      // skill 真执行:加载 SKILL.md 全文 + output schema,调 LLM 按工作流基于已有 tool 输出产出结构化结果。
-      const skillEntry = skillLoader.getSkill(step.actor_id);
-      if (!skillEntry) throw new Error(`skill 非 active 或不存在: ${step.actor_id}`);
-      const { body, hash: skillManifestHash } = skillLoader.loadSkillBody(step.actor_id);
-      const { output } = skillLoader.loadSkillSchemas(step.actor_id);
-      const skillGen = await llm.generateStructured<object>({
-        prompt:
-          `你是「${skillEntry.name}」能力。严格按以下 SKILL.md 的工作流与质量门禁执行,` +
-          `基于提供的检索数据(tool_outputs)产出结构化结果;无数据支撑的判断标 llm_inference,不得冒充事实。\n\n${body}`,
-        schema: output ?? {},
-        schemaName: `skill:${step.actor_id}`,
-        context: { research_goal: ctx.researchGoal, tool_outputs: ctx.toolOutputs },
-      });
-      if (skillEntry.output_schema) {
-        validator.validateFileOrThrow(join(getConfigRoot(), skillEntry.output_schema), skillGen.data);
-      }
-      outputRef = ctx.ws.writeToolOutput(step.step_no, skillGen.data);
-      ctx.toolOutputs.push({ toolId: step.actor_id, output: skillGen.data });
-      ctx.toolOutputRefs.push({ stepNo: step.step_no, toolId: step.actor_id });
-      manifestHashes.push(skillManifestHash);
-      stepTokens = skillGen.tokens;
-      ctx.usedCapabilities.push({ id: step.actor_id, type: 'skill' });
-    } else if (step.actor_type === 'llm') {
-      // 中间 LLM 步:基于已累积输出产出简洁小结,push 进 toolOutputs 供后续 + synthesis
-      const gen = await llm.generateText({
-        prompt:
-          `你是研究编排中的一步:「${step.step_name}」。${step.purpose ?? ''}\n` +
-          `基于已有执行结果(检索数据 + 竞品分析)完成这一步,产出简洁小结;` +
-          `凡引用数据的结论标明来源,无据推断需说明。`,
-        context: { research_goal: ctx.researchGoal, tool_outputs: ctx.toolOutputs },
-      });
-      // 落盘与内存保持同一结构(供 resume 重建一致)
-      const out = { note: gen.text };
-      outputRef = ctx.ws.writeToolOutput(step.step_no, out);
-      ctx.toolOutputs.push({ toolId: step.actor_id, output: out });
-      ctx.toolOutputRefs.push({ stepNo: step.step_no, toolId: step.actor_id });
-      stepTokens = gen.tokens;
-    } else if (step.actor_type === 'reviewer') {
-      // reviewer 步:轻量复核,收进 reviewNotes 供 synthesis(不改前序产出,不进 toolOutputs)
-      const gen = await llm.generateText({
-        prompt:
-          `你是质量复核者:「${step.step_name}」。审查已有执行结果的来源标注是否完整、` +
-          `有无把推断当事实、数据缺口是否说明。产出复核意见,不改写前序结论。`,
-        context: { research_goal: ctx.researchGoal, tool_outputs: ctx.toolOutputs },
-      });
-      outputRef = ctx.ws.writeToolOutput(step.step_no, { review: gen.text });
-      ctx.reviewNotes.push(gen.text);
-      stepTokens = gen.tokens;
-    }
+    const runner = this.runners[step.actor_type];
+    const artifact = await runner.run(step, ctx);
+    const { outputRef, tokens, manifestHashes } = this.commitArtifact(step, ctx, artifact);
 
     await checkpointStore.writeExecutionLog({
       taskId: ctx.taskId, stepNo: step.step_no, stepName: step.step_name,
       actorType: step.actor_type, actorId: step.actor_id, status: 'succeeded',
       outputRef, startedAt, finishedAt: new Date(),
-      tokensJson: stepTokens,
+      tokensJson: tokens,
       contextManifestRef: `${ctx.ws.uri}/context_manifest.json`,
       decisionGraphHash: ctx.graphHash,
       skillManifestHashes: step.actor_type === 'skill' ? manifestHashes : [],
       toolManifestHashes: step.actor_type === 'tool' ? manifestHashes : [],
     });
+  }
+
+  // 累积单点:Runner 只回 artifact,这里按 kind 分派到 toolOutputs / reviewNotes / usedCapabilities,
+  // 让 4 支 Runner 都不用碰 ctx 的可变数组(局部性)。
+  private commitArtifact(
+    step: PlanStep,
+    ctx: ExecCtx,
+    artifact: StepArtifact,
+  ): { outputRef: string; tokens?: { prompt: number; completion: number; total: number }; manifestHashes: string[] } {
+    switch (artifact.kind) {
+      case 'tool_output':
+        ctx.toolOutputs.push({ toolId: artifact.actorId, output: artifact.output });
+        ctx.toolOutputRefs.push({ stepNo: step.step_no, toolId: artifact.actorId });
+        ctx.usedCapabilities.push({ id: artifact.actorId, type: 'tool' });
+        return { outputRef: artifact.outputRef, tokens: artifact.tokens, manifestHashes: [artifact.manifestHash] };
+      case 'skill_output':
+        ctx.toolOutputs.push({ toolId: artifact.actorId, output: artifact.output });
+        ctx.toolOutputRefs.push({ stepNo: step.step_no, toolId: artifact.actorId });
+        ctx.usedCapabilities.push({ id: artifact.actorId, type: 'skill' });
+        return { outputRef: artifact.outputRef, tokens: artifact.tokens, manifestHashes: [artifact.manifestHash] };
+      case 'llm_note':
+        ctx.toolOutputs.push({ toolId: artifact.actorId, output: artifact.output });
+        ctx.toolOutputRefs.push({ stepNo: step.step_no, toolId: artifact.actorId });
+        return { outputRef: artifact.outputRef, tokens: artifact.tokens, manifestHashes: [] };
+      case 'review_note':
+        ctx.reviewNotes.push(artifact.review);
+        return { outputRef: artifact.outputRef, tokens: artifact.tokens, manifestHashes: [] };
+    }
   }
 
   // 段4:synthesis → report → 过 schema → 写 artifact。失败/跳过步的缺口 + 复核意见注入 prompt。
