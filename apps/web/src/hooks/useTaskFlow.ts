@@ -43,22 +43,21 @@ export function useTaskFlow(options: UseTaskFlowOptions = {}) {
     setPhase('planning'); setCandidatesResp(null); setPlan(null); setExec(null); setError('');
     setSelectedCandidateId(null); setOriginalInput(text); setProgress([]);
     try {
-      await api.planStream({ originalInput: text }, (type, data) => {
-        if (type === 'progress') {
-          const ev = data as unknown as PlanProgress;
-          // start 追加占位;done 更新同 phase 的最后一条为完成态
-          setProgress((prev) => {
-            const i = prev.findIndex((p) => p.phase === ev.phase);
-            if (i >= 0) { const next = [...prev]; next[i] = ev; return next; }
-            return [...prev, ev];
-          });
-        } else if (type === 'result') {
-          setCandidatesResp(data as unknown as PlanCandidatesResponse);
-          setPhase('picking');
-        } else if (type === 'error') {
-          setError(String(data.error ?? '规划失败')); setPhase('error');
-        }
-      });
+      const resp = await api.planStream(
+        { originalInput: text },
+        {
+          onProgress: (ev) => {
+            // start 追加占位;done 更新同 phase 的最后一条为完成态
+            setProgress((prev) => {
+              const i = prev.findIndex((p) => p.phase === ev.phase);
+              if (i >= 0) { const next = [...prev]; next[i] = ev; return next; }
+              return [...prev, ev];
+            });
+          },
+        },
+      );
+      setCandidatesResp(resp);
+      setPhase('picking');
     } catch (e) {
       setError(e instanceof ApiError ? e.message : '规划失败'); setPhase('error');
     }

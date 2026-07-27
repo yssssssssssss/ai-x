@@ -72,6 +72,7 @@ import type {
   TaskSummary,
   SkillItem,
 } from '../../../../packages/api-contract/http.ts';
+import type { PlanProgress } from '../../../../packages/api-contract/plan.ts';
 
 // ---- API ----
 export const api = {
@@ -83,11 +84,12 @@ export const api = {
 
   plan: (b: { originalInput: string; conversationId?: string }) =>
     req<PlanCandidatesResponse>('/tasks/plan', { method: 'POST', body: b }),
-  // 流式规划:SSE 逐阶段回调 onEvent(type, data);type ∈ conversation|progress|result|error。
+  // 流式规划:SSE 逐阶段回调 onProgress(PlanProgress);终态 result→resolve、error→throw ApiError。
+  // 事件分派(conversation/progress/result/error)在此消化,caller 只拿类型化进度与最终候选。
   planStream: async (
     b: { originalInput: string; conversationId?: string },
-    onEvent: (type: string, data: Record<string, unknown>) => void,
-  ): Promise<void> => {
+    opts: { onProgress?: (ev: PlanProgress) => void } = {},
+  ): Promise<PlanCandidatesResponse> => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const token = getToken();
     if (token) headers.Authorization = `Bearer ${token}`;
@@ -96,6 +98,7 @@ export const api = {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = '';
+    let result: PlanCandidatesResponse | null = null;
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -110,9 +113,15 @@ export const api = {
           if (line.startsWith('event:')) event = line.slice(6).trim();
           else if (line.startsWith('data:')) data += line.slice(5).trim();
         }
-        if (data) onEvent(event, JSON.parse(data));
+        if (!data) continue;
+        const parsed = JSON.parse(data);
+        if (event === 'progress') opts.onProgress?.(parsed as PlanProgress);
+        else if (event === 'result') result = parsed as PlanCandidatesResponse;
+        else if (event === 'error') throw new ApiError(502, String(parsed?.error ?? '规划失败'));
       }
     }
+    if (!result) throw new ApiError(502, '规划未返回结果');
+    return result;
   },
   selectCandidate: (taskId: string, candidateId: 'depth' | 'speed') =>
     req<SelectResponse>(`/tasks/${taskId}/select`, { method: 'POST', body: { candidateId } }),
