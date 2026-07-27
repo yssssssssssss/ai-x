@@ -1,11 +1,10 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import {
   type LLMClient,
   type LLMResult,
   type TokenUsage,
   hashPrompt,
 } from './llm-client.ts';
+import { resolveSchema, loadSchemaText, type SchemaSpec } from './schema-registry.ts';
 
 // 真实 LLM 通道:京东内网网关(OpenAI 兼容 /v1/chat/completions)。
 // 只用 Node20 内置 fetch,不引入任何 SDK。实现与 MockLLMClient 完全相同的 interface。
@@ -37,24 +36,21 @@ function readConfig(): GatewayConfig {
   return { baseUrl, apiKey, model, timeoutMs: Number(process.env.LLM_GATEWAY_TIMEOUT_MS ?? 30000) };
 }
 
-// 结构化输出的 schema 说明:优先用传入的 schema 对象(如 skill 目录下的 output schema,不在 schemas/);
-// 否则按 schemaName 从 schemas/ 加载。decision-states 是 decision-state 的数组(无独立文件),特殊处理。
-function schemaHint(schemaName: string, schema?: object): string {
-  // schema 对象非空(如 skill:xxx)→ 直接用它,不查 schemas/ 文件
+// 结构化输出的 schema 说明。schemaName 语义(项目 schema / decision-states 数组 / skill:* 动态)
+// 统一由 schema-registry 描述;这里只按 spec 组织提示词。
+// 优先用传入的 schema 对象(如 skill 目录下的 output schema);否则据 spec 读 schemas/ 文本。
+function schemaHint(spec: SchemaSpec, schema?: object): string {
   if (schema && Object.keys(schema).length > 0) {
     return `输出的 JSON 必须严格符合以下 JSON Schema:\n${JSON.stringify(schema)}`;
   }
-  const dir = join(process.cwd(), 'schemas');
-  if (schemaName === 'decision-states') {
-    const one = readFileSync(join(dir, 'decision-state.schema.json'), 'utf8');
-    return `输出一个 JSON 数组,数组每一项都必须符合以下 JSON Schema:\n${one}\n注意:顶层是数组,但因为 response_format 要求 JSON object,请用 {"items": [...]} 包裹,items 为该数组。`;
+  const text = loadSchemaText(spec);
+  if (text && spec.isArrayEnvelope) {
+    return `输出一个 JSON 数组,数组每一项都必须符合以下 JSON Schema:\n${text}\n注意:顶层是数组,但因为 response_format 要求 JSON object,请用 {"items": [...]} 包裹,items 为该数组。`;
   }
-  try {
-    const s = readFileSync(join(dir, `${schemaName}.schema.json`), 'utf8');
-    return `输出的 JSON 必须严格符合以下 JSON Schema:\n${s}`;
-  } catch {
-    return `输出符合 "${schemaName}" 结构的 JSON。`;
+  if (text) {
+    return `输出的 JSON 必须严格符合以下 JSON Schema:\n${text}`;
   }
+  return `输出符合 "${spec.id}" 结构的 JSON。`;
 }
 
 interface ChatResponse {
@@ -138,10 +134,11 @@ export class GatewayLLMClient implements LLMClient {
   async generateStructured<T>(opts: {
     prompt: string; schema: object; schemaName: string; context?: object;
   }): Promise<LLMResult<T>> {
+    const spec = resolveSchema(opts.schemaName);
     const messages = [
       {
         role: 'system',
-        content: `你是用研任务编排器。只输出 JSON,不要任何解释或 markdown 代码块。\n${schemaHint(opts.schemaName, opts.schema)}`,
+        content: `你是用研任务编排器。只输出 JSON,不要任何解释或 markdown 代码块。\n${schemaHint(spec, opts.schema)}`,
       },
       {
         role: 'user',
@@ -158,14 +155,14 @@ export class GatewayLLMClient implements LLMClient {
     } catch {
       throw new Error(`网关返回非法 JSON(schemaName=${opts.schemaName}): ${content.slice(0, 200)}`);
     }
-    // decision-states 用 {items:[...]} 包裹返回,拆出数组
-    const data = opts.schemaName === 'decision-states' && parsed && typeof parsed === 'object' && 'items' in parsed
+    // 数组 envelope(如 decision-states)用 {items:[...]} 包裹返回,拆出数组
+    const data = spec.isArrayEnvelope && parsed && typeof parsed === 'object' && 'items' in parsed
       ? (parsed as { items: unknown }).items
       : parsed;
 
     return {
       data: data as T,
-      promptHash: hashPrompt(opts.prompt, opts.context),
+      promptHash: hashPrompt(opts.prompt, opts.context, opts.schemaName),
       modelName: resp.model ?? this.cfg.model,
       modelVersion: resp.model ?? this.cfg.model,
       traceId: resp.id ?? 'gateway-no-id',

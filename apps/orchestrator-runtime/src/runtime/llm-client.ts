@@ -34,10 +34,12 @@ export interface LLMClient {
 }
 
 // 确定性 hash:同输入同输出,便于测试与复盘对齐。
-export function hashPrompt(prompt: string, context?: object): string {
+// schemaId 纳入 hash:同一段 prompt 用于不同 schema 时溯源不冲撞(issue #5)。
+export function hashPrompt(prompt: string, context?: object, schemaId?: string): string {
   const h = createHash('sha256');
   h.update(prompt);
   if (context) h.update(JSON.stringify(context));
+  if (schemaId) h.update(schemaId);
   return 'sha256:' + h.digest('hex').slice(0, 16);
 }
 
@@ -102,7 +104,7 @@ export class MockLLMClient implements LLMClient {
     out = injectToolResultFinding(opts.schemaName, opts.context, out);
     return {
       data: out,
-      promptHash: hashPrompt(opts.prompt, opts.context),
+      promptHash: hashPrompt(opts.prompt, opts.context, opts.schemaName),
       modelName: this.model.name,
       modelVersion: this.model.version,
       traceId: traceFrom(opts.prompt, opts.schemaName),
