@@ -24,6 +24,7 @@ import { SkillActorRunner } from './runners/skill-runner.ts';
 import { LlmActorRunner } from './runners/llm-runner.ts';
 import { ReviewerActorRunner } from './runners/reviewer-runner.ts';
 import type { PlanStrategy, PlanProvenance } from './planners/plan-strategy.ts';
+import { sanitizeCandidateToPlan } from './planners/plan-sanitizer.ts';
 import { DirectPlanner } from './planners/direct-planner.ts';
 import { RoutedPlanner } from './planners/routed-planner.ts';
 
@@ -193,39 +194,10 @@ export class Orchestrator {
       throw new Error(`候选 ${input.candidateId} 不存在,可选:${raw.candidates.map((c) => c.id).join(', ')}`);
     }
 
-    // 组装 plan(与旧 execution-plan schema 同形)。
-    // 候选生成时 schema:{} 不严格校验,真实 LLM 常给 step 用 step_id/漏 step_name/多塞字段;
-    // 这里按 execution-plan schema 白名单清洗并兜底:step_no 一律用数组顺序(不信 LLM 编号),
-    // step_name 缺失用 actor_id 兜底,丢弃 step_id 等非法字段,避免 additionalProperties:false 校验失败。
+    // 候选阶段 schema 不严格,LLM 输出常带漂移;sanitizeCandidateToPlan 白名单清洗成合规 plan。
     const taskRow = await checkpointStore.getTask(input.taskId);
     const taskType = taskRow?.task_type ?? '';
-    const isPlainObject = (v: unknown): v is Record<string, unknown> =>
-      v !== null && typeof v === 'object' && !Array.isArray(v);
-    const cleanStep = (s: PlanStep, i: number): PlanStep => ({
-      step_no: i + 1,
-      step_name: s.step_name || s.actor_id || `步骤 ${i + 1}`,
-      actor_type: s.actor_type,
-      actor_id: s.actor_id,
-      ...(typeof s.purpose === 'string' ? { purpose: s.purpose } : {}),
-      ...(isPlainObject(s.input) ? { input: s.input } : {}),   // 非纯对象(字符串/数组/null)丢弃,执行时回落 {query}
-      ...(typeof s.requires_approval === 'boolean' ? { requires_approval: s.requires_approval } : {}),
-    });
-    const cleanAssumption = (a: unknown, i: number): { key: string; value: string; editable: boolean } => {
-      if (typeof a === 'string') return { key: `假设 ${i + 1}`, value: a, editable: true };
-      const o = (a ?? {}) as { key?: string; value?: string; editable?: boolean; name?: string; description?: string; assumption?: string };
-      return {
-        key: o.key ?? o.name ?? `假设 ${i + 1}`,
-        value: o.value ?? o.description ?? o.assumption ?? JSON.stringify(a),
-        editable: o.editable ?? true,
-      };
-    };
-    const plan = {
-      task_id: input.taskId,
-      task_type: taskType,
-      steps: cand.steps.map(cleanStep),
-      activated_nodes: cand.activated_nodes,
-      assumptions: (cand.assumptions ?? []).map(cleanAssumption),
-    };
+    const plan = sanitizeCandidateToPlan(cand, input.taskId, taskType);
     validator.validateOrThrow('execution-plan', plan);
 
     // 扫描 tool 步图像入参,聚合 pendingUploads(每候选可能不同,选中后才知道要什么图)。
