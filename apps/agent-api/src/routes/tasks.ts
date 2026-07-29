@@ -1,6 +1,4 @@
 import { Router } from 'express';
-import { readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
 import {
   createConversation,
   listRecentTasks,
@@ -9,6 +7,7 @@ import {
   listExecutionLog,
 } from '../../../../database/repository.ts';
 import { buildOrchestrator } from '../../../orchestrator-runtime/src/orchestrator.ts';
+import { RunWorkspace } from '../../../orchestrator-runtime/src/run-workspace.ts';
 import { requireAuth } from '../middleware.ts';
 import type { ResearchTaskData } from '../../../../packages/api-contract/plan.ts';
 import type {
@@ -32,11 +31,6 @@ async function getOwnedTask(taskId: string, userId: string) {
   const task = await getResearchTask(taskId);
   if (!task || task.owner_user_id !== userId) return null;
   return task;
-}
-
-function readReport(taskId: string): Report | null {
-  const p = join(process.cwd(), 'run-workspaces', taskId, 'artifacts', 'report.json');
-  return existsSync(p) ? (JSON.parse(readFileSync(p, 'utf8')) as Report) : null;
 }
 
 // 段1+2:一句话 → 候选计划(2 份,停在候选选择闸门,不执行)
@@ -164,7 +158,7 @@ tasksRouter.post('/:id/execute', async (req, res) => {
       failedStepName: result.failedStepName ?? null,
       gapCount: result.gapCount ?? 0,
       executionLog: await listExecutionLog(task.id),
-      report: readReport(task.id),
+      report: new RunWorkspace(task.id).readReport<Report>(),
     };
     res.json(body);
   } catch (err) {
@@ -199,7 +193,7 @@ tasksRouter.post('/:id/resume', async (req, res) => {
       failedStepName: result.failedStepName ?? null,
       gapCount: result.gapCount ?? 0,
       executionLog: await listExecutionLog(task.id),
-      report: readReport(task.id),
+      report: new RunWorkspace(task.id).readReport<Report>(),
     };
     res.json(body);
   } catch (err) {
@@ -230,7 +224,7 @@ tasksRouter.get('/:id', async (req, res) => {
     },
     decisionStates: await listDecisionStates(task.id),
     executionLog: await listExecutionLog(task.id),
-    report: readReport(task.id),
+    report: new RunWorkspace(task.id).readReport<Report>(),
   };
   res.json(body);
 });

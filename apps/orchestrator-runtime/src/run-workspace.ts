@@ -88,6 +88,12 @@ export class RunWorkspace {
     return p;
   }
 
+  // report 是执行完成后才有的产物,未完成时缺失属正常态 → 返回 null(区别于 readPlan 等的 throw)。
+  readReport<T>(): T | null {
+    const p = join(this.dir, 'artifacts', 'report.json');
+    return existsSync(p) ? (JSON.parse(readFileSync(p, 'utf8')) as T) : null;
+  }
+
   // 失败记录:每行一条 JSON,用于回放与规则补强(不只留日志)
   appendFailure(record: {
     task_id: string;
