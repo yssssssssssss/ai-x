@@ -7,6 +7,7 @@ import {
 } from '../apps/orchestrator-runtime/src/runtime/tool-adapter.ts';
 import { loadToolManifest } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
+import { buildRuntime } from '../apps/orchestrator-runtime/src/runtime/agent-runtime.ts';
 
 const ORIGINAL_ENV = { ...process.env };
 const ORIGINAL_FETCH = globalThis.fetch;
@@ -32,6 +33,20 @@ function response(body: unknown, init: ResponseInit = {}) {
     headers: { 'Content-Type': 'application/json', ...init.headers },
   });
 }
+
+test('runtime: ToolRouter 注册 tavily adapter_type', async () => {
+  process.env.TAVILY_API_KEY = 'test-key';
+  installFetch(async () => response({ answer: null, response_time: null, results: [] }));
+
+  const runtime = buildRuntime();
+  const res = await runtime.deps.toolAdapter.invoke({
+    toolId: 'tavily-web-search',
+    input: { query: '直播 数字人' },
+    manifest,
+  });
+
+  assert.deepEqual(res.output, { answer: null, response_time: null, results: [] });
+});
 
 test('missing TAVILY_API_KEY rejects with ToolInvocationError for the requested tool', async () => {
   delete process.env.TAVILY_API_KEY;

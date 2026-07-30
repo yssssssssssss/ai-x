@@ -1,6 +1,6 @@
 import { type LLMClient, MockLLMClient } from './llm-client.ts';
 import { GatewayLLMClient } from './gateway-llm-client.ts';
-import { type ToolAdapter, FakeO2Adapter, HttpApiAdapter, RestJsonAdapter, ToolRouter } from './tool-adapter.ts';
+import { type ToolAdapter, FakeO2Adapter, HttpApiAdapter, RestJsonAdapter, TavilyAdapter, ToolRouter } from './tool-adapter.ts';
 import { SkillLoader } from './skill-loader.ts';
 import { CheckpointStore } from './checkpoint-store.ts';
 import { SchemaValidator } from '../schema/validator.ts';
@@ -51,14 +51,15 @@ function buildLLM(provider: string): LLMClient {
 }
 
 function buildToolAdapter(channel: string): ToolAdapter {
-  // ToolRouter 按 tool manifest 的 adapter_type 分发,fake / o2 / internal_api 共存。
-  // fake 与 o2 都映射到 FakeO2Adapter(V0 无真实 o2 通道);internal_api 走 HttpApiAdapter(真实 REST)。
+  // ToolRouter 按 tool manifest 的 adapter_type 分发,fake / o2 / internal_api / tavily 共存。
+  // fake 与 o2 都映射到 FakeO2Adapter(V0 无真实 o2 通道);internal_api 和 tavily 走真实 HTTP。
   const fake = new FakeO2Adapter();
   const router = new ToolRouter();
   router.registerAs('fake', fake);
   router.registerAs('o2', fake);
   router.registerAs('internal_api', new HttpApiAdapter());
   router.registerAs('rest_json', new RestJsonAdapter());
+  router.registerAs('tavily', new TavilyAdapter());
   void channel;
   return router;
 }
