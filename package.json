@@ -18,7 +18,8 @@
     "api:dev": "tsx watch apps/agent-api/src/server.ts",
     "labs:install": "for d in external-tools/*-lab; do (echo \"npm install @ $d\" && cd \"$d\" && npm install); done",
     "labs:dev": "node scripts/start-labs.mjs",
-    "test": "tsx --test tests/*.test.ts"
+    "test": "tsx --test tests/*.test.ts",
+    "quality": "pnpm lint:registry && pnpm lint:knowledge && pnpm test"
   },
   "dependencies": {
     "ajv": "^8.17.1",
