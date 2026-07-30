@@ -167,6 +167,110 @@ export class RestJsonAdapter implements ToolAdapter {
   }
 }
 
+interface TavilyAdapterConfig {
+  baseUrl?: string;
+  apiKey?: string;
+  timeoutMs?: number;
+}
+
+interface TavilyInput {
+  query?: unknown;
+  max_results?: unknown;
+  search_depth?: unknown;
+  topic?: unknown;
+  include_answer?: unknown;
+  time_range?: unknown;
+}
+
+interface TavilyResultRow {
+  title?: unknown;
+  url?: unknown;
+  content?: unknown;
+  snippet?: unknown;
+  score?: unknown;
+  published_date?: unknown;
+}
+
+interface TavilyResponse {
+  answer?: unknown;
+  response_time?: unknown;
+  results?: unknown;
+}
+
+export class TavilyAdapter implements ToolAdapter {
+  readonly adapterType = 'tavily' as const;
+
+  constructor(private readonly cfg: TavilyAdapterConfig = {}) {}
+
+  async invoke(opts: { toolId: string; input: object; manifest: ToolManifest }): Promise<ToolInvokeResult> {
+    const start = performance.now();
+    const apiKey = this.cfg.apiKey ?? process.env.TAVILY_API_KEY;
+    if (!apiKey) {
+      throw new ToolInvocationError(opts.toolId, '缺少 TAVILY_API_KEY');
+    }
+
+    const baseUrl = (this.cfg.baseUrl ?? process.env.TAVILY_BASE_URL ?? 'https://api.tavily.com').replace(/\/$/, '');
+    const timeoutMs = opts.manifest.timeout_seconds
+      ? opts.manifest.timeout_seconds * 1000
+      : this.cfg.timeoutMs ?? Number(process.env.TAVILY_TIMEOUT_MS ?? 30000);
+    const input = opts.input as TavilyInput;
+    const body: Record<string, unknown> = {
+      query: input.query,
+      max_results: input.max_results ?? 5,
+      search_depth: input.search_depth ?? 'basic',
+      topic: input.topic ?? 'general',
+      include_answer: input.include_answer ?? false,
+      include_raw_content: false,
+    };
+    if (input.time_range !== undefined) body.time_range = input.time_range;
+
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${baseUrl}${opts.manifest.entrypoint || '/search'}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: ac.signal,
+      });
+      if (!res.ok) {
+        throw new ToolInvocationError(opts.toolId, `HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      }
+      const raw = (await res.json()) as TavilyResponse;
+      return { output: mapTavilyResponse(raw), latencyMs: Math.round(performance.now() - start) };
+    } catch (err) {
+      if (err instanceof ToolInvocationError) throw err;
+      throw new ToolInvocationError(opts.toolId, err instanceof Error ? err.message : String(err));
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
+
+function mapTavilyResponse(raw: TavilyResponse): object {
+  const rows = Array.isArray(raw.results) ? raw.results : [];
+  return {
+    answer: typeof raw.answer === 'string' ? raw.answer : null,
+    response_time: typeof raw.response_time === 'number' ? raw.response_time : null,
+    results: rows.map((row) => mapTavilyResult(row as TavilyResultRow)),
+  };
+}
+
+function mapTavilyResult(row: TavilyResultRow): object {
+  return {
+    title: typeof row.title === 'string' ? row.title : '',
+    url: typeof row.url === 'string' ? row.url : '',
+    snippet: typeof row.content === 'string'
+      ? row.content
+      : typeof row.snippet === 'string' ? row.snippet : '',
+    score: typeof row.score === 'number' ? row.score : null,
+    published_date: typeof row.published_date === 'string' ? row.published_date : null,
+  };
+}
+
 // 把 ai-spider-app 的 SearchResult[] 映射为 ai-spider-search/output.schema.json 结构。
 function mapSearchResults(raw: unknown): object {
   const arr = Array.isArray(raw) ? raw : [];
