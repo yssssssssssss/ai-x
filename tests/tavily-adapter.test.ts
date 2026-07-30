@@ -34,9 +34,12 @@ function response(body: unknown, init: ResponseInit = {}) {
   });
 }
 
-test('runtime: ToolRouter 注册 tavily adapter_type', async () => {
-  process.env.TAVILY_API_KEY = 'test-key';
-  installFetch(async () => response({ answer: null, response_time: null, results: [] }));
+test('runtime: TOOL_ADAPTER=fake 时 tavily adapter_type 走离线 fake', async () => {
+  delete process.env.TAVILY_API_KEY;
+  process.env.TOOL_ADAPTER = 'fake';
+  installFetch(async () => {
+    throw new Error('fake mode must not call Tavily network');
+  });
 
   const runtime = buildRuntime();
   const res = await runtime.deps.toolAdapter.invoke({
@@ -45,7 +48,13 @@ test('runtime: ToolRouter 注册 tavily adapter_type', async () => {
     manifest,
   });
 
-  assert.deepEqual(res.output, { answer: null, response_time: null, results: [] });
+  assert.deepEqual(res.output, {
+    results: [
+      { title: '竞品A数字人产品页', url: 'https://example.com/a', snippet: '支持实时语音互动与形象定制' },
+      { title: '行业评测:直播AI横评', url: 'https://example.com/review', snippet: '对比交互延迟与内容质量' },
+      { title: '应用商店榜单', url: 'https://example.com/rank', snippet: '数字人直播产品下载榜' },
+    ],
+  });
 });
 
 test('missing TAVILY_API_KEY rejects with ToolInvocationError for the requested tool', async () => {

@@ -18,7 +18,7 @@ let userId: string;
 let convId: string;
 const cleanupDirs: string[] = [];
 
-// 走完 plan→select(depth),返回 taskId;depth 候选 steps = [tool o2-web-search, skill, reviewer]。
+// 走完 plan→select(depth),返回 taskId;depth 候选 steps = [tool tavily-web-search, skill, reviewer]。
 async function planAndSelectDepth(orch: Orchestrator): Promise<string> {
   const plan = await orch.planPhase({
     originalInput: '我要为直播场域做数字人竞品研究',
@@ -62,7 +62,7 @@ test('全成功 → completed(回归)', async () => {
 
 // B · tool 步失败 → paused,停在该步,后续步未执行,落 run_state。
 test('tool 步失败 → paused、后续步未执行、落 run_state', async () => {
-  const orch = orchFailingTool(['o2-web-search']);
+  const orch = orchFailingTool(['tavily-web-search']);
   const taskId = await planAndSelectDepth(orch);
   const r = await orch.executePhase({ taskId, conversationId: convId });
 
@@ -82,7 +82,7 @@ test('tool 步失败 → paused、后续步未执行、落 run_state', async () 
 
 // C · resume(skip) → 失败步 skipped、后续步续跑、completed_with_gaps、缺口进 risks。
 test('resume(skip) → 续跑、失败步 skipped、completed_with_gaps、缺口进报告', async () => {
-  const orch = orchFailingTool(['o2-web-search']);
+  const orch = orchFailingTool(['tavily-web-search']);
   const taskId = await planAndSelectDepth(orch);
   await orch.executePhase({ taskId, conversationId: convId });   // → paused
 
@@ -105,7 +105,7 @@ test('resume(skip) → 续跑、失败步 skipped、completed_with_gaps、缺口
 
 // D · resume(abort) → failed,不再产新 report。
 test('resume(abort) → failed', async () => {
-  const orch = orchFailingTool(['o2-web-search']);
+  const orch = orchFailingTool(['tavily-web-search']);
   const taskId = await planAndSelectDepth(orch);
   await orch.executePhase({ taskId, conversationId: convId });   // → paused
 
