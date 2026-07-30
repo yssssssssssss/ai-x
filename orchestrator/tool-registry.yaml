@@ -13,6 +13,14 @@ tools:
     risk_level: low
     status: active
 
+  - id: tavily-web-search
+    name: Tavily 网页检索
+    path: tools/tavily-web-search/manifest.yaml
+    adapter_type: tavily
+    auth_required: true
+    risk_level: low
+    status: active
+
   - id: ai-spider-search
     name: 竞品截图库检索
     path: tools/ai-spider-search/manifest.yaml

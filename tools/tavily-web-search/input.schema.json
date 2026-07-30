@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "tavily-web-search/input.schema.json",
+  "title": "TavilyWebSearchInput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["query"],
+  "properties": {
+    "query": { "type": "string", "minLength": 1, "description": "检索关键词" },
+    "max_results": { "type": "integer", "minimum": 1, "maximum": 20, "default": 5 },
+    "search_depth": { "type": "string", "enum": ["basic", "advanced", "fast", "ultra-fast"], "default": "basic" },
+    "topic": { "type": "string", "enum": ["general", "news", "finance"], "default": "general" },
+    "time_range": { "type": "string", "enum": ["day", "week", "month", "year", "d", "w", "m", "y"] },
+    "include_answer": {
+      "oneOf": [
+        { "type": "boolean" },
+        { "type": "string", "enum": ["basic", "advanced"] }
+      ],
+      "default": false
+    }
+  }
+}

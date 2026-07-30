@@ -1,0 +1,16 @@
+{
+  "input": { "query": "直播 数字人 竞品", "max_results": 3 },
+  "output": {
+    "answer": "公开资料显示，直播数字人能力主要围绕互动、形象生成和运营转化展开。",
+    "response_time": 0.72,
+    "results": [
+      {
+        "title": "Example Digital Human Live Commerce",
+        "url": "https://example.com/digital-human-live-commerce",
+        "snippet": "Example page describing live commerce digital human features.",
+        "score": 0.91,
+        "published_date": "2026-07-30"
+      }
+    ]
+  }
+}
