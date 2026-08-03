@@ -558,18 +558,50 @@ test('non-resume rejects an existing run before stale success artifacts can be r
   assert.equal(resumed.records[0].status, 'skipped');
 });
 
-test('resume rejects a run directory that does not exist', async () => {
+test('resume atomically creates a missing run directory and evaluates every Skill', async () => {
+  const setup = fixture(['alpha', 'beta']);
+  const evaluated: string[] = [];
+
+  const manifest = await runEvaluationBatch(
+    {
+      runId: 'missing-run',
+      outputRoot: setup.outputRoot,
+      casesDir: setup.casesDir,
+      concurrency: 2,
+      resume: true,
+    },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: {
+        evaluate: async (loadedCase) => {
+          evaluated.push(loadedCase.data.skill_id);
+          return successRecord(loadedCase);
+        },
+      },
+    },
+  );
+
+  assert.deepEqual(evaluated.sort(), ['alpha', 'beta']);
+  assert.equal(manifest.status, 'completed');
+  assert.equal(manifest.counts.succeeded, 2);
+  assert.equal(existsSync(join(setup.outputRoot, 'missing-run')), true);
+});
+
+test('maps an exclusive claim EEXIST race without entering the evaluator', async () => {
   const setup = fixture(['alpha']);
+  const runDir = join(setup.outputRoot, 'contended-run');
+  const mkdirCalls: Array<{ path: string; recursive: boolean }> = [];
   let evaluateCalls = 0;
+  assert.equal(existsSync(runDir), false);
 
   await assert.rejects(
     runEvaluationBatch(
       {
-        runId: 'missing-run',
+        runId: 'contended-run',
         outputRoot: setup.outputRoot,
         casesDir: setup.casesDir,
         concurrency: 1,
-        resume: true,
+        resume: false,
       },
       {
         skillLoader: setup.skillLoader,
@@ -579,51 +611,28 @@ test('resume rejects a run directory that does not exist', async () => {
             return successRecord(loadedCase);
           },
         },
+        mkdirSync: (
+          path: string,
+          options?: { recursive?: boolean },
+        ): void => {
+          mkdirCalls.push({ path, recursive: options?.recursive === true });
+          if (!options?.recursive) {
+            throw Object.assign(new Error('simulated competing claimant'), {
+              code: 'EEXIST',
+            });
+          }
+        },
       },
     ),
-    /run directory does not exist.*missing-run/,
+    /run directory already exists.*--resume/,
   );
-  assert.equal(evaluateCalls, 0);
-});
 
-test('concurrent non-resume batches allow exactly one run directory claimant', async () => {
-  const setup = fixture(['alpha']);
-  const options = {
-    runId: 'contended-run',
-    outputRoot: setup.outputRoot,
-    casesDir: setup.casesDir,
-    concurrency: 1 as const,
-    resume: false,
-  };
-  let evaluateCalls = 0;
-  const dependencies = {
-    skillLoader: setup.skillLoader,
-    evaluator: {
-      evaluate: async (loadedCase: LoadedEvaluationCase) => {
-        evaluateCalls += 1;
-        await delay(20);
-        return successRecord(loadedCase);
-      },
-    },
-  };
-
-  const results = await Promise.allSettled([
-    runEvaluationBatch(options, dependencies),
-    runEvaluationBatch(options, dependencies),
+  assert.deepEqual(mkdirCalls, [
+    { path: setup.outputRoot, recursive: true },
+    { path: runDir, recursive: false },
   ]);
-
-  assert.equal(results.filter(({ status }) => status === 'fulfilled').length, 1);
-  assert.equal(results.filter(({ status }) => status === 'rejected').length, 1);
-  const rejection = results.find(
-    (result): result is PromiseRejectedResult => result.status === 'rejected',
-  );
-  assert.match(String(rejection?.reason), /run directory already exists.*--resume/);
-  assert.equal(evaluateCalls, 1);
-  const runDir = join(setup.outputRoot, 'contended-run');
-  const manifest = readJson<EvaluationManifest>(join(runDir, 'manifest.json'));
-  assert.equal(manifest.status, 'completed');
-  assert.deepEqual(manifest.records.map(({ skillId }) => skillId), ['alpha']);
-  assert.equal(existsSync(join(runDir, 'alpha', 'error.json')), false);
+  assert.equal(evaluateCalls, 0);
+  assert.equal(existsSync(runDir), false);
 });
 
 test('keeps manifest running when summary publication fails', async () => {

@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, statSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { SkillRegistryEntry } from '../../apps/orchestrator-runtime/src/runtime/config-loader.ts';
@@ -40,11 +40,17 @@ interface EvaluationCaseEvaluator {
   evaluate(loadedCase: LoadedEvaluationCase): Promise<SkillEvaluationRecord>;
 }
 
+type MakeDirectory = (
+  path: string,
+  options?: { recursive?: boolean },
+) => unknown;
+
 export interface EvaluationRunDependencies {
   skillLoader?: EvaluationSkillLoader;
   evaluator?: EvaluationCaseEvaluator;
   clock?: () => Date;
   provider?: string;
+  mkdirSync?: MakeDirectory;
 }
 
 export interface EvaluationCliDependencies {
@@ -232,21 +238,14 @@ function claimRunDirectory(
   outputRoot: string,
   runDirectory: string,
   resume: boolean,
+  makeDirectory: MakeDirectory,
 ): void {
-  mkdirSync(outputRoot, { recursive: true });
-  if (resume) {
-    try {
-      if (statSync(runDirectory).isDirectory()) return;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    }
-    throw new Error(`run directory does not exist: ${runDirectory}`);
-  }
-
+  makeDirectory(outputRoot, { recursive: true });
   try {
-    mkdirSync(runDirectory);
+    makeDirectory(runDirectory);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    if (resume) return;
     throw new Error(
       `run directory already exists: ${runDirectory}; use --resume or choose a new run ID`,
     );
@@ -264,7 +263,12 @@ export async function runEvaluationBatch(
   const selected = selectedSkills(activeSkills, options.skillId);
   const cases = loadEvaluationCases(activeSkills, options.casesDir);
   const runDirectory = join(options.outputRoot, options.runId);
-  claimRunDirectory(options.outputRoot, runDirectory, options.resume);
+  claimRunDirectory(
+    options.outputRoot,
+    runDirectory,
+    options.resume,
+    dependencies.mkdirSync ?? mkdirSync,
+  );
   const priorRecords = options.resume
     ? previousRecords(runDirectory)
     : new Map<string, SkillEvaluationRecord>();
