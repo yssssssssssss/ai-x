@@ -1,0 +1,449 @@
+import assert from 'node:assert/strict';
+import { join } from 'node:path';
+import { test } from 'node:test';
+import type {
+  LLMClient,
+  LLMResult,
+} from '../apps/orchestrator-runtime/src/runtime/llm-client.ts';
+import type { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
+import type { SkillRegistryEntry } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import { getConfigRoot } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
+import { SkillEvaluator } from '../evaluations/skills/evaluator.ts';
+import type {
+  LoadedEvaluationCase,
+  SkillScorecard,
+} from '../evaluations/skills/types.ts';
+
+type StructuredCall = Parameters<LLMClient['generateStructured']>[0];
+
+const dimensionWeights = {
+  workflow_adherence: 20,
+  method_correctness: 20,
+  completeness_structure: 20,
+  evidence_boundaries: 15,
+  actionability: 15,
+  risk_boundary_handling: 10,
+} as const;
+
+const scorecardSchemaPath = join(
+  getConfigRoot(),
+  'evaluations/skills/scorecard.schema.json',
+);
+
+const nativeSkill: SkillRegistryEntry = {
+  id: 'native-skill',
+  name: 'Native Skill',
+  path: 'skills/native/SKILL.md',
+  when_to_use: 'evaluation',
+  owner: 'test',
+  status: 'active',
+  output_schema: 'skills/native/output.schema.json',
+  risk_level: 'medium',
+};
+
+const loadedCase: LoadedEvaluationCase = {
+  data: {
+    skill_id: nativeSkill.id,
+    title: 'Synthetic evaluation',
+    research_goal: 'Compare synthetic products',
+    input_materials: { brief: 'fixture brief' },
+    tool_outputs: [{ title: 'fixture evidence', value: 3 }],
+    expected_deliverables: ['Grounded comparison'],
+    risk_checks: ['Do not claim synthetic data is real'],
+  },
+  sourcePath: '/fixtures/native-skill.json',
+  caseHash: 'sha256:case',
+};
+
+function scorecard(
+  scores: Partial<Record<keyof typeof dimensionWeights, number>> = {},
+  overrides: Partial<SkillScorecard> = {},
+): SkillScorecard {
+  return {
+    skill_id: nativeSkill.id,
+    total_score: 1,
+    verdict: 'pass',
+    dimensions: Object.entries(dimensionWeights).map(([id, max_score]) => ({
+      id,
+      score: scores[id as keyof typeof dimensionWeights] ?? max_score,
+      max_score,
+      evidence: [`output quote for ${id}`],
+      defects: [],
+    })),
+    critical_defects: [],
+    review_notes: [],
+    ...overrides,
+  };
+}
+
+function result<T>(data: T, callNumber: number): LLMResult<T> {
+  return {
+    data,
+    promptHash: `sha256:prompt-${callNumber}`,
+    modelName: 'fake-model',
+    modelVersion: 'v1',
+    traceId: `trace-${callNumber}`,
+    tokens: { prompt: 10, completion: 5, total: 15 },
+  };
+}
+
+class FakeLLM implements LLMClient {
+  readonly calls: StructuredCall[] = [];
+
+  constructor(
+    private readonly responses: Array<unknown | Error> = [
+      { answer: 'grounded output' },
+      scorecard(),
+    ],
+  ) {}
+
+  async generateStructured<T>(opts: StructuredCall): Promise<LLMResult<T>> {
+    this.calls.push(opts);
+    const response = this.responses[this.calls.length - 1];
+    if (response instanceof Error) throw response;
+    return result(response as T, this.calls.length);
+  }
+
+  async generateText(): Promise<never> {
+    throw new Error('not used');
+  }
+}
+
+class FakeValidator {
+  readonly calls: Array<{ path: string; data: unknown }> = [];
+
+  constructor(private readonly rejectPath?: string) {}
+
+  validateFileOrThrow(path: string, data: unknown): void {
+    this.calls.push({ path, data });
+    if (path === this.rejectPath) throw new Error(`invalid schema: ${path}`);
+  }
+}
+
+function fakeSkillLoader(entry: SkillRegistryEntry = nativeSkill): SkillLoader {
+  return {
+    getSkill: (id: string) => (id === entry.id ? entry : null),
+    loadSkillBody: () => ({
+      body: '# Synthetic Skill\nFollow the prescribed workflow.',
+      hash: 'sha256:skill',
+      path: entry.entry ?? entry.path,
+    }),
+    loadSkillSchemas: () => ({
+      output: entry.output_schema
+        ? { type: 'object', required: ['answer'] }
+        : undefined,
+    }),
+  } as unknown as SkillLoader;
+}
+
+function makeEvaluator(options: {
+  llm?: FakeLLM;
+  entry?: SkillRegistryEntry;
+  validator?: FakeValidator;
+  scorecardSchemaPath?: string;
+} = {}) {
+  const llm =
+    options.llm ??
+    new FakeLLM([
+      { answer: 'grounded output' },
+      scorecard({}, { skill_id: options.entry?.id ?? nativeSkill.id }),
+    ]);
+  const validator = options.validator ?? new FakeValidator();
+  const evaluator = new SkillEvaluator({
+    llm,
+    skillLoader: fakeSkillLoader(options.entry),
+    validator: validator as unknown as SchemaValidator,
+    scorecardSchemaPath: options.scorecardSchemaPath ?? scorecardSchemaPath,
+  });
+  return { evaluator, llm, validator };
+}
+
+test('generates from the full Skill and case, validates output, then scores independently', async () => {
+  const { evaluator, llm, validator } = makeEvaluator();
+
+  const record = await evaluator.evaluate(loadedCase);
+
+  assert.equal(record.status, 'succeeded');
+  assert.deepEqual(record.output, { answer: 'grounded output' });
+  assert.equal(record.skillId, nativeSkill.id);
+  assert.equal(record.skillHash, 'sha256:skill');
+  assert.equal(record.caseHash, loadedCase.caseHash);
+  assert.equal(record.generationPromptHash, 'sha256:prompt-1');
+  assert.equal(record.scoringPromptHash, 'sha256:prompt-2');
+
+  assert.equal(llm.calls.length, 2);
+  const generation = llm.calls[0];
+  assert.match(generation.prompt, /# Synthetic Skill/);
+  assert.match(generation.prompt, /只能基于 input_materials 与 tool_outputs/);
+  assert.match(generation.prompt, /不得表述为真实业务事实/);
+  assert.match(generation.prompt, /llm_inference|待人工确认/);
+  assert.equal(generation.schemaName, `skill:${nativeSkill.id}`);
+  assert.deepEqual(generation.context, {
+    research_goal: loadedCase.data.research_goal,
+    input_materials: loadedCase.data.input_materials,
+    tool_outputs: loadedCase.data.tool_outputs,
+    expected_deliverables: loadedCase.data.expected_deliverables,
+    risk_checks: loadedCase.data.risk_checks,
+  });
+
+  const scoring = llm.calls[1];
+  assert.equal(scoring.schemaName, 'skill-evaluation-scorecard');
+  for (const [id, weight] of Object.entries(dimensionWeights)) {
+    assert.match(
+      scoring.prompt,
+      new RegExp(`(?:：|；)${id} ${weight}(?:；|。)`),
+    );
+  }
+  assert.match(scoring.prompt, /具体.*引用|逐字引用/);
+  assert.match(scoring.prompt, /不得.*冗长|不奖励.*冗长/);
+  assert.match(scoring.prompt, /合成评测数据.*不得.*真实业务事实/);
+  assert.deepEqual(scoring.context, {
+    skill_id: nativeSkill.id,
+    skill_body: '# Synthetic Skill\nFollow the prescribed workflow.',
+    evaluation_case: loadedCase.data,
+    generated_output: { answer: 'grounded output' },
+  });
+
+  const outputSchemaPath = join(getConfigRoot(), nativeSkill.output_schema!);
+  assert.equal(
+    validator.calls.filter(({ path }) => path === outputSchemaPath).length,
+    1,
+  );
+  assert.equal(
+    validator.calls.filter(({ path }) => path === scorecardSchemaPath).length,
+    1,
+  );
+  assert.equal(record.scorecard?.total_score, 100);
+});
+
+test('skips output validation for a KB Skill without output_schema', async () => {
+  const kbSkill = {
+    ...nativeSkill,
+    id: 'kb-skill',
+    name: 'KB Skill',
+    output_schema: undefined,
+    path: 'skills/kb',
+    entry: 'skills/kb/SKILL.md',
+  };
+  const kbCase = {
+    ...loadedCase,
+    data: { ...loadedCase.data, skill_id: kbSkill.id },
+  };
+  const { evaluator, validator } = makeEvaluator({ entry: kbSkill });
+
+  const record = await evaluator.evaluate(kbCase);
+
+  assert.equal(record.status, 'succeeded');
+  assert.deepEqual(
+    validator.calls.map(({ path }) => path),
+    [scorecardSchemaPath],
+  );
+});
+
+for (const { name, sum, expectedVerdict, expectedStatus } of [
+  { name: 'below 60', sum: 59, expectedVerdict: 'fail', expectedStatus: 'succeeded' },
+  { name: 'at 60', sum: 60, expectedVerdict: 'needs_review', expectedStatus: 'needs_review' },
+  { name: 'at 79', sum: 79, expectedVerdict: 'needs_review', expectedStatus: 'needs_review' },
+  { name: 'at 80', sum: 80, expectedVerdict: 'pass', expectedStatus: 'succeeded' },
+] as const) {
+  test(`recomputes an inconsistent total and normalizes ${name} to ${expectedVerdict}`, async () => {
+    let remaining = sum;
+    const scores = Object.fromEntries(
+      Object.entries(dimensionWeights).map(([id, max]) => {
+        const value = Math.min(max, remaining);
+        remaining -= value;
+        return [id, value];
+      }),
+    );
+    const scored = scorecard(scores, { total_score: 999, verdict: 'fail' });
+    const { evaluator } = makeEvaluator({
+      llm: new FakeLLM([{ answer: 'output' }, scored]),
+    });
+
+    const record = await evaluator.evaluate(loadedCase);
+
+    assert.equal(record.scorecard?.total_score, sum);
+    assert.equal(record.scorecard?.verdict, expectedVerdict);
+    assert.equal(record.status, expectedStatus);
+  });
+}
+
+test('keeps a high score at needs_review when requested by the scorer', async () => {
+  const { evaluator } = makeEvaluator({
+    llm: new FakeLLM([
+      { answer: 'output' },
+      scorecard({}, { verdict: 'needs_review' }),
+    ]),
+  });
+
+  const record = await evaluator.evaluate(loadedCase);
+
+  assert.equal(record.scorecard?.total_score, 100);
+  assert.equal(record.scorecard?.verdict, 'needs_review');
+  assert.equal(record.status, 'needs_review');
+});
+
+test('forces fail when the scorer lists a critical defect', async () => {
+  const { evaluator } = makeEvaluator({
+    llm: new FakeLLM([
+      { answer: 'output' },
+      scorecard({}, { critical_defects: ['Fabricated a source'] }),
+    ]),
+  });
+
+  const record = await evaluator.evaluate(loadedCase);
+
+  assert.equal(record.scorecard?.total_score, 100);
+  assert.equal(record.scorecard?.verdict, 'fail');
+  assert.equal(record.status, 'succeeded');
+});
+
+test('degrades a scorer exception to a review card and preserves generated output', async () => {
+  const { evaluator, llm } = makeEvaluator({
+    llm: new FakeLLM([
+      { answer: 'preserve me' },
+      new Error('scorer unavailable'),
+    ]),
+  });
+
+  const record = await evaluator.evaluate(loadedCase);
+
+  assert.equal(llm.calls.length, 2);
+  assert.equal(record.status, 'needs_review');
+  assert.equal(record.errorStage, 'scoring');
+  assert.equal(record.errorMessage, 'scorer unavailable');
+  assert.deepEqual(record.output, { answer: 'preserve me' });
+  assert.equal(record.scorecard?.skill_id, nativeSkill.id);
+  assert.equal(record.scorecard?.total_score, null);
+  assert.equal(record.scorecard?.verdict, 'needs_review');
+  assert.deepEqual(record.scorecard?.dimensions, []);
+  assert.ok(record.scorecard?.review_notes.includes('scorer unavailable'));
+});
+
+test('treats scorecard schema rejection as an observable scoring failure', async () => {
+  const validator = new FakeValidator(scorecardSchemaPath);
+  const { evaluator } = makeEvaluator({ validator });
+
+  const record = await evaluator.evaluate(loadedCase);
+
+  assert.equal(record.status, 'needs_review');
+  assert.equal(record.errorStage, 'scoring');
+  assert.match(record.errorMessage ?? '', /invalid schema/);
+  assert.deepEqual(record.output, { answer: 'grounded output' });
+  assert.equal(record.scorecard?.total_score, null);
+});
+
+test('does not clamp an invalid dimension score and degrades scoring', async () => {
+  const invalid = scorecard({ workflow_adherence: 21 });
+  const { evaluator } = makeEvaluator({
+    llm: new FakeLLM([{ answer: 'output' }, invalid]),
+  });
+
+  const record = await evaluator.evaluate(loadedCase);
+
+  assert.equal(record.status, 'needs_review');
+  assert.equal(record.errorStage, 'scoring');
+  assert.match(record.errorMessage ?? '', /workflow_adherence/);
+  assert.equal(record.scorecard?.total_score, null);
+  assert.deepEqual(record.output, { answer: 'output' });
+});
+
+test('rejects missing, duplicate, or unknown scoring dimensions instead of normalizing them', async (t) => {
+  const cases: Array<{ name: string; dimensions: SkillScorecard['dimensions'] }> = [
+    { name: 'missing', dimensions: scorecard().dimensions.slice(0, 5) },
+    {
+      name: 'duplicate',
+      dimensions: [
+        ...scorecard().dimensions.slice(0, 5),
+        scorecard().dimensions[0],
+      ],
+    },
+    {
+      name: 'unknown',
+      dimensions: scorecard().dimensions.map((dimension, index) =>
+        index === 0 ? { ...dimension, id: 'unknown' } : dimension,
+      ),
+    },
+  ];
+
+  for (const invalidCase of cases) {
+    await t.test(invalidCase.name, async () => {
+      const { evaluator } = makeEvaluator({
+        llm: new FakeLLM([
+          { answer: 'output' },
+          scorecard({}, { dimensions: invalidCase.dimensions }),
+        ]),
+      });
+
+      const record = await evaluator.evaluate(loadedCase);
+
+      assert.equal(record.status, 'needs_review');
+      assert.equal(record.errorStage, 'scoring');
+      assert.equal(record.scorecard?.total_score, null);
+    });
+  }
+});
+
+test('returns a generation failure and never scores when generation throws', async () => {
+  const llm = new FakeLLM([new Error('generation unavailable')]);
+  const { evaluator, validator } = makeEvaluator({ llm });
+
+  const record = await evaluator.evaluate(loadedCase);
+
+  assert.equal(llm.calls.length, 1);
+  assert.equal(validator.calls.length, 0);
+  assert.equal(record.status, 'failed');
+  assert.equal(record.errorStage, 'generation');
+  assert.equal(record.errorMessage, 'generation unavailable');
+  assert.equal(record.output, undefined);
+  assert.equal(record.scorecard, undefined);
+});
+
+test('returns a schema failure and never scores when generated output is invalid', async () => {
+  const outputSchemaPath = join(getConfigRoot(), nativeSkill.output_schema!);
+  const llm = new FakeLLM();
+  const validator = new FakeValidator(outputSchemaPath);
+  const { evaluator } = makeEvaluator({ llm, validator });
+
+  const record = await evaluator.evaluate(loadedCase);
+
+  assert.equal(llm.calls.length, 1);
+  assert.equal(record.status, 'failed');
+  assert.equal(record.errorStage, 'schema_validation');
+  assert.match(record.errorMessage ?? '', /invalid schema/);
+  assert.deepEqual(record.output, { answer: 'grounded output' });
+  assert.equal(record.scorecard, undefined);
+});
+
+test('scorecard schema accepts the contract and rejects extra fields and negative scores', () => {
+  const validator = new SchemaValidator();
+  const schemaPath = join(
+    getConfigRoot(),
+    'evaluations/skills/scorecard.schema.json',
+  );
+  const valid = scorecard();
+
+  assert.doesNotThrow(() => validator.validateFileOrThrow(schemaPath, valid));
+  assert.throws(() =>
+    validator.validateFileOrThrow(schemaPath, { ...valid, unexpected: true }),
+  );
+  assert.throws(() =>
+    validator.validateFileOrThrow(schemaPath, {
+      ...valid,
+      dimensions: [
+        { ...valid.dimensions[0], score: -1 },
+        ...valid.dimensions.slice(1),
+      ],
+    }),
+  );
+  assert.throws(() =>
+    validator.validateFileOrThrow(schemaPath, {
+      ...valid,
+      dimensions: [
+        { ...valid.dimensions[0], unexpected: true },
+        ...valid.dimensions.slice(1),
+      ],
+    }),
+  );
+});
