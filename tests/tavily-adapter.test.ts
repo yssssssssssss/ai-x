@@ -74,9 +74,9 @@ test('missing TAVILY_API_KEY rejects with ToolInvocationError for the requested 
 
 test('successful invoke sends Tavily POST with bearer auth and default body', async () => {
   process.env.TAVILY_API_KEY = 'test-key';
-  let captured: CapturedFetch | null = null;
+  const captured: CapturedFetch[] = [];
   installFetch(async (url, init) => {
-    captured = { url: String(url), init: init ?? {} };
+    captured.push({ url: String(url), init: init ?? {} });
     return response({
       answer: 'summary only',
       response_time: 0.12,
@@ -98,14 +98,15 @@ test('successful invoke sends Tavily POST with bearer auth and default body', as
     manifest,
   });
 
-  assert.ok(captured);
-  assert.equal(captured.url, 'https://api.tavily.com/search');
-  assert.equal(captured.init.method, 'POST');
-  assert.deepEqual(captured.init.headers, {
+  assert.equal(captured.length, 1);
+  const call = captured[0];
+  assert.equal(call.url, 'https://api.tavily.com/search');
+  assert.equal(call.init.method, 'POST');
+  assert.deepEqual(call.init.headers, {
     'Content-Type': 'application/json',
     Authorization: 'Bearer test-key',
   });
-  assert.deepEqual(JSON.parse(String(captured.init.body)), {
+  assert.deepEqual(JSON.parse(String(call.init.body)), {
     query: 'AI search',
     max_results: 5,
     search_depth: 'basic',
