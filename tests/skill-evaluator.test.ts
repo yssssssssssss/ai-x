@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { isDeepStrictEqual } from 'node:util';
 import type {
   LLMClient,
   LLMResult,
@@ -30,6 +31,16 @@ const scorecardSchemaPath = join(
   getConfigRoot(),
   'evaluations/skills/scorecard.schema.json',
 );
+
+const skillBody = `# Synthetic Skill
+
+## Workflow
+1. Read every input material.
+2. Ground each conclusion in tool output.
+
+## Quality gates
+- Label unsupported judgments as inference.
+- Keep synthetic evidence distinct from real facts.`;
 
 const nativeSkill: SkillRegistryEntry = {
   id: 'native-skill',
@@ -113,11 +124,19 @@ class FakeLLM implements LLMClient {
 class FakeValidator {
   readonly calls: Array<{ path: string; data: unknown }> = [];
 
-  constructor(private readonly rejectPath?: string) {}
+  constructor(
+    private readonly rejection?: { path: string; data: unknown },
+  ) {}
 
   validateFileOrThrow(path: string, data: unknown): void {
     this.calls.push({ path, data });
-    if (path === this.rejectPath) throw new Error(`invalid schema: ${path}`);
+    if (
+      this.rejection &&
+      path === this.rejection.path &&
+      isDeepStrictEqual(data, this.rejection.data)
+    ) {
+      throw new Error(`invalid schema: ${path}`);
+    }
   }
 }
 
@@ -125,7 +144,7 @@ function fakeSkillLoader(entry: SkillRegistryEntry = nativeSkill): SkillLoader {
   return {
     getSkill: (id: string) => (id === entry.id ? entry : null),
     loadSkillBody: () => ({
-      body: '# Synthetic Skill\nFollow the prescribed workflow.',
+      body: skillBody,
       hash: 'sha256:skill',
       path: entry.entry ?? entry.path,
     }),
@@ -174,7 +193,7 @@ test('generates from the full Skill and case, validates output, then scores inde
 
   assert.equal(llm.calls.length, 2);
   const generation = llm.calls[0];
-  assert.match(generation.prompt, /# Synthetic Skill/);
+  assert.ok(generation.prompt.endsWith(`\n\n${skillBody}`));
   assert.match(generation.prompt, /只能基于 input_materials 与 tool_outputs/);
   assert.match(generation.prompt, /不得表述为真实业务事实/);
   assert.match(generation.prompt, /llm_inference|待人工确认/);
@@ -200,16 +219,17 @@ test('generates from the full Skill and case, validates output, then scores inde
   assert.match(scoring.prompt, /合成评测数据.*不得.*真实业务事实/);
   assert.deepEqual(scoring.context, {
     skill_id: nativeSkill.id,
-    skill_body: '# Synthetic Skill\nFollow the prescribed workflow.',
+    skill_body: skillBody,
     evaluation_case: loadedCase.data,
     generated_output: { answer: 'grounded output' },
   });
 
   const outputSchemaPath = join(getConfigRoot(), nativeSkill.output_schema!);
-  assert.equal(
-    validator.calls.filter(({ path }) => path === outputSchemaPath).length,
-    1,
+  const outputValidations = validator.calls.filter(
+    ({ path }) => path === outputSchemaPath,
   );
+  assert.equal(outputValidations.length, 1);
+  assert.deepEqual(outputValidations[0].data, { answer: 'grounded output' });
   assert.equal(
     validator.calls.filter(({ path }) => path === scorecardSchemaPath).length,
     1,
@@ -322,8 +342,15 @@ test('degrades a scorer exception to a review card and preserves generated outpu
 });
 
 test('treats scorecard schema rejection as an observable scoring failure', async () => {
-  const validator = new FakeValidator(scorecardSchemaPath);
-  const { evaluator } = makeEvaluator({ validator });
+  const rejected = scorecard();
+  const validator = new FakeValidator({
+    path: scorecardSchemaPath,
+    data: rejected,
+  });
+  const { evaluator } = makeEvaluator({
+    llm: new FakeLLM([{ answer: 'grounded output' }, rejected]),
+    validator,
+  });
 
   const record = await evaluator.evaluate(loadedCase);
 
@@ -336,6 +363,28 @@ test('treats scorecard schema rejection as an observable scoring failure', async
 
 test('does not clamp an invalid dimension score and degrades scoring', async () => {
   const invalid = scorecard({ workflow_adherence: 21 });
+  const { evaluator } = makeEvaluator({
+    llm: new FakeLLM([{ answer: 'output' }, invalid]),
+  });
+
+  const record = await evaluator.evaluate(loadedCase);
+
+  assert.equal(record.status, 'needs_review');
+  assert.equal(record.errorStage, 'scoring');
+  assert.match(record.errorMessage ?? '', /workflow_adherence/);
+  assert.equal(record.scorecard?.total_score, null);
+  assert.deepEqual(record.output, { answer: 'output' });
+});
+
+test('rejects a score within an incorrect fixed maximum instead of accepting it', async () => {
+  const valid = scorecard();
+  const invalid = scorecard({}, {
+    dimensions: valid.dimensions.map((dimension) =>
+      dimension.id === 'workflow_adherence'
+        ? { ...dimension, score: 21, max_score: 21 }
+        : dimension,
+    ),
+  });
   const { evaluator } = makeEvaluator({
     llm: new FakeLLM([{ answer: 'output' }, invalid]),
   });
@@ -402,8 +451,12 @@ test('returns a generation failure and never scores when generation throws', asy
 
 test('returns a schema failure and never scores when generated output is invalid', async () => {
   const outputSchemaPath = join(getConfigRoot(), nativeSkill.output_schema!);
-  const llm = new FakeLLM();
-  const validator = new FakeValidator(outputSchemaPath);
+  const invalidOutput = { answer: 'invalid output' };
+  const llm = new FakeLLM([invalidOutput]);
+  const validator = new FakeValidator({
+    path: outputSchemaPath,
+    data: invalidOutput,
+  });
   const { evaluator } = makeEvaluator({ llm, validator });
 
   const record = await evaluator.evaluate(loadedCase);
@@ -412,11 +465,11 @@ test('returns a schema failure and never scores when generated output is invalid
   assert.equal(record.status, 'failed');
   assert.equal(record.errorStage, 'schema_validation');
   assert.match(record.errorMessage ?? '', /invalid schema/);
-  assert.deepEqual(record.output, { answer: 'grounded output' });
+  assert.deepEqual(record.output, invalidOutput);
   assert.equal(record.scorecard, undefined);
 });
 
-test('scorecard schema accepts the contract and rejects extra fields and negative scores', () => {
+test('scorecard schema enforces every required field and declared value constraint', () => {
   const validator = new SchemaValidator();
   const schemaPath = join(
     getConfigRoot(),
@@ -425,6 +478,34 @@ test('scorecard schema accepts the contract and rejects extra fields and negativ
   const valid = scorecard();
 
   assert.doesNotThrow(() => validator.validateFileOrThrow(schemaPath, valid));
+  assert.doesNotThrow(() =>
+    validator.validateFileOrThrow(schemaPath, {
+      ...valid,
+      total_score: null,
+    }),
+  );
+  const requiredFields: Array<keyof SkillScorecard> = [
+    'skill_id',
+    'total_score',
+    'verdict',
+    'dimensions',
+    'critical_defects',
+    'review_notes',
+  ];
+  for (const field of requiredFields) {
+    const missing = { ...valid } as Partial<SkillScorecard>;
+    delete missing[field];
+    assert.throws(
+      () => validator.validateFileOrThrow(schemaPath, missing),
+      `missing ${field} must be rejected`,
+    );
+  }
+  assert.throws(() =>
+    validator.validateFileOrThrow(schemaPath, {
+      ...valid,
+      verdict: 'maybe',
+    }),
+  );
   assert.throws(() =>
     validator.validateFileOrThrow(schemaPath, { ...valid, unexpected: true }),
   );
