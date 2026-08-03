@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import assert from 'node:assert/strict';
@@ -52,6 +52,16 @@ test('loads cases in active Skill order and hashes exact file bytes', () => {
     `sha256:${createHash('sha256').update(exactBytes).digest('hex')}`,
   );
   assert.match(loaded.get('alpha')?.caseHash ?? '', /^sha256:[a-f0-9]{64}$/);
+});
+
+test('ignores directories whose names end in .json', () => {
+  const casesDir = makeCasesDir();
+  writeCase(casesDir, 'alpha.json', validCase('alpha'));
+  mkdirSync(join(casesDir, 'archive.json'));
+
+  const loaded = loadEvaluationCases([active[0]], casesDir);
+
+  assert.deepEqual([...loaded.keys()], ['alpha']);
 });
 
 test('changes caseHash when the JSON file content changes', () => {
