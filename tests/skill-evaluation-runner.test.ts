@@ -358,6 +358,233 @@ test('resume reruns incomplete and corrupt result pairs', async () => {
   }
 });
 
+test('resume reruns parseable artifacts with invalid output or scorecard shapes', async () => {
+  const skillIds = [
+    'bad-output',
+    'bad-scorecard',
+    'wrong-skill',
+    'bad-dimensions',
+    'bad-defects',
+    'bad-notes',
+    'bad-total',
+    'bad-verdict',
+    'bad-dimension-item',
+  ];
+  const setup = fixture(skillIds);
+  const runDir = join(setup.outputRoot, 'shape-run');
+  const valid = (skillId: string) => scorecard(skillId);
+  const artifacts: Record<string, { output: unknown; scorecard: unknown }> = {
+    'bad-output': { output: [], scorecard: valid('bad-output') },
+    'bad-scorecard': { output: { answer: 'old' }, scorecard: [] },
+    'wrong-skill': {
+      output: { answer: 'old' },
+      scorecard: { ...valid('wrong-skill'), skill_id: 'other' },
+    },
+    'bad-dimensions': {
+      output: { answer: 'old' },
+      scorecard: { ...valid('bad-dimensions'), dimensions: {} },
+    },
+    'bad-defects': {
+      output: { answer: 'old' },
+      scorecard: { ...valid('bad-defects'), critical_defects: {} },
+    },
+    'bad-notes': {
+      output: { answer: 'old' },
+      scorecard: { ...valid('bad-notes'), review_notes: {} },
+    },
+    'bad-total': {
+      output: { answer: 'old' },
+      scorecard: { ...valid('bad-total'), total_score: '90' },
+    },
+    'bad-verdict': {
+      output: { answer: 'old' },
+      scorecard: { ...valid('bad-verdict'), verdict: 'excellent' },
+    },
+    'bad-dimension-item': {
+      output: { answer: 'old' },
+      scorecard: {
+        ...valid('bad-dimension-item'),
+        dimensions: [{ id: 'workflow_adherence' }],
+      },
+    },
+  };
+  for (const skillId of skillIds) {
+    const skillDir = join(runDir, skillId);
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, 'output.json'),
+      JSON.stringify(artifacts[skillId].output),
+    );
+    writeFileSync(
+      join(skillDir, 'scorecard.json'),
+      JSON.stringify(artifacts[skillId].scorecard),
+    );
+  }
+  const evaluated: string[] = [];
+
+  const manifest = await runEvaluationBatch(
+    {
+      runId: 'shape-run',
+      outputRoot: setup.outputRoot,
+      casesDir: setup.casesDir,
+      concurrency: 3,
+      resume: true,
+    },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: {
+        evaluate: async (loadedCase) => {
+          evaluated.push(loadedCase.data.skill_id);
+          return successRecord(loadedCase);
+        },
+      },
+    },
+  );
+
+  assert.deepEqual(evaluated.sort(), [...skillIds].sort());
+  assert.equal(manifest.counts.succeeded, skillIds.length);
+  assert.equal(manifest.counts.skipped, 0);
+});
+
+test('resume preloads valid prior records before workers can be interrupted', async () => {
+  const setup = fixture(['beta', 'alpha']);
+  const runDir = join(setup.outputRoot, 'interrupted-resume');
+  const alphaDir = join(runDir, 'alpha');
+  mkdirSync(alphaDir, { recursive: true });
+  writeFileSync(join(alphaDir, 'output.json'), JSON.stringify({ answer: 'existing' }));
+  writeFileSync(join(alphaDir, 'scorecard.json'), JSON.stringify(scorecard('alpha', 87)));
+  const previousRecord: SkillEvaluationRecord = {
+    skillId: 'alpha',
+    skillHash: 'sha256:preserved-skill',
+    caseHash: 'sha256:preserved-case',
+    modelName: 'preserved-model',
+    modelVersion: 'preserved-v1',
+    elapsedMs: 91,
+    status: 'succeeded',
+    output: { answer: 'existing' },
+    scorecard: scorecard('alpha', 87),
+  };
+  writeFileSync(
+    join(runDir, 'manifest.json'),
+    JSON.stringify({ records: [previousRecord] }),
+  );
+  let releaseBeta!: () => void;
+  const betaBlocked = new Promise<void>((resolve) => {
+    releaseBeta = resolve;
+  });
+  let signalBetaStarted!: () => void;
+  const betaStarted = new Promise<void>((resolve) => {
+    signalBetaStarted = resolve;
+  });
+
+  const running = runEvaluationBatch(
+    {
+      runId: 'interrupted-resume',
+      outputRoot: setup.outputRoot,
+      casesDir: setup.casesDir,
+      concurrency: 1,
+      resume: true,
+    },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: {
+        evaluate: async (loadedCase) => {
+          signalBetaStarted();
+          await betaBlocked;
+          return successRecord(loadedCase);
+        },
+      },
+    },
+  );
+  await betaStarted;
+
+  const interrupted = readJson<EvaluationManifest>(join(runDir, 'manifest.json'));
+  releaseBeta();
+  await running;
+
+  assert.equal(interrupted.status, 'running');
+  assert.deepEqual(
+    interrupted.records.map(({ skillId, status }) => [skillId, status]),
+    [['alpha', 'skipped']],
+  );
+  assert.equal(interrupted.records[0].skillHash, 'sha256:preserved-skill');
+  assert.equal(interrupted.records[0].modelName, 'preserved-model');
+  assert.equal(interrupted.records[0].elapsedMs, 91);
+});
+
+test('non-resume rejects an existing run before stale success artifacts can be reused', async () => {
+  const setup = fixture(['alpha']);
+  const options = {
+    runId: 'same-run',
+    outputRoot: setup.outputRoot,
+    casesDir: setup.casesDir,
+    concurrency: 1 as const,
+    resume: false,
+  };
+  await runEvaluationBatch(options, {
+    skillLoader: setup.skillLoader,
+    evaluator: { evaluate: async (loadedCase) => successRecord(loadedCase) },
+  });
+  let secondRunCalls = 0;
+
+  await assert.rejects(
+    runEvaluationBatch(options, {
+      skillLoader: setup.skillLoader,
+      evaluator: {
+        evaluate: async () => {
+          secondRunCalls += 1;
+          throw new Error('second run failed');
+        },
+      },
+    }),
+    /run directory already exists.*--resume/,
+  );
+  assert.equal(secondRunCalls, 0);
+
+  let resumeCalls = 0;
+  const resumed = await runEvaluationBatch(
+    { ...options, resume: true },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: {
+        evaluate: async (loadedCase) => {
+          resumeCalls += 1;
+          return successRecord(loadedCase);
+        },
+      },
+    },
+  );
+  assert.equal(resumeCalls, 0);
+  assert.equal(resumed.records[0].status, 'skipped');
+});
+
+test('keeps manifest running when summary publication fails', async () => {
+  const setup = fixture(['alpha']);
+  const runDir = join(setup.outputRoot, 'summary-failure');
+  mkdirSync(join(runDir, `summary.md.tmp-${process.pid}`), { recursive: true });
+
+  await assert.rejects(
+    runEvaluationBatch(
+      {
+        runId: 'summary-failure',
+        outputRoot: setup.outputRoot,
+        casesDir: setup.casesDir,
+        concurrency: 1,
+        resume: true,
+      },
+      {
+        skillLoader: setup.skillLoader,
+        evaluator: { evaluate: async (loadedCase) => successRecord(loadedCase) },
+      },
+    ),
+    /EISDIR/,
+  );
+
+  const manifest = readJson<EvaluationManifest>(join(runDir, 'manifest.json'));
+  assert.equal(manifest.status, 'running');
+  assert.equal(existsSync(join(runDir, 'summary.csv')), false);
+});
+
 test('rejects concurrency outside the inclusive 1-3 range', async () => {
   const setup = fixture(['alpha']);
   for (const concurrency of [0, 4, 1.5]) {

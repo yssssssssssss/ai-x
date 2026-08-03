@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { SkillRegistryEntry } from '../../apps/orchestrator-runtime/src/runtime/config-loader.ts';
@@ -123,6 +123,43 @@ function readJson(path: string): unknown | undefined {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+function isScoreDimension(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.score === 'number' &&
+    Number.isFinite(value.score) &&
+    typeof value.max_score === 'number' &&
+    Number.isFinite(value.max_score) &&
+    isStringArray(value.evidence) &&
+    isStringArray(value.defects)
+  );
+}
+
+function isScorecard(value: unknown, skillId: string): value is SkillScorecard {
+  return (
+    isRecord(value) &&
+    value.skill_id === skillId &&
+    (value.total_score === null ||
+      (typeof value.total_score === 'number' && Number.isFinite(value.total_score))) &&
+    (value.verdict === 'pass' ||
+      value.verdict === 'needs_review' ||
+      value.verdict === 'fail') &&
+    Array.isArray(value.dimensions) &&
+    value.dimensions.every(isScoreDimension) &&
+    isStringArray(value.critical_defects) &&
+    isStringArray(value.review_notes)
+  );
+}
+
 function previousRecords(runDirectory: string): Map<string, SkillEvaluationRecord> {
   const parsed = readJson(join(runDirectory, 'manifest.json'));
   if (
@@ -149,7 +186,7 @@ function resumedRecord(
   const skillDirectory = join(runDirectory, skillId);
   const output = readJson(join(skillDirectory, 'output.json'));
   const scorecard = readJson(join(skillDirectory, 'scorecard.json'));
-  if (output === undefined || scorecard === undefined) return undefined;
+  if (!isRecord(output) || !isScorecard(scorecard, skillId)) return undefined;
 
   return {
     ...previous,
@@ -158,8 +195,8 @@ function resumedRecord(
     caseHash: loadedCase.caseHash,
     elapsedMs: previous?.elapsedMs ?? 0,
     status: 'skipped',
-    output: output as Record<string, unknown>,
-    scorecard: scorecard as SkillScorecard,
+    output,
+    scorecard,
   };
 }
 
@@ -202,11 +239,19 @@ export async function runEvaluationBatch(
   const selected = selectedSkills(activeSkills, options.skillId);
   const cases = loadEvaluationCases(activeSkills, options.casesDir);
   const runDirectory = join(options.outputRoot, options.runId);
+  if (!options.resume && existsSync(runDirectory)) {
+    throw new Error(
+      `run directory already exists: ${runDirectory}; use --resume or choose a new run ID`,
+    );
+  }
   const priorRecords = options.resume
     ? previousRecords(runDirectory)
     : new Map<string, SkillEvaluationRecord>();
   const recordSlots: Array<SkillEvaluationRecord | undefined> = selected.map(
-    () => undefined,
+    ({ id }) =>
+      options.resume
+        ? resumedRecord(runDirectory, cases.get(id)!, priorRecords.get(id))
+        : undefined,
   );
   const startedAt = clock().toISOString();
   const provider = dependencies.provider ?? process.env.LLM_PROVIDER ?? 'injected';
@@ -256,18 +301,7 @@ export async function runEvaluationBatch(
       const skillDirectory = join(runDirectory, skill.id);
       writeInputArtifact(skillDirectory, loadedCase);
 
-      if (options.resume) {
-        const skipped = resumedRecord(
-          runDirectory,
-          loadedCase,
-          priorRecords.get(skill.id),
-        );
-        if (skipped) {
-          recordSlots[index] = skipped;
-          persistRunningManifest();
-          continue;
-        }
-      }
+      if (recordSlots[index]?.status === 'skipped') continue;
 
       const evaluationStartedAt = clock().getTime();
       let record: SkillEvaluationRecord;
@@ -296,8 +330,8 @@ export async function runEvaluationBatch(
     ? 'completed_with_failures'
     : 'completed';
   const manifest = buildManifest(finalStatus, clock().toISOString());
-  writeManifest(runDirectory, manifest);
   writeSummaries(runDirectory, records);
+  writeManifest(runDirectory, manifest);
   return manifest;
 }
 
