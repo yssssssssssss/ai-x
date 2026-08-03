@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { SkillRegistryEntry } from '../../apps/orchestrator-runtime/src/runtime/config-loader.ts';
@@ -228,6 +228,31 @@ function selectedSkills(
   );
 }
 
+function claimRunDirectory(
+  outputRoot: string,
+  runDirectory: string,
+  resume: boolean,
+): void {
+  mkdirSync(outputRoot, { recursive: true });
+  if (resume) {
+    try {
+      if (statSync(runDirectory).isDirectory()) return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    throw new Error(`run directory does not exist: ${runDirectory}`);
+  }
+
+  try {
+    mkdirSync(runDirectory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    throw new Error(
+      `run directory already exists: ${runDirectory}; use --resume or choose a new run ID`,
+    );
+  }
+}
+
 export async function runEvaluationBatch(
   options: EvaluationRunOptions,
   dependencies: EvaluationRunDependencies = {},
@@ -239,11 +264,7 @@ export async function runEvaluationBatch(
   const selected = selectedSkills(activeSkills, options.skillId);
   const cases = loadEvaluationCases(activeSkills, options.casesDir);
   const runDirectory = join(options.outputRoot, options.runId);
-  if (!options.resume && existsSync(runDirectory)) {
-    throw new Error(
-      `run directory already exists: ${runDirectory}; use --resume or choose a new run ID`,
-    );
-  }
+  claimRunDirectory(options.outputRoot, runDirectory, options.resume);
   const priorRecords = options.resume
     ? previousRecords(runDirectory)
     : new Map<string, SkillEvaluationRecord>();

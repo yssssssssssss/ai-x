@@ -558,6 +558,74 @@ test('non-resume rejects an existing run before stale success artifacts can be r
   assert.equal(resumed.records[0].status, 'skipped');
 });
 
+test('resume rejects a run directory that does not exist', async () => {
+  const setup = fixture(['alpha']);
+  let evaluateCalls = 0;
+
+  await assert.rejects(
+    runEvaluationBatch(
+      {
+        runId: 'missing-run',
+        outputRoot: setup.outputRoot,
+        casesDir: setup.casesDir,
+        concurrency: 1,
+        resume: true,
+      },
+      {
+        skillLoader: setup.skillLoader,
+        evaluator: {
+          evaluate: async (loadedCase) => {
+            evaluateCalls += 1;
+            return successRecord(loadedCase);
+          },
+        },
+      },
+    ),
+    /run directory does not exist.*missing-run/,
+  );
+  assert.equal(evaluateCalls, 0);
+});
+
+test('concurrent non-resume batches allow exactly one run directory claimant', async () => {
+  const setup = fixture(['alpha']);
+  const options = {
+    runId: 'contended-run',
+    outputRoot: setup.outputRoot,
+    casesDir: setup.casesDir,
+    concurrency: 1 as const,
+    resume: false,
+  };
+  let evaluateCalls = 0;
+  const dependencies = {
+    skillLoader: setup.skillLoader,
+    evaluator: {
+      evaluate: async (loadedCase: LoadedEvaluationCase) => {
+        evaluateCalls += 1;
+        await delay(20);
+        return successRecord(loadedCase);
+      },
+    },
+  };
+
+  const results = await Promise.allSettled([
+    runEvaluationBatch(options, dependencies),
+    runEvaluationBatch(options, dependencies),
+  ]);
+
+  assert.equal(results.filter(({ status }) => status === 'fulfilled').length, 1);
+  assert.equal(results.filter(({ status }) => status === 'rejected').length, 1);
+  const rejection = results.find(
+    (result): result is PromiseRejectedResult => result.status === 'rejected',
+  );
+  assert.match(String(rejection?.reason), /run directory already exists.*--resume/);
+  assert.equal(evaluateCalls, 1);
+  const runDir = join(setup.outputRoot, 'contended-run');
+  const manifest = readJson<EvaluationManifest>(join(runDir, 'manifest.json'));
+  assert.equal(manifest.status, 'completed');
+  assert.deepEqual(manifest.records.map(({ skillId }) => skillId), ['alpha']);
+  assert.equal(existsSync(join(runDir, 'alpha', 'error.json')), false);
+});
+
 test('keeps manifest running when summary publication fails', async () => {
   const setup = fixture(['alpha']);
   const runDir = join(setup.outputRoot, 'summary-failure');
