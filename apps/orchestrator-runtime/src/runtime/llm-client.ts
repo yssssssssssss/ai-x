@@ -59,13 +59,22 @@ function injectToolResultFinding<T>(schemaName: string, context: object | undefi
   if (!first) return out;
   const app = first.source_app ?? first.title ?? '竞品';
   const detail = first.design_analysis ?? first.snippet ?? '检索到竞品页面';
-  const report = out as { findings?: Array<Record<string, unknown>> };
+  const report = out as {
+    findings?: Array<Record<string, unknown>>;
+    sub_questions?: Array<{ finding_ids?: string[] }>;
+  };
   if (Array.isArray(report.findings)) {
     report.findings.unshift({
+      id: 'F0',
       statement: `检索到竞品「${String(app)}」:${String(detail).slice(0, 60)}`,
       source: 'tool_result',
       source_ref: 'run/tool_outputs',
     });
+    // 把注入的检索发现接入首个子问题,兑现"报告消费了真实检索数据"的链路证明。
+    const firstSq = report.sub_questions?.[0];
+    if (firstSq && Array.isArray(firstSq.finding_ids) && !firstSq.finding_ids.includes('F0')) {
+      firstSq.finding_ids.unshift('F0');
+    }
   }
   return out;
 }
@@ -195,17 +204,36 @@ export const defaultFixtures: FixtureMap = {
   'research-report': {
     task_id: '__RUNTIME__',
     research_goal: '了解直播场域数字人竞品的能力与体验差异,识别差异化机会',
+    method_summary: '通过公开资料检索 + 数字人竞品分析方法,综合归纳能力与体验差异',
     findings: [
-      { statement: '实时多模态互动是普遍短板,响应延迟集中在 1-3s', source: 'tool_result', source_ref: 'run/tool_outputs/step1.json' },
-      { statement: '竞品研究应区分事实与推断,仅凭推断的判断须显式标注', source: 'knowledge_base', source_ref: 'knowledge-base/methods/competitive-research-method.md' },
-      { statement: '低延迟实时互动 + 行业垂直内容模板是可切入的差异化方向', source: 'llm_inference' },
+      { id: 'F1', statement: '实时多模态互动是普遍短板,响应延迟集中在 1-3s', source: 'tool_result', source_ref: 'run/tool_outputs/step1.json' },
+      { id: 'F2', statement: '竞品研究应区分事实与推断,仅凭推断的判断须显式标注', source: 'knowledge_base', source_ref: 'knowledge-base/methods/competitive-research-method.md' },
+      { id: 'F3', statement: '低延迟实时互动 + 行业垂直内容模板是可切入的差异化方向', source: 'llm_inference' },
+    ],
+    sub_questions: [
+      {
+        question: '竞品数字人的实时互动能力处于什么水平?',
+        finding_ids: ['F1'],
+        analysis: [{ statement: '实时性是行业共性短板,谁先压低延迟谁占先机', based_on: ['F1'] }],
+        summary: '实时互动能力普遍不足,是可切入的突破口。',
+      },
+      {
+        question: '京东可切入的差异化方向是什么?',
+        finding_ids: ['F1', 'F3'],
+        analysis: [{ statement: '低延迟 + 垂直内容模板组合是当前空白位', based_on: ['F1', 'F3'] }],
+        summary: '建议以低延迟实时互动叠加行业垂直模板作为差异化主线。',
+      },
+    ],
+    overall_conclusion: [
+      '优先补齐低延迟实时互动能力,对齐并超越竞品共性短板。',
+      '以行业垂直内容模板构建差异化,避免同质化竞争。',
     ],
     timeline: [
       { phase: 'W1', activity: '界定对标范围与维度' },
       { phase: 'W2', activity: '竞品公开资料检索与对比' },
       { phase: 'W3', activity: '差异化归纳与报告产出' },
     ],
-    deliverables: ['竞品对比矩阵', '差异化机会建议'],
+    deliverables: ['竞品能力研究报告', '差异化机会建议'],
     capability_orchestration: [
       { capability_id: 'tavily-web-search', capability_type: 'tool', purpose: '采集竞品公开信息' },
       { capability_id: 'digital-human-competitive-analysis', capability_type: 'skill', purpose: '逐维对比并归纳差异化' },

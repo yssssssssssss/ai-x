@@ -2,18 +2,31 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "research-report.schema.json",
   "title": "ResearchReport",
-  "description": "段4 交付的可落地方案。写入 artifacts(artifact_type=report)。扩展交付物 A2:timeline/deliverables/capability_orchestration。",
+  "description": "段4 交付的需求驱动研究报告。写入 artifacts(artifact_type=report)。以研究子问题为组织轴:全局证据池 findings + 子问题(发现/分析/小结)+ 总体结论。",
   "type": "object",
   "additionalProperties": false,
-  "required": ["task_id", "research_goal", "findings", "timeline", "deliverables", "capability_orchestration"],
+  "required": ["task_id", "research_goal", "method_summary", "findings", "sub_questions", "overall_conclusion", "timeline", "deliverables", "capability_orchestration"],
   "properties": {
     "task_id": { "type": "string", "minLength": 1 },
     "research_goal": { "type": "string", "minLength": 1 },
+    "method_summary": { "type": "string", "minLength": 1, "description": "研究方法概述(一句话):本研究用了哪些检索/分析能力。研究方法节由此 + capability_orchestration + timeline 派生渲染。" },
     "findings": {
       "type": "array",
-      "description": "关键结论,每条必须带来源标注(report-linter 强制)。",
+      "description": "全局证据池。每条带全局唯一 id 与来源标注(schema 强制)。sub_questions 通过 id 引用。",
       "minItems": 1,
       "items": { "$ref": "#/$defs/finding" }
+    },
+    "sub_questions": {
+      "type": "array",
+      "description": "研究子问题(段4 事后拆解)。每个议题挂相关发现 id + 分析 + 小结。",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/subQuestion" }
+    },
+    "overall_conclusion": {
+      "type": "array",
+      "description": "总体结论与建议,由各子问题小结汇总。",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
     },
     "timeline": {
       "type": "array",
@@ -57,18 +70,56 @@
     "finding": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["statement", "source"],
+      "required": ["id", "statement", "source"],
       "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^F[0-9]+$",
+          "description": "全局唯一发现编号,如 F1。sub_questions.finding_ids 与 analysis.based_on 引用它。"
+        },
         "statement": { "type": "string", "minLength": 1 },
         "source": {
           "type": "string",
-          "description": "来源标注,report-linter 强制存在。",
+          "description": "来源标注,schema 强制存在。",
           "enum": ["user_input", "knowledge_base", "tool_result", "llm_inference", "pending_human_review"]
         },
         "source_ref": {
           "type": "string",
-          "description": "来源可反查引用,如 knowledge id / tool output ref。"
+          "description": "来源可反查引用,如 knowledge id / tool output ref / URL。"
         }
+      }
+    },
+    "subQuestion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["question", "finding_ids", "analysis", "summary"],
+      "properties": {
+        "question": { "type": "string", "minLength": 1, "description": "研究子问题。" },
+        "finding_ids": {
+          "type": "array",
+          "description": "本议题相关的发现 id(引用完整性由 validator 语义校验)。",
+          "items": { "type": "string", "pattern": "^F[0-9]+$" }
+        },
+        "analysis": {
+          "type": "array",
+          "description": "分析结论。每条强制引用其所依据的发现 id。",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["statement", "based_on"],
+            "properties": {
+              "statement": { "type": "string", "minLength": 1 },
+              "based_on": {
+                "type": "array",
+                "description": "该分析结论依据的发现 id(引用完整性由 validator 语义校验)。",
+                "minItems": 1,
+                "items": { "type": "string", "pattern": "^F[0-9]+$" }
+              }
+            }
+          }
+        },
+        "summary": { "type": "string", "minLength": 1, "description": "本子问题小结。" }
       }
     }
   }

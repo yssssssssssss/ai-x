@@ -17,6 +17,15 @@ export type SchemaName =
   | 'tool-manifest'
   | 'research-report';
 
+// checkReportReferences 消费的最小形状(结构由 ajv 保证,此处只取引用完整性所需字段)。
+interface ResearchReportShape {
+  findings: Array<{ id: string }>;
+  sub_questions: Array<{
+    finding_ids: string[];
+    analysis: Array<{ based_on: string[] }>;
+  }>;
+}
+
 export class SchemaValidator {
   private readonly ajv: Ajv;
   private readonly cache = new Map<string, ValidateFunction>();
@@ -54,10 +63,37 @@ export class SchemaValidator {
   // 返回错误信息数组;空数组表示通过。
   validate(name: SchemaName | string, data: unknown): string[] {
     const validate = this.load(name);
-    if (validate(data)) return [];
-    return (validate.errors ?? []).map(
-      (e) => `${e.instancePath || '(root)'} ${e.message ?? 'invalid'}`,
-    );
+    const structural = validate(data)
+      ? []
+      : (validate.errors ?? []).map(
+          (e) => `${e.instancePath || '(root)'} ${e.message ?? 'invalid'}`,
+        );
+    // research-report:draft-07 表达不了跨数组引用,结构通过后追加受控语义校验。
+    if (name === 'research-report' && structural.length === 0) {
+      return this.checkReportReferences(data as ResearchReportShape);
+    }
+    return structural;
+  }
+
+  // based_on / finding_ids 引用的发现 id 必须真实存在于 findings 全局证据池。
+  private checkReportReferences(report: ResearchReportShape): string[] {
+    const ids = new Set(report.findings.map((f) => f.id));
+    const errors: string[] = [];
+    report.sub_questions.forEach((sq, qi) => {
+      sq.finding_ids.forEach((fid) => {
+        if (!ids.has(fid)) {
+          errors.push(`/sub_questions/${qi}/finding_ids 引用不存在的发现 id ${fid}`);
+        }
+      });
+      sq.analysis.forEach((a, ai) => {
+        a.based_on.forEach((fid) => {
+          if (!ids.has(fid)) {
+            errors.push(`/sub_questions/${qi}/analysis/${ai}/based_on 引用不存在的发现 id ${fid}`);
+          }
+        });
+      });
+    });
+    return errors;
   }
 
   // 硬校验:不合规直接抛错。用于 tool 输入、报告入库等不可降级场景。

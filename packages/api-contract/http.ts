@@ -24,14 +24,30 @@ export interface Upload {
 }
 
 export interface Finding {
+  id: string;
   statement: string;
   source: string;
   source_ref?: string;
 }
 
+export interface Analysis {
+  statement: string;
+  based_on: string[];
+}
+
+export interface SubQuestion {
+  question: string;
+  finding_ids: string[];
+  analysis: Analysis[];
+  summary: string;
+}
+
 export interface Report {
   research_goal: string;
+  method_summary: string;
   findings: Finding[];
+  sub_questions: SubQuestion[];
+  overall_conclusion: string[];
   timeline: Array<{ phase: string; activity: string }>;
   deliverables: string[];
   capability_orchestration: Array<{ capability_id: string; capability_type: string; purpose: string }>;

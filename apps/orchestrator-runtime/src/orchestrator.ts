@@ -410,10 +410,12 @@ export class Orchestrator {
 
     const reportGen = await llm.generateStructured<Record<string, unknown>>({
       prompt:
-        '基于以下真实执行结果生成可落地竞品研究方案报告。' +
-        'findings 中凡来自 tool_outputs 检索数据的结论,source 必须标 tool_result,' +
-        '并在 statement 中引用具体竞品名称/来源;无数据支撑的判断标 llm_inference,不得冒充事实;' +
-        '若 tool_outputs 为空则如实说明数据缺口。' +
+        '基于以下真实执行结果生成需求驱动的研究报告(非竞品对比矩阵)。' +
+        '先把研究需求拆成若干研究子问题(sub_questions);' +
+        'findings 为全局证据池,每条分配全局唯一 id(F1、F2…),凡来自 tool_outputs 检索数据的结论 source 必须标 tool_result 并在 statement 引用具体竞品名称/来源;' +
+        '每个子问题挂相关 finding_ids、给出 analysis(每条 based_on 引用其依据的发现 id)与 summary;' +
+        'overall_conclusion 汇总各子问题小结;method_summary 用一句话概述所用检索/分析能力;' +
+        '无数据支撑的判断标 llm_inference,不得冒充事实;若 tool_outputs 为空则如实说明数据缺口。' +
         gapNote + reviewNote,
       schema: {}, schemaName: 'research-report',
       context: {

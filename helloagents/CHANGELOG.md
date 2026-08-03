@@ -10,6 +10,9 @@
 - 增加 Node 原生 HTTP 集成测试、当前 owner 的反馈聚合 API，以及评分、采纳率和脱敏评论计数。
 - 增加 `report:replay` 固定对比指标：证据引用率、无依据推断数、行动项验证覆盖率和生成模式。
 - 增加 `npm run quality` 与 GitHub Actions 质量工作流；CI 使用临时 PostgreSQL、mock LLM 和 fake Tool adapter。
+- 研究报告升级为需求驱动结构：`research-report` schema 新增 `method_summary`、`sub_questions`(问题→发现→分析→小结)、`overall_conclusion`,`findings` 全局证据池且每条带唯一 id(`^F[0-9]+$`)。
+- validator 增加报告引用完整性校验:`sub_questions.finding_ids` 与 `analysis.based_on` 只能引用已存在的 finding id。
+- 新增 `reportToMarkdown` 纯函数与共享 `SOURCE_LABEL`,Stage4Report 网页版式与导出 Markdown 同源;报告页支持一键导出与历史报告降级渲染。
 
 ### 变更
 - 任务执行、恢复和终止改为 PostgreSQL 条件更新；未领取的请求不会调用外部能力。
