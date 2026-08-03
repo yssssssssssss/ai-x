@@ -1,0 +1,33 @@
+{
+  "skill_id": "run-heuristic-evaluation",
+  "title": "移动商品详情与结算启发式评估",
+  "research_goal": "对移动商品详情和结算主路径进行两遍启发式评估，基于给定位置和交互证据识别问题、严重度与修复优先级。",
+  "input_materials": {
+    "data_classification": "synthetic_evaluation_data",
+    "evaluation_target": "390×844 移动 Web 商品详情到订单提交路径",
+    "scope": ["商品详情默认态", "规格选择抽屉", "购物车", "订单确认", "支付失败状态"],
+    "interface_evidence": [
+      {"location": "商品详情/价格区", "observation": "页面价为 299 元，优惠说明写满 300 减 30；未显示当前是否满足。"},
+      {"location": "商品详情/规格抽屉", "observation": "关闭后重新打开，刚才选择的颜色被清空。"},
+      {"location": "购物车/数量控件", "observation": "减到 0 后商品直接消失，没有撤销入口。"},
+      {"location": "订单确认/运费", "observation": "运费 12 元仅在页面底部合计区域出现。"},
+      {"location": "订单确认/提交操作", "observation": "提交后按钮保持原文且可再次点击 1.5 秒，随后出现加载状态。"},
+      {"location": "支付失败/错误消息", "observation": "只显示错误码 P-104 和关闭按钮；关闭后返回订单确认页。"},
+      {"location": "订单确认/返回", "observation": "返回购物车后已填地址仍保留。"},
+      {"location": "全路径/帮助", "observation": "商品详情有客服入口，支付失败页没有帮助入口。"}
+    ],
+    "interaction_limits": "未提供横屏、弱网、键盘、读屏、优惠券冲突或支付成功后的界面证据。"
+  },
+  "tool_outputs": [],
+  "expected_deliverables": [
+    "第一遍任务流理解与第二遍逐项检查的 two-pass 说明",
+    "结论摘要与 Top 3–5",
+    "每项含 location evidence、violated heuristic、0–4 severity、rationale、fix 和 priority 的 issue list",
+    "按启发式和严重度汇总、修复优先级、自检和五部分本次运行说明"
+  ],
+  "risk_checks": [
+    "no unsupported visual claim，只能使用给定位置与交互证据",
+    "severity rationale explicit，违反启发式不自动等于问题",
+    "未覆盖状态必须标未评到；涉及真实用户影响的推断标需真人验证"
+  ]
+}

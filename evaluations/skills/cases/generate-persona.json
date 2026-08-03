@@ -1,0 +1,34 @@
+{
+  "skill_id": "generate-persona",
+  "title": "直播购物者研究型人物角色",
+  "research_goal": "基于八场合成访谈和行为指标，形成可追溯的直播购物行为原型，支持商品信息与互动能力优先级决策。",
+  "input_materials": {
+    "data_classification": "synthetic_evaluation_data",
+    "user_scope": "过去 60 天至少观看 3 场直播购物且完成过至少 1 次购买的用户",
+    "decision_use": "决定直播间优先优化即时互动、证据说明还是快速下单",
+    "candidate_clustering_variables": ["购买前核验强度", "互动依赖", "决策速度", "价格敏感度"],
+    "interview_summaries": [
+      {"id": "P01", "behavior": "看回放和参数后再买，很少发问", "quote": "主播说好不够，我会再看规格和退换条件。", "metrics": {"sessions_30d": 7, "questions": 0, "purchases": 2, "median_decision_min": 34}},
+      {"id": "P02", "behavior": "反复核对材质和售后", "quote": "能把证据放在商品旁边，我就不用退出去查。", "metrics": {"sessions_30d": 5, "questions": 1, "purchases": 1, "median_decision_min": 41}},
+      {"id": "P03", "behavior": "高频提问，得到回应后快速下单", "quote": "主播回答到我的尺寸问题，我就敢拍。", "metrics": {"sessions_30d": 11, "questions": 14, "purchases": 5, "median_decision_min": 9}},
+      {"id": "P04", "behavior": "依赖评论区和主播实时演示", "quote": "我想看现场试一下，不想只听口播。", "metrics": {"sessions_30d": 9, "questions": 10, "purchases": 3, "median_decision_min": 13}},
+      {"id": "P05", "behavior": "看到限时价格会快速比较后下单", "quote": "到手价算清楚，我几分钟就能决定。", "metrics": {"sessions_30d": 15, "questions": 2, "purchases": 8, "median_decision_min": 5}},
+      {"id": "P06", "behavior": "关注优惠叠加和库存", "quote": "别让我自己算券，直接告诉我最终要付多少。", "metrics": {"sessions_30d": 13, "questions": 3, "purchases": 7, "median_decision_min": 6}},
+      {"id": "P07", "behavior": "边看边收藏，隔天再比较", "quote": "直播先帮我发现商品，真正决定通常在第二天。", "metrics": {"sessions_30d": 8, "questions": 1, "purchases": 2, "median_decision_min": 720}},
+      {"id": "P08", "behavior": "与家人共同决策，保存片段和商品", "quote": "我要把关键讲解发给家人，不会当场买。", "metrics": {"sessions_30d": 6, "questions": 2, "purchases": 1, "median_decision_min": 980}}
+    ],
+    "privacy_note": "P01–P08 均为合成匿名编号，不对应真人，不提供照片或人口标签。"
+  },
+  "tool_outputs": [],
+  "expected_deliverables": [
+    "说明候选变量、1–2 个核心变量和证据映射的 clustering basis",
+    "2–3 个 personas，每类包含九模块、可回溯 quotes、stories、behaviors、needs 与 recommendations",
+    "人物角色集与用户划分依据，明确量化只用于本样本内校验",
+    "六项质量标准逐条自检和五部分本次运行说明"
+  ],
+  "risk_checks": [
+    "personas are research archetypes, not population segments",
+    "所有特征、语录和频次必须回指 P01–P08，不得创造未提供的人口属性或占比",
+    "不得把角色当真人档案或标签系统，不得伪造量化聚类验证或使用真人照片"
+  ]
+}

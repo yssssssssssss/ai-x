@@ -1,0 +1,49 @@
+{
+  "skill_id": "feature-adoption-analysis",
+  "title": "AI 商品总结功能采纳分析",
+  "research_goal": "评估 AI 商品总结从曝光到价值激活、有效使用和复用的采纳表现，定位分群差异并提出可回测行动。",
+  "input_materials": {
+    "data_classification": "synthetic_evaluation_data",
+    "feature": "商品详情页 AI 总结",
+    "analysis_window": "2026-06-01 至 2026-07-31",
+    "definitions": {
+      "eligible_denominator": "访问支持品类商品详情且登录的去重用户",
+      "exposure": "总结入口进入首屏且可见不少于 1 秒",
+      "activation": "生成总结后展开至少一条证据引用并完成一次候选商品收藏",
+      "use": "激活会话内把至少两个商品加入比较清单",
+      "reuse": "首次激活后 28 天内另一天再次完成 use"
+    },
+    "funnel_counts": {"eligible": 12000, "exposure": 9000, "activation": 2700, "use": 2100, "reuse": 840},
+    "five_dimension_data": {
+      "breadth": {"activated_users": 2700, "eligible_users": 12000},
+      "depth": {"citations_expanded_per_activated_user_mean": 2.4, "products_compared_per_user_mean": 2.7},
+      "frequency": {"activated_once": 1540, "activated_2_to_3_days": 820, "activated_4_plus_days": 340},
+      "time_to_adopt": {"median_hours_from_first_eligible_visit": 18, "p75_hours": 52},
+      "retention": {"reuse_users_28d": 840, "first_activation_users_with_full_28d_observation": 2400}
+    },
+    "cohorts": [
+      {"first_activation_week": "2026-W23", "n_with_full_observation": 600, "day_7_reuse": 168, "day_28_reuse": 210},
+      {"first_activation_week": "2026-W24", "n_with_full_observation": 620, "day_7_reuse": 161, "day_28_reuse": 205},
+      {"first_activation_week": "2026-W25", "n_with_full_observation": 590, "day_7_reuse": 142, "day_28_reuse": 196},
+      {"first_activation_week": "2026-W26", "n_with_full_observation": 590, "day_7_reuse": 150, "day_28_reuse": 229}
+    ],
+    "segments": [
+      {"name": "new_users", "eligible": 5000, "exposure": 3500, "activation": 800, "use": 560, "reuse_full_window": 170},
+      {"name": "returning_users", "eligible": 7000, "exposure": 5500, "activation": 1900, "use": 1540, "reuse_full_window": 670}
+    ],
+    "limitations": "未提供随机实验、访谈或因果识别；部分 7 月激活用户尚未满 28 天，留存分母仅使用满观察窗用户。"
+  },
+  "tool_outputs": [],
+  "expected_deliverables": [
+    "带 caption、结论摘要和改进速览的四段 adoption funnel",
+    "breadth/depth/frequency/time-to-adopt/retention 五维指标及明确分母",
+    "可回溯 cohort 与分群 diagnosis",
+    "最大流失段的疑似病因、actions 和回测设计",
+    "数据口径、自检和五部分本次运行说明"
+  ],
+  "risk_checks": [
+    "denominators explicit，尤其采纳率和 28 日留存需使用对应可观察分母",
+    "no causal claim from correlation，分群差异只能形成待验证假设",
+    "激活必须保持价值型定义，不得退化为打开页面或点击一次"
+  ]
+}

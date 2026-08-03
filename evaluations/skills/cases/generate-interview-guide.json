@@ -1,0 +1,28 @@
+{
+  "skill_id": "generate-interview-guide",
+  "title": "AI 购物助手信任与放弃原因访谈提纲",
+  "research_goal": "理解谨慎型消费者在首次使用 AI 购物助手比较高客单商品时，如何判断建议可信、在哪些时刻放弃以及需要什么证据。",
+  "input_materials": {
+    "data_classification": "synthetic_evaluation_data",
+    "target_users": "过去三个月购买过 2000 元以上耐用品，且至少使用过一次对话式购物助手的消费者",
+    "product_stage": "封闭 beta，核心比较流程可用，尚未决定证据展示方案",
+    "research_stage": "探索与概念验证",
+    "format": "60 分钟一对一远程视频访谈，允许共享屏幕回忆最近一次经历",
+    "decision_use": "决定下一版优先建设来源链接、排序解释还是价格提醒",
+    "topics": ["最近一次高客单购买过程", "开始使用助手的情境", "信任形成或破裂", "放弃与替代行为", "证据需求和概念反馈"],
+    "participant_safety": "不收集账号、订单号、地址或支付信息；涉及屏幕共享时由参与者自行隐藏敏感内容。"
+  },
+  "tool_outputs": [],
+  "expected_deliverables": [
+    "含知情同意、录制确认和隐私提醒的开场与 warm-up",
+    "按研究目标拆分且模块内按 ORID 递进的 modules",
+    "每模块的中性 main questions 与 2–3 级 probe ladder",
+    "closing、时间分配、moderator notes 和用法提示",
+    "逐题偏误自检与五部分本次运行说明"
+  ],
+  "risk_checks": [
+    "avoid leading/double-barreled questions，并避免判断、锚定和滥问为什么",
+    "consent included，录制和敏感信息处理必须在开场明确",
+    "不得假设参与者已信任或已放弃，概念反馈不能替代真实经历回溯"
+  ]
+}

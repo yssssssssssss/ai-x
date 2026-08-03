@@ -1,0 +1,49 @@
+{
+  "skill_id": "design-experience-review",
+  "title": "直播商品卡页面设计体验走查",
+  "research_goal": "综合固定设计描述与三类模型结果，评估直播商品卡页面的美学、注意力和品牌一致性并提出优先行动。",
+  "input_materials": {
+    "data_classification": "synthetic_evaluation_data",
+    "design_artifact_description": {
+      "artifact_id": "DESIGN-01",
+      "format_notice": "隔离评测仅提供合成文字描述，不提供真实像素图像。",
+      "canvas": "390×844 移动端直播页",
+      "observable_structure": "顶部为直播画面；底部 240px 为白色商品卡。商品图在左，标题和两行卖点居中，红色价格与橙色购买按钮并列；右上角有品牌标识；卡片上叠加黄色限时标签。",
+      "design_goals": ["三秒内识别商品与到手价", "购买按钮明显但不遮挡直播内容", "保持品牌蓝与橙色行动色的一致关系"]
+    },
+    "focus": ["aesthetic", "attention", "brand"]
+  },
+  "tool_outputs": [
+    {
+      "data_classification": "synthetic_evaluation_data",
+      "tool": "fixed_aesthetic_lab",
+      "artifact_id": "DESIGN-01",
+      "score": 72,
+      "signals": ["商品卡内存在红、橙、黄三个高饱和强调色", "标题与卖点行距一致", "价格与按钮间距为 8px"]
+    },
+    {
+      "data_classification": "synthetic_evaluation_data",
+      "tool": "fixed_attention_lab",
+      "artifact_id": "DESIGN-01",
+      "result": "预测首要注意区域为黄色限时标签，次要为价格，购买按钮位列第三；品牌标识关注最低。"
+    },
+    {
+      "data_classification": "synthetic_evaluation_data",
+      "tool": "fixed_brand_lab",
+      "artifact_id": "DESIGN-01",
+      "score": 68,
+      "signals": ["品牌蓝只出现在小面积标识", "行动色橙与既定品牌规范一致", "红色价格与黄色标签不在品牌强调色规范内"]
+    }
+  ],
+  "expected_deliverables": [
+    "美学、注意力、品牌三维 three-dimension assessment，并逐条标 tool_result 或 llm_inference",
+    "按影响和可执行性排序的 priority actions",
+    "列明合成设计描述与三个固定 lab 输出的 sources",
+    "明确算法量化仅是客观参考、不等于最终设计结论"
+  ],
+  "risk_checks": [
+    "no direct pixel claims beyond supplied outputs",
+    "本次运行只评估证据综合能力，不评估模型直接像素感知能力",
+    "不得声称看过真实图片，也不得补充未提供的颜色值、热区或用户反应"
+  ]
+}

@@ -5,6 +5,7 @@ import { basename, join } from 'node:path';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { SkillRegistryEntry } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import { loadEvaluationCases } from '../evaluations/skills/case-loader.ts';
 import type { SkillEvaluationCase } from '../evaluations/skills/types.ts';
 
@@ -186,5 +187,17 @@ test('source paths identify the sorted JSON fixture filenames', () => {
       basename(sourcePath),
     ),
     ['alpha.json', 'beta.json'],
+  );
+});
+
+test('real evaluation corpus covers every active Skill in registry order', () => {
+  const activeSkills = new SkillLoader().listActiveSkills();
+  const cases = loadEvaluationCases(activeSkills);
+
+  assert.equal(activeSkills.length, 22);
+  assert.equal(cases.size, activeSkills.length);
+  assert.deepEqual(
+    [...cases.keys()],
+    activeSkills.map((skill) => skill.id),
   );
 });
