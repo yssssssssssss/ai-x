@@ -3,11 +3,11 @@
 ## 修改文件
 
 - `evaluations/skills/report-writer.ts`：失败状态清理 `output.json`、`output.md`、`scorecard.json`；非失败状态清理旧 `error.json`，保证报告产物互斥。
-- `evaluations/skills/run.ts`：增加安全单段 `runId` 校验；resume 仅在 prior 状态为 `failed`/`needs_review` 时禁止完整 pair skip；完整 pair 必须为非空数字 `total_score`、六个固定维度、固定 max/合法 score、每维非空 evidence；允许无 prior record 的合法 pair skip；fallback null/空维度 pair 会重跑；`.active.lock` 写入 PID，活动 PID resume 拒绝，死 PID、损坏内容及 PID 前缀夹杂垃圾的锁回收后原子重试，锁在 `finally` 释放。
+- `evaluations/skills/run.ts`：增加安全单段 `runId` 校验；resume 仅在 prior 状态为 `failed`/`needs_review` 时禁止完整 pair skip；完整 pair 必须为非空数字 `total_score`、恰好六个固定维度、固定 max/合法 score、每维非空 evidence，且 `total_score` 必须等于六维 score 之和；允许无 prior record 的合法 pair skip；fallback null/空维度及总分不一致 pair 会重跑；`.active.lock` 写入 PID，活动 PID resume 拒绝，死 PID、损坏内容及 PID 前缀夹杂垃圾的锁回收后原子重试，锁在 `finally` 释放。
 - `evaluations/skills/scorecard.schema.json`：dimension `evidence.minItems = 1`。
 - `evaluations/skills/evaluator.ts`：normalize 阶段拒绝空 evidence，降级为 `needs_review`/空总分 fallback。
 - `evaluations/skills/case-loader.ts`：缺失 `casesDir` 按空 case 集处理并稳定报告 `missing cases: ...`。
-- `tests/skill-evaluation-runner.test.ts`：成功→失败→resume 产物互斥、failed/needs_review prior gate、无 manifest 合法 pair skip、fallback scorecard crash-window、runId traversal、活动 PID 锁、死 PID stale lock、malformed live-PID-prefix 锁回归。
+- `tests/skill-evaluation-runner.test.ts`：成功→失败→resume 产物互斥、failed/needs_review prior gate、无 manifest 合法 pair skip、fallback scorecard crash-window、总分与维度和不一致 crash-window、runId traversal、活动 PID 锁、死 PID stale lock、malformed live-PID-prefix 锁回归；合法 fixture 评分卡与维度和一致。
 - `tests/skill-evaluator.test.ts`：空 evidence 行为与 schema 拒绝回归。
 - `tests/skill-evaluation-case-loader.test.ts`：缺失目录错误稳定性回归。
 
@@ -22,9 +22,9 @@ pnpm exec tsx --test tests/skill-evaluation-runner.test.ts tests/skill-evaluator
 最新原始摘要：
 
 ```text
-1..40
-# tests 43
-# pass 43
+1..41
+# tests 44
+# pass 44
 # fail 0
 # cancelled 0
 # skipped 0
@@ -49,13 +49,14 @@ pnpm exec tsx --test tests/skill-evaluation-case-loader.test.ts
 # todo 0
 ```
 
-三文件联合目标覆盖：`# tests 61`, `# pass 61`, `# fail 0`（联合启动偶发超时，已分别以同一命令参数完整跑 runner/evaluator 与 case-loader，均通过）。
+三文件联合验证最新摘要：`# tests 62`, `# pass 62`, `# fail 0`。
 
 ## 提交号
 
 - 基础修复提交：`4b7d7e5` (`fix skill evaluation resume and evidence guards`)
 - pair skip/PID stale lock 修复提交：`5c7bf32` (`fix stale evaluation locks and complete pair resume`)
 - 严格 scorecard completeness 与 malformed PID lock 修复提交：`3c63b8f` (`fix resume scorecard completeness and lock parsing`)
+- 总分与维度和一致性修复提交：`75768d6` (`fix resume score total consistency`)
 - 报告更新链：`b7d41a1`、`c76cede`；本次报告内容随最终报告提交更新。
 
 ## 剩余风险
