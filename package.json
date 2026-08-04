@@ -19,7 +19,8 @@
     "labs:install": "for d in external-tools/*-lab; do (echo \"npm install @ $d\" && cd \"$d\" && npm install); done",
     "labs:dev": "node scripts/start-labs.mjs",
     "test": "tsx --test tests/*.test.ts",
-    "quality": "pnpm lint:registry && pnpm lint:knowledge && pnpm test"
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p apps/web/tsconfig.json",
+    "quality": "pnpm typecheck && pnpm lint:registry && pnpm lint:knowledge && pnpm test"
   },
   "dependencies": {
     "ajv": "^8.17.1",

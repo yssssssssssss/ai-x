@@ -20,3 +20,4 @@
 - 执行 API 与 SSE 使用稳定错误码区分状态冲突、输入前置条件和上游故障；Web 客户端保留错误码。
 - Express 应用构建与端口监听解耦，测试可注入确定性编排器；报告回放比较格式升级为 `1.1`。
 - 测试文件改为串行执行，消除共享 PostgreSQL 日志写入对工具并发探针造成的非确定性。
+- `npm run quality` 门前置 `typecheck`(root + web 两个 tsconfig 的 `tsc --noEmit`),从源头拦截类型漂移;并修复 tavily-adapter 测试中 `let` 闭包捕获导致的 `never` 收窄报错,root tsc 全量归零。
