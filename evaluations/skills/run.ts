@@ -1,4 +1,4 @@
-import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { SkillRegistryEntry } from '../../apps/orchestrator-runtime/src/runtime/config-loader.ts';
@@ -80,6 +80,23 @@ function assertRunId(value: string): void {
     value.includes('\u0000')
   ) {
     throw new Error('runId must be a single safe path segment');
+  }
+}
+
+function lockOwnerIsAlive(lockPath: string): boolean {
+  let pid: number;
+  try {
+    pid = Number.parseInt(readFileSync(lockPath, 'utf8').trim(), 10);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    return true;
+  }
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
   }
 }
 
@@ -204,11 +221,7 @@ function resumedRecord(
 ): SkillEvaluationRecord | undefined {
   const skillId = loadedCase.data.skill_id;
   const skillDirectory = join(runDirectory, skillId);
-  if (
-    !previous ||
-    previous.status === 'failed' ||
-    previous.status === 'needs_review'
-  ) {
+  if (previous?.status === 'failed' || previous?.status === 'needs_review') {
     return undefined;
   }
   const output = readJson(join(skillDirectory, 'output.json'));
@@ -275,13 +288,24 @@ function claimRunDirectory(
 
   const lockPath = join(runDirectory, '.active.lock');
   let descriptor: number;
-  try {
-    descriptor = openSync(lockPath, 'wx');
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-      throw new Error(`run is already active: ${runDirectory}; use --resume later`);
+  while (true) {
+    try {
+      descriptor = openSync(lockPath, 'wx');
+      writeSync(descriptor, String(process.pid));
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      if (lockOwnerIsAlive(lockPath)) {
+        throw new Error(`run is already active: ${runDirectory}; use --resume later`);
+      }
+      try {
+        unlinkSync(lockPath);
+      } catch (unlinkError) {
+        if ((unlinkError as NodeJS.ErrnoException).code !== 'ENOENT') {
+          throw unlinkError;
+        }
+      }
     }
-    throw error;
   }
   closeSync(descriptor);
 

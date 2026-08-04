@@ -367,6 +367,39 @@ test('resume skips only a complete parseable result and retains score and model 
   assert.equal(manifest.counts.skipped, 1);
 });
 
+test('resume skips a complete pair even when the prior manifest record is missing', async () => {
+  const setup = fixture(['alpha']);
+  const runDir = join(setup.outputRoot, 'pair-without-record');
+  const skillDir = join(runDir, 'alpha');
+  mkdirSync(skillDir, { recursive: true });
+  writeFileSync(join(skillDir, 'output.json'), JSON.stringify({ answer: 'existing' }));
+  writeFileSync(join(skillDir, 'scorecard.json'), JSON.stringify(scorecard('alpha', 88)));
+  let evaluateCalls = 0;
+
+  const resumed = await runEvaluationBatch(
+    {
+      runId: 'pair-without-record',
+      outputRoot: setup.outputRoot,
+      casesDir: setup.casesDir,
+      concurrency: 1,
+      resume: true,
+    },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: {
+        evaluate: async (loadedCase) => {
+          evaluateCalls += 1;
+          return successRecord(loadedCase);
+        },
+      },
+    },
+  );
+
+  assert.equal(evaluateCalls, 0);
+  assert.equal(resumed.records[0].status, 'skipped');
+  assert.equal(resumed.records[0].scorecard?.total_score, 88);
+});
+
 test('resume reruns complete artifacts from a prior needs_review record', async () => {
   const setup = fixture(['alpha']);
   const runDir = join(setup.outputRoot, 'needs-review-run');
@@ -757,7 +790,7 @@ test('rejects resume of an active running manifest without overwriting it', asyn
   const setup = fixture(['alpha']);
   const runDir = join(setup.outputRoot, 'active-run');
   mkdirSync(runDir, { recursive: true });
-  writeFileSync(join(runDir, '.active.lock'), 'active');
+  writeFileSync(join(runDir, '.active.lock'), String(process.pid));
   const manifestBytes = JSON.stringify({ status: 'running', records: [] });
   writeFileSync(join(runDir, 'manifest.json'), manifestBytes);
   let evaluateCalls = 0;
@@ -787,11 +820,12 @@ test('rejects resume of an active running manifest without overwriting it', asyn
   assert.equal(readFileSync(join(runDir, 'manifest.json'), 'utf8'), manifestBytes);
 });
 
-test('resumes a stale running manifest when no active lock remains', async () => {
+test('resumes a stale running manifest when the lock PID is gone', async () => {
   const setup = fixture(['alpha']);
   const runDir = join(setup.outputRoot, 'stale-running');
   mkdirSync(runDir, { recursive: true });
   writeFileSync(join(runDir, 'manifest.json'), JSON.stringify({ status: 'running', records: [] }));
+  writeFileSync(join(runDir, '.active.lock'), '99999999');
   let evaluateCalls = 0;
 
   const resumed = await runEvaluationBatch(
