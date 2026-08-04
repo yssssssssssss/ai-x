@@ -52,11 +52,25 @@ function scorecard(
   totalScore = 90,
   overrides: Partial<SkillScorecard> = {},
 ): SkillScorecard {
+  const dimensionMaxScores = {
+    workflow_adherence: 20,
+    method_correctness: 20,
+    completeness_structure: 20,
+    evidence_boundaries: 15,
+    actionability: 15,
+    risk_boundary_handling: 10,
+  } as const;
   return {
     skill_id: skillId,
     total_score: totalScore,
     verdict: totalScore >= 80 ? 'pass' : 'needs_review',
-    dimensions: [],
+    dimensions: Object.entries(dimensionMaxScores).map(([id, max_score]) => ({
+      id,
+      score: max_score,
+      max_score,
+      evidence: [`output quote for ${id}`],
+      defects: [],
+    })),
     critical_defects: [],
     review_notes: [],
     ...overrides,
@@ -398,6 +412,46 @@ test('resume skips a complete pair even when the prior manifest record is missin
   assert.equal(evaluateCalls, 0);
   assert.equal(resumed.records[0].status, 'skipped');
   assert.equal(resumed.records[0].scorecard?.total_score, 88);
+});
+
+test('resume reruns output paired with a fallback scorecard and no prior record', async () => {
+  const setup = fixture(['alpha']);
+  const runDir = join(setup.outputRoot, 'fallback-pair');
+  const skillDir = join(runDir, 'alpha');
+  mkdirSync(skillDir, { recursive: true });
+  writeFileSync(join(skillDir, 'output.json'), JSON.stringify({ answer: 'generated' }));
+  writeFileSync(
+    join(skillDir, 'scorecard.json'),
+    JSON.stringify({
+      ...scorecard('alpha'),
+      total_score: null,
+      dimensions: [],
+      verdict: 'needs_review',
+    }),
+  );
+  let evaluateCalls = 0;
+
+  const resumed = await runEvaluationBatch(
+    {
+      runId: 'fallback-pair',
+      outputRoot: setup.outputRoot,
+      casesDir: setup.casesDir,
+      concurrency: 1,
+      resume: true,
+    },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: {
+        evaluate: async (loadedCase) => {
+          evaluateCalls += 1;
+          return successRecord(loadedCase);
+        },
+      },
+    },
+  );
+
+  assert.equal(evaluateCalls, 1);
+  assert.equal(resumed.records[0].status, 'succeeded');
 });
 
 test('resume reruns complete artifacts from a prior needs_review record', async () => {
@@ -850,6 +904,37 @@ test('resumes a stale running manifest when the lock PID is gone', async () => {
   assert.equal(evaluateCalls, 1);
   assert.equal(resumed.status, 'completed');
   assert.equal(existsSync(join(runDir, '.active.lock')), false);
+});
+
+test('reclaims a lock with a live PID prefix but malformed suffix', async () => {
+  const setup = fixture(['alpha']);
+  const runDir = join(setup.outputRoot, 'malformed-lock');
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(join(runDir, 'manifest.json'), JSON.stringify({ status: 'running', records: [] }));
+  writeFileSync(join(runDir, '.active.lock'), `${process.pid}garbage`);
+  let evaluateCalls = 0;
+
+  const resumed = await runEvaluationBatch(
+    {
+      runId: 'malformed-lock',
+      outputRoot: setup.outputRoot,
+      casesDir: setup.casesDir,
+      concurrency: 1,
+      resume: true,
+    },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: {
+        evaluate: async (loadedCase) => {
+          evaluateCalls += 1;
+          return successRecord(loadedCase);
+        },
+      },
+    },
+  );
+
+  assert.equal(evaluateCalls, 1);
+  assert.equal(resumed.status, 'completed');
 });
 
 test('keeps manifest running when summary publication fails', async () => {

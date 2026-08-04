@@ -84,14 +84,16 @@ function assertRunId(value: string): void {
 }
 
 function lockOwnerIsAlive(lockPath: string): boolean {
-  let pid: number;
+  let rawPid: string;
   try {
-    pid = Number.parseInt(readFileSync(lockPath, 'utf8').trim(), 10);
+    rawPid = readFileSync(lockPath, 'utf8').trim();
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
     return true;
   }
-  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (!/^\d+$/.test(rawPid)) return false;
+  const pid = Number(rawPid);
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
     return true;
@@ -167,6 +169,15 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string');
 }
 
+const RESUME_DIMENSION_MAX_SCORES = {
+  workflow_adherence: 20,
+  method_correctness: 20,
+  completeness_structure: 20,
+  evidence_boundaries: 15,
+  actionability: 15,
+  risk_boundary_handling: 10,
+} as const;
+
 function isScoreDimension(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -182,19 +193,40 @@ function isScoreDimension(value: unknown): boolean {
 }
 
 function isScorecard(value: unknown, skillId: string): value is SkillScorecard {
-  return (
-    isRecord(value) &&
-    value.skill_id === skillId &&
-    (value.total_score === null ||
-      (typeof value.total_score === 'number' && Number.isFinite(value.total_score))) &&
-    (value.verdict === 'pass' ||
-      value.verdict === 'needs_review' ||
-      value.verdict === 'fail') &&
-    Array.isArray(value.dimensions) &&
-    value.dimensions.every(isScoreDimension) &&
-    isStringArray(value.critical_defects) &&
-    isStringArray(value.review_notes)
-  );
+  if (
+    !isRecord(value) ||
+    value.skill_id !== skillId ||
+    typeof value.total_score !== 'number' ||
+    !Number.isFinite(value.total_score) ||
+    (value.verdict !== 'pass' &&
+      value.verdict !== 'needs_review' &&
+      value.verdict !== 'fail') ||
+    !Array.isArray(value.dimensions) ||
+    value.dimensions.length !== Object.keys(RESUME_DIMENSION_MAX_SCORES).length ||
+    !isStringArray(value.critical_defects) ||
+    !isStringArray(value.review_notes)
+  ) {
+    return false;
+  }
+
+  const seen = new Set<string>();
+  return value.dimensions.every((dimension) => {
+    if (!isScoreDimension(dimension) || seen.has(dimension.id)) return false;
+    const expectedMax =
+      RESUME_DIMENSION_MAX_SCORES[
+        dimension.id as keyof typeof RESUME_DIMENSION_MAX_SCORES
+      ];
+    if (
+      expectedMax === undefined ||
+      dimension.max_score !== expectedMax ||
+      dimension.score < 0 ||
+      dimension.score > expectedMax
+    ) {
+      return false;
+    }
+    seen.add(dimension.id);
+    return true;
+  });
 }
 
 function previousRecords(runDirectory: string): Map<string, SkillEvaluationRecord> {
