@@ -499,6 +499,74 @@ test('resume reruns a scorecard whose total does not equal dimension sum', async
   assert.equal(resumed.records[0].status, 'succeeded');
 });
 
+test('resume reruns scorecards whose persisted verdict conflicts with normalization', async () => {
+  const invalidScorecards = [
+    scorecard('alpha', 100, { critical_defects: ['critical'], verdict: 'pass' }),
+    scorecard('alpha', 50, { verdict: 'pass' }),
+    scorecard('alpha', 80, { verdict: 'fail' }),
+  ];
+  for (const [index, invalid] of invalidScorecards.entries()) {
+    const setup = fixture(['alpha']);
+    const runId = `inconsistent-verdict-${index}`;
+    const skillDir = join(setup.outputRoot, runId, 'alpha');
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, 'output.json'), JSON.stringify({ answer: 'generated' }));
+    writeFileSync(join(skillDir, 'scorecard.json'), JSON.stringify(invalid));
+    let evaluateCalls = 0;
+
+    await runEvaluationBatch(
+      {
+        runId,
+        outputRoot: setup.outputRoot,
+        casesDir: setup.casesDir,
+        concurrency: 1,
+        resume: true,
+      },
+      {
+        skillLoader: setup.skillLoader,
+        evaluator: {
+          evaluate: async (loadedCase) => {
+            evaluateCalls += 1;
+            return successRecord(loadedCase);
+          },
+        },
+      },
+    );
+    assert.equal(evaluateCalls, 1, `invalid verdict case ${index}`);
+  }
+
+  const validSetup = fixture(['alpha']);
+  const validRunId = 'high-score-needs-review';
+  const validSkillDir = join(validSetup.outputRoot, validRunId, 'alpha');
+  mkdirSync(validSkillDir, { recursive: true });
+  writeFileSync(join(validSkillDir, 'output.json'), JSON.stringify({ answer: 'generated' }));
+  writeFileSync(
+    join(validSkillDir, 'scorecard.json'),
+    JSON.stringify(scorecard('alpha', 100, { verdict: 'needs_review' })),
+  );
+  let validEvaluateCalls = 0;
+  const resumed = await runEvaluationBatch(
+    {
+      runId: validRunId,
+      outputRoot: validSetup.outputRoot,
+      casesDir: validSetup.casesDir,
+      concurrency: 1,
+      resume: true,
+    },
+    {
+      skillLoader: validSetup.skillLoader,
+      evaluator: {
+        evaluate: async (loadedCase) => {
+          validEvaluateCalls += 1;
+          return successRecord(loadedCase);
+        },
+      },
+    },
+  );
+  assert.equal(validEvaluateCalls, 0);
+  assert.equal(resumed.records[0].status, 'skipped');
+});
+
 test('resume reruns complete artifacts from a prior needs_review record', async () => {
   const setup = fixture(['alpha']);
   const runDir = join(setup.outputRoot, 'needs-review-run');

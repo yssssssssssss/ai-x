@@ -228,7 +228,14 @@ function isScorecard(value: unknown, skillId: string): value is SkillScorecard {
     seen.add(dimension.id);
     dimensionTotal += dimension.score;
   }
-  return dimensionTotal === value.total_score;
+  if (dimensionTotal !== value.total_score) return false;
+  const expectedVerdict =
+    value.total_score < 60 || value.critical_defects.length > 0
+      ? 'fail'
+      : value.total_score < 80 || value.verdict === 'needs_review'
+        ? 'needs_review'
+        : 'pass';
+  return value.verdict === expectedVerdict;
 }
 
 function previousRecords(runDirectory: string): Map<string, SkillEvaluationRecord> {
