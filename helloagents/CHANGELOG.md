@@ -13,6 +13,10 @@
 - 研究报告升级为需求驱动结构：`research-report` schema 新增 `method_summary`、`sub_questions`(问题→发现→分析→小结)、`overall_conclusion`,`findings` 全局证据池且每条带唯一 id(`^F[0-9]+$`)。
 - validator 增加报告引用完整性校验:`sub_questions.finding_ids` 与 `analysis.based_on` 只能引用已存在的 finding id。
 - 新增 `reportToMarkdown` 纯函数与共享 `SOURCE_LABEL`,Stage4Report 网页版式与导出 Markdown 同源;报告页支持一键导出与历史报告降级渲染。
+- 新增金标批次真实闭环验证机制 `gold:run`:对金标场景连跑三次全真运行(强制 `LLM_PROVIDER=gateway` + `TOOL_ADAPTER=real`,不改 `.env`),按 ADR-0001 断言无审批步才自动确认、命中审批步即停,按 ADR-0002 固定全真边界;infra 失败可重试不占名额且透明留痕,能力失败计入批次。
+- 新增批次审计包:`audit/gold-runs/<batch_id>/run-*/` 落裁剪后的报告 md/json、执行日志、模型元数据、来源核验矩阵与评审表单,批次根 `batch.md` 机器填客观计数、P0 通过结论留独立研究员;评审表单判定字段不可由模型代填。
+- 增加金标机制离线自测:评审表单预填与留空、批次计数(infra 不占名额)、失败分类(网关 5xx/超时/限流 vs schema 不过)、审批闸门放行与拦停、审计包裁剪落盘。
+- CONTEXT.md 增补验收术语(金标真实运行 / 批次审计包 / 基础设施失败 / 评审表单),并新增 ADR-0001(gold:run 自动确认闸门)、ADR-0002(坚持全真闭环边界)。
 
 ### 变更
 - 任务执行、恢复和终止改为 PostgreSQL 条件更新；未领取的请求不会调用外部能力。
