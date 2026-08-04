@@ -3,41 +3,33 @@
 ## 修改文件
 
 - `evaluations/skills/report-writer.ts`：失败状态清理 `output.json`、`output.md`、`scorecard.json`；非失败状态清理旧 `error.json`，保证报告产物互斥。
-- `evaluations/skills/run.ts`：增加安全单段 `runId` 校验；resume 仅在 prior 状态为 `failed`/`needs_review` 时禁止完整 pair skip；完整 pair 必须为非空数字 `total_score`、恰好六个固定维度、固定 max/合法 score、每维非空 evidence，且 `total_score` 必须等于六维 score 之和；允许无 prior record 的合法 pair skip；fallback null/空维度及总分不一致 pair 会重跑；`.active.lock` 写入 PID，活动 PID resume 拒绝，死 PID、损坏内容及 PID 前缀夹杂垃圾的锁回收后原子重试，锁在 `finally` 释放。
+- `evaluations/skills/run.ts`：增加安全单段 `runId` 校验；resume 完整 pair 必须具备非空数字 `total_score`、恰好六个固定维度、固定 max/合法 score、每维非空 evidence、总分等于六维 score 之和，并且 persisted verdict 符合 normalize 语义（critical 或总分<60 为 fail；否则总分<80 或 incoming needs_review 为 needs_review；否则 pass）；failed/needs_review prior 仍禁止 skip，无 prior 的合法 pair 可 skip；fallback、总分不一致及 verdict 不一致 pair 均重跑；`.active.lock` 写入 PID，活动 PID resume 拒绝，死 PID/损坏锁回收后原子重试，锁在 `finally` 释放。
 - `evaluations/skills/scorecard.schema.json`：dimension `evidence.minItems = 1`。
 - `evaluations/skills/evaluator.ts`：normalize 阶段拒绝空 evidence，降级为 `needs_review`/空总分 fallback。
 - `evaluations/skills/case-loader.ts`：缺失 `casesDir` 按空 case 集处理并稳定报告 `missing cases: ...`。
-- `tests/skill-evaluation-runner.test.ts`：成功→失败→resume 产物互斥、failed/needs_review prior gate、无 manifest 合法 pair skip、fallback scorecard crash-window、总分与维度和不一致 crash-window、runId traversal、活动 PID 锁、死 PID stale lock、malformed live-PID-prefix 锁回归；合法 fixture 评分卡与维度和一致。
+- `tests/skill-evaluation-runner.test.ts`：覆盖 artifact 互斥、prior 状态门禁、无 manifest 合法 pair、fallback/总分/三类 verdict 不一致 crash-window、合法高分 needs_review、runId traversal、PID 锁 stale/malformed 回收。
 - `tests/skill-evaluator.test.ts`：空 evidence 行为与 schema 拒绝回归。
 - `tests/skill-evaluation-case-loader.test.ts`：缺失目录错误稳定性回归。
 
 ## 测试命令与原始摘要
 
-指定聚焦命令：
-
 ```text
 pnpm exec tsx --test tests/skill-evaluation-runner.test.ts tests/skill-evaluator.test.ts
 ```
 
-最新原始摘要：
-
 ```text
-1..41
-# tests 44
-# pass 44
+1..42
+# tests 45
+# pass 45
 # fail 0
 # cancelled 0
 # skipped 0
 # todo 0
 ```
 
-新增 case-loader 聚焦命令：
-
 ```text
 pnpm exec tsx --test tests/skill-evaluation-case-loader.test.ts
 ```
-
-原始摘要：
 
 ```text
 1..18
@@ -49,18 +41,19 @@ pnpm exec tsx --test tests/skill-evaluation-case-loader.test.ts
 # todo 0
 ```
 
-三文件联合验证最新摘要：`# tests 62`, `# pass 62`, `# fail 0`。
+三文件联合最新摘要：`# tests 63`, `# pass 63`, `# fail 0`。
 
 ## 提交号
 
-- 基础修复提交：`4b7d7e5` (`fix skill evaluation resume and evidence guards`)
-- pair skip/PID stale lock 修复提交：`5c7bf32` (`fix stale evaluation locks and complete pair resume`)
-- 严格 scorecard completeness 与 malformed PID lock 修复提交：`3c63b8f` (`fix resume scorecard completeness and lock parsing`)
-- 总分与维度和一致性修复提交：`75768d6` (`fix resume score total consistency`)
-- 报告更新链：`b7d41a1`、`c76cede`；本次报告内容随最终报告提交更新。
+- 基础修复：`4b7d7e5`
+- pair skip/PID stale lock：`5c7bf32`
+- strict scorecard/malformed PID：`3c63b8f`
+- total-score consistency：`75768d6`
+- verdict consistency：`81a4926`
+- 报告更新链：`b7d41a1`、`c76cede`；本次报告随最终报告提交更新。
 
 ## 剩余风险
 
-- `.active.lock` 对强制终止进程采用 PID 存活检测并可回收死锁；极端 PID 复用场景仍可能暂时误判为活动运行。
-- `runId` 校验针对 `/`、`\\`、`.`、`..`、NUL 与空字符串；未额外限制业务允许字符集合，合法单段名称仍可包含空格或其他普通字符。
-- 本次仅运行评测 runner/evaluator/case-loader 聚焦测试，未运行项目全量测试或 formatter/linter（按任务约束）。
+- 强制终止进程时依赖 PID 存活检测回收锁；极端 PID 复用场景仍可能暂时误判活动运行。
+- `runId` 拒绝空、`.`、`..`、`/`、`\\`、NUL，但未限制普通单段名称的字符集合。
+- 按任务约束未运行项目全量测试、formatter 或 linter。
