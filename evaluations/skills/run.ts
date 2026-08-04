@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { SkillRegistryEntry } from '../../apps/orchestrator-runtime/src/runtime/config-loader.ts';
@@ -67,6 +67,19 @@ function errorMessage(error: unknown): string {
 function assertConcurrency(value: number): asserts value is 1 | 2 | 3 {
   if (!Number.isInteger(value) || value < 1 || value > 3) {
     throw new Error('concurrency must be an integer from 1 to 3');
+  }
+}
+
+function assertRunId(value: string): void {
+  if (
+    value.length === 0 ||
+    value === '.' ||
+    value === '..' ||
+    value.includes('/') ||
+    value.includes('\\') ||
+    value.includes('\u0000')
+  ) {
+    throw new Error('runId must be a single safe path segment');
   }
 }
 
@@ -146,6 +159,7 @@ function isScoreDimension(value: unknown): boolean {
     typeof value.max_score === 'number' &&
     Number.isFinite(value.max_score) &&
     isStringArray(value.evidence) &&
+    value.evidence.length > 0 &&
     isStringArray(value.defects)
   );
 }
@@ -190,6 +204,13 @@ function resumedRecord(
 ): SkillEvaluationRecord | undefined {
   const skillId = loadedCase.data.skill_id;
   const skillDirectory = join(runDirectory, skillId);
+  if (
+    !previous ||
+    previous.status === 'failed' ||
+    previous.status === 'needs_review'
+  ) {
+    return undefined;
+  }
   const output = readJson(join(skillDirectory, 'output.json'));
   const scorecard = readJson(join(skillDirectory, 'scorecard.json'));
   if (!isRecord(output) || !isScorecard(scorecard, skillId)) return undefined;
@@ -239,23 +260,45 @@ function claimRunDirectory(
   runDirectory: string,
   resume: boolean,
   makeDirectory: MakeDirectory,
-): void {
+): () => void {
   makeDirectory(outputRoot, { recursive: true });
   try {
     makeDirectory(runDirectory);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    if (resume) return;
-    throw new Error(
-      `run directory already exists: ${runDirectory}; use --resume or choose a new run ID`,
-    );
+    if (!resume) {
+      throw new Error(
+        `run directory already exists: ${runDirectory}; use --resume or choose a new run ID`,
+      );
+    }
   }
+
+  const lockPath = join(runDirectory, '.active.lock');
+  let descriptor: number;
+  try {
+    descriptor = openSync(lockPath, 'wx');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+      throw new Error(`run is already active: ${runDirectory}; use --resume later`);
+    }
+    throw error;
+  }
+  closeSync(descriptor);
+
+  return () => {
+    try {
+      unlinkSync(lockPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  };
 }
 
 export async function runEvaluationBatch(
   options: EvaluationRunOptions,
   dependencies: EvaluationRunDependencies = {},
 ): Promise<EvaluationManifest> {
+  assertRunId(options.runId);
   assertConcurrency(options.concurrency);
   const { skillLoader, evaluator } = resolveDependencies(dependencies);
   const clock = dependencies.clock ?? (() => new Date());
@@ -263,101 +306,106 @@ export async function runEvaluationBatch(
   const selected = selectedSkills(activeSkills, options.skillId);
   const cases = loadEvaluationCases(activeSkills, options.casesDir);
   const runDirectory = join(options.outputRoot, options.runId);
-  claimRunDirectory(
+  const releaseRunLock = claimRunDirectory(
     options.outputRoot,
     runDirectory,
     options.resume,
     dependencies.mkdirSync ?? mkdirSync,
   );
-  const priorRecords = options.resume
-    ? previousRecords(runDirectory)
-    : new Map<string, SkillEvaluationRecord>();
-  const recordSlots: Array<SkillEvaluationRecord | undefined> = selected.map(
-    ({ id }) =>
-      options.resume
-        ? resumedRecord(runDirectory, cases.get(id)!, priorRecords.get(id))
-        : undefined,
-  );
-  const startedAt = clock().toISOString();
-  const provider = dependencies.provider ?? process.env.LLM_PROVIDER ?? 'injected';
 
-  const currentRecords = (): SkillEvaluationRecord[] =>
-    recordSlots.filter(
-      (record): record is SkillEvaluationRecord => record !== undefined,
+  try {
+    const priorRecords = options.resume
+      ? previousRecords(runDirectory)
+      : new Map<string, SkillEvaluationRecord>();
+    const recordSlots: Array<SkillEvaluationRecord | undefined> = selected.map(
+      ({ id }) =>
+        options.resume
+          ? resumedRecord(runDirectory, cases.get(id)!, priorRecords.get(id))
+          : undefined,
     );
-  const buildManifest = (
-    status: EvaluationManifest['status'],
-    completedAt?: string,
-  ): EvaluationManifest => {
-    const records = currentRecords();
-    const modelRecord = records.find(({ modelName, modelVersion }) =>
-      Boolean(modelName || modelVersion),
-    );
-    return {
-      runId: options.runId,
-      status,
-      startedAt,
-      ...(completedAt ? { completedAt } : {}),
-      provider,
-      ...(modelRecord?.modelName ? { modelName: modelRecord.modelName } : {}),
-      ...(modelRecord?.modelVersion
-        ? { modelVersion: modelRecord.modelVersion }
-        : {}),
-      activeSkillCount: selected.length,
-      activeSkillIds: selected.map(({ id }) => id),
-      records,
-      counts: counts(records),
+    const startedAt = clock().toISOString();
+    const provider = dependencies.provider ?? process.env.LLM_PROVIDER ?? 'injected';
+
+    const currentRecords = (): SkillEvaluationRecord[] =>
+      recordSlots.filter(
+        (record): record is SkillEvaluationRecord => record !== undefined,
+      );
+    const buildManifest = (
+      status: EvaluationManifest['status'],
+      completedAt?: string,
+    ): EvaluationManifest => {
+      const records = currentRecords();
+      const modelRecord = records.find(({ modelName, modelVersion }) =>
+        Boolean(modelName || modelVersion),
+      );
+      return {
+        runId: options.runId,
+        status,
+        startedAt,
+        ...(completedAt ? { completedAt } : {}),
+        provider,
+        ...(modelRecord?.modelName ? { modelName: modelRecord.modelName } : {}),
+        ...(modelRecord?.modelVersion
+          ? { modelVersion: modelRecord.modelVersion }
+          : {}),
+        activeSkillCount: selected.length,
+        activeSkillIds: selected.map(({ id }) => id),
+        records,
+        counts: counts(records),
+      };
     };
-  };
-  const persistRunningManifest = (): void => {
-    writeManifest(runDirectory, buildManifest('running'));
-  };
+    const persistRunningManifest = (): void => {
+      writeManifest(runDirectory, buildManifest('running'));
+    };
 
-  persistRunningManifest();
-  let nextIndex = 0;
-  const worker = async (): Promise<void> => {
-    while (true) {
-      const index = nextIndex;
-      nextIndex += 1;
-      if (index >= selected.length) return;
+    persistRunningManifest();
+    let nextIndex = 0;
+    const worker = async (): Promise<void> => {
+      while (true) {
+        const index = nextIndex;
+        nextIndex += 1;
+        if (index >= selected.length) return;
 
-      const skill = selected[index];
-      const loadedCase = cases.get(skill.id)!;
-      const skillDirectory = join(runDirectory, skill.id);
-      writeInputArtifact(skillDirectory, loadedCase);
+        const skill = selected[index];
+        const loadedCase = cases.get(skill.id)!;
+        const skillDirectory = join(runDirectory, skill.id);
+        writeInputArtifact(skillDirectory, loadedCase);
 
-      if (recordSlots[index]?.status === 'skipped') continue;
+        if (recordSlots[index]?.status === 'skipped') continue;
 
-      const evaluationStartedAt = clock().getTime();
-      let record: SkillEvaluationRecord;
-      try {
-        record = await evaluator.evaluate(loadedCase);
-      } catch (error) {
-        record = failedRecord(
-          loadedCase,
-          error,
-          Math.max(0, clock().getTime() - evaluationStartedAt),
-        );
+        const evaluationStartedAt = clock().getTime();
+        let record: SkillEvaluationRecord;
+        try {
+          record = await evaluator.evaluate(loadedCase);
+        } catch (error) {
+          record = failedRecord(
+            loadedCase,
+            error,
+            Math.max(0, clock().getTime() - evaluationStartedAt),
+          );
+        }
+        writeEvaluationArtifacts(skillDirectory, record);
+        recordSlots[index] = record;
+        persistRunningManifest();
       }
-      writeEvaluationArtifacts(skillDirectory, record);
-      recordSlots[index] = record;
-      persistRunningManifest();
-    }
-  };
+    };
 
-  const workerCount = Math.min(options.concurrency, selected.length);
-  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+    const workerCount = Math.min(options.concurrency, selected.length);
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
-  const records = currentRecords();
-  const finalStatus: EvaluationManifest['status'] = records.some(
-    ({ status }) => status === 'failed',
-  )
-    ? 'completed_with_failures'
-    : 'completed';
-  const manifest = buildManifest(finalStatus, clock().toISOString());
-  writeSummaries(runDirectory, records);
-  writeManifest(runDirectory, manifest);
-  return manifest;
+    const records = currentRecords();
+    const finalStatus: EvaluationManifest['status'] = records.some(
+      ({ status }) => status === 'failed',
+    )
+      ? 'completed_with_failures'
+      : 'completed';
+    const manifest = buildManifest(finalStatus, clock().toISOString());
+    writeSummaries(runDirectory, records);
+    writeManifest(runDirectory, manifest);
+    return manifest;
+  } finally {
+    releaseRunLock();
+  }
 }
 
 function defaultRunId(now: Date): string {

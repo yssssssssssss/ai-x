@@ -1,4 +1,4 @@
-import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type {
   EvaluationManifest,
@@ -23,6 +23,14 @@ export function writeJsonAtomic(path: string, value: unknown): void {
   writeAtomic(path, prettyJson(value));
 }
 
+function removeArtifact(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+}
+
 export function writeManifest(
   runDirectory: string,
   manifest: EvaluationManifest,
@@ -41,10 +49,16 @@ export function writeEvaluationArtifacts(
   skillDirectory: string,
   record: SkillEvaluationRecord,
 ): void {
+  const errorPath = join(skillDirectory, 'error.json');
   if (record.status === 'failed') {
-    writeJsonAtomic(join(skillDirectory, 'error.json'), record);
+    for (const filename of ['output.json', 'output.md', 'scorecard.json']) {
+      removeArtifact(join(skillDirectory, filename));
+    }
+    writeJsonAtomic(errorPath, record);
     return;
   }
+
+  removeArtifact(errorPath);
 
   if (record.output !== undefined) {
     writeJsonAtomic(join(skillDirectory, 'output.json'), record.output);

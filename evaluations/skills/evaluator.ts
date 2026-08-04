@@ -60,6 +60,9 @@ function normalizeScorecard(
       throw new Error(`duplicate score dimension: ${dimension.id}`);
     }
     seen.add(dimension.id);
+    if (dimension.evidence.length === 0) {
+      throw new Error(`score dimension evidence must not be empty: ${dimension.id}`);
+    }
     if (
       !Number.isFinite(dimension.score) ||
       !Number.isFinite(dimension.max_score) ||

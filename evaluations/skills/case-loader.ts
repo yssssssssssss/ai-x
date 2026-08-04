@@ -63,10 +63,16 @@ export function loadEvaluationCases(
   activeSkills: SkillRegistryEntry[],
   casesDir = join(getConfigRoot(), 'evaluations', 'skills', 'cases'),
 ): Map<string, LoadedEvaluationCase> {
-  const filenames = readdirSync(casesDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && extname(entry.name) === '.json')
-    .map(({ name }) => name)
-    .sort((left, right) => left.localeCompare(right));
+  let filenames: string[];
+  try {
+    filenames = readdirSync(casesDir, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && extname(entry.name) === '.json')
+      .map(({ name }) => name)
+      .sort((left, right) => left.localeCompare(right));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    filenames = [];
+  }
   const parsedCases: Array<{
     filename: string;
     data: SkillEvaluationCase;

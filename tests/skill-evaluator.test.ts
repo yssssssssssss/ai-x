@@ -433,6 +433,24 @@ test('rejects missing, duplicate, or unknown scoring dimensions instead of norma
     });
   }
 });
+test('degrades a scorecard with empty dimension evidence to needs_review', async () => {
+  const invalid = scorecard({}, {
+    dimensions: scorecard().dimensions.map((dimension, index) =>
+      index === 0 ? { ...dimension, evidence: [] } : dimension,
+    ),
+  });
+  const { evaluator } = makeEvaluator({
+    llm: new FakeLLM([{ answer: 'output' }, invalid]),
+  });
+
+  const record = await evaluator.evaluate(loadedCase);
+
+  assert.equal(record.status, 'needs_review');
+  assert.equal(record.errorStage, 'scoring');
+  assert.equal(record.scorecard?.total_score, null);
+  assert.deepEqual(record.output, { answer: 'output' });
+});
+
 
 test('returns a generation failure and never scores when generation throws', async () => {
   const llm = new FakeLLM([new Error('generation unavailable')]);
@@ -482,6 +500,15 @@ test('scorecard schema enforces every required field and declared value constrai
     validator.validateFileOrThrow(schemaPath, {
       ...valid,
       total_score: null,
+    }),
+  );
+  assert.throws(() =>
+    validator.validateFileOrThrow(schemaPath, {
+      ...valid,
+      dimensions: [
+        { ...valid.dimensions[0], evidence: [] },
+        ...valid.dimensions.slice(1),
+      ],
     }),
   );
   const requiredFields: Array<keyof SkillScorecard> = [

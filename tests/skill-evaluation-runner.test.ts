@@ -255,6 +255,62 @@ test('records one failure, continues later Skills, and completes with failures',
   assert.equal(existsSync(join(runDir, 'gamma', 'output.json')), true);
   assert.match(readFileSync(join(runDir, 'summary.md'), 'utf8'), /beta/);
 });
+test('cleans mutually exclusive artifacts across success failure and resume retry', async () => {
+  const setup = fixture(['alpha']);
+  const options = {
+    runId: 'transition-run',
+    outputRoot: setup.outputRoot,
+    casesDir: setup.casesDir,
+    concurrency: 1 as const,
+  };
+
+  await runEvaluationBatch(
+    { ...options, resume: false },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: { evaluate: async (loadedCase) => successRecord(loadedCase) },
+    },
+  );
+  const skillDir = join(setup.outputRoot, options.runId, 'alpha');
+  writeFileSync(join(skillDir, 'scorecard.json'), '{');
+
+  const failed = await runEvaluationBatch(
+    { ...options, resume: true },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: {
+        evaluate: async () => {
+          throw new Error('retry failed');
+        },
+      },
+    },
+  );
+  assert.equal(failed.records[0].status, 'failed');
+  assert.equal(existsSync(join(skillDir, 'error.json')), true);
+  for (const filename of ['output.json', 'output.md', 'scorecard.json']) {
+    assert.equal(existsSync(join(skillDir, filename)), false, filename);
+  }
+
+  writeFileSync(join(skillDir, 'output.json'), JSON.stringify({ answer: 'stale' }));
+  writeFileSync(join(skillDir, 'scorecard.json'), JSON.stringify(scorecard('alpha')));
+  let retryCalls = 0;
+  const resumed = await runEvaluationBatch(
+    { ...options, resume: true },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: {
+        evaluate: async (loadedCase) => {
+          retryCalls += 1;
+          return successRecord(loadedCase);
+        },
+      },
+    },
+  );
+  assert.equal(retryCalls, 1);
+  assert.equal(resumed.records[0].status, 'succeeded');
+  assert.equal(existsSync(join(skillDir, 'error.json')), false);
+});
+
 
 test('resume skips only a complete parseable result and retains score and model metadata', async () => {
   const setup = fixture(['alpha']);
@@ -309,6 +365,43 @@ test('resume skips only a complete parseable result and retains score and model 
   assert.equal(manifest.records[0].modelName, 'resume-model');
   assert.equal(manifest.records[0].modelVersion, 'resume-v2');
   assert.equal(manifest.counts.skipped, 1);
+});
+
+test('resume reruns complete artifacts from a prior needs_review record', async () => {
+  const setup = fixture(['alpha']);
+  const runDir = join(setup.outputRoot, 'needs-review-run');
+  const skillDir = join(runDir, 'alpha');
+  mkdirSync(skillDir, { recursive: true });
+  writeFileSync(join(skillDir, 'output.json'), JSON.stringify({ answer: 'stale' }));
+  writeFileSync(join(skillDir, 'scorecard.json'), JSON.stringify(scorecard('alpha')));
+  const previousRecord = successRecord(
+    { data: evaluationCase('alpha'), sourcePath: '', caseHash: 'sha256:case' },
+    { status: 'needs_review' },
+  );
+  writeFileSync(join(runDir, 'manifest.json'), JSON.stringify({ records: [previousRecord] }));
+  let evaluateCalls = 0;
+
+  const resumed = await runEvaluationBatch(
+    {
+      runId: 'needs-review-run',
+      outputRoot: setup.outputRoot,
+      casesDir: setup.casesDir,
+      concurrency: 1,
+      resume: true,
+    },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: {
+        evaluate: async (loadedCase) => {
+          evaluateCalls += 1;
+          return successRecord(loadedCase);
+        },
+      },
+    },
+  );
+
+  assert.equal(evaluateCalls, 1);
+  assert.equal(resumed.records[0].status, 'succeeded');
 });
 
 test('resume reruns incomplete and corrupt result pairs', async () => {
@@ -557,6 +650,31 @@ test('non-resume rejects an existing run before stale success artifacts can be r
   assert.equal(resumeCalls, 0);
   assert.equal(resumed.records[0].status, 'skipped');
 });
+test('rejects traversal run IDs before writing outside the output root', async () => {
+  const setup = fixture(['alpha']);
+  const outsideManifest = join(setup.outputRoot, '..', 'outside', 'manifest.json');
+
+  await assert.rejects(
+    runEvaluationBatch(
+      {
+        runId: '../outside',
+        outputRoot: setup.outputRoot,
+        casesDir: setup.casesDir,
+        concurrency: 1,
+        resume: false,
+      },
+      {
+        skillLoader: setup.skillLoader,
+        evaluator: {
+          evaluate: async (loadedCase) => successRecord(loadedCase),
+        },
+      },
+    ),
+    /runId must be a single safe path segment/,
+  );
+  assert.equal(existsSync(outsideManifest), false);
+});
+
 
 test('resume atomically creates a missing run directory and evaluates every Skill', async () => {
   const setup = fixture(['alpha', 'beta']);
@@ -633,6 +751,71 @@ test('maps an exclusive claim EEXIST race without entering the evaluator', async
   ]);
   assert.equal(evaluateCalls, 0);
   assert.equal(existsSync(runDir), false);
+});
+
+test('rejects resume of an active running manifest without overwriting it', async () => {
+  const setup = fixture(['alpha']);
+  const runDir = join(setup.outputRoot, 'active-run');
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(join(runDir, '.active.lock'), 'active');
+  const manifestBytes = JSON.stringify({ status: 'running', records: [] });
+  writeFileSync(join(runDir, 'manifest.json'), manifestBytes);
+  let evaluateCalls = 0;
+
+  await assert.rejects(
+    runEvaluationBatch(
+      {
+        runId: 'active-run',
+        outputRoot: setup.outputRoot,
+        casesDir: setup.casesDir,
+        concurrency: 1,
+        resume: true,
+      },
+      {
+        skillLoader: setup.skillLoader,
+        evaluator: {
+          evaluate: async (loadedCase) => {
+            evaluateCalls += 1;
+            return successRecord(loadedCase);
+          },
+        },
+      },
+    ),
+    /run is already active.*--resume later/,
+  );
+  assert.equal(evaluateCalls, 0);
+  assert.equal(readFileSync(join(runDir, 'manifest.json'), 'utf8'), manifestBytes);
+});
+
+test('resumes a stale running manifest when no active lock remains', async () => {
+  const setup = fixture(['alpha']);
+  const runDir = join(setup.outputRoot, 'stale-running');
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(join(runDir, 'manifest.json'), JSON.stringify({ status: 'running', records: [] }));
+  let evaluateCalls = 0;
+
+  const resumed = await runEvaluationBatch(
+    {
+      runId: 'stale-running',
+      outputRoot: setup.outputRoot,
+      casesDir: setup.casesDir,
+      concurrency: 1,
+      resume: true,
+    },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: {
+        evaluate: async (loadedCase) => {
+          evaluateCalls += 1;
+          return successRecord(loadedCase);
+        },
+      },
+    },
+  );
+
+  assert.equal(evaluateCalls, 1);
+  assert.equal(resumed.status, 'completed');
+  assert.equal(existsSync(join(runDir, '.active.lock')), false);
 });
 
 test('keeps manifest running when summary publication fails', async () => {

@@ -87,6 +87,15 @@ test('reports every missing active Skill case deterministically', () => {
   );
 });
 
+test('reports missing cases deterministically when casesDir does not exist', () => {
+  const casesDir = join(makeCasesDir(), 'missing');
+
+  assert.throws(
+    () => loadEvaluationCases(active, casesDir),
+    new Error('missing cases: alpha, beta'),
+  );
+});
+
 test('reports every unknown case deterministically', () => {
   const casesDir = makeCasesDir();
   writeCase(casesDir, 'alpha.json', validCase('alpha'));
