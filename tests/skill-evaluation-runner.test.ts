@@ -64,13 +64,20 @@ function scorecard(
     skill_id: skillId,
     total_score: totalScore,
     verdict: totalScore >= 80 ? 'pass' : 'needs_review',
-    dimensions: Object.entries(dimensionMaxScores).map(([id, max_score]) => ({
-      id,
-      score: max_score,
-      max_score,
-      evidence: [`output quote for ${id}`],
-      defects: [],
-    })),
+    dimensions: (() => {
+      let remaining = totalScore;
+      return Object.entries(dimensionMaxScores).map(([id, max_score]) => {
+        const score = Math.min(max_score, Math.max(0, remaining));
+        remaining -= score;
+        return {
+          id,
+          score,
+          max_score,
+          evidence: [`output quote for ${id}`],
+          defects: [],
+        };
+      });
+    })(),
     critical_defects: [],
     review_notes: [],
     ...overrides,
@@ -434,6 +441,44 @@ test('resume reruns output paired with a fallback scorecard and no prior record'
   const resumed = await runEvaluationBatch(
     {
       runId: 'fallback-pair',
+      outputRoot: setup.outputRoot,
+      casesDir: setup.casesDir,
+      concurrency: 1,
+      resume: true,
+    },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: {
+        evaluate: async (loadedCase) => {
+          evaluateCalls += 1;
+          return successRecord(loadedCase);
+        },
+      },
+    },
+  );
+
+  assert.equal(evaluateCalls, 1);
+  assert.equal(resumed.records[0].status, 'succeeded');
+});
+
+test('resume reruns a scorecard whose total does not equal dimension sum', async () => {
+  const setup = fixture(['alpha']);
+  const runDir = join(setup.outputRoot, 'inconsistent-total');
+  const skillDir = join(runDir, 'alpha');
+  mkdirSync(skillDir, { recursive: true });
+  const inconsistent = scorecard('alpha', 100, {
+    dimensions: scorecard('alpha').dimensions.map((dimension) => ({
+      ...dimension,
+      score: 0,
+    })),
+  });
+  writeFileSync(join(skillDir, 'output.json'), JSON.stringify({ answer: 'generated' }));
+  writeFileSync(join(skillDir, 'scorecard.json'), JSON.stringify(inconsistent));
+  let evaluateCalls = 0;
+
+  const resumed = await runEvaluationBatch(
+    {
+      runId: 'inconsistent-total',
       outputRoot: setup.outputRoot,
       casesDir: setup.casesDir,
       concurrency: 1,

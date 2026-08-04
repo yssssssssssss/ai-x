@@ -210,7 +210,8 @@ function isScorecard(value: unknown, skillId: string): value is SkillScorecard {
   }
 
   const seen = new Set<string>();
-  return value.dimensions.every((dimension) => {
+  let dimensionTotal = 0;
+  for (const dimension of value.dimensions) {
     if (!isScoreDimension(dimension) || seen.has(dimension.id)) return false;
     const expectedMax =
       RESUME_DIMENSION_MAX_SCORES[
@@ -225,8 +226,9 @@ function isScorecard(value: unknown, skillId: string): value is SkillScorecard {
       return false;
     }
     seen.add(dimension.id);
-    return true;
-  });
+    dimensionTotal += dimension.score;
+  }
+  return dimensionTotal === value.total_score;
 }
 
 function previousRecords(runDirectory: string): Map<string, SkillEvaluationRecord> {
