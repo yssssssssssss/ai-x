@@ -304,6 +304,7 @@ function prepareKbRun(
 function loadKbForSkill(
   prepared: PreparedKbRun,
   skillId: string,
+  loadedCase: LoadedEvaluationCase,
   dependencies: EvaluationKbDependencies | undefined,
 ): KnowledgeRetrievalResult {
   const mapping = prepared.mappings.get(skillId);
@@ -324,6 +325,7 @@ function loadKbForSkill(
     prepared.snapshot,
     prepared.index,
     mapping,
+    { query: loadedCase.data.research_goal },
   );
 }
 
@@ -676,7 +678,7 @@ export async function runEvaluationBatch(
         let retrieval: KnowledgeRetrievalResult | undefined;
         try {
           retrieval = preparedKb
-            ? loadKbForSkill(preparedKb, skill.id, dependencies.kb)
+            ? loadKbForSkill(preparedKb, skill.id, loadedCase, dependencies.kb)
             : undefined;
           record = await evaluator.evaluate(
             loadedCase,

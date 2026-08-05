@@ -258,12 +258,17 @@ function kbDependencies(skillIds: string[], mode: 'gold' | 'live') {
       } satisfies GoldSourceSelection,
     ]),
   );
+  const calls: Array<{ skillId: string; query?: string }> = [];
   return {
+    calls,
     loadKnowledgeSnapshot: () => ({ snapshot: kbSnapshot(), index: kbIndex(skillIds), warnings: [] }),
     loadSkillKnowledgeMappings: () => mappings,
     loadGoldSourceSelections: () => goldSelections,
     loadGoldKnowledgeContext: (skillId: string) => kbResult(skillId, mode),
-    loadLiveKnowledgeContext: (skillId: string) => kbResult(skillId, mode),
+    loadLiveKnowledgeContext: (skillId: string, _snapshot: unknown, _index: unknown, _mapping: unknown, options?: { query?: string }) => {
+      calls.push({ skillId, query: options?.query });
+      return kbResult(skillId, mode, { record: { ...kbResult(skillId, mode).record, query: options?.query } });
+    },
   };
 }
 
@@ -337,6 +342,7 @@ test('gold KB mode writes KB artifacts and manifest metadata', async () => {
 
 test('live KB mode writes candidate and selected source IDs', async () => {
   const setup = fixture(['alpha']);
+  const kb = kbDependencies(['alpha'], 'live');
   await runEvaluationBatch(
     {
       runId: 'live-run',
@@ -350,11 +356,12 @@ test('live KB mode writes candidate and selected source IDs', async () => {
     {
       skillLoader: setup.skillLoader,
       evaluator: {
-        evaluate: async (loadedCase, kb) => successRecord(loadedCase, { kbAssessment: kbAssessment(loadedCase.data.skill_id, kb!.knowledgeContext.mode) }),
+        evaluate: async (loadedCase, kbArg) => successRecord(loadedCase, { kbAssessment: kbAssessment(loadedCase.data.skill_id, kbArg!.knowledgeContext.mode) }),
       },
-      kb: kbDependencies(['alpha'], 'live'),
+      kb,
     },
   );
+  assert.deepEqual(kb.calls, [{ skillId: 'alpha', query: 'Evaluate alpha' }]);
 
   const retrieval = readJson<RetrievalRecord>(join(setup.outputRoot, 'live-run', 'alpha', 'retrieval.json'));
   assert.deepEqual(retrieval.candidate_source_ids, ['alpha_candidate', 'alpha_source']);
