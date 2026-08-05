@@ -3,7 +3,9 @@
     "skill_id": "digital-human-competitive-analysis",
     "mode": "not_applicable",
     "selected_source_ids": [],
-    "unresolved_items": []
+    "unresolved_items": [
+      "methods/competitive-research-method.md (missing; native Skill references it)"
+    ]
   },
   {
     "skill_id": "competitive-web-research",
@@ -52,7 +54,7 @@
     "selected_source_ids": [
       "toolbox_analysis_experience_metrics_heart",
       "toolbox_analysis_longitudinal_benchmark_tracking",
-      "assets/scales/standardized-ux-scales.md"
+      "path:assets/scales/standardized-ux-scales.md"
     ],
     "unresolved_items": []
   },
@@ -105,7 +107,8 @@
     "selected_source_ids": [
       "toolbox_collection_interview_guide_design",
       "model_orid",
-      "toolbox_collection_respondent_bias"
+      "toolbox_collection_respondent_bias",
+      "toolbox_collection_interviews"
     ],
     "unresolved_items": [
       "assets/question-bank/interview/<主题>.md (dynamic topic path)",
@@ -119,7 +122,8 @@
       "toolbox_collection_persona",
       "toolbox_analysis_affinity_diagram",
       "toolbox_analysis_qualitative_insight_frameworks",
-      "model_user_insight"
+      "model_user_insight",
+      "toolbox_collection_interviews"
     ],
     "unresolved_items": []
   },
@@ -128,7 +132,8 @@
     "mode": "gold",
     "selected_source_ids": [
       "standard_requirement_elicitation",
-      "standard_research_project_workflow"
+      "standard_research_project_workflow",
+      "standard_sampling"
     ],
     "unresolved_items": [
       "methods/scenarios/<业务线>/... (dynamic business-line path)"
@@ -138,8 +143,7 @@
     "skill_id": "generate-survey",
     "mode": "gold",
     "selected_source_ids": [
-      "standard_questionnaire_design",
-      "assets/scales/standardized-ux-scales.md"
+      "standard_questionnaire_design"
     ],
     "unresolved_items": []
   },
@@ -148,7 +152,7 @@
     "mode": "gold",
     "selected_source_ids": [
       "toolbox_collection_usability_testing",
-      "assets/scales/standardized-ux-scales.md",
+      "path:assets/scales/standardized-ux-scales.md",
       "standard_sampling",
       "toolbox_collection_participant_recruitment",
       "toolbox_collection_respondent_bias"
@@ -161,7 +165,9 @@
     "skill_id": "issue-prioritization",
     "mode": "gold",
     "selected_source_ids": [
-      "toolbox_analysis_issue_prioritization"
+      "toolbox_analysis_issue_prioritization",
+      "path:assets/playbooks/priority-frameworks-overview.md",
+      "toolbox_analysis_priority_quadrant_method"
     ],
     "unresolved_items": []
   },
@@ -182,7 +188,8 @@
     "selected_source_ids": [
       "toolbox_collection_experience_map",
       "toolbox_analysis_qualitative_insight_frameworks",
-      "model_user_insight"
+      "model_user_insight",
+      "toolbox_collection_interviews"
     ],
     "unresolved_items": []
   },
@@ -200,6 +207,8 @@
     "skill_id": "structure-interview-transcript",
     "mode": "gold",
     "selected_source_ids": [
+      "toolbox_collection_interview_guide_design",
+      "toolbox_analysis_affinity_diagram",
       "model_orid"
     ],
     "unresolved_items": []

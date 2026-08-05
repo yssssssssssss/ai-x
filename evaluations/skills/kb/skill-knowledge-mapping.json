@@ -7,7 +7,9 @@
     "optional_sources": [],
     "retrieval_tags": [],
     "source_status_policy": "not_applicable",
-    "unresolved_items": []
+    "unresolved_items": [
+      "methods/competitive-research-method.md (missing; native Skill references it)"
+    ]
   },
   {
     "skill_id": "competitive-web-research",
@@ -632,11 +634,6 @@
         "path": "methods/standards/questionnaire-design.md",
         "role": "standard",
         "status": "draft"
-      },
-      {
-        "path": "assets/scales/standardized-ux-scales.md",
-        "role": "asset",
-        "status": "draft"
       }
     ],
     "conditional_sources": [
@@ -657,6 +654,12 @@
         "role": "method",
         "status": "draft",
         "trigger": "when no validated scale fits"
+      },
+      {
+        "path": "assets/scales/standardized-ux-scales.md",
+        "role": "asset",
+        "status": "draft",
+        "trigger": "when the case requests a validated standard scale"
       }
     ],
     "optional_sources": [
@@ -981,6 +984,16 @@
     "kb_mode": "required",
     "required_sources": [
       {
+        "path": "methods/toolbox/collection/interview-guide-design.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/analysis/affinity-diagram.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
         "path": "models/orid.md",
         "role": "one_of",
         "status": "draft",
@@ -993,20 +1006,7 @@
         "trigger": "select one transcript-structuring lens"
       }
     ],
-    "conditional_sources": [
-      {
-        "path": "methods/toolbox/collection/interview-guide-design.md",
-        "role": "method",
-        "status": "draft",
-        "trigger": "when organizing transcript structure"
-      },
-      {
-        "path": "methods/toolbox/analysis/affinity-diagram.md",
-        "role": "method",
-        "status": "draft",
-        "trigger": "when clustering findings"
-      }
-    ],
+    "conditional_sources": [],
     "optional_sources": [
       {
         "path": "methods/toolbox/collection/respondent-bias.md",

@@ -25,7 +25,7 @@ test('preserves source role, status policy, one-of semantics, and unresolved pat
   assert.ok(survey.required_sources.every((source) => source.role));
   const transcript = mappings.get('structure-interview-transcript')!;
   assert.ok(transcript.required_sources.some((source) => source.role === 'one_of'));
-  assert.deepEqual(transcript.required_sources.map((source) => source.path), ['models/orid.md', 'methods/toolbox/analysis/qualitative-insight-frameworks.md']);
+  assert.deepEqual(transcript.required_sources.map((source) => source.path), ['methods/toolbox/collection/interview-guide-design.md', 'methods/toolbox/analysis/affinity-diagram.md', 'models/orid.md', 'methods/toolbox/analysis/qualitative-insight-frameworks.md']);
   const competitive = mappings.get('competitive-analysis')!;
   assert.ok(competitive.unresolved_items.some((item) => item.includes('models/aarrr.md')));
   assert.ok(mappings.get('conversion-funnel-analysis')!.unresolved_items.some((item) => item.includes('models/fogg-behavior-model.md')));
@@ -53,5 +53,33 @@ test('gold selections cover every Skill and keep native selections empty', () =>
   assert.deepEqual(selections.get('competitive-web-research')?.selected_source_ids, []);
   assert.equal(selections.get('competitive-web-research')?.mode, 'not_applicable');
   assert.ok(selections.get('generate-survey')?.selected_source_ids.length);
-  assert.deepEqual(selections.get('structure-interview-transcript')?.selected_source_ids, ['model_orid']);
+  assert.deepEqual(selections.get('structure-interview-transcript')?.selected_source_ids, ['toolbox_collection_interview_guide_design', 'toolbox_analysis_affinity_diagram', 'model_orid']);
+});
+
+test('gold selections preserve unresolved items and current case triggers', () => {
+  const activeSkills = loadSkillRegistry().skills.filter((skill) => skill.status === 'active');
+  const mappings = loadSkillKnowledgeMappings(activeSkills);
+  const selections = loadGoldSourceSelections(activeSkills);
+  for (const [skillId, mapping] of mappings) {
+    assert.deepEqual(selections.get(skillId)?.unresolved_items, mapping.unresolved_items);
+  }
+  assert.ok(selections.get('generate-interview-guide')?.selected_source_ids.includes('toolbox_collection_interviews'));
+  assert.ok(selections.get('generate-persona')?.selected_source_ids.includes('toolbox_collection_interviews'));
+  assert.ok(selections.get('generate-research-plan')?.selected_source_ids.includes('standard_sampling'));
+  assert.ok(selections.get('issue-prioritization')?.selected_source_ids.includes('path:assets/playbooks/priority-frameworks-overview.md'));
+  assert.ok(selections.get('issue-prioritization')?.selected_source_ids.includes('toolbox_analysis_priority_quadrant_method'));
+  assert.ok(selections.get('journey-map')?.selected_source_ids.includes('toolbox_collection_interviews'));
+  assert.ok(!selections.get('generate-survey')?.selected_source_ids.includes('path:assets/scales/standardized-ux-scales.md'));
+  assert.ok(mappings.get('digital-human-competitive-analysis')?.unresolved_items.some((item) => item.includes('competitive-research-method.md')));
+});
+
+test('rejects duplicate and unresolvable gold source selections', () => {
+  const activeSkills = loadSkillRegistry().skills.filter((skill) => skill.status === 'active');
+  const dir = mkdtempSync(join('/tmp', 'kb-gold-'));
+  const selections = JSON.parse(readFileSync(join(process.cwd(), 'evaluations/skills/kb/gold-source-selections.json'), 'utf8')) as unknown[];
+  writeFileSync(join(dir, 'duplicate.json'), JSON.stringify([...selections, selections[0]]));
+  assert.throws(() => loadGoldSourceSelections(activeSkills, join(dir, 'duplicate.json')), /duplicate gold selection/);
+  const invalid = (selections as Array<Record<string, unknown>>).map((selection) => ({ ...selection, selected_source_ids: selection.skill_id === 'generate-survey' ? ['ghost-source'] : selection.selected_source_ids }));
+  writeFileSync(join(dir, 'invalid.json'), JSON.stringify(invalid));
+  assert.throws(() => loadGoldSourceSelections(activeSkills, join(dir, 'invalid.json')), /unresolvable gold source ID/);
 });

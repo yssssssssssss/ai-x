@@ -56,3 +56,19 @@ test('loads an existing snapshot and index map deterministically', () => {
   assert.equal(result.index.get('model_sample')?.source_path, 'models/sample.md');
   assert.equal(result.snapshot.index_path, data.index);
 });
+
+test('catalogs non-indexed assets with canonical path source IDs', () => {
+  const result = buildKnowledgeSnapshot();
+  assert.equal(result.index.get('path:assets/scales/standardized-ux-scales.md')?.source_path, 'assets/scales/standardized-ux-scales.md');
+});
+
+test('rejects duplicate index IDs and source paths escaping the KB root', () => {
+  const data = fixture();
+  writeFileSync(data.index, JSON.stringify([
+    { id: 'model_sample', source_path: 'models/sample.md', content_hash: 'sha256:x', status: 'draft' },
+    { id: 'model_sample', source_path: 'models/sample.md', content_hash: 'sha256:y', status: 'draft' },
+  ]));
+  assert.throws(() => buildKnowledgeSnapshot(data.index, data.kb), /duplicate knowledge index id/);
+  writeFileSync(data.index, JSON.stringify([{ id: 'escape', source_path: '../outside.md', content_hash: 'sha256:x', status: 'draft' }]));
+  assert.throws(() => buildKnowledgeSnapshot(data.index, data.kb), /escapes KB root/);
+});
