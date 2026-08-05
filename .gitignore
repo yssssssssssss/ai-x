@@ -17,6 +17,10 @@ apps/web/dist/
 run-workspaces/*
 !run-workspaces/README.md
 
+# 金标批次审计包:生成物(报告/执行日志/评审表单),不入库;独立研究员本地填写评审后另行归档
+audit/gold-runs/*
+!audit/gold-runs/README.md
+
 # 集中管理的独立工具项目(external-tools/):只提交源码,排除依赖/构建产物/env/缓存
 external-tools/**/node_modules/
 external-tools/**/.venv/

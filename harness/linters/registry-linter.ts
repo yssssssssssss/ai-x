@@ -70,6 +70,9 @@ function lintTools(issues: LintIssue[]): void {
         issues.push({ level: 'error', target: tgt, message: `active tool 缺必填字段 "${String(f)}"` });
       }
     }
+    if (t.tier !== 'core' && t.tier !== 'optional') {
+      issues.push({ level: 'error', target: tgt, message: 'active tool 的 tier 必须是 core|optional' });
+    }
     if (t.path && !fileExists(t.path)) {
       issues.push({ level: 'error', target: tgt, message: `path 不存在: ${t.path}` });
       continue; // 读不到 manifest,后续 approver 校验跳过

@@ -64,6 +64,11 @@ export interface ToolRegistryEntry {
   auth_required: boolean;
   risk_level: 'low' | 'medium' | 'high';
   status: 'draft' | 'active' | 'deprecated';
+  // 可用性层级(与 decision-node 同词汇):
+  //   core     = 平台托管、常在的能力(公开网页检索 o2/tavily),失败按 infra 处理、可重试。
+  //   optional = 依赖外部后端的增强能力(截图库/labs),缺失不应阻断报告——规划不得作唯一证据,
+  //              金标运行遇其失败自动跳过成缺口。缺省视为 optional(增强,保守不阻断)。
+  tier?: 'core' | 'optional';
 }
 
 export interface ToolManifest {

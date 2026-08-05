@@ -84,7 +84,7 @@ export class RoutedPlanner implements PlanStrategy {
     const toolIds = activeTools.map((t) => t.id);
     const toolCtx = activeTools.map((t) => {
       const manifest = loadToolManifest(t.path);
-      return { id: t.id, name: t.name, input_schema: loadToolInputSchema(manifest.input_schema) };
+      return { id: t.id, name: t.name, tier: t.tier ?? 'optional', input_schema: loadToolInputSchema(manifest.input_schema) };
     });
     const planGen = await llm.generateStructured<{ candidates: Array<Omit<PlanCandidate, 'activated_nodes'>> }>({
       prompt:
@@ -92,11 +92,14 @@ export class RoutedPlanner implements PlanStrategy {
         `硬约束:\n` +
         `- 顶层结构 { candidates: [ {id, title, rationale, tradeoffs, steps, assumptions}, ... ] },且必须恰好 2 项。\n` +
         `- 每个 step 必须含字段:step_no(从 1 递增的整数)、step_name(该步中文简述)、actor_type、actor_id;可选 purpose/input/requires_approval。禁止用 step_id,禁止省略 step_no 或 step_name。\n` +
+        `- requires_approval 语义:仅当该步涉及个人隐私数据(PII)、敏感数据授权、对外发布/投放、付费或不可逆的外部副作用时才标 true;纯公开信息检索、竞品分析、范围澄清、汇总提炼、质量复核等只读且仅用公开信息的步骤一律 false 或省略。不要因"需要用户确认范围/口径"就标 true——范围澄清用 assumptions(editable:true)表达,而非审批步。\n` +
         `- 第 1 项 id="depth"(深度优先:方法论完整、覆盖广、含复核/交叉验证),第 2 项 id="speed"(速度优先:最短路径拿关键结论)。\n` +
         `- 两份 steps 必须在 skill/tool 组合上存在明显差异(不同能力或不同顺序),不允许只是 speed 版把 depth 版删几行。\n` +
         `- actor_type=skill 步的 actor_id 只能取:[${skillIds.join(', ')}];actor_type=tool 步的 actor_id 只能取:[${toolIds.join(', ')}];禁止编造清单外 id。\n` +
         `- 若需 LLM 自身推理步骤(汇总/提炼)用 actor_type=llm;质量复核用 actor_type=reviewer。\n` +
         `- tool 步必须在 step.input 里按该 tool 的 input_schema(见 context.tools[].input_schema)生成入参;无图字段留空,并在 assumptions 标注『需用户提供设计稿』。\n` +
+        `- tool 分层(context.tools[].tier):core=平台常在的公开检索(如网页检索),optional=依赖外部后端的增强能力(截图库/实验室)。` +
+        `关键结论的证据必须由 core 能力支撑,报告在无任何 optional 能力时也应成立;optional 只作增强、不得作为唯一证据来源,也不得置于关键结论的必经依赖上。若某 skill 的 required_tools 含 optional tool,可纳入计划但须让报告在其缺失时仍可产出。\n` +
         `- rationale(为什么这样组合,引用方法论点名如 JTBD/5W2H)与 tradeoffs(明显代价,如"耗时约翻倍"/"覆盖窄可能漏点")必填,各控制在 1-2 句。\n` +
         `- title 用中文短语,例如"深度优先·方法论覆盖" / "速度优先·关键结论"。\n` +
         `选方法/排步骤时参考 context.guidance 召回的方法卡片,使方法选择有正典依据。`,

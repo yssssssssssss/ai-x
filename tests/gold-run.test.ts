@@ -9,6 +9,10 @@ import {
   forceRealEnv,
   assertNoApprovalStep,
   writeRunAudit,
+  pausedFailureIsInfra,
+  pausedFailureIsOptionalTool,
+  pausedFailureMsg,
+  optionalToolIdSet,
 } from '../apps/orchestrator-runtime/src/gold-run.ts';
 import type { GoldRunRecord } from '../apps/orchestrator-runtime/src/audit/audit-package.ts';
 
@@ -90,4 +94,50 @@ test('无报告的运行也落审计包(评审表单说明不可评审)', () => 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('optional tool 失败(ai-spider fetch failed)判为可跳过增强,不占 infra 重试名额', () => {
+  // 方案 B 根因:ai-spider-search 是 optional(增强)tool,其后端 down 常呈 fetch failed。
+  // 按能力分层应 skip 成缺口(报告仍产出),优先于 infra 文本判定。
+  const optional = optionalToolIdSet();
+  assert.ok(optional.has('ai-spider-search'), 'ai-spider-search 应为 optional tier');
+  assert.ok(!optional.has('o2-web-search'), 'o2-web-search 应为 core tier');
+  assert.ok(!optional.has('tavily-web-search'), 'tavily-web-search 应为 core tier');
+
+  const state = { stepFailures: [{ stepNo: 6, actorType: 'tool', actorId: 'ai-spider-search', message: 'tool "ai-spider-search" 调用失败: fetch failed' }] };
+  assert.equal(pausedFailureIsOptionalTool(state, optional), true, 'optional tool 失败应可跳过');
+  assert.match(pausedFailureMsg(state), /fetch failed/);
+});
+
+test('core tool 失败(o2 fetch failed)判 infra、非可跳过:重试不占名额', () => {
+  const optional = optionalToolIdSet();
+  const state = { stepFailures: [{ stepNo: 3, actorType: 'tool', actorId: 'o2-web-search', message: 'tool "o2-web-search" 调用失败: fetch failed' }] };
+  assert.equal(pausedFailureIsOptionalTool(state, optional), false, 'core tool 失败不可跳过');
+  assert.equal(pausedFailureIsInfra(state), true, 'core 检索 fetch failed 判 infra 重试');
+});
+
+test('执行阶段 step 失败(网关 5xx)判 infra', () => {
+  assert.equal(pausedFailureIsInfra({ stepFailures: [{ message: '网关返回 HTTP 503: upstream' }] }), true);
+});
+
+test('执行阶段能力失败(schema 不过)不判 infra:计入批次样本', () => {
+  assert.equal(pausedFailureIsInfra({ stepFailures: [{ message: 'research-report 校验失败: findings 至少 1 条' }] }), false);
+});
+
+test('无失败记录不判 infra(空 stepFailures / 缺字段安全)', () => {
+  assert.equal(pausedFailureIsInfra({ stepFailures: [] }), false);
+  assert.equal(pausedFailureIsInfra({}), false);
+  assert.equal(pausedFailureIsInfra({ stepFailures: [{}] }), false);
+});
+
+test('infra 判定只看最近失败步:历史 optional 缺口已 skip 不误判整轮', () => {
+  // 先 ai-spider(optional, fetch failed)被 skip 成缺口,续跑后 core 步 schema 不过 → 最近步非 infra。
+  const state = {
+    stepFailures: [
+      { stepNo: 6, actorType: 'tool', actorId: 'ai-spider-search', message: 'fetch failed' },
+      { stepNo: 7, actorType: 'llm', actorId: 'synthesis', message: 'research-report 校验失败' },
+    ],
+  };
+  assert.equal(pausedFailureIsInfra(state), false, '最近步(合成校验失败)非 infra');
+  assert.equal(pausedFailureIsOptionalTool(state, optionalToolIdSet()), false, '最近步非 optional tool');
 });

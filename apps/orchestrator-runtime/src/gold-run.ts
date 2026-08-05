@@ -13,7 +13,8 @@ import {
   type RunModelMeta,
 } from './audit/audit-package.ts';
 import { buildBatchSummary, type BatchRunLine } from './audit/batch-summary.ts';
-import { classifyError } from './audit/failure-classify.ts';
+import { classifyError, isInfraFailure } from './audit/failure-classify.ts';
+import { loadToolRegistry } from './runtime/config-loader.ts';
 
 // gold:run —— 金标批次真实闭环运行器(ADR-0001 / ADR-0002 / CONTEXT「金标真实运行」)。
 // 用法: pnpm gold:run [batch_id]
@@ -82,6 +83,50 @@ interface OneRunResult {
   record: GoldRunRecord | null;
 }
 
+// paused 断点的最小投影。完整契约见 orchestrator RunState;这里只取判定所需字段。
+export interface PausedFailure {
+  message?: string;
+  actorType?: string;
+  actorId?: string;
+}
+export interface PausedRunState {
+  stepFailures?: PausedFailure[];
+}
+
+// 当前 pause 对应"最近失败步"= stepFailures 末元素(resume 续跑会追加新失败)。
+function latestFailure(state: PausedRunState): PausedFailure | undefined {
+  const arr = state.stepFailures ?? [];
+  return arr[arr.length - 1];
+}
+
+// 失败步的 message 拼接(留痕用:含历史所有失败步)。
+export function pausedFailureMsg(state: PausedRunState): string {
+  return (state.stepFailures ?? []).map((f) => f.message ?? '').join(' | ');
+}
+
+// 最近失败步是否 infra 特征(工具 fetch failed / 网关 5xx 等)→ 重试不占名额。
+// 只看最近一步:历史失败步可能已被 skip 成缺口,不应据其误判整轮为 infra。
+export function pausedFailureIsInfra(state: PausedRunState): boolean {
+  const msg = latestFailure(state)?.message ?? '';
+  return msg !== '' && isInfraFailure(new Error(msg));
+}
+
+// 最近失败步是否 optional(增强)tool:金标仅公开信息,其缺失可跳过成缺口、不阻断报告。
+// 数据驱动:optionalToolIds 来自 tool-registry 的 tier 字段,非硬编码 id。
+export function pausedFailureIsOptionalTool(state: PausedRunState, optionalToolIds: ReadonlySet<string>): boolean {
+  const f = latestFailure(state);
+  return f?.actorType === 'tool' && f.actorId != null && optionalToolIds.has(f.actorId);
+}
+
+// 从 tool-registry 取 tier=optional 的 active tool id 集合(缺省 tier 视为 optional:增强,保守)。
+export function optionalToolIdSet(): Set<string> {
+  return new Set(
+    loadToolRegistry().tools
+      .filter((t) => t.status === 'active' && (t.tier ?? 'optional') === 'optional')
+      .map((t) => t.id),
+  );
+}
+
 // 发起一次真跑:plan → 断言无审批步 → 自动确认 depth 候选 → execute。
 // 抛错按 infra / capability 分类:infra 无报告 → 上层重试;capability 计入样本。
 async function runOnce(runId: string, batchId: string): Promise<OneRunResult> {
@@ -104,9 +149,33 @@ async function runOnce(runId: string, batchId: string): Promise<OneRunResult> {
     assertNoApprovalStep(candidate); // 命中审批步在此抛 GOLD_APPROVAL_GATE(不归类 infra,直接冒泡停批次)
 
     await orch.selectPlan({ taskId, candidateId: candidate.id });
-    const exec: ExecuteResult = await orch.executePhase({ taskId, conversationId: conv.id });
+    let exec: ExecuteResult = await orch.executePhase({ taskId, conversationId: conv.id });
 
     const ws = new RunWorkspace(taskId);
+
+    // 执行阶段 step 失败不抛异常(orchestrator 挂起落 run_state)。按最近失败步分三类处置(优先级从上到下):
+    //  1. optional(增强)tool 失败(如截图库后端未启动)→ resume(skip) 跳过成缺口续跑。
+    //     金标仅公开信息,增强能力缺失不得阻断报告(方案 B 根因修复);缺口透明进 risks_and_open_issues。
+    //     优先于 infra 判定:optional 后端 down 常呈 fetch failed(infra 文本特征),但按能力分层应跳过而非重试。
+    //  2. infra 失败(网关 5xx / core 检索 fetch failed 等)→ 判 infra,上层重试不占名额。
+    //  3. core 能力失败(公开检索/合成本身失败)→ 不跳过,保留 paused 样本让评审看到真实缺陷。
+    const optionalToolIds = optionalToolIdSet();
+    let skipGuard = 0;
+    while (exec.status === 'paused') {
+      const state = ws.readRunState<PausedRunState>();
+      if (pausedFailureIsOptionalTool(state, optionalToolIds)) {
+        if (skipGuard++ > candidate.steps.length) {
+          throw new Error(`resume(skip) 超过步数上限仍未终态(taskId=${taskId}),疑似死循环`);
+        }
+        exec = await orch.resumePhase({ taskId, conversationId: conv.id, action: 'skip' });
+        continue;
+      }
+      if (pausedFailureIsInfra(state)) {
+        return { outcome: 'infra_failed', status: 'paused', schema_valid: false, note: pausedFailureMsg(state), record: null };
+      }
+      break; // core 能力失败:留 paused,下方按无报告能力样本计入
+    }
+
     const report = ws.readReport<Report>();
     const finishedAt = new Date().toISOString();
     const log = await listExecutionLog(taskId);

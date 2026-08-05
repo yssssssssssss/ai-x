@@ -12,6 +12,7 @@ tools:
     auth_required: true
     risk_level: low
     status: active
+    tier: core            # 平台托管公开检索,常在;失败按 infra 处理可重试
 
   - id: tavily-web-search
     name: Tavily 网页检索
@@ -20,6 +21,7 @@ tools:
     auth_required: true
     risk_level: low
     status: active
+    tier: core            # 同上,公开证据主检索
 
   - id: ai-spider-search
     name: 竞品截图库检索
@@ -28,6 +30,7 @@ tools:
     auth_required: true
     risk_level: low
     status: active
+    tier: optional        # 依赖外部截图库后端,增强性;缺失不阻断报告(自动跳过成缺口)
 
   # external-tools/*-lab:无鉴权 REST 工具,走 RestJsonAdapter(rest_json)。
   - id: aesthetic-quant-lab
@@ -37,6 +40,7 @@ tools:
     auth_required: false
     risk_level: low
     status: active
+    tier: optional        # 依赖外部 lab 后端,增强性
 
   - id: attention-analysis-lab
     name: 视觉注意力分析实验室
@@ -45,6 +49,7 @@ tools:
     auth_required: false
     risk_level: low
     status: active
+    tier: optional
 
   - id: experience-model-lab
     name: 体验模型实验室
@@ -53,6 +58,7 @@ tools:
     auth_required: false
     risk_level: low
     status: active
+    tier: optional
 
   - id: virtual-user-lab
     name: 虚拟用户实验室
@@ -61,6 +67,7 @@ tools:
     auth_required: false
     risk_level: low
     status: active
+    tier: optional
 
   - id: vision-brand-lab
     name: 视觉品牌实验室
@@ -69,3 +76,4 @@ tools:
     auth_required: false
     risk_level: low
     status: active
+    tier: optional
