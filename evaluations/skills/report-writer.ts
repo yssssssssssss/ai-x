@@ -68,14 +68,7 @@ export function writeEvaluationArtifacts(
 ): void {
   const errorPath = join(skillDirectory, 'error.json');
   if (record.status === 'failed') {
-    for (const filename of [
-      'output.json',
-      'output.md',
-      'scorecard.json',
-      'knowledge-context.json',
-      'retrieval.json',
-      'kb-assessment.json',
-    ]) {
+    for (const filename of ['output.json', 'output.md', 'scorecard.json']) {
       removeArtifact(join(skillDirectory, filename));
     }
     writeJsonAtomic(errorPath, record);

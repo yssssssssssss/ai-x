@@ -10,6 +10,7 @@ import {
 import type { SkillLoader } from '../../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import { loadEvaluationCases } from './case-loader.ts';
 import { SkillEvaluator } from './evaluator.ts';
+import { assessKnowledgeUsage, type KBAssessment } from './kb/assessment.ts';
 import {
   loadGoldKnowledgeContext,
   loadLiveKnowledgeContext,
@@ -239,6 +240,13 @@ function sha256(value: unknown): string {
   return `sha256:${createHash('sha256').update(stableJson(value)).digest('hex')}`;
 }
 
+function snapshotContentHash(snapshot: KnowledgeSnapshot): string {
+  return sha256({
+    index_hash: snapshot.index_hash,
+    source_files: snapshot.source_files,
+  });
+}
+
 function assertKbMode(value: KBMode | undefined): KBMode {
   const mode = value ?? 'none';
   if (mode !== 'none' && mode !== 'gold' && mode !== 'live') {
@@ -286,7 +294,7 @@ function prepareKbRun(
     metadata: {
       mode,
       snapshotId: snapshotResult.snapshot.snapshot_id,
-      snapshotHash: snapshotResult.snapshot.snapshot_id,
+      snapshotHash: snapshotContentHash(snapshotResult.snapshot),
       indexHash: snapshotResult.snapshot.index_hash,
       sourceMappingHash: sha256([...mappings.values()]),
     },
@@ -340,6 +348,32 @@ function isRetrievalRecord(value: unknown, mode: 'gold' | 'live', snapshotId: st
     Array.isArray(value.missing_required_source_ids) &&
     Array.isArray(value.unresolved_items)
   );
+}
+
+function kbAssessmentForRecord(
+  skillId: string,
+  retrieval: KnowledgeRetrievalResult,
+  record: SkillEvaluationRecord,
+): KBAssessment {
+  if (record.kbAssessment) return record.kbAssessment;
+  const assessment = assessKnowledgeUsage(
+    skillId,
+    retrieval.context,
+    retrieval.record,
+    record.output,
+  );
+  if (record.status !== 'failed') return assessment;
+  return {
+    ...assessment,
+    kb_grounding_verdict:
+      assessment.kb_grounding_verdict === 'not_applicable'
+        ? 'not_applicable'
+        : 'needs_review',
+    review_notes: [
+      ...assessment.review_notes,
+      `evaluation failed after KB retrieval: ${record.errorMessage ?? 'unknown error'}`,
+    ],
+  };
 }
 
 const RESUME_DIMENSION_MAX_SCORES = {
@@ -660,11 +694,11 @@ export async function runEvaluationBatch(
             Math.max(0, clock().getTime() - evaluationStartedAt),
           );
         }
-        if (retrieval && record.status !== 'failed') {
+        if (retrieval) {
           writeKbArtifacts(skillDirectory, {
             knowledgeContext: retrieval.context,
             retrieval: retrieval.record,
-            ...(record.kbAssessment ? { kbAssessment: record.kbAssessment } : {}),
+            kbAssessment: kbAssessmentForRecord(skill.id, retrieval, record),
           });
         }
         writeEvaluationArtifacts(skillDirectory, record);

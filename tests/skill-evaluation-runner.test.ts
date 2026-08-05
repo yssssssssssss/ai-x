@@ -323,13 +323,15 @@ test('gold KB mode writes KB artifacts and manifest metadata', async () => {
   assert.deepEqual(readJson<KnowledgeContext>(join(skillDir, 'knowledge-context.json')).selected_source_ids, ['alpha_source']);
   assert.deepEqual(readJson<RetrievalRecord>(join(skillDir, 'retrieval.json')).candidate_source_ids, ['alpha_source']);
   assert.equal(readJson<KBAssessment>(join(skillDir, 'kb-assessment.json')).kb_grounding_verdict, 'pass');
-  assert.deepEqual(manifest.kb && { ...manifest.kb, sourceMappingHash: '<hash>' }, {
+  assert.deepEqual(manifest.kb && { ...manifest.kb, sourceMappingHash: '<hash>', snapshotHash: '<hash>' }, {
     mode: 'gold',
     snapshotId: 'sha256:test-snapshot',
-    snapshotHash: 'sha256:test-snapshot',
+    snapshotHash: '<hash>',
     indexHash: 'sha256:test-index',
     sourceMappingHash: '<hash>',
   });
+  assert.notEqual(manifest.kb?.snapshotHash, manifest.kb?.snapshotId);
+  assert.match(manifest.kb?.snapshotHash ?? '', /^sha256:[0-9a-f]{64}$/);
   assert.match(manifest.kb?.sourceMappingHash ?? '', /^sha256:[0-9a-f]{64}$/);
 });
 
@@ -438,6 +440,71 @@ test('one Skill KB retrieval failure records failure and continues batch', async
   assert.equal(evaluateCalls, 1);
   assert.deepEqual(manifest.records.map(({ skillId, status }) => [skillId, status]), [['alpha', 'failed'], ['beta', 'succeeded']]);
   assert.equal(readJson<SkillEvaluationRecord>(join(setup.outputRoot, 'retrieval-failure-run', 'alpha', 'error.json')).errorStage, 'generation');
+});
+
+test('KB artifacts persist when retrieval succeeds but evaluator fails and resume reruns sanely', async () => {
+  const setup = fixture(['alpha']);
+  const options = {
+    runId: 'post-retrieval-failure-run',
+    outputRoot: setup.outputRoot,
+    casesDir: setup.casesDir,
+    concurrency: 1 as const,
+    kbMode: 'gold' as const,
+    kbSnapshotId: 'sha256:test-snapshot',
+  };
+  const deps = kbDependencies(['alpha'], 'gold');
+  const failed = await runEvaluationBatch(
+    { ...options, resume: false },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: {
+        evaluate: async () => {
+          throw new Error('synthetic schema failure after retrieval');
+        },
+      },
+      kb: deps,
+    },
+  );
+
+  const skillDir = join(setup.outputRoot, options.runId, 'alpha');
+  assert.equal(failed.records[0].status, 'failed');
+  assert.deepEqual(readJson<KnowledgeContext>(join(skillDir, 'knowledge-context.json')).selected_source_ids, ['alpha_source']);
+  assert.deepEqual(readJson<RetrievalRecord>(join(skillDir, 'retrieval.json')).selected_source_ids, ['alpha_source']);
+  const fallbackAssessment = readJson<KBAssessment>(join(skillDir, 'kb-assessment.json'));
+  assert.equal(fallbackAssessment.kb_grounding_verdict, 'needs_review');
+  assert.match(fallbackAssessment.review_notes.join('\n'), /evaluation failed after KB retrieval/);
+
+  let retryCalls = 0;
+  const recovered = await runEvaluationBatch(
+    { ...options, resume: true },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: {
+        evaluate: async (loadedCase, kb) => {
+          retryCalls += 1;
+          return successRecord(loadedCase, { kbAssessment: kbAssessment(loadedCase.data.skill_id, kb!.knowledgeContext.mode) });
+        },
+      },
+      kb: deps,
+    },
+  );
+  assert.equal(retryCalls, 1);
+  assert.equal(recovered.records[0].status, 'succeeded');
+  assert.equal(readJson<KBAssessment>(join(skillDir, 'kb-assessment.json')).kb_grounding_verdict, 'pass');
+
+  const skipped = await runEvaluationBatch(
+    { ...options, resume: true },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: {
+        evaluate: async (loadedCase) => {
+          throw new Error(`should skip ${loadedCase.data.skill_id}`);
+        },
+      },
+      kb: deps,
+    },
+  );
+  assert.equal(skipped.records[0].status, 'skipped');
 });
 
 test('resume validates KB mode and snapshot before reusing artifacts', async () => {
