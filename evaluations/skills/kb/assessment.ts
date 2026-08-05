@@ -46,6 +46,66 @@ function extractMatches(text: string, pattern: RegExp): string[] {
   return matches;
 }
 
+function addExplicitCitation(
+  value: unknown,
+  sourceIds: Set<string>,
+  sourcePathToId: Map<string, string>,
+  cited: string[],
+  unsupported: string[],
+): void {
+  if (typeof value !== 'string') return;
+  if (sourceIds.has(value)) cited.push(value);
+  else if (sourcePathToId.has(value)) cited.push(sourcePathToId.get(value)!);
+  else unsupported.push(value);
+}
+
+function addSourcePathCitation(
+  value: unknown,
+  sourcePathToId: Map<string, string>,
+  cited: string[],
+  unsupported: string[],
+): void {
+  if (typeof value !== 'string') return;
+  const sourceId = sourcePathToId.get(value);
+  if (sourceId) cited.push(sourceId);
+  else unsupported.push(value);
+}
+
+function collectStructuredCitations(
+  value: unknown,
+  sourceIds: Set<string>,
+  sourcePathToId: Map<string, string>,
+  cited: string[],
+  unsupported: string[],
+): void {
+  if (!value || typeof value !== 'object') return;
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      collectStructuredCitations(entry, sourceIds, sourcePathToId, cited, unsupported);
+    }
+    return;
+  }
+
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === 'source_id') {
+      addExplicitCitation(entry, sourceIds, sourcePathToId, cited, unsupported);
+    } else if (key === 'source_path') {
+      addSourcePathCitation(entry, sourcePathToId, cited, unsupported);
+    } else if (key === 'source_ids' || key === 'sources' || key === 'citations') {
+      const entries = Array.isArray(entry) ? entry : [entry];
+      for (const citation of entries) {
+        if (typeof citation === 'string') {
+          addExplicitCitation(citation, sourceIds, sourcePathToId, cited, unsupported);
+        } else {
+          collectStructuredCitations(citation, sourceIds, sourcePathToId, cited, unsupported);
+        }
+      }
+    } else {
+      collectStructuredCitations(entry, sourceIds, sourcePathToId, cited, unsupported);
+    }
+  }
+}
+
 function extractCitedSourceIds(
   output: unknown,
   sourceIds: Set<string>,
@@ -54,16 +114,12 @@ function extractCitedSourceIds(
   const text = outputText(output);
   const cited: string[] = [];
   const unsupported: string[] = [];
-  const explicitIds = extractMatches(text, SOURCE_MARKER);
-  for (const sourceId of explicitIds) {
-    if (sourceIds.has(sourceId)) cited.push(sourceId);
-    else if (sourcePathToId.has(sourceId)) cited.push(sourcePathToId.get(sourceId)!);
-    else unsupported.push(sourceId);
+  collectStructuredCitations(output, sourceIds, sourcePathToId, cited, unsupported);
+  for (const sourceId of extractMatches(text, SOURCE_MARKER)) {
+    addExplicitCitation(sourceId, sourceIds, sourcePathToId, cited, unsupported);
   }
   for (const sourcePath of extractMatches(text, SOURCE_PATH_MARKER)) {
-    const sourceId = sourcePathToId.get(sourcePath);
-    if (sourceId) cited.push(sourceId);
-    else unsupported.push(sourcePath);
+    addSourcePathCitation(sourcePath, sourcePathToId, cited, unsupported);
   }
   return { cited: unique(cited), unsupported: unique(unsupported) };
 }

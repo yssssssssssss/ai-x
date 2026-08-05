@@ -147,6 +147,86 @@ test('recognizes explicit source_path citations and maps them to source ids', ()
   assert.deepEqual(assessment.cited_source_ids, ['required_id']);
 });
 
+test('extracts every source_id from structured citation objects', () => {
+  const twoSourceContext = context({
+    required_source_ids: ['required_id', 'draft_id'],
+    selected_source_ids: ['required_id', 'draft_id'],
+    items: [
+      item('required_id', 'methods/required.md'),
+      item('draft_id', 'methods/draft.md', 'draft'),
+    ],
+  });
+  const assessment = assessKnowledgeUsage(
+    'alpha-skill',
+    twoSourceContext,
+    retrieval({
+      candidate_source_ids: ['required_id', 'draft_id'],
+      selected_source_ids: ['required_id', 'draft_id'],
+    }),
+    {
+      conclusion: 'Structured citations are explicit.',
+      citations: [{ source_id: 'required_id' }, { source_id: 'draft_id' }],
+    },
+  );
+
+  assert.equal(assessment.kb_grounding_verdict, 'pass');
+  assert.deepEqual(assessment.cited_source_ids, ['required_id', 'draft_id']);
+  assert.deepEqual(assessment.draft_sources_used, ['draft_id']);
+});
+
+test('extracts every source id from structured sources arrays', () => {
+  const twoSourceContext = context({
+    required_source_ids: ['required_id', 'draft_id'],
+    selected_source_ids: ['required_id', 'draft_id'],
+    items: [
+      item('required_id', 'methods/required.md'),
+      item('draft_id', 'methods/draft.md', 'draft'),
+    ],
+  });
+  const assessment = assessKnowledgeUsage(
+    'alpha-skill',
+    twoSourceContext,
+    retrieval({
+      candidate_source_ids: ['required_id', 'draft_id'],
+      selected_source_ids: ['required_id', 'draft_id'],
+    }),
+    { conclusion: 'Structured source list.', sources: ['required_id', 'draft_id'] },
+  );
+
+  assert.equal(assessment.kb_grounding_verdict, 'pass');
+  assert.deepEqual(assessment.cited_source_ids, ['required_id', 'draft_id']);
+  assert.deepEqual(assessment.draft_sources_used, ['draft_id']);
+});
+
+test('extracts nested source_path fields from structured output', () => {
+  const twoSourceContext = context({
+    required_source_ids: ['required_id', 'draft_id'],
+    selected_source_ids: ['required_id', 'draft_id'],
+    items: [
+      item('required_id', 'methods/required.md'),
+      item('draft_id', 'methods/draft.md', 'draft'),
+    ],
+  });
+  const assessment = assessKnowledgeUsage(
+    'alpha-skill',
+    twoSourceContext,
+    retrieval({
+      candidate_source_ids: ['required_id', 'draft_id'],
+      selected_source_ids: ['required_id', 'draft_id'],
+    }),
+    {
+      sections: [
+        { claim: 'required', evidence: { source_path: 'methods/required.md' } },
+        { claim: 'draft', evidence: { source_path: 'methods/draft.md' } },
+      ],
+    },
+  );
+
+  assert.equal(assessment.kb_grounding_verdict, 'pass');
+  assert.deepEqual(assessment.cited_source_ids, ['required_id', 'draft_id']);
+  assert.deepEqual(assessment.draft_sources_used, ['draft_id']);
+});
+
 test('returns not_applicable for native Skills with empty KB context and retrieval', () => {
   const assessment = assessKnowledgeUsage(
     'native-skill',
