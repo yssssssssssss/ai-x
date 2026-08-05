@@ -77,6 +77,12 @@ test('rejects duplicate index IDs, source paths, and path traversal outside the 
   writeFileSync(data.index, JSON.stringify([{ id: 'escape', source_path: '../outside.md', content_hash: 'sha256:x', status: 'draft' }]));
   assert.throws(() => buildKnowledgeSnapshot(data.index, data.kb), /escapes KB root/);
 });
+test('rejects non-array knowledge index JSON explicitly', () => {
+  const data = fixture();
+  writeFileSync(data.index, JSON.stringify({ items: [] }));
+  assert.throws(() => buildKnowledgeSnapshot(data.index, data.kb), /invalid knowledge index: expected array/);
+});
+
 
 test('rejects source symlinks that resolve outside the KB root', () => {
   const data = fixture();

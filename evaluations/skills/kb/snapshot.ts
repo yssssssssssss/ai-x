@@ -68,6 +68,7 @@ function readIndex(indexPath: string): { bytes: Buffer; items: KnowledgeIndexIte
   } catch {
     throw new Error(`invalid knowledge index JSON: ${indexPath}`);
   }
+  if (!Array.isArray(parsed)) throw new Error('invalid knowledge index: expected array');
   const seenPaths = new Set<string>();
   const seen = new Set<string>();
   const items = parsed.map((item, position) => {
@@ -157,6 +158,7 @@ function validateGoldSelections(
     if (new Set(selection.selected_source_ids).size !== selection.selected_source_ids.length) throw new Error(`duplicate selected source ID: ${selection.skill_id}`);
     const expectedMode = mapping.kb_mode === 'required' ? 'gold' : mapping.kb_mode;
     if (selection.mode !== expectedMode) throw new Error(`gold selection mode mismatch: ${selection.skill_id}`);
+    if (expectedMode !== 'gold' && selection.selected_source_ids.length > 0) throw new Error(`non-KB gold selection must be empty: ${selection.skill_id}`);
     if (JSON.stringify(selection.unresolved_items) !== JSON.stringify(mapping.unresolved_items)) throw new Error(`gold unresolved_items mismatch: ${selection.skill_id}`);
     const rules = mappingSourcePaths(mapping);
     const allowed = new Set(rules.map((source) => canonicalSourceId(source.path, indexItems)));

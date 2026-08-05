@@ -113,3 +113,13 @@ test('rejects gold mode that disagrees with mapping mode', () => {
   writeFileSync(path, JSON.stringify(selections));
   assert.throws(() => loadGoldSourceSelections(activeSkills, path), /mode mismatch/);
 });
+
+test('rejects selected sources for non-KB gold modes', () => {
+  const activeSkills = loadSkillRegistry().skills.filter((skill) => skill.status === 'active');
+  const dir = mkdtempSync(join('/tmp', 'kb-native-selected-'));
+  const selections = JSON.parse(readFileSync(join(process.cwd(), 'evaluations/skills/kb/gold-source-selections.json'), 'utf8')) as Array<Record<string, unknown>>;
+  selections[0] = { ...selections[0], selected_source_ids: ['ghost_source'] };
+  const path = join(dir, 'native-selected.json');
+  writeFileSync(path, JSON.stringify(selections));
+  assert.throws(() => loadGoldSourceSelections(activeSkills, path), /non-KB gold selection must be empty/);
+});
