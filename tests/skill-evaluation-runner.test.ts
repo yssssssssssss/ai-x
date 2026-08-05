@@ -22,6 +22,16 @@ import type {
   SkillEvaluationRecord,
   SkillScorecard,
 } from '../evaluations/skills/types.ts';
+import type { KBAssessment } from '../evaluations/skills/kb/assessment.ts';
+import type {
+  GoldSourceSelection,
+  KnowledgeContext,
+  KnowledgeIndexItem,
+  KnowledgeRetrievalResult,
+  KnowledgeSnapshot,
+  RetrievalRecord,
+  SkillKnowledgeMapping,
+} from '../evaluations/skills/kb/types.ts';
 
 function activeSkill(id: string): SkillRegistryEntry {
   return {
@@ -137,6 +147,376 @@ function readJson<T>(path: string): T {
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+function kbMapping(skillId: string): SkillKnowledgeMapping {
+  return {
+    skill_id: skillId,
+    kb_mode: 'required',
+    required_sources: [{ path: `methods/${skillId}.md`, role: 'method' }],
+    conditional_sources: [],
+    optional_sources: [],
+    retrieval_tags: [skillId, 'research'],
+    source_status_policy: 'draft_allowed_with_warning',
+    unresolved_items: [],
+  };
+}
+
+function kbSnapshot(): KnowledgeSnapshot {
+  return {
+    snapshot_id: 'sha256:test-snapshot',
+    index_path: '/fixture/knowledge.json',
+    index_hash: 'sha256:test-index',
+    built_at: '2026-08-05T00:00:00.000Z',
+    source_files: [
+      { path: 'methods/alpha.md', content_hash: 'sha256:alpha-body', status: 'reviewed' },
+      { path: 'methods/beta.md', content_hash: 'sha256:beta-body', status: 'draft' },
+    ],
+  };
+}
+
+function kbIndex(skillIds: string[]): Map<string, KnowledgeIndexItem> {
+  return new Map(
+    skillIds.map((skillId) => [
+      `${skillId}_source`,
+      {
+        id: `${skillId}_source`,
+        title: `${skillId} source`,
+        source_path: `methods/${skillId}.md`,
+        content_hash: `sha256:${skillId}-body`,
+        status: skillId === 'beta' ? 'draft' : 'reviewed',
+      },
+    ]),
+  );
+}
+
+function kbResult(
+  skillId: string,
+  mode: 'gold' | 'live',
+  overrides: Partial<KnowledgeRetrievalResult> = {},
+): KnowledgeRetrievalResult {
+  const sourceId = `${skillId}_source`;
+  const context: KnowledgeContext = {
+    mode,
+    snapshot_id: 'sha256:test-snapshot',
+    required_source_ids: [sourceId],
+    selected_source_ids: [sourceId],
+    items: [
+      {
+        source_id: sourceId,
+        title: `${skillId} source`,
+        source_path: `methods/${skillId}.md`,
+        content_hash: `sha256:${skillId}-body`,
+        status: skillId === 'beta' ? 'draft' : 'reviewed',
+        role: 'required',
+        content: `${skillId} KB body`,
+      },
+    ],
+  };
+  const record: RetrievalRecord = {
+    mode,
+    snapshot_id: 'sha256:test-snapshot',
+    guide_tags: [skillId, 'research'],
+    query: `${skillId} evaluation`,
+    candidate_source_ids: mode === 'live' ? [`${skillId}_candidate`, sourceId] : [sourceId],
+    selected_source_ids: [sourceId],
+    required_source_recall: 1,
+    missing_required_source_ids: [],
+    unresolved_items: [],
+  };
+  return { context, record, warnings: [], failures: [], ...overrides };
+}
+
+function kbAssessment(skillId: string, mode: 'gold' | 'live'): KBAssessment {
+  return {
+    skill_id: skillId,
+    mode,
+    required_sources_available: true,
+    required_source_ids: [`${skillId}_source`],
+    selected_source_ids: [`${skillId}_source`],
+    missing_required_source_ids: [],
+    cited_source_ids: [`${skillId}_source`],
+    uncited_selected_source_ids: [],
+    invented_source_ids: [],
+    draft_sources_used: [],
+    retrieval_recall: 1,
+    kb_grounding_verdict: 'pass',
+    status_warnings: [],
+    review_notes: [],
+  };
+}
+
+function kbDependencies(skillIds: string[], mode: 'gold' | 'live') {
+  const mappings = new Map(skillIds.map((skillId) => [skillId, kbMapping(skillId)]));
+  const goldSelections = new Map(
+    skillIds.map((skillId) => [
+      skillId,
+      {
+        skill_id: skillId,
+        mode: 'gold',
+        selected_source_ids: [`${skillId}_source`],
+        unresolved_items: [],
+      } satisfies GoldSourceSelection,
+    ]),
+  );
+  return {
+    loadKnowledgeSnapshot: () => ({ snapshot: kbSnapshot(), index: kbIndex(skillIds), warnings: [] }),
+    loadSkillKnowledgeMappings: () => mappings,
+    loadGoldSourceSelections: () => goldSelections,
+    loadGoldKnowledgeContext: (skillId: string) => kbResult(skillId, mode),
+    loadLiveKnowledgeContext: (skillId: string) => kbResult(skillId, mode),
+  };
+}
+
+test('kbMode none preserves Round 0 artifact shape and evaluator call signature', async () => {
+  const setup = fixture(['alpha']);
+  const manifest = await runEvaluationBatch(
+    {
+      runId: 'round0-run',
+      outputRoot: setup.outputRoot,
+      casesDir: setup.casesDir,
+      concurrency: 1,
+      resume: false,
+      kbMode: 'none',
+    },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: {
+        evaluate: async (loadedCase, kb) => {
+          assert.equal(kb, undefined);
+          return successRecord(loadedCase);
+        },
+      },
+      clock: () => new Date('2026-08-05T01:00:00.000Z'),
+    },
+  );
+
+  const runDir = join(setup.outputRoot, 'round0-run');
+  assert.equal('kb' in manifest, false);
+  assert.equal(existsSync(join(runDir, 'alpha', 'knowledge-context.json')), false);
+  assert.equal(existsSync(join(runDir, 'alpha', 'retrieval.json')), false);
+  assert.equal(existsSync(join(runDir, 'alpha', 'kb-assessment.json')), false);
+  assert.deepEqual(Object.keys(readJson(join(runDir, 'manifest.json'))).sort(), Object.keys(manifest).sort());
+});
+
+test('gold KB mode writes KB artifacts and manifest metadata', async () => {
+  const setup = fixture(['alpha']);
+  const manifest = await runEvaluationBatch(
+    {
+      runId: 'gold-run',
+      outputRoot: setup.outputRoot,
+      casesDir: setup.casesDir,
+      concurrency: 1,
+      resume: false,
+      kbMode: 'gold',
+      kbSnapshotId: 'sha256:test-snapshot',
+    },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: {
+        evaluate: async (loadedCase, kb) => successRecord(loadedCase, { kbAssessment: kbAssessment(loadedCase.data.skill_id, kb!.knowledgeContext.mode) }),
+      },
+      kb: kbDependencies(['alpha'], 'gold'),
+    },
+  );
+
+  const skillDir = join(setup.outputRoot, 'gold-run', 'alpha');
+  assert.deepEqual(readJson<KnowledgeContext>(join(skillDir, 'knowledge-context.json')).selected_source_ids, ['alpha_source']);
+  assert.deepEqual(readJson<RetrievalRecord>(join(skillDir, 'retrieval.json')).candidate_source_ids, ['alpha_source']);
+  assert.equal(readJson<KBAssessment>(join(skillDir, 'kb-assessment.json')).kb_grounding_verdict, 'pass');
+  assert.deepEqual(manifest.kb && { ...manifest.kb, sourceMappingHash: '<hash>' }, {
+    mode: 'gold',
+    snapshotId: 'sha256:test-snapshot',
+    snapshotHash: 'sha256:test-snapshot',
+    indexHash: 'sha256:test-index',
+    sourceMappingHash: '<hash>',
+  });
+  assert.match(manifest.kb?.sourceMappingHash ?? '', /^sha256:[0-9a-f]{64}$/);
+});
+
+test('live KB mode writes candidate and selected source IDs', async () => {
+  const setup = fixture(['alpha']);
+  await runEvaluationBatch(
+    {
+      runId: 'live-run',
+      outputRoot: setup.outputRoot,
+      casesDir: setup.casesDir,
+      concurrency: 1,
+      resume: false,
+      kbMode: 'live',
+      kbSnapshotId: 'sha256:test-snapshot',
+    },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: {
+        evaluate: async (loadedCase, kb) => successRecord(loadedCase, { kbAssessment: kbAssessment(loadedCase.data.skill_id, kb!.knowledgeContext.mode) }),
+      },
+      kb: kbDependencies(['alpha'], 'live'),
+    },
+  );
+
+  const retrieval = readJson<RetrievalRecord>(join(setup.outputRoot, 'live-run', 'alpha', 'retrieval.json'));
+  assert.deepEqual(retrieval.candidate_source_ids, ['alpha_candidate', 'alpha_source']);
+  assert.deepEqual(retrieval.selected_source_ids, ['alpha_source']);
+});
+
+test('KB mode preflight rejects missing snapshot or mapping before evaluator calls', async () => {
+  const setup = fixture(['alpha']);
+  let evaluateCalls = 0;
+  await assert.rejects(
+    runEvaluationBatch(
+      {
+        runId: 'missing-snapshot-run',
+        outputRoot: setup.outputRoot,
+        casesDir: setup.casesDir,
+        concurrency: 1,
+        resume: false,
+        kbMode: 'gold',
+      },
+      {
+        skillLoader: setup.skillLoader,
+        evaluator: { evaluate: async (loadedCase) => { evaluateCalls += 1; return successRecord(loadedCase); } },
+      },
+    ),
+    /kb-snapshot/i,
+  );
+  assert.equal(evaluateCalls, 0);
+
+  await assert.rejects(
+    runEvaluationBatch(
+      {
+        runId: 'missing-mapping-run',
+        outputRoot: setup.outputRoot,
+        casesDir: setup.casesDir,
+        concurrency: 1,
+        resume: false,
+        kbMode: 'live',
+        kbSnapshotId: 'sha256:test-snapshot',
+      },
+      {
+        skillLoader: setup.skillLoader,
+        evaluator: { evaluate: async (loadedCase) => { evaluateCalls += 1; return successRecord(loadedCase); } },
+        kb: { loadKnowledgeSnapshot: () => ({ snapshot: kbSnapshot(), index: kbIndex(['alpha']), warnings: [] }) },
+      },
+    ),
+    /mapping/i,
+  );
+  assert.equal(evaluateCalls, 0);
+});
+
+test('one Skill KB retrieval failure records failure and continues batch', async () => {
+  const setup = fixture(['alpha', 'beta']);
+  const deps = kbDependencies(['alpha', 'beta'], 'gold');
+  let evaluateCalls = 0;
+  const manifest = await runEvaluationBatch(
+    {
+      runId: 'retrieval-failure-run',
+      outputRoot: setup.outputRoot,
+      casesDir: setup.casesDir,
+      concurrency: 1,
+      resume: false,
+      kbMode: 'gold',
+      kbSnapshotId: 'sha256:test-snapshot',
+    },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: {
+        evaluate: async (loadedCase) => {
+          evaluateCalls += 1;
+          return successRecord(loadedCase);
+        },
+      },
+      kb: {
+        ...deps,
+        loadGoldKnowledgeContext: (skillId: string) => {
+          if (skillId === 'alpha') throw new Error('synthetic retrieval failure');
+          return kbResult(skillId, 'gold');
+        },
+      },
+    },
+  );
+
+  assert.equal(evaluateCalls, 1);
+  assert.deepEqual(manifest.records.map(({ skillId, status }) => [skillId, status]), [['alpha', 'failed'], ['beta', 'succeeded']]);
+  assert.equal(readJson<SkillEvaluationRecord>(join(setup.outputRoot, 'retrieval-failure-run', 'alpha', 'error.json')).errorStage, 'generation');
+});
+
+test('resume validates KB mode and snapshot before reusing artifacts', async () => {
+  const setup = fixture(['alpha']);
+  const options = {
+    runId: 'kb-resume-run',
+    outputRoot: setup.outputRoot,
+    casesDir: setup.casesDir,
+    concurrency: 1 as const,
+    kbMode: 'gold' as const,
+    kbSnapshotId: 'sha256:test-snapshot',
+  };
+  await runEvaluationBatch(
+    { ...options, resume: false },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: { evaluate: async (loadedCase, kb) => successRecord(loadedCase, { kbAssessment: kbAssessment(loadedCase.data.skill_id, kb!.knowledgeContext.mode) }) },
+      kb: kbDependencies(['alpha'], 'gold'),
+    },
+  );
+
+  let evaluateCalls = 0;
+  const skipped = await runEvaluationBatch(
+    { ...options, resume: true },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: { evaluate: async (loadedCase) => { evaluateCalls += 1; return successRecord(loadedCase); } },
+      kb: kbDependencies(['alpha'], 'gold'),
+    },
+  );
+  assert.equal(evaluateCalls, 0);
+  assert.equal(skipped.records[0].status, 'skipped');
+
+  const rerun = await runEvaluationBatch(
+    { ...options, resume: true, kbSnapshotId: 'sha256:changed-snapshot' },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: { evaluate: async (loadedCase, kb) => { evaluateCalls += 1; return successRecord(loadedCase, { kbAssessment: kbAssessment(loadedCase.data.skill_id, kb!.knowledgeContext.mode) }); } },
+      kb: { ...kbDependencies(['alpha'], 'gold'), loadKnowledgeSnapshot: () => ({ snapshot: { ...kbSnapshot(), snapshot_id: 'sha256:changed-snapshot' }, index: kbIndex(['alpha']), warnings: [] }) },
+    },
+  );
+  assert.equal(evaluateCalls, 1);
+  assert.equal(rerun.records[0].status, 'succeeded');
+});
+
+test('CLI parses KB flags before building runtime', async () => {
+  let captured: unknown;
+  await runEvaluationCli(['--kb-mode', 'gold', '--kb-snapshot', 'sha256:test-snapshot'], {
+    env: { LLM_PROVIDER: 'real-provider' },
+    loadEnvFile: () => undefined,
+    buildRuntime: () => ({
+      deps: {
+        skillLoader: { listActiveSkills: () => [] },
+        llm: {},
+        validator: {},
+      },
+    } as AgentRuntime),
+    clock: () => new Date('2026-08-05T04:00:00.000Z'),
+  }, async (options) => {
+    captured = options;
+    return { runId: options.runId, status: 'completed', startedAt: '', provider: '', activeSkillCount: 0, activeSkillIds: [], records: [], counts: { succeeded: 0, needs_review: 0, failed: 0, skipped: 0 } };
+  });
+  assert.deepEqual(captured, {
+    runId: '20260805-040000',
+    outputRoot: 'skill-evaluations',
+    concurrency: 3,
+    resume: false,
+    kbMode: 'gold',
+    kbSnapshotId: 'sha256:test-snapshot',
+  });
+  await assert.rejects(
+    runEvaluationCli(['--kb-mode', 'bogus'], {
+      env: { LLM_PROVIDER: 'real-provider' },
+      loadEnvFile: () => undefined,
+      buildRuntime: () => { throw new Error('runtime should not build'); },
+    }),
+    /kb-mode/i,
+  );
+});
 
 test('writes complete atomic artifacts and summaries while preserving registry order', async () => {
   const setup = fixture(['alpha', 'beta']);

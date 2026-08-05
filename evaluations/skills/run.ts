@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,8 +11,29 @@ import type { SkillLoader } from '../../apps/orchestrator-runtime/src/runtime/sk
 import { loadEvaluationCases } from './case-loader.ts';
 import { SkillEvaluator } from './evaluator.ts';
 import {
+  loadGoldKnowledgeContext,
+  loadLiveKnowledgeContext,
+} from './kb/retriever.ts';
+import {
+  loadGoldSourceSelections,
+  loadKnowledgeSnapshot,
+  loadSkillKnowledgeMappings,
+} from './kb/snapshot.ts';
+import type {
+  GoldSourceSelection,
+  KBMode,
+  KnowledgeContext,
+  KnowledgeIndexItem,
+  KnowledgeRetrievalResult,
+  KnowledgeSnapshot,
+  KnowledgeSnapshotResult,
+  RetrievalRecord,
+  SkillKnowledgeMapping,
+} from './kb/types.ts';
+import {
   writeEvaluationArtifacts,
   writeInputArtifact,
+  writeKbArtifacts,
   writeManifest,
   writeSummaries,
 } from './report-writer.ts';
@@ -30,6 +52,8 @@ export interface EvaluationRunOptions {
   skillId?: string;
   concurrency: 1 | 2 | 3;
   resume: boolean;
+  kbMode?: KBMode;
+  kbSnapshotId?: string;
 }
 
 interface EvaluationSkillLoader {
@@ -37,7 +61,10 @@ interface EvaluationSkillLoader {
 }
 
 interface EvaluationCaseEvaluator {
-  evaluate(loadedCase: LoadedEvaluationCase): Promise<SkillEvaluationRecord>;
+  evaluate(
+    loadedCase: LoadedEvaluationCase,
+    kb?: { knowledgeContext: KnowledgeContext; retrieval: RetrievalRecord },
+  ): Promise<SkillEvaluationRecord>;
 }
 
 type MakeDirectory = (
@@ -45,12 +72,36 @@ type MakeDirectory = (
   options?: { recursive?: boolean },
 ) => unknown;
 
+interface EvaluationKbDependencies {
+  loadKnowledgeSnapshot?: () => KnowledgeSnapshotResult;
+  loadSkillKnowledgeMappings?: (
+    activeSkills: SkillRegistryEntry[],
+  ) => Map<string, SkillKnowledgeMapping>;
+  loadGoldSourceSelections?: (
+    activeSkills: SkillRegistryEntry[],
+  ) => Map<string, GoldSourceSelection>;
+  loadGoldKnowledgeContext?: (
+    skillId: string,
+    snapshot: KnowledgeSnapshot,
+    index: Map<string, KnowledgeIndexItem>,
+    mapping: SkillKnowledgeMapping,
+    goldSelection: GoldSourceSelection,
+  ) => KnowledgeRetrievalResult;
+  loadLiveKnowledgeContext?: (
+    skillId: string,
+    snapshot: KnowledgeSnapshot,
+    index: Map<string, KnowledgeIndexItem>,
+    mapping: SkillKnowledgeMapping,
+  ) => KnowledgeRetrievalResult;
+}
+
 export interface EvaluationRunDependencies {
   skillLoader?: EvaluationSkillLoader;
   evaluator?: EvaluationCaseEvaluator;
   clock?: () => Date;
   provider?: string;
   mkdirSync?: MakeDirectory;
+  kb?: EvaluationKbDependencies;
 }
 
 export interface EvaluationCliDependencies {
@@ -59,6 +110,11 @@ export interface EvaluationCliDependencies {
   buildRuntime?: () => AgentRuntime;
   clock?: () => Date;
 }
+export type RunEvaluationBatch = (
+  options: EvaluationRunOptions,
+  dependencies: EvaluationRunDependencies,
+) => Promise<EvaluationManifest>;
+
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -168,6 +224,123 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string');
 }
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (isRecord(value)) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function sha256(value: unknown): string {
+  return `sha256:${createHash('sha256').update(stableJson(value)).digest('hex')}`;
+}
+
+function assertKbMode(value: KBMode | undefined): KBMode {
+  const mode = value ?? 'none';
+  if (mode !== 'none' && mode !== 'gold' && mode !== 'live') {
+    throw new Error(`kb-mode must be one of none, gold, live: ${String(value)}`);
+  }
+  return mode;
+}
+
+interface PreparedKbRun {
+  mode: 'gold' | 'live';
+  snapshot: KnowledgeSnapshot;
+  index: Map<string, KnowledgeIndexItem>;
+  mappings: Map<string, SkillKnowledgeMapping>;
+  goldSelections?: Map<string, GoldSourceSelection>;
+  metadata: NonNullable<EvaluationManifest['kb']>;
+}
+
+function prepareKbRun(
+  mode: KBMode,
+  snapshotId: string | undefined,
+  activeSkills: SkillRegistryEntry[],
+  dependencies: EvaluationKbDependencies | undefined,
+): PreparedKbRun | undefined {
+  if (mode === 'none') return undefined;
+  if (!snapshotId) throw new Error('--kb-snapshot is required when kb-mode is gold or live');
+  const snapshotResult = (dependencies?.loadKnowledgeSnapshot ?? loadKnowledgeSnapshot)();
+  if (snapshotResult.snapshot.snapshot_id !== snapshotId) {
+    throw new Error(
+      `kb snapshot mismatch: requested ${snapshotId}, loaded ${snapshotResult.snapshot.snapshot_id}`,
+    );
+  }
+  const mappings = (dependencies?.loadSkillKnowledgeMappings ?? loadSkillKnowledgeMappings)(
+    activeSkills,
+  );
+  const goldSelections =
+    mode === 'gold'
+      ? (dependencies?.loadGoldSourceSelections ?? loadGoldSourceSelections)(activeSkills)
+      : undefined;
+  return {
+    mode,
+    snapshot: snapshotResult.snapshot,
+    index: snapshotResult.index,
+    mappings,
+    ...(goldSelections ? { goldSelections } : {}),
+    metadata: {
+      mode,
+      snapshotId: snapshotResult.snapshot.snapshot_id,
+      snapshotHash: snapshotResult.snapshot.snapshot_id,
+      indexHash: snapshotResult.snapshot.index_hash,
+      sourceMappingHash: sha256([...mappings.values()]),
+    },
+  };
+}
+
+function loadKbForSkill(
+  prepared: PreparedKbRun,
+  skillId: string,
+  dependencies: EvaluationKbDependencies | undefined,
+): KnowledgeRetrievalResult {
+  const mapping = prepared.mappings.get(skillId);
+  if (!mapping) throw new Error(`missing mapping: ${skillId}`);
+  if (prepared.mode === 'gold') {
+    const selection = prepared.goldSelections?.get(skillId);
+    if (!selection) throw new Error(`missing gold selection: ${skillId}`);
+    return (dependencies?.loadGoldKnowledgeContext ?? loadGoldKnowledgeContext)(
+      skillId,
+      prepared.snapshot,
+      prepared.index,
+      mapping,
+      selection,
+    );
+  }
+  return (dependencies?.loadLiveKnowledgeContext ?? loadLiveKnowledgeContext)(
+    skillId,
+    prepared.snapshot,
+    prepared.index,
+    mapping,
+  );
+}
+
+function isKbContext(value: unknown, mode: 'gold' | 'live', snapshotId: string): value is KnowledgeContext {
+  return (
+    isRecord(value) &&
+    value.mode === mode &&
+    value.snapshot_id === snapshotId &&
+    Array.isArray(value.required_source_ids) &&
+    Array.isArray(value.selected_source_ids) &&
+    Array.isArray(value.items)
+  );
+}
+
+function isRetrievalRecord(value: unknown, mode: 'gold' | 'live', snapshotId: string): value is RetrievalRecord {
+  return (
+    isRecord(value) &&
+    value.mode === mode &&
+    value.snapshot_id === snapshotId &&
+    Array.isArray(value.candidate_source_ids) &&
+    Array.isArray(value.selected_source_ids) &&
+    Array.isArray(value.missing_required_source_ids) &&
+    Array.isArray(value.unresolved_items)
+  );
+}
 
 const RESUME_DIMENSION_MAX_SCORES = {
   workflow_adherence: 20,
@@ -259,6 +432,7 @@ function resumedRecord(
   runDirectory: string,
   loadedCase: LoadedEvaluationCase,
   previous: SkillEvaluationRecord | undefined,
+  kb: PreparedKbRun | undefined,
 ): SkillEvaluationRecord | undefined {
   const skillId = loadedCase.data.skill_id;
   const skillDirectory = join(runDirectory, skillId);
@@ -268,6 +442,18 @@ function resumedRecord(
   const output = readJson(join(skillDirectory, 'output.json'));
   const scorecard = readJson(join(skillDirectory, 'scorecard.json'));
   if (!isRecord(output) || !isScorecard(scorecard, skillId)) return undefined;
+  if (kb) {
+    const knowledgeContext = readJson(join(skillDirectory, 'knowledge-context.json'));
+    const retrieval = readJson(join(skillDirectory, 'retrieval.json'));
+    const kbAssessment = readJson(join(skillDirectory, 'kb-assessment.json'));
+    if (
+      !isKbContext(knowledgeContext, kb.mode, kb.snapshot.snapshot_id) ||
+      !isRetrievalRecord(retrieval, kb.mode, kb.snapshot.snapshot_id) ||
+      !isRecord(kbAssessment)
+    ) {
+      return undefined;
+    }
+  }
 
   return {
     ...previous,
@@ -365,10 +551,17 @@ export async function runEvaluationBatch(
 ): Promise<EvaluationManifest> {
   assertRunId(options.runId);
   assertConcurrency(options.concurrency);
+  const kbMode = assertKbMode(options.kbMode);
   const { skillLoader, evaluator } = resolveDependencies(dependencies);
   const clock = dependencies.clock ?? (() => new Date());
   const activeSkills = skillLoader.listActiveSkills();
   const selected = selectedSkills(activeSkills, options.skillId);
+  const preparedKb = prepareKbRun(
+    kbMode,
+    options.kbSnapshotId,
+    activeSkills,
+    dependencies.kb,
+  );
   const cases = loadEvaluationCases(activeSkills, options.casesDir);
   const runDirectory = join(options.outputRoot, options.runId);
   const releaseRunLock = claimRunDirectory(
@@ -385,7 +578,12 @@ export async function runEvaluationBatch(
     const recordSlots: Array<SkillEvaluationRecord | undefined> = selected.map(
       ({ id }) =>
         options.resume
-          ? resumedRecord(runDirectory, cases.get(id)!, priorRecords.get(id))
+          ? resumedRecord(
+              runDirectory,
+              cases.get(id)!,
+              priorRecords.get(id),
+              preparedKb,
+            )
           : undefined,
     );
     const startedAt = clock().toISOString();
@@ -417,6 +615,7 @@ export async function runEvaluationBatch(
         activeSkillIds: selected.map(({ id }) => id),
         records,
         counts: counts(records),
+        ...(preparedKb ? { kb: preparedKb.metadata } : {}),
       };
     };
     const persistRunningManifest = (): void => {
@@ -440,14 +639,33 @@ export async function runEvaluationBatch(
 
         const evaluationStartedAt = clock().getTime();
         let record: SkillEvaluationRecord;
+        let retrieval: KnowledgeRetrievalResult | undefined;
         try {
-          record = await evaluator.evaluate(loadedCase);
+          retrieval = preparedKb
+            ? loadKbForSkill(preparedKb, skill.id, dependencies.kb)
+            : undefined;
+          record = await evaluator.evaluate(
+            loadedCase,
+            retrieval
+              ? {
+                  knowledgeContext: retrieval.context,
+                  retrieval: retrieval.record,
+                }
+              : undefined,
+          );
         } catch (error) {
           record = failedRecord(
             loadedCase,
             error,
             Math.max(0, clock().getTime() - evaluationStartedAt),
           );
+        }
+        if (retrieval && record.status !== 'failed') {
+          writeKbArtifacts(skillDirectory, {
+            knowledgeContext: retrieval.context,
+            retrieval: retrieval.record,
+            ...(record.kbAssessment ? { kbAssessment: record.kbAssessment } : {}),
+          });
         }
         writeEvaluationArtifacts(skillDirectory, record);
         recordSlots[index] = record;
@@ -495,6 +713,8 @@ function parseOptions(args: string[], clock: () => Date): EvaluationRunOptions {
   let skillId: string | undefined;
   let concurrency = 3;
   let resume = false;
+  let kbMode: KBMode | undefined;
+  let kbSnapshotId: string | undefined;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
@@ -518,6 +738,14 @@ function parseOptions(args: string[], clock: () => Date): EvaluationRunOptions {
       case '--resume':
         resume = true;
         break;
+      case '--kb-mode':
+        kbMode = assertKbMode(optionValue(args, index, argument) as KBMode);
+        index += 1;
+        break;
+      case '--kb-snapshot':
+        kbSnapshotId = optionValue(args, index, argument);
+        index += 1;
+        break;
       default:
         throw new Error(`unknown argument: ${argument}`);
     }
@@ -529,12 +757,15 @@ function parseOptions(args: string[], clock: () => Date): EvaluationRunOptions {
     ...(skillId ? { skillId } : {}),
     concurrency,
     resume,
+    ...(kbMode ? { kbMode } : {}),
+    ...(kbSnapshotId ? { kbSnapshotId } : {}),
   };
 }
 
 export async function runEvaluationCli(
   args = process.argv.slice(2),
   dependencies: EvaluationCliDependencies = {},
+  runBatch: RunEvaluationBatch = runEvaluationBatch,
 ): Promise<EvaluationManifest> {
   const env = dependencies.env ?? process.env;
   const loadEnvFile =
@@ -554,7 +785,7 @@ export async function runEvaluationCli(
     skillLoader: runtime.deps.skillLoader,
     validator: runtime.deps.validator,
   });
-  return runEvaluationBatch(options, {
+  return runBatch(options, {
     skillLoader: runtime.deps.skillLoader,
     evaluator,
     clock,

@@ -84,6 +84,14 @@ export interface EvaluationManifestCounts {
   skipped: number;
 }
 
+export interface EvaluationManifestKbMetadata {
+  mode: 'gold' | 'live';
+  snapshotId: string;
+  snapshotHash: string;
+  indexHash: string;
+  sourceMappingHash: string;
+}
+
 export interface EvaluationManifest {
   runId: string;
   status: EvaluationManifestStatus;
@@ -96,4 +104,5 @@ export interface EvaluationManifest {
   activeSkillIds: string[];
   records: SkillEvaluationRecord[];
   counts: EvaluationManifestCounts;
+  kb?: EvaluationManifestKbMetadata;
 }

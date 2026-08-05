@@ -5,6 +5,8 @@ import type {
   LoadedEvaluationCase,
   SkillEvaluationRecord,
 } from './types.ts';
+import type { KBAssessment } from './kb/assessment.ts';
+import type { KnowledgeContext, RetrievalRecord } from './kb/types.ts';
 
 const DISCLAIMER = '自动评分仅供人工评估参考';
 
@@ -45,13 +47,35 @@ export function writeInputArtifact(
   writeJsonAtomic(join(skillDirectory, 'input.json'), loadedCase.data);
 }
 
+export function writeKbArtifacts(
+  skillDirectory: string,
+  artifacts: {
+    knowledgeContext: KnowledgeContext;
+    retrieval: RetrievalRecord;
+    kbAssessment?: KBAssessment;
+  },
+): void {
+  writeJsonAtomic(join(skillDirectory, 'knowledge-context.json'), artifacts.knowledgeContext);
+  writeJsonAtomic(join(skillDirectory, 'retrieval.json'), artifacts.retrieval);
+  if (artifacts.kbAssessment !== undefined) {
+    writeJsonAtomic(join(skillDirectory, 'kb-assessment.json'), artifacts.kbAssessment);
+  }
+}
+
 export function writeEvaluationArtifacts(
   skillDirectory: string,
   record: SkillEvaluationRecord,
 ): void {
   const errorPath = join(skillDirectory, 'error.json');
   if (record.status === 'failed') {
-    for (const filename of ['output.json', 'output.md', 'scorecard.json']) {
+    for (const filename of [
+      'output.json',
+      'output.md',
+      'scorecard.json',
+      'knowledge-context.json',
+      'retrieval.json',
+      'kb-assessment.json',
+    ]) {
       removeArtifact(join(skillDirectory, filename));
     }
     writeJsonAtomic(errorPath, record);

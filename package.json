@@ -19,6 +19,8 @@
     "labs:install": "for d in external-tools/*-lab; do (echo \"npm install @ $d\" && cd \"$d\" && npm install); done",
     "labs:dev": "node scripts/start-labs.mjs",
     "eval:skills": "tsx evaluations/skills/run.ts",
+    "eval:skills:kb": "tsx evaluations/skills/run.ts",
+    "eval:skills:kb:compare": "tsx evaluations/skills/kb/compare.ts",
     "test": "tsx --test tests/*.test.ts",
     "quality": "pnpm lint:registry && pnpm lint:knowledge && pnpm test"
   },
