@@ -48,3 +48,40 @@ export interface KnowledgeSnapshotResult {
   index: Map<string, KnowledgeIndexItem>;
   warnings: string[];
 }
+
+export interface KnowledgeContextItem {
+  source_id: string;
+  title: string;
+  source_path: string;
+  content_hash: string;
+  status: string;
+  role: 'required' | 'conditional' | 'optional' | 'candidate';
+  content: string;
+}
+
+export interface KnowledgeContext {
+  mode: 'gold' | 'live';
+  snapshot_id: string;
+  required_source_ids: string[];
+  selected_source_ids: string[];
+  items: KnowledgeContextItem[];
+}
+
+export interface RetrievalRecord {
+  mode: 'gold' | 'live';
+  snapshot_id: string;
+  guide_tags: string[];
+  query?: string;
+  candidate_source_ids: string[];
+  selected_source_ids: string[];
+  required_source_recall: number | null;
+  missing_required_source_ids: string[];
+  unresolved_items: string[];
+}
+
+export interface KnowledgeRetrievalResult {
+  context: KnowledgeContext;
+  record: RetrievalRecord;
+  warnings: string[];
+  failures: string[];
+}
