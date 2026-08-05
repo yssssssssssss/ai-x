@@ -1,3 +1,5 @@
+import type { KBAssessment } from './kb/assessment.ts';
+
 export interface SkillEvaluationCase {
   skill_id: string;
   title: string;
@@ -60,6 +62,14 @@ export interface SkillEvaluationRecord {
   errorMessage?: string;
   output?: Record<string, unknown>;
   scorecard?: SkillScorecard;
+  kbAssessment?: KBAssessment;
+  knowledgeContextRef?: {
+    mode: 'gold' | 'live';
+    snapshot_id: string;
+    required_source_ids: string[];
+    selected_source_ids: string[];
+    retrieval_recall: number | null;
+  };
 }
 
 export type EvaluationManifestStatus =

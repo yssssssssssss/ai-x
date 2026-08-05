@@ -451,6 +451,111 @@ test('degrades a scorecard with empty dimension evidence to needs_review', async
   assert.deepEqual(record.output, { answer: 'output' });
 });
 
+test('preserves Round 0 prompts and contexts when KB is not provided', async () => {
+  const { evaluator, llm } = makeEvaluator();
+
+  await evaluator.evaluate(loadedCase);
+
+  assert.equal('knowledge_context' in llm.calls[0].context, false);
+  assert.equal('retrieval' in llm.calls[1].context, false);
+  assert.equal('knowledge_context' in llm.calls[1].context, false);
+});
+
+test('injects optional KB context into generation and scoring without changing base score', async () => {
+  const kb = {
+    knowledgeContext: {
+      mode: 'gold' as const,
+      snapshot_id: 'sha256:snapshot',
+      required_source_ids: ['required_id'],
+      selected_source_ids: ['required_id'],
+      items: [{
+        source_id: 'required_id',
+        title: 'Required',
+        source_path: 'methods/required.md',
+        content_hash: 'sha256:required',
+        status: 'reviewed',
+        role: 'required' as const,
+        content: 'required body',
+      }],
+    },
+    retrieval: {
+      mode: 'gold' as const,
+      snapshot_id: 'sha256:snapshot',
+      guide_tags: ['alpha'],
+      candidate_source_ids: ['required_id'],
+      selected_source_ids: ['required_id'],
+      required_source_recall: 1,
+      missing_required_source_ids: [],
+      unresolved_items: [],
+    },
+  };
+  const { evaluator, llm } = makeEvaluator({
+    llm: new FakeLLM([
+      { answer: 'grounded output [source: required_id]' },
+      scorecard({ workflow_adherence: 10 }),
+    ]),
+  });
+
+  const record = await evaluator.evaluate(loadedCase, kb);
+
+  assert.equal(record.scorecard?.total_score, 90);
+  assert.equal(record.kbAssessment?.kb_grounding_verdict, 'pass');
+  assert.deepEqual(record.knowledgeContextRef, {
+    mode: 'gold',
+    snapshot_id: 'sha256:snapshot',
+    required_source_ids: ['required_id'],
+    selected_source_ids: ['required_id'],
+    retrieval_recall: 1,
+  });
+  assert.deepEqual(llm.calls[0].context.knowledge_context, kb.knowledgeContext);
+  assert.match(llm.calls[0].prompt, /source status|source_id|citation/i);
+  assert.deepEqual(llm.calls[1].context.knowledge_context, kb.knowledgeContext);
+  assert.deepEqual(llm.calls[1].context.retrieval, kb.retrieval);
+});
+
+test('keeps generated output and KB assessment when scoring fails', async () => {
+  const kb = {
+    knowledgeContext: {
+      mode: 'gold' as const,
+      snapshot_id: 'sha256:snapshot',
+      required_source_ids: ['required_id'],
+      selected_source_ids: ['required_id'],
+      items: [{
+        source_id: 'required_id',
+        title: 'Required',
+        source_path: 'methods/required.md',
+        content_hash: 'sha256:required',
+        status: 'reviewed',
+        role: 'required' as const,
+        content: 'required body',
+      }],
+    },
+    retrieval: {
+      mode: 'gold' as const,
+      snapshot_id: 'sha256:snapshot',
+      guide_tags: [],
+      candidate_source_ids: ['required_id'],
+      selected_source_ids: ['required_id'],
+      required_source_recall: 1,
+      missing_required_source_ids: [],
+      unresolved_items: [],
+    },
+  };
+  const { evaluator } = makeEvaluator({
+    llm: new FakeLLM([
+      { answer: 'grounded output [source: required_id]' },
+      new Error('scorer unavailable'),
+    ]),
+  });
+
+  const record = await evaluator.evaluate(loadedCase, kb);
+
+  assert.equal(record.status, 'needs_review');
+  assert.equal(record.errorStage, 'scoring');
+  assert.deepEqual(record.output, { answer: 'grounded output [source: required_id]' });
+  assert.equal(record.kbAssessment?.kb_grounding_verdict, 'pass');
+});
+
 
 test('returns a generation failure and never scores when generation throws', async () => {
   const llm = new FakeLLM([new Error('generation unavailable')]);
