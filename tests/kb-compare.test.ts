@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -103,8 +103,18 @@ function writeRound(root: string, runId: string, round: 'round0' | 'gold' | 'liv
   for (const [index, skillId] of ids.entries()) {
     const skillDir = join(dir, skillId);
     mkdirSync(skillDir, { recursive: true });
+    const currentRecord = records[index]!;
+    writeJson(join(skillDir, 'output.json'), currentRecord.output ?? {});
+    writeJson(join(skillDir, 'scorecard.json'), currentRecord.scorecard ?? {});
     if (round !== 'round0') {
       writeJson(join(skillDir, 'kb-assessment.json'), kbAssessment(skillId, round, index));
+      writeJson(join(skillDir, 'knowledge-context.json'), {
+        mode: round,
+        snapshot_id: 'sha256:snapshot-id',
+        required_source_ids: index >= 18 ? [] : [`source-${index}`],
+        selected_source_ids: index >= 18 ? [] : [`source-${index}`],
+        items: [],
+      });
       writeJson(join(skillDir, 'retrieval.json'), {
         mode: round,
         snapshot_id: 'sha256:snapshot-id',
@@ -193,6 +203,36 @@ test('writes parseable Markdown, CSV, and JSON comparison artifacts with warning
   assert.equal(json.metadata.round0.runId, 'round0');
   assert.equal(json.metadata.roundA.kbSnapshotId, 'sha256:snapshot-id');
   assert.equal(json.rows.length, 22);
+});
+
+test('rejects incomplete completed_with_failures rounds before writing comparison artifacts', () => {
+  const setup = fixture();
+  const manifestPath = join(setup.roundA, 'manifest.json');
+  const original = JSON.parse(readFileSync(manifestPath, 'utf8')) as EvaluationManifest;
+  const failedSkill = original.activeSkillIds[0]!;
+  writeJson(manifestPath, {
+    ...original,
+    status: 'completed_with_failures',
+    records: original.records.map((entry, index) => index === 0 ? {
+      skillId: entry.skillId,
+      skillHash: entry.skillHash,
+      caseHash: entry.caseHash,
+      modelName: entry.modelName,
+      modelVersion: entry.modelVersion,
+      elapsedMs: entry.elapsedMs,
+      status: 'failed',
+      errorStage: 'generation',
+      errorMessage: 'gateway 429',
+    } : entry),
+  });
+  unlinkSync(join(setup.roundA, failedSkill, 'output.json'));
+  unlinkSync(join(setup.roundA, failedSkill, 'scorecard.json'));
+
+  assert.throws(
+    () => compareEvaluationRounds({ round0: setup.round0, roundA: setup.roundA, roundB: setup.roundB, output: setup.compare }),
+    /incomplete|completed/i,
+  );
+  assert.equal(existsSync(join(setup.compare, 'kb-comparison.json')), false);
 });
 
 test('rejects comparisons when model, case hashes, or KB snapshot IDs differ', () => {

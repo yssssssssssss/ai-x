@@ -142,6 +142,32 @@ function assertSameSnapshot(roundA: EvaluationManifest, roundB: EvaluationManife
   }
 }
 
+function assertCompleteRound(
+  label: 'round0' | 'roundA' | 'roundB',
+  roundDirectory: string,
+  manifest: EvaluationManifest,
+): void {
+  if (manifest.status !== 'completed') {
+    throw new Error(`${label} is incomplete: manifest status is ${manifest.status}`);
+  }
+  const records = bySkill(manifest.records);
+  for (const skillId of manifest.activeSkillIds) {
+    const record = records.get(skillId);
+    if (!record) throw new Error(`${label} is incomplete: missing record for ${skillId}`);
+    if (record.status !== 'succeeded') throw new Error(`${label} is incomplete: ${skillId} status is ${record.status}`);
+    if (typeof record.scorecard?.total_score !== 'number') throw new Error(`${label} is incomplete: missing scorecard for ${skillId}`);
+    if (!record.output) throw new Error(`${label} is incomplete: missing output for ${skillId}`);
+    for (const file of ['output.json', 'scorecard.json']) {
+      readJson(join(roundDirectory, skillId, file));
+    }
+    if (label !== 'round0') {
+      for (const file of ['knowledge-context.json', 'retrieval.json', 'kb-assessment.json']) {
+        readJson(join(roundDirectory, skillId, file));
+      }
+    }
+  }
+}
+
 function activeRegistryOrder(skillIds: string[]): string[] {
   const registryIds = loadSkillRegistry().skills.filter((skill) => skill.status === 'active').map((skill) => skill.id);
   const registrySet = new Set(registryIds);
@@ -296,6 +322,9 @@ export function compareEvaluationRounds(options: CompareOptions): ComparisonOutp
   assertSameModel(round0, roundA, roundB);
   assertSameCaseHashes(round0, roundA, roundB);
   assertSameSnapshot(roundA, roundB);
+  assertCompleteRound('round0', round0Directory, round0);
+  assertCompleteRound('roundA', roundADirectory, roundA);
+  assertCompleteRound('roundB', roundBDirectory, roundB);
 
   const order = activeRegistryOrder(round0.activeSkillIds);
   const round0Records = bySkill(round0.records);
