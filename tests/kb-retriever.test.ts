@@ -106,7 +106,7 @@ test('live mode calls injected search with tags/query and then get for determini
 
   assertNoFailure(result);
   assert.deepEqual(searchCalls, [{ guide_tags: ['alpha', 'research'], query: 'case task' }]);
-  assert.deepEqual(getCalls, ['required_id', 'conditional_id']);
+  assert.deepEqual(getCalls, ['optional_id', 'required_id', 'conditional_id']);
   assert.deepEqual(result.record.candidate_source_ids, ['optional_id', 'required_id', 'conditional_id']);
   assert.deepEqual(result.record.selected_source_ids, ['required_id', 'conditional_id']);
   assert.deepEqual(result.context.items.map((item) => item.source_id), ['required_id', 'conditional_id']);
@@ -141,6 +141,24 @@ test('missing source body yields retrieval failure provenance without invented c
   assert.deepEqual(result.record.missing_required_source_ids, ['required_id']);
   assert.deepEqual(result.record.unresolved_items, ['missing body: required_id']);
   assert.deepEqual(result.failures, ['missing body: required_id']);
+});
+
+test('live mode records missing bodies for non-selected candidates deterministically', () => {
+  const data = fixture();
+  const getCalls: string[] = [];
+  const result = loadLiveKnowledgeContext('alpha-skill', data.snapshot, data.index, mapping(), {
+    search: () => [data.index.get('optional_id')!, data.index.get('required_id')!],
+    get: (id: string) => {
+      getCalls.push(id);
+      return id === 'optional_id' ? null : { frontmatter: {}, content: `${id} body` };
+    },
+  });
+
+  assert.deepEqual(getCalls, ['optional_id', 'required_id']);
+  assert.deepEqual(result.context.items.map((item) => item.source_id), ['required_id']);
+  assert.deepEqual(result.record.candidate_source_ids, ['optional_id', 'required_id']);
+  assert.deepEqual(result.record.unresolved_items, ['missing body: optional_id']);
+  assert.deepEqual(result.failures, ['missing body: optional_id']);
 });
 
 test('deprecated source cannot satisfy a required source', () => {
@@ -186,6 +204,24 @@ test('required_source_recall reflects selected required over available required 
     get: () => null,
   });
   assert.equal(noRequired.record.required_source_recall, null);
+});
+
+test('gold mode does not count a selected required source as recalled when its body is missing', () => {
+  const data = fixture();
+  const selection: GoldSourceSelection = {
+    skill_id: 'alpha-skill',
+    mode: 'gold',
+    selected_source_ids: ['required_id'],
+    unresolved_items: [],
+  };
+  const result = loadGoldKnowledgeContext('alpha-skill', data.snapshot, data.index, mapping(), selection, { sourceRoot: join(data.kb, 'missing-root') });
+
+  assert.deepEqual(result.context.items, []);
+  assert.deepEqual(result.record.selected_source_ids, ['required_id']);
+  assert.equal(result.record.required_source_recall, 0);
+  assert.deepEqual(result.record.missing_required_source_ids, ['required_id']);
+  assert.deepEqual(result.record.unresolved_items, ['missing body: required_id']);
+  assert.deepEqual(result.failures, ['missing body: required_id']);
 });
 
 test('native not_applicable mapping returns empty context and no KB failure', () => {

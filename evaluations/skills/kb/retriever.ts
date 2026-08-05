@@ -161,6 +161,11 @@ function buildResult(
     items,
   };
   const availableRequired = availableRequiredIds(mapping, index, snapshot);
+  const usableSelected = selectedIds.filter((sourceId) => !failures.includes(`missing body: ${sourceId}`));
+  const missing = unique([
+    ...missingRequired(usableSelected, required, availableRequired),
+    ...selectedIds.filter((sourceId) => failures.includes(`missing body: ${sourceId}`) && required.includes(sourceId)),
+  ]);
   const record: RetrievalRecord = {
     mode,
     snapshot_id: snapshot.snapshot_id,
@@ -168,8 +173,8 @@ function buildResult(
     query,
     candidate_source_ids: candidateIds,
     selected_source_ids: selectedIds,
-    required_source_recall: recall(selectedIds, availableRequired),
-    missing_required_source_ids: selectedIds.filter((sourceId) => failures.includes(`missing body: ${sourceId}`)),
+    required_source_recall: recall(usableSelected, availableRequired),
+    missing_required_source_ids: missing,
     unresolved_items: unresolved,
   };
   return { context, record, warnings: unique(items.flatMap(warningForDraft)), failures };
@@ -269,17 +274,16 @@ export function loadLiveKnowledgeContext(
     }
   }
 
-  for (const sourceId of selectedIds) {
-    const indexItem = index.get(sourceId);
-    if (!indexItem) continue;
-    const entry = get(sourceId);
+  for (const candidate of candidates) {
+    const entry = get(candidate.id);
     if (!entry) {
-      const message = `missing body: ${sourceId}`;
+      const message = `missing body: ${candidate.id}`;
       unresolved.push(message);
       failures.push(message);
       continue;
     }
-    items.push(itemFromIndex(sourceId, indexItem, snapshot, roles.get(indexItem.source_path) ?? 'candidate', entry.content));
+    if (!selected.has(candidate.id)) continue;
+    items.push(itemFromIndex(candidate.id, candidate, snapshot, roles.get(candidate.source_path) ?? 'candidate', entry.content));
   }
 
   const availableRequired = availableRequiredIds(mapping, index, snapshot);
@@ -302,7 +306,6 @@ export function loadLiveKnowledgeContext(
     missing_required_source_ids: unique(missing),
     unresolved_items: unresolved,
   };
-  void selected;
   return { context, record, warnings: unique(items.flatMap(warningForDraft)), failures };
 }
 
