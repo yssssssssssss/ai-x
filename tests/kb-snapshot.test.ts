@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { join } from 'node:path';
 import {
@@ -62,13 +62,28 @@ test('catalogs non-indexed assets with canonical path source IDs', () => {
   assert.equal(result.index.get('path:assets/scales/standardized-ux-scales.md')?.source_path, 'assets/scales/standardized-ux-scales.md');
 });
 
-test('rejects duplicate index IDs and source paths escaping the KB root', () => {
+test('rejects duplicate index IDs, source paths, and path traversal outside the KB root', () => {
   const data = fixture();
   writeFileSync(data.index, JSON.stringify([
     { id: 'model_sample', source_path: 'models/sample.md', content_hash: 'sha256:x', status: 'draft' },
-    { id: 'model_sample', source_path: 'models/sample.md', content_hash: 'sha256:y', status: 'draft' },
+    { id: 'model_sample', source_path: 'models/other.md', content_hash: 'sha256:y', status: 'draft' },
   ]));
   assert.throws(() => buildKnowledgeSnapshot(data.index, data.kb), /duplicate knowledge index id/);
+  writeFileSync(data.index, JSON.stringify([
+    { id: 'first', source_path: 'models/sample.md', content_hash: 'sha256:x', status: 'draft' },
+    { id: 'second', source_path: 'models/sample.md', content_hash: 'sha256:y', status: 'draft' },
+  ]));
+  assert.throws(() => buildKnowledgeSnapshot(data.index, data.kb), /duplicate knowledge source path/);
   writeFileSync(data.index, JSON.stringify([{ id: 'escape', source_path: '../outside.md', content_hash: 'sha256:x', status: 'draft' }]));
   assert.throws(() => buildKnowledgeSnapshot(data.index, data.kb), /escapes KB root/);
+});
+
+test('rejects source symlinks that resolve outside the KB root', () => {
+  const data = fixture();
+  const outside = join(data.root, 'outside.md');
+  writeFileSync(outside, 'outside');
+  const link = join(data.kb, 'models', 'linked.md');
+  symlinkSync(outside, link);
+  writeFileSync(data.index, JSON.stringify([{ id: 'linked', source_path: 'models/linked.md', content_hash: 'sha256:x', status: 'draft' }]));
+  assert.throws(() => buildKnowledgeSnapshot(data.index, data.kb), /escapes KB root via symlink/);
 });
