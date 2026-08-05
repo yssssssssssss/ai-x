@@ -110,6 +110,18 @@ test('批次摘要:就绪状态由能力样本数决定,P0 结论留给研究员
   assert.match(md, /gateway 超时/);
 });
 
+test('批次摘要:备注含竖线时转义,不破坏 Markdown 表格列', () => {
+  const withPipe: BatchInput = {
+    ...batch,
+    runs: [{ run_id: 'run-x', outcome: 'infra_failed', status: 'paused', schema_valid: false, infra_retries: 0, note: 'tool "ai-spider-search" 调用失败: fetch failed | 网关限流 HTTP 429' }],
+  };
+  const md = buildBatchSummary(withPipe);
+  const row = md.split('\n').find((l) => l.includes('run-x'))!;
+  const colDelims = (row.match(/(?<!\\)\|/g) ?? []).length; // 只数未转义竖线 = 真实列分隔符
+  assert.equal(colDelims, 7, '6 列表格行应恰有 7 个未转义分隔符(首尾各一 + 列间五)');
+  assert.match(row, /fetch failed \\\| 网关限流/, '备注内竖线应被转义');
+});
+
 test('能力样本不足 3 时就绪状态提示补齐', () => {
   const short: BatchInput = { ...batch, runs: batch.runs.slice(0, 2) };
   const md = buildBatchSummary(short);

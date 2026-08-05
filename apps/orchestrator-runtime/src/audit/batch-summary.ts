@@ -57,7 +57,8 @@ export function buildBatchSummary(input: BatchInput): string {
   L.push('| --- | --- | --- | --- | --- | --- |');
   for (const r of input.runs) {
     const kind = r.outcome === 'capability_run' ? '能力样本' : 'infra失败';
-    L.push(`| ${r.run_id} | ${kind} | ${r.status} | ${r.schema_valid ? '通过' : '未通过'} | ${r.infra_retries} | ${r.note ?? ''} |`);
+    const note = (r.note ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' '); // 转义竖线/换行,防表格串列
+    L.push(`| ${r.run_id} | ${kind} | ${r.status} | ${r.schema_valid ? '通过' : '未通过'} | ${r.infra_retries} | ${note} |`);
   }
   L.push('');
 
