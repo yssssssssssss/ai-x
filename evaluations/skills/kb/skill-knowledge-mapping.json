@@ -981,7 +981,7 @@
     "kb_mode": "required",
     "required_sources": [
       {
-        "path": "methods/toolbox/collection/interview-guide-design.md",
+        "path": "models/orid.md",
         "role": "one_of",
         "status": "draft",
         "trigger": "select one transcript-structuring lens"
@@ -995,10 +995,10 @@
     ],
     "conditional_sources": [
       {
-        "path": "models/orid.md",
-        "role": "model",
+        "path": "methods/toolbox/collection/interview-guide-design.md",
+        "role": "method",
         "status": "draft",
-        "trigger": "when organizing topic findings"
+        "trigger": "when organizing transcript structure"
       },
       {
         "path": "methods/toolbox/analysis/affinity-diagram.md",

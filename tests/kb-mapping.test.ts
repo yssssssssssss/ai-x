@@ -25,6 +25,7 @@ test('preserves source role, status policy, one-of semantics, and unresolved pat
   assert.ok(survey.required_sources.every((source) => source.role));
   const transcript = mappings.get('structure-interview-transcript')!;
   assert.ok(transcript.required_sources.some((source) => source.role === 'one_of'));
+  assert.deepEqual(transcript.required_sources.map((source) => source.path), ['models/orid.md', 'methods/toolbox/analysis/qualitative-insight-frameworks.md']);
   const competitive = mappings.get('competitive-analysis')!;
   assert.ok(competitive.unresolved_items.some((item) => item.includes('models/aarrr.md')));
   assert.ok(mappings.get('conversion-funnel-analysis')!.unresolved_items.some((item) => item.includes('models/fogg-behavior-model.md')));
@@ -52,4 +53,5 @@ test('gold selections cover every Skill and keep native selections empty', () =>
   assert.deepEqual(selections.get('competitive-web-research')?.selected_source_ids, []);
   assert.equal(selections.get('competitive-web-research')?.mode, 'not_applicable');
   assert.ok(selections.get('generate-survey')?.selected_source_ids.length);
+  assert.deepEqual(selections.get('structure-interview-transcript')?.selected_source_ids, ['model_orid']);
 });
