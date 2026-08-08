@@ -7,6 +7,7 @@ import { conversationsRouter } from './routes/conversations.ts';
 import { tasksRouter } from './routes/tasks.ts';
 import { feedbackRouter } from './routes/feedback.ts';
 import { skillsRouter } from './routes/skills.ts';
+import { controlTasksRouter } from './routes/control-tasks.ts';
 
 const app = express();
 app.use(express.json({ limit: '12mb' })); // execute 可携带设计稿 base64(图像工具 upload 上限 10MB + base64 膨胀)
@@ -17,6 +18,7 @@ app.use('/api/conversations', conversationsRouter);
 app.use('/api/tasks', tasksRouter);
 app.use('/api/tasks', feedbackRouter);
 app.use('/api/skills', skillsRouter);
+app.use('/api/control-tasks', controlTasksRouter);
 
 const PORT = Number(process.env.API_PORT ?? 3001);
 app.listen(PORT, () => {

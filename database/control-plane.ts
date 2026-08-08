@@ -109,6 +109,31 @@ function artifactFromRow(row: Record<string, unknown>): ControlArtifact {
   };
 }
 
+export interface ControlTaskDetail extends ControlTask {
+  conversationId: string;
+  ownerUserId: string;
+  conversationOwnerUserId: string;
+  structuredTask: unknown;
+}
+
+export interface ControlPlanVersionDetail extends ControlPlanVersion {
+  candidateId: string | null;
+  plan: unknown;
+  pendingInputs: unknown;
+}
+
+export interface ControlGateRecord {
+  gateType: string;
+  gateKey: string;
+  requiredAuthority: string;
+  decision: string;
+}
+
+export interface ControlCommandRecord {
+  requestHash: string;
+  response: unknown;
+}
+
 export class ControlPlaneRepository {
   constructor(private readonly database: MigrationDatabase) {}
 
@@ -404,5 +429,218 @@ export class ControlPlaneRepository {
     } finally {
       connection.release();
     }
+  }
+  async getTaskDetail(taskId: string): Promise<ControlTaskDetail | null> {
+    const connection = await this.database.connect();
+    try {
+      const result = await connection.query(
+        `SELECT task.id, task.conversation_id, task.owner_user_id, conversation.owner_user_id AS conversation_owner_user_id,
+                task.structured_task, task.state, task.state_version, task.active_plan_version_id, task.current_attempt_id
+         FROM control_tasks AS task
+         JOIN conversations AS conversation ON conversation.id = task.conversation_id
+         WHERE task.id = $1`,
+        [taskId],
+      );
+      const row = result.rows[0];
+      if (!row) return null;
+      return {
+        id: asString(row.id, 'id'),
+        conversationId: asString(row.conversation_id, 'conversation_id'),
+        ownerUserId: asString(row.owner_user_id, 'owner_user_id'),
+        conversationOwnerUserId: asString(row.conversation_owner_user_id, 'conversation_owner_user_id'),
+        structuredTask: row.structured_task,
+        state: asString(row.state, 'state') as ControlTaskState,
+        stateVersion: asNumber(row.state_version, 'state_version'),
+        activePlanVersionId: typeof row.active_plan_version_id === 'string' ? row.active_plan_version_id : null,
+        currentAttemptId: typeof row.current_attempt_id === 'string' ? row.current_attempt_id : null,
+      };
+    } finally {
+      connection.release();
+    }
+  }
+
+  async getPlanVersionDetail(planVersionId: string): Promise<ControlPlanVersionDetail | null> {
+    const connection = await this.database.connect();
+    try {
+      const result = await connection.query(
+        `SELECT id, task_id, version, candidate_id, plan_json, plan_hash, pending_inputs
+         FROM control_plan_versions WHERE id = $1`,
+        [planVersionId],
+      );
+      const row = result.rows[0];
+      if (!row) return null;
+      return {
+        id: asString(row.id, 'id'),
+        taskId: asString(row.task_id, 'task_id'),
+        version: asNumber(row.version, 'version'),
+        candidateId: typeof row.candidate_id === 'string' ? row.candidate_id : null,
+        plan: row.plan_json,
+        planHash: asString(row.plan_hash, 'plan_hash'),
+        pendingInputs: row.pending_inputs,
+      };
+    } finally {
+      connection.release();
+    }
+  }
+
+  async nextPlanVersion(taskId: string): Promise<number> {
+    const connection = await this.database.connect();
+    try {
+      const result = await connection.query(
+        `SELECT COALESCE(MAX(version), 0) + 1 AS version FROM control_plan_versions WHERE task_id = $1`,
+        [taskId],
+      );
+      return asNumber(result.rows[0]?.version, 'version');
+    } finally {
+      connection.release();
+    }
+  }
+
+  async transitionTask(input: {
+    taskId: string;
+    expectedVersion: number;
+    from: ControlTaskState | ControlTaskState[];
+    to: ControlTaskState;
+    activePlanVersionId?: string;
+  }): Promise<ControlTask> {
+    return this.transaction(async (connection) => {
+      const fromStates = Array.isArray(input.from) ? input.from : [input.from];
+      const result = await connection.query(
+        `UPDATE control_tasks
+         SET state = $3,
+             state_version = state_version + 1,
+             active_plan_version_id = COALESCE($4, active_plan_version_id),
+             updated_at = now()
+         WHERE id = $1 AND state_version = $2 AND state = ANY($5::text[])
+         RETURNING id, state, state_version, active_plan_version_id, current_attempt_id`,
+        [input.taskId, input.expectedVersion, input.to, input.activePlanVersionId ?? null, fromStates],
+      );
+      const row = result.rows[0];
+      if (!row) throw new ControlPlaneConflictError(`task ${input.taskId} is not ${fromStates.join(' or ')} at version ${input.expectedVersion}`);
+      return {
+        id: asString(row.id, 'id'),
+        state: asString(row.state, 'state') as ControlTaskState,
+        stateVersion: asNumber(row.state_version, 'state_version'),
+        activePlanVersionId: typeof row.active_plan_version_id === 'string' ? row.active_plan_version_id : null,
+        currentAttemptId: typeof row.current_attempt_id === 'string' ? row.current_attempt_id : null,
+      };
+    });
+  }
+
+  async getCommand(taskId: string, commandType: string, idempotencyKey: string): Promise<ControlCommandRecord | null> {
+    const connection = await this.database.connect();
+    try {
+      const result = await connection.query(
+        `SELECT request_hash, response_json FROM control_commands
+         WHERE task_id = $1 AND command_type = $2 AND idempotency_key = $3`,
+        [taskId, commandType, idempotencyKey],
+      );
+      const row = result.rows[0];
+      return row ? { requestHash: asString(row.request_hash, 'request_hash'), response: row.response_json } : null;
+    } finally {
+      connection.release();
+    }
+  }
+
+  async recordCommand(input: {
+    taskId: string;
+    commandType: string;
+    idempotencyKey: string;
+    requestHash: string;
+    expectedVersion: number;
+    stateBefore: ControlTaskState;
+    stateAfter: ControlTaskState;
+    response: unknown;
+    actorUserId?: string;
+  }): Promise<void> {
+    await this.transaction(async (connection) => {
+      await connection.query(
+        `INSERT INTO control_commands
+         (task_id, command_type, idempotency_key, request_hash, expected_version,
+          state_before, state_after, response_json, actor_user_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          input.taskId, input.commandType, input.idempotencyKey, input.requestHash,
+          input.expectedVersion, input.stateBefore, input.stateAfter,
+          JSON.stringify(input.response), input.actorUserId ?? null,
+        ],
+      );
+    });
+  }
+
+  async recordGate(input: {
+    taskId: string;
+    planVersionId: string;
+    planHash: string;
+    gateType: string;
+    gateKey: string;
+    requiredAuthority: string;
+    decision: string;
+    value?: unknown;
+    actorUserId?: string;
+    actorService?: string;
+    actorRole?: string;
+    idempotencyKey: string;
+  }): Promise<void> {
+    await this.transaction(async (connection) => {
+      await connection.query(
+        `INSERT INTO control_gate_records
+         (task_id, plan_version_id, plan_hash, gate_type, gate_key, required_authority,
+          decision, value_json, actor_user_id, actor_service, actor_role, policy_version, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'trusted-p0-v1', $12)`,
+        [
+          input.taskId, input.planVersionId, input.planHash, input.gateType, input.gateKey,
+          input.requiredAuthority, input.decision, input.value == null ? null : JSON.stringify(input.value),
+          input.actorUserId ?? null, input.actorService ?? null, input.actorRole ?? null,
+          input.idempotencyKey,
+        ],
+      );
+    });
+  }
+
+  async listGateRecords(taskId: string, planVersionId: string): Promise<ControlGateRecord[]> {
+    const connection = await this.database.connect();
+    try {
+      const result = await connection.query(
+        `SELECT gate_type, gate_key, required_authority, decision
+         FROM control_gate_records
+         WHERE task_id = $1 AND plan_version_id = $2 ORDER BY created_at`,
+        [taskId, planVersionId],
+      );
+      return result.rows.map((row) => ({
+        gateType: asString(row.gate_type, 'gate_type'),
+        gateKey: asString(row.gate_key, 'gate_key'),
+        requiredAuthority: asString(row.required_authority, 'required_authority'),
+        decision: asString(row.decision, 'decision'),
+      }));
+    } finally {
+      connection.release();
+    }
+  }
+
+  async pauseExecution(input: { taskId: string; attemptId: string; expectedVersion: number; reason: string }): Promise<ControlTask> {
+    return this.transaction(async (connection) => {
+      const attempt = await connection.query(
+        `UPDATE control_execution_attempts SET state = 'paused', failure_kind = $3, finished_at = now()
+         WHERE id = $1 AND task_id = $2 AND state = 'active' RETURNING id`,
+        [input.attemptId, input.taskId, input.reason],
+      );
+      if (!attempt.rows[0]) throw new ControlPlaneConflictError(`attempt ${input.attemptId} is not active`);
+      const task = await connection.query(
+        `UPDATE control_tasks SET state = 'paused', state_version = state_version + 1, updated_at = now()
+         WHERE id = $1 AND state = 'executing' AND state_version = $2
+         RETURNING id, state, state_version, active_plan_version_id, current_attempt_id`,
+        [input.taskId, input.expectedVersion],
+      );
+      const row = task.rows[0];
+      if (!row) throw new ControlPlaneConflictError(`task ${input.taskId} is no longer executing at version ${input.expectedVersion}`);
+      return {
+        id: asString(row.id, 'id'),
+        state: asString(row.state, 'state') as ControlTaskState,
+        stateVersion: asNumber(row.state_version, 'state_version'),
+        activePlanVersionId: typeof row.active_plan_version_id === 'string' ? row.active_plan_version_id : null,
+        currentAttemptId: typeof row.current_attempt_id === 'string' ? row.current_attempt_id : null,
+      };
+    });
   }
 }
