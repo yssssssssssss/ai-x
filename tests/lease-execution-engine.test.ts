@@ -423,6 +423,17 @@ test('executes the current plan with real Tool provenance and complete model rec
     assert.doesNotMatch(serialized, /secret-value/);
     assert.doesNotMatch(serialized, /owner@example\.com|13800138000/);
     assert.match(serialized, /\[REDACTED_EMAIL\]|\[REDACTED_PHONE\]/);
+    const evidenceArtifacts = await connection.query(
+      `SELECT storage_uri FROM control_artifacts WHERE attempt_id = $1 AND kind = 'evidence_manifest'`,
+      [lease.attemptId],
+    );
+    const evidenceUri = evidenceArtifacts.rows[0]?.storage_uri;
+    if (typeof evidenceUri !== 'string') assert.fail('execution must seal an Evidence Manifest artifact');
+    const evidence: unknown = JSON.parse(readFileSync(evidenceUri, 'utf8'));
+    assert.ok(evidence && typeof evidence === 'object' && 'entries' in evidence);
+    assert.ok(Array.isArray(evidence.entries));
+    assert.equal(evidence.entries[0]?.toolProof?.executionMode, 'real');
+    assert.equal(evidence.entries[0]?.sourceUrl, 'https://source.test/article');
   } finally {
     connection.release();
   }

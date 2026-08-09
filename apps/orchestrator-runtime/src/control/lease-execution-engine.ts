@@ -32,6 +32,7 @@ import {
   type ToolInvocationReceipt,
 } from '../runtime/tool-adapter.ts';
 import { ControlArtifactStore } from './artifact-store.ts';
+import { EvidenceService, type EvidenceEntry } from '../evidence/evidence-service.ts';
 
 interface EnginePlan {
   taskId: string;
@@ -431,6 +432,61 @@ export class LeaseExecutionEngine {
         return { status: 'paused', attemptId: input.lease.attemptId, failedStepNo: step.step_no, failure };
       }
     }
+    const evidenceEntries = (await this.dependencies.repository.listExecutionSteps(input.lease.attemptId))
+      .flatMap((step): EvidenceEntry[] => {
+        const provenance = step.toolProvenance;
+        const proof = provenance && typeof provenance === 'object' ? provenance : null;
+        const outputHash = typeof proof?.outputHash === 'string' ? proof.outputHash : null;
+        const executionMode = proof?.executionMode;
+        const implementationId = proof?.implementationId;
+        const refs = Array.isArray(proof?.sourceRefs)
+          ? proof.sourceRefs.filter((ref): ref is string => typeof ref === 'string' && ref.startsWith('https://'))
+          : [];
+        if (
+          step.actorType !== 'tool'
+          || step.state !== 'succeeded'
+          || !outputHash
+          || executionMode !== 'real'
+          || typeof implementationId !== 'string'
+          || refs.length === 0
+        ) return [];
+        return refs.map((sourceUrl, index) => ({
+          id: `E${step.stepNo}-${index + 1}`,
+          kind: 'tool_output',
+          evidenceClass: 'public_source',
+          artifactHash: outputHash,
+          jsonPointer: `/results/${index}`,
+          sourceUrl,
+          stepNo: step.stepNo,
+          toolProof: { implementationId, executionMode: 'real', outputHash },
+          sensitivity: 'public',
+          redaction: 'masked',
+        }));
+      });
+    if (evidenceEntries.length === 0) {
+      await this.dependencies.repository.pauseExecution({
+        taskId: input.lease.taskId,
+        attemptId: input.lease.attemptId,
+        expectedVersion: active.stateVersion,
+        reason: 'missing_core_evidence',
+      });
+      throw new ExecutionAuthenticityError('execution has no valid core Tool evidence');
+    }
+    const evidenceManifest = new EvidenceService().createManifest({
+      taskId: input.lease.taskId,
+      planVersionId: input.lease.planVersionId,
+      attemptId: input.lease.attemptId,
+      collectedAt: new Date().toISOString(),
+      entries: evidenceEntries,
+    });
+    await this.dependencies.artifacts.writeJson({
+      taskId: input.lease.taskId,
+      planVersionId: input.lease.planVersionId,
+      attemptId: input.lease.attemptId,
+      kind: 'evidence_manifest',
+      relativePath: 'evidence/manifest.json',
+      value: evidenceManifest,
+    });
 
     try {
       active = await this.refreshLease(input.lease);
