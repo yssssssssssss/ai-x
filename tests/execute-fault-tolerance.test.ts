@@ -128,7 +128,7 @@ test('全产出步失败/跳过 → AllStepsFailedError + failed', async () => {
     rationale: 'r',
     tradeoffs: 't',
     steps: [
-      { step_no: 1, step_name: '检索', actor_type: 'tool', actor_id: 'o2-web-search', purpose: 'p', requires_approval: false },
+      { step_no: 1, step_name: '检索', actor_type: 'tool', actor_id: 'tavily-web-search', purpose: 'p', requires_approval: false },
       { step_no: 2, step_name: '复核', actor_type: 'reviewer', actor_id: '复核', purpose: 'p', requires_approval: false },
     ],
     assumptions: [{ key: 'competitors', value: '头部 3 家', editable: true }],
@@ -136,7 +136,7 @@ test('全产出步失败/跳过 → AllStepsFailedError + failed', async () => {
 
   const rt = buildRuntime({
     llm: new MockLLMClient(fixtures),
-    toolAdapter: new FakeO2Adapter({ failOnToolIds: ['o2-web-search'] }),
+    toolAdapter: new FakeO2Adapter({ failOnToolIds: ['tavily-web-search'] }),
   });
   const orch = new Orchestrator(rt);
   const taskId = await planAndSelectDepth(orch);

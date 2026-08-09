@@ -1,9 +1,10 @@
-import { type LLMClient, MockLLMClient } from './llm-client.ts';
+import { type LLMClient, MockLLMClient, type ModelCallRecorder } from './llm-client.ts';
 import { GatewayLLMClient } from './gateway-llm-client.ts';
 import { type ToolAdapter, FakeO2Adapter, HttpApiAdapter, RestJsonAdapter, TavilyAdapter, ToolRouter } from './tool-adapter.ts';
 import { SkillLoader } from './skill-loader.ts';
 import { CheckpointStore } from './checkpoint-store.ts';
 import { SchemaValidator } from '../schema/validator.ts';
+import { ReceiptLLMClient } from './receipt-llm-client.ts';
 
 // Agent Runtime:封装 Claude/OpenAI/Pi/内部网关差异的薄壳。
 // 只做装配,不含业务判断(判断在 skill + 配置 + LLM)。
@@ -11,6 +12,7 @@ import { SchemaValidator } from '../schema/validator.ts';
 
 export interface RuntimeDeps {
   llm: LLMClient;
+  modelCallRecorder?: ModelCallRecorder;
   toolAdapter: ToolAdapter;
   skillLoader: SkillLoader;
   checkpointStore: CheckpointStore;
@@ -26,7 +28,10 @@ export function buildRuntime(overrides: Partial<RuntimeDeps> = {}): AgentRuntime
   const provider = process.env.LLM_PROVIDER ?? 'mock';
   const toolChannel = process.env.TOOL_ADAPTER ?? 'fake';
 
-  const llm = overrides.llm ?? buildLLM(provider);
+  const baseLlm = overrides.llm ?? buildLLM(provider);
+  const llm = overrides.modelCallRecorder
+    ? new ReceiptLLMClient(baseLlm, overrides.modelCallRecorder)
+    : baseLlm;
   const toolAdapter = overrides.toolAdapter ?? buildToolAdapter(toolChannel);
 
   return new AgentRuntime({

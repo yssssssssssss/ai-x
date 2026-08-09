@@ -2,18 +2,19 @@ import type { PlanCandidate } from '../../api/client.ts';
 import { Header } from './Stage1Understand.tsx';
 
 // 段2a · 待选方案:横排 N 张候选卡,展示 rationale + tradeoffs + 步骤概览。
-// 选中回调交给上层触发 /select;loading 时禁用点击并在选中卡显示 spinner。
+// Legacy candidates remain comparable but cannot trigger removed mutation endpoints.
 export function Stage2Candidates({
-  candidates, onSelect, selectedId, loading,
+  candidates, onSelect, selectedId, loading, readOnly = false,
 }: {
   candidates: PlanCandidate[];
   onSelect: (id: PlanCandidate['id']) => void;
   selectedId?: PlanCandidate['id'];
   loading?: boolean;
+  readOnly?: boolean;
 }) {
   return (
     <section className="stage-card">
-      <Header n="2" title="待选执行方案" note="选一份继续,可对比差异后再定" />
+      <Header n="2" title="待选执行方案" note={readOnly ? '旧任务仅可查看，执行请通过 Control Workflow 创建新任务' : '选一份继续，可对比差异后再定'} />
       <div className="candidate-grid">
         {candidates.map((c) => {
           const active = selectedId === c.id;
@@ -21,8 +22,8 @@ export function Stage2Candidates({
             <button
               key={c.id}
               type="button"
-              disabled={loading}
-              onClick={() => onSelect(c.id)}
+              disabled={readOnly || loading}
+              onClick={readOnly ? undefined : () => onSelect(c.id)}
               className={`candidate-card${active ? ' is-active' : ''}`}
             >
               <div className="candidate-head">

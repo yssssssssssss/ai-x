@@ -80,6 +80,7 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
                       onSelect={flow.pickCandidate}
                       selectedId={selectedCandidateId ?? undefined}
                       loading={phase === 'selecting'}
+                      readOnly
                     />
                   </>
                 )}

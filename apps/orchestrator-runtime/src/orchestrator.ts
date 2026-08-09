@@ -1,4 +1,5 @@
 import { AgentRuntime, buildRuntime } from './runtime/agent-runtime.ts';
+import { hashPrompt } from './runtime/llm-client.ts';
 import { RunWorkspace } from './run-workspace.ts';
 import { parseDirectInvoke } from './runtime/direct-invoke.ts';
 import {
@@ -27,6 +28,7 @@ import type { PlanStrategy, PlanProvenance } from './planners/plan-strategy.ts';
 import { sanitizeCandidateToPlan } from './planners/plan-sanitizer.ts';
 import { DirectPlanner } from './planners/direct-planner.ts';
 import { RoutedPlanner } from './planners/routed-planner.ts';
+import { ToolRouter } from './runtime/tool-adapter.ts';
 
 // 对外契约集中在 plan-types.ts,这里 re-export 让老 import 路径继续可用。
 export type {
@@ -49,6 +51,13 @@ export { retrieveGuidance } from './planners/routed-planner.ts';
 // 四段流编排壳(方案 §五)。判断全在 skill/配置/LLM,壳只做装配、校验、留痕。
 // 严禁在此写 `if task_type == 'competitive_research'` 类领域分支:
 //   节点激活 = 纯数据过滤(applies_to.includes(task_type)),加 task_type 只需改 YAML。
+
+export class LegacyRealExecutionBlockedError extends Error {
+  constructor(capability: string) {
+    super(`legacy execution cannot invoke real ${capability}; use TaskWorkflowService + LeaseExecutionEngine`);
+    this.name = 'LegacyRealExecutionBlockedError';
+  }
+}
 
 export class Orchestrator {
   private readonly runners: Record<PlanStep['actor_type'], ActorRunner>;
@@ -102,6 +111,7 @@ export class Orchestrator {
       schema: {},
       schemaName: 'research-task',
       context: { input: understandInput },
+      receipt: { stage: 'task_understanding', contextManifestHash: hashPrompt('', { input: understandInput }), expectedModel: llm.identity.requestedModel },
     });
     validator.validateOrThrow('research-task', taskGen.data);
     const task = taskGen.data;
@@ -237,6 +247,7 @@ export class Orchestrator {
     const { checkpointStore } = this.rt.deps;
     const ws = new RunWorkspace(input.taskId);
     const plan = ws.readPlan<{ steps: PlanStep[]; task_id: string }>();
+    this.assertLegacyExecutionIsHermetic(plan.steps);
     const taskRow = await checkpointStore.getTask(input.taskId);
     const researchGoal =
       (taskRow?.structured_task as { research_goal?: string } | undefined)?.research_goal ??
@@ -266,6 +277,7 @@ export class Orchestrator {
 
     // skip:失败步标 skipped,从各步已落盘 output 重建 toolOutputs,从下一步续跑。
     const plan = ws.readPlan<{ steps: PlanStep[]; task_id: string }>();
+    this.assertLegacyExecutionIsHermetic(plan.steps);
     const taskRow = await checkpointStore.getTask(input.taskId);
     const researchGoal =
       (taskRow?.structured_task as { research_goal?: string } | undefined)?.research_goal ??
@@ -422,6 +434,13 @@ export class Orchestrator {
         task_id: ctx.taskId, research_goal: ctx.researchGoal, tool_outputs: ctx.toolOutputs,
         step_failures: ctx.stepFailures, review_notes: ctx.reviewNotes,
       },
+      receipt: {
+        stage: 'synthesis',
+        attemptId: ctx.attemptId,
+        stepNo: ctx.plan.steps.length + 1,
+        contextManifestHash: ctx.contextManifestHash,
+        expectedModel: ctx.expectedModel,
+      },
     });
     const report = { ...reportGen.data, task_id: ctx.taskId };
     validator.validateOrThrow('research-report', report);
@@ -451,6 +470,24 @@ export class Orchestrator {
     await checkpointStore.updateTaskStatus(ctx.taskId, status);
     return { status, reportArtifactId: artifact.id, gapCount };
   }
+  private assertLegacyExecutionIsHermetic(steps: PlanStep[]): void {
+    const { skillLoader, toolAdapter } = this.rt.deps;
+    const llmIdentity = this.rt.deps.llm.identity;
+    if (llmIdentity.mode === 'real' && llmIdentity.eligibleAsReal) {
+      throw new LegacyRealExecutionBlockedError(`LLM ${llmIdentity.provider}`);
+    }
+    for (const step of steps) {
+      if (step.actor_type !== 'tool') continue;
+      const tool = skillLoader.getTool(step.actor_id);
+      if (!tool) continue;
+      const manifest = loadToolManifest(tool.path);
+      const mode = toolAdapter instanceof ToolRouter
+        ? toolAdapter.resolve(manifest)?.executionMode
+        : toolAdapter.executionMode;
+      if (mode === 'real') throw new LegacyRealExecutionBlockedError(`Tool ${step.actor_id}`);
+    }
+  }
+
 }
 
 // 执行累积上下文与 StepFailure:契约见 runners/actor-runner.ts,orchestrator 在此

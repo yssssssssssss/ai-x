@@ -102,6 +102,18 @@ test('批次计数:infra 失败不占能力名额', () => {
   assert.equal(c.schemaPassed, 3);
 });
 
+test('disabled workflow command 不计入 P0 能力样本', () => {
+  const disabled: BatchInput = {
+    ...batch,
+    runs: [{ run_id: 'workflow-gate', outcome: 'disabled_workflow', status: 'paused', schema_valid: false, infra_retries: 0 }],
+  };
+  const counts = countBatch(disabled);
+  assert.equal(counts.capabilityRuns, 0);
+  assert.equal(counts.disabledWorkflows, 1);
+  assert.match(buildBatchSummary(disabled), /disabled Workflow 命令验证（不计入 P0）: 1/);
+  assert.match(buildBatchSummary(disabled), /能力样本不足 3（当前 0）/);
+});
+
 test('批次摘要:就绪状态由能力样本数决定,P0 结论留给研究员', () => {
   const md = buildBatchSummary(batch);
   assert.match(md, /能力样本已齐，待评审/);

@@ -24,6 +24,9 @@ export interface ExecCtx {
   ws: RunWorkspace;
   plan: { steps: PlanStep[]; task_id: string };
   graphHash: string;
+  attemptId?: string;
+  contextManifestHash?: string;
+  expectedModel?: string;
   uploads?: Array<{ role: string; dataUrl: string }>;
   toolOutputs: Array<{ toolId: string; output: unknown }>;
   reviewNotes: string[];

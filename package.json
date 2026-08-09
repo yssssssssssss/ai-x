@@ -9,6 +9,7 @@
   },
   "scripts": {
     "db:migrate": "tsx database/run-migrations.ts",
+    "db:seed": "tsx database/run-seed.ts",
     "lint:registry": "tsx harness/linters/registry-linter.ts",
     "lint:knowledge": "tsx harness/linters/knowledge-linter.ts",
     "kb:import": "tsx scripts/kb-import.ts",

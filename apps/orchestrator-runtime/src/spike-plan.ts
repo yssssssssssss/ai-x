@@ -1,13 +1,13 @@
 import { buildOrchestrator } from './orchestrator.ts';
-import { createConversation } from '../../../database/repository.ts';
+import { createConversation, getUserById } from '../../../database/repository.ts';
 import { closePool } from '../../../database/db.ts';
+import { DEVELOPMENT_SEED_USER_ID, assertDevelopmentSeedUser } from '../../../database/development-seed.ts';
 
 // spike:plan —— 段1+段2,生成待确认计划后【停】。HITL 硬闸门:本命令永不执行 tool/skill。
 // 用法: pnpm spike:plan "我要为直播场域做一次数字人竞品研究"
 //
 // 用 seed 用户(database/seed/001_seed.sql)作为归属,新建会话承载本次任务。
 
-const SEED_USER_ID = '00000000-0000-0000-0000-000000000001';
 
 async function main(): Promise<void> {
   const input = process.argv.slice(2).join(' ').trim();
@@ -16,12 +16,14 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const conv = await createConversation({ ownerUserId: SEED_USER_ID, title: input.slice(0, 40) });
+  const seedUser = await getUserById(DEVELOPMENT_SEED_USER_ID);
+  assertDevelopmentSeedUser(seedUser);
+  const conv = await createConversation({ ownerUserId: DEVELOPMENT_SEED_USER_ID, title: input.slice(0, 40) });
   const orch = buildOrchestrator();
   const result = await orch.planPhase({
     originalInput: input,
     conversationId: conv.id,
-    ownerUserId: SEED_USER_ID,
+    ownerUserId: DEVELOPMENT_SEED_USER_ID,
   });
 
   console.log('\n===== 段1 · 任务理解 =====');

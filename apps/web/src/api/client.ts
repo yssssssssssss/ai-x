@@ -13,8 +13,8 @@ export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY);
 }
 
-async function req<T>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+async function req<T>(path: string, opts: { method?: string; body?: unknown; headers?: Record<string, string> } = {}): Promise<T> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', ...opts.headers };
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(`/api${path}`, {
@@ -73,6 +73,33 @@ import type {
   SkillItem,
 } from '../../../../packages/api-contract/http.ts';
 import type { PlanProgress } from '../../../../packages/api-contract/plan.ts';
+
+export type {
+  ApprovalControlPlanRequest,
+  ConfirmControlPlanRequest,
+  ControlCommandResponse,
+  ControlTaskResponse,
+  ControlWorkflowState as ControlTaskState,
+  CreateControlTaskRequest,
+  DisabledExecutionResponse,
+  ExecutionControlPlanRequest,
+  PlanMutationRequest,
+  ResumeControlPlanRequest,
+  SelectControlPlanResponse,
+} from '../../../../packages/api-contract/control-workflow.ts';
+
+import type {
+  ApprovalControlPlanRequest,
+  ConfirmControlPlanRequest,
+  ControlCommandResponse,
+  ControlTaskResponse,
+  CreateControlTaskRequest,
+  DisabledExecutionResponse,
+  ExecutionControlPlanRequest,
+  PlanMutationRequest,
+  ResumeControlPlanRequest,
+  SelectControlPlanResponse,
+} from '../../../../packages/api-contract/control-workflow.ts';
 
 // ---- API ----
 export const api = {
@@ -135,4 +162,18 @@ export const api = {
   feedback: (id: string, b: { rating?: number; adopted?: boolean; comment?: string }) =>
     req<{ id: string }>(`/tasks/${id}/feedback`, { method: 'POST', body: b }),
   skills: () => req<{ skills: SkillItem[] }>('/skills'),
+  createControlTask: (b: CreateControlTaskRequest) =>
+    req<{ task: ControlTaskResponse }>('/control-tasks', { method: 'POST', body: b }),
+  selectControlPlan: (taskId: string, b: PlanMutationRequest) =>
+    req<SelectControlPlanResponse>(`/control-tasks/${taskId}/select`, { method: 'POST', body: b, headers: { 'Idempotency-Key': b.idempotencyKey } }),
+  confirmControlPlan: (taskId: string, b: ConfirmControlPlanRequest) =>
+    req<ControlCommandResponse>(`/control-tasks/${taskId}/confirm`, { method: 'POST', body: b, headers: { 'Idempotency-Key': b.idempotencyKey } }),
+  approveControlPlan: (taskId: string, b: ApprovalControlPlanRequest) =>
+    req<ControlCommandResponse>(`/control-tasks/${taskId}/approve`, { method: 'POST', body: b, headers: { 'Idempotency-Key': b.idempotencyKey } }),
+  reviseControlPlan: (taskId: string, b: PlanMutationRequest) =>
+    req<SelectControlPlanResponse>(`/control-tasks/${taskId}/revise`, { method: 'POST', body: b, headers: { 'Idempotency-Key': b.idempotencyKey } }),
+  resumeControlPlan: (taskId: string, b: ResumeControlPlanRequest) =>
+    req<ControlCommandResponse>(`/control-tasks/${taskId}/resume`, { method: 'POST', body: b, headers: { 'Idempotency-Key': b.idempotencyKey } }),
+  executeControlPlan: (taskId: string, b: ExecutionControlPlanRequest) =>
+    req<DisabledExecutionResponse>(`/control-tasks/${taskId}/execute`, { method: 'POST', body: b, headers: { 'Idempotency-Key': b.idempotencyKey } }),
 };
