@@ -299,7 +299,7 @@ export class LeaseExecutionEngine {
     const researchGoal = isRecord(task.structuredTask) && typeof task.structuredTask.research_goal === 'string'
       ? task.structuredTask.research_goal
       : '';
-    const preflightError = this.preflight(plan, input.expectedModel);
+    const preflightError = await this.preflight(plan, input.expectedModel, researchGoal);
     if (preflightError) {
       const failure = failureFrom(preflightError);
       failure.allowedActions = ['abort'];
@@ -492,7 +492,7 @@ export class LeaseExecutionEngine {
     return { status: 'completed', attemptId: input.lease.attemptId };
   }
 
-  private preflight(plan: EnginePlan, expectedModel: string): ExecutionAuthenticityError | null {
+  private async preflight(plan: EnginePlan, expectedModel: string, researchGoal: string): Promise<ExecutionAuthenticityError | null> {
     const tavily = this.dependencies.skillLoader.getTool('tavily-web-search');
     const hasRequiredTavily = tavily?.tier === 'core'
       && plan.steps.some((step) => step.actor_type === 'tool' && step.actor_id === 'tavily-web-search');
@@ -501,11 +501,20 @@ export class LeaseExecutionEngine {
     }
     try {
       for (const step of plan.steps) {
+        if (step.actor_type === 'skill') {
+          const skill = this.dependencies.skillLoader.getSkill(step.actor_id);
+          if (!skill) return new ExecutionAuthenticityError(`skill ${step.actor_id} is not active`);
+          this.dependencies.skillLoader.loadSkillBody(step.actor_id);
+          this.dependencies.skillLoader.loadSkillSchemas(step.actor_id);
+          continue;
+        }
         if (step.actor_type !== 'tool') continue;
         const tool = this.dependencies.skillLoader.getTool(step.actor_id);
         if (!tool) return new ExecutionAuthenticityError(`tool ${step.actor_id} is not active`);
         const manifest = loadToolManifest(tool.path);
         const resolution = this.dependencies.tools.resolve(manifest);
+        const toolInput = step.input ?? { query: researchGoal };
+        this.dependencies.validator.validateFileOrThrow(join(getConfigRoot(), manifest.input_schema), toolInput);
         if (
           !resolution
           || resolution.executionMode !== 'real'
@@ -522,7 +531,7 @@ export class LeaseExecutionEngine {
       }
     } catch (error) {
       return new ExecutionAuthenticityError(
-        'tool preflight could not verify runtime configuration',
+        'execution preflight failed before external side effects',
         { cause: error instanceof Error ? error.message : String(error) },
       );
     }

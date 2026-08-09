@@ -160,6 +160,10 @@ function isRetryableHttp(status: number): boolean {
   return status === 429 || status >= 500;
 }
 
+function quotaExceeded(headers: Headers): boolean {
+  return headers.get('x-quota-exhausted') === 'true' || headers.get('x-quota-remaining') === '0';
+}
+
 
 // Fake o2 adapter:返回预置检索结果。
 // failOnToolIds 里的 tool 会抛错——用于验证失败回放(execution_log.status=failed + failures.jsonl)。
@@ -281,8 +285,8 @@ export class HttpApiAdapter implements ToolAdapter {
       }
       if (!res.ok) {
         throw new ToolInvocationError(opts.toolId, {
-          kind: httpFailureKind(res.status),
-          retryable: isRetryableHttp(res.status),
+          kind: res.status === 429 && quotaExceeded(res.headers) ? 'quota' : httpFailureKind(res.status),
+          retryable: !(res.status === 429 && quotaExceeded(res.headers)) && isRetryableHttp(res.status),
           providerStatus: res.status,
           sanitizedMessage: `HTTP ${res.status}`,
         });
@@ -339,8 +343,8 @@ export class RestJsonAdapter implements ToolAdapter {
       });
       if (!res.ok) {
         throw new ToolInvocationError(opts.toolId, {
-          kind: httpFailureKind(res.status),
-          retryable: isRetryableHttp(res.status),
+          kind: res.status === 429 && quotaExceeded(res.headers) ? 'quota' : httpFailureKind(res.status),
+          retryable: !(res.status === 429 && quotaExceeded(res.headers)) && isRetryableHttp(res.status),
           providerStatus: res.status,
           sanitizedMessage: `HTTP ${res.status}`,
         });
@@ -440,10 +444,9 @@ export class TavilyAdapter implements ToolAdapter {
         signal: ac.signal,
       });
       if (!res.ok) {
-        const message = sanitizeMessage(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`, [apiKey]);
         throw new ToolInvocationError(opts.toolId, {
-          kind: httpFailureKind(res.status),
-          retryable: isRetryableHttp(res.status),
+          kind: res.status === 429 && quotaExceeded(res.headers) ? 'quota' : httpFailureKind(res.status),
+          retryable: !(res.status === 429 && quotaExceeded(res.headers)) && isRetryableHttp(res.status),
           providerStatus: res.status,
           sanitizedMessage: `HTTP ${res.status}`,
         });

@@ -122,6 +122,8 @@ export class GatewayLLMClient implements LLMClient {
         signal: ac.signal,
       });
       if (res.status === 429) {
+        const exhausted = res.headers.get('x-quota-exhausted') === 'true' || res.headers.get('x-quota-remaining') === '0';
+        if (exhausted) throw new LLMInvocationError('quota', false, 429, 'gateway quota exhausted');
         const retryAfter = Number(res.headers.get('retry-after')) * 1000;
         throw new RateLimitError(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : undefined);
       }
