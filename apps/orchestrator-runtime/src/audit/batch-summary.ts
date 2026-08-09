@@ -1,3 +1,6 @@
+import { isP0EligibleBatch, loadGoldPolicy } from './gold-policy.ts';
+import type { GoldPolicy } from './gold-policy.ts';
+
 // 批次聚合(纯函数层)。三次金标真实运行 → batch.md。
 // 机器只填客观计数(infra 失败数、能力产出数、schema 通过数);
 // 「本批次是否 P0 通过」这句结论必须由研究员写(可用性判定不可自动化)。
@@ -39,8 +42,14 @@ export function countBatch(input: BatchInput): BatchCounts {
   };
 }
 
-export function buildBatchSummary(input: BatchInput): string {
+export function countP0EligibleRuns(input: BatchInput, policy: GoldPolicy): number {
+  if (!isP0EligibleBatch(input.batch_id, policy)) return 0;
+  return countBatch(input).capabilityRuns;
+}
+
+export function buildBatchSummary(input: BatchInput, policy: GoldPolicy = loadGoldPolicy()): string {
   const c = countBatch(input);
+  const p0EligibleRuns = countP0EligibleRuns(input, policy);
   const L: string[] = [];
   L.push(`# 批次审计 — ${input.batch_id}`, '');
   L.push(`- 金标场景: ${input.scenario}`);
@@ -48,6 +57,7 @@ export function buildBatchSummary(input: BatchInput): string {
   L.push('');
 
   L.push('## 客观计数（机器填）', '');
+  L.push(`- 可信 P0 资格计数: ${p0EligibleRuns} / 3`);
   L.push(`- 计入批次的能力样本: ${c.capabilityRuns} / 3`);
   L.push(`- 基础设施失败（不占名额）: ${c.infraFailures}`);
   L.push(`- disabled Workflow 命令验证（不计入 P0）: ${c.disabledWorkflows}`);

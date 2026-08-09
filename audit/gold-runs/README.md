@@ -15,6 +15,11 @@
 
 审计包是运行生成物(消耗真实 gateway token + Tavily 配额产生),与 `run-workspaces/` 同理不进 git。
 独立研究员在本地完成人工评审(逐条来源核验 + P0 判定)后,按团队约定另行归档留档。
+## 历史批次状态
+
+- `20260805-live-digital-human`: `INVALIDATED`，原因 `NO_REVIEWABLE_REPORTS`。
+- `20260730-live-digital-human-b2`: `INVALIDATED`，原因 `FAKE_CORE_TOOL`、`FABRICATED_SOURCE_REFERENCE`、`INCOMPLETE_AUDIT_PACKAGE`。
+- 上述批次文件只读保留，不计入任何新的 P0 slot 或成功计数；禁止事后补写证据。
 
 ## infra 失败不占名额
 

@@ -13,6 +13,7 @@ import {
 import { buildBatchSummary, type BatchRunLine } from './audit/batch-summary.ts';
 import { isInfraFailure } from './audit/failure-classify.ts';
 import { loadToolRegistry } from './runtime/config-loader.ts';
+import { assertTrustedGoldEnabled, loadGoldPolicy } from './audit/gold-policy.ts';
 // gold:run —— 金标批次真实闭环运行器(ADR-0001 / ADR-0002 / CONTEXT「金标真实运行」)。
 // 用法: pnpm gold:run [batch_id]
 //   固定金标输入,连跑三次能力样本(全真:gateway + real Tavily),按需重试 infra 失败,
@@ -192,6 +193,8 @@ export function writeRunAudit(dir: string, rec: GoldRunRecord): void {
 }
 
 async function main(): Promise<void> {
+  assertTrustedGoldEnabled();
+  forceRealEnv();
   const argBatch = process.argv[2]?.trim();
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   const batchId = argBatch || `${today}-${SCENARIO_SLUG}`;
@@ -238,7 +241,7 @@ async function main(): Promise<void> {
   }
 
   // 批次聚合:机器填计数,P0 结论留研究员。
-  const summary = buildBatchSummary({ batch_id: batchId, scenario: SCENARIO, scenario_input: SCENARIO_INPUT, runs: runLines });
+  const summary = buildBatchSummary({ batch_id: batchId, scenario: SCENARIO, scenario_input: SCENARIO_INPUT, runs: runLines }, loadGoldPolicy());
   mkdirSync(batchDir, { recursive: true });
   writeFileSync(join(batchDir, 'batch.md'), summary);
 
