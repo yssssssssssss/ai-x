@@ -2,11 +2,11 @@
 // 机器只填客观计数(infra 失败数、能力产出数、schema 通过数);
 // 「本批次是否 P0 通过」这句结论必须由研究员写(可用性判定不可自动化)。
 
-export type RunOutcome = 'capability_run' | 'infra_failed';
+export type RunOutcome = 'capability_run' | 'infra_failed' | 'disabled_workflow';
 
 export interface BatchRunLine {
   run_id: string;
-  outcome: RunOutcome; // 能力样本 or 基础设施失败(不占名额)
+  outcome: RunOutcome; // 能力样本、基础设施失败，或不计入 P0 的 disabled 命令验证
   status: string; // completed / completed_with_gaps / paused / failed
   schema_valid: boolean;
   infra_retries: number; // 该 run 因 infra 失败重试的次数(透明留痕)
@@ -24,6 +24,7 @@ export interface BatchCounts {
   capabilityRuns: number; // 计入批次的能力样本数(目标 3)
   infraFailures: number; // infra 失败次数(不占名额)
   totalInfraRetries: number;
+  disabledWorkflows: number;
   schemaPassed: number; // 能力样本中 schema 通过数
 }
 
@@ -32,6 +33,7 @@ export function countBatch(input: BatchInput): BatchCounts {
   return {
     capabilityRuns: cap.length,
     infraFailures: input.runs.filter((r) => r.outcome === 'infra_failed').length,
+    disabledWorkflows: input.runs.filter((r) => r.outcome === 'disabled_workflow').length,
     totalInfraRetries: input.runs.reduce((n, r) => n + r.infra_retries, 0),
     schemaPassed: cap.filter((r) => r.schema_valid).length,
   };
@@ -48,6 +50,7 @@ export function buildBatchSummary(input: BatchInput): string {
   L.push('## 客观计数（机器填）', '');
   L.push(`- 计入批次的能力样本: ${c.capabilityRuns} / 3`);
   L.push(`- 基础设施失败（不占名额）: ${c.infraFailures}`);
+  L.push(`- disabled Workflow 命令验证（不计入 P0）: ${c.disabledWorkflows}`);
   L.push(`- infra 失败重试合计: ${c.totalInfraRetries}`);
   L.push(`- 能力样本中 schema 通过: ${c.schemaPassed} / ${c.capabilityRuns}`);
   L.push('');
@@ -56,7 +59,7 @@ export function buildBatchSummary(input: BatchInput): string {
   L.push('| run | 类型 | 状态 | schema | infra重试 | 备注 |');
   L.push('| --- | --- | --- | --- | --- | --- |');
   for (const r of input.runs) {
-    const kind = r.outcome === 'capability_run' ? '能力样本' : 'infra失败';
+    const kind = r.outcome === 'capability_run' ? '能力样本' : r.outcome === 'infra_failed' ? 'infra失败' : 'disabled命令验证';
     const note = (r.note ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' '); // 转义竖线/换行,防表格串列
     L.push(`| ${r.run_id} | ${kind} | ${r.status} | ${r.schema_valid ? '通过' : '未通过'} | ${r.infra_retries} | ${note} |`);
   }

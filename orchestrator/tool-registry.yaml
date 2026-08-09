@@ -11,8 +11,8 @@ tools:
     adapter_type: o2
     auth_required: true
     risk_level: low
-    status: active
-    tier: core            # 平台托管公开检索,常在;失败按 infra 处理可重试
+    status: draft
+    tier: optional        # 尚无可证明真实身份的 O2 adapter,不得进入 P0
 
   - id: tavily-web-search
     name: Tavily 网页检索

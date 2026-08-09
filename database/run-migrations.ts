@@ -1,38 +1,39 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { pool, closePool } from './db.ts';
-
-// SQL runner:按文件名顺序执行 migrations/*.sql,再执行 seed/*.sql。
-// migration 全用 IF NOT EXISTS、seed 全用 ON CONFLICT DO NOTHING,故可重复执行。
+import { dirname } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { closePool, pool } from './db.ts';
+import { runDatabaseMigrations } from './migration-entry.ts';
+import { planMigrations } from './migration-runner.ts';
+import { createPostgresMigrationDatabase } from './postgres-migration-database.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-function runDir(label: string, dir: string): Promise<void>[] {
-  let files: string[];
-  try {
-    files = readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
-  } catch {
-    return [];
+export async function main(): Promise<void> {
+  const migrationsDir = `${here}/migrations`;
+  if (process.argv.includes('--dry-run')) {
+    const plan = planMigrations(migrationsDir);
+    console.log(`migration dry-run: ${plan.migrations.length} files`);
+    for (const migration of plan.migrations) {
+      console.log(`  [plan] ${migration.version} ${migration.fileName} ${migration.checksum}`);
+    }
+    return;
   }
-  return files.map(async (f) => {
-    const sql = readFileSync(join(dir, f), 'utf8');
-    await pool.query(sql);
-    console.log(`  [${label}] applied ${f}`);
-  });
-}
 
-async function main(): Promise<void> {
   console.log('running migrations...');
-  for (const p of runDir('migrate', join(here, 'migrations'))) await p;
-  console.log('running seed...');
-  for (const p of runDir('seed', join(here, 'seed'))) await p;
-  console.log('done.');
+  const result = await runDatabaseMigrations(
+    createPostgresMigrationDatabase(pool),
+    migrationsDir,
+    console.log,
+  );
+  console.log(`done. applied=${result.applied.length} skipped=${result.skipped.length}`);
 }
 
-main()
-  .catch((err) => {
-    console.error('migration failed:', err.message);
-    process.exitCode = 1;
-  })
-  .finally(closePool);
+const isEntry = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isEntry) {
+  main()
+    .catch((err) => {
+      console.error('migration failed:', err instanceof Error ? err.message : err);
+      process.exitCode = 1;
+    })
+    .finally(closePool);
+}

@@ -3,34 +3,186 @@ import { type ToolManifest } from './config-loader.ts';
 // tool 调用统一接口。业务/skill 只经此调用 tool,不直接 shell out / import SDK。
 // V0 实现 = FakeO2Adapter;二期加 O2Adapter(真实 o2)/ InternalApiAdapter / McpAdapter / ScriptAdapter。
 
+export type ToolExecutionMode = 'real' | 'fake';
+
+export type ToolFailureKind =
+  | 'rate_limit'
+  | 'server'
+  | 'timeout'
+  | 'network'
+  | 'quota'
+  | 'authentication'
+  | 'configuration'
+  | 'schema'
+  | 'capability'
+  | 'safety'
+  | 'unknown';
+
+export type ToolInvocationStatus = 'ok' | 'failed';
+
+export interface ToolInvocationReceipt {
+  declaredAdapterType: ToolManifest['adapter_type'];
+  resolvedAdapterType: ToolManifest['adapter_type'] | 'unknown';
+  implementationId: string;
+  executionMode: ToolExecutionMode | 'unknown';
+  endpointHost: string | null;
+  status: ToolInvocationStatus;
+  latencyMs: number;
+}
+
+export interface ToolAdapterResolution {
+  declaredAdapterType: ToolManifest['adapter_type'];
+  resolvedAdapterType: ToolManifest['adapter_type'];
+  implementationId: string;
+  executionMode: ToolExecutionMode;
+  endpointHost: string | null;
+}
+
+interface ToolInvocationErrorOptions {
+  kind: ToolFailureKind;
+  retryable: boolean;
+  providerStatus?: number | null;
+  sanitizedMessage: string;
+  receipt?: ToolInvocationReceipt;
+  details?: Record<string, unknown>;
+}
+
 export interface ToolInvokeResult {
   output: object;
   latencyMs: number;
+  receipt: ToolInvocationReceipt;
 }
 
 export interface ToolAdapter {
   readonly adapterType: ToolManifest['adapter_type'];
+  readonly implementationId: string;
+  readonly executionMode: ToolExecutionMode;
+  endpointHost?(manifest: ToolManifest): string | null;
   invoke(opts: { toolId: string; input: object; manifest: ToolManifest }): Promise<ToolInvokeResult>;
 }
 
+
 export class ToolInvocationError extends Error {
-  constructor(public readonly toolId: string, message: string) {
-    super(`tool "${toolId}" 调用失败: ${message}`);
+  readonly kind: ToolFailureKind;
+  readonly retryable: boolean;
+  readonly providerStatus: number | null;
+  readonly sanitizedMessage: string;
+  readonly receipt: ToolInvocationReceipt | null;
+  readonly details: Record<string, unknown>;
+
+  constructor(public readonly toolId: string, messageOrOptions: string | ToolInvocationErrorOptions) {
+    const opts = typeof messageOrOptions === 'string'
+      ? {
+          kind: 'unknown' as const,
+          retryable: false,
+          providerStatus: null,
+          sanitizedMessage: messageOrOptions,
+          receipt: undefined,
+          details: undefined,
+        }
+      : messageOrOptions;
+    super(`tool "${toolId}" 调用失败: ${opts.sanitizedMessage}`);
     this.name = 'ToolInvocationError';
+    this.kind = opts.kind;
+    this.retryable = opts.retryable;
+    this.providerStatus = opts.providerStatus ?? null;
+    this.sanitizedMessage = opts.sanitizedMessage;
+    this.receipt = opts.receipt ?? null;
+    this.details = opts.details ?? {};
   }
 }
+
+function receiptFromResolution(resolution: ToolAdapterResolution, status: ToolInvocationStatus, latencyMs: number): ToolInvocationReceipt {
+  return { ...resolution, status, latencyMs };
+}
+
+function directReceipt(adapter: ToolAdapter, manifest: ToolManifest, status: ToolInvocationStatus, latencyMs: number): ToolInvocationReceipt {
+  return {
+    declaredAdapterType: manifest.adapter_type,
+    resolvedAdapterType: adapter.adapterType,
+    implementationId: adapter.implementationId,
+    executionMode: adapter.executionMode,
+    endpointHost: adapter.endpointHost?.(manifest) ?? null,
+    status,
+    latencyMs,
+  };
+}
+
+function unknownReceipt(declaredAdapterType: ToolManifest['adapter_type'], latencyMs: number): ToolInvocationReceipt {
+  return {
+    declaredAdapterType,
+    resolvedAdapterType: 'unknown',
+    implementationId: 'unknown',
+    executionMode: 'unknown',
+    endpointHost: null,
+    status: 'failed',
+    latencyMs,
+  };
+}
+
+
+function hostFromUrl(rawUrl: string): string | null {
+  try {
+    return new URL(rawUrl).host;
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeMessage(message: string, secrets: string[] = []): string {
+  const known = secrets.reduce(
+    (current, secret) => secret ? current.replaceAll(secret, '[REDACTED]') : current,
+    message,
+  );
+  return known
+    .replace(/Bearer\s+[^\s,;]+/gi, 'Bearer [REDACTED]')
+    .replace(/\b(api[_-]?key|authorization|token|secret|password)\s*[:=]\s*[^\s,;]+/gi, '$1=[REDACTED]');
+}
+
+function errorFromUnknown(toolId: string, err: unknown, fallbackKind: ToolFailureKind = 'unknown'): ToolInvocationError {
+  if (err instanceof ToolInvocationError) return err;
+  return new ToolInvocationError(toolId, {
+    kind: err instanceof DOMException && err.name === 'AbortError' ? 'timeout' : fallbackKind,
+    retryable: err instanceof DOMException && err.name === 'AbortError' || fallbackKind === 'network' || fallbackKind === 'timeout',
+    providerStatus: null,
+    sanitizedMessage: err instanceof Error ? err.message : String(err),
+  });
+}
+
+function httpFailureKind(status: number): ToolFailureKind {
+  if (status === 429) return 'rate_limit';
+  if (status === 401 || status === 403) return 'authentication';
+  if (status >= 500) return 'server';
+  return 'unknown';
+}
+
+function isRetryableHttp(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+function quotaExceeded(headers: Headers): boolean {
+  return headers.get('x-quota-exhausted') === 'true' || headers.get('x-quota-remaining') === '0';
+}
+
 
 // Fake o2 adapter:返回预置检索结果。
 // failOnToolIds 里的 tool 会抛错——用于验证失败回放(execution_log.status=failed + failures.jsonl)。
 export class FakeO2Adapter implements ToolAdapter {
   readonly adapterType = 'fake' as const;
+  readonly implementationId = 'fake-o2';
+  readonly executionMode = 'fake' as const;
 
   constructor(private readonly opts: { failOnToolIds?: string[] } = {}) {}
 
   async invoke(opts: { toolId: string; input: object; manifest: ToolManifest }): Promise<ToolInvokeResult> {
     const start = performance.now();
     if (this.opts.failOnToolIds?.includes(opts.toolId)) {
-      throw new ToolInvocationError(opts.toolId, '模拟失败(FakeO2Adapter.failOnToolIds)');
+      throw new ToolInvocationError(opts.toolId, {
+        kind: 'unknown',
+        retryable: false,
+        providerStatus: null,
+        sanitizedMessage: '模拟失败(FakeO2Adapter.failOnToolIds)',
+      });
     }
     // 与 o2-web-search/output.schema.json 对齐的预置结果
     const output = {
@@ -40,7 +192,8 @@ export class FakeO2Adapter implements ToolAdapter {
         { title: '应用商店榜单', url: 'https://example.com/rank', snippet: '数字人直播产品下载榜' },
       ],
     };
-    return { output, latencyMs: Math.round(performance.now() - start) };
+    const latencyMs = Math.round(performance.now() - start);
+    return { output, latencyMs, receipt: directReceipt(this, opts.manifest, 'ok', latencyMs) };
   }
 }
 
@@ -57,7 +210,10 @@ interface HttpAdapterConfig {
 
 export class HttpApiAdapter implements ToolAdapter {
   readonly adapterType = 'internal_api' as const;
+  readonly implementationId = 'http-api';
+  readonly executionMode = 'real' as const;
   private token: string | null = null;
+
 
   constructor(private readonly cfg?: Partial<HttpAdapterConfig>) {}
 
@@ -69,20 +225,33 @@ export class HttpApiAdapter implements ToolAdapter {
       timeoutMs: this.cfg?.timeoutMs ?? Number(process.env.SPIDER_TIMEOUT_MS ?? 30000),
     };
   }
+  endpointHost(): string | null {
+    return hostFromUrl(this.config().baseUrl);
+  }
+
 
   private async login(cfg: HttpAdapterConfig): Promise<string> {
     if (!cfg.username || !cfg.password) {
       throw new Error('缺少 SPIDER_USERNAME / SPIDER_PASSWORD,无法登录');
     }
-    const res = await fetch(`${cfg.baseUrl}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: cfg.username, password: cfg.password }),
-    });
-    if (!res.ok) throw new Error(`登录失败 HTTP ${res.status}`);
-    const data = (await res.json()) as { access_token?: string };
-    if (!data.access_token) throw new Error('登录响应缺少 access_token');
-    return data.access_token;
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), cfg.timeoutMs);
+    try {
+      const res = await fetch(`${cfg.baseUrl}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: cfg.username, password: cfg.password }),
+        signal: ac.signal,
+      });
+      if (!res.ok) throw new Error(`登录失败 HTTP ${res.status}`);
+      const data: unknown = await res.json();
+      if (!data || typeof data !== 'object' || !('access_token' in data) || typeof data.access_token !== 'string') {
+        throw new Error('登录响应缺少 access_token');
+      }
+      return data.access_token;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async invoke(opts: { toolId: string; input: object; manifest: ToolManifest }): Promise<ToolInvokeResult> {
@@ -110,19 +279,24 @@ export class HttpApiAdapter implements ToolAdapter {
 
     try {
       let res = await doCall();
-      // token 过期 → 重登一次
       if (res.status === 401 && opts.manifest.auth_required) {
         this.token = null;
         res = await doCall();
       }
       if (!res.ok) {
-        throw new ToolInvocationError(opts.toolId, `HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+        throw new ToolInvocationError(opts.toolId, {
+          kind: res.status === 429 && quotaExceeded(res.headers) ? 'quota' : httpFailureKind(res.status),
+          retryable: !(res.status === 429 && quotaExceeded(res.headers)) && isRetryableHttp(res.status),
+          providerStatus: res.status,
+          sanitizedMessage: `HTTP ${res.status}`,
+        });
       }
       const raw = (await res.json()) as unknown;
-      return { output: mapSearchResults(raw), latencyMs: Math.round(performance.now() - start) };
+      const latencyMs = Math.round(performance.now() - start);
+      return { output: mapSearchResults(raw), latencyMs, receipt: directReceipt(this, opts.manifest, 'ok', latencyMs) };
     } catch (err) {
       if (err instanceof ToolInvocationError) throw err;
-      throw new ToolInvocationError(opts.toolId, err instanceof Error ? err.message : String(err));
+      throw errorFromUnknown(opts.toolId, err, 'network');
     }
   }
 }
@@ -133,13 +307,27 @@ export class HttpApiAdapter implements ToolAdapter {
 // entrypoint 由 manifest 声明(如 /api/analyze);超时取 manifest.timeout_seconds。
 export class RestJsonAdapter implements ToolAdapter {
   readonly adapterType = 'rest_json' as const;
+  readonly implementationId = 'rest-json';
+  readonly executionMode = 'real' as const;
+
+
+  endpointHost(manifest: ToolManifest): string | null {
+    const envKey = manifest.base_url_env;
+    const baseUrl = (envKey ? process.env[envKey] : undefined)?.replace(/\/$/, '');
+    return baseUrl ? hostFromUrl(baseUrl) : null;
+  }
 
   async invoke(opts: { toolId: string; input: object; manifest: ToolManifest }): Promise<ToolInvokeResult> {
     const start = performance.now();
     const envKey = opts.manifest.base_url_env;
     const baseUrl = (envKey ? process.env[envKey] : undefined)?.replace(/\/$/, '');
     if (!baseUrl) {
-      throw new ToolInvocationError(opts.toolId, `缺少 base_url:请设置环境变量 ${envKey ?? '(manifest 未声明 base_url_env)'}`);
+      throw new ToolInvocationError(opts.toolId, {
+        kind: 'configuration',
+        retryable: false,
+        providerStatus: null,
+        sanitizedMessage: `缺少 base_url:请设置环境变量 ${envKey ?? '(manifest 未声明 base_url_env)'}`,
+      });
     }
     const path = opts.manifest.entrypoint || '/api/analyze';
     const timeoutMs = (opts.manifest.timeout_seconds ?? 60) * 1000;
@@ -154,13 +342,19 @@ export class RestJsonAdapter implements ToolAdapter {
         signal: ac.signal,
       });
       if (!res.ok) {
-        throw new ToolInvocationError(opts.toolId, `HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+        throw new ToolInvocationError(opts.toolId, {
+          kind: res.status === 429 && quotaExceeded(res.headers) ? 'quota' : httpFailureKind(res.status),
+          retryable: !(res.status === 429 && quotaExceeded(res.headers)) && isRetryableHttp(res.status),
+          providerStatus: res.status,
+          sanitizedMessage: `HTTP ${res.status}`,
+        });
       }
       const output = (await res.json()) as object;
-      return { output, latencyMs: Math.round(performance.now() - start) };
+      const latencyMs = Math.round(performance.now() - start);
+      return { output, latencyMs, receipt: directReceipt(this, opts.manifest, 'ok', latencyMs) };
     } catch (err) {
       if (err instanceof ToolInvocationError) throw err;
-      throw new ToolInvocationError(opts.toolId, err instanceof Error ? err.message : String(err));
+      throw errorFromUnknown(opts.toolId, err, 'network');
     } finally {
       clearTimeout(timer);
     }
@@ -199,14 +393,27 @@ interface TavilyResponse {
 
 export class TavilyAdapter implements ToolAdapter {
   readonly adapterType = 'tavily' as const;
+  readonly implementationId = 'tavily';
+  readonly executionMode = 'real' as const;
+
 
   constructor(private readonly cfg: TavilyAdapterConfig = {}) {}
+  endpointHost(): string | null {
+    const baseUrl = (this.cfg.baseUrl ?? process.env.TAVILY_BASE_URL ?? 'https://api.tavily.com').replace(/\/$/, '');
+    return hostFromUrl(baseUrl);
+  }
+
 
   async invoke(opts: { toolId: string; input: object; manifest: ToolManifest }): Promise<ToolInvokeResult> {
     const start = performance.now();
     const apiKey = this.cfg.apiKey ?? process.env.TAVILY_API_KEY;
     if (!apiKey) {
-      throw new ToolInvocationError(opts.toolId, '缺少 TAVILY_API_KEY');
+      throw new ToolInvocationError(opts.toolId, {
+        kind: 'configuration',
+        retryable: false,
+        providerStatus: null,
+        sanitizedMessage: 'Missing TAVILY_API_KEY',
+      });
     }
 
     const baseUrl = (this.cfg.baseUrl ?? process.env.TAVILY_BASE_URL ?? 'https://api.tavily.com').replace(/\/$/, '');
@@ -237,13 +444,19 @@ export class TavilyAdapter implements ToolAdapter {
         signal: ac.signal,
       });
       if (!res.ok) {
-        throw new ToolInvocationError(opts.toolId, `HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+        throw new ToolInvocationError(opts.toolId, {
+          kind: res.status === 429 && quotaExceeded(res.headers) ? 'quota' : httpFailureKind(res.status),
+          retryable: !(res.status === 429 && quotaExceeded(res.headers)) && isRetryableHttp(res.status),
+          providerStatus: res.status,
+          sanitizedMessage: `HTTP ${res.status}`,
+        });
       }
       const raw = (await res.json()) as TavilyResponse;
-      return { output: mapTavilyResponse(raw), latencyMs: Math.round(performance.now() - start) };
+      const latencyMs = Math.round(performance.now() - start);
+      return { output: mapTavilyResponse(raw), latencyMs, receipt: directReceipt(this, opts.manifest, 'ok', latencyMs) };
     } catch (err) {
       if (err instanceof ToolInvocationError) throw err;
-      throw new ToolInvocationError(opts.toolId, err instanceof Error ? err.message : String(err));
+      throw errorFromUnknown(opts.toolId, err, 'network');
     } finally {
       clearTimeout(timer);
     }
@@ -294,6 +507,8 @@ function mapSearchResults(raw: unknown): object {
 // 自身实现 ToolAdapter 接口,故 RuntimeDeps.toolAdapter 签名不变,orchestrator 无需改。
 export class ToolRouter implements ToolAdapter {
   readonly adapterType = 'router' as unknown as ToolManifest['adapter_type'];
+  readonly implementationId = 'tool-router';
+  readonly executionMode = 'real' as const;
   private readonly byType = new Map<string, ToolAdapter>();
 
   register(adapter: ToolAdapter): this {
@@ -307,11 +522,58 @@ export class ToolRouter implements ToolAdapter {
     return this;
   }
 
+  resolve(manifest: ToolManifest): ToolAdapterResolution | null {
+    const adapter = this.byType.get(manifest.adapter_type);
+    if (!adapter) return null;
+    return {
+      declaredAdapterType: manifest.adapter_type,
+      resolvedAdapterType: adapter.adapterType,
+      implementationId: adapter.implementationId,
+      executionMode: adapter.executionMode,
+      endpointHost: adapter.endpointHost?.(manifest) ?? null,
+    };
+  }
+
   async invoke(opts: { toolId: string; input: object; manifest: ToolManifest }): Promise<ToolInvokeResult> {
-    const adapter = this.byType.get(opts.manifest.adapter_type);
-    if (!adapter) {
-      throw new ToolInvocationError(opts.toolId, `无对应 adapter: adapter_type=${opts.manifest.adapter_type}`);
+    const start = performance.now();
+    const resolution = this.resolve(opts.manifest);
+    if (!resolution) {
+      const latencyMs = Math.round(performance.now() - start);
+      throw new ToolInvocationError(opts.toolId, {
+        kind: 'configuration',
+        retryable: false,
+        providerStatus: null,
+        sanitizedMessage: `No adapter registered for adapter_type=${opts.manifest.adapter_type}`,
+        receipt: unknownReceipt(opts.manifest.adapter_type, latencyMs),
+      });
     }
-    return adapter.invoke(opts);
+
+    try {
+      const result = await this.byType.get(opts.manifest.adapter_type)!.invoke(opts);
+      const latencyMs = Math.round(performance.now() - start);
+      return { ...result, latencyMs, receipt: receiptFromResolution(resolution, 'ok', latencyMs) };
+    } catch (err) {
+      if (err instanceof ToolInvocationError) {
+        const latencyMs = Math.round(performance.now() - start);
+        const receipt = receiptFromResolution(resolution, 'failed', latencyMs);
+        throw new ToolInvocationError(opts.toolId, {
+          kind: err.kind,
+          retryable: err.retryable,
+          providerStatus: err.providerStatus,
+          sanitizedMessage: err.sanitizedMessage,
+          receipt,
+          details: err.details,
+        });
+      }
+      const structured = errorFromUnknown(opts.toolId, err, 'network');
+      const latencyMs = Math.round(performance.now() - start);
+      throw new ToolInvocationError(opts.toolId, {
+        kind: structured.kind,
+        retryable: structured.retryable,
+        providerStatus: structured.providerStatus,
+        sanitizedMessage: structured.sanitizedMessage,
+        receipt: receiptFromResolution(resolution, 'failed', latencyMs),
+      });
+    }
   }
 }

@@ -1,21 +1,18 @@
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildOrchestrator } from './orchestrator.ts';
-import { RunWorkspace } from './run-workspace.ts';
-import { createConversation, getResearchTask, listExecutionLog } from '../../../database/repository.ts';
-import { closePool } from '../../../database/db.ts';
-import type { PlanStep, PlanCandidate, ExecuteResult } from './plan-types.ts';
-import type { Report } from '../../../packages/api-contract/http.ts';
+import { createConversation } from '../../../database/repository.ts';
+import { closePool, pool } from '../../../database/db.ts';
+import { ControlPlaneRepository } from '../../../database/control-plane.ts';
+import { TaskWorkflowService } from './control/task-workflow.ts';
+import type { PlanCandidate } from './plan-types.ts';
 import {
   buildReviewForm,
   buildReportMarkdown,
   type GoldRunRecord,
-  type RunModelMeta,
 } from './audit/audit-package.ts';
 import { buildBatchSummary, type BatchRunLine } from './audit/batch-summary.ts';
-import { classifyError, isInfraFailure } from './audit/failure-classify.ts';
+import { isInfraFailure } from './audit/failure-classify.ts';
 import { loadToolRegistry } from './runtime/config-loader.ts';
-
 // gold:run —— 金标批次真实闭环运行器(ADR-0001 / ADR-0002 / CONTEXT「金标真实运行」)。
 // 用法: pnpm gold:run [batch_id]
 //   固定金标输入,连跑三次能力样本(全真:gateway + real Tavily),按需重试 infra 失败,
@@ -34,12 +31,8 @@ const MAX_INFRA_RETRIES = 3; // 单个名额位因 infra 失败最多重试次�
 
 const AUDIT_ROOT = process.env.GOLD_AUDIT_ROOT ?? './audit/gold-runs';
 
-interface PlanShape {
-  steps: PlanStep[];
-  task_id: string;
-}
 
-// ADR-0002:强制全真,不读 .env 的 provider/adapter 值(.env 的 fake 供离线测试)。
+// Retained for ADR compatibility tests. #32's CLI path does not call real providers.
 export function forceRealEnv(): void {
   process.env.LLM_PROVIDER = 'gateway';
   process.env.TOOL_ADAPTER = 'real';
@@ -57,26 +50,9 @@ export function assertNoApprovalStep(candidate: PlanCandidate): void {
   }
 }
 
-function readModelMeta(ws: RunWorkspace): RunModelMeta {
-  const p = join(ws.uri, 'context_manifest.json');
-  if (existsSync(p)) {
-    const m = JSON.parse(readFileSync(p, 'utf8')) as {
-      model_name?: string; model_version?: string; trace_id?: string;
-    };
-    return {
-      model_name: m.model_name ?? process.env.LLM_MODEL_NAME ?? 'unknown',
-      model_version: m.model_version ?? process.env.LLM_MODEL_VERSION ?? 'unknown',
-      trace_id: m.trace_id,
-    };
-  }
-  return {
-    model_name: process.env.LLM_MODEL_NAME ?? 'unknown',
-    model_version: process.env.LLM_MODEL_VERSION ?? 'unknown',
-  };
-}
 
 interface OneRunResult {
-  outcome: 'capability_run' | 'infra_failed';
+  outcome: 'disabled_workflow' | 'infra_failed';
   status: string;
   schema_valid: boolean;
   note?: string;
@@ -131,88 +107,76 @@ export function optionalToolIdSet(): Set<string> {
 // 抛错按 infra / capability 分类:infra 无报告 → 上层重试;capability 计入样本。
 async function runOnce(runId: string, batchId: string): Promise<OneRunResult> {
   const startedAt = new Date().toISOString();
-  const orch = buildOrchestrator();
-  const conv = await createConversation({ ownerUserId: SEED_USER_ID, title: `gold ${runId}` });
-
-  let taskId = '';
-  try {
-    const plan = await orch.planPhase({
-      originalInput: SCENARIO_INPUT,
-      conversationId: conv.id,
-      ownerUserId: SEED_USER_ID,
-    });
-    taskId = plan.taskId;
-
-    // depth 候选优先(更完整);无则取第一个。
-    const candidate = plan.candidates.find((c) => c.id === 'depth') ?? plan.candidates[0];
-    if (!candidate) throw new Error('规划未产出任何候选计划');
-    assertNoApprovalStep(candidate); // 命中审批步在此抛 GOLD_APPROVAL_GATE(不归类 infra,直接冒泡停批次)
-
-    await orch.selectPlan({ taskId, candidateId: candidate.id });
-    let exec: ExecuteResult = await orch.executePhase({ taskId, conversationId: conv.id });
-
-    const ws = new RunWorkspace(taskId);
-
-    // 执行阶段 step 失败不抛异常(orchestrator 挂起落 run_state)。按最近失败步分三类处置(优先级从上到下):
-    //  1. optional(增强)tool 失败(如截图库后端未启动)→ resume(skip) 跳过成缺口续跑。
-    //     金标仅公开信息,增强能力缺失不得阻断报告(方案 B 根因修复);缺口透明进 risks_and_open_issues。
-    //     优先于 infra 判定:optional 后端 down 常呈 fetch failed(infra 文本特征),但按能力分层应跳过而非重试。
-    //  2. infra 失败(网关 5xx / core 检索 fetch failed 等)→ 判 infra,上层重试不占名额。
-    //  3. core 能力失败(公开检索/合成本身失败)→ 不跳过,保留 paused 样本让评审看到真实缺陷。
-    const optionalToolIds = optionalToolIdSet();
-    let skipGuard = 0;
-    while (exec.status === 'paused') {
-      const state = ws.readRunState<PausedRunState>();
-      if (pausedFailureIsOptionalTool(state, optionalToolIds)) {
-        if (skipGuard++ > candidate.steps.length) {
-          throw new Error(`resume(skip) 超过步数上限仍未终态(taskId=${taskId}),疑似死循环`);
-        }
-        exec = await orch.resumePhase({ taskId, conversationId: conv.id, action: 'skip' });
-        continue;
-      }
-      if (pausedFailureIsInfra(state)) {
-        return { outcome: 'infra_failed', status: 'paused', schema_valid: false, note: pausedFailureMsg(state), record: null };
-      }
-      break; // core 能力失败:留 paused,下方按无报告能力样本计入
-    }
-
-    const report = ws.readReport<Report>();
-    const finishedAt = new Date().toISOString();
-    const log = await listExecutionLog(taskId);
-
-    // 有报告即能力样本(哪怕 completed_with_gaps / 报告差 —— 真实结果,必须计入)。
-    // 无报告(paused 且未合成)视为能力失败样本:仍计入,评审判"不可用"。
-    const model = readModelMeta(ws);
-    const record: GoldRunRecord = {
-      run_id: runId, task_id: taskId, batch_id: batchId,
-      scenario_input: SCENARIO_INPUT,
-      status: exec.status, report, model,
-      schema_valid: report != null, // 报告已过 validateOrThrow 才落盘,故存在即 schema 合法
-      exec_log: log.map((l) => ({ step_no: l.step_no, actor_type: l.actor_type, actor_id: l.actor_id, status: l.status })),
-      started_at: startedAt, finished_at: finishedAt,
-    };
-    return { outcome: 'capability_run', status: exec.status, schema_valid: report != null, record };
-  } catch (err) {
-    if (err instanceof Error && err.message.startsWith('GOLD_APPROVAL_GATE')) throw err; // 闸门命中:停批次
-
-    const { kind, message } = classifyError(err);
-    if (kind === 'infra_failed') {
-      return { outcome: 'infra_failed', status: 'failed', schema_valid: false, note: message, record: null };
-    }
-    // 能力失败但抛了异常(如 schema 不过):产出可能不完整,仍计入为能力样本(报告可能缺)。
-    const finishedAt = new Date().toISOString();
-    const ws = taskId ? new RunWorkspace(taskId) : null;
-    const report = ws ? ws.readReport<Report>() : null;
-    const record: GoldRunRecord = {
-      run_id: runId, task_id: taskId, batch_id: batchId,
-      scenario_input: SCENARIO_INPUT,
-      status: 'failed', report, model: readModelMeta(ws ?? new RunWorkspace('__none__')),
-      schema_valid: false,
-      exec_log: taskId ? (await listExecutionLog(taskId)).map((l) => ({ step_no: l.step_no, actor_type: l.actor_type, actor_id: l.actor_id, status: l.status })) : [],
-      started_at: startedAt, finished_at: finishedAt,
-    };
-    return { outcome: 'capability_run', status: `failed: ${message}`, schema_valid: false, note: message, record };
-  }
+  const conversation = await createConversation({ ownerUserId: SEED_USER_ID, title: `gold disabled ${runId}` });
+  const repository = new ControlPlaneRepository(pool);
+  const workflow = new TaskWorkflowService(repository);
+  const task = await repository.createTask({
+    conversationId: conversation.id,
+    ownerUserId: SEED_USER_ID,
+    originalInput: SCENARIO_INPUT,
+    taskType: 'gold_workflow_probe',
+    structuredTask: {
+      confirmations: [],
+      blocking_issues: [{ key: 'gold-service', required_authority: 'gold' }],
+    },
+    state: 'awaiting_selection',
+  });
+  const owner = { userId: SEED_USER_ID, role: 'owner' as const };
+  const selected = await workflow.select({
+    taskId: task.id,
+    expectedVersion: task.stateVersion,
+    idempotencyKey: `gold-select:${runId}`,
+    actor: owner,
+    candidateId: 'gold-disabled',
+    plan: { steps: [] },
+    planHash: `sha256:gold-disabled:${runId}`,
+    pendingInputs: [],
+  });
+  const confirmed = await workflow.confirm({
+    taskId: task.id,
+    planVersionId: selected.planVersionId,
+    expectedVersion: selected.stateVersion,
+    idempotencyKey: `gold-confirm:${runId}`,
+    actor: owner,
+    confirmationAnswers: {},
+    inputRoles: [],
+  });
+  const approved = await workflow.approve({
+    taskId: task.id,
+    planVersionId: selected.planVersionId,
+    expectedVersion: confirmed.stateVersion,
+    idempotencyKey: `gold-approve:${runId}`,
+    actor: { userId: SEED_USER_ID, role: 'gold', service: 'gold' },
+    gateKey: 'gold-service',
+    decision: 'approved',
+  });
+  const execution = await workflow.execute({
+    taskId: task.id,
+    planVersionId: selected.planVersionId,
+    expectedVersion: approved.stateVersion,
+    idempotencyKey: `gold-execute:${runId}`,
+    actor: owner,
+  });
+  const record: GoldRunRecord = {
+    run_id: runId,
+    task_id: task.id,
+    batch_id: batchId,
+    scenario_input: SCENARIO_INPUT,
+    status: 'paused',
+    report: null,
+    model: { model_name: 'disabled-workflow-gate', model_version: 'trusted-p0-v1' },
+    schema_valid: false,
+    exec_log: [],
+    started_at: startedAt,
+    finished_at: new Date().toISOString(),
+  };
+  return {
+    outcome: 'disabled_workflow',
+    status: execution.state,
+    schema_valid: false,
+    note: 'execution disabled by Workflow Gate; this is not a P0 capability sample',
+    record,
+  };
 }
 
 // 裁剪审计包落盘(CONTEXT「批次审计包」清单:报告、plan、执行日志、模型元数据、来源清单、评审表单)。
@@ -228,7 +192,6 @@ export function writeRunAudit(dir: string, rec: GoldRunRecord): void {
 }
 
 async function main(): Promise<void> {
-  forceRealEnv();
   const argBatch = process.argv[2]?.trim();
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   const batchId = argBatch || `${today}-${SCENARIO_SLUG}`;
@@ -237,8 +200,8 @@ async function main(): Promise<void> {
   console.log(`\n===== gold:run 金标批次 =====`);
   console.log(`batch_id : ${batchId}`);
   console.log(`场景     : ${SCENARIO}`);
-  console.log(`真实边界 : LLM_PROVIDER=gateway (${process.env.LLM_MODEL_NAME}) + TOOL_ADAPTER=real`);
-  console.log(`目标     : ${TARGET_CAPABILITY_RUNS} 次能力样本(infra 失败重试,不占名额)\n`);
+  console.log('执行边界 : TaskWorkflowService disabled execution, 不调用 LLM 或 Tool');
+  console.log(`目标     : ${TARGET_CAPABILITY_RUNS} 次命令流验证,不构成 P0 能力样本\n`);
 
   const runLines: BatchRunLine[] = [];
 
@@ -248,7 +211,7 @@ async function main(): Promise<void> {
     while (!done) {
       const isRetry = infraRetries > 0;
       const runId = isRetry ? `run-${slot}-retry${infraRetries}` : `run-${slot}`;
-      console.log(`--- ${runId} 发起真跑(消耗 gateway token + Tavily 配额)...`);
+      console.log(`--- ${runId} 验证 Gold Workflow Gate disabled command flow...`);
       const r = await runOnce(runId, batchId);
 
       if (r.outcome === 'infra_failed') {
@@ -262,14 +225,14 @@ async function main(): Promise<void> {
         continue;
       }
 
-      // 能力样本:落审计包,计入批次。
+      // Disabled command sample: persist evidence, but never present it as a real capability run.
       const finalRunId = `run-${slot}`;
       if (r.record) {
         r.record.run_id = finalRunId;
         writeRunAudit(join(batchDir, finalRunId), r.record);
       }
-      runLines.push({ run_id: finalRunId, outcome: 'capability_run', status: r.status, schema_valid: r.schema_valid, infra_retries: infraRetries, note: r.note });
-      console.log(`    [capability_run] status=${r.status} schema=${r.schema_valid ? 'ok' : 'fail'} → 审计包 ${join(batchDir, finalRunId)}`);
+      runLines.push({ run_id: finalRunId, outcome: r.outcome, status: r.status, schema_valid: r.schema_valid, infra_retries: infraRetries, note: r.note });
+      console.log(`    [disabled_workflow] status=${r.status} → 审计包 ${join(batchDir, finalRunId)}`);
       done = true;
     }
   }
@@ -286,7 +249,7 @@ async function main(): Promise<void> {
   console.log(`\n⚠️ 最终 P0 判定 = 待人评审,非"通过"。`);
 }
 
-// 仅作为 CLI 入口时自动运行;被测试 import 时不触发(避免连 DB / 打真实网关)。
+// Only auto-run as a CLI entry, tests import pure helpers without DB or provider calls.
 const isEntry = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
 if (isEntry) {
   main()

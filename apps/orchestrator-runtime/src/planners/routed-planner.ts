@@ -8,6 +8,7 @@ import {
   loadToolInputSchema,
   type DecisionNode,
 } from '../runtime/config-loader.ts';
+import { hashPrompt } from '../runtime/llm-client.ts';
 import { searchKnowledge } from '../knowledge/index.ts';
 import type { GuidanceRef, PlanCandidate } from '../plan-types.ts';
 import type {
@@ -67,6 +68,11 @@ export class RoutedPlanner implements PlanStrategy {
       schema: {},
       schemaName: 'decision-states',
       context: { activated: activated.map((n) => n.key), task, guidance },
+      receipt: {
+        stage: 'planning_decision',
+        contextManifestHash: hashPrompt('', { activated: activated.map((n) => n.key), task, guidance }),
+        expectedModel: llm.identity.requestedModel,
+      },
     });
     // 只保留本次实际激活的节点状态(防 fixture 含多余节点)
     const activatedKeys = new Set(activated.map((n) => n.key));
@@ -110,6 +116,11 @@ export class RoutedPlanner implements PlanStrategy {
         skills: activeSkills.map((s) => ({ id: s.id, when_to_use: s.when_to_use, required_tools: s.required_tools })),
         tools: toolCtx,
         guidance,
+      },
+      receipt: {
+        stage: 'planning',
+        contextManifestHash: hashPrompt('', { task, skills: activeSkills, tools: toolCtx, guidance }),
+        expectedModel: llm.identity.requestedModel,
       },
     });
     // 严格取 2 份;LLM 极端情况下产出 0/1/3+ 时兜底(截取前 2 或补空报错)。

@@ -19,18 +19,93 @@ export interface LLMResult<T> {
   tokens?: TokenUsage;
 }
 
-export interface LLMClient {
-  generateStructured<T>(opts: {
-    prompt: string;
-    schema: object;
-    schemaName: string;
-    context?: object;
-  }): Promise<LLMResult<T>>;
+export type LLMFailureKind =
+  | 'rate_limit'
+  | 'server'
+  | 'timeout'
+  | 'network'
+  | 'quota'
+  | 'authentication'
+  | 'configuration'
+  | 'schema'
+  | 'capability'
+  | 'unknown';
 
-  generateText(opts: {
-    prompt: string;
-    context?: object;
-  }): Promise<Omit<LLMResult<string>, 'data'> & { text: string }>;
+export class LLMInvocationError extends Error {
+  constructor(
+    readonly kind: LLMFailureKind,
+    readonly retryable: boolean,
+    readonly providerStatus: number | null,
+    readonly sanitizedMessage: string,
+  ) {
+    super(sanitizedMessage);
+    this.name = 'LLMInvocationError';
+  }
+}
+
+export interface LLMReceiptContext {
+  stage: string;
+  attemptId?: string;
+  stepNo?: number;
+  contextManifestHash?: string;
+  expectedModel?: string;
+}
+
+export interface LLMProviderIdentity {
+  provider: string;
+  endpointHost: string;
+  requestedModel: string;
+  mode: 'mock' | 'real' | 'draft';
+  eligibleAsReal: boolean;
+}
+
+export interface StructuredLLMCallOptions {
+  prompt: string;
+  schema: object;
+  schemaName: string;
+  context?: object;
+  receipt: LLMReceiptContext;
+}
+
+export interface TextLLMCallOptions {
+  prompt: string;
+  context?: object;
+  receipt: LLMReceiptContext;
+}
+
+export interface ModelCallRecordInput {
+  attemptId?: string;
+  stage: string;
+  stepNo?: number;
+  provider: string;
+  endpointHost: string;
+  requestedModel: string;
+  actualModel: string;
+  promptHash: string;
+  contextManifestHash?: string;
+  traceId?: string;
+  tokens?: TokenUsage;
+  status: 'succeeded' | 'failed';
+  failure: Record<string, unknown> | null;
+  startedAt: Date;
+  finishedAt: Date;
+}
+
+export interface ModelCallRecorder {
+  recordModelCall(input: ModelCallRecordInput): Promise<void>;
+}
+
+export type LegacyStructuredLLMCallOptions = Omit<StructuredLLMCallOptions, 'receipt'> & { receipt?: LLMReceiptContext };
+export type LegacyTextLLMCallOptions = Omit<TextLLMCallOptions, 'receipt'> & { receipt?: LLMReceiptContext };
+
+export type TextLLMResult = Omit<LLMResult<string>, 'data'> & { text: string };
+
+export interface LLMClient {
+  readonly identity: LLMProviderIdentity;
+
+  generateStructured<T>(opts: StructuredLLMCallOptions): Promise<LLMResult<T>>;
+
+  generateText(opts: TextLLMCallOptions): Promise<TextLLMResult>;
 }
 
 // 确定性 hash:同输入同输出,便于测试与复盘对齐。
@@ -100,9 +175,17 @@ export class MockLLMClient implements LLMClient {
     private readonly model = { name: process.env.LLM_MODEL_NAME ?? 'mock-llm', version: process.env.LLM_MODEL_VERSION ?? 'v0' },
   ) {}
 
-  async generateStructured<T>(opts: {
-    prompt: string; schema: object; schemaName: string; context?: object;
-  }): Promise<LLMResult<T>> {
+  get identity(): LLMProviderIdentity {
+    return {
+      provider: 'mock',
+      endpointHost: 'local-mock',
+      requestedModel: this.model.name,
+      mode: 'mock',
+      eligibleAsReal: false,
+    };
+  }
+
+  async generateStructured<T>(opts: LegacyStructuredLLMCallOptions): Promise<LLMResult<T>> {
     const data = this.fixtures[opts.schemaName] ?? skillFixtureFor(opts.schemaName);
     if (data === undefined) {
       throw new Error(`MockLLMClient: 没有为 schemaName="${opts.schemaName}" 预置 fixture`);
@@ -121,7 +204,7 @@ export class MockLLMClient implements LLMClient {
     };
   }
 
-  async generateText(opts: { prompt: string; context?: object }) {
+  async generateText(opts: LegacyTextLLMCallOptions): Promise<TextLLMResult> {
     return {
       text: (this.fixtures['__text__'] as string) ?? '（mock 文本输出）',
       promptHash: hashPrompt(opts.prompt, opts.context),

@@ -210,8 +210,8 @@ test('HTTP non-2xx rejects with ToolInvocationError without leaking API key', as
     (err) => {
       assert.ok(err instanceof ToolInvocationError);
       assert.equal(err.toolId, 'tavily-web-search');
-      assert.match(err.message, /HTTP 403: upstream denied/);
-      assert.doesNotMatch(err.message, /test-key/);
+      assert.match(err.message, /HTTP 403/);
+      assert.doesNotMatch(err.message, /upstream denied|test-key/);
       return true;
     },
   );

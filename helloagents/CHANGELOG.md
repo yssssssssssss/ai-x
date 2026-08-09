@@ -17,11 +17,13 @@
 - 新增批次审计包:`audit/gold-runs/<batch_id>/run-*/` 落裁剪后的报告 md/json、执行日志、模型元数据、来源核验矩阵与评审表单,批次根 `batch.md` 机器填客观计数、P0 通过结论留独立研究员;评审表单判定字段不可由模型代填。
 - 增加金标机制离线自测:评审表单预填与留空、批次计数(infra 不占名额)、失败分类(网关 5xx/超时/限流 vs schema 不过)、审批闸门放行与拦停、审计包裁剪落盘。
 - CONTEXT.md 增补验收术语(金标真实运行 / 批次审计包 / 基础设施失败 / 评审表单),并新增 ADR-0001(gold:run 自动确认闸门)、ADR-0002(坚持全真闭环边界)。
+- 新增 Clean Cutover gate:机器校验 #29–#35 冻结、维护窗口停写、DB/workspace/audit 备份 SHA-256 inventory + restore check、migration 演练、只读 app smoke、non-gold workflow smoke、拒绝探针、go/no-go、首写前 rollback 与首写后 roll-forward lock,并封存 cutover checklist 防篡改。
 
 ### 变更
 - 任务执行、恢复和终止改为 PostgreSQL 条件更新；未领取的请求不会调用外部能力。
 - 媒体角色、数量、类型和任务归属在执行领取前校验，失败保持任务待确认状态。
 - 执行 API 与 SSE 使用稳定错误码区分状态冲突、输入前置条件和上游故障；Web 客户端保留错误码。
 - Express 应用构建与端口监听解耦，测试可注入确定性编排器；报告回放比较格式升级为 `1.1`。
+- Agent API 暴露 `createAgentApiApp()` composition root factory,端口监听仅在直接启动 `server.ts` 时发生,支持 cutover read-only smoke 验证旧 mutation=410 与旧 routes 不存在。
 - 测试文件改为串行执行，消除共享 PostgreSQL 日志写入对工具并发探针造成的非确定性。
 - `npm run quality` 门前置 `typecheck`(root + web 两个 tsconfig 的 `tsc --noEmit`),从源头拦截类型漂移;并修复 tavily-adapter 测试中 `let` 闭包捕获导致的 `never` 收窄报错,root tsc 全量归零。

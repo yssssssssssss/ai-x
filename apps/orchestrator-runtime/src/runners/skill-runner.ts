@@ -31,6 +31,13 @@ export class SkillActorRunner implements ActorRunner {
       schema: output ?? {},
       schemaName: `skill:${step.actor_id}`,
       context: { research_goal: ctx.researchGoal, tool_outputs: ctx.toolOutputs },
+      receipt: {
+        stage: 'skill',
+        attemptId: ctx.attemptId,
+        stepNo: step.step_no,
+        contextManifestHash: ctx.contextManifestHash,
+        expectedModel: ctx.expectedModel,
+      },
     });
 
     if (skillEntry.output_schema) {

@@ -12,11 +12,7 @@ import { requireAuth } from '../middleware.ts';
 import type { ResearchTaskData } from '../../../../packages/api-contract/plan.ts';
 import type {
   PlanCandidatesResponse,
-  SelectResponse,
-  FinalizedPlan,
-  ExecuteResponse,
   TaskDetail,
-  TaskSummary,
   Report,
 } from '../../../../packages/api-contract/http.ts';
 
@@ -109,102 +105,24 @@ tasksRouter.post('/plan/stream', async (req, res) => {
   }
 });
 
-// 候选选择:用户选一份 → finalize 出 plan + pendingUploads,状态转 awaiting_confirmation。
-tasksRouter.post('/:id/select', async (req, res) => {
-  const task = await getOwnedTask(req.params.id, req.userId!);
-  if (!task) {
-    res.status(404).json({ error: '任务不存在' });
-    return;
-  }
-  const { candidateId } = req.body ?? {};
-  if (candidateId !== 'depth' && candidateId !== 'speed') {
-    res.status(400).json({ error: 'candidateId 需为 depth 或 speed' });
-    return;
-  }
-  try {
-    const orch = buildOrchestrator();
-    const result = await orch.selectPlan({ taskId: task.id, candidateId });
-    const body: SelectResponse = {
-      taskId: result.taskId,
-      candidateId: result.candidateId,
-      plan: result.plan as FinalizedPlan,
-      pendingUploads: result.pendingUploads,
-    };
-    res.json(body);
-  } catch (err) {
-    res.status(502).json({ error: `候选选择失败: ${err instanceof Error ? err.message : String(err)}` });
-  }
+// Legacy mutations are intentionally unavailable; legacy tasks remain read-only.
+tasksRouter.post('/:id/select', (_req, res) => {
+  res.status(410).json({ error: 'legacy task mutation 已移除；请使用 /api/control-tasks/:id/select' });
 });
 
-// 段3+4:确认后执行 → 报告(容错:遇失败步返回 status=paused,前端给跳过/终止)
-tasksRouter.post('/:id/execute', async (req, res) => {
-  const task = await getOwnedTask(req.params.id, req.userId!);
-  if (!task) {
-    res.status(404).json({ error: '任务不存在' });
-    return;
-  }
-  try {
-    const orch = buildOrchestrator();
-    const result = await orch.executePhase({
-      taskId: task.id,
-      conversationId: task.conversation_id,
-      uploads: req.body?.uploads,   // [{ role, dataUrl }] — 确认闸门收的图,回填 step.input
-    });
-    const body: ExecuteResponse = {
-      taskId: task.id,
-      status: result.status,
-      reportArtifactId: result.reportArtifactId ?? null,
-      failedStepNo: result.failedStepNo ?? null,
-      failedStepName: result.failedStepName ?? null,
-      gapCount: result.gapCount ?? 0,
-      executionLog: await listExecutionLog(task.id),
-      report: new RunWorkspace(task.id).readReport<Report>(),
-    };
-    res.json(body);
-  } catch (err) {
-    res.status(502).json({ error: `执行失败: ${err instanceof Error ? err.message : String(err)}` });
-  }
+// Legacy merged execution is intentionally unavailable.
+tasksRouter.post('/:id/execute', (_req, res) => {
+  res.status(410).json({ error: 'legacy merged execute 已移除；请使用 /api/control-tasks/:id/execute' });
 });
 
-// 失败步恢复:skip=从下一步续跑,abort=终止收尾
-tasksRouter.post('/:id/resume', async (req, res) => {
-  const task = await getOwnedTask(req.params.id, req.userId!);
-  if (!task) {
-    res.status(404).json({ error: '任务不存在' });
-    return;
-  }
-  const { action } = req.body ?? {};
-  if (action !== 'skip' && action !== 'abort') {
-    res.status(400).json({ error: 'action 需为 skip 或 abort' });
-    return;
-  }
-  try {
-    const orch = buildOrchestrator();
-    const result = await orch.resumePhase({
-      taskId: task.id,
-      conversationId: task.conversation_id,
-      action,
-    });
-    const body: ExecuteResponse = {
-      taskId: task.id,
-      status: result.status,
-      reportArtifactId: result.reportArtifactId ?? null,
-      failedStepNo: result.failedStepNo ?? null,
-      failedStepName: result.failedStepName ?? null,
-      gapCount: result.gapCount ?? 0,
-      executionLog: await listExecutionLog(task.id),
-      report: new RunWorkspace(task.id).readReport<Report>(),
-    };
-    res.json(body);
-  } catch (err) {
-    res.status(502).json({ error: `恢复失败: ${err instanceof Error ? err.message : String(err)}` });
-  }
+// Legacy resume is intentionally unavailable.
+tasksRouter.post('/:id/resume', (_req, res) => {
+  res.status(410).json({ error: 'legacy task resume 已移除；请使用 /api/control-tasks/:id/resume' });
 });
 
 // 历史任务(owner 隔离)
 tasksRouter.get('/', async (req, res) => {
-  const body: { tasks: TaskSummary[] } = { tasks: await listRecentTasks(req.userId!) };
-  res.json(body);
+  res.json({ kind: 'legacy', tasks: await listRecentTasks(req.userId!) });
 });
 
 // 任务详情:task + 决策状态 + 执行日志 + 报告(复盘用)
@@ -226,5 +144,5 @@ tasksRouter.get('/:id', async (req, res) => {
     executionLog: await listExecutionLog(task.id),
     report: new RunWorkspace(task.id).readReport<Report>(),
   };
-  res.json(body);
+  res.json({ kind: 'legacy', ...body });
 });
