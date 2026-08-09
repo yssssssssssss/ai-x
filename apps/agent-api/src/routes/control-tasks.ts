@@ -98,7 +98,10 @@ controlTasksRouter.get('/:id', async (req, res) => {
     res.status(404).json({ error: '任务不存在' });
     return;
   }
-  res.json({ kind: 'current', task });
+  const executionSteps = task.currentAttemptId
+    ? await repository.listExecutionSteps(task.currentAttemptId)
+    : [];
+  res.json({ kind: 'current', task, executionSteps });
 });
 
 controlTasksRouter.post('/:id/select', async (req, res) => {
@@ -220,6 +223,18 @@ controlTasksRouter.post('/:id/resume', async (req, res) => {
   const actor = await authenticatedActor(req, res);
   const key = idempotencyKey(req);
   const expectedVersion = version(body?.expectedVersion);
+  const action = body?.action === 'retry' || body?.action === 'skip' || body?.action === 'abort'
+    ? body.action
+    : undefined;
+  const failedStepNo = version(body?.failedStepNo);
+  if (body?.action !== undefined && !action) {
+    res.status(400).json({ error: 'action 需为 retry、skip 或 abort' });
+    return;
+  }
+  if (body?.failedStepNo !== undefined && (!failedStepNo || failedStepNo < 1)) {
+    res.status(400).json({ error: 'failedStepNo 需为正整数' });
+    return;
+  }
   if (!actor) return;
   if (expectedVersion == null || !key) {
     res.status(400).json({ error: 'expectedVersion、Idempotency-Key 必填' });
@@ -231,6 +246,8 @@ controlTasksRouter.post('/:id/resume', async (req, res) => {
       expectedVersion,
       idempotencyKey: key,
       actor,
+      action,
+      failedStepNo: failedStepNo && failedStepNo > 0 ? failedStepNo : undefined,
     }));
   } catch (error) {
     responseError(res, error);

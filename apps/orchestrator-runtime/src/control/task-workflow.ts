@@ -5,6 +5,7 @@ import {
   type ControlPlanVersionDetail,
   type ControlTaskDetail,
   type ControlTaskState,
+  type ControlExecutionLease,
 } from '../../../../database/control-plane.ts';
 
 export type WorkflowRole = 'owner' | 'legal' | 'security' | 'gold';
@@ -40,6 +41,25 @@ interface CommandResult {
   stateVersion: number;
 }
 
+export interface WorkflowExecutionDriver {
+  execute(input: { lease: ControlExecutionLease }): Promise<{
+    status: 'completed' | 'paused';
+    attemptId: string;
+    failedStepNo?: number;
+    failure?: Record<string, unknown>;
+  }>;
+}
+
+export type WorkflowExecutionResponse =
+  | (CommandResult & { attemptId: string; executionDisabled: true })
+  | (CommandResult & {
+      attemptId: string;
+      executionDisabled: false;
+      status: 'completed' | 'paused';
+      failedStepNo?: number;
+      failure?: Record<string, unknown>;
+    });
+
 export class TaskWorkflowGateError extends Error {
   constructor(readonly unresolved: string[]) {
     super(`workflow gates remain unresolved: ${unresolved.join(', ')}`);
@@ -74,6 +94,10 @@ function stableValue(value: unknown): unknown {
 
 function requestHash(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(stableValue(value))).digest('hex');
+}
+
+function leaseTokenHash(token: string): string {
+  return `sha256:${createHash('sha256').update(token).digest('hex')}`;
 }
 
 function taskShape(task: ControlTaskDetail): WorkflowTaskShape {
@@ -139,6 +163,24 @@ function pendingInputKeys(plan: ControlPlanVersionDetail): string[] {
   });
 }
 
+function revisedPlanWithoutStep(plan: unknown, failedStepNo: number): Record<string, unknown> {
+  if (!isRecord(plan) || !Array.isArray(plan.steps)) throw new TaskWorkflowGateError(['plan.steps']);
+  const remaining = plan.steps
+    .filter((step) => !isRecord(step) || step.step_no !== failedStepNo)
+    .map((step, index) => {
+      if (!isRecord(step)) throw new TaskWorkflowGateError(['plan.steps']);
+      return { ...step, step_no: index + 1 };
+    });
+  if (remaining.length === plan.steps.length) throw new TaskWorkflowGateError([`step:${failedStepNo}`]);
+  return { ...plan, steps: remaining };
+}
+
+function allowedActions(failure: Record<string, unknown> | null): string[] {
+  return Array.isArray(failure?.allowedActions)
+    ? failure.allowedActions.filter((action): action is string => typeof action === 'string')
+    : [];
+}
+
 function requiredApprovals(task: ControlTaskDetail, plan: ControlPlanVersionDetail): Array<{ key: string; authority: WorkflowRole }> {
   const requirements = new Map<string, WorkflowRole>();
   for (const issue of taskShape(task).blocking_issues ?? []) {
@@ -153,7 +195,10 @@ function requiredApprovals(task: ControlTaskDetail, plan: ControlPlanVersionDeta
 }
 
 export class TaskWorkflowService {
-  constructor(private readonly repository: ControlPlaneRepository) {}
+  constructor(
+    private readonly repository: ControlPlaneRepository,
+    private readonly executionDriver?: WorkflowExecutionDriver,
+  ) {}
 
   private async requireTask(taskId: string): Promise<ControlTaskDetail> {
     const task = await this.repository.getTaskDetail(taskId);
@@ -394,21 +439,18 @@ export class TaskWorkflowService {
     if (!revisableStates.includes(task.state) || task.stateVersion !== input.expectedVersion) {
       throw new ControlPlaneConflictError(`task ${task.id} cannot be revised at version ${input.expectedVersion}`);
     }
-    const plan = await this.repository.createPlanVersion({
+    const revision = await this.repository.createPlanRevision({
       taskId: task.id,
-      version: await this.repository.nextPlanVersion(task.id),
+      expectedVersion: input.expectedVersion,
+      from: revisableStates,
+      to: 'awaiting_confirmation',
       candidateId: input.candidateId,
       plan: input.plan,
       planHash: input.planHash,
       pendingInputs: input.pendingInputs,
     });
-    const transitioned = await this.repository.transitionTask({
-      taskId: task.id,
-      expectedVersion: input.expectedVersion,
-      from: revisableStates,
-      to: 'awaiting_confirmation',
-      activePlanVersionId: plan.id,
-    });
+    const plan = revision.plan;
+    const transitioned = revision.task;
     const result = { planVersionId: plan.id, state: transitioned.state, stateVersion: transitioned.stateVersion };
     await this.repository.recordCommand({
       taskId: task.id,
@@ -429,21 +471,90 @@ export class TaskWorkflowService {
     expectedVersion: number;
     idempotencyKey: string;
     actor: WorkflowActor;
+    action?: 'retry' | 'skip' | 'abort';
+    failedStepNo?: number;
   }): Promise<CommandResult> {
     const hash = requestHash(input);
     const replay = await this.replay<CommandResult>(input.taskId, 'resume', input.idempotencyKey, hash);
     if (replay) return replay;
     const task = await this.requireTask(input.taskId);
     this.requireOwner(task, input.actor);
+    const action = input.action ?? 'retry';
+    const recoveredState = action === 'skip' ? 'awaiting_confirmation' : action === 'abort' ? 'cancelled' : 'ready';
     if (task.state !== 'paused' || task.stateVersion !== input.expectedVersion) {
+      const currentAttempt = task.currentAttemptId
+        ? (await this.repository.listAttempts(task.id)).find((attempt) => attempt.id === task.currentAttemptId)
+        : undefined;
+      const recoveryAttemptState = action === 'abort' ? 'cancelled' : 'paused';
+      if (task.state === recoveredState && currentAttempt?.state === recoveryAttemptState) {
+        const recovered = { state: task.state, stateVersion: task.stateVersion };
+        try {
+          await this.repository.recordCommand({
+            taskId: task.id,
+            commandType: 'resume',
+            idempotencyKey: input.idempotencyKey,
+            requestHash: hash,
+            expectedVersion: input.expectedVersion,
+            stateBefore: 'paused',
+            stateAfter: task.state,
+            response: recovered,
+            actorUserId: input.actor.userId,
+          });
+        } catch (error) {
+          const replayed = await this.replay<CommandResult>(input.taskId, 'resume', input.idempotencyKey, hash);
+          if (replayed) return replayed;
+          throw error;
+        }
+        return recovered;
+      }
       throw new ControlPlaneConflictError(`task ${task.id} is not paused at version ${input.expectedVersion}`);
     }
-    const transitioned = await this.repository.transitionTask({
-      taskId: task.id,
-      expectedVersion: input.expectedVersion,
-      from: 'paused',
-      to: 'ready',
-    });
+    let failedStep = null;
+    if (task.currentAttemptId) {
+      const steps = await this.repository.listExecutionSteps(task.currentAttemptId);
+      failedStep = input.failedStepNo == null
+        ? [...steps].reverse().find((step) => step.state === 'failed') ?? null
+        : steps.find((step) => step.stepNo === input.failedStepNo && step.state === 'failed') ?? null;
+    }
+    if (failedStep) {
+      if (!allowedActions(failedStep.failure).includes(action)) {
+        throw new TaskWorkflowGateError([`action:${action}`]);
+      }
+    } else if (action !== 'retry') {
+      throw new TaskWorkflowGateError([`action:${action}`]);
+    }
+
+    let transitioned;
+    if (action === 'skip') {
+      if (!failedStep || !task.activePlanVersionId) throw new TaskWorkflowGateError(['resume.failure']);
+      const activePlan = await this.requirePlan(task, task.activePlanVersionId);
+      const revisedPlan = revisedPlanWithoutStep(activePlan.plan, failedStep.stepNo);
+      const revision = await this.repository.createPlanRevision({
+        taskId: task.id,
+        expectedVersion: input.expectedVersion,
+        from: 'paused',
+        to: 'awaiting_confirmation',
+        candidateId: activePlan.candidateId ?? undefined,
+        plan: revisedPlan,
+        planHash: `sha256:${requestHash(revisedPlan)}`,
+        pendingInputs: activePlan.pendingInputs,
+      });
+      transitioned = revision.task;
+    } else if (action === 'abort') {
+      if (!task.currentAttemptId) throw new TaskWorkflowGateError(['resume.attempt']);
+      transitioned = await this.repository.cancelPausedExecution({
+        taskId: task.id,
+        attemptId: task.currentAttemptId,
+        expectedVersion: input.expectedVersion,
+      });
+    } else {
+      transitioned = await this.repository.transitionTask({
+        taskId: task.id,
+        expectedVersion: input.expectedVersion,
+        from: 'paused',
+        to: 'ready',
+      });
+    }
     const result = { state: transitioned.state, stateVersion: transitioned.stateVersion };
     await this.repository.recordCommand({
       taskId: task.id,
@@ -465,35 +576,115 @@ export class TaskWorkflowService {
     expectedVersion: number;
     idempotencyKey: string;
     actor: WorkflowActor;
-  }): Promise<CommandResult & { attemptId: string; executionDisabled: true }> {
+  }): Promise<WorkflowExecutionResponse> {
     const hash = requestHash(input);
-    const replay = await this.replay<CommandResult & { attemptId: string; executionDisabled: true }>(input.taskId, 'disabled_execution', input.idempotencyKey, hash);
+    const commandType = this.executionDriver ? 'execution' : 'disabled_execution';
+    const replay = await this.replay<WorkflowExecutionResponse>(input.taskId, commandType, input.idempotencyKey, hash);
     if (replay) return replay;
     const task = await this.requireTask(input.taskId);
     this.requireOwner(task, input.actor);
     await this.requirePlan(task, input.planVersionId);
-    if (task.state !== 'ready' || task.stateVersion !== input.expectedVersion) {
-      throw new ControlPlaneConflictError(`task ${task.id} is not ready at version ${input.expectedVersion}`);
-    }
+    const leaseToken = randomUUID();
+    const leaseOwner = this.executionDriver ? 'workflow-execution-engine' : 'workflow-gate-disabled-executor';
     const claim = await this.repository.claimExecution({
       taskId: task.id,
       planVersionId: input.planVersionId,
       expectedVersion: input.expectedVersion,
       idempotencyKey: input.idempotencyKey,
       requestHash: hash,
-      leaseOwner: 'workflow-gate-disabled-executor',
-      leaseTokenHash: createHash('sha256').update(randomUUID()).digest('hex'),
+      leaseOwner,
+      leaseTokenHash: leaseTokenHash(leaseToken),
     });
+
+    if (this.executionDriver) {
+      if (claim.replayed) {
+        const finalTask = await this.requireTask(task.id);
+        if (
+          finalTask.currentAttemptId === claim.attemptId
+          && (finalTask.state === 'completed' || finalTask.state === 'paused')
+        ) {
+          const failedSteps = finalTask.state === 'paused'
+            ? await this.repository.listExecutionSteps(claim.attemptId)
+            : [];
+          const latestFailure = [...failedSteps].reverse().find((step) => step.state === 'failed');
+          const recovered: WorkflowExecutionResponse = {
+            attemptId: claim.attemptId,
+            state: finalTask.state,
+            stateVersion: finalTask.stateVersion,
+            status: finalTask.state === 'completed' ? 'completed' : 'paused',
+            executionDisabled: false,
+            failedStepNo: latestFailure?.stepNo,
+            failure: latestFailure?.failure ?? undefined,
+          };
+          try {
+            await this.repository.recordCommand({
+              taskId: task.id,
+              commandType,
+              idempotencyKey: input.idempotencyKey,
+              requestHash: hash,
+              expectedVersion: input.expectedVersion,
+              stateBefore: 'ready',
+              stateAfter: finalTask.state,
+              response: recovered,
+              actorUserId: input.actor.userId,
+            });
+          } catch (error) {
+            const completed = await this.replay<WorkflowExecutionResponse>(input.taskId, commandType, input.idempotencyKey, hash);
+            if (completed) return completed;
+            throw error;
+          }
+          return recovered;
+        }
+        throw new ControlPlaneConflictError(`execution command ${input.idempotencyKey} is still in progress`);
+      }
+      const driven = await this.executionDriver.execute({
+        lease: {
+          taskId: task.id,
+          planVersionId: input.planVersionId,
+          attemptId: claim.attemptId,
+          leaseOwner,
+          leaseToken,
+        },
+      });
+      const finalTask = await this.requireTask(task.id);
+      const result: WorkflowExecutionResponse = {
+        attemptId: claim.attemptId,
+        state: finalTask.state,
+        stateVersion: finalTask.stateVersion,
+        status: driven.status,
+        executionDisabled: false,
+        ...(driven.failedStepNo === undefined ? {} : { failedStepNo: driven.failedStepNo }),
+        ...(driven.failure === undefined ? {} : { failure: driven.failure }),
+      };
+      await this.repository.recordCommand({
+        taskId: task.id,
+        commandType,
+        idempotencyKey: input.idempotencyKey,
+        requestHash: hash,
+        expectedVersion: input.expectedVersion,
+        stateBefore: task.state,
+        stateAfter: finalTask.state,
+        response: result,
+        actorUserId: input.actor.userId,
+      });
+      return result;
+    }
+
     const paused = await this.repository.pauseExecution({
       taskId: task.id,
       attemptId: claim.attemptId,
       expectedVersion: claim.stateVersion,
       reason: 'execution_disabled_by_workflow_gate',
     });
-    const result = { attemptId: claim.attemptId, state: paused.state, stateVersion: paused.stateVersion, executionDisabled: true as const };
+    const result: WorkflowExecutionResponse = {
+      attemptId: claim.attemptId,
+      state: paused.state,
+      stateVersion: paused.stateVersion,
+      executionDisabled: true,
+    };
     await this.repository.recordCommand({
       taskId: task.id,
-      commandType: 'disabled_execution',
+      commandType,
       idempotencyKey: input.idempotencyKey,
       requestHash: hash,
       expectedVersion: input.expectedVersion,

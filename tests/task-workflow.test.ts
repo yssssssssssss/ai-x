@@ -363,3 +363,273 @@ test('disabled execution claim creates no real execution work and pauses the tas
   assert.equal(rerun.state, 'paused');
   assert.equal((await repository.listAttempts(task.id)).length, 2);
 });
+
+test('Workflow owns the lease and invokes a real execution driver once per command', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  let driverCalls = 0;
+  const workflow = new TaskWorkflowService(repository, {
+    execute: async ({ lease }) => {
+      driverCalls += 1;
+      await repository.requireActiveLease(lease);
+      await repository.completeExecution(lease);
+      return { status: 'completed', attemptId: lease.attemptId };
+    },
+  });
+  const task = await repository.createTask({
+    conversationId,
+    ownerUserId: ownerId,
+    originalInput: 'real workflow execution',
+    taskType: 'competitive_research',
+    structuredTask: { confirmations: [], blocking_issues: [] },
+    state: 'awaiting_selection',
+  });
+  const selection = await workflow.select({
+    taskId: task.id,
+    expectedVersion: task.stateVersion,
+    idempotencyKey: 'real-select',
+    actor: { userId: ownerId, role: 'owner' },
+    candidateId: 'depth',
+    plan: { task_id: task.id, steps: [] },
+    planHash: 'sha256:real-plan',
+    pendingInputs: [],
+  });
+  const ready = await workflow.confirm({
+    taskId: task.id,
+    planVersionId: selection.planVersionId,
+    expectedVersion: selection.stateVersion,
+    idempotencyKey: 'real-confirm',
+    actor: { userId: ownerId, role: 'owner' },
+    confirmationAnswers: {},
+    inputRoles: [],
+  });
+  const command = {
+    taskId: task.id,
+    planVersionId: selection.planVersionId,
+    expectedVersion: ready.stateVersion,
+    idempotencyKey: 'real-execute',
+    actor: { userId: ownerId, role: 'owner' as const },
+  };
+
+  const execution = await workflow.execute(command);
+  const replay = await workflow.execute(command);
+
+  assert.equal(execution.executionDisabled, false);
+  assert.equal(execution.state, 'completed');
+  assert.equal('leaseToken' in execution, false);
+  assert.deepEqual(replay, execution);
+  assert.equal(driverCalls, 1);
+});
+
+test('concurrent execute commands invoke the external driver only once', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  let driverCalls = 0;
+  let announceDriver: (() => void) | undefined;
+  let releaseDriver: (() => void) | undefined;
+  const driverStarted = new Promise<void>((resolve) => { announceDriver = resolve; });
+  const driverRelease = new Promise<void>((resolve) => { releaseDriver = resolve; });
+  const workflow = new TaskWorkflowService(repository, {
+    execute: async ({ lease }) => {
+      driverCalls += 1;
+      announceDriver?.();
+      await driverRelease;
+      await repository.completeExecution(lease);
+      return { status: 'completed', attemptId: lease.attemptId };
+    },
+  });
+  const task = await repository.createTask({
+    conversationId,
+    ownerUserId: ownerId,
+    originalInput: 'concurrent real execution',
+    taskType: 'competitive_research',
+    structuredTask: { confirmations: [], blocking_issues: [] },
+    state: 'awaiting_selection',
+  });
+  const selection = await workflow.select({
+    taskId: task.id,
+    expectedVersion: task.stateVersion,
+    idempotencyKey: 'concurrent-select',
+    actor: { userId: ownerId, role: 'owner' },
+    candidateId: 'depth',
+    plan: { task_id: task.id, steps: [] },
+    planHash: 'sha256:concurrent-real-plan',
+    pendingInputs: [],
+  });
+  const ready = await workflow.confirm({
+    taskId: task.id,
+    planVersionId: selection.planVersionId,
+    expectedVersion: selection.stateVersion,
+    idempotencyKey: 'concurrent-confirm',
+    actor: { userId: ownerId, role: 'owner' },
+    confirmationAnswers: {},
+    inputRoles: [],
+  });
+  const base = {
+    taskId: task.id,
+    planVersionId: selection.planVersionId,
+    expectedVersion: ready.stateVersion,
+    actor: { userId: ownerId, role: 'owner' as const },
+  };
+
+  const first = workflow.execute({ ...base, idempotencyKey: 'execute-a' });
+  await driverStarted;
+  const second = workflow.execute({ ...base, idempotencyKey: 'execute-b' });
+  releaseDriver?.();
+  const results = await Promise.allSettled([first, second]);
+
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+  assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
+  assert.equal(driverCalls, 1);
+  assert.equal((await repository.listAttempts(task.id)).length, 1);
+});
+
+test('reconstructs an execution result after driver state commit but before command persistence', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  let driverCalls = 0;
+  const workflow = new TaskWorkflowService(repository, {
+    execute: async ({ lease }) => {
+      driverCalls += 1;
+      await repository.completeExecution(lease);
+      throw new Error('simulated process crash after state commit');
+    },
+  });
+  const task = await repository.createTask({
+    conversationId,
+    ownerUserId: ownerId,
+    originalInput: 'crash replay execution',
+    taskType: 'competitive_research',
+    structuredTask: { confirmations: [], blocking_issues: [] },
+    state: 'awaiting_selection',
+  });
+  const selection = await workflow.select({
+    taskId: task.id,
+    expectedVersion: task.stateVersion,
+    idempotencyKey: 'crash-select',
+    actor: { userId: ownerId, role: 'owner' },
+    candidateId: 'depth',
+    plan: { task_id: task.id, steps: [] },
+    planHash: 'sha256:crash-plan',
+    pendingInputs: [],
+  });
+  const ready = await workflow.confirm({
+    taskId: task.id,
+    planVersionId: selection.planVersionId,
+    expectedVersion: selection.stateVersion,
+    idempotencyKey: 'crash-confirm',
+    actor: { userId: ownerId, role: 'owner' },
+    confirmationAnswers: {},
+    inputRoles: [],
+  });
+  const command = {
+    taskId: task.id,
+    planVersionId: selection.planVersionId,
+    expectedVersion: ready.stateVersion,
+    idempotencyKey: 'crash-execute',
+    actor: { userId: ownerId, role: 'owner' as const },
+  };
+
+  await assert.rejects(() => workflow.execute(command), /simulated process crash/);
+  const replay = await workflow.execute(command);
+
+  assert.equal(replay.executionDisabled, false);
+  assert.equal(replay.state, 'completed');
+  assert.equal('status' in replay && replay.status, 'completed');
+  assert.equal(driverCalls, 1);
+});
+
+test('resume rejects core skip and revises the plan for optional skip', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const workflow = new TaskWorkflowService(repository);
+
+  async function pausedTask(kind: 'core' | 'optional') {
+    const task = await repository.createTask({
+      conversationId,
+      ownerUserId: ownerId,
+      originalInput: `${kind} resume`,
+      taskType: 'competitive_research',
+      structuredTask: {},
+      state: 'ready',
+    });
+    const plan = await repository.createPlanVersion({
+      taskId: task.id,
+      version: 1,
+      plan: {
+        task_id: task.id,
+        steps: [
+          { step_no: 1, step_name: 'failed tool', actor_type: 'tool', actor_id: kind === 'core' ? 'tavily-web-search' : 'ai-spider-search' },
+          { step_no: 2, step_name: 'analysis', actor_type: 'llm', actor_id: 'analysis' },
+        ],
+      },
+      planHash: `sha256:${kind}-resume-plan`,
+    });
+    const claim = await repository.claimExecution({
+      taskId: task.id,
+      planVersionId: plan.id,
+      expectedVersion: task.stateVersion,
+      idempotencyKey: `${kind}-claim`,
+      requestHash: `sha256:${kind}-claim`,
+      leaseOwner: 'resume-test',
+      leaseTokenHash: `sha256:${kind}-lease`,
+    });
+    await repository.recordExecutionStep({
+      attemptId: claim.attemptId,
+      stepNo: 1,
+      stepName: 'failed tool',
+      actorType: 'tool',
+      actorId: kind === 'core' ? 'tavily-web-search' : 'ai-spider-search',
+      state: 'failed',
+      failure: {
+        kind: 'network',
+        toolTier: kind,
+        allowedActions: kind === 'core' ? ['retry', 'abort'] : ['retry', 'skip', 'abort'],
+      },
+    });
+    const paused = await repository.pauseExecution({
+      taskId: task.id,
+      attemptId: claim.attemptId,
+      expectedVersion: claim.stateVersion,
+      reason: 'network',
+    });
+    return { task, plan, paused };
+  }
+
+  const core = await pausedTask('core');
+  await assert.rejects(
+    () => workflow.resume({
+      taskId: core.task.id,
+      expectedVersion: core.paused.stateVersion,
+      idempotencyKey: 'core-skip',
+      actor: { userId: ownerId, role: 'owner' },
+      action: 'skip',
+      failedStepNo: 1,
+    }),
+    TaskWorkflowGateError,
+  );
+  const aborted = await workflow.resume({
+    taskId: core.task.id,
+    expectedVersion: core.paused.stateVersion,
+    idempotencyKey: 'core-abort',
+    actor: { userId: ownerId, role: 'owner' },
+    action: 'abort',
+    failedStepNo: 1,
+  });
+  assert.equal(aborted.state, 'cancelled');
+  assert.equal((await repository.listAttempts(core.task.id))[0]?.state, 'cancelled');
+
+  const optional = await pausedTask('optional');
+  const skipped = await workflow.resume({
+    taskId: optional.task.id,
+    expectedVersion: optional.paused.stateVersion,
+    idempotencyKey: 'optional-skip',
+    actor: { userId: ownerId, role: 'owner' },
+    action: 'skip',
+    failedStepNo: 1,
+  });
+  assert.equal(skipped.state, 'awaiting_confirmation');
+  const revisedTask = await repository.getTaskDetail(optional.task.id);
+  assert.notEqual(revisedTask?.activePlanVersionId, optional.plan.id);
+  const revisedPlan = await repository.getPlanVersionDetail(revisedTask?.activePlanVersionId ?? '');
+  assert.ok(revisedPlan?.plan && typeof revisedPlan.plan === 'object' && 'steps' in revisedPlan.plan);
+  assert.deepEqual(revisedPlan.plan.steps, [
+    { step_no: 1, step_name: 'analysis', actor_type: 'llm', actor_id: 'analysis' },
+  ]);
+});

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { MigrationConnection, MigrationDatabase } from './migration-runner.ts';
 
 export type ControlTaskState =
@@ -34,6 +35,49 @@ export interface ControlExecutionClaim {
   attemptId: string;
   stateVersion: number;
   replayed: boolean;
+}
+
+export interface ControlExecutionLease {
+  taskId: string;
+  planVersionId: string;
+  attemptId: string;
+  leaseOwner: string;
+  leaseToken: string;
+}
+
+export interface ActiveExecutionLease {
+  taskId: string;
+  planVersionId: string;
+  attemptId: string;
+  leaseOwner: string;
+  leaseExpiresAt: Date;
+  stateVersion: number;
+}
+
+export interface ControlExecutionStep {
+  stepNo: number;
+  stepName: string;
+  actorType: string;
+  actorId: string;
+  state: string;
+  toolProvenance: Record<string, unknown> | null;
+  failure: Record<string, unknown> | null;
+  latencyMs: number | null;
+}
+
+export interface ControlModelCall {
+  stage: string;
+  stepNo: number | null;
+  provider: string;
+  endpointHost: string;
+  requestedModel: string;
+  actualModel: string;
+  promptHash: string;
+  contextManifestHash: string | null;
+  traceId: string | null;
+  tokens: Record<string, unknown> | null;
+  status: string;
+  failure: Record<string, unknown> | null;
 }
 
 export interface ControlArtifact {
@@ -80,6 +124,22 @@ function asNumber(value: unknown, field: string): number {
   const parsed = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(parsed)) throw new Error(`control-plane query missing ${field}`);
   return parsed;
+}
+
+function asDate(value: unknown, field: string): Date {
+  const parsed = value instanceof Date ? value : new Date(asString(value, field));
+  if (Number.isNaN(parsed.getTime())) throw new Error(`control-plane query missing ${field}`);
+  return parsed;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function hashLeaseToken(token: string): string {
+  return `sha256:${createHash('sha256').update(token).digest('hex')}`;
 }
 
 function commandResponse(value: unknown): CommandResponse {
@@ -230,6 +290,75 @@ export class ControlPlaneRepository {
         [input.taskId, plan.id],
       );
       return plan;
+    });
+  }
+
+  async createPlanRevision(input: {
+    taskId: string;
+    expectedVersion: number;
+    from: ControlTaskState | ControlTaskState[];
+    to: ControlTaskState;
+    plan: unknown;
+    planHash: string;
+    candidateId?: string;
+    pendingInputs?: unknown;
+  }): Promise<{ plan: ControlPlanVersion; task: ControlTask }> {
+    return this.transaction(async (connection) => {
+      const fromStates = Array.isArray(input.from) ? input.from : [input.from];
+      const locked = await connection.query(
+        `SELECT state, state_version FROM control_tasks WHERE id = $1 FOR UPDATE`,
+        [input.taskId],
+      );
+      const taskRow = locked.rows[0];
+      if (
+        !taskRow
+        || !fromStates.includes(asString(taskRow.state, 'state') as ControlTaskState)
+        || asNumber(taskRow.state_version, 'state_version') !== input.expectedVersion
+      ) {
+        throw new ControlPlaneConflictError(`task ${input.taskId} cannot revise at version ${input.expectedVersion}`);
+      }
+      const versionResult = await connection.query(
+        `SELECT COALESCE(MAX(version), 0) + 1 AS version FROM control_plan_versions WHERE task_id = $1`,
+        [input.taskId],
+      );
+      const version = asNumber(versionResult.rows[0]?.version, 'version');
+      const inserted = await connection.query(
+        `INSERT INTO control_plan_versions
+           (task_id, version, candidate_id, plan_json, plan_hash, pending_inputs)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id, task_id, version, plan_hash`,
+        [
+          input.taskId, version, input.candidateId ?? null, JSON.stringify(input.plan),
+          input.planHash, JSON.stringify(input.pendingInputs ?? []),
+        ],
+      );
+      const planRow = inserted.rows[0] ?? {};
+      const plan: ControlPlanVersion = {
+        id: asString(planRow.id, 'id'),
+        taskId: asString(planRow.task_id, 'task_id'),
+        version: asNumber(planRow.version, 'version'),
+        planHash: asString(planRow.plan_hash, 'plan_hash'),
+      };
+      const updated = await connection.query(
+        `UPDATE control_tasks
+         SET state = $3, state_version = state_version + 1,
+             active_plan_version_id = $4, updated_at = now()
+         WHERE id = $1 AND state_version = $2 AND state = ANY($5::text[])
+         RETURNING id, state, state_version, active_plan_version_id, current_attempt_id`,
+        [input.taskId, input.expectedVersion, input.to, plan.id, fromStates],
+      );
+      const row = updated.rows[0];
+      if (!row) throw new ControlPlaneConflictError(`task ${input.taskId} lost revision CAS`);
+      return {
+        plan,
+        task: {
+          id: asString(row.id, 'id'),
+          state: asString(row.state, 'state') as ControlTaskState,
+          stateVersion: asNumber(row.state_version, 'state_version'),
+          activePlanVersionId: typeof row.active_plan_version_id === 'string' ? row.active_plan_version_id : null,
+          currentAttemptId: typeof row.current_attempt_id === 'string' ? row.current_attempt_id : null,
+        },
+      };
     });
   }
 
@@ -616,6 +745,316 @@ export class ControlPlaneRepository {
     } finally {
       connection.release();
     }
+  }
+
+  async requireActiveLease(input: ControlExecutionLease): Promise<ActiveExecutionLease> {
+    const connection = await this.database.connect();
+    try {
+      const result = await connection.query(
+        `SELECT attempt.id AS attempt_id, attempt.task_id, attempt.plan_version_id,
+                attempt.lease_owner, attempt.lease_expires_at, task.state_version
+         FROM control_execution_attempts AS attempt
+         JOIN control_tasks AS task ON task.id = attempt.task_id
+         WHERE attempt.id = $1
+           AND attempt.task_id = $2
+           AND attempt.plan_version_id = $3
+           AND attempt.lease_owner = $4
+           AND attempt.lease_token_hash = $5
+           AND attempt.state = 'active'
+           AND attempt.lease_expires_at > now()
+           AND task.state = 'executing'
+           AND task.current_attempt_id = attempt.id
+           AND task.active_plan_version_id = attempt.plan_version_id`,
+        [input.attemptId, input.taskId, input.planVersionId, input.leaseOwner, hashLeaseToken(input.leaseToken)],
+      );
+      const row = result.rows[0];
+      if (!row) throw new ControlPlaneConflictError(`execution lease ${input.attemptId} is invalid or expired`);
+      return {
+        attemptId: asString(row.attempt_id, 'attempt_id'),
+        taskId: asString(row.task_id, 'task_id'),
+        planVersionId: asString(row.plan_version_id, 'plan_version_id'),
+        leaseOwner: asString(row.lease_owner, 'lease_owner'),
+        leaseExpiresAt: asDate(row.lease_expires_at, 'lease_expires_at'),
+        stateVersion: asNumber(row.state_version, 'state_version'),
+      };
+    } finally {
+      connection.release();
+    }
+  }
+
+  async heartbeatExecutionLease(input: ControlExecutionLease & { extendUntil: Date }): Promise<ActiveExecutionLease> {
+    return this.transaction(async (connection) => {
+      const result = await connection.query(
+        `UPDATE control_execution_attempts AS attempt
+         SET lease_heartbeat_at = now(),
+             lease_expires_at = GREATEST(attempt.lease_expires_at, $6)
+         FROM control_tasks AS task
+         WHERE attempt.id = $1
+           AND attempt.task_id = $2
+           AND attempt.plan_version_id = $3
+           AND attempt.lease_owner = $4
+           AND attempt.lease_token_hash = $5
+           AND attempt.state = 'active'
+           AND attempt.lease_expires_at > now()
+           AND task.id = attempt.task_id
+           AND task.state = 'executing'
+           AND task.current_attempt_id = attempt.id
+           AND task.active_plan_version_id = attempt.plan_version_id
+         RETURNING attempt.id AS attempt_id, attempt.task_id, attempt.plan_version_id,
+                   attempt.lease_owner, attempt.lease_expires_at, task.state_version`,
+        [input.attemptId, input.taskId, input.planVersionId, input.leaseOwner, hashLeaseToken(input.leaseToken), input.extendUntil],
+      );
+      const row = result.rows[0];
+      if (!row) throw new ControlPlaneConflictError(`execution lease ${input.attemptId} cannot heartbeat`);
+      return {
+        attemptId: asString(row.attempt_id, 'attempt_id'),
+        taskId: asString(row.task_id, 'task_id'),
+        planVersionId: asString(row.plan_version_id, 'plan_version_id'),
+        leaseOwner: asString(row.lease_owner, 'lease_owner'),
+        leaseExpiresAt: asDate(row.lease_expires_at, 'lease_expires_at'),
+        stateVersion: asNumber(row.state_version, 'state_version'),
+      };
+    });
+  }
+
+  async recordExecutionStep(input: {
+    attemptId: string;
+    stepNo: number;
+    stepName: string;
+    actorType: string;
+    actorId: string;
+    state: 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped';
+    toolProvenance?: Record<string, unknown>;
+    failure?: Record<string, unknown>;
+    latencyMs?: number;
+    startedAt?: Date;
+    finishedAt?: Date;
+  }): Promise<void> {
+    await this.transaction(async (connection) => {
+      await connection.query(
+        `INSERT INTO control_execution_steps
+           (attempt_id, step_no, step_name, actor_type, actor_id, state,
+            tool_provenance, failure_json, latency_ms, started_at, finished_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         ON CONFLICT (attempt_id, step_no) DO UPDATE
+         SET step_name = EXCLUDED.step_name,
+             actor_type = EXCLUDED.actor_type,
+             actor_id = EXCLUDED.actor_id,
+             state = EXCLUDED.state,
+             tool_provenance = COALESCE(EXCLUDED.tool_provenance, control_execution_steps.tool_provenance),
+             failure_json = COALESCE(EXCLUDED.failure_json, control_execution_steps.failure_json),
+             latency_ms = COALESCE(EXCLUDED.latency_ms, control_execution_steps.latency_ms),
+             started_at = COALESCE(control_execution_steps.started_at, EXCLUDED.started_at),
+             finished_at = EXCLUDED.finished_at`,
+        [
+          input.attemptId, input.stepNo, input.stepName, input.actorType, input.actorId, input.state,
+          input.toolProvenance == null ? null : JSON.stringify(input.toolProvenance),
+          input.failure == null ? null : JSON.stringify(input.failure),
+          input.latencyMs ?? null, input.startedAt ?? null, input.finishedAt ?? null,
+        ],
+      );
+    });
+  }
+
+  async listExecutionSteps(attemptId: string): Promise<ControlExecutionStep[]> {
+    const connection = await this.database.connect();
+    try {
+      const result = await connection.query(
+        `SELECT step_no, step_name, actor_type, actor_id, state, tool_provenance, failure_json, latency_ms
+         FROM control_execution_steps WHERE attempt_id = $1 ORDER BY step_no`,
+        [attemptId],
+      );
+      return result.rows.map((row) => ({
+        stepNo: asNumber(row.step_no, 'step_no'),
+        stepName: asString(row.step_name, 'step_name'),
+        actorType: asString(row.actor_type, 'actor_type'),
+        actorId: asString(row.actor_id, 'actor_id'),
+        state: asString(row.state, 'state'),
+        toolProvenance: asRecord(row.tool_provenance),
+        failure: asRecord(row.failure_json),
+        latencyMs: row.latency_ms == null ? null : asNumber(row.latency_ms, 'latency_ms'),
+      }));
+    } finally {
+      connection.release();
+    }
+  }
+
+  async recordModelCall(input: {
+    attemptId?: string;
+    stage: string;
+    stepNo?: number;
+    provider: string;
+    endpointHost: string;
+    requestedModel: string;
+    actualModel: string;
+    promptHash: string;
+    contextManifestHash?: string;
+    traceId?: string;
+    tokens?: { prompt: number; completion: number; total: number };
+    status: 'succeeded' | 'failed';
+    failure: Record<string, unknown> | null;
+    startedAt: Date;
+    finishedAt: Date;
+  }): Promise<void> {
+    await this.transaction(async (connection) => {
+      await connection.query(
+        `INSERT INTO control_model_calls
+           (attempt_id, stage, step_no, provider, endpoint_host, requested_model, actual_model,
+            prompt_hash, context_manifest_hash, trace_id, tokens_json, status, failure_json, started_at, finished_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+        [
+          input.attemptId ?? null, input.stage, input.stepNo ?? null, input.provider, input.endpointHost,
+          input.requestedModel, input.actualModel, input.promptHash, input.contextManifestHash ?? null,
+          input.traceId ?? null, input.tokens == null ? null : JSON.stringify(input.tokens), input.status,
+          input.failure == null ? null : JSON.stringify(input.failure), input.startedAt, input.finishedAt,
+        ],
+      );
+    });
+  }
+
+  async listModelCalls(attemptId: string): Promise<ControlModelCall[]> {
+    const connection = await this.database.connect();
+    try {
+      const result = await connection.query(
+        `SELECT stage, step_no, provider, endpoint_host, requested_model, actual_model,
+                prompt_hash, context_manifest_hash, trace_id, tokens_json, status, failure_json
+         FROM control_model_calls WHERE attempt_id = $1 ORDER BY started_at`,
+        [attemptId],
+      );
+      return result.rows.map((row) => ({
+        stage: asString(row.stage, 'stage'),
+        stepNo: row.step_no == null ? null : asNumber(row.step_no, 'step_no'),
+        provider: asString(row.provider, 'provider'),
+        endpointHost: asString(row.endpoint_host, 'endpoint_host'),
+        requestedModel: asString(row.requested_model, 'requested_model'),
+        actualModel: asString(row.actual_model, 'actual_model'),
+        promptHash: asString(row.prompt_hash, 'prompt_hash'),
+        contextManifestHash: typeof row.context_manifest_hash === 'string' ? row.context_manifest_hash : null,
+        traceId: typeof row.trace_id === 'string' ? row.trace_id : null,
+        tokens: asRecord(row.tokens_json),
+        status: asString(row.status, 'status'),
+        failure: asRecord(row.failure_json),
+      }));
+    } finally {
+      connection.release();
+    }
+  }
+
+  async completeExecution(input: ControlExecutionLease): Promise<ControlTask> {
+    return this.transaction(async (connection) => {
+      const attempt = await connection.query(
+        `UPDATE control_execution_attempts
+         SET state = 'completed', finished_at = now()
+         WHERE id = $1
+           AND task_id = $2
+           AND plan_version_id = $3
+           AND lease_owner = $4
+           AND lease_token_hash = $5
+           AND state = 'active'
+           AND lease_expires_at > now()
+         RETURNING id`,
+        [input.attemptId, input.taskId, input.planVersionId, input.leaseOwner, hashLeaseToken(input.leaseToken)],
+      );
+      if (!attempt.rows[0]) throw new ControlPlaneConflictError(`execution lease ${input.attemptId} cannot complete`);
+      const task = await connection.query(
+        `UPDATE control_tasks
+         SET state = 'completed', state_version = state_version + 1, updated_at = now()
+         WHERE id = $1
+           AND state = 'executing'
+           AND current_attempt_id = $2
+           AND active_plan_version_id = $3
+         RETURNING id, state, state_version, active_plan_version_id, current_attempt_id`,
+        [input.taskId, input.attemptId, input.planVersionId],
+      );
+      const row = task.rows[0];
+      if (!row) throw new ControlPlaneConflictError(`task ${input.taskId} is not executing attempt ${input.attemptId}`);
+      return {
+        id: asString(row.id, 'id'),
+        state: asString(row.state, 'state') as ControlTaskState,
+        stateVersion: asNumber(row.state_version, 'state_version'),
+        activePlanVersionId: typeof row.active_plan_version_id === 'string' ? row.active_plan_version_id : null,
+        currentAttemptId: typeof row.current_attempt_id === 'string' ? row.current_attempt_id : null,
+      };
+    });
+  }
+
+  async expireExecutionLease(input: { taskId: string; attemptId: string }): Promise<ControlTask> {
+    return this.transaction(async (connection) => {
+      const attempt = await connection.query(
+        `UPDATE control_execution_attempts
+         SET state = 'paused', failure_kind = 'worker_loss', finished_at = now()
+         WHERE id = $1
+           AND task_id = $2
+           AND state = 'active'
+           AND lease_expires_at <= now()
+         RETURNING id, plan_version_id`,
+        [input.attemptId, input.taskId],
+      );
+      const attemptRow = attempt.rows[0];
+      if (!attemptRow) throw new ControlPlaneConflictError(`execution lease ${input.attemptId} is not expired and active`);
+      const stepNo = await connection.query(
+        `SELECT COALESCE(MAX(step_no), 0) + 1 AS step_no FROM control_execution_steps WHERE attempt_id = $1`,
+        [input.attemptId],
+      );
+      await connection.query(
+        `INSERT INTO control_execution_steps
+           (attempt_id, step_no, step_name, actor_type, actor_id, state, failure_json, started_at, finished_at)
+         VALUES ($1, $2, 'worker lease expired', 'system', 'worker-loss', 'failed', $3, now(), now())`,
+        [input.attemptId, asNumber(stepNo.rows[0]?.step_no, 'step_no'), JSON.stringify({ kind: 'worker_loss', retryable: true, allowedActions: ['retry', 'abort'] })],
+      );
+      const task = await connection.query(
+        `UPDATE control_tasks
+         SET state = 'paused', state_version = state_version + 1, updated_at = now()
+         WHERE id = $1
+           AND state = 'executing'
+           AND current_attempt_id = $2
+           AND active_plan_version_id = $3
+         RETURNING id, state, state_version, active_plan_version_id, current_attempt_id`,
+        [input.taskId, input.attemptId, attemptRow.plan_version_id],
+      );
+      const row = task.rows[0];
+      if (!row) throw new ControlPlaneConflictError(`task ${input.taskId} is not executing expired attempt ${input.attemptId}`);
+      return {
+        id: asString(row.id, 'id'),
+        state: asString(row.state, 'state') as ControlTaskState,
+        stateVersion: asNumber(row.state_version, 'state_version'),
+        activePlanVersionId: typeof row.active_plan_version_id === 'string' ? row.active_plan_version_id : null,
+        currentAttemptId: typeof row.current_attempt_id === 'string' ? row.current_attempt_id : null,
+      };
+    });
+  }
+
+  async cancelPausedExecution(input: {
+    taskId: string;
+    attemptId: string;
+    expectedVersion: number;
+  }): Promise<ControlTask> {
+    return this.transaction(async (connection) => {
+      const attempt = await connection.query(
+        `UPDATE control_execution_attempts
+         SET state = 'cancelled', finished_at = COALESCE(finished_at, now())
+         WHERE id = $1 AND task_id = $2 AND state = 'paused'
+         RETURNING id`,
+        [input.attemptId, input.taskId],
+      );
+      if (!attempt.rows[0]) throw new ControlPlaneConflictError(`attempt ${input.attemptId} is not paused`);
+      const task = await connection.query(
+        `UPDATE control_tasks
+         SET state = 'cancelled', state_version = state_version + 1, updated_at = now()
+         WHERE id = $1 AND state = 'paused' AND state_version = $2 AND current_attempt_id = $3
+         RETURNING id, state, state_version, active_plan_version_id, current_attempt_id`,
+        [input.taskId, input.expectedVersion, input.attemptId],
+      );
+      const row = task.rows[0];
+      if (!row) throw new ControlPlaneConflictError(`task ${input.taskId} cannot cancel attempt ${input.attemptId}`);
+      return {
+        id: asString(row.id, 'id'),
+        state: asString(row.state, 'state') as ControlTaskState,
+        stateVersion: asNumber(row.state_version, 'state_version'),
+        activePlanVersionId: typeof row.active_plan_version_id === 'string' ? row.active_plan_version_id : null,
+        currentAttemptId: typeof row.current_attempt_id === 'string' ? row.current_attempt_id : null,
+      };
+    });
   }
 
   async pauseExecution(input: { taskId: string; attemptId: string; expectedVersion: number; reason: string }): Promise<ControlTask> {

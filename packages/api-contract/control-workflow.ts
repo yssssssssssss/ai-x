@@ -68,6 +68,8 @@ export interface ExecutionControlPlanRequest {
 export interface ResumeControlPlanRequest {
   expectedVersion: number;
   idempotencyKey: string;
+  action?: 'retry' | 'skip' | 'abort';
+  failedStepNo?: number;
 }
 
 export interface ControlCommandResponse {
@@ -85,7 +87,19 @@ export interface LegacyTaskReadResponse<T> {
   task: T;
 }
 
+export interface ControlExecutionStepResponse {
+  stepNo: number;
+  stepName: string;
+  actorType: string;
+  actorId: string;
+  state: string;
+  toolProvenance: Record<string, unknown> | null;
+  failure: Record<string, unknown> | null;
+  latencyMs: number | null;
+}
+
 export interface CurrentTaskReadResponse {
   kind: 'current';
   task: ControlTaskResponse;
+  executionSteps: ControlExecutionStepResponse[];
 }

@@ -1,6 +1,11 @@
 import {
+  type LegacyStructuredLLMCallOptions,
+  type LegacyTextLLMCallOptions,
   type LLMClient,
+  type LLMProviderIdentity,
+  LLMInvocationError,
   type LLMResult,
+  type TextLLMResult,
   type TokenUsage,
   hashPrompt,
 } from './llm-client.ts';
@@ -17,9 +22,9 @@ interface GatewayConfig {
   timeoutMs: number;
 }
 
-class RateLimitError extends Error {
+class RateLimitError extends LLMInvocationError {
   constructor(public readonly retryAfterMs?: number) {
-    super('网关限流 HTTP 429');
+    super('rate_limit', true, 429, 'gateway HTTP 429');
     this.name = 'RateLimitError';
   }
 }
@@ -68,6 +73,16 @@ export class GatewayLLMClient implements LLMClient {
     this.cfg = { ...readConfig(), ...cfg };
   }
 
+  get identity(): LLMProviderIdentity {
+    return {
+      provider: 'gateway',
+      endpointHost: new URL(this.cfg.baseUrl).host,
+      requestedModel: this.cfg.model,
+      mode: 'real',
+      eligibleAsReal: true,
+    };
+  }
+
   // 带 429 限流退避的重试外层(网关有 per-minute token 上限)。
   private async call(messages: object[], jsonMode: boolean): Promise<{ content: string; resp: ChatResponse }> {
     const maxAttempts = 3;
@@ -111,13 +126,22 @@ export class GatewayLLMClient implements LLMClient {
         throw new RateLimitError(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : undefined);
       }
       if (!res.ok) {
-        throw new Error(`网关返回 HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+        const kind = res.status === 401 || res.status === 403
+          ? 'authentication'
+          : res.status >= 500 ? 'server' : 'unknown';
+        throw new LLMInvocationError(kind, res.status >= 500, res.status, `gateway HTTP ${res.status}`);
       }
       const resp = (await res.json()) as ChatResponse;
-      if (resp.error) throw new Error(`网关错误: ${resp.error.message}`);
+      if (resp.error) throw new LLMInvocationError('capability', false, null, 'gateway returned an error payload');
       const content = resp.choices?.[0]?.message?.content;
-      if (content == null) throw new Error('网关响应缺少 choices[0].message.content');
+      if (content == null) throw new LLMInvocationError('capability', false, null, 'gateway response missing content');
       return { content, resp };
+    } catch (error) {
+      if (error instanceof LLMInvocationError) throw error;
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw new LLMInvocationError('timeout', true, null, 'gateway request timed out');
+      }
+      throw new LLMInvocationError('network', true, null, 'gateway network request failed');
     } finally {
       clearTimeout(timer);
     }
@@ -131,9 +155,7 @@ export class GatewayLLMClient implements LLMClient {
     };
   }
 
-  async generateStructured<T>(opts: {
-    prompt: string; schema: object; schemaName: string; context?: object;
-  }): Promise<LLMResult<T>> {
+  async generateStructured<T>(opts: LegacyStructuredLLMCallOptions): Promise<LLMResult<T>> {
     const spec = resolveSchema(opts.schemaName);
     const messages = [
       {
@@ -153,24 +175,25 @@ export class GatewayLLMClient implements LLMClient {
     try {
       parsed = JSON.parse(content);
     } catch {
-      throw new Error(`网关返回非法 JSON(schemaName=${opts.schemaName}): ${content.slice(0, 200)}`);
+      throw new LLMInvocationError('schema', false, null, `gateway returned invalid JSON for ${opts.schemaName}`);
     }
-    // 数组 envelope(如 decision-states)用 {items:[...]} 包裹返回,拆出数组
-    const data = spec.isArrayEnvelope && parsed && typeof parsed === 'object' && 'items' in parsed
-      ? (parsed as { items: unknown }).items
-      : parsed;
+    let data = parsed;
+    if (spec.isArrayEnvelope && parsed !== null && typeof parsed === 'object' && 'items' in parsed) {
+      data = parsed.items;
+    }
+    const typedData = data as T;
 
     return {
-      data: data as T,
+      data: typedData,
       promptHash: hashPrompt(opts.prompt, opts.context, opts.schemaName),
-      modelName: resp.model ?? this.cfg.model,
-      modelVersion: resp.model ?? this.cfg.model,
+      modelName: resp.model ?? 'unknown',
+      modelVersion: resp.model ?? 'unknown',
       traceId: resp.id ?? 'gateway-no-id',
       tokens: this.usageOf(resp),
     };
   }
 
-  async generateText(opts: { prompt: string; context?: object }) {
+  async generateText(opts: LegacyTextLLMCallOptions): Promise<TextLLMResult> {
     const messages = [
       {
         role: 'user',
@@ -181,8 +204,8 @@ export class GatewayLLMClient implements LLMClient {
     return {
       text: content,
       promptHash: hashPrompt(opts.prompt, opts.context),
-      modelName: resp.model ?? this.cfg.model,
-      modelVersion: resp.model ?? this.cfg.model,
+      modelName: resp.model ?? 'unknown',
+      modelVersion: resp.model ?? 'unknown',
       traceId: resp.id ?? 'gateway-no-id',
       tokens: this.usageOf(resp),
     };

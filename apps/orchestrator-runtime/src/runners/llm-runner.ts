@@ -16,6 +16,13 @@ export class LlmActorRunner implements ActorRunner {
         `基于已有执行结果(检索数据 + 竞品分析)完成这一步,产出简洁小结;` +
         `凡引用数据的结论标明来源,无据推断需说明。`,
       context: { research_goal: ctx.researchGoal, tool_outputs: ctx.toolOutputs },
+      receipt: {
+        stage: 'llm',
+        attemptId: ctx.attemptId,
+        stepNo: step.step_no,
+        contextManifestHash: ctx.contextManifestHash,
+        expectedModel: ctx.expectedModel,
+      },
     });
 
     const out = { note: gen.text };
