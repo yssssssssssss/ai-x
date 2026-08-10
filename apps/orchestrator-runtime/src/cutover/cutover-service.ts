@@ -144,7 +144,7 @@ export function assertMigrationPlanFrozen(input: {
   requireTrue(input.contractVersionVerified, 'migrations.contractVersionVerified');
 }
 
-function validateEvidence(evidence: CutoverEvidence): void {
+export function validateCutoverEvidence(evidence: CutoverEvidence): void {
   requireString(evidence.release.releaseId, 'release.releaseId');
   requireString(evidence.release.commit, 'release.commit');
   for (const issue of REQUIRED_BLOCKERS) {
@@ -196,7 +196,7 @@ export class CutoverService {
   constructor(private readonly options: { auditRoot: string }) {}
 
   prepareGoLive(evidence: CutoverEvidence): CutoverGoLiveResult {
-    validateEvidence(evidence);
+    validateCutoverEvidence(evidence);
     const rollForwardLock = evidence.firstWrite.occurred
       ? { reason: 'first new contract write observed', contractVersion: evidence.firstWrite.contractVersion, at: evidence.firstWrite.at }
       : null;
@@ -230,7 +230,7 @@ export class CutoverService {
       rollForwardLock: manifest.rollForwardLock,
     };
     if (manifest.manifestHash !== hashJson(draft)) throw new CutoverGateError('cutover checklist hash is invalid');
-    validateEvidence(manifest.evidence);
+    validateCutoverEvidence(manifest.evidence);
     return manifest;
   }
 }
