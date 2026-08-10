@@ -18,6 +18,7 @@ export function loadCutoverOperatorInput(path: string): CutoverOperatorInput {
 
 export function evidenceFromOperatorInput(input: CutoverOperatorInput): CutoverEvidence {
   const backup = input.backupFiles ? backupInventoryFromFiles(input.backupFiles) : input.backup;
+  if (!backup) throw new Error('backup or backupFiles is required');
   const evidence: CutoverEvidence = {
     release: input.release,
     maintenance: input.maintenance,
