@@ -18,7 +18,17 @@ export function loadCutoverOperatorInput(path: string): CutoverOperatorInput {
 
 export function evidenceFromOperatorInput(input: CutoverOperatorInput): CutoverEvidence {
   const backup = input.backupFiles ? backupInventoryFromFiles(input.backupFiles) : input.backup;
-  const evidence = { ...input, backup } as CutoverEvidence;
+  const evidence: CutoverEvidence = {
+    release: input.release,
+    maintenance: input.maintenance,
+    backup,
+    migrations: input.migrations,
+    readOnlySmoke: input.readOnlySmoke,
+    workflowSmoke: input.workflowSmoke,
+    rejectionProbes: input.rejectionProbes,
+    operator: input.operator,
+    firstWrite: input.firstWrite,
+  };
   validateCutoverEvidence(evidence);
   return evidence;
 }

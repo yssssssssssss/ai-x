@@ -1,15 +1,19 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { once } from 'node:events';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import express from 'express';
 import {
   evidenceFromOperatorInput,
   loadCutoverOperatorInput,
   type CutoverOperatorInput,
 } from '../apps/orchestrator-runtime/src/cutover/cutover-input.ts';
 import { CutoverGateError, type CutoverEvidence } from '../apps/orchestrator-runtime/src/cutover/cutover-service.ts';
+import { runCutoverHttpSmoke } from '../apps/orchestrator-runtime/src/cutover/cutover-smoke.ts';
 
 function validInput(overrides: Partial<CutoverOperatorInput> = {}): CutoverOperatorInput {
   return {
@@ -108,6 +112,7 @@ test('operator backupFiles derive SHA-256 digests and byte counts from local fil
       bytes: 12,
       restoreChecked: true,
     });
+    assert.equal('backupFiles' in evidence, false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -132,4 +137,66 @@ test('operator JSON input loads from disk and preserves release id', () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+async function withSmokeServer(
+  configure: (app: express.Express, seenHeaders: Array<Record<string, string | undefined>>) => void,
+  run: (baseUrl: string, seenHeaders: Array<Record<string, string | undefined>>) => Promise<void>,
+): Promise<void> {
+  const app = express();
+  app.use(express.json());
+  const seenHeaders: Array<Record<string, string | undefined>> = [];
+  configure(app, seenHeaders);
+  const server = createServer(app);
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  try {
+    await run(`http://127.0.0.1:${address.port}`, seenHeaders);
+  } finally {
+    server.close();
+    await once(server, 'close');
+  }
+}
+
+test('cutover HTTP smoke records local health, legacy mutation, and old route probes', async () => {
+  await withSmokeServer(
+    (app, seenHeaders) => {
+      app.get('/api/healthz', (_req, res) => res.sendStatus(200));
+      app.post('/api/tasks/:taskId/execute', (req, res) => {
+        seenHeaders.push({ authorization: req.header('authorization'), contentType: req.header('content-type') });
+        res.sendStatus(410);
+      });
+      app.post('/api/legacy/tasks/:taskId/execute', (req, res) => {
+        seenHeaders.push({ authorization: req.header('authorization'), contentType: req.header('content-type') });
+        res.sendStatus(404);
+      });
+    },
+    async (baseUrl, seenHeaders) => {
+      const result = await runCutoverHttpSmoke({ baseUrl, bearerToken: 'smoke-token', taskId: 'task-123' });
+
+      assert.deepEqual(result, { healthz: true, legacyMutation410: true, oldRoute404: true });
+      assert.deepEqual(seenHeaders, [
+        { authorization: 'Bearer smoke-token', contentType: 'application/json' },
+        { authorization: 'Bearer smoke-token', contentType: 'application/json' },
+      ]);
+    },
+  );
+});
+
+test('cutover HTTP smoke fails closed when legacy mutation is not gone', async () => {
+  await withSmokeServer(
+    (app) => {
+      app.get('/api/healthz', (_req, res) => res.sendStatus(200));
+      app.post('/api/tasks/:taskId/execute', (_req, res) => res.sendStatus(200));
+      app.post('/api/legacy/tasks/:taskId/execute', (_req, res) => res.sendStatus(404));
+    },
+    async (baseUrl) => {
+      await assert.rejects(
+        runCutoverHttpSmoke({ baseUrl, bearerToken: 'smoke-token', taskId: 'task-123' }),
+        /legacy mutation expected 410/,
+      );
+    },
+  );
 });
