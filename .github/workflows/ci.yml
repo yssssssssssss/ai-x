@@ -32,6 +32,8 @@ jobs:
         with:
           node-version: 20
       - run: corepack enable
+      - run: corepack prepare pnpm@9.12.1 --activate
       - run: pnpm install --frozen-lockfile
+      - run: pnpm --dir apps/web install --frozen-lockfile
       - run: pnpm db:migrate
       - run: pnpm quality

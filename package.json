@@ -4,6 +4,7 @@
   "private": true,
   "description": "用研 AI 专项 · Agent Harness + Skill Orchestrator 底座(V0/P0)",
   "type": "module",
+  "packageManager": "pnpm@9.12.1",
   "engines": {
     "node": ">=20"
   },
@@ -18,6 +19,8 @@
     "spike:execute": "tsx apps/orchestrator-runtime/src/spike-execute.ts",
     "gold:run": "tsx apps/orchestrator-runtime/src/gold-run.ts",
     "api:dev": "tsx watch apps/agent-api/src/server.ts",
+    "cutover:prepare": "tsx apps/orchestrator-runtime/src/cutover/cutover-cli.ts prepare",
+    "cutover:verify": "tsx apps/orchestrator-runtime/src/cutover/cutover-cli.ts verify",
     "dev:stack": "tsx scripts/dev-stack.ts",
     "labs:install": "for d in external-tools/*-lab; do (echo \"npm install @ $d\" && cd \"$d\" && npm install); done",
     "labs:dev": "node scripts/start-labs.mjs",
