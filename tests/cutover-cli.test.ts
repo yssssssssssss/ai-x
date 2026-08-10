@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -199,4 +200,50 @@ test('cutover HTTP smoke fails closed when legacy mutation is not gone', async (
       );
     },
   );
+});
+
+test('cutover prepare CLI seals checklist from operator input', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cutover-cli-prepare-'));
+  try {
+    const inputPath = join(root, 'input.json');
+    const auditRoot = join(root, 'audit');
+    writeFileSync(inputPath, `${JSON.stringify(validInput(), null, 2)}\n`);
+
+    const result = spawnSync(process.execPath, [
+      '--import', 'tsx',
+      'apps/orchestrator-runtime/src/cutover/cutover-cli.ts',
+      'prepare',
+      '--input', inputPath,
+      '--audit-root', auditRoot,
+    ], { cwd: process.cwd(), encoding: 'utf8' });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /decision=GO/);
+    assert.equal(existsSync(join(auditRoot, 'cutovers', 'release-2026-08-09-clean-cutover', 'cutover-checklist.json')), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('cutover prepare CLI exits non-zero on NO_GO and does not seal checklist', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cutover-cli-nogo-'));
+  try {
+    const inputPath = join(root, 'input.json');
+    const auditRoot = join(root, 'audit');
+    writeFileSync(inputPath, `${JSON.stringify(validInput({ operator: { goNoGo: 'NO_GO', operatorId: 'ops-1', recordedAt: '2026-08-09T00:00:00.000Z' } }), null, 2)}\n`);
+
+    const result = spawnSync(process.execPath, [
+      '--import', 'tsx',
+      'apps/orchestrator-runtime/src/cutover/cutover-cli.ts',
+      'prepare',
+      '--input', inputPath,
+      '--audit-root', auditRoot,
+    ], { cwd: process.cwd(), encoding: 'utf8' });
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /operator.goNoGo/);
+    assert.equal(existsSync(join(auditRoot, 'cutovers', 'release-2026-08-09-clean-cutover', 'cutover-checklist.json')), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

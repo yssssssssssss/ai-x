@@ -18,6 +18,7 @@
     "spike:execute": "tsx apps/orchestrator-runtime/src/spike-execute.ts",
     "gold:run": "tsx apps/orchestrator-runtime/src/gold-run.ts",
     "api:dev": "tsx watch apps/agent-api/src/server.ts",
+    "cutover:prepare": "tsx apps/orchestrator-runtime/src/cutover/cutover-cli.ts prepare",
     "dev:stack": "tsx scripts/dev-stack.ts",
     "labs:install": "for d in external-tools/*-lab; do (echo \"npm install @ $d\" && cd \"$d\" && npm install); done",
     "labs:dev": "node scripts/start-labs.mjs",
