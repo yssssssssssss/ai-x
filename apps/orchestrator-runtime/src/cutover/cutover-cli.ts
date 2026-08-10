@@ -34,10 +34,22 @@ async function prepare(args: string[]): Promise<void> {
   console.log(`legacyWriterAllowed=${String(result.legacyWriterAllowed)}`);
 }
 
+function verify(args: string[]): void {
+  const manifest = new CutoverService({ auditRoot: '.' }).verifyGoLivePackage(requireFlag(args, '--directory'));
+  console.log('verified=true');
+  console.log(`releaseId=${manifest.evidence.release.releaseId}`);
+  console.log(`rollback=${manifest.rollback.mode}`);
+  console.log(`legacyWriterAllowed=${String(manifest.legacyWriterAllowed)}`);
+}
+
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2);
   if (command === 'prepare') {
     await prepare(args);
+    return;
+  }
+  if (command === 'verify') {
+    verify(args);
     return;
   }
   throw new Error('usage: cutover-cli.ts prepare|verify ...');

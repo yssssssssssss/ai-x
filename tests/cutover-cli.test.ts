@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -243,6 +243,48 @@ test('cutover prepare CLI exits non-zero on NO_GO and does not seal checklist', 
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /operator.goNoGo/);
     assert.equal(existsSync(join(auditRoot, 'cutovers', 'release-2026-08-09-clean-cutover', 'cutover-checklist.json')), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('cutover verify CLI accepts sealed checklist and rejects tampering', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cutover-cli-verify-'));
+  try {
+    const inputPath = join(root, 'input.json');
+    const auditRoot = join(root, 'audit');
+    writeFileSync(inputPath, `${JSON.stringify(validInput(), null, 2)}\n`);
+    const prepare = spawnSync(process.execPath, [
+      '--import', 'tsx',
+      'apps/orchestrator-runtime/src/cutover/cutover-cli.ts',
+      'prepare',
+      '--input', inputPath,
+      '--audit-root', auditRoot,
+    ], { cwd: process.cwd(), encoding: 'utf8' });
+    assert.equal(prepare.status, 0, prepare.stderr || prepare.stdout);
+
+    const directory = join(auditRoot, 'cutovers', 'release-2026-08-09-clean-cutover');
+    const verify = spawnSync(process.execPath, [
+      '--import', 'tsx',
+      'apps/orchestrator-runtime/src/cutover/cutover-cli.ts',
+      'verify',
+      '--directory', directory,
+    ], { cwd: process.cwd(), encoding: 'utf8' });
+
+    assert.equal(verify.status, 0, verify.stderr || verify.stdout);
+    assert.match(verify.stdout, /verified=true/);
+
+    const checklist = join(directory, 'cutover-checklist.json');
+    writeFileSync(checklist, readFileSync(checklist, 'utf8').replace('FULL_ROLLBACK_ALLOWED', 'ROLL_FORWARD_ONLY'));
+    const tampered = spawnSync(process.execPath, [
+      '--import', 'tsx',
+      'apps/orchestrator-runtime/src/cutover/cutover-cli.ts',
+      'verify',
+      '--directory', directory,
+    ], { cwd: process.cwd(), encoding: 'utf8' });
+
+    assert.notEqual(tampered.status, 0);
+    assert.match(tampered.stderr, /cutover checklist hash/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
