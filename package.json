@@ -4,6 +4,7 @@
   "private": true,
   "description": "用研 AI 专项 · Agent Harness + Skill Orchestrator 底座(V0/P0)",
   "type": "module",
+  "packageManager": "pnpm@9.12.1",
   "engines": {
     "node": ">=20"
   },
