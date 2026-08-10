@@ -19,6 +19,7 @@
 - CONTEXT.md 增补验收术语(金标真实运行 / 批次审计包 / 基础设施失败 / 评审表单),并新增 ADR-0001(gold:run 自动确认闸门)、ADR-0002(坚持全真闭环边界)。
 - 新增 Clean Cutover gate:机器校验 #29–#35 冻结、维护窗口停写、DB/workspace/audit 备份 SHA-256 inventory + restore check、migration 演练、只读 app smoke、non-gold workflow smoke、拒绝探针、go/no-go、首写前 rollback 与首写后 roll-forward lock,并封存 cutover checklist 防篡改。
 - 新增 Cutover operator CLI:`pnpm cutover:prepare` 从 operator input 和本地备份文件生成 sealed cutover checklist,`pnpm cutover:verify` 校验 checklist hash 与嵌入证据,支持 staging 先演练再进入生产维护窗口。
+- 新增本地专用 `cutover:rehearse` / `cutover:verify-rehearsal`:实际执行 loopback PostgreSQL dump/restore、workspace/audit archive restore 与 HTTP smoke,封存 `cutover-rehearsal-v1`;固定标记为 local、不可 go-live、非生产证据、非 Gold slot。
 
 ### 变更
 - 任务执行、恢复和终止改为 PostgreSQL 条件更新；未领取的请求不会调用外部能力。

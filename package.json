@@ -21,6 +21,8 @@
     "api:dev": "tsx watch apps/agent-api/src/server.ts",
     "cutover:prepare": "tsx apps/orchestrator-runtime/src/cutover/cutover-cli.ts prepare",
     "cutover:verify": "tsx apps/orchestrator-runtime/src/cutover/cutover-cli.ts verify",
+    "cutover:rehearse": "tsx apps/orchestrator-runtime/src/cutover/cutover-cli.ts rehearse",
+    "cutover:verify-rehearsal": "tsx apps/orchestrator-runtime/src/cutover/cutover-cli.ts verify-rehearsal",
     "dev:stack": "tsx scripts/dev-stack.ts",
     "labs:install": "for d in external-tools/*-lab; do (echo \"npm install @ $d\" && cd \"$d\" && npm install); done",
     "labs:dev": "node scripts/start-labs.mjs",
