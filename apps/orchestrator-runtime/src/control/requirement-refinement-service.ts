@@ -4,6 +4,7 @@ import type {
 } from '../../../../database/control-plane.ts';
 import type { ControlRequirementVersion } from '../../../../packages/api-contract/control-workflow.ts';
 import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
+import type { ResearchPlanningResult } from '../planners/research-planning-service.ts';
 import type { LLMClient } from '../runtime/llm-client.ts';
 import { hashPrompt } from '../runtime/llm-client.ts';
 import { SchemaValidator } from '../schema/validator.ts';
@@ -51,10 +52,9 @@ export interface ClarifyInput {
   expectedVersion?: number;
   expectedStateVersion?: number;
 }
-
 export type RequirementRefinementResult =
   | { status: 'clarification_required'; taskId: string; requirement: ResearchTaskV2 }
-  | { status: 'ready_to_plan'; taskId: string; requirement: ResearchTaskV2 };
+  | { status: 'ready_to_plan'; taskId: string; requirement: ResearchTaskV2; planningResult?: ResearchPlanningResult };
 
 interface RequirementRepository {
   createRequirementVersion(input: {
@@ -223,17 +223,19 @@ export class RequirementRefinementService {
     const status = needsClarification(requirement)
       ? 'clarification_required'
       : 'ready_to_plan';
-    if (status === 'ready_to_plan' && this.dependencies.planner) {
-      await this.dependencies.planner.plan({
-        originalInput: input.originalInput,
-        requirement,
-      });
-    }
+    const planningResult = status === 'ready_to_plan' && this.dependencies.planner
+      ? await this.dependencies.planner.plan({
+          originalInput: input.originalInput,
+          requirement,
+        }) as ResearchPlanningResult
+      : undefined;
     await this.appendMessage({
       conversationId: input.conversationId,
       role: 'assistant',
       content: JSON.stringify({ status, requirement }),
     });
-    return { status, taskId: input.taskId, requirement };
+    return planningResult
+      ? { status, taskId: input.taskId, requirement, planningResult }
+      : { status, taskId: input.taskId, requirement };
   }
 }

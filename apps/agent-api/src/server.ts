@@ -71,7 +71,16 @@ function refinementPlanningPort(runtime: ControlRuntime): ControlPlanningPort {
       if (result.status === 'clarification_required') {
         return refinementResponse(result, await runtime.repository.getTaskDetail(created.id));
       }
-      return runtime.controlPlanning.plan({ ...input, conversationId: conversation.id }, onProgress, onConversation);
+      const readyTask = await runtime.repository.getTaskDetail(created.id);
+      if (!readyTask) throw new Error(`task ${created.id} disappeared after refinement`);
+      if (!result.planningResult) throw new Error('refinement ready result has no finalized planning result');
+      return runtime.controlPlanning.planExistingTask({
+        taskId: readyTask.id,
+        conversationId: conversation.id,
+        ownerUserId: input.ownerUserId,
+        expectedStateVersion: readyTask.stateVersion,
+        originalInput: input.originalInput,
+      }, result.planningResult);
     },
   };
 }
@@ -89,11 +98,16 @@ function refinementClarificationPort(runtime: ControlRuntime): ControlClarificat
       if (result.status === 'clarification_required') {
         return refinementResponse(result, await runtime.repository.getTaskDetail(input.taskId));
       }
-      return runtime.controlPlanning.plan({
-        originalInput: JSON.stringify(result.requirement),
+      const clarifiedTask = await runtime.repository.getTaskDetail(input.taskId);
+      if (!clarifiedTask) throw new Error(`task ${input.taskId} disappeared after clarification`);
+      if (!result.planningResult) throw new Error('clarification ready result has no finalized planning result');
+      return runtime.controlPlanning.planExistingTask({
+        taskId: clarifiedTask.id,
         conversationId: input.conversationId,
         ownerUserId: input.ownerUserId,
-      });
+        expectedStateVersion: clarifiedTask.stateVersion,
+        originalInput: JSON.stringify(result.requirement),
+      }, result.planningResult);
     },
   };
 }

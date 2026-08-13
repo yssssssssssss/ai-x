@@ -521,15 +521,24 @@ git commit -m "feat: add current requirement refinement loop"
 - Modify: `apps/agent-api/src/routes/control-planning.ts`
 - Modify: `apps/agent-api/src/routes/control-tasks.ts`
 - Modify: `apps/agent-api/src/server.ts`
+- Modify: `apps/agent-api/src/control-runtime.ts` (runtime exposure seam; existing `controlPlanning` service)
+- Modify: `apps/orchestrator-runtime/src/control/control-planning-service.ts`
+- Modify: `apps/orchestrator-runtime/src/control/requirement-refinement-service.ts`
+- Modify: `database/control-plane.ts`
 - Modify: `apps/web/src/api/client.ts`
 - Create: `apps/web/src/components/stages/CurrentStage1Clarify.tsx`
 - Modify: `apps/web/src/hooks/useTaskFlow.ts`
 - Modify: `apps/web/src/pages/Workbench.tsx`
 - Test: `tests/control-clarification.test.ts`
+- Test: `tests/control-planning-service.test.ts`
+- Test: `tests/control-plane.test.ts`
 - Test: `tests/current-flow-state.test.ts`
 
 **Interfaces:**
 - Produces: planning union response 和 `/api/control-tasks/:id/clarify`。
+- Produces: `ControlPlaneRepository.persistExistingTaskWithCandidates()`，在单事务中锁定并 CAS 更新原 `awaiting_clarification` task，写入 depth/speed plan versions。
+- Produces: `ControlPlanningService.planExistingTask()`，消费 finalized `ResearchPlanningResult`，复用 candidate sanitization/evidence policy，返回原 conversation/task response。
+- Consumes: `RequirementRefinementService` ready result 的 finalized planning result；ControlRuntime 通过 `controlPlanning` 暴露该 seam。
 
 - [ ] **Step 1: 写 HTTP 测试**
 

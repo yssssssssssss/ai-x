@@ -201,8 +201,10 @@ export interface ControlRuntimeOverrides {
   expectedActualModel?: string;
 }
 
+export type ControlPlanningRuntime = Pick<ControlPlanningService, 'plan' | 'planExistingTask'>;
+
 export interface ControlRuntime {
-  controlPlanning: ControlPlanningService;
+  controlPlanning: ControlPlanningRuntime;
   requirementRefinement: RequirementRefinementService;
   workflow: TaskWorkflowService;
   repository: ControlPlaneRepository;

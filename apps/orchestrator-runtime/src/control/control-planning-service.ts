@@ -71,6 +71,22 @@ export interface ControlPlanningDependencies {
       task: ControlTaskResponse;
       candidates: PersistedPlanVersion[];
     }>;
+    persistExistingTaskWithCandidates?(input: {
+      taskId: string;
+      conversationId: string;
+      ownerUserId: string;
+      expectedStateVersion: number;
+      taskType: string | null;
+      structuredTask: unknown;
+      candidates: Array<{
+        candidateId: PlanCandidate['id'];
+        plan: ProvisionalExecutionPlan;
+        pendingInputs: PendingInput[];
+      }>;
+    }): Promise<{
+      task: ControlTaskResponse;
+      candidates: PersistedPlanVersion[];
+    }>;
   };
   conversations: {
     create(input: { ownerUserId: string; title: string }): Promise<{ id: string }>;
@@ -83,6 +99,59 @@ export interface ControlPlanningDependencies {
 
 export class ControlPlanningService {
   constructor(private readonly dependencies: ControlPlanningDependencies) {}
+
+  private prepareCandidates(planningResult: ResearchPlanningResult): Array<{
+    candidateId: PlanCandidate['id'];
+    plan: ProvisionalExecutionPlan;
+    pendingInputs: PendingInput[];
+  }> {
+    const evidenceRequirements = resolveEvidenceRequirements(
+      planningResult.task.task_type,
+      'research_plan',
+    );
+    return planningResult.candidates.map((candidate) => ({
+      candidateId: candidate.id,
+      plan: {
+        task_id: '',
+        deliverable_type: 'research_plan',
+        evidence_requirements: evidenceRequirements,
+        steps: sanitizeCurrentSteps(candidate.steps),
+      },
+      pendingInputs: [],
+    }));
+  }
+
+  private responseFromPersisted(
+    conversationId: string,
+    planningResult: ResearchPlanningResult,
+    persisted: { task: ControlTaskResponse; candidates: PersistedPlanVersion[] },
+  ): ControlPlanCandidatesResponse {
+    const persistedByCandidateId = new Map(
+      persisted.candidates.map((candidate) => [candidate.candidateId, candidate]),
+    );
+    const candidates = planningResult.candidates.map((candidate) => {
+      const stored = persistedByCandidateId.get(candidate.id);
+      if (!stored) throw new Error(`repository did not return candidate ${candidate.id}`);
+      return {
+        planVersionId: stored.id,
+        candidateId: candidate.id,
+        title: candidate.title,
+        rationale: candidate.rationale,
+        tradeoffs: candidate.tradeoffs,
+        planHash: stored.planHash,
+        plan: stored.plan,
+        pendingInputs: stored.pendingInputs,
+      };
+    });
+    return {
+      kind: 'current',
+      conversationId,
+      task: persisted.task,
+      structuredTask: planningResult.task,
+      activatedNodes: planningResult.activatedNodes,
+      candidates,
+    };
+  }
 
   async plan(
     input: PlanControlTaskRequest & { ownerUserId: string },
@@ -98,16 +167,11 @@ export class ControlPlanningService {
           ownerUserId: input.ownerUserId,
           title: input.originalInput.slice(0, 40),
         });
-    // 新建会话需在 planning 开始前对外可见(SSE 先推 conversation 再推 progress)。
     if (!input.conversationId) onConversation?.(conversation.id);
 
     const planningResult = await this.dependencies.planning.plan(
       { originalInput: input.originalInput },
       onProgress,
-    );
-    const evidenceRequirements = resolveEvidenceRequirements(
-      planningResult.task.task_type,
-      'research_plan',
     );
     const persisted = await this.dependencies.repository.createTaskWithCandidates({
       conversationId: conversation.id,
@@ -115,45 +179,36 @@ export class ControlPlanningService {
       originalInput: input.originalInput,
       taskType: planningResult.task.task_type,
       structuredTask: planningResult.task,
-      candidates: planningResult.candidates.map((candidate) => ({
-        candidateId: candidate.id,
-        plan: {
-          task_id: '',
-          deliverable_type: 'research_plan',
-          evidence_requirements: evidenceRequirements,
-          steps: sanitizeCurrentSteps(candidate.steps),
-        },
-        pendingInputs: [],
-      })),
+      candidates: this.prepareCandidates(planningResult),
     });
+    return this.responseFromPersisted(conversation.id, planningResult, persisted);
+  }
 
-    const persistedByCandidateId = new Map(
-      persisted.candidates.map((candidate) => [candidate.candidateId, candidate]),
-    );
-    const candidates = planningResult.candidates.map((candidate) => {
-      const stored = persistedByCandidateId.get(candidate.id);
-      if (!stored) {
-        throw new Error(`repository did not return candidate ${candidate.id}`);
-      }
-      return {
-        planVersionId: stored.id,
-        candidateId: candidate.id,
-        title: candidate.title,
-        rationale: candidate.rationale,
-        tradeoffs: candidate.tradeoffs,
-        planHash: stored.planHash,
-        plan: stored.plan,
-        pendingInputs: stored.pendingInputs,
-      };
+  async planExistingTask(
+    input: {
+      taskId: string;
+      conversationId: string;
+      ownerUserId: string;
+      expectedStateVersion: number;
+      originalInput: string;
+    },
+    planningResult: ResearchPlanningResult,
+  ): Promise<ControlPlanCandidatesResponse> {
+    const conversation = await this.dependencies.conversations.requireOwned({
+      conversationId: input.conversationId,
+      ownerUserId: input.ownerUserId,
     });
-
-    return {
-      kind: 'current',
+    const persist = this.dependencies.repository.persistExistingTaskWithCandidates;
+    if (!persist) throw new Error('existing-task planning persistence is unavailable');
+    const persisted = await persist({
+      taskId: input.taskId,
       conversationId: conversation.id,
-      task: persisted.task,
+      ownerUserId: input.ownerUserId,
+      expectedStateVersion: input.expectedStateVersion,
+      taskType: planningResult.task.task_type,
       structuredTask: planningResult.task,
-      activatedNodes: planningResult.activatedNodes,
-      candidates,
-    };
+      candidates: this.prepareCandidates(planningResult),
+    });
+    return this.responseFromPersisted(conversation.id, planningResult, persisted);
   }
 }

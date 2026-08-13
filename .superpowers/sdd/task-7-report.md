@@ -1,8 +1,8 @@
 # Task 7 报告：Clarify API、SSE 和 Web 阶段
 
-## 范围
+## 范围修正
 
-仅修改 Task 7 brief 指定的 API route/server、Web client/state/stage/hook/page 与两份测试；未修改 planner、database 或 control-runtime internals。
+原报告将 Task 7 错误限定为 API/Web 文件，遗漏 ready-path 必需的 control-planning、database 与 runtime seams。本次修正纳入 `database/control-plane.ts`、`apps/orchestrator-runtime/src/control/control-planning-service.ts`、`apps/orchestrator-runtime/src/control/requirement-refinement-service.ts` 以及 server/runtime 接口 wiring。
 
 ## TDD
 
@@ -24,6 +24,23 @@
 - Web：`pnpm --dir apps/web build` —— passed（Vite production build）。
 - Browser：BLOCKED。当前 worktree 没有可用 API/Web 服务；`hub ps` 显示 `current-browser-api` 与 `current-browser-web` 均已退出（exit 143），因此未伪造浏览器证据。可由 Phase gate 启动共享 dev stack 后验收澄清页、回答后 depth/speed candidates 与刷新恢复。
 
-## 风险/注意
+## 根因与修正
 
-- server adapter 在 ready clarification 后复用现有 Current planning port 生成候选；planner/database 文件保持不变。Phase gate 应使用真实服务验证端到端任务版本与刷新恢复。
+- 根因：`apps/agent-api/src/server.ts:92-97` 在 clarification ready 后调用 `controlPlanning.plan()`，该路径通过 `createTaskWithCandidates()` 新建 task，丢失澄清 requirement 版本与原 task 的关联。
+- 修正：ready 的 refinement/clarification ports 读取澄清后 task 的当前 `stateVersion`，调用 `ControlPlanningService.planExistingTask()`；该服务复用候选清洗与 evidence policy，数据库在一个事务中锁定原 task、校验双 owner/state/version/结构化 task/task_type，写入严格 depth/speed 两个 canonical plan versions，再 CAS 到 `awaiting_selection`。
+
+## 本次 TDD 验证
+
+- RED：新增 service 回归先失败 `service.planExistingTask is not a function`；新增 database 回归先失败 `persistExistingTaskWithCandidates is not a function`。
+- GREEN：`pnpm exec tsx --test --test-concurrency=1 tests/control-clarification.test.ts tests/control-planning-service.test.ts tests/control-planning.test.ts tests/control-plane.test.ts` —— 31 passed / 0 failed。
+- Database seam：`control-plane.test.ts` —— 17 passed / 0 failed；成功场景断言原 task ID 不变、版本 1/2 的 `taskId` 均为原 ID、state 为 `awaiting_selection`、stateVersion +1，且 control_tasks 总数不增加；missing/foreign/stale 均 fail closed。
+- TypeScript：`pnpm typecheck` —— passed。
+- Web：`pnpm --dir apps/web build` —— passed（Vite production build）。
+
+## 文件
+
+`database/control-plane.ts`; `apps/orchestrator-runtime/src/control/control-planning-service.ts`; `apps/orchestrator-runtime/src/control/requirement-refinement-service.ts`; `apps/agent-api/src/control-runtime.ts`; `apps/agent-api/src/server.ts`; `tests/control-plane.test.ts`; `tests/control-planning-service.test.ts`; Task7 brief/approved plan/report。
+
+## Commit
+
+已提交：`fix: persist clarification plans on original task`。

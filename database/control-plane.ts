@@ -571,6 +571,130 @@ export class ControlPlaneRepository {
     });
   }
 
+  async persistExistingTaskWithCandidates(input: {
+    taskId: string;
+    conversationId: string;
+    ownerUserId: string;
+    expectedStateVersion: number;
+    taskType: string | null;
+    structuredTask: unknown;
+    candidates: Array<{
+      candidateId: ControlCandidateId;
+      plan: Omit<CurrentExecutionPlan, 'task_id'> & { task_id?: string };
+      pendingInputs: PendingInput[];
+    }>;
+  }): Promise<{ task: ControlTask; candidates: ControlCandidatePlanVersionDetail[] }> {
+    return this.transaction(async (connection) => {
+      const taskResult = await connection.query(
+        `SELECT task.id, task.conversation_id, task.owner_user_id,
+                conversation.owner_user_id AS conversation_owner_user_id,
+                task.task_type, task.structured_task, task.state, task.state_version,
+                task.active_plan_version_id, task.current_attempt_id
+         FROM control_tasks AS task
+         JOIN conversations AS conversation ON conversation.id = task.conversation_id
+         WHERE task.id = $1
+         FOR UPDATE OF task`,
+        [input.taskId],
+      );
+      const taskRow = taskResult.rows[0];
+      if (!taskRow) throw new ControlPlaneConflictError(`task ${input.taskId} does not exist`);
+      if (taskRow.conversation_id !== input.conversationId) {
+        throw new ControlPlaneConflictError(`task ${input.taskId} does not belong to conversation ${input.conversationId}`);
+      }
+      if (
+        taskRow.owner_user_id !== input.ownerUserId
+        || taskRow.conversation_owner_user_id !== input.ownerUserId
+      ) {
+        throw new ControlPlaneAuthorizationError(`actor cannot control task ${input.taskId}`);
+      }
+      if (taskRow.state !== 'awaiting_clarification') {
+        throw new ControlPlaneConflictError(`task ${input.taskId} is not awaiting clarification`);
+      }
+      if (asNumber(taskRow.state_version, 'state_version') !== input.expectedStateVersion) {
+        throw new ControlPlaneConflictError(`task ${input.taskId} is not at version ${input.expectedStateVersion}`);
+      }
+      const structuredTask = asRecord(input.structuredTask);
+      if (!input.taskType || !structuredTask || structuredTask.task_type !== input.taskType) {
+        throw new ControlPlaneConflictError(`task ${input.taskId} has invalid finalized structured task`);
+      }
+      const candidateIds = input.candidates.map((candidate) => candidate.candidateId);
+      if (
+        input.candidates.length !== 2
+        || new Set(candidateIds).size !== 2
+        || !candidateIds.includes('depth')
+        || !candidateIds.includes('speed')
+      ) {
+        throw new ControlPlaneConflictError('existing task planning requires exactly depth and speed candidates');
+      }
+
+      const preparedCandidates = input.candidates.map((candidate) => ({
+        candidate,
+        persistedPlan: planForTask(candidate.plan, input.taskId),
+      }));
+      const planHashes = new Set<string>();
+      for (const { persistedPlan } of preparedCandidates) {
+        if (planHashes.has(persistedPlan.hash)) {
+          throw new ControlPlaneConflictError(`candidate plan hash ${persistedPlan.hash} is duplicated`);
+        }
+        planHashes.add(persistedPlan.hash);
+      }
+
+      const candidates: ControlCandidatePlanVersionDetail[] = [];
+      for (const [index, { candidate, persistedPlan }] of preparedCandidates.entries()) {
+        const planResult = await connection.query(
+          `INSERT INTO control_plan_versions
+             (task_id, version, candidate_id, plan_json, plan_hash, pending_inputs)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id, task_id, version, candidate_id, plan_json, plan_hash, pending_inputs`,
+          [
+            input.taskId,
+            index + 1,
+            candidate.candidateId,
+            persistedPlan.json,
+            persistedPlan.hash,
+            JSON.stringify(candidate.pendingInputs),
+          ],
+        );
+        const planRow = planResult.rows[0] ?? {};
+        candidates.push({
+          id: asString(planRow.id, 'id'),
+          taskId: asString(planRow.task_id, 'task_id'),
+          version: asNumber(planRow.version, 'version'),
+          candidateId: asString(planRow.candidate_id, 'candidate_id') as ControlCandidateId,
+          plan: planRow.plan_json as CurrentExecutionPlan,
+          planHash: asString(planRow.plan_hash, 'plan_hash'),
+          pendingInputs: planRow.pending_inputs as PendingInput[],
+        });
+      }
+
+      const updated = await connection.query(
+        `UPDATE control_tasks
+         SET task_type = $2,
+             structured_task = $3,
+             state = 'awaiting_selection',
+             state_version = state_version + 1,
+             updated_at = now()
+         WHERE id = $1
+           AND state = 'awaiting_clarification'
+           AND state_version = $4
+         RETURNING id, state, state_version, active_plan_version_id, current_attempt_id`,
+        [input.taskId, input.taskType, JSON.stringify(input.structuredTask), input.expectedStateVersion],
+      );
+      const updatedRow = updated.rows[0];
+      if (!updatedRow) throw new ControlPlaneConflictError(`task ${input.taskId} lost planning CAS`);
+      return {
+        task: {
+          id: asString(updatedRow.id, 'id'),
+          state: asString(updatedRow.state, 'state') as ControlTaskState,
+          stateVersion: asNumber(updatedRow.state_version, 'state_version'),
+          activePlanVersionId: typeof updatedRow.active_plan_version_id === 'string' ? updatedRow.active_plan_version_id : null,
+          currentAttemptId: typeof updatedRow.current_attempt_id === 'string' ? updatedRow.current_attempt_id : null,
+        },
+        candidates,
+      };
+    });
+  }
+
   async selectCandidate(input: {
     taskId: string;
     planVersionId: string;

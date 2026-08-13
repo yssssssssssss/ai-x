@@ -70,6 +70,22 @@ interface ControlPlanningDependencies {
       task: ControlTaskResponse;
       candidates: PersistedPlanVersion[];
     }>;
+    persistExistingTaskWithCandidates?(input: {
+      taskId: string;
+      conversationId: string;
+      ownerUserId: string;
+      expectedStateVersion: number;
+      taskType: string | null;
+      structuredTask: unknown;
+      candidates: Array<{
+        candidateId: PlanCandidate['id'];
+        plan: ProvisionalExecutionPlan;
+        pendingInputs: PendingInput[];
+      }>;
+    }): Promise<{
+      task: ControlTaskResponse;
+      candidates: PersistedPlanVersion[];
+    }>;
   };
   conversations: {
     create(input: { ownerUserId: string; title: string }): Promise<{ id: string }>;
@@ -82,6 +98,16 @@ interface ControlPlanningServiceLike {
     input: PlanControlTaskRequest & { ownerUserId: string },
     onProgress?: (event: PlanProgress) => void,
     onConversation?: (conversationId: string) => void,
+  ): Promise<ControlPlanCandidatesResponse>;
+  planExistingTask(
+    input: {
+      taskId: string;
+      conversationId: string;
+      ownerUserId: string;
+      expectedStateVersion: number;
+      originalInput: string;
+    },
+    planningResult: ResearchPlanningResult,
   ): Promise<ControlPlanCandidatesResponse>;
 }
 
@@ -545,4 +571,64 @@ test('rejects a foreign conversation before planning or candidate persistence', 
   assert.equal(conversationCreateCalls, 0);
   assert.equal(planningCalls, 0);
   assert.equal(repositoryCalls, 0);
+});
+
+test('planExistingTask persists finalized candidates on the original task without creating a duplicate', async () => {
+  const { ControlPlanningService } = await loadControlPlanningModule();
+  const taskId = '00000000-0000-0000-0000-000000000901';
+  const conversationId = '00000000-0000-0000-0000-000000000902';
+  const ownerUserId = '00000000-0000-0000-0000-000000000903';
+  const originalInput = '澄清后的原任务规划';
+  const planningResult = researchPlanningResult(originalInput);
+  const calls: Array<Record<string, unknown>> = [];
+  const service = new ControlPlanningService({
+    planning: { async plan() { throw new Error('plan must not run for finalized result'); } },
+    conversations: {
+      async create() { throw new Error('conversation must not be created'); },
+      async requireOwned(input) { return { id: input.conversationId }; },
+    },
+    repository: {
+      async createTaskWithCandidates() { throw new Error('duplicate task persistence must not run'); },
+      async persistExistingTaskWithCandidates(input) {
+        calls.push(input as unknown as Record<string, unknown>);
+        return {
+          task: {
+            id: taskId,
+            state: 'awaiting_selection',
+            stateVersion: 2,
+            activePlanVersionId: null,
+            currentAttemptId: null,
+          },
+          candidates: input.candidates.map((candidate, index) => ({
+            id: `00000000-0000-0000-0000-00000000091${index}`,
+            taskId,
+            version: index + 1,
+            candidateId: candidate.candidateId,
+            plan: { ...candidate.plan, task_id: taskId },
+            planHash: `sha256:${String(index + 1).repeat(64)}`,
+            pendingInputs: candidate.pendingInputs,
+          })),
+        };
+      },
+    },
+  });
+
+  const response = await service.planExistingTask({
+    taskId,
+    conversationId,
+    ownerUserId,
+    expectedStateVersion: 1,
+    originalInput,
+  }, planningResult);
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.taskId, taskId);
+  assert.equal(calls[0]?.conversationId, conversationId);
+  assert.equal(calls[0]?.ownerUserId, ownerUserId);
+  assert.equal(calls[0]?.expectedStateVersion, 1);
+  assert.deepEqual((calls[0]?.candidates as Array<{ candidateId: string }>).map((candidate) => candidate.candidateId), ['depth', 'speed']);
+  assert.equal(response.task.id, taskId);
+  assert.equal(response.task.state, 'awaiting_selection');
+  assert.deepEqual(response.candidates.map((candidate) => candidate.candidateId), ['depth', 'speed']);
+  assert.ok(response.candidates.every((candidate) => candidate.plan.task_id === taskId));
 });

@@ -21,7 +21,7 @@
 - Phase 1: complete; final gate APPROVE at `454d052`; quality 411 tests / 405 pass / 6 skip / 0 fail; final targeted serial 83 pass / 1 skip / 0 fail.
 - Task 5: complete; RED 3 expected DB constraint failures plus V2 schema failures; GREEN 23/23 targeted tests, `tsc --noEmit -p tsconfig.json` passed, migration dry-run recognized 004. Commit `feat: version current research requirements`.
 - Task 6: complete; RED 5 expected missing-module failures; GREEN 12/12 refinement + research-planning tests, `tsc --noEmit -p tsconfig.json` passed. Commit `feat: add current requirement refinement loop`.
-- Task 7: implementation complete; RED expected route/helper failures; GREEN 12/12 targeted tests, `pnpm typecheck`, and `pnpm --dir apps/web build` passed. Browser blocked because current API/Web services were exited; see `task-7-report.md`. Commit pending: `feat: add current clarification experience`.
+- Task 7: clarification UI/API 原实现完成后发现 ready-path duplicate-task scope gap；已补原任务 planning seam。RED：service/database 方法缺失；GREEN：指定四文件集合 31/31、`pnpm typecheck`、`pnpm --dir apps/web build` 全通过。原 task ID、depth/speed 版本绑定与 missing/foreign/stale fail-closed 已由真实 PostgreSQL 回归覆盖。Commit `fix: persist clarification plans on original task`。
 
 - Revision integrity follow-up: complete (`fix: validate regenerated revision bindings`; targeted RED/GREEN and serial combined verification passed).
 - Next action: Phase 1 review of revision integrity and lease fence changes.

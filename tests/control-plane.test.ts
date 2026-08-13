@@ -11,6 +11,7 @@ import {
 } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
 import {
   ArtifactNotSealedError,
+  ControlPlaneAuthorizationError,
   ControlPlaneConflictError,
   ControlPlaneRepository,
   canonicalPlanHash,
@@ -39,6 +40,22 @@ type CandidatePersistenceRepository = ControlPlaneRepository & {
     task: ControlTask;
     candidates: ControlPlanVersionDetail[];
   }>;
+  persistExistingTaskWithCandidates(input: {
+    taskId: string;
+    conversationId: string;
+    ownerUserId: string;
+    expectedStateVersion: number;
+    taskType: string | null;
+    structuredTask: unknown;
+    candidates: Array<{
+      candidateId: string;
+      plan: unknown;
+      pendingInputs: unknown[];
+    }>;
+  }): Promise<{
+    task: ControlTask;
+    candidates: ControlPlanVersionDetail[];
+  }>;
 };
 
 type LeaseBoundArtifactRepository = ControlPlaneRepository & {
@@ -53,6 +70,25 @@ type LeaseBoundArtifactRepository = ControlPlaneRepository & {
     leaseToken: string;
   }): Promise<{ state: string }>;
 };
+
+function existingTaskCandidates(label: string): Array<{
+  candidateId: string;
+  plan: Record<string, unknown>;
+  pendingInputs: unknown[];
+}> {
+  return [
+    {
+      candidateId: 'depth',
+      plan: { task_id: `provisional-${label}-depth`, deliverable_type: 'research_plan', steps: [{ step_no: 1, step_name: `${label}-depth` }] },
+      pendingInputs: [],
+    },
+    {
+      candidateId: 'speed',
+      plan: { task_id: `provisional-${label}-speed`, deliverable_type: 'research_plan', steps: [{ step_no: 1, step_name: `${label}-speed` }] },
+      pendingInputs: [],
+    },
+  ];
+}
 
 function assertPlanTaskId(plan: unknown, expectedTaskId: string): void {
   assert.ok(plan !== null && typeof plan === 'object' && 'task_id' in plan);
@@ -208,6 +244,112 @@ test('persists a Current task and its depth/speed candidates without activating 
   assertPlanTaskId(persistedSpeed.plan, created.task.id);
   assert.deepEqual(persistedDepth, depthCandidate);
   assert.deepEqual(persistedSpeed, speedCandidate);
+});
+
+test('persists clarified depth/speed plans on the same task and advances selection state atomically', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const candidateRepository = repository as unknown as CandidatePersistenceRepository;
+  const created = await repository.createTask({
+    conversationId,
+    ownerUserId: ownerId,
+    originalInput: '待澄清的原始需求',
+    taskType: null,
+    structuredTask: {},
+    state: 'awaiting_clarification',
+  });
+  const before = await scopedDatabase.connect();
+  let taskCountBefore = 0;
+  try {
+    const result = await before.query('SELECT count(*) AS count FROM control_tasks');
+    taskCountBefore = Number(result.rows[0]?.count);
+  } finally {
+    before.release();
+  }
+
+  const persisted = await candidateRepository.persistExistingTaskWithCandidates({
+    taskId: created.id,
+    conversationId,
+    ownerUserId: ownerId,
+    expectedStateVersion: created.stateVersion,
+    taskType: 'competitive_research',
+    structuredTask: { task_type: 'competitive_research', research_goal: '澄清后目标' },
+    candidates: existingTaskCandidates('same-task'),
+  });
+
+  assert.equal(persisted.task.id, created.id);
+  assert.equal(persisted.task.state, 'awaiting_selection');
+  assert.equal(persisted.task.stateVersion, created.stateVersion + 1);
+  assert.deepEqual(persisted.candidates.map((candidate) => ({
+    taskId: candidate.taskId,
+    version: candidate.version,
+    candidateId: candidate.candidateId,
+  })), [
+    { taskId: created.id, version: 1, candidateId: 'depth' },
+    { taskId: created.id, version: 2, candidateId: 'speed' },
+  ]);
+  for (const candidate of persisted.candidates) {
+    assertPlanTaskId(candidate.plan, created.id);
+    assert.match(candidate.planHash, /^sha256:[0-9a-f]{64}$/);
+  }
+  const after = await scopedDatabase.connect();
+  try {
+    const result = await after.query('SELECT count(*) AS count FROM control_tasks');
+    assert.equal(Number(result.rows[0]?.count), taskCountBefore);
+  } finally {
+    after.release();
+  }
+  const detail = await repository.getTaskDetail(created.id);
+  assert.equal(detail?.state, 'awaiting_selection');
+  assert.equal(detail?.stateVersion, created.stateVersion + 1);
+  assert.deepEqual(detail?.structuredTask, { task_type: 'competitive_research', research_goal: '澄清后目标' });
+});
+
+test('fails closed for missing, foreign-owner, and stale existing-task planning requests', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const candidateRepository = repository as unknown as CandidatePersistenceRepository;
+  const input = (taskId: string, expectedStateVersion: number, actor = ownerId) => ({
+    taskId,
+    conversationId,
+    ownerUserId: actor,
+    expectedStateVersion,
+    taskType: 'competitive_research',
+    structuredTask: { task_type: 'competitive_research', research_goal: 'must be accepted only once' },
+    candidates: existingTaskCandidates(`reject-${taskId}`),
+  });
+
+  await assert.rejects(
+    () => candidateRepository.persistExistingTaskWithCandidates(input(randomUUID(), 0)),
+    ControlPlaneConflictError,
+  );
+
+  const foreignTask = await repository.createTask({
+    conversationId,
+    ownerUserId: ownerId,
+    originalInput: 'foreign actor task',
+    taskType: null,
+    structuredTask: {},
+    state: 'awaiting_clarification',
+  });
+  await assert.rejects(
+    () => candidateRepository.persistExistingTaskWithCandidates(input(foreignTask.id, foreignTask.stateVersion, 'foreign-owner')),
+    ControlPlaneAuthorizationError,
+  );
+
+  const staleTask = await repository.createTask({
+    conversationId,
+    ownerUserId: ownerId,
+    originalInput: 'stale task',
+    taskType: null,
+    structuredTask: {},
+    state: 'awaiting_clarification',
+  });
+  await assert.rejects(
+    () => candidateRepository.persistExistingTaskWithCandidates(input(staleTask.id, staleTask.stateVersion + 1)),
+    ControlPlaneConflictError,
+  );
+  const detail = await repository.getTaskDetail(staleTask.id);
+  assert.equal(detail?.state, 'awaiting_clarification');
+  assert.equal(detail?.stateVersion, staleTask.stateVersion);
 });
 
 test('hashes semantically identical plans independently of object key insertion order', () => {
