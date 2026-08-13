@@ -100,3 +100,28 @@ Commit message: `fix: close phase one integrity gaps`
 ### Commit
 
 Commit message: `fix: validate regenerated revision bindings`
+
+## Revision driver typing follow-up
+
+### Finding fixed
+
+- `revisionSteps` now exposes its existing runtime validation as the type predicate `value is PlanCandidate['steps']`, narrowing validated `steps` before `.some` without changing behavior.
+
+### Verification
+
+- `pnpm typecheck`
+  - Passed.
+- `pnpm exec tsx --test tests/current-revision-integrity.test.ts`
+  - 8 passed, 0 failed, 0 skipped.
+- `pnpm exec tsx --test --test-concurrency=1 tests/current-revision-integrity.test.ts tests/task-workflow.test.ts tests/control-api-integration.test.ts tests/lease-execution-engine.test.ts tests/control-plane.test.ts`
+  - 62 passed, 0 failed, 1 real-provider skip.
+
+### Files
+
+- `apps/agent-api/src/control-runtime.ts`
+- `.superpowers/sdd/phase-1-fix-report.md`
+- `.superpowers/sdd/progress.md`
+
+### Commit
+
+Commit message: `fix: complete revision driver typing`

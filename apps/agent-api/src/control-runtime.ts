@@ -109,7 +109,7 @@ function revisionPendingInputs(value: unknown): value is PendingInput[] {
 
 const REVISION_STEP_KEYS = ['actor_id', 'actor_type', 'input', 'requires_approval', 'step_name', 'step_no'] as const;
 
-function revisionSteps(value: unknown): boolean {
+function revisionSteps(value: unknown): value is PlanCandidate['steps'] {
   return Array.isArray(value)
     && value.length > 0
     && value.every((item) => {
