@@ -752,27 +752,17 @@ ALLOW_REAL_PROVIDER=1 TOOL_ADAPTER=real pnpm smoke:current:real
 
 ## 13. Milestone 1 后续里程碑
 
-### Milestone 2：通用化
+### Milestone 2–7：可信多模态研究系统
 
-- task_types 预筛。
-- required_tools 位置和成功状态校验。
-- `$skill` 直呼依赖处理。
-- Tool retry_policy。
-- optional 自动 gap。
-- Skill provenance。
-- expired lease sweeper。
-- staging reconcile。
-- 新增 interview_guide、audit_report、analysis_report payload。
-- 增加访谈提纲、设计走查、VOC 三条真实场景。
+实现真源：`docs/superpowers/specs/2026-08-14-trusted-multimodal-research-system-design.md`。
 
-### Milestone 3：Gold
-
-- Gold runner 使用 Current 主链。
-- 修复 Gold store batch/slot/pin/infra retry。
-- Audit Package 纳入 deliverable/evidence/receipts。
-- 评审身份来自认证用户。
-- 三次真实运行和三次独立评审。
-- 通过后才开启 trusted Gold。
+本里程碑获批修改 Current Planning HTTP、Current Plan JSON 和数据库 schema；以下旧约束继续有效：
+- Current 是唯一新写主链。
+- Legacy mutation 继续 410，Legacy GET 继续只读。
+- Select 只接收 planVersionId。
+- ResearchDeliverableEnvelope v1 保持不变。
+- EvidenceEntry 必须绑定 SEALED Artifact。
+- 客户端不得提交 plan 或 planHash。
 
 ## 14. 计划变更规则
 
