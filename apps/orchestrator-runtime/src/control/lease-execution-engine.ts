@@ -539,7 +539,7 @@ export class LeaseExecutionEngine {
           failure.toolTier = toolTier;
           failedToolProvenance = this.failedToolProvenance(step, researchGoal, error);
           failedToolProvenance.toolTier = toolTier;
-          if (toolTier === 'optional' && failure.kind !== 'safety' && !isIntegrityFailure(error)) {
+          if (toolTier === 'optional' && failure.kind !== 'safety' && failure.kind !== 'lease_lost' && !isIntegrityFailure(error)) {
             failure.allowedActions ??= [];
             await this.dependencies.repository.recordExecutionStep({
               attemptId: input.lease.attemptId,

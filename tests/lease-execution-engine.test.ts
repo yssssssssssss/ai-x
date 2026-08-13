@@ -237,6 +237,34 @@ class FailingRealAdapter implements ToolAdapter {
     });
   }
 }
+class SuccessfulInternalAdapter implements ToolAdapter {
+  readonly adapterType = 'internal_api' as const;
+  readonly implementationId = 'test-internal-real-v1';
+  readonly executionMode = 'real' as const;
+  calls = 0;
+
+  endpointHost(): string {
+    return 'internal.test';
+  }
+
+  async invoke(options: { manifest: ToolManifest }): Promise<ToolInvokeResult> {
+    this.calls += 1;
+    return {
+      output: { results: [] },
+      latencyMs: 1,
+      receipt: {
+        declaredAdapterType: options.manifest.adapter_type,
+        resolvedAdapterType: this.adapterType,
+        implementationId: this.implementationId,
+        executionMode: this.executionMode,
+        endpointHost: this.endpointHost(),
+        status: 'ok',
+        latencyMs: 1,
+      },
+    };
+  }
+}
+
 
 class ConfigBreakingAdapter extends FailingRealAdapter {
   constructor(private readonly breakConfig: () => void) {
@@ -1115,6 +1143,48 @@ test('continues after an optional Tool failure and completes with a sanitized ga
   assert.equal((await repository.getTaskDetail(lease.taskId))?.state, 'completed_with_gaps');
   assert.equal((await repository.listAttempts(lease.taskId))[0]?.state, 'completed');
 });
+test('does not skip an optional tool when lease is lost during artifact seal', async () => {
+  const optionalSteps = [
+    planSteps[0],
+    {
+      ...planSteps[0],
+      step_no: 2,
+      step_name: '可选内部资料检索',
+      actor_id: 'ai-spider-search',
+    },
+    planSteps[2],
+    planSteps[3],
+  ];
+  const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), optionalSteps);
+  const originalSealArtifact = repository.sealArtifact.bind(repository);
+  let sealCalls = 0;
+  repository.sealArtifact = async (input) => {
+    sealCalls += 1;
+    if (sealCalls === 2) await expireLease(repository, lease);
+    return originalSealArtifact(input);
+  };
+  const optionalAdapter = new SuccessfulInternalAdapter();
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()).register(optionalAdapter),
+    new CountingRealLLM(),
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'paused');
+  assert.equal(result.failure?.kind, 'lease_lost');
+  assert.equal(optionalAdapter.calls, 1);
+  const steps = await repository.listExecutionSteps(lease.attemptId);
+  const failedStep = steps.find((step) => step.state === 'failed');
+  assert.ok(failedStep);
+  assert.equal(failedStep.stepNo, 2);
+  assert.equal(failedStep.failure?.kind, 'lease_lost');
+  assert.equal(steps.some((step) => step.state === 'skipped'), false);
+  assert.equal(steps.some((step) => step.stepNo > 2 && step.actorType !== 'system'), false);
+  assert.equal((await repository.getTaskDetail(lease.taskId))?.state, 'paused');
+  assert.equal((await repository.listAttempts(lease.taskId))[0]?.state, 'paused');
+  assert.deepEqual(await repository.listModelCalls(lease.attemptId), []);
+});
+
 
 test('discards Tool output when the lease is lost while awaiting the provider', async () => {
   const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), [planSteps[0]]);

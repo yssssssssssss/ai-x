@@ -21,7 +21,11 @@ import {
   type ResearchPlanningResult,
 } from '../../orchestrator-runtime/src/planners/research-planning-service.ts';
 import { sanitizeCandidateToPlan } from '../../orchestrator-runtime/src/planners/plan-sanitizer.ts';
-import type { PlanCandidate } from '../../../packages/api-contract/plan.ts';
+import type {
+  EvidenceClass,
+  EvidenceRequirement,
+  PendingInput,
+} from '../../../packages/api-contract/research-deliverable.ts';
 import { CurrentDeliverableService } from '../../orchestrator-runtime/src/report/current-deliverable-service.ts';
 import { buildRuntime } from '../../orchestrator-runtime/src/runtime/agent-runtime.ts';
 import type { LLMClient } from '../../orchestrator-runtime/src/runtime/llm-client.ts';
@@ -43,6 +47,83 @@ function revisionRecord(value: unknown): Record<string, unknown> | null {
     ? value as Record<string, unknown>
     : null;
 }
+const REVISION_EVIDENCE_CLASSES: Record<EvidenceClass, true> = {
+  public_source: true,
+  screenshot: true,
+  user_input: true,
+  knowledge: true,
+  dataset: true,
+  simulation: true,
+  derived: true,
+};
+
+function revisionEvidenceRequirements(value: unknown): value is EvidenceRequirement[] {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.every((item) => {
+      const record = revisionRecord(item);
+      return record !== null
+        && typeof record.id === 'string'
+        && record.id.trim().length > 0
+        && Array.isArray(record.acceptedClasses)
+        && record.acceptedClasses.length > 0
+        && record.acceptedClasses.every(
+          (evidenceClass): evidenceClass is EvidenceClass =>
+            typeof evidenceClass === 'string'
+            && REVISION_EVIDENCE_CLASSES[evidenceClass as EvidenceClass] === true,
+        )
+        && typeof record.minimumCount === 'number'
+        && Number.isInteger(record.minimumCount)
+        && record.minimumCount >= 0
+        && typeof record.required === 'boolean';
+    });
+}
+
+function revisionPendingInputs(value: unknown): value is PendingInput[] {
+  return Array.isArray(value) && value.every((item) => {
+    const record = revisionRecord(item);
+    if (
+      !record
+      || typeof record.role !== 'string'
+      || record.role.trim().length === 0
+      || typeof record.label !== 'string'
+      || record.label.trim().length === 0
+      || typeof record.multiple !== 'boolean'
+      || !Array.isArray(record.targets)
+    ) return false;
+    return record.targets.every((target) => {
+      const targetRecord = revisionRecord(target);
+      return targetRecord !== null
+        && typeof targetRecord.step_no === 'number'
+        && Number.isInteger(targetRecord.step_no)
+        && targetRecord.step_no >= 1
+        && typeof targetRecord.tool_id === 'string'
+        && targetRecord.tool_id.trim().length > 0
+        && typeof targetRecord.field === 'string'
+        && targetRecord.field.trim().length > 0
+        && typeof targetRecord.multiple === 'boolean';
+    });
+  });
+}
+
+function revisionSteps(value: unknown): boolean {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.every((item) => {
+      const record = revisionRecord(item);
+      return record !== null
+        && typeof record.step_no === 'number'
+        && Number.isInteger(record.step_no)
+        && record.step_no >= 1
+        && typeof record.step_name === 'string'
+        && record.step_name.trim().length > 0
+        && typeof record.actor_type === 'string'
+        && REVISION_ACTOR_TYPES[record.actor_type] === true
+        && typeof record.actor_id === 'string'
+        && record.actor_id.trim().length > 0;
+    });
+}
+
 
 function revisionCandidate(result: unknown, candidateId: 'depth' | 'speed'): PlanCandidate {
   const record = revisionRecord(result);
@@ -186,8 +267,9 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       const activePlanShape = revisionRecord(activePlan.plan);
       if (
         activePlanShape?.deliverable_type !== 'research_plan'
-        || !Array.isArray(activePlanShape.evidence_requirements)
-        || !Array.isArray(activePlan.pendingInputs)
+        || !revisionEvidenceRequirements(activePlanShape.evidence_requirements)
+        || !revisionPendingInputs(activePlan.pendingInputs)
+        || !revisionSteps(activePlanShape.steps)
       ) {
         throw new Error(`active plan ${activePlan.id} is malformed`);
       }

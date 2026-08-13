@@ -179,6 +179,24 @@ async function createSelectedTask(options: {
   });
   return { created, selected, selectedPlan };
 }
+async function overwriteActivePlan(input: {
+  planVersionId: string;
+  plan: unknown;
+  pendingInputs: unknown;
+}): Promise<void> {
+  const connection = await scopedDatabase.connect();
+  try {
+    await connection.query(
+      `UPDATE control_plan_versions
+       SET plan_json = $1::jsonb, pending_inputs = $2::jsonb
+       WHERE id = $3`,
+      [JSON.stringify(input.plan), JSON.stringify(input.pendingInputs), input.planVersionId],
+    );
+  } finally {
+    connection.release();
+  }
+}
+
 
 function planningResult(originalInput: string): ResearchPlanningResult {
   return {
@@ -391,6 +409,46 @@ test('production runtime replans from research goal and instruction while preser
   assert.equal('extra_client_field' in (steps[0] ?? {}), false);
   assert.equal(persisted.planHash, canonicalPlanHash(persisted.plan));
 });
+test('production runtime rejects malformed frozen revision fields before repository persistence', async () => {
+  let plannerCalls = 0;
+  const runtime = await buildRuntime({
+    async plan(input) {
+      plannerCalls += 1;
+      return planningResult(input.originalInput);
+    },
+  });
+  const malformedCases = [
+    { suffix: 'malformed-frozen-evidence', evidenceRequirements: [null], pending: pendingInputs },
+    { suffix: 'malformed-frozen-pending', evidenceRequirements, pending: [{ role: 'brief' }] },
+  ];
+
+  for (const malformed of malformedCases) {
+    const seeded = await createSelectedTask({ suffix: malformed.suffix });
+    const activePlan = await repository.getPlanVersionDetail(seeded.selected.planVersionId);
+    assert.ok(activePlan);
+    await overwriteActivePlan({
+      planVersionId: activePlan.id,
+      plan: {
+        ...(activePlan.plan as Record<string, unknown>),
+        evidence_requirements: malformed.evidenceRequirements,
+        steps: candidateSteps('speed'),
+      },
+      pendingInputs: malformed.pending,
+    });
+
+    const nextVersion = await repository.nextPlanVersion(seeded.created.task.id);
+    await assert.rejects(() => runtime.workflow.revise({
+      taskId: seeded.created.task.id,
+      expectedVersion: seeded.selected.stateVersion,
+      revisionInstruction: '拒绝畸形冻结字段',
+      idempotencyKey: malformed.suffix,
+      actor: { userId: ownerId, role: 'owner' },
+    }));
+    assert.equal(await repository.nextPlanVersion(seeded.created.task.id), nextVersion);
+  }
+  assert.equal(plannerCalls, 0);
+});
+
 
 test('production runtime fails closed before creating a revision when planning context is invalid', async () => {
   let plannerCalls = 0;
