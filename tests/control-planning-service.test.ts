@@ -632,3 +632,65 @@ test('planExistingTask persists finalized candidates on the original task withou
   assert.deepEqual(response.candidates.map((candidate) => candidate.candidateId), ['depth', 'speed']);
   assert.ok(response.candidates.every((candidate) => candidate.plan.task_id === taskId));
 });
+
+test('binds existing-task persistence to a class-backed repository', async () => {
+  const { ControlPlanningService } = await loadControlPlanningModule();
+  const taskId = '00000000-0000-0000-0000-000000000911';
+  const conversationId = '00000000-0000-0000-0000-000000000912';
+  const ownerUserId = '00000000-0000-0000-0000-000000000913';
+  const planningResult = researchPlanningResult('类仓储方法必须保留 this');
+  type PersistInput = Parameters<NonNullable<
+    ControlPlanningDependencies['repository']['persistExistingTaskWithCandidates']
+  >>[0];
+  class ClassBackedRepository {
+    readonly calls: PersistInput[] = [];
+
+    async createTaskWithCandidates(): Promise<never> {
+      throw new Error('duplicate task persistence must not run');
+    }
+
+    async persistExistingTaskWithCandidates(input: PersistInput) {
+      this.calls.push(input);
+      return {
+        task: {
+          id: taskId,
+          state: 'awaiting_selection' as const,
+          stateVersion: 2,
+          activePlanVersionId: null,
+          currentAttemptId: null,
+        },
+        candidates: input.candidates.map((candidate, index) => ({
+          id: `00000000-0000-0000-0000-00000000092${index}`,
+          taskId,
+          version: index + 1,
+          candidateId: candidate.candidateId,
+          plan: { ...candidate.plan, task_id: taskId },
+          planHash: `sha256:${String(index + 1).repeat(64)}`,
+          pendingInputs: candidate.pendingInputs,
+        })),
+      };
+    }
+  }
+
+  const repository = new ClassBackedRepository();
+  const service = new ControlPlanningService({
+    planning: { async plan() { throw new Error('plan must not run for finalized result'); } },
+    conversations: {
+      async create() { throw new Error('conversation must not be created'); },
+      async requireOwned(input) { return { id: input.conversationId }; },
+    },
+    repository,
+  });
+
+  const response = await service.planExistingTask({
+    taskId,
+    conversationId,
+    ownerUserId,
+    expectedStateVersion: 1,
+    originalInput: '类仓储方法必须保留 this',
+  }, planningResult);
+
+  assert.equal(repository.calls.length, 1);
+  assert.equal(response.task.id, taskId);
+  assert.deepEqual(response.candidates.map((candidate) => candidate.candidateId), ['depth', 'speed']);
+});

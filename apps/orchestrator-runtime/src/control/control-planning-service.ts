@@ -198,9 +198,10 @@ export class ControlPlanningService {
       conversationId: input.conversationId,
       ownerUserId: input.ownerUserId,
     });
-    const persist = this.dependencies.repository.persistExistingTaskWithCandidates;
-    if (!persist) throw new Error('existing-task planning persistence is unavailable');
-    const persisted = await persist({
+    if (!this.dependencies.repository.persistExistingTaskWithCandidates) {
+      throw new Error('existing-task planning persistence is unavailable');
+    }
+    const persisted = await this.dependencies.repository.persistExistingTaskWithCandidates({
       taskId: input.taskId,
       conversationId: conversation.id,
       ownerUserId: input.ownerUserId,

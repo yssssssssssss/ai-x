@@ -44,3 +44,9 @@
 ## Commit
 
 已提交：`fix: persist clarification plans on original task`。
+## Phase 2 quality follow-up：existing-task repository 方法绑定
+
+- 根因：`ControlPlanningService.planExistingTask()` 将 `this.dependencies.repository.persistExistingTaskWithCandidates` 提取到局部变量后裸调用；真实 `ControlPlaneRepository` 的实现依赖实例 `this.transaction`，因此生产 ready-path 会抛出 `Cannot read properties of undefined (reading 'transaction')`，而对象字面量 mock 未暴露该问题。
+- RED：新增 class-backed repository regression 首次运行 `pnpm exec tsx --test --test-concurrency=1 tests/control-planning-service.test.ts`，6 passed / 1 failed；失败为 `Cannot read properties of undefined (reading 'calls')`，栈定位到裸调用。
+- GREEN：改为 `this.dependencies.repository.persistExistingTaskWithCandidates(...)` 直接调用；指定套件 `pnpm exec tsx --test --test-concurrency=1 tests/control-planning-service.test.ts tests/control-api-integration.test.ts tests/control-clarification.test.ts` —— 14 passed / 0 failed。
+- TypeScript：`pnpm typecheck` —— passed。

@@ -90,6 +90,12 @@ git add apps/agent-api/src/routes/control-planning.ts \
 git commit -m "feat: add current clarification experience"
 ```
 
+### Task 7 质量 follow-up：绑定 existing-task repository 方法
+
+- [x] 先新增 class-backed repository 回归并确认 RED：裸调用因丢失 `this` 抛出 `Cannot read properties of undefined (reading 'calls')`。
+- [x] 以实例直接调用 `persistExistingTaskWithCandidates`，不做额外重构。
+- [x] 运行指定 control planning/API/clarification 套件与 `pnpm typecheck`。
+
 ---
 
 ## Phase 3：问题图和能力编译

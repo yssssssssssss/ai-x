@@ -30,3 +30,4 @@
 - Phase 1 review blockers follow-up: complete (revision optional-field contract and strict current candidate schema dispatch; targeted 29 pass / 0 fail; serial Phase 83 pass / 1 real-provider skip / 0 fail).
 
 - Phase 1 final review: APPROVE; no open blockers.
+- Task 7 quality follow-up: complete; class-backed repository regression RED 6 pass / 1 expected `this` failure；直接实例调用修复后指定 control planning/API/clarification 套件 14/14 passed，`pnpm typecheck` passed。
