@@ -107,12 +107,16 @@ function revisionPendingInputs(value: unknown): value is PendingInput[] {
   });
 }
 
+const REVISION_STEP_KEYS = ['actor_id', 'actor_type', 'input', 'requires_approval', 'step_name', 'step_no'] as const;
+
 function revisionSteps(value: unknown): boolean {
   return Array.isArray(value)
     && value.length > 0
     && value.every((item) => {
       const record = revisionRecord(item);
       return record !== null
+        && Object.keys(record).length === REVISION_STEP_KEYS.length
+        && REVISION_STEP_KEYS.every((key) => Object.hasOwn(record, key))
         && typeof record.step_no === 'number'
         && Number.isInteger(record.step_no)
         && record.step_no >= 1
@@ -121,8 +125,24 @@ function revisionSteps(value: unknown): boolean {
         && typeof record.actor_type === 'string'
         && REVISION_ACTOR_TYPES[record.actor_type] === true
         && typeof record.actor_id === 'string'
-        && record.actor_id.trim().length > 0;
+        && record.actor_id.trim().length > 0
+        && revisionRecord(record.input) !== null
+        && typeof record.requires_approval === 'boolean';
     });
+}
+
+function revisionPendingInputsResolve(pendingInputs: PendingInput[], steps: unknown): boolean {
+  if (!revisionSteps(steps)) return false;
+  return pendingInputs.every((pendingInput) => pendingInput.targets.every((target) => (
+    steps.some((step) => {
+      const stepRecord = revisionRecord(step);
+      const stepInput = revisionRecord(stepRecord?.input);
+      return stepRecord?.step_no === target.step_no
+        && stepRecord.actor_id === target.tool_id
+        && stepInput !== null
+        && Object.hasOwn(stepInput, target.field);
+    })
+  )));
 }
 
 
@@ -280,6 +300,9 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       });
       const candidate = revisionCandidate(planningResult, activePlan.candidateId);
       const steps = sanitizeCandidateToPlan(candidate, task.id, '').steps;
+      if (!revisionPendingInputsResolve(activePlan.pendingInputs, steps)) {
+        throw new Error(`active plan ${activePlan.id} has pending input target unresolved by replacement steps`);
+      }
       return {
         plan: {
           task_id: task.id,

@@ -448,6 +448,81 @@ test('production runtime rejects malformed frozen revision fields before reposit
   }
   assert.equal(plannerCalls, 0);
 });
+test('production runtime rejects malformed frozen step shape before repository persistence', async () => {
+  let plannerCalls = 0;
+  const runtime = await buildRuntime({
+    async plan(input) {
+      plannerCalls += 1;
+      return planningResult(input.originalInput);
+    },
+  });
+  const malformedSteps = [
+    { suffix: 'malformed-step-null-input', step: { ...candidateSteps('speed')[0], input: null } },
+    { suffix: 'malformed-step-array-input', step: { ...candidateSteps('speed')[0], input: [] } },
+    { suffix: 'malformed-step-approval', step: { ...candidateSteps('speed')[0], requires_approval: 'yes' } },
+    { suffix: 'malformed-step-extra-key', step: { ...candidateSteps('speed')[0], extra_client_field: 'reject-me' } },
+  ];
+
+  for (const malformed of malformedSteps) {
+    const seeded = await createSelectedTask({ suffix: malformed.suffix });
+    const activePlan = await repository.getPlanVersionDetail(seeded.selected.planVersionId);
+    assert.ok(activePlan);
+    await overwriteActivePlan({
+      planVersionId: activePlan.id,
+      plan: {
+        ...(activePlan.plan as Record<string, unknown>),
+        steps: [malformed.step],
+      },
+      pendingInputs: activePlan.pendingInputs,
+    });
+
+    const nextVersion = await repository.nextPlanVersion(seeded.created.task.id);
+    await assert.rejects(() => runtime.workflow.revise({
+      taskId: seeded.created.task.id,
+      expectedVersion: seeded.selected.stateVersion,
+      revisionInstruction: '拒绝畸形冻结步骤',
+      idempotencyKey: malformed.suffix,
+      actor: { userId: ownerId, role: 'owner' },
+    }));
+    assert.equal(await repository.nextPlanVersion(seeded.created.task.id), nextVersion);
+  }
+  assert.equal(plannerCalls, 0);
+});
+
+test('production runtime fails closed when regenerated steps leave pending input target dangling', async () => {
+  let plannerCalls = 0;
+  const runtime = await buildRuntime({
+    async plan(input) {
+      plannerCalls += 1;
+      const result = planningResult(input.originalInput);
+      return {
+        ...result,
+        candidates: result.candidates.map((candidate) => candidate.id === 'speed'
+          ? {
+            ...candidate,
+            steps: candidate.steps.map((step) => ({
+              ...step,
+              actor_id: 'different-search-tool',
+              input: { url: 'https://example.test' },
+            })),
+          }
+          : candidate),
+      };
+    },
+  });
+  const seeded = await createSelectedTask({ workflow: runtime.workflow, suffix: 'dangling-pending-target' });
+  const nextVersion = await repository.nextPlanVersion(seeded.created.task.id);
+
+  await assert.rejects(() => runtime.workflow.revise({
+    taskId: seeded.created.task.id,
+    expectedVersion: seeded.selected.stateVersion,
+    revisionInstruction: '生成无法绑定旧输入目标的步骤',
+    idempotencyKey: 'dangling-pending-target',
+    actor: { userId: ownerId, role: 'owner' },
+  }));
+  assert.equal(await repository.nextPlanVersion(seeded.created.task.id), nextVersion);
+  assert.equal(plannerCalls, 1);
+});
 
 
 test('production runtime fails closed before creating a revision when planning context is invalid', async () => {

@@ -67,3 +67,36 @@ Commit message: `fix: close phase one integrity gaps`
 - `apps/agent-api/src/control-runtime.ts`
 - `.superpowers/sdd/phase-1-fix-report.md`
 - `.superpowers/sdd/progress.md`
+## Revision integrity follow-up
+
+### Findings fixed
+
+- `revisionSteps` now requires the complete six-field frozen step shape, rejects non-object/array `input`, rejects non-boolean `requires_approval`, and rejects unknown step keys before the planner is called.
+- Regenerated steps are checked against every preserved pending-input target by `step_no`, `actor_id`/`tool_id`, and input field. A dangling target fails closed before `createPlanRevision`; valid targets continue to revise normally.
+
+### TDD evidence
+
+#### RED
+
+- `pnpm exec tsx --test tests/current-revision-integrity.test.ts`
+  - Failed as expected: the new malformed frozen step test reported `Missing expected rejection`.
+  - Failed as expected: the new dangling pending-input target test reported `Missing expected rejection`.
+  - Existing six tests passed.
+
+#### GREEN
+
+- `pnpm exec tsx --test tests/current-revision-integrity.test.ts`
+  - 8 passed, 0 failed, 0 skipped.
+- `pnpm exec tsx --test --test-concurrency=1 tests/current-revision-integrity.test.ts tests/task-workflow.test.ts tests/control-api-integration.test.ts tests/lease-execution-engine.test.ts tests/control-plane.test.ts`
+  - 62 passed, 0 failed, 1 real-provider skip.
+
+### Files
+
+- `apps/agent-api/src/control-runtime.ts`
+- `tests/current-revision-integrity.test.ts`
+- `.superpowers/sdd/phase-1-fix-report.md`
+- `.superpowers/sdd/progress.md`
+
+### Commit
+
+Commit message: `fix: validate regenerated revision bindings`

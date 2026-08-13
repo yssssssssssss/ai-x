@@ -19,3 +19,6 @@
 - Task 4: complete (RED expected failure; GREEN 39 pass / 1 real-provider skip / 0 fail; deterministic expiry-before-seal race covered).
 - Phase 1 quality follow-up: complete (`PlanCandidate` type-only wiring restored; `pnpm typecheck` passed; serial targeted verification 60 pass / 1 real-provider skip / 0 fail).
 - Tasks 5–25: pending.
+
+- Revision integrity follow-up: complete (`fix: validate regenerated revision bindings`; targeted RED/GREEN and serial combined verification passed).
+- Next action: Phase 1 review of revision integrity and lease fence changes.
