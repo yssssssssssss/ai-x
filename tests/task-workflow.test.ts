@@ -328,7 +328,11 @@ test('malformed persisted workflow gate fails closed during confirmation', async
 });
 test('confirmation, required input, role matrix, and plan revision gate ready state', async () => {
   const repository = new ControlPlaneRepository(scopedDatabase);
-  const workflow = new TaskWorkflowService(repository);
+  const workflow = new TaskWorkflowService(repository, undefined, {
+    async revise({ taskId }) {
+      return { plan: { task_id: taskId, steps: [] }, pendingInputs: [] };
+    },
+  });
   const created = await createCandidateTask(repository, 'workflow-gate', {
     structuredTask: {
       confirmations: [{ key: 'competitors', question: '竞品范围?' }],
@@ -434,10 +438,7 @@ test('confirmation, required input, role matrix, and plan revision gate ready st
     expectedVersion: approved.stateVersion,
     idempotencyKey: 'revise-after-approval',
     actor: { userId: ownerId, role: 'owner' },
-    candidateId: 'depth',
-    plan: { steps: [] },
-    planHash: 'sha256:revised-plan',
-    pendingInputs: [],
+    revisionInstruction: 're-plan after approval',
   });
   const reconfirmed = await workflow.confirm({
     taskId: task.id,

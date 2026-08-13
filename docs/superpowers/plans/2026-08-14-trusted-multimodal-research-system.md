@@ -216,9 +216,11 @@ git commit -m "feat: validate current planning candidates"
 **Files:**
 - Modify: `packages/api-contract/control-workflow.ts:79-100`
 - Modify: `apps/agent-api/src/routes/control-tasks.ts:199-229`
+- Modify: `apps/agent-api/src/control-runtime.ts:99-140`
 - Modify: `apps/orchestrator-runtime/src/control/task-workflow.ts:388-450`
 - Modify: `database/control-plane.ts:567-612`
 - Test: `tests/current-revision-integrity.test.ts`
+- Test: `tests/task-workflow.test.ts` (migrate the existing revision caller to the server driver contract)
 
 **Interfaces:**
 - Replace client plan revision with `revisionInstruction: string`。
@@ -283,7 +285,7 @@ export interface WorkflowPlanRevisionDriver {
 }
 ```
 
-Workflow 使用 driver 产物调用 repository；repository 内部重算 canonical hash，不接受外部 hash。
+Workflow 使用 driver 产物调用 repository；repository 内部调用 `canonicalPlanHash(plan)`，不接受外部 hash。`buildControlRuntime` 注入生产 driver：读取 active task/plan，以 `structuredTask.research_goal + revisionInstruction` 调用现有 `ResearchPlanningService`，保持当前 candidateId 的 depth/speed 取向，复用 active plan 已冻结的 `deliverable_type` 和 `evidence_requirements`，服务端清洗新 steps，保留 active pendingInputs。若 task/plan/candidate 无法解析则 fail-closed，不创建 revision。
 
 - [ ] **Step 5: 运行测试**
 
@@ -296,9 +298,11 @@ Expected: PASS。
 ```bash
 git add packages/api-contract/control-workflow.ts \
   apps/agent-api/src/routes/control-tasks.ts \
+  apps/agent-api/src/control-runtime.ts \
   apps/orchestrator-runtime/src/control/task-workflow.ts \
   database/control-plane.ts \
-  tests/current-revision-integrity.test.ts
+  tests/current-revision-integrity.test.ts \
+  tests/task-workflow.test.ts
 git commit -m "fix: make current plan revisions server-owned"
 ```
 

@@ -59,6 +59,14 @@ export interface WorkflowExecutionDriver {
   }>;
 }
 
+export interface WorkflowPlanRevisionDriver {
+  revise(input: {
+    taskId: string;
+    activePlanVersionId: string;
+    instruction: string;
+  }): Promise<{ plan: unknown; pendingInputs: unknown[] }>;
+}
+
 export type WorkflowExecutionResponse = DisabledExecutionResponse | ControlExecutionResult;
 
 export class TaskWorkflowGateError extends Error {
@@ -193,6 +201,7 @@ export class TaskWorkflowService {
   constructor(
     private readonly repository: ControlPlaneRepository,
     private readonly executionDriver?: WorkflowExecutionDriver,
+    private readonly planRevisionDriver?: WorkflowPlanRevisionDriver,
   ) {}
 
   private async requireTask(taskId: string): Promise<ControlTaskDetail> {
@@ -389,10 +398,7 @@ export class TaskWorkflowService {
     expectedVersion: number;
     idempotencyKey: string;
     actor: WorkflowActor;
-    candidateId: string;
-    plan: unknown;
-    planHash: string;
-    pendingInputs: unknown[];
+    revisionInstruction: string;
   }): Promise<{ planVersionId: string; state: ControlTaskState; stateVersion: number }> {
     const hash = requestHash(input);
     const replay = await this.replay<{ planVersionId: string; state: ControlTaskState; stateVersion: number }>(input.taskId, 'revision', input.idempotencyKey, hash);
@@ -403,15 +409,35 @@ export class TaskWorkflowService {
     if (!revisableStates.includes(task.state) || task.stateVersion !== input.expectedVersion) {
       throw new ControlPlaneConflictError(`task ${task.id} cannot be revised at version ${input.expectedVersion}`);
     }
+    if (!input.revisionInstruction.trim()) {
+      throw new ControlPlaneConflictError('revision instruction is required');
+    }
+    if (!task.activePlanVersionId) {
+      throw new ControlPlaneConflictError(`task ${task.id} has no active plan to revise`);
+    }
+    const activePlan = await this.requirePlan(task, task.activePlanVersionId);
+    if (activePlan.candidateId !== 'depth' && activePlan.candidateId !== 'speed') {
+      throw new ControlPlaneConflictError(`active plan ${activePlan.id} has no valid candidate choice`);
+    }
+    if (!this.planRevisionDriver) {
+      throw new ControlPlaneConflictError('plan revision driver is unavailable');
+    }
+    const generated = await this.planRevisionDriver.revise({
+      taskId: task.id,
+      activePlanVersionId: activePlan.id,
+      instruction: input.revisionInstruction,
+    });
+    if (!isRecord(generated) || !isRecord(generated.plan) || !Array.isArray(generated.pendingInputs)) {
+      throw new ControlPlaneConflictError('plan revision driver returned a malformed result');
+    }
     const revision = await this.repository.createPlanRevision({
       taskId: task.id,
       expectedVersion: input.expectedVersion,
       from: revisableStates,
       to: 'awaiting_confirmation',
-      candidateId: input.candidateId,
-      plan: input.plan,
-      planHash: input.planHash,
-      pendingInputs: input.pendingInputs,
+      candidateId: activePlan.candidateId,
+      plan: generated.plan,
+      pendingInputs: generated.pendingInputs,
     });
     const plan = revision.plan;
     const transitioned = revision.task;
@@ -500,7 +526,6 @@ export class TaskWorkflowService {
         to: 'awaiting_confirmation',
         candidateId: activePlan.candidateId ?? undefined,
         plan: revisedPlan,
-        planHash: `sha256:${requestHash(revisedPlan)}`,
         pendingInputs: activePlan.pendingInputs,
       });
       transitioned = revision.task;

@@ -5,7 +5,10 @@ import { createConversation, getOwnedConversation } from '../../../database/repo
 import { ControlArtifactStore } from '../../orchestrator-runtime/src/control/artifact-store.ts';
 import { ControlPlanningService } from '../../orchestrator-runtime/src/control/control-planning-service.ts';
 import { LeaseExecutionEngine } from '../../orchestrator-runtime/src/control/lease-execution-engine.ts';
-import { TaskWorkflowService } from '../../orchestrator-runtime/src/control/task-workflow.ts';
+import {
+  TaskWorkflowService,
+  type WorkflowPlanRevisionDriver,
+} from '../../orchestrator-runtime/src/control/task-workflow.ts';
 import {
   EvidenceService,
   type EvidenceArtifactResolver,
@@ -17,6 +20,8 @@ import {
   ResearchPlanningService,
   type ResearchPlanningResult,
 } from '../../orchestrator-runtime/src/planners/research-planning-service.ts';
+import { sanitizeCandidateToPlan } from '../../orchestrator-runtime/src/planners/plan-sanitizer.ts';
+import type { PlanCandidate } from '../../../packages/api-contract/plan.ts';
 import { CurrentDeliverableService } from '../../orchestrator-runtime/src/report/current-deliverable-service.ts';
 import { buildRuntime } from '../../orchestrator-runtime/src/runtime/agent-runtime.ts';
 import type { LLMClient } from '../../orchestrator-runtime/src/runtime/llm-client.ts';
@@ -25,6 +30,38 @@ import { SchemaValidator } from '../../orchestrator-runtime/src/schema/validator
 import { SkillLoader } from '../../orchestrator-runtime/src/runtime/skill-loader.ts';
 import { ToolRouter } from '../../orchestrator-runtime/src/runtime/tool-adapter.ts';
 
+
+const REVISION_ACTOR_TYPES: Record<string, true> = {
+  skill: true,
+  tool: true,
+  llm: true,
+  reviewer: true,
+};
+
+function revisionRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function revisionCandidate(result: unknown, candidateId: 'depth' | 'speed'): PlanCandidate {
+  const record = revisionRecord(result);
+  if (!record || !Array.isArray(record.candidates)) {
+    throw new Error('revision planning result has no candidates');
+  }
+  const candidate = record.candidates.find((value) => revisionRecord(value)?.id === candidateId);
+  const candidateRecord = revisionRecord(candidate);
+  if (!candidateRecord || !Array.isArray(candidateRecord.steps) || candidateRecord.steps.length === 0) {
+    throw new Error(`revision planning result has no ${candidateId} steps`);
+  }
+  for (const step of candidateRecord.steps) {
+    const actorType = revisionRecord(step)?.actor_type;
+    if (typeof actorType !== 'string' || REVISION_ACTOR_TYPES[actorType] !== true) {
+      throw new Error(`revision planning result has invalid actor_type: ${String(actorType)}`);
+    }
+  }
+  return candidate as PlanCandidate;
+}
 interface ConversationAdapter {
   create(input: { ownerUserId: string; title: string }): Promise<{ id: string }>;
   requireOwned(input: { conversationId: string; ownerUserId: string }): Promise<{ id: string }>;
@@ -127,12 +164,56 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     heartbeatMs: 30_000,
     deliverables,
   });
+  const planRevisionDriver: WorkflowPlanRevisionDriver = {
+    async revise(input) {
+      const task = await repository.getTaskDetail(input.taskId);
+      if (!task || task.activePlanVersionId !== input.activePlanVersionId) {
+        throw new Error(`task ${input.taskId} has no matching active plan`);
+      }
+      const taskShape = revisionRecord(task.structuredTask);
+      const researchGoal = typeof taskShape?.research_goal === 'string'
+        ? taskShape.research_goal.trim()
+        : '';
+      if (!researchGoal) throw new Error(`task ${input.taskId} has no research_goal`);
+
+      const activePlan = await repository.getPlanVersionDetail(input.activePlanVersionId);
+      if (!activePlan || activePlan.taskId !== task.id) {
+        throw new Error(`active plan ${input.activePlanVersionId} does not belong to task ${task.id}`);
+      }
+      if (activePlan.candidateId !== 'depth' && activePlan.candidateId !== 'speed') {
+        throw new Error(`active plan ${activePlan.id} has no depth/speed candidate`);
+      }
+      const activePlanShape = revisionRecord(activePlan.plan);
+      if (
+        activePlanShape?.deliverable_type !== 'research_plan'
+        || !Array.isArray(activePlanShape.evidence_requirements)
+        || !Array.isArray(activePlan.pendingInputs)
+      ) {
+        throw new Error(`active plan ${activePlan.id} is malformed`);
+      }
+
+      const planningResult = await planning.plan({
+        originalInput: `${researchGoal}\n\nRevision instruction: ${input.instruction}`,
+      });
+      const candidate = revisionCandidate(planningResult, activePlan.candidateId);
+      const steps = sanitizeCandidateToPlan(candidate, task.id, '').steps;
+      return {
+        plan: {
+          task_id: task.id,
+          deliverable_type: activePlanShape.deliverable_type,
+          evidence_requirements: activePlanShape.evidence_requirements,
+          steps,
+        },
+        pendingInputs: activePlan.pendingInputs,
+      };
+    },
+  };
   const workflow = new TaskWorkflowService(repository, {
     execute: ({ lease }) => engine.execute({
       lease,
       expectedModel: expectedActualModel,
     }),
-  });
+  }, planRevisionDriver);
 
   return {
     controlPlanning,

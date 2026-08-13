@@ -570,10 +570,10 @@ export class ControlPlaneRepository {
     from: ControlTaskState | ControlTaskState[];
     to: ControlTaskState;
     plan: unknown;
-    planHash: string;
     candidateId?: string;
     pendingInputs?: unknown;
   }): Promise<{ plan: ControlPlanVersion; task: ControlTask }> {
+    const persistedPlan = canonicalPlan(input.plan);
     return this.transaction(async (connection) => {
       const fromStates = Array.isArray(input.from) ? input.from : [input.from];
       const locked = await connection.query(
@@ -599,8 +599,8 @@ export class ControlPlaneRepository {
          VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING id, task_id, version, plan_hash`,
         [
-          input.taskId, version, input.candidateId ?? null, JSON.stringify(input.plan),
-          input.planHash, JSON.stringify(input.pendingInputs ?? []),
+          input.taskId, version, input.candidateId ?? null, persistedPlan.json,
+          persistedPlan.hash, JSON.stringify(input.pendingInputs ?? []),
         ],
       );
       const planRow = inserted.rows[0] ?? {};

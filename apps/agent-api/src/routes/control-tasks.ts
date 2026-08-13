@@ -203,13 +203,15 @@ router.post('/:id/revise', async (req, res) => {
   const actor = await authenticatedActor(req, res);
   const key = idempotencyKey(req);
   const expectedVersion = version(body?.expectedVersion);
-  const candidateId = string(body?.candidateId);
-  const planHash = string(body?.planHash);
-  const pendingInputs = Array.isArray(body?.pendingInputs) ? body?.pendingInputs : null;
+  const revisionInstruction = string(body?.revisionInstruction);
   if (!actor) return;
   if (!await ensureOwnedTask(runtime, req, res, actor)) return;
-  if (expectedVersion == null || !key || !candidateId || !planHash || !pendingInputs || !('plan' in (body ?? {}))) {
-    res.status(400).json({ error: 'expectedVersion、Idempotency-Key、candidateId、plan、planHash、pendingInputs 必填' });
+  if (body && ('plan' in body || 'planHash' in body)) {
+    res.status(400).json({ error: 'plan 和 planHash 由服务端生成，不接受客户端提交' });
+    return;
+  }
+  if (expectedVersion == null || !key || !revisionInstruction) {
+    res.status(400).json({ error: 'expectedVersion、Idempotency-Key、revisionInstruction 必填' });
     return;
   }
   try {
@@ -218,10 +220,7 @@ router.post('/:id/revise', async (req, res) => {
       expectedVersion,
       idempotencyKey: key,
       actor,
-      candidateId,
-      plan: body?.plan,
-      planHash,
-      pendingInputs,
+      revisionInstruction,
     }));
   } catch (error) {
     responseError(res, error);

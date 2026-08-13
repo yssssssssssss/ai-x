@@ -68,6 +68,12 @@ export interface SelectControlPlanResponse {
   stateVersion: number;
 }
 
+export interface ReviseControlPlanRequest {
+  expectedVersion: number;
+  revisionInstruction: string;
+  idempotencyKey: string;
+}
+
 export interface ConfirmControlPlanRequest {
   expectedVersion: number;
   planVersionId: string;
