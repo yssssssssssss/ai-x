@@ -465,6 +465,7 @@ export class LeaseExecutionEngine {
           relativePath: `steps/${step.step_no}-${result.kind}.json`,
           value: artifactValue,
           schemaVersion: STEP_ARTIFACT_SCHEMA_VERSIONS[result.kind],
+          activeLease: input.lease,
         });
         if (artifact.state !== 'SEALED' || !artifact.contentSha256) {
           throw new ExecutionAuthenticityError(`step Artifact ${artifact.id} was not sealed`);

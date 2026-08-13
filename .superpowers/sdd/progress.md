@@ -16,4 +16,5 @@
 - Task 1: complete (`9694a67..9a887cc`; targeted docs verification passed).
 - Task 2: complete (`9a887cc..58697b0`; RED 7 expected failures, GREEN 19/19 targeted tests).
 - Task 3: complete (RED 4 expected failures / 1 pass; GREEN 19/19 targeted tests).
-- Tasks 4–25: pending.
+- Task 4: complete (RED expected failure; GREEN 39 pass / 1 real-provider skip / 0 fail; deterministic expiry-before-seal race covered).
+- Tasks 5–25: pending.

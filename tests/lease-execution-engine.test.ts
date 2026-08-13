@@ -1151,6 +1151,39 @@ test('discards Tool output when the lease is lost while awaiting the provider', 
     connection.release();
   }
 });
+test('does not seal a step Artifact when the lease expires before artifact seal', async () => {
+  const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), [planSteps[0]]);
+  const originalSealArtifact = repository.sealArtifact.bind(repository);
+  repository.sealArtifact = async (input) => {
+    await expireLease(repository, lease);
+    return originalSealArtifact(input);
+  };
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new CountingRealLLM(),
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'paused');
+  assert.equal(result.failure?.kind, 'lease_lost');
+  const steps = await repository.listExecutionSteps(lease.attemptId);
+  assert.equal(steps[0]?.state, 'failed');
+  assert.notEqual(steps[0]?.state, 'succeeded');
+  const connection = await scopedDatabase.connect();
+  try {
+    const artifacts = await connection.query(
+      `SELECT kind, state FROM control_artifacts WHERE attempt_id = $1`,
+      [lease.attemptId],
+    );
+    assert.deepEqual(artifacts.rows, [{ kind: 'tool_output', state: 'FAILED' }]);
+    assert.equal(artifacts.rows.some((artifact) => artifact.state === 'SEALED'), false);
+  } finally {
+    connection.release();
+  }
+  assert.equal((await repository.getTaskDetail(lease.taskId))?.state, 'paused');
+  assert.equal((await repository.listAttempts(lease.taskId))[0]?.state, 'paused');
+});
 
 test('redacts Skill, LLM, and Reviewer echoes before sealing or passing later step context', async () => {
   const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), planSteps);
