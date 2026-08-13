@@ -50,3 +50,11 @@
 - RED：新增 class-backed repository regression 首次运行 `pnpm exec tsx --test --test-concurrency=1 tests/control-planning-service.test.ts`，6 passed / 1 failed；失败为 `Cannot read properties of undefined (reading 'calls')`，栈定位到裸调用。
 - GREEN：改为 `this.dependencies.repository.persistExistingTaskWithCandidates(...)` 直接调用；指定套件 `pnpm exec tsx --test --test-concurrency=1 tests/control-planning-service.test.ts tests/control-api-integration.test.ts tests/control-clarification.test.ts` —— 14 passed / 0 failed。
 - TypeScript：`pnpm typecheck` —— passed。
+
+
+## Phase 2 offline Current 集成夹具 follow-up
+
+- RED：在已包含 production repository binding 修复的 `7568396` 上，以提交态旧夹具运行 `pnpm exec tsx --test --test-concurrency=1 --test-name-pattern="production control runtime completes" tests/control-api-integration.test.ts`，目标用例稳定返回 planning `502`（期望 `200`），0 passed / 1 failed / 2 skipped。
+- 根因：Task 6 clean cutover 后，离线 Current 集成夹具仍让 `research-task-v2` schema 返回 `{ ok: true }`，且本地 `ConversationAdapter` 仍只有 create/require，缺少 refinement 必需的 owner-scoped `listMessages` 与 `appendMessage`。有效 V2 fixture 补入后，诊断响应依次暴露 `requirement refinement requires conversation append support`；conversation ports 补齐后才到达此前未绑定的 repository transaction 路径。因此根因是 structured LLM response 与 conversation ports 两组夹具同时陈旧，不能将首个失败单独归因于 LLM fixture；它们共同阻断并遮蔽 production binding 路径。
+- 夹具修正：为 `research-task-v2` 返回符合契约、无 blocking ambiguity 的 snake_case ResearchTaskV2；以真实测试数据库实现 owner-scoped message history 与 append；planning 失败断言附带响应 body，并断言相同 `originalInput` 只持久化 1 个 control task 和严格 2 个 plan versions，继续保留 execute 与 owner-only deliverable 断言。
+- GREEN：目标单例 `pnpm exec tsx --test --test-concurrency=1 --test-name-pattern="production control runtime completes" tests/control-api-integration.test.ts` —— 1 passed / 2 name-filter skipped；指定三文件串行套件 `pnpm exec tsx --test --test-concurrency=1 tests/control-clarification.test.ts tests/control-api-integration.test.ts tests/control-planning-service.test.ts` —— 14 passed / 0 failed；`pnpm typecheck` —— passed。

@@ -530,6 +530,7 @@ git commit -m "feat: add current requirement refinement loop"
 - Modify: `apps/web/src/hooks/useTaskFlow.ts`
 - Modify: `apps/web/src/pages/Workbench.tsx`
 - Test: `tests/control-clarification.test.ts`
+- Test: `tests/control-api-integration.test.ts`
 - Test: `tests/control-planning-service.test.ts`
 - Test: `tests/control-plane.test.ts`
 - Test: `tests/current-flow-state.test.ts`

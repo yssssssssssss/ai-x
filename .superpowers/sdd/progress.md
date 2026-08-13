@@ -31,3 +31,4 @@
 
 - Phase 1 final review: APPROVE; no open blockers.
 - Task 7 quality follow-up: complete; class-backed repository regression RED 6 pass / 1 expected `this` failure；直接实例调用修复后指定 control planning/API/clarification 套件 14/14 passed，`pnpm typecheck` passed。
+- Task 7 offline Current integration fixture follow-up: RED 在 `7568396` 的提交态旧夹具上稳定复现 planning 502；已对齐 ResearchTaskV2 structured response、owner-scoped conversation history/append ports，并增加原 task / 两候选版本持久化基数断言。GREEN：目标单例 1/1、指定三文件串行套件 14/14、`pnpm typecheck` passed。

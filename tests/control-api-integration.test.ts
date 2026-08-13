@@ -43,6 +43,15 @@ import type {
 interface ConversationAdapter {
   create(input: { ownerUserId: string; title: string }): Promise<{ id: string }>;
   requireOwned(input: { conversationId: string; ownerUserId: string }): Promise<{ id: string }>;
+  listMessages(input: {
+    conversationId: string;
+    ownerUserId: string;
+  }): Promise<Array<{ role: string; content: string }>>;
+  appendMessage(input: {
+    conversationId: string;
+    role: 'user' | 'assistant';
+    content: string;
+  }): Promise<void>;
 }
 
 interface ControlRuntimeOverrides {
@@ -168,12 +177,37 @@ class OfflineEligibleRealLLM implements LLMClient {
           differentiation_opportunities: ['按宠物类型与使用场景细分研究样本'],
           sources: [evidenceUrl],
         }
-      : options.schemaName === 'research-plan-deliverable-content'
-        ? validDeliverableDraft(
-            (options.context as { verifiedEvidence?: Array<{ evidenceId?: unknown }> } | undefined)
-              ?.verifiedEvidence?.[0]?.evidenceId,
-          )
-        : { ok: true };
+      : options.schemaName === 'research-task-v2'
+        ? {
+            version: 'research-task-v2',
+            task_type: 'competitive_research',
+            business_domain: '宠物辅食',
+            research_goal: '形成基于公开证据的宠物辅食竞品研究计划',
+            target_audience: ['宠物食品产品与市场团队'],
+            scope: ['公开可访问的宠物辅食竞品资料'],
+            constraints: [{
+              id: 'public-evidence-only',
+              statement: '仅使用公开可验证来源',
+              source: 'user',
+            }],
+            success_criteria: [{
+              id: 'verifiable-comparison',
+              statement: '输出基于公开证据且可追溯的竞品研究计划',
+            }],
+            expected_deliverables: ['宠物辅食竞品研究计划'],
+            assumptions: [],
+            ambiguities: [],
+            clarification_questions: [],
+            blocking_issues: [],
+            sensitivity: 'public',
+            pii_detected: false,
+          }
+        : options.schemaName === 'research-plan-deliverable-content'
+          ? validDeliverableDraft(
+              (options.context as { verifiedEvidence?: Array<{ evidenceId?: unknown }> } | undefined)
+                ?.verifiedEvidence?.[0]?.evidenceId,
+            )
+          : { ok: true };
     return {
       data: data as T,
       promptHash: hashPrompt(options.prompt),
@@ -451,6 +485,37 @@ function conversationAdapter(): ConversationAdapter {
         connection.release();
       }
     },
+    async listMessages(input) {
+      const connection = await scopedDatabase.connect();
+      try {
+        const result = await connection.query(
+          `SELECT message.sender_type, message.content
+           FROM messages AS message
+           JOIN conversations AS conversation ON conversation.id = message.conversation_id
+           WHERE message.conversation_id = $1 AND conversation.owner_user_id = $2
+           ORDER BY message.created_at ASC`,
+          [input.conversationId, input.ownerUserId],
+        );
+        return result.rows.map((row) => ({
+          role: String(row.sender_type),
+          content: typeof row.content === 'string' ? row.content : JSON.stringify(row.content),
+        }));
+      } finally {
+        connection.release();
+      }
+    },
+    async appendMessage(input) {
+      const connection = await scopedDatabase.connect();
+      try {
+        await connection.query(
+          `INSERT INTO messages (conversation_id, sender_type, message_type, content)
+           VALUES ($1, $2, 'text', $3)`,
+          [input.conversationId, input.role, JSON.stringify(input.content)],
+        );
+      } finally {
+        connection.release();
+      }
+    },
   };
 }
 
@@ -563,6 +628,7 @@ after(async () => {
 });
 
 test('production control runtime completes the offline Current API flow and serves the owner deliverable', async () => {
+  const originalInput = '请生成基于公开证据的宠物辅食竞品研究计划';
   const { buildControlRuntime } = await loadControlRuntimeModule();
   const tavily = new OfflineRealTavilyAdapter();
   const llm = new OfflineEligibleRealLLM();
@@ -596,13 +662,28 @@ test('production control runtime completes the offline Current API flow and serv
   const foreignToken = signToken({ userId: foreignUserId, email: 'foreign@test.local' });
 
   const planResponse = await postJson(baseUrl, '/api/control-tasks/plan', ownerToken, {
-    originalInput: '请生成基于公开证据的宠物辅食竞品研究计划',
+    originalInput,
     conversationId,
   });
-  assert.equal(planResponse.status, 200);
+  assert.equal(planResponse.status, 200, await planResponse.clone().text());
   const planned = await planResponse.json() as ControlPlanCandidatesResponse;
   assert.equal(planned.kind, 'current');
   assert.deepEqual(planned.candidates.map((candidate) => candidate.candidateId), ['depth', 'speed']);
+  const planningConnection = await scopedDatabase.connect();
+  try {
+    const persisted = await planningConnection.query(
+      `SELECT
+         (SELECT count(*)::int FROM control_tasks WHERE original_input = $1) AS tasks,
+         (SELECT count(*)::int
+          FROM control_plan_versions AS plan
+          JOIN control_tasks AS task ON task.id = plan.task_id
+          WHERE task.original_input = $1) AS candidates`,
+      [originalInput],
+    );
+    assert.deepEqual(persisted.rows[0], { tasks: 1, candidates: 2 });
+  } finally {
+    planningConnection.release();
+  }
   for (const candidate of planned.candidates) {
     assert.deepEqual(
       candidate.plan.steps.map((step) => step.actor_type),
