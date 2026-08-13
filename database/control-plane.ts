@@ -1,17 +1,22 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { MigrationConnection, MigrationDatabase } from './migration-runner.ts';
+import type { ControlRequirementVersion } from '../packages/api-contract/control-workflow.ts';
 import type {
   CurrentExecutionPlan,
   PendingInput,
 } from '../packages/api-contract/research-deliverable.ts';
+export type { ControlRequirementVersion };
 
 export type ControlTaskState =
+  | 'awaiting_clarification'
   | 'awaiting_selection'
   | 'awaiting_confirmation'
   | 'awaiting_approval'
   | 'ready'
   | 'executing'
   | 'paused'
+  | 'reviewing'
+  | 'composing_report'
   | 'completed'
   | 'completed_with_gaps'
   | 'failed'
@@ -229,9 +234,41 @@ function artifactFromRow(row: Record<string, unknown>): ControlArtifact {
 
 export interface ControlTaskDetail extends ControlTask {
   conversationId: string;
+
   ownerUserId: string;
   conversationOwnerUserId: string;
   structuredTask: unknown;
+  activeRequirementVersionId: string | null;
+}
+
+function requirementVersionFromRow(row: Record<string, unknown>): ControlRequirementVersion {
+  return {
+    id: asString(row.id, 'id'),
+    taskId: asString(row.task_id, 'task_id'),
+    version: asNumber(row.version, 'version'),
+    rawInputHash: asString(row.raw_input_hash, 'raw_input_hash'),
+    clarification: row.clarification_json,
+    structuredTask: row.structured_task_json as ControlRequirementVersion['structuredTask'],
+    modelCallId: typeof row.model_call_id === 'string' ? row.model_call_id : null,
+    createdAt: asDate(row.created_at, 'created_at'),
+  };
+}
+
+function controlTaskDetailFromRow(row: Record<string, unknown>): ControlTaskDetail {
+  return {
+    id: asString(row.id, 'id'),
+    conversationId: asString(row.conversation_id, 'conversation_id'),
+    ownerUserId: asString(row.owner_user_id, 'owner_user_id'),
+    conversationOwnerUserId: asString(row.conversation_owner_user_id, 'conversation_owner_user_id'),
+    structuredTask: row.structured_task,
+    state: asString(row.state, 'state') as ControlTaskState,
+    stateVersion: asNumber(row.state_version, 'state_version'),
+    activePlanVersionId: typeof row.active_plan_version_id === 'string' ? row.active_plan_version_id : null,
+    currentAttemptId: typeof row.current_attempt_id === 'string' ? row.current_attempt_id : null,
+    activeRequirementVersionId: typeof row.active_requirement_version_id === 'string'
+      ? row.active_requirement_version_id
+      : null,
+  };
 }
 
 export interface ControlPlanVersionDetail extends ControlPlanVersion {
@@ -317,6 +354,124 @@ export class ControlPlaneRepository {
         activePlanVersionId: typeof row.active_plan_version_id === 'string' ? row.active_plan_version_id : null,
         currentAttemptId: typeof row.current_attempt_id === 'string' ? row.current_attempt_id : null,
       };
+    });
+  }
+
+  async createRequirementVersion(input: {
+    taskId: string;
+    version: number;
+    rawInputHash: string;
+    clarification: unknown;
+    structuredTask: unknown;
+    modelCallId?: string | null;
+  }): Promise<ControlRequirementVersion> {
+    return this.transaction(async (connection) => {
+      const task = await connection.query(
+        `SELECT id FROM control_tasks WHERE id = $1 FOR KEY SHARE`,
+        [input.taskId],
+      );
+      if (!task.rows[0]) throw new ControlPlaneConflictError(`task ${input.taskId} does not exist`);
+      const result = await connection.query(
+        `INSERT INTO control_requirement_versions
+           (task_id, version, raw_input_hash, clarification_json, structured_task_json, model_call_id)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id, task_id, version, raw_input_hash, clarification_json,
+                   structured_task_json, model_call_id, created_at`,
+        [
+          input.taskId,
+          input.version,
+          input.rawInputHash,
+          JSON.stringify(input.clarification),
+          JSON.stringify(input.structuredTask),
+          input.modelCallId ?? null,
+        ],
+      );
+      return requirementVersionFromRow(result.rows[0] ?? {});
+    });
+  }
+
+  async getActiveRequirementVersion(taskId: string): Promise<ControlRequirementVersion | null> {
+    return this.transaction(async (connection) => {
+      const result = await connection.query(
+        `SELECT requirement.id, requirement.task_id, requirement.version,
+                requirement.raw_input_hash, requirement.clarification_json,
+                requirement.structured_task_json, requirement.model_call_id,
+                requirement.created_at
+         FROM control_requirement_versions AS requirement
+         JOIN control_tasks AS task
+           ON task.active_requirement_version_id = requirement.id
+          AND task.id = requirement.task_id
+         WHERE task.id = $1`,
+        [taskId],
+      );
+      const row = result.rows[0];
+      return row ? requirementVersionFromRow(row) : null;
+    });
+  }
+
+  async activateRequirementVersion(input: {
+    taskId: string;
+    requirementVersionId: string;
+    expectedVersion: number;
+    ownerUserId: string;
+  }): Promise<ControlTaskDetail> {
+    return this.transaction(async (connection) => {
+      const taskResult = await connection.query(
+        `SELECT task.id, task.conversation_id, task.owner_user_id,
+                conversation.owner_user_id AS conversation_owner_user_id,
+                task.structured_task, task.state, task.state_version,
+                task.active_plan_version_id, task.current_attempt_id,
+                task.active_requirement_version_id
+         FROM control_tasks AS task
+         JOIN conversations AS conversation ON conversation.id = task.conversation_id
+         WHERE task.id = $1
+         FOR UPDATE OF task`,
+        [input.taskId],
+      );
+      const task = taskResult.rows[0];
+      if (!task) throw new ControlPlaneConflictError(`task ${input.taskId} does not exist`);
+      if (
+        task.owner_user_id !== input.ownerUserId
+        || task.conversation_owner_user_id !== input.ownerUserId
+      ) {
+        throw new ControlPlaneAuthorizationError(`actor cannot control task ${input.taskId}`);
+      }
+      if (asNumber(task.state_version, 'state_version') !== input.expectedVersion) {
+        throw new ControlPlaneConflictError(`task ${input.taskId} is not at version ${input.expectedVersion}`);
+      }
+
+      const requirementResult = await connection.query(
+        `SELECT id, task_id, version, raw_input_hash, clarification_json,
+                structured_task_json, model_call_id, created_at
+         FROM control_requirement_versions
+         WHERE id = $1
+         FOR KEY SHARE`,
+        [input.requirementVersionId],
+      );
+      const requirement = requirementResult.rows[0];
+      if (!requirement || requirement.task_id !== input.taskId) {
+        throw new ControlPlaneConflictError(
+          `requirement version ${input.requirementVersionId} does not belong to task ${input.taskId}`,
+        );
+      }
+
+      const updated = await connection.query(
+        `UPDATE control_tasks
+         SET active_requirement_version_id = $2,
+             state_version = state_version + 1,
+             updated_at = now()
+         WHERE id = $1 AND state_version = $3
+         RETURNING id, conversation_id, owner_user_id,
+                   (SELECT owner_user_id FROM conversations WHERE id = control_tasks.conversation_id)
+                     AS conversation_owner_user_id,
+                   structured_task, state, state_version,
+                   active_plan_version_id, current_attempt_id,
+                   active_requirement_version_id`,
+        [input.taskId, input.requirementVersionId, input.expectedVersion],
+      );
+      const row = updated.rows[0];
+      if (!row) throw new ControlPlaneConflictError(`task ${input.taskId} lost requirement activation CAS`);
+      return controlTaskDetailFromRow(row);
     });
   }
 
@@ -964,7 +1119,8 @@ export class ControlPlaneRepository {
     try {
       const result = await connection.query(
         `SELECT task.id, task.conversation_id, task.owner_user_id, conversation.owner_user_id AS conversation_owner_user_id,
-                task.structured_task, task.state, task.state_version, task.active_plan_version_id, task.current_attempt_id
+                task.structured_task, task.state, task.state_version, task.active_plan_version_id,
+                task.current_attempt_id, task.active_requirement_version_id
          FROM control_tasks AS task
          JOIN conversations AS conversation ON conversation.id = task.conversation_id
          WHERE task.id = $1`,
@@ -972,17 +1128,7 @@ export class ControlPlaneRepository {
       );
       const row = result.rows[0];
       if (!row) return null;
-      return {
-        id: asString(row.id, 'id'),
-        conversationId: asString(row.conversation_id, 'conversation_id'),
-        ownerUserId: asString(row.owner_user_id, 'owner_user_id'),
-        conversationOwnerUserId: asString(row.conversation_owner_user_id, 'conversation_owner_user_id'),
-        structuredTask: row.structured_task,
-        state: asString(row.state, 'state') as ControlTaskState,
-        stateVersion: asNumber(row.state_version, 'state_version'),
-        activePlanVersionId: typeof row.active_plan_version_id === 'string' ? row.active_plan_version_id : null,
-        currentAttemptId: typeof row.current_attempt_id === 'string' ? row.current_attempt_id : null,
-      };
+      return controlTaskDetailFromRow(row);
     } finally {
       connection.release();
     }

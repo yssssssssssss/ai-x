@@ -1,13 +1,16 @@
-import type { ResearchTaskData } from './plan.ts';
+import type { ResearchTaskData, ResearchTaskV2 } from './plan.ts';
 import type { CurrentExecutionPlan, PendingInput } from './research-deliverable.ts';
 
 export type ControlWorkflowState =
+  | 'awaiting_clarification'
   | 'awaiting_selection'
   | 'awaiting_confirmation'
   | 'awaiting_approval'
   | 'ready'
   | 'executing'
   | 'paused'
+  | 'reviewing'
+  | 'composing_report'
   | 'completed'
   | 'completed_with_gaps'
   | 'failed'
@@ -15,6 +18,33 @@ export type ControlWorkflowState =
   | 'rejected';
 
 export type ControlWorkflowRole = 'owner' | 'legal' | 'security' | 'gold';
+
+export interface ControlRequirementVersion {
+  id: string;
+  taskId: string;
+  version: number;
+  rawInputHash: string;
+  clarification: unknown;
+  structuredTask: ResearchTaskV2;
+  modelCallId: string | null;
+  createdAt: Date;
+}
+
+export interface CreateRequirementVersionRequest {
+  taskId: string;
+  version: number;
+  rawInputHash: string;
+  clarification: unknown;
+  structuredTask: ResearchTaskV2;
+  modelCallId?: string | null;
+}
+
+export interface ActivateRequirementVersionRequest {
+  taskId: string;
+  requirementVersionId: string;
+  expectedVersion: number;
+  ownerUserId: string;
+}
 export interface PlanControlTaskRequest {
   originalInput: string;
   conversationId?: string;

@@ -29,6 +29,53 @@ export interface ResearchTaskData {
   pii_detected: boolean;
 }
 
+export interface ResearchTaskV2Constraint {
+  id: string;
+  statement: string;
+  source: 'user' | 'policy';
+}
+
+export interface ResearchTaskV2SuccessCriterion {
+  id: string;
+  statement: string;
+}
+
+export interface ResearchTaskV2Ambiguity {
+  id: string;
+  statement: string;
+  blocking: boolean;
+}
+
+export interface ResearchTaskV2ClarificationQuestion {
+  key: string;
+  question: string;
+  rationale: string;
+}
+
+export interface ResearchTaskV2BlockingIssue {
+  key: string;
+  reason: string;
+  kind: string;
+}
+
+export interface ResearchTaskV2 {
+  version: 'research-task-v2';
+  task_type: 'competitive_research' | 'user_research_planning' | 'voc_diagnosis' | 'design_audit' | 'a11y_audit';
+  business_domain: string;
+  research_goal: string;
+  target_audience: string[];
+  scope: string[];
+  constraints: ResearchTaskV2Constraint[];
+  success_criteria: ResearchTaskV2SuccessCriterion[];
+  expected_deliverables: string[];
+  assumptions: Assumption[];
+  ambiguities: ResearchTaskV2Ambiguity[];
+  clarification_questions: ResearchTaskV2ClarificationQuestion[];
+  blocking_issues: ResearchTaskV2BlockingIssue[];
+  sensitivity: 'public' | 'internal' | 'confidential';
+  pii_detected: boolean;
+}
+
 export interface PendingUpload {
   role: string;
   label: string;

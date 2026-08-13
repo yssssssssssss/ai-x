@@ -8,7 +8,7 @@
 - Baseline verification: `pnpm quality` passed on 2026-08-14; 392 tests, 386 passed, 6 real-provider skips, 0 failed.
 - Execution protocol: one shared context packet per Phase; targeted reads/tests per Task; one integrated review and `pnpm quality` per Phase.
 - Baseline Current trusted-research implementation: committed as `185c393`.
-- Next task: Phase 1 integrated review after the type-wiring quality fix.
+- Next task: Phase 2 / Task 5 — add Migration 004 and ResearchTaskV2 contract.
 
 ## Task Ledger
 
@@ -18,10 +18,14 @@
 - Task 3: complete (RED 4 expected failures / 1 pass; GREEN 19/19 targeted tests).
 - Task 4: complete (RED expected failure; GREEN 39 pass / 1 real-provider skip / 0 fail; deterministic expiry-before-seal race covered).
 - Phase 1 quality follow-up: complete (`PlanCandidate` type-only wiring restored; `pnpm typecheck` passed; serial targeted verification 60 pass / 1 real-provider skip / 0 fail).
-- Tasks 5–25: pending.
+- Phase 1: complete; final gate APPROVE at `454d052`; quality 411 tests / 405 pass / 6 skip / 0 fail; final targeted serial 83 pass / 1 skip / 0 fail.
+- Task 5: complete; RED 3 expected DB constraint failures plus V2 schema failures; GREEN 23/23 targeted tests, `tsc --noEmit -p tsconfig.json` passed, migration dry-run recognized 004. Commit `feat: version current research requirements`.
+- Tasks 6–25: pending.
 
 - Revision integrity follow-up: complete (`fix: validate regenerated revision bindings`; targeted RED/GREEN and serial combined verification passed).
 - Next action: Phase 1 review of revision integrity and lease fence changes.
 - Revision driver typing follow-up: complete (`revisionSteps` narrows validated values to `PlanCandidate['steps']`; `pnpm typecheck` passed; revision integrity 8/8 passed; serial combined verification 62 passed / 1 real-provider skip / 0 failed; commit `fix: complete revision driver typing`).
 
 - Phase 1 review blockers follow-up: complete (revision optional-field contract and strict current candidate schema dispatch; targeted 29 pass / 0 fail; serial Phase 83 pass / 1 real-provider skip / 0 fail).
+
+- Phase 1 final review: APPROVE; no open blockers.
