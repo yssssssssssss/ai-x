@@ -8,7 +8,7 @@
 - Baseline verification: `pnpm quality` passed on 2026-08-14; 392 tests, 386 passed, 6 real-provider skips, 0 failed.
 - Execution protocol: one shared context packet per Phase; targeted reads/tests per Task; one integrated review and `pnpm quality` per Phase.
 - Baseline Current trusted-research implementation: committed as `185c393`.
-- Next task: Phase 1 / Task 4 — lease-fence every Step Artifact.
+- Next task: Phase 1 integrated review after the type-wiring quality fix.
 
 ## Task Ledger
 
@@ -17,4 +17,5 @@
 - Task 2: complete (`9a887cc..58697b0`; RED 7 expected failures, GREEN 19/19 targeted tests).
 - Task 3: complete (RED 4 expected failures / 1 pass; GREEN 19/19 targeted tests).
 - Task 4: complete (RED expected failure; GREEN 39 pass / 1 real-provider skip / 0 fail; deterministic expiry-before-seal race covered).
+- Phase 1 quality follow-up: complete (`PlanCandidate` type-only wiring restored; `pnpm typecheck` passed; serial targeted verification 60 pass / 1 real-provider skip / 0 fail).
 - Tasks 5–25: pending.

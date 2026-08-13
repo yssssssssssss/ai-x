@@ -50,3 +50,20 @@ Commit message: `fix: close phase one integrity gaps`
 
 - Phase 1 blockers fixed.
 - Next action: phase review.
+
+
+## Follow-up compile fix
+
+- Added the missing type-only `PlanCandidate` import from `packages/api-contract/plan.ts` to the server-owned revision driver in `control-runtime.ts`.
+- Before the fix, `pnpm typecheck` failed only at `control-runtime.ts:128` and `control-runtime.ts:144` with `TS2304: Cannot find name 'PlanCandidate'`.
+- After the fix, `pnpm typecheck` passed.
+- Serial targeted verification passed:
+  - `pnpm exec tsx --test --test-concurrency=1 tests/current-revision-integrity.test.ts tests/task-workflow.test.ts tests/control-api-integration.test.ts tests/lease-execution-engine.test.ts tests/control-plane.test.ts`
+  - 60 passed, 0 failed, 1 real-provider skip.
+- Follow-up commit message: `fix: complete phase one type wiring`.
+
+## Follow-up files
+
+- `apps/agent-api/src/control-runtime.ts`
+- `.superpowers/sdd/phase-1-fix-report.md`
+- `.superpowers/sdd/progress.md`

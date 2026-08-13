@@ -21,6 +21,7 @@ import {
   type ResearchPlanningResult,
 } from '../../orchestrator-runtime/src/planners/research-planning-service.ts';
 import { sanitizeCandidateToPlan } from '../../orchestrator-runtime/src/planners/plan-sanitizer.ts';
+import type { PlanCandidate } from '../../../packages/api-contract/plan.ts';
 import type {
   EvidenceClass,
   EvidenceRequirement,
