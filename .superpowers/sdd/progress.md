@@ -8,9 +8,10 @@
 - Baseline verification: `pnpm quality` passed on 2026-08-14; 392 tests, 386 passed, 6 real-provider skips, 0 failed.
 - Execution protocol: one shared context packet per Phase; targeted reads/tests per Task; one integrated review and `pnpm quality` per Phase.
 - Baseline Current trusted-research implementation: committed as `185c393`.
-- Next task: Phase 1 / Task 1 — update frozen Current decision document.
+- Next task: Phase 1 / Task 2 — add strict Current candidate schema.
 
 ## Task Ledger
 
 - Baseline: complete (`0cebfd2..185c393`; `pnpm quality` passed, 386 pass / 6 skip / 0 fail).
-- Tasks 1–25: pending.
+- Task 1: complete (`9694a67..9a887cc`; targeted docs verification passed).
+- Tasks 2–25: pending.

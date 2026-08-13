@@ -121,19 +121,10 @@ export class RoutedPlanner implements PlanStrategy {
         expectedModel: this.deps.expectedActualModel ?? llm.identity.requestedModel,
       },
     });
-    // 严格取 2 份;LLM 极端情况下产出 0/1/3+ 时兜底(截取前 2 或补空报错)。
-    const raw = Array.isArray(planGen.data.candidates) ? planGen.data.candidates : [];
-    if (raw.length < 2) {
-      throw new Error(`候选计划生成失败:期望 2 份,实际 ${raw.length} 份`);
-    }
+    validator.validateOrThrow('current-plan-candidates', planGen.data);
     const activatedNodeKeys = activated.map((n) => n.key);
-    const candidates: PlanCandidate[] = raw.slice(0, 2).map((c, i) => ({
-      id: (c.id === 'speed' || c.id === 'depth' ? c.id : i === 0 ? 'depth' : 'speed') as PlanCandidate['id'],
-      title: c.title || (i === 0 ? '深度优先方案' : '速度优先方案'),
-      rationale: c.rationale ?? '',
-      tradeoffs: c.tradeoffs ?? '',
-      steps: c.steps ?? [],
-      assumptions: c.assumptions ?? task.assumptions ?? [],
+    const candidates: PlanCandidate[] = planGen.data.candidates.map((candidate) => ({
+      ...candidate,
       activated_nodes: activatedNodeKeys,
     }));
     // 幻觉能力校验:每份候选独立过一遍

@@ -5,7 +5,7 @@ import type { SchemaName } from '../schema/validator.ts';
 // schemaName 命名空间的唯一事实源(issue #5)。
 // 收敛此前散在 gateway-llm-client(schemaHint / decision-states 特判 / envelope-unwrap)
 // 与 llm-client 里的魔法字符串:一次描述「一个 schemaName 意味着什么」。
-// - 项目 schema:6 个,对应 schemas/<name>.schema.json(SchemaName 联合类型为准)。
+// - 项目 schema:7 个,对应 schemas/<name>.schema.json(SchemaName 联合类型加 Current 候选为准)。
 // - decision-states:decision-state 的数组,网关用 {items:[...]} envelope 包裹。
 // - skill:*:运行时动态名,output schema 由调用方以 schema 对象直接传入,不查 schemas/。
 // - 其它未知名(如 execution-plan-candidates):无独立文件,调用方降级为通用提示。
@@ -17,10 +17,11 @@ export interface SchemaSpec {
   arrayItemFile?: string; // 数组项的 schema 文件(仅 envelope)
 }
 
-const PROJECT_SCHEMAS: readonly SchemaName[] = [
+const PROJECT_SCHEMAS: readonly (SchemaName | 'current-plan-candidates')[] = [
   'research-task',
   'decision-state',
   'execution-plan',
+  'current-plan-candidates',
   'skill-manifest',
   'tool-manifest',
   'research-report',
