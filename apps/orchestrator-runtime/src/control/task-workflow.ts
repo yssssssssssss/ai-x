@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
+  ControlPlaneAuthorizationError as TaskWorkflowAuthorizationError,
   ControlPlaneConflictError,
   ControlPlaneRepository,
   type ControlPlanVersionDetail,
@@ -7,6 +8,11 @@ import {
   type ControlTaskState,
   type ControlExecutionLease,
 } from '../../../../database/control-plane.ts';
+import type {
+  ControlExecutionResult,
+  DisabledExecutionResponse,
+} from '../../../../packages/api-contract/control-workflow.ts';
+export { TaskWorkflowAuthorizationError };
 
 export type WorkflowRole = 'owner' | 'legal' | 'security' | 'gold';
 
@@ -43,22 +49,17 @@ interface CommandResult {
 
 export interface WorkflowExecutionDriver {
   execute(input: { lease: ControlExecutionLease }): Promise<{
-    status: 'completed' | 'paused';
+    status: 'completed' | 'completed_with_gaps' | 'paused';
     attemptId: string;
+    deliverableArtifactId?: string;
+    evidenceManifestArtifactId?: string;
+    gapCount?: number;
     failedStepNo?: number;
     failure?: Record<string, unknown>;
   }>;
 }
 
-export type WorkflowExecutionResponse =
-  | (CommandResult & { attemptId: string; executionDisabled: true })
-  | (CommandResult & {
-      attemptId: string;
-      executionDisabled: false;
-      status: 'completed' | 'paused';
-      failedStepNo?: number;
-      failure?: Record<string, unknown>;
-    });
+export type WorkflowExecutionResponse = DisabledExecutionResponse | ControlExecutionResult;
 
 export class TaskWorkflowGateError extends Error {
   constructor(readonly unresolved: string[]) {
@@ -67,12 +68,6 @@ export class TaskWorkflowGateError extends Error {
   }
 }
 
-export class TaskWorkflowAuthorizationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'TaskWorkflowAuthorizationError';
-  }
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -238,47 +233,16 @@ export class TaskWorkflowService {
     expectedVersion: number;
     idempotencyKey: string;
     actor: WorkflowActor;
-    candidateId: string;
-    plan: unknown;
-    planHash: string;
-    pendingInputs: unknown[];
+    planVersionId: string;
   }): Promise<{ planVersionId: string; state: ControlTaskState; stateVersion: number }> {
-    const hash = requestHash(input);
-    const replay = await this.replay<{ planVersionId: string; state: ControlTaskState; stateVersion: number }>(input.taskId, 'selection', input.idempotencyKey, hash);
-    if (replay) return replay;
-    const task = await this.requireTask(input.taskId);
-    this.requireOwner(task, input.actor);
-    if (task.state !== 'awaiting_selection' || task.stateVersion !== input.expectedVersion) {
-      throw new ControlPlaneConflictError(`task ${input.taskId} is not awaiting selection at version ${input.expectedVersion}`);
-    }
-    const plan = await this.repository.createPlanVersion({
-      taskId: task.id,
-      version: await this.repository.nextPlanVersion(task.id),
-      candidateId: input.candidateId,
-      plan: input.plan,
-      planHash: input.planHash,
-      pendingInputs: input.pendingInputs,
-    });
-    const transitioned = await this.repository.transitionTask({
-      taskId: task.id,
+    const hash = requestHash({
+      taskId: input.taskId,
       expectedVersion: input.expectedVersion,
-      from: 'awaiting_selection',
-      to: 'awaiting_confirmation',
-      activePlanVersionId: plan.id,
-    });
-    const result = { planVersionId: plan.id, state: transitioned.state, stateVersion: transitioned.stateVersion };
-    await this.repository.recordCommand({
-      taskId: task.id,
-      commandType: 'selection',
       idempotencyKey: input.idempotencyKey,
-      requestHash: hash,
-      expectedVersion: input.expectedVersion,
-      stateBefore: task.state,
-      stateAfter: transitioned.state,
-      response: result,
-      actorUserId: input.actor.userId,
+      actor: input.actor,
+      planVersionId: input.planVersionId,
     });
-    return result;
+    return this.repository.selectCandidate({ ...input, requestHash: hash });
   }
 
   async confirm(input: {
@@ -601,7 +565,7 @@ export class TaskWorkflowService {
         const finalTask = await this.requireTask(task.id);
         if (
           finalTask.currentAttemptId === claim.attemptId
-          && (finalTask.state === 'completed' || finalTask.state === 'paused')
+          && (finalTask.state === 'completed' || finalTask.state === 'completed_with_gaps' || finalTask.state === 'paused')
         ) {
           const failedSteps = finalTask.state === 'paused'
             ? await this.repository.listExecutionSteps(claim.attemptId)
@@ -611,7 +575,7 @@ export class TaskWorkflowService {
             attemptId: claim.attemptId,
             state: finalTask.state,
             stateVersion: finalTask.stateVersion,
-            status: finalTask.state === 'completed' ? 'completed' : 'paused',
+            status: finalTask.state,
             executionDisabled: false,
             failedStepNo: latestFailure?.stepNo,
             failure: latestFailure?.failure ?? undefined,
@@ -653,6 +617,9 @@ export class TaskWorkflowService {
         stateVersion: finalTask.stateVersion,
         status: driven.status,
         executionDisabled: false,
+        ...(driven.deliverableArtifactId === undefined ? {} : { deliverableArtifactId: driven.deliverableArtifactId }),
+        ...(driven.evidenceManifestArtifactId === undefined ? {} : { evidenceManifestArtifactId: driven.evidenceManifestArtifactId }),
+        ...(driven.gapCount === undefined ? {} : { gapCount: driven.gapCount }),
         ...(driven.failedStepNo === undefined ? {} : { failedStepNo: driven.failedStepNo }),
         ...(driven.failure === undefined ? {} : { failure: driven.failure }),
       };

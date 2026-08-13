@@ -1,17 +1,14 @@
 import { Router } from 'express';
 import {
-  createConversation,
   listRecentTasks,
   getResearchTask,
   listDecisionStates,
   listExecutionLog,
 } from '../../../../database/repository.ts';
-import { buildOrchestrator } from '../../../orchestrator-runtime/src/orchestrator.ts';
 import { RunWorkspace } from '../../../orchestrator-runtime/src/run-workspace.ts';
 import { requireAuth } from '../middleware.ts';
 import type { ResearchTaskData } from '../../../../packages/api-contract/plan.ts';
 import type {
-  PlanCandidatesResponse,
   TaskDetail,
   Report,
 } from '../../../../packages/api-contract/http.ts';
@@ -29,80 +26,20 @@ async function getOwnedTask(taskId: string, userId: string) {
   return task;
 }
 
-// 段1+2:一句话 → 候选计划(2 份,停在候选选择闸门,不执行)
-tasksRouter.post('/plan', async (req, res) => {
-  const { originalInput, conversationId } = req.body ?? {};
-  if (!originalInput) {
-    res.status(400).json({ error: 'originalInput 必填' });
-    return;
-  }
-  // 无会话则新建(标题取输入前 40 字)
-  const convId =
-    conversationId ??
-    (await createConversation({ ownerUserId: req.userId!, title: originalInput.slice(0, 40) })).id;
-
-  try {
-    const orch = buildOrchestrator();
-    const result = await orch.planPhase({
-      originalInput,
-      conversationId: convId,
-      ownerUserId: req.userId!,
-    });
-    const body: PlanCandidatesResponse = {
-      conversationId: convId,
-      taskId: result.taskId,
-      task: result.task,
-      activatedNodes: result.activatedNodes,
-      candidates: result.candidates,
-    };
-    res.json(body);
-  } catch (err) {
-    res.status(502).json({ error: `规划失败: ${err instanceof Error ? err.message : String(err)}` });
-  }
+// Legacy planning mutations are intentionally unavailable; use /api/control-tasks planning.
+tasksRouter.post('/plan', (_req, res) => {
+  res.status(410).json({ error: 'legacy task plan 已移除；请使用 /api/control-tasks/plan' });
 });
 
 // 段1+2 流式:SSE 逐阶段推送 planPhase 进度(理解→激活→召回→判定→候选→归档),末尾推 result。
 // 用 POST(带 body + JWT header,EventSource 不支持);前端用 fetch ReadableStream 解析。
-tasksRouter.post('/plan/stream', async (req, res) => {
-  const { originalInput, conversationId } = req.body ?? {};
-  if (!originalInput) {
-    res.status(400).json({ error: 'originalInput 必填' });
-    return;
-  }
-  const convId =
-    conversationId ??
-    (await createConversation({ ownerUserId: req.userId!, title: originalInput.slice(0, 40) })).id;
+tasksRouter.post('/plan/stream', (_req, res) => {
+  res.status(410).json({ error: 'legacy task plan/stream 已移除；请使用 /api/control-tasks/plan/stream' });
+});
 
-  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-cache, no-transform');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no'); // 禁反代缓冲,保证逐条到达
-  res.flushHeaders?.();
-
-  const send = (event: string, data: unknown) => {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-  };
-  send('conversation', { conversationId: convId });
-
-  try {
-    const orch = buildOrchestrator();
-    const result = await orch.planPhase(
-      { originalInput, conversationId: convId, ownerUserId: req.userId! },
-      (ev) => send('progress', ev),
-    );
-    const body: PlanCandidatesResponse = {
-      conversationId: convId,
-      taskId: result.taskId,
-      task: result.task,
-      activatedNodes: result.activatedNodes,
-      candidates: result.candidates,
-    };
-    send('result', body);
-  } catch (err) {
-    send('error', { error: `规划失败: ${err instanceof Error ? err.message : String(err)}` });
-  } finally {
-    res.end();
-  }
+// Legacy feedback mutation is intentionally unavailable.
+tasksRouter.post('/:id/feedback', (_req, res) => {
+  res.status(410).json({ error: 'legacy task feedback 已移除；请使用 control 反馈通道' });
 });
 
 // Legacy mutations are intentionally unavailable; legacy tasks remain read-only.

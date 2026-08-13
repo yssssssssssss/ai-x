@@ -1,3 +1,6 @@
+import type { ResearchTaskData } from './plan.ts';
+import type { CurrentExecutionPlan, PendingInput } from './research-deliverable.ts';
+
 export type ControlWorkflowState =
   | 'awaiting_selection'
   | 'awaiting_confirmation'
@@ -12,6 +15,11 @@ export type ControlWorkflowState =
   | 'rejected';
 
 export type ControlWorkflowRole = 'owner' | 'legal' | 'security' | 'gold';
+export interface PlanControlTaskRequest {
+  originalInput: string;
+  conversationId?: string;
+}
+
 
 export interface ControlTaskResponse {
   id: string;
@@ -28,12 +36,29 @@ export interface CreateControlTaskRequest {
   sensitivity?: string;
 }
 
-export interface PlanMutationRequest {
-  expectedVersion: number;
-  candidateId: string;
-  plan: unknown;
+export interface CurrentPlanCandidate {
+  planVersionId: string;
+  candidateId: 'depth' | 'speed';
+  title: string;
+  rationale: string;
+  tradeoffs: string;
   planHash: string;
-  pendingInputs: unknown[];
+  plan: CurrentExecutionPlan;
+  pendingInputs: PendingInput[];
+}
+
+export interface ControlPlanCandidatesResponse {
+  kind: 'current';
+  conversationId: string;
+  task: ControlTaskResponse;
+  structuredTask: ResearchTaskData;
+  activatedNodes: string[];
+  candidates: CurrentPlanCandidate[];
+}
+
+export interface SelectControlPlanRequest {
+  expectedVersion: number;
+  planVersionId: string;
   idempotencyKey: string;
 }
 
@@ -81,6 +106,19 @@ export interface DisabledExecutionResponse extends ControlCommandResponse {
   attemptId: string;
   executionDisabled: true;
 }
+export interface ControlExecutionResult {
+  attemptId: string;
+  state: ControlWorkflowState;
+  stateVersion: number;
+  status: 'completed' | 'completed_with_gaps' | 'paused';
+  executionDisabled: false;
+  deliverableArtifactId?: string;
+  evidenceManifestArtifactId?: string;
+  gapCount?: number;
+  failedStepNo?: number;
+  failure?: Record<string, unknown>;
+}
+
 
 export interface LegacyTaskReadResponse<T> {
   kind: 'legacy';

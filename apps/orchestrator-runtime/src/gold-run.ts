@@ -111,7 +111,7 @@ async function runOnce(runId: string, batchId: string): Promise<OneRunResult> {
   const conversation = await createConversation({ ownerUserId: SEED_USER_ID, title: `gold disabled ${runId}` });
   const repository = new ControlPlaneRepository(pool);
   const workflow = new TaskWorkflowService(repository);
-  const task = await repository.createTask({
+  const created = await repository.createTaskWithCandidates({
     conversationId: conversation.id,
     ownerUserId: SEED_USER_ID,
     originalInput: SCENARIO_INPUT,
@@ -120,18 +120,30 @@ async function runOnce(runId: string, batchId: string): Promise<OneRunResult> {
       confirmations: [],
       blocking_issues: [{ key: 'gold-service', required_authority: 'gold' }],
     },
-    state: 'awaiting_selection',
+    candidates: [{
+      candidateId: 'speed',
+      plan: {
+        task_id: '',
+        deliverable_type: 'research_plan',
+        evidence_requirements: [{
+          id: 'gold-disabled-public-source',
+          acceptedClasses: ['public_source'],
+          minimumCount: 1,
+          required: true,
+        }],
+        steps: [],
+      },
+      pendingInputs: [],
+    }],
   });
+  const task = created.task;
   const owner = { userId: SEED_USER_ID, role: 'owner' as const };
   const selected = await workflow.select({
     taskId: task.id,
     expectedVersion: task.stateVersion,
     idempotencyKey: `gold-select:${runId}`,
     actor: owner,
-    candidateId: 'gold-disabled',
-    plan: { steps: [] },
-    planHash: `sha256:gold-disabled:${runId}`,
-    pendingInputs: [],
+    planVersionId: created.candidates[0]!.id,
   });
   const confirmed = await workflow.confirm({
     taskId: task.id,

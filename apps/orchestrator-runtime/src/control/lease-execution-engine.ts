@@ -6,6 +6,7 @@ import type {
   ControlExecutionLease,
   ControlPlaneRepository,
 } from '../../../../database/control-plane.ts';
+import type { EvidenceClass, EvidenceRequirement } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { PlanStep } from '../plan-types.ts';
 import { SchemaValidator } from '../schema/validator.ts';
 import {
@@ -31,17 +32,55 @@ import {
   type ToolAdapterResolution,
   type ToolInvocationReceipt,
 } from '../runtime/tool-adapter.ts';
-import { ControlArtifactStore } from './artifact-store.ts';
-import { EvidenceService, type EvidenceEntry } from '../evidence/evidence-service.ts';
+import {
+  containsBlockedSensitiveData,
+  redactSensitiveValue,
+  redactString,
+  redactToolOutput,
+} from '../runtime/redaction.ts';
+import { ArtifactIntegrityError, ControlArtifactStore } from './artifact-store.ts';
+import {
+  EvidenceService,
+  type EvidenceArtifactResolver,
+  type EvidenceEntry,
+  type ResolvedEvidenceArtifact,
+} from '../evidence/evidence-service.ts';
+import { CurrentReportValidationError } from '../evidence/report-evidence-validator.ts';
+import type { CurrentDeliverableGenerateInput } from '../report/current-deliverable-service.ts';
 
 interface EnginePlan {
   taskId: string;
+  evidence_requirements: EvidenceRequirement[];
   steps: PlanStep[];
 }
 
+const SUPPORTED_EVIDENCE_CLASSES: Record<EvidenceClass, true> = {
+  public_source: true,
+  screenshot: true,
+  user_input: true,
+  knowledge: true,
+  dataset: true,
+  simulation: true,
+  derived: true,
+};
+
+interface ToolSourceRef {
+  sourceUrl: string;
+  originalIndex: number;
+}
+
+type StepArtifactKind = 'tool_output' | 'skill_output' | 'llm_output' | 'review_output';
+
+const STEP_ARTIFACT_SCHEMA_VERSIONS: Record<StepArtifactKind, string> = {
+  tool_output: 'tool-output-v1',
+  skill_output: 'skill-output-v1',
+  llm_output: 'llm-output-v1',
+  review_output: 'review-output-v1',
+};
+
 interface StepResult {
   output: unknown;
-  kind: string;
+  kind: StepArtifactKind;
   artifactValue?: unknown;
   toolReceipt?: ToolInvocationReceipt;
   toolResolution?: ToolAdapterResolution;
@@ -52,12 +91,27 @@ interface StepResult {
   outputHash?: string;
   redactedOutputHash?: string;
   configHash?: string;
-  sourceRefs?: string[];
+  sourceRefs?: ToolSourceRef[];
+}
+
+interface SealedStepOutput {
+  stepNo: number;
+  actorId: string;
+  kind: StepArtifactKind;
+  output: unknown;
+  artifact: {
+    id: string;
+    contentSha256: string;
+    state: 'SEALED';
+  };
 }
 
 export interface LeaseExecutionResult {
-  status: 'completed' | 'paused';
+  status: 'completed' | 'completed_with_gaps' | 'paused';
   attemptId: string;
+  deliverableArtifactId?: string;
+  evidenceManifestArtifactId?: string;
+  gapCount?: number;
   failedStepNo?: number;
   failure?: Record<string, unknown>;
 }
@@ -69,6 +123,13 @@ export class ExecutionAuthenticityError extends Error {
   ) {
     super(message);
     this.name = 'ExecutionAuthenticityError';
+  }
+}
+
+class ExecutionSafetyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ExecutionSafetyError';
   }
 }
 
@@ -86,49 +147,26 @@ function stableValue(value: unknown): unknown {
   );
 }
 
-function redactString(value: string, maskPii: boolean): string {
-  const withoutData = value.startsWith('data:') && value.includes(';base64,')
-    ? '[REDACTED_DATA]'
-    : value;
-  const withoutSecrets = withoutData.replace(
-    /\b(api[_-]?key|authorization|token|secret|password)\s*[:=]\s*[^\s,;]+/gi,
-    (_match, label: string) => `${label}=[REDACTED]`,
-  );
-  if (!maskPii) return withoutSecrets;
-  return withoutSecrets
-    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[REDACTED_EMAIL]')
-    .replace(/\b1[3-9]\d{9}\b/g, '[REDACTED_PHONE]')
-    .replace(/\b\d{17}[\dXx]\b/g, '[REDACTED_ID]')
-    .replace(/(?:0\d{2,3}-)?\d{7,8}/g, '[REDACTED_LANDLINE]')
-    .replace(/[\u4e00-\u9fa5]{2,}(?:省|市|区|县|路|街|号)[\u4e00-\u9fa5\d-]{0,24}/g, '[REDACTED_ADDRESS]');
-}
-
-function redactToolOutput(
-  value: unknown,
-  policy: Record<string, string>,
-  key = '',
-): unknown {
-  const maskPii = policy.pii === 'mask';
-  if (/^(authorization|api[_-]?key|token|secret|password|dataurl|base64)$/i.test(key)) return '[REDACTED]';
-  if (maskPii && /^(name|full_name|contact_name|email|phone|mobile)$/i.test(key)) return '[REDACTED_PII]';
-  if (typeof value === 'string') return redactString(value, maskPii);
-  if (Array.isArray(value)) return value.map((item) => redactToolOutput(item, policy));
-  if (!isRecord(value)) return value;
-  return Object.fromEntries(Object.entries(value).map(([childKey, child]) => [childKey, redactToolOutput(child, policy, childKey)]));
-}
-
-function containsBlockedSensitiveData(value: unknown): boolean {
-  if (typeof value === 'string') return /\b(confidential|internal[-_ ]only|business[-_ ]secret)\b|商业机密|敏感业务/i.test(value);
-  if (Array.isArray(value)) return value.some(containsBlockedSensitiveData);
-  if (!isRecord(value)) return false;
-  return Object.entries(value).some(([key, child]) =>
-    /^(confidential|internal_only|business_secret|sensitive_business_data)$/i.test(key)
-    || containsBlockedSensitiveData(child),
-  );
-}
 
 function hashJson(value: unknown): string {
   return `sha256:${createHash('sha256').update(JSON.stringify(stableValue(value))).digest('hex')}`;
+}
+
+function sanitizeStepResult(result: StepResult): StepResult {
+  if (
+    containsBlockedSensitiveData(result.output)
+    || (result.artifactValue !== undefined && containsBlockedSensitiveData(result.artifactValue))
+  ) {
+    throw new ExecutionSafetyError('actor output blocked by sensitive business data policy');
+  }
+  if (result.kind === 'tool_output') return result;
+  return {
+    ...result,
+    output: redactSensitiveValue(result.output),
+    ...(result.artifactValue === undefined
+      ? {}
+      : { artifactValue: redactSensitiveValue(result.artifactValue) }),
+  };
 }
 
 function toolConfigHash(manifest: ToolManifest, resolution: ToolAdapterResolution | null): string {
@@ -182,15 +220,58 @@ function parsePlan(taskId: string, value: unknown): EnginePlan {
       requires_approval: typeof item.requires_approval === 'boolean' ? item.requires_approval : undefined,
     };
   });
-  return { taskId, steps };
+  if (value.deliverable_type !== 'research_plan') {
+    throw new ExecutionAuthenticityError('plan deliverable type is unsupported');
+  }
+  const rawRequirements = value.evidence_requirements;
+  if (!Array.isArray(rawRequirements) || rawRequirements.length === 0) {
+    throw new ExecutionAuthenticityError('plan evidence requirements are malformed');
+  }
+  const evidenceRequirements = rawRequirements.map((item, index): EvidenceRequirement => {
+    if (
+      !isRecord(item)
+      || typeof item.id !== 'string'
+      || item.id.trim().length === 0
+      || !Array.isArray(item.acceptedClasses)
+      || item.acceptedClasses.length === 0
+      || !item.acceptedClasses.every(
+        (evidenceClass): evidenceClass is EvidenceClass =>
+          typeof evidenceClass === 'string'
+          && SUPPORTED_EVIDENCE_CLASSES[evidenceClass as EvidenceClass] === true,
+      )
+      || typeof item.minimumCount !== 'number'
+      || !Number.isInteger(item.minimumCount)
+      || item.minimumCount < 0
+      || typeof item.required !== 'boolean'
+    ) {
+      throw new ExecutionAuthenticityError(`evidence requirement ${index + 1} is malformed`);
+    }
+    return {
+      id: item.id,
+      acceptedClasses: item.acceptedClasses,
+      minimumCount: item.minimumCount,
+      required: item.required,
+    };
+  });
+  if (!evidenceRequirements.some((requirement) => requirement.required)) {
+    throw new ExecutionAuthenticityError('plan must include required evidence');
+  }
+  return { taskId, evidence_requirements: evidenceRequirements, steps };
 }
 
-function sourceRefs(value: unknown): string[] {
+function isToolSourceRef(value: unknown): value is ToolSourceRef {
+  return isRecord(value)
+    && typeof value.sourceUrl === 'string'
+    && Number.isInteger(value.originalIndex)
+    && (value.originalIndex as number) >= 0;
+}
+
+function sourceRefs(value: unknown): ToolSourceRef[] {
   if (!isRecord(value) || !Array.isArray(value.results)) return [];
-  return value.results.flatMap((item) => {
+  return value.results.flatMap((item, originalIndex) => {
     if (!isRecord(item)) return [];
-    const ref = typeof item.url === 'string' ? item.url : typeof item.oss_url === 'string' ? item.oss_url : null;
-    return ref ? [ref] : [];
+    const sourceUrl = typeof item.url === 'string' ? item.url : typeof item.oss_url === 'string' ? item.oss_url : null;
+    return sourceUrl ? [{ sourceUrl, originalIndex }] : [];
   });
 }
 
@@ -212,6 +293,9 @@ function failureFrom(error: unknown): Record<string, unknown> {
       providerStatus: error.providerStatus,
       message: error.sanitizedMessage,
     };
+  }
+  if (error instanceof ExecutionSafetyError) {
+    return { kind: 'safety', retryable: false, message: error.message };
   }
   if (error instanceof ControlPlaneConflictError) {
     return { kind: 'lease_lost', retryable: true, message: error.message };
@@ -240,8 +324,26 @@ function failureFrom(error: unknown): Record<string, unknown> {
 
 function isIntegrityFailure(error: unknown): boolean {
   return error instanceof ExecutionAuthenticityError
+    || error instanceof ArtifactIntegrityError
     || error instanceof ModelDriftError
     || error instanceof MissingModelReceiptError;
+}
+
+function deliverableFailureFrom(error: unknown): Record<string, unknown> {
+  if (
+    error instanceof LLMInvocationError
+    || error instanceof ControlPlaneConflictError
+    || isIntegrityFailure(error)
+  ) {
+    return failureFrom(error);
+  }
+  return {
+    kind: 'deliverable_validation',
+    retryable: false,
+    message: error instanceof CurrentReportValidationError
+      ? error.message
+      : error instanceof Error ? error.message : String(error),
+  };
 }
 
 export class LeaseExecutionEngine {
@@ -255,6 +357,12 @@ export class LeaseExecutionEngine {
     skillLoader: SkillLoader;
     validator: SchemaValidator;
     heartbeatMs: number;
+    deliverables: {
+      generate(input: CurrentDeliverableGenerateInput): Promise<{
+        deliverable: unknown;
+        deliverableArtifactId: string;
+      }>;
+    };
   }) {
     this.llm = new ReceiptLLMClient(dependencies.llm, dependencies.repository);
   }
@@ -300,7 +408,7 @@ export class LeaseExecutionEngine {
     const researchGoal = isRecord(task.structuredTask) && typeof task.structuredTask.research_goal === 'string'
       ? task.structuredTask.research_goal
       : '';
-    const preflightError = await this.preflight(plan, input.expectedModel, researchGoal);
+    const preflightError = await this.preflight(plan, researchGoal);
     if (preflightError) {
       const failure = failureFrom(preflightError);
       failure.allowedActions = ['abort'];
@@ -323,7 +431,9 @@ export class LeaseExecutionEngine {
       });
       throw preflightError;
     }
-    const outputs: Array<{ actorId: string; output: unknown }> = [];
+    const outputs: SealedStepOutput[] = [];
+    const resolvedArtifacts = new Map<string, ResolvedEvidenceArtifact>();
+    const gaps: string[] = [];
 
     for (const step of plan.steps) {
       const startedAt = new Date();
@@ -338,23 +448,51 @@ export class LeaseExecutionEngine {
         startedAt,
       });
       try {
-        const result = await this.withLeaseHeartbeat(input.lease, () => this.runStep({
+        const result = sanitizeStepResult(await this.withLeaseHeartbeat(input.lease, () => this.runStep({
           step,
           lease: input.lease,
           researchGoal,
           outputs,
           expectedModel: input.expectedModel,
-        }));
+        })));
         await this.dependencies.repository.requireActiveLease(input.lease);
+        const artifactValue = result.artifactValue ?? result.output;
         const artifact = await this.dependencies.artifacts.writeJson({
           taskId: input.lease.taskId,
           planVersionId: input.lease.planVersionId,
           attemptId: input.lease.attemptId,
           kind: result.kind,
           relativePath: `steps/${step.step_no}-${result.kind}.json`,
-          value: result.artifactValue ?? result.output,
+          value: artifactValue,
+          schemaVersion: STEP_ARTIFACT_SCHEMA_VERSIONS[result.kind],
         });
-        outputs.push({ actorId: step.actor_id, output: result.output });
+        if (artifact.state !== 'SEALED' || !artifact.contentSha256) {
+          throw new ExecutionAuthenticityError(`step Artifact ${artifact.id} was not sealed`);
+        }
+        if (step.actor_type === 'tool') {
+          const verified = await this.dependencies.artifacts.readVerifiedJson<unknown>(artifact.id);
+          if (!verified.artifact.contentSha256) {
+            throw new ExecutionAuthenticityError(`sealed Tool Artifact ${artifact.id} has no content hash`);
+          }
+          resolvedArtifacts.set(verified.artifact.id, {
+            artifact: {
+              id: verified.artifact.id,
+              contentSha256: verified.artifact.contentSha256,
+            },
+            value: verified.value,
+          });
+        }
+        outputs.push({
+          stepNo: step.step_no,
+          actorId: step.actor_id,
+          kind: result.kind,
+          output: result.output,
+          artifact: {
+            id: artifact.id,
+            contentSha256: artifact.contentSha256,
+            state: 'SEALED',
+          },
+        });
         await this.dependencies.repository.recordExecutionStep({
           attemptId: input.lease.attemptId,
           stepNo: step.step_no,
@@ -378,6 +516,7 @@ export class LeaseExecutionEngine {
                 executionMode: result.toolReceipt.executionMode,
                 endpointHost: result.toolReceipt.endpointHost,
                 sourceRefs: result.sourceRefs,
+                toolTier: this.dependencies.skillLoader.getTool(step.actor_id)?.tier ?? 'core',
                 outputArtifactId: artifact.id,
                 status: 'succeeded',
               }
@@ -388,24 +527,41 @@ export class LeaseExecutionEngine {
         });
       } catch (error) {
         const failure = failureFrom(error);
+        let failedToolProvenance: Record<string, unknown> | undefined;
+        let toolTier: 'core' | 'optional' = 'core';
         if (step.actor_type === 'tool') {
-          let tier: 'core' | 'optional' = 'core';
           try {
-            tier = this.dependencies.skillLoader.getTool(step.actor_id)?.tier ?? 'core';
+            toolTier = this.dependencies.skillLoader.getTool(step.actor_id)?.tier ?? 'core';
           } catch {
             // Config loss is itself unsafe; default core forbids skip.
           }
-          failure.toolTier = tier;
-          failure.allowedActions = tier === 'core'
-            ? ['retry', 'abort']
-            : ['retry', 'skip', 'abort'];
-        }
-        else {
+          failure.toolTier = toolTier;
+          failedToolProvenance = this.failedToolProvenance(step, researchGoal, error);
+          failedToolProvenance.toolTier = toolTier;
+          if (toolTier === 'optional' && failure.kind !== 'safety' && !isIntegrityFailure(error)) {
+            failure.allowedActions ??= [];
+            await this.dependencies.repository.recordExecutionStep({
+              attemptId: input.lease.attemptId,
+              stepNo: step.step_no,
+              stepName: step.step_name,
+              actorType: step.actor_type,
+              actorId: step.actor_id,
+              state: 'skipped',
+              failure,
+              toolProvenance: failedToolProvenance,
+              startedAt,
+              finishedAt: new Date(),
+            });
+            const message = typeof failure.message === 'string'
+              ? failure.message
+              : 'optional tool failed';
+            gaps.push(redactString(`Step ${step.step_no} (${step.actor_id}): ${message}`));
+            continue;
+          }
+          failure.allowedActions = failure.kind === 'safety' ? ['abort'] : ['retry', 'abort'];
+        } else {
           failure.allowedActions = failure.retryable === true ? ['retry', 'abort'] : ['abort'];
         }
-        const failedToolProvenance = step.actor_type === 'tool'
-          ? this.failedToolProvenance(step, researchGoal, error)
-          : undefined;
         await this.dependencies.repository.recordExecutionStep({
           attemptId: input.lease.attemptId,
           stepNo: step.step_no,
@@ -432,94 +588,108 @@ export class LeaseExecutionEngine {
         return { status: 'paused', attemptId: input.lease.attemptId, failedStepNo: step.step_no, failure };
       }
     }
-    const evidenceEntries = (await this.dependencies.repository.listExecutionSteps(input.lease.attemptId))
-      .flatMap((step): EvidenceEntry[] => {
-        const provenance = step.toolProvenance;
-        const proof = provenance && typeof provenance === 'object' ? provenance : null;
-        const outputHash = typeof proof?.outputHash === 'string' ? proof.outputHash : null;
-        const executionMode = proof?.executionMode;
-        const implementationId = proof?.implementationId;
-        const refs = Array.isArray(proof?.sourceRefs)
-          ? proof.sourceRefs.filter((ref): ref is string => typeof ref === 'string' && ref.startsWith('https://'))
-          : [];
-        if (
-          step.actorType !== 'tool'
-          || step.state !== 'succeeded'
-          || !outputHash
-          || executionMode !== 'real'
-          || typeof implementationId !== 'string'
-          || refs.length === 0
-        ) return [];
-        return refs.map((sourceUrl, index) => ({
-          id: `E${step.stepNo}-${index + 1}`,
-          kind: 'tool_output',
-          evidenceClass: 'public_source',
-          artifactHash: outputHash,
-          jsonPointer: `/results/${index}`,
-          sourceUrl,
-          stepNo: step.stepNo,
-          toolProof: { implementationId, executionMode: 'real', outputHash },
-          sensitivity: 'public',
-          redaction: 'masked',
-        }));
-      });
-    if (evidenceEntries.length === 0) {
-      await this.dependencies.repository.pauseExecution({
-        taskId: input.lease.taskId,
-        attemptId: input.lease.attemptId,
-        expectedVersion: active.stateVersion,
-        reason: 'missing_core_evidence',
-      });
-      throw new ExecutionAuthenticityError('execution has no valid core Tool evidence');
-    }
-    const evidenceManifest = new EvidenceService().createManifest({
-      taskId: input.lease.taskId,
-      planVersionId: input.lease.planVersionId,
-      attemptId: input.lease.attemptId,
-      collectedAt: new Date().toISOString(),
-      entries: evidenceEntries,
-    });
-    await this.dependencies.artifacts.writeJson({
-      taskId: input.lease.taskId,
-      planVersionId: input.lease.planVersionId,
-      attemptId: input.lease.attemptId,
-      kind: 'evidence_manifest',
-      relativePath: 'evidence/manifest.json',
-      value: evidenceManifest,
-    });
-
+    let sealedEvidenceManifest!: CurrentDeliverableGenerateInput['evidenceManifest'];
+    let evidenceResolver!: EvidenceArtifactResolver;
     try {
-      active = await this.refreshLease(input.lease);
-      const synthesisContext = { research_goal: researchGoal, outputs };
-      const synthesis = await this.withLeaseHeartbeat(input.lease, () => this.llm.generateText({
-        prompt: 'Summarize the completed execution outputs without inventing new evidence.',
-        context: synthesisContext,
-        receipt: {
-          stage: 'synthesis',
-          attemptId: input.lease.attemptId,
-          stepNo: plan.steps.length + 1,
-          contextManifestHash: hashJson(synthesisContext),
-          expectedModel: input.expectedModel,
-        },
-      }));
-      await this.dependencies.repository.requireActiveLease(input.lease);
-      await this.dependencies.artifacts.writeJson({
+      evidenceResolver = {
+        resolveArtifact: (artifactId) => resolvedArtifacts.get(artifactId) ?? null,
+      };
+      const evidenceEntries = (await this.dependencies.repository.listExecutionSteps(input.lease.attemptId))
+        .flatMap((step): EvidenceEntry[] => {
+          const proof = step.toolProvenance;
+          const outputArtifactId = typeof proof?.outputArtifactId === 'string' ? proof.outputArtifactId : null;
+          const artifact = outputArtifactId ? resolvedArtifacts.get(outputArtifactId) : undefined;
+          const executionMode = proof?.executionMode;
+          const implementationId = proof?.implementationId;
+          const redactedOutputHash = proof?.redactedOutputHash;
+          const toolTier = proof?.toolTier;
+          const refs = Array.isArray(proof?.sourceRefs)
+            ? proof.sourceRefs.filter(isToolSourceRef).filter((ref) => ref.sourceUrl.startsWith('https://'))
+            : [];
+          if (
+            step.actorType !== 'tool'
+            || step.state !== 'succeeded'
+            || !artifact
+            || executionMode !== 'real'
+            || typeof implementationId !== 'string'
+            || typeof redactedOutputHash !== 'string'
+            || (toolTier !== 'core' && toolTier !== 'optional')
+            || refs.length === 0
+          ) return [];
+          return refs.map(({ sourceUrl, originalIndex }) => ({
+            id: `E${step.stepNo}-${originalIndex + 1}`,
+            kind: 'tool_output',
+            evidenceClass: 'public_source',
+            toolId: step.actorId,
+            toolTier,
+            artifactId: artifact.artifact.id,
+            artifactContentSha256: artifact.artifact.contentSha256,
+            jsonPointer: `/output/results/${originalIndex}`,
+            sourceUrl,
+            stepNo: step.stepNo,
+            toolProof: { implementationId, executionMode: 'real', redactedOutputHash },
+            sensitivity: 'public',
+            redaction: 'masked',
+          }));
+        });
+      for (const requirement of plan.evidence_requirements) {
+        let actual = 0;
+        for (const entry of evidenceEntries) {
+          if (requirement.required && entry.toolTier !== 'core') continue;
+          if (requirement.acceptedClasses.includes(entry.evidenceClass)) actual += 1;
+        }
+        if (requirement.required && actual < requirement.minimumCount) {
+          throw new ExecutionAuthenticityError(
+            `required evidence requirement ${requirement.id} is not satisfied`,
+            {
+              kind: 'missing_required_evidence',
+              requirementId: requirement.id,
+              required: requirement.minimumCount,
+              actual,
+            },
+          );
+        }
+      }
+      if (!evidenceEntries.some((entry) => entry.toolTier === 'core')) {
+        throw new ExecutionAuthenticityError('execution has no valid core Tool evidence');
+      }
+      const evidenceManifest = new EvidenceService().createManifest({
         taskId: input.lease.taskId,
         planVersionId: input.lease.planVersionId,
         attemptId: input.lease.attemptId,
-        kind: 'execution_summary',
-        relativePath: 'synthesis/summary.json',
-        value: { text: synthesis.text },
+        collectedAt: new Date().toISOString(),
+        entries: evidenceEntries,
+      }, evidenceResolver);
+      const evidenceManifestArtifact = await this.dependencies.artifacts.writeJson({
+        taskId: input.lease.taskId,
+        planVersionId: input.lease.planVersionId,
+        attemptId: input.lease.attemptId,
+        kind: 'evidence_manifest',
+        relativePath: 'evidence/manifest.json',
+        value: evidenceManifest,
+        schemaVersion: 'evidence-v1',
+        activeLease: input.lease,
       });
+      if (evidenceManifestArtifact.state !== 'SEALED' || !evidenceManifestArtifact.contentSha256) {
+        throw new ExecutionAuthenticityError('Evidence Manifest Artifact was not sealed');
+      }
+      sealedEvidenceManifest = {
+        artifact: {
+          id: evidenceManifestArtifact.id,
+          contentSha256: evidenceManifestArtifact.contentSha256,
+          state: 'SEALED',
+        },
+        value: evidenceManifest,
+      };
     } catch (error) {
       const failure = failureFrom(error);
-      failure.allowedActions = failure.retryable === true ? ['retry', 'abort'] : ['abort'];
+      failure.allowedActions = ['abort'];
       await this.dependencies.repository.recordExecutionStep({
         attemptId: input.lease.attemptId,
         stepNo: plan.steps.length + 1,
-        stepName: 'execution synthesis',
-        actorType: 'llm',
-        actorId: 'synthesis',
+        stepName: 'evidence manifest',
+        actorType: 'system',
+        actorId: 'evidence',
         state: 'failed',
         failure,
         startedAt: new Date(),
@@ -530,7 +700,7 @@ export class LeaseExecutionEngine {
           taskId: input.lease.taskId,
           attemptId: input.lease.attemptId,
           expectedVersion: active.stateVersion,
-          reason: String(failure.kind ?? 'synthesis_failure'),
+          reason: String(failure.kind ?? 'evidence_failure'),
         });
       } catch (pauseError) {
         if (!(pauseError instanceof ControlPlaneConflictError)) throw pauseError;
@@ -544,11 +714,81 @@ export class LeaseExecutionEngine {
       };
     }
 
-    await this.dependencies.repository.completeExecution(input.lease);
-    return { status: 'completed', attemptId: input.lease.attemptId };
+    try {
+      active = await this.refreshLease(input.lease);
+      const deliverable = await this.withLeaseHeartbeat(input.lease, () => this.dependencies.deliverables.generate({
+        task: { id: task.id },
+        plan: {
+          id: planVersion.id,
+          plan: {
+            ...(planVersion.plan as Record<string, unknown>),
+            deliverable_type: 'research_plan',
+            steps: (planVersion.plan as Record<string, unknown>).steps as unknown[],
+          },
+        },
+        attempt: { id: input.lease.attemptId },
+        researchGoal,
+        evidenceManifest: sealedEvidenceManifest,
+        evidenceResolver,
+        outputs,
+        gaps,
+        expectedModel: input.expectedModel,
+        stepNo: plan.steps.length + 1,
+        activeLease: input.lease,
+      }));
+      await this.dependencies.repository.requireActiveLease(input.lease);
+      const status = gaps.length > 0 ? 'completed_with_gaps' : 'completed';
+      await this.dependencies.repository.completeExecution(input.lease, { status });
+      return {
+        status,
+        attemptId: input.lease.attemptId,
+        deliverableArtifactId: deliverable.deliverableArtifactId,
+        evidenceManifestArtifactId: sealedEvidenceManifest.artifact.id,
+        gapCount: gaps.length,
+      };
+    } catch (error) {
+      if (error instanceof ControlPlaneConflictError) {
+        await this.dependencies.repository.invalidateTerminalArtifacts({
+          taskId: input.lease.taskId,
+          planVersionId: input.lease.planVersionId,
+          attemptId: input.lease.attemptId,
+          reason: 'terminal artifacts invalidated after execution lease loss',
+        });
+      }
+      const failure = deliverableFailureFrom(error);
+      failure.allowedActions = failure.retryable === true ? ['retry', 'abort'] : ['abort'];
+      await this.dependencies.repository.recordExecutionStep({
+        attemptId: input.lease.attemptId,
+        stepNo: plan.steps.length + 1,
+        stepName: 'deliverable generation',
+        actorType: 'llm',
+        actorId: 'deliverable',
+        state: 'failed',
+        failure,
+        startedAt: new Date(),
+        finishedAt: new Date(),
+      });
+      try {
+        await this.dependencies.repository.pauseExecution({
+          taskId: input.lease.taskId,
+          attemptId: input.lease.attemptId,
+          expectedVersion: active.stateVersion,
+          reason: String(failure.kind ?? 'deliverable_validation'),
+        });
+      } catch (pauseError) {
+        if (!(pauseError instanceof ControlPlaneConflictError)) throw pauseError;
+      }
+      if (isIntegrityFailure(error)) throw error;
+      return {
+        status: 'paused',
+        attemptId: input.lease.attemptId,
+        failedStepNo: plan.steps.length + 1,
+        failure,
+      };
+    }
   }
 
-  private async preflight(plan: EnginePlan, expectedModel: string, researchGoal: string): Promise<ExecutionAuthenticityError | null> {
+  private async preflight(plan: EnginePlan, researchGoal: string): Promise<ExecutionAuthenticityError | null> {
     const tavily = this.dependencies.skillLoader.getTool('tavily-web-search');
     const hasRequiredTavily = tavily?.tier === 'core'
       && plan.steps.some((step) => step.actor_type === 'tool' && step.actor_id === 'tavily-web-search');
@@ -597,12 +837,6 @@ export class LeaseExecutionEngine {
         provider: identity.provider,
         mode: identity.mode,
         requestedModel: identity.requestedModel,
-      });
-    }
-    if (identity.requestedModel !== expectedModel) {
-      return new ExecutionAuthenticityError('requested model does not match the execution pin', {
-        requestedModel: identity.requestedModel,
-        expectedModel,
       });
     }
     return null;
@@ -664,7 +898,7 @@ export class LeaseExecutionEngine {
     const receipt = error instanceof ToolInvocationError ? error.receipt : null;
     const details = error instanceof ToolInvocationError ? error.details : {};
     const refs = Array.isArray(details.sourceRefs)
-      ? details.sourceRefs.filter((ref): ref is string => typeof ref === 'string')
+      ? details.sourceRefs.filter(isToolSourceRef)
       : [];
     const fallback = (captureFailure: unknown): Record<string, unknown> => ({
       registryHash: null,

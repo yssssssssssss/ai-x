@@ -64,10 +64,6 @@ export type {
 // api 方法体实际引用的类型(export type 只做 re-export、不引入本地绑定,故这里单独 import)。
 import type {
   User,
-  Upload,
-  PlanCandidatesResponse,
-  SelectResponse,
-  ExecuteResponse,
   TaskDetail,
   TaskSummary,
   SkillItem,
@@ -78,28 +74,51 @@ export type {
   ApprovalControlPlanRequest,
   ConfirmControlPlanRequest,
   ControlCommandResponse,
+  ControlExecutionResult,
+  ControlPlanCandidatesResponse,
   ControlTaskResponse,
   ControlWorkflowState as ControlTaskState,
-  CreateControlTaskRequest,
-  DisabledExecutionResponse,
+  CurrentTaskReadResponse,
+  CurrentPlanCandidate,
   ExecutionControlPlanRequest,
-  PlanMutationRequest,
+  PlanControlTaskRequest,
   ResumeControlPlanRequest,
+  SelectControlPlanRequest,
   SelectControlPlanResponse,
 } from '../../../../packages/api-contract/control-workflow.ts';
+export type {
+  CapabilityProvenance,
+  CurrentRecommendation,
+  EvidenceEntry,
+  FindingGraph,
+  ResearchDeliverableEnvelope,
+  ResearchPlanPayload,
+} from '../../../../packages/api-contract/research-deliverable.ts';
+export type { EvidenceManifest } from '../../../orchestrator-runtime/src/evidence/evidence-service.ts';
 
 import type {
   ApprovalControlPlanRequest,
   ConfirmControlPlanRequest,
   ControlCommandResponse,
-  ControlTaskResponse,
-  CreateControlTaskRequest,
-  DisabledExecutionResponse,
+  ControlExecutionResult,
+  ControlPlanCandidatesResponse,
+  CurrentTaskReadResponse,
   ExecutionControlPlanRequest,
-  PlanMutationRequest,
+  PlanControlTaskRequest,
   ResumeControlPlanRequest,
+  SelectControlPlanRequest,
   SelectControlPlanResponse,
 } from '../../../../packages/api-contract/control-workflow.ts';
+import type {
+  ResearchDeliverableEnvelope,
+  ResearchPlanPayload,
+} from '../../../../packages/api-contract/research-deliverable.ts';
+import type { EvidenceManifest } from '../../../orchestrator-runtime/src/evidence/evidence-service.ts';
+
+export interface ControlDeliverableResponse {
+  deliverable: ResearchDeliverableEnvelope<ResearchPlanPayload>;
+  evidenceManifest: EvidenceManifest;
+}
 
 // ---- API ----
 export const api = {
@@ -109,71 +128,83 @@ export const api = {
     req<{ token: string; user: User }>('/auth/login', { method: 'POST', body: b }),
   me: () => req<{ user: User }>('/auth/me'),
 
-  plan: (b: { originalInput: string; conversationId?: string }) =>
-    req<PlanCandidatesResponse>('/tasks/plan', { method: 'POST', body: b }),
-  // 流式规划:SSE 逐阶段回调 onProgress(PlanProgress);终态 result→resolve、error→throw ApiError。
-  // 事件分派(conversation/progress/result/error)在此消化,caller 只拿类型化进度与最终候选。
-  planStream: async (
-    b: { originalInput: string; conversationId?: string },
-    opts: { onProgress?: (ev: PlanProgress) => void } = {},
-  ): Promise<PlanCandidatesResponse> => {
+  // Current 规划流:SSE conversation/progress/result/error 在 client 层收口。
+  planControlStream: async (
+    body: PlanControlTaskRequest,
+    handlers: {
+      onConversation?: (conversationId: string) => void;
+      onProgress?: (event: PlanProgress) => void;
+    } = {},
+  ): Promise<ControlPlanCandidatesResponse> => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const token = getToken();
     if (token) headers.Authorization = `Bearer ${token}`;
-    const res = await fetch('/api/tasks/plan/stream', { method: 'POST', headers, body: JSON.stringify(b) });
-    if (!res.ok || !res.body) throw new ApiError(res.status, `HTTP ${res.status}`);
-    const reader = res.body.getReader();
+    const response = await fetch('/api/control-tasks/plan/stream', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    });
+    if (!response.ok || !response.body) throw new ApiError(response.status, `HTTP ${response.status}`);
+
+    const reader = response.body.getReader();
     const decoder = new TextDecoder();
-    let buf = '';
-    let result: PlanCandidatesResponse | null = null;
+    let buffer = '';
+    let result: ControlPlanCandidatesResponse | null = null;
+    const consume = (block: string): void => {
+      let event = 'message';
+      let data = '';
+      for (const line of block.split('\n')) {
+        if (line.startsWith('event:')) event = line.slice(6).trim();
+        else if (line.startsWith('data:')) data += line.slice(5).trim();
+      }
+      if (!data) return;
+      const parsed: unknown = JSON.parse(data);
+      if (event === 'conversation') {
+        const conversation = parsed as { conversationId?: unknown };
+        if (typeof conversation.conversationId === 'string') handlers.onConversation?.(conversation.conversationId);
+      } else if (event === 'progress') {
+        handlers.onProgress?.(parsed as PlanProgress);
+      } else if (event === 'result') {
+        result = parsed as ControlPlanCandidatesResponse;
+      } else if (event === 'error') {
+        const failure = parsed as { error?: unknown };
+        throw new ApiError(502, typeof failure.error === 'string' ? failure.error : '规划失败');
+      }
+    };
+
     for (;;) {
       const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let sep: number;
-      while ((sep = buf.indexOf('\n\n')) >= 0) {
-        const block = buf.slice(0, sep);
-        buf = buf.slice(sep + 2);
-        let event = 'message';
-        let data = '';
-        for (const line of block.split('\n')) {
-          if (line.startsWith('event:')) event = line.slice(6).trim();
-          else if (line.startsWith('data:')) data += line.slice(5).trim();
-        }
-        if (!data) continue;
-        const parsed = JSON.parse(data);
-        if (event === 'progress') opts.onProgress?.(parsed as PlanProgress);
-        else if (event === 'result') result = parsed as PlanCandidatesResponse;
-        else if (event === 'error') throw new ApiError(502, String(parsed?.error ?? '规划失败'));
+      buffer = `${buffer}${decoder.decode(value, { stream: !done })}`.replaceAll('\r\n', '\n');
+      let separator = buffer.indexOf('\n\n');
+      while (separator >= 0) {
+        consume(buffer.slice(0, separator));
+        buffer = buffer.slice(separator + 2);
+        separator = buffer.indexOf('\n\n');
       }
+      if (done) break;
     }
+    if (buffer.trim()) consume(buffer);
     if (!result) throw new ApiError(502, '规划未返回结果');
     return result;
   },
-  selectCandidate: (taskId: string, candidateId: 'depth' | 'speed') =>
-    req<SelectResponse>(`/tasks/${taskId}/select`, { method: 'POST', body: { candidateId } }),
-  execute: (taskId: string, uploads?: Upload[]) =>
-    req<ExecuteResponse>(`/tasks/${taskId}/execute`, { method: 'POST', body: uploads?.length ? { uploads } : {} }),
-  resume: (taskId: string, action: 'skip' | 'abort') =>
-    req<ExecuteResponse>(`/tasks/${taskId}/resume`, { method: 'POST', body: { action } }),
   listTasks: () => req<{ tasks: TaskSummary[] }>('/tasks'),
   taskDetail: (id: string) =>
     req<TaskDetail>(`/tasks/${id}`),
   feedback: (id: string, b: { rating?: number; adopted?: boolean; comment?: string }) =>
     req<{ id: string }>(`/tasks/${id}/feedback`, { method: 'POST', body: b }),
   skills: () => req<{ skills: SkillItem[] }>('/skills'),
-  createControlTask: (b: CreateControlTaskRequest) =>
-    req<{ task: ControlTaskResponse }>('/control-tasks', { method: 'POST', body: b }),
-  selectControlPlan: (taskId: string, b: PlanMutationRequest) =>
-    req<SelectControlPlanResponse>(`/control-tasks/${taskId}/select`, { method: 'POST', body: b, headers: { 'Idempotency-Key': b.idempotencyKey } }),
-  confirmControlPlan: (taskId: string, b: ConfirmControlPlanRequest) =>
-    req<ControlCommandResponse>(`/control-tasks/${taskId}/confirm`, { method: 'POST', body: b, headers: { 'Idempotency-Key': b.idempotencyKey } }),
-  approveControlPlan: (taskId: string, b: ApprovalControlPlanRequest) =>
-    req<ControlCommandResponse>(`/control-tasks/${taskId}/approve`, { method: 'POST', body: b, headers: { 'Idempotency-Key': b.idempotencyKey } }),
-  reviseControlPlan: (taskId: string, b: PlanMutationRequest) =>
-    req<SelectControlPlanResponse>(`/control-tasks/${taskId}/revise`, { method: 'POST', body: b, headers: { 'Idempotency-Key': b.idempotencyKey } }),
-  resumeControlPlan: (taskId: string, b: ResumeControlPlanRequest) =>
-    req<ControlCommandResponse>(`/control-tasks/${taskId}/resume`, { method: 'POST', body: b, headers: { 'Idempotency-Key': b.idempotencyKey } }),
-  executeControlPlan: (taskId: string, b: ExecutionControlPlanRequest) =>
-    req<DisabledExecutionResponse>(`/control-tasks/${taskId}/execute`, { method: 'POST', body: b, headers: { 'Idempotency-Key': b.idempotencyKey } }),
+  controlTask: (taskId: string) =>
+    req<CurrentTaskReadResponse>(`/control-tasks/${taskId}`),
+  selectControlPlan: (taskId: string, body: SelectControlPlanRequest) =>
+    req<SelectControlPlanResponse>(`/control-tasks/${taskId}/select`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
+  confirmControlPlan: (taskId: string, body: ConfirmControlPlanRequest) =>
+    req<ControlCommandResponse>(`/control-tasks/${taskId}/confirm`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
+  approveControlPlan: (taskId: string, body: ApprovalControlPlanRequest) =>
+    req<ControlCommandResponse>(`/control-tasks/${taskId}/approve`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
+  resumeControlPlan: (taskId: string, body: ResumeControlPlanRequest) =>
+    req<ControlCommandResponse>(`/control-tasks/${taskId}/resume`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
+  executeControlPlan: (taskId: string, body: ExecutionControlPlanRequest) =>
+    req<ControlExecutionResult>(`/control-tasks/${taskId}/execute`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
+  controlDeliverable: (taskId: string) =>
+    req<ControlDeliverableResponse>(`/control-tasks/${taskId}/deliverable`),
 };

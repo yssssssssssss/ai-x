@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto';
 import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, normalize, relative, resolve } from 'node:path';
-import type { ControlArtifact, ControlPlaneRepository } from '../../../../database/control-plane.ts';
+import type {
+  ControlArtifact,
+  ControlExecutionLease,
+  ControlPlaneRepository,
+} from '../../../../database/control-plane.ts';
 
 export class ArtifactIntegrityError extends Error {
   constructor(artifactId: string) {
@@ -20,6 +24,7 @@ export interface ArtifactWriteInput {
   schemaVersion?: string;
   sensitivity?: string;
   redactionPolicyVersion?: string;
+  activeLease?: ControlExecutionLease;
 }
 
 export class ControlArtifactStore {
@@ -84,6 +89,7 @@ export class ControlArtifactStore {
         artifactId: artifact.id,
         contentSha256,
         byteSize: bytes.byteLength,
+        ...(input.activeLease ?? {}),
       });
     } catch (error) {
       if (existsSync(temporaryUri)) rmSync(temporaryUri, { force: true });
@@ -104,13 +110,26 @@ export class ControlArtifactStore {
     }
   }
 
-  async verifySealed(artifactId: string): Promise<ControlArtifact> {
+  private async readVerifiedBytes(artifactId: string): Promise<{
+    artifact: ControlArtifact;
+    bytes: Buffer;
+  }> {
     const artifact = await this.options.registry.requireSealedArtifact(artifactId);
     const bytes = readFileSync(artifact.storageUri);
     const actual = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
     if (actual !== artifact.contentSha256) {
       throw new ArtifactIntegrityError(artifactId);
     }
-    return artifact;
+    return { artifact, bytes };
+  }
+
+  async verifySealed(artifactId: string): Promise<ControlArtifact> {
+    return (await this.readVerifiedBytes(artifactId)).artifact;
+  }
+
+  async readVerifiedJson<T>(artifactId: string): Promise<{ artifact: ControlArtifact; value: T }> {
+    const { artifact, bytes } = await this.readVerifiedBytes(artifactId);
+    const value = JSON.parse(bytes.toString('utf8')) as T;
+    return { artifact, value };
   }
 }

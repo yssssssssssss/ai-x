@@ -1,5 +1,9 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { MigrationConnection, MigrationDatabase } from './migration-runner.ts';
+import type {
+  CurrentExecutionPlan,
+  PendingInput,
+} from '../packages/api-contract/research-deliverable.ts';
 
 export type ControlTaskState =
   | 'awaiting_selection'
@@ -103,6 +107,13 @@ export class ControlPlaneConflictError extends Error {
   }
 }
 
+export class ControlPlaneAuthorizationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TaskWorkflowAuthorizationError';
+  }
+}
+
 export class ArtifactNotSealedError extends Error {
   constructor(artifactId: string) {
     super(`artifact ${artifactId} is not sealed`);
@@ -140,6 +151,53 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function hashLeaseToken(token: string): string {
   return `sha256:${createHash('sha256').update(token).digest('hex')}`;
+}
+
+
+function stableValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableValue);
+  const record = asRecord(value);
+  if (!record) return value;
+  return Object.fromEntries(
+    Object.entries(record)
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([key, child]) => [key, stableValue(child)]),
+  );
+}
+
+function canonicalPlan(plan: unknown): { json: string; hash: string } {
+  const json = JSON.stringify(stableValue(plan));
+  if (json === undefined) throw new ControlPlaneConflictError('plan is not JSON serializable');
+  return {
+    json,
+    hash: `sha256:${createHash('sha256').update(json).digest('hex')}`,
+  };
+}
+
+export function canonicalPlanHash(plan: unknown): string {
+  return canonicalPlan(plan).hash;
+}
+
+function planForTask(plan: unknown, taskId: string): { json: string; hash: string } {
+  const record = asRecord(plan);
+  if (!record) throw new ControlPlaneConflictError('candidate plan must be an object');
+  return canonicalPlan({ ...record, task_id: taskId });
+}
+
+export interface SelectionResponse {
+  planVersionId: string;
+  state: ControlTaskState;
+  stateVersion: number;
+}
+
+function selectionResponse(value: unknown): SelectionResponse {
+  const response = asRecord(value);
+  if (!response) throw new Error('control-plane selection response is invalid');
+  return {
+    planVersionId: asString(response.planVersionId, 'planVersionId'),
+    state: asString(response.state, 'state') as ControlTaskState,
+    stateVersion: asNumber(response.stateVersion, 'stateVersion'),
+  };
 }
 
 function commandResponse(value: unknown): CommandResponse {
@@ -180,6 +238,15 @@ export interface ControlPlanVersionDetail extends ControlPlanVersion {
   candidateId: string | null;
   plan: unknown;
   pendingInputs: unknown;
+}
+
+export type ControlCandidateId = 'depth' | 'speed';
+
+export interface ControlCandidatePlanVersionDetail
+  extends Omit<ControlPlanVersionDetail, 'candidateId' | 'plan' | 'pendingInputs'> {
+  candidateId: ControlCandidateId;
+  plan: CurrentExecutionPlan;
+  pendingInputs: PendingInput[];
 }
 
 export interface ControlGateRecord {
@@ -250,6 +317,210 @@ export class ControlPlaneRepository {
         activePlanVersionId: typeof row.active_plan_version_id === 'string' ? row.active_plan_version_id : null,
         currentAttemptId: typeof row.current_attempt_id === 'string' ? row.current_attempt_id : null,
       };
+    });
+  }
+
+  async createTaskWithCandidates(input: {
+    conversationId: string;
+    ownerUserId: string;
+    originalInput: string;
+    taskType: string | null;
+    structuredTask: unknown;
+    candidates: Array<{
+      candidateId: ControlCandidateId;
+      plan: Omit<CurrentExecutionPlan, 'task_id'> & { task_id?: string };
+      pendingInputs: PendingInput[];
+    }>;
+  }): Promise<{ task: ControlTask; candidates: ControlCandidatePlanVersionDetail[] }> {
+    return this.transaction(async (connection) => {
+      const conversationResult = await connection.query(
+        `SELECT owner_user_id FROM conversations WHERE id = $1 FOR UPDATE`,
+        [input.conversationId],
+      );
+      const conversation = conversationResult.rows[0];
+      if (!conversation || conversation.owner_user_id !== input.ownerUserId) {
+        throw new ControlPlaneConflictError(`conversation ${input.conversationId} does not belong to owner ${input.ownerUserId}`);
+      }
+      const candidateIds = new Set<ControlCandidateId>();
+      for (const candidate of input.candidates) {
+        if (candidateIds.has(candidate.candidateId)) {
+          throw new ControlPlaneConflictError(`candidate id ${candidate.candidateId} is duplicated`);
+        }
+        candidateIds.add(candidate.candidateId);
+      }
+
+      const taskId = randomUUID();
+      const taskResult = await connection.query(
+        `INSERT INTO control_tasks
+           (id, conversation_id, owner_user_id, original_input, task_type, structured_task, state)
+         VALUES ($1, $2, $3, $4, $5, $6, 'awaiting_selection')
+         RETURNING id, state, state_version, active_plan_version_id, current_attempt_id`,
+        [
+          taskId,
+          input.conversationId,
+          input.ownerUserId,
+          input.originalInput,
+          input.taskType,
+          JSON.stringify(input.structuredTask),
+        ],
+      );
+      const taskRow = taskResult.rows[0] ?? {};
+      const task: ControlTask = {
+        id: asString(taskRow.id, 'id'),
+        state: asString(taskRow.state, 'state') as ControlTaskState,
+        stateVersion: asNumber(taskRow.state_version, 'state_version'),
+        activePlanVersionId: typeof taskRow.active_plan_version_id === 'string' ? taskRow.active_plan_version_id : null,
+        currentAttemptId: typeof taskRow.current_attempt_id === 'string' ? taskRow.current_attempt_id : null,
+      };
+
+      const preparedCandidates = input.candidates.map((candidate) => ({
+        candidate,
+        persistedPlan: planForTask(candidate.plan, taskId),
+      }));
+      const planHashes = new Set<string>();
+      for (const { persistedPlan } of preparedCandidates) {
+        if (planHashes.has(persistedPlan.hash)) {
+          throw new ControlPlaneConflictError(`candidate plan hash ${persistedPlan.hash} is duplicated`);
+        }
+        planHashes.add(persistedPlan.hash);
+      }
+
+      const candidates: ControlCandidatePlanVersionDetail[] = [];
+      for (const [index, { candidate, persistedPlan }] of preparedCandidates.entries()) {
+        const planResult = await connection.query(
+          `INSERT INTO control_plan_versions
+             (task_id, version, candidate_id, plan_json, plan_hash, pending_inputs)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id, task_id, version, candidate_id, plan_json, plan_hash, pending_inputs`,
+          [
+            taskId,
+            index + 1,
+            candidate.candidateId,
+            persistedPlan.json,
+            persistedPlan.hash,
+            JSON.stringify(candidate.pendingInputs),
+          ],
+        );
+        const planRow = planResult.rows[0] ?? {};
+        candidates.push({
+          id: asString(planRow.id, 'id'),
+          taskId: asString(planRow.task_id, 'task_id'),
+          version: asNumber(planRow.version, 'version'),
+          candidateId: asString(planRow.candidate_id, 'candidate_id') as ControlCandidateId,
+          plan: planRow.plan_json as CurrentExecutionPlan,
+          planHash: asString(planRow.plan_hash, 'plan_hash'),
+          pendingInputs: planRow.pending_inputs as PendingInput[],
+        });
+      }
+      return { task, candidates };
+    });
+  }
+
+  async selectCandidate(input: {
+    taskId: string;
+    planVersionId: string;
+    expectedVersion: number;
+    idempotencyKey: string;
+    requestHash: string;
+    actor: { userId: string; role: string };
+  }): Promise<SelectionResponse> {
+    return this.transaction(async (connection) => {
+      const taskResult = await connection.query(
+        `SELECT task.owner_user_id, conversation.owner_user_id AS conversation_owner_user_id,
+                task.state, task.state_version, task.active_plan_version_id
+         FROM control_tasks AS task
+         JOIN conversations AS conversation ON conversation.id = task.conversation_id
+         WHERE task.id = $1
+         FOR UPDATE OF task`,
+        [input.taskId],
+      );
+      const task = taskResult.rows[0];
+      if (!task) throw new ControlPlaneConflictError(`task ${input.taskId} does not exist`);
+
+      const commandResult = await connection.query(
+        `SELECT request_hash, response_json
+         FROM control_commands
+         WHERE task_id = $1 AND command_type = 'selection' AND idempotency_key = $2`,
+        [input.taskId, input.idempotencyKey],
+      );
+      const existingCommand = commandResult.rows[0];
+      if (existingCommand) {
+        if (existingCommand.request_hash !== input.requestHash) {
+          throw new ControlPlaneConflictError(`idempotency key ${input.idempotencyKey} was reused with a different request`);
+        }
+        return selectionResponse(existingCommand.response_json);
+      }
+
+      if (
+        task.owner_user_id !== input.actor.userId
+        || task.conversation_owner_user_id !== input.actor.userId
+        || input.actor.role !== 'owner'
+      ) {
+        throw new ControlPlaneAuthorizationError(`actor cannot control task ${input.taskId}`);
+      }
+      if (
+        task.state !== 'awaiting_selection'
+        || asNumber(task.state_version, 'state_version') !== input.expectedVersion
+        || task.active_plan_version_id !== null
+      ) {
+        throw new ControlPlaneConflictError(`task ${input.taskId} is not awaiting selection at version ${input.expectedVersion}`);
+      }
+
+      const planResult = await connection.query(
+        `SELECT task_id, candidate_id, plan_json, plan_hash
+         FROM control_plan_versions
+         WHERE id = $1
+         FOR UPDATE`,
+        [input.planVersionId],
+      );
+      const plan = planResult.rows[0];
+      if (!plan || plan.task_id !== input.taskId || typeof plan.candidate_id !== 'string') {
+        throw new ControlPlaneConflictError(`plan version ${input.planVersionId} is not a candidate for task ${input.taskId}`);
+      }
+      const persistedPlan = asRecord(plan.plan_json);
+      if (!persistedPlan || persistedPlan.task_id !== input.taskId) {
+        throw new ControlPlaneConflictError(`plan version ${input.planVersionId} is not bound to task ${input.taskId}`);
+      }
+      if (canonicalPlanHash(persistedPlan) !== plan.plan_hash) {
+        throw new ControlPlaneConflictError(`plan version ${input.planVersionId} hash does not match persisted plan`);
+      }
+
+      const updatedResult = await connection.query(
+        `UPDATE control_tasks
+         SET state = 'awaiting_confirmation',
+             state_version = state_version + 1,
+             active_plan_version_id = $2,
+             updated_at = now()
+         WHERE id = $1
+           AND state = 'awaiting_selection'
+           AND state_version = $3
+           AND active_plan_version_id IS NULL
+         RETURNING state, state_version`,
+        [input.taskId, input.planVersionId, input.expectedVersion],
+      );
+      const updated = updatedResult.rows[0];
+      if (!updated) throw new ControlPlaneConflictError(`task ${input.taskId} lost selection CAS`);
+      const response: SelectionResponse = {
+        planVersionId: input.planVersionId,
+        state: asString(updated.state, 'state') as ControlTaskState,
+        stateVersion: asNumber(updated.state_version, 'state_version'),
+      };
+      await connection.query(
+        `INSERT INTO control_commands
+           (task_id, command_type, idempotency_key, request_hash, expected_version,
+            state_before, state_after, response_json, actor_user_id)
+         VALUES ($1, $2, $3, $4, $5, 'awaiting_selection', 'awaiting_confirmation', $6, $7)`,
+        [
+          input.taskId,
+          'selection',
+          input.idempotencyKey,
+          input.requestHash,
+          input.expectedVersion,
+          JSON.stringify(response),
+          input.actor.userId,
+        ],
+      );
+      return response;
     });
   }
 
@@ -505,22 +776,110 @@ export class ControlPlaneRepository {
     artifactId: string;
     contentSha256: string;
     byteSize: number;
-  }): Promise<ControlArtifact> {
-    return this.transaction(async (connection) => {
-      const result = await connection.query(
-        `UPDATE control_artifacts
-         SET state = 'SEALED',
-             content_sha256 = $2,
-             byte_size = $3,
-             sealed_at = now(),
-             redaction_status = 'sealed'
-         WHERE id = $1 AND state = 'STAGING'
-         RETURNING *`,
-        [input.artifactId, input.contentSha256, input.byteSize],
-      );
-      if (!result.rows[0]) throw new ControlPlaneConflictError(`artifact ${input.artifactId} cannot be sealed`);
-      return artifactFromRow(result.rows[0]);
+  } & Partial<ControlExecutionLease>): Promise<ControlArtifact> {
+    const leaseFieldCount = [
+      input.taskId,
+      input.planVersionId,
+      input.attemptId,
+      input.leaseOwner,
+      input.leaseToken,
+    ].filter((value) => value !== undefined).length;
+    const leaseBound = leaseFieldCount === 5;
+    const outcome = await this.transaction(async (connection) => {
+      const result = leaseBound
+        ? await connection.query(
+            `UPDATE control_artifacts AS artifact
+             SET state = 'SEALED',
+                 content_sha256 = $2,
+                 byte_size = $3,
+                 sealed_at = now(),
+                 redaction_status = 'sealed'
+             FROM control_execution_attempts AS attempt, control_tasks AS task
+             WHERE artifact.id = $1
+               AND artifact.state = 'STAGING'
+               AND artifact.task_id = $4
+               AND artifact.plan_version_id = $5
+               AND artifact.attempt_id = $6
+               AND attempt.id = $6
+               AND attempt.task_id = $4
+               AND attempt.plan_version_id = $5
+               AND attempt.lease_owner = $7
+               AND attempt.lease_token_hash = $8
+               AND attempt.state = 'active'
+               AND attempt.lease_expires_at > now()
+               AND task.id = $4
+               AND task.state = 'executing'
+               AND task.current_attempt_id = attempt.id
+               AND task.active_plan_version_id = attempt.plan_version_id
+             RETURNING artifact.*`,
+            [
+              input.artifactId,
+              input.contentSha256,
+              input.byteSize,
+              input.taskId,
+              input.planVersionId,
+              input.attemptId,
+              input.leaseOwner,
+              hashLeaseToken(input.leaseToken!),
+            ],
+          )
+        : leaseFieldCount === 0
+          ? await connection.query(
+              `UPDATE control_artifacts
+               SET state = 'SEALED',
+                   content_sha256 = $2,
+                   byte_size = $3,
+                   sealed_at = now(),
+                   redaction_status = 'sealed'
+               WHERE id = $1 AND state = 'STAGING'
+               RETURNING *`,
+              [input.artifactId, input.contentSha256, input.byteSize],
+            )
+          : { rows: [] };
+      if (result.rows[0]) return artifactFromRow(result.rows[0]);
+
+      if (leaseFieldCount > 0) {
+        await connection.query(
+          `UPDATE control_artifacts
+           SET state = 'FAILED',
+               failure_reason = 'active execution lease is invalid or expired',
+               redaction_status = 'failed'
+           WHERE id = $1 AND state = 'STAGING'`,
+          [input.artifactId],
+        );
+        if (leaseBound) {
+          await connection.query(
+            `UPDATE control_execution_attempts
+             SET state = 'paused', failure_kind = 'worker_loss', finished_at = now()
+             WHERE id = $1
+               AND task_id = $2
+               AND plan_version_id = $3
+               AND state = 'active'
+               AND lease_expires_at <= now()`,
+            [input.attemptId, input.taskId, input.planVersionId],
+          );
+          await connection.query(
+            `UPDATE control_tasks AS task
+             SET state = 'paused', state_version = state_version + 1, updated_at = now()
+             WHERE task.id = $1
+               AND task.state = 'executing'
+               AND task.current_attempt_id = $2
+               AND task.active_plan_version_id = $3
+               AND EXISTS (
+                 SELECT 1 FROM control_execution_attempts AS attempt
+                 WHERE attempt.id = $2
+                   AND attempt.task_id = task.id
+                   AND attempt.plan_version_id = $3
+                   AND attempt.state = 'paused'
+               )`,
+            [input.taskId, input.attemptId, input.planVersionId],
+          );
+        }
+      }
+      return null;
     });
+    if (!outcome) throw new ControlPlaneConflictError(`artifact ${input.artifactId} cannot be sealed`);
+    return outcome;
   }
 
   async failArtifact(artifactId: string, reason: string): Promise<void> {
@@ -534,10 +893,51 @@ export class ControlPlaneRepository {
     });
   }
 
+  async invalidateTerminalArtifacts(input: {
+    taskId: string;
+    planVersionId: string;
+    attemptId: string;
+    reason: string;
+  }): Promise<void> {
+    await this.transaction(async (connection) => {
+      await connection.query(
+        `UPDATE control_artifacts
+         SET state = 'FAILED', failure_reason = $4, redaction_status = 'failed'
+         WHERE task_id = $1
+           AND plan_version_id = $2
+           AND attempt_id = $3
+           AND kind IN ('evidence_manifest', 'deliverable')
+           AND state IN ('STAGING', 'SEALED')`,
+        [input.taskId, input.planVersionId, input.attemptId, input.reason],
+      );
+    });
+  }
+
   async getArtifact(artifactId: string): Promise<ControlArtifact | null> {
     const connection = await this.database.connect();
     try {
       const result = await connection.query(`SELECT * FROM control_artifacts WHERE id = $1`, [artifactId]);
+      return result.rows[0] ? artifactFromRow(result.rows[0]) : null;
+    } finally {
+      connection.release();
+    }
+  }
+
+  async findSealedArtifact(input: {
+    taskId: string;
+    attemptId: string;
+    kind: string;
+  }): Promise<ControlArtifact | null> {
+    const connection = await this.database.connect();
+    try {
+      const result = await connection.query(
+        `SELECT *
+         FROM control_artifacts
+         WHERE task_id = $1 AND attempt_id = $2 AND kind = $3 AND state = 'SEALED'
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [input.taskId, input.attemptId, input.kind],
+      );
       return result.rows[0] ? artifactFromRow(result.rows[0]) : null;
     } finally {
       connection.release();
@@ -940,7 +1340,10 @@ export class ControlPlaneRepository {
     }
   }
 
-  async completeExecution(input: ControlExecutionLease): Promise<ControlTask> {
+  async completeExecution(
+    input: ControlExecutionLease,
+    options: { status: 'completed' | 'completed_with_gaps' } = { status: 'completed' },
+  ): Promise<ControlTask> {
     return this.transaction(async (connection) => {
       const attempt = await connection.query(
         `UPDATE control_execution_attempts
@@ -958,13 +1361,13 @@ export class ControlPlaneRepository {
       if (!attempt.rows[0]) throw new ControlPlaneConflictError(`execution lease ${input.attemptId} cannot complete`);
       const task = await connection.query(
         `UPDATE control_tasks
-         SET state = 'completed', state_version = state_version + 1, updated_at = now()
+         SET state = $4, state_version = state_version + 1, updated_at = now()
          WHERE id = $1
            AND state = 'executing'
            AND current_attempt_id = $2
            AND active_plan_version_id = $3
          RETURNING id, state, state_version, active_plan_version_id, current_attempt_id`,
-        [input.taskId, input.attemptId, input.planVersionId],
+        [input.taskId, input.attemptId, input.planVersionId, options.status],
       );
       const row = task.rows[0];
       if (!row) throw new ControlPlaneConflictError(`task ${input.taskId} is not executing attempt ${input.attemptId}`);

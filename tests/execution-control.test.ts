@@ -7,6 +7,7 @@ import {
   ControlPlaneConflictError,
   ControlPlaneRepository,
   type ControlExecutionLease,
+  type ControlTask,
 } from '../database/control-plane.ts';
 import {
   runMigrations,
@@ -165,6 +166,19 @@ test('completes task and attempt only with the current active lease', async () =
     () => repository.completeExecution(lease),
     ControlPlaneConflictError,
   );
+});
+
+test('completes the task with gaps while the attempt remains completed', async () => {
+  const { repository, lease } = await claimedLease();
+  const completeExecution = repository.completeExecution.bind(repository) as unknown as (
+    input: ControlExecutionLease,
+    options: { status: 'completed' | 'completed_with_gaps' },
+  ) => Promise<ControlTask>;
+  const completed = await completeExecution(lease, { status: 'completed_with_gaps' });
+
+  assert.equal(completed.state, 'completed_with_gaps');
+  assert.equal(completed.currentAttemptId, lease.attemptId);
+  assert.equal((await repository.listAttempts(lease.taskId))[0]?.state, 'completed');
 });
 
 test('classifies an expired lease as worker loss and pauses for explicit resume', async () => {

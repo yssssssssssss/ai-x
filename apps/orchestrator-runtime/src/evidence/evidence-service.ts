@@ -1,19 +1,24 @@
 import { createHash } from 'node:crypto';
+import type { EvidenceClass } from '../../../../packages/api-contract/research-deliverable.ts';
 
-export type EvidenceClass = 'public_source' | 'screenshot' | 'user_input' | 'knowledge' | 'simulation' | 'derived';
+export type { EvidenceClass };
+
 export type EvidenceKind = 'tool_output' | 'knowledge_excerpt' | 'user_constraint' | 'screenshot';
 
 export interface ToolProof {
   implementationId: string;
-  executionMode: 'real' | 'fake' | 'unknown';
-  outputHash: string;
+  executionMode: 'real';
+  redactedOutputHash: string;
 }
 
 export interface EvidenceEntry {
   id: string;
   kind: EvidenceKind;
   evidenceClass: EvidenceClass;
-  artifactHash: string;
+  toolId?: string;
+  toolTier?: 'core' | 'optional';
+  artifactId: string;
+  artifactContentSha256: string;
   jsonPointer: string;
   sourceUrl?: string;
   stepNo?: number;
@@ -105,8 +110,16 @@ function pointer(value: string): void {
   if (!value.startsWith('/')) throw new EvidenceGraphValidationError(`invalid JSON pointer ${value}`);
 }
 
-export interface EvidenceOutputResolver {
-  resolveOutput(artifactHash: string): unknown | null;
+export interface ResolvedEvidenceArtifact {
+  artifact: {
+    id: string;
+    contentSha256: string;
+  };
+  value: unknown;
+}
+
+export interface EvidenceArtifactResolver {
+  resolveArtifact(artifactId: string): ResolvedEvidenceArtifact | null;
 }
 
 function isUnknownRecord(value: unknown): value is Record<string, unknown> {
@@ -130,14 +143,77 @@ function resolvePointer(value: unknown, jsonPointer: string): unknown | undefine
 }
 
 export class EvidenceService {
-  createManifest(input: Omit<EvidenceManifest, 'version' | 'manifestHash'>): EvidenceManifest {
+  createManifest(
+    input: Omit<EvidenceManifest, 'version' | 'manifestHash'>,
+    resolver: EvidenceArtifactResolver,
+  ): EvidenceManifest {
     const draft = { version: 'evidence-v1' as const, ...input };
     const manifest = { ...draft, manifestHash: hash(draft) };
-    this.validateManifest(manifest);
+    this.validateManifest(manifest, resolver);
     return manifest;
   }
 
-  validateManifest(manifest: EvidenceManifest, resolver?: EvidenceOutputResolver): void {
+  resolveEvidenceValue(entry: EvidenceEntry, resolver: EvidenceArtifactResolver): unknown {
+    requireId(entry.id, 'evidence id');
+    requireId(entry.artifactId, `evidence ${entry.id} artifactId`);
+    pointer(entry.jsonPointer);
+    if (!entry.artifactContentSha256.startsWith('sha256:')) {
+      throw new EvidenceGraphValidationError(`evidence ${entry.id} has invalid Artifact content hash`);
+    }
+    const isPublicSource = entry.evidenceClass === 'public_source';
+    if (isPublicSource) {
+      if (!entry.sourceUrl?.startsWith('https://')) {
+        throw new EvidenceGraphValidationError(`public evidence ${entry.id} requires an https source URL`);
+      }
+      if (
+        !entry.toolProof
+        || entry.toolProof.executionMode !== 'real'
+        || entry.toolProof.implementationId === 'unknown'
+        || !entry.toolProof.redactedOutputHash.startsWith('sha256:')
+      ) {
+        throw new EvidenceGraphValidationError(`public evidence ${entry.id} requires a real Tool proof`);
+      }
+    }
+    const resolved = resolver.resolveArtifact(entry.artifactId);
+    if (!resolved || resolved.artifact.id !== entry.artifactId) {
+      throw new EvidenceGraphValidationError(`evidence ${entry.id} Artifact does not resolve`);
+    }
+    if (resolved.artifact.contentSha256 !== entry.artifactContentSha256) {
+      throw new EvidenceGraphValidationError(`evidence ${entry.id} Artifact content hash does not match`);
+    }
+    const resolvedResult = resolvePointer(resolved.value, entry.jsonPointer);
+    if (resolvedResult === undefined) {
+      throw new EvidenceGraphValidationError(`evidence ${entry.id} pointer does not resolve`);
+    }
+    if (isPublicSource) {
+      const resolvedSourceUrl = isUnknownRecord(resolvedResult)
+        ? typeof resolvedResult.url === 'string'
+          ? resolvedResult.url
+          : typeof resolvedResult.oss_url === 'string' ? resolvedResult.oss_url : null
+        : null;
+      if (!resolvedSourceUrl?.startsWith('https://') || resolvedSourceUrl !== entry.sourceUrl) {
+        throw new EvidenceGraphValidationError(`public evidence ${entry.id} source URL does not match resolved result`);
+      }
+      const artifactValue = isUnknownRecord(resolved.value) ? resolved.value : null;
+      if (!artifactValue || !('output' in artifactValue)) {
+        throw new EvidenceGraphValidationError(`public evidence ${entry.id} Tool proof does not match resolved Artifact`);
+      }
+      const resolvedOutputHash = hash(artifactValue.output);
+      if (
+        artifactValue.redactedOutputHash !== resolvedOutputHash
+        || entry.toolProof?.redactedOutputHash !== resolvedOutputHash
+      ) {
+        throw new EvidenceGraphValidationError(`public evidence ${entry.id} Tool proof does not match resolved Artifact`);
+      }
+    }
+    return resolvedResult;
+  }
+
+  validateManifest(manifest: EvidenceManifest, resolver?: EvidenceArtifactResolver): void {
+    const { manifestHash, ...draft } = manifest;
+    if (manifestHash !== hash(draft)) {
+      throw new EvidenceGraphValidationError('evidence manifest hash does not match its contents');
+    }
     requireId(manifest.taskId, 'taskId');
     requireId(manifest.planVersionId, 'planVersionId');
     requireId(manifest.attemptId, 'attemptId');
@@ -147,32 +223,38 @@ export class EvidenceService {
     unique(manifest.entries.map((entry) => entry.id), 'evidence manifest');
     for (const entry of manifest.entries) {
       requireId(entry.id, 'evidence id');
+      requireId(entry.artifactId, `evidence ${entry.id} artifactId`);
       pointer(entry.jsonPointer);
-      if (!entry.artifactHash.startsWith('sha256:')) {
-        throw new EvidenceGraphValidationError(`evidence ${entry.id} has invalid artifact hash`);
+      if (!entry.artifactContentSha256.startsWith('sha256:')) {
+        throw new EvidenceGraphValidationError(`evidence ${entry.id} has invalid Artifact content hash`);
       }
-      if (entry.evidenceClass === 'public_source') {
+      const isPublicSource = entry.evidenceClass === 'public_source';
+      if (isPublicSource) {
         if (!entry.sourceUrl?.startsWith('https://')) {
           throw new EvidenceGraphValidationError(`public evidence ${entry.id} requires an https source URL`);
         }
-        if (!entry.toolProof || entry.toolProof.executionMode !== 'real' || entry.toolProof.implementationId === 'unknown') {
+        if (
+          !entry.toolProof
+          || entry.toolProof.executionMode !== 'real'
+          || entry.toolProof.implementationId === 'unknown'
+          || !entry.toolProof.redactedOutputHash.startsWith('sha256:')
+        ) {
           throw new EvidenceGraphValidationError(`public evidence ${entry.id} requires a real Tool proof`);
         }
-        if (entry.toolProof.outputHash !== entry.artifactHash) {
-          throw new EvidenceGraphValidationError(`public evidence ${entry.id} output hash does not match artifact hash`);
+        if (!resolver) {
+          throw new EvidenceGraphValidationError(`public evidence ${entry.id} requires an Artifact resolver`);
         }
       }
-      if (resolver) {
-        const output = resolver.resolveOutput(entry.artifactHash);
-        if (output === null || resolvePointer(output, entry.jsonPointer) === undefined) {
-          throw new EvidenceGraphValidationError(`evidence ${entry.id} pointer does not resolve`);
-        }
-      }
+      if (resolver) this.resolveEvidenceValue(entry, resolver);
     }
   }
 
-  validateFindingGraph(input: { manifest: EvidenceManifest; graph: FindingGraph }): void {
-    this.validateManifest(input.manifest);
+  validateFindingGraph(input: {
+    manifest: EvidenceManifest;
+    graph: FindingGraph;
+    resolver?: EvidenceArtifactResolver;
+  }): void {
+    this.validateManifest(input.manifest, input.resolver);
     const evidence = new Map(input.manifest.entries.map((entry) => [entry.id, entry]));
     const findingIds = input.graph.findings.map((finding) => finding.id);
     unique(findingIds, 'findings');
@@ -188,7 +270,11 @@ export class EvidenceService {
         for (const evidenceId of finding.evidenceIds) {
           const entry = evidence.get(evidenceId);
           if (!entry) throw new EvidenceGraphValidationError(`fact ${id} references unknown evidence ${evidenceId}`);
-          if (entry.evidenceClass !== 'public_source' && entry.evidenceClass !== 'screenshot') {
+          if (
+            entry.evidenceClass !== 'public_source'
+            && entry.evidenceClass !== 'screenshot'
+            && entry.evidenceClass !== 'dataset'
+          ) {
             throw new EvidenceGraphValidationError(`fact ${id} is rooted in non-factual evidence ${evidenceId}`);
           }
         }

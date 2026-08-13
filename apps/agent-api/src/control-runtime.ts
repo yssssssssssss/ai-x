@@ -1,0 +1,239 @@
+import { join } from 'node:path';
+import { pool } from '../../../database/db.ts';
+import { ControlPlaneAuthorizationError, ControlPlaneRepository } from '../../../database/control-plane.ts';
+import { createConversation, getOwnedConversation } from '../../../database/repository.ts';
+import { ControlArtifactStore } from '../../orchestrator-runtime/src/control/artifact-store.ts';
+import { ControlPlanningService } from '../../orchestrator-runtime/src/control/control-planning-service.ts';
+import { LeaseExecutionEngine } from '../../orchestrator-runtime/src/control/lease-execution-engine.ts';
+import { TaskWorkflowService } from '../../orchestrator-runtime/src/control/task-workflow.ts';
+import {
+  EvidenceService,
+  type EvidenceArtifactResolver,
+  type EvidenceManifest,
+  type ResolvedEvidenceArtifact,
+} from '../../orchestrator-runtime/src/evidence/evidence-service.ts';
+import { ReportEvidenceValidator } from '../../orchestrator-runtime/src/evidence/report-evidence-validator.ts';
+import {
+  ResearchPlanningService,
+  type ResearchPlanningResult,
+} from '../../orchestrator-runtime/src/planners/research-planning-service.ts';
+import { CurrentDeliverableService } from '../../orchestrator-runtime/src/report/current-deliverable-service.ts';
+import { buildRuntime } from '../../orchestrator-runtime/src/runtime/agent-runtime.ts';
+import type { LLMClient } from '../../orchestrator-runtime/src/runtime/llm-client.ts';
+import { ReceiptLLMClient } from '../../orchestrator-runtime/src/runtime/receipt-llm-client.ts';
+import { SchemaValidator } from '../../orchestrator-runtime/src/schema/validator.ts';
+import { SkillLoader } from '../../orchestrator-runtime/src/runtime/skill-loader.ts';
+import { ToolRouter } from '../../orchestrator-runtime/src/runtime/tool-adapter.ts';
+
+interface ConversationAdapter {
+  create(input: { ownerUserId: string; title: string }): Promise<{ id: string }>;
+  requireOwned(input: { conversationId: string; ownerUserId: string }): Promise<{ id: string }>;
+}
+
+interface PlanningAdapter {
+  plan(input: { originalInput: string }): Promise<ResearchPlanningResult>;
+}
+
+export interface ControlRuntimeOverrides {
+  repository?: ControlPlaneRepository;
+  conversations?: ConversationAdapter;
+  planning?: PlanningAdapter;
+  tools?: ToolRouter;
+  llm?: LLMClient;
+  validator?: SchemaValidator;
+  skillLoader?: SkillLoader;
+  artifacts?: ControlArtifactStore;
+  expectedActualModel?: string;
+}
+
+export interface ControlRuntime {
+  controlPlanning: ControlPlanningService;
+  workflow: TaskWorkflowService;
+  repository: ControlPlaneRepository;
+  artifacts: ControlArtifactStore;
+  getDeliverable(taskId: string, ownerUserId: string): Promise<unknown | null>;
+}
+
+
+function defaultConversations(): ConversationAdapter {
+  return {
+    async create(input) {
+      return createConversation(input);
+    },
+    async requireOwned(input) {
+      const conversation = await getOwnedConversation(input.conversationId, input.ownerUserId);
+      if (!conversation) throw new ControlPlaneAuthorizationError('conversation is not owned by requester');
+      return conversation;
+    },
+  };
+}
+
+export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): ControlRuntime {
+  const agentRuntime = overrides.llm
+    && overrides.validator
+    && overrides.skillLoader
+    && overrides.tools
+    ? undefined
+    : buildRuntime();
+  const repository = overrides.repository ?? new ControlPlaneRepository(pool);
+  const llm = overrides.llm ?? agentRuntime!.deps.llm;
+  const validator = overrides.validator ?? agentRuntime!.deps.validator;
+  const skillLoader = overrides.skillLoader ?? agentRuntime!.deps.skillLoader;
+  let tools = overrides.tools;
+  if (!tools) {
+    const adapter = agentRuntime!.deps.toolAdapter;
+    if (!(adapter instanceof ToolRouter)) throw new Error('control runtime requires a ToolRouter');
+    tools = adapter;
+  }
+  const artifacts = overrides.artifacts ?? new ControlArtifactStore({
+    root: join(process.env.RUN_WORKSPACE_ROOT ?? './run-workspaces', 'current-control'),
+    registry: repository,
+  });
+  const expectedActualModel = overrides.expectedActualModel
+    ?? (overrides.llm
+      ? llm.identity.requestedModel
+      : process.env.LLM_EXPECTED_ACTUAL_MODEL?.trim());
+  if (!expectedActualModel) {
+    throw new Error('LLM_EXPECTED_ACTUAL_MODEL is required for the production control runtime');
+  }
+  // planning 与 deliverable 的 LLM 都经 ReceiptLLMClient 包装:逐次记录模型调用回执,
+  // actual≠expected(drift)或回执写库失败时 fail-closed。planning receipt 锚定 actual model pin。
+  const planning = overrides.planning ?? new ResearchPlanningService({
+    llm: new ReceiptLLMClient(llm, repository),
+    validator,
+    skillLoader,
+    expectedActualModel,
+  });
+  const controlPlanning = new ControlPlanningService({
+    planning,
+    repository,
+    conversations: overrides.conversations ?? defaultConversations(),
+  });
+  const evidence = new EvidenceService();
+  const reportValidator: ReportEvidenceValidator = new ReportEvidenceValidator(evidence);
+  const deliverables = new CurrentDeliverableService({
+    llm: new ReceiptLLMClient(llm, repository),
+    validator,
+    evidence,
+    artifacts,
+  });
+  const engine = new LeaseExecutionEngine({
+    repository,
+    artifacts,
+    tools,
+    llm,
+    skillLoader,
+    validator,
+    heartbeatMs: 30_000,
+    deliverables,
+  });
+  const workflow = new TaskWorkflowService(repository, {
+    execute: ({ lease }) => engine.execute({
+      lease,
+      expectedModel: expectedActualModel,
+    }),
+  });
+
+  return {
+    controlPlanning,
+    workflow,
+    repository,
+    artifacts,
+    async getDeliverable(taskId, ownerUserId) {
+      const task = await repository.getTaskDetail(taskId);
+      if (
+        !task
+        || task.ownerUserId !== ownerUserId
+        || task.conversationOwnerUserId !== ownerUserId
+        || (task.state !== 'completed' && task.state !== 'completed_with_gaps')
+        || !task.currentAttemptId
+      ) {
+        return null;
+      }
+      const artifact = await repository.findSealedArtifact({
+        taskId: task.id,
+        attemptId: task.currentAttemptId,
+        kind: 'deliverable',
+      });
+      if (!artifact) return null;
+      const verified = await artifacts.readVerifiedJson<unknown>(artifact.id);
+      if (
+        verified.artifact.kind !== 'deliverable'
+        || verified.artifact.taskId !== task.id
+        || verified.artifact.attemptId !== task.currentAttemptId
+        || verified.artifact.planVersionId !== task.activePlanVersionId
+      ) {
+        throw new Error('sealed deliverable binding is invalid');
+      }
+      const deliverable = verified.value !== null
+        && typeof verified.value === 'object'
+        && !Array.isArray(verified.value)
+        ? verified.value as Record<string, unknown>
+        : null;
+      if (!deliverable || typeof deliverable.evidenceManifestArtifactId !== 'string') {
+        throw new Error('sealed deliverable is missing its evidence manifest reference');
+      }
+      const manifestArtifact = await artifacts.readVerifiedJson<unknown>(
+        deliverable.evidenceManifestArtifactId,
+      );
+      if (
+        manifestArtifact.artifact.kind !== 'evidence_manifest'
+        || manifestArtifact.artifact.taskId !== task.id
+        || manifestArtifact.artifact.attemptId !== task.currentAttemptId
+        || manifestArtifact.artifact.planVersionId !== task.activePlanVersionId
+        || manifestArtifact.value === null
+        || typeof manifestArtifact.value !== 'object'
+        || Array.isArray(manifestArtifact.value)
+      ) {
+        throw new Error('sealed evidence manifest binding is invalid');
+      }
+      const manifestRecord = manifestArtifact.value as Record<string, unknown>;
+      if (
+        manifestRecord.taskId !== task.id
+        || manifestRecord.planVersionId !== task.activePlanVersionId
+        || manifestRecord.attemptId !== task.currentAttemptId
+        || !Array.isArray(manifestRecord.entries)
+      ) {
+        throw new Error('sealed evidence manifest identity is invalid');
+      }
+      const resolvedArtifacts = new Map<string, ResolvedEvidenceArtifact>();
+      await Promise.all(manifestRecord.entries.map(async (candidate) => {
+        if (
+          candidate === null
+          || typeof candidate !== 'object'
+          || Array.isArray(candidate)
+          || !('artifactId' in candidate)
+          || typeof candidate.artifactId !== 'string'
+        ) {
+          throw new Error('sealed evidence manifest entry is invalid');
+        }
+        const resolved = await artifacts.readVerifiedJson<unknown>(candidate.artifactId);
+        if (
+          !resolved.artifact.contentSha256
+          || resolved.artifact.taskId !== task.id
+          || resolved.artifact.attemptId !== task.currentAttemptId
+          || resolved.artifact.planVersionId !== task.activePlanVersionId
+        ) {
+          throw new Error('referenced evidence Artifact binding is invalid');
+        }
+        resolvedArtifacts.set(resolved.artifact.id, {
+          artifact: {
+            id: resolved.artifact.id,
+            contentSha256: resolved.artifact.contentSha256,
+          },
+          value: resolved.value,
+        });
+      }));
+      const resolver: EvidenceArtifactResolver = {
+        resolveArtifact: (artifactId) => resolvedArtifacts.get(artifactId) ?? null,
+      };
+      const manifest = manifestArtifact.value as EvidenceManifest;
+      evidence.validateManifest(manifest, resolver);
+      reportValidator.validate({ manifest, report: deliverable, resolver });
+      return {
+        deliverable,
+        evidenceManifest: manifest,
+      };
+    },
+  };
+}

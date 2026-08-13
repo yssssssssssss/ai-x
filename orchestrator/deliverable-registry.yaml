@@ -1,0 +1,6 @@
+version: 1
+deliverables:
+  - id: research_plan
+    status: active
+    envelope_version: research-deliverable-v1
+    payload_schema: schemas/deliverables/research-plan.schema.json

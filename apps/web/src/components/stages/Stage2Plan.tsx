@@ -7,9 +7,13 @@ import { Header } from './Stage1Understand.tsx';
 export function Stage2Plan({
   plan, locked, onConfirm,
 }: {
-  plan: PlanResponse; locked: boolean; onConfirm: (uploads: Upload[]) => void;
+  plan: PlanResponse;
+  locked: boolean;
+  onConfirm: (confirmationAnswers: Record<string, unknown>, uploads: Upload[]) => void;
 }) {
+  const confirmations = confirmationRequirements(plan.task.confirmations);
   const [assumptions, setAssumptions] = useState(plan.task.assumptions);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
   const [confirmed, setConfirmed] = useState(false);
   const [images, setImages] = useState<Record<string, string>>({}); // role → dataUrl
 
@@ -24,14 +28,16 @@ export function Stage2Plan({
   }
 
   function confirm() {
+    if (missingAnswers.length > 0) return;
     const uploads: Upload[] = pending
       .map((pu) => ({ role: pu.role, dataUrl: images[pu.role] }))
       .filter((u): u is Upload => !!u.dataUrl);
     setConfirmed(true);
-    onConfirm(uploads);
+    onConfirm(answers, uploads);
   }
 
   const pending = plan.pendingUploads ?? [];
+  const missingAnswers = confirmations.filter(({ key }) => !answers[key]?.trim());
 
   return (
     <section className="stage-card">
@@ -59,6 +65,35 @@ export function Stage2Plan({
         ))}
       </div>
 
+      {confirmations.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 8 }}>确认项（必须由你明确回答）</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {confirmations.map((confirmation) => (
+              <label key={confirmation.key} style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 13 }}>
+                <span>{confirmation.question ?? confirmation.key}</span>
+                {confirmation.suggestion !== undefined && (
+                  <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>
+                    建议（不会自动采用）：{formatSuggestion(confirmation.suggestion)}
+                  </span>
+                )}
+                <input
+                  required
+                  disabled={locked || confirmed}
+                  value={answers[confirmation.key] ?? ''}
+                  onChange={(event) => setAnswers((previous) => ({
+                    ...previous,
+                    [confirmation.key]: event.target.value,
+                  }))}
+                  placeholder="请输入你的明确回答"
+                  style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', padding: '7px 9px', fontSize: 13 }}
+                />
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
       {pending.length > 0 && !locked && (
         <div style={{ marginTop: 16 }}>
           <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待上传图片(同一张图会自动用于所有需要它的步骤;不传将跳过该项)</div>
@@ -83,10 +118,15 @@ export function Stage2Plan({
       )}
 
       {!locked && !confirmed && (
-        <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
-          <button className="btn-primary" onClick={confirm}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8, marginTop: 18 }}>
+          <button className="btn-primary" onClick={confirm} disabled={missingAnswers.length > 0}>
             ✓ 确认计划,开始执行
           </button>
+          {missingAnswers.length > 0 && (
+            <span role="alert" style={{ color: 'var(--warn)', fontSize: 12 }}>
+              请先回答全部确认项：{missingAnswers.map(({ question, key }) => question ?? key).join('、')}
+            </span>
+          )}
         </div>
       )}
       {(locked || confirmed) && (
@@ -94,6 +134,31 @@ export function Stage2Plan({
       )}
     </section>
   );
+}
+
+interface ConfirmationRequirement {
+  key: string;
+  question?: string;
+  suggestion?: unknown;
+}
+
+function confirmationRequirements(values: unknown[]): ConfirmationRequirement[] {
+  return values.flatMap((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+    const candidate = value as { key?: unknown; question?: unknown; suggestion?: unknown };
+    if (typeof candidate.key !== 'string' || candidate.key.trim() === '') return [];
+    return [{
+      key: candidate.key,
+      question: typeof candidate.question === 'string' ? candidate.question : undefined,
+      suggestion: candidate.suggestion,
+    }];
+  });
+}
+
+function formatSuggestion(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value === null || typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return JSON.stringify(value) ?? String(value);
 }
 
 function StepRow({ step }: { step: PlanStep }) {

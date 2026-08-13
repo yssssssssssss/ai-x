@@ -1,19 +1,14 @@
 import { AgentRuntime, buildRuntime } from './runtime/agent-runtime.ts';
-import { hashPrompt } from './runtime/llm-client.ts';
 import { RunWorkspace } from './run-workspace.ts';
-import { parseDirectInvoke } from './runtime/direct-invoke.ts';
 import {
   loadToolManifest,
   hashFile,
   CONFIG_PATHS,
 } from './runtime/config-loader.ts';
 import type {
-  GuidanceRef,
-  ResearchTaskData,
   PendingUpload,
   PlanCandidate,
   PlanResult,
-  PlanPhaseKey,
   PlanProgress,
   SelectResult,
   PlanStep,
@@ -24,10 +19,8 @@ import { ToolActorRunner } from './runners/tool-runner.ts';
 import { SkillActorRunner } from './runners/skill-runner.ts';
 import { LlmActorRunner } from './runners/llm-runner.ts';
 import { ReviewerActorRunner } from './runners/reviewer-runner.ts';
-import type { PlanStrategy, PlanProvenance } from './planners/plan-strategy.ts';
+import { ResearchPlanningService } from './planners/research-planning-service.ts';
 import { sanitizeCandidateToPlan } from './planners/plan-sanitizer.ts';
-import { DirectPlanner } from './planners/direct-planner.ts';
-import { RoutedPlanner } from './planners/routed-planner.ts';
 import { ToolRouter } from './runtime/tool-adapter.ts';
 
 // 对外契约集中在 plan-types.ts,这里 re-export 让老 import 路径继续可用。
@@ -61,8 +54,7 @@ export class LegacyRealExecutionBlockedError extends Error {
 
 export class Orchestrator {
   private readonly runners: Record<PlanStep['actor_type'], ActorRunner>;
-  private readonly directPlanner: PlanStrategy;
-  private readonly routedPlanner: PlanStrategy;
+  private readonly planningService: ResearchPlanningService;
 
   constructor(private readonly rt: AgentRuntime) {
     const { llm, validator, skillLoader, toolAdapter } = rt.deps;
@@ -72,10 +64,7 @@ export class Orchestrator {
       llm: new LlmActorRunner(llm),
       reviewer: new ReviewerActorRunner(llm),
     };
-    // 两策略构造期 new 并存为字段,deps 注入 —— 与 runners(构造期 new、运行时分派)对称(D4)。
-    const plannerDeps = { llm, validator, skillLoader };
-    this.directPlanner = new DirectPlanner(plannerDeps);
-    this.routedPlanner = new RoutedPlanner(plannerDeps);
+    this.planningService = new ResearchPlanningService({ llm, validator, skillLoader });
   }
 
   // ---- 段1 + 段2:理解 → 计划 → 停(HITL 闸门,不执行)----
@@ -85,54 +74,21 @@ export class Orchestrator {
     conversationId: string;
     ownerUserId: string;
   }, onProgress?: (ev: PlanProgress) => void): Promise<PlanResult> {
-    const { llm, validator, checkpointStore, skillLoader } = this.rt.deps;
+    const { checkpointStore } = this.rt.deps;
     const emit = onProgress ?? (() => {});
-
-    // $ 直呼:命中则跳过引导循环 + 路由 LLM,确定性产出单步 skill 计划(仍走确认闸门)。
-    // 对"参数文字"(rest)做任务理解,无参数时退回 skillName;非直呼时理解原始输入。
-    const direct = parseDirectInvoke(input.originalInput);
-    const understandInput = direct ? (direct.rest || direct.skillName) : input.originalInput;
-
-    // 段1 任务理解:一句话 → ResearchTask,过 schema
-    // task_type 判定带语义引导 + 反"默认竞品"偏置(此前设计走查易被误判为 competitive_research)。
-    emit({ phase: 'understand', status: 'start', label: '理解任务需求' });
-    const taskGen = await llm.generateStructured<ResearchTaskData>({
-      prompt:
-        `把用户需求结构化为 ResearchTask。\n` +
-        `【task_type 按"用户想做什么"选最贴切的一个,不要默认竞品】:\n` +
-        `- design_audit:对已有设计稿/页面/界面做走查·评估·审查(美学/视觉/注意力/品牌一致性/可用性)。信号:"走查/评估设计稿/看这个页面/UI 审查/视觉评估"。\n` +
-        `- competitive_research:分析对标竞品、比较各家能力差异。信号:"竞品/对标/各家/横评/差异化"。\n` +
-        `- user_research_planning:规划一次用户研究(找谁/用什么方法/问什么)。信号:"规划研究/研究方案/怎么调研/招募"。\n` +
-        `- voc_diagnosis:分析用户反馈/评论/舆情。信号:"用户之声/差评/反馈/VOC"。\n` +
-        `- a11y_audit:无障碍/可访问性审查。\n` +
-        `【硬规则】用户明确说"不做竞品/对设计稿评估"时绝不选 competitive_research;有设计稿评估诉求优先 design_audit。\n` +
-        `【缺失信息三级】可假设→assumptions(给默认值);需用户确认→confirmations;涉敏感/合规/授权→blocking_issues。\n` +
-        `用户需求:${understandInput}`,
-      schema: {},
-      schemaName: 'research-task',
-      context: { input: understandInput },
-      receipt: { stage: 'task_understanding', contextManifestHash: hashPrompt('', { input: understandInput }), expectedModel: llm.identity.requestedModel },
-    });
-    validator.validateOrThrow('research-task', taskGen.data);
-    const task = taskGen.data;
-    emit({ phase: 'understand', status: 'done', label: '理解任务需求', detail: `${task.task_type} · ${task.business_domain}` });
-
-    // 选策略并执行:direct($ 直呼)走 DirectPlanner,否则 RoutedPlanner —— 与 runners 运行时分派对称(D4)。
-    // 两路统一产出 PlanArtifacts(activated/decisionStates/candidates/planProvenance/guidanceSources),
-    // candidate 形状与 provenance 兜底由类型强制对齐,漂移在 tsc 阶段即炸。
-    const taskProvenance: PlanProvenance = {
-      modelName: taskGen.modelName, modelVersion: taskGen.modelVersion,
-      promptHash: taskGen.promptHash, traceId: taskGen.traceId,
-    };
-    const strategy = direct ? this.directPlanner : this.routedPlanner;
-    const { activated, decisionStates, candidates, planProvenance, guidanceSources } =
-      await strategy.plan({ task, direct, taskProvenance, emit });
+    const {
+      task,
+      activatedNodes,
+      decisionStates,
+      candidates,
+      guidanceSources,
+      provenance,
+    } = await this.planningService.plan({ originalInput: input.originalInput }, onProgress);
 
     const graphHash = hashFile(CONFIG_PATHS.decisionGraph);
 
     // 落库:研究任务
     emit({ phase: 'persist', status: 'start', label: '归档计划' });
-    const workspace = new RunWorkspace('__pending__');
     const taskRow = await checkpointStore.createTask({
       conversationId: input.conversationId,
       ownerUserId: input.ownerUserId,
@@ -165,30 +121,41 @@ export class Orchestrator {
       });
     }
     ws.writeDecisionStates(decisionStates);
+    const loadedSources: Array<{ type: string; ref: string; hash?: string }> = [
+      { type: 'research_task', ref: `research_tasks.${taskRow.id}` },
+      { type: 'registry', ref: 'orchestrator/skill-registry.yaml', hash: hashFile(CONFIG_PATHS.skillRegistry) },
+      { type: 'decision_graph', ref: 'orchestrator/decision-graph.yaml', hash: graphHash },
+      ...guidanceSources.map((source) => ({
+        type: 'knowledge',
+        ref: source.source_path,
+        hash: source.content_hash,
+      })),
+    ];
+    const sourceKeys = new Set<string>();
+
     ws.writeContextManifest({
       run_id: taskRow.id,
       stage: 'planning',
-      loaded_sources: [
-        { type: 'research_task', ref: `research_tasks.${taskRow.id}` },
-        { type: 'registry', ref: 'orchestrator/skill-registry.yaml', hash: hashFile(CONFIG_PATHS.skillRegistry) },
-        { type: 'decision_graph', ref: 'orchestrator/decision-graph.yaml', hash: graphHash },
-        ...guidanceSources,
-      ],
-      model_name: planProvenance.modelName,
-      model_version: planProvenance.modelVersion,
-      prompt_hash: planProvenance.promptHash,
-      trace_id: planProvenance.traceId,
+      loaded_sources: loadedSources.filter((source) => {
+        const key = JSON.stringify([source.ref, source.hash]);
+        if (sourceKeys.has(key)) return false;
+        sourceKeys.add(key);
+        return true;
+      }),
+      model_name: provenance.modelName,
+      model_version: provenance.modelVersion,
+      prompt_hash: provenance.promptHash,
+      trace_id: provenance.traceId,
     });
 
     // 更新状态:候选已生成,等用户选一份
     await checkpointStore.updateTaskStatus(taskRow.id, 'planned', 'awaiting_selection');
     emit({ phase: 'persist', status: 'done', label: '归档计划', detail: '候选已就绪' });
 
-    void workspace; // 占位变量清理
     return {
       taskId: taskRow.id,
       task,
-      activatedNodes: activated.map((n) => n.key),
+      activatedNodes,
       candidates,
       workspaceUri: ws.uri,
     };

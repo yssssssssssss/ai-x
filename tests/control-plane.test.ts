@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -13,12 +13,51 @@ import {
   ArtifactNotSealedError,
   ControlPlaneConflictError,
   ControlPlaneRepository,
+  canonicalPlanHash,
+  type ControlPlanVersionDetail,
+  type ControlTask,
 } from '../database/control-plane.ts';
 import {
   runMigrations,
   type MigrationConnection,
   type MigrationDatabase,
 } from '../database/migration-runner.ts';
+
+type CandidatePersistenceRepository = ControlPlaneRepository & {
+  createTaskWithCandidates(input: {
+    conversationId: string;
+    ownerUserId: string;
+    originalInput: string;
+    taskType: string | null;
+    structuredTask: unknown;
+    candidates: Array<{
+      candidateId: string;
+      plan: unknown;
+      pendingInputs: unknown[];
+    }>;
+  }): Promise<{
+    task: ControlTask;
+    candidates: ControlPlanVersionDetail[];
+  }>;
+};
+
+type LeaseBoundArtifactRepository = ControlPlaneRepository & {
+  sealArtifact(input: {
+    artifactId: string;
+    contentSha256: string;
+    byteSize: number;
+    taskId: string;
+    planVersionId: string;
+    attemptId: string;
+    leaseOwner: string;
+    leaseToken: string;
+  }): Promise<{ state: string }>;
+};
+
+function assertPlanTaskId(plan: unknown, expectedTaskId: string): void {
+  assert.ok(plan !== null && typeof plan === 'object' && 'task_id' in plan);
+  assert.equal(plan.task_id, expectedTaskId);
+}
 
 class ScopedMigrationDatabase implements MigrationDatabase {
   constructor(
@@ -95,6 +134,257 @@ test('keeps legacy schema available while creating the isolated control plane sc
     assert.equal(tables.rows[0]?.control_tasks, 'control_tasks');
   } finally {
     connection.release();
+  }
+});
+
+test('persists a Current task and its depth/speed candidates without activating either plan', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const candidateRepository = repository as unknown as CandidatePersistenceRepository;
+  const depthPlan = {
+    task_id: 'provisional-depth-task',
+    title: 'Depth plan',
+    steps: [{ step_no: 1, step_name: 'deep research' }],
+  };
+  const speedPlan = {
+    task_id: 'provisional-speed-task',
+    title: 'Speed plan',
+    steps: [{ step_no: 1, step_name: 'fast research' }],
+  };
+
+  const created = await candidateRepository.createTaskWithCandidates({
+    conversationId,
+    ownerUserId: ownerId,
+    originalInput: 'Current planning persistence',
+    taskType: 'competitive_research',
+    structuredTask: { research_goal: 'persist server candidates' },
+    candidates: [
+      {
+        candidateId: 'depth',
+        plan: depthPlan,
+        pendingInputs: [{ role: 'brief' }],
+      },
+      {
+        candidateId: 'speed',
+        plan: speedPlan,
+        pendingInputs: [],
+      },
+    ],
+  });
+
+  assert.equal(created.task.state, 'awaiting_selection');
+  assert.equal(created.task.activePlanVersionId, null);
+  assert.deepEqual(
+    created.candidates.map((candidate) => ({
+      taskId: candidate.taskId,
+      version: candidate.version,
+      candidateId: candidate.candidateId,
+    })),
+    [
+      {
+        taskId: created.task.id,
+        version: 1,
+        candidateId: 'depth',
+      },
+      {
+        taskId: created.task.id,
+        version: 2,
+        candidateId: 'speed',
+      },
+    ],
+  );
+  const depthCandidate = created.candidates[0]!;
+  const speedCandidate = created.candidates[1]!;
+  assertPlanTaskId(depthCandidate.plan, created.task.id);
+  assertPlanTaskId(speedCandidate.plan, created.task.id);
+  assert.match(depthCandidate.planHash, /^sha256:[0-9a-f]{64}$/);
+  assert.match(speedCandidate.planHash, /^sha256:[0-9a-f]{64}$/);
+  assert.notEqual(depthCandidate.planHash, speedCandidate.planHash);
+
+  const persistedDepth = await repository.getPlanVersionDetail(depthCandidate.id);
+  const persistedSpeed = await repository.getPlanVersionDetail(speedCandidate.id);
+  assert.ok(persistedDepth);
+  assert.ok(persistedSpeed);
+  assertPlanTaskId(persistedDepth.plan, created.task.id);
+  assertPlanTaskId(persistedSpeed.plan, created.task.id);
+  assert.deepEqual(persistedDepth, depthCandidate);
+  assert.deepEqual(persistedSpeed, speedCandidate);
+});
+
+test('hashes semantically identical plans independently of object key insertion order', () => {
+  const taskId = randomUUID();
+  const depthHash = canonicalPlanHash({
+    task_id: taskId,
+    title: 'Canonical plan',
+    steps: [{ step_no: 1, step_name: 'research' }],
+  });
+  const speedHash = canonicalPlanHash({
+    steps: [{ step_name: 'research', step_no: 1 }],
+    title: 'Canonical plan',
+    task_id: taskId,
+  });
+
+  assert.match(depthHash, /^sha256:[0-9a-f]{64}$/);
+  assert.equal(speedHash, depthHash);
+});
+
+test('atomically rejects duplicate canonical candidate plans', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const candidateRepository = repository as unknown as CandidatePersistenceRepository;
+  const connection = await scopedDatabase.connect();
+  const before = await connection.query(
+    `SELECT (SELECT count(*) FROM control_tasks) AS tasks,
+            (SELECT count(*) FROM control_plan_versions) AS plans`,
+  );
+  connection.release();
+
+  await assert.rejects(
+    () => candidateRepository.createTaskWithCandidates({
+      conversationId,
+      ownerUserId: ownerId,
+      originalInput: 'Reject duplicate canonical candidates',
+      taskType: 'competitive_research',
+      structuredTask: { research_goal: 'stable plan hashes' },
+      candidates: [
+        {
+          candidateId: 'depth',
+          plan: {
+            task_id: 'provisional-canonical-depth',
+            title: 'Canonical plan',
+            steps: [{ step_no: 1, step_name: 'research' }],
+          },
+          pendingInputs: [],
+        },
+        {
+          candidateId: 'speed',
+          plan: {
+            steps: [{ step_name: 'research', step_no: 1 }],
+            title: 'Canonical plan',
+            task_id: 'provisional-canonical-speed',
+          },
+          pendingInputs: [],
+        },
+      ],
+    }),
+    ControlPlaneConflictError,
+  );
+
+  const verificationConnection = await scopedDatabase.connect();
+  try {
+    const after = await verificationConnection.query(
+      `SELECT (SELECT count(*) FROM control_tasks) AS tasks,
+              (SELECT count(*) FROM control_plan_versions) AS plans`,
+    );
+    assert.deepEqual(after.rows[0], before.rows[0]);
+  } finally {
+    verificationConnection.release();
+  }
+});
+
+test('atomically rejects duplicate candidate IDs even when plans differ', async () => {
+  const candidateRepository = new ControlPlaneRepository(scopedDatabase) as unknown as CandidatePersistenceRepository;
+  const connection = await scopedDatabase.connect();
+  const before = await connection.query(
+    `SELECT (SELECT count(*) FROM control_tasks) AS tasks,
+            (SELECT count(*) FROM control_plan_versions) AS plans`,
+  );
+  connection.release();
+
+  await assert.rejects(
+    () => candidateRepository.createTaskWithCandidates({
+      conversationId,
+      ownerUserId: ownerId,
+      originalInput: 'Reject duplicate candidate IDs',
+      taskType: 'competitive_research',
+      structuredTask: { research_goal: 'distinct candidate IDs' },
+      candidates: [
+        {
+          candidateId: 'depth',
+          plan: { task_id: 'provisional-depth-a', steps: [{ step_no: 1, step_name: 'first' }] },
+          pendingInputs: [],
+        },
+        {
+          candidateId: 'depth',
+          plan: { task_id: 'provisional-depth-b', steps: [{ step_no: 1, step_name: 'second' }] },
+          pendingInputs: [],
+        },
+      ],
+    }),
+    ControlPlaneConflictError,
+  );
+
+  const verificationConnection = await scopedDatabase.connect();
+  try {
+    const after = await verificationConnection.query(
+      `SELECT (SELECT count(*) FROM control_tasks) AS tasks,
+              (SELECT count(*) FROM control_plan_versions) AS plans`,
+    );
+    assert.deepEqual(after.rows[0], before.rows[0]);
+  } finally {
+    verificationConnection.release();
+  }
+});
+
+test('atomically rejects candidate persistence when the conversation belongs to another owner', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const candidateRepository = repository as unknown as CandidatePersistenceRepository;
+  const connection = await scopedDatabase.connect();
+  let foreignConversationId = '';
+  let countsBefore: Record<string, unknown> = {};
+  try {
+    const foreignOwner = await connection.query(
+      `INSERT INTO users (email, display_name, password_hash, role)
+       VALUES ($1, 'foreign owner', 'x', 'member')
+       RETURNING id`,
+      [`control-foreign-${randomUUID()}@test.local`],
+    );
+    const foreignConversation = await connection.query(
+      `INSERT INTO conversations (owner_user_id, title)
+       VALUES ($1, 'foreign control conversation')
+       RETURNING id`,
+      [String(foreignOwner.rows[0]?.id)],
+    );
+    foreignConversationId = String(foreignConversation.rows[0]?.id);
+    const counts = await connection.query(
+      `SELECT (SELECT count(*) FROM control_tasks) AS tasks,
+              (SELECT count(*) FROM control_plan_versions) AS plans`,
+    );
+    countsBefore = counts.rows[0] ?? {};
+  } finally {
+    connection.release();
+  }
+
+  await assert.rejects(
+    () => candidateRepository.createTaskWithCandidates({
+      conversationId: foreignConversationId,
+      ownerUserId: ownerId,
+      originalInput: 'must roll back',
+      taskType: 'competitive_research',
+      structuredTask: { research_goal: 'reject foreign conversation' },
+      candidates: [
+        {
+          candidateId: 'depth',
+          plan: { task_id: 'provisional-foreign-depth', steps: [] },
+          pendingInputs: [],
+        },
+        {
+          candidateId: 'speed',
+          plan: { task_id: 'provisional-foreign-speed', steps: [] },
+          pendingInputs: [],
+        },
+      ],
+    }),
+    ControlPlaneConflictError,
+  );
+
+  const verificationConnection = await scopedDatabase.connect();
+  try {
+    const countsAfter = await verificationConnection.query(
+      `SELECT (SELECT count(*) FROM control_tasks) AS tasks,
+              (SELECT count(*) FROM control_plan_versions) AS plans`,
+    );
+    assert.deepEqual(countsAfter.rows[0], countsBefore);
+  } finally {
+    verificationConnection.release();
   }
 });
 
@@ -342,6 +632,10 @@ test('seals versioned attempt artifacts and rejects staged or tampered artifacts
     leaseTokenHash: 'sha256:artifact-lease',
   });
   const store = new ControlArtifactStore({ root: workspaceRoot, registry: repository });
+  const verifiedStore = store as unknown as {
+    readVerifiedJson<T>(artifactId: string): Promise<{ artifact: { id: string }; value: T }>;
+  };
+  const contextValue = { task: task.id };
 
   const sealed = await store.writeJson({
     taskId: task.id,
@@ -349,7 +643,7 @@ test('seals versioned attempt artifacts and rejects staged or tampered artifacts
     attemptId: claim.attemptId,
     kind: 'context_manifest',
     relativePath: 'context/context-manifest.json',
-    value: { task: task.id },
+    value: contextValue,
   });
   const planArtifact = await store.writeJson({
     taskId: task.id,
@@ -363,6 +657,9 @@ test('seals versioned attempt artifacts and rejects staged or tampered artifacts
   assert.ok(existsSync(sealed.storageUri));
   assert.match(sealed.storageUri, new RegExp(`tasks/${task.id}/attempts/${claim.attemptId}/context`));
   assert.equal((await repository.requireSealedArtifact(sealed.id)).id, sealed.id);
+  const verified = await verifiedStore.readVerifiedJson<typeof contextValue>(sealed.id);
+  assert.equal(verified.artifact.id, sealed.id);
+  assert.deepEqual(verified.value, contextValue);
 
   const staged = await repository.createStagingArtifact({
     taskId: task.id,
@@ -374,12 +671,82 @@ test('seals versioned attempt artifacts and rejects staged or tampered artifacts
     sensitivity: 'internal',
     redactionPolicyVersion: 'v1',
   });
+  await assert.rejects(
+    () => verifiedStore.readVerifiedJson(staged.id),
+    ArtifactNotSealedError,
+  );
   await assert.rejects(() => repository.requireSealedArtifact(staged.id), ArtifactNotSealedError);
   await store.reconcileStaging();
   assert.equal((await repository.getArtifact(staged.id))?.state, 'FAILED');
+  await assert.rejects(
+    () => verifiedStore.readVerifiedJson(staged.id),
+    ArtifactNotSealedError,
+  );
 
   writeFileSync(sealed.storageUri, '{"tampered":true}');
+  await assert.rejects(
+    () => verifiedStore.readVerifiedJson(sealed.id),
+    ArtifactIntegrityError,
+  );
   await assert.rejects(() => store.verifySealed(sealed.id), ArtifactIntegrityError);
+});
+
+test('atomically refuses to seal a terminal artifact after its execution lease expires', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const task = await repository.createTask({
+    conversationId,
+    ownerUserId: ownerId,
+    originalInput: 'terminal artifact lease 测试',
+    taskType: 'competitive_research',
+    structuredTask: { research_goal: '验证 terminal artifact lease' },
+    state: 'ready',
+  });
+  const plan = await repository.createPlanVersion({
+    taskId: task.id,
+    version: 1,
+    plan: { steps: [] },
+    planHash: `sha256:${randomUUID()}`,
+  });
+  const leaseToken = randomUUID();
+  const leaseOwner = 'terminal-artifact-worker';
+  const claim = await repository.claimExecution({
+    taskId: task.id,
+    planVersionId: plan.id,
+    expectedVersion: task.stateVersion,
+    idempotencyKey: randomUUID(),
+    requestHash: `sha256:${randomUUID()}`,
+    leaseOwner,
+    leaseTokenHash: `sha256:${createHash('sha256').update(leaseToken).digest('hex')}`,
+    leaseExpiresAt: new Date(Date.now() - 1_000),
+  });
+  const staged = await repository.createStagingArtifact({
+    taskId: task.id,
+    planVersionId: plan.id,
+    attemptId: claim.attemptId,
+    kind: 'deliverable',
+    storageUri: join(workspaceRoot, `${claim.attemptId}-terminal.json`),
+    schemaVersion: 'research-deliverable-v1',
+    sensitivity: 'internal',
+    redactionPolicyVersion: 'v1',
+  });
+  await repository.expireExecutionLease({ taskId: task.id, attemptId: claim.attemptId });
+
+  const leaseBound = repository as LeaseBoundArtifactRepository;
+  await assert.rejects(
+    () => leaseBound.sealArtifact({
+      artifactId: staged.id,
+      contentSha256: `sha256:${'a'.repeat(64)}`,
+      byteSize: 2,
+      taskId: task.id,
+      planVersionId: plan.id,
+      attemptId: claim.attemptId,
+      leaseOwner,
+      leaseToken,
+    }),
+    ControlPlaneConflictError,
+  );
+  assert.equal((await repository.getArtifact(staged.id))?.state, 'FAILED');
+  assert.equal((await repository.getTaskDetail(task.id))?.state, 'paused');
 });
 
 test('refuses to overwrite an already sealed artifact path', async () => {

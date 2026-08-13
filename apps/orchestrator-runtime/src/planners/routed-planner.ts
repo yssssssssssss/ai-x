@@ -54,9 +54,7 @@ export class RoutedPlanner implements PlanStrategy {
 
     // 引导召回:按激活节点的 related_tags 从知识库取方法论,喂给下面两个 LLM 调用作正典依据。
     const guidance = retrieveGuidance(activated);
-    const guidanceSources = guidance
-      .filter((g, i, arr) => arr.findIndex((x) => x.id === g.id) === i) // 按 id 去重
-      .map((g) => ({ type: 'knowledge' as const, ref: g.source_path, hash: g.content_hash }));
+    const guidanceSources = guidance;
     emit({ phase: 'guidance', status: 'done', label: '召回方法论知识', detail: `${guidanceSources.length} 条方法卡片` });
 
     // 段2b 决策状态判定:LLM 对激活节点逐一判 6 态,过 schema
@@ -71,7 +69,7 @@ export class RoutedPlanner implements PlanStrategy {
       receipt: {
         stage: 'planning_decision',
         contextManifestHash: hashPrompt('', { activated: activated.map((n) => n.key), task, guidance }),
-        expectedModel: llm.identity.requestedModel,
+        expectedModel: this.deps.expectedActualModel ?? llm.identity.requestedModel,
       },
     });
     // 只保留本次实际激活的节点状态(防 fixture 含多余节点)
@@ -120,7 +118,7 @@ export class RoutedPlanner implements PlanStrategy {
       receipt: {
         stage: 'planning',
         contextManifestHash: hashPrompt('', { task, skills: activeSkills, tools: toolCtx, guidance }),
-        expectedModel: llm.identity.requestedModel,
+        expectedModel: this.deps.expectedActualModel ?? llm.identity.requestedModel,
       },
     });
     // 严格取 2 份;LLM 极端情况下产出 0/1/3+ 时兜底(截取前 2 或补空报错)。

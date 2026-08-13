@@ -1,0 +1,9 @@
+version: 1
+policies:
+  - task_type: competitive_research
+    deliverable_type: research_plan
+    requirements:
+      - id: public-market-evidence
+        accepted_classes: [public_source]
+        minimum_count: 1
+        required: true

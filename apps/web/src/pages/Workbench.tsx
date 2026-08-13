@@ -8,6 +8,7 @@ import { Stage2Candidates } from '../components/stages/Stage2Candidates.tsx';
 import { Stage2Plan } from '../components/stages/Stage2Plan.tsx';
 import { Stage3Execute } from '../components/stages/Stage3Execute.tsx';
 import { Stage4Report } from '../components/stages/Stage4Report.tsx';
+import { CurrentStage4Report } from '../components/stages/CurrentStage4Report.tsx';
 import { Labs } from './Labs.tsx';
 
 type View = 'task' | 'labs' | 'history';
@@ -24,9 +25,28 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
   }, []);
   useEffect(refreshHistory, [refreshHistory]);
 
-  // 任务执行流(状态机 + 4 个 action)全部收进 useTaskFlow;执行成功后回调刷新历史。
-  const flow = useTaskFlow({ onExecuted: refreshHistory });
-  const { phase, candidatesResp, selectedCandidateId, plan, originalInput, exec, error, progress } = flow;
+  // 新任务走 Current 同页主链；侧栏历史仍仅刷新 Legacy 只读任务。
+  const flow = useTaskFlow();
+  const {
+    phase,
+    candidatesResp,
+    selectedCandidateId,
+    plan,
+    originalInput,
+    exec,
+    executionSteps,
+    deliverable,
+    reportState,
+    deliverableError,
+    error,
+    progress,
+  } = flow;
+  const executionPlanSteps: PlanStep[] = plan?.plan.steps ?? executionSteps.map((step) => ({
+    step_no: step.step_no,
+    step_name: step.step_name,
+    actor_type: step.actor_type as PlanStep['actor_type'],
+    actor_id: step.actor_id,
+  }));
 
   function newTask() {
     setView('task'); setDetail(null); setDetailError('');
@@ -71,7 +91,7 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
 
             {candidatesResp && (
               <>
-                <Stage1Understand task={candidatesResp.task} activatedNodes={candidatesResp.activatedNodes} />
+                <Stage1Understand task={candidatesResp.structuredTask} activatedNodes={candidatesResp.activatedNodes} />
                 {(phase === 'picking' || phase === 'selecting') && (
                   <>
                     {error && phase === 'picking' && <InlineError msg={error} />}
@@ -80,14 +100,14 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
                       onSelect={flow.pickCandidate}
                       selectedId={selectedCandidateId ?? undefined}
                       loading={phase === 'selecting'}
-                      readOnly
+                      readOnly={false}
                     />
                   </>
                 )}
               </>
             )}
 
-            {plan && phase !== 'picking' && phase !== 'selecting' && (
+            {plan && phase !== 'picking' && phase !== 'selecting' && phase !== 'awaiting-approval' && phase !== 'error' && (
               <Stage2Plan
                 plan={plan}
                 locked={phase !== 'planned'}
@@ -96,36 +116,44 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
             )}
 
             {phase === 'planning' && <PlanProgressCard steps={progress} />}
-            {phase === 'executing' && (
+            {phase === 'awaiting-approval' && <AwaitingApprovalNotice />}
+            {phase === 'executing' && <Loading text="执行中…报告合成较慢,请稍候" />}
+            {phase === 'paused' && exec && (
               <>
-                {plan && <Stage3Execute steps={plan.plan.steps} running />}
-                <Loading text="执行中…报告合成较慢,请稍候" />
-              </>
-            )}
-            {phase === 'paused' && exec && plan && (
-              <>
-                <Stage3Execute steps={plan.plan.steps} log={exec.executionLog} />
+                {executionPlanSteps.length > 0 && (
+                  <Stage3Execute steps={executionPlanSteps} log={executionSteps} />
+                )}
                 <FailureActionCard
-                  stepNo={exec.failedStepNo ?? undefined}
-                  stepName={exec.failedStepName ?? undefined}
-                  onSkip={() => flow.resumeStep('skip')}
+                  stepNo={exec.failedStepNo}
+                  stepName={executionPlanSteps.find((step) => step.step_no === exec.failedStepNo)?.step_name}
+                  failure={exec.failure}
+                  onRetry={() => flow.resumeStep('retry')}
                   onAbort={() => flow.resumeStep('abort')}
                 />
               </>
             )}
-            {phase === 'done' && exec && plan && (
+            {phase === 'done' && exec && (
               <>
-                <Stage3Execute steps={plan.plan.steps} log={exec.executionLog} />
-                {exec.status === 'completed_with_gaps' && <GapNotice count={exec.gapCount ?? 0} />}
-                {exec.status === 'failed'
-                  ? <AbortedNotice />
-                  : <Stage4Report report={exec.report} taskId={exec.taskId} />}
+                {executionPlanSteps.length > 0 && (
+                  <Stage3Execute steps={executionPlanSteps} log={executionSteps} />
+                )}
+                {error && <ErrorCard msg={error} />}
+                {exec.status === 'completed_with_gaps' && (
+                  <GapNotice count={exec.gapCount ?? executionSteps.filter((step) => step.status === 'skipped').length} />
+                )}
+                {reportState === 'loading' && <Loading text="正在读取研究报告…" />}
+                {reportState === 'report-loading-error' && (
+                  <ErrorCard msg={deliverableError} onRetry={flow.retryDeliverable} retryLabel="重取报告" />
+                )}
+                {deliverable && <CurrentStage4Report report={deliverable} />}
               </>
             )}
-            {phase === 'error' && <ErrorCard msg={error} onRetry={plan ? () => flow.confirmAndExecute() : undefined} />}
+            {phase === 'cancelled' && <AbortedNotice />}
+            {phase === 'error' && <ErrorCard msg={error} />}
+            {(candidatesResp || exec || deliverable) && <CurrentHistoryNotice />}
           </div>
         </div>
-        <Composer disabled={phase === 'planning' || phase === 'selecting' || phase === 'executing'} onSubmit={flow.submitInput} />
+        <Composer disabled={phase === 'planning' || phase === 'selecting' || phase === 'executing' || phase === 'awaiting-approval'} onSubmit={flow.submitInput} />
       </main>
       )}
     </div>
@@ -188,12 +216,20 @@ function Loading({ text }: { text: string }) {
   );
 }
 
-function ErrorCard({ msg, onRetry }: { msg: string; onRetry?: () => void }) {
+function ErrorCard({
+  msg,
+  onRetry,
+  retryLabel = '重试执行',
+}: {
+  msg: string;
+  onRetry?: () => void;
+  retryLabel?: string;
+}) {
   return (
     <div style={{ background: 'rgba(248,113,113,.08)', border: '1px solid rgba(248,113,113,.3)', borderRadius: 16, padding: 18, marginTop: 16 }}>
       <div style={{ color: 'var(--danger)', fontWeight: 600 }}>出错了</div>
       <div style={{ color: 'var(--text-dim)', fontSize: 13, margin: '6px 0' }}>{msg}</div>
-      {onRetry && <button className="btn-ghost" onClick={onRetry}>重试执行</button>}
+      {onRetry && <button className="btn-ghost" onClick={onRetry}>{retryLabel}</button>}
     </div>
   );
 }
@@ -252,39 +288,73 @@ function InlineError({ msg }: { msg: string }) {
   );
 }
 
-// 失败步操作卡(paused 态):停在失败步,给「跳过续跑 / 终止」。
-function FailureActionCard({ stepNo, stepName, onSkip, onAbort }: { stepNo?: number; stepName?: string; onSkip: () => void; onAbort: () => void }) {
+
+function FailureActionCard({
+  stepNo,
+  stepName,
+  failure,
+  onRetry,
+  onAbort,
+}: {
+  stepNo?: number;
+  stepName?: string;
+  failure?: Record<string, unknown>;
+  onRetry: () => void;
+  onAbort: () => void;
+}) {
   return (
-    <div style={{ background: 'rgba(251,191,36,.08)', border: '1px solid rgba(251,191,36,.3)', borderRadius: 16, padding: 18, marginTop: 16 }}>
+    <section style={{ background: 'rgba(251,191,36,.08)', border: '1px solid rgba(251,191,36,.3)', borderRadius: 16, padding: 18, marginTop: 16 }}>
       <div style={{ color: 'var(--warn)', fontWeight: 600 }}>
-        第 {stepNo ?? '?'} 步失败{stepName ? `:${stepName}` : ''}
+        第 {stepNo ?? '?'} 步失败{stepName ? `：${stepName}` : ''}
       </div>
-      <div style={{ color: 'var(--text-dim)', fontSize: 13, margin: '6px 0 12px' }}>
-        跳过该步会从下一步继续,缺失的数据会在报告中如实标注;终止则结束任务、不生成报告。
-      </div>
+      {failure && (
+        <pre style={{ whiteSpace: 'pre-wrap', color: 'var(--text-dim)', fontSize: 12, margin: '8px 0' }}>
+          {JSON.stringify(failure, null, 2)}
+        </pre>
+      )}
+      <p style={{ color: 'var(--text-dim)', fontSize: 13, margin: '6px 0 12px' }}>
+        重试会通过 Current resume 将任务恢复到 ready，再以同一 planVersionId 重新执行；终止不会生成交付物。
+      </p>
       <div style={{ display: 'flex', gap: 10 }}>
-        <button className="btn-primary" onClick={onSkip}>跳过该步,继续</button>
-        <button className="btn-ghost" onClick={onAbort}>终止任务</button>
+        <button type="button" className="btn-primary" onClick={onRetry}>重试失败执行</button>
+        <button type="button" className="btn-ghost" onClick={onAbort}>终止任务</button>
       </div>
-    </div>
+    </section>
   );
 }
 
-// 部分完成提示(completed_with_gaps):报告已出但有维度缺口。
 function GapNotice({ count }: { count: number }) {
   return (
     <div style={{ background: 'rgba(251,191,36,.08)', border: '1px solid rgba(251,191,36,.3)', borderRadius: 16, padding: '12px 16px', marginBottom: 16, fontSize: 13, color: 'var(--warn)' }}>
-      ⚠ 部分完成 · {count} 步失败或跳过,相关维度的数据缺口已在下方「风险与待确认」中标注。
+      部分完成 · {count} 个数据缺口已在下方风险与待解决问题中标注。
     </div>
   );
 }
 
-// 任务终止提示(abort)。
+function AwaitingApprovalNotice() {
+  return (
+    <section className="stage-card">
+      <h3 style={{ margin: '0 0 8px', fontSize: 15 }}>计划等待授权审批</h3>
+      <p style={{ margin: 0, color: 'var(--text-dim)', fontSize: 13 }}>
+        确认已记录，但计划包含需要对应角色处理的阻断项；状态达到 ready 前不会执行。
+      </p>
+    </section>
+  );
+}
+
+function CurrentHistoryNotice() {
+  return (
+    <aside style={{ color: 'var(--text-faint)', fontSize: 12, padding: '4px 2px 18px' }}>
+      Current 终态可在本浏览器刷新恢复；侧栏历史仍是 Legacy 只读记录，不提供 Current 历史列表。
+    </aside>
+  );
+}
+
 function AbortedNotice() {
   return (
     <div style={{ background: 'rgba(248,113,113,.08)', border: '1px solid rgba(248,113,113,.3)', borderRadius: 16, padding: 18, marginTop: 16 }}>
       <div style={{ color: 'var(--danger)', fontWeight: 600 }}>任务已终止</div>
-      <div style={{ color: 'var(--text-dim)', fontSize: 13, marginTop: 6 }}>你选择了终止,未生成报告。可新建任务重试。</div>
+      <div style={{ color: 'var(--text-dim)', fontSize: 13, marginTop: 6 }}>Current 任务已取消，未生成交付物。可新建任务重试。</div>
     </div>
   );
 }

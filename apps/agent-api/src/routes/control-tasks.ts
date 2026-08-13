@@ -1,20 +1,20 @@
 import { Router, type Request, type Response } from 'express';
-import { ControlPlaneConflictError, ControlPlaneRepository } from '../../../../database/control-plane.ts';
-import { pool } from '../../../../database/db.ts';
-import { createConversation, getUserById } from '../../../../database/repository.ts';
+import { ControlPlaneConflictError, type ControlPlaneRepository } from '../../../../database/control-plane.ts';
+import { getUserById } from '../../../../database/repository.ts';
 import {
   TaskWorkflowAuthorizationError,
   TaskWorkflowGateError,
-  TaskWorkflowService,
+  type TaskWorkflowService,
   type WorkflowActor,
 } from '../../../orchestrator-runtime/src/control/task-workflow.ts';
 import { requireAuth } from '../middleware.ts';
 
-export const controlTasksRouter = Router();
-controlTasksRouter.use(requireAuth);
+export interface ControlTasksRuntime {
+  repository: ControlPlaneRepository;
+  workflow: TaskWorkflowService;
+  getDeliverable(taskId: string, ownerUserId: string): Promise<unknown | null>;
+}
 
-const repository = new ControlPlaneRepository(pool);
-const workflow = new TaskWorkflowService(repository);
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -66,31 +66,27 @@ async function authenticatedActor(req: Request, res: Response): Promise<Workflow
   if (!actor) res.status(401).json({ error: '用户不存在或已停用' });
   return actor;
 }
-
-controlTasksRouter.post('/', async (req, res) => {
-  const body = record(req.body);
-  const actor = await authenticatedActor(req, res);
-  if (!actor) return;
-  const originalInput = string(body?.originalInput);
-  if (!originalInput) {
-    res.status(400).json({ error: 'originalInput 必填' });
-    return;
+async function ensureOwnedTask(
+  runtime: ControlTasksRuntime,
+  req: Request,
+  res: Response,
+  actor: WorkflowActor,
+): Promise<boolean> {
+  const taskId = typeof req.params.id === 'string' ? req.params.id : req.params.id[0] ?? '';
+  const task = await runtime.repository.getTaskDetail(taskId);
+  if (!task || task.ownerUserId !== actor.userId || task.conversationOwnerUserId !== actor.userId) {
+    res.status(404).json({ error: '任务不存在' });
+    return false;
   }
-  const structuredTask = record(body?.structuredTask) ?? {};
-  const conversation = await createConversation({ ownerUserId: actor.userId, title: originalInput.slice(0, 40) });
-  const task = await repository.createTask({
-    conversationId: conversation.id,
-    ownerUserId: actor.userId,
-    originalInput,
-    taskType: string(body?.taskType),
-    structuredTask,
-    state: 'awaiting_selection',
-    sensitivity: string(body?.sensitivity) ?? undefined,
-  });
-  res.status(201).json({ task });
-});
+  return true;
+}
 
-controlTasksRouter.get('/:id', async (req, res) => {
+export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
+  const router = Router();
+  router.use(requireAuth);
+  const { repository, workflow } = runtime;
+
+router.get('/:id', async (req, res) => {
   const actor = await authenticatedActor(req, res);
   if (!actor) return;
   const task = await repository.getTaskDetail(req.params.id);
@@ -104,17 +100,31 @@ controlTasksRouter.get('/:id', async (req, res) => {
   res.json({ kind: 'current', task, executionSteps });
 });
 
-controlTasksRouter.post('/:id/select', async (req, res) => {
+router.get('/:id/deliverable', async (req, res) => {
+  const actor = await authenticatedActor(req, res);
+  if (!actor) return;
+  try {
+    const deliverable = await runtime.getDeliverable(req.params.id, actor.userId);
+    if (deliverable === null) {
+      res.status(404).json({ error: '交付物不存在' });
+      return;
+    }
+    res.json(deliverable);
+  } catch (error) {
+    responseError(res, error);
+  }
+});
+
+router.post('/:id/select', async (req, res) => {
   const body = record(req.body);
   const actor = await authenticatedActor(req, res);
   const key = idempotencyKey(req);
   const expectedVersion = version(body?.expectedVersion);
-  const candidateId = string(body?.candidateId);
-  const planHash = string(body?.planHash);
-  const pendingInputs = Array.isArray(body?.pendingInputs) ? body?.pendingInputs : null;
+  const planVersionId = string(body?.planVersionId);
   if (!actor) return;
-  if (expectedVersion == null || !key || !candidateId || !planHash || !pendingInputs || !('plan' in (body ?? {}))) {
-    res.status(400).json({ error: 'expectedVersion、Idempotency-Key、candidateId、plan、planHash、pendingInputs 必填' });
+  if (!await ensureOwnedTask(runtime, req, res, actor)) return;
+  if (expectedVersion == null || !key || !planVersionId) {
+    res.status(400).json({ error: 'expectedVersion、Idempotency-Key、planVersionId 必填' });
     return;
   }
   try {
@@ -123,17 +133,14 @@ controlTasksRouter.post('/:id/select', async (req, res) => {
       expectedVersion,
       idempotencyKey: key,
       actor,
-      candidateId,
-      plan: body?.plan,
-      planHash,
-      pendingInputs,
+      planVersionId,
     }));
   } catch (error) {
     responseError(res, error);
   }
 });
 
-controlTasksRouter.post('/:id/confirm', async (req, res) => {
+router.post('/:id/confirm', async (req, res) => {
   const body = record(req.body);
   const actor = await authenticatedActor(req, res);
   const key = idempotencyKey(req);
@@ -142,6 +149,7 @@ controlTasksRouter.post('/:id/confirm', async (req, res) => {
   const confirmationAnswers = record(body?.confirmationAnswers);
   const inputRoles = stringList(body?.inputRoles);
   if (!actor) return;
+  if (!await ensureOwnedTask(runtime, req, res, actor)) return;
   if (expectedVersion == null || !key || !planVersionId || !confirmationAnswers || !inputRoles) {
     res.status(400).json({ error: 'expectedVersion、Idempotency-Key、planVersionId、confirmationAnswers、inputRoles 必填' });
     return;
@@ -161,7 +169,7 @@ controlTasksRouter.post('/:id/confirm', async (req, res) => {
   }
 });
 
-controlTasksRouter.post('/:id/approve', async (req, res) => {
+router.post('/:id/approve', async (req, res) => {
   const body = record(req.body);
   const actor = await authenticatedActor(req, res);
   const key = idempotencyKey(req);
@@ -170,6 +178,7 @@ controlTasksRouter.post('/:id/approve', async (req, res) => {
   const gateKey = string(body?.gateKey);
   const decision = body?.decision === 'approved' || body?.decision === 'rejected' ? body.decision : null;
   if (!actor) return;
+  if (!await ensureOwnedTask(runtime, req, res, actor)) return;
   if (expectedVersion == null || !key || !planVersionId || !gateKey || !decision) {
     res.status(400).json({ error: 'expectedVersion、Idempotency-Key、planVersionId、gateKey、decision 必填' });
     return;
@@ -189,7 +198,7 @@ controlTasksRouter.post('/:id/approve', async (req, res) => {
   }
 });
 
-controlTasksRouter.post('/:id/revise', async (req, res) => {
+router.post('/:id/revise', async (req, res) => {
   const body = record(req.body);
   const actor = await authenticatedActor(req, res);
   const key = idempotencyKey(req);
@@ -198,6 +207,7 @@ controlTasksRouter.post('/:id/revise', async (req, res) => {
   const planHash = string(body?.planHash);
   const pendingInputs = Array.isArray(body?.pendingInputs) ? body?.pendingInputs : null;
   if (!actor) return;
+  if (!await ensureOwnedTask(runtime, req, res, actor)) return;
   if (expectedVersion == null || !key || !candidateId || !planHash || !pendingInputs || !('plan' in (body ?? {}))) {
     res.status(400).json({ error: 'expectedVersion、Idempotency-Key、candidateId、plan、planHash、pendingInputs 必填' });
     return;
@@ -218,7 +228,7 @@ controlTasksRouter.post('/:id/revise', async (req, res) => {
   }
 });
 
-controlTasksRouter.post('/:id/resume', async (req, res) => {
+router.post('/:id/resume', async (req, res) => {
   const body = record(req.body);
   const actor = await authenticatedActor(req, res);
   const key = idempotencyKey(req);
@@ -236,6 +246,7 @@ controlTasksRouter.post('/:id/resume', async (req, res) => {
     return;
   }
   if (!actor) return;
+  if (!await ensureOwnedTask(runtime, req, res, actor)) return;
   if (expectedVersion == null || !key) {
     res.status(400).json({ error: 'expectedVersion、Idempotency-Key 必填' });
     return;
@@ -254,13 +265,14 @@ controlTasksRouter.post('/:id/resume', async (req, res) => {
   }
 });
 
-controlTasksRouter.post('/:id/execute', async (req, res) => {
+router.post('/:id/execute', async (req, res) => {
   const body = record(req.body);
   const actor = await authenticatedActor(req, res);
   const key = idempotencyKey(req);
   const expectedVersion = version(body?.expectedVersion);
   const planVersionId = string(body?.planVersionId);
   if (!actor) return;
+  if (!await ensureOwnedTask(runtime, req, res, actor)) return;
   if (expectedVersion == null || !key || !planVersionId) {
     res.status(400).json({ error: 'expectedVersion、Idempotency-Key、planVersionId 必填' });
     return;
@@ -277,3 +289,6 @@ controlTasksRouter.post('/:id/execute', async (req, res) => {
     responseError(res, error);
   }
 });
+
+  return router;
+}

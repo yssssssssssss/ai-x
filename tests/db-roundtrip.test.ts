@@ -33,7 +33,7 @@ test('会话 + 消息回放', async () => {
   convId = conv.id;
   await writeMessage({ conversationId: convId, senderType: 'user', messageType: 'text', content: { text: 'hi' } });
   await writeMessage({ conversationId: convId, senderType: 'assistant', messageType: 'plan', content: { steps: [] } });
-  const msgs = await listMessages(convId);
+  const msgs = await listMessages(convId, userId);
   assert.equal(msgs.length, 2);
   assert.equal(msgs[0].sender_type, 'user');
 });
