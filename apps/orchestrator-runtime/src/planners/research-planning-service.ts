@@ -4,6 +4,7 @@ import type {
   PlanCandidate,
   PlanProgress,
   ResearchTaskData,
+  ResearchTaskV2,
 } from '../../../../packages/api-contract/plan.ts';
 import {
   loadEvidencePolicy,
@@ -24,6 +25,7 @@ import { RoutedPlanner } from './routed-planner.ts';
 export interface ResearchPlanningInput {
   originalInput: string;
   directSkillId?: string;
+  requirement?: ResearchTaskV2;
 }
 
 export interface ResearchPlanningResult {
@@ -61,6 +63,9 @@ export class ResearchPlanningService {
     input: ResearchPlanningInput,
     onProgress?: (event: PlanProgress) => void,
   ): Promise<ResearchPlanningResult> {
+    if (input.requirement) {
+      return this.planFromRequirement(input.requirement, input.originalInput, onProgress);
+    }
     const { llm, validator } = this.dependencies;
     const emit = onProgress ?? (() => {});
     const direct: DirectInvoke | null = input.directSkillId !== undefined
@@ -90,16 +95,47 @@ export class ResearchPlanningService {
       label: '理解任务需求',
       detail: `${task.task_type} · ${task.business_domain}`,
     });
-
-    const taskProvenance: PlanProvenance = {
+    return this.planTask(task, direct, {
       modelName: taskGen.modelName,
       modelVersion: taskGen.modelVersion,
       promptHash: taskGen.promptHash,
       traceId: taskGen.traceId,
+    }, emit);
+  }
+
+  async planFromRequirement(
+    requirement: ResearchTaskV2,
+    originalInput = requirement.research_goal,
+    onProgress?: (event: PlanProgress) => void,
+  ): Promise<ResearchPlanningResult> {
+    const task: ResearchTaskData = {
+      task_type: requirement.task_type,
+      business_domain: requirement.business_domain,
+      research_goal: requirement.research_goal,
+      assumptions: requirement.assumptions,
+      confirmations: requirement.clarification_questions,
+      blocking_issues: requirement.blocking_issues,
+      sensitivity: requirement.sensitivity,
+      pii_detected: requirement.pii_detected,
     };
+    const emit = onProgress ?? (() => {});
+    const provenance: PlanProvenance = {
+      modelName: this.dependencies.llm.identity.requestedModel,
+      modelVersion: 'research-task-v2',
+      promptHash: hashPrompt(originalInput, requirement, 'research-task-v2'),
+      traceId: `trace_requirement_${hashPrompt(originalInput, requirement).slice(-12)}`,
+    };
+    return this.planTask(task, parseDirectInvoke(originalInput), provenance, emit);
+  }
+
+  private async planTask(
+    task: ResearchTaskData,
+    direct: DirectInvoke | null,
+    taskProvenance: PlanProvenance,
+    emit: (event: PlanProgress) => void,
+  ): Promise<ResearchPlanningResult> {
     const strategy = direct ? this.directPlanner : this.routedPlanner;
     const artifacts = await strategy.plan({ task, direct, taskProvenance, emit });
-
     return {
       task,
       activatedNodes: artifacts.activated.map((node) => node.key),

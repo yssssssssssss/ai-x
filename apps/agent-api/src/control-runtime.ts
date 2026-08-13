@@ -1,9 +1,10 @@
 import { join } from 'node:path';
 import { pool } from '../../../database/db.ts';
 import { ControlPlaneAuthorizationError, ControlPlaneRepository } from '../../../database/control-plane.ts';
-import { createConversation, getOwnedConversation } from '../../../database/repository.ts';
+import { createConversation, getOwnedConversation, listMessages, writeMessage } from '../../../database/repository.ts';
 import { ControlArtifactStore } from '../../orchestrator-runtime/src/control/artifact-store.ts';
 import { ControlPlanningService } from '../../orchestrator-runtime/src/control/control-planning-service.ts';
+import { sanitizeCandidateToPlan } from '../../orchestrator-runtime/src/planners/plan-sanitizer.ts';
 import { LeaseExecutionEngine } from '../../orchestrator-runtime/src/control/lease-execution-engine.ts';
 import {
   TaskWorkflowService,
@@ -17,10 +18,13 @@ import {
 } from '../../orchestrator-runtime/src/evidence/evidence-service.ts';
 import { ReportEvidenceValidator } from '../../orchestrator-runtime/src/evidence/report-evidence-validator.ts';
 import {
+  RequirementRefinementService,
+  type ConversationAdapter,
+} from '../../orchestrator-runtime/src/control/requirement-refinement-service.ts';
+import {
   ResearchPlanningService,
   type ResearchPlanningResult,
 } from '../../orchestrator-runtime/src/planners/research-planning-service.ts';
-import { sanitizeCandidateToPlan } from '../../orchestrator-runtime/src/planners/plan-sanitizer.ts';
 import type { PlanCandidate } from '../../../packages/api-contract/plan.ts';
 import type {
   EvidenceClass,
@@ -174,10 +178,12 @@ function revisionCandidate(result: unknown, candidateId: 'depth' | 'speed'): Pla
   }
   return candidate as PlanCandidate;
 }
-interface ConversationAdapter {
+type RuntimeConversationAdapter = {
   create(input: { ownerUserId: string; title: string }): Promise<{ id: string }>;
   requireOwned(input: { conversationId: string; ownerUserId: string }): Promise<{ id: string }>;
-}
+  listMessages?: ConversationAdapter['listMessages'];
+  appendMessage?: ConversationAdapter['appendMessage'];
+};
 
 interface PlanningAdapter {
   plan(input: { originalInput: string }): Promise<ResearchPlanningResult>;
@@ -185,7 +191,7 @@ interface PlanningAdapter {
 
 export interface ControlRuntimeOverrides {
   repository?: ControlPlaneRepository;
-  conversations?: ConversationAdapter;
+  conversations?: RuntimeConversationAdapter;
   planning?: PlanningAdapter;
   tools?: ToolRouter;
   llm?: LLMClient;
@@ -197,14 +203,13 @@ export interface ControlRuntimeOverrides {
 
 export interface ControlRuntime {
   controlPlanning: ControlPlanningService;
+  requirementRefinement: RequirementRefinementService;
   workflow: TaskWorkflowService;
   repository: ControlPlaneRepository;
   artifacts: ControlArtifactStore;
   getDeliverable(taskId: string, ownerUserId: string): Promise<unknown | null>;
 }
-
-
-function defaultConversations(): ConversationAdapter {
+function defaultConversations(): RuntimeConversationAdapter {
   return {
     async create(input) {
       return createConversation(input);
@@ -214,8 +219,29 @@ function defaultConversations(): ConversationAdapter {
       if (!conversation) throw new ControlPlaneAuthorizationError('conversation is not owned by requester');
       return conversation;
     },
+    async listMessages(input) {
+      const conversation = await getOwnedConversation(input.conversationId, input.ownerUserId);
+      if (!conversation) throw new ControlPlaneAuthorizationError('conversation is not owned by requester');
+      const messages = await listMessages(input.conversationId, input.ownerUserId);
+      return messages.map((message) => ({
+        role: message.sender_type,
+        content: typeof message.content === 'string'
+          ? message.content
+          : JSON.stringify(message.content),
+      }));
+    },
+    async appendMessage(input) {
+      await writeMessage({
+        conversationId: input.conversationId,
+        senderType: input.role,
+        messageType: 'text',
+        content: input.content,
+      });
+    },
   };
 }
+
+
 
 export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): ControlRuntime {
   const agentRuntime = overrides.llm
@@ -253,10 +279,34 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     skillLoader,
     expectedActualModel,
   });
+  const conversations = overrides.conversations ?? defaultConversations();
+  const refinementConversations: ConversationAdapter = {
+    requireOwned: (input) => conversations.requireOwned(input),
+    async listMessages(input) {
+      if (!conversations.listMessages) {
+        throw new Error('requirement refinement requires conversation history support');
+      }
+      return conversations.listMessages(input);
+    },
+    async appendMessage(input) {
+      if (!conversations.appendMessage) {
+        throw new Error('requirement refinement requires conversation append support');
+      }
+      await conversations.appendMessage(input);
+    },
+  };
+  const requirementRefinement = new RequirementRefinementService({
+    llm: new ReceiptLLMClient(llm, repository),
+    validator,
+    repository,
+    conversations: refinementConversations,
+    planner: planning,
+    expectedActualModel,
+  });
   const controlPlanning = new ControlPlanningService({
     planning,
     repository,
-    conversations: overrides.conversations ?? defaultConversations(),
+    conversations,
   });
   const evidence = new EvidenceService();
   const reportValidator: ReportEvidenceValidator = new ReportEvidenceValidator(evidence);
@@ -333,6 +383,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
 
   return {
     controlPlanning,
+    requirementRefinement,
     workflow,
     repository,
     artifacts,

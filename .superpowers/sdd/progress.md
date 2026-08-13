@@ -20,7 +20,8 @@
 - Phase 1 quality follow-up: complete (`PlanCandidate` type-only wiring restored; `pnpm typecheck` passed; serial targeted verification 60 pass / 1 real-provider skip / 0 fail).
 - Phase 1: complete; final gate APPROVE at `454d052`; quality 411 tests / 405 pass / 6 skip / 0 fail; final targeted serial 83 pass / 1 skip / 0 fail.
 - Task 5: complete; RED 3 expected DB constraint failures plus V2 schema failures; GREEN 23/23 targeted tests, `tsc --noEmit -p tsconfig.json` passed, migration dry-run recognized 004. Commit `feat: version current research requirements`.
-- Tasks 6–25: pending.
+- Task 6: complete; RED 5 expected missing-module failures; GREEN 12/12 refinement + research-planning tests, `tsc --noEmit -p tsconfig.json` passed. Commit `feat: add current requirement refinement loop`.
+- Tasks 7–25: pending.
 
 - Revision integrity follow-up: complete (`fix: validate regenerated revision bindings`; targeted RED/GREEN and serial combined verification passed).
 - Next action: Phase 1 review of revision integrity and lease fence changes.
