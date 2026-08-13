@@ -6,6 +6,7 @@ import {
   defaultFixtures,
   MockLLMClient,
 } from '../apps/orchestrator-runtime/src/runtime/llm-client.ts';
+import type { LegacyStructuredLLMCallOptions } from '../apps/orchestrator-runtime/src/runtime/llm-client.ts';
 import {
   loadSchemaText,
   resolveSchema,
@@ -38,6 +39,15 @@ function payload(): { candidates: CandidatePayload[] } {
 
 function errorsFor(value: unknown): string[] {
   return new SchemaValidator().validate('current-plan-candidates', value);
+}
+
+class RecordingPlanningLLM extends MockLLMClient {
+  readonly structuredCalls: LegacyStructuredLLMCallOptions[] = [];
+
+  override async generateStructured<T>(options: LegacyStructuredLLMCallOptions) {
+    this.structuredCalls.push(options);
+    return super.generateStructured<T>(options);
+  }
 }
 
 test('current-plan-candidates schema is registered and accepts the strict baseline', () => {
@@ -114,7 +124,7 @@ const planningTask = structuredClone(defaultFixtures['research-task']) as Resear
 
 async function planWith(candidates: unknown[]): Promise<void> {
   const fixtures = structuredClone(defaultFixtures);
-  fixtures['execution-plan-candidates'] = { candidates };
+  fixtures['current-plan-candidates'] = { candidates };
   const planner = new RoutedPlanner({
     llm: new MockLLMClient(fixtures),
     validator: new SchemaValidator(),
@@ -147,5 +157,35 @@ test('RoutedPlanner rejects malformed candidate fields before returning a plan',
   await assert.rejects(
     () => planWith([malformed, candidate('speed')]),
     /current-plan-candidates|校验失败/,
+  );
+});
+
+test('RoutedPlanner dispatches the current candidate schema object to the LLM', async () => {
+  const fixtures = structuredClone(defaultFixtures);
+  const llm = new RecordingPlanningLLM(fixtures);
+  const planner = new RoutedPlanner({
+    llm,
+    validator: new SchemaValidator(),
+    skillLoader: new SkillLoader(),
+  });
+
+  await planner.plan({
+    task: planningTask,
+    direct: null,
+    taskProvenance: {
+      modelName: 'planning-test',
+      modelVersion: '1',
+      promptHash: 'sha256:planning-test',
+      traceId: 'trace_planning_test',
+    },
+    emit() {},
+  });
+
+  const planningCall = llm.structuredCalls.find((call) => call.receipt?.stage === 'planning');
+  assert.ok(planningCall);
+  assert.equal(planningCall.schemaName, 'current-plan-candidates');
+  assert.deepEqual(
+    planningCall.schema,
+    JSON.parse(loadSchemaText(resolveSchema('current-plan-candidates')) ?? '{}'),
   );
 });

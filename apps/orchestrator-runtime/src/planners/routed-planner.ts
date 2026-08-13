@@ -18,6 +18,13 @@ import type {
   PlannerDeps,
   PlanStrategy,
 } from './plan-strategy.ts';
+import { loadSchemaText, resolveSchema } from '../runtime/schema-registry.ts';
+
+const currentPlanCandidatesSchemaText = loadSchemaText(resolveSchema('current-plan-candidates'));
+if (!currentPlanCandidatesSchemaText) {
+  throw new Error('current-plan-candidates schema is not registered');
+}
+const currentPlanCandidatesSchema = JSON.parse(currentPlanCandidatesSchemaText) as object;
 
 // 引导召回:对每个激活的决策节点,用其 related_tags 从知识库召回方法论/模型(每节点 top-3),
 // 供"决策状态判定"与"计划生成"两个 LLM 调用作正典依据,并进 context_manifest 溯源。纯函数,可测。
@@ -107,8 +114,8 @@ export class RoutedPlanner implements PlanStrategy {
         `- rationale(为什么这样组合,引用方法论点名如 JTBD/5W2H)与 tradeoffs(明显代价,如"耗时约翻倍"/"覆盖窄可能漏点")必填,各控制在 1-2 句。\n` +
         `- title 用中文短语,例如"深度优先·方法论覆盖" / "速度优先·关键结论"。\n` +
         `选方法/排步骤时参考 context.guidance 召回的方法卡片,使方法选择有正典依据。`,
-      schema: {},
-      schemaName: 'execution-plan-candidates',
+      schema: currentPlanCandidatesSchema,
+      schemaName: 'current-plan-candidates',
       context: {
         task,
         skills: activeSkills.map((s) => ({ id: s.id, when_to_use: s.when_to_use, required_tools: s.required_tools })),

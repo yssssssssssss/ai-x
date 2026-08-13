@@ -122,7 +122,7 @@ test('resume(abort) → failed', async () => {
 // 自定义 fixture:候选 depth 只有 [tool, reviewer],tool 失败跳过后 reviewer 不产出 → toolOutputs 空。
 test('全产出步失败/跳过 → AllStepsFailedError + failed', async () => {
   const fixtures = structuredClone(defaultFixtures) as Record<string, unknown>;
-  (fixtures['execution-plan-candidates'] as { candidates: Array<{ id: string; steps: unknown[] }> }).candidates[0] = {
+  (fixtures['current-plan-candidates'] as { candidates: Array<{ id: string; steps: unknown[] }> }).candidates[0] = {
     id: 'depth',
     title: '仅检索+复核',
     rationale: 'r',

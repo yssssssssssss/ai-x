@@ -257,7 +257,7 @@ export const defaultFixtures: FixtureMap = {
   },
   // 段2c 候选计划(candidates,恰好 2 份 depth/speed);steps 只用真实存在的能力(过幻觉校验)。
   // depth = tool + skill + reviewer(可测复核回流);speed = tool + llm(可测 llm 步)。
-  'execution-plan-candidates': {
+  'current-plan-candidates': {
     candidates: [
       {
         id: 'depth',

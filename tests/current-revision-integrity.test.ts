@@ -460,8 +460,10 @@ test('production runtime rejects malformed frozen step shape before repository p
     { suffix: 'malformed-step-null-input', step: { ...candidateSteps('speed')[0], input: null } },
     { suffix: 'malformed-step-array-input', step: { ...candidateSteps('speed')[0], input: [] } },
     { suffix: 'malformed-step-approval', step: { ...candidateSteps('speed')[0], requires_approval: 'yes' } },
+    { suffix: 'malformed-step-purpose', step: { ...candidateSteps('speed')[0], purpose: 123 } },
     { suffix: 'malformed-step-extra-key', step: { ...candidateSteps('speed')[0], extra_client_field: 'reject-me' } },
   ];
+
 
   for (const malformed of malformedSteps) {
     const seeded = await createSelectedTask({ suffix: malformed.suffix });
@@ -487,6 +489,41 @@ test('production runtime rejects malformed frozen step shape before repository p
     assert.equal(await repository.nextPlanVersion(seeded.created.task.id), nextVersion);
   }
   assert.equal(plannerCalls, 0);
+});
+
+test('production runtime accepts a frozen step with only the required fields and purpose', async () => {
+  const runtime = await buildRuntime({
+    async plan(input) {
+      return planningResult(input.originalInput);
+    },
+  });
+  const seeded = await createSelectedTask({ suffix: 'valid-step-purpose-only', pendingInputs: [] });
+  const activePlan = await repository.getPlanVersionDetail(seeded.selected.planVersionId);
+  assert.ok(activePlan);
+  await overwriteActivePlan({
+    planVersionId: activePlan.id,
+    plan: {
+      ...(activePlan.plan as Record<string, unknown>),
+      steps: [{
+        step_no: 1,
+        step_name: '公开资料检索',
+        actor_type: 'tool',
+        actor_id: 'tavily-web-search',
+        purpose: '采集公开信息',
+      }],
+    },
+    pendingInputs: [],
+  });
+
+  const revised = await runtime.workflow.revise({
+    taskId: seeded.created.task.id,
+    expectedVersion: seeded.selected.stateVersion,
+    revisionInstruction: '保留公开检索步骤',
+    idempotencyKey: 'valid-step-purpose-only',
+    actor: { userId: ownerId, role: 'owner' },
+  });
+  assert.equal(revised.state, 'awaiting_confirmation');
+  assert.notEqual(revised.planVersionId, seeded.selected.planVersionId);
 });
 
 test('production runtime fails closed when regenerated steps leave pending input target dangling', async () => {

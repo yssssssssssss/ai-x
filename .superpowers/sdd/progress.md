@@ -23,3 +23,5 @@
 - Revision integrity follow-up: complete (`fix: validate regenerated revision bindings`; targeted RED/GREEN and serial combined verification passed).
 - Next action: Phase 1 review of revision integrity and lease fence changes.
 - Revision driver typing follow-up: complete (`revisionSteps` narrows validated values to `PlanCandidate['steps']`; `pnpm typecheck` passed; revision integrity 8/8 passed; serial combined verification 62 passed / 1 real-provider skip / 0 failed; commit `fix: complete revision driver typing`).
+
+- Phase 1 review blockers follow-up: complete (revision optional-field contract and strict current candidate schema dispatch; targeted 29 pass / 0 fail; serial Phase 83 pass / 1 real-provider skip / 0 fail).

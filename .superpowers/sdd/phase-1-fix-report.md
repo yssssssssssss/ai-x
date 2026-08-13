@@ -125,3 +125,45 @@ Commit message: `fix: validate regenerated revision bindings`
 ### Commit
 
 Commit message: `fix: complete revision driver typing`
+
+## Phase 1 review blockers follow-up
+
+### Findings fixed
+
+1. **Revision PlanStep optional-field contract**
+   - `revisionSteps` now requires exactly `step_no`, `step_name`, `actor_type`, and `actor_id`.
+   - It accepts optional `purpose`, `input`, and `requires_approval` when omitted or correctly typed, while rejecting unknown keys and malformed present optionals.
+2. **Strict current candidate schema dispatch**
+   - `RoutedPlanner` now dispatches `schemaName: 'current-plan-candidates'` with the parsed schema loaded from the registered schema file.
+   - Default and targeted fixtures use `current-plan-candidates`; the old name remains only in the schema-registry unknown-name fallback test.
+
+### TDD evidence
+
+#### RED
+
+- `pnpm exec tsx --test tests/current-plan-candidate-schema.test.ts`
+  - Failed as expected: planner dispatch regression observed `execution-plan-candidates` instead of `current-plan-candidates`.
+- `pnpm exec tsx --test tests/current-revision-integrity.test.ts`
+  - Failed as expected: valid frozen purpose-only/no-input step was rejected as malformed.
+
+#### GREEN
+
+- `pnpm exec tsx --test tests/current-revision-integrity.test.ts tests/current-plan-candidate-schema.test.ts`
+  - 17 passed, 0 failed, 0 skipped.
+- Required targeted command:
+  - `pnpm exec tsx --test tests/current-revision-integrity.test.ts tests/current-plan-candidate-schema.test.ts tests/research-planning-service.test.ts tests/control-planning-service.test.ts`
+  - 29 passed, 0 failed, 0 skipped.
+- Serial Phase command:
+  - `pnpm exec tsx --test --test-concurrency=1 tests/current-revision-integrity.test.ts tests/current-plan-candidate-schema.test.ts tests/research-planning-service.test.ts tests/control-planning-service.test.ts tests/task-workflow.test.ts tests/control-api-integration.test.ts tests/lease-execution-engine.test.ts tests/control-plane.test.ts`
+  - 83 passed, 1 real-provider skip, 0 failed.
+
+### Files
+
+- `apps/agent-api/src/control-runtime.ts`
+- `apps/orchestrator-runtime/src/planners/routed-planner.ts`
+- `apps/orchestrator-runtime/src/runtime/llm-client.ts`
+- `tests/current-revision-integrity.test.ts`
+- `tests/current-plan-candidate-schema.test.ts`
+- `tests/execute-fault-tolerance.test.ts`
+- `.superpowers/sdd/phase-1-fix-report.md`
+- `.superpowers/sdd/progress.md`

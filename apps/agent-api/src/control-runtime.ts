@@ -107,7 +107,16 @@ function revisionPendingInputs(value: unknown): value is PendingInput[] {
   });
 }
 
-const REVISION_STEP_KEYS = ['actor_id', 'actor_type', 'input', 'requires_approval', 'step_name', 'step_no'] as const;
+const REVISION_REQUIRED_STEP_KEYS = ['actor_id', 'actor_type', 'step_name', 'step_no'] as const;
+const REVISION_STEP_KEYS: Record<string, true> = {
+  actor_id: true,
+  actor_type: true,
+  input: true,
+  purpose: true,
+  requires_approval: true,
+  step_name: true,
+  step_no: true,
+};
 
 function revisionSteps(value: unknown): value is PlanCandidate['steps'] {
   return Array.isArray(value)
@@ -115,8 +124,8 @@ function revisionSteps(value: unknown): value is PlanCandidate['steps'] {
     && value.every((item) => {
       const record = revisionRecord(item);
       return record !== null
-        && Object.keys(record).length === REVISION_STEP_KEYS.length
-        && REVISION_STEP_KEYS.every((key) => Object.hasOwn(record, key))
+        && Object.keys(record).every((key) => REVISION_STEP_KEYS[key] === true)
+        && REVISION_REQUIRED_STEP_KEYS.every((key) => Object.hasOwn(record, key))
         && typeof record.step_no === 'number'
         && Number.isInteger(record.step_no)
         && record.step_no >= 1
@@ -126,8 +135,9 @@ function revisionSteps(value: unknown): value is PlanCandidate['steps'] {
         && REVISION_ACTOR_TYPES[record.actor_type] === true
         && typeof record.actor_id === 'string'
         && record.actor_id.trim().length > 0
-        && revisionRecord(record.input) !== null
-        && typeof record.requires_approval === 'boolean';
+        && (!Object.hasOwn(record, 'purpose') || typeof record.purpose === 'string')
+        && (!Object.hasOwn(record, 'input') || revisionRecord(record.input) !== null)
+        && (!Object.hasOwn(record, 'requires_approval') || typeof record.requires_approval === 'boolean');
     });
 }
 
