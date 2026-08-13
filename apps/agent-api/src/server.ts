@@ -2,17 +2,20 @@ import { loadEnv, pool } from '../../../database/db.ts';
 loadEnv(); // 读 .env:DATABASE_URL / LLM 网关 / JWT_SECRET
 
 import express from 'express';
-import { ControlPlaneRepository } from '../../../database/control-plane.ts';
+import { ControlPlaneRepository, type ControlTaskDetail } from '../../../database/control-plane.ts';
+import { createConversation } from '../../../database/repository.ts';
 import { TaskWorkflowService } from '../../orchestrator-runtime/src/control/task-workflow.ts';
 import { authRouter } from './routes/auth.ts';
 import { conversationsRouter } from './routes/conversations.ts';
 import { tasksRouter } from './routes/tasks.ts';
 import { feedbackRouter } from './routes/feedback.ts';
 import { skillsRouter } from './routes/skills.ts';
-import { createControlTasksRouter } from './routes/control-tasks.ts';
+import { createControlTasksRouter, type ControlClarificationPort } from './routes/control-tasks.ts';
 import {
   createControlPlanningRouter,
+  type ClarificationRequiredResponse,
   type ControlPlanningPort,
+  type CurrentPlanningResponse,
 } from './routes/control-planning.ts';
 import { requireJwtSecret } from './auth.ts';
 import { buildControlRuntime, type ControlRuntime } from './control-runtime.ts';
@@ -20,6 +23,81 @@ export interface AgentApiDependencies {
   controlRuntime?: ControlRuntime;
   controlPlanning?: ControlPlanningPort;
 }
+
+function refinementResponse(
+  result: { status: 'clarification_required'; taskId: string; requirement: ClarificationRequiredResponse['structuredTask'] },
+  task: ControlTaskDetail | null,
+): ClarificationRequiredResponse {
+  if (!task) throw new Error(`task ${result.taskId} disappeared after refinement`);
+  return {
+    kind: 'current',
+    status: 'clarification_required',
+    conversationId: task.conversationId,
+    task: {
+      id: task.id,
+      state: task.state,
+      stateVersion: task.stateVersion,
+      activePlanVersionId: task.activePlanVersionId,
+      currentAttemptId: task.currentAttemptId,
+    },
+    structuredTask: result.requirement,
+    activatedNodes: [],
+    candidates: [],
+  };
+}
+
+function refinementPlanningPort(runtime: ControlRuntime): ControlPlanningPort {
+  return {
+    async plan(input, onProgress, onConversation): Promise<CurrentPlanningResponse> {
+      const conversation = input.conversationId
+        ? { id: input.conversationId }
+        : await createConversation({ ownerUserId: input.ownerUserId, title: input.originalInput.slice(0, 40) });
+      if (!input.conversationId) onConversation?.(conversation.id);
+      const created = await runtime.repository.createTask({
+        conversationId: conversation.id,
+        ownerUserId: input.ownerUserId,
+        originalInput: input.originalInput,
+        taskType: null,
+        structuredTask: {},
+        state: 'awaiting_clarification',
+      });
+      const result = await runtime.requirementRefinement.understand({
+        taskId: created.id,
+        conversationId: conversation.id,
+        ownerUserId: input.ownerUserId,
+        originalInput: input.originalInput,
+        expectedVersion: created.stateVersion,
+      });
+      if (result.status === 'clarification_required') {
+        return refinementResponse(result, await runtime.repository.getTaskDetail(created.id));
+      }
+      return runtime.controlPlanning.plan({ ...input, conversationId: conversation.id }, onProgress, onConversation);
+    },
+  };
+}
+
+function refinementClarificationPort(runtime: ControlRuntime): ControlClarificationPort {
+  return {
+    async clarify(input) {
+      const result = await runtime.requirementRefinement.clarify({
+        taskId: input.taskId,
+        conversationId: input.conversationId,
+        ownerUserId: input.ownerUserId,
+        answers: { ...input.answers, assumption_edits: input.assumptionEdits },
+        expectedVersion: input.expectedVersion,
+      });
+      if (result.status === 'clarification_required') {
+        return refinementResponse(result, await runtime.repository.getTaskDetail(input.taskId));
+      }
+      return runtime.controlPlanning.plan({
+        originalInput: JSON.stringify(result.requirement),
+        conversationId: input.conversationId,
+        ownerUserId: input.ownerUserId,
+      });
+    },
+  };
+}
+
 
 export function createAgentApiApp(deps: AgentApiDependencies = {}) {
   requireJwtSecret();
@@ -33,8 +111,12 @@ export function createAgentApiApp(deps: AgentApiDependencies = {}) {
   app.use('/api/tasks', feedbackRouter);
   app.use('/api/skills', skillsRouter);
   if (deps.controlRuntime) {
-    app.use('/api/control-tasks', createControlPlanningRouter(deps.controlRuntime.controlPlanning));
-    app.use('/api/control-tasks', createControlTasksRouter(deps.controlRuntime));
+    const planning = refinementPlanningPort(deps.controlRuntime);
+    app.use('/api/control-tasks', createControlPlanningRouter(planning));
+    app.use('/api/control-tasks', createControlTasksRouter({
+      ...deps.controlRuntime,
+      clarification: refinementClarificationPort(deps.controlRuntime),
+    }));
   } else {
     if (deps.controlPlanning) {
       app.use('/api/control-tasks', createControlPlanningRouter(deps.controlPlanning));

@@ -55,6 +55,26 @@ interface CurrentFlowStateModule {
   failDeliverableRead(state: DeliverableReadState, error: string): FlowTransition;
   retryDeliverable(state: DeliverableReadState): FlowTransition;
 }
+interface ClarificationQuestion {
+  key: string;
+  question: string;
+  rationale: string;
+}
+
+interface ClarificationRequirement {
+  clarification_questions: ClarificationQuestion[];
+  assumptions: Array<{ key: string; value: string; editable: boolean }>;
+}
+
+interface ClarificationStateModule extends CurrentFlowStateModule {
+  buildClarificationSubmission(
+    requirement: ClarificationRequirement,
+    answers: Record<string, unknown>,
+    assumptionEdits: Record<string, string>,
+  ): { clarificationAnswers: Record<string, unknown>; assumptionEdits: Record<string, string> };
+  missingBlockingAnswers(requirement: ClarificationRequirement, answers: Record<string, unknown>): string[];
+}
+
 
 const currentFlowStateModulePath: string = '../apps/web/src/current-flow-state.ts';
 const currentFlowStateModuleFile = new URL(currentFlowStateModulePath, import.meta.url);
@@ -72,11 +92,35 @@ async function loadCurrentFlowStateModule(): Promise<CurrentFlowStateModule> {
     'finishExecution',
     'failDeliverableRead',
     'retryDeliverable',
+    'buildClarificationSubmission',
+    'missingBlockingAnswers',
   ]) {
     assert.equal(typeof moduleExports[exportName], 'function', `${exportName} must be exported`);
   }
   return moduleExports as unknown as CurrentFlowStateModule;
 }
+
+test('clarification submission contains only explicit answers and editable assumption changes', async () => {
+  const { buildClarificationSubmission } = await loadCurrentFlowStateModule() as ClarificationStateModule;
+  assert.deepEqual(buildClarificationSubmission({
+    clarification_questions: [{ key: 'audience', question: 'Who?', rationale: 'Changes method' }],
+    assumptions: [{ key: 'scope', value: 'web', editable: true }],
+  }, { audience: 'new users', ignored: 'nope' }, { scope: 'mobile', unknown: 'nope' }), {
+    clarificationAnswers: { audience: 'new users' },
+    assumptionEdits: { scope: 'mobile' },
+  });
+});
+
+test('missing blocking clarification answers remain unresolved despite suggestions', async () => {
+  const { missingBlockingAnswers } = await loadCurrentFlowStateModule() as ClarificationStateModule;
+  assert.deepEqual(missingBlockingAnswers({
+    clarification_questions: [
+      { key: 'audience', question: 'Who?', rationale: 'Changes method' },
+      { key: 'scope', question: 'What?', rationale: 'Bounds work' },
+    ],
+    assumptions: [],
+  }, { audience: 'new users' }), ['scope']);
+});
 
 test('buildConfirmationAnswers returns only explicit user answers, including false', async () => {
   const { buildConfirmationAnswers } = await loadCurrentFlowStateModule();

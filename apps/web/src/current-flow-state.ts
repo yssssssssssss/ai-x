@@ -116,3 +116,46 @@ export function retryDeliverable<TDeliverable>(
     effect: 'load-deliverable',
   };
 }
+
+export interface ClarificationQuestionState {
+  key: string;
+  question: string;
+  rationale: string;
+}
+
+export interface ClarificationRequirementState {
+  clarification_questions: ClarificationQuestionState[];
+  assumptions: Array<{ key: string; value: string; editable: boolean }>;
+}
+
+function hasExplicitAnswer(value: unknown): boolean {
+  return value !== undefined && value !== null && (typeof value !== 'string' || value.trim().length > 0);
+}
+
+export function missingBlockingAnswers(
+  requirement: ClarificationRequirementState,
+  answers: Record<string, unknown>,
+): string[] {
+  return requirement.clarification_questions
+    .filter((question) => !hasExplicitAnswer(answers[question.key]))
+    .map((question) => question.key);
+}
+
+export function buildClarificationSubmission(
+  requirement: ClarificationRequirementState,
+  answers: Record<string, unknown>,
+  assumptionEdits: Record<string, string>,
+): { clarificationAnswers: Record<string, unknown>; assumptionEdits: Record<string, string> } {
+  const questionKeys = new Set(requirement.clarification_questions.map((question) => question.key));
+  const editableKeys = new Set(
+    requirement.assumptions.filter((assumption) => assumption.editable).map((assumption) => assumption.key),
+  );
+  return {
+    clarificationAnswers: Object.fromEntries(
+      Object.entries(answers).filter(([key, value]) => questionKeys.has(key) && hasExplicitAnswer(value)),
+    ),
+    assumptionEdits: Object.fromEntries(
+      Object.entries(assumptionEdits).filter(([key, value]) => editableKeys.has(key) && value.trim().length > 0),
+    ),
+  };
+}

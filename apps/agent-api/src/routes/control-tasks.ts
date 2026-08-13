@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express';
-import { ControlPlaneConflictError, type ControlPlaneRepository } from '../../../../database/control-plane.ts';
+import { ControlPlaneConflictError, type ControlPlaneRepository, type ControlTaskDetail } from '../../../../database/control-plane.ts';
 import { getUserById } from '../../../../database/repository.ts';
 import {
   TaskWorkflowAuthorizationError,
@@ -7,13 +7,27 @@ import {
   type TaskWorkflowService,
   type WorkflowActor,
 } from '../../../orchestrator-runtime/src/control/task-workflow.ts';
+import type { CurrentPlanningResponse } from './control-planning.ts';
 import { requireAuth } from '../middleware.ts';
+
+export interface ControlClarificationPort {
+  clarify(input: {
+    taskId: string;
+    conversationId: string;
+    ownerUserId: string;
+    answers: Record<string, unknown>;
+    assumptionEdits: Record<string, string>;
+    expectedVersion: number;
+  }): Promise<CurrentPlanningResponse>;
+}
 
 export interface ControlTasksRuntime {
   repository: ControlPlaneRepository;
   workflow: TaskWorkflowService;
   getDeliverable(taskId: string, ownerUserId: string): Promise<unknown | null>;
+  clarification?: ControlClarificationPort;
 }
+
 
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -73,6 +87,7 @@ async function ensureOwnedTask(
   actor: WorkflowActor,
 ): Promise<boolean> {
   const taskId = typeof req.params.id === 'string' ? req.params.id : req.params.id[0] ?? '';
+
   const task = await runtime.repository.getTaskDetail(taskId);
   if (!task || task.ownerUserId !== actor.userId || task.conversationOwnerUserId !== actor.userId) {
     res.status(404).json({ error: '任务不存在' });
@@ -85,6 +100,68 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
   const router = Router();
   router.use(requireAuth);
   const { repository, workflow } = runtime;
+  const clarificationReplays = new Map<string, { fingerprint: string; response: CurrentPlanningResponse }>();
+  router.post('/:id/clarify', async (req, res) => {
+    const body = record(req.body);
+    const actor = await authenticatedActor(req, res);
+    if (!actor) return;
+    if (!await ensureOwnedTask(runtime, req, res, actor)) return;
+    if (!runtime.clarification) {
+      res.status(501).json({ error: '澄清服务不可用' });
+      return;
+    }
+    const forbidden = ['plan', 'planHash', 'structuredTask'];
+    if (body && forbidden.some((key) => key in body)) {
+      res.status(400).json({ error: 'plan、planHash、structuredTask 由服务端生成，不接受客户端提交' });
+      return;
+    }
+    const expectedVersion = version(body?.expectedVersion);
+    const clarificationAnswers = record(body?.clarificationAnswers);
+    const assumptionEdits = record(body?.assumptionEdits);
+    const key = idempotencyKey(req);
+    if (
+      expectedVersion == null
+      || !clarificationAnswers
+      || !assumptionEdits
+      || !key
+      || Object.values(assumptionEdits).some((value) => typeof value !== 'string')
+    ) {
+      res.status(400).json({ error: 'expectedVersion、clarificationAnswers、assumptionEdits、Idempotency-Key 必填' });
+      return;
+    }
+    const fingerprint = JSON.stringify({ expectedVersion, clarificationAnswers, assumptionEdits });
+    const replayKey = `${req.params.id}:${key}`;
+    const replay = clarificationReplays.get(replayKey);
+    if (replay) {
+      if (replay.fingerprint !== fingerprint) {
+        res.status(409).json({ error: `idempotency key ${key} was reused with a different request` });
+        return;
+      }
+      res.json(replay.response);
+      return;
+    }
+    try {
+      const task = await runtime.repository.getTaskDetail(req.params.id);
+      if (!task || task.ownerUserId !== actor.userId || task.conversationOwnerUserId !== actor.userId) {
+        res.status(404).json({ error: '任务不存在' });
+        return;
+      }
+      const response = await runtime.clarification.clarify({
+        taskId: task.id,
+        conversationId: task.conversationId,
+        ownerUserId: actor.userId,
+        answers: clarificationAnswers,
+        assumptionEdits: Object.fromEntries(
+          Object.entries(assumptionEdits).map(([field, value]) => [field, value as string]),
+        ),
+        expectedVersion,
+      });
+      clarificationReplays.set(replayKey, { fingerprint, response });
+      res.json(response);
+    } catch (error) {
+      responseError(res, error);
+    }
+  });
 
 router.get('/:id', async (req, res) => {
   const actor = await authenticatedActor(req, res);

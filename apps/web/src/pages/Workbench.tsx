@@ -4,6 +4,7 @@ import { useTaskFlow } from '../hooks/useTaskFlow.ts';
 import { Sidebar } from '../components/Sidebar.tsx';
 import { Composer } from '../components/Composer.tsx';
 import { Stage1Understand } from '../components/stages/Stage1Understand.tsx';
+import { CurrentStage1Clarify } from '../components/stages/CurrentStage1Clarify.tsx';
 import { Stage2Candidates } from '../components/stages/Stage2Candidates.tsx';
 import { Stage2Plan } from '../components/stages/Stage2Plan.tsx';
 import { Stage3Execute } from '../components/stages/Stage3Execute.tsx';
@@ -29,6 +30,8 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
   const flow = useTaskFlow();
   const {
     phase,
+    clarification,
+    submitClarification,
     candidatesResp,
     selectedCandidateId,
     plan,
@@ -86,6 +89,9 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
         <div style={{ flex: 1, overflowY: 'auto', padding: '32px 0' }}>
           <div className="chat-column" aria-live="polite">
             {phase === 'idle' && <Welcome onPick={flow.submitInput} />}
+            {clarification && phase === 'clarifying' && (
+              <CurrentStage1Clarify response={clarification} onSubmit={submitClarification} disabled={false} />
+            )}
 
             {originalInput && phase !== 'idle' && <UserBubble text={originalInput} />}
 
@@ -153,7 +159,7 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
             {(candidatesResp || exec || deliverable) && <CurrentHistoryNotice />}
           </div>
         </div>
-        <Composer disabled={phase === 'planning' || phase === 'selecting' || phase === 'executing' || phase === 'awaiting-approval'} onSubmit={flow.submitInput} />
+        <Composer disabled={phase === 'planning' || phase === 'clarifying' || phase === 'selecting' || phase === 'executing' || phase === 'awaiting-approval'} onSubmit={flow.submitInput} />
       </main>
       )}
     </div>

@@ -61,14 +61,9 @@ export type {
   SkillItem,
 } from '../../../../packages/api-contract/http.ts';
 
-// api 方法体实际引用的类型(export type 只做 re-export、不引入本地绑定,故这里单独 import)。
 import type {
-  User,
-  TaskDetail,
-  TaskSummary,
-  SkillItem,
-} from '../../../../packages/api-contract/http.ts';
-import type { PlanProgress } from '../../../../packages/api-contract/plan.ts';
+  CurrentPlanningResponse,
+} from '../../../agent-api/src/routes/control-planning.ts';
 
 export type {
   ApprovalControlPlanRequest,
@@ -94,14 +89,13 @@ export type {
   ResearchDeliverableEnvelope,
   ResearchPlanPayload,
 } from '../../../../packages/api-contract/research-deliverable.ts';
-export type { EvidenceManifest } from '../../../orchestrator-runtime/src/evidence/evidence-service.ts';
+export type { ClarificationRequiredResponse, CurrentPlanningResponse } from '../../../agent-api/src/routes/control-planning.ts';
 
 import type {
   ApprovalControlPlanRequest,
   ConfirmControlPlanRequest,
   ControlCommandResponse,
   ControlExecutionResult,
-  ControlPlanCandidatesResponse,
   CurrentTaskReadResponse,
   ExecutionControlPlanRequest,
   PlanControlTaskRequest,
@@ -114,20 +108,27 @@ import type {
   ResearchPlanPayload,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { EvidenceManifest } from '../../../orchestrator-runtime/src/evidence/evidence-service.ts';
+import type { PlanProgress } from '../../../../packages/api-contract/plan.ts';
+import type { User, TaskDetail, TaskSummary, SkillItem } from '../../../../packages/api-contract/http.ts';
 
 export interface ControlDeliverableResponse {
   deliverable: ResearchDeliverableEnvelope<ResearchPlanPayload>;
   evidenceManifest: EvidenceManifest;
 }
 
-// ---- API ----
+export interface ClarifyControlTaskRequest {
+  expectedVersion: number;
+  clarificationAnswers: Record<string, unknown>;
+  assumptionEdits: Record<string, string>;
+  idempotencyKey: string;
+}
+
 export const api = {
   register: (b: { email: string; password: string; displayName: string }) =>
     req<{ token: string; user: User }>('/auth/register', { method: 'POST', body: b }),
   login: (b: { email: string; password: string }) =>
     req<{ token: string; user: User }>('/auth/login', { method: 'POST', body: b }),
   me: () => req<{ user: User }>('/auth/me'),
-
   // Current 规划流:SSE conversation/progress/result/error 在 client 层收口。
   planControlStream: async (
     body: PlanControlTaskRequest,
@@ -135,7 +136,7 @@ export const api = {
       onConversation?: (conversationId: string) => void;
       onProgress?: (event: PlanProgress) => void;
     } = {},
-  ): Promise<ControlPlanCandidatesResponse> => {
+  ): Promise<CurrentPlanningResponse> => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const token = getToken();
     if (token) headers.Authorization = `Bearer ${token}`;
@@ -149,7 +150,7 @@ export const api = {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-    let result: ControlPlanCandidatesResponse | null = null;
+    let result: CurrentPlanningResponse | null = null;
     const consume = (block: string): void => {
       let event = 'message';
       let data = '';
@@ -165,7 +166,7 @@ export const api = {
       } else if (event === 'progress') {
         handlers.onProgress?.(parsed as PlanProgress);
       } else if (event === 'result') {
-        result = parsed as ControlPlanCandidatesResponse;
+        result = parsed as CurrentPlanningResponse;
       } else if (event === 'error') {
         const failure = parsed as { error?: unknown };
         throw new ApiError(502, typeof failure.error === 'string' ? failure.error : '规划失败');
@@ -187,6 +188,14 @@ export const api = {
     if (!result) throw new ApiError(502, '规划未返回结果');
     return result;
   },
+  clarifyControlTask: (
+    taskId: string,
+    body: ClarifyControlTaskRequest,
+  ) => req<CurrentPlanningResponse>(`/control-tasks/${taskId}/clarify`, {
+    method: 'POST',
+    body,
+    headers: { 'Idempotency-Key': body.idempotencyKey },
+  }),
   listTasks: () => req<{ tasks: TaskSummary[] }>('/tasks'),
   taskDetail: (id: string) =>
     req<TaskDetail>(`/tasks/${id}`),

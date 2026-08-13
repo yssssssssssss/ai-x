@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import {
   api,
+  type ClarificationRequiredResponse,
+  type ClarifyControlTaskRequest,
   type ControlDeliverableResponse,
   type ControlExecutionResult,
   type ControlPlanCandidatesResponse,
@@ -23,6 +25,7 @@ const CURRENT_TASK_STORAGE_KEY = 'ur_current_task_id';
 export type Phase =
   | 'idle'
   | 'planning'
+  | 'clarifying'
   | 'picking'
   | 'selecting'
   | 'planned'
@@ -69,6 +72,7 @@ function message(error: unknown, fallback: string): string {
 }
 
 export function useTaskFlow() {
+  const [clarification, setClarification] = useState<ClarificationRequiredResponse | null>(null);
   const [phase, setPhase] = useState<Phase>('idle');
   const [candidatesResp, setCandidatesResp] = useState<ControlPlanCandidatesResponse | null>(null);
   const [selectedCandidate, setSelectedCandidate] = useState<CurrentPlanCandidate | null>(null);
@@ -152,6 +156,7 @@ export function useTaskFlow() {
   function reset() {
     localStorage.removeItem(CURRENT_TASK_STORAGE_KEY);
     setPhase('idle');
+    setClarification(null);
     setCandidatesResp(null);
     setSelectedCandidate(null);
     setPlan(null);
@@ -170,6 +175,7 @@ export function useTaskFlow() {
   async function submitInput(text: string) {
     localStorage.removeItem(CURRENT_TASK_STORAGE_KEY);
     setPhase('planning');
+    setClarification(null);
     setCandidatesResp(null);
     setSelectedCandidate(null);
     setPlan(null);
@@ -200,12 +206,42 @@ export function useTaskFlow() {
       );
       localStorage.setItem(CURRENT_TASK_STORAGE_KEY, response.task.id);
       setCurrentTaskId(response.task.id);
-      setCandidatesResp(response);
       setStateVersion(response.task.stateVersion);
-      setPhase('picking');
+      if (response.status === 'clarification_required') {
+        setClarification(response);
+        setCandidatesResp(null);
+        setPhase('clarifying');
+      } else {
+        setCandidatesResp(response);
+        setPhase('picking');
+      }
     } catch (cause) {
       setError(message(cause, '规划失败'));
       setPhase('error');
+    }
+  }
+
+  async function submitClarification(input: Omit<ClarifyControlTaskRequest, 'idempotencyKey'>) {
+    if (!clarification) return;
+    setPhase('clarifying');
+    setError('');
+    try {
+      const response = await api.clarifyControlTask(clarification.task.id, {
+        ...input,
+        idempotencyKey: crypto.randomUUID(),
+      });
+      setStateVersion(response.task.stateVersion);
+      if (response.status === 'clarification_required') {
+        setClarification(response);
+        setPhase('clarifying');
+      } else {
+        setClarification(null);
+        setCandidatesResp(response);
+        setPhase('picking');
+      }
+    } catch (cause) {
+      setError(message(cause, '澄清提交失败'));
+      setPhase('clarifying');
     }
   }
 
@@ -342,6 +378,8 @@ export function useTaskFlow() {
 
   return {
     phase,
+    clarification,
+    submitClarification,
     candidatesResp,
     selectedCandidate,
     selectedCandidateId: selectedCandidate?.planVersionId ?? null,

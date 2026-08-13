@@ -2,10 +2,27 @@ import { Router } from 'express';
 import { ControlPlaneAuthorizationError, ControlPlaneConflictError } from '../../../../database/control-plane.ts';
 import type {
   ControlPlanCandidatesResponse,
+  ControlTaskResponse,
   PlanControlTaskRequest,
 } from '../../../../packages/api-contract/control-workflow.ts';
-import type { PlanProgress } from '../../../../packages/api-contract/plan.ts';
+import type { ResearchTaskV2, PlanProgress } from '../../../../packages/api-contract/plan.ts';
 import { requireAuth } from '../middleware.ts';
+
+export type CurrentCandidatesResponse = ControlPlanCandidatesResponse & {
+  status?: 'current_candidates';
+};
+
+export interface ClarificationRequiredResponse {
+  kind: 'current';
+  status: 'clarification_required';
+  conversationId: string;
+  task: ControlTaskResponse;
+  structuredTask: ResearchTaskV2;
+  activatedNodes: string[];
+  candidates: [];
+}
+
+export type CurrentPlanningResponse = CurrentCandidatesResponse | ClarificationRequiredResponse;
 
 export interface ControlPlanningPort {
   plan(
@@ -13,7 +30,7 @@ export interface ControlPlanningPort {
     onProgress?: (event: PlanProgress) => void,
     // 新建会话后、planning resolve 前回调:让 SSE 能实时先发 conversation,不等规划完成。
     onConversation?: (conversationId: string) => void,
-  ): Promise<ControlPlanCandidatesResponse>;
+  ): Promise<CurrentPlanningResponse>;
 }
 function isConversationLookupError(error: unknown): boolean {
   if (error instanceof ControlPlaneAuthorizationError) return true;
