@@ -164,6 +164,14 @@ before(async () => {
   // Static imports would construct the shared pool before its scoped PGOPTIONS is installed.
   repository = await import('../database/repository.ts');
   ({ closePool: closeRepositoryPool } = await import('../database/db.ts'));
+  await database.query(
+    `INSERT INTO "${schema}".control_model_calls
+       (id, stage, attempt_id, step_no, provider, endpoint_host, requested_model, actual_model, model_version,
+        prompt_hash, context_manifest_hash, trace_id, status, started_at, finished_at)
+     VALUES ('11111111-1111-4111-8111-111111111111', 'problem_graph', NULL, NULL, 'fixture', 'fixture.test',
+             'auth-fixture-model', 'auth-fixture-model', '1', 'sha256:auth-fixture-problem-graph',
+             NULL, 'trace-auth-fixture-problem-graph', 'succeeded', now(), now())`,
+  );
 
   const owner = await repository.createUser({
     email: `auth-owner-${randomUUID()}@test.local`,

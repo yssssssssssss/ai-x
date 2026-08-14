@@ -444,20 +444,42 @@ function sourceRefs(value: unknown): ToolSourceRef[] {
 }
 
 
-function verifiedPriorOutputs(outputs: readonly EngineSealedStepOutput[]): Array<{
+function verifiedPriorOutputs(
+  outputs: readonly EngineSealedStepOutput[],
+  step?: EngineStep,
+): Array<{
   stepNo: number;
   actorId: string;
   kind: StepArtifactKind;
   output: unknown;
   artifact: EngineSealedStepOutput['artifact'];
 }> {
-  return outputs.map(({ stepNo, actorId, kind, output, artifact }) => ({
-    stepNo,
-    actorId,
-    kind,
-    output,
-    artifact,
-  }));
+  const allowed = step
+    ? new Set([
+        ...step.depends_on,
+        ...step.input_bindings.map((binding) => binding.source_step_no),
+      ])
+    : null;
+  return outputs
+    .filter(({ stepNo }) => allowed === null || allowed.has(stepNo))
+    .map(({ stepNo, actorId, kind, output, artifact }) => ({
+      stepNo,
+      actorId,
+      kind,
+      output,
+      artifact,
+    }));
+}
+
+function stepContract(step: EngineStep): Record<string, unknown> {
+  return {
+    question_ids: [...step.question_ids],
+    acceptance_criteria: [...step.acceptance_criteria],
+    expected_outputs: step.expected_outputs.map((output) => ({ ...output })),
+    actor_type: step.actor_type,
+    actor_id: step.actor_id,
+  };
+
 }
 function failureFrom(error: unknown): Record<string, unknown> {
   if (error instanceof ToolInvocationError) {
@@ -781,6 +803,7 @@ export class LeaseExecutionEngine {
             lease: input.lease,
             researchGoal,
             resolvedInput,
+            priorOutputs: outputs,
             producedOutputHash: error instanceof SkillOutputSchemaError
               ? error.outputHash
               : producedSkillOutputHash,
@@ -1014,11 +1037,28 @@ export class LeaseExecutionEngine {
   }
 
   private async preflight(plan: EnginePlan, researchGoal: string): Promise<ExecutionAuthenticityError | null> {
-    const tavily = this.dependencies.skillLoader.getTool('tavily-web-search');
-    const hasRequiredTavily = tavily?.tier === 'core'
-      && plan.steps.some((step) => step.actor_type === 'tool' && step.actor_id === 'tavily-web-search');
-    if (!hasRequiredTavily) {
-      return new ExecutionAuthenticityError('current P0 execution requires an active core Tavily step');
+    const requiresPublicSource = plan.evidence_requirements.some((requirement) => (
+      requirement.required && requirement.acceptedClasses.includes('public_source')
+    ));
+    let publicEvidencePolicyFailure = false;
+    if (requiresPublicSource) {
+      publicEvidencePolicyFailure = !plan.steps.some((step) => {
+        if (step.actor_type !== 'tool') return false;
+        const registryEntry = this.dependencies.skillLoader.getTool(step.actor_id);
+        if (!registryEntry || registryEntry.tier !== 'core') return false;
+        try {
+          const manifest = loadToolManifest(registryEntry.path);
+          const resolution = this.dependencies.tools.resolve(manifest);
+          return Boolean(
+            resolution
+              && resolution.executionMode === 'real'
+              && resolution.declaredAdapterType === resolution.resolvedAdapterType
+              && resolution.implementationId !== 'unknown',
+          );
+        } catch {
+          return false;
+        }
+      });
     }
     try {
       const stepNos = plan.steps.map((step) => step.step_no);
@@ -1061,6 +1101,11 @@ export class LeaseExecutionEngine {
       return new ExecutionAuthenticityError(
         'execution preflight failed before external side effects',
         { cause: error instanceof Error ? error.message : String(error) },
+      );
+    }
+    if (publicEvidencePolicyFailure) {
+      return new ExecutionAuthenticityError(
+        'execution evidence policy requires a planned eligible real Core Tool for public-source evidence',
       );
     }
     const identity = this.dependencies.llm.identity;
@@ -1183,6 +1228,7 @@ export class LeaseExecutionEngine {
     lease: ControlExecutionLease;
     researchGoal: string;
     resolvedInput: Record<string, unknown>;
+    priorOutputs: EngineSealedStepOutput[];
     producedOutputHash?: string;
   }): Promise<Record<string, unknown>> {
     let receipt: { id: string; promptHash: string; traceId: string | null } | undefined;
@@ -1210,9 +1256,10 @@ export class LeaseExecutionEngine {
       const context = {
         research_goal: input.researchGoal,
         input: input.resolvedInput,
-        prior_outputs: [],
+        prior_outputs: verifiedPriorOutputs(input.priorOutputs, input.step),
+        ...stepContract(input.step),
       };
-      const prompt = `${SKILL_PROMPT_PREFIX}\n\n${body.body}`;
+      const prompt = `${SKILL_PROMPT_PREFIX}\n${JSON.stringify(stepContract(input.step))}\n\n${body.body}`;
       return {
         skillBodyHash: body.hash,
         inputSchemaHash: skill.input_schema ? hashFile(skill.input_schema) : null,
@@ -1366,9 +1413,10 @@ export class LeaseExecutionEngine {
     const skillContext = {
       research_goal: input.researchGoal,
       input: input.resolvedInput,
-      prior_outputs: verifiedPriorOutputs(input.outputs),
+      prior_outputs: verifiedPriorOutputs(input.outputs, input.step),
+      ...stepContract(input.step),
     };
-    const prompt = `${SKILL_PROMPT_PREFIX}\n\n${body.body}`;
+    const prompt = `${SKILL_PROMPT_PREFIX}\n${JSON.stringify(stepContract(input.step))}\n\n${body.body}`;
     const result = await this.llm.generateStructured<object>({
       prompt,
       schema: schemas.output ?? {},
@@ -1426,10 +1474,11 @@ export class LeaseExecutionEngine {
     const llmContext = {
       research_goal: input.researchGoal,
       input: input.resolvedInput,
-      prior_outputs: verifiedPriorOutputs(input.outputs),
+      prior_outputs: verifiedPriorOutputs(input.outputs, input.step),
+      ...stepContract(input.step),
     };
     const result = await this.llm.generateText({
-      prompt: `Execute plan step: ${input.step.step_name}. ${input.step.purpose ?? ''}`,
+      prompt: `Execute plan step: ${input.step.step_name}. ${input.step.purpose ?? ''}\nContract: ${JSON.stringify(stepContract(input.step))}`, 
       context: llmContext,
       receipt: {
         stage: 'llm',
@@ -1456,10 +1505,11 @@ export class LeaseExecutionEngine {
     const reviewerContext = {
       research_goal: input.researchGoal,
       input: input.resolvedInput,
-      prior_outputs: verifiedPriorOutputs(input.outputs),
+      prior_outputs: verifiedPriorOutputs(input.outputs, input.step),
+      ...stepContract(input.step),
     };
     const result = await this.llm.generateText({
-      prompt: `Review completed outputs for source support and gaps: ${input.step.step_name}.`,
+      prompt: `Review completed outputs for source support and gaps: ${input.step.step_name}. Contract: ${JSON.stringify(stepContract(input.step))}`, 
       context: reviewerContext,
       receipt: {
         stage: 'reviewer',

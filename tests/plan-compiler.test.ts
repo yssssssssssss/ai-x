@@ -167,7 +167,7 @@ function validCandidate(id: 'depth' | 'speed' = 'depth'): CurrentPlanCandidatePr
         actor_id: eligibleSkill.id,
         question_ids: ['question-source', 'question-action'],
         depends_on: [1],
-        input: { research_goal: task.research_goal, sources: null },
+        input: { research_goal: task.research_goal, sources: null, competitor_screenshots: [] },
         input_bindings: [{
           target_pointer: '/sources',
           source_step_no: 1,
@@ -209,6 +209,20 @@ function expectCompileError(
     },
   );
 }
+
+test('rejects pending input roles missing from the frozen Skill step input', () => {
+  const value = input();
+  delete (value.candidate.steps[1]!.input as Record<string, unknown>).competitor_screenshots;
+  assert.throws(
+    () => new PlanCompiler().compile(value),
+    (error: unknown) => {
+      assert.ok(error instanceof PlanCompilerValidationError);
+      assert.equal(error.kind, 'pending_input_schema_invalid');
+      assert.match(error.message, /competitor_screenshots/);
+      return true;
+    },
+  );
+});
 
 test('rejects a step dependency cycle', () => {
   expectCompileError((value) => {
@@ -817,11 +831,8 @@ test('direct Current depth and speed prepend every required Tool with remapped s
       const reviewer = reviewers[0]!;
       assert.equal(reviewer.step_no, skillStepNo + 1);
       assert.deepEqual(reviewer.depends_on, [skillStepNo]);
-      assert.deepEqual(reviewer.input_bindings, [{
-        target_pointer: '/result',
-        source_step_no: skillStepNo,
-        source_pointer: skillStep.expected_outputs[0]!.pointer,
-      }]);
+      assert.deepEqual(reviewer.input_bindings, []);
+      assert.ok(!skillStep.expected_outputs.some((output) => output.pointer === '/result'));
     }
   }
 });

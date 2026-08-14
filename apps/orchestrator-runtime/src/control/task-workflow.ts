@@ -364,11 +364,15 @@ export class TaskWorkflowService {
     const missingAnswers = (taskShape(task).clarification_questions ?? [])
       .map((requirement) => requirement.key)
       .filter((key) => !(key in input.confirmationAnswers));
-    const missingInputs = pendingInputKeys(plan).filter((key) => (
+    const requiredInputRoles = new Set(pendingInputKeys(plan));
+    const extraInputs = Object.keys(input.inputValues).filter((key) => !requiredInputRoles.has(key));
+    const missingInputs = [...requiredInputRoles].filter((key) => (
       !Object.prototype.hasOwnProperty.call(input.inputValues, key)
       || input.inputValues[key] === undefined
     ));
-    if (missingAnswers.length || missingInputs.length) throw new TaskWorkflowGateError([...missingAnswers, ...missingInputs]);
+    if (missingAnswers.length || missingInputs.length || extraInputs.length) {
+      throw new TaskWorkflowGateError([...missingAnswers, ...missingInputs, ...extraInputs]);
+    }
 
     for (const [key, value] of Object.entries(input.confirmationAnswers)) {
       await this.repository.recordGate({

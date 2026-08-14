@@ -917,6 +917,14 @@ before(async () => {
       [ownerUserId],
     );
     conversationId = String(conversation.rows[0]?.id);
+    await connection.query(
+      `INSERT INTO control_model_calls
+         (id, stage, attempt_id, step_no, provider, endpoint_host, requested_model, actual_model, model_version,
+          prompt_hash, context_manifest_hash, trace_id, status, started_at, finished_at)
+       VALUES ('33333333-3333-4333-8333-333333333333', 'problem_graph', NULL, NULL, 'fixture', 'fixture.test',
+               'planner', 'planner', '1', 'sha256:problem-graph',
+               NULL, 'trace-problem-graph', 'succeeded', now(), now())`,
+    );
   } finally {
     connection.release();
   }

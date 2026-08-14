@@ -469,6 +469,9 @@ function derivePendingInputs(
     if (step.actor_type !== 'skill') continue;
     const decision = eligibleSkills.get(step.actor_id)!;
     for (const pending of decision.pending_inputs) {
+      if (!Object.hasOwn(step.input, pending.role)) {
+        fail('pending_input_schema_invalid', step.actor_id, pending.role, String(step.step_no));
+      }
       let item = pendingByRole.get(pending.role);
       if (!item) {
         item = {

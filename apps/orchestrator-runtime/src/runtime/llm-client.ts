@@ -82,6 +82,7 @@ export interface ModelCallRecordInput {
   endpointHost: string;
   requestedModel: string;
   actualModel: string;
+  modelVersion?: string;
   promptHash: string;
   contextManifestHash?: string;
   traceId?: string;

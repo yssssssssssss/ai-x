@@ -837,16 +837,20 @@ git commit -m "feat: compile current execution plans"
 **Files:**
 - Create: `apps/orchestrator-runtime/src/control/step-input-resolver.ts`
 - Create: `database/migrations/007_skill_provenance.sql`
+- Create: `database/migrations/008_model_version.sql`
 - Create: `.superpowers/sdd/task-11-report.md`
 - Modify: `apps/orchestrator-runtime/src/control/lease-execution-engine.ts`
 - Modify: `apps/orchestrator-runtime/src/runtime/llm-client.ts`
 - Modify: `apps/orchestrator-runtime/src/runtime/receipt-llm-client.ts`
 - Modify: `database/control-plane.ts`
+- Modify: `apps/orchestrator-runtime/src/planners/plan-compiler.ts`, `apps/orchestrator-runtime/src/planners/routed-planner.ts`
+- Modify: `apps/orchestrator-runtime/src/control/task-workflow.ts`, `apps/web/src/hooks/useTaskFlow.ts`
 - Modify: `.superpowers/sdd/progress.md`
-- Test: `tests/current-step-bindings.test.ts`, `tests/lease-execution-engine.test.ts`, `tests/execution-control.test.ts`, `tests/model-receipt.test.ts`
-- Receipt fixture migration: `tests/gateway-llm-receipt.test.ts`, `tests/problem-graph.test.ts`, `tests/requirement-refinement-service.test.ts`
+- Test: `tests/current-step-bindings.test.ts`, `tests/lease-execution-engine.test.ts`, `tests/execution-control.test.ts`, `tests/model-receipt.test.ts`, `tests/plan-compiler.test.ts`, `tests/task-workflow.test.ts`, `tests/control-plane.test.ts`, `tests/current-revision-integrity.test.ts`, `tests/control-api-integration.test.ts`, `tests/auth-isolation.test.ts`
 
 **Scope correction:** Input Binding is execution-integrity state, so Task 11 also owns additive Migration 007 and the independent `skill_provenance` repository read/write path. Complete Skill provenance requires the database-generated model-call ID; `ModelCallRecorder` therefore returns the inserted ID and `ReceiptLLMClient` propagates it on successful results. All affected recorder fixtures migrate directly with no compatibility alias. Report/progress files record the expanded approved scope.
+
+**Final-gate closure:** The approved scope includes generic Evidence Policy/Core Tool preflight (no provider ID), schema/registry-derived direct output pointers, complete actor contract context and dependency-scoped verified outputs, frozen pending-input own-field validation, extra input role rejection at API/workflow/Web boundaries, exact failed Skill receipt context recovery, and PostgreSQL receipt tuple validation (including model version) before candidate or revision plan insertion. These constraints are fail-closed and preserve Current safety; no compatibility alias or validation relaxation is permitted.
 
 **Integrated review scope correction:** Task 11 also owns the confirmation-to-execution Pending Input value path, resolver-compatible compiler target validation, optional Tool source/fallback rejection, required-question success coverage, frozen high-risk approval authority, deterministic direct required Tool steps, resume Pending Input remapping, durable ProblemGraph receipt provenance, failed Skill receipt recovery, and shared API/Web `skillProvenance`. These are integrity constraints on the same frozen Current plan and execution boundary, not Phase 4 features. Inline image `dataUrl` remains an internal, 12 MB API-limited actor input only until Phase 5 replaces it with sealed upload Artifacts; it must not enter responses, logs, receipts, or unrelated prompts.
 

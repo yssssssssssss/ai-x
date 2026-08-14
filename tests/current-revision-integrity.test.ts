@@ -113,6 +113,22 @@ before(async () => {
       [ownerId],
     );
     conversationId = String(conversation.rows[0]?.id);
+    await connection.query(
+      `INSERT INTO control_model_calls
+         (id, stage, attempt_id, step_no, provider, endpoint_host, requested_model, actual_model, model_version,
+          prompt_hash, context_manifest_hash, trace_id, status, started_at, finished_at)
+       VALUES ('11111111-1111-4111-8111-111111111111', 'problem_graph', NULL, NULL, 'fixture', 'fixture.test',
+               'revision-fixture-model', 'revision-fixture-model', '1', 'sha256:revision-fixture-problem-graph',
+               NULL, 'trace-revision-fixture-problem-graph', 'succeeded', now(), now())`,
+    );
+    await connection.query(
+      `INSERT INTO control_model_calls
+         (id, stage, attempt_id, step_no, provider, endpoint_host, requested_model, actual_model, model_version,
+          prompt_hash, context_manifest_hash, trace_id, status, started_at, finished_at)
+       VALUES ('22222222-2222-4222-8222-222222222222', 'problem_graph', NULL, NULL, 'fixture', 'fixture.test',
+               'revision-planner', 'revision-planner', '1', 'sha256:problem-graph',
+               NULL, 'revision-problem-graph', 'succeeded', now(), now())`,
+    );
   } finally {
     connection.release();
   }

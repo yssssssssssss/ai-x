@@ -90,6 +90,7 @@ export interface ControlModelCall {
   endpointHost: string;
   requestedModel: string;
   actualModel: string;
+  modelVersion: string;
   promptHash: string;
   contextManifestHash: string | null;
   traceId: string | null;
@@ -192,6 +193,38 @@ export function canonicalPlanHash(plan: unknown): string {
   return canonicalPlan(plan).hash;
 }
 
+
+async function validateProblemGraphReceipt(
+  connection: MigrationConnection,
+  plan: unknown,
+): Promise<void> {
+  const record = asRecord(plan);
+  const provenance = record ? asRecord(record.problem_graph_provenance) : null;
+  const receiptId = provenance?.receiptId;
+  if (!provenance || typeof receiptId !== 'string') {
+    throw new ControlPlaneConflictError('problem graph provenance receiptId is missing');
+  }
+  const result = await connection.query(
+    `SELECT stage, attempt_id, status, actual_model, model_version, prompt_hash, trace_id
+     FROM control_model_calls
+     WHERE id = $1
+     FOR SHARE`,
+    [receiptId],
+  );
+  const receipt = result.rows[0];
+  if (
+    !receipt
+    || receipt.attempt_id !== null
+    || receipt.stage !== 'problem_graph'
+    || receipt.status !== 'succeeded'
+    || receipt.actual_model !== provenance.modelName
+    || receipt.model_version !== provenance.modelVersion
+    || receipt.prompt_hash !== provenance.promptHash
+    || receipt.trace_id !== provenance.traceId
+  ) {
+    throw new ControlPlaneConflictError(`problem graph provenance receipt ${receiptId} is not bound to the persisted model call`);
+  }
+}
 function planForTask(plan: unknown, taskId: string): { json: string; hash: string } {
   const record = asRecord(plan);
   if (!record) throw new ControlPlaneConflictError('candidate plan must be an object');
@@ -676,6 +709,9 @@ export class ControlPlaneRepository {
         candidate,
         persistedPlan: planForTask(candidate.plan, taskId),
       }));
+      for (const { persistedPlan } of preparedCandidates) {
+        await validateProblemGraphReceipt(connection, JSON.parse(persistedPlan.json));
+      }
       const planHashes = new Set<string>();
       for (const { persistedPlan } of preparedCandidates) {
         if (planHashes.has(persistedPlan.hash)) {
@@ -775,6 +811,9 @@ export class ControlPlaneRepository {
         candidate,
         persistedPlan: planForTask(candidate.plan, input.taskId),
       }));
+      for (const { persistedPlan } of preparedCandidates) {
+        await validateProblemGraphReceipt(connection, JSON.parse(persistedPlan.json));
+      }
       const planHashes = new Set<string>();
       for (const { persistedPlan } of preparedCandidates) {
         if (planHashes.has(persistedPlan.hash)) {
@@ -916,6 +955,9 @@ export class ControlPlaneRepository {
         const candidate = candidateById.get(candidateId)!;
         return { candidate, persistedPlan: planForTask(candidate.plan, input.taskId) };
       });
+      for (const { persistedPlan } of preparedCandidates) {
+        await validateProblemGraphReceipt(connection, JSON.parse(persistedPlan.json));
+      }
       if (preparedCandidates[0]!.persistedPlan.hash === preparedCandidates[1]!.persistedPlan.hash) {
         throw new ControlPlaneConflictError('clarification candidate plan hashes are duplicated');
       }
@@ -1203,6 +1245,7 @@ export class ControlPlaneRepository {
       ) {
         throw new ControlPlaneConflictError(`task ${input.taskId} cannot revise at version ${input.expectedVersion}`);
       }
+      await validateProblemGraphReceipt(connection, input.plan);
       const validatedPlan = validateCurrentPlanRevision({
         plan: input.plan,
         task: taskRow.structured_task,
@@ -2233,6 +2276,7 @@ export class ControlPlaneRepository {
     endpointHost: string;
     requestedModel: string;
     actualModel: string;
+    modelVersion?: string;
     promptHash: string;
     contextManifestHash?: string;
     traceId?: string;
@@ -2245,14 +2289,15 @@ export class ControlPlaneRepository {
     return this.transaction(async (connection) => {
       const result = await connection.query(
         `INSERT INTO control_model_calls
-           (attempt_id, stage, step_no, provider, endpoint_host, requested_model, actual_model,
+           (attempt_id, stage, step_no, provider, endpoint_host, requested_model, actual_model, model_version,
             prompt_hash, context_manifest_hash, trace_id, tokens_json, status, failure_json, started_at, finished_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
          RETURNING id`,
         [
           input.attemptId ?? null, input.stage, input.stepNo ?? null, input.provider, input.endpointHost,
-          input.requestedModel, input.actualModel, input.promptHash, input.contextManifestHash ?? null,
-          input.traceId ?? null, input.tokens == null ? null : JSON.stringify(input.tokens), input.status,
+          input.requestedModel, input.actualModel, input.modelVersion ?? 'unknown', input.promptHash,
+          input.contextManifestHash ?? null, input.traceId ?? null,
+          input.tokens == null ? null : JSON.stringify(input.tokens), input.status,
           input.failure == null ? null : JSON.stringify(input.failure), input.startedAt, input.finishedAt,
         ],
       );
@@ -2264,7 +2309,7 @@ export class ControlPlaneRepository {
     const connection = await this.database.connect();
     try {
       const result = await connection.query(
-        `SELECT id, stage, step_no, provider, endpoint_host, requested_model, actual_model,
+        `SELECT id, stage, step_no, provider, endpoint_host, requested_model, actual_model, model_version,
                 prompt_hash, context_manifest_hash, trace_id, tokens_json, status, failure_json
          FROM control_model_calls WHERE attempt_id = $1 ORDER BY started_at`,
         [attemptId],
@@ -2277,6 +2322,7 @@ export class ControlPlaneRepository {
         endpointHost: asString(row.endpoint_host, 'endpoint_host'),
         requestedModel: asString(row.requested_model, 'requested_model'),
         actualModel: asString(row.actual_model, 'actual_model'),
+        modelVersion: asString(row.model_version, 'model_version'),
         promptHash: asString(row.prompt_hash, 'prompt_hash'),
         contextManifestHash: typeof row.context_manifest_hash === 'string' ? row.context_manifest_hash : null,
         traceId: typeof row.trace_id === 'string' ? row.trace_id : null,

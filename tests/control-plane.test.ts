@@ -144,12 +144,34 @@ function existingTaskCandidates(label: string): Array<{
   return [
     {
       candidateId: 'depth',
-      plan: { task_id: `provisional-${label}-depth`, deliverable_type: 'research_plan', steps: [{ step_no: 1, step_name: `${label}-depth` }] },
+      plan: {
+        task_id: `provisional-${label}-depth`,
+        deliverable_type: 'research_plan',
+        problem_graph_provenance: {
+          receiptId: '11111111-1111-4111-8111-111111111112',
+          modelName: 'control-fixture-model',
+          modelVersion: '1',
+          promptHash: 'sha256:control-fixture-problem-graph',
+          traceId: 'trace-control-fixture-problem-graph',
+        },
+        steps: [{ step_no: 1, step_name: `${label}-depth` }],
+      },
       pendingInputs: [],
     },
     {
       candidateId: 'speed',
-      plan: { task_id: `provisional-${label}-speed`, deliverable_type: 'research_plan', steps: [{ step_no: 1, step_name: `${label}-speed` }] },
+      plan: {
+        task_id: `provisional-${label}-speed`,
+        deliverable_type: 'research_plan',
+        problem_graph_provenance: {
+          receiptId: '11111111-1111-4111-8111-111111111112',
+          modelName: 'control-fixture-model',
+          modelVersion: '1',
+          promptHash: 'sha256:control-fixture-problem-graph',
+          traceId: 'trace-control-fixture-problem-graph',
+        },
+        steps: [{ step_no: 1, step_name: `${label}-speed` }],
+      },
       pendingInputs: [],
     },
   ];
@@ -241,6 +263,22 @@ before(async () => {
       [ownerId, 'control test'],
     );
     conversationId = String(conversation.rows[0]?.id);
+    await connection.query(
+      `INSERT INTO control_model_calls
+         (id, stage, attempt_id, step_no, provider, endpoint_host, requested_model, actual_model, model_version,
+          prompt_hash, context_manifest_hash, trace_id, status, started_at, finished_at)
+       VALUES ('11111111-1111-4111-8111-111111111112', 'problem_graph', NULL, NULL, 'fixture', 'fixture.test',
+               'control-fixture-model', 'control-fixture-model', '1', 'sha256:control-fixture-problem-graph',
+               NULL, 'trace-control-fixture-problem-graph', 'succeeded', now(), now())`,
+    );
+    await connection.query(
+      `INSERT INTO control_model_calls
+         (id, stage, attempt_id, step_no, provider, endpoint_host, requested_model, actual_model, model_version,
+          prompt_hash, context_manifest_hash, trace_id, status, started_at, finished_at)
+       VALUES ('11111111-1111-4111-8111-111111111113', 'problem_graph', NULL, NULL, 'fixture', 'fixture.test',
+               'fixture-model', 'fixture-model', '1', 'sha256:fixture-problem-graph',
+               NULL, 'trace-fixture-problem-graph', 'succeeded', now(), now())`,
+    );
   } finally {
     connection.release();
   }
@@ -299,7 +337,7 @@ test('repository rejects semantically invalid Current revisions before inserting
       }],
     },
     problem_graph_provenance: {
-      receiptId: '11111111-1111-4111-8111-111111111111',
+      receiptId: '11111111-1111-4111-8111-111111111113',
       modelName: 'fixture-model',
       modelVersion: '1',
       promptHash: 'sha256:fixture-problem-graph',
@@ -358,6 +396,11 @@ test('persists a Current task and its depth/speed candidates without activating 
   const depthPlan = {
     task_id: 'provisional-depth-task',
     title: 'Depth plan',
+    problem_graph_provenance: {
+      receiptId: '11111111-1111-4111-8111-111111111112',
+      modelName: 'control-fixture-model', modelVersion: '1',
+      promptHash: 'sha256:control-fixture-problem-graph', traceId: 'trace-control-fixture-problem-graph',
+    },
     steps: [{ step_no: 1, step_name: 'deep research' }],
     candidate_metadata: { title: 'Depth', rationale: 'Cross-check', tradeoffs: 'Slower' },
     activated_nodes: ['D5_competitive'],
@@ -365,6 +408,11 @@ test('persists a Current task and its depth/speed candidates without activating 
   const speedPlan = {
     task_id: 'provisional-speed-task',
     title: 'Speed plan',
+    problem_graph_provenance: {
+      receiptId: '11111111-1111-4111-8111-111111111112',
+      modelName: 'control-fixture-model', modelVersion: '1',
+      promptHash: 'sha256:control-fixture-problem-graph', traceId: 'trace-control-fixture-problem-graph',
+    },
     steps: [{ step_no: 1, step_name: 'fast research' }],
     candidate_metadata: { title: 'Speed', rationale: 'Move quickly', tradeoffs: 'Less review' },
     activated_nodes: ['D5_competitive'],

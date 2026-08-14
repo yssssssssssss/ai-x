@@ -180,6 +180,14 @@ function buildSchemaInput(
   return input;
 }
 
+function declaredOutputPointers(outputSchemaPath: string | undefined): string[] {
+  if (!outputSchemaPath) return ['/output'];
+  const schema = loadToolInputSchema(outputSchemaPath) as InputSchema;
+  const properties = schema.properties;
+  if (!properties || Object.keys(properties).length === 0) return ['/output'];
+  return Object.keys(properties).map((property) => `/${property.replaceAll('~', '~0').replaceAll('/', '~1')}`);
+}
+
 export interface CurrentPlanArtifacts {
   activated: DecisionNode[];
   decisionStates: DecisionStateRec[];
@@ -529,7 +537,7 @@ export class RoutedPlanner implements PlanStrategy {
       const skillApproval = requiredApprovals.find((item) => (
         item.capability_type === 'skill' && item.capability_id === ctx.direct!.skillName
       ));
-      const skillOutputPointer = '/result';
+      const skillOutputPointers = declaredOutputPointers(directDecision.skill.output_schema);
       const skillStep: CurrentPlanStep = {
         step_no: skillStepNo,
         step_name: `直呼 ${ctx.direct.skillName}`,
@@ -539,7 +547,10 @@ export class RoutedPlanner implements PlanStrategy {
         depends_on: toolSteps.map((step) => step.step_no),
         input: skillInput,
         input_bindings: [],
-        expected_outputs: [{ pointer: skillOutputPointer, description: `${ctx.direct.skillName} result` }],
+        expected_outputs: skillOutputPointers.map((pointer) => ({
+          pointer,
+          description: `${ctx.direct!.skillName} output ${pointer}`, 
+        })), 
         acceptance_criteria: acceptanceCriteria,
         requires_approval: Boolean(skillApproval),
         ...(skillApproval ? { approval_role: skillApproval.authority } : {}),
@@ -552,12 +563,8 @@ export class RoutedPlanner implements PlanStrategy {
         actor_id: 'research-plan-reviewer',
         question_ids: questionIds,
         depends_on: [skillStepNo],
-        input: { result: null },
-        input_bindings: [{
-          target_pointer: '/result',
-          source_step_no: skillStepNo,
-          source_pointer: skillOutputPointer,
-        }],
+        input: {},
+        input_bindings: [],
         expected_outputs: [{ pointer: '/review', description: '直呼结果复核' }],
         acceptance_criteria: acceptanceCriteria,
         requires_approval: false,

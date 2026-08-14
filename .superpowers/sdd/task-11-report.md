@@ -60,3 +60,13 @@ Observed failures before implementation:
 - ProblemGraph receipt ID/model/prompt/trace provenance is frozen into every Current plan and revision. Failed Skill capture retains its already-persisted receipt even when configuration reads fail, while Current API and Web execution state preserve `skillProvenance`.
 - TDD RED: the exact Phase 3 serial suite reported 115 pass / 39 fail / 1 real-provider skip. GREEN: the same suite reported 154 pass / 0 fail / 1 skip; strict-field adjacent regressions reported 41/41; `pnpm typecheck` passed.
 - Phase 5 migration boundary: image `dataUrl` values remain internal gate/actor input under the existing 12 MB API body limit (10 MB upload plus base64 expansion). They are not added to command responses, logs, provenance receipts, or unrelated prompts; Phase 5 must migrate binary payloads to sealed upload Artifacts rather than extend inline transport.
+
+
+## Phase 3 Final-Gate Closure
+
+- A: Current execution preflight now derives required public-source evidence coverage from the frozen Evidence Policy and registry-qualified real Core Tools; no Tool ID is hardcoded. Direct plans without a required eligible Core Tool fail closed with a generic policy error before side effects.
+- B/G: Skill, LLM, and Reviewer prompts/contexts carry `question_ids`, `acceptance_criteria`, `expected_outputs`, `actor_type`, and `actor_id`; verified prior outputs are scoped to declared dependencies/bindings. Direct Skill output pointers derive from the declared output schema, while context-only reviewers have no fabricated `/result` binding.
+- C/D: Compiler pending roles require own fields in frozen Skill inputs; confirmation rejects extra `inputValues` before gate writes or state transition; Web upload serialization filters to selected pending roles. Real PostgreSQL confirm-to-execute fixtures preserve explicit asset/role values without changing plan hashes.
+- E: Failed Skill provenance reuses the exact verified prior-output context and contract used by dispatch, preserving receipt/prompt/trace/output hashes through capture failures.
+- F: PostgreSQL migrations persist `model_version`; candidate and revision transactions lock `control_model_calls` by receipt ID and require `attempt_id IS NULL`, `stage=problem_graph`, `status=succeeded`, and an exact actual-model/version/prompt/trace tuple before any plan insert.
+- TDD evidence: RED reproduced pending own-field acceptance and extra-role gate persistence; GREEN exact Phase 3 serial suite reached 165 pass / 1 real-provider skip / 0 fail, with PostgreSQL fixture receipt migrations and offline Current flow covered. `pnpm typecheck` passed after the final engine/preflight changes.

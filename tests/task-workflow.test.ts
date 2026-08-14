@@ -140,6 +140,14 @@ before(async () => {
       [ownerId],
     );
     conversationId = String(conversation.rows[0]?.id);
+    await connection.query(
+      `INSERT INTO control_model_calls
+         (id, stage, attempt_id, step_no, provider, endpoint_host, requested_model, actual_model, model_version,
+          prompt_hash, context_manifest_hash, trace_id, status, started_at, finished_at)
+       VALUES ('11111111-1111-4111-8111-111111111111', 'problem_graph', NULL, NULL, 'fixture', 'fixture.test',
+               'workflow-fixture-model', 'workflow-fixture-model', '1', 'sha256:workflow-problem-graph',
+               NULL, 'trace-workflow-problem-graph', 'succeeded', now(), now())`,
+    );
   } finally {
     connection.release();
   }
@@ -421,6 +429,43 @@ test('malformed persisted workflow gate fails closed during confirmation', async
     }),
     TaskWorkflowGateError,
   );
+});
+
+test('rejects extra input roles before writing gates or transitioning state', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const workflow = new TaskWorkflowService(repository);
+  const created = await createCandidateTask(repository, 'extra-input', {
+    candidateId: 'speed',
+    plan: currentPlan('', 'extra-input', [currentStep({ input: { brief: null } })]),
+    pendingInputs: [{
+      role: 'brief',
+      label: '研究简报',
+      multiple: false,
+      targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'brief', multiple: false }],
+    }],
+  });
+  const selection = await workflow.select({
+    taskId: created.task.id,
+    expectedVersion: created.task.stateVersion,
+    idempotencyKey: 'extra-input-select',
+    actor: { userId: ownerId, role: 'owner' },
+    planVersionId: created.candidates.find((candidate) => candidate.candidateId === 'speed')!.id,
+  });
+  await assert.rejects(
+    () => workflow.confirm({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      expectedVersion: selection.stateVersion,
+      idempotencyKey: 'extra-input-confirm',
+      actor: { userId: ownerId, role: 'owner' },
+      confirmationAnswers: {},
+      inputValues: { brief: '已提供', unknown_role: '不应写入' },
+    }),
+    TaskWorkflowGateError,
+  );
+  const persisted = await repository.getTaskDetail(created.task.id);
+  assert.equal(persisted?.state, 'awaiting_confirmation');
+  assert.deepEqual(await repository.listGateRecords(created.task.id, selection.planVersionId), []);
 });
 test('confirmation, required input, role matrix, and plan revision gate ready state', async () => {
   const repository = new ControlPlaneRepository(scopedDatabase);

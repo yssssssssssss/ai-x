@@ -379,7 +379,8 @@ export function useTaskFlow() {
       const inputValues: Record<string, unknown> = Object.create(null);
       for (const [role, values] of uploadsByRole) {
         const pendingInput = selectedCandidate.pendingInputs.find((input) => input.role === role);
-        inputValues[role] = pendingInput?.multiple ? values : values[0];
+        if (!pendingInput) continue;
+        inputValues[role] = pendingInput.multiple ? values : values[0];
       }
       const confirmed = await api.confirmControlPlan(candidatesResp.task.id, {
         expectedVersion: stateVersion,
