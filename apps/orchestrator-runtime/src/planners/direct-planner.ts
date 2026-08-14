@@ -15,7 +15,7 @@ export class DirectPlanner implements PlanStrategy {
 
   async plan(ctx: PlanContext): Promise<PlanArtifacts> {
     const { skillLoader } = this.deps;
-    const { task, direct, taskProvenance, emit } = ctx;
+    const { task, direct, taskProvenance, emit, requirement } = ctx;
     if (!direct) throw new Error('DirectPlanner 需要非空 direct(内部错误:glue 路由有误)');
 
     const skill = skillLoader.getSkill(direct.skillName);
@@ -37,7 +37,11 @@ export class DirectPlanner implements PlanStrategy {
             actor_type: 'skill',
             actor_id: skill.id,
             purpose: `用户 $ 直呼技能 ${skill.name}`,
-            input: { research_goal: task.research_goal, brief: direct.rest },
+            input: {
+              research_goal: task.research_goal,
+              brief: direct.rest,
+              ...(requirement ? { requirement } : {}),
+            },
           } as PlanStep,
         ],
         assumptions: task.assumptions ?? [],

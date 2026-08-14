@@ -34,7 +34,8 @@ import {
 } from '../apps/orchestrator-runtime/src/runtime/tool-adapter.ts';
 import type { ToolManifest } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
-import { ControlPlaneRepository } from '../database/control-plane.ts';
+import { ControlPlaneAuthorizationError, ControlPlaneRepository } from '../database/control-plane.ts';
+import { writeMessage } from '../database/repository.ts';
 import {
   runMigrations,
   type MigrationConnection,
@@ -57,6 +58,7 @@ interface ConversationAdapter {
     conversationId: string;
     role: 'user' | 'assistant';
     content: string;
+    idempotencyKey?: string;
   }): Promise<void>;
 }
 
@@ -515,7 +517,9 @@ function conversationAdapter(): ConversationAdapter {
           [input.conversationId, input.ownerUserId],
         );
         const id = result.rows[0]?.id;
-        if (typeof id !== 'string') throw new Error('conversation is not owned by requester');
+        if (typeof id !== 'string') {
+          throw new ControlPlaneAuthorizationError('conversation is not owned by requester');
+        }
         return { id };
       } finally {
         connection.release();
@@ -544,9 +548,13 @@ function conversationAdapter(): ConversationAdapter {
       const connection = await scopedDatabase.connect();
       try {
         await connection.query(
-          `INSERT INTO messages (conversation_id, sender_type, message_type, content)
-           VALUES ($1, $2, 'text', $3)`,
-          [input.conversationId, input.role, JSON.stringify(input.content)],
+          `INSERT INTO messages
+             (conversation_id, sender_type, message_type, content, idempotency_key)
+           VALUES ($1, $2, 'text', $3, $4)
+           ON CONFLICT (conversation_id, idempotency_key)
+             WHERE idempotency_key IS NOT NULL
+           DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key`,
+          [input.conversationId, input.role, JSON.stringify(input.content), input.idempotencyKey ?? null],
         );
       } finally {
         connection.release();
@@ -1144,6 +1152,83 @@ test('production ControlRuntime persists planning candidates only when every pla
   }
 });
 
+test('supplied foreign and missing planning conversations return 404 before creating a task', async () => {
+  const { buildControlRuntime } = await loadControlRuntimeModule();
+  const foreignConversation = await scopedDatabase.connect();
+  let foreignConversationId = '';
+  try {
+    const result = await foreignConversation.query(
+      `INSERT INTO conversations (owner_user_id, title) VALUES ($1, 'foreign planning conversation') RETURNING id`,
+      [foreignUserId],
+    );
+    foreignConversationId = String(result.rows[0]?.id);
+  } finally {
+    foreignConversation.release();
+  }
+  const runtime = buildControlRuntime({
+    repository,
+    conversations: conversationAdapter(),
+    planning: { async plan() { throw new Error('planning must not run'); } },
+    tools: new ToolRouter(),
+    llm: new OfflineEligibleRealLLM(),
+    validator: new SchemaValidator(),
+    skillLoader: new SkillLoader(),
+    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
+    expectedActualModel: 'fixture-real-model',
+  });
+  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+  const app = await listenLocalApp(
+    (createAgentApiApp as unknown as PlannedCreateAgentApiApp)({ controlRuntime: runtime }),
+  );
+  const ownerToken = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  const cases = [
+    { conversationId: foreignConversationId, originalInput: `foreign-no-write-${randomUUID()}` },
+    { conversationId: randomUUID(), originalInput: `missing-no-write-${randomUUID()}` },
+  ];
+  try {
+    for (const target of cases) {
+      const response = await postJson(app.baseUrl, '/api/control-tasks/plan', ownerToken, target);
+      assert.equal(response.status, 404, await response.clone().text());
+    }
+    const connection = await scopedDatabase.connect();
+    try {
+      const tasks = await connection.query(
+        'SELECT count(*)::int AS count FROM control_tasks WHERE original_input = ANY($1::text[])',
+        [cases.map((target) => target.originalInput)],
+      );
+      assert.equal(tasks.rows[0]?.count, 0);
+    } finally {
+      connection.release();
+    }
+  } finally {
+    await closeLocalServer(app.server);
+  }
+});
+
+test('writeMessage reuses one assistant row for the same conversation idempotency key', async () => {
+  const marker = `assistant-idempotency-${randomUUID()}`;
+  const input = {
+    conversationId,
+    senderType: 'assistant' as const,
+    messageType: 'text' as const,
+    content: { marker },
+    idempotencyKey: `requirement:${randomUUID()}:assistant`,
+  };
+  const first = await writeMessage(input);
+  const second = await writeMessage(input);
+  assert.equal(second.id, first.id);
+  const connection = await scopedDatabase.connect();
+  try {
+    const count = await connection.query(
+      'SELECT count(*)::int AS count FROM messages WHERE conversation_id = $1 AND content = $2::jsonb',
+      [conversationId, JSON.stringify(input.content)],
+    );
+    assert.equal(count.rows[0]?.count, 1);
+  } finally {
+    connection.release();
+  }
+});
+
 test('migration 005 preserves legacy completed commands and permits pending reservations', async () => {
   const compatibilitySchema = `command_reservation_compat_${randomUUID().replaceAll('-', '')}`;
   await database.query(`CREATE SCHEMA "${compatibilitySchema}"`);
@@ -1198,6 +1283,59 @@ test('migration 005 preserves legacy completed commands and permits pending rese
        VALUES ($1, 'clarification', 'pending-key', 'sha256:pending', 0,
                'awaiting_clarification', 'awaiting_clarification', NULL, 'pending', $2, now() + interval '1 minute')`,
       [randomUUID(), randomUUID()],
+    );
+  } finally {
+    client.release();
+    await database.query(`DROP SCHEMA IF EXISTS "${compatibilitySchema}" CASCADE`);
+  }
+});
+
+test('migration 006 adds nullable message idempotency without changing legacy rows', async () => {
+  const compatibilitySchema = `message_idempotency_compat_${randomUUID().replaceAll('-', '')}`;
+  await database.query(`CREATE SCHEMA "${compatibilitySchema}"`);
+  const client = await database.connect();
+  try {
+    await client.query(`SET search_path TO "${compatibilitySchema}", public`);
+    await client.query(`
+      CREATE TABLE messages (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        conversation_id UUID NOT NULL,
+        sender_type TEXT NOT NULL,
+        message_type TEXT NOT NULL,
+        content JSONB NOT NULL,
+        artifact_id UUID,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+    const conversation = randomUUID();
+    await client.query(
+      `INSERT INTO messages (conversation_id, sender_type, message_type, content)
+       VALUES ($1, 'assistant', 'text', '{"legacy":true}')`,
+      [conversation],
+    );
+    await client.query(readFileSync(
+      join(process.cwd(), 'database', 'migrations', '006_message_idempotency.sql'),
+      'utf8',
+    ));
+    const legacy = await client.query(
+      'SELECT idempotency_key FROM messages WHERE conversation_id = $1',
+      [conversation],
+    );
+    assert.deepEqual(legacy.rows, [{ idempotency_key: null }]);
+    await client.query(
+      `INSERT INTO messages (conversation_id, sender_type, message_type, content, idempotency_key)
+       VALUES ($1, 'assistant', 'text', '{}', 'requirement:1:assistant')`,
+      [conversation],
+    );
+    await assert.rejects(() => client.query(
+      `INSERT INTO messages (conversation_id, sender_type, message_type, content, idempotency_key)
+       VALUES ($1, 'assistant', 'text', '{}', 'requirement:1:assistant')`,
+      [conversation],
+    ));
+    await client.query(
+      `INSERT INTO messages (conversation_id, sender_type, message_type, content)
+       VALUES ($1, 'assistant', 'text', '{}'), ($1, 'assistant', 'text', '{}')`,
+      [conversation],
     );
   } finally {
     client.release();
@@ -1456,6 +1594,109 @@ test('post-activation clarification failure reclaims the same command without an
     }
     assert.equal(llm.requirementCalls, 2, 'retry must not rerun requirement understanding');
     assert.equal(plannerCalls, 2, 'retry may rerun downstream planning exactly once');
+  } finally {
+    await closeLocalServer(app.server);
+  }
+});
+
+test('response delivery failure after atomic clarification commit replays the persisted response', async () => {
+  const { buildControlRuntime } = await loadControlRuntimeModule();
+  const llm = new ClarificationRetryLLM();
+  const instrumentedRepository = Object.create(repository) as ControlPlaneRepository;
+  let failResponseDelivery = true;
+  let atomicCalls = 0;
+  instrumentedRepository.persistClarificationCandidatesAndCompleteCommand = async (input) => {
+    atomicCalls += 1;
+    const response = await repository.persistClarificationCandidatesAndCompleteCommand(input);
+    if (failResponseDelivery) {
+      failResponseDelivery = false;
+      throw new Error('simulated HTTP response delivery failure after commit');
+    }
+    return response;
+  };
+  let plannerCalls = 0;
+  const controlRuntime = buildControlRuntime({
+    repository: instrumentedRepository,
+    conversations: conversationAdapter(),
+    planning: {
+      async plan(input) {
+        plannerCalls += 1;
+        return {
+          ...planningResult(input.originalInput),
+          structuredTask: resolvedClarificationRequirement(),
+        } as ResearchPlanningResult;
+      },
+    },
+    tools: new ToolRouter(),
+    llm,
+    validator: new SchemaValidator(),
+    skillLoader: new SkillLoader(),
+    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: instrumentedRepository }),
+    expectedActualModel: llm.identity.requestedModel,
+  });
+  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+  const app = await listenLocalApp(
+    (createAgentApiApp as unknown as PlannedCreateAgentApiApp)({ controlRuntime }),
+  );
+  const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  try {
+    const plannedResponse = await postJson(app.baseUrl, '/api/control-tasks/plan', token, {
+      originalInput: `response-delivery-replay-${randomUUID()}`,
+      conversationId,
+    });
+    assert.equal(plannedResponse.status, 200, await plannedResponse.clone().text());
+    const planned = await plannedResponse.json() as CurrentPlanningResponse;
+    assert.equal(planned.status, 'clarification_required');
+    const key = `response-delivery-${randomUUID()}`;
+    const requestBody = {
+      expectedVersion: planned.task.stateVersion,
+      clarificationAnswers: { audience: '产品团队' },
+      assumptionEdits: {},
+    };
+
+    const failed = await postJson(
+      app.baseUrl,
+      `/api/control-tasks/${planned.task.id}/clarify`,
+      token,
+      requestBody,
+      key,
+    );
+    assert.equal(failed.status, 500);
+    const persistedResponse = (
+      await repository.getCommand(planned.task.id, 'clarification', key)
+    )?.response as ControlPlanCandidatesResponse;
+    assert.equal(persistedResponse.task.state, 'awaiting_selection');
+
+    const connection = await scopedDatabase.connect();
+    try {
+      const persisted = await connection.query(
+        `SELECT
+           (SELECT count(*)::int FROM control_plan_versions WHERE task_id = $1) AS plans,
+           (SELECT count(*)::int
+              FROM messages
+             WHERE conversation_id = $2
+               AND idempotency_key = 'requirement:' ||
+                 (SELECT active_requirement_version_id::text FROM control_tasks WHERE id = $1) ||
+                 ':assistant') AS assistant_messages`,
+        [planned.task.id, conversationId],
+      );
+      assert.deepEqual(persisted.rows[0], { plans: 2, assistant_messages: 1 });
+    } finally {
+      connection.release();
+    }
+
+    const replay = await postJson(
+      app.baseUrl,
+      `/api/control-tasks/${planned.task.id}/clarify`,
+      token,
+      requestBody,
+      key,
+    );
+    assert.equal(replay.status, 200, await replay.clone().text());
+    assert.deepEqual(await replay.json(), persistedResponse);
+    assert.equal(atomicCalls, 1);
+    assert.equal(plannerCalls, 1);
+    assert.equal(llm.requirementCalls, 2);
   } finally {
     await closeLocalServer(app.server);
   }

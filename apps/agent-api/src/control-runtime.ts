@@ -205,6 +205,7 @@ export type ControlPlanningRuntime = Pick<ControlPlanningService, 'plan' | 'plan
 
 export interface ControlRuntime {
   controlPlanning: ControlPlanningRuntime;
+  conversations: Pick<RuntimeConversationAdapter, 'create' | 'requireOwned'>;
   requirementRefinement: RequirementRefinementService;
   workflow: TaskWorkflowService;
   repository: ControlPlaneRepository;
@@ -238,6 +239,7 @@ function defaultConversations(): RuntimeConversationAdapter {
         senderType: input.role,
         messageType: 'text',
         content: input.content,
+        idempotencyKey: input.idempotencyKey,
       });
     },
   };
@@ -385,6 +387,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
 
   return {
     controlPlanning,
+    conversations,
     requirementRefinement,
     workflow,
     repository,

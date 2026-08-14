@@ -106,7 +106,13 @@ function makeRepository() {
     activations,
     events,
     async getTaskDetail() {
-      return { ...task, stateVersion };
+      const active = versions.at(-1);
+      return {
+        ...task,
+        stateVersion,
+        structuredTask: active?.structuredTask ?? null,
+        activeRequirementVersionId: active?.id ?? null,
+      };
     },
     async createAndActivateRequirementVersion(input: {
       taskId: string;
@@ -143,10 +149,17 @@ function makeConversations() {
     { role: 'user', content: 'owner history' },
     { role: 'assistant', content: 'owner answer' },
   ];
-  const appended: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+  const appended: Array<{
+    role: 'user' | 'assistant';
+    content: string;
+    idempotencyKey?: string;
+  }> = [];
+  const appendAttempts: typeof appended = [];
+  const keyedMessages = new Map<string, (typeof appended)[number]>();
   return {
     messages,
     appended,
+    appendAttempts,
     async requireOwned(input: { conversationId: string; ownerUserId: string }) {
       assert.equal(input.conversationId, conversationId);
       assert.equal(input.ownerUserId, ownerUserId);
@@ -155,9 +168,19 @@ function makeConversations() {
     async listMessages() {
       return messages;
     },
-    async appendMessage(input: { conversationId: string; role: 'user' | 'assistant'; content: string }) {
+    async appendMessage(input: {
+      conversationId: string;
+      role: 'user' | 'assistant';
+      content: string;
+      idempotencyKey?: string;
+    }) {
       assert.equal(input.conversationId, conversationId);
-      appended.push({ role: input.role, content: input.content });
+      appendAttempts.push(input);
+      if (input.idempotencyKey) {
+        if (keyedMessages.has(input.idempotencyKey)) return;
+        keyedMessages.set(input.idempotencyKey, input);
+      }
+      appended.push(input);
     },
   };
 }
@@ -263,6 +286,65 @@ test('clarification answers persist a new v2 and clear blocking ambiguity before
   assert.deepEqual(events.slice(-2), ['persist_activate', 'plan']);
   assert.equal(plannedInput, 'raw original input from task');
   assert.equal(plannerCalls, 1);
+});
+
+test('post-activation retry reuses one requirement-version assistant message key', async () => {
+  const { RequirementRefinementService } = await loadModule();
+  const clearRequirement = requirement({ target_audience: ['enterprise buyers'] });
+  const llm = new FixtureLLM([ambiguousRequirement, clearRequirement]);
+  const repository = makeRepository();
+  const conversations = makeConversations();
+  let plannerCalls = 0;
+  const service = new RequirementRefinementService({
+    llm,
+    validator: new SchemaValidator(),
+    repository,
+    conversations,
+    planner: {
+      async plan() {
+        plannerCalls += 1;
+        if (plannerCalls === 1) throw new Error('simulated failure after assistant append');
+      },
+    },
+  });
+
+  await service.understand({
+    taskId,
+    conversationId,
+    ownerUserId,
+    originalInput: 'compare competitors',
+  });
+  const answers = { audience: 'enterprise buyers' };
+  await assert.rejects(
+    () => service.clarify({
+      taskId,
+      conversationId,
+      ownerUserId,
+      answers,
+      expectedVersion: 2,
+    }),
+    /simulated failure after assistant append/,
+  );
+  const result = await service.clarify({
+    taskId,
+    conversationId,
+    ownerUserId,
+    answers,
+    expectedVersion: 2,
+  });
+
+  assert.equal(result.status, 'ready_to_plan');
+  const readyAttempts = conversations.appendAttempts.filter((message) =>
+    message.content.includes('ready_to_plan')
+  );
+  assert.deepEqual(
+    readyAttempts.map((message) => message.idempotencyKey),
+    ['requirement:requirement-2:assistant', 'requirement:requirement-2:assistant'],
+  );
+  assert.equal(
+    conversations.appended.filter((message) => message.content.includes('ready_to_plan')).length,
+    1,
+  );
 });
 
 test('only owner-scoped conversation history is sent to the refinement LLM', async () => {

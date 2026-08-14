@@ -87,6 +87,24 @@ export interface ControlPlanningDependencies {
       task: ControlTaskResponse;
       candidates: PersistedPlanVersion[];
     }>;
+    persistClarificationCandidatesAndCompleteCommand?(input: {
+      taskId: string;
+      conversationId: string;
+      ownerUserId: string;
+      expectedStateVersion: number;
+      taskType: string;
+      structuredTask: NonNullable<ResearchPlanningResult['structuredTask']>;
+      activatedNodes: string[];
+      candidates: Array<{
+        candidateId: PlanCandidate['id'];
+        title: string;
+        rationale: string;
+        tradeoffs: string;
+        plan: ProvisionalExecutionPlan;
+        pendingInputs: PendingInput[];
+      }>;
+      command: ClarificationCommandReservation;
+    }): Promise<ControlPlanCandidatesResponse>;
   };
   conversations: {
     create(input: { ownerUserId: string; title: string }): Promise<{ id: string }>;
@@ -95,6 +113,15 @@ export interface ControlPlanningDependencies {
       ownerUserId: string;
     }): Promise<{ id: string }>;
   };
+}
+
+export interface ClarificationCommandReservation {
+  commandType: 'clarification';
+  idempotencyKey: string;
+  requestHash: string;
+  expectedVersion: number;
+  reservationToken: string;
+  actorUserId: string;
 }
 
 export class ControlPlanningService {
@@ -191,6 +218,7 @@ export class ControlPlanningService {
       ownerUserId: string;
       expectedStateVersion: number;
       originalInput: string;
+      commandReservation?: ClarificationCommandReservation;
     },
     planningResult: ResearchPlanningResult,
   ): Promise<ControlPlanCandidatesResponse> {
@@ -198,6 +226,37 @@ export class ControlPlanningService {
       conversationId: input.conversationId,
       ownerUserId: input.ownerUserId,
     });
+    const preparedCandidates = this.prepareCandidates(planningResult);
+    if (input.commandReservation) {
+      if (!this.dependencies.repository.persistClarificationCandidatesAndCompleteCommand) {
+        throw new Error('atomic clarification planning persistence is unavailable');
+      }
+      const structuredTask = planningResult.structuredTask;
+      if (!structuredTask) throw new Error('clarification planning requires ResearchTaskV2');
+      const preparedById = new Map(preparedCandidates.map((candidate) => [candidate.candidateId, candidate]));
+      return this.dependencies.repository.persistClarificationCandidatesAndCompleteCommand({
+        taskId: input.taskId,
+        conversationId: conversation.id,
+        ownerUserId: input.ownerUserId,
+        expectedStateVersion: input.expectedStateVersion,
+        taskType: planningResult.task.task_type,
+        structuredTask,
+        activatedNodes: planningResult.activatedNodes,
+        candidates: planningResult.candidates.map((candidate) => {
+          const prepared = preparedById.get(candidate.id);
+          if (!prepared) throw new Error(`prepared candidate ${candidate.id} is missing`);
+          return {
+            candidateId: candidate.id,
+            title: candidate.title,
+            rationale: candidate.rationale,
+            tradeoffs: candidate.tradeoffs,
+            plan: prepared.plan,
+            pendingInputs: prepared.pendingInputs,
+          };
+        }),
+        command: input.commandReservation,
+      });
+    }
     if (!this.dependencies.repository.persistExistingTaskWithCandidates) {
       throw new Error('existing-task planning persistence is unavailable');
     }
@@ -208,7 +267,7 @@ export class ControlPlanningService {
       expectedStateVersion: input.expectedStateVersion,
       taskType: planningResult.task.task_type,
       structuredTask: planningResult.structuredTask ?? planningResult.task,
-      candidates: this.prepareCandidates(planningResult),
+      candidates: preparedCandidates,
     });
     return this.responseFromPersisted(conversation.id, planningResult, persisted);
   }

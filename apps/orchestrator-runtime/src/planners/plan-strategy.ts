@@ -12,6 +12,7 @@ import type { LLMClient } from '../runtime/llm-client.ts';
 import type { SkillLoader } from '../runtime/skill-loader.ts';
 import type { SchemaValidator } from '../schema/validator.ts';
 import type { GuidanceRef, PlanCandidate, PlanProgress, ResearchTaskData } from '../plan-types.ts';
+import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
 
 // $<skill> 直呼解析结果(parseDirectInvoke 的非空返回)。命中直呼支路时非 null。
 export interface DirectInvoke {
@@ -52,6 +53,7 @@ export interface PlannerDeps {
 export interface PlanContext {
   task: ResearchTaskData;
   direct: DirectInvoke | null;
+  requirement?: ResearchTaskV2;
   // 段1 taskGen 的溯源,direct 支路无路由 LLM,用它兜底 planProvenance。
   taskProvenance: PlanProvenance;
   emit: (ev: PlanProgress) => void;

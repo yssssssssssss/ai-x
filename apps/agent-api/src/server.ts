@@ -3,7 +3,6 @@ loadEnv(); // 读 .env:DATABASE_URL / LLM 网关 / JWT_SECRET
 
 import express from 'express';
 import { ControlPlaneRepository, type ControlTaskDetail } from '../../../database/control-plane.ts';
-import { createConversation } from '../../../database/repository.ts';
 import { TaskWorkflowService } from '../../orchestrator-runtime/src/control/task-workflow.ts';
 import { authRouter } from './routes/auth.ts';
 import { conversationsRouter } from './routes/conversations.ts';
@@ -50,8 +49,14 @@ function refinementPlanningPort(runtime: ControlRuntime): ControlPlanningPort {
   return {
     async plan(input, onProgress, onConversation): Promise<CurrentPlanningResponse> {
       const conversation = input.conversationId
-        ? { id: input.conversationId }
-        : await createConversation({ ownerUserId: input.ownerUserId, title: input.originalInput.slice(0, 40) });
+        ? await runtime.conversations.requireOwned({
+            conversationId: input.conversationId,
+            ownerUserId: input.ownerUserId,
+          })
+        : await runtime.conversations.create({
+            ownerUserId: input.ownerUserId,
+            title: input.originalInput.slice(0, 40),
+          });
       if (!input.conversationId) onConversation?.(conversation.id);
       const created = await runtime.repository.createTask({
         conversationId: conversation.id,
@@ -107,6 +112,7 @@ function refinementClarificationPort(runtime: ControlRuntime): ControlClarificat
         ownerUserId: input.ownerUserId,
         expectedStateVersion: clarifiedTask.stateVersion,
         originalInput: clarifiedTask.originalInput,
+        commandReservation: input.commandReservation,
       }, result.planningResult);
     },
   };

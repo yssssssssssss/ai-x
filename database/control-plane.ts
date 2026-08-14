@@ -1,11 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { MigrationConnection, MigrationDatabase } from './migration-runner.ts';
-import type { ControlRequirementVersion } from '../packages/api-contract/control-workflow.ts';
+import type {
+  ControlPlanCandidatesResponse,
+  ControlRequirementVersion,
+} from '../packages/api-contract/control-workflow.ts';
 import type {
   CurrentExecutionPlan,
   PendingInput,
 } from '../packages/api-contract/research-deliverable.ts';
+import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 export type { ControlRequirementVersion };
 
 export type ControlTaskState =
@@ -300,6 +304,32 @@ export type ControlCommandReservation =
 export type ControlCommandWaitResult =
   | { status: 'replay'; response: unknown }
   | { status: 'released' | 'timeout' | 'conflict' };
+
+export interface PersistClarificationCandidatesInput {
+  taskId: string;
+  conversationId: string;
+  ownerUserId: string;
+  expectedStateVersion: number;
+  taskType: string;
+  structuredTask: ResearchTaskV2;
+  activatedNodes: string[];
+  candidates: Array<{
+    candidateId: ControlCandidateId;
+    title: string;
+    rationale: string;
+    tradeoffs: string;
+    plan: Omit<CurrentExecutionPlan, 'task_id'> & { task_id?: string };
+    pendingInputs: PendingInput[];
+  }>;
+  command: {
+    commandType: 'clarification';
+    idempotencyKey: string;
+    requestHash: string;
+    expectedVersion: number;
+    reservationToken: string;
+    actorUserId: string;
+  };
+}
 
 export class ControlPlaneRepository {
   constructor(private readonly database: MigrationDatabase) {}
@@ -775,6 +805,191 @@ export class ControlPlaneRepository {
         },
         candidates,
       };
+    });
+  }
+
+  async persistClarificationCandidatesAndCompleteCommand(
+    input: PersistClarificationCandidatesInput,
+  ): Promise<ControlPlanCandidatesResponse> {
+    if (input.expectedStateVersion !== input.command.expectedVersion + 1) {
+      throw new ControlPlaneConflictError('clarification planning state version is not activation successor');
+    }
+    return this.transaction(async (connection) => {
+      const taskResult = await connection.query(
+        `SELECT task.id, task.conversation_id, task.owner_user_id,
+                conversation.owner_user_id AS conversation_owner_user_id,
+                task.state, task.state_version, task.active_plan_version_id,
+                task.current_attempt_id
+         FROM control_tasks AS task
+         JOIN conversations AS conversation ON conversation.id = task.conversation_id
+         WHERE task.id = $1
+         FOR UPDATE OF task`,
+        [input.taskId],
+      );
+      const taskRow = taskResult.rows[0];
+      if (!taskRow) throw new ControlPlaneConflictError(`task ${input.taskId} does not exist`);
+      if (taskRow.conversation_id !== input.conversationId) {
+        throw new ControlPlaneConflictError(
+          `task ${input.taskId} does not belong to conversation ${input.conversationId}`,
+        );
+      }
+      if (
+        taskRow.owner_user_id !== input.ownerUserId
+        || taskRow.conversation_owner_user_id !== input.ownerUserId
+      ) {
+        throw new ControlPlaneAuthorizationError(`actor cannot control task ${input.taskId}`);
+      }
+      if (
+        taskRow.state !== 'awaiting_clarification'
+        || asNumber(taskRow.state_version, 'state_version') !== input.expectedStateVersion
+      ) {
+        throw new ControlPlaneConflictError(
+          `task ${input.taskId} is not awaiting clarification at version ${input.expectedStateVersion}`,
+        );
+      }
+
+      const commandResult = await connection.query(
+        `SELECT request_hash, expected_version, actor_user_id, command_status, reservation_token
+         FROM control_commands
+         WHERE task_id = $1 AND command_type = $2 AND idempotency_key = $3
+         FOR UPDATE`,
+        [input.taskId, input.command.commandType, input.command.idempotencyKey],
+      );
+      const commandRow = commandResult.rows[0];
+      if (
+        !commandRow
+        || commandRow.request_hash !== input.command.requestHash
+        || asNumber(commandRow.expected_version, 'expected_version') !== input.command.expectedVersion
+        || commandRow.actor_user_id !== input.command.actorUserId
+        || input.command.actorUserId !== input.ownerUserId
+        || commandRow.command_status !== 'pending'
+        || commandRow.reservation_token !== input.command.reservationToken
+      ) {
+        throw new ControlPlaneConflictError('clarification command reservation fence was lost');
+      }
+
+      const structuredTask = asRecord(input.structuredTask);
+      if (!structuredTask || structuredTask.task_type !== input.taskType) {
+        throw new ControlPlaneConflictError(`task ${input.taskId} has invalid finalized structured task`);
+      }
+      const candidateById = new Map(input.candidates.map((candidate) => [candidate.candidateId, candidate]));
+      if (
+        input.candidates.length !== 2
+        || candidateById.size !== 2
+        || !candidateById.has('depth')
+        || !candidateById.has('speed')
+      ) {
+        throw new ControlPlaneConflictError('clarification planning requires exactly depth and speed candidates');
+      }
+      const preparedCandidates = (['depth', 'speed'] as const).map((candidateId) => {
+        const candidate = candidateById.get(candidateId)!;
+        return { candidate, persistedPlan: planForTask(candidate.plan, input.taskId) };
+      });
+      if (preparedCandidates[0]!.persistedPlan.hash === preparedCandidates[1]!.persistedPlan.hash) {
+        throw new ControlPlaneConflictError('clarification candidate plan hashes are duplicated');
+      }
+
+      const persistedCandidates: Array<{
+        candidate: PersistClarificationCandidatesInput['candidates'][number];
+        stored: ControlCandidatePlanVersionDetail;
+      }> = [];
+      for (const [index, prepared] of preparedCandidates.entries()) {
+        const planResult = await connection.query(
+          `INSERT INTO control_plan_versions
+             (task_id, version, candidate_id, plan_json, plan_hash, pending_inputs)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id, task_id, version, candidate_id, plan_json, plan_hash, pending_inputs`,
+          [
+            input.taskId,
+            index + 1,
+            prepared.candidate.candidateId,
+            prepared.persistedPlan.json,
+            prepared.persistedPlan.hash,
+            JSON.stringify(prepared.candidate.pendingInputs),
+          ],
+        );
+        const row = planResult.rows[0] ?? {};
+        persistedCandidates.push({
+          candidate: prepared.candidate,
+          stored: {
+            id: asString(row.id, 'id'),
+            taskId: asString(row.task_id, 'task_id'),
+            version: asNumber(row.version, 'version'),
+            candidateId: asString(row.candidate_id, 'candidate_id') as ControlCandidateId,
+            plan: row.plan_json as CurrentExecutionPlan,
+            planHash: asString(row.plan_hash, 'plan_hash'),
+            pendingInputs: row.pending_inputs as PendingInput[],
+          },
+        });
+      }
+
+      const updated = await connection.query(
+        `UPDATE control_tasks
+         SET task_type = $2,
+             structured_task = $3,
+             state = 'awaiting_selection',
+             state_version = state_version + 1,
+             updated_at = now()
+         WHERE id = $1 AND state = 'awaiting_clarification' AND state_version = $4
+         RETURNING id, state, state_version, active_plan_version_id, current_attempt_id`,
+        [input.taskId, input.taskType, JSON.stringify(input.structuredTask), input.expectedStateVersion],
+      );
+      const updatedRow = updated.rows[0];
+      if (!updatedRow) throw new ControlPlaneConflictError(`task ${input.taskId} lost planning CAS`);
+      const response: ControlPlanCandidatesResponse = {
+        kind: 'current',
+        conversationId: input.conversationId,
+        task: {
+          id: asString(updatedRow.id, 'id'),
+          state: asString(updatedRow.state, 'state') as ControlTaskState,
+          stateVersion: asNumber(updatedRow.state_version, 'state_version'),
+          activePlanVersionId: typeof updatedRow.active_plan_version_id === 'string'
+            ? updatedRow.active_plan_version_id
+            : null,
+          currentAttemptId: typeof updatedRow.current_attempt_id === 'string'
+            ? updatedRow.current_attempt_id
+            : null,
+        },
+        structuredTask: input.structuredTask,
+        activatedNodes: input.activatedNodes,
+        candidates: persistedCandidates.map(({ candidate, stored }) => ({
+          planVersionId: stored.id,
+          candidateId: stored.candidateId,
+          title: candidate.title,
+          rationale: candidate.rationale,
+          tradeoffs: candidate.tradeoffs,
+          planHash: stored.planHash,
+          plan: stored.plan,
+          pendingInputs: stored.pendingInputs,
+        })),
+      };
+      const completed = await connection.query(
+        `UPDATE control_commands
+         SET state_after = 'awaiting_selection',
+             response_json = $8,
+             command_status = 'completed',
+             reservation_token = NULL,
+             reservation_expires_at = NULL
+         WHERE task_id = $1 AND command_type = $2 AND idempotency_key = $3
+           AND request_hash = $4 AND expected_version = $5
+           AND command_status = 'pending' AND reservation_token = $6
+           AND actor_user_id = $7
+         RETURNING id`,
+        [
+          input.taskId,
+          input.command.commandType,
+          input.command.idempotencyKey,
+          input.command.requestHash,
+          input.command.expectedVersion,
+          input.command.reservationToken,
+          input.command.actorUserId,
+          JSON.stringify(response),
+        ],
+      );
+      if (!completed.rows[0]) {
+        throw new ControlPlaneConflictError('clarification command reservation fence was lost');
+      }
+      return response;
     });
   }
 

@@ -26,6 +26,7 @@ export interface ConversationAdapter {
     conversationId: string;
     role: 'user' | 'assistant';
     content: string;
+    idempotencyKey?: string;
   }): Promise<void>;
 }
 
@@ -116,6 +117,7 @@ export class RequirementRefinementService {
     conversationId: string;
     role: 'user' | 'assistant';
     content: string;
+    idempotencyKey?: string;
   }): Promise<void> {
     const append = this.dependencies.conversations.appendMessage;
     if (!append) throw new Error('requirement refinement requires conversation append support');
@@ -174,6 +176,7 @@ export class RequirementRefinementService {
         conversationId: input.conversationId,
         originalInput: task.originalInput,
         requirement: active.structuredTask,
+        requirementVersionId: active.id,
       });
     }
     return this.refine({
@@ -192,21 +195,23 @@ export class RequirementRefinementService {
     conversationId: string;
     originalInput: string;
     requirement: ResearchTaskV2;
+    requirementVersionId: string;
   }): Promise<RequirementRefinementResult> {
     const status = needsClarification(input.requirement)
       ? 'clarification_required'
       : 'ready_to_plan';
+    await this.appendMessage({
+      conversationId: input.conversationId,
+      role: 'assistant',
+      content: JSON.stringify({ status, requirement: input.requirement }),
+      idempotencyKey: `requirement:${input.requirementVersionId}:assistant`,
+    });
     const planningResult = status === 'ready_to_plan' && this.dependencies.planner
       ? await this.dependencies.planner.plan({
           originalInput: input.originalInput,
           requirement: input.requirement,
         }) as ResearchPlanningResult
       : undefined;
-    await this.appendMessage({
-      conversationId: input.conversationId,
-      role: 'assistant',
-      content: JSON.stringify({ status, requirement: input.requirement }),
-    });
     return planningResult
       ? { status, taskId: input.taskId, requirement: input.requirement, planningResult }
       : { status, taskId: input.taskId, requirement: input.requirement };
@@ -249,7 +254,7 @@ export class RequirementRefinementService {
       ?? input.expectedStateVersion
       ?? task?.stateVersion
       ?? 0;
-    await this.dependencies.repository.createAndActivateRequirementVersion({
+    const activated = await this.dependencies.repository.createAndActivateRequirementVersion({
       taskId: input.taskId,
       ownerUserId: input.ownerUserId,
       expectedVersion,
@@ -263,6 +268,7 @@ export class RequirementRefinementService {
       conversationId: input.conversationId,
       originalInput: input.originalInput,
       requirement,
+      requirementVersionId: activated.version.id,
     });
   }
 }

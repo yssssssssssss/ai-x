@@ -201,16 +201,30 @@ test('foreign and missing clarification tasks are both 404', async () => {
 
 test('clarify keeps awaiting_clarification when a blocking answer is missing and returns candidates when complete', async () => {
   let calls = 0;
+  const repository = clarificationRepository(async () => task);
   const runtime = {
-    repository: clarificationRepository(async () => task),
+    repository,
     workflow: {},
     getDeliverable: async () => null,
     clarification: {
-      clarify: async (input: { answers: Record<string, unknown>; assumptionEdits?: Record<string, string> }) => {
+      clarify: async (input: {
+        answers: Record<string, unknown>;
+        assumptionEdits?: Record<string, string>;
+        commandReservation: { idempotencyKey: string; requestHash: string; reservationToken: string };
+      }) => {
         calls += 1;
         assert.deepEqual(input.answers, calls === 1 ? {} : { audience: 'new users' });
         assert.deepEqual(input.assumptionEdits, { scope: 'mobile app' });
-        return calls === 1 ? clarificationResult : candidatesResult;
+        const response = calls === 1 ? clarificationResult : candidatesResult;
+        if (response.status !== 'clarification_required') {
+          await repository.completeCommand({
+            ...input.commandReservation,
+            taskId: task.id,
+            commandType: 'clarification',
+            response,
+          });
+        }
+        return response;
       },
     },
   } as unknown as ControlTasksRuntime;
@@ -235,11 +249,25 @@ test('clarify keeps awaiting_clarification when a blocking answer is missing and
 
 test('clarify rejects client plan fields and replays an idempotency key with the same response', async () => {
   let calls = 0;
+  const repository = clarificationRepository(async () => task);
   const runtime = {
-    repository: clarificationRepository(async () => task),
+    repository,
     workflow: {},
     getDeliverable: async () => null,
-    clarification: { clarify: async () => { calls += 1; return candidatesResult; } },
+    clarification: {
+      clarify: async (input: {
+        commandReservation: { idempotencyKey: string; requestHash: string; reservationToken: string };
+      }) => {
+        calls += 1;
+        await repository.completeCommand({
+          ...input.commandReservation,
+          taskId: task.id,
+          commandType: 'clarification',
+          response: candidatesResult,
+        });
+        return candidatesResult;
+      },
+    },
   } as unknown as ControlTasksRuntime;
   const app = express();
   app.use(express.json());

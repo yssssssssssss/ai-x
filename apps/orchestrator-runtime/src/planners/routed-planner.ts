@@ -52,11 +52,12 @@ export class RoutedPlanner implements PlanStrategy {
 
   async plan(ctx: PlanContext): Promise<PlanArtifacts> {
     const { llm, validator, skillLoader } = this.deps;
-    const { task, emit } = ctx;
+    const { task, requirement, emit } = ctx;
 
     // 段2a 决策节点激活:按 applies_to 过滤(数据驱动,非领域分支)
     const graph = loadDecisionGraph();
     const activated = graph.nodes.filter((n) => n.applies_to.includes(task.task_type));
+    const activatedNodeKeys = activated.map((node) => node.key);
     emit({ phase: 'activate', status: 'done', label: '激活决策节点', detail: `${activated.length} 个 · ${activated.map((n) => n.key).join(' / ')}` });
 
     // 引导召回:按激活节点的 related_tags 从知识库取方法论,喂给下面两个 LLM 调用作正典依据。
@@ -66,16 +67,22 @@ export class RoutedPlanner implements PlanStrategy {
 
     // 段2b 决策状态判定:LLM 对激活节点逐一判 6 态,过 schema
     emit({ phase: 'states', status: 'start', label: '判定节点状态' });
+    const decisionContext = {
+      activated: activatedNodeKeys,
+      task,
+      ...(requirement ? { requirement } : {}),
+      guidance,
+    };
     const statesGen = await llm.generateStructured<DecisionStateRec[]>({
       prompt:
         `对以下激活的决策节点逐一判定状态:${activated.map((n) => n.key).join(', ')}\n` +
         `结合 context.guidance 里按节点召回的用研方法论/模型判断每个节点状态与 reason,引用方法论时点名(如 JTBD/5W2H)。`,
       schema: {},
       schemaName: 'decision-states',
-      context: { activated: activated.map((n) => n.key), task, guidance },
+      context: decisionContext,
       receipt: {
         stage: 'planning_decision',
-        contextManifestHash: hashPrompt('', { activated: activated.map((n) => n.key), task, guidance }),
+        contextManifestHash: hashPrompt('', decisionContext),
         expectedModel: this.deps.expectedActualModel ?? llm.identity.requestedModel,
       },
     });
@@ -97,6 +104,17 @@ export class RoutedPlanner implements PlanStrategy {
       const manifest = loadToolManifest(t.path);
       return { id: t.id, name: t.name, tier: t.tier ?? 'optional', input_schema: loadToolInputSchema(manifest.input_schema) };
     });
+    const candidateContext = {
+      task,
+      ...(requirement ? { requirement } : {}),
+      skills: activeSkills.map((skill) => ({
+        id: skill.id,
+        when_to_use: skill.when_to_use,
+        required_tools: skill.required_tools,
+      })),
+      tools: toolCtx,
+      guidance,
+    };
     const planGen = await llm.generateStructured<{ candidates: Array<Omit<PlanCandidate, 'activated_nodes'>> }>({
       prompt:
         `基于任务与候选能力,生成 2 份"待用户挑选"的执行计划候选,分别对应 depth 与 speed 两种取向。\n` +
@@ -116,20 +134,14 @@ export class RoutedPlanner implements PlanStrategy {
         `选方法/排步骤时参考 context.guidance 召回的方法卡片,使方法选择有正典依据。`,
       schema: currentPlanCandidatesSchema,
       schemaName: 'current-plan-candidates',
-      context: {
-        task,
-        skills: activeSkills.map((s) => ({ id: s.id, when_to_use: s.when_to_use, required_tools: s.required_tools })),
-        tools: toolCtx,
-        guidance,
-      },
+      context: candidateContext,
       receipt: {
         stage: 'planning',
-        contextManifestHash: hashPrompt('', { task, skills: activeSkills, tools: toolCtx, guidance }),
+        contextManifestHash: hashPrompt('', candidateContext),
         expectedModel: this.deps.expectedActualModel ?? llm.identity.requestedModel,
       },
     });
     validator.validateOrThrow('current-plan-candidates', planGen.data);
-    const activatedNodeKeys = activated.map((n) => n.key);
     const candidates: PlanCandidate[] = planGen.data.candidates.map((candidate) => ({
       ...candidate,
       activated_nodes: activatedNodeKeys,

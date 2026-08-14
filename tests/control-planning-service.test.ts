@@ -22,6 +22,17 @@ import type {
   DecisionStateRec,
   PlanProvenance,
 } from '../apps/orchestrator-runtime/src/planners/plan-strategy.ts';
+import { ResearchPlanningService } from '../apps/orchestrator-runtime/src/planners/research-planning-service.ts';
+import type {
+  LLMClient,
+  LLMResult,
+  StructuredLLMCallOptions,
+  TextLLMCallOptions,
+  TextLLMResult,
+} from '../apps/orchestrator-runtime/src/runtime/llm-client.ts';
+import { hashPrompt } from '../apps/orchestrator-runtime/src/runtime/llm-client.ts';
+import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
+import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 
 interface ResearchPlanningResult {
   task: ResearchTaskData;
@@ -223,6 +234,98 @@ function researchPlanningResult(originalInput: string): ResearchPlanningResult {
     },
   };
 }
+
+class V2ContextLLM implements LLMClient {
+  readonly identity = {
+    provider: 'v2-context-fixture',
+    endpointHost: 'fixture.test',
+    requestedModel: 'v2-context-model',
+    mode: 'mock' as const,
+    eligibleAsReal: false,
+  };
+  readonly calls: Array<{
+    schemaName: string;
+    context: object | undefined;
+    contextManifestHash: string | undefined;
+  }> = [];
+
+  async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
+    this.calls.push({
+      schemaName: options.schemaName,
+      context: options.context,
+      contextManifestHash: options.receipt.contextManifestHash,
+    });
+    const data = options.schemaName === 'decision-states'
+      ? []
+      : {
+          candidates: [
+            {
+              id: 'depth',
+              title: '完整 V2 深度计划',
+              rationale: '覆盖全部约束',
+              tradeoffs: '耗时更长',
+              steps: [{ step_no: 1, step_name: '深度分析', actor_type: 'llm', actor_id: 'planner' }],
+              assumptions: [],
+            },
+            {
+              id: 'speed',
+              title: '完整 V2 快速计划',
+              rationale: '优先关键结论',
+              tradeoffs: '覆盖较窄',
+              steps: [{ step_no: 1, step_name: '快速分析', actor_type: 'llm', actor_id: 'planner' }],
+              assumptions: [],
+            },
+          ],
+        };
+    return {
+      data: data as T,
+      promptHash: 'sha256:v2-context',
+      modelName: this.identity.requestedModel,
+      modelVersion: '1',
+      traceId: `trace-${options.schemaName}`,
+    };
+  }
+
+  async generateText(_options: TextLLMCallOptions): Promise<TextLLMResult> {
+    throw new Error('not used');
+  }
+}
+
+test('candidate planning and direct invoke retain every ResearchTaskV2 field', async () => {
+  const requirement = researchPlanningResult('完整 V2 上下文').structuredTask!;
+  const llm = new V2ContextLLM();
+  const planning = new ResearchPlanningService({
+    llm,
+    validator: new SchemaValidator(),
+    skillLoader: new SkillLoader(),
+  });
+
+  await planning.planFromRequirement(requirement, requirement.research_goal);
+
+  const routedCalls = llm.calls.filter((call) =>
+    call.schemaName === 'decision-states' || call.schemaName === 'current-plan-candidates'
+  );
+  assert.equal(routedCalls.length, 2);
+  for (const call of routedCalls) {
+    const context = call.context as Record<string, unknown>;
+    assert.deepEqual(context.requirement, requirement);
+    assert.deepEqual((context.requirement as ResearchTaskV2).target_audience, requirement.target_audience);
+    assert.deepEqual((context.requirement as ResearchTaskV2).scope, requirement.scope);
+    assert.deepEqual((context.requirement as ResearchTaskV2).constraints, requirement.constraints);
+    assert.deepEqual((context.requirement as ResearchTaskV2).success_criteria, requirement.success_criteria);
+    assert.deepEqual((context.requirement as ResearchTaskV2).expected_deliverables, requirement.expected_deliverables);
+    assert.equal(call.contextManifestHash, hashPrompt('', context));
+    const { requirement: _omitted, ...legacyContext } = context;
+    assert.notEqual(call.contextManifestHash, hashPrompt('', legacyContext));
+  }
+
+  const direct = await planning.planFromRequirement(
+    requirement,
+    `$competitive-analysis ${requirement.research_goal}`,
+  );
+  const directInput = direct.candidates[0]?.steps[0]?.input as Record<string, unknown>;
+  assert.deepEqual(directInput.requirement, requirement);
+});
 
 
 test('announces a newly created conversation before planning begins', async () => {

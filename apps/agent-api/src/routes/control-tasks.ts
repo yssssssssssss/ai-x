@@ -19,6 +19,14 @@ export interface ControlClarificationPort {
     answers: Record<string, unknown>;
     assumptionEdits: Record<string, string>;
     expectedVersion: number;
+    commandReservation: {
+      commandType: 'clarification';
+      idempotencyKey: string;
+      requestHash: string;
+      expectedVersion: number;
+      reservationToken: string;
+      actorUserId: string;
+    };
   }): Promise<CurrentPlanningResponse>;
 }
 
@@ -164,7 +172,7 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
 
     const command = {
       taskId: task.id,
-      commandType: 'clarification',
+      commandType: 'clarification' as const,
       idempotencyKey: key,
       requestHash,
       expectedVersion,
@@ -211,13 +219,20 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
             Object.entries(assumptionEdits).map(([field, value]) => [field, value as string]),
           ),
           expectedVersion,
+          commandReservation: {
+            ...command,
+            reservationToken,
+            actorUserId: actor.userId,
+          },
         });
-        await repository.completeCommand({
-          ...command,
-          reservationToken,
-          stateAfter: response.task.state,
-          response,
-        });
+        if (response.status === 'clarification_required') {
+          await repository.completeCommand({
+            ...command,
+            reservationToken,
+            stateAfter: response.task.state,
+            response,
+          });
+        }
         res.json(response);
       } catch (error) {
         await repository.recoverCommandAfterFailure({ ...command, reservationToken });

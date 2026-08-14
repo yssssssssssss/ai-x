@@ -524,8 +524,14 @@ git commit -m "feat: add current requirement refinement loop"
 - Modify: `apps/agent-api/src/control-runtime.ts` (runtime exposure seam; existing `controlPlanning` service)
 - Modify: `apps/orchestrator-runtime/src/control/control-planning-service.ts`
 - Modify: `apps/orchestrator-runtime/src/control/requirement-refinement-service.ts`（匹配 active requirement 的 retry resume）
+- Modify: `apps/orchestrator-runtime/src/planners/plan-strategy.ts`
+- Modify: `apps/orchestrator-runtime/src/planners/research-planning-service.ts`
+- Modify: `apps/orchestrator-runtime/src/planners/routed-planner.ts`
+- Modify: `apps/orchestrator-runtime/src/planners/direct-planner.ts`
 - Modify: `database/control-plane.ts`（token-fenced immediate reclaim）
 - Create: `database/migrations/005_clarification_command_reservation.sql`
+- Modify: `database/repository.ts`
+- Create: `database/migrations/006_message_idempotency.sql`
 - Modify: `apps/web/src/api/client.ts`
 - Modify: `packages/api-contract/control-workflow.ts`
 - Modify: `packages/api-contract/http.ts`
@@ -537,11 +543,13 @@ git commit -m "feat: add current requirement refinement loop"
 - Test: `tests/control-api-integration.test.ts`
 - Test: `tests/control-planning-service.test.ts`
 - Test: `tests/control-plane.test.ts`
+- Test: `tests/requirement-refinement-service.test.ts`
+- Test: `tests/db-roundtrip.test.ts`
 - Test: `tests/current-flow-state.test.ts`
 
 **Interfaces:**
 - Produces: planning union response 和 `/api/control-tasks/:id/clarify`。
-- Produces: `ControlPlaneRepository.persistExistingTaskWithCandidates()`，在单事务中锁定并 CAS 更新原 `awaiting_clarification` task，写入 depth/speed plan versions。
+- Produces: `ControlPlaneRepository.persistExistingTaskWithCandidates()`，保留无 command reservation 的首次 ready planning；clarification ready 改用 `persistClarificationCandidatesAndCompleteCommand()`，单事务锁 task 与 matching pending command，完成 token/hash/actor/version fences 后写 canonical depth/speed、CAS task、构造完整 response 并完成同一 command。
 - Produces: `ControlPlanningService.planExistingTask()`，消费 finalized `ResearchPlanningResult`，复用 candidate sanitization/evidence policy，返回原 conversation/task response。
 - Consumes: `RequirementRefinementService` ready result 的 finalized planning result；ControlRuntime 通过 `controlPlanning` 暴露该 seam。
 - Produces: `ControlPlaneRepository.createAndActivateRequirementVersion()`；同一事务锁 task、校验双 owner/state/version、插入下一 requirement version 并 CAS 激活完整 `ResearchTaskV2`。
@@ -550,6 +558,15 @@ git commit -m "feat: add current requirement refinement loop"
 - Produces: `ControlPlaneRepository.recoverCommandAfterFailure()`；task 仍是 expectedVersion 时 token-fenced 删除 pending，恰好由本请求 requirement activation 前进一版时保留 command 并立即过期，允许同 key/hash/旧 expectedVersion reclaim。
 - Produces: `RequirementRefinementService.clarify()` 的 post-activation resume；仅 active requirement ID、stored clarification、stored `ResearchTaskV2` 与 expectedVersion+1 全部匹配时跳过 requirement LLM/新版本，并仅重跑下游 planner/persistence；其余 fail closed。
 - Produces: Web clarification logical submission state；同 payload 在 in-flight/transport retry 复用 idempotency key，changed payload 换 key，success 清理 identity，request identity fence 忽略 stale settle；`clarificationSubmitting` 禁用提交组件。
+
+**Phase 2 final-review closure（2026-08-14）：**
+
+- supplied conversation 在创建 task 前通过 ControlRuntime 暴露的同一 injected ConversationAdapter 做 owner require；foreign/missing 统一 404 且零 task 写入。
+- `PlanContext.requirement` 携带完整 `ResearchTaskV2`；routed decision/candidate context 与 receipt hash、direct step input 均保留 target audience、scope、constraints、success criteria、expected deliverables。
+- clarification ready 不跨外部 LLM 持有事务；规划完成后由专用 repository transaction 原子持久化 candidates、task transition 和 completed command response。reclaimed old token 在任何 plan insert 前被拒绝；事务失败全部回滚；commit 后响应传递失败可由 durable response replay。
+- Migration 006 为 assistant message 增 nullable partial-unique idempotency key；RequirementRefinementService 以 activated requirement version ID 派生 key，post-append retry 不重复消息。
+- RED：7 个定向失败分别命中 pre-create authorization、V2 context、缺失 atomic repository seam、old-token/rollback、缺失 Migration 006、message duplicate 与缺失 requirement-version key。
+- GREEN：精确串行 7 文件 suite 66/66；`pnpm typecheck` passed；`pnpm --dir apps/web build` passed（44 modules transformed）。
 
 - [ ] **Step 1: 写 HTTP 测试**
 

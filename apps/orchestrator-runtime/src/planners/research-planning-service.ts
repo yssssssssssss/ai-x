@@ -137,7 +137,13 @@ export class ResearchPlanningService {
     structuredTask?: ResearchTaskV2,
   ): Promise<ResearchPlanningResult> {
     const strategy = direct ? this.directPlanner : this.routedPlanner;
-    const artifacts = await strategy.plan({ task, direct, taskProvenance, emit });
+    const artifacts = await strategy.plan({
+      task,
+      direct,
+      taskProvenance,
+      emit,
+      ...(structuredTask ? { requirement: structuredTask } : {}),
+    });
     return {
       task,
       ...(structuredTask ? { structuredTask } : {}),

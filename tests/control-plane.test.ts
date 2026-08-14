@@ -18,6 +18,8 @@ import {
   type ControlPlanVersionDetail,
   type ControlTask,
 } from '../database/control-plane.ts';
+import type { ControlPlanCandidatesResponse } from '../packages/api-contract/control-workflow.ts';
+import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import {
   runMigrations,
   type MigrationConnection,
@@ -56,7 +58,66 @@ type CandidatePersistenceRepository = ControlPlaneRepository & {
     task: ControlTask;
     candidates: ControlPlanVersionDetail[];
   }>;
+  persistClarificationCandidatesAndCompleteCommand(
+    input: AtomicClarificationInput,
+  ): Promise<ControlPlanCandidatesResponse>;
 };
+
+interface AtomicClarificationInput {
+  taskId: string;
+  conversationId: string;
+  ownerUserId: string;
+  expectedStateVersion: number;
+  taskType: string;
+  structuredTask: ResearchTaskV2;
+  activatedNodes: string[];
+  candidates: Array<{
+    candidateId: 'depth' | 'speed';
+    title: string;
+    rationale: string;
+    tradeoffs: string;
+    plan: Record<string, unknown>;
+    pendingInputs: unknown[];
+  }>;
+  command: {
+    commandType: 'clarification';
+    idempotencyKey: string;
+    requestHash: string;
+    expectedVersion: number;
+    reservationToken: string;
+    actorUserId: string;
+  };
+}
+
+function readyRequirement(label: string): ResearchTaskV2 {
+  return {
+    version: 'research-task-v2',
+    task_type: 'competitive_research',
+    business_domain: 'atomic clarification',
+    research_goal: label,
+    target_audience: ['产品团队'],
+    scope: ['公开资料'],
+    constraints: [],
+    success_criteria: [{ id: 'atomic', statement: '候选与命令一起提交' }],
+    expected_deliverables: ['研究计划'],
+    assumptions: [],
+    ambiguities: [],
+    clarification_questions: [],
+    blocking_issues: [],
+    sensitivity: 'public',
+    pii_detected: false,
+  };
+}
+
+function atomicCandidates(label: string): AtomicClarificationInput['candidates'] {
+  return existingTaskCandidates(label).map((candidate) => ({
+    ...candidate,
+    candidateId: candidate.candidateId as 'depth' | 'speed',
+    title: `${candidate.candidateId} title`,
+    rationale: `${candidate.candidateId} rationale`,
+    tradeoffs: `${candidate.candidateId} tradeoffs`,
+  }));
+}
 
 type LeaseBoundArtifactRepository = ControlPlaneRepository & {
   sealArtifact(input: {
@@ -112,6 +173,29 @@ class ScopedMigrationDatabase implements MigrationDatabase {
       release() {
         client.release();
       },
+    };
+  }
+}
+
+class FailingQueryDatabase implements MigrationDatabase {
+  private failed = false;
+
+  constructor(
+    private readonly delegate: MigrationDatabase,
+    private readonly pattern: RegExp,
+  ) {}
+
+  async connect(): Promise<MigrationConnection> {
+    const connection = await this.delegate.connect();
+    return {
+      query: async (sql, values = []) => {
+        if (!this.failed && this.pattern.test(sql)) {
+          this.failed = true;
+          throw new Error('simulated atomic command completion failure');
+        }
+        return connection.query(sql, values);
+      },
+      release: () => connection.release(),
     };
   }
 }
@@ -350,6 +434,128 @@ test('fails closed for missing, foreign-owner, and stale existing-task planning 
   const detail = await repository.getTaskDetail(staleTask.id);
   assert.equal(detail?.state, 'awaiting_clarification');
   assert.equal(detail?.stateVersion, staleTask.stateVersion);
+});
+
+test('atomically fences a reclaimed clarification token and lets only the winner create candidates', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const atomicRepository = repository as CandidatePersistenceRepository;
+  const created = await repository.createTask({
+    conversationId,
+    ownerUserId: ownerId,
+    originalInput: 'atomic reclaimed clarification',
+    taskType: null,
+    structuredTask: {},
+    state: 'awaiting_clarification',
+  });
+  const key = `atomic-reclaim-${randomUUID()}`;
+  const requestHash = `sha256:${'b'.repeat(64)}`;
+  const command = {
+    taskId: created.id,
+    commandType: 'clarification' as const,
+    idempotencyKey: key,
+    requestHash,
+    expectedVersion: created.stateVersion,
+    actorUserId: ownerId,
+  };
+  const first = await repository.reserveCommand(command);
+  assert.equal(first.status, 'reserved');
+  const structuredTask = readyRequirement('atomic reclaimed clarification');
+  const activated = await repository.createAndActivateRequirementVersion({
+    taskId: created.id,
+    ownerUserId: ownerId,
+    expectedVersion: created.stateVersion,
+    rawInputHash: requestHash,
+    clarification: { audience: '产品团队' },
+    structuredTask,
+  });
+  await repository.recoverCommandAfterFailure({
+    ...command,
+    reservationToken: first.reservationToken!,
+  });
+  const reclaimed = await repository.reserveCommand(command);
+  assert.equal(reclaimed.status, 'reserved');
+  assert.notEqual(reclaimed.reservationToken, first.reservationToken);
+  const baseInput = {
+    taskId: created.id,
+    conversationId,
+    ownerUserId: ownerId,
+    expectedStateVersion: activated.task.stateVersion,
+    taskType: structuredTask.task_type,
+    structuredTask,
+    activatedNodes: ['D5_competitive'],
+    candidates: atomicCandidates('atomic-reclaim'),
+  };
+
+  await assert.rejects(
+    () => atomicRepository.persistClarificationCandidatesAndCompleteCommand({
+      ...baseInput,
+      command: { ...command, reservationToken: first.reservationToken! },
+    }),
+    /reservation|fence|lost/i,
+  );
+  assert.equal((await repository.getTaskDetail(created.id))?.state, 'awaiting_clarification');
+  assert.equal(await repository.nextPlanVersion(created.id), 1);
+
+  const response = await atomicRepository.persistClarificationCandidatesAndCompleteCommand({
+    ...baseInput,
+    command: { ...command, reservationToken: reclaimed.reservationToken! },
+  });
+  assert.equal(response.task.state, 'awaiting_selection');
+  assert.deepEqual(response.candidates.map((candidate) => candidate.candidateId), ['depth', 'speed']);
+  assert.deepEqual((await repository.getCommand(created.id, 'clarification', key))?.response, response);
+  assert.equal(await repository.nextPlanVersion(created.id), 3);
+});
+
+test('rolls back plans, task transition, and command completion when the atomic transaction fails', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const created = await repository.createTask({
+    conversationId,
+    ownerUserId: ownerId,
+    originalInput: 'atomic transaction rollback',
+    taskType: null,
+    structuredTask: {},
+    state: 'awaiting_clarification',
+  });
+  const command = {
+    taskId: created.id,
+    commandType: 'clarification' as const,
+    idempotencyKey: `atomic-rollback-${randomUUID()}`,
+    requestHash: `sha256:${'c'.repeat(64)}`,
+    expectedVersion: created.stateVersion,
+    actorUserId: ownerId,
+  };
+  const reservation = await repository.reserveCommand(command);
+  assert.equal(reservation.status, 'reserved');
+  const structuredTask = readyRequirement('atomic transaction rollback');
+  const activated = await repository.createAndActivateRequirementVersion({
+    taskId: created.id,
+    ownerUserId: ownerId,
+    expectedVersion: created.stateVersion,
+    rawInputHash: command.requestHash,
+    clarification: {},
+    structuredTask,
+  });
+  const failingRepository = new ControlPlaneRepository(
+    new FailingQueryDatabase(scopedDatabase, /UPDATE control_commands/u),
+  ) as CandidatePersistenceRepository;
+
+  await assert.rejects(
+    () => failingRepository.persistClarificationCandidatesAndCompleteCommand({
+      taskId: created.id,
+      conversationId,
+      ownerUserId: ownerId,
+      expectedStateVersion: activated.task.stateVersion,
+      taskType: structuredTask.task_type,
+      structuredTask,
+      activatedNodes: ['D5_competitive'],
+      candidates: atomicCandidates('atomic-rollback'),
+      command: { ...command, reservationToken: reservation.reservationToken! },
+    }),
+    /simulated atomic command completion failure/,
+  );
+  assert.equal((await repository.getTaskDetail(created.id))?.state, 'awaiting_clarification');
+  assert.equal(await repository.nextPlanVersion(created.id), 1);
+  assert.equal((await repository.getCommand(created.id, 'clarification', command.idempotencyKey))?.response, null);
 });
 
 test('hashes semantically identical plans independently of object key insertion order', () => {

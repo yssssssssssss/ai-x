@@ -83,3 +83,15 @@
 - 验证：指定四文件串行套件 29/29 passed；`pnpm typecheck` passed；`pnpm --dir apps/web build` passed（44 modules transformed）。
 
 - 最终修复文件：`database/control-plane.ts`；`apps/agent-api/src/routes/control-tasks.ts`；`apps/orchestrator-runtime/src/control/requirement-refinement-service.ts`；`apps/web/src/current-flow-state.ts`；`apps/web/src/hooks/useTaskFlow.ts`；`apps/web/src/pages/Workbench.tsx`；`tests/control-api-integration.test.ts`；`tests/current-flow-state.test.ts`；Task7 plan/report/progress。
+
+## Phase 2 final-review transaction closure
+
+- Conversation authorization：`refinementPlanningPort` 对 supplied `conversationId` 先调用 ControlRuntime 暴露的 owner-scoped conversation adapter，再创建 task。真实 HTTP 回归覆盖 foreign/missing 均 404，且对应 `original_input` 的 task count 保持 0。
+- Full V2 planning context：`PlanContext` 增加可选 `requirement`；`planFromRequirement()` 把完整 V2 传给 routed/direct planner。decision 与 candidate LLM 使用包含 V2 的实际 context 计算 receipt hash；direct candidate input 也保留完整 V2。
+- Atomic ready transition：新增 `persistClarificationCandidatesAndCompleteCommand()`。单事务依次锁 task 与 matching pending clarification command；在 insert 前校验 conversation/task 双 owner、state/stateVersion、request hash、旧 expectedVersion、reservation token、actor 和严格 depth/speed；随后写 canonical plans、CAS 到 `awaiting_selection`、构造包含生成 ID/hash/metadata 的完整 response，并完成同一 command row。route 对 ready response 不再调用第二次 `completeCommand()`。
+- Atomic regressions：expired/reclaimed token race 中旧 worker 无 plan 写入，winner 恰好创建 2 plans 并持久化 replay；注入 command completion query failure 后 plans/task/command completion 全回滚；注入 commit 后 response delivery failure，首次 HTTP 500 后 retry 从 `response_json` replay，atomic/refinement/planner 不重跑。
+- Idempotent assistant messages：Migration 006 additive 新增 `messages.idempotency_key` 与 `(conversation_id, idempotency_key)` partial unique index；`writeMessage()` 用 partial conflict target 返回既有 ID并安全更新时间戳。refinement 以 `requirement:<activated-version-id>:assistant` 写消息且在 planner 前 append；post-append failure/retry 保持 1 条 message。
+- TDD RED：定向串行首次 7 个失败，分别为 missing conversation 502/FK、V2 context undefined、两个 atomic method missing、同 key message 返回不同 ID、Migration 006 ENOENT、assistant append key undefined。
+- Final verification：用户指定 7 文件串行 suite 66/66 passed；`pnpm typecheck` passed；`pnpm --dir apps/web build` passed（Vite 44 modules transformed）。
+
+- 最终 closure 文件：`database/migrations/006_message_idempotency.sql`；`database/repository.ts`；`database/control-plane.ts`；`apps/agent-api/src/control-runtime.ts`；`apps/agent-api/src/server.ts`；`apps/agent-api/src/routes/control-tasks.ts`；`apps/orchestrator-runtime/src/control/control-planning-service.ts`；`apps/orchestrator-runtime/src/control/requirement-refinement-service.ts`；planner context 四文件；五个相关 test 文件；Task7 plan/report/progress。

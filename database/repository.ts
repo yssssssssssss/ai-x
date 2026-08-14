@@ -135,10 +135,15 @@ export async function writeMessage(input: {
   messageType: 'text' | 'plan' | 'execution_update' | 'report' | 'error';
   content: unknown;
   artifactId?: string;
+  idempotencyKey?: string;
 }): Promise<{ id: string }> {
   const { rows } = await pool.query<{ id: string }>(
-    `INSERT INTO messages (conversation_id, sender_type, message_type, content, artifact_id)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO messages
+       (conversation_id, sender_type, message_type, content, artifact_id, idempotency_key)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (conversation_id, idempotency_key)
+       WHERE idempotency_key IS NOT NULL
+     DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
      RETURNING id`,
     [
       input.conversationId,
@@ -146,6 +151,7 @@ export async function writeMessage(input: {
       input.messageType,
       JSON.stringify(input.content),
       input.artifactId ?? null,
+      input.idempotencyKey ?? null,
     ],
   );
   // 更新会话最后消息时间(会话记忆/断点恢复用)
