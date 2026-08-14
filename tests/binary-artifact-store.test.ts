@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -34,7 +35,7 @@ const JPEG = Buffer.from(
   'base64',
 );
 const WEBP = Buffer.from(
-  'UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEAAUAmJaQAA3AA/v89',
+  'UklGRhoAAABXRUJQVlA4TA4AAAAvAAAAAAcQEf0PRET/Aw==',
   'base64',
 );
 const TEN_MIB = 10 * 1024 * 1024;
@@ -303,6 +304,33 @@ function truncatedWebpPayload(): Buffer {
   return bytes;
 }
 
+function jpegDeclaringLargeFrameWithTinyEntropy(): Buffer {
+  const output = Buffer.from(JPEG);
+  const frameOffset = output.indexOf(Buffer.from([0xff, 0xc0]));
+  assert.ok(frameOffset > 0);
+  output.writeUInt16BE(4_000, frameOffset + 5);
+  output.writeUInt16BE(5_000, frameOffset + 7);
+  return output;
+}
+
+function webpWithOnePayloadByte(type: 'VP8 ' | 'VP8L'): Buffer {
+  const payload = type === 'VP8 '
+    ? Buffer.from([0x10, 0, 0, 0x9d, 0x01, 0x2a, 1, 0, 1, 0, 0])
+    : Buffer.from([0x2f, 0, 0, 0, 0, 0]);
+  const chunkLength = payload.byteLength;
+  const paddedLength = chunkLength + (chunkLength % 2);
+  const extraLength = type === 'VP8L' ? 8 : 0;
+  const output = Buffer.alloc(20 + paddedLength + extraLength);
+  output.write('RIFF', 0, 'ascii');
+  output.writeUInt32LE(output.byteLength - 8, 4);
+  output.write('WEBP', 8, 'ascii');
+  output.write(type, 12, 'ascii');
+  output.writeUInt32LE(chunkLength, 16);
+  payload.copy(output, 20);
+  if (extraLength) output.write('JUNK', 20 + paddedLength, 'ascii');
+  return output;
+}
+
 async function assertRoundTrip(
   fixture: Buffer,
   contentType: TrustedBinaryMetadata['contentType'],
@@ -401,6 +429,24 @@ test('rejects indexed PNG samples that exceed the declared palette', async () =>
   );
 });
 
+test('rejects a 5000x4000 JPEG with only tiny-image entropy data', async () => {
+  const { store } = setup();
+  await assert.rejects(
+    () => store.writeBinary(binaryInput(jpegDeclaringLargeFrameWithTinyEntropy(), 'visuals/truncated-20mp.jpg')),
+    /decode|invalid|unsupported|JPEG/i,
+  );
+});
+
+test('rejects VP8 and VP8L files with only one post-header payload byte', async () => {
+  const { store } = setup();
+  for (const type of ['VP8 ', 'VP8L'] as const) {
+    await assert.rejects(
+      () => store.writeBinary(binaryInput(webpWithOnePayloadByte(type), `visuals/one-byte-${type.trim()}.webp`)),
+      /decode|invalid|unsupported|WebP/i,
+    );
+  }
+});
+
 test('rejects over-20MP PNG dimensions before attempting to inflate IDAT', async () => {
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(20_000_001, 0);
@@ -477,6 +523,109 @@ test('rejects PNGs with excessive IDAT chunk counts before aggregation', async (
     () => store.writeBinary(binaryInput(pngWithIdatCount(1_025), 'visuals/idat-flood.png')),
     /IDAT|invalid|unsupported/i,
   );
+});
+
+test('invalidates a seal when the pinned inode is overwritten while seal is pending', async () => {
+  const { registry, store } = setup();
+  registry.beforeSealCommit = (artifact) => {
+    const original = readFileSync(artifact.storageUri, 'utf8');
+    writeFileSync(artifact.storageUri, original.replace('AAAA', 'BBBB'));
+  };
+  await assert.rejects(
+    () => store.writeJson({
+      taskId: ACTIVE_LEASE.taskId,
+      planVersionId: ACTIVE_LEASE.planVersionId,
+      attemptId: ACTIVE_LEASE.attemptId,
+      kind: 'context_manifest',
+      relativePath: 'visuals/in-place-overwrite.json',
+      value: { marker: 'AAAA' },
+    }),
+    /checksum|content|integrity|changed/i,
+  );
+});
+
+
+test('invalidates a seal when bytes are appended to the pinned inode during seal', async () => {
+  const { registry, store } = setup();
+  registry.beforeSealCommit = (artifact) => {
+    writeFileSync(artifact.storageUri, Buffer.from([0]), { flag: 'a' });
+  };
+  await assert.rejects(
+    () => store.writeJson({
+      taskId: ACTIVE_LEASE.taskId,
+      planVersionId: ACTIVE_LEASE.planVersionId,
+      attemptId: ACTIVE_LEASE.attemptId,
+      kind: 'context_manifest',
+      relativePath: 'visuals/append-during-seal.json',
+      value: { marker: 'stable' },
+    }),
+    /size|content|integrity|changed/i,
+  );
+});
+test('rejects a parent symlink swap between root check and parent descriptor open', async () => {
+  const physicalRoot = mkdtempSync(join(tmpdir(), 'binary-root-pin-'));
+  const outside = mkdtempSync(join(tmpdir(), 'binary-root-pin-outside-'));
+  temporaryRoots.push(physicalRoot, outside);
+  const ancestor = join(physicalRoot, 'tasks', ACTIVE_LEASE.taskId);
+  const parent = join(ancestor, 'attempts', ACTIVE_LEASE.attemptId, 'visuals');
+  mkdirSync(join(outside, 'attempts', ACTIVE_LEASE.attemptId, 'visuals'), { recursive: true });
+  let rootReads = 0;
+  let swapped = false;
+  const registry = new MemoryArtifactRegistry();
+  const options = {
+    get root() {
+      rootReads += 1;
+      if (!swapped && rootReads >= 5 && existsSync(parent)) {
+        renameSync(ancestor, `${ancestor}.pinned`);
+        symlinkSync(outside, ancestor, 'dir');
+        swapped = true;
+      }
+      return physicalRoot;
+    },
+    registry,
+  };
+  const store = new ControlArtifactStore(options);
+  await assert.rejects(
+    () => store.writeBinary(binaryInput(PNG, 'visuals/root-window.png')),
+    /workspace|publication|identity|root/i,
+  );
+  assert.equal(swapped, true);
+  assert.equal(registry.sealInputs.length, 0);
+});
+
+test('never writes bytes after an ancestor swap between parent check and temp open', async () => {
+  const physicalRoot = mkdtempSync(join(tmpdir(), 'binary-prewrite-pin-'));
+  const outside = mkdtempSync(join(tmpdir(), 'binary-prewrite-outside-'));
+  temporaryRoots.push(physicalRoot, outside);
+  const ancestor = join(physicalRoot, 'tasks', ACTIVE_LEASE.taskId);
+  const externalParent = join(outside, 'attempts', ACTIVE_LEASE.attemptId, 'visuals');
+  const parent = join(ancestor, 'attempts', ACTIVE_LEASE.attemptId, 'visuals');
+  mkdirSync(externalParent, { recursive: true });
+  let rootReads = 0;
+  let swapped = false;
+  const registry = new MemoryArtifactRegistry();
+  const store = new ControlArtifactStore({
+    get root() {
+      rootReads += 1;
+      if (!swapped && rootReads >= 7 && existsSync(parent)) {
+        renameSync(ancestor, `${ancestor}.pinned`);
+        symlinkSync(outside, ancestor, 'dir');
+        swapped = true;
+      }
+      return physicalRoot;
+    },
+    registry,
+  });
+
+  await assert.rejects(
+    () => store.writeBinary(binaryInput(PNG, 'visuals/prewrite-window.png')),
+    /workspace|publication|identity|root/i,
+  );
+  const suspiciousFiles = readdirSync(externalParent);
+  assert.equal(swapped, true);
+  assert.ok(suspiciousFiles.length > 0);
+  assert.ok(suspiciousFiles.every((name) => readFileSync(join(externalParent, name)).byteLength === 0));
+  assert.equal(registry.sealInputs.length, 0);
 });
 
 test('rejects file hash tamper and persisted trusted metadata tamper on verified read', async () => {
@@ -585,7 +734,7 @@ test('rejects a versioned workspace directory symlink that escapes the artifact 
 
   await assert.rejects(
     () => store.writeBinary(binaryInput(PNG, 'visuals/escaped.png')),
-    /workspace|path/i,
+    /workspace|path|root|publication/i,
   );
   assert.equal(existsSync(join(outside, 'attempts')), false);
   assert.equal(registry.artifacts.size, 0);

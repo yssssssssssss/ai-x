@@ -1099,9 +1099,9 @@ git commit -m "feat: serve verified current report packages"
 
 - [x] **Step 1: 安装依赖**
 
-Run: `pnpm add image-size`
+Run: `pnpm add image-size sharp`
 
-Expected: `package.json` 和 `pnpm-lock.yaml` 只新增 `image-size` 及其传递依赖。
+Expected: `package.json` 和 `pnpm-lock.yaml` 只新增 `image-size`、`sharp` 及其平台传递依赖。`image-size` 仅作低成本 header/尺寸快检；`sharp` 是本地严格 decode 事实源。
 
 - [x] **Step 2: 写失败测试**
 
@@ -1131,10 +1131,11 @@ git commit -m "feat: seal binary current artifacts"
 
 #### Task 15 execution note（2026-08-14）
 
-- [x] `image-size` 仅加入根 package/lock；复用 Migration 004 的 `media_type`/`metadata_json`，未新增 migration。
+- [x] 根 package/lock 包含 `image-size` 与 `sharp`；复用 Migration 004 的 `media_type`/`metadata_json`，未新增 migration。初版计划只列 `image-size`，第二安全 Gate 证明 header/手写容器校验不能证明 JPEG/WebP 可解码，因此显式纠偏加入 `sharp`，不隐瞒该依赖偏差。
 - [x] JSON 与 binary 共用唯一 `writeBytes()` 的 STAGING/fsync/link-no-clobber/hash/seal/failure 生命周期；binary active lease 原样进入现有 repository 原子 fence。
-- [x] write/read 均从字节严格识别 PNG/JPEG/WebP；PNG 额外重验 inflated scanline 与尺寸，JPEG/WebP 重验 marker/chunk payload 结构；10 MiB 与 20,000,000 pixels inclusive，20,000,001 拒绝。binary verified read 额外重验 Task/Plan/Attempt 路径、hash、byte size 与持久化 trusted metadata；legacy JSON hash read 保持兼容。SVG 与未知/畸形/截断数据 fail closed。
-- [x] RED：10 项中 legacy JSON 1 pass，9 项 binary contract 均以缺少 `writeBinary()` 失败；review follow-up 再复现 payload mismatch、lease retry、null-Plan JSON、root/symlink 与 seal response 边界。GREEN：binary 13/13；指定 binary + ControlPlane 串行 suite 50/50；`pnpm typecheck` passed。`tests/artifact-store.test.ts` 不存在，按约定未创建。
+- [x] `image-size` 快检签名/尺寸并在 decode 前执行 10 MiB / 20 MP gate；`sharp(bytes,{ failOn:'warning', limitInputPixels:20_000_000, animated:false })` 完整 decode 到 raw，拒绝动画/多页，并要求 decoded format/width/height 与 header 完全一致。PNG 额外保留 chunk/CRC/filter/palette/IDAT 安全检查。binary verified read 重验 Task/Plan/Attempt、fd hash/size 与 trusted metadata；legacy JSON hash read 保持兼容。
+- [x] publication pin root physical path；root/parent/temp/published 均用 no-follow fd 与 dev/ino 身份反复校验。DB seal hash 来自 pinned published fd，seal promise 返回后同 fd 再 hash；同 inode overwrite 或 ancestor swap 均 invalidate，不通过可疑 path 清理。
+- [x] 最终纠偏 RED：5000×4000 tiny-entropy JPEG、VP8/VP8L 一字节 payload、seal pending 同 inode overwrite/append、check→parent-open 与 parent-check→temp-open 中间 ancestor swap 均先失败。GREEN：binary 28/28；指定 binary + ControlPlane 串行 suite 66/66；`pnpm typecheck` passed。`tests/artifact-store.test.ts` 不存在，按约定未创建。
 
 
 ### Task 16: VisualAssetService 和安全远程图片

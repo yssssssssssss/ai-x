@@ -10,6 +10,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readSync,
   realpathSync,
   renameSync,
   unlinkSync,
@@ -17,6 +18,7 @@ import {
 } from 'node:fs';
 import { dirname, isAbsolute, join, normalize, relative, resolve } from 'node:path';
 import { imageSize } from 'image-size';
+import sharp from 'sharp';
 import { inflateSync } from 'node:zlib';
 import type {
   ControlArtifact,
@@ -80,6 +82,27 @@ function crc32(bytes: Uint8Array, start: number, end: number): number {
     }
   }
   return (crc ^ 0xffffffff) >>> 0;
+}
+
+function sha256Descriptor(descriptor: number, byteSize: number): string {
+  const before = fstatSync(descriptor, { bigint: true });
+  if (!before.isFile() || before.size !== BigInt(byteSize)) {
+    throw new Error('published file size changed from its sealed byte size');
+  }
+  const hash = createHash('sha256');
+  const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, Math.max(1, byteSize)));
+  let position = 0;
+  while (position < byteSize) {
+    const read = readSync(descriptor, chunk, 0, Math.min(chunk.byteLength, byteSize - position), position);
+    if (read === 0) throw new Error('published file ended before its sealed byte size');
+    hash.update(chunk.subarray(0, read));
+    position += read;
+  }
+  const after = fstatSync(descriptor, { bigint: true });
+  if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size) {
+    throw new Error('published file changed while hashing');
+  }
+  return `sha256:${hash.digest('hex')}`;
 }
 
 function pngPayloadMatchesDimensions(
@@ -413,7 +436,7 @@ function isWebpContainerValid(bytes: Buffer): boolean {
   return sawImageChunk && offset === bytes.byteLength;
 }
 
-function inspectBinary(bytes: Buffer): TrustedBinaryMetadata {
+async function inspectBinary(bytes: Buffer): Promise<TrustedBinaryMetadata> {
   if (bytes.byteLength > MAX_BINARY_BYTE_SIZE) {
     throw new BinaryArtifactValidationError('byte size exceeds 10 MiB');
   }
@@ -430,16 +453,52 @@ function inspectBinary(bytes: Buffer): TrustedBinaryMetadata {
   if (width * height > MAX_BINARY_PIXEL_COUNT) {
     throw new BinaryArtifactValidationError('pixel count exceeds 20 megapixels');
   }
-  const contentType: TrustedBinaryContentType = dimensions.type === 'png'
-    ? 'image/png'
-    : dimensions.type === 'jpg' ? 'image/jpeg' : dimensions.type === 'webp' ? 'image/webp' : (() => {
-        throw new BinaryArtifactValidationError('only complete PNG, JPEG, and WebP bytes are supported');
-      })();
-  const valid = dimensions.type === 'png'
-    ? isPngContainerValid(bytes)
-    : dimensions.type === 'jpg' ? isJpegContainerValid(bytes) : isWebpContainerValid(bytes);
-  if (!valid) {
+  let contentType: TrustedBinaryContentType;
+  let sharpFormat: 'png' | 'jpeg' | 'webp';
+  let containerValid = false;
+  if (dimensions.type === 'png') {
+    contentType = 'image/png';
+    sharpFormat = 'png';
+    containerValid = isPngContainerValid(bytes);
+  } else if (dimensions.type === 'jpg') {
+    contentType = 'image/jpeg';
+    sharpFormat = 'jpeg';
+    containerValid = isJpegContainerValid(bytes);
+  } else if (dimensions.type === 'webp') {
+    contentType = 'image/webp';
+    sharpFormat = 'webp';
+    containerValid = isWebpContainerValid(bytes);
+  } else {
     throw new BinaryArtifactValidationError('only complete PNG, JPEG, and WebP bytes are supported');
+  }
+  if (!containerValid) {
+    throw new BinaryArtifactValidationError('only complete PNG, JPEG, and WebP bytes are supported');
+  }
+  try {
+    const decoder = sharp(bytes, {
+      animated: false,
+      failOn: 'warning',
+      limitInputPixels: MAX_BINARY_PIXEL_COUNT,
+    });
+    const decodedMetadata = await decoder.metadata();
+    if (
+      decodedMetadata.format !== sharpFormat
+      || decodedMetadata.width !== width
+      || decodedMetadata.height !== height
+      || (decodedMetadata.pages ?? 1) !== 1
+    ) {
+      throw new Error('decoded image metadata does not match its sniffed header');
+    }
+    const decoded = await decoder.raw().toBuffer({ resolveWithObject: true });
+    if (
+      decoded.info.width !== width
+      || decoded.info.height !== height
+      || decoded.data.byteLength !== width * height * decoded.info.channels
+    ) {
+      throw new Error('decoded image pixels are incomplete');
+    }
+  } catch (error) {
+    throw new BinaryArtifactValidationError(`decode failed: ${error instanceof Error ? error.message : String(error)}`);
   }
   return { contentType, byteSize: bytes.byteLength, width, height };
 }
@@ -516,6 +575,23 @@ export class ControlArtifactStore {
     }
   }
 
+  private descriptorPathInsideRoot(rootPhysicalPath: string, path: string, descriptor: number): boolean {
+    if (!this.descriptorMatchesPath(path, descriptor)) return false;
+    try {
+      const physicalPath = realpathSync(path);
+      const physicalRelative = relative(rootPhysicalPath, physicalPath);
+      return physicalRelative !== '' && !physicalRelative.startsWith('..') && !isAbsolute(physicalRelative);
+    } catch {
+      return false;
+    }
+  }
+
+  private assertDescriptorInsideRoot(rootPhysicalPath: string, path: string, descriptor: number): void {
+    if (!this.descriptorPathInsideRoot(rootPhysicalPath, path, descriptor)) {
+      throw new ArtifactIntegrityError('publication', 'publication directory escaped its pinned root');
+    }
+  }
+
   private assertDescriptorPath(path: string, descriptor: number): void {
     if (!this.descriptorMatchesPath(path, descriptor)) {
       throw new ArtifactIntegrityError('publication', 'filesystem identity changed during publication');
@@ -530,23 +606,11 @@ export class ControlArtifactStore {
     const directory = this.directoryFor(input);
     const storageUri = this.resolveArtifactPath(directory, input.relativePath);
     const parentUri = dirname(storageUri);
-    mkdirSync(this.options.root, { recursive: true });
-    this.assertUnaliasedRootPath(storageUri);
-    const artifact = await this.options.registry.createStagingArtifact({
-      taskId: input.taskId,
-      planVersionId: input.planVersionId,
-      attemptId: input.attemptId,
-      kind: input.kind,
-      storageUri,
-      schemaVersion: input.schemaVersion ?? 'v1',
-      sensitivity: input.sensitivity ?? 'internal',
-      redactionPolicyVersion: input.redactionPolicyVersion ?? 'v1',
-      ...(metadata
-        ? { mediaType: metadata.contentType, metadata: { width: metadata.width, height: metadata.height } }
-        : {}),
-    });
-    const temporaryUri = `${storageUri}.${artifact.id}.tmp`;
-    const contentSha256 = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+    const rootUri = resolve(this.options.root);
+    const callerContentSha256 = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+    let artifact: ControlArtifact | null = null;
+    let temporaryUri = '';
+    let rootPhysicalPath = '';
     let rootDescriptor = -1;
     let parentDescriptor = -1;
     let temporaryDescriptor = -1;
@@ -555,31 +619,55 @@ export class ControlArtifactStore {
 
     const publicationStable = () => rootDescriptor >= 0
       && parentDescriptor >= 0
-      && this.descriptorMatchesPath(this.options.root, rootDescriptor)
-      && this.descriptorMatchesPath(parentUri, parentDescriptor)
+      && this.descriptorMatchesPath(rootUri, rootDescriptor)
+      && this.descriptorPathInsideRoot(rootPhysicalPath, parentUri, parentDescriptor)
+      && (temporaryDescriptor < 0 || this.descriptorMatchesPath(temporaryUri, temporaryDescriptor))
       && (!published || (publishedDescriptor >= 0 && this.descriptorMatchesPath(storageUri, publishedDescriptor)));
 
     try {
-      mkdirSync(parentUri, { recursive: true });
-      this.assertUnaliasedRootPath(storageUri);
+      mkdirSync(this.options.root, { recursive: true });
       rootDescriptor = openSync(this.options.root, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-      parentDescriptor = openSync(parentUri, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+      rootPhysicalPath = realpathSync(rootUri);
+      this.assertDescriptorPath(rootUri, rootDescriptor);
+      this.assertUnaliasedRootPath(storageUri);
+
+      artifact = await this.options.registry.createStagingArtifact({
+        taskId: input.taskId,
+        planVersionId: input.planVersionId,
+        attemptId: input.attemptId,
+        kind: input.kind,
+        storageUri,
+        schemaVersion: input.schemaVersion ?? 'v1',
+        sensitivity: input.sensitivity ?? 'internal',
+        redactionPolicyVersion: input.redactionPolicyVersion ?? 'v1',
+        ...(metadata
+          ? { mediaType: metadata.contentType, metadata: { width: metadata.width, height: metadata.height } }
+          : {}),
+      });
+      temporaryUri = `${storageUri}.${artifact.id}.tmp`;
+      mkdirSync(parentUri, { recursive: true });
       this.assertDescriptorPath(this.options.root, rootDescriptor);
+      parentDescriptor = openSync(parentUri, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
       this.assertDescriptorPath(parentUri, parentDescriptor);
+      this.assertDescriptorInsideRoot(rootPhysicalPath, parentUri, parentDescriptor);
+      this.assertDescriptorPath(this.options.root, rootDescriptor);
 
       temporaryDescriptor = openSync(
         temporaryUri,
         constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
         0o600,
       );
+      this.assertDescriptorPath(rootUri, rootDescriptor);
+      this.assertDescriptorInsideRoot(rootPhysicalPath, parentUri, parentDescriptor);
+      this.assertDescriptorPath(temporaryUri, temporaryDescriptor);
       writeFileSync(temporaryDescriptor, bytes);
       fsyncSync(temporaryDescriptor);
       const temporaryStat = fstatSync(temporaryDescriptor, { bigint: true });
       if (!temporaryStat.isFile() || temporaryStat.size !== BigInt(bytes.byteLength)) {
         throw new ArtifactIntegrityError(artifact.id, 'validated temporary file size changed');
       }
-      this.assertDescriptorPath(this.options.root, rootDescriptor);
-      this.assertDescriptorPath(parentUri, parentDescriptor);
+      this.assertDescriptorPath(rootUri, rootDescriptor);
+      this.assertDescriptorInsideRoot(rootPhysicalPath, parentUri, parentDescriptor);
       this.assertDescriptorPath(temporaryUri, temporaryDescriptor);
 
       linkSync(temporaryUri, storageUri);
@@ -594,20 +682,29 @@ export class ControlArtifactStore {
       ) {
         throw new ArtifactIntegrityError(artifact.id, 'published hardlink does not match validated input');
       }
-      this.assertDescriptorPath(this.options.root, rootDescriptor);
-      this.assertDescriptorPath(parentUri, parentDescriptor);
+      this.assertDescriptorPath(rootUri, rootDescriptor);
+      this.assertDescriptorInsideRoot(rootPhysicalPath, parentUri, parentDescriptor);
+      this.assertDescriptorPath(temporaryUri, temporaryDescriptor);
       this.assertDescriptorPath(storageUri, publishedDescriptor);
+      const publishedContentSha256 = sha256Descriptor(publishedDescriptor, bytes.byteLength);
+      if (publishedContentSha256 !== callerContentSha256) {
+        throw new ArtifactIntegrityError(artifact.id, 'published content does not match validated caller bytes');
+      }
 
       const sealed = await this.options.registry.sealArtifact({
         artifactId: artifact.id,
-        contentSha256,
+        contentSha256: publishedContentSha256,
         byteSize: bytes.byteLength,
         ...(input.activeLease ?? {}),
       });
       try {
-        this.assertDescriptorPath(this.options.root, rootDescriptor);
-        this.assertDescriptorPath(parentUri, parentDescriptor);
+        this.assertDescriptorPath(rootUri, rootDescriptor);
+        this.assertDescriptorInsideRoot(rootPhysicalPath, parentUri, parentDescriptor);
+        this.assertDescriptorPath(temporaryUri, temporaryDescriptor);
         this.assertDescriptorPath(storageUri, publishedDescriptor);
+        if (sha256Descriptor(publishedDescriptor, bytes.byteLength) !== publishedContentSha256) {
+          throw new ArtifactIntegrityError(artifact.id, 'published content changed while seal was pending');
+        }
       } catch (error) {
         await this.options.registry.invalidateArtifactPublication(
           artifact.id,
@@ -618,20 +715,31 @@ export class ControlArtifactStore {
       unlinkSync(temporaryUri);
       return sealed;
     } catch (error) {
-      const persisted = published ? await this.options.registry.getArtifact(artifact.id) : null;
-      if (persisted?.state === 'SEALED' && publicationStable()) {
+      const persisted = artifact && published ? await this.options.registry.getArtifact(artifact.id) : null;
+      if (
+        artifact
+        && persisted?.state === 'SEALED'
+        && publicationStable()
+        && persisted.contentSha256 === callerContentSha256
+        && sha256Descriptor(publishedDescriptor, bytes.byteLength) === callerContentSha256
+      ) {
         if (temporaryDescriptor >= 0 && this.descriptorMatchesPath(temporaryUri, temporaryDescriptor)) unlinkSync(temporaryUri);
         return persisted;
       }
-      if (persisted?.state === 'SEALED') {
+      if (artifact && persisted?.state === 'SEALED') {
         await this.options.registry.invalidateArtifactPublication(
           artifact.id,
           error instanceof Error ? error.message : String(error),
         );
       }
-      if (published && publicationStable()) renameSync(storageUri, `${storageUri}.${artifact.id}.orphan`);
-      if (temporaryDescriptor >= 0 && this.descriptorMatchesPath(temporaryUri, temporaryDescriptor)) unlinkSync(temporaryUri);
-      await this.options.registry.failArtifact(artifact.id, error instanceof Error ? error.message : String(error));
+      if (artifact && published && publicationStable()) renameSync(storageUri, `${storageUri}.${artifact.id}.orphan`);
+      if (
+        temporaryDescriptor >= 0
+        && parentDescriptor >= 0
+        && this.descriptorPathInsideRoot(rootPhysicalPath, parentUri, parentDescriptor)
+        && this.descriptorMatchesPath(temporaryUri, temporaryDescriptor)
+      ) unlinkSync(temporaryUri);
+      if (artifact) await this.options.registry.failArtifact(artifact.id, error instanceof Error ? error.message : String(error));
       throw error;
     } finally {
       if (publishedDescriptor >= 0) closeSync(publishedDescriptor);
@@ -652,7 +760,7 @@ export class ControlArtifactStore {
       throw new BinaryArtifactValidationError('byte size exceeds 10 MiB');
     }
     const bytes = Buffer.from(input.bytes);
-    return this.writeBytes(input, bytes, inspectBinary(bytes));
+    return this.writeBytes(input, bytes, await inspectBinary(bytes));
   }
 
   async reconcileStaging(): Promise<void> {
@@ -742,7 +850,7 @@ export class ControlArtifactStore {
     metadata: TrustedBinaryMetadata;
   }> {
     const { artifact, bytes } = await this.readVerifiedBytes(artifactId, true, MAX_BINARY_BYTE_SIZE);
-    const metadata = inspectBinary(bytes);
+    const metadata = await inspectBinary(bytes);
     const persisted = artifact.metadata;
     if (
       artifact.mediaType !== metadata.contentType
