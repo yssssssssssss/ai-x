@@ -1136,6 +1136,7 @@ git commit -m "feat: seal binary current artifacts"
 - [x] `image-size` 快检签名/尺寸并在 decode 前执行 10 MiB / 20 MP gate；`sharp(bytes,{ failOn:'warning', limitInputPixels:20_000_000, animated:false })` 完整 decode 到 raw，拒绝动画/多页，并要求 decoded format/width/height 与 header 完全一致。PNG 额外保留 chunk/CRC/filter/palette/IDAT 安全检查。binary verified read 重验 Task/Plan/Attempt、fd hash/size 与 trusted metadata；legacy JSON hash read 保持兼容。
 - [x] publication pin root physical path；root/parent/temp/published 均用 no-follow fd 与 dev/ino 身份反复校验。DB seal hash 来自 pinned published fd，seal promise 返回后同 fd 再 hash；同 inode overwrite 或 ancestor swap 均 invalidate，不通过可疑 path 清理。
 - [x] 最终纠偏 RED：5000×4000 tiny-entropy JPEG、VP8/VP8L 一字节 payload、seal pending 同 inode overwrite/append、check→parent-open 与 parent-check→temp-open 中间 ancestor swap 均先失败。GREEN：binary 28/28；指定 binary + ControlPlane 串行 suite 66/66；`pnpm typecheck` passed。`tests/artifact-store.test.ts` 不存在，按约定未创建。
+- [x] FinalGate cleanup 纠偏：success/catch/reconcile 不再对 publication/temp 执行 pathname unlink/rename。Node 缺少安全的 dirfd-relative cleanup，因此 hardlink/temp 保留给未来 trusted GC（hardlink 不重复数据）。exact `storage_uri` 由 PostgreSQL advisory lock 串行化；仅 prior owners 全部 FAILED 且 existing fd 的 regular/size/hash/physical containment 与本次 validated bytes 完全一致时复用。different bytes、SEALED、STAGING 均保持 no-clobber。最终 binary 32/32、ControlPlane 38/38、combined 70/70、`pnpm typecheck` passed。
 
 
 ### Task 16: VisualAssetService 和安全远程图片

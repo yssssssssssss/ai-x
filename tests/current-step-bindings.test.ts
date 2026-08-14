@@ -323,6 +323,10 @@ class MemoryArtifactRegistry {
     return this.artifacts.get(artifactId) ?? null;
   }
 
+  async listArtifactsByStorageUri(storageUri: string): Promise<ControlArtifact[]> {
+    return [...this.artifacts.values()].filter((artifact) => artifact.storageUri === storageUri);
+  }
+
   async listStagingArtifacts(): Promise<ControlArtifact[]> {
     return [...this.artifacts.values()].filter((value) => value.state === 'STAGING');
   }

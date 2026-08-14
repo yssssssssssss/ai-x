@@ -1492,6 +1492,16 @@ export class ControlPlaneRepository {
     metadata?: Record<string, unknown>;
   }): Promise<ControlArtifact> {
     return this.transaction(async (connection) => {
+      await connection.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [input.storageUri]);
+      const livePath = await connection.query(
+        `SELECT id FROM control_artifacts
+         WHERE storage_uri = $1 AND state IN ('STAGING', 'SEALED')
+         LIMIT 1`,
+        [input.storageUri],
+      );
+      if (livePath.rows[0]) {
+        throw new ControlPlaneConflictError(`artifact path ${input.storageUri} already has a live owner`);
+      }
       if (input.planVersionId) {
         const plan = await connection.query(
           'SELECT 1 FROM control_plan_versions WHERE id = $1 AND task_id = $2',
@@ -1550,7 +1560,7 @@ export class ControlPlaneRepository {
     const leaseBound = leaseFieldCount === 5;
     const outcome = await this.transaction(async (connection) => {
       const bindingResult = await connection.query(
-        `SELECT artifact.task_id, artifact.plan_version_id, artifact.attempt_id,
+        `SELECT artifact.task_id, artifact.plan_version_id, artifact.attempt_id, artifact.storage_uri,
                 plan.task_id AS plan_task_id,
                 attempt.task_id AS attempt_task_id,
                 attempt.plan_version_id AS attempt_plan_version_id
@@ -1562,6 +1572,17 @@ export class ControlPlaneRepository {
       );
       const binding = bindingResult.rows[0];
       if (!binding) return null;
+      const storageUri = asString(binding.storage_uri, 'storage_uri');
+      await connection.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [storageUri]);
+      const competingPath = await connection.query(
+        `SELECT id FROM control_artifacts
+         WHERE storage_uri = $1
+           AND id <> $2
+           AND state IN ('STAGING', 'SEALED')
+         LIMIT 1`,
+        [storageUri, input.artifactId],
+      );
+      if (competingPath.rows[0]) return null;
       const taskId = asString(binding.task_id, 'task_id');
       const planVersionId = typeof binding.plan_version_id === 'string' ? binding.plan_version_id : null;
       const attemptId = typeof binding.attempt_id === 'string' ? binding.attempt_id : null;
@@ -1758,6 +1779,19 @@ export class ControlPlaneRepository {
         throw new ControlPlaneConflictError(`artifact ${artifactId} identity binding is invalid`);
       }
       return artifactFromRow(row);
+    } finally {
+      connection.release();
+    }
+  }
+
+  async listArtifactsByStorageUri(storageUri: string): Promise<ControlArtifact[]> {
+    const connection = await this.database.connect();
+    try {
+      const result = await connection.query(
+        'SELECT * FROM control_artifacts WHERE storage_uri = $1 ORDER BY created_at, id',
+        [storageUri],
+      );
+      return result.rows.map(artifactFromRow);
     } finally {
       connection.release();
     }

@@ -12,7 +12,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { deflateSync } from 'node:zlib';
 import {
@@ -149,6 +149,10 @@ class MemoryArtifactRegistry {
 
   async getArtifact(artifactId: string): Promise<ControlArtifact | null> {
     return this.artifacts.get(artifactId) ?? null;
+  }
+
+  async listArtifactsByStorageUri(storageUri: string): Promise<ControlArtifact[]> {
+    return [...this.artifacts.values()].filter((artifact) => artifact.storageUri === storageUri);
   }
 
   async listStagingArtifacts(): Promise<ControlArtifact[]> {
@@ -626,6 +630,74 @@ test('never writes bytes after an ancestor swap between parent check and temp op
   assert.ok(suspiciousFiles.length > 0);
   assert.ok(suspiciousFiles.every((name) => readFileSync(join(externalParent, name)).byteLength === 0));
   assert.equal(registry.sealInputs.length, 0);
+});
+
+test('retains temp hardlinks after successful publication instead of path cleanup', async () => {
+  const { store } = setup();
+  const sealed = await store.writeBinary(binaryInput(PNG, 'visuals/retained-success.png'));
+  const siblings = readdirSync(dirname(sealed.storageUri));
+  assert.ok(siblings.some((name) => name === `retained-success.png.${sealed.id}.tmp`));
+  assert.equal(existsSync(sealed.storageUri), true);
+});
+
+test('retains failed publication and safely reuses only identical bytes', async () => {
+  const { root, registry, store } = setup();
+  const relativePath = 'visuals/retained-failed.png';
+  const storageUri = join(root, 'tasks', ACTIVE_LEASE.taskId, 'attempts', ACTIVE_LEASE.attemptId, relativePath);
+  registry.leaseExpired = true;
+  await assert.rejects(
+    () => store.writeBinary({ ...binaryInput(PNG, relativePath), activeLease: ACTIVE_LEASE }),
+    ControlPlaneConflictError,
+  );
+  assert.equal(existsSync(storageUri), true);
+  assert.deepEqual(readFileSync(storageUri), PNG);
+
+  registry.leaseExpired = false;
+  await assert.rejects(
+    () => store.writeBinary({ ...binaryInput(JPEG, relativePath), activeLease: ACTIVE_LEASE }),
+  );
+  assert.deepEqual(readFileSync(storageUri), PNG);
+  const retried = await store.writeBinary({ ...binaryInput(PNG, relativePath), activeLease: ACTIVE_LEASE });
+  assert.equal(retried.state, 'SEALED');
+});
+
+test('refuses an existing STAGING publication path without modifying its bytes', async () => {
+  const { root, registry, store } = setup();
+  const storageUri = join(root, 'tasks', ACTIVE_LEASE.taskId, 'attempts', ACTIVE_LEASE.attemptId, 'visuals/staged.png');
+  mkdirSync(dirname(storageUri), { recursive: true });
+  writeFileSync(storageUri, PNG);
+  await registry.createStagingArtifact({
+    taskId: ACTIVE_LEASE.taskId,
+    planVersionId: ACTIVE_LEASE.planVersionId,
+    attemptId: ACTIVE_LEASE.attemptId,
+    kind: 'visual_asset',
+    storageUri,
+    schemaVersion: 'visual-asset-v1',
+    sensitivity: 'internal',
+    redactionPolicyVersion: 'v1',
+  });
+  await assert.rejects(() => store.writeBinary(binaryInput(PNG, 'visuals/staged.png')));
+  assert.deepEqual(readFileSync(storageUri), PNG);
+});
+
+test('reconcileStaging fails DB state but retains the original path for trusted GC', async () => {
+  const { root, registry, store } = setup();
+  const storageUri = join(root, 'staging-retained.png');
+  writeFileSync(storageUri, PNG);
+  const staged = await registry.createStagingArtifact({
+    taskId: ACTIVE_LEASE.taskId,
+    planVersionId: ACTIVE_LEASE.planVersionId,
+    attemptId: ACTIVE_LEASE.attemptId,
+    kind: 'visual_asset',
+    storageUri,
+    schemaVersion: 'visual-asset-v1',
+    sensitivity: 'internal',
+    redactionPolicyVersion: 'v1',
+  });
+  await store.reconcileStaging();
+  assert.equal((await registry.getArtifact(staged.id))?.state, 'FAILED');
+  assert.equal(existsSync(storageUri), true);
+  assert.equal(existsSync(`${storageUri}.${staged.id}.orphan`), false);
 });
 
 test('rejects file hash tamper and persisted trusted metadata tamper on verified read', async () => {

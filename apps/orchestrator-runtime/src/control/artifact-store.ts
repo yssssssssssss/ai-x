@@ -12,8 +12,6 @@ import {
   readFileSync,
   readSync,
   realpathSync,
-  renameSync,
-  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname, isAbsolute, join, normalize, relative, resolve } from 'node:path';
@@ -510,8 +508,8 @@ export class ControlArtifactStore {
       registry: Pick<
         ControlPlaneRepository,
         | 'createStagingArtifact' | 'sealArtifact' | 'failArtifact' | 'getArtifact'
-        | 'listStagingArtifacts' | 'requireSealedArtifact' | 'requireSealedArtifactBinding'
-        | 'invalidateArtifactPublication'
+        | 'listArtifactsByStorageUri' | 'listStagingArtifacts'
+        | 'requireSealedArtifact' | 'requireSealedArtifactBinding' | 'invalidateArtifactPublication'
       >;
     },
   ) {}
@@ -670,17 +668,32 @@ export class ControlArtifactStore {
       this.assertDescriptorInsideRoot(rootPhysicalPath, parentUri, parentDescriptor);
       this.assertDescriptorPath(temporaryUri, temporaryDescriptor);
 
-      linkSync(temporaryUri, storageUri);
+      let reusedPublication = false;
+      try {
+        linkSync(temporaryUri, storageUri);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        const owners = await this.options.registry.listArtifactsByStorageUri(storageUri);
+        const current = owners.find((candidate) => candidate.id === artifact!.id);
+        const previous = owners.filter((candidate) => candidate.id !== artifact!.id);
+        if (!current || current.state !== 'STAGING' || previous.length === 0 || previous.some((candidate) => candidate.state !== 'FAILED')) {
+          throw error;
+        }
+        reusedPublication = true;
+      }
       published = true;
       publishedDescriptor = openSync(storageUri, constants.O_RDONLY | constants.O_NOFOLLOW);
       const publishedStat = fstatSync(publishedDescriptor, { bigint: true });
       if (
-        publishedStat.dev !== temporaryStat.dev
-        || publishedStat.ino !== temporaryStat.ino
+        !publishedStat.isFile()
         || publishedStat.size !== temporaryStat.size
-        || publishedStat.nlink < 2n
+        || (!reusedPublication && (
+          publishedStat.dev !== temporaryStat.dev
+          || publishedStat.ino !== temporaryStat.ino
+          || publishedStat.nlink < 2n
+        ))
       ) {
-        throw new ArtifactIntegrityError(artifact.id, 'published hardlink does not match validated input');
+        throw new ArtifactIntegrityError(artifact.id, 'published file does not match validated input');
       }
       this.assertDescriptorPath(rootUri, rootDescriptor);
       this.assertDescriptorInsideRoot(rootPhysicalPath, parentUri, parentDescriptor);
@@ -712,7 +725,6 @@ export class ControlArtifactStore {
         );
         throw error;
       }
-      unlinkSync(temporaryUri);
       return sealed;
     } catch (error) {
       const persisted = artifact && published ? await this.options.registry.getArtifact(artifact.id) : null;
@@ -723,7 +735,6 @@ export class ControlArtifactStore {
         && persisted.contentSha256 === callerContentSha256
         && sha256Descriptor(publishedDescriptor, bytes.byteLength) === callerContentSha256
       ) {
-        if (temporaryDescriptor >= 0 && this.descriptorMatchesPath(temporaryUri, temporaryDescriptor)) unlinkSync(temporaryUri);
         return persisted;
       }
       if (artifact && persisted?.state === 'SEALED') {
@@ -732,13 +743,8 @@ export class ControlArtifactStore {
           error instanceof Error ? error.message : String(error),
         );
       }
-      if (artifact && published && publicationStable()) renameSync(storageUri, `${storageUri}.${artifact.id}.orphan`);
-      if (
-        temporaryDescriptor >= 0
-        && parentDescriptor >= 0
-        && this.descriptorPathInsideRoot(rootPhysicalPath, parentUri, parentDescriptor)
-        && this.descriptorMatchesPath(temporaryUri, temporaryDescriptor)
-      ) unlinkSync(temporaryUri);
+      // Path cleanup is intentionally deferred to a future trusted GC. Node does not expose
+      // dirfd-relative unlink/rename, so cleanup after an ancestor swap cannot be made safe.
       if (artifact) await this.options.registry.failArtifact(artifact.id, error instanceof Error ? error.message : String(error));
       throw error;
     } finally {
@@ -765,13 +771,10 @@ export class ControlArtifactStore {
 
   async reconcileStaging(): Promise<void> {
     for (const artifact of await this.options.registry.listStagingArtifacts()) {
-      if (!existsSync(artifact.storageUri)) {
-        await this.options.registry.failArtifact(artifact.id, 'staging artifact file is missing');
-        continue;
-      }
-      const quarantineUri = `${artifact.storageUri}.${artifact.id}.orphan`;
-      renameSync(artifact.storageUri, quarantineUri);
-      await this.options.registry.failArtifact(artifact.id, `orphaned staging artifact moved to ${quarantineUri}`);
+      const reason = existsSync(artifact.storageUri)
+        ? `staging artifact path retained for trusted GC: ${artifact.storageUri}`
+        : 'staging artifact file is missing';
+      await this.options.registry.failArtifact(artifact.id, reason);
     }
   }
 
