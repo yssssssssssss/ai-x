@@ -34,7 +34,7 @@ interface BlockingIssue {
 }
 
 interface WorkflowTaskShape {
-  confirmations?: ConfirmationRequirement[];
+  clarification_questions?: ConfirmationRequirement[];
   blocking_issues?: BlockingIssue[];
 }
 
@@ -105,13 +105,13 @@ function leaseTokenHash(token: string): string {
 
 function taskShape(task: ControlTaskDetail): WorkflowTaskShape {
   if (!isRecord(task.structuredTask)) throw new TaskWorkflowGateError(['structured_task']);
-  const confirmations = task.structuredTask.confirmations;
+  const clarificationQuestions = task.structuredTask.clarification_questions;
   const blockingIssues = task.structuredTask.blocking_issues;
-  if (confirmations !== undefined && !Array.isArray(confirmations)) throw new TaskWorkflowGateError(['structured_task.confirmations']);
+  if (clarificationQuestions !== undefined && !Array.isArray(clarificationQuestions)) throw new TaskWorkflowGateError(['structured_task.clarification_questions']);
   if (blockingIssues !== undefined && !Array.isArray(blockingIssues)) throw new TaskWorkflowGateError(['structured_task.blocking_issues']);
   return {
-    confirmations: confirmations?.map((item) => {
-      if (!isRecord(item) || typeof item.key !== 'string' || !item.key) throw new TaskWorkflowGateError(['structured_task.confirmations']);
+    clarification_questions: clarificationQuestions?.map((item) => {
+      if (!isRecord(item) || typeof item.key !== 'string' || !item.key) throw new TaskWorkflowGateError(['structured_task.clarification_questions']);
       return { key: item.key, question: typeof item.question === 'string' ? item.question : undefined };
     }),
     blocking_issues: blockingIssues?.map((item) => {
@@ -168,14 +168,66 @@ function pendingInputKeys(plan: ControlPlanVersionDetail): string[] {
 
 function revisedPlanWithoutStep(plan: unknown, failedStepNo: number): Record<string, unknown> {
   if (!isRecord(plan) || !Array.isArray(plan.steps)) throw new TaskWorkflowGateError(['plan.steps']);
-  const remaining = plan.steps
-    .filter((step) => !isRecord(step) || step.step_no !== failedStepNo)
-    .map((step, index) => {
-      if (!isRecord(step)) throw new TaskWorkflowGateError(['plan.steps']);
-      return { ...step, step_no: index + 1 };
+  const steps = plan.steps.map((step, index) => {
+    if (
+      !isRecord(step)
+      || typeof step.step_no !== 'number'
+      || !Number.isInteger(step.step_no)
+      || step.step_no !== index + 1
+    ) {
+      throw new TaskWorkflowGateError(['plan.steps']);
+    }
+    if (!Array.isArray(step.depends_on)) throw new TaskWorkflowGateError([`step:${step.step_no}:depends_on`]);
+    const dependsOn = step.depends_on.map((dependency) => {
+      if (typeof dependency !== 'number' || !Number.isInteger(dependency)) {
+        throw new TaskWorkflowGateError([`step:${step.step_no}:depends_on`]);
+      }
+      return dependency;
     });
-  if (remaining.length === plan.steps.length) throw new TaskWorkflowGateError([`step:${failedStepNo}`]);
-  return { ...plan, steps: remaining };
+    if (!Array.isArray(step.input_bindings)) throw new TaskWorkflowGateError([`step:${step.step_no}:input_bindings`]);
+    const inputBindings = step.input_bindings.map((binding) => {
+      if (
+        !isRecord(binding)
+        || typeof binding.source_step_no !== 'number'
+        || !Number.isInteger(binding.source_step_no)
+      ) {
+        throw new TaskWorkflowGateError([`step:${step.step_no}:input_bindings`]);
+      }
+      return { binding, sourceStepNo: binding.source_step_no };
+    });
+    return { step, stepNo: step.step_no, dependsOn, inputBindings };
+  });
+  const remaining = steps.filter(({ stepNo }) => stepNo !== failedStepNo);
+  if (remaining.length === steps.length) throw new TaskWorkflowGateError([`step:${failedStepNo}`]);
+  for (const entry of remaining) {
+    if (
+      entry.dependsOn.includes(failedStepNo)
+      || entry.inputBindings.some(({ sourceStepNo }) => sourceStepNo === failedStepNo)
+    ) {
+      throw new TaskWorkflowGateError([`step:${failedStepNo}:referenced`]);
+    }
+  }
+
+  const remappedStepNo = new Map(remaining.map(({ stepNo }, index) => [stepNo, index + 1]));
+  const remapReference = (sourceStepNo: number, issue: string): number => {
+    const remapped = remappedStepNo.get(sourceStepNo);
+    if (remapped === undefined) throw new TaskWorkflowGateError([issue]);
+    return remapped;
+  };
+  return {
+    ...plan,
+    steps: remaining.map((entry, index) => ({
+      ...entry.step,
+      step_no: index + 1,
+      depends_on: entry.dependsOn.map((dependency) => (
+        remapReference(dependency, `step:${entry.stepNo}:depends_on`)
+      )),
+      input_bindings: entry.inputBindings.map(({ binding, sourceStepNo }) => ({
+        ...binding,
+        source_step_no: remapReference(sourceStepNo, `step:${entry.stepNo}:input_bindings`),
+      })),
+    })),
+  };
 }
 
 function allowedActions(failure: Record<string, unknown> | null): string[] {
@@ -272,7 +324,7 @@ export class TaskWorkflowService {
     if (task.state !== 'awaiting_confirmation' || task.stateVersion !== input.expectedVersion) {
       throw new ControlPlaneConflictError(`task ${task.id} is not awaiting confirmation at version ${input.expectedVersion}`);
     }
-    const missingAnswers = (taskShape(task).confirmations ?? [])
+    const missingAnswers = (taskShape(task).clarification_questions ?? [])
       .map((requirement) => requirement.key)
       .filter((key) => !(key in input.confirmationAnswers));
     const missingInputs = pendingInputKeys(plan).filter((key) => !input.inputRoles.includes(key));

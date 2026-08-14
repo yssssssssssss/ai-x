@@ -174,11 +174,13 @@ class OfflineEligibleRealLLM implements LLMClient {
     eligibleAsReal: true,
   };
   calls = 0;
+  skillContexts: object[] = [];
 
   async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
     this.calls += 1;
     let data: unknown;
     if (options.schemaName.startsWith('skill:')) {
+      this.skillContexts.push(structuredClone(options.context ?? {}));
       data = {
         comparison_matrix: [{
           competitor: '公开竞品 A',
@@ -580,7 +582,7 @@ function planningResult(
         owner: '竞品分析组',
         status: 'active' as const,
         task_types: ['competitive_research'],
-        inputs: ['research_goal'],
+        inputs: ['business_domain'],
         outputs: ['competitive_analysis'],
         required_tools: ['tavily-web-search'],
         risk_level: 'low' as const,
@@ -617,9 +619,9 @@ function planningResult(
       actor_id: 'digital-human-competitive-analysis',
       question_ids: ['competitive-question'],
       depends_on: [1],
-      input: { research_goal: structuredTask.research_goal, sources: null },
-      input_bindings: [{ target_pointer: '/sources', source_step_no: 1, source_pointer: '/results' }],
-      expected_outputs: [{ pointer: '/analysis', description: '竞品分析' }],
+      input: { business_domain: structuredTask.business_domain },
+      input_bindings: [],
+      expected_outputs: [{ pointer: '/comparison_matrix', description: '竞品对比矩阵' }],
       acceptance_criteria: ['分析引用公开来源'],
       requires_approval: false,
       fallback_actor_ids: [],
@@ -631,9 +633,9 @@ function planningResult(
       actor_id: 'research-synthesis',
       question_ids: ['competitive-question'],
       depends_on: [2],
-      input: { analysis: null },
-      input_bindings: [{ target_pointer: '/analysis', source_step_no: 2, source_pointer: '/analysis' }],
-      expected_outputs: [{ pointer: '/summary', description: '研究摘要' }],
+      input: { comparison_matrix: null },
+      input_bindings: [{ target_pointer: '/comparison_matrix', source_step_no: 2, source_pointer: '/comparison_matrix' }],
+      expected_outputs: [{ pointer: '/text', description: '研究摘要' }],
       acceptance_criteria: ['摘要覆盖研究问题'],
       requires_approval: false,
       fallback_actor_ids: [],
@@ -646,7 +648,7 @@ function planningResult(
       question_ids: ['competitive-question'],
       depends_on: [3],
       input: { summary: null },
-      input_bindings: [{ target_pointer: '/summary', source_step_no: 3, source_pointer: '/summary' }],
+      input_bindings: [{ target_pointer: '/summary', source_step_no: 3, source_pointer: '/text' }],
       expected_outputs: [{ pointer: '/review', description: '证据复核' }],
       acceptance_criteria: ['所有结论可追溯'],
       requires_approval: false,
@@ -1107,6 +1109,24 @@ test('production control runtime completes the offline Current API flow and serv
     ],
   );
   assert.equal(steps[0]?.toolProvenance?.executionMode, 'real');
+  assert.equal(llm.skillContexts.length, 1);
+  const skillContext = llm.skillContexts[0] as {
+    input?: unknown;
+    prior_outputs?: Array<{
+      stepNo?: unknown;
+      actorId?: unknown;
+      kind?: unknown;
+      output?: { results?: Array<{ url?: unknown }> };
+      artifact?: { state?: unknown };
+    }>;
+  };
+  assert.deepEqual(skillContext.input, { business_domain: '宠物辅食' });
+  assert.equal(skillContext.prior_outputs?.length, 1);
+  assert.equal(skillContext.prior_outputs?.[0]?.stepNo, 1);
+  assert.equal(skillContext.prior_outputs?.[0]?.actorId, 'tavily-web-search');
+  assert.equal(skillContext.prior_outputs?.[0]?.kind, 'tool_output');
+  assert.equal(skillContext.prior_outputs?.[0]?.output?.results?.[0]?.url, evidenceUrl);
+  assert.equal(skillContext.prior_outputs?.[0]?.artifact?.state, 'SEALED');
   assert.equal(steps[0]?.toolProvenance?.implementationId, tavily.implementationId);
   assert.equal(tavily.calls, 1);
 

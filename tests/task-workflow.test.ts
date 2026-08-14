@@ -9,6 +9,11 @@ import {
   type ControlPlanVersionDetail,
   type ControlTask,
 } from '../database/control-plane.ts';
+import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
+import type {
+  CurrentExecutionPlan,
+  CurrentPlanStep,
+} from '../packages/api-contract/research-deliverable.ts';
 import {
   TaskWorkflowAuthorizationError,
   TaskWorkflowGateError,
@@ -86,7 +91,6 @@ const scopedDatabase = new ScopedWorkflowDatabase(database, schema);
 let ownerId = '';
 let legalId = '';
 let securityId = '';
-let goldId = '';
 let conversationId = '';
 let foreignConversationId = '';
 
@@ -121,12 +125,6 @@ before(async () => {
       [`workflow-security-${Date.now()}@test.local`],
     );
     securityId = String(security.rows[0]?.id);
-    const gold = await connection.query(
-      `INSERT INTO users (email, display_name, password_hash, role)
-       VALUES ($1, 'gold', 'x', 'gold') RETURNING id`,
-      [`workflow-gold-${Date.now()}@test.local`],
-    );
-    goldId = String(gold.rows[0]?.id);
     const foreignOwner = await connection.query(
       `INSERT INTO users (email, display_name, password_hash, role)
        VALUES ($1, 'foreign', 'x', 'member') RETURNING id`,
@@ -146,46 +144,136 @@ before(async () => {
     connection.release();
   }
 });
+const workflowEvidenceRequirement = {
+  id: 'workflow-source',
+  acceptedClasses: ['public_source'] as Array<'public_source'>,
+  minimumCount: 1,
+  required: true,
+};
+
+function currentTask(overrides: Partial<ResearchTaskV2> = {}): ResearchTaskV2 {
+  return {
+    version: 'research-task-v2',
+    task_type: 'competitive_research',
+    business_domain: 'workflow fixtures',
+    research_goal: 'verify the Current workflow',
+    target_audience: ['research team'],
+    scope: ['public sources'],
+    constraints: [],
+    success_criteria: [{ id: 'workflow-ready', statement: 'the workflow remains executable' }],
+    expected_deliverables: ['research plan'],
+    assumptions: [],
+    ambiguities: [],
+    clarification_questions: [],
+    blocking_issues: [],
+    sensitivity: 'public',
+    pii_detected: false,
+    ...overrides,
+  };
+}
+
+function currentStep(overrides: Partial<CurrentPlanStep> = {}): CurrentPlanStep {
+  return {
+    step_no: 1,
+    step_name: 'workflow analysis',
+    actor_type: 'llm',
+    actor_id: 'workflow-analysis',
+    question_ids: ['workflow-question'],
+    depends_on: [],
+    input: {},
+    input_bindings: [],
+    expected_outputs: [{ pointer: '/result', description: 'workflow result' }],
+    acceptance_criteria: ['workflow completes'],
+    requires_approval: false,
+    fallback_actor_ids: [],
+    ...overrides,
+  };
+}
+
+function currentPlan(
+  taskId: string,
+  label: string,
+  steps: CurrentPlanStep[] = [currentStep()],
+): CurrentExecutionPlan {
+  const requiredTools = [...new Set(
+    steps.filter((step) => step.actor_type === 'tool').map((step) => step.actor_id),
+  )];
+  return {
+    task_id: taskId,
+    deliverable_type: 'research_plan',
+    evidence_requirements: [{
+      ...workflowEvidenceRequirement,
+      acceptedClasses: [...workflowEvidenceRequirement.acceptedClasses],
+    }],
+    problem_graph: {
+      version: 'problem-graph-v1',
+      questions: [{
+        id: 'workflow-question',
+        statement: 'Can the Current workflow complete safely?',
+        rationale: 'Covers the workflow fixture contract',
+        priority: 'required',
+        success_criterion_ids: ['workflow-ready'],
+        evidence_requirements: [{
+          ...workflowEvidenceRequirement,
+          acceptedClasses: [...workflowEvidenceRequirement.acceptedClasses],
+        }],
+        acceptance_criteria: ['At least one public source is traceable'],
+        depends_on: [],
+      }],
+    },
+    capability_decisions: {
+      eligible: requiredTools.length === 0 ? [] : [{
+        skill: {
+          id: `${label}-tool-provider`,
+          status: 'active',
+          task_types: ['competitive_research'],
+          inputs: [],
+          outputs: [],
+          required_tools: requiredTools,
+        },
+        reasons: [{ code: 'eligible', message: 'fixture tools are eligible' }],
+        pending_inputs: [],
+      }],
+      rejected: [],
+    },
+    steps,
+    candidate_metadata: {
+      title: label,
+      rationale: `${label} rationale`,
+      tradeoffs: `${label} tradeoffs`,
+    },
+    activated_nodes: ['D5_competitive'],
+  };
+}
 
 async function createCandidateTask(
   repository: ControlPlaneRepository,
   suffix: string,
   options: {
     structuredTask?: unknown;
-    candidateId?: string;
-    plan?: Record<string, unknown>;
+    candidateId?: 'depth' | 'speed';
+    plan?: CurrentExecutionPlan;
     pendingInputs?: unknown[];
   } = {},
 ) {
   const candidateRepository = repository as unknown as CandidatePersistenceRepository;
   const candidateId = options.candidateId ?? 'depth';
   const alternateCandidateId = candidateId === 'depth' ? 'speed' : 'depth';
-  const candidatePlan = options.plan ?? {
-    title: `${candidateId} ${suffix}`,
-    steps: [{ step_no: 1, step_name: candidateId }],
-  };
   return candidateRepository.createTaskWithCandidates({
     conversationId,
     ownerUserId: ownerId,
     originalInput: `server candidate selection ${suffix}`,
     taskType: 'competitive_research',
-    structuredTask: options.structuredTask ?? { confirmations: [], blocking_issues: [] },
+    structuredTask: options.structuredTask ?? currentTask(),
     candidates: [
       {
         candidateId,
-        plan: {
-          ...candidatePlan,
-          task_id: `provisional-${candidateId}-${suffix}`,
-        },
+        plan: options.plan ?? currentPlan('', `${candidateId} ${suffix}`),
         pendingInputs: options.pendingInputs ?? [],
       },
       {
         candidateId: alternateCandidateId,
-        plan: {
-          task_id: `provisional-${alternateCandidateId}-${suffix}`,
-          title: `${alternateCandidateId} ${suffix}`,
-          steps: [{ step_no: 1, step_name: alternateCandidateId }],
-        },
+        plan: currentPlan('', `${alternateCandidateId} ${suffix}`),
         pendingInputs: [],
       },
     ],
@@ -273,14 +361,14 @@ test('rejects a task owner when the linked conversation has another owner', asyn
     ownerUserId: ownerId,
     originalInput: 'cross-conversation attempt',
     taskType: 'competitive_research',
-    structuredTask: {},
+    structuredTask: currentTask(),
     state: 'awaiting_selection',
   });
   const candidate = await repository.createPlanVersion({
     taskId: task.id,
     version: 1,
     candidateId: 'speed',
-    plan: { steps: [] },
+    plan: currentPlan(task.id, 'cross-conversation'),
     planHash: 'sha256:cross-conversation',
     pendingInputs: [],
   });
@@ -301,9 +389,9 @@ test('malformed persisted workflow gate fails closed during confirmation', async
   const repository = new ControlPlaneRepository(scopedDatabase);
   const workflow = new TaskWorkflowService(repository);
   const created = await createCandidateTask(repository, 'malformed', {
-    structuredTask: { confirmations: 'not-an-array' },
+    structuredTask: { ...currentTask(), clarification_questions: 'not-an-array' },
     candidateId: 'speed',
-    plan: { steps: [] },
+    plan: currentPlan('', 'malformed'),
   });
   const task = created.task;
   const selection = await workflow.select({
@@ -331,30 +419,30 @@ test('confirmation, required input, role matrix, and plan revision gate ready st
   const workflow = new TaskWorkflowService(repository, undefined, {
     async revise({ taskId }) {
       return {
-        plan: {
-          task_id: taskId,
-          steps: [],
-          candidate_metadata: {
-            title: 'revised workflow plan',
-            rationale: 're-plan after approval',
-            tradeoffs: 'requires reconfirmation',
-          },
-          activated_nodes: [],
-        },
+        plan: currentPlan(taskId, 'revised workflow plan'),
         pendingInputs: [],
       };
     },
   });
   const created = await createCandidateTask(repository, 'workflow-gate', {
-    structuredTask: {
-      confirmations: [{ key: 'competitors', question: '竞品范围?' }],
-      blocking_issues: [
-        { key: 'privacy', kind: 'privacy_compliance', reason: '敏感材料' },
-        { key: 'gold-review', required_authority: 'gold', reason: 'Gold evidence review' },
-      ],
-    },
-    plan: { steps: [{ step_no: 1, requires_approval: true, approval_role: 'security' }] },
-    pendingInputs: [{ role: 'brief' }],
+    structuredTask: currentTask({
+      clarification_questions: [{
+        key: 'competitors',
+        question: '竞品范围?',
+        rationale: '确认公开研究范围',
+      }],
+      blocking_issues: [{ key: 'privacy', kind: 'privacy_compliance', reason: '敏感材料' }],
+    }),
+    plan: currentPlan('', 'workflow-gate', [currentStep({
+      requires_approval: true,
+      approval_role: 'security',
+    })]),
+    pendingInputs: [{
+      role: 'brief',
+      label: '研究简报',
+      multiple: false,
+      targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'brief', multiple: false }],
+    }],
   });
   const task = created.task;
 
@@ -374,7 +462,7 @@ test('confirmation, required input, role matrix, and plan revision gate ready st
       idempotencyKey: 'confirm-missing',
       actor: { userId: ownerId, role: 'owner' },
       confirmationAnswers: {},
-      inputRoles: [],
+      inputRoles: ['brief'],
     }),
     TaskWorkflowGateError,
   );
@@ -434,17 +522,8 @@ test('confirmation, required input, role matrix, and plan revision gate ready st
     gateKey: 'step:1',
     decision: 'approved',
   });
-  assert.equal(securityApproved.state, 'awaiting_approval');
-  const approved = await workflow.approve({
-    taskId: task.id,
-    planVersionId: selection.planVersionId,
-    expectedVersion: securityApproved.stateVersion,
-    idempotencyKey: 'gold-approves-review',
-    actor: { userId: goldId, role: 'gold', service: 'gold' },
-    gateKey: 'gold-review',
-    decision: 'approved',
-  });
-  assert.equal(approved.state, 'ready');
+  assert.equal(securityApproved.state, 'ready');
+  const approved = securityApproved;
   const revision = await workflow.revise({
     taskId: task.id,
     expectedVersion: approved.stateVersion,
@@ -469,7 +548,6 @@ test('disabled execution claim creates no real execution work and pauses the tas
   const workflow = new TaskWorkflowService(repository);
   const created = await createCandidateTask(repository, 'disabled', {
     candidateId: 'speed',
-    plan: { steps: [] },
   });
   const task = created.task;
   const selection = await workflow.select({
@@ -539,7 +617,6 @@ test('Workflow owns the lease and invokes a real execution driver once per comma
   });
   const created = await createCandidateTask(repository, 'real', {
     candidateId: 'depth',
-    plan: { steps: [] },
   });
   const task = created.task;
   const selection = await workflow.select({
@@ -594,7 +671,6 @@ test('concurrent execute commands invoke the external driver only once', async (
   });
   const created = await createCandidateTask(repository, 'concurrent', {
     candidateId: 'depth',
-    plan: { steps: [] },
   });
   const task = created.task;
   const selection = await workflow.select({
@@ -644,7 +720,6 @@ test('reconstructs an execution result after driver state commit but before comm
   });
   const created = await createCandidateTask(repository, 'crash', {
     candidateId: 'depth',
-    plan: { steps: [] },
   });
   const task = created.task;
   const selection = await workflow.select({
@@ -680,63 +755,80 @@ test('reconstructs an execution result after driver state commit but before comm
   assert.equal(driverCalls, 1);
 });
 
-test('resume rejects core skip and revises the plan for optional skip', async () => {
+async function createPausedTask(input: {
+  repository: ControlPlaneRepository;
+  suffix: string;
+  failedStepNo: number;
+  steps: CurrentPlanStep[];
+  allowedActions: string[];
+}) {
+  const task = await input.repository.createTask({
+    conversationId,
+    ownerUserId: ownerId,
+    originalInput: `${input.suffix} resume`,
+    taskType: 'competitive_research',
+    structuredTask: currentTask(),
+    state: 'ready',
+  });
+  const plan = await input.repository.createPlanVersion({
+    taskId: task.id,
+    version: 1,
+    candidateId: 'speed',
+    plan: currentPlan(task.id, input.suffix, input.steps),
+    planHash: `sha256:${input.suffix}-resume-plan`,
+    pendingInputs: [],
+  });
+  const claim = await input.repository.claimExecution({
+    taskId: task.id,
+    planVersionId: plan.id,
+    expectedVersion: task.stateVersion,
+    idempotencyKey: `${input.suffix}-claim`,
+    requestHash: `sha256:${input.suffix}-claim`,
+    leaseOwner: 'resume-test',
+    leaseTokenHash: `sha256:${input.suffix}-lease`,
+  });
+  const failedStep = input.steps.find((step) => step.step_no === input.failedStepNo);
+  assert.ok(failedStep && failedStep.actor_type === 'tool');
+  await input.repository.recordExecutionStep({
+    attemptId: claim.attemptId,
+    stepNo: failedStep.step_no,
+    stepName: failedStep.step_name,
+    actorType: failedStep.actor_type,
+    actorId: failedStep.actor_id,
+    state: 'failed',
+    failure: {
+      kind: 'network',
+      toolTier: input.allowedActions.includes('skip') ? 'optional' : 'core',
+      allowedActions: input.allowedActions,
+    },
+  });
+  const paused = await input.repository.pauseExecution({
+    taskId: task.id,
+    attemptId: claim.attemptId,
+    expectedVersion: claim.stateVersion,
+    reason: 'network',
+  });
+  return { task, plan, paused };
+}
+
+test('resume rejects core skip and safely renumbers a strict Current plan after optional skip', async () => {
   const repository = new ControlPlaneRepository(scopedDatabase);
   const workflow = new TaskWorkflowService(repository);
-
-  async function pausedTask(kind: 'core' | 'optional') {
-    const task = await repository.createTask({
-      conversationId,
-      ownerUserId: ownerId,
-      originalInput: `${kind} resume`,
-      taskType: 'competitive_research',
-      structuredTask: {},
-      state: 'ready',
-    });
-    const plan = await repository.createPlanVersion({
-      taskId: task.id,
-      version: 1,
-      plan: {
-        task_id: task.id,
-        steps: [
-          { step_no: 1, step_name: 'failed tool', actor_type: 'tool', actor_id: kind === 'core' ? 'tavily-web-search' : 'ai-spider-search' },
-          { step_no: 2, step_name: 'analysis', actor_type: 'llm', actor_id: 'analysis' },
-        ],
-      },
-      planHash: `sha256:${kind}-resume-plan`,
-    });
-    const claim = await repository.claimExecution({
-      taskId: task.id,
-      planVersionId: plan.id,
-      expectedVersion: task.stateVersion,
-      idempotencyKey: `${kind}-claim`,
-      requestHash: `sha256:${kind}-claim`,
-      leaseOwner: 'resume-test',
-      leaseTokenHash: `sha256:${kind}-lease`,
-    });
-    await repository.recordExecutionStep({
-      attemptId: claim.attemptId,
-      stepNo: 1,
-      stepName: 'failed tool',
-      actorType: 'tool',
-      actorId: kind === 'core' ? 'tavily-web-search' : 'ai-spider-search',
-      state: 'failed',
-      failure: {
-        kind: 'network',
-        toolTier: kind,
-        allowedActions: kind === 'core' ? ['retry', 'abort'] : ['retry', 'skip', 'abort'],
-      },
-    });
-    const paused = await repository.pauseExecution({
-      taskId: task.id,
-      attemptId: claim.attemptId,
-      expectedVersion: claim.stateVersion,
-      reason: 'network',
-    });
-    return { task, plan, paused };
-  }
-
-  const core = await pausedTask('core');
+  const core = await createPausedTask({
+    repository,
+    suffix: 'core-resume',
+    failedStepNo: 1,
+    steps: [
+      currentStep({
+        step_name: 'failed core tool',
+        actor_type: 'tool',
+        actor_id: 'tavily-web-search',
+        expected_outputs: [{ pointer: '/results', description: 'core results' }],
+      }),
+      currentStep({ step_no: 2, step_name: 'analysis', actor_id: 'analysis' }),
+    ],
+    allowedActions: ['retry', 'abort'],
+  });
   await assert.rejects(
     () => workflow.resume({
       taskId: core.task.id,
@@ -759,21 +851,181 @@ test('resume rejects core skip and revises the plan for optional skip', async ()
   assert.equal(aborted.state, 'cancelled');
   assert.equal((await repository.listAttempts(core.task.id))[0]?.state, 'cancelled');
 
-  const optional = await pausedTask('optional');
+  const originalOptionalSteps = [
+    currentStep({
+      step_name: 'core search',
+      actor_type: 'tool',
+      actor_id: 'tavily-web-search',
+      expected_outputs: [{ pointer: '/results', description: 'core results' }],
+    }),
+    currentStep({
+      step_no: 2,
+      step_name: 'failed optional search',
+      actor_type: 'tool',
+      actor_id: 'ai-spider-search',
+      expected_outputs: [{ pointer: '/results', description: 'optional results' }],
+    }),
+    currentStep({
+      step_no: 3,
+      step_name: 'analysis',
+      actor_id: 'analysis',
+      depends_on: [1],
+      input: { sources: null },
+      input_bindings: [{ target_pointer: '/sources', source_step_no: 1, source_pointer: '/results' }],
+      expected_outputs: [{ pointer: '/analysis', description: 'analysis result' }],
+    }),
+    currentStep({
+      step_no: 4,
+      step_name: 'review',
+      actor_type: 'reviewer',
+      actor_id: 'reviewer',
+      depends_on: [3],
+      input: { analysis: null },
+      input_bindings: [{ target_pointer: '/analysis', source_step_no: 3, source_pointer: '/analysis' }],
+      expected_outputs: [{ pointer: '/review', description: 'review result' }],
+    }),
+  ];
+  const optional = await createPausedTask({
+    repository,
+    suffix: 'optional-resume',
+    failedStepNo: 2,
+    steps: originalOptionalSteps,
+    allowedActions: ['retry', 'skip', 'abort'],
+  });
   const skipped = await workflow.resume({
     taskId: optional.task.id,
     expectedVersion: optional.paused.stateVersion,
     idempotencyKey: 'optional-skip',
     actor: { userId: ownerId, role: 'owner' },
     action: 'skip',
-    failedStepNo: 1,
+    failedStepNo: 2,
   });
   assert.equal(skipped.state, 'awaiting_confirmation');
   const revisedTask = await repository.getTaskDetail(optional.task.id);
   assert.notEqual(revisedTask?.activePlanVersionId, optional.plan.id);
   const revisedPlan = await repository.getPlanVersionDetail(revisedTask?.activePlanVersionId ?? '');
-  assert.ok(revisedPlan?.plan && typeof revisedPlan.plan === 'object' && 'steps' in revisedPlan.plan);
-  assert.deepEqual(revisedPlan.plan.steps, [
-    { step_no: 1, step_name: 'analysis', actor_type: 'llm', actor_id: 'analysis' },
-  ]);
+  assert.equal(revisedPlan?.candidateId, 'speed');
+  const expectedSteps = [
+    originalOptionalSteps[0]!,
+    { ...originalOptionalSteps[2]!, step_no: 2 },
+    {
+      ...originalOptionalSteps[3]!,
+      step_no: 3,
+      depends_on: [2],
+      input_bindings: [{ target_pointer: '/analysis', source_step_no: 2, source_pointer: '/analysis' }],
+    },
+  ];
+  assert.deepEqual(revisedPlan?.plan, {
+    ...currentPlan(optional.task.id, 'optional-resume', originalOptionalSteps),
+    steps: expectedSteps,
+  });
+});
+
+test('resume rejects skipping an optional step referenced by a remaining dependency or input binding', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const workflow = new TaskWorkflowService(repository);
+  const references = [
+    {
+      kind: 'dependency',
+      step: currentStep({ step_no: 2, depends_on: [1] }),
+    },
+    {
+      kind: 'binding',
+      step: currentStep({
+        step_no: 2,
+        input: { source: null },
+        input_bindings: [{ target_pointer: '/source', source_step_no: 1, source_pointer: '/results' }],
+      }),
+    },
+  ] as const;
+
+  for (const reference of references) {
+    const paused = await createPausedTask({
+      repository,
+      suffix: `referenced-${reference.kind}`,
+      failedStepNo: 1,
+      steps: [
+        currentStep({
+          step_name: 'failed optional search',
+          actor_type: 'tool',
+          actor_id: 'ai-spider-search',
+          expected_outputs: [{ pointer: '/results', description: 'optional results' }],
+        }),
+        reference.step,
+      ],
+      allowedActions: ['retry', 'skip', 'abort'],
+    });
+    await assert.rejects(
+      () => workflow.resume({
+        taskId: paused.task.id,
+        expectedVersion: paused.paused.stateVersion,
+        idempotencyKey: `referenced-${reference.kind}-skip`,
+        actor: { userId: ownerId, role: 'owner' },
+        action: 'skip',
+        failedStepNo: 1,
+      }),
+      TaskWorkflowGateError,
+    );
+    const unchanged = await repository.getTaskDetail(paused.task.id);
+    assert.equal(unchanged?.state, 'paused');
+    assert.equal(unchanged?.activePlanVersionId, paused.plan.id);
+  }
+});
+
+test('resume rejects non-contiguous or out-of-order Current step numbers before skip remapping', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const workflow = new TaskWorkflowService(repository);
+  const malformedPlans = [
+    {
+      kind: 'gapped',
+      failedStepNo: 1,
+      steps: [
+        currentStep({
+          step_name: 'failed optional search',
+          actor_type: 'tool',
+          actor_id: 'ai-spider-search',
+          expected_outputs: [{ pointer: '/results', description: 'optional results' }],
+        }),
+        currentStep({ step_no: 3 }),
+      ],
+    },
+    {
+      kind: 'out-of-order',
+      failedStepNo: 2,
+      steps: [
+        currentStep({
+          step_no: 2,
+          step_name: 'failed optional search',
+          actor_type: 'tool',
+          actor_id: 'ai-spider-search',
+          expected_outputs: [{ pointer: '/results', description: 'optional results' }],
+        }),
+        currentStep(),
+      ],
+    },
+  ] as const;
+
+  for (const malformed of malformedPlans) {
+    const paused = await createPausedTask({
+      repository,
+      suffix: `malformed-${malformed.kind}`,
+      failedStepNo: malformed.failedStepNo,
+      steps: [...malformed.steps],
+      allowedActions: ['retry', 'skip', 'abort'],
+    });
+    await assert.rejects(
+      () => workflow.resume({
+        taskId: paused.task.id,
+        expectedVersion: paused.paused.stateVersion,
+        idempotencyKey: `malformed-${malformed.kind}-skip`,
+        actor: { userId: ownerId, role: 'owner' },
+        action: 'skip',
+        failedStepNo: malformed.failedStepNo,
+      }),
+      TaskWorkflowGateError,
+    );
+    const unchanged = await repository.getTaskDetail(paused.task.id);
+    assert.equal(unchanged?.state, 'paused');
+    assert.equal(unchanged?.activePlanVersionId, paused.plan.id);
+  }
 });
