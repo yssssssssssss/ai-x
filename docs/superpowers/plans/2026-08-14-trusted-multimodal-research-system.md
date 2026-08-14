@@ -1097,27 +1097,27 @@ git commit -m "feat: serve verified current report packages"
 **Interfaces:**
 - Produces: `writeBinary()`、`readVerifiedBinary()`。
 
-- [ ] **Step 1: 安装依赖**
+- [x] **Step 1: 安装依赖**
 
 Run: `pnpm add image-size`
 
 Expected: `package.json` 和 `pnpm-lock.yaml` 只新增 `image-size` 及其传递依赖。
 
-- [ ] **Step 2: 写失败测试**
+- [x] **Step 2: 写失败测试**
 
 覆盖 PNG/JPEG/WebP、10 MiB 上限、20 Megapixels、禁止 SVG、hash tamper、active lease fence、path traversal。
 
-- [ ] **Step 3: 运行并确认失败**
+- [x] **Step 3: 运行并确认失败**
 
 Run: `pnpm exec tsx --test tests/binary-artifact-store.test.ts`
 
 Expected: FAIL。
 
-- [ ] **Step 4: 实现 Binary 方法**
+- [x] **Step 4: 实现 Binary 方法**
 
 复用 JSON 的 STAGING/fsync/link/hash/seal 过程；禁止复制第二套 seal 逻辑，抽取私有 `writeBytes()`。
 
-- [ ] **Step 5: 运行测试和提交**
+- [x] **Step 5: 运行测试和提交**
 
 Run: `pnpm exec tsx --test tests/binary-artifact-store.test.ts tests/control-plane.test.ts`
 
@@ -1128,6 +1128,14 @@ git add package.json pnpm-lock.yaml \
   tests/binary-artifact-store.test.ts
 git commit -m "feat: seal binary current artifacts"
 ```
+
+#### Task 15 execution note（2026-08-14）
+
+- [x] `image-size` 仅加入根 package/lock；复用 Migration 004 的 `media_type`/`metadata_json`，未新增 migration。
+- [x] JSON 与 binary 共用唯一 `writeBytes()` 的 STAGING/fsync/link-no-clobber/hash/seal/failure 生命周期；binary active lease 原样进入现有 repository 原子 fence。
+- [x] write/read 均从字节严格识别 PNG/JPEG/WebP；PNG 额外重验 inflated scanline 与尺寸，JPEG/WebP 重验 marker/chunk payload 结构；10 MiB 与 20,000,000 pixels inclusive，20,000,001 拒绝。binary verified read 额外重验 Task/Plan/Attempt 路径、hash、byte size 与持久化 trusted metadata；legacy JSON hash read 保持兼容。SVG 与未知/畸形/截断数据 fail closed。
+- [x] RED：10 项中 legacy JSON 1 pass，9 项 binary contract 均以缺少 `writeBinary()` 失败；review follow-up 再复现 payload mismatch、lease retry、null-Plan JSON、root/symlink 与 seal response 边界。GREEN：binary 13/13；指定 binary + ControlPlane 串行 suite 50/50；`pnpm typecheck` passed。`tests/artifact-store.test.ts` 不存在，按约定未创建。
+
 
 ### Task 16: VisualAssetService 和安全远程图片
 

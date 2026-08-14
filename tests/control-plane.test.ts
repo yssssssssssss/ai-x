@@ -1383,6 +1383,30 @@ test('seals versioned attempt artifacts and rejects staged or tampered artifacts
   const verified = await verifiedStore.readVerifiedJson<typeof contextValue>(sealed.id);
   assert.equal(verified.artifact.id, sealed.id);
   assert.deepEqual(verified.value, contextValue);
+  assert.equal(sealed.mediaType, null);
+  assert.equal(sealed.metadata, null);
+
+  const pngBytes = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64',
+  );
+  const binary = await store.writeBinary({
+    taskId: task.id,
+    planVersionId: plan.id,
+    attemptId: claim.attemptId,
+    kind: 'visual_asset',
+    relativePath: 'visuals/tiny.png',
+    bytes: pngBytes,
+    schemaVersion: 'visual-asset-v1',
+  });
+  assert.equal(binary.mediaType, 'image/png');
+  assert.deepEqual(binary.metadata, { width: 1, height: 1 });
+  assert.deepEqual((await repository.getArtifact(binary.id))?.metadata, { width: 1, height: 1 });
+  const verifiedBinary = await store.readVerifiedBinary(binary.id);
+  assert.deepEqual(verifiedBinary.bytes, pngBytes);
+  assert.deepEqual(verifiedBinary.metadata, {
+    contentType: 'image/png', byteSize: pngBytes.byteLength, width: 1, height: 1,
+  });
 
   const staged = await repository.createStagingArtifact({
     taskId: task.id,

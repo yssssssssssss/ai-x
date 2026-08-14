@@ -113,6 +113,8 @@ export interface ControlArtifact {
   sensitivity: string;
   redactionPolicyVersion: string;
   failureReason: string | null;
+  mediaType?: string | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 export class ControlPlaneConflictError extends Error {
@@ -294,6 +296,8 @@ function artifactFromRow(row: Record<string, unknown>): ControlArtifact {
     sensitivity: asString(row.sensitivity, 'sensitivity'),
     redactionPolicyVersion: asString(row.redaction_policy_version, 'redaction_policy_version'),
     failureReason: typeof row.failure_reason === 'string' ? row.failure_reason : null,
+    mediaType: typeof row.media_type === 'string' ? row.media_type : null,
+    metadata: asRecord(row.metadata_json),
   };
 }
 
@@ -1484,13 +1488,15 @@ export class ControlPlaneRepository {
     schemaVersion: string;
     sensitivity: string;
     redactionPolicyVersion: string;
+    mediaType?: string;
+    metadata?: Record<string, unknown>;
   }): Promise<ControlArtifact> {
     return this.transaction(async (connection) => {
       const result = await connection.query(
         `INSERT INTO control_artifacts
            (task_id, plan_version_id, attempt_id, kind, contract_version, schema_version, state,
-            storage_uri, sensitivity, redaction_policy_version)
-         VALUES ($1, $2, $3, $4, 'trusted-p0-v1', $5, 'STAGING', $6, $7, $8)
+            storage_uri, sensitivity, redaction_policy_version, media_type, metadata_json)
+         VALUES ($1, $2, $3, $4, 'trusted-p0-v1', $5, 'STAGING', $6, $7, $8, $9, $10)
          RETURNING *`,
         [
           input.taskId,
@@ -1501,6 +1507,8 @@ export class ControlPlaneRepository {
           input.storageUri,
           input.sensitivity,
           input.redactionPolicyVersion,
+          input.mediaType ?? null,
+          input.metadata ? JSON.stringify(input.metadata) : null,
         ],
       );
       return artifactFromRow(result.rows[0] ?? {});
