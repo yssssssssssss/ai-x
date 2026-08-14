@@ -25,6 +25,12 @@ export interface CurrentExecutionPlan {
   deliverable_type: DeliverableType;
   evidence_requirements: EvidenceRequirement[];
   steps: PlanStep[];
+  candidate_metadata?: {
+    title: string;
+    rationale: string;
+    tradeoffs: string;
+  };
+  activated_nodes?: string[];
 }
 
 export interface PendingInput {

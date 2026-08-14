@@ -18,7 +18,7 @@ import {
   type ControlPlanVersionDetail,
   type ControlTask,
 } from '../database/control-plane.ts';
-import type { ControlPlanCandidatesResponse } from '../packages/api-contract/control-workflow.ts';
+import type { ControlPlanCandidatesResponse, CurrentPlanCandidate } from '../packages/api-contract/control-workflow.ts';
 import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import {
   runMigrations,
@@ -61,6 +61,10 @@ type CandidatePersistenceRepository = ControlPlaneRepository & {
   persistClarificationCandidatesAndCompleteCommand(
     input: AtomicClarificationInput,
   ): Promise<ControlPlanCandidatesResponse>;
+  listCandidatePlanVersionsForOwner(input: {
+    taskId: string;
+    ownerUserId: string;
+  }): Promise<{ candidates: CurrentPlanCandidate[]; activatedNodes: string[] } | null>;
 };
 
 interface AtomicClarificationInput {
@@ -206,7 +210,6 @@ const database = new Pool({
   connectionString: process.env.DATABASE_URL ?? 'postgres://localhost:5432/user_research_ai',
 });
 const scopedDatabase = new ScopedMigrationDatabase(database, schema);
-
 let ownerId = '';
 let conversationId = '';
 
@@ -264,11 +267,15 @@ test('persists a Current task and its depth/speed candidates without activating 
     task_id: 'provisional-depth-task',
     title: 'Depth plan',
     steps: [{ step_no: 1, step_name: 'deep research' }],
+    candidate_metadata: { title: 'Depth', rationale: 'Cross-check', tradeoffs: 'Slower' },
+    activated_nodes: ['D5_competitive'],
   };
   const speedPlan = {
     task_id: 'provisional-speed-task',
     title: 'Speed plan',
     steps: [{ step_no: 1, step_name: 'fast research' }],
+    candidate_metadata: { title: 'Speed', rationale: 'Move quickly', tradeoffs: 'Less review' },
+    activated_nodes: ['D5_competitive'],
   };
 
   const created = await candidateRepository.createTaskWithCandidates({
@@ -328,6 +335,89 @@ test('persists a Current task and its depth/speed candidates without activating 
   assertPlanTaskId(persistedSpeed.plan, created.task.id);
   assert.deepEqual(persistedDepth, depthCandidate);
   assert.deepEqual(persistedSpeed, speedCandidate);
+  const recovered = await candidateRepository.listCandidatePlanVersionsForOwner({
+    taskId: created.task.id,
+    ownerUserId: ownerId,
+  });
+  assert.ok(recovered);
+  assert.deepEqual(recovered.activatedNodes, ['D5_competitive']);
+  assert.deepEqual(
+    recovered.candidates.map(({ planVersionId, candidateId, title, rationale, tradeoffs, planHash }) => ({
+      planVersionId,
+      candidateId,
+      title,
+      rationale,
+      tradeoffs,
+      planHash,
+    })),
+    [
+      {
+        planVersionId: depthCandidate.id,
+        candidateId: 'depth',
+        ...depthPlan.candidate_metadata,
+        planHash: depthCandidate.planHash,
+      },
+      {
+        planVersionId: speedCandidate.id,
+        candidateId: 'speed',
+        ...speedPlan.candidate_metadata,
+        planHash: speedCandidate.planHash,
+      },
+    ],
+  );
+  assert.equal(await candidateRepository.listCandidatePlanVersionsForOwner({
+    taskId: created.task.id,
+    ownerUserId: 'foreign-owner',
+  }), null);
+
+  const extraPlan = {
+    ...(speedCandidate.plan as unknown as Record<string, unknown>),
+    candidate_metadata: { title: 'Extra', rationale: 'Must reject', tradeoffs: 'Invalid set' },
+  };
+  const extraConnection = await scopedDatabase.connect();
+  try {
+    await extraConnection.query(
+      `INSERT INTO control_plan_versions
+         (task_id, version, candidate_id, plan_json, plan_hash, pending_inputs)
+       VALUES ($1, 3, 'extra', $2, $3, '[]'::jsonb)`,
+      [created.task.id, JSON.stringify(extraPlan), canonicalPlanHash(extraPlan)],
+    );
+    await assert.rejects(
+      () => candidateRepository.listCandidatePlanVersionsForOwner({
+        taskId: created.task.id,
+        ownerUserId: ownerId,
+      }),
+      /exactly depth and speed/i,
+    );
+    await extraConnection.query(
+      `DELETE FROM control_plan_versions WHERE task_id = $1 AND candidate_id = 'extra'`,
+      [created.task.id],
+    );
+  } finally {
+    extraConnection.release();
+  }
+
+
+  const malformedPlan = {
+    ...(depthCandidate.plan as unknown as Record<string, unknown>),
+    candidate_metadata: undefined,
+  };
+  const connection = await scopedDatabase.connect();
+  try {
+    await connection.query(
+      'UPDATE control_plan_versions SET plan_json = $2, plan_hash = $3 WHERE id = $1',
+      [depthCandidate.id, JSON.stringify(malformedPlan), canonicalPlanHash(malformedPlan)],
+    );
+  } finally {
+    connection.release();
+  }
+  await assert.rejects(
+    () => candidateRepository.listCandidatePlanVersionsForOwner({
+      taskId: created.task.id,
+      ownerUserId: ownerId,
+    }),
+    /metadata/i,
+  );
 });
 
 test('persists clarified depth/speed plans on the same task and advances selection state atomically', async () => {
@@ -560,19 +650,26 @@ test('rolls back plans, task transition, and command completion when the atomic 
 
 test('hashes semantically identical plans independently of object key insertion order', () => {
   const taskId = randomUUID();
-  const depthHash = canonicalPlanHash({
+  const plan = {
     task_id: taskId,
     title: 'Canonical plan',
     steps: [{ step_no: 1, step_name: 'research' }],
-  });
-  const speedHash = canonicalPlanHash({
+    candidate_metadata: { title: 'Depth', rationale: 'Review', tradeoffs: 'Slower' },
+    activated_nodes: ['D5_competitive'],
+  };
+  const depthHash = canonicalPlanHash(plan);
+  const reorderedHash = canonicalPlanHash({
+    activated_nodes: ['D5_competitive'],
+    candidate_metadata: { tradeoffs: 'Slower', rationale: 'Review', title: 'Depth' },
     steps: [{ step_name: 'research', step_no: 1 }],
     title: 'Canonical plan',
     task_id: taskId,
   });
 
   assert.match(depthHash, /^sha256:[0-9a-f]{64}$/);
-  assert.equal(speedHash, depthHash);
+  assert.equal(reorderedHash, depthHash);
+  assert.notEqual(canonicalPlanHash({ ...plan, candidate_metadata: { ...plan.candidate_metadata, title: 'Speed' } }), depthHash);
+  assert.notEqual(canonicalPlanHash({ ...plan, activated_nodes: ['D3_method_selection'] }), depthHash);
 });
 
 test('atomically rejects duplicate canonical candidate plans', async () => {

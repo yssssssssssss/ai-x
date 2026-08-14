@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ControlTaskDetail } from '../database/control-plane.ts';
 import type { ControlRequirementVersion } from '../packages/api-contract/control-workflow.ts';
-import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
+import type { PlanProgress, ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import type {
   LLMClient,
   LLMResult,
@@ -16,6 +16,12 @@ type RefinementModule = typeof import('../apps/orchestrator-runtime/src/control/
 const ownerUserId = 'owner-1';
 const conversationId = 'conversation-1';
 const taskId = 'task-1';
+const planningProgress: PlanProgress = {
+  phase: 'candidates',
+  status: 'done',
+  label: '生成候选方案',
+  detail: 'depth · speed',
+};
 
 function requirement(overrides: Partial<ResearchTaskV2> = {}): ResearchTaskV2 {
   return {
@@ -195,6 +201,7 @@ test('explicit requirements return ready_to_plan and invoke planner with finaliz
   const repository = makeRepository();
   const conversations = makeConversations();
   let planned: { originalInput: string; requirement: ResearchTaskV2 } | null = null;
+  const progress: PlanProgress[] = [];
   const service = new RequirementRefinementService({
     llm,
     validator: new SchemaValidator(),
@@ -202,8 +209,12 @@ test('explicit requirements return ready_to_plan and invoke planner with finaliz
     conversations,
     expectedActualModel: 'pinned-model',
     planner: {
-      async plan(input: { originalInput: string; requirement: ResearchTaskV2 }) {
+      async plan(
+        input: { originalInput: string; requirement: ResearchTaskV2 },
+        onProgress?: (event: PlanProgress) => void,
+      ) {
         planned = input;
+        onProgress?.(planningProgress);
       },
     },
   });
@@ -213,11 +224,12 @@ test('explicit requirements return ready_to_plan and invoke planner with finaliz
     conversationId,
     ownerUserId,
     originalInput: 'compare live-commerce competitors',
-  });
+  }, (event) => progress.push(event));
 
   assert.equal(result.status, 'ready_to_plan');
   assert.deepEqual(result.requirement, requirement());
   assert.deepEqual(planned, { originalInput: 'compare live-commerce competitors', requirement: requirement() });
+  assert.deepEqual(progress, [planningProgress]);
   assert.deepEqual(repository.events, ['persist_activate']);
 });
 
@@ -256,16 +268,21 @@ test('clarification answers persist a new v2 and clear blocking ambiguity before
   const events = repository.events;
   let plannedInput = '';
   let plannerCalls = 0;
+  const progress: PlanProgress[] = [];
   const service = new RequirementRefinementService({
     llm,
     validator: new SchemaValidator(),
     repository,
     conversations,
     planner: {
-      async plan(input: { originalInput: string }) {
+      async plan(
+        input: { originalInput: string },
+        onProgress?: (event: PlanProgress) => void,
+      ) {
         events.push('plan');
         plannedInput = input.originalInput;
         plannerCalls += 1;
+        onProgress?.(planningProgress);
       },
     },
   });
@@ -276,7 +293,7 @@ test('clarification answers persist a new v2 and clear blocking ambiguity before
     conversationId,
     ownerUserId,
     answers: { audience: 'enterprise buyers' },
-  });
+  }, (event) => progress.push(event));
 
   assert.equal(result.status, 'ready_to_plan');
   assert.equal(result.requirement.version, 'research-task-v2');
@@ -286,6 +303,7 @@ test('clarification answers persist a new v2 and clear blocking ambiguity before
   assert.deepEqual(events.slice(-2), ['persist_activate', 'plan']);
   assert.equal(plannedInput, 'raw original input from task');
   assert.equal(plannerCalls, 1);
+  assert.deepEqual(progress, [planningProgress]);
 });
 
 test('post-activation retry reuses one requirement-version assistant message key', async () => {

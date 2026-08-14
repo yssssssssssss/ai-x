@@ -323,8 +323,19 @@ test('candidate planning and direct invoke retain every ResearchTaskV2 field', a
     requirement,
     `$competitive-analysis ${requirement.research_goal}`,
   );
-  const directInput = direct.candidates[0]?.steps[0]?.input as Record<string, unknown>;
-  assert.deepEqual(directInput.requirement, requirement);
+  assert.deepEqual(direct.candidates.map((candidate) => candidate.id), ['depth', 'speed']);
+  assert.equal(direct.candidates.find((candidate) => candidate.id === 'speed')?.steps.length, 1);
+  assert.equal(direct.candidates.find((candidate) => candidate.id === 'depth')?.steps.length, 2);
+  for (const candidate of direct.candidates) {
+    const directInput = candidate.steps[0]?.input as Record<string, unknown>;
+    assert.deepEqual(directInput.requirement, requirement);
+    assert.equal(directInput.brief, requirement.research_goal);
+  }
+  assert.equal(
+    llm.calls.filter((call) => call.schemaName === 'current-plan-candidates').length,
+    1,
+    'direct planning must not add a routed candidate LLM call',
+  );
 });
 
 
@@ -459,6 +470,12 @@ test('creates a conversation and persists ResearchPlanningResult candidates as C
     assert.equal(candidate.plan.deliverable_type, 'research_plan');
     assert.deepEqual(candidate.plan.evidence_requirements, evidencePolicy);
     assert.deepEqual(candidate.plan.steps, planningResult.candidates[index]?.steps);
+    assert.deepEqual(candidate.plan.candidate_metadata, {
+      title: planningResult.candidates[index]?.title,
+      rationale: planningResult.candidates[index]?.rationale,
+      tradeoffs: planningResult.candidates[index]?.tradeoffs,
+    });
+    assert.deepEqual(candidate.plan.activated_nodes, planningResult.activatedNodes);
     assert.deepEqual(candidate.pendingInputs, []);
   }
 

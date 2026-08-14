@@ -122,17 +122,23 @@ export function useTaskFlow() {
     void (async () => {
       try {
         const current = await api.controlTask(taskId);
-        const hydrated = hydrateCurrentTask(current as unknown as Parameters<typeof hydrateCurrentTask>[0]);
-                if (cancelled) return;
-                setOriginalInput(hydrated.originalInput);
-                setStateVersion(hydrated.stateVersion);
-                if (hydrated.phase === 'clarifying') {
-                  setClarification(hydrated.clarification as ClarificationRequiredResponse);
-                  setPhase('clarifying');
-                  setError('');
-                  return;
-                }
-                const { state, stateVersion: restoredStateVersion, currentAttemptId } = current.task;
+        const hydrated = hydrateCurrentTask(current);
+        if (cancelled) return;
+        setOriginalInput(hydrated.originalInput);
+        setStateVersion(hydrated.stateVersion);
+        if (hydrated.phase === 'clarifying') {
+          setClarification(hydrated.clarification as ClarificationRequiredResponse);
+          setPhase('clarifying');
+          setError('');
+          return;
+        }
+        if (hydrated.phase === 'picking') {
+          setCandidatesResp(hydrated.candidatesResp);
+          setPhase('picking');
+          setError('');
+          return;
+        }
+        const { state, stateVersion: restoredStateVersion, currentAttemptId } = current.task;
         if (state !== 'completed' && state !== 'completed_with_gaps') return;
         if (!currentAttemptId) throw new Error('completed Current task has no attempt');
         if (cancelled) return;
@@ -159,11 +165,10 @@ export function useTaskFlow() {
           setDeliverableError(message(cause, '报告加载失败'));
           setReportState('report-loading-error');
         }
-      } catch {
-        if (!cancelled) {
-          localStorage.removeItem(CURRENT_TASK_STORAGE_KEY);
-          setCurrentTaskId(null);
-        }
+      } catch (cause) {
+        if (cancelled) return;
+        setError(message(cause, 'Current 任务恢复失败'));
+        setPhase('error');
       }
     })();
     return () => { cancelled = true; };

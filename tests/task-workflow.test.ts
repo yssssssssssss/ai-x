@@ -330,7 +330,19 @@ test('confirmation, required input, role matrix, and plan revision gate ready st
   const repository = new ControlPlaneRepository(scopedDatabase);
   const workflow = new TaskWorkflowService(repository, undefined, {
     async revise({ taskId }) {
-      return { plan: { task_id: taskId, steps: [] }, pendingInputs: [] };
+      return {
+        plan: {
+          task_id: taskId,
+          steps: [],
+          candidate_metadata: {
+            title: 'revised workflow plan',
+            rationale: 're-plan after approval',
+            tradeoffs: 'requires reconfirmation',
+          },
+          activated_nodes: [],
+        },
+        pendingInputs: [],
+      };
     },
   });
   const created = await createCandidateTask(repository, 'workflow-gate', {

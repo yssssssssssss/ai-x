@@ -57,7 +57,7 @@ function refinementPlanningPort(runtime: ControlRuntime): ControlPlanningPort {
             ownerUserId: input.ownerUserId,
             title: input.originalInput.slice(0, 40),
           });
-      if (!input.conversationId) onConversation?.(conversation.id);
+      onConversation?.(conversation.id);
       const created = await runtime.repository.createTask({
         conversationId: conversation.id,
         ownerUserId: input.ownerUserId,
@@ -72,7 +72,7 @@ function refinementPlanningPort(runtime: ControlRuntime): ControlPlanningPort {
         ownerUserId: input.ownerUserId,
         originalInput: input.originalInput,
         expectedVersion: created.stateVersion,
-      });
+      }, onProgress);
       if (result.status === 'clarification_required') {
         return refinementResponse(result, await runtime.repository.getTaskDetail(created.id));
       }
@@ -92,14 +92,14 @@ function refinementPlanningPort(runtime: ControlRuntime): ControlPlanningPort {
 
 function refinementClarificationPort(runtime: ControlRuntime): ControlClarificationPort {
   return {
-    async clarify(input) {
+    async clarify(input, onProgress) {
       const result = await runtime.requirementRefinement.clarify({
         taskId: input.taskId,
         conversationId: input.conversationId,
         ownerUserId: input.ownerUserId,
         answers: { ...input.answers, assumption_edits: input.assumptionEdits },
         expectedVersion: input.expectedVersion,
-      });
+      }, onProgress);
       if (result.status === 'clarification_required') {
         return refinementResponse(result, await runtime.repository.getTaskDetail(input.taskId));
       }

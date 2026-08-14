@@ -5,7 +5,7 @@ import { buildOrchestrator } from '../apps/orchestrator-runtime/src/orchestrator
 import { createUser, createConversation, listExecutionLog } from '../database/repository.ts';
 import { closePool } from '../database/db.ts';
 
-// $ 直呼支路验收:跳过引导循环 + 路由 LLM,产出单步 skill 计划,仍过确认闸门。
+// $ 直呼支路验收:跳过引导循环 + 路由 LLM,确定性产出 distinct depth/speed,仍过确认闸门。
 // 强制走 Mock LLM(确定性、不花 token、不依赖内网)。
 process.env.LLM_PROVIDER = 'mock';
 
@@ -25,7 +25,7 @@ after(async () => {
   await closePool();
 });
 
-test('直呼命中 active skill → 单步 skill 计划、activatedNodes 空、无 execution_log', async () => {
+test('直呼命中 active skill → distinct depth/speed、activatedNodes 空、无 execution_log', async () => {
   const orch = buildOrchestrator();
   // competitive-analysis 是 registry 中 active 的 KB 派生 skill(orchestrator/skill-registry.yaml)。
   const r = await orch.planPhase({
@@ -37,12 +37,18 @@ test('直呼命中 active skill → 单步 skill 计划、activatedNodes 空、�
   // 跳过引导循环:不激活任何决策节点
   assert.deepEqual(r.activatedNodes, [], '直呼不应激活决策节点');
 
-  // 确定性单步 skill 计划(直呼支路仍统一走 candidates 数组,只含 1 份)
-  assert.equal(r.candidates.length, 1, '直呼应产 1 份候选');
-  const steps = r.candidates[0].steps;
-  assert.equal(steps.length, 1, '直呼应为单步计划');
-  assert.equal(steps[0].actor_type, 'skill');
-  assert.equal(steps[0].actor_id, 'competitive-analysis');
+  const candidates = Object.fromEntries(r.candidates.map((candidate) => [candidate.id, candidate]));
+  assert.deepEqual(Object.keys(candidates), ['depth', 'speed']);
+  const speedSteps = candidates.speed?.steps ?? [];
+  const depthSteps = candidates.depth?.steps ?? [];
+  assert.equal(speedSteps.length, 1, 'speed 只执行直呼 skill');
+  assert.equal(depthSteps.length, 2, 'depth 在相同直呼 skill 后增加 reviewer');
+  assert.equal(speedSteps[0]?.actor_type, 'skill');
+  assert.equal(speedSteps[0]?.actor_id, 'competitive-analysis');
+  assert.equal(depthSteps[0]?.actor_type, 'skill');
+  assert.equal(depthSteps[0]?.actor_id, 'competitive-analysis');
+  assert.equal(depthSteps[1]?.actor_type, 'reviewer');
+  assert.deepEqual(depthSteps[0]?.input, speedSteps[0]?.input);
 
   // 确认闸门未越过:planPhase 后无 execution_log
   const log = await listExecutionLog(r.taskId);

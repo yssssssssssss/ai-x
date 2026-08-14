@@ -1,4 +1,8 @@
-import type { ControlExecutionStepResponse } from '../../../packages/api-contract/control-workflow.ts';
+import type {
+  ControlExecutionStepResponse,
+  ControlPlanCandidatesResponse,
+  CurrentPlanCandidate,
+} from '../../../packages/api-contract/control-workflow.ts';
 import type { ExecLogRow } from '../../../packages/api-contract/http.ts';
 
 export interface ConfirmationRequirement {
@@ -217,6 +221,23 @@ export function settleClarificationSubmission(
     accepted: true,
   };
 }
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim() !== '';
+}
+
+function isRestorableCandidate(value: unknown): value is CurrentPlanCandidate {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as Partial<CurrentPlanCandidate>;
+  return (candidate.candidateId === 'depth' || candidate.candidateId === 'speed')
+    && isNonEmptyString(candidate.planVersionId)
+    && isNonEmptyString(candidate.title)
+    && isNonEmptyString(candidate.rationale)
+    && isNonEmptyString(candidate.tradeoffs)
+    && isNonEmptyString(candidate.planHash)
+    && Boolean(candidate.plan && typeof candidate.plan === 'object')
+    && Array.isArray(candidate.pendingInputs);
+}
+
 export interface CurrentTaskHydrationInput {
   task: {
     id: string;
@@ -228,6 +249,8 @@ export interface CurrentTaskHydrationInput {
     activePlanVersionId?: string | null;
     currentAttemptId?: string | null;
   };
+  candidates?: CurrentPlanCandidate[];
+  activatedNodes?: string[];
 }
 
 export function hydrateCurrentTask(input: CurrentTaskHydrationInput): {
@@ -235,14 +258,51 @@ export function hydrateCurrentTask(input: CurrentTaskHydrationInput): {
   stateVersion: number;
   originalInput: string;
   clarification: unknown | null;
+  candidatesResp: ControlPlanCandidatesResponse | null;
 } {
   const { task } = input;
-  if (task.state !== 'awaiting_clarification') {
+  if (task.state === 'awaiting_selection') {
+    const candidates = input.candidates;
+    const activatedNodes = input.activatedNodes;
+    if (
+      !Array.isArray(candidates)
+      || candidates.length !== 2
+      || !candidates.every(isRestorableCandidate)
+      || candidates[0]?.candidateId !== 'depth'
+      || candidates[1]?.candidateId !== 'speed'
+      || !Array.isArray(activatedNodes)
+      || activatedNodes.some((node) => typeof node !== 'string')
+    ) {
+      throw new Error('awaiting_selection task has no valid server candidate recovery payload');
+    }
     return {
-      phase: task.state === 'awaiting_selection' ? 'picking' : 'idle',
+      phase: 'picking',
       stateVersion: task.stateVersion,
       originalInput: task.originalInput,
       clarification: null,
+      candidatesResp: {
+        kind: 'current',
+        conversationId: task.conversationId,
+        task: {
+          id: task.id,
+          state: 'awaiting_selection',
+          stateVersion: task.stateVersion,
+          activePlanVersionId: task.activePlanVersionId ?? null,
+          currentAttemptId: task.currentAttemptId ?? null,
+        },
+        structuredTask: task.structuredTask as ControlPlanCandidatesResponse['structuredTask'],
+        activatedNodes,
+        candidates,
+      },
+    };
+  }
+  if (task.state !== 'awaiting_clarification') {
+    return {
+      phase: 'idle',
+      stateVersion: task.stateVersion,
+      originalInput: task.originalInput,
+      clarification: null,
+      candidatesResp: null,
     };
   }
   return {
@@ -264,5 +324,6 @@ export function hydrateCurrentTask(input: CurrentTaskHydrationInput): {
       activatedNodes: [],
       candidates: [],
     },
+    candidatesResp: null,
   };
 }

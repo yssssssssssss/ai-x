@@ -28,18 +28,19 @@ after(async () => {
 test('$ 直呼无 schema KB skill → executePhase 跑完、有 report、skill 步 succeeded', async () => {
   const orch = buildOrchestrator();
 
-  // 计划:确定性单步 skill 计划(competitive-analysis 无 JSON schema)。
+  // 计划:speed 是确定性单步 skill 计划(competitive-analysis 无 JSON schema)。
   const plan = await orch.planPhase({
     originalInput: '$competitive-analysis 对比拼多多直播',
     conversationId: convId, ownerUserId: userId,
   });
   cleanupDirs.push(plan.workspaceUri);
 
-  const steps = plan.candidates[0].steps;
-  assert.equal(steps[0].actor_id, 'competitive-analysis', '直呼应命中该 KB skill');
+  const speed = plan.candidates.find((candidate) => candidate.id === 'speed');
+  assert.ok(speed);
+  assert.equal(speed.steps[0]?.actor_id, 'competitive-analysis', '直呼应命中该 KB skill');
 
-  // 选中直呼那份候选(直呼支路 id='depth'),finalize 出 plan.json
-  await orch.selectPlan({ taskId: plan.taskId, candidateId: 'depth' });
+  // 选中 speed，保持本用例只验证无 schema KB skill 的执行，不引入 depth reviewer。
+  await orch.selectPlan({ taskId: plan.taskId, candidateId: 'speed' });
 
   // 执行:模拟确认后执行。修复前会崩在 loadSkillBody(读目录 EISDIR)/loadSkillSchemas(undefined path)。
   const { reportArtifactId } = await orch.executePhase({ taskId: plan.taskId, conversationId: convId });

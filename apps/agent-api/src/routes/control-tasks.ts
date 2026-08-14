@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
+import type { PlanProgress } from '../../../../packages/api-contract/plan.ts';
 import { ControlPlaneConflictError, type ControlPlaneRepository } from '../../../../database/control-plane.ts';
 import { getUserById } from '../../../../database/repository.ts';
 import {
@@ -27,7 +28,7 @@ export interface ControlClarificationPort {
       reservationToken: string;
       actorUserId: string;
     };
-  }): Promise<CurrentPlanningResponse>;
+  }, onProgress?: (event: PlanProgress) => void): Promise<CurrentPlanningResponse>;
 }
 
 export interface ControlTasksRuntime {
@@ -247,14 +248,32 @@ router.get('/:id', async (req, res) => {
   const actor = await authenticatedActor(req, res);
   if (!actor) return;
   const task = await repository.getTaskDetail(req.params.id);
-  if (!task || task.ownerUserId !== actor.userId) {
+  if (
+    !task
+    || task.ownerUserId !== actor.userId
+    || task.conversationOwnerUserId !== actor.userId
+  ) {
     res.status(404).json({ error: '任务不存在' });
     return;
   }
-  const executionSteps = task.currentAttemptId
-    ? await repository.listExecutionSteps(task.currentAttemptId)
-    : [];
-  res.json({ kind: 'current', task, executionSteps });
+  try {
+    const recovered = task.state === 'awaiting_selection'
+      ? await repository.listCandidatePlanVersionsForOwner({
+          taskId: task.id,
+          ownerUserId: actor.userId,
+        })
+      : { candidates: [], activatedNodes: [] };
+    if (!recovered) {
+      res.status(404).json({ error: '任务不存在' });
+      return;
+    }
+    const executionSteps = task.currentAttemptId
+      ? await repository.listExecutionSteps(task.currentAttemptId)
+      : [];
+    res.json({ kind: 'current', task, executionSteps, ...recovered });
+  } catch (error) {
+    responseError(res, error);
+  }
 });
 
 router.get('/:id/deliverable', async (req, res) => {

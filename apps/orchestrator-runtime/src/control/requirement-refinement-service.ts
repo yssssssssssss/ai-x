@@ -4,7 +4,7 @@ import type {
 } from '../../../../database/control-plane.ts';
 import { ControlPlaneConflictError } from '../../../../database/control-plane.ts';
 import type { ControlRequirementVersion } from '../../../../packages/api-contract/control-workflow.ts';
-import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
+import type { PlanProgress, ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
 import type { ResearchPlanningResult } from '../planners/research-planning-service.ts';
 import type { LLMClient } from '../runtime/llm-client.ts';
 import { hashPrompt } from '../runtime/llm-client.ts';
@@ -34,7 +34,7 @@ export interface RequirementPlanner {
   plan(input: {
     originalInput: string;
     requirement: ResearchTaskV2;
-  }): Promise<unknown>;
+  }, onProgress?: (event: PlanProgress) => void): Promise<unknown>;
 }
 
 export interface UnderstandInput {
@@ -133,7 +133,10 @@ export class RequirementRefinementService {
     return list(input);
   }
 
-  async understand(input: UnderstandInput): Promise<RequirementRefinementResult> {
+  async understand(
+    input: UnderstandInput,
+    onProgress?: (event: PlanProgress) => void,
+  ): Promise<RequirementRefinementResult> {
     await this.dependencies.conversations.requireOwned({
       conversationId: input.conversationId,
       ownerUserId: input.ownerUserId,
@@ -146,10 +149,13 @@ export class RequirementRefinementService {
       clarification: null,
       expectedVersion: input.expectedVersion,
       expectedStateVersion: input.expectedStateVersion,
-    });
+    }, onProgress);
   }
 
-  async clarify(input: ClarifyInput): Promise<RequirementRefinementResult> {
+  async clarify(
+    input: ClarifyInput,
+    onProgress?: (event: PlanProgress) => void,
+  ): Promise<RequirementRefinementResult> {
     await this.dependencies.conversations.requireOwned({
       conversationId: input.conversationId,
       ownerUserId: input.ownerUserId,
@@ -177,7 +183,7 @@ export class RequirementRefinementService {
         originalInput: task.originalInput,
         requirement: active.structuredTask,
         requirementVersionId: active.id,
-      });
+      }, onProgress);
     }
     return this.refine({
       taskId: input.taskId,
@@ -187,7 +193,7 @@ export class RequirementRefinementService {
       clarification: input.answers,
       expectedVersion: input.expectedVersion,
       expectedStateVersion: input.expectedStateVersion,
-    });
+    }, onProgress);
   }
 
   private async finishRefinement(input: {
@@ -196,7 +202,7 @@ export class RequirementRefinementService {
     originalInput: string;
     requirement: ResearchTaskV2;
     requirementVersionId: string;
-  }): Promise<RequirementRefinementResult> {
+  }, onProgress?: (event: PlanProgress) => void): Promise<RequirementRefinementResult> {
     const status = needsClarification(input.requirement)
       ? 'clarification_required'
       : 'ready_to_plan';
@@ -210,7 +216,7 @@ export class RequirementRefinementService {
       ? await this.dependencies.planner.plan({
           originalInput: input.originalInput,
           requirement: input.requirement,
-        }) as ResearchPlanningResult
+        }, onProgress) as ResearchPlanningResult
       : undefined;
     return planningResult
       ? { status, taskId: input.taskId, requirement: input.requirement, planningResult }
@@ -225,7 +231,7 @@ export class RequirementRefinementService {
     clarification: unknown;
     expectedVersion?: number;
     expectedStateVersion?: number;
-  }): Promise<RequirementRefinementResult> {
+  }, onProgress?: (event: PlanProgress) => void): Promise<RequirementRefinementResult> {
     const messages = await this.listMessages({
       conversationId: input.conversationId,
       ownerUserId: input.ownerUserId,
@@ -269,6 +275,6 @@ export class RequirementRefinementService {
       originalInput: input.originalInput,
       requirement,
       requirementVersionId: activated.version.id,
-    });
+    }, onProgress);
   }
 }

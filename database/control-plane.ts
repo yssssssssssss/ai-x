@@ -3,6 +3,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type { MigrationConnection, MigrationDatabase } from './migration-runner.ts';
 import type {
   ControlPlanCandidatesResponse,
+  CurrentPlanCandidate,
   ControlRequirementVersion,
 } from '../packages/api-contract/control-workflow.ts';
 import type {
@@ -192,6 +193,29 @@ function planForTask(plan: unknown, taskId: string): { json: string; hash: strin
   const record = asRecord(plan);
   if (!record) throw new ControlPlaneConflictError('candidate plan must be an object');
   return canonicalPlan({ ...record, task_id: taskId });
+}
+
+function candidateMetadata(plan: Record<string, unknown>): {
+  title: string;
+  rationale: string;
+  tradeoffs: string;
+} {
+  const metadata = asRecord(plan.candidate_metadata);
+  const title = metadata && typeof metadata.title === 'string' ? metadata.title.trim() : '';
+  const rationale = metadata && typeof metadata.rationale === 'string' ? metadata.rationale.trim() : '';
+  const tradeoffs = metadata && typeof metadata.tradeoffs === 'string' ? metadata.tradeoffs.trim() : '';
+  if (!title || !rationale || !tradeoffs) {
+    throw new ControlPlaneConflictError('candidate plan metadata is missing or malformed');
+  }
+  return { title, rationale, tradeoffs };
+}
+
+function candidateActivatedNodes(plan: Record<string, unknown>): string[] {
+  const activatedNodes = plan.activated_nodes;
+  if (!Array.isArray(activatedNodes) || activatedNodes.some((node) => typeof node !== 'string')) {
+    throw new ControlPlaneConflictError('candidate plan activated_nodes is malformed');
+  }
+  return activatedNodes;
 }
 
 export interface SelectionResponse {
@@ -1150,6 +1174,12 @@ export class ControlPlaneRepository {
     candidateId?: string;
     pendingInputs?: unknown;
   }): Promise<{ plan: ControlPlanVersion; task: ControlTask }> {
+    const plan = asRecord(input.plan);
+    if (input.candidateId === 'depth' || input.candidateId === 'speed') {
+      if (!plan) throw new ControlPlaneConflictError('candidate revision plan must be an object');
+      candidateMetadata(plan);
+      candidateActivatedNodes(plan);
+    }
     const persistedPlan = canonicalPlan(input.plan);
     return this.transaction(async (connection) => {
       const fromStates = Array.isArray(input.from) ? input.from : [input.from];
@@ -1554,6 +1584,80 @@ export class ControlPlaneRepository {
     } finally {
       connection.release();
     }
+  }
+
+  async listCandidatePlanVersionsForOwner(input: {
+    taskId: string;
+    ownerUserId: string;
+  }): Promise<{ candidates: CurrentPlanCandidate[]; activatedNodes: string[] } | null> {
+    return this.transaction(async (connection) => {
+      const taskResult = await connection.query(
+        `SELECT task.state, task.owner_user_id,
+                conversation.owner_user_id AS conversation_owner_user_id
+         FROM control_tasks AS task
+         JOIN conversations AS conversation ON conversation.id = task.conversation_id
+         WHERE task.id = $1
+         FOR KEY SHARE OF task`,
+        [input.taskId],
+      );
+      const task = taskResult.rows[0];
+      if (
+        !task
+        || task.owner_user_id !== input.ownerUserId
+        || task.conversation_owner_user_id !== input.ownerUserId
+      ) {
+        return null;
+      }
+      if (task.state !== 'awaiting_selection') {
+        throw new ControlPlaneConflictError(`task ${input.taskId} is not awaiting_selection`);
+      }
+
+      const result = await connection.query(
+        `SELECT id, task_id, version, candidate_id, plan_json, plan_hash, pending_inputs
+         FROM control_plan_versions
+         WHERE task_id = $1
+         ORDER BY version`,
+        [input.taskId],
+      );
+      if (
+        result.rows.length !== 2
+        || result.rows[0]?.candidate_id !== 'depth'
+        || result.rows[1]?.candidate_id !== 'speed'
+      ) {
+        throw new ControlPlaneConflictError('awaiting_selection task requires exactly depth and speed candidates');
+      }
+
+      let activatedNodes: string[] | null = null;
+      const candidates = result.rows.map((row): CurrentPlanCandidate => {
+        const plan = asRecord(row.plan_json);
+        if (!plan || plan.task_id !== input.taskId) {
+          throw new ControlPlaneConflictError('candidate plan task binding is malformed');
+        }
+        const planHash = asString(row.plan_hash, 'plan_hash');
+        if (canonicalPlanHash(plan) !== planHash) {
+          throw new ControlPlaneConflictError('candidate plan canonical hash does not match stored hash');
+        }
+        const metadata = candidateMetadata(plan);
+        const candidateNodes = candidateActivatedNodes(plan);
+        if (activatedNodes === null) {
+          activatedNodes = candidateNodes;
+        } else if (JSON.stringify(activatedNodes) !== JSON.stringify(candidateNodes)) {
+          throw new ControlPlaneConflictError('candidate activated_nodes do not match');
+        }
+        if (!Array.isArray(row.pending_inputs)) {
+          throw new ControlPlaneConflictError('candidate pending inputs are malformed');
+        }
+        return {
+          planVersionId: asString(row.id, 'id'),
+          candidateId: asString(row.candidate_id, 'candidate_id') as 'depth' | 'speed',
+          ...metadata,
+          planHash,
+          plan: plan as unknown as CurrentExecutionPlan,
+          pendingInputs: row.pending_inputs as PendingInput[],
+        };
+      });
+      return { candidates, activatedNodes: activatedNodes ?? [] };
+    });
   }
 
   async getPlanVersionDetail(planVersionId: string): Promise<ControlPlanVersionDetail | null> {

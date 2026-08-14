@@ -143,6 +143,12 @@ export class ControlPlanningService {
         deliverable_type: 'research_plan',
         evidence_requirements: evidenceRequirements,
         steps: sanitizeCurrentSteps(candidate.steps),
+        candidate_metadata: {
+          title: candidate.title,
+          rationale: candidate.rationale,
+          tradeoffs: candidate.tradeoffs,
+        },
+        activated_nodes: planningResult.activatedNodes,
       },
       pendingInputs: [],
     }));

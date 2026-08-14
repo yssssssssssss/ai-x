@@ -568,6 +568,17 @@ git commit -m "feat: add current requirement refinement loop"
 - RED：7 个定向失败分别命中 pre-create authorization、V2 context、缺失 atomic repository seam、old-token/rollback、缺失 Migration 006、message duplicate 与缺失 requirement-version key。
 - GREEN：精确串行 7 文件 suite 66/66；`pnpm typecheck` passed；`pnpm --dir apps/web build` passed（44 modules transformed）。
 
+**Phase 2 planning recovery gate closure（2026-08-14）：**
+
+- Direct invoke clean cutover：installed `$skill` 由 `DirectPlanner` 确定性生成严格 `depth`/`speed`；speed 仅含原 direct skill step，depth 复用同一语义的 direct skill input 并追加 `research-plan-reviewer`。两份计划保留 skill ID、trimmed rest 与完整 `ResearchTaskV2`，hash distinct，且不调用 routed candidate LLM；unknown skill 继续 fail closed。
+- Candidate recovery contract：`CurrentExecutionPlan` 的 `candidate_metadata` 与 `activated_nodes` 在 `ControlPlanningService.prepareCandidates()` 写入，覆盖 initial、existing-task 与 atomic clarification 三条持久化路径，并在 repository canonical hash 前进入 plan JSON；不新增 DB column。
+- Owner-scoped refresh：repository 在同一 read transaction 校验 task/conversation 双 owner、`awaiting_selection`、exact depth/speed、task binding、canonical hash、非空 metadata、同一 activated nodes；Current GET 返回可信 candidates/activatedNodes。Web 仅从该 payload 重建 `ControlPlanCandidatesResponse`，缺失或畸形数据进入 error，不回退 idle，也不触发 planner/plan write。
+- Response-loss recovery：atomic clarification commit 后即使 HTTP response delivery 失败，普通 owner GET 仍恢复与 durable command response 相同的 plan version IDs/hashes；重复 GET 与同 key replay 保持 2 个 plan rows，planner/atomic persistence 不重跑。
+- Progress forwarding：`RequirementRefinementService` 的 understand、clarify normal path 与 post-activation resume path 均透传可选 `onProgress`；production `/plan/stream` 经 runtime/refinement 观察到 `conversation → activate/guidance/states/candidates progress → result`。supplied conversation 仅在 owner require 成功后发布。
+- TDD：direct/metadata、strict hydration、owner repository recovery、HTTP refresh/response-loss 与 refinement progress 均先出现对应失败，再以最小 seam 修复。
+- Gate：用户指定 7 文件串行 suite 64/64 passed；`pnpm typecheck` passed；`pnpm --dir apps/web build` passed（Vite 44 modules transformed）；直调 speed execute smoke 与 control-plane regression 20/20 passed。
+- Focused review closure：owner recovery 查询不预过滤 candidate ID，读取 task 全部 plan rows 后拒绝任何额外/未知 candidate；revision driver 与 repository depth/speed revision boundary 均校验并写入 regenerated `candidate_metadata`/`activated_nodes`，避免 revised canonical plan 丢失恢复合同。定向 reviewer regressions 28/28、相邻 workflow 11/11。
+
 - [ ] **Step 1: 写 HTTP 测试**
 
 覆盖：

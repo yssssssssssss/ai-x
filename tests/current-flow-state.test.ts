@@ -66,7 +66,9 @@ interface CurrentFlowStateModule {
   retryDeliverable(state: DeliverableReadState): FlowTransition;
   hydrateCurrentTask(input: {
     task: { id: string; state: string; stateVersion: number; originalInput: string; conversationId: string; structuredTask: unknown };
-  }): { phase: string; stateVersion: number; originalInput: string; clarification: unknown | null };
+    candidates?: unknown[];
+    activatedNodes?: string[];
+  }): { phase: string; stateVersion: number; originalInput: string; clarification: unknown | null; candidatesResp: unknown | null };
   createClarificationSubmissionState(): ClarificationSubmissionState;
   beginClarificationSubmission(
     state: ClarificationSubmissionState,
@@ -170,6 +172,92 @@ test('hydrates an awaiting clarification task with its questions and raw input',
     activatedNodes: [],
     candidates: [],
   });
+});
+
+test('hydrates an awaiting selection task with the server-validated candidate payload', async () => {
+  const { hydrateCurrentTask } = await loadCurrentFlowStateModule();
+  const structuredTask = {
+    version: 'research-task-v2',
+    task_type: 'competitive_research',
+    business_domain: '宠物辅食',
+    research_goal: '恢复候选',
+    target_audience: ['产品团队'],
+    scope: ['公开资料'],
+    constraints: [],
+    success_criteria: [],
+    expected_deliverables: ['研究计划'],
+    assumptions: [],
+    ambiguities: [],
+    clarification_questions: [],
+    blocking_issues: [],
+    sensitivity: 'public',
+    pii_detected: false,
+  };
+  const task = {
+    id: 'task-selection-refresh',
+    state: 'awaiting_selection',
+    stateVersion: 5,
+    originalInput: '$competitive-analysis 恢复候选',
+    conversationId: 'conversation-selection-refresh',
+    structuredTask,
+    activePlanVersionId: null,
+    currentAttemptId: null,
+  };
+  const candidates = [
+    {
+      planVersionId: 'plan-depth',
+      candidateId: 'depth',
+      title: '深度方案',
+      rationale: '增加复核',
+      tradeoffs: '较慢',
+      planHash: `sha256:${'a'.repeat(64)}`,
+      plan: { task_id: task.id, deliverable_type: 'research_plan', evidence_requirements: [], steps: [] },
+      pendingInputs: [],
+    },
+    {
+      planVersionId: 'plan-speed',
+      candidateId: 'speed',
+      title: '快速方案',
+      rationale: '立即执行',
+      tradeoffs: '少复核',
+      planHash: `sha256:${'b'.repeat(64)}`,
+      plan: { task_id: task.id, deliverable_type: 'research_plan', evidence_requirements: [], steps: [] },
+      pendingInputs: [],
+    },
+  ];
+  const hydrated = hydrateCurrentTask({ task, candidates, activatedNodes: ['D5_competitive'] });
+
+  assert.equal(hydrated.phase, 'picking');
+  assert.equal(hydrated.stateVersion, 5);
+  assert.equal(hydrated.originalInput, task.originalInput);
+  assert.deepEqual(hydrated.candidatesResp, {
+    kind: 'current',
+    conversationId: task.conversationId,
+    task: {
+      id: task.id,
+      state: task.state,
+      stateVersion: task.stateVersion,
+      activePlanVersionId: null,
+      currentAttemptId: null,
+    },
+    structuredTask,
+    activatedNodes: ['D5_competitive'],
+    candidates,
+  });
+});
+
+test('fails closed when awaiting selection refresh lacks validated candidates', async () => {
+  const { hydrateCurrentTask } = await loadCurrentFlowStateModule();
+  assert.throws(() => hydrateCurrentTask({
+    task: {
+      id: 'task-malformed-refresh',
+      state: 'awaiting_selection',
+      stateVersion: 2,
+      originalInput: 'cannot recover',
+      conversationId: 'conversation-malformed-refresh',
+      structuredTask: {},
+    },
+  }), /candidate|候选|awaiting_selection/i);
 });
 
 test('clarification submission contains only explicit answers and editable assumption changes', async () => {

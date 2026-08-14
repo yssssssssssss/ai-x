@@ -95,3 +95,18 @@
 - Final verification：用户指定 7 文件串行 suite 66/66 passed；`pnpm typecheck` passed；`pnpm --dir apps/web build` passed（Vite 44 modules transformed）。
 
 - 最终 closure 文件：`database/migrations/006_message_idempotency.sql`；`database/repository.ts`；`database/control-plane.ts`；`apps/agent-api/src/control-runtime.ts`；`apps/agent-api/src/server.ts`；`apps/agent-api/src/routes/control-tasks.ts`；`apps/orchestrator-runtime/src/control/control-planning-service.ts`；`apps/orchestrator-runtime/src/control/requirement-refinement-service.ts`；planner context 四文件；五个相关 test 文件；Task7 plan/report/progress。
+
+## Phase 2 planning recovery gate closure
+
+- Direct boundary RED：旧 `DirectPlanner` 仅返回一个 depth 单步候选；新回归要求严格 `depth/speed`、speed=direct skill、depth=同一 direct skill input+reviewer、完整 V2/rest 保留且不新增 `current-plan-candidates` LLM 调用。GREEN 后 direct/planning-service 10/10；unknown skill 回归保持。
+- Refresh metadata RED：新候选 plan JSON 缺 `candidate_metadata`/`activated_nodes`；awaiting-selection hydration 只有 phase、无 candidates，并在缺 payload 时静默 idle。GREEN 后三条 persistence path 在 canonical hash 前携带恢复字段，owner-scoped repository/GET 严格校验后返回，Web 重建完整 candidates response；metadata/activated nodes 任一变化都会改变 canonical hash。
+- Recovery integrity：initial-ready GET 返回与 POST 相同的 candidate IDs、planVersionIds、hash、V2 task 和 activated nodes。atomic clarification commit 后模拟 response delivery 失败，GET 仍恢复 durable response；重复 GET/replay 后 plan rows 仍为 2，atomic/planner 均仅一次。foreign owner 404；missing/malformed metadata、hash 或 candidate set fail closed。
+- Progress RED：RequirementRefinementService 的 understand/clarify callback 未到 planner。GREEN 后 normal、clarification 与 post-activation resume 共享透传；production runtime-backed SSE 顺序为 conversation、6 个 planning progress（activate/guidance/states start+done/candidates start+done）、result。
+- Clean cutover：legacy direct read-only tests 保留；direct execute fixture 显式选择 speed，继续验证无 schema KB skill 的单步执行，不混入 depth reviewer。
+- 验证：用户指定串行 7 文件 suite 64/64 passed；`pnpm typecheck` passed；Web production build passed（44 modules transformed）；direct speed execute + control-plane smoke 20/20 passed。
+
+### Focused review closure
+
+- Review 发现 recovery SQL 先过滤 candidate ID，无法识别额外第三行；修复为读取 task 全部 plan versions 后再要求严格两行 depth/speed。额外 candidate RED 从“Missing expected rejection”转绿。
+- Review 发现 production revision driver 会丢 `candidate_metadata`/`activated_nodes`；修复为校验 regenerated candidate metadata/activated nodes、写入 revised canonical plan，并在 repository 对 depth/speed revision 再做边界校验。production revision RED 从 metadata `undefined` 转绿。
+- Reviewer 回归 `control-plane + current-revision-integrity` 28/28；相邻 `task-workflow` 11/11。

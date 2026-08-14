@@ -23,9 +23,10 @@ import {
 } from '../../orchestrator-runtime/src/control/requirement-refinement-service.ts';
 import {
   ResearchPlanningService,
+  type ResearchPlanningInput,
   type ResearchPlanningResult,
 } from '../../orchestrator-runtime/src/planners/research-planning-service.ts';
-import type { PlanCandidate } from '../../../packages/api-contract/plan.ts';
+import type { PlanCandidate, PlanProgress } from '../../../packages/api-contract/plan.ts';
 import type {
   EvidenceClass,
   EvidenceRequirement,
@@ -167,8 +168,18 @@ function revisionCandidate(result: unknown, candidateId: 'depth' | 'speed'): Pla
   }
   const candidate = record.candidates.find((value) => revisionRecord(value)?.id === candidateId);
   const candidateRecord = revisionRecord(candidate);
-  if (!candidateRecord || !Array.isArray(candidateRecord.steps) || candidateRecord.steps.length === 0) {
-    throw new Error(`revision planning result has no ${candidateId} steps`);
+  if (
+    !candidateRecord
+    || !Array.isArray(candidateRecord.steps)
+    || candidateRecord.steps.length === 0
+    || typeof candidateRecord.title !== 'string'
+    || candidateRecord.title.trim() === ''
+    || typeof candidateRecord.rationale !== 'string'
+    || candidateRecord.rationale.trim() === ''
+    || typeof candidateRecord.tradeoffs !== 'string'
+    || candidateRecord.tradeoffs.trim() === ''
+  ) {
+    throw new Error(`revision planning result has malformed ${candidateId} candidate`);
   }
   for (const step of candidateRecord.steps) {
     const actorType = revisionRecord(step)?.actor_type;
@@ -178,6 +189,14 @@ function revisionCandidate(result: unknown, candidateId: 'depth' | 'speed'): Pla
   }
   return candidate as PlanCandidate;
 }
+
+function revisionActivatedNodes(result: unknown): string[] {
+  const activatedNodes = revisionRecord(result)?.activatedNodes;
+  if (!Array.isArray(activatedNodes) || activatedNodes.some((node) => typeof node !== 'string')) {
+    throw new Error('revision planning result has malformed activated nodes');
+  }
+  return activatedNodes;
+}
 type RuntimeConversationAdapter = {
   create(input: { ownerUserId: string; title: string }): Promise<{ id: string }>;
   requireOwned(input: { conversationId: string; ownerUserId: string }): Promise<{ id: string }>;
@@ -186,7 +205,10 @@ type RuntimeConversationAdapter = {
 };
 
 interface PlanningAdapter {
-  plan(input: { originalInput: string }): Promise<ResearchPlanningResult>;
+  plan(
+    input: ResearchPlanningInput,
+    onProgress?: (event: PlanProgress) => void,
+  ): Promise<ResearchPlanningResult>;
 }
 
 export interface ControlRuntimeOverrides {
@@ -363,6 +385,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
         originalInput: `${researchGoal}\n\nRevision instruction: ${input.instruction}`,
       });
       const candidate = revisionCandidate(planningResult, activePlan.candidateId);
+      const activatedNodes = revisionActivatedNodes(planningResult);
       const steps = sanitizeCandidateToPlan(candidate, task.id, '').steps;
       if (!revisionPendingInputsResolve(activePlan.pendingInputs, steps)) {
         throw new Error(`active plan ${activePlan.id} has pending input target unresolved by replacement steps`);
@@ -373,6 +396,12 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
           deliverable_type: activePlanShape.deliverable_type,
           evidence_requirements: activePlanShape.evidence_requirements,
           steps,
+          candidate_metadata: {
+            title: candidate.title,
+            rationale: candidate.rationale,
+            tradeoffs: candidate.tradeoffs,
+          },
+          activated_nodes: activatedNodes,
         },
         pendingInputs: activePlan.pendingInputs,
       };

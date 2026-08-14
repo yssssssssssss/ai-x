@@ -163,6 +163,12 @@ async function createSelectedTask(options: {
           acceptedClasses: [...requirement.acceptedClasses],
         })),
         steps: candidateSteps(candidateId),
+        candidate_metadata: {
+          title: `${candidateId} original`,
+          rationale: `${candidateId} original rationale`,
+          tradeoffs: `${candidateId} original tradeoffs`,
+        },
+        activated_nodes: ['D5_competitive'],
       },
       pendingInputs: candidateId === selectedId ? (options.pendingInputs ?? pendingInputs) : [],
     })),
@@ -210,7 +216,7 @@ function planningResult(originalInput: string): ResearchPlanningResult {
       sensitivity: 'public',
       pii_detected: false,
     },
-    activatedNodes: [],
+    activatedNodes: ['D3_method_selection'],
     decisionStates: [],
     candidates: (['depth', 'speed'] as const).map((id) => ({
       id,
@@ -223,7 +229,7 @@ function planningResult(originalInput: string): ResearchPlanningResult {
         extra_client_field: 'drop-me',
       })) as never,
       assumptions: [],
-      activated_nodes: [],
+      activated_nodes: ['D3_method_selection'],
     })),
     guidanceSources: [],
     provenance: {
@@ -305,6 +311,12 @@ test('workflow requires a revision driver and repository persists a canonical ha
           deliverable_type: 'research_plan',
           evidence_requirements: evidenceRequirements,
           steps: candidateSteps('speed').map((step) => ({ ...step, purpose: input.instruction })),
+          candidate_metadata: {
+            title: 'speed revision',
+            rationale: 'Apply user instruction',
+            tradeoffs: 'Replanned scope',
+          },
+          activated_nodes: ['D3_method_selection'],
         },
         pendingInputs,
       };
@@ -358,6 +370,12 @@ test('repository computes the revision hash instead of accepting one from its ca
     deliverable_type: 'research_plan',
     evidence_requirements: evidenceRequirements,
     steps: candidateSteps('speed').map((step) => ({ ...step, purpose: 'canonical revision' })),
+    candidate_metadata: {
+      title: 'speed canonical revision',
+      rationale: 'Verify repository hash',
+      tradeoffs: 'Test-only revision',
+    },
+    activated_nodes: ['D3_method_selection'],
   };
   const revision = await repository.createPlanRevision({
     taskId: seeded.created.task.id,
@@ -403,6 +421,12 @@ test('production runtime replans from research goal and instruction while preser
   assert.equal((persisted.plan as Record<string, unknown>).deliverable_type, 'research_plan');
   assert.deepEqual((persisted.plan as Record<string, unknown>).evidence_requirements, evidenceRequirements);
   assert.deepEqual(persisted.pendingInputs, pendingInputs);
+  assert.deepEqual((persisted.plan as Record<string, unknown>).candidate_metadata, {
+    title: 'speed',
+    rationale: 'speed',
+    tradeoffs: 'speed',
+  });
+  assert.deepEqual((persisted.plan as Record<string, unknown>).activated_nodes, ['D3_method_selection']);
   const steps = (persisted.plan as { steps: Array<Record<string, unknown>> }).steps;
   assert.equal(steps[0]?.step_name, 'speed search');
   assert.equal(steps[0]?.step_no, 1);

@@ -174,6 +174,12 @@ export interface ControlExecutionStepResponse {
 
 export interface CurrentTaskReadResponse {
   kind: 'current';
-  task: ControlTaskResponse;
+  task: ControlTaskResponse & {
+    conversationId: string;
+    originalInput: string;
+    structuredTask: ResearchTaskData | ResearchTaskV2;
+  };
   executionSteps: ControlExecutionStepResponse[];
+  activatedNodes: string[];
+  candidates: CurrentPlanCandidate[];
 }

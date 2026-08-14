@@ -288,7 +288,15 @@ class PlanningModelFixtureLLM implements LLMClient {
   }
 
   async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
-    const generated = await this.fixtures.generateStructured<T>(options);
+    const generated = options.schemaName === 'research-task-v2'
+      ? {
+          data: resolvedClarificationRequirement() as T,
+          promptHash: hashPrompt(options.prompt),
+          modelName: this.actualModel,
+          modelVersion: `${this.actualModel}-fixture-v1`,
+          traceId: 'trace-research-task-v2',
+        }
+      : await this.fixtures.generateStructured<T>(options);
     return {
       ...generated,
       modelName: this.actualModel,
@@ -601,6 +609,15 @@ async function postJson(
   });
 }
 
+function parseSseEvents(body: string): Array<{ event: string; data: unknown }> {
+  return body.trim().split('\n\n').map((block) => {
+    const lines = block.split('\n');
+    const event = lines.find((line) => line.startsWith('event: '))?.slice('event: '.length) ?? '';
+    const data = lines.find((line) => line.startsWith('data: '))?.slice('data: '.length) ?? 'null';
+    return { event, data: JSON.parse(data) as unknown };
+  });
+}
+
 async function listenLocalApp(app: Express): Promise<{ server: Server; baseUrl: string }> {
   const localServer = createServer(app);
   localServer.listen(0, '127.0.0.1');
@@ -769,10 +786,21 @@ test('production control runtime completes the offline Current API flow and serv
   assert.equal(refreshedResponse.status, 200, await refreshedResponse.clone().text());
   const refreshed = await refreshedResponse.json() as {
     task: { originalInput: string; structuredTask: unknown };
+    activatedNodes: string[];
+    candidates: ControlPlanCandidatesResponse['candidates'];
   };
   assert.equal(refreshed.task.originalInput, originalInput);
   assert.deepEqual(refreshed.task.structuredTask, planned.structuredTask);
+  assert.deepEqual(refreshed.activatedNodes, planned.activatedNodes);
+  assert.deepEqual(
+    refreshed.candidates.map(({ planVersionId, candidateId, planHash }) => ({ planVersionId, candidateId, planHash })),
+    planned.candidates.map(({ planVersionId, candidateId, planHash }) => ({ planVersionId, candidateId, planHash })),
+  );
   assert.deepEqual(planned.candidates.map((candidate) => candidate.candidateId), ['depth', 'speed']);
+  const foreignRefresh = await fetch(`${baseUrl}/api/control-tasks/${planned.task.id}`, {
+    headers: { authorization: `Bearer ${foreignToken}` },
+  });
+  assert.equal(foreignRefresh.status, 404);
   const planningConnection = await scopedDatabase.connect();
   try {
     const persisted = await planningConnection.query(
@@ -999,6 +1027,64 @@ test('production control runtime completes the offline Current API flow and serv
     assert.deepEqual(revalidationFailures, []);
   } finally {
     connection.release();
+  }
+});
+
+test('production plan stream forwards requirement-backed planning progress in order', async () => {
+  const { buildControlRuntime } = await loadControlRuntimeModule();
+  const expectedModel = 'progress-planning-model';
+  const controlRuntime = buildControlRuntime({
+    repository,
+    conversations: conversationAdapter(),
+    tools: new ToolRouter(),
+    llm: new PlanningModelFixtureLLM(expectedModel, expectedModel),
+    validator: new SchemaValidator(),
+    skillLoader: new SkillLoader(),
+    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
+    expectedActualModel: expectedModel,
+  });
+  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+  const app = await listenLocalApp(
+    (createAgentApiApp as unknown as PlannedCreateAgentApiApp)({ controlRuntime }),
+  );
+  try {
+    const response = await postJson(
+      app.baseUrl,
+      '/api/control-tasks/plan/stream',
+      signToken({ userId: ownerUserId, email: 'owner@test.local' }),
+      { originalInput: `progress-stream-${randomUUID()}`, conversationId },
+    );
+    assert.equal(response.status, 200);
+    const events = parseSseEvents(await response.text());
+    assert.deepEqual(events.map((event) => event.event), [
+      'conversation',
+      'progress',
+      'progress',
+      'progress',
+      'progress',
+      'progress',
+      'progress',
+      'result',
+    ]);
+    assert.deepEqual(
+      events.slice(1, -1).map((event) => {
+        const progress = event.data as { phase: string; status: string };
+        return `${progress.phase}:${progress.status}`;
+      }),
+      [
+        'activate:done',
+        'guidance:done',
+        'states:start',
+        'states:done',
+        'candidates:start',
+        'candidates:done',
+      ],
+    );
+    const result = events.at(-1)?.data as ControlPlanCandidatesResponse;
+    assert.equal(result.task.state, 'awaiting_selection');
+    assert.deepEqual(result.candidates.map((candidate) => candidate.candidateId), ['depth', 'speed']);
+  } finally {
+    await closeLocalServer(app.server);
   }
 });
 
@@ -1666,6 +1752,23 @@ test('response delivery failure after atomic clarification commit replays the pe
       await repository.getCommand(planned.task.id, 'clarification', key)
     )?.response as ControlPlanCandidatesResponse;
     assert.equal(persistedResponse.task.state, 'awaiting_selection');
+    const recoveredResponse = await fetch(`${app.baseUrl}/api/control-tasks/${planned.task.id}`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(recoveredResponse.status, 200, await recoveredResponse.clone().text());
+    const recovered = await recoveredResponse.json() as {
+      candidates: ControlPlanCandidatesResponse['candidates'];
+      activatedNodes: string[];
+    };
+    assert.deepEqual(
+      recovered.candidates.map(({ planVersionId, candidateId, planHash }) => ({ planVersionId, candidateId, planHash })),
+      persistedResponse.candidates.map(({ planVersionId, candidateId, planHash }) => ({ planVersionId, candidateId, planHash })),
+    );
+    assert.deepEqual(recovered.activatedNodes, persistedResponse.activatedNodes);
+    const repeatedRecovery = await fetch(`${app.baseUrl}/api/control-tasks/${planned.task.id}`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(repeatedRecovery.status, 200);
 
     const connection = await scopedDatabase.connect();
     try {
