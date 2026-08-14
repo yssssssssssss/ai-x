@@ -1005,55 +1005,61 @@ git add schemas/report-review.schema.json \
 git commit -m "feat: review and revise current deliverables"
 ```
 
-### Task 14: Report Package Artifact 和读取重验
+### Task 14: Verified Core Report Package 读取重验
 
-**用户收益：** 用户拿到的不只是报告正文，还能验证报告、Evidence、视觉资产和审查记录属于同一次执行。
+**用户收益：** Phase 4 用户拿到经过完整性、身份、Evidence 图和终局 Review 重验的核心报告包；Phase 5 文档与视觉资产未生成时不会返回伪数据。
 
 **Files:**
 - Modify: `packages/api-contract/control-workflow.ts`
-- Modify: `apps/agent-api/src/control-runtime.ts:137-238`
-- Modify: `apps/agent-api/src/routes/control-tasks.ts`
+- Modify: `packages/api-contract/research-deliverable.ts`
+- Create: `apps/orchestrator-runtime/src/report/current-report-package-reader.ts`
+- Modify: `apps/orchestrator-runtime/src/report/current-deliverable-service.ts`
+- Modify: `apps/agent-api/src/control-runtime.ts`
+- Modify: `database/control-plane.ts`
 - Test: `tests/report-package.test.ts`
 - Test: `tests/control-api-integration.test.ts`
+- Test: `tests/auth-isolation.test.ts`
 
 **Interfaces:**
-- Produces: `CurrentReportPackageResponse`。
+- Produces: `CurrentReportPackageResponse`，`presentationMode: 'legacy_text' | 'current_text' | 'multimodal'`。
+- Phase 4 `current_text` 返回 verified deliverable、evidenceManifest 和 reportReview；`reportDocument`、`visualAssetManifest` 可选且必须缺席。
+- Phase 5 Tasks 16–19 扩展 `multimodal`，届时 document/assets 成为必需。
 
 - [ ] **Step 1: 写失败测试**
 
-覆盖 package happy path、wrong task/plan/attempt、tampered review、missing report document、foreign owner 404。
+覆盖 review-gated package happy path；missing/tampered/wrong Task/Plan/Attempt Review；Review 非 pass/非最终轮次；referenced Evidence/Finding Graph 重验；历史 marker fallback；foreign/missing 404。
 
 - [ ] **Step 2: 运行并确认失败**
 
-Run: `pnpm exec tsx --test tests/report-package.test.ts`
+Run: `pnpm exec tsx --test --test-concurrency=1 tests/report-package.test.ts`
 
-Expected: FAIL。
+Expected: FAIL，尚无 Verified Core Package reader。
 
-- [ ] **Step 3: 扩展读取返回**
+- [ ] **Step 3: 实现核心读取深模块**
 
-返回 deliverable、evidenceManifest、reportDocument、visualAssetManifest、reportReview。每个 Artifact 逐一执行 `readVerifiedJson/readVerifiedBinary` 和 identity 校验。
+所有 JSON Artifact 使用 `readVerifiedJson()`。验证 Deliverable、Evidence Manifest、Review 的 SEALED/schemaVersion/Task/Plan/Attempt；resolver 逐项重读 Evidence Artifact，再执行 Manifest 与 Finding Graph 验证。Review 必须绑定最终 Deliverable、`verdict=pass` 且 revisionRound 匹配最终 Review Artifact。
 
-- [ ] **Step 4: 保持历史兼容**
+- [ ] **Step 4: 用 schemaVersion marker 做历史兼容**
 
-旧 completed task 缺新 Artifact 时返回 `presentationMode: 'legacy_text'` 和现有 deliverable/evidence；新任务缺任一 Report Package Artifact 视为不完整，不返回伪完成。
+Task 13 新交付写 `research-deliverable-v1-review-gated`，缺失/篡改/错误/blocked Review 一律拒绝且不可降级。历史 `research-deliverable-v1` 返回 `legacy_text`；未知 marker 拒绝。Phase 4 不创建伪 `reportDocument` 或 `visualAssetManifest`。
 
 - [ ] **Step 5: 运行测试和阶段门禁**
 
 Run:
 
 ```bash
-pnpm exec tsx --test tests/report-package.test.ts tests/control-api-integration.test.ts tests/auth-isolation.test.ts
-pnpm quality
+pnpm exec tsx --test --test-concurrency=1 tests/report-package.test.ts tests/control-api-integration.test.ts tests/auth-isolation.test.ts tests/report-review-service.test.ts
+pnpm typecheck
 ```
 
 - [ ] **Step 6: 提交**
 
 ```bash
-git add packages/api-contract/control-workflow.ts \
-  apps/agent-api/src/control-runtime.ts \
-  apps/agent-api/src/routes/control-tasks.ts \
-  tests/report-package.test.ts \
-  tests/control-api-integration.test.ts
+git add packages/api-contract/control-workflow.ts packages/api-contract/research-deliverable.ts \
+  apps/orchestrator-runtime/src/report/current-report-package-reader.ts \
+  apps/orchestrator-runtime/src/report/current-deliverable-service.ts \
+  apps/agent-api/src/control-runtime.ts database/control-plane.ts \
+  tests/report-package.test.ts tests/control-api-integration.test.ts tests/auth-isolation.test.ts
 git commit -m "feat: serve verified current report packages"
 ```
 

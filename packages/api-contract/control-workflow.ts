@@ -1,5 +1,10 @@
 import type { ResearchTaskData, ResearchTaskV2 } from './plan.ts';
-import type { CurrentExecutionPlan, PendingInput } from './research-deliverable.ts';
+import type {
+  CurrentExecutionPlan,
+  EvidenceManifest,
+  PendingInput,
+  ResearchDeliverableEnvelope,
+} from './research-deliverable.ts';
 
 export type ControlWorkflowState =
   | 'awaiting_clarification'
@@ -156,6 +161,58 @@ export interface ControlExecutionResult {
   failedStepNo?: number;
   failure?: Record<string, unknown>;
 }
+
+export type ReportReviewVerdict = 'pass' | 'revise' | 'block';
+export type ReportReviewDimensionId =
+  | 'requirement_coverage'
+  | 'question_coverage'
+  | 'evidence_coverage'
+  | 'reasoning_quality'
+  | 'recommendation_quality'
+  | 'visual_quality'
+  | 'risk_disclosure';
+
+export interface ReportReviewDimension {
+  id: ReportReviewDimensionId;
+  passed: boolean;
+  issues: string[];
+}
+
+export interface ReportReviewArtifact {
+  version: 'report-review-v1';
+  taskId: string;
+  planVersionId: string;
+  attemptId: string;
+  deliverableArtifactId: string;
+  verdict: ReportReviewVerdict;
+  dimensions: ReportReviewDimension[];
+  revisionRound: 0 | 1;
+}
+
+interface CoreReportPackageResponse {
+  deliverable: ResearchDeliverableEnvelope<unknown>;
+  evidenceManifest: EvidenceManifest;
+  reportDocument?: unknown;
+  visualAssetManifest?: unknown;
+}
+
+export type CurrentReportPackageResponse =
+  | CoreReportPackageResponse & {
+      presentationMode: 'legacy_text';
+      reportReview?: never;
+    }
+  | CoreReportPackageResponse & {
+      presentationMode: 'current_text';
+      reportReview: ReportReviewArtifact;
+      reportDocument?: never;
+      visualAssetManifest?: never;
+    }
+  | CoreReportPackageResponse & {
+      presentationMode: 'multimodal';
+      reportReview: ReportReviewArtifact;
+      reportDocument: unknown;
+      visualAssetManifest: unknown;
+    };
 
 
 export interface LegacyTaskReadResponse<T> {

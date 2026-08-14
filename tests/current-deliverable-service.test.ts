@@ -419,6 +419,7 @@ test('generates and seals a machine-owned research plan deliverable envelope', a
   assert.equal(writes.length, 1);
   assert.equal(writes[0]?.relativePath, 'deliverables/final.json');
   assert.equal(writes[0]?.kind, 'deliverable');
+  assert.equal(writes[0]?.schemaVersion, 'research-deliverable-v1-review-gated');
   assert.deepEqual(writes[0]?.value, result.deliverable);
   assert.equal(result.deliverableArtifactId, deliverableArtifactId);
 });

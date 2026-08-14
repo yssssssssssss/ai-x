@@ -101,6 +101,7 @@ type ExecutionResponse = ControlExecutionResult & {
   state: ControlWorkflowState;
   deliverableArtifactId: string;
   evidenceManifestArtifactId: string;
+  reportReviewArtifactId: string;
 };
 
 class ScopedIntegrationDatabase implements MigrationDatabase {
@@ -259,6 +260,11 @@ class OfflineEligibleRealLLM implements LLMClient {
         verifiedEvidence?: Array<{ evidenceId?: unknown }>;
       } | undefined;
       data = validDeliverableDraft(deliverableContext?.verifiedEvidence?.[0]?.evidenceId);
+    } else if (options.schemaName === 'report-review') {
+      data = {
+        verdict: 'pass',
+        dimensions: [{ id: 'reasoning_quality', passed: true, issues: [] }],
+      };
     } else {
       data = { ok: true };
     }
@@ -1127,6 +1133,7 @@ test('production control runtime completes the offline Current API flow and serv
   assert.equal(execution.status, 'completed', JSON.stringify(execution));
   assert.match(execution.deliverableArtifactId, /^[0-9a-f-]{36}$/);
   assert.match(execution.evidenceManifestArtifactId, /^[0-9a-f-]{36}$/);
+  assert.match(execution.reportReviewArtifactId, /^[0-9a-f-]{36}$/);
 
   const ownerDeliverableResponse = await fetch(
     `${baseUrl}/api/control-tasks/${planned.task.id}/deliverable`,
@@ -1135,11 +1142,21 @@ test('production control runtime completes the offline Current API flow and serv
   assert.equal(ownerDeliverableResponse.status, 200);
   const ownerDeliverableBody: unknown = await ownerDeliverableResponse.json();
   assertRecord(ownerDeliverableBody);
-  const envelope = ownerDeliverableBody.deliverable ?? ownerDeliverableBody;
+  assert.equal(ownerDeliverableBody.presentationMode, 'current_text');
+  const envelope = ownerDeliverableBody.deliverable;
   assertRecord(envelope);
   assert.equal(envelope.taskId, planned.task.id);
   assert.equal(envelope.deliverableType, 'research_plan');
   assert.equal(envelope.evidenceManifestArtifactId, execution.evidenceManifestArtifactId);
+  const reportReview = ownerDeliverableBody.reportReview;
+  assertRecord(reportReview);
+  assert.equal(reportReview.verdict, 'pass');
+  assert.equal(reportReview.taskId, planned.task.id);
+  assert.equal(reportReview.planVersionId, speed.planVersionId);
+  assert.equal(reportReview.attemptId, execution.attemptId);
+  assert.equal(reportReview.deliverableArtifactId, execution.deliverableArtifactId);
+  assert.equal('reportDocument' in ownerDeliverableBody, false);
+  assert.equal('visualAssetManifest' in ownerDeliverableBody, false);
   assert.match(JSON.stringify(ownerDeliverableBody), new RegExp(evidenceUrl.replaceAll('.', '\\.'), 'u'));
 
   const foreignDeliverableResponse = await fetch(
@@ -1191,6 +1208,7 @@ test('production control runtime completes the offline Current API flow and serv
     { stage: 'llm', status: 'succeeded' },
     { stage: 'reviewer', status: 'succeeded' },
     { stage: 'deliverable', status: 'succeeded' },
+    { stage: 'deliverable_review', status: 'succeeded' },
   ]);
   for (const receipt of modelReceipts) {
     assert.equal(receipt.provider, llm.identity.provider);
@@ -1252,7 +1270,7 @@ test('production control runtime completes the offline Current API flow and serv
     const terminalArtifacts = await connection.query(
       `SELECT id, kind, state
        FROM control_artifacts
-       WHERE attempt_id = $1 AND kind IN ('deliverable', 'evidence_manifest', 'execution_summary')
+       WHERE attempt_id = $1 AND kind IN ('deliverable', 'evidence_manifest', 'report_review', 'execution_summary')
        ORDER BY kind`,
       [execution.attemptId],
     );
@@ -1261,6 +1279,7 @@ test('production control runtime completes the offline Current API flow and serv
       [
         { kind: 'deliverable', state: 'SEALED' },
         { kind: 'evidence_manifest', state: 'SEALED' },
+        { kind: 'report_review', state: 'SEALED' },
       ],
     );
     assert.equal(
@@ -1271,21 +1290,29 @@ test('production control runtime completes the offline Current API flow and serv
       terminalArtifacts.rows.find((row) => row.kind === 'evidence_manifest')?.id,
       execution.evidenceManifestArtifactId,
     );
+    assert.equal(
+      terminalArtifacts.rows.find((row) => row.kind === 'report_review')?.id,
+      execution.reportReviewArtifactId,
+    );
 
     const referencedArtifacts = await connection.query(
       `SELECT id, kind, storage_uri, content_sha256
        FROM control_artifacts
-       WHERE attempt_id = $1 AND kind IN ('tool_output', 'evidence_manifest')`,
+       WHERE attempt_id = $1 AND kind IN ('tool_output', 'evidence_manifest', 'report_review')`,
       [execution.attemptId],
     );
     const toolArtifact = referencedArtifacts.rows.find((row) => row.kind === 'tool_output');
     const manifestArtifact = referencedArtifacts.rows.find((row) => row.kind === 'evidence_manifest');
+    const reviewArtifact = referencedArtifacts.rows.find((row) => row.kind === 'report_review');
     assert.ok(toolArtifact);
     assert.ok(manifestArtifact);
+    assert.ok(reviewArtifact);
     const toolStorageUri = String(toolArtifact.storage_uri);
     const manifestStorageUri = String(manifestArtifact.storage_uri);
     const originalToolContent = readFileSync(toolStorageUri, 'utf8');
     const originalManifestContent = readFileSync(manifestStorageUri, 'utf8');
+    const reviewStorageUri = String(reviewArtifact.storage_uri);
+    const originalReviewContent = readFileSync(reviewStorageUri, 'utf8');
     const originalManifestHash = String(manifestArtifact.content_sha256);
     const ownerDeliverableUrl = `${baseUrl}/api/control-tasks/${planned.task.id}/deliverable`;
     const revalidationFailures: string[] = [];
@@ -1301,6 +1328,13 @@ test('production control runtime completes the offline Current API flow and serv
       await expectOwnerReadRejected('referenced Tool Artifact content');
     } finally {
       writeFileSync(toolStorageUri, originalToolContent);
+    }
+
+    try {
+      writeFileSync(reviewStorageUri, JSON.stringify({ tampered: true }));
+      await expectOwnerReadRejected('Report Review Artifact content');
+    } finally {
+      writeFileSync(reviewStorageUri, originalReviewContent);
     }
 
     const mutateManifestEntry = async (

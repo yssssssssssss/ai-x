@@ -376,7 +376,7 @@ export class CurrentDeliverableService {
       attemptId: input.attempt.id,
       kind: 'deliverable',
       relativePath: 'deliverables/final.json',
-      schemaVersion: 'research-deliverable-v1',
+      schemaVersion: 'research-deliverable-v1-review-gated',
       sensitivity: 'internal',
       redactionPolicyVersion: 'v1',
       activeLease: input.activeLease,

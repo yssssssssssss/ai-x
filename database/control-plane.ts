@@ -1474,7 +1474,7 @@ export class ControlPlaneRepository {
                AND attempt.state = 'active'
                AND attempt.lease_expires_at > now()
                AND task.id = $4
-               AND task.state = 'executing'
+               AND task.state IN ('executing', 'reviewing', 'composing_report')
                AND task.current_attempt_id = attempt.id
                AND task.active_plan_version_id = attempt.plan_version_id
              RETURNING artifact.*`,
@@ -2147,7 +2147,7 @@ export class ControlPlaneRepository {
            AND attempt.lease_token_hash = $5
            AND attempt.state = 'active'
            AND attempt.lease_expires_at > now()
-           AND task.state = 'executing'
+           AND task.state IN ('executing', 'reviewing', 'composing_report')
            AND task.current_attempt_id = attempt.id
            AND task.active_plan_version_id = attempt.plan_version_id`,
         [input.attemptId, input.taskId, input.planVersionId, input.leaseOwner, hashLeaseToken(input.leaseToken)],
@@ -2182,7 +2182,7 @@ export class ControlPlaneRepository {
            AND attempt.state = 'active'
            AND attempt.lease_expires_at > now()
            AND task.id = attempt.task_id
-           AND task.state = 'executing'
+           AND task.state IN ('executing', 'reviewing', 'composing_report')
            AND task.current_attempt_id = attempt.id
            AND task.active_plan_version_id = attempt.plan_version_id
          RETURNING attempt.id AS attempt_id, attempt.task_id, attempt.plan_version_id,

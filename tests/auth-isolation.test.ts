@@ -407,6 +407,14 @@ test('Current task GET and every command hide foreign and missing task IDs behin
       });
       assert.equal(getResponse.status, 404, `${target.label} GET`);
       await getResponse.text();
+      const deliverableResponse = await fetch(
+        `${baseUrl}/api/control-tasks/${target.taskId}/deliverable`,
+        { headers: { authorization: `Bearer ${target.token}` } },
+      );
+      const deliverableBody = await deliverableResponse.json() as Record<string, unknown>;
+      assert.equal(deliverableResponse.status, 404, `${target.label} deliverable GET`);
+      assert.deepEqual(Object.keys(deliverableBody), ['error']);
+      assert.equal(JSON.stringify(deliverableBody).includes(target.taskId), false);
 
       for (const command of commands) {
         const response = await fetch(

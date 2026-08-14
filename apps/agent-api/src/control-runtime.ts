@@ -9,12 +9,7 @@ import {
   TaskWorkflowService,
   type WorkflowPlanRevisionDriver,
 } from '../../orchestrator-runtime/src/control/task-workflow.ts';
-import {
-  EvidenceService,
-  type EvidenceArtifactResolver,
-  type EvidenceManifest,
-  type ResolvedEvidenceArtifact,
-} from '../../orchestrator-runtime/src/evidence/evidence-service.ts';
+import { EvidenceService } from '../../orchestrator-runtime/src/evidence/evidence-service.ts';
 import { ReportEvidenceValidator } from '../../orchestrator-runtime/src/evidence/report-evidence-validator.ts';
 import {
   RequirementRefinementService,
@@ -28,6 +23,7 @@ import {
 } from '../../orchestrator-runtime/src/planners/research-planning-service.ts';
 import { PlanCompiler } from '../../orchestrator-runtime/src/planners/plan-compiler.ts';
 import type { PlanCandidate, PlanProgress, ResearchTaskV2 } from '../../../packages/api-contract/plan.ts';
+import type { CurrentReportPackageResponse } from '../../../packages/api-contract/control-workflow.ts';
 import type {
   CurrentExecutionPlan,
   EvidenceClass,
@@ -37,6 +33,7 @@ import type {
 import { CurrentDeliverableService } from '../../orchestrator-runtime/src/report/current-deliverable-service.ts';
 import { SynthesisMaterializer } from '../../orchestrator-runtime/src/report/synthesis-materializer.ts';
 import { ReportReviewService } from '../../orchestrator-runtime/src/report/report-review-service.ts';
+import { CurrentReportPackageReader } from '../../orchestrator-runtime/src/report/current-report-package-reader.ts';
 import { buildRuntime } from '../../orchestrator-runtime/src/runtime/agent-runtime.ts';
 import type { LLMClient } from '../../orchestrator-runtime/src/runtime/llm-client.ts';
 import { ReceiptLLMClient } from '../../orchestrator-runtime/src/runtime/receipt-llm-client.ts';
@@ -236,7 +233,7 @@ export interface ControlRuntime {
   workflow: TaskWorkflowService;
   repository: ControlPlaneRepository;
   artifacts: ControlArtifactStore;
-  getDeliverable(taskId: string, ownerUserId: string): Promise<unknown | null>;
+  getDeliverable(taskId: string, ownerUserId: string): Promise<CurrentReportPackageResponse | null>;
 }
 function defaultConversations(): RuntimeConversationAdapter {
   return {
@@ -354,6 +351,13 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
   });
   const evidence = new EvidenceService();
   const reportValidator: ReportEvidenceValidator = new ReportEvidenceValidator(evidence);
+  const reportPackageReader = new CurrentReportPackageReader({
+    artifacts,
+    repository,
+    evidence,
+    reportValidator,
+    schemaValidator: validator,
+  });
   const deliverables = new CurrentDeliverableService({
     llm: new ReceiptLLMClient(llm, repository),
     validator,
@@ -444,94 +448,16 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
         || task.ownerUserId !== ownerUserId
         || task.conversationOwnerUserId !== ownerUserId
         || (task.state !== 'completed' && task.state !== 'completed_with_gaps')
+        || !task.activePlanVersionId
         || !task.currentAttemptId
       ) {
         return null;
       }
-      const artifact = await repository.findSealedArtifact({
+      return reportPackageReader.read({
         taskId: task.id,
+        planVersionId: task.activePlanVersionId,
         attemptId: task.currentAttemptId,
-        kind: 'deliverable',
       });
-      if (!artifact) return null;
-      const verified = await artifacts.readVerifiedJson<unknown>(artifact.id);
-      if (
-        verified.artifact.kind !== 'deliverable'
-        || verified.artifact.taskId !== task.id
-        || verified.artifact.attemptId !== task.currentAttemptId
-        || verified.artifact.planVersionId !== task.activePlanVersionId
-      ) {
-        throw new Error('sealed deliverable binding is invalid');
-      }
-      const deliverable = verified.value !== null
-        && typeof verified.value === 'object'
-        && !Array.isArray(verified.value)
-        ? verified.value as Record<string, unknown>
-        : null;
-      if (!deliverable || typeof deliverable.evidenceManifestArtifactId !== 'string') {
-        throw new Error('sealed deliverable is missing its evidence manifest reference');
-      }
-      const manifestArtifact = await artifacts.readVerifiedJson<unknown>(
-        deliverable.evidenceManifestArtifactId,
-      );
-      if (
-        manifestArtifact.artifact.kind !== 'evidence_manifest'
-        || manifestArtifact.artifact.taskId !== task.id
-        || manifestArtifact.artifact.attemptId !== task.currentAttemptId
-        || manifestArtifact.artifact.planVersionId !== task.activePlanVersionId
-        || manifestArtifact.value === null
-        || typeof manifestArtifact.value !== 'object'
-        || Array.isArray(manifestArtifact.value)
-      ) {
-        throw new Error('sealed evidence manifest binding is invalid');
-      }
-      const manifestRecord = manifestArtifact.value as Record<string, unknown>;
-      if (
-        manifestRecord.taskId !== task.id
-        || manifestRecord.planVersionId !== task.activePlanVersionId
-        || manifestRecord.attemptId !== task.currentAttemptId
-        || !Array.isArray(manifestRecord.entries)
-      ) {
-        throw new Error('sealed evidence manifest identity is invalid');
-      }
-      const resolvedArtifacts = new Map<string, ResolvedEvidenceArtifact>();
-      await Promise.all(manifestRecord.entries.map(async (candidate) => {
-        if (
-          candidate === null
-          || typeof candidate !== 'object'
-          || Array.isArray(candidate)
-          || !('artifactId' in candidate)
-          || typeof candidate.artifactId !== 'string'
-        ) {
-          throw new Error('sealed evidence manifest entry is invalid');
-        }
-        const resolved = await artifacts.readVerifiedJson<unknown>(candidate.artifactId);
-        if (
-          !resolved.artifact.contentSha256
-          || resolved.artifact.taskId !== task.id
-          || resolved.artifact.attemptId !== task.currentAttemptId
-          || resolved.artifact.planVersionId !== task.activePlanVersionId
-        ) {
-          throw new Error('referenced evidence Artifact binding is invalid');
-        }
-        resolvedArtifacts.set(resolved.artifact.id, {
-          artifact: {
-            id: resolved.artifact.id,
-            contentSha256: resolved.artifact.contentSha256,
-          },
-          value: resolved.value,
-        });
-      }));
-      const resolver: EvidenceArtifactResolver = {
-        resolveArtifact: (artifactId) => resolvedArtifacts.get(artifactId) ?? null,
-      };
-      const manifest = manifestArtifact.value as EvidenceManifest;
-      evidence.validateManifest(manifest, resolver);
-      reportValidator.validate({ manifest, report: deliverable, resolver });
-      return {
-        deliverable,
-        evidenceManifest: manifest,
-      };
     },
   };
 }

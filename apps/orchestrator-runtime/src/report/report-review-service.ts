@@ -1,35 +1,21 @@
 import type { ControlExecutionLease } from '../../../../database/control-plane.ts';
+import type {
+  ReportReviewArtifact,
+  ReportReviewDimension,
+  ReportReviewDimensionId,
+  ReportReviewVerdict,
+} from '../../../../packages/api-contract/control-workflow.ts';
+export type {
+  ReportReviewArtifact,
+  ReportReviewDimension,
+  ReportReviewDimensionId,
+  ReportReviewVerdict,
+} from '../../../../packages/api-contract/control-workflow.ts';
 import type { ArtifactWriteInput } from '../control/artifact-store.ts';
 import { redactSensitiveValue } from '../runtime/redaction.ts';
 import type { LLMResult, StructuredLLMCallOptions } from '../runtime/llm-client.ts';
 import { SchemaValidator } from '../schema/validator.ts';
 
-export type ReportReviewVerdict = 'pass' | 'revise' | 'block';
-export type ReportReviewDimensionId =
-  | 'requirement_coverage'
-  | 'question_coverage'
-  | 'evidence_coverage'
-  | 'reasoning_quality'
-  | 'recommendation_quality'
-  | 'visual_quality'
-  | 'risk_disclosure';
-
-export interface ReportReviewDimension {
-  id: ReportReviewDimensionId;
-  passed: boolean;
-  issues: string[];
-}
-
-export interface ReportReviewArtifact {
-  version: 'report-review-v1';
-  taskId: string;
-  planVersionId: string;
-  attemptId: string;
-  deliverableArtifactId: string;
-  verdict: ReportReviewVerdict;
-  dimensions: ReportReviewDimension[];
-  revisionRound: 0 | 1;
-}
 
 export interface ReportReviewResult extends ReportReviewArtifact {
   status: 'completed' | 'paused';

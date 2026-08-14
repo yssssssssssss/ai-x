@@ -636,19 +636,22 @@ interface ClarifyControlTaskRequest {
 
 ### 8.4 Report Package Read
 
-`GET /api/control-tasks/:id/deliverable` 返回：
+`GET /api/control-tasks/:id/deliverable` 分阶段返回：
 
 ```ts
 interface CurrentReportPackageResponse {
+  presentationMode: 'legacy_text' | 'current_text' | 'multimodal';
   deliverable: ResearchDeliverableEnvelope<unknown>;
   evidenceManifest: EvidenceManifest;
-  reportDocument: ReportDocument;
-  visualAssetManifest: VisualAssetManifest;
-  reportReview: ReportReviewArtifact;
+  reportReview?: ReportReviewArtifact;
+  reportDocument?: ReportDocument;
+  visualAssetManifest?: VisualAssetManifest;
 }
 ```
 
-读取时重新验证所有 Artifact、Manifest、Evidence、Finding Graph、Chart Spec 和 Asset 引用。
+Phase 4 的 `current_text` 只包含 verified core package，不伪造 Phase 5 的文档或视觉资产。新 deliverable Artifact 使用 review-gated schemaVersion marker，读取时强制验证最终 pass Review；历史 marker 才能回退为 `legacy_text`。Phase 5 的 `multimodal` 要求 document/assets。
+
+读取时重新验证所有已返回 Artifact、Manifest、Evidence 和 Finding Graph；Phase 5 再增加 Chart Spec 与 Asset 引用重验。
 
 ### 8.5 Asset Read
 

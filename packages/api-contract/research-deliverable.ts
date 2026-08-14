@@ -231,6 +231,16 @@ export interface EvidenceEntry {
   redaction: 'none' | 'masked' | 'blocked';
 }
 
+export interface EvidenceManifest {
+  version: 'evidence-v1';
+  taskId: string;
+  planVersionId: string;
+  attemptId: string;
+  collectedAt: string;
+  manifestHash: string;
+  entries: EvidenceEntry[];
+}
+
 export interface ResearchDeliverableEnvelope<TPayload> {
   version: 'research-deliverable-v1';
   taskId: string;
