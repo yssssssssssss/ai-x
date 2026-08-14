@@ -13,6 +13,8 @@ import type { SkillLoader } from '../runtime/skill-loader.ts';
 import type { SchemaValidator } from '../schema/validator.ts';
 import type { GuidanceRef, PlanCandidate, PlanProgress, ResearchTaskData } from '../plan-types.ts';
 import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
+import type { CapabilityApprovalAuthority } from './capability-resolver.ts';
+import type { ToolRouter } from '../runtime/tool-adapter.ts';
 
 // $<skill> 直呼解析结果(parseDirectInvoke 的非空返回)。命中直呼支路时非 null。
 export interface DirectInvoke {
@@ -47,6 +49,8 @@ export interface PlannerDeps {
   // 网关实际返回的规范模型 ID(drift 门禁锚点)。注入后 planning receipt 用它做比对,
   // 否则回退到 llm.identity.requestedModel(本地 mock 场景)。
   expectedActualModel?: string;
+  tools?: ToolRouter;
+  approvalAuthorities?: readonly CapabilityApprovalAuthority[];
 }
 
 // 策略入参:公共前置产出的运行态数据 + 流式进度回调。deps 不在此(构造期注入)。

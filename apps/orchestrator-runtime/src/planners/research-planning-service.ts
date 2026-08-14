@@ -1,4 +1,8 @@
-import type { DeliverableType, EvidenceRequirement } from '../../../../packages/api-contract/research-deliverable.ts';
+import type {
+  DeliverableType,
+  EvidenceRequirement,
+  ProblemGraph,
+} from '../../../../packages/api-contract/research-deliverable.ts';
 import type {
   GuidanceRef,
   PlanCandidate,
@@ -21,6 +25,9 @@ import type {
   PlanStrategy,
 } from './plan-strategy.ts';
 import { RoutedPlanner } from './routed-planner.ts';
+import type { CapabilityResolution } from './capability-resolver.ts';
+import type { ProblemGraphProvenance } from './problem-graph-planner.ts';
+import type { CurrentPlanCandidateProposal } from './plan-compiler.ts';
 
 export interface ResearchPlanningInput {
   originalInput: string;
@@ -38,6 +45,14 @@ export interface ResearchPlanningResult {
   provenance: PlanProvenance;
 }
 
+export interface CurrentResearchPlanningResult extends Omit<ResearchPlanningResult, 'candidates' | 'structuredTask'> {
+  structuredTask: ResearchTaskV2;
+  candidates: CurrentPlanCandidateProposal[];
+  problemGraph: ProblemGraph;
+  capabilityResolution: CapabilityResolution;
+  problemGraphProvenance: ProblemGraphProvenance;
+}
+
 const TASK_UNDERSTANDING_PROMPT =
   `把用户需求结构化为 ResearchTask。\n` +
   `【task_type 按"用户想做什么"选最贴切的一个,不要默认竞品】:\n` +
@@ -52,7 +67,7 @@ const TASK_UNDERSTANDING_PROMPT =
 export class ResearchPlanningService {
   private readonly dependencies: Readonly<PlannerDeps>;
   private readonly directPlanner: PlanStrategy;
-  private readonly routedPlanner: PlanStrategy;
+  private readonly routedPlanner: RoutedPlanner;
 
   constructor(dependencies: PlannerDeps) {
     this.dependencies = dependencies;
@@ -127,6 +142,51 @@ export class ResearchPlanningService {
       traceId: `trace_requirement_${hashPrompt(originalInput, requirement).slice(-12)}`,
     };
     return this.planTask(task, parseDirectInvoke(originalInput), provenance, emit, requirement);
+  }
+
+  async planCurrentFromRequirement(
+    requirement: ResearchTaskV2,
+    originalInput = requirement.research_goal,
+    onProgress?: (event: PlanProgress) => void,
+  ): Promise<CurrentResearchPlanningResult> {
+    const task: ResearchTaskData = {
+      task_type: requirement.task_type,
+      business_domain: requirement.business_domain,
+      research_goal: requirement.research_goal,
+      assumptions: requirement.assumptions,
+      confirmations: requirement.clarification_questions,
+      blocking_issues: requirement.blocking_issues,
+      sensitivity: requirement.sensitivity,
+      pii_detected: requirement.pii_detected,
+    };
+    const emit = onProgress ?? (() => {});
+    const direct = parseDirectInvoke(originalInput);
+    const taskProvenance: PlanProvenance = {
+      modelName: this.dependencies.llm.identity.requestedModel,
+      modelVersion: 'research-task-v2',
+      promptHash: hashPrompt(originalInput, requirement, 'research-task-v2'),
+      traceId: `trace_requirement_${hashPrompt(originalInput, requirement).slice(-12)}`,
+    };
+    const evidenceRequirements = resolveEvidenceRequirements(requirement.task_type, 'research_plan');
+    const artifacts = await this.routedPlanner.planCurrent({
+      task,
+      direct,
+      requirement,
+      taskProvenance,
+      emit,
+    }, evidenceRequirements);
+    return {
+      task,
+      structuredTask: requirement,
+      activatedNodes: artifacts.activated.map((node) => node.key),
+      decisionStates: artifacts.decisionStates,
+      candidates: artifacts.candidates,
+      guidanceSources: artifacts.guidanceSources,
+      provenance: artifacts.planProvenance,
+      problemGraph: artifacts.problemGraph,
+      problemGraphProvenance: artifacts.problemGraphProvenance,
+      capabilityResolution: artifacts.capabilityResolution,
+    };
   }
 
   private async planTask(

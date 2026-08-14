@@ -6,25 +6,108 @@ import {
   loadDecisionGraph,
   loadToolManifest,
   loadToolInputSchema,
+  loadToolRegistry,
   type DecisionNode,
 } from '../runtime/config-loader.ts';
 import { hashPrompt } from '../runtime/llm-client.ts';
 import { searchKnowledge } from '../knowledge/index.ts';
 import type { GuidanceRef, PlanCandidate } from '../plan-types.ts';
+import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
+import type {
+  CurrentPlanStep,
+  EvidenceRequirement,
+  ProblemGraph,
+} from '../../../../packages/api-contract/research-deliverable.ts';
 import type {
   DecisionStateRec,
   PlanArtifacts,
   PlanContext,
   PlannerDeps,
+  PlanProvenance,
   PlanStrategy,
 } from './plan-strategy.ts';
+import {
+  CapabilityResolver,
+  type CapabilityApproval,
+  type CapabilityResolution,
+  type CapabilityToolState,
+} from './capability-resolver.ts';
+import {
+  ProblemGraphPlanner,
+  type ProblemGraphProvenance,
+} from './problem-graph-planner.ts';
+import type { CurrentPlanCandidateProposal } from './plan-compiler.ts';
 import { loadSchemaText, resolveSchema } from '../runtime/schema-registry.ts';
+
+interface SchemaWithDefinitions {
+  $defs: Record<string, object>;
+}
 
 const currentPlanCandidatesSchemaText = loadSchemaText(resolveSchema('current-plan-candidates'));
 if (!currentPlanCandidatesSchemaText) {
   throw new Error('current-plan-candidates schema is not registered');
 }
-const currentPlanCandidatesSchema = JSON.parse(currentPlanCandidatesSchemaText) as object;
+const currentPlanCandidatesSchemaValue: unknown = JSON.parse(currentPlanCandidatesSchemaText);
+if (!currentPlanCandidatesSchemaValue || typeof currentPlanCandidatesSchemaValue !== 'object' || !('$defs' in currentPlanCandidatesSchemaValue)) {
+  throw new Error('current-plan-candidates schema has no definitions');
+}
+const currentPlanCandidatesSchema = currentPlanCandidatesSchemaValue as object & SchemaWithDefinitions;
+
+const currentExecutionPlanSchemaText = loadSchemaText(resolveSchema('current-execution-plan'));
+if (!currentExecutionPlanSchemaText) {
+  throw new Error('current-execution-plan schema is not registered');
+}
+const currentExecutionPlanSchemaValue: unknown = JSON.parse(currentExecutionPlanSchemaText);
+if (!currentExecutionPlanSchemaValue || typeof currentExecutionPlanSchemaValue !== 'object' || !('$defs' in currentExecutionPlanSchemaValue)) {
+  throw new Error('current-execution-plan schema has no definitions');
+}
+const currentExecutionPlanSchema = currentExecutionPlanSchemaValue as SchemaWithDefinitions;
+const legacyCandidateDefinitions = currentPlanCandidatesSchema.$defs;
+const currentPlanProposalSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['candidates'],
+  properties: {
+    candidates: {
+      type: 'array',
+      minItems: 2,
+      maxItems: 2,
+      items: [
+        { allOf: [{ $ref: '#/$defs/candidate' }, { properties: { id: { const: 'depth' } } }] },
+        { allOf: [{ $ref: '#/$defs/candidate' }, { properties: { id: { const: 'speed' } } }] },
+      ],
+      additionalItems: false,
+    },
+  },
+  $defs: {
+    ...currentExecutionPlanSchema.$defs,
+    assumption: legacyCandidateDefinitions.assumption,
+    candidate: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['id', 'title', 'rationale', 'tradeoffs', 'steps', 'assumptions'],
+      properties: {
+        id: { enum: ['depth', 'speed'] },
+        title: { type: 'string', minLength: 1 },
+        rationale: { type: 'string', minLength: 1 },
+        tradeoffs: { type: 'string', minLength: 1 },
+        steps: { type: 'array', minItems: 1, items: { $ref: '#/$defs/step' } },
+        assumptions: { type: 'array', items: { $ref: '#/$defs/assumption' } },
+      },
+    },
+  },
+};
+
+export interface CurrentPlanArtifacts {
+  activated: DecisionNode[];
+  decisionStates: DecisionStateRec[];
+  candidates: CurrentPlanCandidateProposal[];
+  planProvenance: PlanProvenance;
+  guidanceSources: GuidanceRef[];
+  problemGraph: ProblemGraph;
+  problemGraphProvenance: ProblemGraphProvenance;
+  capabilityResolution: CapabilityResolution;
+}
 
 // 引导召回:对每个激活的决策节点,用其 related_tags 从知识库召回方法论/模型(每节点 top-3),
 // 供"决策状态判定"与"计划生成"两个 LLM 调用作正典依据,并进 context_manifest 溯源。纯函数,可测。
@@ -167,5 +250,309 @@ export class RoutedPlanner implements PlanStrategy {
     emit({ phase: 'candidates', status: 'done', label: '生成候选方案', detail: `${candidates.length} 份 · ${candidates.map((c) => c.id).join(' / ')}` });
 
     return { activated, decisionStates, candidates, planProvenance, guidanceSources };
+  }
+
+  async planCurrent(
+    ctx: PlanContext & { requirement: ResearchTaskV2 },
+    evidenceRequirements: EvidenceRequirement[],
+  ): Promise<CurrentPlanArtifacts> {
+    const { llm, validator, skillLoader, tools } = this.deps;
+    if (!tools) throw new Error('Current planning requires ToolRouter capability state');
+    const decisionGraph = loadDecisionGraph();
+    const activated = ctx.direct
+      ? []
+      : decisionGraph.nodes.filter((node) => node.applies_to.includes(ctx.task.task_type));
+    const activatedNodeKeys = activated.map((node) => node.key);
+    ctx.emit({
+      phase: 'activate',
+      status: 'done',
+      label: '激活决策节点',
+      detail: `${activated.length} 个 · ${activatedNodeKeys.join(' / ')}`,
+    });
+    const guidanceSources = retrieveGuidance(activated);
+    ctx.emit({
+      phase: 'guidance',
+      status: 'done',
+      label: '召回方法论知识',
+      detail: `${guidanceSources.length} 条方法卡片`,
+    });
+
+    let decisionStates: DecisionStateRec[] = [];
+    if (!ctx.direct) {
+      ctx.emit({ phase: 'states', status: 'start', label: '判定节点状态' });
+      const decisionContext = {
+        activated: activatedNodeKeys,
+        task: ctx.task,
+        requirement: ctx.requirement,
+        guidance: guidanceSources,
+      };
+      const statesGen = await llm.generateStructured<DecisionStateRec[]>({
+        prompt: `对以下激活的决策节点逐一判定状态:${activatedNodeKeys.join(', ')}`,
+        schema: {},
+        schemaName: 'decision-states',
+        context: decisionContext,
+        receipt: {
+          stage: 'planning_decision',
+          contextManifestHash: hashPrompt('', decisionContext),
+          expectedModel: this.deps.expectedActualModel ?? llm.identity.requestedModel,
+        },
+      });
+      const activatedKeys = new Set(activatedNodeKeys);
+      decisionStates = statesGen.data.filter((state) => activatedKeys.has(state.node_key));
+      for (const state of decisionStates) validator.validateOrThrow('decision-state', state);
+      ctx.emit({
+        phase: 'states',
+        status: 'done',
+        label: '判定节点状态',
+        detail: `${decisionStates.length} 个节点已判定`,
+      });
+    }
+
+    const problemGraphResult = await new ProblemGraphPlanner({
+      llm,
+      validator,
+      guidance: guidanceSources,
+      evidenceRequirements,
+      expectedActualModel: this.deps.expectedActualModel,
+    }).build(ctx.requirement);
+
+    const registeredTools = loadToolRegistry().tools;
+    const manifests = registeredTools.map((tool) => loadToolManifest(tool.path));
+    const manifestById = new Map(manifests.map((manifest) => [manifest.id, manifest]));
+    const toolStates: CapabilityToolState[] = registeredTools.map((tool) => {
+      const manifest = manifestById.get(tool.id);
+      if (!manifest) {
+        return { tool_id: tool.id, health: 'unhealthy', real_adapter_qualified: false };
+      }
+      const resolution = tools.resolve(manifest);
+      return {
+        tool_id: tool.id,
+        health: resolution ? 'healthy' : 'unhealthy',
+        real_adapter_qualified: Boolean(
+          resolution
+          && resolution.executionMode === 'real'
+          && resolution.resolvedAdapterType === resolution.declaredAdapterType,
+        ),
+      };
+    });
+    const authorities = new Set(this.deps.approvalAuthorities ?? []);
+    const capabilitySkills = skillLoader.listCapabilitySkills();
+    const approvalCapabilities: CapabilityApproval[] = [];
+    for (const skill of capabilitySkills) {
+      if (skill.status !== 'active' || skill.risk_level !== 'high' || !skill.id) continue;
+      for (const authority of authorities) {
+        approvalCapabilities.push({ capability_type: 'skill', capability_id: skill.id, authority });
+      }
+    }
+    for (const manifest of manifests) {
+      if (
+        manifest.risk_level === 'high'
+        && manifest.approver_rule
+        && manifest.approver_rule !== 'none'
+        && authorities.has(manifest.approver_rule)
+      ) {
+        approvalCapabilities.push({
+          capability_type: 'tool',
+          capability_id: manifest.id,
+          authority: manifest.approver_rule,
+        });
+      }
+    }
+    const availableInputRoles = ['research_goal', 'business_domain'];
+    if (ctx.requirement.target_audience.length > 0) availableInputRoles.push('target_audience');
+    if (ctx.requirement.scope.length > 0) availableInputRoles.push('scope');
+    if (ctx.requirement.constraints.length > 0) availableInputRoles.push('constraints');
+    if (ctx.requirement.success_criteria.length > 0) availableInputRoles.push('success_criteria');
+    if (ctx.requirement.expected_deliverables.length > 0) availableInputRoles.push('expected_deliverables');
+    const capabilityResolution = new CapabilityResolver().resolve({
+      task: ctx.requirement,
+      available_input_roles: availableInputRoles,
+      skills: capabilitySkills,
+      tools: registeredTools,
+      tool_states: toolStates,
+      tool_manifests: manifests,
+      approval_capabilities: approvalCapabilities,
+    });
+    if (capabilityResolution.eligible.length === 0) {
+      throw new Error(`Current planning has no eligible skill for ${ctx.requirement.task_type}`);
+    }
+    if (ctx.direct) {
+      const directDecision = capabilityResolution.eligible.find(
+        (decision) => decision.skill.id === ctx.direct!.skillName,
+      );
+      if (!directDecision) {
+        const rejected = capabilityResolution.rejected.find(
+          (decision) => decision.skill.id === ctx.direct!.skillName,
+        );
+        const reasons = rejected?.reasons.map((reason) => reason.code).join(', ') ?? 'not registered';
+        throw new Error(`Current direct skill ${ctx.direct.skillName} is not eligible: ${reasons}`);
+      }
+      const questionIds = problemGraphResult.graph.questions.map((question) => question.id);
+      const acceptanceCriteria = problemGraphResult.graph.questions.flatMap(
+        (question) => question.acceptance_criteria,
+      );
+      const requiresApproval = directDecision.skill.risk_level === 'high';
+      const approvalRole = requiresApproval ? [...authorities][0] : undefined;
+      if (requiresApproval && !approvalRole) {
+        throw new Error(`Current direct skill ${ctx.direct.skillName} has no approval role`);
+      }
+      const skillStep: CurrentPlanStep = {
+        step_no: 99,
+        step_name: `直呼 ${ctx.direct.skillName}`,
+        actor_type: 'skill',
+        actor_id: ctx.direct.skillName,
+        question_ids: questionIds,
+        depends_on: [],
+        input: {
+          research_goal: ctx.requirement.research_goal,
+          brief: ctx.direct.rest,
+          requirement: ctx.requirement,
+        },
+        input_bindings: [],
+        expected_outputs: [{ pointer: '/result', description: `${ctx.direct.skillName} result` }],
+        acceptance_criteria: acceptanceCriteria,
+        requires_approval: requiresApproval,
+        ...(approvalRole ? { approval_role: approvalRole } : {}),
+        fallback_actor_ids: [],
+      };
+      const reviewerStep: CurrentPlanStep = {
+        step_no: 99,
+        step_name: '复核直呼结果',
+        actor_type: 'reviewer',
+        actor_id: 'research-plan-reviewer',
+        question_ids: questionIds,
+        depends_on: [1],
+        input: { result: null },
+        input_bindings: [{
+          target_pointer: '/result',
+          source_step_no: 1,
+          source_pointer: '/result',
+        }],
+        expected_outputs: [{ pointer: '/review', description: '直呼结果复核' }],
+        acceptance_criteria: acceptanceCriteria,
+        requires_approval: false,
+        fallback_actor_ids: [],
+      };
+      const candidates: CurrentPlanCandidateProposal[] = [
+        {
+          id: 'depth',
+          title: `直呼 ${directDecision.skill.name ?? ctx.direct.skillName}（含复核）`,
+          rationale: '执行用户指定 Skill，并追加独立质量复核。',
+          tradeoffs: '多一步复核，耗时略长。',
+          steps: [structuredClone(skillStep), reviewerStep],
+          assumptions: ctx.requirement.assumptions,
+          activated_nodes: [],
+        },
+        {
+          id: 'speed',
+          title: `直呼 ${directDecision.skill.name ?? ctx.direct.skillName}`,
+          rationale: '执行用户指定 Skill，不经过能力排序。',
+          tradeoffs: '仅执行指定 Skill，不做独立复核。',
+          steps: [structuredClone(skillStep)],
+          assumptions: ctx.requirement.assumptions,
+          activated_nodes: [],
+        },
+      ];
+      const proposalEnvelope = {
+        candidates: candidates.map(({ activated_nodes: _activatedNodes, ...candidate }) => candidate),
+      };
+      validator.validateSchemaOrThrow(
+        currentPlanProposalSchema,
+        proposalEnvelope,
+        'current-plan-candidates',
+      );
+      ctx.emit({
+        phase: 'candidates',
+        status: 'done',
+        label: '生成候选方案',
+        detail: `直呼 ${ctx.direct.skillName}`,
+      });
+      return {
+        activated,
+        decisionStates,
+        candidates,
+        planProvenance: ctx.taskProvenance,
+        guidanceSources,
+        problemGraph: problemGraphResult.graph,
+        problemGraphProvenance: problemGraphResult.provenance,
+        capabilityResolution,
+      };
+    }
+
+    const eligibleToolIds = new Set(
+      capabilityResolution.eligible.flatMap((decision) => decision.skill.required_tools),
+    );
+    const candidateTools = registeredTools
+      .filter((tool) => eligibleToolIds.has(tool.id))
+      .map((tool) => {
+        const manifest = manifestById.get(tool.id)!;
+        return {
+          id: tool.id,
+          name: tool.name,
+          tier: tool.tier ?? 'optional',
+          input_schema: loadToolInputSchema(manifest.input_schema),
+        };
+      });
+    const candidateContext = {
+      task: ctx.task,
+      requirement: ctx.requirement,
+      problem_graph: problemGraphResult.graph,
+      capability_resolution: capabilityResolution,
+      skills: capabilityResolution.eligible.map((decision) => ({
+        id: decision.skill.id,
+        when_to_use: decision.skill.when_to_use,
+        inputs: decision.skill.inputs,
+        outputs: decision.skill.outputs,
+        required_tools: decision.skill.required_tools,
+        pending_inputs: decision.pending_inputs,
+      })),
+      tools: candidateTools,
+      guidance: guidanceSources,
+      evidence_requirements: evidenceRequirements,
+    };
+    ctx.emit({ phase: 'candidates', status: 'start', label: '生成候选方案' });
+    const planGen = await llm.generateStructured<{
+      candidates: Array<Omit<CurrentPlanCandidateProposal, 'activated_nodes'>>;
+    }>({
+      prompt:
+        `基于 finalized ResearchTaskV2、ProblemGraph、Evidence Policy 和 eligible capability shortlist 生成 depth/speed 两份 Current 候选。` +
+        `每个 step 必须精确包含 step_no、step_name、actor_type、actor_id、question_ids、depends_on、input、input_bindings、expected_outputs、acceptance_criteria、requires_approval、fallback_actor_ids。` +
+        `Skill 的 required_tools 必须作为更早的 Tool step；所有引用必须真实存在；不得使用 capability_resolution.rejected 中的 actor。`,
+      schema: currentPlanProposalSchema,
+      schemaName: 'current-plan-candidates',
+      context: candidateContext,
+      receipt: {
+        stage: 'planning',
+        contextManifestHash: hashPrompt('', candidateContext),
+        expectedModel: this.deps.expectedActualModel ?? llm.identity.requestedModel,
+      },
+    });
+    validator.validateSchemaOrThrow(currentPlanProposalSchema, planGen.data, 'current-plan-candidates');
+    const candidates: CurrentPlanCandidateProposal[] = planGen.data.candidates.map((candidate) => ({
+      ...candidate,
+      activated_nodes: activatedNodeKeys,
+    }));
+    const planProvenance: PlanProvenance = {
+      modelName: planGen.modelName,
+      modelVersion: planGen.modelVersion,
+      promptHash: planGen.promptHash,
+      traceId: planGen.traceId,
+    };
+    ctx.emit({
+      phase: 'candidates',
+      status: 'done',
+      label: '生成候选方案',
+      detail: `${candidates.length} 份 · ${candidates.map((candidate) => candidate.id).join(' / ')}`,
+    });
+    return {
+      activated,
+      decisionStates,
+      candidates,
+      planProvenance,
+      guidanceSources,
+      problemGraph: problemGraphResult.graph,
+      problemGraphProvenance: problemGraphResult.provenance,
+      capabilityResolution,
+    };
   }
 }

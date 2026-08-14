@@ -15,7 +15,10 @@ import {
 } from '../apps/agent-api/src/routes/control-tasks.ts';
 import type { CurrentPlanningResponse } from '../apps/agent-api/src/routes/control-planning.ts';
 import { ControlArtifactStore } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
-import type { ResearchPlanningResult } from '../apps/orchestrator-runtime/src/planners/research-planning-service.ts';
+import type {
+  CurrentResearchPlanningResult,
+  ResearchPlanningInput,
+} from '../apps/orchestrator-runtime/src/planners/research-planning-service.ts';
 import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import {
   MockLLMClient,
@@ -66,7 +69,7 @@ interface ControlRuntimeOverrides {
   repository: ControlPlaneRepository;
   conversations: ConversationAdapter;
   planning?: {
-    plan(input: { originalInput: string }): Promise<ResearchPlanningResult>;
+    plan(input: ResearchPlanningInput): Promise<CurrentResearchPlanningResult>;
   };
   tools: ToolRouter;
   llm: LLMClient;
@@ -174,48 +177,88 @@ class OfflineEligibleRealLLM implements LLMClient {
 
   async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
     this.calls += 1;
-    const data = options.schemaName.startsWith('skill:')
-      ? {
-          comparison_matrix: [{
-            competitor: '公开竞品 A',
-            dimension: '产品定位',
-            assessment: '公开来源支持其宠物辅食场景定位',
-            source: 'tool_result',
-          }],
-          differentiation_opportunities: ['按宠物类型与使用场景细分研究样本'],
-          sources: [evidenceUrl],
-        }
-      : options.schemaName === 'research-task-v2'
-        ? {
-            version: 'research-task-v2',
-            task_type: 'competitive_research',
-            business_domain: '宠物辅食',
-            research_goal: '形成基于公开证据的宠物辅食竞品研究计划',
-            target_audience: ['宠物食品产品与市场团队'],
-            scope: ['公开可访问的宠物辅食竞品资料'],
-            constraints: [{
-              id: 'public-evidence-only',
-              statement: '仅使用公开可验证来源',
-              source: 'user',
-            }],
-            success_criteria: [{
-              id: 'verifiable-comparison',
-              statement: '输出基于公开证据且可追溯的竞品研究计划',
-            }],
-            expected_deliverables: ['宠物辅食竞品研究计划'],
-            assumptions: [],
-            ambiguities: [],
-            clarification_questions: [],
-            blocking_issues: [],
-            sensitivity: 'public',
-            pii_detected: false,
-          }
-        : options.schemaName === 'research-plan-deliverable-content'
-          ? validDeliverableDraft(
-              (options.context as { verifiedEvidence?: Array<{ evidenceId?: unknown }> } | undefined)
-                ?.verifiedEvidence?.[0]?.evidenceId,
-            )
-          : { ok: true };
+    let data: unknown;
+    if (options.schemaName.startsWith('skill:')) {
+      data = {
+        comparison_matrix: [{
+          competitor: '公开竞品 A',
+          dimension: '产品定位',
+          assessment: '公开来源支持其宠物辅食场景定位',
+          source: 'tool_result',
+        }],
+        differentiation_opportunities: ['按宠物类型与使用场景细分研究样本'],
+        sources: [evidenceUrl],
+      };
+    } else if (options.schemaName === 'research-task-v2') {
+      data = {
+        version: 'research-task-v2',
+        task_type: 'competitive_research',
+        business_domain: '宠物辅食',
+        research_goal: '形成基于公开证据的宠物辅食竞品研究计划',
+        target_audience: ['宠物食品产品与市场团队'],
+        scope: ['公开可访问的宠物辅食竞品资料'],
+        constraints: [{
+          id: 'public-evidence-only',
+          statement: '仅使用公开可验证来源',
+          source: 'user',
+        }],
+        success_criteria: [{
+          id: 'verifiable-comparison',
+          statement: '输出基于公开证据且可追溯的竞品研究计划',
+        }],
+        expected_deliverables: ['宠物辅食竞品研究计划'],
+        assumptions: [],
+        ambiguities: [],
+        clarification_questions: [],
+        blocking_issues: [],
+        sensitivity: 'public',
+        pii_detected: false,
+      };
+    } else if (options.schemaName === 'decision-states') {
+      data = [];
+    } else if (options.schemaName === 'problem-graph') {
+      const graphContext = options.context as {
+        task: ResearchTaskV2;
+        evidencePolicy: Array<{
+          id: string;
+          acceptedClasses: Array<'public_source'>;
+          minimumCount: number;
+          required: boolean;
+        }>;
+      };
+      data = {
+        version: 'problem-graph-v1',
+        questions: [{
+          id: 'competitive-question',
+          statement: '主要竞品的公开定位差异是什么？',
+          rationale: '回答竞品研究目标',
+          priority: 'required',
+          success_criterion_ids: graphContext.task.success_criteria.map((criterion) => criterion.id),
+          evidence_requirements: graphContext.evidencePolicy,
+          acceptance_criteria: ['至少一个公开来源支撑结论'],
+          depends_on: [],
+        }],
+      };
+    } else if (options.schemaName === 'current-plan-candidates') {
+      data = {
+        candidates: planningResult('offline-current-candidate').candidates.map((candidate) => {
+          const { activated_nodes: _activatedNodes, ...proposal } = candidate;
+          return {
+            ...proposal,
+            steps: proposal.steps.map((step) => step.actor_type === 'skill'
+              ? { ...step, actor_id: 'competitive-web-research' }
+              : step),
+          };
+        }),
+      };
+    } else if (options.schemaName === 'research-plan-deliverable-content') {
+      const deliverableContext = options.context as {
+        verifiedEvidence?: Array<{ evidenceId?: unknown }>;
+      } | undefined;
+      data = validDeliverableDraft(deliverableContext?.verifiedEvidence?.[0]?.evidenceId);
+    } else {
+      data = { ok: true };
+    }
     return {
       data: data as T,
       promptHash: hashPrompt(options.prompt),
@@ -288,19 +331,81 @@ class PlanningModelFixtureLLM implements LLMClient {
   }
 
   async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
-    const generated = options.schemaName === 'research-task-v2'
-      ? {
-          data: resolvedClarificationRequirement() as T,
-          promptHash: hashPrompt(options.prompt),
-          modelName: this.actualModel,
-          modelVersion: `${this.actualModel}-fixture-v1`,
-          traceId: 'trace-research-task-v2',
-        }
-      : await this.fixtures.generateStructured<T>(options);
+    let data: unknown;
+    if (options.schemaName === 'research-task-v2') {
+      data = resolvedClarificationRequirement();
+    } else if (options.schemaName === 'decision-states') {
+      data = [];
+    } else if (options.schemaName === 'problem-graph') {
+      const graphContext = options.context as {
+        task: ResearchTaskV2;
+        evidencePolicy: unknown[];
+      };
+      data = {
+        version: 'problem-graph-v1',
+        questions: [{
+          id: 'model-receipt-question',
+          statement: '如何生成可执行研究计划？',
+          rationale: '覆盖成功标准',
+          priority: 'required',
+          success_criterion_ids: graphContext.task.success_criteria.map((criterion) => criterion.id),
+          evidence_requirements: graphContext.evidencePolicy,
+          acceptance_criteria: ['研究计划可执行'],
+          depends_on: [],
+        }],
+      };
+    } else if (options.schemaName === 'current-plan-candidates') {
+      const systemStep = (actorType: 'llm' | 'reviewer', actorId: string, dependsOn: number[]) => ({
+        step_no: 99,
+        step_name: actorId,
+        actor_type: actorType,
+        actor_id: actorId,
+        question_ids: ['model-receipt-question'],
+        depends_on: dependsOn,
+        input: {},
+        input_bindings: [],
+        expected_outputs: [{ pointer: '/result', description: `${actorId} result` }],
+        acceptance_criteria: ['研究计划可执行'],
+        requires_approval: false,
+        fallback_actor_ids: [],
+      });
+      data = {
+        candidates: [
+          {
+            id: 'depth',
+            title: '深度研究',
+            rationale: '包含复核',
+            tradeoffs: '耗时更长',
+            steps: [
+              systemStep('llm', 'research-synthesis', []),
+              systemStep('reviewer', 'evidence-reviewer', [1]),
+            ],
+            assumptions: [],
+          },
+          {
+            id: 'speed',
+            title: '快速研究',
+            rationale: '最短路径',
+            tradeoffs: '复核较少',
+            steps: [systemStep('llm', 'research-synthesis', [])],
+            assumptions: [],
+          },
+        ],
+      };
+    } else {
+      const generated = await this.fixtures.generateStructured<T>(options);
+      return {
+        ...generated,
+        modelName: this.actualModel,
+        modelVersion: `${this.actualModel}-fixture-v1`,
+      };
+    }
     return {
-      ...generated,
+      data: data as T,
+      promptHash: hashPrompt(options.prompt),
       modelName: this.actualModel,
       modelVersion: `${this.actualModel}-fixture-v1`,
+      traceId: `trace-${options.schemaName}`,
     };
   }
 
@@ -422,83 +527,171 @@ function validDeliverableDraft(evidenceId: unknown = 'missing-evidence'): Record
   };
 }
 
-function planningResult(originalInput: string): ResearchPlanningResult {
+function planningResult(
+  originalInput: string,
+  requirement?: ResearchTaskV2,
+): CurrentResearchPlanningResult {
+  const structuredTask: ResearchTaskV2 = requirement ?? {
+    version: 'research-task-v2',
+    task_type: 'competitive_research',
+    business_domain: '宠物辅食',
+    research_goal: '形成基于公开证据的宠物辅食竞品研究计划',
+    target_audience: ['宠物食品产品与市场团队'],
+    scope: ['公开资料'],
+    constraints: [],
+    success_criteria: [{ id: 'verifiable-comparison', statement: '结论可追溯' }],
+    expected_deliverables: ['竞品研究计划'],
+    assumptions: [],
+    ambiguities: [],
+    clarification_questions: [],
+    blocking_issues: [],
+    sensitivity: 'public',
+    pii_detected: false,
+  };
+  const evidenceRequirements = [{
+    id: 'public-market-evidence',
+    acceptedClasses: ['public_source'] as const,
+    minimumCount: 1,
+    required: true,
+  }];
+  const problemGraph = {
+    version: 'problem-graph-v1' as const,
+    questions: [{
+      id: 'competitive-question',
+      statement: '主要竞品的公开定位差异是什么？',
+      rationale: '回答竞品研究目标',
+      priority: 'required' as const,
+      success_criterion_ids: [structuredTask.success_criteria[0]!.id],
+      evidence_requirements: evidenceRequirements.map((item) => ({
+        ...item,
+        acceptedClasses: [...item.acceptedClasses],
+      })),
+      acceptance_criteria: ['至少一个公开来源支撑结论'],
+      depends_on: [],
+    }],
+  };
+  const capabilityResolution = {
+    eligible: [{
+      skill: {
+        id: 'digital-human-competitive-analysis',
+        name: '数字人竞品分析',
+        path: 'skills/competitive-analysis/digital-human/SKILL.md',
+        when_to_use: '竞品研究',
+        owner: '竞品分析组',
+        status: 'active' as const,
+        task_types: ['competitive_research'],
+        inputs: ['research_goal'],
+        outputs: ['competitive_analysis'],
+        required_tools: ['tavily-web-search'],
+        risk_level: 'low' as const,
+      },
+      reasons: [{ code: 'eligible' as const, message: 'eligible' }],
+      pending_inputs: [],
+    }],
+    rejected: [],
+  };
   const steps = (mode: 'depth' | 'speed') => [
     {
-      step_no: 1,
+      step_no: 99,
       step_name: `${mode} 公开来源检索`,
       actor_type: 'tool' as const,
       actor_id: 'tavily-web-search',
+      question_ids: ['competitive-question'],
+      depends_on: [],
       input: {
         query: originalInput,
         max_results: 3,
         search_depth: mode === 'depth' ? 'advanced' : 'basic',
         include_answer: false,
       },
+      input_bindings: [],
+      expected_outputs: [{ pointer: '/results', description: '公开来源结果' }],
+      acceptance_criteria: ['返回至少一个公开来源'],
       requires_approval: false,
+      fallback_actor_ids: [],
     },
     {
-      step_no: 2,
+      step_no: 99,
       step_name: `${mode} 竞品分析`,
       actor_type: 'skill' as const,
       actor_id: 'digital-human-competitive-analysis',
+      question_ids: ['competitive-question'],
+      depends_on: [1],
+      input: { research_goal: structuredTask.research_goal, sources: null },
+      input_bindings: [{ target_pointer: '/sources', source_step_no: 1, source_pointer: '/results' }],
+      expected_outputs: [{ pointer: '/analysis', description: '竞品分析' }],
+      acceptance_criteria: ['分析引用公开来源'],
       requires_approval: false,
+      fallback_actor_ids: [],
     },
     {
-      step_no: 3,
+      step_no: 99,
       step_name: `${mode} 研究摘要`,
       actor_type: 'llm' as const,
       actor_id: 'research-synthesis',
+      question_ids: ['competitive-question'],
+      depends_on: [2],
+      input: { analysis: null },
+      input_bindings: [{ target_pointer: '/analysis', source_step_no: 2, source_pointer: '/analysis' }],
+      expected_outputs: [{ pointer: '/summary', description: '研究摘要' }],
+      acceptance_criteria: ['摘要覆盖研究问题'],
       requires_approval: false,
+      fallback_actor_ids: [],
     },
     {
-      step_no: 4,
+      step_no: 99,
       step_name: `${mode} 证据复核`,
       actor_type: 'reviewer' as const,
       actor_id: 'evidence-reviewer',
+      question_ids: ['competitive-question'],
+      depends_on: [3],
+      input: { summary: null },
+      input_bindings: [{ target_pointer: '/summary', source_step_no: 3, source_pointer: '/summary' }],
+      expected_outputs: [{ pointer: '/review', description: '证据复核' }],
+      acceptance_criteria: ['所有结论可追溯'],
       requires_approval: false,
+      fallback_actor_ids: [],
     },
   ];
+  const candidate = (id: 'depth' | 'speed') => ({
+    id,
+    title: id === 'depth' ? '深度研究' : '快速研究',
+    rationale: id === 'depth' ? '优先覆盖更多研究维度' : '优先形成可信的最小闭环',
+    tradeoffs: id === 'depth' ? '执行时间更长' : '研究维度更聚焦',
+    steps: steps(id),
+    assumptions: [],
+    activated_nodes: ['D5_competitive', 'D6_evidence'],
+  });
   return {
     task: {
-      task_type: 'competitive_research',
-      business_domain: '宠物辅食',
-      research_goal: '形成基于公开证据的宠物辅食竞品研究计划',
+      task_type: structuredTask.task_type,
+      business_domain: structuredTask.business_domain,
+      research_goal: structuredTask.research_goal,
       assumptions: [],
       confirmations: [],
       blocking_issues: [],
       sensitivity: 'public',
       pii_detected: false,
     },
+    structuredTask,
     activatedNodes: ['D5_competitive', 'D6_evidence'],
     decisionStates: [],
-    candidates: [
-      {
-        id: 'depth',
-        title: '深度研究',
-        rationale: '优先覆盖更多研究维度',
-        tradeoffs: '执行时间更长',
-        steps: steps('depth'),
-        assumptions: [],
-        activated_nodes: ['D5_competitive', 'D6_evidence'],
-      },
-      {
-        id: 'speed',
-        title: '快速研究',
-        rationale: '优先形成可信的最小闭环',
-        tradeoffs: '研究维度更聚焦',
-        steps: steps('speed'),
-        assumptions: [],
-        activated_nodes: ['D5_competitive', 'D6_evidence'],
-      },
-    ],
+    candidates: [candidate('depth'), candidate('speed')],
     guidanceSources: [],
     provenance: {
-      modelName: 'offline-planning-fixture',
+      modelName: 'planner',
       modelVersion: '1',
-      promptHash: hashPrompt(originalInput),
-      traceId: 'trace-offline-planning',
+      promptHash: originalInput,
+      traceId: 'trace-planner',
     },
+    problemGraph,
+    problemGraphProvenance: {
+      modelName: 'planner',
+      modelVersion: '1',
+      promptHash: 'sha256:problem-graph',
+      traceId: 'trace-problem-graph',
+    },
+    capabilityResolution,
   };
 }
 
@@ -1089,7 +1282,7 @@ test('production plan stream forwards requirement-backed planning progress in or
 });
 
 
-test('production ControlRuntime rejects planning model drift before task persistence and records a failed receipt', async () => {
+test('production Current planning rejects model drift before candidate persistence and records a failed receipt', async () => {
   const { buildControlRuntime } = await loadControlRuntimeModule();
   const originalInput = `planning-model-drift-${randomUUID()}`;
   const expectedModel = 'expected-planning-model';
@@ -1110,11 +1303,22 @@ test('production ControlRuntime rejects planning model drift before task persist
     artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
     expectedActualModel: expectedModel,
   });
-
-  await assert.rejects(
-    () => runtime.controlPlanning.plan({ originalInput, conversationId, ownerUserId }),
-    /model drift/i,
+  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+  const app = await listenLocalApp(
+    (createAgentApiApp as unknown as PlannedCreateAgentApiApp)({ controlRuntime: runtime }),
   );
+  try {
+    const response = await postJson(
+      app.baseUrl,
+      '/api/control-tasks/plan',
+      signToken({ userId: ownerUserId, email: 'owner@test.local' }),
+      { originalInput, conversationId },
+    );
+    assert.equal(response.status, 502);
+    assert.match(await response.text(), /model drift/i);
+  } finally {
+    await closeLocalServer(app.server);
+  }
 
   const connection = await scopedDatabase.connect();
   try {
@@ -1135,9 +1339,9 @@ test('production ControlRuntime rejects planning model drift before task persist
       [existingReceipts.rows.map((row) => row.id)],
     );
 
-    assert.deepEqual(persisted.rows[0], { tasks: 0, candidates: 0 });
+    assert.deepEqual(persisted.rows[0], { tasks: 1, candidates: 0 });
     assert.deepEqual(receipts.rows, [{
-      stage: 'task_understanding',
+      stage: 'requirement_understanding',
       requested_model: requestedModel,
       actual_model: actualModel,
       status: 'failed',
@@ -1152,7 +1356,7 @@ test('production ControlRuntime rejects planning model drift before task persist
   }
 });
 
-test('production ControlRuntime persists planning candidates only when every planning receipt matches the model pin', async () => {
+test('production Current planning persists candidates only when every receipt matches the model pin', async () => {
   const { buildControlRuntime } = await loadControlRuntimeModule();
   const originalInput = `planning-model-match-${randomUUID()}`;
   const expectedModel = 'expected-planning-model';
@@ -1172,12 +1376,24 @@ test('production ControlRuntime persists planning candidates only when every pla
     artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
     expectedActualModel: expectedModel,
   });
-
-  const planned = await runtime.controlPlanning.plan({
-    originalInput,
-    conversationId,
-    ownerUserId,
-  });
+  // Delayed import preserves the test-controlled DB/JWT environment used by this integration file.
+  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+  const app = await listenLocalApp(
+    (createAgentApiApp as unknown as PlannedCreateAgentApiApp)({ controlRuntime: runtime }),
+  );
+  let planned: ControlPlanCandidatesResponse;
+  try {
+    const response = await postJson(
+      app.baseUrl,
+      '/api/control-tasks/plan',
+      signToken({ userId: ownerUserId, email: 'owner@test.local' }),
+      { originalInput, conversationId },
+    );
+    assert.equal(response.status, 200, await response.clone().text());
+    planned = await response.json() as ControlPlanCandidatesResponse;
+  } finally {
+    await closeLocalServer(app.server);
+  }
 
   const connection = await scopedDatabase.connect();
   try {
@@ -1209,29 +1425,13 @@ test('production ControlRuntime persists planning candidates only when every pla
         status: row.status,
         failure: row.failure_json,
       })),
-      [
-        {
-          stage: 'planning',
-          requestedModel,
-          actualModel: expectedModel,
-          status: 'succeeded',
-          failure: null,
-        },
-        {
-          stage: 'planning_decision',
-          requestedModel,
-          actualModel: expectedModel,
-          status: 'succeeded',
-          failure: null,
-        },
-        {
-          stage: 'task_understanding',
-          requestedModel,
-          actualModel: expectedModel,
-          status: 'succeeded',
-          failure: null,
-        },
-      ],
+      ['planning', 'planning_decision', 'problem_graph', 'requirement_understanding'].map((stage) => ({
+        stage,
+        requestedModel,
+        actualModel: expectedModel,
+        status: 'succeeded',
+        failure: null,
+      })),
     );
   } finally {
     connection.release();
@@ -1573,10 +1773,7 @@ test('post-activation clarification failure reclaims the same command without an
       async plan(input) {
         plannerCalls += 1;
         if (plannerCalls === 1) throw new Error('simulated post-activation planner failure');
-        return {
-          ...planningResult(input.originalInput),
-          structuredTask: resolvedClarificationRequirement(),
-        } as ResearchPlanningResult;
+        return planningResult(input.originalInput, resolvedClarificationRequirement());
       },
     },
     tools: new ToolRouter(),
@@ -1707,10 +1904,7 @@ test('response delivery failure after atomic clarification commit replays the pe
     planning: {
       async plan(input) {
         plannerCalls += 1;
-        return {
-          ...planningResult(input.originalInput),
-          structuredTask: resolvedClarificationRequirement(),
-        } as ResearchPlanningResult;
+        return planningResult(input.originalInput, resolvedClarificationRequirement());
       },
     },
     tools: new ToolRouter(),

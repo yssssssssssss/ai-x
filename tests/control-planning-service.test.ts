@@ -22,7 +22,10 @@ import type {
   DecisionStateRec,
   PlanProvenance,
 } from '../apps/orchestrator-runtime/src/planners/plan-strategy.ts';
-import { ResearchPlanningService } from '../apps/orchestrator-runtime/src/planners/research-planning-service.ts';
+import {
+  ResearchPlanningService,
+  type CurrentResearchPlanningResult,
+} from '../apps/orchestrator-runtime/src/planners/research-planning-service.ts';
 import type {
   LLMClient,
   LLMResult,
@@ -34,15 +37,7 @@ import { hashPrompt } from '../apps/orchestrator-runtime/src/runtime/llm-client.
 import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 
-interface ResearchPlanningResult {
-  task: ResearchTaskData;
-  structuredTask?: ResearchTaskV2;
-  activatedNodes: string[];
-  decisionStates: DecisionStateRec[];
-  candidates: PlanCandidate[];
-  guidanceSources: GuidanceRef[];
-  provenance: PlanProvenance;
-}
+type ResearchPlanningResult = CurrentResearchPlanningResult;
 
 type ProvisionalExecutionPlan = Omit<CurrentExecutionPlan, 'task_id'> & {
   task_id?: '';
@@ -157,74 +152,98 @@ const evidencePolicy: EvidenceRequirement[] = [{
 }];
 
 function researchPlanningResult(originalInput: string): ResearchPlanningResult {
+  const structuredTask: ResearchTaskV2 = {
+    version: 'research-task-v2',
+    task_type: 'competitive_research',
+    business_domain: '宠物辅食',
+    research_goal: '形成可信的宠物辅食市场研究计划',
+    target_audience: ['宠物食品产品与市场团队'],
+    scope: ['公开可访问资料'],
+    constraints: [{ id: 'c1', statement: '仅用公开来源', source: 'user' }],
+    success_criteria: [{ id: 's1', statement: '所有结论可追溯' }],
+    expected_deliverables: ['研究计划'],
+    assumptions: [],
+    ambiguities: [],
+    clarification_questions: [],
+    blocking_issues: [],
+    sensitivity: 'public',
+    pii_detected: false,
+  };
+  const problemGraph = {
+    version: 'problem-graph-v1' as const,
+    questions: [{
+      id: 'q-public-source',
+      statement: '有哪些可信公开来源？',
+      rationale: '支撑可追溯结论',
+      priority: 'required' as const,
+      success_criterion_ids: ['s1'],
+      evidence_requirements: structuredClone(evidencePolicy),
+      acceptance_criteria: ['至少一个可信公开来源'],
+      depends_on: [],
+    }],
+  };
+  const capabilityResolution = {
+    eligible: [{
+      skill: {
+        id: 'competitive-web-research',
+        name: '竞品公开研究',
+        path: 'skills/competitive-analysis/web-research/SKILL.md',
+        when_to_use: '公开资料研究',
+        owner: '研究团队',
+        status: 'active' as const,
+        task_types: ['competitive_research'],
+        inputs: ['research_goal'],
+        outputs: ['competitive_analysis'],
+        required_tools: ['tavily-search'],
+        risk_level: 'low' as const,
+      },
+      reasons: [{ code: 'eligible' as const, message: 'eligible' }],
+      pending_inputs: [],
+    }],
+    rejected: [],
+  };
+  const candidate = (id: 'depth' | 'speed') => ({
+    id,
+    title: id === 'depth' ? '深度研究' : '快速研究',
+    rationale: id === 'depth' ? '优先覆盖来源与交叉验证' : '优先产出可执行框架',
+    tradeoffs: id === 'depth' ? '耗时更长' : '来源覆盖较窄',
+    steps: [{
+      step_no: 99,
+      step_name: id === 'depth' ? '公开来源深度检索' : '公开来源快速检索',
+      actor_type: 'tool' as const,
+      actor_id: 'tavily-search',
+      question_ids: ['q-public-source'],
+      depends_on: [],
+      input: {
+        query: originalInput,
+        filters: id === 'depth'
+          ? { language: 'zh-CN', freshness: 'year' }
+          : { language: 'zh-CN' },
+      },
+      input_bindings: [],
+      expected_outputs: [{ pointer: '/results', description: '公开来源结果' }],
+      acceptance_criteria: ['至少返回一个公开来源'],
+      requires_approval: false,
+      fallback_actor_ids: [],
+    }],
+    assumptions: [],
+    activated_nodes: ['D5_competitive', 'D6_evidence'],
+  });
   return {
     task: {
-      task_type: 'competitive_research',
-      business_domain: '宠物辅食',
-      research_goal: '形成可信的宠物辅食市场研究计划',
+      task_type: structuredTask.task_type,
+      business_domain: structuredTask.business_domain,
+      research_goal: structuredTask.research_goal,
       assumptions: [],
       confirmations: [],
       blocking_issues: [],
       sensitivity: 'public',
       pii_detected: false,
     },
-    structuredTask: {
-      version: 'research-task-v2',
-      task_type: 'competitive_research',
-      business_domain: '宠物辅食',
-      research_goal: '形成可信的宠物辅食市场研究计划',
-      target_audience: ['宠物食品产品与市场团队'],
-      scope: ['公开可访问资料'],
-      constraints: [{ id: 'c1', statement: '仅用公开来源', source: 'user' }],
-      success_criteria: [{ id: 's1', statement: '所有结论可追溯' }],
-      expected_deliverables: ['研究计划'],
-      assumptions: [],
-      ambiguities: [],
-      clarification_questions: [],
-      blocking_issues: [],
-      sensitivity: 'public',
-      pii_detected: false,
-    },
+    structuredTask,
     activatedNodes: ['D5_competitive', 'D6_evidence'],
     decisionStates: [],
-    candidates: [
-      {
-        id: 'depth',
-        title: '深度研究',
-        rationale: '优先覆盖来源与交叉验证',
-        tradeoffs: '耗时更长',
-        steps: [{
-          step_no: 1,
-          step_name: '公开来源深度检索',
-          actor_type: 'tool',
-          actor_id: 'tavily-search',
-          input: {
-            query: originalInput,
-            filters: { language: 'zh-CN', freshness: 'year' },
-          },
-        }],
-        assumptions: [],
-        activated_nodes: ['D5_competitive', 'D6_evidence'],
-      },
-      {
-        id: 'speed',
-        title: '快速研究',
-        rationale: '优先产出可执行框架',
-        tradeoffs: '来源覆盖较窄',
-        steps: [{
-          step_no: 1,
-          step_name: '公开来源快速检索',
-          actor_type: 'tool',
-          actor_id: 'tavily-search',
-          input: {
-            query: originalInput,
-            filters: { language: 'zh-CN' },
-          },
-        }],
-        assumptions: [],
-        activated_nodes: ['D5_competitive'],
-      },
-    ],
+    candidates: [candidate('depth'), candidate('speed')],
     guidanceSources: [],
     provenance: {
       modelName: 'planning-fake',
@@ -232,6 +251,14 @@ function researchPlanningResult(originalInput: string): ResearchPlanningResult {
       promptHash: 'sha256:planning-prompt',
       traceId: 'trace_control_planning',
     },
+    problemGraph,
+    problemGraphProvenance: {
+      modelName: 'planning-fake',
+      modelVersion: '1',
+      promptHash: 'sha256:problem-graph',
+      traceId: 'trace_problem_graph',
+    },
+    capabilityResolution,
   };
 }
 
@@ -469,7 +496,12 @@ test('creates a conversation and persists ResearchPlanningResult candidates as C
     assert.deepEqual(Object.keys(candidate).sort(), ['candidateId', 'pendingInputs', 'plan']);
     assert.equal(candidate.plan.deliverable_type, 'research_plan');
     assert.deepEqual(candidate.plan.evidence_requirements, evidencePolicy);
-    assert.deepEqual(candidate.plan.steps, planningResult.candidates[index]?.steps);
+    assert.deepEqual(candidate.plan.steps, planningResult.candidates[index]?.steps.map((step, stepIndex) => ({
+      ...step,
+      step_no: stepIndex + 1,
+    })));
+    assert.deepEqual(candidate.plan.problem_graph, planningResult.problemGraph);
+    assert.deepEqual(candidate.plan.capability_decisions, planningResult.capabilityResolution);
     assert.deepEqual(candidate.plan.candidate_metadata, {
       title: planningResult.candidates[index]?.title,
       rationale: planningResult.candidates[index]?.rationale,
@@ -514,86 +546,38 @@ test('creates a conversation and persists ResearchPlanningResult candidates as C
   );
 });
 
-test('normalizes and whitelists generated Current plan steps before repository persistence', async () => {
+test('rejects generated Current step drift before repository persistence', async () => {
   const { ControlPlanningService } = await loadControlPlanningModule();
-  const ownerUserId = '00000000-0000-0000-0000-000000000103';
-  const conversationId = '00000000-0000-0000-0000-000000000203';
-  const taskId = '00000000-0000-0000-0000-000000000303';
-  const originalInput = '归一化 Current 候选计划';
+  const originalInput = '拒绝 Current 候选计划漂移';
   const planningResult = researchPlanningResult(originalInput);
-  planningResult.candidates[0]!.steps = [
-    {
-      step_no: 9,
-      actor_type: 'tool',
-      actor_id: 'tavily-search',
-      purpose: '检索公开来源',
-      input: { query: originalInput },
-      requires_approval: false,
-      step_id: 'untrusted-step-id',
-      schema_escape: 'must-not-persist',
-    },
-    {
-      step_no: 9,
-      step_name: '综合分析',
-      actor_type: 'llm',
-      actor_id: 'research-synthesis',
-      input: ['not', 'an', 'object'],
-      ignored: true,
-    },
-  ] as unknown as PlanCandidate['steps'];
-  let repositoryInput: CreateTaskWithCandidatesInput | undefined;
-
+  planningResult.candidates[0]!.steps[0] = {
+    ...planningResult.candidates[0]!.steps[0]!,
+    purpose: 'legacy-only field',
+    schema_escape: 'must-not-persist',
+  } as never;
+  let repositoryCalls = 0;
   const service = new ControlPlanningService({
     planning: { async plan() { return planningResult; } },
     conversations: {
-      async create() { return { id: conversationId }; },
+      async create() { return { id: '00000000-0000-0000-0000-000000000203' }; },
       async requireOwned(input) { return { id: input.conversationId }; },
     },
     repository: {
-      async createTaskWithCandidates(input) {
-        repositoryInput = structuredClone(input);
-        return {
-          task: {
-            id: taskId,
-            state: 'awaiting_selection',
-            stateVersion: 0,
-            activePlanVersionId: null,
-            currentAttemptId: null,
-          },
-          candidates: input.candidates.map((candidate, index) => ({
-            id: `00000000-0000-0000-0000-0000000004${index + 10}`,
-            taskId,
-            version: index + 1,
-            candidateId: candidate.candidateId,
-            plan: { ...candidate.plan, task_id: taskId },
-            planHash: `sha256:${String(index + 1).repeat(64)}`,
-            pendingInputs: candidate.pendingInputs,
-          })),
-        };
+      async createTaskWithCandidates() {
+        repositoryCalls += 1;
+        throw new Error('repository must not be called');
       },
     },
   });
 
-  await service.plan({ originalInput, ownerUserId });
-
-  assert.ok(repositoryInput);
-  assert.deepEqual(repositoryInput.candidates[0]?.plan.steps, [
-    {
-      step_no: 1,
-      step_name: 'tavily-search',
-      actor_type: 'tool',
-      actor_id: 'tavily-search',
-      purpose: '检索公开来源',
-      input: { query: originalInput },
-      requires_approval: false,
-    },
-    {
-      step_no: 2,
-      step_name: '综合分析',
-      actor_type: 'llm',
-      actor_id: 'research-synthesis',
-    },
-  ]);
+  await assert.rejects(
+    () => service.plan({
+      originalInput,
+      ownerUserId: '00000000-0000-0000-0000-000000000103',
+    }),
+    /candidate_schema_invalid.*purpose.*schema_escape/,
+  );
+  assert.equal(repositoryCalls, 0);
 });
 
 test('rejects empty steps and unknown actor types before calling the repository', async () => {
@@ -616,7 +600,7 @@ test('rejects empty steps and unknown actor types before calling the repository'
 
   for (const invalid of invalidCases) {
     const planningResult = researchPlanningResult(invalid.label);
-    planningResult.candidates[0]!.steps = invalid.steps as PlanCandidate['steps'];
+    planningResult.candidates[0]!.steps = invalid.steps as never;
     let repositoryCalls = 0;
     const service = new ControlPlanningService({
       planning: { async plan() { return planningResult; } },

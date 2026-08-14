@@ -1,25 +1,15 @@
-import type { EvidenceRequirement } from '../../../../packages/api-contract/research-deliverable.ts';
+import type {
+  EvidenceRequirement,
+  ProblemGraph,
+  ResearchQuestion,
+} from '../../../../packages/api-contract/research-deliverable.ts';
 import type { GuidanceRef, ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
 import type { LLMClient } from '../runtime/llm-client.ts';
 import { hashPrompt } from '../runtime/llm-client.ts';
 import { loadSchemaText, resolveSchema } from '../runtime/schema-registry.ts';
 import type { SchemaValidator } from '../schema/validator.ts';
 
-export interface ResearchQuestion {
-  id: string;
-  statement: string;
-  rationale: string;
-  priority: 'required' | 'optional';
-  success_criterion_ids: string[];
-  evidence_requirements: EvidenceRequirement[];
-  acceptance_criteria: string[];
-  depends_on: string[];
-}
-
-export interface ProblemGraph {
-  version: 'problem-graph-v1';
-  questions: ResearchQuestion[];
-}
+export type { ProblemGraph, ResearchQuestion };
 
 export interface ProblemGraphProvenance {
   modelName: string;

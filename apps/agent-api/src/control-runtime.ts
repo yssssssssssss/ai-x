@@ -4,7 +4,6 @@ import { ControlPlaneAuthorizationError, ControlPlaneRepository } from '../../..
 import { createConversation, getOwnedConversation, listMessages, writeMessage } from '../../../database/repository.ts';
 import { ControlArtifactStore } from '../../orchestrator-runtime/src/control/artifact-store.ts';
 import { ControlPlanningService } from '../../orchestrator-runtime/src/control/control-planning-service.ts';
-import { sanitizeCandidateToPlan } from '../../orchestrator-runtime/src/planners/plan-sanitizer.ts';
 import { LeaseExecutionEngine } from '../../orchestrator-runtime/src/control/lease-execution-engine.ts';
 import {
   TaskWorkflowService,
@@ -23,11 +22,14 @@ import {
 } from '../../orchestrator-runtime/src/control/requirement-refinement-service.ts';
 import {
   ResearchPlanningService,
+  resolveEvidenceRequirements,
+  type CurrentResearchPlanningResult,
   type ResearchPlanningInput,
-  type ResearchPlanningResult,
 } from '../../orchestrator-runtime/src/planners/research-planning-service.ts';
-import type { PlanCandidate, PlanProgress } from '../../../packages/api-contract/plan.ts';
+import { PlanCompiler } from '../../orchestrator-runtime/src/planners/plan-compiler.ts';
+import type { PlanCandidate, PlanProgress, ResearchTaskV2 } from '../../../packages/api-contract/plan.ts';
 import type {
+  CurrentExecutionPlan,
   EvidenceClass,
   EvidenceRequirement,
   PendingInput,
@@ -208,7 +210,7 @@ interface PlanningAdapter {
   plan(
     input: ResearchPlanningInput,
     onProgress?: (event: PlanProgress) => void,
-  ): Promise<ResearchPlanningResult>;
+  ): Promise<CurrentResearchPlanningResult>;
 }
 
 export interface ControlRuntimeOverrides {
@@ -299,12 +301,26 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
   }
   // planning 与 deliverable 的 LLM 都经 ReceiptLLMClient 包装:逐次记录模型调用回执,
   // actual≠expected(drift)或回执写库失败时 fail-closed。planning receipt 锚定 actual model pin。
-  const planning = overrides.planning ?? new ResearchPlanningService({
+  const planningService = overrides.planning ? null : new ResearchPlanningService({
     llm: new ReceiptLLMClient(llm, repository),
     validator,
     skillLoader,
+    tools,
+    approvalAuthorities: ['owner'],
     expectedActualModel,
   });
+  const planning: PlanningAdapter = overrides.planning ?? {
+    async plan(input, onProgress) {
+      if (!input.requirement) {
+        throw new Error('Current planning requires finalized ResearchTaskV2');
+      }
+      return planningService!.planCurrentFromRequirement(
+        input.requirement,
+        input.originalInput,
+        onProgress,
+      );
+    },
+  };
   const conversations = overrides.conversations ?? defaultConversations();
   const refinementConversations: ConversationAdapter = {
     requireOwned: (input) => conversations.requireOwned(input),
@@ -358,10 +374,9 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       if (!task || task.activePlanVersionId !== input.activePlanVersionId) {
         throw new Error(`task ${input.taskId} has no matching active plan`);
       }
-      const taskShape = revisionRecord(task.structuredTask);
-      const researchGoal = typeof taskShape?.research_goal === 'string'
-        ? taskShape.research_goal.trim()
-        : '';
+      validator.validateOrThrow('research-task-v2', task.structuredTask);
+      const structuredTask = task.structuredTask as ResearchTaskV2;
+      const researchGoal = structuredTask.research_goal.trim();
       if (!researchGoal) throw new Error(`task ${input.taskId} has no research_goal`);
 
       const activePlan = await repository.getPlanVersionDetail(input.activePlanVersionId);
@@ -371,39 +386,31 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       if (activePlan.candidateId !== 'depth' && activePlan.candidateId !== 'speed') {
         throw new Error(`active plan ${activePlan.id} has no depth/speed candidate`);
       }
-      const activePlanShape = revisionRecord(activePlan.plan);
-      if (
-        activePlanShape?.deliverable_type !== 'research_plan'
-        || !revisionEvidenceRequirements(activePlanShape.evidence_requirements)
-        || !revisionPendingInputs(activePlan.pendingInputs)
-        || !revisionSteps(activePlanShape.steps)
-      ) {
-        throw new Error(`active plan ${activePlan.id} is malformed`);
+      validator.validateOrThrow('current-execution-plan', activePlan.plan);
+      if (!revisionPendingInputs(activePlan.pendingInputs)) {
+        throw new Error(`active plan ${activePlan.id} has malformed pending inputs`);
       }
+      const activePlanShape = activePlan.plan as CurrentExecutionPlan;
 
       const planningResult = await planning.plan({
         originalInput: `${researchGoal}\n\nRevision instruction: ${input.instruction}`,
+        requirement: structuredTask,
       });
-      const candidate = revisionCandidate(planningResult, activePlan.candidateId);
-      const activatedNodes = revisionActivatedNodes(planningResult);
-      const steps = sanitizeCandidateToPlan(candidate, task.id, '').steps;
-      if (!revisionPendingInputsResolve(activePlan.pendingInputs, steps)) {
-        throw new Error(`active plan ${activePlan.id} has pending input target unresolved by replacement steps`);
+      const candidate = planningResult.candidates.find((item) => item.id === activePlan.candidateId);
+      if (!candidate) {
+        throw new Error(`revision planning result has no ${activePlan.candidateId} candidate`);
       }
+      const compiled = new PlanCompiler(validator).compile({
+        candidate,
+        task: structuredTask,
+        problem_graph: planningResult.problemGraph,
+        capability_resolution: planningResult.capabilityResolution,
+        evidence_requirements: activePlanShape.evidence_requirements,
+        activated_nodes: planningResult.activatedNodes,
+      });
       return {
-        plan: {
-          task_id: task.id,
-          deliverable_type: activePlanShape.deliverable_type,
-          evidence_requirements: activePlanShape.evidence_requirements,
-          steps,
-          candidate_metadata: {
-            title: candidate.title,
-            rationale: candidate.rationale,
-            tradeoffs: candidate.tradeoffs,
-          },
-          activated_nodes: activatedNodes,
-        },
-        pendingInputs: activePlan.pendingInputs,
+        plan: { ...compiled.plan, task_id: task.id },
+        pendingInputs: compiled.pending_inputs,
       };
     },
   };

@@ -22,6 +22,7 @@ import type {
   listMessages as ListMessages,
   writeMessage as WriteMessage,
 } from '../database/repository.ts';
+import type { CurrentExecutionPlan } from '../packages/api-contract/research-deliverable.ts';
 
 class ScopedMigrationDatabase implements MigrationDatabase {
   constructor(
@@ -106,6 +107,44 @@ async function loadRequireJwtSecret(): Promise<() => string> {
   return authModule.requireJwtSecret as () => string;
 }
 
+function currentFixturePlan(label: string): Omit<CurrentExecutionPlan, 'task_id'> {
+  const questionId = `${label}-question`;
+  return {
+    deliverable_type: 'research_plan',
+    evidence_requirements: [],
+    problem_graph: {
+      version: 'problem-graph-v1',
+      questions: [{
+        id: questionId,
+        statement: `${label} research question`,
+        rationale: 'authorization fixture',
+        priority: 'optional',
+        success_criterion_ids: [],
+        evidence_requirements: [],
+        acceptance_criteria: ['fixture completes'],
+        depends_on: [],
+      }],
+    },
+    capability_decisions: { eligible: [], rejected: [] },
+    steps: [{
+      step_no: 1,
+      step_name: label,
+      actor_type: 'llm',
+      actor_id: 'research-synthesis',
+      question_ids: [questionId],
+      depends_on: [],
+      input: {},
+      input_bindings: [],
+      expected_outputs: [{ pointer: '/result', description: 'fixture result' }],
+      acceptance_criteria: ['fixture completes'],
+      requires_approval: false,
+      fallback_actor_ids: [],
+    }],
+    candidate_metadata: { title: label, rationale: 'fixture', tradeoffs: 'fixture only' },
+    activated_nodes: [],
+  };
+}
+
 before(async () => {
   await database.query(`CREATE SCHEMA "${schema}"`);
   await runMigrations({
@@ -163,30 +202,12 @@ before(async () => {
     candidates: [
       {
         candidateId: 'depth',
-        plan: {
-          deliverable_type: 'research_plan',
-          evidence_requirements: [],
-          steps: [{
-            step_no: 1,
-            step_name: 'depth public research',
-            actor_type: 'tool',
-            actor_id: 'tavily-web-search',
-          }],
-        },
+        plan: currentFixturePlan('depth public research'),
         pendingInputs: [],
       },
       {
         candidateId: 'speed',
-        plan: {
-          deliverable_type: 'research_plan',
-          evidence_requirements: [],
-          steps: [{
-            step_no: 1,
-            step_name: 'speed public research',
-            actor_type: 'llm',
-            actor_id: 'research-synthesis',
-          }],
-        },
+        plan: currentFixturePlan('speed public research'),
         pendingInputs: [],
       },
     ],

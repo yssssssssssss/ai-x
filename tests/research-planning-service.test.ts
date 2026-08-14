@@ -85,7 +85,7 @@ function toCurrentExecutionPlan(
   taskId: string,
   candidate: PlanCandidate,
   evidenceRequirements: EvidenceRequirement[],
-): CurrentExecutionPlan {
+): Pick<CurrentExecutionPlan, 'task_id' | 'deliverable_type' | 'evidence_requirements'> & { steps: PlanCandidate['steps'] } {
   return {
     task_id: taskId,
     deliverable_type: 'research_plan',

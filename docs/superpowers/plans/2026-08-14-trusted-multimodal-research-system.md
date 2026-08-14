@@ -762,9 +762,24 @@ git commit -m "feat: resolve eligible current capabilities"
 - Modify: `packages/api-contract/research-deliverable.ts`
 - Create: `schemas/current-execution-plan.schema.json`
 - Create: `apps/orchestrator-runtime/src/planners/plan-compiler.ts`
-- Modify: `apps/orchestrator-runtime/src/control/control-planning-service.ts`
+- Modify: `apps/orchestrator-runtime/src/planners/problem-graph-planner.ts`
+- Modify: `apps/orchestrator-runtime/src/planners/plan-strategy.ts`
 - Modify: `apps/orchestrator-runtime/src/planners/routed-planner.ts`
+- Modify: `apps/orchestrator-runtime/src/planners/research-planning-service.ts`
+- Modify: `apps/orchestrator-runtime/src/control/control-planning-service.ts`
+- Modify: `apps/orchestrator-runtime/src/control/requirement-refinement-service.ts`
+- Modify: `apps/orchestrator-runtime/src/runtime/schema-registry.ts`
+- Modify: `apps/agent-api/src/control-runtime.ts`
+- Modify: `database/control-plane.ts`
+- Modify: `apps/orchestrator-runtime/src/gold-run.ts`
 - Test: `tests/plan-compiler.test.ts`
+- Test: `tests/control-planning-service.test.ts`
+- Test: `tests/control-plane.test.ts`
+- Test: `tests/control-api-integration.test.ts`
+- Test fixture migration: `tests/auth-isolation.test.ts`, `tests/control-planning.test.ts`, `tests/current-revision-integrity.test.ts`, `tests/research-planning-service.test.ts`
+- Report/progress: `.superpowers/sdd/task-10-report.md`, `.superpowers/sdd/progress.md`
+
+**Scope correction:** Current planning assembly and every revision persistence path must invoke Task8/9 and PlanCompiler before repository insertion. The production runtime, requirement-planning seam, canonical repository revision gate, and existing strict-Current fixtures are therefore part of Task 10; Legacy `PlanStep` and Legacy planning remain unchanged.
 
 **Interfaces:**
 - Produces: `CurrentPlanStep`、`PlanCompiler.compile()`。

@@ -27,7 +27,11 @@ import {
   type MigrationConnection,
   type MigrationDatabase,
 } from '../database/migration-runner.ts';
-import type { ResearchPlanningResult } from '../apps/orchestrator-runtime/src/planners/research-planning-service.ts';
+import type {
+  CurrentResearchPlanningResult,
+  ResearchPlanningInput,
+} from '../apps/orchestrator-runtime/src/planners/research-planning-service.ts';
+import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 
 class ScopedRevisionDatabase implements MigrationDatabase {
   constructor(
@@ -123,14 +127,40 @@ after(async () => {
   restoreEnvironment('PGOPTIONS', originalPgOptions);
 });
 
+function finalizedTask(researchGoal = '研究国内宠物辅食品牌'): ResearchTaskV2 {
+  return {
+    version: 'research-task-v2',
+    task_type: 'competitive_research',
+    business_domain: '宠物辅食',
+    research_goal: researchGoal,
+    target_audience: ['产品团队'],
+    scope: ['公开资料'],
+    constraints: [],
+    success_criteria: [{ id: 'source-backed', statement: '结论可追溯' }],
+    expected_deliverables: ['研究计划'],
+    assumptions: [],
+    ambiguities: [],
+    clarification_questions: [],
+    blocking_issues: [],
+    sensitivity: 'public',
+    pii_detected: false,
+  };
+}
+
 function candidateSteps(mode: 'depth' | 'speed') {
   return [{
     step_no: 99,
     step_name: `${mode} search`,
     actor_type: 'tool' as const,
     actor_id: 'tavily-web-search',
+    question_ids: ['source-question'],
+    depends_on: [],
     input: { query: mode },
+    input_bindings: [],
+    expected_outputs: [{ pointer: '/results', description: '公开来源' }],
+    acceptance_criteria: ['返回公开来源'],
     requires_approval: false,
+    fallback_actor_ids: [],
   }];
 }
 
@@ -148,11 +178,7 @@ async function createSelectedTask(options: {
     ownerUserId: ownerId,
     originalInput: `original ${suffix}`,
     taskType: 'competitive_research',
-    structuredTask: options.structuredTask ?? {
-      research_goal: '研究国内宠物辅食品牌',
-      confirmations: [],
-      blocking_issues: [],
-    },
+    structuredTask: options.structuredTask ?? finalizedTask(),
     candidates: (['depth', 'speed'] as const).map((candidateId) => ({
       candidateId,
       plan: {
@@ -162,6 +188,23 @@ async function createSelectedTask(options: {
           ...requirement,
           acceptedClasses: [...requirement.acceptedClasses],
         })),
+        problem_graph: {
+          version: 'problem-graph-v1' as const,
+          questions: [{
+            id: 'source-question',
+            statement: '有哪些公开来源？',
+            rationale: '支撑可追溯结论',
+            priority: 'required' as const,
+            success_criterion_ids: ['source-backed'],
+            evidence_requirements: evidenceRequirements.map((requirement) => ({
+              ...requirement,
+              acceptedClasses: [...requirement.acceptedClasses],
+            })),
+            acceptance_criteria: ['至少一个公开来源'],
+            depends_on: [],
+          }],
+        },
+        capability_decisions: { eligible: [], rejected: [] },
         steps: candidateSteps(candidateId),
         candidate_metadata: {
           title: `${candidateId} original`,
@@ -204,18 +247,56 @@ async function overwriteActivePlan(input: {
 }
 
 
-function planningResult(originalInput: string): ResearchPlanningResult {
+function planningResult(originalInput: string): CurrentResearchPlanningResult {
+  const structuredTask = finalizedTask(originalInput);
+  const problemGraph = {
+    version: 'problem-graph-v1' as const,
+    questions: [{
+      id: 'source-question',
+      statement: '有哪些公开来源？',
+      rationale: '支撑可追溯结论',
+      priority: 'required' as const,
+      success_criterion_ids: ['source-backed'],
+      evidence_requirements: evidenceRequirements.map((requirement) => ({
+        ...requirement,
+        acceptedClasses: [...requirement.acceptedClasses],
+      })),
+      acceptance_criteria: ['至少一个公开来源'],
+      depends_on: [],
+    }],
+  };
+  const capabilityResolution = {
+    eligible: [{
+      skill: {
+        id: 'competitive-web-research',
+        name: '竞品公开研究',
+        path: 'skills/competitive-analysis/web-research/SKILL.md',
+        when_to_use: '公开资料研究',
+        owner: '研究团队',
+        status: 'active' as const,
+        task_types: ['competitive_research'],
+        inputs: ['research_goal'],
+        outputs: ['competitive_analysis'],
+        required_tools: ['tavily-web-search'],
+        risk_level: 'low' as const,
+      },
+      reasons: [{ code: 'eligible' as const, message: 'eligible' }],
+      pending_inputs: [],
+    }],
+    rejected: [],
+  };
   return {
     task: {
-      task_type: 'competitive_research',
-      business_domain: '宠物辅食',
-      research_goal: originalInput,
+      task_type: structuredTask.task_type,
+      business_domain: structuredTask.business_domain,
+      research_goal: structuredTask.research_goal,
       assumptions: [],
       confirmations: [],
       blocking_issues: [],
       sensitivity: 'public',
       pii_detected: false,
     },
+    structuredTask,
     activatedNodes: ['D3_method_selection'],
     decisionStates: [],
     candidates: (['depth', 'speed'] as const).map((id) => ({
@@ -223,11 +304,7 @@ function planningResult(originalInput: string): ResearchPlanningResult {
       title: id,
       rationale: id,
       tradeoffs: id,
-      steps: candidateSteps(id).map((step) => ({
-        ...step,
-        step_no: 42,
-        extra_client_field: 'drop-me',
-      })) as never,
+      steps: candidateSteps(id),
       assumptions: [],
       activated_nodes: ['D3_method_selection'],
     })),
@@ -238,10 +315,18 @@ function planningResult(originalInput: string): ResearchPlanningResult {
       promptHash: originalInput,
       traceId: 'revision-trace',
     },
+    problemGraph,
+    problemGraphProvenance: {
+      modelName: 'revision-planner',
+      modelVersion: '1',
+      promptHash: 'sha256:problem-graph',
+      traceId: 'revision-problem-graph',
+    },
+    capabilityResolution,
   };
 }
 
-async function buildRuntime(planning: { plan(input: { originalInput: string }): Promise<ResearchPlanningResult> }) {
+async function buildRuntime(planning: { plan(input: ResearchPlanningInput): Promise<CurrentResearchPlanningResult> }) {
   const { buildControlRuntime } = await import('../apps/agent-api/src/control-runtime.ts');
   const llm = new MockLLMClient();
   return buildControlRuntime({
@@ -258,6 +343,28 @@ async function buildRuntime(planning: { plan(input: { originalInput: string }): 
     artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
     expectedActualModel: llm.identity.requestedModel,
   });
+}
+
+function compiledRevisionPlan(taskId: string, title: string) {
+  const result = planningResult(title);
+  const candidate = result.candidates.find((item) => item.id === 'speed')!;
+  return {
+    task_id: taskId,
+    deliverable_type: 'research_plan' as const,
+    evidence_requirements: evidenceRequirements.map((requirement) => ({
+      ...requirement,
+      acceptedClasses: [...requirement.acceptedClasses],
+    })),
+    problem_graph: result.problemGraph,
+    capability_decisions: result.capabilityResolution,
+    steps: candidate.steps.map((step, index) => ({ ...step, step_no: index + 1 })),
+    candidate_metadata: {
+      title,
+      rationale: 'Apply user instruction',
+      tradeoffs: 'Replanned scope',
+    },
+    activated_nodes: result.activatedNodes,
+  };
 }
 
 test('revision HTTP endpoint rejects client plan and planHash', async () => {
@@ -306,19 +413,8 @@ test('workflow requires a revision driver and repository persists a canonical ha
     async revise(input) {
       calls.push(input);
       return {
-        plan: {
-          task_id: input.taskId,
-          deliverable_type: 'research_plan',
-          evidence_requirements: evidenceRequirements,
-          steps: candidateSteps('speed').map((step) => ({ ...step, purpose: input.instruction })),
-          candidate_metadata: {
-            title: 'speed revision',
-            rationale: 'Apply user instruction',
-            tradeoffs: 'Replanned scope',
-          },
-          activated_nodes: ['D3_method_selection'],
-        },
-        pendingInputs,
+        plan: compiledRevisionPlan(input.taskId, 'speed revision'),
+        pendingInputs: [],
       };
     },
   };
@@ -365,18 +461,7 @@ test('workflow requires a revision driver and repository persists a canonical ha
 
 test('repository computes the revision hash instead of accepting one from its caller', async () => {
   const seeded = await createSelectedTask({ suffix: 'repository-canonical' });
-  const plan = {
-    task_id: seeded.created.task.id,
-    deliverable_type: 'research_plan',
-    evidence_requirements: evidenceRequirements,
-    steps: candidateSteps('speed').map((step) => ({ ...step, purpose: 'canonical revision' })),
-    candidate_metadata: {
-      title: 'speed canonical revision',
-      rationale: 'Verify repository hash',
-      tradeoffs: 'Test-only revision',
-    },
-    activated_nodes: ['D3_method_selection'],
-  };
+  const plan = compiledRevisionPlan(seeded.created.task.id, 'speed canonical revision');
   const revision = await repository.createPlanRevision({
     taskId: seeded.created.task.id,
     expectedVersion: seeded.selected.stateVersion,
@@ -384,7 +469,7 @@ test('repository computes the revision hash instead of accepting one from its ca
     to: 'awaiting_confirmation',
     candidateId: 'speed',
     plan,
-    pendingInputs,
+    pendingInputs: [],
   });
   const persisted = await repository.getPlanVersionDetail(revision.plan.id);
   assert.ok(persisted);
@@ -420,7 +505,7 @@ test('production runtime replans from research goal and instruction while preser
   assert.equal(persisted.candidateId, 'speed');
   assert.equal((persisted.plan as Record<string, unknown>).deliverable_type, 'research_plan');
   assert.deepEqual((persisted.plan as Record<string, unknown>).evidence_requirements, evidenceRequirements);
-  assert.deepEqual(persisted.pendingInputs, pendingInputs);
+  assert.deepEqual(persisted.pendingInputs, []);
   assert.deepEqual((persisted.plan as Record<string, unknown>).candidate_metadata, {
     title: 'speed',
     rationale: 'speed',
@@ -515,13 +600,15 @@ test('production runtime rejects malformed frozen step shape before repository p
   assert.equal(plannerCalls, 0);
 });
 
-test('production runtime accepts a frozen step with only the required fields and purpose', async () => {
+test('production runtime rejects a legacy purpose-only frozen step before persistence', async () => {
+  let plannerCalls = 0;
   const runtime = await buildRuntime({
     async plan(input) {
+      plannerCalls += 1;
       return planningResult(input.originalInput);
     },
   });
-  const seeded = await createSelectedTask({ suffix: 'valid-step-purpose-only', pendingInputs: [] });
+  const seeded = await createSelectedTask({ suffix: 'legacy-step-purpose-only', pendingInputs: [] });
   const activePlan = await repository.getPlanVersionDetail(seeded.selected.planVersionId);
   assert.ok(activePlan);
   await overwriteActivePlan({
@@ -538,16 +625,17 @@ test('production runtime accepts a frozen step with only the required fields and
     },
     pendingInputs: [],
   });
+  const nextVersion = await repository.nextPlanVersion(seeded.created.task.id);
 
-  const revised = await runtime.workflow.revise({
+  await assert.rejects(() => runtime.workflow.revise({
     taskId: seeded.created.task.id,
     expectedVersion: seeded.selected.stateVersion,
-    revisionInstruction: '保留公开检索步骤',
-    idempotencyKey: 'valid-step-purpose-only',
+    revisionInstruction: '拒绝 Legacy 步骤',
+    idempotencyKey: 'legacy-step-purpose-only',
     actor: { userId: ownerId, role: 'owner' },
-  });
-  assert.equal(revised.state, 'awaiting_confirmation');
-  assert.notEqual(revised.planVersionId, seeded.selected.planVersionId);
+  }), /current-execution-plan/);
+  assert.equal(await repository.nextPlanVersion(seeded.created.task.id), nextVersion);
+  assert.equal(plannerCalls, 0);
 });
 
 test('production runtime fails closed when regenerated steps leave pending input target dangling', async () => {

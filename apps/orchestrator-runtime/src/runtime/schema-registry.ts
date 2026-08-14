@@ -17,12 +17,13 @@ export interface SchemaSpec {
   arrayItemFile?: string; // 数组项的 schema 文件(仅 envelope)
 }
 
-const PROJECT_SCHEMAS: readonly (SchemaName | 'current-plan-candidates' | 'research-task-v2' | 'problem-graph')[] = [
+const PROJECT_SCHEMAS: readonly (SchemaName | 'current-plan-candidates' | 'current-execution-plan' | 'research-task-v2' | 'problem-graph')[] = [
   'research-task',
   'research-task-v2',
   'decision-state',
   'problem-graph',
   'execution-plan',
+  'current-execution-plan',
   'current-plan-candidates',
   'skill-manifest',
   'tool-manifest',

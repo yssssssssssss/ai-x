@@ -5,7 +5,7 @@ import type {
 import { ControlPlaneConflictError } from '../../../../database/control-plane.ts';
 import type { ControlRequirementVersion } from '../../../../packages/api-contract/control-workflow.ts';
 import type { PlanProgress, ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
-import type { ResearchPlanningResult } from '../planners/research-planning-service.ts';
+import type { CurrentResearchPlanningResult } from '../planners/research-planning-service.ts';
 import type { LLMClient } from '../runtime/llm-client.ts';
 import { hashPrompt } from '../runtime/llm-client.ts';
 import { SchemaValidator } from '../schema/validator.ts';
@@ -56,7 +56,7 @@ export interface ClarifyInput {
 }
 export type RequirementRefinementResult =
   | { status: 'clarification_required'; taskId: string; requirement: ResearchTaskV2 }
-  | { status: 'ready_to_plan'; taskId: string; requirement: ResearchTaskV2; planningResult?: ResearchPlanningResult };
+  | { status: 'ready_to_plan'; taskId: string; requirement: ResearchTaskV2; planningResult?: CurrentResearchPlanningResult };
 
 interface RequirementRepository {
   createAndActivateRequirementVersion(input: {
@@ -216,7 +216,7 @@ export class RequirementRefinementService {
       ? await this.dependencies.planner.plan({
           originalInput: input.originalInput,
           requirement: input.requirement,
-        }, onProgress) as ResearchPlanningResult
+        }, onProgress) as CurrentResearchPlanningResult
       : undefined;
     return planningResult
       ? { status, taskId: input.taskId, requirement: input.requirement, planningResult }

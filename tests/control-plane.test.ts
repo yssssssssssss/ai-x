@@ -260,6 +260,91 @@ test('keeps legacy schema available while creating the isolated control plane sc
   }
 });
 
+test('repository rejects semantically invalid Current revisions before inserting a plan version', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const requirement = readyRequirement('revision semantic gate');
+  const task = await repository.createTask({
+    conversationId,
+    ownerUserId: ownerId,
+    originalInput: requirement.research_goal,
+    taskType: requirement.task_type,
+    structuredTask: requirement,
+    state: 'awaiting_confirmation',
+  });
+  const plan = {
+    task_id: task.id,
+    deliverable_type: 'research_plan' as const,
+    evidence_requirements: [{
+      id: 'public-source',
+      acceptedClasses: ['public_source'] as const,
+      minimumCount: 1,
+      required: true,
+    }],
+    problem_graph: {
+      version: 'problem-graph-v1' as const,
+      questions: [{
+        id: 'known-question',
+        statement: '如何形成候选与命令一起提交的计划？',
+        rationale: '覆盖 success criterion',
+        priority: 'required' as const,
+        success_criterion_ids: ['atomic'],
+        evidence_requirements: [{
+          id: 'public-source',
+          acceptedClasses: ['public_source'] as const,
+          minimumCount: 1,
+          required: true,
+        }],
+        acceptance_criteria: ['结论有公开来源'],
+        depends_on: [],
+      }],
+    },
+    capability_decisions: { eligible: [], rejected: [] },
+    steps: [{
+      step_no: 1,
+      step_name: '生成计划',
+      actor_type: 'llm' as const,
+      actor_id: 'research-synthesis',
+      question_ids: ['unknown-question'],
+      depends_on: [],
+      input: {},
+      input_bindings: [],
+      expected_outputs: [{ pointer: '/result', description: '研究计划' }],
+      acceptance_criteria: ['结论有公开来源'],
+      requires_approval: false,
+      fallback_actor_ids: [],
+    }],
+    candidate_metadata: {
+      title: 'Invalid semantic revision',
+      rationale: 'Regression fixture',
+      tradeoffs: 'Must not persist',
+    },
+    activated_nodes: [],
+  };
+
+  await assert.rejects(
+    () => repository.createPlanRevision({
+      taskId: task.id,
+      expectedVersion: task.stateVersion,
+      from: 'awaiting_confirmation',
+      to: 'awaiting_confirmation',
+      candidateId: 'speed',
+      plan,
+      pendingInputs: [],
+    }),
+    /unknown_question.*unknown-question/,
+  );
+  const connection = await scopedDatabase.connect();
+  try {
+    const versions = await connection.query(
+      'SELECT count(*)::int AS count FROM control_plan_versions WHERE task_id = $1',
+      [task.id],
+    );
+    assert.equal(versions.rows[0]?.count, 0);
+  } finally {
+    connection.release();
+  }
+});
+
 test('persists a Current task and its depth/speed candidates without activating either plan', async () => {
   const repository = new ControlPlaneRepository(scopedDatabase);
   const candidateRepository = repository as unknown as CandidatePersistenceRepository;

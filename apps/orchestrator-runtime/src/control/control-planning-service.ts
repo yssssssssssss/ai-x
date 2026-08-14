@@ -13,30 +13,13 @@ import type {
 } from '../../../../packages/api-contract/plan.ts';
 import {
   resolveEvidenceRequirements,
-  type ResearchPlanningResult,
+  type CurrentResearchPlanningResult,
 } from '../planners/research-planning-service.ts';
-import { sanitizeCandidateToPlan } from '../planners/plan-sanitizer.ts';
+import { PlanCompiler } from '../planners/plan-compiler.ts';
 
 type ProvisionalExecutionPlan = Omit<CurrentExecutionPlan, 'task_id'> & {
   task_id?: '';
 };
-
-// Current plan step 白名单清洗:复用 legacy sanitizeCandidateToPlan 的 step 规整
-// (step_no 用索引、step_name 缺省取 actor_id、非对象 input 丢弃、丢弃 step_id/schema_escape 等漂移字段)。
-// 在调用 repository 持久化前执行,拒绝空 steps 与未知 actor_type。
-const ALLOWED_ACTOR_TYPES = new Set(['skill', 'tool', 'llm', 'reviewer']);
-
-function sanitizeCurrentSteps(steps: PlanCandidate['steps']): CurrentExecutionPlan['steps'] {
-  if (!Array.isArray(steps) || steps.length === 0) {
-    throw new Error('Current plan steps 不能为空');
-  }
-  for (const step of steps) {
-    if (!ALLOWED_ACTOR_TYPES.has((step as { actor_type?: string }).actor_type ?? '')) {
-      throw new Error(`未知 actor_type: ${(step as { actor_type?: unknown }).actor_type}`);
-    }
-  }
-  return sanitizeCandidateToPlan({ steps } as PlanCandidate, '', '').steps;
-}
 
 interface PersistedPlanVersion {
   id: string;
@@ -53,7 +36,7 @@ export interface ControlPlanningDependencies {
     plan(
       input: { originalInput: string },
       onProgress?: (event: PlanProgress) => void,
-    ): Promise<ResearchPlanningResult>;
+    ): Promise<CurrentResearchPlanningResult>;
   };
   repository: {
     createTaskWithCandidates(input: {
@@ -93,7 +76,7 @@ export interface ControlPlanningDependencies {
       ownerUserId: string;
       expectedStateVersion: number;
       taskType: string;
-      structuredTask: NonNullable<ResearchPlanningResult['structuredTask']>;
+      structuredTask: CurrentResearchPlanningResult['structuredTask'];
       activatedNodes: string[];
       candidates: Array<{
         candidateId: PlanCandidate['id'];
@@ -125,38 +108,48 @@ export interface ClarificationCommandReservation {
 }
 
 export class ControlPlanningService {
+  private readonly compiler = new PlanCompiler();
+
   constructor(private readonly dependencies: ControlPlanningDependencies) {}
 
-  private prepareCandidates(planningResult: ResearchPlanningResult): Array<{
+  private prepareCandidates(planningResult: CurrentResearchPlanningResult): Array<{
     candidateId: PlanCandidate['id'];
     plan: ProvisionalExecutionPlan;
     pendingInputs: PendingInput[];
   }> {
+    const candidateIds = planningResult.candidates.map((candidate) => candidate.id);
+    if (
+      candidateIds.length !== 2
+      || new Set(candidateIds).size !== 2
+      || !candidateIds.includes('depth')
+      || !candidateIds.includes('speed')
+    ) {
+      throw new Error('Current planning requires exactly depth and speed candidates');
+    }
     const evidenceRequirements = resolveEvidenceRequirements(
-      planningResult.task.task_type,
+      planningResult.structuredTask.task_type,
       'research_plan',
     );
-    return planningResult.candidates.map((candidate) => ({
-      candidateId: candidate.id,
-      plan: {
-        task_id: '',
-        deliverable_type: 'research_plan',
+    return planningResult.candidates.map((candidate) => {
+      const compiled = this.compiler.compile({
+        candidate,
+        task: planningResult.structuredTask,
+        problem_graph: planningResult.problemGraph,
+        capability_resolution: planningResult.capabilityResolution,
         evidence_requirements: evidenceRequirements,
-        steps: sanitizeCurrentSteps(candidate.steps),
-        candidate_metadata: {
-          title: candidate.title,
-          rationale: candidate.rationale,
-          tradeoffs: candidate.tradeoffs,
-        },
         activated_nodes: planningResult.activatedNodes,
-      },
-      pendingInputs: [],
-    }));
+      });
+      return {
+        candidateId: candidate.id,
+        plan: compiled.plan,
+        pendingInputs: compiled.pending_inputs,
+      };
+    });
   }
 
   private responseFromPersisted(
     conversationId: string,
-    planningResult: ResearchPlanningResult,
+    planningResult: CurrentResearchPlanningResult,
     persisted: { task: ControlTaskResponse; candidates: PersistedPlanVersion[] },
   ): ControlPlanCandidatesResponse {
     const persistedByCandidateId = new Map(
@@ -226,7 +219,7 @@ export class ControlPlanningService {
       originalInput: string;
       commandReservation?: ClarificationCommandReservation;
     },
-    planningResult: ResearchPlanningResult,
+    planningResult: CurrentResearchPlanningResult,
   ): Promise<ControlPlanCandidatesResponse> {
     const conversation = await this.dependencies.conversations.requireOwned({
       conversationId: input.conversationId,

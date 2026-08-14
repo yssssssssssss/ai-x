@@ -11,6 +11,7 @@ import type {
   PendingInput,
 } from '../packages/api-contract/research-deliverable.ts';
 import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
+import { validateCurrentPlanRevision } from '../apps/orchestrator-runtime/src/planners/plan-compiler.ts';
 export type { ControlRequirementVersion };
 
 export type ControlTaskState =
@@ -1174,17 +1175,18 @@ export class ControlPlaneRepository {
     candidateId?: string;
     pendingInputs?: unknown;
   }): Promise<{ plan: ControlPlanVersion; task: ControlTask }> {
-    const plan = asRecord(input.plan);
-    if (input.candidateId === 'depth' || input.candidateId === 'speed') {
-      if (!plan) throw new ControlPlaneConflictError('candidate revision plan must be an object');
-      candidateMetadata(plan);
-      candidateActivatedNodes(plan);
+    const candidateId = input.candidateId;
+    if (candidateId !== 'depth' && candidateId !== 'speed') {
+      throw new ControlPlaneConflictError('Current plan revision requires a depth or speed candidate id');
     }
-    const persistedPlan = canonicalPlan(input.plan);
+    const plan = asRecord(input.plan);
+    if (!plan) throw new ControlPlaneConflictError('candidate revision plan must be an object');
+    candidateMetadata(plan);
+    candidateActivatedNodes(plan);
     return this.transaction(async (connection) => {
       const fromStates = Array.isArray(input.from) ? input.from : [input.from];
       const locked = await connection.query(
-        `SELECT state, state_version FROM control_tasks WHERE id = $1 FOR UPDATE`,
+        `SELECT state, state_version, structured_task FROM control_tasks WHERE id = $1 FOR UPDATE`,
         [input.taskId],
       );
       const taskRow = locked.rows[0];
@@ -1195,6 +1197,14 @@ export class ControlPlaneRepository {
       ) {
         throw new ControlPlaneConflictError(`task ${input.taskId} cannot revise at version ${input.expectedVersion}`);
       }
+      const validatedPlan = validateCurrentPlanRevision({
+        plan: input.plan,
+        task: taskRow.structured_task,
+        pending_inputs: input.pendingInputs ?? [],
+        task_id: input.taskId,
+        candidate_id: candidateId,
+      });
+      const persistedPlan = canonicalPlan(validatedPlan);
       const versionResult = await connection.query(
         `SELECT COALESCE(MAX(version), 0) + 1 AS version FROM control_plan_versions WHERE task_id = $1`,
         [input.taskId],

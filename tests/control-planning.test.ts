@@ -15,6 +15,10 @@ import type {
   PlanControlTaskRequest,
 } from '../packages/api-contract/control-workflow.ts';
 import type { PlanProgress } from '../packages/api-contract/plan.ts';
+import type {
+  CurrentExecutionPlan,
+  EvidenceRequirement,
+} from '../packages/api-contract/research-deliverable.ts';
 
 interface ControlPlanningInput extends PlanControlTaskRequest {
   ownerUserId: string;
@@ -64,6 +68,49 @@ function restoreJwtSecret(): void {
   process.env.JWT_SECRET = originalJwtSecret;
 }
 
+function currentResponsePlan(
+  taskId: string,
+  label: string,
+  evidenceRequirements: EvidenceRequirement[],
+): CurrentExecutionPlan {
+  const questionId = `${label}-question`;
+  return {
+    task_id: taskId,
+    deliverable_type: 'research_plan',
+    evidence_requirements: evidenceRequirements,
+    problem_graph: {
+      version: 'problem-graph-v1',
+      questions: [{
+        id: questionId,
+        statement: label,
+        rationale: 'HTTP fixture',
+        priority: 'optional',
+        success_criterion_ids: [],
+        evidence_requirements: [],
+        acceptance_criteria: ['fixture completes'],
+        depends_on: [],
+      }],
+    },
+    capability_decisions: { eligible: [], rejected: [] },
+    steps: [{
+      step_no: 1,
+      step_name: label,
+      actor_type: 'llm',
+      actor_id: 'research-synthesis',
+      question_ids: [questionId],
+      depends_on: [],
+      input: {},
+      input_bindings: [],
+      expected_outputs: [{ pointer: '/result', description: 'fixture result' }],
+      acceptance_criteria: ['fixture completes'],
+      requires_approval: false,
+      fallback_actor_ids: [],
+    }],
+    candidate_metadata: { title: label, rationale: 'fixture', tradeoffs: 'fixture only' },
+    activated_nodes: [],
+  };
+}
+
 test('POST /api/control-tasks/plan plans Current candidates for the authenticated owner without client plan mutation', async () => {
   process.env.JWT_SECRET = `control-planning-test-${randomUUID()}`;
   const ownerUserId = activeOwnerUserId;
@@ -78,26 +125,12 @@ test('POST /api/control-tasks/plan plans Current candidates for the authenticate
       rationale: '优先覆盖证据深度与完整性',
       tradeoffs: '耗时更长',
       planHash: 'sha256:depth-plan',
-      plan: {
-        task_id: taskId,
-        deliverable_type: 'research_plan',
-        evidence_requirements: [
-          {
-            id: 'public-market-sources',
-            acceptedClasses: ['public_source'],
-            minimumCount: 3,
-            required: true,
-          },
-        ],
-        steps: [
-          {
-            step_no: 1,
-            step_name: '公开来源调研',
-            actor_type: 'tool',
-            actor_id: 'tavily-search',
-          },
-        ],
-      },
+      plan: currentResponsePlan(taskId, '公开来源调研', [{
+        id: 'public-market-sources',
+        acceptedClasses: ['public_source'],
+        minimumCount: 3,
+        required: true,
+      }]),
       pendingInputs: [],
     },
     {
@@ -107,26 +140,12 @@ test('POST /api/control-tasks/plan plans Current candidates for the authenticate
       rationale: '优先形成可执行研究框架',
       tradeoffs: '证据覆盖较窄',
       planHash: 'sha256:speed-plan',
-      plan: {
-        task_id: taskId,
-        deliverable_type: 'research_plan',
-        evidence_requirements: [
-          {
-            id: 'public-market-sources',
-            acceptedClasses: ['public_source'],
-            minimumCount: 1,
-            required: true,
-          },
-        ],
-        steps: [
-          {
-            step_no: 1,
-            step_name: '快速公开来源调研',
-            actor_type: 'tool',
-            actor_id: 'tavily-search',
-          },
-        ],
-      },
+      plan: currentResponsePlan(taskId, '快速公开来源调研', [{
+        id: 'public-market-sources',
+        acceptedClasses: ['public_source'],
+        minimumCount: 1,
+        required: true,
+      }]),
       pendingInputs: [],
     },
   ];

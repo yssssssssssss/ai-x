@@ -1,4 +1,3 @@
-import type { PlanStep } from './plan.ts';
 
 export type EvidenceClass =
   | 'public_source'
@@ -20,17 +19,117 @@ export interface EvidenceRequirement {
 
 export type DeliverableType = 'research_plan';
 
+export interface ResearchQuestion {
+  id: string;
+  statement: string;
+  rationale: string;
+  priority: 'required' | 'optional';
+  success_criterion_ids: string[];
+  evidence_requirements: EvidenceRequirement[];
+  acceptance_criteria: string[];
+  depends_on: string[];
+}
+
+export interface ProblemGraph {
+  version: 'problem-graph-v1';
+  questions: ResearchQuestion[];
+}
+
+export interface CurrentPlanInputBinding {
+  target_pointer: string;
+  source_step_no: number;
+  source_pointer: string;
+}
+
+export interface CurrentPlanExpectedOutput {
+  pointer: string;
+  description: string;
+}
+
+export interface CurrentPlanStep {
+  step_no: number;
+  step_name: string;
+  actor_type: 'tool' | 'skill' | 'llm' | 'reviewer';
+  actor_id: string;
+  question_ids: string[];
+  depends_on: number[];
+  input: Record<string, unknown>;
+  input_bindings: CurrentPlanInputBinding[];
+  expected_outputs: CurrentPlanExpectedOutput[];
+  acceptance_criteria: string[];
+  requires_approval: boolean;
+  approval_role?: 'owner' | 'legal' | 'security';
+  fallback_actor_ids: string[];
+}
+
+export interface CurrentCapabilitySkill {
+  id?: string;
+  name?: string;
+  path?: string;
+  when_to_use?: string;
+  owner?: string;
+  status: 'draft' | 'active' | 'deprecated';
+  task_types: string[];
+  intent_tags?: string[];
+  inputs: string[];
+  outputs: string[];
+  input_schema?: string;
+  output_schema?: string;
+  entry?: string;
+  required_tools: string[];
+  cost_level?: string;
+  risk_level?: 'low' | 'medium' | 'high';
+}
+
+export type CurrentCapabilityReasonCode =
+  | 'skill_inactive'
+  | 'task_type_mismatch'
+  | 'required_tool_missing'
+  | 'required_tool_inactive'
+  | 'required_tool_health_unknown'
+  | 'required_tool_unhealthy'
+  | 'core_tool_real_adapter_unavailable'
+  | 'approval_unavailable'
+  | 'pending_input_required'
+  | 'eligible';
+
+export interface CurrentCapabilityDecisionReason {
+  code: CurrentCapabilityReasonCode;
+  message: string;
+  related_id?: string;
+}
+
+export interface CurrentCapabilityPendingInput {
+  role: string;
+  label: string;
+  multiple: boolean;
+  capability_id: string;
+}
+
+export interface CurrentCapabilityDecision {
+  skill: CurrentCapabilitySkill;
+  reasons: CurrentCapabilityDecisionReason[];
+  pending_inputs: CurrentCapabilityPendingInput[];
+}
+
+export interface CurrentCapabilityDecisions {
+  eligible: CurrentCapabilityDecision[];
+  rejected: CurrentCapabilityDecision[];
+}
+
 export interface CurrentExecutionPlan {
   task_id: string;
   deliverable_type: DeliverableType;
   evidence_requirements: EvidenceRequirement[];
-  steps: PlanStep[];
-  candidate_metadata?: {
+  problem_graph: ProblemGraph;
+  capability_decisions: CurrentCapabilityDecisions;
+  steps: CurrentPlanStep[];
+  candidate_metadata: {
     title: string;
     rationale: string;
     tradeoffs: string;
   };
-  activated_nodes?: string[];
+  activated_nodes: string[];
 }
 
 export interface PendingInput {
