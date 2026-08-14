@@ -261,8 +261,15 @@ class OfflineEligibleRealLLM implements LLMClient {
     } else if (options.schemaName === 'research-plan-deliverable-content') {
       const deliverableContext = options.context as {
         verifiedEvidence?: Array<{ evidenceId?: unknown }>;
+        coverageRequirements?: {
+          requiredQuestionIds: string[];
+          successCriterionIds: string[];
+        };
       } | undefined;
-      data = validDeliverableDraft(deliverableContext?.verifiedEvidence?.[0]?.evidenceId);
+      data = validDeliverableDraft(
+        deliverableContext?.verifiedEvidence?.[0]?.evidenceId,
+        deliverableContext?.coverageRequirements,
+      );
     } else if (options.schemaName === 'report-review') {
       const verdict = this.reviewVerdicts[this.reviewCall]
         ?? this.reviewVerdicts[this.reviewVerdicts.length - 1]
@@ -478,7 +485,16 @@ function restoreEnvironment(name: 'JWT_SECRET' | 'PGOPTIONS', value: string | un
   process.env[name] = value;
 }
 
-function validDeliverableDraft(evidenceId: unknown = 'missing-evidence'): Record<string, unknown> {
+function validDeliverableDraft(
+  evidenceId: unknown = 'missing-evidence',
+  coverageRequirements: {
+    requiredQuestionIds: string[];
+    successCriterionIds: string[];
+  } = {
+    requiredQuestionIds: ['competitive-question'],
+    successCriterionIds: ['verifiable-comparison'],
+  },
+): Record<string, unknown> {
   return {
     methodSummary: '使用离线真实模式适配器采集公开资料，并按冻结研究维度形成计划。',
     findingGraph: {
@@ -551,6 +567,17 @@ function validDeliverableDraft(evidenceId: unknown = 'missing-evidence'): Record
       summaryIds: ['S1'],
       statement: '按产品定位维度继续采集公开信息。',
     }],
+    coverage: {
+      questionBindings: coverageRequirements.requiredQuestionIds.map((questionId) => ({
+        questionId,
+        summaryIds: ['S1'],
+      })),
+      successCriterionBindings: coverageRequirements.successCriterionIds.map((successCriterionId) => ({
+        successCriterionId,
+        conclusionIds: ['C1'],
+        recommendationIds: ['R1'],
+      })),
+    },
     risksAndOpenIssues: [],
   };
 }

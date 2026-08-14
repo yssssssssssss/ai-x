@@ -206,6 +206,22 @@ export interface CurrentRecommendation {
   statement: string;
 }
 
+export interface QuestionCoverageBinding {
+  questionId: string;
+  summaryIds: string[];
+}
+
+export interface SuccessCriterionCoverageBinding {
+  successCriterionId: string;
+  conclusionIds: string[];
+  recommendationIds: string[];
+}
+
+export interface ResearchDeliverableCoverage {
+  questionBindings: QuestionCoverageBinding[];
+  successCriterionBindings: SuccessCriterionCoverageBinding[];
+}
+
 export interface CapabilityProvenance {
   id: string;
   type: string;
@@ -252,6 +268,7 @@ export interface ResearchDeliverableEnvelope<TPayload> {
   findingGraph: FindingGraph;
   payload: TPayload;
   recommendations: CurrentRecommendation[];
+  coverage: ResearchDeliverableCoverage;
   risksAndOpenIssues: string[];
   capabilityProvenance: CapabilityProvenance[];
 }

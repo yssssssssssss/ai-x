@@ -40,6 +40,14 @@ type DeliverableDraft = Pick<
   | 'recommendations'
   | 'capabilityProvenance'
 > & {
+  coverage: {
+    questionBindings: Array<{ questionId: string; summaryIds: string[] }>;
+    successCriterionBindings: Array<{
+      successCriterionId: string;
+      conclusionIds: string[];
+      recommendationIds: string[];
+    }>;
+  };
   risksAndOpenIssues?: string[];
 };
 
@@ -60,6 +68,8 @@ interface DeliverableGenerateInput {
   };
   attempt: { id: string };
   researchGoal: string;
+  finalizedRequirement?: unknown;
+  problemGraph?: unknown;
   evidenceManifest: SealedEvidenceManifest;
   evidenceResolver: EvidenceArtifactResolver;
   outputs: unknown[];
@@ -223,6 +233,14 @@ function validDeliverableDraft(): DeliverableDraft {
       summaryIds: ['S1'],
       statement: '按产品定位维度继续采集可追溯公开信息',
     }],
+    coverage: {
+      questionBindings: [{ questionId: 'q1', summaryIds: ['S1'] }],
+      successCriterionBindings: [{
+        successCriterionId: 'criterion1',
+        conclusionIds: ['C1'],
+        recommendationIds: ['R1'],
+      }],
+    },
     risksAndOpenIssues: ['公开页面内容可能随时间变化'],
     capabilityProvenance: [{ id: 'pinned-model', type: 'llm' }],
   };
@@ -418,6 +436,14 @@ function generateInput(overrides: Partial<DeliverableGenerateInput> = {}): Deliv
     },
     attempt: { id: attemptId },
     researchGoal: '形成可信的宠物辅食竞品研究计划',
+    finalizedRequirement: {
+      version: 'research-task-v2',
+      success_criteria: [{ id: 'criterion1', statement: '结论可追溯' }],
+    },
+    problemGraph: {
+      version: 'problem-graph-v1',
+      questions: [{ id: 'q1', priority: 'required' }],
+    },
     evidenceManifest: evidence.evidenceManifest,
     evidenceResolver: evidence.evidenceResolver,
     outputs: [{ actorId: 'tavily', output: { summary: '公开来源采集完成' } }],
@@ -467,6 +493,12 @@ test('generates and seals a machine-owned research plan deliverable envelope', a
   const result = await service.generate(generateInput());
 
   const modelContext = llm.structuredCalls[0]?.context as {
+    finalizedRequirement?: unknown;
+    problemGraph?: unknown;
+    coverageRequirements?: {
+      requiredQuestionIds: string[];
+      successCriterionIds: string[];
+    };
     verifiedEvidence?: Array<{ evidenceId: string; sourceUrl?: string; value: unknown }>;
   };
   assert.deepEqual(modelContext.verifiedEvidence, [{
@@ -481,6 +513,13 @@ test('generates and seals a machine-owned research plan deliverable envelope', a
   assert.equal(verifiedEvidenceText.includes(resolverWrapperRawFixture), false);
   assert.equal(fullModelContextText.includes('redactedOutputHash'), false);
   assert.equal(fullModelContextText.includes(resolverWrapperRawFixture), false);
+  assert.deepEqual(modelContext.finalizedRequirement, generateInput().finalizedRequirement);
+  assert.deepEqual(modelContext.problemGraph, generateInput().problemGraph);
+  assert.deepEqual(modelContext.coverageRequirements, {
+    requiredQuestionIds: ['q1'],
+    successCriterionIds: ['criterion1'],
+  });
+  assert.match(llm.structuredCalls[0]?.prompt ?? '', /coverage|binding/i);
   assert.equal(validator.schemaCalls.length, 1);
   assert.equal(validator.schemaCalls[0]?.label, 'research-plan-deliverable-content');
 
@@ -490,6 +529,7 @@ test('generates and seals a machine-owned research plan deliverable envelope', a
   assert.equal(result.deliverable.attemptId, attemptId);
   assert.equal(result.deliverable.deliverableType, 'research_plan');
   assert.equal(result.deliverable.evidenceManifestArtifactId, evidenceManifestArtifactId);
+  assert.deepEqual(result.deliverable.coverage, validDeliverableDraft().coverage);
   assert.doesNotThrow(() => validator.validateFileOrThrow(
     researchPlanSchemaPath,
     result.deliverable.payload,
@@ -617,6 +657,40 @@ test('rejects a recommendation without a summary root before writing an artifact
 
   assert.equal(writes.length, 0);
 });
+
+const INVALID_DELIVERABLE_COVERAGE_CASES: Array<{
+  name: string;
+  mutate(draft: DeliverableDraft): void;
+}> = [{
+  name: 'missing coverage',
+  mutate: (draft) => { Reflect.deleteProperty(draft, 'coverage'); },
+}, {
+  name: 'an empty question target list',
+  mutate: (draft) => { draft.coverage.questionBindings[0]!.summaryIds = []; },
+}, {
+  name: 'an extra question binding property',
+  mutate: (draft) => {
+    Object.assign(draft.coverage.questionBindings[0]!, { unexpected: true });
+  },
+}, {
+  name: 'a duplicate question binding',
+  mutate: (draft) => { draft.coverage.questionBindings.push({ ...draft.coverage.questionBindings[0]! }); },
+}, {
+  name: 'a dangling conclusion reference',
+  mutate: (draft) => {
+    draft.coverage.successCriterionBindings[0]!.conclusionIds = ['missing-conclusion'];
+  },
+}];
+
+for (const invalid of INVALID_DELIVERABLE_COVERAGE_CASES) {
+  test(`rejects deliverable content with ${invalid.name} before writing an artifact`, async () => {
+    const draft = validDeliverableDraft();
+    invalid.mutate(draft);
+    const { service, writes } = await createHarness(draft);
+    await assert.rejects(() => service.generate(generateInput()));
+    assert.equal(writes.length, 0);
+  });
+}
 
 test('rejects evidence that does not match its sealed artifact before writing an artifact', async () => {
   const { service, writes } = await createHarness();

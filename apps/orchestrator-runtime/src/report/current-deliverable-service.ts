@@ -35,6 +35,7 @@ const deliverableDraftSchema = {
     'findingGraph',
     'payload',
     'recommendations',
+    'coverage',
   ],
   properties: {
     methodSummary: { type: 'string', minLength: 1 },
@@ -130,6 +131,55 @@ const deliverableDraftSchema = {
         },
       },
     },
+    coverage: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['questionBindings', 'successCriterionBindings'],
+      properties: {
+        questionBindings: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['questionId', 'summaryIds'],
+            properties: {
+              questionId: { type: 'string', minLength: 1 },
+              summaryIds: {
+                type: 'array',
+                minItems: 1,
+                uniqueItems: true,
+                items: { type: 'string', minLength: 1 },
+              },
+            },
+          },
+        },
+        successCriterionBindings: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['successCriterionId', 'conclusionIds', 'recommendationIds'],
+            properties: {
+              successCriterionId: { type: 'string', minLength: 1 },
+              conclusionIds: {
+                type: 'array',
+                minItems: 1,
+                uniqueItems: true,
+                items: { type: 'string', minLength: 1 },
+              },
+              recommendationIds: {
+                type: 'array',
+                minItems: 1,
+                uniqueItems: true,
+                items: { type: 'string', minLength: 1 },
+              },
+            },
+          },
+        },
+      },
+    },
     risksAndOpenIssues: { type: 'array', items: { type: 'string' } },
   },
 } as const;
@@ -141,6 +191,7 @@ type DeliverableDraft = Pick<
   | 'findingGraph'
   | 'payload'
   | 'recommendations'
+  | 'coverage'
 > & {
   risksAndOpenIssues?: string[];
 };
@@ -197,8 +248,8 @@ export interface CurrentDeliverableGenerateInput {
   };
   attempt: { id: string };
   researchGoal: string;
-  finalizedRequirement?: unknown;
-  problemGraph?: unknown;
+  finalizedRequirement: unknown;
+  problemGraph: unknown;
   evidenceManifest: SealedEvidenceManifest;
   evidenceResolver: EvidenceArtifactResolver;
   outputs: unknown[];
@@ -222,6 +273,50 @@ function unknownRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+}
+
+function coverageRequirements(finalizedRequirement: unknown, problemGraph: unknown): {
+  requiredQuestionIds: string[];
+  successCriterionIds: string[];
+} {
+  const requirement = unknownRecord(finalizedRequirement);
+  const criteria = requirement?.success_criteria;
+  if (!Array.isArray(criteria) || criteria.length === 0) {
+    throw new Error('finalized requirement success criteria are required for deliverable coverage');
+  }
+  const successCriterionIds = criteria.map((candidate) => {
+    const criterion = unknownRecord(candidate);
+    if (!criterion || typeof criterion.id !== 'string' || criterion.id.trim().length === 0) {
+      throw new Error('finalized requirement success criterion id is invalid');
+    }
+    return criterion.id;
+  });
+  if (new Set(successCriterionIds).size !== successCriterionIds.length) {
+    throw new Error('finalized requirement success criterion ids must be unique');
+  }
+
+  const graph = unknownRecord(problemGraph);
+  const questions = graph?.questions;
+  if (!Array.isArray(questions)) throw new Error('ProblemGraph questions are required for deliverable coverage');
+  const requiredQuestionIds = questions.flatMap((candidate) => {
+    const question = unknownRecord(candidate);
+    if (
+      !question
+      || typeof question.id !== 'string'
+      || question.id.trim().length === 0
+      || (question.priority !== 'required' && question.priority !== 'optional')
+    ) {
+      throw new Error('ProblemGraph question is invalid');
+    }
+    return question.priority === 'required' ? [question.id] : [];
+  });
+  if (requiredQuestionIds.length === 0) {
+    throw new Error('at least one required ProblemGraph question is required for deliverable coverage');
+  }
+  if (new Set(requiredQuestionIds).size !== requiredQuestionIds.length) {
+    throw new Error('required ProblemGraph question ids must be unique');
+  }
+  return { requiredQuestionIds, successCriterionIds };
 }
 
 const CAPABILITY_TYPE_BY_OUTPUT_KIND: Record<string, string> = {
@@ -295,12 +390,12 @@ export class CurrentDeliverableService {
         this.dependencies.evidence.resolveEvidenceValue(entry, input.evidenceResolver),
       ),
     }));
+    const requiredCoverage = coverageRequirements(input.finalizedRequirement, input.problemGraph);
     const context = {
       researchGoal: redactString(input.researchGoal),
-      ...(input.finalizedRequirement === undefined
-        ? {}
-        : { finalizedRequirement: redactSensitiveValue(input.finalizedRequirement) }),
-      ...(input.problemGraph === undefined ? {} : { problemGraph: redactSensitiveValue(input.problemGraph) }),
+      finalizedRequirement: redactSensitiveValue(input.finalizedRequirement),
+      problemGraph: redactSensitiveValue(input.problemGraph),
+      coverageRequirements: requiredCoverage,
       ...(input.revisionInstruction === undefined ? {} : { revisionInstruction: redactString(input.revisionInstruction) }),
       verifiedEvidence,
       synthesisMaterials,
@@ -316,7 +411,8 @@ export class CurrentDeliverableService {
       capabilityProvenance?: unknown;
     }>({
       prompt:
-        'Generate only the content fields for a research plan deliverable. '
+        'Generate only the content fields for a research plan deliverable, including explicit coverage.questionBindings '
+        + 'and coverage.successCriterionBindings rooted in actual summary, conclusion, and recommendation node IDs. '
         + 'Do not generate version, task, plan, attempt, deliverable type, evidence manifest identifiers, or capability provenance.'
         + (input.revisionInstruction ? ' Address the review issues in the revision instruction.' : ''),
       schema: deliverableDraftSchema,
@@ -360,6 +456,7 @@ export class CurrentDeliverableService {
       findingGraph: draft.findingGraph,
       payload: draft.payload,
       recommendations: draft.recommendations,
+      coverage: draft.coverage,
       risksAndOpenIssues,
       capabilityProvenance: outputData.provenance,
     };
@@ -369,6 +466,7 @@ export class CurrentDeliverableService {
       manifest: evidenceManifest,
       report: deliverable,
       resolver: input.evidenceResolver,
+      requireCoverage: true,
     });
 
     const artifact = await this.dependencies.artifacts.writeJson({

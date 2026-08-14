@@ -970,7 +970,7 @@ git commit -m "feat: synthesize from verified step materials"
 - Test: `tests/report-review-service.test.ts`
 
 **Interfaces:**
-- Produces: `ReportReviewArtifact`、`reviewing` 状态、一次 `revise()`。
+- Produces: `ReportReviewArtifact`、`reviewing` 状态、一次 `revise()`，以及 `ResearchDeliverableCoverage`：问题只绑定真实 Summary，成功标准只绑定真实 Conclusion/Recommendation。
 
 - [x] **Step 1: 写失败测试**
 
@@ -984,7 +984,7 @@ Expected: FAIL。
 
 - [x] **Step 3: 实现确定性 Gate**
 
-先运行 requirement/question/evidence/root coverage；失败直接返回 block，不消耗 Reviewer LLM。
+先严格验证 `coverage.questionBindings` 与 `coverage.successCriterionBindings` 的字段、唯一 ID、非空目标和报告节点引用，再要求每个必答 ProblemGraph 问题与 finalized success criterion 恰好有一个绑定。Review 不递归扫描正文或任意字符串；失败直接返回 block，不消耗 Reviewer LLM。
 
 - [x] **Step 4: 实现语义 Review**
 
@@ -993,6 +993,10 @@ Expected: FAIL。
 - [x] **Step 5: 接入一次修订**
 
 `verdict=revise` 时调用 DeliverableComposer.revise 一次，随后重新执行所有确定性和语义审查；不允许循环。
+
+- [x] **Step 5a: 最终恢复语义收口**
+
+显式 `failedStepNo` 必须命中当前 Attempt 的 failed step，否则立即 gate 且任务保持 paused。Command-loss replay 分别恢复整体 task 状态与 Review 状态：只有已验证 Review `verdict=pass` 才返回 `reviewStatus=completed`。
 
 - [x] **Step 6: 运行测试和提交**
 
@@ -1040,7 +1044,7 @@ Expected: FAIL，尚无 Verified Core Package reader。
 
 - [x] **Step 3: 实现核心读取深模块**
 
-所有 JSON Artifact 使用 `readVerifiedJson()`。验证 Deliverable、Evidence Manifest、Review 的 SEALED/schemaVersion/Task/Plan/Attempt；resolver 逐项重读 Evidence Artifact，再执行 Manifest 与 Finding Graph 验证。Review 必须绑定最终 Deliverable、`verdict=pass` 且 revisionRound 匹配最终 Review Artifact。
+所有 JSON Artifact 使用 `readVerifiedJson()`。验证 Deliverable、Evidence Manifest、Review 的 SEALED/schemaVersion/Task/Plan/Attempt；review-gated Deliverable 还必须通过严格 typed coverage 图重验；resolver 逐项重读 Evidence Artifact，再执行 Manifest 与 Finding Graph 验证。Review 必须绑定最终 Deliverable、`verdict=pass` 且 revisionRound 匹配最终 Review Artifact。
 
 - [x] **Step 4: 用 schemaVersion marker 做历史兼容**
 

@@ -1,4 +1,7 @@
-import type { ResearchDeliverableEnvelope } from '../../../../packages/api-contract/research-deliverable.ts';
+import type {
+  ResearchDeliverableCoverage,
+  ResearchDeliverableEnvelope,
+} from '../../../../packages/api-contract/research-deliverable.ts';
 
 import {
   EvidenceGraphValidationError,
@@ -39,6 +42,114 @@ function record(value: unknown): Record<string, unknown> | null {
 
 function strings(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
+
+function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const keys = Object.keys(value);
+  return keys.length === expected.length && keys.every((key) => expected.includes(key));
+}
+
+function nonEmptyUniqueIds(value: unknown): value is string[] {
+  return strings(value)
+    && value.length > 0
+    && value.every((entry) => entry.trim().length > 0)
+    && new Set(value).size === value.length;
+}
+
+function nodeIds(value: unknown): Set<string> {
+  if (!Array.isArray(value)) return new Set();
+  return new Set(value.flatMap((candidate) => {
+    const node = record(candidate);
+    return node && typeof node.id === 'string' && node.id.trim().length > 0 ? [node.id] : [];
+  }));
+}
+
+export function validateReportCoverage(reportValue: unknown): ResearchDeliverableCoverage {
+  const report = record(reportValue);
+  const coverage = record(report?.coverage);
+  if (!coverage || !exactKeys(coverage, ['questionBindings', 'successCriterionBindings'])) {
+    throw new CurrentReportValidationError('report coverage shape is invalid');
+  }
+  if (
+    !Array.isArray(coverage.questionBindings)
+    || coverage.questionBindings.length === 0
+    || !Array.isArray(coverage.successCriterionBindings)
+    || coverage.successCriterionBindings.length === 0
+  ) {
+    throw new CurrentReportValidationError('report coverage requires question and success criterion bindings');
+  }
+
+  const graph = record(report?.findingGraph);
+  const summaries = nodeIds(graph?.subQuestionSummaries);
+  const conclusions = nodeIds(graph?.overallConclusions);
+  const recommendations = nodeIds(report?.recommendations);
+  const questionIds = new Set<string>();
+  const questionBindings: ResearchDeliverableCoverage['questionBindings'] = [];
+  for (const candidate of coverage.questionBindings) {
+    const binding = record(candidate);
+    if (
+      !binding
+      || !exactKeys(binding, ['questionId', 'summaryIds'])
+      || typeof binding.questionId !== 'string'
+      || binding.questionId.trim().length === 0
+      || !nonEmptyUniqueIds(binding.summaryIds)
+    ) {
+      throw new CurrentReportValidationError('question coverage binding shape is invalid');
+    }
+    if (questionIds.has(binding.questionId)) {
+      throw new CurrentReportValidationError(`duplicate question coverage binding ${binding.questionId}`);
+    }
+    for (const summaryId of binding.summaryIds) {
+      if (!summaries.has(summaryId)) {
+        throw new CurrentReportValidationError(`question ${binding.questionId} references unknown summary ${summaryId}`);
+      }
+    }
+    questionIds.add(binding.questionId);
+    questionBindings.push({ questionId: binding.questionId, summaryIds: [...binding.summaryIds] });
+  }
+
+  const successCriterionIds = new Set<string>();
+  const successCriterionBindings: ResearchDeliverableCoverage['successCriterionBindings'] = [];
+  for (const candidate of coverage.successCriterionBindings) {
+    const binding = record(candidate);
+    if (
+      !binding
+      || !exactKeys(binding, ['successCriterionId', 'conclusionIds', 'recommendationIds'])
+      || typeof binding.successCriterionId !== 'string'
+      || binding.successCriterionId.trim().length === 0
+      || !nonEmptyUniqueIds(binding.conclusionIds)
+      || !nonEmptyUniqueIds(binding.recommendationIds)
+    ) {
+      throw new CurrentReportValidationError('success criterion coverage binding shape is invalid');
+    }
+    if (successCriterionIds.has(binding.successCriterionId)) {
+      throw new CurrentReportValidationError(
+        `duplicate success criterion coverage binding ${binding.successCriterionId}`,
+      );
+    }
+    for (const conclusionId of binding.conclusionIds) {
+      if (!conclusions.has(conclusionId)) {
+        throw new CurrentReportValidationError(
+          `success criterion ${binding.successCriterionId} references unknown conclusion ${conclusionId}`,
+        );
+      }
+    }
+    for (const recommendationId of binding.recommendationIds) {
+      if (!recommendations.has(recommendationId)) {
+        throw new CurrentReportValidationError(
+          `success criterion ${binding.successCriterionId} references unknown recommendation ${recommendationId}`,
+        );
+      }
+    }
+    successCriterionIds.add(binding.successCriterionId);
+    successCriterionBindings.push({
+      successCriterionId: binding.successCriterionId,
+      conclusionIds: [...binding.conclusionIds],
+      recommendationIds: [...binding.recommendationIds],
+    });
+  }
+
+  return { questionBindings, successCriterionBindings };
 }
 
 function findingGraph(value: unknown): value is FindingGraph {
@@ -83,7 +194,10 @@ function findingGraph(value: unknown): value is FindingGraph {
   return findingsValid && analysesValid && summariesValid && conclusionsValid;
 }
 
-type EvidenceReport = CurrentEvidenceReport | ResearchDeliverableEnvelope<unknown>;
+type EvidenceReport = CurrentEvidenceReport | (
+  Omit<ResearchDeliverableEnvelope<unknown>, 'coverage'>
+  & { coverage?: ResearchDeliverableCoverage }
+);
 
 export class ReportEvidenceValidator {
   constructor(private readonly evidence: Pick<EvidenceService, 'validateFindingGraph'>) {}
@@ -92,10 +206,12 @@ export class ReportEvidenceValidator {
     manifest: EvidenceManifest;
     report: unknown;
     resolver: EvidenceArtifactResolver;
+    requireCoverage?: boolean;
   }): asserts input is {
     manifest: EvidenceManifest;
     report: EvidenceReport;
     resolver: EvidenceArtifactResolver;
+    requireCoverage?: boolean;
   } {
     const report = record(input.report);
     if (
@@ -179,5 +295,6 @@ export class ReportEvidenceValidator {
         }
       }
     }
+    if (input.requireCoverage || report.coverage !== undefined) validateReportCoverage(report);
   }
 }

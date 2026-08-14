@@ -325,7 +325,7 @@ function parsePlan(taskId: string, value: unknown): EnginePlan {
   return { taskId, evidence_requirements: evidenceRequirements, steps };
 }
 interface ReviewCoverageIds {
-  requirementIds: string[];
+  successCriterionIds: string[];
   questionIds: string[];
 }
 
@@ -337,12 +337,15 @@ function parseReviewCoverageIds(structuredTask: unknown, plan: unknown): ReviewC
   if (!Array.isArray(criteria) || criteria.length === 0) {
     throw new ExecutionAuthenticityError('finalized task success criteria are malformed');
   }
-  const requirementIds = criteria.map((criterion, index) => {
+  const successCriterionIds = criteria.map((criterion, index) => {
     if (!isRecord(criterion) || typeof criterion.id !== 'string' || criterion.id.trim().length === 0) {
       throw new ExecutionAuthenticityError(`success criterion ${index + 1} is malformed`);
     }
     return criterion.id;
   });
+  if (new Set(successCriterionIds).size !== successCriterionIds.length) {
+    throw new ExecutionAuthenticityError('finalized task success criterion ids must be unique');
+  }
 
   const planRecord = isRecord(plan) ? plan : null;
   const problemGraph = planRecord && isRecord(planRecord.problem_graph) ? planRecord.problem_graph : null;
@@ -361,7 +364,10 @@ function parseReviewCoverageIds(structuredTask: unknown, plan: unknown): ReviewC
     }
     return question.priority === 'required' ? [question.id] : [];
   });
-  return { requirementIds, questionIds };
+  if (new Set(questionIds).size !== questionIds.length) {
+    throw new ExecutionAuthenticityError('required ProblemGraph question ids must be unique');
+  }
+  return { successCriterionIds, questionIds };
 }
 
 
@@ -1070,7 +1076,7 @@ export class LeaseExecutionEngine {
           attempt: { id: input.lease.attemptId },
           deliverableArtifactId: deliverable.deliverableArtifactId,
           deliverable: deliverable.deliverable,
-          requirementIds: reviewCoverage.requirementIds,
+          successCriterionIds: reviewCoverage.successCriterionIds,
           questionIds: reviewCoverage.questionIds,
           evidenceIds: sealedEvidenceManifest.value.entries.map((entry) => entry.id),
           expectedModel: input.expectedModel,

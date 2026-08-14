@@ -409,7 +409,7 @@ export class TaskWorkflowService {
       deliverableArtifactId: verifiedDeliverable.artifact.id,
       evidenceManifestArtifactId: verifiedManifest.artifact.id,
       reportReviewArtifactId: verifiedReview.artifact.id,
-      reviewStatus: input.status === 'paused' ? 'paused' : 'completed',
+      reviewStatus: reviewValue.verdict === 'pass' ? 'completed' : 'paused',
     };
   }
 
@@ -700,6 +700,9 @@ export class TaskWorkflowService {
       failedStep = input.failedStepNo == null
         ? [...steps].reverse().find((step) => step.state === 'failed') ?? null
         : steps.find((step) => step.stepNo === input.failedStepNo && step.state === 'failed') ?? null;
+    }
+    if (input.failedStepNo != null && !failedStep) {
+      throw new TaskWorkflowGateError([`step:${input.failedStepNo}`]);
     }
     if (failedStep) {
       if (!allowedActions(failedStep.failure).includes(action)) {

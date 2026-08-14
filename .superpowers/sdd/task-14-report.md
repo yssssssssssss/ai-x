@@ -5,9 +5,9 @@ Status: complete
 ## Implementation
 
 - Added `CurrentReportPackageResponse` with explicit `legacy_text`, `current_text`, and future `multimodal` modes. Phase 4 `current_text` contains only Deliverable, Evidence Manifest, and final Report Review; no document or visual asset placeholders are created.
-- New Deliverable Artifacts use `research-deliverable-v1-review-gated` while the JSON envelope remains `research-deliverable-v1`. Historical Artifacts with the old marker return `legacy_text`; unknown markers and incomplete review-gated packages fail closed.
-- Added `CurrentReportPackageReader` as the single read-side validation boundary. It invokes `readVerifiedJson()` for Deliverable, Evidence Manifest, every referenced Evidence Artifact, and Review; validates SEALED/schema/Task/Plan/Attempt bindings; then reruns Manifest and Finding Graph validation.
-- Review-gated reads require a `report-review-v1` Artifact bound to the selected final Deliverable, `verdict=pass`, and a revision round matching the selected final Review Artifact. Missing, tampered, foreign, malformed, revise, or block Reviews are rejected without legacy downgrade.
+- New Deliverable Artifacts use `research-deliverable-v1-review-gated` while the JSON envelope remains `research-deliverable-v1`. The marker requires the strict typed coverage graph; historical Artifacts with the old marker alone may omit coverage and return `legacy_text`. Unknown markers and incomplete review-gated packages fail closed.
+- Added `CurrentReportPackageReader` as the single read-side validation boundary. It invokes `readVerifiedJson()` for Deliverable, Evidence Manifest, every referenced Evidence Artifact, and Review; validates SEALED/schema/Task/Plan/Attempt bindings; reruns Manifest and Finding Graph validation; and validates every coverage binding against actual Summary, Conclusion, and Recommendation nodes.
+- Review-gated reads require a `report-review-v1` Artifact bound to the selected final Deliverable, `verdict=pass`, and a revision round matching the selected final Review Artifact. Missing coverage or missing, tampered, foreign, malformed, revise, or block Reviews are rejected without legacy downgrade.
 - Production Current GET now checks task and conversation ownership before invoking the package reader. Foreign and missing task IDs remain indistinguishable 404 responses.
 - Real E2E exposed the Task 13 lease fence still accepting only `executing`; the repository fence now consistently permits the already-declared `reviewing` and `composing_report` execution states for seal, require-active, and heartbeat operations while retaining attempt, owner, token, expiry, task, and plan checks.
 - Corrected the Task 14 brief, approved plan, and phase design note so Phase 5 Tasks 16–19—not Phase 4—own ReportDocument and VisualAssetManifest.
@@ -30,9 +30,14 @@ Status: complete
 - Lease expiry and expired `requireActiveLease`, heartbeat, completion, and seal paths atomically pause the attempt and task from `executing`, `reviewing`, or `composing_report`. Terminal recovery invalidates SEALED/STAGING `evidence_manifest`, `deliverable`, and `report_review` together, so no trusted orphan Review remains.
 - Real PostgreSQL and `ControlArtifactStore` regressions cover the state matrix, immutable file collision, final revised API ID, and terminal trusted-artifact invalidation.
 
-- Workflow command-loss recovery uses verified terminal Review content rather than an arbitrary latest draft, preserving the same final Deliverable, Evidence Manifest, Review IDs, and review status across idempotent replay.
+- Workflow command-loss recovery uses verified terminal Review content rather than task state to recover `reviewStatus`: pass is completed, revise/block is paused. The overall execution state remains separate, so a later post-review failure can leave the task paused while replay preserves the same final Deliverable, Evidence Manifest, and Review IDs.
 
 ### TDD and Verification
 
 - RED: Evidence scoping produced 2 expected failures across 7 tests; report identity/dimension regressions produced 16 expected failures across 71 tests; lease/recovery produced 20 expected failures across 107 tests with one real-provider skip.
 - GREEN: `pnpm exec tsx --test --test-concurrency=1 tests/synthesis-materializer.test.ts tests/current-deliverable-service.test.ts tests/report-review-service.test.ts tests/report-package.test.ts tests/lease-execution-engine.test.ts tests/task-workflow.test.ts tests/control-plane.test.ts tests/control-api-integration.test.ts` passed 184/184 runnable tests with one real-provider skip; `pnpm typecheck` passed.
+
+## Final Gate Blocker Closure
+
+- Review-gated package regressions now reject missing, duplicate, and dangling coverage while the old `research-deliverable-v1` marker remains the only no-coverage `legacy_text` path.
+- The exact requested eight-file serial suite ran 177 tests: 176 passed, one real-provider test skipped, zero failed. `pnpm typecheck` passed.

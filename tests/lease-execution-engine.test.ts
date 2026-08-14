@@ -131,10 +131,15 @@ function minimalDeliverable(
     evidenceManifestArtifactId: input.evidenceManifest.artifact.id,
     methodSummary: 'Compare sealed public evidence against the approved research dimensions.',
     findingGraph: {
-      findings: [],
-      analyses: [],
-      subQuestionSummaries: [],
-      overallConclusions: [],
+      findings: [{ id: 'F1', kind: 'fact', evidenceIds: [], statement: 'Fixture fact' }],
+      analyses: [{ id: 'A1', findingIds: ['F1'], statement: 'Fixture analysis' }],
+      subQuestionSummaries: [{
+        id: 'S1',
+        findingIds: ['F1'],
+        analysisIds: ['A1'],
+        summary: 'Fixture summary',
+      }],
+      overallConclusions: [{ id: 'C1', summaryIds: ['S1'], statement: 'Fixture conclusion' }],
     },
     payload: {
       title: 'Test research plan',
@@ -177,7 +182,15 @@ function minimalDeliverable(
       deliverables: ['Research plan'],
       qualityChecks: ['Every claim traces to sealed evidence'],
     },
-    recommendations: [],
+    recommendations: [{ id: 'R1', summaryIds: ['S1'], statement: 'Fixture recommendation' }],
+    coverage: {
+      questionBindings: [{ questionId: 'fixture-question', summaryIds: ['S1'] }],
+      successCriterionBindings: [{
+        successCriterionId: 'fixture-criterion',
+        conclusionIds: ['C1'],
+        recommendationIds: ['R1'],
+      }],
+    },
     risksAndOpenIssues: [],
     capabilityProvenance: [{ id: input.expectedModel, type: 'llm' }],
   };
@@ -1177,7 +1190,7 @@ test('passes finalized success criteria and required ProblemGraph question IDs t
 
   assert.equal(result.status, 'completed');
   assert.equal(review.calls.length, 1);
-  assert.deepEqual(review.calls[0]?.requirementIds, ['criterion-evidence', 'criterion-coverage']);
+  assert.deepEqual(review.calls[0]?.successCriterionIds, ['criterion-evidence', 'criterion-coverage']);
   assert.deepEqual(review.calls[0]?.questionIds, ['question-required']);
 });
 

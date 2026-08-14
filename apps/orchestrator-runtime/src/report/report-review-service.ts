@@ -16,6 +16,10 @@ import type { ArtifactWriteInput } from '../control/artifact-store.ts';
 import { redactSensitiveValue } from '../runtime/redaction.ts';
 import type { LLMResult, StructuredLLMCallOptions } from '../runtime/llm-client.ts';
 import { SchemaValidator } from '../schema/validator.ts';
+import {
+  CurrentReportValidationError,
+  validateReportCoverage,
+} from '../evidence/report-evidence-validator.ts';
 
 
 export interface ReportReviewResult extends ReportReviewArtifact {
@@ -55,12 +59,9 @@ export interface ReportReviewInput {
   attempt: { id: string };
   deliverableArtifactId: string;
   deliverable: unknown;
-  requirementIds?: readonly string[];
-  questionIds?: readonly string[];
-  evidenceIds?: readonly string[];
-  requirements?: readonly (string | { id: string })[];
-  questions?: readonly (string | { id: string })[];
-  evidence?: readonly (string | { id: string })[];
+  successCriterionIds: readonly string[];
+  questionIds: readonly string[];
+  evidenceIds: readonly string[];
   expectedModel: string;
   activeLease: ControlExecutionLease;
   revisionRound?: 0 | 1;
@@ -111,24 +112,6 @@ export function assertReportReviewInvariant(
   }
 }
 
-function ids(values: readonly (string | { id: string })[] | undefined): string[] {
-  if (!values) return [];
-  return values.map((value) => typeof value === 'string' ? value : value.id);
-}
-
-function nestedStrings(value: unknown, output: Set<string>): void {
-  if (typeof value === 'string') {
-    output.add(value);
-    return;
-  }
-  if (Array.isArray(value)) {
-    for (const child of value) nestedStrings(child, output);
-    return;
-  }
-  const object = record(value);
-  if (!object) return;
-  for (const child of Object.values(object)) nestedStrings(child, output);
-}
 
 function issueDimension(id: ReportReviewDimensionId, issues: string[]): ReportReviewDimension {
   return { id, passed: issues.length === 0, issues };
@@ -164,14 +147,30 @@ function deterministicDimensions(input: ReportReviewInput, deliverable: unknown)
   if (summaries.length === 0) issues.reasoning_quality.push('finding graph requires a summary root');
   if (conclusions.length === 0) issues.reasoning_quality.push('finding graph requires a conclusion root');
 
-  const requirementIds = input.requirementIds ?? ids(input.requirements);
-  const questionIds = input.questionIds ?? ids(input.questions);
-  const evidenceIds = input.evidenceIds ?? ids(input.evidence);
-  const referenced = new Set<string>();
-  nestedStrings(deliverable, referenced);
-  for (const requirementId of requirementIds) if (!referenced.has(requirementId)) issues.requirement_coverage.push(`missing requirement ${requirementId}`);
-  for (const questionId of questionIds) if (!referenced.has(questionId)) issues.question_coverage.push(`missing question ${questionId}`);
-  const knownEvidence = new Set(evidenceIds);
+  const knownEvidence = new Set(input.evidenceIds);
+  try {
+    const coverage = validateReportCoverage(report);
+    const coveredSuccessCriteria = new Set(
+      coverage.successCriterionBindings.map((binding) => binding.successCriterionId),
+    );
+    const coveredQuestions = new Set(
+      coverage.questionBindings.map((binding) => binding.questionId),
+    );
+    for (const successCriterionId of input.successCriterionIds) {
+      if (!coveredSuccessCriteria.has(successCriterionId)) {
+        issues.requirement_coverage.push(`missing success criterion ${successCriterionId}`);
+      }
+    }
+    for (const questionId of input.questionIds) {
+      if (!coveredQuestions.has(questionId)) {
+        issues.question_coverage.push(`missing question ${questionId}`);
+      }
+    }
+  } catch (error) {
+    if (!(error instanceof CurrentReportValidationError)) throw error;
+    issues.requirement_coverage.push(error.message);
+    issues.question_coverage.push(error.message);
+  }
   for (const finding of findings) {
     const value = record(finding);
     if (value?.kind !== 'fact') continue;
@@ -212,7 +211,7 @@ export class ReportReviewService {
     const dimensions = deterministicDimensions(input, input.deliverable);
     if (this.dependencies.evidence?.validate && !deterministicFailure(dimensions)) await this.dependencies.evidence.validate({
       taskId: input.task.id, planVersionId: input.plan.id, attemptId: input.attempt.id,
-      deliverable: input.deliverable, evidenceIds: input.evidenceIds ?? ids(input.evidence),
+      deliverable: input.deliverable, evidenceIds: input.evidenceIds,
     });
     if (deterministicFailure(dimensions)) return this.seal(input, {
       version: 'report-review-v1', taskId: input.task.id, planVersionId: input.plan.id,

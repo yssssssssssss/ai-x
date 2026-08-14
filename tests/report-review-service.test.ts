@@ -78,10 +78,16 @@ function report(overrides: Record<string, unknown> = {}): Record<string, unknown
       overallConclusions: [{ id: 'c-1', statement: 'A conclusion', summaryIds: ['s-1'] }],
     },
     recommendations: [{ id: 'r-1', statement: 'Act', summaryIds: ['s-1'] }],
+    coverage: {
+      questionBindings: [{ questionId: 'q-1', summaryIds: ['s-1'] }],
+      successCriterionBindings: [{
+        successCriterionId: 'req-1',
+        conclusionIds: ['c-1'],
+        recommendationIds: ['r-1'],
+      }],
+    },
     risksAndOpenIssues: [],
     capabilityProvenance: [],
-    requirementIds: ['req-1'],
-    questionIds: ['q-1'],
     ...overrides,
   };
 }
@@ -93,7 +99,7 @@ function input(overrides: Partial<ReportReviewInput> = {}): ReportReviewInput {
     attempt: { id: lease.attemptId },
     deliverableArtifactId: 'deliverable-1',
     deliverable: report(),
-    requirementIds: ['req-1'],
+    successCriterionIds: ['req-1'],
     questionIds: ['q-1'],
     evidenceIds: ['e-1'],
     expectedModel: 'model-v1',
@@ -211,7 +217,7 @@ for (const invalid of INVALID_PASS_DIMENSION_CASES) {
 }
 
 test('revises exactly once and passes after re-running every gate', async () => {
-  const revised = report({ requirementIds: ['req-1'], questionIds: ['q-1'] });
+  const revised = report();
   const llm = new RecordingLlm([semantic('revise'), semantic('pass', 1)]);
   const artifacts = new RecordingArtifacts();
   const composer = new RevisionComposer(revised);
@@ -248,13 +254,75 @@ test('pauses on a semantic block verdict', async () => {
   assert.equal(result.status, 'paused');
 });
 
-test('blocks before reviewer LLM when deterministic coverage is missing', async () => {
+const INVALID_EXPLICIT_COVERAGE_CASES: Array<{
+  name: string;
+  deliverable: () => Record<string, unknown>;
+}> = [{
+  name: 'coverage is missing even when risk text contains every expected ID',
+  deliverable: () => report({
+    coverage: undefined,
+    risksAndOpenIssues: ['req-1', 'q-1'],
+  }),
+}, {
+  name: 'a question binding is duplicated',
+  deliverable: () => report({
+    coverage: {
+      questionBindings: [
+        { questionId: 'q-1', summaryIds: ['s-1'] },
+        { questionId: 'q-1', summaryIds: ['s-1'] },
+      ],
+      successCriterionBindings: [{ successCriterionId: 'req-1', conclusionIds: ['c-1'], recommendationIds: ['r-1'] }],
+    },
+  }),
+}, {
+  name: 'a question binding points to a missing summary',
+  deliverable: () => report({
+    coverage: {
+      questionBindings: [{ questionId: 'q-1', summaryIds: ['missing-summary'] }],
+      successCriterionBindings: [{ successCriterionId: 'req-1', conclusionIds: ['c-1'], recommendationIds: ['r-1'] }],
+    },
+  }),
+}, {
+  name: 'a success criterion binding is duplicated',
+  deliverable: () => report({
+    coverage: {
+      questionBindings: [{ questionId: 'q-1', summaryIds: ['s-1'] }],
+      successCriterionBindings: [
+        { successCriterionId: 'req-1', conclusionIds: ['c-1'], recommendationIds: ['r-1'] },
+        { successCriterionId: 'req-1', conclusionIds: ['c-1'], recommendationIds: ['r-1'] },
+      ],
+    },
+  }),
+}, {
+  name: 'a success criterion binding points to missing report nodes',
+  deliverable: () => report({
+    coverage: {
+      questionBindings: [{ questionId: 'q-1', summaryIds: ['s-1'] }],
+      successCriterionBindings: [{
+        successCriterionId: 'req-1',
+        conclusionIds: ['missing-conclusion'],
+        recommendationIds: ['missing-recommendation'],
+      }],
+    },
+  }),
+}];
+
+for (const invalid of INVALID_EXPLICIT_COVERAGE_CASES) {
+  test(`blocks before reviewer LLM when ${invalid.name}`, async () => {
+    const llm = new RecordingLlm([semantic('pass')]);
+    const artifacts = new RecordingArtifacts();
+    const result = await service(llm, artifacts).review(input({ deliverable: invalid.deliverable() }));
+    assert.equal(result.verdict, 'block');
+    assert.equal(result.status, 'paused');
+    assert.equal(llm.calls.length, 0);
+  });
+}
+
+test('passes deterministic coverage only from valid explicit report-node bindings', async () => {
   const llm = new RecordingLlm([semantic('pass')]);
-  const artifacts = new RecordingArtifacts();
-  const result = await service(llm, artifacts).review(input({ deliverable: report({ requirementIds: [] }) }));
-  assert.equal(result.verdict, 'block');
-  assert.equal(result.status, 'paused');
-  assert.equal(llm.calls.length, 0);
+  const result = await service(llm, new RecordingArtifacts()).review(input());
+  assert.equal(result.status, 'completed');
+  assert.equal(llm.calls.length, 1);
 });
 
 test('does not accept model drift from the reviewer', async () => {

@@ -56,6 +56,14 @@ const graph: FindingGraph = {
   subQuestionSummaries: [{ id: 'S1', findingIds: ['F1'], analysisIds: ['A1'], summary: '问题小结' }],
   overallConclusions: [{ id: 'C1', summaryIds: ['S1'], statement: '总体结论' }],
 };
+const coverage = {
+  questionBindings: [{ questionId: 'Q1', summaryIds: ['S1'] }],
+  successCriterionBindings: [{
+    successCriterionId: 'SC1',
+    conclusionIds: ['C1'],
+    recommendationIds: ['R1'],
+  }],
+};
 
 function report(): CurrentEvidenceReport {
   return {
@@ -81,6 +89,7 @@ function deliverableReport(overrides: Record<string, unknown> = {}): Record<stri
     findingGraph: graph,
     payload: {},
     recommendations: [{ id: 'R1', summaryIds: ['S1'], statement: '建议继续验证' }],
+    coverage,
     risksAndOpenIssues: [],
     capabilityProvenance: [{ id: 'tavily', type: 'tool' }],
     ...overrides,
@@ -176,4 +185,68 @@ test('rejects legacy report shapes from the current evidence contract', () => {
     () => validator.validate({ manifest, report: { findings: [{ source_ref: 'https://example.test' }] }, resolver }),
     CurrentReportValidationError,
   );
+});
+
+const INVALID_REVIEW_GATED_COVERAGE_CASES: Array<{
+  name: string;
+  coverage: unknown;
+}> = [{
+  name: 'missing coverage',
+  coverage: undefined,
+}, {
+  name: 'duplicate question bindings',
+  coverage: {
+    ...coverage,
+    questionBindings: [...coverage.questionBindings, ...coverage.questionBindings],
+  },
+}, {
+  name: 'duplicate success criterion bindings',
+  coverage: {
+    ...coverage,
+    successCriterionBindings: [
+      ...coverage.successCriterionBindings,
+      ...coverage.successCriterionBindings,
+    ],
+  },
+}, {
+  name: 'a dangling summary reference',
+  coverage: {
+    ...coverage,
+    questionBindings: [{ questionId: 'Q1', summaryIds: ['missing-summary'] }],
+  },
+}, {
+  name: 'dangling conclusion and recommendation references',
+  coverage: {
+    ...coverage,
+    successCriterionBindings: [{
+      successCriterionId: 'SC1',
+      conclusionIds: ['missing-conclusion'],
+      recommendationIds: ['missing-recommendation'],
+    }],
+  },
+}];
+
+for (const invalid of INVALID_REVIEW_GATED_COVERAGE_CASES) {
+  test(`rejects review-gated deliverable coverage with ${invalid.name}`, () => {
+    const validator = new ReportEvidenceValidator(evidenceService);
+    assert.throws(
+      () => validator.validate({
+        manifest,
+        report: deliverableReport({ coverage: invalid.coverage }),
+        resolver,
+        requireCoverage: true,
+      }),
+      CurrentReportValidationError,
+    );
+  });
+}
+
+test('accepts valid explicit coverage for a review-gated deliverable', () => {
+  const validator = new ReportEvidenceValidator(evidenceService);
+  assert.doesNotThrow(() => validator.validate({
+    manifest,
+    report: deliverableReport(),
+    resolver,
+    requireCoverage: true,
+  }));
 });

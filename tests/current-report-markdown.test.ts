@@ -139,6 +139,14 @@ function buildResponse(
       summaryIds: ['S1'],
       statement: '按产品定位维度继续采集六个样本的可追溯公开信息',
     }],
+    coverage: {
+      questionBindings: [{ questionId: 'question-positioning', summaryIds: ['S1'] }],
+      successCriterionBindings: [{
+        successCriterionId: 'criterion-traceable',
+        conclusionIds: ['C1'],
+        recommendationIds: ['R1'],
+      }],
+    },
     risksAndOpenIssues,
     capabilityProvenance: [
       { id: 'tavily-web-search', type: 'tool' },

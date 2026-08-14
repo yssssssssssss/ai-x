@@ -131,6 +131,14 @@ function deliverable(overrides: Record<string, unknown> = {}): Record<string, un
     },
     payload: { title: 'Verified report' },
     recommendations: [{ id: 'recommendation-1', statement: 'Act on the conclusion', summaryIds: ['summary-1'] }],
+    coverage: {
+      questionBindings: [{ questionId: 'question-1', summaryIds: ['summary-1'] }],
+      successCriterionBindings: [{
+        successCriterionId: 'criterion-1',
+        conclusionIds: ['conclusion-1'],
+        recommendationIds: ['recommendation-1'],
+      }],
+    },
     risksAndOpenIssues: [],
     capabilityProvenance: [],
     ...overrides,
@@ -389,9 +397,24 @@ test('revalidates referenced Evidence Artifacts and the Finding Graph on every r
   await assert.rejects(invalid.reader.read(binding), /unknown evidence/i);
 });
 
-test('returns historical research-deliverable-v1 Artifacts as legacy_text without a Review', async () => {
-  const { reader } = setup({ deliverableSchemaVersion: 'research-deliverable-v1', review: null });
-  const result = await reader.read(binding);
+test('rejects review-gated deliverables without explicit coverage', async () => {
+  const fixture = setup();
+  const stored = fixture.artifacts.artifacts.get(deliverableArtifactId);
+  assert.ok(stored);
+  const value = { ...(stored.value as Record<string, unknown>) };
+  delete value.coverage;
+  stored.value = value;
+  await assert.rejects(fixture.reader.read(binding), /coverage/i);
+});
+
+test('returns historical research-deliverable-v1 Artifacts as legacy_text without coverage or a Review', async () => {
+  const fixture = setup({ deliverableSchemaVersion: 'research-deliverable-v1', review: null });
+  const stored = fixture.artifacts.artifacts.get(deliverableArtifactId);
+  assert.ok(stored);
+  const value = { ...(stored.value as Record<string, unknown>) };
+  delete value.coverage;
+  stored.value = value;
+  const result = await fixture.reader.read(binding);
 
   assert.equal(result?.presentationMode, 'legacy_text');
   assert.equal(result?.reportReview, undefined);

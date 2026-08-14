@@ -1016,6 +1016,137 @@ test('reconstructs final artifact IDs after driver state commit but before comma
   }
 });
 
+test('replays a sealed pass Review as completed when post-review failure leaves the task paused', async () => {
+  const artifactRoot = mkdtempSync(join(tmpdir(), 'task-workflow-paused-review-replay-'));
+  try {
+    const repository = new ControlPlaneRepository(scopedDatabase);
+    const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+    let driverCalls = 0;
+    let expectedArtifactIds: {
+      deliverableArtifactId: string;
+      evidenceManifestArtifactId: string;
+      reportReviewArtifactId: string;
+    } | undefined;
+    const workflow = new TaskWorkflowService(repository, {
+      execute: async ({ lease }) => {
+        driverCalls += 1;
+        const evidenceManifest = await artifacts.writeJson({
+          taskId: lease.taskId,
+          planVersionId: lease.planVersionId,
+          attemptId: lease.attemptId,
+          kind: 'evidence_manifest',
+          relativePath: 'evidence/manifest.json',
+          schemaVersion: 'evidence-v1',
+          activeLease: lease,
+          value: {
+            version: 'evidence-v1',
+            taskId: lease.taskId,
+            planVersionId: lease.planVersionId,
+            attemptId: lease.attemptId,
+          },
+        });
+        const deliverable = await artifacts.writeJson({
+          taskId: lease.taskId,
+          planVersionId: lease.planVersionId,
+          attemptId: lease.attemptId,
+          kind: 'deliverable',
+          relativePath: 'deliverables/final-r1.json',
+          schemaVersion: 'research-deliverable-v1-review-gated',
+          activeLease: lease,
+          value: {
+            version: 'research-deliverable-v1',
+            taskId: lease.taskId,
+            planVersionId: lease.planVersionId,
+            attemptId: lease.attemptId,
+          },
+        });
+        const reportReview = await artifacts.writeJson({
+          taskId: lease.taskId,
+          planVersionId: lease.planVersionId,
+          attemptId: lease.attemptId,
+          kind: 'report_review',
+          relativePath: 'reports/review-r1.json',
+          schemaVersion: 'report-review-v1',
+          activeLease: lease,
+          value: {
+            version: 'report-review-v1',
+            taskId: lease.taskId,
+            planVersionId: lease.planVersionId,
+            attemptId: lease.attemptId,
+            deliverableArtifactId: deliverable.id,
+            verdict: 'pass',
+            dimensions: REPORT_REVIEW_DIMENSION_IDS.map((id) => ({ id, passed: true, issues: [] })),
+            revisionRound: 1,
+          },
+        });
+        expectedArtifactIds = {
+          deliverableArtifactId: deliverable.id,
+          evidenceManifestArtifactId: evidenceManifest.id,
+          reportReviewArtifactId: reportReview.id,
+        };
+        await repository.recordExecutionStep({
+          attemptId: lease.attemptId,
+          stepNo: 99,
+          stepName: 'post-review packaging',
+          actorType: 'system',
+          actorId: 'report-package',
+          state: 'failed',
+          failure: { kind: 'post_review', allowedActions: ['retry', 'abort'] },
+        });
+        const executingTask = await repository.getTaskDetail(lease.taskId);
+        assert.ok(executingTask);
+        await repository.pauseExecution({
+          taskId: lease.taskId,
+          attemptId: lease.attemptId,
+          expectedVersion: executingTask.stateVersion,
+          reason: 'post_review',
+        });
+        throw new Error('simulated process crash after post-review pause');
+      },
+    }, undefined, artifacts);
+    const created = await createCandidateTask(repository, 'paused-review-replay', {
+      candidateId: 'depth',
+    });
+    const selection = await workflow.select({
+      taskId: created.task.id,
+      expectedVersion: created.task.stateVersion,
+      idempotencyKey: 'paused-review-select',
+      actor: { userId: ownerId, role: 'owner' },
+      planVersionId: created.candidates[0]!.id,
+    });
+    const ready = await workflow.confirm({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      expectedVersion: selection.stateVersion,
+      idempotencyKey: 'paused-review-confirm',
+      actor: { userId: ownerId, role: 'owner' },
+      confirmationAnswers: {},
+      inputValues: {},
+    });
+    const command = {
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      expectedVersion: ready.stateVersion,
+      idempotencyKey: 'paused-review-execute',
+      actor: { userId: ownerId, role: 'owner' as const },
+    };
+
+    await assert.rejects(() => workflow.execute(command), /simulated process crash/);
+    const replay = await workflow.execute(command);
+
+    assert.ok(expectedArtifactIds);
+    assert.equal(replay.state, 'paused');
+    assert.equal('status' in replay && replay.status, 'paused');
+    assert.equal('deliverableArtifactId' in replay && replay.deliverableArtifactId, expectedArtifactIds.deliverableArtifactId);
+    assert.equal('evidenceManifestArtifactId' in replay && replay.evidenceManifestArtifactId, expectedArtifactIds.evidenceManifestArtifactId);
+    assert.equal('reportReviewArtifactId' in replay && replay.reportReviewArtifactId, expectedArtifactIds.reportReviewArtifactId);
+    assert.equal('reviewStatus' in replay && replay.reviewStatus, 'completed');
+    assert.equal(driverCalls, 1);
+  } finally {
+    rmSync(artifactRoot, { recursive: true, force: true });
+  }
+});
+
 async function createPausedTask(input: {
   repository: ControlPlaneRepository;
   suffix: string;
@@ -1123,6 +1254,20 @@ test('report review failure rejects retry and permits only abort recovery', asyn
     expectedVersion: claim.stateVersion,
     reason: 'report_review',
   });
+
+  await assert.rejects(
+    () => workflow.resume({
+      taskId: task.id,
+      expectedVersion: paused.stateVersion,
+      idempotencyKey: `review-forged-retry-${randomUUID()}`,
+      actor: { userId: ownerId, role: 'owner' },
+      action: 'retry',
+      failedStepNo: failedStepNo + 100,
+    }),
+    TaskWorkflowGateError,
+  );
+  assert.equal((await repository.getTaskDetail(task.id))?.state, 'paused');
+  assert.equal((await repository.listAttempts(task.id))[0]?.state, 'paused');
 
   await assert.rejects(
     () => workflow.resume({

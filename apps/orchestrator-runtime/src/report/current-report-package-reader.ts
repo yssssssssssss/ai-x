@@ -142,6 +142,7 @@ export class CurrentReportPackageReader {
       binding,
       'deliverable',
     );
+    const schemaVersion = verifiedDeliverable.artifact.schemaVersion;
     const deliverable = record(verifiedDeliverable.value);
     if (!deliverable || deliverable.version !== 'research-deliverable-v1') {
       throw new Error('deliverable JSON schema is invalid');
@@ -202,9 +203,9 @@ export class CurrentReportPackageReader {
       manifest: evidenceManifest,
       report: deliverable,
       resolver,
+      requireCoverage: schemaVersion === REVIEW_GATED_DELIVERABLE_SCHEMA_VERSION,
     });
 
-    const schemaVersion = verifiedDeliverable.artifact.schemaVersion;
     if (review) {
       if (schemaVersion !== REVIEW_GATED_DELIVERABLE_SCHEMA_VERSION) {
         throw new Error(`Review-bound deliverable Artifact schema marker ${schemaVersion} is unsupported`);
