@@ -315,6 +315,10 @@ class MemoryArtifactRegistry {
     this.artifacts.set(failed.id, failed);
   }
 
+  async invalidateArtifactPublication(artifactId: string, failureReason: string): Promise<void> {
+    await this.failArtifact(artifactId, failureReason);
+  }
+
   async getArtifact(artifactId: string): Promise<ControlArtifact | null> {
     return this.artifacts.get(artifactId) ?? null;
   }
@@ -327,6 +331,10 @@ class MemoryArtifactRegistry {
     const current = this.artifacts.get(artifactId);
     if (!current || current.state !== 'SEALED') throw new ArtifactNotSealedError(artifactId);
     return current;
+  }
+
+  async requireSealedArtifactBinding(artifactId: string): Promise<ControlArtifact> {
+    return this.requireSealedArtifact(artifactId);
   }
 }
 

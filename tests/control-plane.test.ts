@@ -1438,6 +1438,68 @@ test('seals versioned attempt artifacts and rejects staged or tampered artifacts
   await assert.rejects(() => store.verifySealed(sealed.id), ArtifactIntegrityError);
 });
 
+test('rejects foreign Task Plan Attempt tuples on staging, unleased seal, and verified binary read', async () => {
+  const first = await createLeaseStateFixture('executing', false);
+  const second = await createLeaseStateFixture('executing', false);
+  const repository = first.repository;
+  const base = {
+    kind: 'visual_asset',
+    storageUri: join(workspaceRoot, `${randomUUID()}.png`),
+    schemaVersion: 'visual-asset-v1',
+    sensitivity: 'internal',
+    redactionPolicyVersion: 'v1',
+    mediaType: 'image/png',
+    metadata: { width: 1, height: 1 },
+  };
+
+  await assert.rejects(
+    () => repository.createStagingArtifact({
+      ...base,
+      taskId: first.task.id,
+      planVersionId: first.plan.id,
+      attemptId: second.claim.attemptId,
+    }),
+    ControlPlaneConflictError,
+  );
+
+  const staged = await repository.createStagingArtifact({
+    ...base,
+    taskId: first.task.id,
+    planVersionId: first.plan.id,
+    attemptId: first.claim.attemptId,
+  });
+  const connection = await scopedDatabase.connect();
+  try {
+    await connection.query(
+      'UPDATE control_artifacts SET plan_version_id = $2, attempt_id = $3 WHERE id = $1',
+      [staged.id, second.plan.id, second.claim.attemptId],
+    );
+  } finally {
+    connection.release();
+  }
+  await assert.rejects(
+    () => repository.sealArtifact({ artifactId: staged.id, contentSha256: `sha256:${'a'.repeat(64)}`, byteSize: 1 }),
+    ControlPlaneConflictError,
+  );
+
+  const store = new ControlArtifactStore({ root: workspaceRoot, registry: repository });
+  const sealed = await store.writeBinary({
+    taskId: first.task.id,
+    planVersionId: first.plan.id,
+    attemptId: first.claim.attemptId,
+    kind: 'visual_asset',
+    relativePath: `visuals/${randomUUID()}.png`,
+    bytes: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'),
+  });
+  const tamper = await scopedDatabase.connect();
+  try {
+    await tamper.query('UPDATE control_artifacts SET plan_version_id = $2 WHERE id = $1', [sealed.id, second.plan.id]);
+  } finally {
+    tamper.release();
+  }
+  await assert.rejects(() => store.readVerifiedBinary(sealed.id), ControlPlaneConflictError);
+});
+
 test('atomically refuses to seal a terminal artifact after its execution lease expires', async () => {
   const repository = new ControlPlaneRepository(scopedDatabase);
   const task = await repository.createTask({

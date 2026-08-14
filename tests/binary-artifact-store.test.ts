@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -29,7 +30,7 @@ const PNG = Buffer.from(
   'base64',
 );
 const JPEG = Buffer.from(
-  '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABBQJ//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAwEBPwF//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPwF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQAGPwJ//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPyF//9oADAMBAAIAAwAAABD/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/EB//xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/EB//xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/EB//2Q==',
+  '/9j/4AAQSkZJRgABAQAASABIAAD/wAALCAABAAEBAREA/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/9sAQwACAgICAgIDAgIDBQMDAwUGBQUFBQYIBgYGBgYICggICAgICAoKCgoKCgoKDAwMDAwMDg4ODg4PDw8PDw8PDw8P/90ABAAB/9oACAEBAAA/APwDr//Z',
   'base64',
 );
 const WEBP = Buffer.from(
@@ -68,6 +69,7 @@ class MemoryArtifactRegistry {
   } & Partial<ControlExecutionLease>> = [];
   leaseExpired = false;
   sealResponseLost = false;
+  beforeSealCommit?: (artifact: ControlArtifact) => void;
 
   async createStagingArtifact(input: {
     taskId: string;
@@ -120,6 +122,7 @@ class MemoryArtifactRegistry {
         && input.leaseToken === ACTIVE_LEASE.leaseToken;
       if (!matches) throw new ControlPlaneConflictError('active execution lease is invalid or expired');
     }
+    this.beforeSealCommit?.(artifact);
     const sealed = {
       ...artifact,
       state: 'SEALED' as const,
@@ -137,6 +140,12 @@ class MemoryArtifactRegistry {
     this.artifacts.set(artifactId, { ...artifact, state: 'FAILED', failureReason });
   }
 
+  async invalidateArtifactPublication(artifactId: string, failureReason: string): Promise<void> {
+    const artifact = this.artifacts.get(artifactId);
+    if (!artifact) return;
+    this.artifacts.set(artifactId, { ...artifact, state: 'FAILED', failureReason });
+  }
+
   async getArtifact(artifactId: string): Promise<ControlArtifact | null> {
     return this.artifacts.get(artifactId) ?? null;
   }
@@ -148,6 +157,12 @@ class MemoryArtifactRegistry {
   async requireSealedArtifact(artifactId: string): Promise<ControlArtifact> {
     const artifact = this.artifacts.get(artifactId);
     if (!artifact || artifact.state !== 'SEALED') throw new ArtifactNotSealedError(artifactId);
+    return artifact;
+  }
+
+  async requireSealedArtifactBinding(artifactId: string): Promise<ControlArtifact> {
+    const artifact = await this.requireSealedArtifact(artifactId);
+    if (!artifact.planVersionId) throw new ControlPlaneConflictError('artifact identity binding is invalid');
     return artifact;
   }
 }
@@ -225,6 +240,69 @@ function grayscalePng(width: number, height: number): Buffer {
   ]);
 }
 
+function indexedPngWithMissingPaletteEntry(): Buffer {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(1, 0);
+  ihdr.writeUInt32BE(1, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 3;
+  return Buffer.concat([
+    PNG.subarray(0, 8),
+    pngChunk('IHDR', ihdr),
+    pngChunk('PLTE', Buffer.from([0, 0, 0])),
+    pngChunk('IDAT', deflateSync(Buffer.from([0, 1]))),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+function pngWithIdatCount(count: number): Buffer {
+  const iendOffset = PNG.lastIndexOf(Buffer.from('IEND')) - 4;
+  const firstIdatOffset = PNG.indexOf(Buffer.from('IDAT')) - 4;
+  const firstIdatLength = PNG.readUInt32BE(firstIdatOffset);
+  const afterIdat = firstIdatOffset + firstIdatLength + 12;
+  return Buffer.concat([
+    PNG.subarray(0, firstIdatOffset),
+    ...Array.from({ length: count }, () => pngChunk('IDAT', Buffer.alloc(0))),
+    PNG.subarray(firstIdatOffset, afterIdat),
+    PNG.subarray(afterIdat, iendOffset),
+    PNG.subarray(iendOffset),
+  ]);
+}
+
+function malformedJpegWithIncompleteFrame(): Buffer {
+  const segment = (marker: number, data: Buffer) => {
+    const output = Buffer.alloc(data.byteLength + 4);
+    output[0] = 0xff;
+    output[1] = marker;
+    output.writeUInt16BE(data.byteLength + 2, 2);
+    data.copy(output, 4);
+    return output;
+  };
+  const quantization = Buffer.concat([Buffer.from([0]), Buffer.alloc(64, 1)]);
+  const huffman = Buffer.concat([Buffer.from([0, 1]), Buffer.alloc(15), Buffer.from([0])]);
+  const incompleteFrame = Buffer.from([8, 0, 1, 0, 1]);
+  return Buffer.concat([
+    Buffer.from([0xff, 0xd8]),
+    segment(0xdb, quantization),
+    segment(0xc4, huffman),
+    segment(0xc0, incompleteFrame),
+    segment(0xda, Buffer.alloc(0)),
+    Buffer.from([0, 0xff, 0xd9]),
+  ]);
+}
+
+function truncatedWebpPayload(): Buffer {
+  const bytes = Buffer.alloc(30);
+  bytes.write('RIFF', 0, 'ascii');
+  bytes.writeUInt32LE(22, 4);
+  bytes.write('WEBPVP8 ', 8, 'ascii');
+  bytes.writeUInt32LE(10, 16);
+  bytes.set([0, 0, 0, 0x9d, 0x01, 0x2a], 20);
+  bytes.writeUInt16LE(1, 26);
+  bytes.writeUInt16LE(1, 28);
+  return bytes;
+}
+
 async function assertRoundTrip(
   fixture: Buffer,
   contentType: TrustedBinaryMetadata['contentType'],
@@ -297,6 +375,108 @@ test('rejects SVG, unknown, malformed, and truncated PNG/JPEG/WebP bytes', async
     );
   }
   assert.equal(registry.artifacts.size, 0);
+});
+
+test('rejects JPEGs with incomplete SOF components, SOS selectors, and entropy structure', async () => {
+  const { store } = setup();
+  await assert.rejects(
+    () => store.writeBinary(binaryInput(malformedJpegWithIncompleteFrame(), 'visuals/incomplete.jpg')),
+    /invalid|unsupported|JPEG/i,
+  );
+});
+
+test('rejects WebP payloads that end after a VP8 dimensions header', async () => {
+  const { store } = setup();
+  await assert.rejects(
+    () => store.writeBinary(binaryInput(truncatedWebpPayload(), 'visuals/truncated.webp')),
+    /invalid|unsupported|WebP/i,
+  );
+});
+
+test('rejects indexed PNG samples that exceed the declared palette', async () => {
+  const { store } = setup();
+  await assert.rejects(
+    () => store.writeBinary(binaryInput(indexedPngWithMissingPaletteEntry(), 'visuals/bad-index.png')),
+    /invalid|unsupported|PNG/i,
+  );
+});
+
+test('rejects over-20MP PNG dimensions before attempting to inflate IDAT', async () => {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(20_000_001, 0);
+  ihdr.writeUInt32BE(1, 4);
+  ihdr[8] = 16;
+  ihdr[9] = 6;
+  const hostile = Buffer.concat([
+    PNG.subarray(0, 8),
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', Buffer.from('not-zlib')),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+  const { store } = setup();
+  await assert.rejects(
+    () => store.writeBinary(binaryInput(hostile, 'visuals/over-limit.png')),
+    /20 megapixels|pixel count/i,
+  );
+});
+
+test('rejects oversized binary input before attempting a Buffer copy', async () => {
+  const oversized = {
+    byteLength: TEN_MIB + 1,
+    length: TEN_MIB + 1,
+    [Symbol.iterator]() { throw new Error('oversized input was copied'); },
+  } as unknown as Uint8Array;
+  const { store } = setup();
+  await assert.rejects(
+    () => store.writeBinary(binaryInput(oversized, 'visuals/oversized.png')),
+    /10 MiB|byte size|too large/i,
+  );
+});
+
+test('rejects oversized stored binary from fstat before allocating or hashing it', async () => {
+  const { store } = setup();
+  const sealed = await store.writeBinary(binaryInput(PNG, 'visuals/stored-size.png'));
+  writeFileSync(sealed.storageUri, Buffer.alloc(TEN_MIB + 1));
+  await assert.rejects(
+    () => store.readVerifiedBinary(sealed.id),
+    /10 MiB|byte size|too large/i,
+  );
+});
+
+test('does not seal a path replacement introduced during publication', async () => {
+  const { registry, store } = setup();
+  registry.beforeSealCommit = (artifact) => {
+    renameSync(artifact.storageUri, `${artifact.storageUri}.validated`);
+    writeFileSync(artifact.storageUri, WEBP);
+  };
+  await assert.rejects(
+    () => store.writeBinary(binaryInput(PNG, 'visuals/replaced-before-seal.png')),
+    /integrity|publication|identity/i,
+  );
+});
+
+test('does not seal when the publication parent is swapped to an external symlink', async () => {
+  const { root, registry, store } = setup();
+  const outside = mkdtempSync(join(tmpdir(), 'binary-publication-swap-'));
+  temporaryRoots.push(outside);
+  registry.beforeSealCommit = (artifact) => {
+    const parent = join(root, 'tasks', ACTIVE_LEASE.taskId, 'attempts', ACTIVE_LEASE.attemptId, 'visuals');
+    renameSync(parent, `${parent}.validated`);
+    symlinkSync(outside, parent, 'dir');
+    assert.equal(artifact.storageUri, join(parent, 'parent-swap.png'));
+  };
+  await assert.rejects(
+    () => store.writeBinary(binaryInput(PNG, 'visuals/parent-swap.png')),
+    /workspace|publication|identity/i,
+  );
+});
+
+test('rejects PNGs with excessive IDAT chunk counts before aggregation', async () => {
+  const { store } = setup();
+  await assert.rejects(
+    () => store.writeBinary(binaryInput(pngWithIdatCount(1_025), 'visuals/idat-flood.png')),
+    /IDAT|invalid|unsupported/i,
+  );
 });
 
 test('rejects file hash tamper and persisted trusted metadata tamper on verified read', async () => {

@@ -1,15 +1,17 @@
 import { createHash } from 'node:crypto';
 import {
   closeSync,
+  constants,
   existsSync,
+  fstatSync,
   fsyncSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
   realpathSync,
   renameSync,
-  rmSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -87,31 +89,63 @@ function pngPayloadMatchesDimensions(
   bitDepth: number,
   colorType: number,
   interlace: number,
+  paletteEntries: number,
 ): boolean {
   const channels = colorType === 0 || colorType === 3 ? 1 : colorType === 2 ? 3 : colorType === 4 ? 2 : colorType === 6 ? 4 : 0;
   const allowedDepths: Record<number, number[]> = {
     0: [1, 2, 4, 8, 16], 2: [8, 16], 3: [1, 2, 4, 8], 4: [8, 16], 6: [8, 16],
   };
   if (!channels || !allowedDepths[colorType]?.includes(bitDepth) || (interlace !== 0 && interlace !== 1)) return false;
-  if (width * height > MAX_BINARY_PIXEL_COUNT + 1) return true;
-
   const passes = interlace === 0
     ? [[0, 0, 1, 1]]
     : [[0, 0, 8, 8], [4, 0, 8, 8], [0, 4, 4, 8], [2, 0, 4, 4], [0, 2, 2, 4], [1, 0, 2, 2], [0, 1, 1, 2]];
   const layouts = passes.map(([startX, startY, stepX, stepY]) => {
     const passWidth = width <= startX! ? 0 : Math.ceil((width - startX!) / stepX!);
     const passHeight = height <= startY! ? 0 : Math.ceil((height - startY!) / stepY!);
-    return { passHeight, rowSize: Math.ceil((passWidth * channels * bitDepth) / 8) };
+    return { passWidth, passHeight, rowSize: Math.ceil((passWidth * channels * bitDepth) / 8) };
   }).filter(({ passHeight }) => passHeight > 0);
   const expectedLength = layouts.reduce((total, layout) => total + (layout.rowSize + 1) * layout.passHeight, 0);
+  const bytesPerPixel = Math.max(1, Math.ceil((channels * bitDepth) / 8));
   try {
     const inflated = inflateSync(Buffer.concat(compressed), { maxOutputLength: expectedLength });
     if (inflated.byteLength !== expectedLength) return false;
     let offset = 0;
     for (const layout of layouts) {
+      let previous = Buffer.alloc(layout.rowSize);
       for (let row = 0; row < layout.passHeight; row += 1) {
-        if (inflated[offset] === undefined || inflated[offset]! > 4) return false;
-        offset += layout.rowSize + 1;
+        const filter = inflated[offset++];
+        if (filter === undefined || filter > 4) return false;
+        const reconstructed = Buffer.allocUnsafe(layout.rowSize);
+        for (let index = 0; index < layout.rowSize; index += 1) {
+          const raw = inflated[offset + index]!;
+          const left = index >= bytesPerPixel ? reconstructed[index - bytesPerPixel]! : 0;
+          const above = previous[index] ?? 0;
+          const upperLeft = index >= bytesPerPixel ? previous[index - bytesPerPixel]! : 0;
+          let predictor = 0;
+          if (filter === 1) predictor = left;
+          else if (filter === 2) predictor = above;
+          else if (filter === 3) predictor = Math.floor((left + above) / 2);
+          else if (filter === 4) {
+            const estimate = left + above - upperLeft;
+            const leftDistance = Math.abs(estimate - left);
+            const aboveDistance = Math.abs(estimate - above);
+            const upperLeftDistance = Math.abs(estimate - upperLeft);
+            predictor = leftDistance <= aboveDistance && leftDistance <= upperLeftDistance
+              ? left
+              : aboveDistance <= upperLeftDistance ? above : upperLeft;
+          }
+          reconstructed[index] = (raw + predictor) & 0xff;
+        }
+        offset += layout.rowSize;
+        if (colorType === 3) {
+          for (let pixel = 0; pixel < layout.passWidth; pixel += 1) {
+            const bitOffset = pixel * bitDepth;
+            const shift = 8 - bitDepth - (bitOffset % 8);
+            const sample = (reconstructed[Math.floor(bitOffset / 8)]! >> shift) & ((1 << bitDepth) - 1);
+            if (sample >= paletteEntries) return false;
+          }
+        }
+        previous = reconstructed;
       }
     }
     return offset === inflated.byteLength;
@@ -130,6 +164,7 @@ function isPngContainerValid(bytes: Buffer): boolean {
   let interlace = -1;
   const imageData: Buffer[] = [];
   let sawPalette = false;
+  let paletteEntries = 0;
   let imageDataEnded = false;
   while (offset + 12 <= bytes.byteLength) {
     const length = bytes.readUInt32BE(offset);
@@ -152,9 +187,10 @@ function isPngContainerValid(bytes: Buffer): boolean {
     if (type === 'PLTE') {
       if (sawPalette || imageData.length > 0 || length === 0 || length % 3 !== 0 || length > 768 || colorType === 0 || colorType === 4) return false;
       sawPalette = true;
+      paletteEntries = length / 3;
     }
     if (type === 'IDAT') {
-      if (imageDataEnded || (colorType === 3 && !sawPalette)) return false;
+      if (imageDataEnded || (colorType === 3 && !sawPalette) || imageData.length >= 1_024) return false;
       imageData.push(bytes.subarray(offset + 8, dataEnd));
     } else if (imageData.length > 0 && type !== 'IEND') {
       imageDataEnded = true;
@@ -165,55 +201,63 @@ function isPngContainerValid(bytes: Buffer): boolean {
         && imageData.length > 0
         && (colorType !== 3 || sawPalette)
         && chunkEnd === bytes.byteLength
-        && pngPayloadMatchesDimensions(imageData, width, height, bitDepth, colorType, interlace);
+        && pngPayloadMatchesDimensions(imageData, width, height, bitDepth, colorType, interlace, paletteEntries);
     }
     offset = chunkEnd;
   }
   return false;
 }
 
-function isJpegQuantizationSegmentValid(bytes: Buffer, offset: number, length: number): boolean {
+function parseJpegQuantizationSegment(bytes: Buffer, offset: number, length: number): number[] | null {
   let cursor = offset + 2;
   const end = offset + length;
+  const tableIds: number[] = [];
   while (cursor < end) {
     const precisionAndId = bytes[cursor++];
-    if (precisionAndId === undefined || (precisionAndId >> 4) > 1 || (precisionAndId & 0x0f) > 3) return false;
+    if (precisionAndId === undefined || (precisionAndId >> 4) > 1 || (precisionAndId & 0x0f) > 3) return null;
+    tableIds.push(precisionAndId & 0x0f);
     cursor += (precisionAndId >> 4) === 0 ? 64 : 128;
+    if (cursor > end) return null;
   }
-  return cursor === end;
+  return cursor === end && tableIds.length > 0 ? tableIds : null;
 }
 
-function isJpegHuffmanSegmentValid(bytes: Buffer, offset: number, length: number): boolean {
+function parseJpegHuffmanSegment(bytes: Buffer, offset: number, length: number): string[] | null {
   let cursor = offset + 2;
   const end = offset + length;
+  const tableKeys: string[] = [];
   while (cursor < end) {
     const classAndId = bytes[cursor++];
-    if (classAndId === undefined || (classAndId >> 4) > 1 || (classAndId & 0x0f) > 3 || cursor + 16 > end) return false;
+    if (classAndId === undefined || (classAndId >> 4) > 1 || (classAndId & 0x0f) > 3 || cursor + 16 > end) return null;
     let symbolCount = 0;
-    for (let index = 0; index < 16; index += 1) symbolCount += bytes[cursor + index]!;
-    if (symbolCount === 0) return false;
+    let availableCodes = 1;
+    for (let index = 0; index < 16; index += 1) {
+      availableCodes = (availableCodes << 1) - bytes[cursor + index]!;
+      if (availableCodes < 0) return null;
+      symbolCount += bytes[cursor + index]!;
+    }
+    if (symbolCount === 0 || cursor + 16 + symbolCount > end) return null;
+    tableKeys.push(`${classAndId >> 4}:${classAndId & 0x0f}`);
     cursor += 16 + symbolCount;
   }
-  return cursor === end;
+  return cursor === end && tableKeys.length > 0 ? tableKeys : null;
 }
 
 function isJpegContainerValid(bytes: Buffer): boolean {
   if (bytes.byteLength < 12 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return false;
   let offset = 2;
-  let sawSize = false;
-  let sawQuantizationTable = false;
-  let sawHuffmanTable = false;
+  let frameMarker = 0;
+  const quantizationTables = new Set<number>();
+  const huffmanTables = new Set<string>();
+  const frameComponents = new Map<number, number>();
+  let sawScan = false;
   let sawScanByte = false;
   while (offset < bytes.byteLength) {
     if (bytes[offset] !== 0xff) return false;
     while (bytes[offset] === 0xff) offset += 1;
     const marker = bytes[offset++];
     if (marker === 0xd9) {
-      return offset === bytes.byteLength
-        && sawSize
-        && sawQuantizationTable
-        && sawHuffmanTable
-        && sawScanByte;
+      return offset === bytes.byteLength && frameComponents.size > 0 && sawScan && sawScanByte;
     }
     if (marker === undefined || marker === 0x00) return false;
     if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
@@ -221,23 +265,63 @@ function isJpegContainerValid(bytes: Buffer): boolean {
     const segmentLength = bytes.readUInt16BE(offset);
     if (segmentLength < 2 || offset + segmentLength > bytes.byteLength) return false;
     if (marker === 0xdb) {
-      if (!isJpegQuantizationSegmentValid(bytes, offset, segmentLength)) return false;
-      sawQuantizationTable = true;
+      const ids = parseJpegQuantizationSegment(bytes, offset, segmentLength);
+      if (!ids) return false;
+      for (const id of ids) quantizationTables.add(id);
     }
     if (marker === 0xc4) {
-      if (!isJpegHuffmanSegmentValid(bytes, offset, segmentLength)) return false;
-      sawHuffmanTable = true;
+      const keys = parseJpegHuffmanSegment(bytes, offset, segmentLength);
+      if (!keys) return false;
+      for (const key of keys) huffmanTables.add(key);
     }
     if (marker === 0xc0 || marker === 0xc1 || marker === 0xc2) {
-      if (segmentLength < 7) return false;
-      sawSize = true;
+      if (frameComponents.size > 0 || bytes[offset + 2] !== 8) return false;
+      const componentCount = bytes[offset + 7];
+      if (!componentCount || componentCount > 4 || segmentLength !== 8 + 3 * componentCount) return false;
+      const height = bytes.readUInt16BE(offset + 3);
+      const width = bytes.readUInt16BE(offset + 5);
+      if (width === 0 || height === 0) return false;
+      for (let index = 0; index < componentCount; index += 1) {
+        const componentOffset = offset + 8 + index * 3;
+        const id = bytes[componentOffset]!;
+        const sampling = bytes[componentOffset + 1]!;
+        const tableId = bytes[componentOffset + 2]!;
+        if (frameComponents.has(id) || (sampling >> 4) === 0 || (sampling >> 4) > 4 || (sampling & 0x0f) === 0 || (sampling & 0x0f) > 4 || tableId > 3) return false;
+        frameComponents.set(id, tableId);
+      }
+      frameMarker = marker;
+    }
+    if (marker === 0xda) {
+      const scanComponentCount = bytes[offset + 2];
+      if (!scanComponentCount || scanComponentCount > frameComponents.size || segmentLength !== 6 + 2 * scanComponentCount) return false;
+      const scanIds = new Set<number>();
+      for (let index = 0; index < scanComponentCount; index += 1) {
+        const selectorOffset = offset + 3 + index * 2;
+        const id = bytes[selectorOffset]!;
+        const selectors = bytes[selectorOffset + 1]!;
+        if (!frameComponents.has(id) || scanIds.has(id) || !quantizationTables.has(frameComponents.get(id)!)) return false;
+        scanIds.add(id);
+        const dc = selectors >> 4;
+        const ac = selectors & 0x0f;
+        if (dc > 3 || ac > 3) return false;
+        const spectralStart = bytes[offset + 3 + scanComponentCount * 2]!;
+        const spectralEnd = bytes[offset + 4 + scanComponentCount * 2]!;
+        if (spectralStart === 0 && !huffmanTables.has(`0:${dc}`)) return false;
+        if (spectralEnd > 0 && !huffmanTables.has(`1:${ac}`)) return false;
+      }
+      const spectralStart = bytes[offset + 3 + scanComponentCount * 2]!;
+      const spectralEnd = bytes[offset + 4 + scanComponentCount * 2]!;
+      const approximation = bytes[offset + 5 + scanComponentCount * 2]!;
+      if (spectralStart > spectralEnd || spectralEnd > 63 || (frameMarker !== 0xc2 && (spectralStart !== 0 || spectralEnd !== 63 || approximation !== 0))) return false;
+      sawScan = true;
     }
     offset += segmentLength;
     if (marker !== 0xda) continue;
-
+    let currentScanHasByte = false;
     while (offset < bytes.byteLength) {
       if (bytes[offset] !== 0xff) {
         sawScanByte = true;
+        currentScanHasByte = true;
         offset += 1;
         continue;
       }
@@ -245,9 +329,11 @@ function isJpegContainerValid(bytes: Buffer): boolean {
       while (bytes[offset] === 0xff) offset += 1;
       const escaped = bytes[offset];
       if (escaped === 0x00 || (escaped !== undefined && escaped >= 0xd0 && escaped <= 0xd7)) {
+        currentScanHasByte = true;
         offset += 1;
         continue;
       }
+      if (!currentScanHasByte) return false;
       offset = markerOffset;
       break;
     }
@@ -257,12 +343,22 @@ function isJpegContainerValid(bytes: Buffer): boolean {
 
 function isWebpImagePayloadValid(bytes: Buffer, type: string, dataOffset: number, length: number): boolean {
   if (type === 'VP8 ') {
-    return length >= 10
+    if (length <= 10) return false;
+    const frameTag = bytes.readUIntLE(dataOffset, 3);
+    const firstPartitionLength = frameTag >>> 5;
+    return (frameTag & 1) === 0
+      && ((frameTag >> 1) & 7) <= 3
+      && ((frameTag >> 4) & 1) === 1
+      && length > 10 + firstPartitionLength
       && bytes[dataOffset + 3] === 0x9d
       && bytes[dataOffset + 4] === 0x01
-      && bytes[dataOffset + 5] === 0x2a;
+      && bytes[dataOffset + 5] === 0x2a
+      && (bytes.readUInt16LE(dataOffset + 6) & 0x3fff) > 0
+      && (bytes.readUInt16LE(dataOffset + 8) & 0x3fff) > 0;
   }
-  if (type === 'VP8L') return length >= 5 && bytes[dataOffset] === 0x2f;
+  if (type === 'VP8L') {
+    return length > 5 && bytes[dataOffset] === 0x2f && (bytes[dataOffset + 4]! >> 5) === 0;
+  }
   if (type !== 'ANMF' || length < 24) return false;
 
   let nestedOffset = dataOffset + 16;
@@ -295,12 +391,22 @@ function isWebpContainerValid(bytes: Buffer): boolean {
   }
   let offset = 12;
   let sawImageChunk = false;
+  let sawExtendedHeader = false;
   while (offset < bytes.byteLength) {
     if (offset + 8 > bytes.byteLength) return false;
     const type = bytes.toString('ascii', offset, offset + 4);
     const length = bytes.readUInt32LE(offset + 4);
     const chunkEnd = offset + 8 + length;
     if (chunkEnd > bytes.byteLength) return false;
+    if (type === 'VP8X') {
+      if (sawExtendedHeader || offset !== 12 || length !== 10) return false;
+      const dataOffset = offset + 8;
+      if ((bytes[dataOffset]! & 0xc1) !== 0 || bytes.readUIntBE(dataOffset + 1, 3) !== 0) return false;
+      if (bytes.readUIntLE(dataOffset + 4, 3) === 0xffffff || bytes.readUIntLE(dataOffset + 7, 3) === 0xffffff) return false;
+      sawExtendedHeader = true;
+    }
+    if ((type === 'VP8 ' || type === 'VP8L') && sawImageChunk) return false;
+    if (type === 'ANMF' && !sawExtendedHeader) return false;
     if (isWebpImagePayloadValid(bytes, type, offset + 8, length)) sawImageChunk = true;
     offset = chunkEnd + (length % 2);
   }
@@ -311,22 +417,6 @@ function inspectBinary(bytes: Buffer): TrustedBinaryMetadata {
   if (bytes.byteLength > MAX_BINARY_BYTE_SIZE) {
     throw new BinaryArtifactValidationError('byte size exceeds 10 MiB');
   }
-
-  let contentType: TrustedBinaryContentType;
-  let expectedType: 'png' | 'jpg' | 'webp';
-  if (isPngContainerValid(bytes)) {
-    contentType = 'image/png';
-    expectedType = 'png';
-  } else if (isJpegContainerValid(bytes)) {
-    contentType = 'image/jpeg';
-    expectedType = 'jpg';
-  } else if (isWebpContainerValid(bytes)) {
-    contentType = 'image/webp';
-    expectedType = 'webp';
-  } else {
-    throw new BinaryArtifactValidationError('only complete PNG, JPEG, and WebP bytes are supported');
-  }
-
   let dimensions: { width: number; height: number; type?: string };
   try {
     dimensions = imageSize(bytes);
@@ -334,17 +424,22 @@ function inspectBinary(bytes: Buffer): TrustedBinaryMetadata {
     throw new BinaryArtifactValidationError(error instanceof Error ? error.message : String(error));
   }
   const { width, height } = dimensions;
-  if (
-    dimensions.type !== expectedType
-    || !Number.isInteger(width)
-    || !Number.isInteger(height)
-    || width <= 0
-    || height <= 0
-  ) {
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) {
     throw new BinaryArtifactValidationError('image dimensions or signature are invalid');
   }
   if (width * height > MAX_BINARY_PIXEL_COUNT) {
     throw new BinaryArtifactValidationError('pixel count exceeds 20 megapixels');
+  }
+  const contentType: TrustedBinaryContentType = dimensions.type === 'png'
+    ? 'image/png'
+    : dimensions.type === 'jpg' ? 'image/jpeg' : dimensions.type === 'webp' ? 'image/webp' : (() => {
+        throw new BinaryArtifactValidationError('only complete PNG, JPEG, and WebP bytes are supported');
+      })();
+  const valid = dimensions.type === 'png'
+    ? isPngContainerValid(bytes)
+    : dimensions.type === 'jpg' ? isJpegContainerValid(bytes) : isWebpContainerValid(bytes);
+  if (!valid) {
+    throw new BinaryArtifactValidationError('only complete PNG, JPEG, and WebP bytes are supported');
   }
   return { contentType, byteSize: bytes.byteLength, width, height };
 }
@@ -355,7 +450,9 @@ export class ControlArtifactStore {
       root: string;
       registry: Pick<
         ControlPlaneRepository,
-        'createStagingArtifact' | 'sealArtifact' | 'failArtifact' | 'getArtifact' | 'listStagingArtifacts' | 'requireSealedArtifact'
+        | 'createStagingArtifact' | 'sealArtifact' | 'failArtifact' | 'getArtifact'
+        | 'listStagingArtifacts' | 'requireSealedArtifact' | 'requireSealedArtifactBinding'
+        | 'invalidateArtifactPublication'
       >;
     },
   ) {}
@@ -407,6 +504,24 @@ export class ControlArtifactStore {
     }
   }
 
+  private descriptorMatchesPath(path: string, descriptor: number): boolean {
+    try {
+      const descriptorStat = fstatSync(descriptor, { bigint: true });
+      const pathStat = lstatSync(path, { bigint: true });
+      return !pathStat.isSymbolicLink()
+        && descriptorStat.dev === pathStat.dev
+        && descriptorStat.ino === pathStat.ino;
+    } catch {
+      return false;
+    }
+  }
+
+  private assertDescriptorPath(path: string, descriptor: number): void {
+    if (!this.descriptorMatchesPath(path, descriptor)) {
+      throw new ArtifactIntegrityError('publication', 'filesystem identity changed during publication');
+    }
+  }
+
   private async writeBytes(
     input: ArtifactWriteBase,
     bytes: Buffer,
@@ -414,6 +529,7 @@ export class ControlArtifactStore {
   ): Promise<ControlArtifact> {
     const directory = this.directoryFor(input);
     const storageUri = this.resolveArtifactPath(directory, input.relativePath);
+    const parentUri = dirname(storageUri);
     mkdirSync(this.options.root, { recursive: true });
     this.assertUnaliasedRootPath(storageUri);
     const artifact = await this.options.registry.createStagingArtifact({
@@ -426,53 +542,102 @@ export class ControlArtifactStore {
       sensitivity: input.sensitivity ?? 'internal',
       redactionPolicyVersion: input.redactionPolicyVersion ?? 'v1',
       ...(metadata
-        ? {
-            mediaType: metadata.contentType,
-            metadata: { width: metadata.width, height: metadata.height },
-          }
+        ? { mediaType: metadata.contentType, metadata: { width: metadata.width, height: metadata.height } }
         : {}),
     });
     const temporaryUri = `${storageUri}.${artifact.id}.tmp`;
+    const contentSha256 = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+    let rootDescriptor = -1;
+    let parentDescriptor = -1;
+    let temporaryDescriptor = -1;
+    let publishedDescriptor = -1;
     let published = false;
 
+    const publicationStable = () => rootDescriptor >= 0
+      && parentDescriptor >= 0
+      && this.descriptorMatchesPath(this.options.root, rootDescriptor)
+      && this.descriptorMatchesPath(parentUri, parentDescriptor)
+      && (!published || (publishedDescriptor >= 0 && this.descriptorMatchesPath(storageUri, publishedDescriptor)));
+
     try {
-      mkdirSync(dirname(storageUri), { recursive: true });
+      mkdirSync(parentUri, { recursive: true });
       this.assertUnaliasedRootPath(storageUri);
-      writeFileSync(temporaryUri, bytes);
-      const descriptor = openSync(temporaryUri, 'r');
-      try {
-        fsyncSync(descriptor);
-      } finally {
-        closeSync(descriptor);
+      rootDescriptor = openSync(this.options.root, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+      parentDescriptor = openSync(parentUri, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+      this.assertDescriptorPath(this.options.root, rootDescriptor);
+      this.assertDescriptorPath(parentUri, parentDescriptor);
+
+      temporaryDescriptor = openSync(
+        temporaryUri,
+        constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+        0o600,
+      );
+      writeFileSync(temporaryDescriptor, bytes);
+      fsyncSync(temporaryDescriptor);
+      const temporaryStat = fstatSync(temporaryDescriptor, { bigint: true });
+      if (!temporaryStat.isFile() || temporaryStat.size !== BigInt(bytes.byteLength)) {
+        throw new ArtifactIntegrityError(artifact.id, 'validated temporary file size changed');
       }
+      this.assertDescriptorPath(this.options.root, rootDescriptor);
+      this.assertDescriptorPath(parentUri, parentDescriptor);
+      this.assertDescriptorPath(temporaryUri, temporaryDescriptor);
+
       linkSync(temporaryUri, storageUri);
       published = true;
-      unlinkSync(temporaryUri);
-      const sealedBytes = readFileSync(storageUri);
-      const contentSha256 = `sha256:${createHash('sha256').update(sealedBytes).digest('hex')}`;
-      return await this.options.registry.sealArtifact({
+      publishedDescriptor = openSync(storageUri, constants.O_RDONLY | constants.O_NOFOLLOW);
+      const publishedStat = fstatSync(publishedDescriptor, { bigint: true });
+      if (
+        publishedStat.dev !== temporaryStat.dev
+        || publishedStat.ino !== temporaryStat.ino
+        || publishedStat.size !== temporaryStat.size
+        || publishedStat.nlink < 2n
+      ) {
+        throw new ArtifactIntegrityError(artifact.id, 'published hardlink does not match validated input');
+      }
+      this.assertDescriptorPath(this.options.root, rootDescriptor);
+      this.assertDescriptorPath(parentUri, parentDescriptor);
+      this.assertDescriptorPath(storageUri, publishedDescriptor);
+
+      const sealed = await this.options.registry.sealArtifact({
         artifactId: artifact.id,
         contentSha256,
-        byteSize: sealedBytes.byteLength,
+        byteSize: bytes.byteLength,
         ...(input.activeLease ?? {}),
       });
+      try {
+        this.assertDescriptorPath(this.options.root, rootDescriptor);
+        this.assertDescriptorPath(parentUri, parentDescriptor);
+        this.assertDescriptorPath(storageUri, publishedDescriptor);
+      } catch (error) {
+        await this.options.registry.invalidateArtifactPublication(
+          artifact.id,
+          error instanceof Error ? error.message : String(error),
+        );
+        throw error;
+      }
+      unlinkSync(temporaryUri);
+      return sealed;
     } catch (error) {
-      if (existsSync(temporaryUri)) rmSync(temporaryUri, { force: true });
-      if (published) {
-        const persisted = await this.options.registry.getArtifact(artifact.id);
-        if (persisted?.state === 'SEALED') {
-          const persistedBytes = readFileSync(storageUri);
-          const persistedHash = `sha256:${createHash('sha256').update(persistedBytes).digest('hex')}`;
-          if (persisted.contentSha256 === persistedHash && persisted.byteSize === persistedBytes.byteLength) {
-            return persisted;
-          }
-        }
+      const persisted = published ? await this.options.registry.getArtifact(artifact.id) : null;
+      if (persisted?.state === 'SEALED' && publicationStable()) {
+        if (temporaryDescriptor >= 0 && this.descriptorMatchesPath(temporaryUri, temporaryDescriptor)) unlinkSync(temporaryUri);
+        return persisted;
       }
-      if (published && existsSync(storageUri)) {
-        renameSync(storageUri, `${storageUri}.${artifact.id}.orphan`);
+      if (persisted?.state === 'SEALED') {
+        await this.options.registry.invalidateArtifactPublication(
+          artifact.id,
+          error instanceof Error ? error.message : String(error),
+        );
       }
+      if (published && publicationStable()) renameSync(storageUri, `${storageUri}.${artifact.id}.orphan`);
+      if (temporaryDescriptor >= 0 && this.descriptorMatchesPath(temporaryUri, temporaryDescriptor)) unlinkSync(temporaryUri);
       await this.options.registry.failArtifact(artifact.id, error instanceof Error ? error.message : String(error));
       throw error;
+    } finally {
+      if (publishedDescriptor >= 0) closeSync(publishedDescriptor);
+      if (temporaryDescriptor >= 0) closeSync(temporaryDescriptor);
+      if (parentDescriptor >= 0) closeSync(parentDescriptor);
+      if (rootDescriptor >= 0) closeSync(rootDescriptor);
     }
   }
 
@@ -483,6 +648,9 @@ export class ControlArtifactStore {
   }
 
   async writeBinary(input: BinaryArtifactWriteInput): Promise<ControlArtifact> {
+    if (input.bytes.byteLength > MAX_BINARY_BYTE_SIZE) {
+      throw new BinaryArtifactValidationError('byte size exceeds 10 MiB');
+    }
     const bytes = Buffer.from(input.bytes);
     return this.writeBytes(input, bytes, inspectBinary(bytes));
   }
@@ -520,18 +688,42 @@ export class ControlArtifactStore {
     }
   }
 
-  private async readVerifiedBytes(artifactId: string, verifyPath = false): Promise<{
-    artifact: ControlArtifact;
-    bytes: Buffer;
-  }> {
-    const artifact = await this.options.registry.requireSealedArtifact(artifactId);
+  private async readVerifiedBytes(
+    artifactId: string,
+    verifyPath = false,
+    maxByteSize?: number,
+  ): Promise<{ artifact: ControlArtifact; bytes: Buffer }> {
+    const artifact = verifyPath
+      ? await this.options.registry.requireSealedArtifactBinding(artifactId)
+      : await this.options.registry.requireSealedArtifact(artifactId);
     if (verifyPath) this.assertVerifiedPath(artifact);
-    const bytes = readFileSync(artifact.storageUri);
-    const actual = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
-    if (actual !== artifact.contentSha256 || bytes.byteLength !== artifact.byteSize) {
-      throw new ArtifactIntegrityError(artifactId);
+    let descriptor = -1;
+    try {
+      descriptor = openSync(artifact.storageUri, constants.O_RDONLY | constants.O_NOFOLLOW);
+      const before = fstatSync(descriptor, { bigint: true });
+      if (!before.isFile()) throw new ArtifactIntegrityError(artifactId, 'sealed storage is not a regular file');
+      if (maxByteSize !== undefined && before.size > BigInt(maxByteSize)) {
+        throw new BinaryArtifactValidationError('stored byte size exceeds 10 MiB');
+      }
+      if (artifact.byteSize === null || before.size !== BigInt(artifact.byteSize)) {
+        throw new ArtifactIntegrityError(artifactId, 'sealed byte size does not match storage');
+      }
+      if (verifyPath) this.assertDescriptorPath(artifact.storageUri, descriptor);
+      const bytes = readFileSync(descriptor);
+      const after = fstatSync(descriptor, { bigint: true });
+      if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size || bytes.byteLength !== artifact.byteSize) {
+        throw new ArtifactIntegrityError(artifactId, 'sealed file changed during read');
+      }
+      if (verifyPath) {
+        this.assertDescriptorPath(artifact.storageUri, descriptor);
+        this.assertVerifiedPath(artifact);
+      }
+      const actual = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+      if (actual !== artifact.contentSha256) throw new ArtifactIntegrityError(artifactId);
+      return { artifact, bytes };
+    } finally {
+      if (descriptor >= 0) closeSync(descriptor);
     }
-    return { artifact, bytes };
   }
 
   async verifySealed(artifactId: string): Promise<ControlArtifact> {
@@ -549,7 +741,7 @@ export class ControlArtifactStore {
     bytes: Buffer;
     metadata: TrustedBinaryMetadata;
   }> {
-    const { artifact, bytes } = await this.readVerifiedBytes(artifactId, true);
+    const { artifact, bytes } = await this.readVerifiedBytes(artifactId, true, MAX_BINARY_BYTE_SIZE);
     const metadata = inspectBinary(bytes);
     const persisted = artifact.metadata;
     if (

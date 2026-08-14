@@ -1492,6 +1492,26 @@ export class ControlPlaneRepository {
     metadata?: Record<string, unknown>;
   }): Promise<ControlArtifact> {
     return this.transaction(async (connection) => {
+      if (input.planVersionId) {
+        const plan = await connection.query(
+          'SELECT 1 FROM control_plan_versions WHERE id = $1 AND task_id = $2',
+          [input.planVersionId, input.taskId],
+        );
+        if (!plan.rows[0]) {
+          throw new ControlPlaneConflictError(`plan version ${input.planVersionId} does not belong to task ${input.taskId}`);
+        }
+      }
+      if (input.attemptId) {
+        if (!input.planVersionId) throw new ControlPlaneConflictError('attempt-bound artifact requires a plan version');
+        const attempt = await connection.query(
+          `SELECT 1 FROM control_execution_attempts
+           WHERE id = $1 AND task_id = $2 AND plan_version_id = $3`,
+          [input.attemptId, input.taskId, input.planVersionId],
+        );
+        if (!attempt.rows[0]) {
+          throw new ControlPlaneConflictError(`attempt ${input.attemptId} does not belong to artifact task and plan`);
+        }
+      }
       const result = await connection.query(
         `INSERT INTO control_artifacts
            (task_id, plan_version_id, attempt_id, kind, contract_version, schema_version, state,
@@ -1529,6 +1549,29 @@ export class ControlPlaneRepository {
     ].filter((value) => value !== undefined).length;
     const leaseBound = leaseFieldCount === 5;
     const outcome = await this.transaction(async (connection) => {
+      const bindingResult = await connection.query(
+        `SELECT artifact.task_id, artifact.plan_version_id, artifact.attempt_id,
+                plan.task_id AS plan_task_id,
+                attempt.task_id AS attempt_task_id,
+                attempt.plan_version_id AS attempt_plan_version_id
+         FROM control_artifacts AS artifact
+         LEFT JOIN control_plan_versions AS plan ON plan.id = artifact.plan_version_id
+         LEFT JOIN control_execution_attempts AS attempt ON attempt.id = artifact.attempt_id
+         WHERE artifact.id = $1 AND artifact.state = 'STAGING'`,
+        [input.artifactId],
+      );
+      const binding = bindingResult.rows[0];
+      if (!binding) return null;
+      const taskId = asString(binding.task_id, 'task_id');
+      const planVersionId = typeof binding.plan_version_id === 'string' ? binding.plan_version_id : null;
+      const attemptId = typeof binding.attempt_id === 'string' ? binding.attempt_id : null;
+      const validPlan = planVersionId === null || binding.plan_task_id === taskId;
+      const validAttempt = attemptId === null || (
+        planVersionId !== null
+        && binding.attempt_task_id === taskId
+        && binding.attempt_plan_version_id === planVersionId
+      );
+      if (!validPlan || !validAttempt) return null;
       const result = leaseBound
         ? await connection.query(
             `UPDATE control_artifacts AS artifact
@@ -1623,6 +1666,7 @@ export class ControlPlaneRepository {
     attemptId: string;
     reason: string;
   }): Promise<void> {
+
     await this.transaction(async (connection) => {
       await connection.query(
         `UPDATE control_artifacts
@@ -1633,6 +1677,16 @@ export class ControlPlaneRepository {
            AND kind IN ('evidence_manifest', 'deliverable', 'report_review')
            AND state IN ('STAGING', 'SEALED')`,
         [input.taskId, input.planVersionId, input.attemptId, input.reason],
+      );
+    });
+  }
+  async invalidateArtifactPublication(artifactId: string, reason: string): Promise<void> {
+    await this.transaction(async (connection) => {
+      await connection.query(
+        `UPDATE control_artifacts
+         SET state = 'FAILED', failure_reason = $2, redaction_status = 'failed'
+         WHERE id = $1 AND state IN ('STAGING', 'SEALED')`,
+        [artifactId, reason],
       );
     });
   }
@@ -1672,6 +1726,41 @@ export class ControlPlaneRepository {
     const artifact = await this.getArtifact(artifactId);
     if (!artifact || artifact.state !== 'SEALED') throw new ArtifactNotSealedError(artifactId);
     return artifact;
+  }
+
+  async requireSealedArtifactBinding(artifactId: string): Promise<ControlArtifact> {
+    const connection = await this.database.connect();
+    try {
+      const result = await connection.query(
+        `SELECT artifact.*,
+                plan.task_id AS binding_plan_task_id,
+                attempt.task_id AS binding_attempt_task_id,
+                attempt.plan_version_id AS binding_attempt_plan_version_id
+         FROM control_artifacts AS artifact
+         LEFT JOIN control_plan_versions AS plan ON plan.id = artifact.plan_version_id
+         LEFT JOIN control_execution_attempts AS attempt ON attempt.id = artifact.attempt_id
+         WHERE artifact.id = $1 AND artifact.state = 'SEALED'`,
+        [artifactId],
+      );
+      const row = result.rows[0];
+      if (!row) throw new ArtifactNotSealedError(artifactId);
+      const taskId = asString(row.task_id, 'task_id');
+      const planVersionId = typeof row.plan_version_id === 'string' ? row.plan_version_id : null;
+      const attemptId = typeof row.attempt_id === 'string' ? row.attempt_id : null;
+      if (
+        !planVersionId
+        || row.binding_plan_task_id !== taskId
+        || (attemptId !== null && (
+          row.binding_attempt_task_id !== taskId
+          || row.binding_attempt_plan_version_id !== planVersionId
+        ))
+      ) {
+        throw new ControlPlaneConflictError(`artifact ${artifactId} identity binding is invalid`);
+      }
+      return artifactFromRow(row);
+    } finally {
+      connection.release();
+    }
   }
 
   async listStagingArtifacts(): Promise<ControlArtifact[]> {

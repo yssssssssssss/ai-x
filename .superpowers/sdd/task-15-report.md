@@ -18,8 +18,8 @@ Status: complete
 - RED result: 10 tests total; the legacy JSON compatibility test passed and all 9 binary contract tests failed with `TypeError: store.writeBinary is not a function`.
 - The first implementation run passed 8/10 and exposed that the initial WebP fixture contained four bytes beyond its declared RIFF length. The fixture was corrected to a valid deterministic 42-byte WebP; production validation remained strict.
 - Review follow-up RED reproduced three additional contract failures: mismatched PNG IHDR/payload was accepted, expired-lease retry hit `EEXIST`, and legacy null-Plan JSON reads failed. Separate regressions also covered missing-root first write, workspace symlink escape, one-pixel-over dimensions, and committed-seal response loss.
-- GREEN binary suite: 13/13 passed.
-- GREEN exact serial suite: `pnpm exec tsx --test --test-concurrency=1 tests/binary-artifact-store.test.ts tests/control-plane.test.ts` passed 50/50.
+- GREEN binary suite after initial implementation: 13/13 passed.
+- Initial exact serial suite passed 50/50.
 - `pnpm typecheck`: passed.
 - `tests/artifact-store.test.ts` does not exist, so it was omitted rather than invented.
 
@@ -29,3 +29,14 @@ Status: complete
 - Boundary tests cover exactly 10 MiB versus one byte over, and exactly 20,000,000 versus 20,000,001 pixels using valid inflated PNG payloads.
 - Negative tests cover SVG, unknown, malformed, truncated, and dimension/payload-mismatched bytes; hash, path, symlink, and persisted metadata tamper; expired/foreign leases and renewed retry; traversal; destination collision/no-clobber; Task/Plan/Attempt containment; missing-root first write; ambiguous seal response; and legacy JSON behavior.
 - The real PostgreSQL ControlPlane test round-trips non-null `media_type`/`metadata_json`, verifies the binary bytes and reconstructed trusted metadata, and confirms JSON artifacts still return null media fields.
+
+## Security Hardening Review Closure
+
+- Added ten independent RED regressions for incomplete JPEG SOF/SOS/entropy, header-only VP8, indexed PNG palette overflow, pre-inflate pixel rejection, pre-copy input limits, pre-allocation stored-file limits, Task/Plan/Attempt relational mismatch, destination replacement, publication-parent symlink swap, and IDAT chunk amplification. Binary RED was 13 pass / 9 expected fail; ControlPlane RED was 37 pass / 1 expected fail.
+- JPEG validation now binds DQT/DHT table definitions to exact SOF components and SOS selectors, validates frame/scan lengths, spectral parameters, entropy marker escaping, non-empty scans, and terminal EOI. The previous malformed 517-byte fixture was replaced by a deterministic 339-byte baseline JPEG generated locally and stripped to essential segments.
+- WebP validation now rejects dimension-header-only data: VP8 checks key-frame tag, show/version bits, first-partition length, dimensions, and remaining payload; VP8L requires post-header compressed payload/version; VP8X/ANMF validate nested chunk lengths and actual VP8/VP8L frames.
+- PNG validation caps IDAT at 1,024 chunks, rejects pixel limits before inflate, reconstructs all filter modes across normal/Adam7 rows, and checks indexed samples against PLTE entries.
+- Writes reject `byteLength` before copying. The temp file, root, publication parent, and destination are opened with `O_NOFOLLOW`; fsync/fstat and `dev`/`ino`/size/link-count checks bind the DB seal to the validated input digest. Parent/destination swaps invalidate the Artifact and never seal attacker bytes.
+- Verified binary reads use the relational repository binding, then `O_NOFOLLOW` open and `fstat` to enforce regular-file, sealed-size, and 10 MiB limits before allocating; the same descriptor is hashed and identity-checked after reading.
+- ControlPlane validates Plan→Task and Attempt→Task/Plan during STAGING, unleased and leased seal, and verified binary lookup. Independent foreign keys can no longer form a trusted mixed tuple.
+- Final exact serial suite: `pnpm exec tsx --test --test-concurrency=1 tests/binary-artifact-store.test.ts tests/control-plane.test.ts` passed 60/60. Final `pnpm typecheck` passed.
