@@ -6,6 +6,7 @@
 - Modify: `package.json`
 - Modify: `pnpm-lock.yaml`
 - Modify: `apps/orchestrator-runtime/src/control/artifact-store.ts`
+- Modify: `.github/workflows/ci.yml`
 - Modify: `database/control-plane.ts`
 - Create: `tests/binary-artifact-store.test.ts`
 - Create: `.superpowers/sdd/task-15-report.md`
@@ -21,7 +22,7 @@
 
 - [x] **Step 1: dependency**
 
-Add root `image-size` and its lockfile entry only.
+Use Node 22 and add root `image-size`, `sharp`, and `@openclaw/fs-safe`; native filesystem support is required rather than falling back to pathname mutations.
 
 - [x] **Step 2: RED tests**
 
@@ -33,9 +34,9 @@ Run `pnpm exec tsx --test --test-concurrency=1 tests/binary-artifact-store.test.
 
 - [x] **Step 4: GREEN implementation**
 
-Extract one private `writeBytes()` that owns STAGING creation, directory creation, temp write, fsync, hard-link no-clobber publish, reread/hash, and DB seal/failure. Route both `writeJson()` and `writeBinary()` through it. Sniff media and dimensions from bytes before staging. Bind trusted media metadata at staging creation and preserve the existing lease fence by passing the same `activeLease` to `sealArtifact()`.
+Extract one private `writeBytes()` that owns STAGING creation, native fd-relative no-clobber publication, exact-size hash verification, and DB seal/failure. Route both `writeJson()` and `writeBinary()` through it. `image-size` performs the bounded header/dimension preflight, `sharp` fully decodes accepted images, and the existing lease fence is passed unchanged to `sealArtifact()`.
 
-Verified binary reads first require SEALED, re-check path containment and content hash, re-sniff the bytes, enforce byte/pixel limits again, and require exact equality with persisted trusted metadata. JSON reads retain their existing verified-hash behavior and tolerate null media fields.
+Verified binary reads require SEALED relational binding, open through the native Root capability, read exactly the sealed byte count, re-check the hash/media metadata, and reject symlink/FIFO/path or inode replacement. JSON reads retain the same verified lifecycle and legacy null-media compatibility.
 
 - [x] **Step 5: exact verification**
 

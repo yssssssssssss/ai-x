@@ -1099,9 +1099,9 @@ git commit -m "feat: serve verified current report packages"
 
 - [x] **Step 1: 安装依赖**
 
-Run: `pnpm add image-size sharp`
+Run: `pnpm add image-size sharp @openclaw/fs-safe`
 
-Expected: `package.json` 和 `pnpm-lock.yaml` 只新增 `image-size`、`sharp` 及其平台传递依赖。`image-size` 仅作低成本 header/尺寸快检；`sharp` 是本地严格 decode 事实源。
+Expected: Node 22 project/CI runtime; `image-size` only performs low-cost header/dimension preflight, `sharp` is the local decode authority, and `fs-safe` native `require` mode owns fd-relative filesystem mutations.
 
 - [x] **Step 2: 写失败测试**
 
@@ -1115,7 +1115,7 @@ Expected: FAIL。
 
 - [x] **Step 4: 实现 Binary 方法**
 
-复用 JSON 的 STAGING/fsync/link/hash/seal 过程；禁止复制第二套 seal 逻辑，抽取私有 `writeBytes()`。
+复用 JSON 的 STAGING/hash/seal 过程；文件写入和读取统一通过 native Root capability，禁止复制第二套 seal、pathname cleanup 或 symlink race 逻辑。
 
 - [x] **Step 5: 运行测试和提交**
 
@@ -1131,12 +1131,12 @@ git commit -m "feat: seal binary current artifacts"
 
 #### Task 15 execution note（2026-08-14）
 
-- [x] 根 package/lock 包含 `image-size` 与 `sharp`；复用 Migration 004 的 `media_type`/`metadata_json`，未新增 migration。初版计划只列 `image-size`，第二安全 Gate 证明 header/手写容器校验不能证明 JPEG/WebP 可解码，因此显式纠偏加入 `sharp`，不隐瞒该依赖偏差。
-- [x] JSON 与 binary 共用唯一 `writeBytes()` 的 STAGING/fsync/link-no-clobber/hash/seal/failure 生命周期；binary active lease 原样进入现有 repository 原子 fence。
-- [x] `image-size` 快检签名/尺寸并在 decode 前执行 10 MiB / 20 MP gate；`sharp(bytes,{ failOn:'warning', limitInputPixels:20_000_000, animated:false })` 完整 decode 到 raw，拒绝动画/多页，并要求 decoded format/width/height 与 header 完全一致。PNG 额外保留 chunk/CRC/filter/palette/IDAT 安全检查。binary verified read 重验 Task/Plan/Attempt、fd hash/size 与 trusted metadata；legacy JSON hash read 保持兼容。
-- [x] publication pin root physical path；root/parent/temp/published 均用 no-follow fd 与 dev/ino 身份反复校验。DB seal hash 来自 pinned published fd，seal promise 返回后同 fd 再 hash；同 inode overwrite 或 ancestor swap 均 invalidate，不通过可疑 path 清理。
-- [x] 最终纠偏 RED：5000×4000 tiny-entropy JPEG、VP8/VP8L 一字节 payload、seal pending 同 inode overwrite/append、check→parent-open 与 parent-check→temp-open 中间 ancestor swap 均先失败。GREEN：binary 28/28；指定 binary + ControlPlane 串行 suite 66/66；`pnpm typecheck` passed。`tests/artifact-store.test.ts` 不存在，按约定未创建。
-- [x] FinalGate cleanup 纠偏：success/catch/reconcile 不再对 publication/temp 执行 pathname unlink/rename。Node 缺少安全的 dirfd-relative cleanup，因此 hardlink/temp 保留给未来 trusted GC（hardlink 不重复数据）。exact `storage_uri` 由 PostgreSQL advisory lock 串行化；真实并发双 claim 回归证明恰好一个 STAGING winner/一个 conflict，seal 后数据库恰好一个 SEALED owner。仅 prior owners 全部 FAILED 且 existing fd 的 regular/size/hash/physical containment 与本次 validated bytes 完全一致时复用。different bytes、SEALED、STAGING 均保持 no-clobber。最终 binary 32/32、ControlPlane 39/39、combined 71/71、`pnpm typecheck` passed。
+- [x] 项目 engine 与 CI 统一到 Node 22；root package/lock 包含 `image-size`、`sharp` 和 `@openclaw/fs-safe@0.5.5`。native helper 使用 `require`，不可用时 fail closed，不回退到 pathname mutation。
+- [x] JSON 与 binary 共用唯一 `writeBytes()`：STAGING claim → native Root no-clobber create/FAILED exact-byte reuse → exact-size positioned read/hash → lease-fenced seal → post-seal inode/hash recheck。success/failure/reconcile 均不执行不安全 pathname cleanup。
+- [x] `image-size` 在 decode 前执行签名/尺寸与 10 MiB / 20 MP gate；`sharp` 完整 decode 单页 PNG/JPEG/WebP 到 raw。PNG 仅保留 bounded IDAT envelope 与 indexed sample/PLTE 严格校验，不再维护 JPEG/WebP 手写 bitstream parser。
+- [x] verified read 通过 SEALED Task/Plan/Attempt relational binding 和 native nonblocking Root open，固定读取 sealed byte count，重验 inode/size/hash/decode/trusted metadata；symlink、FIFO、增长、篡改与路径替换 fail closed。
+- [x] exact `storage_uri` 继续由 PostgreSQL advisory lock 串行化；真实并发双 claim 仅允许一个 live owner。identical FAILED publication 可复用，different bytes、SEALED、STAGING 保持 no-clobber。
+- [x] 最终 Node 22 RED 为 33 pass / 2 个无效 hook 预期；按 `fs-safe` 官方 threat model对齐后，唯一有界审查发现 APNG animation chunk gap。APNG回归先失败，PNG envelope拒绝 `acTL`/`fcTL`/`fdAT` 后通过。最终 Binary 34/34、Binary+ControlPlane 73/73、`pnpm typecheck` passed。
 
 
 ### Task 16: VisualAssetService 和安全远程图片

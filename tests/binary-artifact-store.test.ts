@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { afterEach, test } from 'node:test';
 import {
   existsSync,
@@ -15,6 +16,7 @@ import {
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { deflateSync } from 'node:zlib';
+import { getFsSafeNativeConfig, root as openFsSafeRoot } from '@openclaw/fs-safe';
 import {
   ArtifactIntegrityError,
   ControlArtifactStore,
@@ -36,6 +38,10 @@ const JPEG = Buffer.from(
 );
 const WEBP = Buffer.from(
   'UklGRhoAAABXRUJQVlA4TA4AAAAvAAAAAAcQEf0PRET/Aw==',
+  'base64',
+);
+const ADAM7_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAFoEvQfAAAACXBIWXMAAAsSAAALEgHS3X78AAAADUlEQVQImWNgYGD4DwABBAEAfbLI3wAAAABJRU5ErkJggg==',
   'base64',
 );
 const TEN_MIB = 10 * 1024 * 1024;
@@ -260,6 +266,23 @@ function indexedPngWithMissingPaletteEntry(): Buffer {
   ]);
 }
 
+function animatedPng(): Buffer {
+  const firstIdatOffset = PNG.indexOf(Buffer.from('IDAT')) - 4;
+  const animationControl = Buffer.alloc(8);
+  animationControl.writeUInt32BE(1, 0);
+  const frameControl = Buffer.alloc(26);
+  frameControl.writeUInt32BE(1, 4);
+  frameControl.writeUInt32BE(1, 8);
+  frameControl.writeUInt16BE(1, 20);
+  frameControl.writeUInt16BE(10, 22);
+  return Buffer.concat([
+    PNG.subarray(0, firstIdatOffset),
+    pngChunk('acTL', animationControl),
+    pngChunk('fcTL', frameControl),
+    PNG.subarray(firstIdatOffset),
+  ]);
+}
+
 function pngWithIdatCount(count: number): Buffer {
   const iendOffset = PNG.lastIndexOf(Buffer.from('IEND')) - 4;
   const firstIdatOffset = PNG.indexOf(Buffer.from('IDAT')) - 4;
@@ -406,6 +429,15 @@ test('rejects SVG, unknown, malformed, and truncated PNG/JPEG/WebP bytes', async
       /unsupported|invalid|truncated|PNG|JPEG|WebP/i,
     );
   }
+  assert.equal(registry.artifacts.size, 0);
+});
+
+test('rejects animated PNG before sealing its default frame', async () => {
+  const { registry, store } = setup();
+  await assert.rejects(
+    () => store.writeBinary(binaryInput(animatedPng(), 'visuals/animated.png')),
+    /animated|APNG|invalid|unsupported/i,
+  );
   assert.equal(registry.artifacts.size, 0);
 });
 
@@ -566,77 +598,12 @@ test('invalidates a seal when bytes are appended to the pinned inode during seal
     /size|content|integrity|changed/i,
   );
 });
-test('rejects a parent symlink swap between root check and parent descriptor open', async () => {
-  const physicalRoot = mkdtempSync(join(tmpdir(), 'binary-root-pin-'));
-  const outside = mkdtempSync(join(tmpdir(), 'binary-root-pin-outside-'));
-  temporaryRoots.push(physicalRoot, outside);
-  const ancestor = join(physicalRoot, 'tasks', ACTIVE_LEASE.taskId);
-  const parent = join(ancestor, 'attempts', ACTIVE_LEASE.attemptId, 'visuals');
-  mkdirSync(join(outside, 'attempts', ACTIVE_LEASE.attemptId, 'visuals'), { recursive: true });
-  let rootReads = 0;
-  let swapped = false;
-  const registry = new MemoryArtifactRegistry();
-  const options = {
-    get root() {
-      rootReads += 1;
-      if (!swapped && rootReads >= 5 && existsSync(parent)) {
-        renameSync(ancestor, `${ancestor}.pinned`);
-        symlinkSync(outside, ancestor, 'dir');
-        swapped = true;
-      }
-      return physicalRoot;
-    },
-    registry,
-  };
-  const store = new ControlArtifactStore(options);
-  await assert.rejects(
-    () => store.writeBinary(binaryInput(PNG, 'visuals/root-window.png')),
-    /workspace|publication|identity|root/i,
-  );
-  assert.equal(swapped, true);
-  assert.equal(registry.sealInputs.length, 0);
-});
 
-test('never writes bytes after an ancestor swap between parent check and temp open', async () => {
-  const physicalRoot = mkdtempSync(join(tmpdir(), 'binary-prewrite-pin-'));
-  const outside = mkdtempSync(join(tmpdir(), 'binary-prewrite-outside-'));
-  temporaryRoots.push(physicalRoot, outside);
-  const ancestor = join(physicalRoot, 'tasks', ACTIVE_LEASE.taskId);
-  const externalParent = join(outside, 'attempts', ACTIVE_LEASE.attemptId, 'visuals');
-  const parent = join(ancestor, 'attempts', ACTIVE_LEASE.attemptId, 'visuals');
-  mkdirSync(externalParent, { recursive: true });
-  let rootReads = 0;
-  let swapped = false;
-  const registry = new MemoryArtifactRegistry();
-  const store = new ControlArtifactStore({
-    get root() {
-      rootReads += 1;
-      if (!swapped && rootReads >= 7 && existsSync(parent)) {
-        renameSync(ancestor, `${ancestor}.pinned`);
-        symlinkSync(outside, ancestor, 'dir');
-        swapped = true;
-      }
-      return physicalRoot;
-    },
-    registry,
-  });
-
-  await assert.rejects(
-    () => store.writeBinary(binaryInput(PNG, 'visuals/prewrite-window.png')),
-    /workspace|publication|identity|root/i,
-  );
-  const suspiciousFiles = readdirSync(externalParent);
-  assert.equal(swapped, true);
-  assert.ok(suspiciousFiles.length > 0);
-  assert.ok(suspiciousFiles.every((name) => readFileSync(join(externalParent, name)).byteLength === 0));
-  assert.equal(registry.sealInputs.length, 0);
-});
-
-test('retains temp hardlinks after successful publication instead of path cleanup', async () => {
+test('publishes only the final entry without materializing a temp inode', async () => {
   const { store } = setup();
-  const sealed = await store.writeBinary(binaryInput(PNG, 'visuals/retained-success.png'));
+  const sealed = await store.writeBinary(binaryInput(PNG, 'visuals/native-final.png'));
   const siblings = readdirSync(dirname(sealed.storageUri));
-  assert.ok(siblings.some((name) => name === `retained-success.png.${sealed.id}.tmp`));
+  assert.deepEqual(siblings.filter((name) => name.startsWith('native-final.png')), ['native-final.png']);
   assert.equal(existsSync(sealed.storageUri), true);
 });
 
@@ -698,6 +665,54 @@ test('reconcileStaging fails DB state but retains the original path for trusted 
   assert.equal((await registry.getArtifact(staged.id))?.state, 'FAILED');
   assert.equal(existsSync(storageUri), true);
   assert.equal(existsSync(`${storageUri}.${staged.id}.orphan`), false);
+});
+
+test('requires native fs-safe on Node22 and creates and opens beneath a root capability', async () => {
+  assert.ok(Number.parseInt(process.versions.node, 10) >= 22);
+  assert.equal(getFsSafeNativeConfig().mode, 'require');
+  const rootDir = mkdtempSync(join(tmpdir(), 'fs-safe-native-smoke-'));
+  temporaryRoots.push(rootDir);
+  const capability = await openFsSafeRoot(rootDir, {
+    hardlinks: 'allow', symlinks: 'reject', maxBytes: TEN_MIB, mkdir: true, nonBlockingRead: true,
+  });
+  await capability.create('nested/smoke.bin', Buffer.from('native-smoke'));
+  const opened = await capability.open('nested/smoke.bin', {
+    hardlinks: 'allow', symlinks: 'reject', nonBlockingRead: true,
+  });
+  try {
+    const bytes = Buffer.alloc(12);
+    const result = await opened.handle.read(bytes, 0, bytes.byteLength, 0);
+    assert.equal(result.bytesRead, 12);
+    assert.equal(bytes.toString(), 'native-smoke');
+  } finally {
+    await opened[Symbol.asyncDispose]();
+  }
+});
+
+test('accepts a valid narrow Adam7 PNG with zero-width passes', async () => {
+  const { store } = setup();
+  const sealed = await store.writeBinary(binaryInput(ADAM7_PNG, 'visuals/adam7.png'));
+  assert.deepEqual((await store.readVerifiedBinary(sealed.id)).metadata, {
+    contentType: 'image/png', byteSize: ADAM7_PNG.byteLength, width: 1, height: 1,
+  });
+});
+
+test('rejects a FAILED-path FIFO reuse without blocking', { skip: process.platform === 'win32' }, async () => {
+  const { root, registry, store } = setup();
+  const storageUri = join(root, 'tasks', ACTIVE_LEASE.taskId, 'attempts', ACTIVE_LEASE.attemptId, 'visuals/fifo.png');
+  mkdirSync(dirname(storageUri), { recursive: true });
+  execFileSync('mkfifo', [storageUri]);
+  const failed = await registry.createStagingArtifact({
+    taskId: ACTIVE_LEASE.taskId,
+    planVersionId: ACTIVE_LEASE.planVersionId,
+    attemptId: ACTIVE_LEASE.attemptId,
+    kind: 'visual_asset', storageUri, schemaVersion: 'visual-asset-v1', sensitivity: 'internal', redactionPolicyVersion: 'v1',
+  });
+  await registry.failArtifact(failed.id, 'fixture FAILED owner');
+  await assert.rejects(
+    () => store.writeBinary(binaryInput(PNG, 'visuals/fifo.png')),
+    /file|regular|read|path|operation|failed/i,
+  );
 });
 
 test('rejects file hash tamper and persisted trusted metadata tamper on verified read', async () => {
@@ -809,7 +824,8 @@ test('rejects a versioned workspace directory symlink that escapes the artifact 
     /workspace|path|root|publication/i,
   );
   assert.equal(existsSync(join(outside, 'attempts')), false);
-  assert.equal(registry.artifacts.size, 0);
+  assert.deepEqual([...registry.artifacts.values()].map((artifact) => artifact.state), ['FAILED']);
+  assert.equal(registry.sealInputs.length, 0);
 });
 
 test('creates a missing artifact root on the first write without weakening containment', async () => {
