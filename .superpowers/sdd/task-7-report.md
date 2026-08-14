@@ -58,3 +58,17 @@
 - 根因：Task 6 clean cutover 后，离线 Current 集成夹具仍让 `research-task-v2` schema 返回 `{ ok: true }`，且本地 `ConversationAdapter` 仍只有 create/require，缺少 refinement 必需的 owner-scoped `listMessages` 与 `appendMessage`。有效 V2 fixture 补入后，诊断响应依次暴露 `requirement refinement requires conversation append support`；conversation ports 补齐后才到达此前未绑定的 repository transaction 路径。因此根因是 structured LLM response 与 conversation ports 两组夹具同时陈旧，不能将首个失败单独归因于 LLM fixture；它们共同阻断并遮蔽 production binding 路径。
 - 夹具修正：为 `research-task-v2` 返回符合契约、无 blocking ambiguity 的 snake_case ResearchTaskV2；以真实测试数据库实现 owner-scoped message history 与 append；planning 失败断言附带响应 body，并断言相同 `originalInput` 只持久化 1 个 control task 和严格 2 个 plan versions，继续保留 execute 与 owner-only deliverable 断言。
 - GREEN：目标单例 `pnpm exec tsx --test --test-concurrency=1 --test-name-pattern="production control runtime completes" tests/control-api-integration.test.ts` —— 1 passed / 2 name-filter skipped；指定三文件串行套件 `pnpm exec tsx --test --test-concurrency=1 tests/control-clarification.test.ts tests/control-api-integration.test.ts tests/control-planning-service.test.ts` —— 14 passed / 0 failed；`pnpm typecheck` —— passed。
+
+## Phase 2 clarification integrity follow-up
+
+- 根因：requirement create/activate 曾被拆成两次事务，clarification route 以进程内 `Map` 作为幂等真源；Current response/Web 仍把结构化任务收窄为 legacy，clarification ready path 还会把 requirement JSON 冒充原始输入。中断的 partial edit 同时破坏了 `database/control-plane.ts` 方法边界。
+- 语法恢复：完整重建 `createRequirementVersion()` 与 `createAndActivateRequirementVersion()` 两个 sibling methods，保留既有 RED tests 与有效 V2/hydration partial hunks。
+- 原子性：`createAndActivateRequirementVersion()` 在单事务 `FOR UPDATE` task lock 下校验 task/conversation 双 owner、`awaiting_clarification` 与 expected state version，再生成下一版本、更新 active FK/`structured_task` 并 CAS `state_version`；wrong-state、stale、foreign actor、conversation owner mismatch 均无 orphan row。
+- Durable idempotency：Migration 005 为 `control_commands` 添加 pending/completed、nullable response、reservation token 与 expiry；repository 提供 token-fenced reserve/complete/release/wait 与 expired reclaim。route 删除 replay Map，跨 router 等待/replay，失败释放 pending，DB transaction 不跨 LLM。
+- V2/input/hydration：`ResearchPlanningResult.structuredTask` 原样持久化和返回；legacy 只留在 planner/UI 内部投影。clarification planner 与 existing-task planning 都使用持久 task 的 `originalInput`。Current GET 暴露 original input/active structured task，Web refresh 恢复 `clarifying`。
+- RED：初始指定 focused suite 44 tests / 42 pass / 2 fail（测试夹具漏 `plannerCalls`、activation RETURNING 漏 `original_input`）；durable reservation integration 7 tests / 3 pass / 4 fail，分别命中重复 LLM、无 DB replay、无 token fence、无 route state gate。
+- GREEN：requirement/refinement/planning/hydration 子集 26/26；durable reservation integration 7/7；clarification route 4/4；atomic/V2/Current GET 验收子集 21/21；`pnpm typecheck` 通过。
+- Migration compatibility：真实 PostgreSQL 以 legacy `control_commands` completed row 直接执行 005，旧 response 保留并默认 `completed`；随后可插入合法 pending reservation。目标用例 1 pass / 7 name-filter skip。
+- Final focused gate：用户指定 7 文件串行命令 —— 51 tests / 51 pass / 0 fail / 0 skip。
+- Final TypeScript gate：`pnpm typecheck` —— passed。
+- Final Web gate：`pnpm --dir apps/web build` —— passed；Vite 44 modules transformed，production assets emitted。

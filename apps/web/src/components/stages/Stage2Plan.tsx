@@ -11,7 +11,9 @@ export function Stage2Plan({
   locked: boolean;
   onConfirm: (confirmationAnswers: Record<string, unknown>, uploads: Upload[]) => void;
 }) {
-  const confirmations = confirmationRequirements(plan.task.confirmations);
+  const confirmations = confirmationRequirements('confirmations' in plan.task
+    ? plan.task.confirmations
+    : plan.task.clarification_questions);
   const [assumptions, setAssumptions] = useState(plan.task.assumptions);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [confirmed, setConfirmed] = useState(false);

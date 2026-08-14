@@ -40,6 +40,7 @@ export type {
   Assumption,
   PlanStep,
   ResearchTaskData,
+  ResearchTaskV2,
   PendingUpload,
   PlanCandidate,
   PlanPhaseKey,

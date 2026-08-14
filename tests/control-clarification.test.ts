@@ -40,6 +40,7 @@ const requirement = {
 const task: ControlTaskDetail = {
   id: 'task-clarify',
   conversationId: 'conversation-clarify',
+  originalInput: '$user-research-planning understand product experience',
   ownerUserId: owner.id,
   conversationOwnerUserId: owner.id,
   structuredTask: requirement,
@@ -94,6 +95,44 @@ async function post(baseUrl: string, path: string, token: string, body: unknown,
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...headers },
     body: JSON.stringify(body),
   });
+}
+
+function clarificationRepository(getTaskDetail: (id: string) => Promise<ControlTaskDetail | null>) {
+  const commands = new Map<string, { requestHash: string; reservationToken: string; response?: unknown }>();
+  const commandKey = (taskId: string, commandType: string, idempotencyKey: string) =>
+    `${taskId}:${commandType}:${idempotencyKey}`;
+  return {
+    getTaskDetail,
+    async getCommand(taskId: string, commandType: string, idempotencyKey: string) {
+      const command = commands.get(commandKey(taskId, commandType, idempotencyKey));
+      return command ? { requestHash: command.requestHash, response: command.response } : null;
+    },
+    async reserveCommand(input: { taskId: string; commandType: string; idempotencyKey: string; requestHash: string }) {
+      const key = commandKey(input.taskId, input.commandType, input.idempotencyKey);
+      const existing = commands.get(key);
+      if (existing?.requestHash !== undefined && existing.requestHash !== input.requestHash) {
+        return { status: 'conflict' as const };
+      }
+      if (existing?.response !== undefined) return { status: 'replay' as const, response: existing.response };
+      if (existing) return { status: 'pending' as const };
+      const reservationToken = `reservation-${commands.size + 1}`;
+      commands.set(key, { requestHash: input.requestHash, reservationToken });
+      return { status: 'reserved' as const, reservationToken };
+    },
+    async waitForCommand() {
+      return { status: 'timeout' as const };
+    },
+    async completeCommand(input: { taskId: string; commandType: string; idempotencyKey: string; reservationToken: string; response: unknown }) {
+      const key = commandKey(input.taskId, input.commandType, input.idempotencyKey);
+      const command = commands.get(key);
+      if (!command || command.reservationToken !== input.reservationToken) throw new Error('reservation fence lost');
+      command.response = input.response;
+    },
+    async releaseCommand(input: { taskId: string; commandType: string; idempotencyKey: string; reservationToken: string }) {
+      const key = commandKey(input.taskId, input.commandType, input.idempotencyKey);
+      if (commands.get(key)?.reservationToken === input.reservationToken) commands.delete(key);
+    },
+  };
 }
 
 before(async () => {
@@ -163,7 +202,7 @@ test('foreign and missing clarification tasks are both 404', async () => {
 test('clarify keeps awaiting_clarification when a blocking answer is missing and returns candidates when complete', async () => {
   let calls = 0;
   const runtime = {
-    repository: { getTaskDetail: async () => task },
+    repository: clarificationRepository(async () => task),
     workflow: {},
     getDeliverable: async () => null,
     clarification: {
@@ -197,7 +236,7 @@ test('clarify keeps awaiting_clarification when a blocking answer is missing and
 test('clarify rejects client plan fields and replays an idempotency key with the same response', async () => {
   let calls = 0;
   const runtime = {
-    repository: { getTaskDetail: async () => task },
+    repository: clarificationRepository(async () => task),
     workflow: {},
     getDeliverable: async () => null,
     clarification: { clarify: async () => { calls += 1; return candidatesResult; } },

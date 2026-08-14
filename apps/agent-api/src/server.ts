@@ -106,7 +106,7 @@ function refinementClarificationPort(runtime: ControlRuntime): ControlClarificat
         conversationId: input.conversationId,
         ownerUserId: input.ownerUserId,
         expectedStateVersion: clarifiedTask.stateVersion,
-        originalInput: JSON.stringify(result.requirement),
+        originalInput: clarifiedTask.originalInput,
       }, result.planningResult);
     },
   };

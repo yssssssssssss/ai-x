@@ -159,3 +159,52 @@ export function buildClarificationSubmission(
     ),
   };
 }
+export interface CurrentTaskHydrationInput {
+  task: {
+    id: string;
+    state: string;
+    stateVersion: number;
+    originalInput: string;
+    conversationId: string;
+    structuredTask: unknown;
+    activePlanVersionId?: string | null;
+    currentAttemptId?: string | null;
+  };
+}
+
+export function hydrateCurrentTask(input: CurrentTaskHydrationInput): {
+  phase: 'clarifying' | 'picking' | 'idle';
+  stateVersion: number;
+  originalInput: string;
+  clarification: unknown | null;
+} {
+  const { task } = input;
+  if (task.state !== 'awaiting_clarification') {
+    return {
+      phase: task.state === 'awaiting_selection' ? 'picking' : 'idle',
+      stateVersion: task.stateVersion,
+      originalInput: task.originalInput,
+      clarification: null,
+    };
+  }
+  return {
+    phase: 'clarifying',
+    stateVersion: task.stateVersion,
+    originalInput: task.originalInput,
+    clarification: {
+      kind: 'current',
+      status: 'clarification_required',
+      conversationId: task.conversationId,
+      task: {
+        id: task.id,
+        state: task.state,
+        stateVersion: task.stateVersion,
+        activePlanVersionId: task.activePlanVersionId ?? null,
+        currentAttemptId: task.currentAttemptId ?? null,
+      },
+      structuredTask: task.structuredTask,
+      activatedNodes: [],
+      candidates: [],
+    },
+  };
+}

@@ -54,6 +54,9 @@ interface CurrentFlowStateModule {
   finishExecution(state: DeliverableReadState, execution: CompletedExecution): FlowTransition;
   failDeliverableRead(state: DeliverableReadState, error: string): FlowTransition;
   retryDeliverable(state: DeliverableReadState): FlowTransition;
+  hydrateCurrentTask(input: {
+    task: { id: string; state: string; stateVersion: number; originalInput: string; conversationId: string; structuredTask: unknown };
+  }): { phase: string; stateVersion: number; originalInput: string; clarification: unknown | null };
 }
 interface ClarificationQuestion {
   key: string;
@@ -99,6 +102,54 @@ async function loadCurrentFlowStateModule(): Promise<CurrentFlowStateModule> {
   }
   return moduleExports as unknown as CurrentFlowStateModule;
 }
+test('hydrates an awaiting clarification task with its questions and raw input', async () => {
+  const { hydrateCurrentTask } = await loadCurrentFlowStateModule() as CurrentFlowStateModule;
+  const structuredTask = {
+    version: 'research-task-v2',
+    task_type: 'competitive_research',
+    research_goal: '原始目标',
+    target_audience: ['产品团队'],
+    scope: ['公开资料'],
+    constraints: [],
+    success_criteria: [],
+    expected_deliverables: [],
+    assumptions: [],
+    ambiguities: [{ id: 'a', statement: '缺少受众', blocking: true }],
+    clarification_questions: [{ key: 'audience', question: '受众是谁？', rationale: '影响方法' }],
+    blocking_issues: [],
+    business_domain: '产品',
+    sensitivity: 'public',
+    pii_detected: false,
+  };
+  const hydrated = hydrateCurrentTask({
+    task: {
+      id: 'task-refresh',
+      state: 'awaiting_clarification',
+      stateVersion: 4,
+      originalInput: '$competitive-research 原始调用',
+      conversationId: 'conversation-refresh',
+      structuredTask,
+    },
+  });
+  assert.equal(hydrated.phase, 'clarifying');
+  assert.equal(hydrated.stateVersion, 4);
+  assert.equal(hydrated.originalInput, '$competitive-research 原始调用');
+  assert.deepEqual(hydrated.clarification, {
+    kind: 'current',
+    status: 'clarification_required',
+    conversationId: 'conversation-refresh',
+    task: {
+      id: 'task-refresh',
+      state: 'awaiting_clarification',
+      stateVersion: 4,
+      activePlanVersionId: null,
+      currentAttemptId: null,
+    },
+    structuredTask,
+    activatedNodes: [],
+    candidates: [],
+  });
+});
 
 test('clarification submission contains only explicit answers and editable assumption changes', async () => {
   const { buildClarificationSubmission } = await loadCurrentFlowStateModule() as ClarificationStateModule;

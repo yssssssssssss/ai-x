@@ -525,9 +525,13 @@ git commit -m "feat: add current requirement refinement loop"
 - Modify: `apps/orchestrator-runtime/src/control/control-planning-service.ts`
 - Modify: `apps/orchestrator-runtime/src/control/requirement-refinement-service.ts`
 - Modify: `database/control-plane.ts`
+- Create: `database/migrations/005_clarification_command_reservation.sql`
 - Modify: `apps/web/src/api/client.ts`
+- Modify: `packages/api-contract/control-workflow.ts`
+- Modify: `packages/api-contract/http.ts`
 - Create: `apps/web/src/components/stages/CurrentStage1Clarify.tsx`
 - Modify: `apps/web/src/hooks/useTaskFlow.ts`
+- Modify: `apps/web/src/current-flow-state.ts`
 - Modify: `apps/web/src/pages/Workbench.tsx`
 - Test: `tests/control-clarification.test.ts`
 - Test: `tests/control-api-integration.test.ts`
@@ -540,6 +544,9 @@ git commit -m "feat: add current requirement refinement loop"
 - Produces: `ControlPlaneRepository.persistExistingTaskWithCandidates()`，在单事务中锁定并 CAS 更新原 `awaiting_clarification` task，写入 depth/speed plan versions。
 - Produces: `ControlPlanningService.planExistingTask()`，消费 finalized `ResearchPlanningResult`，复用 candidate sanitization/evidence policy，返回原 conversation/task response。
 - Consumes: `RequirementRefinementService` ready result 的 finalized planning result；ControlRuntime 通过 `controlPlanning` 暴露该 seam。
+- Produces: `ControlPlaneRepository.createAndActivateRequirementVersion()`；同一事务锁 task、校验双 owner/state/version、插入下一 requirement version 并 CAS 激活完整 `ResearchTaskV2`。
+- Produces: 数据库 durable clarification command reservation（pending/completed、token fence、expiry/reclaim、reserve/complete/release/wait），且不跨 LLM 持有事务。
+- Produces: Current GET 的 `originalInput`/active `structuredTask` 与 Web refresh hydration。
 
 - [ ] **Step 1: 写 HTTP 测试**
 
@@ -551,6 +558,10 @@ git commit -m "feat: add current requirement refinement loop"
 - 缺答案保持 awaiting_clarification。
 - clarify 成功返回 candidates。
 - 重放同一 idempotency key 返回相同结果。
+- 同 key/同 hash 跨并发/新 router 等待并重放；不同 hash 冲突。
+- failed mutation 释放 pending；expired reservation 可 reclaim，旧 token completion fail closed。
+- route/repository 双层 clarification state gate。
+- clarification 规划保留原始 task input/direct invoke，并持久化/返回完整 `ResearchTaskV2`。
 
 - [ ] **Step 2: 运行并确认失败**
 

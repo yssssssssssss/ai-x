@@ -147,7 +147,7 @@ export class ControlPlanningService {
       kind: 'current',
       conversationId,
       task: persisted.task,
-      structuredTask: planningResult.task,
+      structuredTask: planningResult.structuredTask ?? planningResult.task,
       activatedNodes: planningResult.activatedNodes,
       candidates,
     };
@@ -178,7 +178,7 @@ export class ControlPlanningService {
       ownerUserId: input.ownerUserId,
       originalInput: input.originalInput,
       taskType: planningResult.task.task_type,
-      structuredTask: planningResult.task,
+      structuredTask: planningResult.structuredTask ?? planningResult.task,
       candidates: this.prepareCandidates(planningResult),
     });
     return this.responseFromPersisted(conversation.id, planningResult, persisted);
@@ -207,7 +207,7 @@ export class ControlPlanningService {
       ownerUserId: input.ownerUserId,
       expectedStateVersion: input.expectedStateVersion,
       taskType: planningResult.task.task_type,
-      structuredTask: planningResult.task,
+      structuredTask: planningResult.structuredTask ?? planningResult.task,
       candidates: this.prepareCandidates(planningResult),
     });
     return this.responseFromPersisted(conversation.id, planningResult, persisted);

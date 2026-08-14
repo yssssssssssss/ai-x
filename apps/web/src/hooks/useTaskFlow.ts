@@ -12,12 +12,7 @@ import {
   type PlanResponse,
   type Upload,
 } from '../api/client.ts';
-import {
-  buildConfirmationAnswers,
-  executionStepsToExecLog,
-  type ConfirmationRequirement,
-  type ReportState,
-} from '../current-flow-state.ts';
+import { buildConfirmationAnswers, executionStepsToExecLog, hydrateCurrentTask, type ConfirmationRequirement, type ReportState } from '../current-flow-state.ts';
 
 const CURRENT_TASK_STORAGE_KEY = 'ur_current_task_id';
 
@@ -116,7 +111,17 @@ export function useTaskFlow() {
     void (async () => {
       try {
         const current = await api.controlTask(taskId);
-        const { state, stateVersion: restoredStateVersion, currentAttemptId } = current.task;
+        const hydrated = hydrateCurrentTask(current as unknown as Parameters<typeof hydrateCurrentTask>[0]);
+                if (cancelled) return;
+                setOriginalInput(hydrated.originalInput);
+                setStateVersion(hydrated.stateVersion);
+                if (hydrated.phase === 'clarifying') {
+                  setClarification(hydrated.clarification as ClarificationRequiredResponse);
+                  setPhase('clarifying');
+                  setError('');
+                  return;
+                }
+                const { state, stateVersion: restoredStateVersion, currentAttemptId } = current.task;
         if (state !== 'completed' && state !== 'completed_with_gaps') return;
         if (!currentAttemptId) throw new Error('completed Current task has no attempt');
         if (cancelled) return;
@@ -314,7 +319,9 @@ export function useTaskFlow() {
     setError('');
     try {
       const answers = buildConfirmationAnswers(
-        confirmationRequirements(candidatesResp.structuredTask.confirmations),
+        confirmationRequirements('confirmations' in candidatesResp.structuredTask
+          ? candidatesResp.structuredTask.confirmations
+          : candidatesResp.structuredTask.clarification_questions),
         userAnswers,
       );
       const confirmed = await api.confirmControlPlan(candidatesResp.task.id, {

@@ -1,14 +1,18 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { once } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
-import type { Express } from 'express';
+import express, { type Express } from 'express';
 import { Pool } from 'pg';
 import { signToken } from '../apps/agent-api/src/auth.ts';
+import {
+  createControlTasksRouter,
+  type ControlTasksRuntime,
+} from '../apps/agent-api/src/routes/control-tasks.ts';
 import { ControlArtifactStore } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
 import type { ResearchPlanningResult } from '../apps/orchestrator-runtime/src/planners/research-planning-service.ts';
 import {
@@ -557,6 +561,48 @@ async function postJson(
   });
 }
 
+async function listenLocalApp(app: Express): Promise<{ server: Server; baseUrl: string }> {
+  const localServer = createServer(app);
+  localServer.listen(0, '127.0.0.1');
+  await once(localServer, 'listening');
+  const address = localServer.address();
+  assert.ok(address && typeof address !== 'string');
+  return { server: localServer, baseUrl: `http://127.0.0.1:${address.port}` };
+}
+
+async function closeLocalServer(localServer: Server): Promise<void> {
+  const closed = once(localServer, 'close');
+  localServer.close();
+  await closed;
+}
+
+function clarificationRequirement(): Record<string, unknown> {
+  return {
+    version: 'research-task-v2',
+    task_type: 'competitive_research',
+    business_domain: '宠物辅食',
+    research_goal: '确认目标受众后生成研究计划',
+    target_audience: [],
+    scope: ['公开资料'],
+    constraints: [],
+    success_criteria: [],
+    expected_deliverables: ['研究计划'],
+    assumptions: [],
+    ambiguities: [{ id: 'audience', statement: '目标受众未确定', blocking: true }],
+    clarification_questions: [{ key: 'audience', question: '目标受众是谁？', rationale: '决定研究方法' }],
+    blocking_issues: [],
+    sensitivity: 'public',
+    pii_detected: false,
+  };
+}
+
+function controlTasksApp(runtime: ControlTasksRuntime): Express {
+  const app = express();
+  app.use(express.json());
+  app.use('/api/control-tasks', createControlTasksRouter(runtime));
+  return app;
+}
+
 function assertRecord(value: unknown): asserts value is Record<string, unknown> {
   assert.ok(value && typeof value === 'object' && !Array.isArray(value));
 }
@@ -668,6 +714,15 @@ test('production control runtime completes the offline Current API flow and serv
   assert.equal(planResponse.status, 200, await planResponse.clone().text());
   const planned = await planResponse.json() as ControlPlanCandidatesResponse;
   assert.equal(planned.kind, 'current');
+  const refreshedResponse = await fetch(`${baseUrl}/api/control-tasks/${planned.task.id}`, {
+    headers: { authorization: `Bearer ${ownerToken}` },
+  });
+  assert.equal(refreshedResponse.status, 200, await refreshedResponse.clone().text());
+  const refreshed = await refreshedResponse.json() as {
+    task: { originalInput: string; structuredTask: unknown };
+  };
+  assert.equal(refreshed.task.originalInput, originalInput);
+  assert.deepEqual(refreshed.task.structuredTask, planned.structuredTask);
   assert.deepEqual(planned.candidates.map((candidate) => candidate.candidateId), ['depth', 'speed']);
   const planningConnection = await scopedDatabase.connect();
   try {
@@ -1045,5 +1100,281 @@ test('production ControlRuntime persists planning candidates only when every pla
     );
   } finally {
     connection.release();
+  }
+});
+
+test('migration 005 preserves legacy completed commands and permits pending reservations', async () => {
+  const compatibilitySchema = `command_reservation_compat_${randomUUID().replaceAll('-', '')}`;
+  await database.query(`CREATE SCHEMA "${compatibilitySchema}"`);
+  const client = await database.connect();
+  try {
+    await client.query(`SET search_path TO "${compatibilitySchema}", public`);
+    await client.query(`
+      CREATE TABLE control_commands (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        task_id UUID NOT NULL,
+        command_type TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        expected_version BIGINT NOT NULL,
+        state_before TEXT NOT NULL,
+        state_after TEXT NOT NULL,
+        response_json JSONB NOT NULL,
+        actor_user_id UUID,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (task_id, command_type, idempotency_key)
+      )
+    `);
+    const legacyTaskId = randomUUID();
+    await client.query(
+      `INSERT INTO control_commands
+         (task_id, command_type, idempotency_key, request_hash, expected_version,
+          state_before, state_after, response_json)
+       VALUES ($1, 'selection', 'legacy-key', 'sha256:legacy', 0,
+               'awaiting_selection', 'awaiting_confirmation', $2)`,
+      [legacyTaskId, JSON.stringify({ state: 'awaiting_confirmation', stateVersion: 1 })],
+    );
+    await client.query(readFileSync(
+      join(process.cwd(), 'database', 'migrations', '005_clarification_command_reservation.sql'),
+      'utf8',
+    ));
+    const upgraded = await client.query(
+      `SELECT command_status, response_json, reservation_token, reservation_expires_at
+       FROM control_commands WHERE task_id = $1`,
+      [legacyTaskId],
+    );
+    assert.deepEqual(upgraded.rows[0], {
+      command_status: 'completed',
+      response_json: { state: 'awaiting_confirmation', stateVersion: 1 },
+      reservation_token: null,
+      reservation_expires_at: null,
+    });
+    await client.query(
+      `INSERT INTO control_commands
+         (task_id, command_type, idempotency_key, request_hash, expected_version,
+          state_before, state_after, response_json, command_status,
+          reservation_token, reservation_expires_at)
+       VALUES ($1, 'clarification', 'pending-key', 'sha256:pending', 0,
+               'awaiting_clarification', 'awaiting_clarification', NULL, 'pending', $2, now() + interval '1 minute')`,
+      [randomUUID(), randomUUID()],
+    );
+  } finally {
+    client.release();
+    await database.query(`DROP SCHEMA IF EXISTS "${compatibilitySchema}" CASCADE`);
+  }
+});
+test('clarification idempotency is durable across concurrent and newly created routers', async () => {
+
+  const created = await repository.createTask({
+    conversationId,
+    ownerUserId,
+    originalInput: '$competitive-research compare pet supplements',
+    taskType: 'competitive_research',
+    structuredTask: clarificationRequirement(),
+    state: 'awaiting_clarification',
+  });
+  const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  let calls = 0;
+  const signals = new EventEmitter();
+  const blocked = once(signals, 'release');
+  const pendingObserved = once(signals, 'pending');
+  const duplicateCallObserved = once(signals, 'duplicate');
+  const instrumentedRepository = Object.create(repository) as ControlPlaneRepository;
+  instrumentedRepository.reserveCommand = async (input) => {
+    const reservation = await repository.reserveCommand(input);
+    if (reservation.status === 'pending') signals.emit('pending');
+    return reservation;
+  };
+  const response = {
+    kind: 'current' as const,
+    status: 'clarification_required' as const,
+    conversationId,
+    task: { ...created },
+    structuredTask: clarificationRequirement(),
+    activatedNodes: [],
+    candidates: [],
+  };
+  const runtime = {
+    repository: instrumentedRepository,
+    workflow: {},
+    getDeliverable: async () => null,
+    clarification: {
+      async clarify() {
+        calls += 1;
+        if (calls > 1) signals.emit('duplicate');
+        await blocked;
+        return response;
+      },
+    },
+  } as unknown as ControlTasksRuntime;
+  const first = await listenLocalApp(controlTasksApp(runtime));
+  const second = await listenLocalApp(controlTasksApp(runtime));
+  const requestBody = {
+    expectedVersion: created.stateVersion,
+    clarificationAnswers: { audience: '产品团队' },
+    assumptionEdits: {},
+  };
+  const key = `durable-${randomUUID()}`;
+  try {
+    const firstRequest = postJson(first.baseUrl, `/api/control-tasks/${created.id}/clarify`, token, requestBody, key);
+    const concurrentRequest = postJson(second.baseUrl, `/api/control-tasks/${created.id}/clarify`, token, requestBody, key);
+    await Promise.race([pendingObserved, duplicateCallObserved]);
+    signals.emit('release');
+    const [firstResponse, concurrentResponse] = await Promise.all([firstRequest, concurrentRequest]);
+    assert.equal(firstResponse.status, 200, await firstResponse.clone().text());
+    assert.equal(concurrentResponse.status, 200, await concurrentResponse.clone().text());
+    assert.deepEqual(await concurrentResponse.json(), await firstResponse.json());
+    assert.equal(calls, 1);
+
+    const restarted = await listenLocalApp(controlTasksApp(runtime));
+    try {
+      const replay = await postJson(restarted.baseUrl, `/api/control-tasks/${created.id}/clarify`, token, requestBody, key);
+      assert.equal(replay.status, 200, await replay.clone().text());
+      assert.deepEqual(await replay.json(), response);
+      assert.equal(calls, 1);
+      const conflict = await postJson(restarted.baseUrl, `/api/control-tasks/${created.id}/clarify`, token, {
+        ...requestBody,
+        clarificationAnswers: { audience: '消费者' },
+      }, key);
+      assert.equal(conflict.status, 409);
+      assert.equal(calls, 1);
+    } finally {
+      await closeLocalServer(restarted.server);
+    }
+  } finally {
+    signals.emit('release');
+    await Promise.all([closeLocalServer(first.server), closeLocalServer(second.server)]);
+  }
+});
+
+test('failed clarification releases its pending command so a retry can complete', async () => {
+  const created = await repository.createTask({
+    conversationId,
+    ownerUserId,
+    originalInput: 'retry clarification after failure',
+    taskType: 'competitive_research',
+    structuredTask: clarificationRequirement(),
+    state: 'awaiting_clarification',
+  });
+  const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  let calls = 0;
+  const response = {
+    kind: 'current' as const,
+    status: 'clarification_required' as const,
+    conversationId,
+    task: { ...created },
+    structuredTask: clarificationRequirement(),
+    activatedNodes: [],
+    candidates: [],
+  };
+  const runtime = {
+    repository,
+    workflow: {},
+    getDeliverable: async () => null,
+    clarification: {
+      async clarify() {
+        calls += 1;
+        if (calls === 1) throw new Error('simulated refinement failure');
+        return response;
+      },
+    },
+  } as unknown as ControlTasksRuntime;
+  const first = await listenLocalApp(controlTasksApp(runtime));
+  const second = await listenLocalApp(controlTasksApp(runtime));
+  const requestBody = { expectedVersion: created.stateVersion, clarificationAnswers: {}, assumptionEdits: {} };
+  const key = `release-${randomUUID()}`;
+  try {
+    const failed = await postJson(first.baseUrl, `/api/control-tasks/${created.id}/clarify`, token, requestBody, key);
+    assert.equal(failed.status, 500);
+    assert.equal(await repository.getCommand(created.id, 'clarification', key), null);
+
+    const retried = await postJson(second.baseUrl, `/api/control-tasks/${created.id}/clarify`, token, requestBody, key);
+    assert.equal(retried.status, 200, await retried.clone().text());
+    assert.deepEqual((await repository.getCommand(created.id, 'clarification', key))?.response, response);
+    assert.equal(calls, 2);
+  } finally {
+    await Promise.all([closeLocalServer(first.server), closeLocalServer(second.server)]);
+  }
+});
+
+test('expired clarification reservations are reclaimed with token fencing', async () => {
+  const created = await repository.createTask({
+    conversationId,
+    ownerUserId,
+    originalInput: 'reclaim expired clarification reservation',
+    taskType: 'competitive_research',
+    structuredTask: clarificationRequirement(),
+    state: 'awaiting_clarification',
+  });
+  const input = {
+    taskId: created.id,
+    commandType: 'clarification',
+    idempotencyKey: `reclaim-${randomUUID()}`,
+    requestHash: `sha256:${'a'.repeat(64)}`,
+    expectedVersion: created.stateVersion,
+    actorUserId: ownerUserId,
+  };
+  const first = await repository.reserveCommand(input);
+  assert.equal(first.status, 'reserved');
+  assert.ok(first.reservationToken);
+  const connection = await scopedDatabase.connect();
+  try {
+    await connection.query(
+      `UPDATE control_commands
+       SET reservation_expires_at = now() - interval '1 second'
+       WHERE task_id = $1 AND command_type = $2 AND idempotency_key = $3`,
+      [input.taskId, input.commandType, input.idempotencyKey],
+    );
+  } finally {
+    connection.release();
+  }
+  const reclaimed = await repository.reserveCommand(input);
+  assert.equal(reclaimed.status, 'reserved');
+  assert.ok(reclaimed.reservationToken);
+  assert.notEqual(reclaimed.reservationToken, first.reservationToken);
+  await assert.rejects(() => repository.completeCommand({
+    ...input,
+    reservationToken: first.reservationToken!,
+    stateAfter: 'awaiting_clarification',
+    response: { stale: true },
+  }), /reservation|fence|lost/i);
+  await repository.completeCommand({
+    ...input,
+    reservationToken: reclaimed.reservationToken!,
+    stateAfter: 'awaiting_clarification',
+    response: { reclaimed: true },
+  });
+  assert.deepEqual((await repository.getCommand(input.taskId, input.commandType, input.idempotencyKey))?.response, { reclaimed: true });
+});
+
+test('clarification route rejects tasks outside awaiting_clarification before refinement', async () => {
+  const created = await repository.createTask({
+    conversationId,
+    ownerUserId,
+    originalInput: 'selection cannot be clarified',
+    taskType: 'competitive_research',
+    structuredTask: clarificationRequirement(),
+    state: 'awaiting_selection',
+  });
+  let calls = 0;
+  const runtime = {
+    repository,
+    workflow: {},
+    getDeliverable: async () => null,
+    clarification: { async clarify() { calls += 1; throw new Error('must not run'); } },
+  } as unknown as ControlTasksRuntime;
+  const app = await listenLocalApp(controlTasksApp(runtime));
+  try {
+    const response = await postJson(
+      app.baseUrl,
+      `/api/control-tasks/${created.id}/clarify`,
+      signToken({ userId: ownerUserId, email: 'owner@test.local' }),
+      { expectedVersion: created.stateVersion, clarificationAnswers: {}, assumptionEdits: {} },
+      `state-gate-${randomUUID()}`,
+    );
+    assert.equal(response.status, 409);
+    assert.equal(calls, 0);
+  } finally {
+    await closeLocalServer(app.server);
   }
 });

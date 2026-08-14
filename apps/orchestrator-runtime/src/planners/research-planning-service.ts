@@ -30,6 +30,7 @@ export interface ResearchPlanningInput {
 
 export interface ResearchPlanningResult {
   task: ResearchTaskData;
+  structuredTask?: ResearchTaskV2;
   activatedNodes: string[];
   decisionStates: DecisionStateRec[];
   candidates: PlanCandidate[];
@@ -125,7 +126,7 @@ export class ResearchPlanningService {
       promptHash: hashPrompt(originalInput, requirement, 'research-task-v2'),
       traceId: `trace_requirement_${hashPrompt(originalInput, requirement).slice(-12)}`,
     };
-    return this.planTask(task, parseDirectInvoke(originalInput), provenance, emit);
+    return this.planTask(task, parseDirectInvoke(originalInput), provenance, emit, requirement);
   }
 
   private async planTask(
@@ -133,11 +134,13 @@ export class ResearchPlanningService {
     direct: DirectInvoke | null,
     taskProvenance: PlanProvenance,
     emit: (event: PlanProgress) => void,
+    structuredTask?: ResearchTaskV2,
   ): Promise<ResearchPlanningResult> {
     const strategy = direct ? this.directPlanner : this.routedPlanner;
     const artifacts = await strategy.plan({ task, direct, taskProvenance, emit });
     return {
       task,
+      ...(structuredTask ? { structuredTask } : {}),
       activatedNodes: artifacts.activated.map((node) => node.key),
       decisionStates: artifacts.decisionStates,
       candidates: artifacts.candidates,

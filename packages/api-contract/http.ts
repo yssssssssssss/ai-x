@@ -5,6 +5,7 @@
 
 import type {
   ResearchTaskData,
+  ResearchTaskV2,
   PlanStep,
   PlanCandidate,
   Assumption,
@@ -88,7 +89,7 @@ export interface SelectResponse {
 export interface PlanResponse {
   conversationId: string;
   taskId: string;
-  task: ResearchTaskData;
+  task: ResearchTaskData | ResearchTaskV2;
   activatedNodes: string[];
   plan: FinalizedPlan;
   pendingUploads: PendingUpload[];

@@ -91,6 +91,7 @@ function makeRepository() {
   const task: ControlTaskDetail = {
     id: taskId,
     conversationId,
+    originalInput: 'raw original input from task',
     ownerUserId,
     conversationOwnerUserId: ownerUserId,
     structuredTask: null,
@@ -107,19 +108,20 @@ function makeRepository() {
     async getTaskDetail() {
       return { ...task, stateVersion };
     },
-    async createRequirementVersion(input: {
+    async createAndActivateRequirementVersion(input: {
       taskId: string;
-      version: number;
+      ownerUserId: string;
+      expectedVersion: number;
       rawInputHash: string;
       clarification: unknown;
       structuredTask: ResearchTaskV2;
       modelCallId?: string | null;
     }) {
-      events.push('persist');
+      events.push('persist_activate');
       const stored: ControlRequirementVersion = {
-        id: `requirement-${input.version}`,
+        id: `requirement-${versions.length + 1}`,
         taskId: input.taskId,
-        version: input.version,
+        version: versions.length + 1,
         rawInputHash: input.rawInputHash,
         clarification: input.clarification,
         structuredTask: input.structuredTask,
@@ -127,16 +129,11 @@ function makeRepository() {
         createdAt: new Date(),
       };
       versions.push(stored);
-      return stored;
+      stateVersion += 1;
+      return { version: stored, task: { ...task, stateVersion, activeRequirementVersionId: stored.id } };
     },
     async getActiveRequirementVersion() {
       return versions.at(-1) ?? null;
-    },
-    async activateRequirementVersion(input: { requirementVersionId: string; expectedVersion: number }) {
-      events.push('activate');
-      activations.push({ id: input.requirementVersionId, expectedVersion: input.expectedVersion });
-      stateVersion += 1;
-      return { ...task, stateVersion, activeRequirementVersionId: input.requirementVersionId };
     },
   };
 }
@@ -174,7 +171,7 @@ test('explicit requirements return ready_to_plan and invoke planner with finaliz
   const llm = new FixtureLLM([requirement()]);
   const repository = makeRepository();
   const conversations = makeConversations();
-  let planned: ResearchTaskV2 | null = null;
+  let planned: { originalInput: string; requirement: ResearchTaskV2 } | null = null;
   const service = new RequirementRefinementService({
     llm,
     validator: new SchemaValidator(),
@@ -182,8 +179,8 @@ test('explicit requirements return ready_to_plan and invoke planner with finaliz
     conversations,
     expectedActualModel: 'pinned-model',
     planner: {
-      async plan(input: { requirement: ResearchTaskV2 }) {
-        planned = input.requirement;
+      async plan(input: { originalInput: string; requirement: ResearchTaskV2 }) {
+        planned = input;
       },
     },
   });
@@ -197,8 +194,8 @@ test('explicit requirements return ready_to_plan and invoke planner with finaliz
 
   assert.equal(result.status, 'ready_to_plan');
   assert.deepEqual(result.requirement, requirement());
-  assert.deepEqual(planned, requirement());
-  assert.deepEqual(repository.events, ['persist', 'activate']);
+  assert.deepEqual(planned, { originalInput: 'compare live-commerce competitors', requirement: requirement() });
+  assert.deepEqual(repository.events, ['persist_activate']);
 });
 
 test('ambiguous requirements return clarification_required without invoking planner', async () => {
@@ -234,6 +231,7 @@ test('clarification answers persist a new v2 and clear blocking ambiguity before
   const repository = makeRepository();
   const conversations = makeConversations();
   const events = repository.events;
+  let plannedInput = '';
   let plannerCalls = 0;
   const service = new RequirementRefinementService({
     llm,
@@ -241,8 +239,9 @@ test('clarification answers persist a new v2 and clear blocking ambiguity before
     repository,
     conversations,
     planner: {
-      async plan() {
+      async plan(input: { originalInput: string }) {
         events.push('plan');
+        plannedInput = input.originalInput;
         plannerCalls += 1;
       },
     },
@@ -261,7 +260,8 @@ test('clarification answers persist a new v2 and clear blocking ambiguity before
   assert.equal(result.requirement.ambiguities.some((item) => item.blocking), false);
   assert.equal(result.requirement.clarification_questions.length, 0);
   assert.deepEqual(repository.versions.map((version) => version.version), [1, 2]);
-  assert.deepEqual(events.slice(-3), ['persist', 'activate', 'plan']);
+  assert.deepEqual(events.slice(-2), ['persist_activate', 'plan']);
+  assert.equal(plannedInput, 'raw original input from task');
   assert.equal(plannerCalls, 1);
 });
 

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { MigrationConnection, MigrationDatabase } from './migration-runner.ts';
 import type { ControlRequirementVersion } from '../packages/api-contract/control-workflow.ts';
 import type {
@@ -232,14 +233,7 @@ function artifactFromRow(row: Record<string, unknown>): ControlArtifact {
   };
 }
 
-export interface ControlTaskDetail extends ControlTask {
-  conversationId: string;
-
-  ownerUserId: string;
-  conversationOwnerUserId: string;
-  structuredTask: unknown;
-  activeRequirementVersionId: string | null;
-}
+export interface ControlTaskDetail extends ControlTask { conversationId: string; originalInput: string; ownerUserId: string; conversationOwnerUserId: string; structuredTask: unknown; activeRequirementVersionId: string | null; }
 
 function requirementVersionFromRow(row: Record<string, unknown>): ControlRequirementVersion {
   return {
@@ -258,6 +252,7 @@ function controlTaskDetailFromRow(row: Record<string, unknown>): ControlTaskDeta
   return {
     id: asString(row.id, 'id'),
     conversationId: asString(row.conversation_id, 'conversation_id'),
+    originalInput: asString(row.original_input, 'original_input'),
     ownerUserId: asString(row.owner_user_id, 'owner_user_id'),
     conversationOwnerUserId: asString(row.conversation_owner_user_id, 'conversation_owner_user_id'),
     structuredTask: row.structured_task,
@@ -265,9 +260,7 @@ function controlTaskDetailFromRow(row: Record<string, unknown>): ControlTaskDeta
     stateVersion: asNumber(row.state_version, 'state_version'),
     activePlanVersionId: typeof row.active_plan_version_id === 'string' ? row.active_plan_version_id : null,
     currentAttemptId: typeof row.current_attempt_id === 'string' ? row.current_attempt_id : null,
-    activeRequirementVersionId: typeof row.active_requirement_version_id === 'string'
-      ? row.active_requirement_version_id
-      : null,
+    activeRequirementVersionId: typeof row.active_requirement_version_id === 'string' ? row.active_requirement_version_id : null,
   };
 }
 
@@ -297,6 +290,16 @@ export interface ControlCommandRecord {
   requestHash: string;
   response: unknown;
 }
+
+export type ControlCommandReservation =
+  | { status: 'reserved'; reservationToken: string }
+  | { status: 'pending' }
+  | { status: 'replay'; response: unknown }
+  | { status: 'conflict' };
+
+export type ControlCommandWaitResult =
+  | { status: 'replay'; response: unknown }
+  | { status: 'released' | 'timeout' | 'conflict' };
 
 export class ControlPlaneRepository {
   constructor(private readonly database: MigrationDatabase) {}
@@ -367,10 +370,11 @@ export class ControlPlaneRepository {
   }): Promise<ControlRequirementVersion> {
     return this.transaction(async (connection) => {
       const task = await connection.query(
-        `SELECT id FROM control_tasks WHERE id = $1 FOR KEY SHARE`,
+        `SELECT id, state FROM control_tasks WHERE id = $1 FOR KEY SHARE`,
         [input.taskId],
       );
       if (!task.rows[0]) throw new ControlPlaneConflictError(`task ${input.taskId} does not exist`);
+      if (task.rows[0].state !== 'awaiting_clarification') throw new ControlPlaneConflictError(`task ${input.taskId} is not awaiting_clarification`);
       const result = await connection.query(
         `INSERT INTO control_requirement_versions
            (task_id, version, raw_input_hash, clarification_json, structured_task_json, model_call_id)
@@ -387,6 +391,83 @@ export class ControlPlaneRepository {
         ],
       );
       return requirementVersionFromRow(result.rows[0] ?? {});
+    });
+  }
+
+  async createAndActivateRequirementVersion(input: {
+    taskId: string;
+    ownerUserId: string;
+    expectedVersion: number;
+    rawInputHash: string;
+    clarification: unknown;
+    structuredTask: unknown;
+    modelCallId?: string | null;
+  }): Promise<{ version: ControlRequirementVersion; task: ControlTaskDetail }> {
+    return this.transaction(async (connection) => {
+      const taskResult = await connection.query(
+        `SELECT task.id, task.conversation_id, task.original_input, task.owner_user_id,
+                conversation.owner_user_id AS conversation_owner_user_id,
+                task.structured_task, task.state, task.state_version,
+                task.active_plan_version_id, task.current_attempt_id,
+                task.active_requirement_version_id
+         FROM control_tasks AS task
+         JOIN conversations AS conversation ON conversation.id = task.conversation_id
+         WHERE task.id = $1
+         FOR UPDATE OF task`,
+        [input.taskId],
+      );
+      const task = taskResult.rows[0];
+      if (!task) throw new ControlPlaneConflictError(`task ${input.taskId} does not exist`);
+      if (
+        task.owner_user_id !== input.ownerUserId
+        || task.conversation_owner_user_id !== input.ownerUserId
+      ) {
+        throw new ControlPlaneAuthorizationError(`actor cannot control task ${input.taskId}`);
+      }
+      if (task.state !== 'awaiting_clarification') throw new ControlPlaneConflictError(`task ${input.taskId} is not awaiting_clarification`);
+      if (asNumber(task.state_version, 'state_version') !== input.expectedVersion) {
+        throw new ControlPlaneConflictError(`task ${input.taskId} is not at version ${input.expectedVersion}`);
+      }
+
+      const versionResult = await connection.query(
+        `INSERT INTO control_requirement_versions
+           (task_id, version, raw_input_hash, clarification_json, structured_task_json, model_call_id)
+         SELECT $1, COALESCE(MAX(version), 0) + 1, $2, $3, $4, $5
+         FROM control_requirement_versions
+         WHERE task_id = $1
+         RETURNING id, task_id, version, raw_input_hash, clarification_json,
+                   structured_task_json, model_call_id, created_at`,
+        [
+          input.taskId,
+          input.rawInputHash,
+          JSON.stringify(input.clarification),
+          JSON.stringify(input.structuredTask),
+          input.modelCallId ?? null,
+        ],
+      );
+      const versionRow = versionResult.rows[0] ?? {};
+      const updated = await connection.query(
+        `UPDATE control_tasks
+         SET active_requirement_version_id = $2,
+             structured_task = $3,
+             state_version = state_version + 1,
+             updated_at = now()
+         WHERE id = $1
+           AND state = 'awaiting_clarification'
+           AND state_version = $4
+         RETURNING id, conversation_id, original_input, owner_user_id,
+                   (SELECT owner_user_id FROM conversations WHERE id = control_tasks.conversation_id)
+                     AS conversation_owner_user_id,
+                   structured_task, state, state_version, active_plan_version_id,
+                   current_attempt_id, active_requirement_version_id`,
+        [input.taskId, versionRow.id, JSON.stringify(input.structuredTask), input.expectedVersion],
+      );
+      const row = updated.rows[0];
+      if (!row) throw new ControlPlaneConflictError(`task ${input.taskId} lost requirement activation CAS`);
+      return {
+        version: requirementVersionFromRow(versionRow),
+        task: controlTaskDetailFromRow(row),
+      };
     });
   }
 
@@ -417,7 +498,7 @@ export class ControlPlaneRepository {
   }): Promise<ControlTaskDetail> {
     return this.transaction(async (connection) => {
       const taskResult = await connection.query(
-        `SELECT task.id, task.conversation_id, task.owner_user_id,
+        `SELECT task.id, task.conversation_id, task.original_input, task.owner_user_id,
                 conversation.owner_user_id AS conversation_owner_user_id,
                 task.structured_task, task.state, task.state_version,
                 task.active_plan_version_id, task.current_attempt_id,
@@ -436,6 +517,7 @@ export class ControlPlaneRepository {
       ) {
         throw new ControlPlaneAuthorizationError(`actor cannot control task ${input.taskId}`);
       }
+      if (task.state !== 'awaiting_clarification') throw new ControlPlaneConflictError(`task ${input.taskId} is not awaiting_clarification`);
       if (asNumber(task.state_version, 'state_version') !== input.expectedVersion) {
         throw new ControlPlaneConflictError(`task ${input.taskId} is not at version ${input.expectedVersion}`);
       }
@@ -458,10 +540,11 @@ export class ControlPlaneRepository {
       const updated = await connection.query(
         `UPDATE control_tasks
          SET active_requirement_version_id = $2,
+             structured_task = (SELECT structured_task_json FROM control_requirement_versions WHERE id = $2),
              state_version = state_version + 1,
              updated_at = now()
-         WHERE id = $1 AND state_version = $3
-         RETURNING id, conversation_id, owner_user_id,
+         WHERE id = $1 AND state = 'awaiting_clarification' AND state_version = $3
+         RETURNING id, conversation_id, original_input, owner_user_id,
                    (SELECT owner_user_id FROM conversations WHERE id = control_tasks.conversation_id)
                      AS conversation_owner_user_id,
                    structured_task, state, state_version,
@@ -1242,7 +1325,7 @@ export class ControlPlaneRepository {
     const connection = await this.database.connect();
     try {
       const result = await connection.query(
-        `SELECT task.id, task.conversation_id, task.owner_user_id, conversation.owner_user_id AS conversation_owner_user_id,
+        `SELECT task.id, task.conversation_id, task.original_input, task.owner_user_id, conversation.owner_user_id AS conversation_owner_user_id,
                 task.structured_task, task.state, task.state_version, task.active_plan_version_id,
                 task.current_attempt_id, task.active_requirement_version_id
          FROM control_tasks AS task
@@ -1338,6 +1421,202 @@ export class ControlPlaneRepository {
       return row ? { requestHash: asString(row.request_hash, 'request_hash'), response: row.response_json } : null;
     } finally {
       connection.release();
+    }
+  }
+
+  async reserveCommand(input: {
+    taskId: string;
+    commandType: string;
+    idempotencyKey: string;
+    requestHash: string;
+    expectedVersion: number;
+    actorUserId?: string;
+  }): Promise<ControlCommandReservation> {
+    return this.transaction(async (connection) => {
+      const taskResult = await connection.query(
+        `SELECT task.state, task.state_version, task.owner_user_id,
+                conversation.owner_user_id AS conversation_owner_user_id
+         FROM control_tasks AS task
+         JOIN conversations AS conversation ON conversation.id = task.conversation_id
+         WHERE task.id = $1
+         FOR UPDATE OF task`,
+        [input.taskId],
+      );
+      const task = taskResult.rows[0];
+      if (!task) throw new ControlPlaneConflictError(`task ${input.taskId} does not exist`);
+      if (
+        input.actorUserId
+        && (task.owner_user_id !== input.actorUserId
+          || task.conversation_owner_user_id !== input.actorUserId)
+      ) {
+        throw new ControlPlaneAuthorizationError(`actor cannot control task ${input.taskId}`);
+      }
+
+      const existingResult = await connection.query(
+        `SELECT request_hash, command_status, response_json, reservation_expires_at
+         FROM control_commands
+         WHERE task_id = $1 AND command_type = $2 AND idempotency_key = $3
+         FOR UPDATE`,
+        [input.taskId, input.commandType, input.idempotencyKey],
+      );
+      const existing = existingResult.rows[0];
+      if (existing) {
+        if (existing.request_hash !== input.requestHash) return { status: 'conflict' };
+        if (existing.command_status === 'completed') {
+          return { status: 'replay', response: existing.response_json };
+        }
+        const expiresAt = asDate(existing.reservation_expires_at, 'reservation_expires_at');
+        if (expiresAt.getTime() > Date.now()) return { status: 'pending' };
+      }
+
+      if (task.state !== 'awaiting_clarification') {
+        throw new ControlPlaneConflictError(`task ${input.taskId} is not awaiting_clarification`);
+      }
+      if (asNumber(task.state_version, 'state_version') !== input.expectedVersion) {
+        throw new ControlPlaneConflictError(`task ${input.taskId} is not at version ${input.expectedVersion}`);
+      }
+
+      const reservationToken = randomUUID();
+      const reservationExpiresAt = new Date(Date.now() + 5 * 60_000);
+      if (existing) {
+        await connection.query(
+          `UPDATE control_commands
+           SET expected_version = $4,
+               state_before = 'awaiting_clarification',
+               state_after = 'awaiting_clarification',
+               actor_user_id = $5,
+               reservation_token = $6,
+               reservation_expires_at = $7
+           WHERE task_id = $1 AND command_type = $2 AND idempotency_key = $3
+             AND command_status = 'pending'`,
+          [
+            input.taskId,
+            input.commandType,
+            input.idempotencyKey,
+            input.expectedVersion,
+            input.actorUserId ?? null,
+            reservationToken,
+            reservationExpiresAt,
+          ],
+        );
+      } else {
+        await connection.query(
+          `INSERT INTO control_commands
+             (task_id, command_type, idempotency_key, request_hash, expected_version,
+              state_before, state_after, response_json, actor_user_id, command_status,
+              reservation_token, reservation_expires_at)
+           VALUES ($1, $2, $3, $4, $5, 'awaiting_clarification',
+                   'awaiting_clarification', NULL, $6, 'pending', $7, $8)`,
+          [
+            input.taskId,
+            input.commandType,
+            input.idempotencyKey,
+            input.requestHash,
+            input.expectedVersion,
+            input.actorUserId ?? null,
+            reservationToken,
+            reservationExpiresAt,
+          ],
+        );
+      }
+      return { status: 'reserved', reservationToken };
+    });
+  }
+
+  async completeCommand(input: {
+    taskId: string;
+    commandType: string;
+    idempotencyKey: string;
+    requestHash: string;
+    expectedVersion: number;
+    reservationToken: string;
+    stateAfter: ControlTaskState;
+    response: unknown;
+  }): Promise<void> {
+    await this.transaction(async (connection) => {
+      const result = await connection.query(
+        `UPDATE control_commands
+         SET state_after = $7,
+             response_json = $8,
+             command_status = 'completed',
+             reservation_token = NULL,
+             reservation_expires_at = NULL
+         WHERE task_id = $1 AND command_type = $2 AND idempotency_key = $3
+           AND request_hash = $4 AND expected_version = $5
+           AND command_status = 'pending' AND reservation_token = $6
+         RETURNING id`,
+        [
+          input.taskId,
+          input.commandType,
+          input.idempotencyKey,
+          input.requestHash,
+          input.expectedVersion,
+          input.reservationToken,
+          input.stateAfter,
+          JSON.stringify(input.response),
+        ],
+      );
+      if (!result.rows[0]) {
+        throw new ControlPlaneConflictError('clarification command reservation fence was lost');
+      }
+    });
+  }
+
+  async releaseCommand(input: {
+    taskId: string;
+    commandType: string;
+    idempotencyKey: string;
+    requestHash: string;
+    expectedVersion: number;
+    reservationToken: string;
+  }): Promise<void> {
+    await this.transaction(async (connection) => {
+      await connection.query(
+        `DELETE FROM control_commands
+         WHERE task_id = $1 AND command_type = $2 AND idempotency_key = $3
+           AND request_hash = $4 AND expected_version = $5
+           AND command_status = 'pending' AND reservation_token = $6`,
+        [
+          input.taskId,
+          input.commandType,
+          input.idempotencyKey,
+          input.requestHash,
+          input.expectedVersion,
+          input.reservationToken,
+        ],
+      );
+    });
+  }
+
+  async waitForCommand(input: {
+    taskId: string;
+    commandType: string;
+    idempotencyKey: string;
+    requestHash: string;
+    timeoutMs?: number;
+    pollIntervalMs?: number;
+  }): Promise<ControlCommandWaitResult> {
+    const deadline = Date.now() + (input.timeoutMs ?? 1_000);
+    while (true) {
+      const connection = await this.database.connect();
+      try {
+        const result = await connection.query(
+          `SELECT request_hash, command_status, response_json
+           FROM control_commands
+           WHERE task_id = $1 AND command_type = $2 AND idempotency_key = $3`,
+          [input.taskId, input.commandType, input.idempotencyKey],
+        );
+        const command = result.rows[0];
+        if (!command) return { status: 'released' };
+        if (command.request_hash !== input.requestHash) return { status: 'conflict' };
+        if (command.command_status === 'completed') {
+          return { status: 'replay', response: command.response_json };
+        }
+      } finally {
+        connection.release();
+      }
+      if (Date.now() >= deadline) return { status: 'timeout' };
+      await delay(input.pollIntervalMs ?? 25);
     }
   }
 

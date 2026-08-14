@@ -57,21 +57,16 @@ export type RequirementRefinementResult =
   | { status: 'ready_to_plan'; taskId: string; requirement: ResearchTaskV2; planningResult?: ResearchPlanningResult };
 
 interface RequirementRepository {
-  createRequirementVersion(input: {
+  createAndActivateRequirementVersion(input: {
     taskId: string;
-    version: number;
+    ownerUserId: string;
+    expectedVersion: number;
     rawInputHash: string;
     clarification: unknown;
     structuredTask: ResearchTaskV2;
     modelCallId?: string | null;
-  }): Promise<ControlRequirementVersion>;
+  }): Promise<{ version: ControlRequirementVersion; task: ControlTaskDetail }>;
   getActiveRequirementVersion(taskId: string): Promise<ControlRequirementVersion | null>;
-  activateRequirementVersion(input: {
-    taskId: string;
-    requirementVersionId: string;
-    expectedVersion: number;
-    ownerUserId: string;
-  }): Promise<ControlTaskDetail>;
   getTaskDetail?(taskId: string): Promise<ControlTaskDetail | null>;
 }
 
@@ -126,11 +121,6 @@ export class RequirementRefinementService {
       conversationId: input.conversationId,
       ownerUserId: input.ownerUserId,
     });
-    await this.appendMessage({
-      conversationId: input.conversationId,
-      role: 'user',
-      content: input.originalInput,
-    });
     return this.refine({
       taskId: input.taskId,
       conversationId: input.conversationId,
@@ -147,19 +137,15 @@ export class RequirementRefinementService {
       conversationId: input.conversationId,
       ownerUserId: input.ownerUserId,
     });
-    const answerText = JSON.stringify(input.answers);
-    await this.appendMessage({
-      conversationId: input.conversationId,
-      role: 'user',
-      content: answerText,
-    });
+    const task = await this.dependencies.repository.getTaskDetail?.(input.taskId);
+    if (!task) throw new Error(`task ${input.taskId} does not exist`);
     const active = await this.dependencies.repository.getActiveRequirementVersion(input.taskId);
     if (!active) throw new Error(`task ${input.taskId} has no active requirement version to clarify`);
     return this.refine({
       taskId: input.taskId,
       conversationId: input.conversationId,
       ownerUserId: input.ownerUserId,
-      originalInput: JSON.stringify({ previous: active.structuredTask, answers: input.answers }),
+      originalInput: task.originalInput,
       clarification: input.answers,
       expectedVersion: input.expectedVersion,
       expectedStateVersion: input.expectedStateVersion,
@@ -198,28 +184,20 @@ export class RequirementRefinementService {
     });
     this.dependencies.validator.validateOrThrow('research-task-v2', generated.data);
     const requirement = generated.data;
-    const active = await this.dependencies.repository.getActiveRequirementVersion(input.taskId);
-    const version = (active?.version ?? 0) + 1;
-    const stored = await this.dependencies.repository.createRequirementVersion({
-      taskId: input.taskId,
-      version,
-      rawInputHash: hashPrompt(input.originalInput, context, 'research-task-v2'),
-      clarification: input.clarification,
-      structuredTask: requirement,
-      modelCallId: null,
-    });
     const task = await this.dependencies.repository.getTaskDetail?.(input.taskId);
     const expectedVersion = input.expectedVersion
       ?? input.expectedStateVersion
       ?? task?.stateVersion
       ?? 0;
-    await this.dependencies.repository.activateRequirementVersion({
+    const stored = await this.dependencies.repository.createAndActivateRequirementVersion({
       taskId: input.taskId,
-      requirementVersionId: stored.id,
-      expectedVersion,
       ownerUserId: input.ownerUserId,
+      expectedVersion,
+      rawInputHash: hashPrompt(input.originalInput, context, 'research-task-v2'),
+      clarification: input.clarification,
+      structuredTask: requirement,
+      modelCallId: null,
     });
-
     const status = needsClarification(requirement)
       ? 'clarification_required'
       : 'ready_to_plan';

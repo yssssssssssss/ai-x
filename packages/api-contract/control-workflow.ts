@@ -81,7 +81,7 @@ export interface ControlPlanCandidatesResponse {
   kind: 'current';
   conversationId: string;
   task: ControlTaskResponse;
-  structuredTask: ResearchTaskData;
+  structuredTask: ResearchTaskData | ResearchTaskV2;
   activatedNodes: string[];
   candidates: CurrentPlanCandidate[];
 }

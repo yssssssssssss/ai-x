@@ -16,6 +16,7 @@ import type {
   PlanCandidate,
   PlanProgress,
   ResearchTaskData,
+  ResearchTaskV2,
 } from '../packages/api-contract/plan.ts';
 import type {
   DecisionStateRec,
@@ -24,6 +25,7 @@ import type {
 
 interface ResearchPlanningResult {
   task: ResearchTaskData;
+  structuredTask?: ResearchTaskV2;
   activatedNodes: string[];
   decisionStates: DecisionStateRec[];
   candidates: PlanCandidate[];
@@ -151,6 +153,23 @@ function researchPlanningResult(originalInput: string): ResearchPlanningResult {
       research_goal: '形成可信的宠物辅食市场研究计划',
       assumptions: [],
       confirmations: [],
+      blocking_issues: [],
+      sensitivity: 'public',
+      pii_detected: false,
+    },
+    structuredTask: {
+      version: 'research-task-v2',
+      task_type: 'competitive_research',
+      business_domain: '宠物辅食',
+      research_goal: '形成可信的宠物辅食市场研究计划',
+      target_audience: ['宠物食品产品与市场团队'],
+      scope: ['公开可访问资料'],
+      constraints: [{ id: 'c1', statement: '仅用公开来源', source: 'user' }],
+      success_criteria: [{ id: 's1', statement: '所有结论可追溯' }],
+      expected_deliverables: ['研究计划'],
+      assumptions: [],
+      ambiguities: [],
+      clarification_questions: [],
       blocking_issues: [],
       sensitivity: 'public',
       pii_detected: false,
@@ -326,7 +345,7 @@ test('creates a conversation and persists ResearchPlanningResult candidates as C
   assert.equal(persisted.ownerUserId, ownerUserId);
   assert.equal(persisted.originalInput, originalInput);
   assert.equal(persisted.taskType, planningResult.task.task_type);
-  assert.deepEqual(persisted.structuredTask, planningResult.task);
+  assert.deepEqual(persisted.structuredTask, planningResult.structuredTask);
   assert.deepEqual(persisted.candidates.map((candidate) => candidate.candidateId), ['depth', 'speed']);
   assert.ok(persisted.candidates.every(
     (candidate) => candidate.plan.task_id === undefined || candidate.plan.task_id === '',
@@ -349,7 +368,7 @@ test('creates a conversation and persists ResearchPlanningResult candidates as C
     activePlanVersionId: null,
     currentAttemptId: null,
   });
-  assert.deepEqual(response.structuredTask, planningResult.task);
+  assert.deepEqual(response.structuredTask, planningResult.structuredTask);
   assert.deepEqual(response.activatedNodes, planningResult.activatedNodes);
   assert.deepEqual(
     response.candidates.map((candidate) => ({
@@ -627,10 +646,12 @@ test('planExistingTask persists finalized candidates on the original task withou
   assert.equal(calls[0]?.ownerUserId, ownerUserId);
   assert.equal(calls[0]?.expectedStateVersion, 1);
   assert.deepEqual((calls[0]?.candidates as Array<{ candidateId: string }>).map((candidate) => candidate.candidateId), ['depth', 'speed']);
+  assert.deepEqual(calls[0]?.structuredTask, planningResult.structuredTask);
   assert.equal(response.task.id, taskId);
   assert.equal(response.task.state, 'awaiting_selection');
   assert.deepEqual(response.candidates.map((candidate) => candidate.candidateId), ['depth', 'speed']);
   assert.ok(response.candidates.every((candidate) => candidate.plan.task_id === taskId));
+  assert.deepEqual(response.structuredTask, planningResult.structuredTask);
 });
 
 test('binds existing-task persistence to a class-backed repository', async () => {

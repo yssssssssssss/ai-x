@@ -10,9 +10,13 @@
 - Modify: `apps/orchestrator-runtime/src/control/control-planning-service.ts`
 - Modify: `apps/orchestrator-runtime/src/control/requirement-refinement-service.ts`
 - Modify: `database/control-plane.ts`
+- Create: `database/migrations/005_clarification_command_reservation.sql`
 - Modify: `apps/web/src/api/client.ts`
+- Modify: `packages/api-contract/control-workflow.ts`
+- Modify: `packages/api-contract/http.ts`
 - Create: `apps/web/src/components/stages/CurrentStage1Clarify.tsx`
 - Modify: `apps/web/src/hooks/useTaskFlow.ts`
+- Modify: `apps/web/src/current-flow-state.ts`
 - Modify: `apps/web/src/pages/Workbench.tsx`
 - Test: `tests/control-clarification.test.ts`
 - Test: `tests/control-planning-service.test.ts`
@@ -24,6 +28,9 @@
 - Produces: `ControlPlaneRepository.persistExistingTaskWithCandidates()`，在单事务中锁定并 CAS 更新原 `awaiting_clarification` task，写入 depth/speed plan versions。
 - Produces: `ControlPlanningService.planExistingTask()`，消费 finalized `ResearchPlanningResult`，复用 candidate sanitization/evidence policy，返回原 conversation/task response。
 - Consumes: `RequirementRefinementService` ready result 的 finalized planning result；ControlRuntime 通过 `controlPlanning` 暴露该 seam。
+- Produces: `ControlPlaneRepository.createAndActivateRequirementVersion()`，在 task lock 与同一事务中校验双 owner、`awaiting_clarification`、state version，创建并激活完整 `ResearchTaskV2`。
+- Produces: clarification command 的 durable `reserve/complete/release/wait` 协议；pending reservation 有 token fence 与 expiry/reclaim，LLM 调用不持有数据库事务。
+- Produces: Current GET 返回 `originalInput` 与 active `structuredTask`，Web 刷新恢复 `clarifying` 阶段。
 - [ ] **Step 1: 写 HTTP 测试**
 
 覆盖：
@@ -34,6 +41,10 @@
 - 缺答案保持 awaiting_clarification。
 - clarify 成功返回 candidates。
 - 重放同一 idempotency key 返回相同结果。
+- 同 key/同 hash 跨并发 router 等待并重放；新 router/进程重启后从数据库重放。
+- 同 key/不同 hash 冲突；失败 mutation 释放 pending；过期 reservation 可 reclaim 且旧 token 不得完成。
+- 非 `awaiting_clarification` 在 route 与 repository locked update 双层拒绝。
+- clarification planner 保留原始 task input/direct invoke；完整 `ResearchTaskV2` 持久化并返回。
 
 - [ ] **Step 2: 运行并确认失败**
 

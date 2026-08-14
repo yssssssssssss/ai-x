@@ -1,5 +1,6 @@
+import { createHash } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
-import { ControlPlaneConflictError, type ControlPlaneRepository, type ControlTaskDetail } from '../../../../database/control-plane.ts';
+import { ControlPlaneConflictError, type ControlPlaneRepository } from '../../../../database/control-plane.ts';
 import { getUserById } from '../../../../database/repository.ts';
 import {
   TaskWorkflowAuthorizationError,
@@ -59,6 +60,21 @@ function idempotencyKey(req: Request): string | null {
   return string(header) ?? string(record(req.body)?.idempotencyKey);
 }
 
+function stableValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableValue);
+  const object = record(value);
+  if (!object) return value;
+  return Object.fromEntries(
+    Object.entries(object)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => [key, stableValue(child)]),
+  );
+}
+
+function clarificationRequestHash(value: unknown): string {
+  return `sha256:${createHash('sha256').update(JSON.stringify(stableValue(value))).digest('hex')}`;
+}
+
 function responseError(res: Response, error: unknown): void {
   if (error instanceof TaskWorkflowGateError) {
     res.status(422).json({ error: error.message, unresolved: error.unresolved });
@@ -80,6 +96,7 @@ async function authenticatedActor(req: Request, res: Response): Promise<Workflow
   if (!actor) res.status(401).json({ error: '用户不存在或已停用' });
   return actor;
 }
+
 async function ensureOwnedTask(
   runtime: ControlTasksRuntime,
   req: Request,
@@ -87,7 +104,6 @@ async function ensureOwnedTask(
   actor: WorkflowActor,
 ): Promise<boolean> {
   const taskId = typeof req.params.id === 'string' ? req.params.id : req.params.id[0] ?? '';
-
   const task = await runtime.repository.getTaskDetail(taskId);
   if (!task || task.ownerUserId !== actor.userId || task.conversationOwnerUserId !== actor.userId) {
     res.status(404).json({ error: '任务不存在' });
@@ -100,18 +116,16 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
   const router = Router();
   router.use(requireAuth);
   const { repository, workflow } = runtime;
-  const clarificationReplays = new Map<string, { fingerprint: string; response: CurrentPlanningResponse }>();
   router.post('/:id/clarify', async (req, res) => {
     const body = record(req.body);
     const actor = await authenticatedActor(req, res);
     if (!actor) return;
-    if (!await ensureOwnedTask(runtime, req, res, actor)) return;
     if (!runtime.clarification) {
       res.status(501).json({ error: '澄清服务不可用' });
       return;
     }
     const forbidden = ['plan', 'planHash', 'structuredTask'];
-    if (body && forbidden.some((key) => key in body)) {
+    if (body && forbidden.some((field) => field in body)) {
       res.status(400).json({ error: 'plan、planHash、structuredTask 由服务端生成，不接受客户端提交' });
       return;
     }
@@ -129,35 +143,86 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
       res.status(400).json({ error: 'expectedVersion、clarificationAnswers、assumptionEdits、Idempotency-Key 必填' });
       return;
     }
-    const fingerprint = JSON.stringify({ expectedVersion, clarificationAnswers, assumptionEdits });
-    const replayKey = `${req.params.id}:${key}`;
-    const replay = clarificationReplays.get(replayKey);
-    if (replay) {
-      if (replay.fingerprint !== fingerprint) {
-        res.status(409).json({ error: `idempotency key ${key} was reused with a different request` });
-        return;
-      }
-      res.json(replay.response);
+
+    const task = await repository.getTaskDetail(req.params.id);
+    if (!task || task.ownerUserId !== actor.userId || task.conversationOwnerUserId !== actor.userId) {
+      res.status(404).json({ error: '任务不存在' });
       return;
     }
-    try {
-      const task = await runtime.repository.getTaskDetail(req.params.id);
-      if (!task || task.ownerUserId !== actor.userId || task.conversationOwnerUserId !== actor.userId) {
-        res.status(404).json({ error: '任务不存在' });
+    const requestHash = clarificationRequestHash({
+      expectedVersion,
+      clarificationAnswers,
+      assumptionEdits,
+    });
+    if (task.state !== 'awaiting_clarification') {
+      const existing = await repository.getCommand(task.id, 'clarification', key);
+      if (!existing || existing.requestHash !== requestHash) {
+        res.status(409).json({ error: `task ${task.id} is not awaiting_clarification` });
         return;
       }
-      const response = await runtime.clarification.clarify({
-        taskId: task.id,
-        conversationId: task.conversationId,
-        ownerUserId: actor.userId,
-        answers: clarificationAnswers,
-        assumptionEdits: Object.fromEntries(
-          Object.entries(assumptionEdits).map(([field, value]) => [field, value as string]),
-        ),
-        expectedVersion,
-      });
-      clarificationReplays.set(replayKey, { fingerprint, response });
-      res.json(response);
+    }
+
+    const command = {
+      taskId: task.id,
+      commandType: 'clarification',
+      idempotencyKey: key,
+      requestHash,
+      expectedVersion,
+    };
+    try {
+      let reservationToken: string | null = null;
+      while (!reservationToken) {
+        const reservation = await repository.reserveCommand({
+          ...command,
+          actorUserId: actor.userId,
+        });
+        if (reservation.status === 'conflict') {
+          throw new ControlPlaneConflictError(
+            `idempotency key ${key} was reused with a different request`,
+          );
+        }
+        if (reservation.status === 'replay') {
+          res.json(reservation.response);
+          return;
+        }
+        if (reservation.status === 'pending') {
+          const waited = await repository.waitForCommand(command);
+          if (waited.status === 'conflict') {
+            throw new ControlPlaneConflictError(
+              `idempotency key ${key} was reused with a different request`,
+            );
+          }
+          if (waited.status === 'replay') {
+            res.json(waited.response);
+            return;
+          }
+          continue;
+        }
+        reservationToken = reservation.reservationToken;
+      }
+
+      try {
+        const response = await runtime.clarification.clarify({
+          taskId: task.id,
+          conversationId: task.conversationId,
+          ownerUserId: actor.userId,
+          answers: clarificationAnswers,
+          assumptionEdits: Object.fromEntries(
+            Object.entries(assumptionEdits).map(([field, value]) => [field, value as string]),
+          ),
+          expectedVersion,
+        });
+        await repository.completeCommand({
+          ...command,
+          reservationToken,
+          stateAfter: response.task.state,
+          response,
+        });
+        res.json(response);
+      } catch (error) {
+        await repository.releaseCommand({ ...command, reservationToken });
+        throw error;
+      }
     } catch (error) {
       responseError(res, error);
     }
