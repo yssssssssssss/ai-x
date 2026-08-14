@@ -19,13 +19,14 @@ import {
 class MemoryModelRecorder {
   readonly calls: ModelCallRecordInput[] = [];
 
-  async recordModelCall(input: ModelCallRecordInput): Promise<void> {
+  async recordModelCall(input: ModelCallRecordInput): Promise<string> {
     this.calls.push(input);
+    return '11111111-1111-4111-8111-111111111119';
   }
 }
 
 class FailingModelRecorder {
-  async recordModelCall(_input: ModelCallRecordInput): Promise<void> {
+  async recordModelCall(_input: ModelCallRecordInput): Promise<string> {
     throw new Error('database unavailable');
   }
 }
@@ -68,6 +69,7 @@ test('records successful structured call receipt with identity, timestamps, and 
 
   assert.deepEqual(result.data, { ok: true });
   assert.equal(result.modelName, 'mock-model');
+  assert.equal(result.receiptId, '11111111-1111-4111-8111-111111111119');
   assert.equal(recorder.calls.length, 1);
   assert.equal(recorder.calls[0].attemptId, '11111111-1111-4111-8111-111111111111');
   assert.equal(recorder.calls[0].stage, 'plan');

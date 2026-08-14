@@ -836,51 +836,64 @@ git commit -m "feat: compile current execution plans"
 
 **Files:**
 - Create: `apps/orchestrator-runtime/src/control/step-input-resolver.ts`
+- Create: `database/migrations/007_skill_provenance.sql`
+- Create: `.superpowers/sdd/task-11-report.md`
 - Modify: `apps/orchestrator-runtime/src/control/lease-execution-engine.ts`
+- Modify: `apps/orchestrator-runtime/src/runtime/llm-client.ts`
+- Modify: `apps/orchestrator-runtime/src/runtime/receipt-llm-client.ts`
 - Modify: `database/control-plane.ts`
-- Test: `tests/current-step-bindings.test.ts`
-- Test: `tests/lease-execution-engine.test.ts`
+- Modify: `.superpowers/sdd/progress.md`
+- Test: `tests/current-step-bindings.test.ts`, `tests/lease-execution-engine.test.ts`, `tests/execution-control.test.ts`, `tests/model-receipt.test.ts`
+- Receipt fixture migration: `tests/gateway-llm-receipt.test.ts`, `tests/problem-graph.test.ts`, `tests/requirement-refinement-service.test.ts`
+
+**Scope correction:** Input Binding is execution-integrity state, so Task 11 also owns additive Migration 007 and the independent `skill_provenance` repository read/write path. Complete Skill provenance requires the database-generated model-call ID; `ModelCallRecorder` therefore returns the inserted ID and `ReceiptLLMClient` propagates it on successful results. All affected recorder fixtures migrate directly with no compatibility alias. Report/progress files record the expanded approved scope.
 
 **Interfaces:**
-- Produces: `resolveStepInput(step, sealedOutputs)`。
+- Produces: `resolveStepInput(step, sealedOutputs, artifactReader)`、`LLMResult.receiptId`、`TextLLMResult.receiptId`。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 覆盖 JSON Pointer 解析、未知 source step、dangling pointer、Tool/Skill input schema、Skill body/schema hash provenance、后续步骤消费前序值。
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `pnpm exec tsx --test tests/current-step-bindings.test.ts`
 
 Expected: FAIL。
 
-- [ ] **Step 3: 实现 Resolver**
+- [x] **Step 3: 实现 Resolver**
 
 Resolver 只读取已 SEALED 的前序 Step Artifact，复制绑定值到 target pointer；不得读取内存中未 seal 输出。
 
-- [ ] **Step 4: 修改 runSkill**
+- [x] **Step 4: 修改 runSkill**
 
 Skill context 包含 resolved input、research goal 和允许的 prior outputs；验证 input/output schema；execution step provenance 写入：skill body hash、input/output schema hash、input/output hash、model receipt ID。
 
-- [ ] **Step 5: 运行测试和阶段门禁**
+- [x] **Step 5: 运行测试和阶段门禁**
 
 Run:
 
 ```bash
-pnpm exec tsx --test tests/current-step-bindings.test.ts tests/lease-execution-engine.test.ts
-pnpm quality
+pnpm exec tsx --test --test-concurrency=1 tests/current-step-bindings.test.ts tests/lease-execution-engine.test.ts tests/execution-control.test.ts tests/model-receipt.test.ts tests/control-plane.test.ts tests/migration-runner.test.ts
+pnpm typecheck
 ```
 
 Expected: PASS。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
-git add apps/orchestrator-runtime/src/control/step-input-resolver.ts \
+git add .superpowers/sdd/task-11-report.md .superpowers/sdd/progress.md \
+  docs/superpowers/plans/2026-08-14-trusted-multimodal-research-system.md \
+  apps/orchestrator-runtime/src/control/step-input-resolver.ts \
   apps/orchestrator-runtime/src/control/lease-execution-engine.ts \
-  database/control-plane.ts \
-  tests/current-step-bindings.test.ts \
-  tests/lease-execution-engine.test.ts
+  apps/orchestrator-runtime/src/runtime/llm-client.ts \
+  apps/orchestrator-runtime/src/runtime/receipt-llm-client.ts \
+  database/migrations/007_skill_provenance.sql database/control-plane.ts \
+  tests/current-step-bindings.test.ts tests/lease-execution-engine.test.ts \
+  tests/execution-control.test.ts tests/model-receipt.test.ts \
+  tests/gateway-llm-receipt.test.ts tests/problem-graph.test.ts \
+  tests/requirement-refinement-service.test.ts
 git commit -m "feat: bind sealed outputs into current steps"
 ```
 

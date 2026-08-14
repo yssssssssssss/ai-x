@@ -16,6 +16,7 @@ export interface LLMResult<T> {
   modelName: string;
   modelVersion: string;
   traceId: string;
+  receiptId?: string;
   tokens?: TokenUsage;
 }
 
@@ -92,7 +93,7 @@ export interface ModelCallRecordInput {
 }
 
 export interface ModelCallRecorder {
-  recordModelCall(input: ModelCallRecordInput): Promise<void>;
+  recordModelCall(input: ModelCallRecordInput): Promise<string>;
 }
 
 export type LegacyStructuredLLMCallOptions = Omit<StructuredLLMCallOptions, 'receipt'> & { receipt?: LLMReceiptContext };

@@ -12,6 +12,7 @@ import {
   type LeaseExecutionResult,
 } from '../apps/orchestrator-runtime/src/control/lease-execution-engine.ts';
 import type {
+  CurrentPlanStep,
   ResearchDeliverableEnvelope,
   ResearchPlanPayload,
 } from '../packages/api-contract/research-deliverable.ts';
@@ -20,13 +21,14 @@ import type {
   CurrentDeliverableGenerateResult,
 } from '../apps/orchestrator-runtime/src/report/current-deliverable-service.ts';
 import { CurrentReportValidationError } from '../apps/orchestrator-runtime/src/evidence/report-evidence-validator.ts';
-import type {
-  LLMClient,
-  LLMProviderIdentity,
-  LLMResult,
-  StructuredLLMCallOptions,
-  TextLLMCallOptions,
-  TextLLMResult,
+import {
+  LLMInvocationError,
+  type LLMClient,
+  type LLMProviderIdentity,
+  type LLMResult,
+  type StructuredLLMCallOptions,
+  type TextLLMCallOptions,
+  type TextLLMResult,
 } from '../apps/orchestrator-runtime/src/runtime/llm-client.ts';
 import {
   FakeO2Adapter,
@@ -56,6 +58,19 @@ const skipRealTavily = !process.env.TAVILY_TEST;
 
 function assertUnknownRecord(value: unknown): asserts value is Record<string, unknown> {
   assert.ok(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function canonicalJsonHash(value: unknown): string {
+  const canonicalize = (child: unknown): unknown => {
+    if (Array.isArray(child)) return child.map(canonicalize);
+    if (child === null || typeof child !== 'object') return child;
+    return Object.fromEntries(
+      Object.entries(child)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, canonicalize(nested)]),
+    );
+  };
+  return `sha256:${createHash('sha256').update(JSON.stringify(canonicalize(value))).digest('hex')}`;
 }
 type DeliverableAwareExecutionResult = LeaseExecutionResult & {
   deliverableArtifactId?: string;
@@ -183,6 +198,7 @@ class CountingRealTavilyAdapter implements ToolAdapter {
   readonly implementationId = 'test-tavily-real-v1';
   readonly executionMode = 'real' as const;
   calls = 0;
+  readonly inputs: object[] = [];
 
   endpointHost(): string {
     return 'api.tavily.test';
@@ -190,6 +206,7 @@ class CountingRealTavilyAdapter implements ToolAdapter {
 
   async invoke(options: { toolId: string; input: object; manifest: ToolManifest }): Promise<ToolInvokeResult> {
     this.calls += 1;
+    this.inputs.push(structuredClone(options.input));
     return {
       output: {
         answer: null,
@@ -443,6 +460,24 @@ class BlockedSensitiveStageLLM extends CountingRealLLM {
   }
 }
 
+class InvalidSkillOutputLLM extends CountingRealLLM {
+  override async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
+    const result = await super.generateStructured<T>(options);
+    return { ...result, data: { comparison_matrix: [] } as T };
+  }
+}
+
+class ConfigBreakingSkillLLM extends CountingRealLLM {
+  constructor(private readonly breakConfig: () => void) {
+    super();
+  }
+
+  override async generateStructured<T>(_options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
+    this.breakConfig();
+    throw new LLMInvocationError('server', true, 503, 'skill provider unavailable');
+  }
+}
+
 
 class CountingMockLLM extends CountingRealLLM {
   override readonly identity: LLMProviderIdentity = {
@@ -499,35 +534,66 @@ before(async () => {
   }
 });
 
-const planSteps = [
+const planSteps: CurrentPlanStep[] = [
   {
     step_no: 1,
     step_name: '公开资料检索',
     actor_type: 'tool' as const,
     actor_id: 'tavily-web-search',
+    question_ids: ['question-1'],
+    depends_on: [],
     input: { query: 'digital human competitors' },
+    input_bindings: [],
+    expected_outputs: [{ pointer: '/results', description: 'public results' }],
+    acceptance_criteria: ['returns public evidence'],
     requires_approval: false,
+    fallback_actor_ids: [],
   },
   {
     step_no: 2,
     step_name: '竞品分析',
     actor_type: 'skill' as const,
     actor_id: 'digital-human-competitive-analysis',
+    question_ids: ['question-1'],
+    depends_on: [1],
+    input: { business_domain: '' },
+    input_bindings: [{
+      target_pointer: '/business_domain',
+      source_step_no: 1,
+      source_pointer: '/results/0/title',
+    }],
+    expected_outputs: [{ pointer: '/comparison_matrix', description: 'comparison' }],
+    acceptance_criteria: ['uses public evidence'],
     requires_approval: false,
+    fallback_actor_ids: [],
   },
   {
     step_no: 3,
     step_name: '摘要',
     actor_type: 'llm' as const,
     actor_id: 'summary',
+    question_ids: ['question-1'],
+    depends_on: [2],
+    input: {},
+    input_bindings: [],
+    expected_outputs: [{ pointer: '/text', description: 'summary' }],
+    acceptance_criteria: ['summarizes analysis'],
     requires_approval: false,
+    fallback_actor_ids: [],
   },
   {
     step_no: 4,
     step_name: '复核',
     actor_type: 'reviewer' as const,
     actor_id: 'review',
+    question_ids: ['question-1'],
+    depends_on: [3],
+    input: {},
+    input_bindings: [],
+    expected_outputs: [{ pointer: '/review', description: 'review' }],
+    acceptance_criteria: ['reviews evidence'],
     requires_approval: false,
+    fallback_actor_ids: [],
   },
 ];
 
@@ -738,6 +804,91 @@ test('rejects evidence requirements with no required source before execution sid
   assert.equal((await repository.listAttempts(lease.taskId))[0]?.state, 'paused');
 });
 
+test('resolves a sealed Tool output before validating and invoking the next Tool', async () => {
+  const boundToolSteps = [
+    planSteps[0],
+    {
+      ...planSteps[0],
+      step_no: 2,
+      step_name: '使用已封存标题继续检索',
+      depends_on: [1],
+      input: { query: '' },
+      input_bindings: [{
+        target_pointer: '/query',
+        source_step_no: 1,
+        source_pointer: '/results/0/title',
+      }],
+    },
+  ];
+  const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), boundToolSteps);
+  const adapter = new CountingRealTavilyAdapter();
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(adapter),
+    new CountingRealLLM(),
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed');
+  assert.equal(adapter.calls, 2);
+  assert.deepEqual(adapter.inputs, [
+    { query: 'digital human competitors' },
+    { query: 'Source' },
+  ]);
+});
+
+test('rejects a future binding before any actor side effect', async () => {
+  const invalidSteps = [
+    planSteps[0],
+    {
+      ...planSteps[1],
+      input_bindings: [{
+        target_pointer: '/business_domain',
+        source_step_no: 2,
+        source_pointer: '/comparison_matrix',
+      }],
+    },
+  ];
+  const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), invalidSteps);
+  const adapter = new CountingRealTavilyAdapter();
+  const llm = new CountingRealLLM();
+
+  await assert.rejects(
+    () => buildEngine(repository, new ToolRouter().register(adapter), llm)
+      .execute({ lease, expectedModel: 'pinned-model' }),
+    ExecutionAuthenticityError,
+  );
+  assert.equal(adapter.calls, 0);
+  assert.equal(llm.calls, 0);
+  assert.equal((await repository.listAttempts(lease.taskId))[0]?.state, 'paused');
+});
+
+test('rejects a dangling sealed source pointer before the target Skill side effect', async () => {
+  const invalidSteps = [
+    planSteps[0],
+    {
+      ...planSteps[1],
+      input_bindings: [{
+        target_pointer: '/business_domain',
+        source_step_no: 1,
+        source_pointer: '/missing',
+      }],
+    },
+  ];
+  const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), invalidSteps);
+  const adapter = new CountingRealTavilyAdapter();
+  const llm = new CountingRealLLM();
+
+  await assert.rejects(
+    () => buildEngine(repository, new ToolRouter().register(adapter), llm)
+      .execute({ lease, expectedModel: 'pinned-model' }),
+    ExecutionAuthenticityError,
+  );
+  assert.equal(adapter.calls, 1);
+  assert.equal(llm.calls, 0);
+  assert.equal((await repository.listAttempts(lease.taskId))[0]?.state, 'paused');
+});
+
 test('executes the current plan with real Tool provenance and complete model receipts', async () => {
   const { repository, lease } = await claimedExecution(
     new Date(Date.now() + 60_000),
@@ -879,6 +1030,9 @@ test('executes the current plan with real Tool provenance and complete model rec
 
   const serializedContext = JSON.stringify(llm.contexts);
   assert.match(serializedContext, /verified public source/);
+  const skillContext = llm.contexts[0];
+  assertUnknownRecord(skillContext);
+  assert.deepEqual(skillContext.input, { business_domain: 'Source' });
   assert.match(serializedContext, /\[REDACTED\]/);
   assert.doesNotMatch(serializedContext, /secret-token/);
   assert.doesNotMatch(serializedContext, /\bBearer\b/i);
@@ -891,8 +1045,106 @@ test('executes the current plan with real Tool provenance and complete model rec
   assert.equal(steps[0].toolProvenance?.implementationId, 'test-tavily-real-v1');
   const calls = await repository.listModelCalls(lease.attemptId);
   assert.deepEqual(calls.map((call) => call.stage), ['skill', 'llm', 'reviewer']);
+  const skillProvenance = steps[1]?.skillProvenance;
+  assert.ok(skillProvenance);
+  assert.match(String(skillProvenance.skillBodyHash), /^sha256:/u);
+  assert.match(String(skillProvenance.inputSchemaHash), /^sha256:/u);
+  assert.match(String(skillProvenance.outputSchemaHash), /^sha256:/u);
+  assert.match(String(skillProvenance.inputHash), /^sha256:/u);
+  assert.match(String(skillProvenance.outputHash), /^sha256:/u);
+  assert.match(String(skillProvenance.promptHash), /^sha256:/u);
+  assert.equal(skillProvenance.traceId, 'trace-1');
+  assert.equal(skillProvenance.modelReceiptId, calls[0]?.id);
+  assert.equal(typeof skillProvenance.outputArtifactId, 'string');
+  assert.equal(skillProvenance.status, 'succeeded');
   const attempts = await repository.listAttempts(lease.taskId);
   assert.equal(attempts[0]?.state, 'completed');
+});
+
+test('validates resolved Skill input before the Skill LLM side effect', async () => {
+  const invalidSteps: CurrentPlanStep[] = [
+    planSteps[0]!,
+    {
+      ...planSteps[1]!,
+      input_bindings: [{
+        target_pointer: '/business_domain',
+        source_step_no: 1,
+        source_pointer: '/results',
+      }],
+    },
+  ];
+  const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), invalidSteps);
+  const adapter = new CountingRealTavilyAdapter();
+  const llm = new CountingRealLLM();
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(adapter),
+    llm,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'paused');
+  assert.equal(result.failedStepNo, 2);
+  assert.equal(result.failure?.kind, 'schema');
+  assert.equal(adapter.calls, 1);
+  assert.equal(llm.calls, 0);
+  const skillStep = (await repository.listExecutionSteps(lease.attemptId))[1];
+  assert.equal(skillStep?.skillProvenance?.status, 'failed');
+  assert.match(String(skillStep?.skillProvenance?.inputSchemaHash), /^sha256:/u);
+  assert.equal(skillStep?.skillProvenance?.modelReceiptId, null);
+});
+
+test('persists failed Skill provenance and receipt when output schema validation fails', async () => {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    planSteps.slice(0, 2),
+  );
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new InvalidSkillOutputLLM(),
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'paused');
+  assert.equal(result.failure?.kind, 'schema');
+  const calls = await repository.listModelCalls(lease.attemptId);
+  assert.equal(calls.length, 1);
+  const skillStep = (await repository.listExecutionSteps(lease.attemptId))[1];
+  assert.equal(skillStep?.skillProvenance?.status, 'failed');
+  assert.equal(skillStep?.skillProvenance?.modelReceiptId, calls[0]?.id);
+  assert.match(String(skillStep?.skillProvenance?.skillBodyHash), /^sha256:/u);
+  assert.match(String(skillStep?.skillProvenance?.outputSchemaHash), /^sha256:/u);
+  assert.equal(
+    skillStep?.skillProvenance?.outputHash,
+    canonicalJsonHash({ comparison_matrix: [] }),
+  );
+});
+
+test('Skill provenance capture failure preserves the actor failure and pauses the attempt', async () => {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    planSteps.slice(0, 2),
+  );
+  const originalRoot = getConfigRoot();
+  const missingRoot = mkdtempSync(join(tmpdir(), 'missing-skill-config-root-'));
+  try {
+    const result = await buildEngine(
+      repository,
+      new ToolRouter().register(new CountingRealTavilyAdapter()),
+      new ConfigBreakingSkillLLM(() => setConfigRoot(missingRoot)),
+    ).execute({ lease, expectedModel: 'pinned-model' });
+
+    assert.equal(result.status, 'paused');
+    assert.equal(result.failure?.kind, 'server');
+    assert.equal(result.failure?.message, 'skill provider unavailable');
+    assert.equal((await repository.listAttempts(lease.taskId))[0]?.state, 'paused');
+    const skillStep = (await repository.listExecutionSteps(lease.attemptId))[1];
+    assert.equal(skillStep?.skillProvenance?.status, 'failed');
+    assert.match(String(skillStep?.skillProvenance?.captureFailure), /ENOENT|no such file/iu);
+  } finally {
+    setConfigRoot(originalRoot);
+    rmSync(missingRoot, { recursive: true, force: true });
+  }
 });
 
 test('pauses execution when current deliverable validation fails', async () => {
@@ -1271,6 +1523,7 @@ test('redacts Skill, LLM, and Reviewer echoes before sealing or passing later st
   assert.equal(deliverables.calls.length, 1);
   const connection = await scopedDatabase.connect();
   let serializedArtifacts = '';
+  let sealedSkillOutput: unknown;
   try {
     const artifacts = await connection.query(
       `SELECT kind, storage_uri FROM control_artifacts
@@ -1285,9 +1538,14 @@ test('redacts Skill, LLM, and Reviewer echoes before sealing or passing later st
     serializedArtifacts = artifacts.rows
       .map((row) => readFileSync(String(row.storage_uri), 'utf8'))
       .join('\n');
+    const skillArtifact = artifacts.rows.find((row) => row.kind === 'skill_output');
+    if (!skillArtifact) assert.fail('sealed Skill output must exist');
+    sealedSkillOutput = JSON.parse(readFileSync(String(skillArtifact.storage_uri), 'utf8')) as unknown;
   } finally {
     connection.release();
   }
+  const skillStep = (await repository.listExecutionSteps(lease.attemptId))[1];
+  assert.equal(skillStep?.skillProvenance?.outputHash, canonicalJsonHash(sealedSkillOutput));
 
   const serializedLaterContext = JSON.stringify(llm.contexts);
   const serializedDeliverableInput = JSON.stringify(deliverables.calls[0]);

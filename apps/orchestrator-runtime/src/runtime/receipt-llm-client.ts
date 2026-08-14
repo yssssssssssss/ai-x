@@ -41,8 +41,8 @@ export class ReceiptLLMClient implements LLMClient {
     const startedAt = new Date();
     try {
       const result = await this.inner.generateStructured<T>(opts);
-      await this.recordOrThrow(opts.receipt, result, startedAt);
-      return result;
+      const receiptId = await this.recordOrThrow(opts.receipt, result, startedAt);
+      return { ...result, receiptId };
     } catch (error) {
       if (error instanceof ModelDriftError || error instanceof MissingModelReceiptError) throw error;
       await this.recordFailureOrThrow(
@@ -59,8 +59,8 @@ export class ReceiptLLMClient implements LLMClient {
     const startedAt = new Date();
     try {
       const result = await this.inner.generateText(opts);
-      await this.recordOrThrow(opts.receipt, result, startedAt);
-      return result;
+      const receiptId = await this.recordOrThrow(opts.receipt, result, startedAt);
+      return { ...result, receiptId };
     } catch (error) {
       if (error instanceof ModelDriftError || error instanceof MissingModelReceiptError) throw error;
       await this.recordFailureOrThrow(opts.receipt, error, startedAt, hashPrompt(opts.prompt, opts.context));
@@ -108,15 +108,16 @@ export class ReceiptLLMClient implements LLMClient {
     receipt: LLMReceiptContext | undefined,
     result: T,
     startedAt: Date,
-  ): Promise<void> {
+  ): Promise<string> {
     if (!receipt) {
       throw new MissingModelReceiptError(new Error('missing receipt context'));
     }
     const finishedAt = new Date();
     const expectedModel = receipt.expectedModel;
     const drift = expectedModel !== undefined && expectedModel !== result.modelName;
+    let receiptId: string;
     try {
-      await this.recorder.recordModelCall({
+      receiptId = await this.recorder.recordModelCall({
         attemptId: receipt.attemptId,
         stage: receipt.stage,
         stepNo: receipt.stepNo,
@@ -141,5 +142,6 @@ export class ReceiptLLMClient implements LLMClient {
     if (drift && expectedModel !== undefined) {
       throw new ModelDriftError(expectedModel, result.modelName);
     }
+    return receiptId;
   }
 }

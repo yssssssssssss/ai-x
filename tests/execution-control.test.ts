@@ -248,9 +248,40 @@ test('persists structured tool provenance and failure on execution steps', async
   assert.equal(steps[1].failure?.kind, 'network');
 });
 
+test('persists Skill provenance independently from Tool provenance', async () => {
+  const { repository, lease } = await claimedLease();
+  await repository.recordExecutionStep({
+    attemptId: lease.attemptId,
+    stepNo: 1,
+    stepName: 'skill analysis',
+    actorType: 'skill',
+    actorId: 'digital-human-competitive-analysis',
+    state: 'succeeded',
+    skillProvenance: {
+      skillBodyHash: 'sha256:body',
+      inputSchemaHash: 'sha256:input-schema',
+      outputSchemaHash: 'sha256:output-schema',
+      inputHash: 'sha256:input',
+      outputHash: 'sha256:output',
+      promptHash: 'sha256:prompt',
+      traceId: 'trace-skill',
+      modelReceiptId: '11111111-1111-4111-8111-111111111111',
+      outputArtifactId: '22222222-2222-4222-8222-222222222222',
+      status: 'succeeded',
+    },
+    startedAt: new Date('2026-08-09T00:00:00Z'),
+    finishedAt: new Date('2026-08-09T00:00:01Z'),
+  });
+
+  const steps = await repository.listExecutionSteps(lease.attemptId);
+  assert.equal(steps[0].toolProvenance, null);
+  assert.equal(steps[0].skillProvenance?.skillBodyHash, 'sha256:body');
+  assert.equal(steps[0].skillProvenance?.modelReceiptId, '11111111-1111-4111-8111-111111111111');
+});
+
 test('persists complete model receipts including drift and structured failure status', async () => {
   const { repository, lease } = await claimedLease();
-  await repository.recordModelCall({
+  const receiptId = await repository.recordModelCall({
     attemptId: lease.attemptId,
     stage: 'skill',
     stepNo: 2,
@@ -267,9 +298,11 @@ test('persists complete model receipts including drift and structured failure st
     startedAt: new Date('2026-08-09T00:00:00Z'),
     finishedAt: new Date('2026-08-09T00:00:02Z'),
   });
+  assert.match(receiptId, /^[0-9a-f-]{36}$/u);
 
   const calls = await repository.listModelCalls(lease.attemptId);
   assert.equal(calls.length, 1);
+  assert.equal(calls[0].id, receiptId);
   assert.equal(calls[0].provider, 'gateway');
   assert.equal(calls[0].requestedModel, 'gpt-pinned');
   assert.equal(calls[0].actualModel, 'gpt-pinned');

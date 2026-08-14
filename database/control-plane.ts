@@ -77,11 +77,13 @@ export interface ControlExecutionStep {
   actorId: string;
   state: string;
   toolProvenance: Record<string, unknown> | null;
+  skillProvenance: Record<string, unknown> | null;
   failure: Record<string, unknown> | null;
   latencyMs: number | null;
 }
 
 export interface ControlModelCall {
+  id: string;
   stage: string;
   stepNo: number | null;
   provider: string;
@@ -2156,6 +2158,7 @@ export class ControlPlaneRepository {
     actorId: string;
     state: 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped';
     toolProvenance?: Record<string, unknown>;
+    skillProvenance?: Record<string, unknown>;
     failure?: Record<string, unknown>;
     latencyMs?: number;
     startedAt?: Date;
@@ -2165,14 +2168,15 @@ export class ControlPlaneRepository {
       await connection.query(
         `INSERT INTO control_execution_steps
            (attempt_id, step_no, step_name, actor_type, actor_id, state,
-            tool_provenance, failure_json, latency_ms, started_at, finished_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            tool_provenance, skill_provenance, failure_json, latency_ms, started_at, finished_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          ON CONFLICT (attempt_id, step_no) DO UPDATE
          SET step_name = EXCLUDED.step_name,
              actor_type = EXCLUDED.actor_type,
              actor_id = EXCLUDED.actor_id,
              state = EXCLUDED.state,
              tool_provenance = COALESCE(EXCLUDED.tool_provenance, control_execution_steps.tool_provenance),
+             skill_provenance = COALESCE(EXCLUDED.skill_provenance, control_execution_steps.skill_provenance),
              failure_json = COALESCE(EXCLUDED.failure_json, control_execution_steps.failure_json),
              latency_ms = COALESCE(EXCLUDED.latency_ms, control_execution_steps.latency_ms),
              started_at = COALESCE(control_execution_steps.started_at, EXCLUDED.started_at),
@@ -2180,6 +2184,7 @@ export class ControlPlaneRepository {
         [
           input.attemptId, input.stepNo, input.stepName, input.actorType, input.actorId, input.state,
           input.toolProvenance == null ? null : JSON.stringify(input.toolProvenance),
+          input.skillProvenance == null ? null : JSON.stringify(input.skillProvenance),
           input.failure == null ? null : JSON.stringify(input.failure),
           input.latencyMs ?? null, input.startedAt ?? null, input.finishedAt ?? null,
         ],
@@ -2191,7 +2196,7 @@ export class ControlPlaneRepository {
     const connection = await this.database.connect();
     try {
       const result = await connection.query(
-        `SELECT step_no, step_name, actor_type, actor_id, state, tool_provenance, failure_json, latency_ms
+        `SELECT step_no, step_name, actor_type, actor_id, state, tool_provenance, skill_provenance, failure_json, latency_ms
          FROM control_execution_steps WHERE attempt_id = $1 ORDER BY step_no`,
         [attemptId],
       );
@@ -2202,6 +2207,7 @@ export class ControlPlaneRepository {
         actorId: asString(row.actor_id, 'actor_id'),
         state: asString(row.state, 'state'),
         toolProvenance: asRecord(row.tool_provenance),
+        skillProvenance: asRecord(row.skill_provenance),
         failure: asRecord(row.failure_json),
         latencyMs: row.latency_ms == null ? null : asNumber(row.latency_ms, 'latency_ms'),
       }));
@@ -2226,13 +2232,14 @@ export class ControlPlaneRepository {
     failure: Record<string, unknown> | null;
     startedAt: Date;
     finishedAt: Date;
-  }): Promise<void> {
-    await this.transaction(async (connection) => {
-      await connection.query(
+  }): Promise<string> {
+    return this.transaction(async (connection) => {
+      const result = await connection.query(
         `INSERT INTO control_model_calls
            (attempt_id, stage, step_no, provider, endpoint_host, requested_model, actual_model,
             prompt_hash, context_manifest_hash, trace_id, tokens_json, status, failure_json, started_at, finished_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+         RETURNING id`,
         [
           input.attemptId ?? null, input.stage, input.stepNo ?? null, input.provider, input.endpointHost,
           input.requestedModel, input.actualModel, input.promptHash, input.contextManifestHash ?? null,
@@ -2240,6 +2247,7 @@ export class ControlPlaneRepository {
           input.failure == null ? null : JSON.stringify(input.failure), input.startedAt, input.finishedAt,
         ],
       );
+      return asString(result.rows[0]?.id, 'model_call_id');
     });
   }
 
@@ -2247,12 +2255,13 @@ export class ControlPlaneRepository {
     const connection = await this.database.connect();
     try {
       const result = await connection.query(
-        `SELECT stage, step_no, provider, endpoint_host, requested_model, actual_model,
+        `SELECT id, stage, step_no, provider, endpoint_host, requested_model, actual_model,
                 prompt_hash, context_manifest_hash, trace_id, tokens_json, status, failure_json
          FROM control_model_calls WHERE attempt_id = $1 ORDER BY started_at`,
         [attemptId],
       );
       return result.rows.map((row) => ({
+        id: asString(row.id, 'id'),
         stage: asString(row.stage, 'stage'),
         stepNo: row.step_no == null ? null : asNumber(row.step_no, 'step_no'),
         provider: asString(row.provider, 'provider'),

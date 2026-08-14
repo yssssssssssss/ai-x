@@ -171,8 +171,9 @@ test('pure validator rejects a required question without required evidence', () 
 class MemoryRecorder {
   readonly calls: ModelCallRecordInput[] = [];
 
-  async recordModelCall(input: ModelCallRecordInput): Promise<void> {
+  async recordModelCall(input: ModelCallRecordInput): Promise<string> {
     this.calls.push(input);
+    return '11111111-1111-4111-8111-111111111122';
   }
 }
 

@@ -84,8 +84,9 @@ class FixtureLLM implements LLMClient {
 
 class Recorder {
   readonly calls: ModelCallRecordInput[] = [];
-  async recordModelCall(input: ModelCallRecordInput): Promise<void> {
+  async recordModelCall(input: ModelCallRecordInput): Promise<string> {
     this.calls.push(input);
+    return '11111111-1111-4111-8111-111111111123';
   }
 }
 
