@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ReportReviewArtifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "taskId", "planVersionId", "attemptId", "deliverableArtifactId", "verdict", "dimensions", "revisionRound"],
+  "properties": {
+    "version": { "const": "report-review-v1" },
+    "taskId": { "type": "string", "minLength": 1 },
+    "planVersionId": { "type": "string", "minLength": 1 },
+    "attemptId": { "type": "string", "minLength": 1 },
+    "deliverableArtifactId": { "type": "string", "minLength": 1 },
+    "verdict": { "enum": ["pass", "revise", "block"] },
+    "dimensions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "passed", "issues"],
+        "properties": {
+          "id": { "enum": ["requirement_coverage", "question_coverage", "evidence_coverage", "reasoning_quality", "recommendation_quality", "visual_quality", "risk_disclosure"] },
+          "passed": { "type": "boolean" },
+          "issues": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "revisionRound": { "enum": [0, 1] }
+  }
+}

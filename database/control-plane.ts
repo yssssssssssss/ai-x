@@ -2358,7 +2358,7 @@ export class ControlPlaneRepository {
         `UPDATE control_tasks
          SET state = $4, state_version = state_version + 1, updated_at = now()
          WHERE id = $1
-           AND state = 'executing'
+           AND state IN ('executing', 'reviewing', 'composing_report')
            AND current_attempt_id = $2
            AND active_plan_version_id = $3
          RETURNING id, state, state_version, active_plan_version_id, current_attempt_id`,
@@ -2465,7 +2465,8 @@ export class ControlPlaneRepository {
       if (!attempt.rows[0]) throw new ControlPlaneConflictError(`attempt ${input.attemptId} is not active`);
       const task = await connection.query(
         `UPDATE control_tasks SET state = 'paused', state_version = state_version + 1, updated_at = now()
-         WHERE id = $1 AND state = 'executing' AND state_version = $2
+         WHERE id = $1 AND state_version = $2
+           AND state IN ('executing', 'reviewing', 'composing_report')
          RETURNING id, state, state_version, active_plan_version_id, current_attempt_id`,
         [input.taskId, input.expectedVersion],
       );

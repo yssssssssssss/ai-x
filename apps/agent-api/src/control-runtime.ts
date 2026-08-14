@@ -36,6 +36,7 @@ import type {
 } from '../../../packages/api-contract/research-deliverable.ts';
 import { CurrentDeliverableService } from '../../orchestrator-runtime/src/report/current-deliverable-service.ts';
 import { SynthesisMaterializer } from '../../orchestrator-runtime/src/report/synthesis-materializer.ts';
+import { ReportReviewService } from '../../orchestrator-runtime/src/report/report-review-service.ts';
 import { buildRuntime } from '../../orchestrator-runtime/src/runtime/agent-runtime.ts';
 import type { LLMClient } from '../../orchestrator-runtime/src/runtime/llm-client.ts';
 import { ReceiptLLMClient } from '../../orchestrator-runtime/src/runtime/receipt-llm-client.ts';
@@ -360,6 +361,10 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     artifacts,
     materializer: new SynthesisMaterializer(artifacts),
   });
+  const reportReview = new ReportReviewService({
+    llm: new ReceiptLLMClient(llm, repository),
+    artifacts,
+  });
   const engine = new LeaseExecutionEngine({
     repository,
     artifacts,
@@ -369,6 +374,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     validator,
     heartbeatMs: 30_000,
     deliverables,
+    reportReview,
   });
   const planRevisionDriver: WorkflowPlanRevisionDriver = {
     async revise(input) {

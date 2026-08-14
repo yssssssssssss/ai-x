@@ -53,6 +53,8 @@ export interface WorkflowExecutionDriver {
     attemptId: string;
     deliverableArtifactId?: string;
     evidenceManifestArtifactId?: string;
+    reportReviewArtifactId?: string;
+    reviewStatus?: 'completed' | 'paused';
     gapCount?: number;
     failedStepNo?: number;
     failure?: Record<string, unknown>;
@@ -744,6 +746,8 @@ export class TaskWorkflowService {
         executionDisabled: false,
         ...(driven.deliverableArtifactId === undefined ? {} : { deliverableArtifactId: driven.deliverableArtifactId }),
         ...(driven.evidenceManifestArtifactId === undefined ? {} : { evidenceManifestArtifactId: driven.evidenceManifestArtifactId }),
+        ...(driven.reportReviewArtifactId === undefined ? {} : { reportReviewArtifactId: driven.reportReviewArtifactId }),
+        ...(driven.reviewStatus === undefined ? {} : { reviewStatus: driven.reviewStatus }),
         ...(driven.gapCount === undefined ? {} : { gapCount: driven.gapCount }),
         ...(driven.failedStepNo === undefined ? {} : { failedStepNo: driven.failedStepNo }),
         ...(driven.failure === undefined ? {} : { failure: driven.failure }),

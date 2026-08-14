@@ -51,7 +51,8 @@ import {
   type ResolvedEvidenceArtifact,
 } from '../evidence/evidence-service.ts';
 import { CurrentReportValidationError } from '../evidence/report-evidence-validator.ts';
-import type { CurrentDeliverableGenerateInput } from '../report/current-deliverable-service.ts';
+import type { CurrentDeliverableGenerateInput, CurrentDeliverableRevisionInput } from '../report/current-deliverable-service.ts';
+import type { DeliverableComposer, ReportReviewInput, ReportReviewResult } from '../report/report-review-service.ts';
 import {
   readVerifiedStepArtifact,
   resolveStepInput,
@@ -122,6 +123,8 @@ export interface LeaseExecutionResult {
   attemptId: string;
   deliverableArtifactId?: string;
   evidenceManifestArtifactId?: string;
+  reportReviewArtifactId?: string;
+  reviewStatus?: ReportReviewResult['status'];
   gapCount?: number;
   failedStepNo?: number;
   failure?: Record<string, unknown>;
@@ -570,6 +573,13 @@ export class LeaseExecutionEngine {
         deliverable: unknown;
         deliverableArtifactId: string;
       }>;
+      revise?(input: CurrentDeliverableRevisionInput): Promise<{
+        deliverable: unknown;
+        deliverableArtifactId: string;
+      }>;
+    };
+    reportReview?: {
+      review(input: ReportReviewInput, composer?: DeliverableComposer): Promise<ReportReviewResult>;
     };
   }) {
     this.llm = new ReceiptLLMClient(dependencies.llm, dependencies.repository);
@@ -968,7 +978,7 @@ export class LeaseExecutionEngine {
 
     try {
       active = await this.refreshLease(input.lease);
-      const deliverable = await this.withLeaseHeartbeat(input.lease, () => this.dependencies.deliverables.generate({
+      const deliverableInput: CurrentDeliverableGenerateInput = {
         task: { id: task.id },
         plan: {
           id: planVersion.id,
@@ -989,7 +999,62 @@ export class LeaseExecutionEngine {
         expectedModel: input.expectedModel,
         stepNo: plan.steps.length + 1,
         activeLease: input.lease,
-      }));
+      };
+      const deliverable = await this.withLeaseHeartbeat(input.lease, () => this.dependencies.deliverables.generate(deliverableInput));
+      let reportReviewArtifactId: string | undefined;
+      let reviewStatus: ReportReviewResult['status'] | undefined;
+      if (this.dependencies.reportReview) {
+        const reviewingTask = await this.dependencies.repository.transitionTask({
+          taskId: input.lease.taskId,
+          expectedVersion: active.stateVersion,
+          from: 'executing',
+          to: 'reviewing',
+        });
+        active = { ...active, stateVersion: reviewingTask.stateVersion };
+        const composer: DeliverableComposer | undefined = this.dependencies.deliverables.revise
+          ? {
+              revise: (revision) => this.dependencies.deliverables.revise!({ ...deliverableInput, review: revision.review }),
+            }
+          : undefined;
+        const review = await this.withLeaseHeartbeat(input.lease, () => this.dependencies.reportReview!.review({
+          task: { id: task.id },
+          plan: { id: planVersion.id },
+          attempt: { id: input.lease.attemptId },
+          deliverableArtifactId: deliverable.deliverableArtifactId,
+          deliverable: deliverable.deliverable,
+          evidenceIds: sealedEvidenceManifest.value.entries.map((entry) => entry.id),
+          expectedModel: input.expectedModel,
+          activeLease: input.lease,
+        }, composer));
+        reportReviewArtifactId = review.artifactId;
+        reviewStatus = review.status;
+        if (review.status === 'paused') {
+          const failure = { kind: 'report_review', retryable: false, verdict: review.verdict, message: 'report review paused execution' };
+          await this.dependencies.repository.pauseExecution({
+            taskId: input.lease.taskId,
+            attemptId: input.lease.attemptId,
+            expectedVersion: active.stateVersion,
+            reason: 'report_review',
+          });
+          return {
+            status: 'paused',
+            attemptId: input.lease.attemptId,
+            deliverableArtifactId: deliverable.deliverableArtifactId,
+            evidenceManifestArtifactId: sealedEvidenceManifest.artifact.id,
+            reportReviewArtifactId,
+            reviewStatus,
+            failedStepNo: plan.steps.length + 2,
+            failure,
+          };
+        }
+        const composingTask = await this.dependencies.repository.transitionTask({
+          taskId: input.lease.taskId,
+          expectedVersion: active.stateVersion,
+          from: 'reviewing',
+          to: 'composing_report',
+        });
+        active = { ...active, stateVersion: composingTask.stateVersion };
+      }
       await this.dependencies.repository.requireActiveLease(input.lease);
       const status = gaps.length > 0 ? 'completed_with_gaps' : 'completed';
       await this.dependencies.repository.completeExecution(input.lease, { status });
@@ -998,6 +1063,8 @@ export class LeaseExecutionEngine {
         attemptId: input.lease.attemptId,
         deliverableArtifactId: deliverable.deliverableArtifactId,
         evidenceManifestArtifactId: sealedEvidenceManifest.artifact.id,
+        ...(reportReviewArtifactId === undefined ? {} : { reportReviewArtifactId }),
+        ...(reviewStatus === undefined ? {} : { reviewStatus }),
         gapCount: gaps.length,
       };
     } catch (error) {
@@ -1014,7 +1081,7 @@ export class LeaseExecutionEngine {
       await this.dependencies.repository.recordExecutionStep({
         attemptId: input.lease.attemptId,
         stepNo: plan.steps.length + 1,
-        stepName: 'deliverable generation',
+        stepName: 'deliverable generation or review',
         actorType: 'llm',
         actorId: 'deliverable',
         state: 'failed',

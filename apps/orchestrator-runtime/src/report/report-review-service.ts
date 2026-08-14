@@ -1,0 +1,251 @@
+import type { ControlExecutionLease } from '../../../../database/control-plane.ts';
+import type { ArtifactWriteInput } from '../control/artifact-store.ts';
+import { redactSensitiveValue } from '../runtime/redaction.ts';
+import type { LLMResult, StructuredLLMCallOptions } from '../runtime/llm-client.ts';
+import { SchemaValidator } from '../schema/validator.ts';
+
+export type ReportReviewVerdict = 'pass' | 'revise' | 'block';
+export type ReportReviewDimensionId =
+  | 'requirement_coverage'
+  | 'question_coverage'
+  | 'evidence_coverage'
+  | 'reasoning_quality'
+  | 'recommendation_quality'
+  | 'visual_quality'
+  | 'risk_disclosure';
+
+export interface ReportReviewDimension {
+  id: ReportReviewDimensionId;
+  passed: boolean;
+  issues: string[];
+}
+
+export interface ReportReviewArtifact {
+  version: 'report-review-v1';
+  taskId: string;
+  planVersionId: string;
+  attemptId: string;
+  deliverableArtifactId: string;
+  verdict: ReportReviewVerdict;
+  dimensions: ReportReviewDimension[];
+  revisionRound: 0 | 1;
+}
+
+export interface ReportReviewResult extends ReportReviewArtifact {
+  status: 'completed' | 'paused';
+  artifactId: string;
+}
+
+export interface ReportReviewLlm {
+  generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>>;
+}
+
+export interface ReportReviewEvidence {
+  validate?(input: {
+    taskId: string;
+    planVersionId: string;
+    attemptId: string;
+    deliverable: unknown;
+    evidenceIds: readonly string[];
+  }): void | Promise<void>;
+}
+
+export interface DeliverableComposer {
+  revise(input: {
+    taskId: string;
+    planVersionId: string;
+    attemptId: string;
+    deliverable: unknown;
+    review: ReportReviewArtifact;
+    revisionRound: 1;
+    activeLease: ControlExecutionLease;
+  }): Promise<{ deliverable: unknown; deliverableArtifactId: string }>;
+}
+
+export interface ReportReviewInput {
+  task: { id: string };
+  plan: { id: string };
+  attempt: { id: string };
+  deliverableArtifactId: string;
+  deliverable: unknown;
+  requirementIds?: readonly string[];
+  questionIds?: readonly string[];
+  evidenceIds?: readonly string[];
+  requirements?: readonly (string | { id: string })[];
+  questions?: readonly (string | { id: string })[];
+  evidence?: readonly (string | { id: string })[];
+  expectedModel: string;
+  activeLease: ControlExecutionLease;
+  revisionRound?: 0 | 1;
+}
+
+interface ReviewArtifactWriter {
+  writeJson(input: ArtifactWriteInput): Promise<{ id: string; state: string }>;
+}
+
+interface ReviewDependencies {
+  llm: ReportReviewLlm;
+  artifacts: ReviewArtifactWriter;
+  evidence?: ReportReviewEvidence;
+  composer?: DeliverableComposer;
+  validator?: Pick<SchemaValidator, 'validateOrThrow'>;
+}
+
+const REVIEW_SCHEMA = {
+  type: 'object',
+  required: ['version', 'taskId', 'planVersionId', 'attemptId', 'deliverableArtifactId', 'verdict', 'dimensions', 'revisionRound'],
+};
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function ids(values: readonly (string | { id: string })[] | undefined): string[] {
+  if (!values) return [];
+  return values.map((value) => typeof value === 'string' ? value : value.id);
+}
+
+function nestedStrings(value: unknown, output: Set<string>): void {
+  if (typeof value === 'string') {
+    output.add(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const child of value) nestedStrings(child, output);
+    return;
+  }
+  const object = record(value);
+  if (!object) return;
+  for (const child of Object.values(object)) nestedStrings(child, output);
+}
+
+function issueDimension(id: ReportReviewDimensionId, issues: string[]): ReportReviewDimension {
+  return { id, passed: issues.length === 0, issues };
+}
+
+function deterministicDimensions(input: ReportReviewInput, deliverable: unknown): ReportReviewDimension[] {
+  const issues: Record<ReportReviewDimensionId, string[]> = {
+    requirement_coverage: [], question_coverage: [], evidence_coverage: [],
+    reasoning_quality: [], recommendation_quality: [], visual_quality: [], risk_disclosure: [],
+  };
+  const report = record(deliverable);
+  if (!report) {
+    issues.reasoning_quality.push('deliverable must be an object');
+    return Object.entries(issues).map(([id, entries]) => issueDimension(id as ReportReviewDimensionId, entries));
+  }
+  if (report.version !== 'research-deliverable-v1') issues.reasoning_quality.push('unsupported deliverable version');
+  if (report.taskId !== input.task.id) issues.reasoning_quality.push('deliverable task identity mismatch');
+  if (report.planVersionId !== input.plan.id) issues.reasoning_quality.push('deliverable plan identity mismatch');
+  if (report.attemptId !== input.attempt.id) issues.reasoning_quality.push('deliverable attempt identity mismatch');
+
+  const graph = record(report.findingGraph);
+  const findings = Array.isArray(graph?.findings) ? graph.findings : [];
+  const analyses = Array.isArray(graph?.analyses) ? graph.analyses : [];
+  const summaries = Array.isArray(graph?.subQuestionSummaries) ? graph.subQuestionSummaries : [];
+  const conclusions = Array.isArray(graph?.overallConclusions) ? graph.overallConclusions : [];
+  if (findings.length === 0 || !findings.some((entry) => record(entry)?.kind === 'fact')) issues.evidence_coverage.push('finding graph requires a fact root');
+  if (analyses.length === 0) issues.reasoning_quality.push('finding graph requires an analysis root');
+  if (summaries.length === 0) issues.reasoning_quality.push('finding graph requires a summary root');
+  if (conclusions.length === 0) issues.reasoning_quality.push('finding graph requires a conclusion root');
+
+  const requirementIds = input.requirementIds ?? ids(input.requirements);
+  const questionIds = input.questionIds ?? ids(input.questions);
+  const evidenceIds = input.evidenceIds ?? ids(input.evidence);
+  const referenced = new Set<string>();
+  nestedStrings(deliverable, referenced);
+  for (const requirementId of requirementIds) if (!referenced.has(requirementId)) issues.requirement_coverage.push(`missing requirement ${requirementId}`);
+  for (const questionId of questionIds) if (!referenced.has(questionId)) issues.question_coverage.push(`missing question ${questionId}`);
+  const knownEvidence = new Set(evidenceIds);
+  for (const finding of findings) {
+    const value = record(finding);
+    if (value?.kind !== 'fact') continue;
+    const findingEvidence = Array.isArray(value.evidenceIds) ? value.evidenceIds : [];
+    if (findingEvidence.length === 0) issues.evidence_coverage.push(`fact ${String(value.id ?? '')} has no evidence`);
+    for (const evidenceId of findingEvidence) if (typeof evidenceId !== 'string' || !knownEvidence.has(evidenceId)) issues.evidence_coverage.push(`fact ${String(value.id ?? '')} references unknown evidence`);
+  }
+  const recommendations = Array.isArray(report.recommendations) ? report.recommendations : [];
+  const summaryIds = new Set(summaries.map((entry) => record(entry)?.id).filter((id): id is string => typeof id === 'string'));
+  if (recommendations.length === 0) issues.recommendation_quality.push('at least one recommendation is required');
+  for (const recommendation of recommendations) {
+    const value = record(recommendation);
+    const roots = Array.isArray(value?.summaryIds) ? value.summaryIds : [];
+    if (roots.length === 0) issues.recommendation_quality.push(`recommendation ${String(value?.id ?? '')} has no summary root`);
+    for (const summaryId of roots) if (typeof summaryId !== 'string' || !summaryIds.has(summaryId)) issues.recommendation_quality.push(`recommendation ${String(value?.id ?? '')} references unknown summary`);
+  }
+  return Object.entries(issues).map(([id, entries]) => issueDimension(id as ReportReviewDimensionId, entries));
+}
+
+function deterministicFailure(dimensions: readonly ReportReviewDimension[]): boolean {
+  return dimensions.some((dimension) => (
+    dimension.id === 'requirement_coverage' || dimension.id === 'question_coverage'
+      || dimension.id === 'evidence_coverage' || dimension.id === 'reasoning_quality'
+      || dimension.id === 'recommendation_quality'
+  ) && !dimension.passed);
+}
+
+export class ReportReviewService {
+  private readonly validator: Pick<SchemaValidator, 'validateOrThrow'>;
+
+  constructor(private readonly dependencies: ReviewDependencies) {
+    this.validator = dependencies.validator ?? new SchemaValidator();
+  }
+
+  async review(input: ReportReviewInput, composerOverride?: DeliverableComposer): Promise<ReportReviewResult> {
+    if (input.activeLease.taskId !== input.task.id || input.activeLease.planVersionId !== input.plan.id || input.activeLease.attemptId !== input.attempt.id) throw new Error('review lease identity does not match input');
+    const round = input.revisionRound ?? 0;
+    const dimensions = deterministicDimensions(input, input.deliverable);
+    if (this.dependencies.evidence?.validate && !deterministicFailure(dimensions)) await this.dependencies.evidence.validate({
+      taskId: input.task.id, planVersionId: input.plan.id, attemptId: input.attempt.id,
+      deliverable: input.deliverable, evidenceIds: input.evidenceIds ?? ids(input.evidence),
+    });
+    if (deterministicFailure(dimensions)) return this.seal(input, {
+      version: 'report-review-v1', taskId: input.task.id, planVersionId: input.plan.id,
+      attemptId: input.attempt.id, deliverableArtifactId: input.deliverableArtifactId,
+      verdict: 'block', dimensions, revisionRound: round,
+    }, 'paused');
+    const artifact = await this.semanticReview(input, dimensions, round);
+    if (artifact.verdict === 'pass') return this.seal(input, artifact, 'completed');
+    const composer = composerOverride ?? this.dependencies.composer;
+    if (artifact.verdict === 'block' || round === 1 || !composer) return this.seal(input, artifact, 'paused');
+    const revised = await composer.revise({
+      taskId: input.task.id, planVersionId: input.plan.id, attemptId: input.attempt.id,
+      deliverable: input.deliverable, review: artifact, revisionRound: 1, activeLease: input.activeLease,
+    });
+    return this.review({ ...input, deliverable: revised.deliverable, deliverableArtifactId: revised.deliverableArtifactId, revisionRound: 1 }, composerOverride);
+  }
+
+  private async semanticReview(input: ReportReviewInput, dimensions: ReportReviewDimension[], revisionRound: 0 | 1): Promise<ReportReviewArtifact> {
+    const generated = await this.dependencies.llm.generateStructured<Partial<ReportReviewArtifact>>({
+      prompt: 'Review the current deliverable. Return only a report-review-v1 artifact.',
+      schema: REVIEW_SCHEMA,
+      schemaName: 'report-review',
+      context: {
+        taskId: input.task.id, planVersionId: input.plan.id, attemptId: input.attempt.id,
+        deliverable: redactSensitiveValue(input.deliverable), deterministicDimensions: dimensions,
+      },
+      receipt: { stage: 'deliverable_review', attemptId: input.attempt.id, expectedModel: input.expectedModel },
+    });
+    const value = record(generated.data);
+    if (!value || (value.verdict !== 'pass' && value.verdict !== 'revise' && value.verdict !== 'block') || !Array.isArray(value.dimensions)) throw new Error('review output is missing required fields');
+    const artifact: ReportReviewArtifact = {
+      version: 'report-review-v1', taskId: input.task.id, planVersionId: input.plan.id,
+      attemptId: input.attempt.id, deliverableArtifactId: input.deliverableArtifactId,
+      verdict: value.verdict, dimensions: value.dimensions as ReportReviewDimension[], revisionRound,
+    };
+    this.validator.validateOrThrow('report-review', artifact);
+    return artifact;
+  }
+
+  private async seal(input: ReportReviewInput, artifact: ReportReviewArtifact, status: 'completed' | 'paused'): Promise<ReportReviewResult> {
+    this.validator.validateOrThrow('report-review', artifact);
+    const sealed = await this.dependencies.artifacts.writeJson({
+      taskId: input.task.id, planVersionId: input.plan.id, attemptId: input.attempt.id,
+      kind: 'report_review', relativePath: `reports/review-r${artifact.revisionRound}.json`, value: artifact,
+      schemaVersion: 'report-review-v1', sensitivity: 'internal', redactionPolicyVersion: 'v1', activeLease: input.activeLease,
+    });
+    if (sealed.state !== 'SEALED') throw new Error('review artifact was not sealed');
+    return { ...artifact, status, artifactId: sealed.id };
+  }
+}

@@ -1,11 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { ControlExecutionLease } from '../../../../database/control-plane.ts';
 import type {
+  EvidenceEntry,
   CurrentExecutionPlan,
   ResearchDeliverableEnvelope,
   ResearchPlanPayload,
 } from '../../../../packages/api-contract/research-deliverable.ts';
-import type { ControlExecutionLease } from '../../../../database/control-plane.ts';
 import type {
   EvidenceArtifactResolver,
   EvidenceManifest,
@@ -17,6 +18,7 @@ import {
   type SynthesisMaterializerLike,
 } from './synthesis-materializer.ts';
 import { redactSensitiveValue, redactString } from '../runtime/redaction.ts';
+import type { ReportReviewArtifact } from './report-review-service.ts';
 const researchPlanSchemaPath = join(
   process.cwd(),
   'schemas/deliverables/research-plan.schema.json',
@@ -203,12 +205,16 @@ export interface CurrentDeliverableGenerateInput {
   gaps: string[];
   expectedModel: string;
   stepNo?: number;
+  revisionInstruction?: string;
   activeLease?: ControlExecutionLease;
 }
 
 export interface CurrentDeliverableGenerateResult {
   deliverable: DeliverableEnvelope;
   deliverableArtifactId: string;
+}
+export interface CurrentDeliverableRevisionInput extends CurrentDeliverableGenerateInput {
+  review: ReportReviewArtifact;
 }
 
 function unknownRecord(value: unknown): Record<string, unknown> | null {
@@ -294,6 +300,7 @@ export class CurrentDeliverableService {
         ? {}
         : { finalizedRequirement: redactSensitiveValue(input.finalizedRequirement) }),
       ...(input.problemGraph === undefined ? {} : { problemGraph: redactSensitiveValue(input.problemGraph) }),
+      ...(input.revisionInstruction === undefined ? {} : { revisionInstruction: redactString(input.revisionInstruction) }),
       verifiedEvidence,
       synthesisMaterials,
       gaps: sanitizedGaps,
@@ -309,7 +316,8 @@ export class CurrentDeliverableService {
     }>({
       prompt:
         'Generate only the content fields for a research plan deliverable. '
-        + 'Do not generate version, task, plan, attempt, deliverable type, evidence manifest identifiers, or capability provenance.',
+        + 'Do not generate version, task, plan, attempt, deliverable type, evidence manifest identifiers, or capability provenance.'
+        + (input.revisionInstruction ? ' Address the review issues in the revision instruction.' : ''),
       schema: deliverableDraftSchema,
       schemaName: 'research-plan-deliverable-content',
       context,
@@ -378,5 +386,14 @@ export class CurrentDeliverableService {
       deliverable,
       deliverableArtifactId: artifact.id,
     };
+  }
+  async revise(input: CurrentDeliverableRevisionInput): Promise<CurrentDeliverableGenerateResult> {
+    const revisionInstruction = input.review.dimensions
+      .flatMap((dimension) => dimension.issues)
+      .join('; ');
+    return this.generate({
+      ...input,
+      revisionInstruction,
+    });
   }
 }

@@ -17,7 +17,7 @@ export interface SchemaSpec {
   arrayItemFile?: string; // 数组项的 schema 文件(仅 envelope)
 }
 
-const PROJECT_SCHEMAS: readonly (SchemaName | 'current-plan-candidates' | 'current-execution-plan' | 'research-task-v2' | 'problem-graph')[] = [
+const PROJECT_SCHEMAS: readonly (SchemaName | 'current-plan-candidates' | 'current-execution-plan' | 'research-task-v2' | 'problem-graph' | 'report-review')[] = [
   'research-task',
   'research-task-v2',
   'decision-state',
@@ -28,6 +28,7 @@ const PROJECT_SCHEMAS: readonly (SchemaName | 'current-plan-candidates' | 'curre
   'skill-manifest',
   'tool-manifest',
   'research-report',
+  'report-review',
 ];
 
 // 命令经 pnpm scripts 从项目根运行,cwd 恒为项目根(与 validator.ts 一致)。

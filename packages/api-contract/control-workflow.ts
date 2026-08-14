@@ -150,6 +150,8 @@ export interface ControlExecutionResult {
   executionDisabled: false;
   deliverableArtifactId?: string;
   evidenceManifestArtifactId?: string;
+  reportReviewArtifactId?: string;
+  reviewStatus?: 'completed' | 'paused';
   gapCount?: number;
   failedStepNo?: number;
   failure?: Record<string, unknown>;
