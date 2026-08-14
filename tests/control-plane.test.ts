@@ -15,6 +15,7 @@ import {
   ControlPlaneConflictError,
   ControlPlaneRepository,
   canonicalPlanHash,
+  type ControlArtifact,
   type ControlExecutionLease,
   type ControlPlanVersionDetail,
   type ControlTask,
@@ -1498,6 +1499,55 @@ test('rejects foreign Task Plan Attempt tuples on staging, unleased seal, and ve
     tamper.release();
   }
   await assert.rejects(() => store.readVerifiedBinary(sealed.id), ControlPlaneConflictError);
+});
+
+test('serializes concurrent artifact claims and permits only one SEALED owner per storage path', async () => {
+  const fixture = await createLeaseStateFixture('executing', false);
+  const storageUri = join(workspaceRoot, `${randomUUID()}-concurrent.png`);
+  const input = {
+    taskId: fixture.task.id,
+    planVersionId: fixture.plan.id,
+    attemptId: fixture.claim.attemptId,
+    kind: 'visual_asset',
+    storageUri,
+    schemaVersion: 'visual-asset-v1',
+    sensitivity: 'internal',
+    redactionPolicyVersion: 'v1',
+    mediaType: 'image/png',
+    metadata: { width: 1, height: 1 },
+  };
+
+  const claims = await Promise.allSettled([
+    fixture.repository.createStagingArtifact(input),
+    fixture.repository.createStagingArtifact(input),
+  ]);
+  const fulfilled = claims.filter((result): result is PromiseFulfilledResult<ControlArtifact> => result.status === 'fulfilled');
+  const rejected = claims.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+  assert.equal(fulfilled.length, 1);
+  assert.equal(rejected.length, 1);
+  assert.ok(rejected[0]!.reason instanceof ControlPlaneConflictError);
+
+  await fixture.repository.sealArtifact({
+    artifactId: fulfilled[0]!.value.id,
+    contentSha256: `sha256:${'b'.repeat(64)}`,
+    byteSize: 1,
+  });
+  await assert.rejects(
+    () => fixture.repository.createStagingArtifact(input),
+    ControlPlaneConflictError,
+  );
+
+  const connection = await scopedDatabase.connect();
+  try {
+    const result = await connection.query(
+      `SELECT count(*)::int AS count FROM control_artifacts
+       WHERE storage_uri = $1 AND state = 'SEALED'`,
+      [storageUri],
+    );
+    assert.equal(result.rows[0]?.count, 1);
+  } finally {
+    connection.release();
+  }
 });
 
 test('atomically refuses to seal a terminal artifact after its execution lease expires', async () => {
