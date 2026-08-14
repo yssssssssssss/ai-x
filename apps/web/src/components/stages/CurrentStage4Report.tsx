@@ -1,8 +1,9 @@
 import type { CurrentResearchPlanResponse } from '../../current-report-markdown.ts';
-import { currentResearchPlanToMarkdown } from '../../current-report-markdown.ts';
+import { assertCurrentReportTextMode, currentResearchPlanToMarkdown } from '../../current-report-markdown.ts';
 import { Header } from './Stage1Understand.tsx';
 
 export function CurrentStage4Report({ report }: { report: CurrentResearchPlanResponse }) {
+  assertCurrentReportTextMode(report);
   const { deliverable, evidenceManifest } = report;
   const { payload, findingGraph } = deliverable;
 

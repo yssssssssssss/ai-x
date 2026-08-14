@@ -3,6 +3,19 @@ import type { ResearchPlanPayload } from '../../../packages/api-contract/researc
 
 export type CurrentResearchPlanResponse = CurrentReportPackageResponse<ResearchPlanPayload>;
 
+export type TextCurrentResearchPlanResponse = Extract<
+  CurrentResearchPlanResponse,
+  { presentationMode: 'legacy_text' | 'current_text' }
+>;
+
+export function assertCurrentReportTextMode(
+  input: CurrentResearchPlanResponse,
+): asserts input is TextCurrentResearchPlanResponse {
+  if (input.presentationMode === 'multimodal') {
+    throw new Error('multimodal report packages require the Phase 5 renderer');
+  }
+}
+
 function appendList(lines: string[], items: string[]): void {
   for (const item of items) lines.push(`- ${item}`);
   lines.push('');
@@ -13,7 +26,7 @@ function assertReference(ids: Set<string>, reference: string, type: string, owne
   }
 }
 
-function assertFindingGraphReferences(input: CurrentResearchPlanResponse): void {
+function assertFindingGraphReferences(input: TextCurrentResearchPlanResponse): void {
   const { findingGraph } = input.deliverable;
   const evidenceIds = new Set(input.evidenceManifest.entries.map((entry) => entry.id));
   const findingIds = new Set(findingGraph.findings.map((finding) => finding.id));
@@ -45,6 +58,7 @@ function assertFindingGraphReferences(input: CurrentResearchPlanResponse): void 
 }
 
 export function currentResearchPlanToMarkdown(input: CurrentResearchPlanResponse): string {
+  assertCurrentReportTextMode(input);
   assertFindingGraphReferences(input);
   const { deliverable, evidenceManifest } = input;
   const { payload } = deliverable;

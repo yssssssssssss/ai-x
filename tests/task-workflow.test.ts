@@ -941,6 +941,7 @@ test('reconstructs final artifact IDs after driver state commit but before comma
             taskId: lease.taskId,
             planVersionId: lease.planVersionId,
             attemptId: lease.attemptId,
+            evidenceManifestArtifactId: evidenceManifest.id,
           },
         });
         const reportReview = await artifacts.writeJson({
@@ -960,6 +961,21 @@ test('reconstructs final artifact IDs after driver state commit but before comma
             verdict: 'pass',
             dimensions: REPORT_REVIEW_DIMENSION_IDS.map((id) => ({ id, passed: true, issues: [] })),
             revisionRound: 1,
+          },
+        });
+        await artifacts.writeJson({
+          taskId: lease.taskId,
+          planVersionId: lease.planVersionId,
+          attemptId: lease.attemptId,
+          kind: 'evidence_manifest',
+          relativePath: 'evidence/later-manifest.json',
+          schemaVersion: 'evidence-v1',
+          activeLease: lease,
+          value: {
+            version: 'evidence-v1',
+            taskId: lease.taskId,
+            planVersionId: lease.planVersionId,
+            attemptId: lease.attemptId,
           },
         });
         expectedArtifactIds = {
@@ -1058,6 +1074,7 @@ test('replays a sealed pass Review as completed when post-review failure leaves 
             taskId: lease.taskId,
             planVersionId: lease.planVersionId,
             attemptId: lease.attemptId,
+            evidenceManifestArtifactId: evidenceManifest.id,
           },
         });
         const reportReview = await artifacts.writeJson({
@@ -1147,6 +1164,101 @@ test('replays a sealed pass Review as completed when post-review failure leaves 
   }
 });
 
+test('rejects a sealed hash-valid Review with an unknown verdict during paused replay', async () => {
+  const artifactRoot = mkdtempSync(join(tmpdir(), 'task-workflow-unknown-review-replay-'));
+  try {
+    const repository = new ControlPlaneRepository(scopedDatabase);
+    const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+    const workflow = new TaskWorkflowService(repository, {
+      execute: async ({ lease }) => {
+        const evidenceManifest = await artifacts.writeJson({
+          taskId: lease.taskId,
+          planVersionId: lease.planVersionId,
+          attemptId: lease.attemptId,
+          kind: 'evidence_manifest',
+          relativePath: 'evidence/manifest.json',
+          schemaVersion: 'evidence-v1',
+          activeLease: lease,
+          value: { version: 'evidence-v1', taskId: lease.taskId, planVersionId: lease.planVersionId, attemptId: lease.attemptId },
+        });
+        const deliverable = await artifacts.writeJson({
+          taskId: lease.taskId,
+          planVersionId: lease.planVersionId,
+          attemptId: lease.attemptId,
+          kind: 'deliverable',
+          relativePath: 'deliverables/final-r0.json',
+          schemaVersion: 'research-deliverable-v1-review-gated',
+          activeLease: lease,
+          value: {
+            version: 'research-deliverable-v1',
+            taskId: lease.taskId,
+            planVersionId: lease.planVersionId,
+            attemptId: lease.attemptId,
+            evidenceManifestArtifactId: evidenceManifest.id,
+          },
+        });
+        await artifacts.writeJson({
+          taskId: lease.taskId,
+          planVersionId: lease.planVersionId,
+          attemptId: lease.attemptId,
+          kind: 'report_review',
+          relativePath: 'reports/review-r0.json',
+          schemaVersion: 'report-review-v1',
+          activeLease: lease,
+          value: {
+            version: 'report-review-v1',
+            taskId: lease.taskId,
+            planVersionId: lease.planVersionId,
+            attemptId: lease.attemptId,
+            deliverableArtifactId: deliverable.id,
+            verdict: 'unknown',
+            dimensions: REPORT_REVIEW_DIMENSION_IDS.map((id) => ({ id, passed: true, issues: [] })),
+            revisionRound: 0,
+          },
+        });
+        const executingTask = await repository.getTaskDetail(lease.taskId);
+        assert.ok(executingTask);
+        await repository.pauseExecution({
+          taskId: lease.taskId,
+          attemptId: lease.attemptId,
+          expectedVersion: executingTask.stateVersion,
+          reason: 'post_review',
+        });
+        throw new Error('simulated process crash after unknown Review');
+      },
+    }, undefined, artifacts);
+    const created = await createCandidateTask(repository, 'unknown-review-replay', { candidateId: 'depth' });
+    const selection = await workflow.select({
+      taskId: created.task.id,
+      expectedVersion: created.task.stateVersion,
+      idempotencyKey: 'unknown-review-select',
+      actor: { userId: ownerId, role: 'owner' },
+      planVersionId: created.candidates[0]!.id,
+    });
+    const ready = await workflow.confirm({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      expectedVersion: selection.stateVersion,
+      idempotencyKey: 'unknown-review-confirm',
+      actor: { userId: ownerId, role: 'owner' },
+      confirmationAnswers: {},
+      inputValues: {},
+    });
+    const command = {
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      expectedVersion: ready.stateVersion,
+      idempotencyKey: 'unknown-review-execute',
+      actor: { userId: ownerId, role: 'owner' as const },
+    };
+
+    await assert.rejects(() => workflow.execute(command), /simulated process crash/);
+    await assert.rejects(() => workflow.execute(command), ControlPlaneConflictError);
+  } finally {
+    rmSync(artifactRoot, { recursive: true, force: true });
+  }
+});
+
 async function createPausedTask(input: {
   repository: ControlPlaneRepository;
   suffix: string;
@@ -1154,6 +1266,7 @@ async function createPausedTask(input: {
   steps: CurrentPlanStep[];
   allowedActions: string[];
   pendingInputs?: unknown[];
+  failureKind?: string;
   planFactory?: (taskId: string, steps: CurrentPlanStep[]) => CurrentExecutionPlan;
 }) {
   const task = await input.repository.createTask({
@@ -1191,7 +1304,7 @@ async function createPausedTask(input: {
     actorId: failedStep.actor_id,
     state: 'failed',
     failure: {
-      kind: 'network',
+      kind: input.failureKind ?? 'network',
       toolTier: input.allowedActions.includes('skip') ? 'optional' : 'core',
       allowedActions: input.allowedActions,
     },
@@ -1204,6 +1317,58 @@ async function createPausedTask(input: {
   });
   return { task, plan, paused };
 }
+
+test('worker-loss retry without failedStepNo validates recovery before accepting recovered state', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const workflow = new TaskWorkflowService(repository);
+  const paused = await createPausedTask({
+    repository,
+    suffix: 'retry-recovered-state',
+    failedStepNo: 1,
+    steps: [currentStep({ actor_type: 'tool', actor_id: 'tavily-web-search' })],
+    allowedActions: ['retry', 'abort'],
+    failureKind: 'worker_loss',
+  });
+
+  const resumed = await workflow.resume({
+    taskId: paused.task.id,
+    expectedVersion: paused.paused.stateVersion,
+    idempotencyKey: 'retry-recovered-state-first',
+    actor: { userId: ownerId, role: 'owner' },
+  });
+  assert.equal(resumed.state, 'ready');
+  const recovered = await workflow.resume({
+    taskId: paused.task.id,
+    expectedVersion: paused.paused.stateVersion,
+    idempotencyKey: 'retry-recovered-state-legitimate',
+    actor: { userId: ownerId, role: 'owner' },
+    action: 'retry',
+    failedStepNo: 1,
+  });
+  assert.deepEqual(recovered, resumed);
+  await assert.rejects(
+    () => workflow.resume({
+      taskId: paused.task.id,
+      expectedVersion: paused.paused.stateVersion,
+      idempotencyKey: 'retry-recovered-state-wrong-step',
+      actor: { userId: ownerId, role: 'owner' },
+      action: 'retry',
+      failedStepNo: 99,
+    }),
+    TaskWorkflowGateError,
+  );
+  await assert.rejects(
+    () => workflow.resume({
+      taskId: paused.task.id,
+      expectedVersion: paused.paused.stateVersion,
+      idempotencyKey: 'retry-recovered-state-wrong-action',
+      actor: { userId: ownerId, role: 'owner' },
+      action: 'skip',
+      failedStepNo: 1,
+    }),
+    TaskWorkflowGateError,
+  );
+});
 
 test('report review failure rejects retry and permits only abort recovery', async () => {
   const repository = new ControlPlaneRepository(scopedDatabase);
@@ -1293,6 +1458,26 @@ test('report review failure rejects retry and permits only abort recovery', asyn
   });
   assert.equal(aborted.state, 'cancelled');
   assert.equal((await repository.listAttempts(task.id))[0]?.state, 'cancelled');
+  const recoveredAbort = await workflow.resume({
+    taskId: task.id,
+    expectedVersion: paused.stateVersion,
+    idempotencyKey: `review-abort-recovered-${randomUUID()}`,
+    actor: { userId: ownerId, role: 'owner' },
+    action: 'abort',
+    failedStepNo,
+  });
+  assert.deepEqual(recoveredAbort, aborted);
+  await assert.rejects(
+    () => workflow.resume({
+      taskId: task.id,
+      expectedVersion: paused.stateVersion,
+      idempotencyKey: `review-abort-wrong-step-${randomUUID()}`,
+      actor: { userId: ownerId, role: 'owner' },
+      action: 'abort',
+      failedStepNo: failedStepNo + 1,
+    }),
+    TaskWorkflowGateError,
+  );
 });
 
 test('resume rejects core skip and safely renumbers a strict Current plan after optional skip', async () => {
@@ -1385,6 +1570,26 @@ test('resume rejects core skip and safely renumbers a strict Current plan after 
     failedStepNo: 2,
   });
   assert.equal(skipped.state, 'awaiting_confirmation');
+  const recoveredSkip = await workflow.resume({
+    taskId: optional.task.id,
+    expectedVersion: optional.paused.stateVersion,
+    idempotencyKey: 'optional-skip-recovered',
+    actor: { userId: ownerId, role: 'owner' },
+    action: 'skip',
+    failedStepNo: 2,
+  });
+  assert.deepEqual(recoveredSkip, skipped);
+  await assert.rejects(
+    () => workflow.resume({
+      taskId: optional.task.id,
+      expectedVersion: optional.paused.stateVersion,
+      idempotencyKey: 'optional-skip-wrong-step',
+      actor: { userId: ownerId, role: 'owner' },
+      action: 'skip',
+      failedStepNo: 99,
+    }),
+    TaskWorkflowGateError,
+  );
   const revisedTask = await repository.getTaskDetail(optional.task.id);
   assert.notEqual(revisedTask?.activePlanVersionId, optional.plan.id);
   const revisedPlan = await repository.getPlanVersionDetail(revisedTask?.activePlanVersionId ?? '');

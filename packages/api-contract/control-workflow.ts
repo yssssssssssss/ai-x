@@ -192,6 +192,8 @@ export interface ReportReviewArtifact {
   revisionRound: 0 | 1;
 }
 
+export type PassedReportReviewArtifact = ReportReviewArtifact & { verdict: 'pass' };
+
 interface CoreReportPackageResponse<TDeliverable> {
   deliverable: TDeliverable;
   evidenceManifest: EvidenceManifest;
@@ -206,13 +208,13 @@ export type CurrentReportPackageResponse<TPayload = unknown> =
     }
   | CoreReportPackageResponse<ResearchDeliverableEnvelope<TPayload>> & {
       presentationMode: 'current_text';
-      reportReview: ReportReviewArtifact;
+      reportReview: PassedReportReviewArtifact;
       reportDocument?: never;
       visualAssetManifest?: never;
     }
   | CoreReportPackageResponse<ResearchDeliverableEnvelope<TPayload>> & {
       presentationMode: 'multimodal';
-      reportReview: ReportReviewArtifact;
+      reportReview: PassedReportReviewArtifact;
       reportDocument?: never;
       visualAssetManifest?: never;
     };

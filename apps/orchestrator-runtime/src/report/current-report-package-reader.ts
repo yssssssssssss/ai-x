@@ -1,7 +1,7 @@
 import { basename } from 'node:path';
 import type {
   CurrentReportPackageResponse,
-  ReportReviewArtifact,
+  PassedReportReviewArtifact,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import type {
   LegacyResearchDeliverableEnvelope,
@@ -20,7 +20,7 @@ import {
 } from '../evidence/evidence-service.ts';
 import { ReportEvidenceValidator } from '../evidence/report-evidence-validator.ts';
 import { SchemaValidator } from '../schema/validator.ts';
-import { assertReportReviewInvariant } from './report-review-service.ts';
+import { assertValidReportReviewArtifact } from './report-review-service.ts';
 
 export const REVIEW_GATED_DELIVERABLE_SCHEMA_VERSION = 'research-deliverable-v1-review-gated';
 const LEGACY_DELIVERABLE_SCHEMA_VERSION = 'research-deliverable-v1';
@@ -96,7 +96,7 @@ export class CurrentReportPackageReader {
       attemptId: binding.attemptId,
       kind: 'report_review',
     });
-    let review: ReportReviewArtifact | null = null;
+    let review: PassedReportReviewArtifact | null = null;
     let deliverableArtifactId: string;
     if (selectedReview) {
       const verifiedReview = await this.dependencies.artifacts.readVerifiedJson<unknown>(
@@ -112,15 +112,14 @@ export class CurrentReportPackageReader {
       if (verifiedReview.artifact.schemaVersion !== 'report-review-v1') {
         throw new Error('Review Artifact schema version is invalid');
       }
-      this.schemaValidator.validateOrThrow('report-review', verifiedReview.value);
+      assertValidReportReviewArtifact(verifiedReview.value, this.schemaValidator);
       const reviewRecord = record(verifiedReview.value);
       if (!reviewRecord) throw new Error('Review JSON schema is invalid');
       assertJsonIdentity(reviewRecord, binding, 'Review');
-      review = verifiedReview.value as ReportReviewArtifact;
-      assertReportReviewInvariant(review);
-      if (review.verdict !== 'pass') {
+      if (verifiedReview.value.verdict !== 'pass') {
         throw new Error('final Review verdict must be pass');
       }
+      review = verifiedReview.value as PassedReportReviewArtifact;
       if (basename(verifiedReview.artifact.storageUri) !== `review-r${review.revisionRound}.json`) {
         throw new Error('Review revision round does not match the final Review Artifact');
       }

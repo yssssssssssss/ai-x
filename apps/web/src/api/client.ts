@@ -97,7 +97,6 @@ import type {
   ConfirmControlPlanRequest,
   ControlCommandResponse,
   ControlExecutionResult,
-  CurrentReportPackageResponse,
   CurrentTaskReadResponse,
   ExecutionControlPlanRequest,
   PlanControlTaskRequest,
@@ -105,13 +104,11 @@ import type {
   SelectControlPlanRequest,
   SelectControlPlanResponse,
 } from '../../../../packages/api-contract/control-workflow.ts';
-import type {
-  ResearchPlanPayload,
-} from '../../../../packages/api-contract/research-deliverable.ts';
 import type { PlanProgress } from '../../../../packages/api-contract/plan.ts';
 import type { User, TaskDetail, TaskSummary, SkillItem } from '../../../../packages/api-contract/http.ts';
+import { parseControlDeliverableResponse } from '../report-package-response.ts';
+export type { ControlDeliverableResponse } from '../report-package-response.ts';
 
-export type ControlDeliverableResponse = CurrentReportPackageResponse<ResearchPlanPayload>;
 
 export interface ClarifyControlTaskRequest {
   expectedVersion: number;
@@ -211,6 +208,7 @@ export const api = {
     req<ControlCommandResponse>(`/control-tasks/${taskId}/resume`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
   executeControlPlan: (taskId: string, body: ExecutionControlPlanRequest) =>
     req<ControlExecutionResult>(`/control-tasks/${taskId}/execute`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
-  controlDeliverable: (taskId: string) =>
-    req<ControlDeliverableResponse>(`/control-tasks/${taskId}/deliverable`),
+  controlDeliverable: async (taskId: string) => parseControlDeliverableResponse(
+    await req<unknown>(`/control-tasks/${taskId}/deliverable`),
+  ),
 };

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { test } from 'node:test';
-import type { CurrentReportPackageResponse } from '../packages/api-contract/control-workflow.ts';
+import type { CurrentReportPackageResponse, ReportReviewArtifact } from '../packages/api-contract/control-workflow.ts';
 import type {
   ResearchDeliverableEnvelope,
   ResearchPlanPayload,
@@ -13,6 +13,10 @@ type CurrentResearchPlanResponse = CurrentReportPackageResponse<ResearchPlanPayl
     contentSha256: string;
   };
 };
+type LegacyCurrentResearchPlanResponse = Extract<
+  CurrentResearchPlanResponse,
+  { presentationMode: 'legacy_text' }
+>;
 
 interface CurrentReportMarkdownModule {
   currentResearchPlanToMarkdown(response: CurrentResearchPlanResponse): string;
@@ -46,7 +50,7 @@ function buildResponse(
     '公开页面内容可能随时间变化',
     '长尾品牌公开资料存在覆盖缺口',
   ],
-): CurrentResearchPlanResponse {
+): LegacyCurrentResearchPlanResponse {
   const payload: ResearchPlanPayload = {
     title: '宠物辅食竞品研究计划',
     researchGoal: '识别宠物辅食市场主要竞品的产品、价格与渠道差异',
@@ -186,6 +190,34 @@ function buildResponse(
   return { presentationMode: 'legacy_text', deliverable, evidenceManifest };
 }
 
+function buildCurrentResponse(): Extract<CurrentResearchPlanResponse, { presentationMode: 'current_text' }> {
+  const legacy = buildResponse();
+  const reportReview: ReportReviewArtifact & { verdict: 'pass' } = {
+    version: 'report-review-v1',
+    taskId: legacy.deliverable.taskId,
+    planVersionId: legacy.deliverable.planVersionId,
+    attemptId: legacy.deliverable.attemptId,
+    deliverableArtifactId: 'deliverable-current-report-1',
+    verdict: 'pass',
+    dimensions: [
+      'requirement_coverage',
+      'question_coverage',
+      'evidence_coverage',
+      'reasoning_quality',
+      'recommendation_quality',
+      'visual_quality',
+      'risk_disclosure',
+    ].map((id) => ({ id, passed: true, issues: [] })) as ReportReviewArtifact['dimensions'],
+    revisionRound: 0,
+  };
+  return {
+    ...legacy,
+    presentationMode: 'current_text',
+    deliverable: legacy.deliverable as ResearchDeliverableEnvelope<ResearchPlanPayload>,
+    reportReview,
+  };
+}
+
 function assertIncludes(markdown: string, expected: string, label: string): void {
   assert.ok(markdown.includes(expected), `${label} must be rendered`);
 }
@@ -285,6 +317,26 @@ test('currentResearchPlanToMarkdown renders the complete current research plan w
   assert.ok(!markdown.includes(manifestArtifactId), 'manifest artifact ID must not leak');
   assert.ok(!markdown.includes(evidenceArtifactId), 'evidence artifact ID must not leak');
   assert.match(markdown, /\[E1\]/u, 'public Evidence ID may be rendered');
+});
+
+test('currentResearchPlanToMarkdown renders a pass-reviewed current_text package', async () => {
+  const { currentResearchPlanToMarkdown } = await loadCurrentReportMarkdownModule();
+  const markdown = currentResearchPlanToMarkdown(buildCurrentResponse());
+
+  assertIncludes(markdown, '宠物辅食竞品研究计划', 'current report title');
+});
+
+test('currentResearchPlanToMarkdown rejects multimodal until the Phase 5 renderer exists', async () => {
+  const { currentResearchPlanToMarkdown } = await loadCurrentReportMarkdownModule();
+  const multimodal = {
+    ...buildCurrentResponse(),
+    presentationMode: 'multimodal',
+  } as CurrentResearchPlanResponse;
+
+  assert.throws(
+    () => currentResearchPlanToMarkdown(multimodal),
+    /multimodal|phase 5|renderer/i,
+  );
 });
 
 test('currentResearchPlanToMarkdown omits the risk heading when risks are empty', async () => {

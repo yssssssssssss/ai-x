@@ -84,6 +84,8 @@ const REVIEW_SCHEMA = {
   required: ['version', 'taskId', 'planVersionId', 'attemptId', 'deliverableArtifactId', 'verdict', 'dimensions', 'revisionRound'],
 };
 
+const REPORT_REVIEW_VALIDATOR = new SchemaValidator();
+
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -110,6 +112,14 @@ export function assertReportReviewInvariant(
       throw new Error('Review verdict pass requires every dimension to pass without issues');
     }
   }
+}
+
+export function assertValidReportReviewArtifact(
+  review: unknown,
+  validator: Pick<SchemaValidator, 'validateOrThrow'> = REPORT_REVIEW_VALIDATOR,
+): asserts review is ReportReviewArtifact {
+  validator.validateOrThrow('report-review', review);
+  assertReportReviewInvariant(review as ReportReviewArtifact);
 }
 
 

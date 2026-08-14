@@ -14,6 +14,7 @@ import {
   CurrentReportPackageReader,
   REVIEW_GATED_DELIVERABLE_SCHEMA_VERSION,
 } from '../apps/orchestrator-runtime/src/report/current-report-package-reader.ts';
+import { parseControlDeliverableResponse } from '../apps/web/src/report-package-response.ts';
 
 const binding = {
   taskId: 'task-1',
@@ -445,7 +446,58 @@ test('models legacy coverage as optional while current coverage remains required
   const _invalidCurrentPackage: CurrentReportPackageResponse = currentWithoutCoverage;
 });
 
+test('narrows final package Reviews to pass verdicts', () => {
+  const fullDeliverable = deliverable() as unknown as ResearchDeliverableEnvelope<unknown>;
+  const currentWithRevision = {
+    presentationMode: 'current_text' as const,
+    deliverable: fullDeliverable,
+    evidenceManifest: manifest(),
+    reportReview: review({ verdict: 'revise' }),
+  };
+  // @ts-expect-error final current_text packages require a pass Review
+  const _invalidCurrentReview: CurrentReportPackageResponse = currentWithRevision;
+
+  const multimodalWithBlock = {
+    presentationMode: 'multimodal' as const,
+    deliverable: fullDeliverable,
+    evidenceManifest: manifest(),
+    reportReview: review({ verdict: 'block' }),
+  };
+  // @ts-expect-error final multimodal packages require a pass Review
+  const _invalidMultimodalReview: CurrentReportPackageResponse = multimodalWithBlock;
+});
+
 test('never silently downgrades an unknown deliverable schema marker', async () => {
   const { reader } = setup({ deliverableSchemaVersion: 'unexpected-deliverable-v2', review: null });
   await assert.rejects(reader.read(binding), /schema|marker/i);
+});
+
+
+test('runtime package client validates presentation mode and a pass final Review', () => {
+  const legacy = {
+    presentationMode: 'legacy_text',
+    deliverable: deliverable(),
+    evidenceManifest: manifest(),
+  };
+  assert.equal(parseControlDeliverableResponse(legacy).presentationMode, 'legacy_text');
+
+  const current = {
+    presentationMode: 'current_text',
+    deliverable: deliverable(),
+    evidenceManifest: manifest(),
+    reportReview: review(),
+  };
+  assert.equal(parseControlDeliverableResponse(current).presentationMode, 'current_text');
+  assert.throws(
+    () => parseControlDeliverableResponse({ ...current, presentationMode: 'future_mode' }),
+    /presentationMode|mode/i,
+  );
+  assert.throws(
+    () => parseControlDeliverableResponse({ ...current, reportReview: review({ verdict: 'revise' }) }),
+    /pass|verdict|review/i,
+  );
+  assert.equal(
+    parseControlDeliverableResponse({ ...current, presentationMode: 'multimodal' }).presentationMode,
+    'multimodal',
+  );
 });

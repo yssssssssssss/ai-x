@@ -1070,6 +1070,15 @@ git add packages/api-contract/control-workflow.ts packages/api-contract/research
 git commit -m "feat: serve verified current report packages"
 ```
 
+#### Task 14 Release-gate recovery report（2026-08-14）
+
+- [x] Command-loss replay 以 verified final Review 绑定的 Deliverable 为事实源，并按 Deliverable 的 `evidenceManifestArtifactId` 精确读取、校验 SEALED/hash/schema/Task/Plan/Attempt；同 attempt 后写 M2 不再覆盖 M1 回放结果。
+- [x] paused/completed replay 复用 strict `report-review` schema 与七维 invariant；未知 verdict 即使 Artifact hash 有效也 fail closed。
+- [x] `resume` 在 recovered-state shortcut 前解析当前 attempt failed step，校验显式 `failedStepNo` 与 `allowedActions`；同动作/同一步可恢复，伪造步骤或动作拒绝，worker-loss 无显式步骤的 retry 保持可用。
+- [x] `current_text`/`multimodal` package 类型收窄为 pass Review；Web API client 在 cast 前校验 `presentationMode` 与 pass verdict；Phase 4 Markdown/Stage4 仅渲染 `legacy_text`/`current_text`，显式拒绝 `multimodal`。
+- [x] TDD：上述四项回归均先观察到预期失败，再完成最小修复。
+- [x] Gate：指定四文件串行 suite 77/77 passed；`pnpm typecheck` passed。
+
 ---
 
 ## Phase 5：专业多模态报告

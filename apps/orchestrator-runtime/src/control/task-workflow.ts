@@ -13,9 +13,8 @@ import {
 import type {
   ControlExecutionResult,
   DisabledExecutionResponse,
-  ReportReviewArtifact,
 } from '../../../../packages/api-contract/control-workflow.ts';
-import { assertReportReviewInvariant } from '../report/report-review-service.ts';
+import { assertValidReportReviewArtifact } from '../report/report-review-service.ts';
 export { TaskWorkflowAuthorizationError };
 
 export type WorkflowRole = 'owner' | 'legal' | 'security' | 'gold';
@@ -345,7 +344,6 @@ export class TaskWorkflowService {
     }
 
     const verifiedReview = await this.terminalArtifacts.readVerifiedJson<unknown>(selectedReview.id);
-    const reviewValue = isRecord(verifiedReview.value) ? verifiedReview.value : null;
     if (
       verifiedReview.artifact.id !== selectedReview.id
       || verifiedReview.artifact.state !== 'SEALED'
@@ -355,52 +353,65 @@ export class TaskWorkflowService {
       || verifiedReview.artifact.taskId !== input.taskId
       || verifiedReview.artifact.planVersionId !== input.planVersionId
       || verifiedReview.artifact.attemptId !== input.attemptId
-      || !reviewValue
-      || reviewValue.version !== 'report-review-v1'
-      || reviewValue.taskId !== input.taskId
+    ) {
+      throw new ControlPlaneConflictError('terminal Review Artifact cannot reconstruct execution result');
+    }
+    try {
+      assertValidReportReviewArtifact(verifiedReview.value);
+    } catch {
+      throw new ControlPlaneConflictError('terminal Review Artifact cannot reconstruct execution result');
+    }
+    const reviewValue = verifiedReview.value;
+    if (
+      reviewValue.taskId !== input.taskId
       || reviewValue.planVersionId !== input.planVersionId
       || reviewValue.attemptId !== input.attemptId
-      || typeof reviewValue.deliverableArtifactId !== 'string'
-      || (reviewValue.revisionRound !== 0 && reviewValue.revisionRound !== 1)
       || basename(verifiedReview.artifact.storageUri) !== `review-r${reviewValue.revisionRound}.json`
       || (input.status !== 'paused' && reviewValue.verdict !== 'pass')
     ) {
       throw new ControlPlaneConflictError('terminal Review Artifact cannot reconstruct execution result');
     }
-    assertReportReviewInvariant(reviewValue as unknown as ReportReviewArtifact);
 
     const verifiedDeliverable = await this.terminalArtifacts.readVerifiedJson<unknown>(
       reviewValue.deliverableArtifactId,
     );
+    const deliverableValue = isRecord(verifiedDeliverable.value) ? verifiedDeliverable.value : null;
     if (
       verifiedDeliverable.artifact.id !== reviewValue.deliverableArtifactId
       || verifiedDeliverable.artifact.state !== 'SEALED'
       || !verifiedDeliverable.artifact.contentSha256
       || verifiedDeliverable.artifact.kind !== 'deliverable'
+      || verifiedDeliverable.artifact.schemaVersion !== 'research-deliverable-v1-review-gated'
       || verifiedDeliverable.artifact.taskId !== input.taskId
       || verifiedDeliverable.artifact.planVersionId !== input.planVersionId
       || verifiedDeliverable.artifact.attemptId !== input.attemptId
+      || !deliverableValue
+      || deliverableValue.version !== 'research-deliverable-v1'
+      || deliverableValue.taskId !== input.taskId
+      || deliverableValue.planVersionId !== input.planVersionId
+      || deliverableValue.attemptId !== input.attemptId
+      || typeof deliverableValue.evidenceManifestArtifactId !== 'string'
     ) {
       throw new ControlPlaneConflictError('terminal Deliverable Artifact cannot reconstruct execution result');
     }
 
-    const selectedManifest = await this.repository.findSealedArtifact({
-      taskId: input.taskId,
-      attemptId: input.attemptId,
-      kind: 'evidence_manifest',
-    });
-    if (!selectedManifest) {
-      throw new ControlPlaneConflictError('terminal Evidence Manifest is missing');
-    }
-    const verifiedManifest = await this.terminalArtifacts.readVerifiedJson<unknown>(selectedManifest.id);
+    const manifestArtifactId = deliverableValue.evidenceManifestArtifactId;
+    const verifiedManifest = await this.terminalArtifacts.readVerifiedJson<unknown>(manifestArtifactId);
+    const manifestValue = isRecord(verifiedManifest.value) ? verifiedManifest.value : null;
     if (
-      verifiedManifest.artifact.id !== selectedManifest.id
+      verifiedManifest.artifact.id !== manifestArtifactId
       || verifiedManifest.artifact.state !== 'SEALED'
       || !verifiedManifest.artifact.contentSha256
       || verifiedManifest.artifact.kind !== 'evidence_manifest'
+      || verifiedManifest.artifact.schemaVersion !== 'evidence-v1'
       || verifiedManifest.artifact.taskId !== input.taskId
       || verifiedManifest.artifact.planVersionId !== input.planVersionId
       || verifiedManifest.artifact.attemptId !== input.attemptId
+      || !manifestValue
+      || manifestValue.version !== 'evidence-v1'
+      || manifestValue.taskId !== input.taskId
+      || manifestValue.planVersionId !== input.planVersionId
+      || manifestValue.attemptId !== input.attemptId
     ) {
       throw new ControlPlaneConflictError('terminal Evidence Manifest cannot reconstruct execution result');
     }
@@ -665,11 +676,29 @@ export class TaskWorkflowService {
     const task = await this.requireTask(input.taskId);
     this.requireOwner(task, input.actor);
     const action = input.action ?? 'retry';
+    const currentAttempt = task.currentAttemptId
+      ? (await this.repository.listAttempts(task.id)).find((attempt) => attempt.id === task.currentAttemptId)
+      : undefined;
+    let failedStep = null;
+    if (task.currentAttemptId) {
+      const steps = await this.repository.listExecutionSteps(task.currentAttemptId);
+      failedStep = input.failedStepNo == null
+        ? [...steps].reverse().find((step) => step.state === 'failed') ?? null
+        : steps.find((step) => step.stepNo === input.failedStepNo && step.state === 'failed') ?? null;
+    }
+    if (input.failedStepNo != null && !failedStep) {
+      throw new TaskWorkflowGateError([`step:${input.failedStepNo}`]);
+    }
+    if (failedStep) {
+      if (!allowedActions(failedStep.failure).includes(action)) {
+        throw new TaskWorkflowGateError([`action:${action}`]);
+      }
+    } else if (action !== 'retry') {
+      throw new TaskWorkflowGateError([`action:${action}`]);
+    }
+
     const recoveredState = action === 'skip' ? 'awaiting_confirmation' : action === 'abort' ? 'cancelled' : 'ready';
     if (task.state !== 'paused' || task.stateVersion !== input.expectedVersion) {
-      const currentAttempt = task.currentAttemptId
-        ? (await this.repository.listAttempts(task.id)).find((attempt) => attempt.id === task.currentAttemptId)
-        : undefined;
       const recoveryAttemptState = action === 'abort' ? 'cancelled' : 'paused';
       if (task.state === recoveredState && currentAttempt?.state === recoveryAttemptState) {
         const recovered = { state: task.state, stateVersion: task.stateVersion };
@@ -693,23 +722,6 @@ export class TaskWorkflowService {
         return recovered;
       }
       throw new ControlPlaneConflictError(`task ${task.id} is not paused at version ${input.expectedVersion}`);
-    }
-    let failedStep = null;
-    if (task.currentAttemptId) {
-      const steps = await this.repository.listExecutionSteps(task.currentAttemptId);
-      failedStep = input.failedStepNo == null
-        ? [...steps].reverse().find((step) => step.state === 'failed') ?? null
-        : steps.find((step) => step.stepNo === input.failedStepNo && step.state === 'failed') ?? null;
-    }
-    if (input.failedStepNo != null && !failedStep) {
-      throw new TaskWorkflowGateError([`step:${input.failedStepNo}`]);
-    }
-    if (failedStep) {
-      if (!allowedActions(failedStep.failure).includes(action)) {
-        throw new TaskWorkflowGateError([`action:${action}`]);
-      }
-    } else if (action !== 'retry') {
-      throw new TaskWorkflowGateError([`action:${action}`]);
     }
 
     let transitioned;
