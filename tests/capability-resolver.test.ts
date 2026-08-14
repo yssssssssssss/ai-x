@@ -221,6 +221,30 @@ test('requires a high-risk tool approval capability to match its manifest author
   assert.deepEqual(reasonCodes(matchingAuthority.eligible[0]!), ['eligible']);
 });
 
+test('freezes exact high-risk Skill and required Tool approval authorities in the eligible decision', () => {
+  const approvals: CapabilityApproval[] = [
+    {
+      capability_type: 'skill',
+      capability_id: 'competitive-web-research',
+      authority: 'security',
+    },
+    {
+      capability_type: 'tool',
+      capability_id: 'tavily-web-search',
+      authority: 'legal',
+    },
+  ];
+  const resolution = resolveCapabilities(input({
+    skills: [skill({ risk_level: 'high' })],
+    tools: [tool({ risk_level: 'high' })],
+    tool_manifests: [toolManifest({ risk_level: 'high', approver_rule: 'legal' })],
+    approval_capabilities: approvals,
+  }));
+
+  assert.equal(resolution.rejected.length, 0);
+  assert.deepEqual(resolution.eligible[0]?.required_approvals, approvals);
+});
+
 test('returns explicit eligible and rejected reasons deterministically', () => {
   const resolveInput = input({
     skills: [

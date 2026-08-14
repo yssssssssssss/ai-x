@@ -2,7 +2,10 @@
 // 大块 prompt 常量就近安放本文件;retrieveGuidance 纯函数移入此处(唯一使用者),
 // 由 orchestrator.ts re-export 保住 tests 的老 import 路径(D3)。planner 不反向依赖 orchestrator。
 
+import { join } from 'node:path';
+
 import {
+  getConfigRoot,
   loadDecisionGraph,
   loadToolManifest,
   loadToolInputSchema,
@@ -97,6 +100,85 @@ const currentPlanProposalSchema = {
     },
   },
 };
+
+interface InputSchema {
+  $ref?: string;
+  const?: unknown;
+  default?: unknown;
+  enum?: unknown[];
+  type?: string | string[];
+  required?: string[];
+  properties?: Record<string, InputSchema>;
+  items?: InputSchema;
+  oneOf?: InputSchema[];
+  anyOf?: InputSchema[];
+  minItems?: number;
+  minimum?: number;
+}
+
+function resolveInputSchema(root: InputSchema, schema: InputSchema): InputSchema {
+  if (!schema.$ref?.startsWith('#/')) return schema;
+  let resolved: unknown = root;
+  for (const segment of schema.$ref.slice(2).split('/')) {
+    if (!resolved || typeof resolved !== 'object') return schema;
+    resolved = Reflect.get(resolved, segment.replaceAll('~1', '/').replaceAll('~0', '~'));
+  }
+  return resolved && typeof resolved === 'object' ? resolved as InputSchema : schema;
+}
+
+function taskInputValue(field: string, task: ResearchTaskV2): unknown {
+  if (field === 'query' || field === 'research_goal' || field === 'goal') return task.research_goal;
+  if (field === 'business_domain') return task.business_domain;
+  if (field === 'target_audience') return task.target_audience;
+  if (field === 'scope') return task.scope;
+  if (field === 'constraints') return task.constraints;
+  if (field === 'success_criteria') return task.success_criteria;
+  if (field === 'expected_deliverables') return task.expected_deliverables;
+  return undefined;
+}
+
+function requiredInputValue(
+  root: InputSchema,
+  rawSchema: InputSchema,
+  field: string,
+  task: ResearchTaskV2,
+): unknown {
+  const schema = resolveInputSchema(root, rawSchema);
+  const taskValue = taskInputValue(field, task);
+  if (taskValue !== undefined) return structuredClone(taskValue);
+  if (schema.default !== undefined) return structuredClone(schema.default);
+  if (schema.const !== undefined) return structuredClone(schema.const);
+  if (schema.enum && schema.enum.length > 0) return structuredClone(schema.enum[0]);
+  const alternative = schema.oneOf?.[0] ?? schema.anyOf?.[0];
+  if (alternative) return requiredInputValue(root, alternative, field, task);
+  const type = Array.isArray(schema.type) ? schema.type.find((item) => item !== 'null') : schema.type;
+  if (type === 'object' || schema.properties) return buildSchemaInput(root, schema, task);
+  if (type === 'array') {
+    return Array.from(
+      { length: schema.minItems ?? 0 },
+      () => requiredInputValue(root, schema.items ?? {}, field, task),
+    );
+  }
+  if (type === 'integer') return Math.ceil(schema.minimum ?? 0);
+  if (type === 'number') return schema.minimum ?? 0;
+  if (type === 'boolean') return false;
+  return task.research_goal;
+}
+
+function buildSchemaInput(
+  root: InputSchema,
+  rawSchema: InputSchema,
+  task: ResearchTaskV2,
+): Record<string, unknown> {
+  const schema = resolveInputSchema(root, rawSchema);
+  const input: Record<string, unknown> = {};
+  for (const field of schema.required ?? []) {
+    const propertySchema = schema.properties?.[field];
+    if (!propertySchema) throw new Error(`Input schema required property ${field} has no definition`);
+    input[field] = requiredInputValue(root, propertySchema, field, task);
+  }
+  return input;
+}
 
 export interface CurrentPlanArtifacts {
   activated: DecisionNode[];
@@ -391,55 +473,104 @@ export class RoutedPlanner implements PlanStrategy {
       const acceptanceCriteria = problemGraphResult.graph.questions.flatMap(
         (question) => question.acceptance_criteria,
       );
-      const requiresApproval = directDecision.skill.risk_level === 'high';
-      const approvalRole = requiresApproval ? [...authorities][0] : undefined;
-      if (requiresApproval && !approvalRole) {
-        throw new Error(`Current direct skill ${ctx.direct.skillName} has no approval role`);
+      const requiredApprovals = directDecision.required_approvals;
+      const requiredToolIds = new Set(directDecision.skill.required_tools);
+      const requiredTools = registeredTools.filter((tool) => requiredToolIds.has(tool.id));
+      if (requiredTools.length !== requiredToolIds.size) {
+        throw new Error(`Current direct skill ${ctx.direct.skillName} has unresolved required tools`);
       }
+      const toolSteps: CurrentPlanStep[] = requiredTools.map((tool, index) => {
+        const manifest = manifestById.get(tool.id);
+        if (!manifest) throw new Error(`Current direct tool ${tool.id} has no manifest`);
+        const inputSchema = loadToolInputSchema(manifest.input_schema);
+        const input = buildSchemaInput(
+          inputSchema as InputSchema,
+          inputSchema as InputSchema,
+          ctx.requirement,
+        );
+        validator.validateFileOrThrow(join(getConfigRoot(), manifest.input_schema), input);
+        const approval = requiredApprovals.find((item) => (
+          item.capability_type === 'tool' && item.capability_id === tool.id
+        ));
+        return {
+          step_no: index + 1,
+          step_name: `调用 ${tool.name}`,
+          actor_type: 'tool',
+          actor_id: tool.id,
+          question_ids: questionIds,
+          depends_on: [],
+          input,
+          input_bindings: [],
+          expected_outputs: [{ pointer: '/result', description: `${tool.name} result` }],
+          acceptance_criteria: acceptanceCriteria,
+          requires_approval: Boolean(approval),
+          ...(approval ? { approval_role: approval.authority } : {}),
+          fallback_actor_ids: [],
+        };
+      });
+      const skillStepNo = toolSteps.length + 1;
+      let skillInput: Record<string, unknown> = {
+        research_goal: ctx.requirement.research_goal,
+        brief: ctx.direct.rest,
+        requirement: ctx.requirement,
+      };
+      if (directDecision.skill.input_schema) {
+        const inputSchema = loadToolInputSchema(directDecision.skill.input_schema);
+        skillInput = buildSchemaInput(
+          inputSchema as InputSchema,
+          inputSchema as InputSchema,
+          ctx.requirement,
+        );
+        validator.validateFileOrThrow(
+          join(getConfigRoot(), directDecision.skill.input_schema),
+          skillInput,
+        );
+      }
+      const skillApproval = requiredApprovals.find((item) => (
+        item.capability_type === 'skill' && item.capability_id === ctx.direct!.skillName
+      ));
+      const skillOutputPointer = '/result';
       const skillStep: CurrentPlanStep = {
-        step_no: 99,
+        step_no: skillStepNo,
         step_name: `直呼 ${ctx.direct.skillName}`,
         actor_type: 'skill',
         actor_id: ctx.direct.skillName,
         question_ids: questionIds,
-        depends_on: [],
-        input: {
-          research_goal: ctx.requirement.research_goal,
-          brief: ctx.direct.rest,
-          requirement: ctx.requirement,
-        },
+        depends_on: toolSteps.map((step) => step.step_no),
+        input: skillInput,
         input_bindings: [],
-        expected_outputs: [{ pointer: '/result', description: `${ctx.direct.skillName} result` }],
+        expected_outputs: [{ pointer: skillOutputPointer, description: `${ctx.direct.skillName} result` }],
         acceptance_criteria: acceptanceCriteria,
-        requires_approval: requiresApproval,
-        ...(approvalRole ? { approval_role: approvalRole } : {}),
+        requires_approval: Boolean(skillApproval),
+        ...(skillApproval ? { approval_role: skillApproval.authority } : {}),
         fallback_actor_ids: [],
       };
       const reviewerStep: CurrentPlanStep = {
-        step_no: 99,
+        step_no: skillStepNo + 1,
         step_name: '复核直呼结果',
         actor_type: 'reviewer',
         actor_id: 'research-plan-reviewer',
         question_ids: questionIds,
-        depends_on: [1],
+        depends_on: [skillStepNo],
         input: { result: null },
         input_bindings: [{
           target_pointer: '/result',
-          source_step_no: 1,
-          source_pointer: '/result',
+          source_step_no: skillStepNo,
+          source_pointer: skillOutputPointer,
         }],
         expected_outputs: [{ pointer: '/review', description: '直呼结果复核' }],
         acceptance_criteria: acceptanceCriteria,
         requires_approval: false,
         fallback_actor_ids: [],
       };
+      const directSteps = [...toolSteps, skillStep];
       const candidates: CurrentPlanCandidateProposal[] = [
         {
           id: 'depth',
           title: `直呼 ${directDecision.skill.name ?? ctx.direct.skillName}（含复核）`,
           rationale: '执行用户指定 Skill，并追加独立质量复核。',
           tradeoffs: '多一步复核，耗时略长。',
-          steps: [structuredClone(skillStep), reviewerStep],
+          steps: [...structuredClone(directSteps), reviewerStep],
           assumptions: ctx.requirement.assumptions,
           activated_nodes: [],
         },
@@ -448,7 +579,7 @@ export class RoutedPlanner implements PlanStrategy {
           title: `直呼 ${directDecision.skill.name ?? ctx.direct.skillName}`,
           rationale: '执行用户指定 Skill，不经过能力排序。',
           tradeoffs: '仅执行指定 Skill，不做独立复核。',
-          steps: [structuredClone(skillStep)],
+          steps: structuredClone(directSteps),
           assumptions: ctx.requirement.assumptions,
           activated_nodes: [],
         },

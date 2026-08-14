@@ -166,7 +166,10 @@ function pendingInputKeys(plan: ControlPlanVersionDetail): string[] {
   });
 }
 
-function revisedPlanWithoutStep(plan: unknown, failedStepNo: number): Record<string, unknown> {
+function revisedPlanWithoutStep(plan: unknown, failedStepNo: number): {
+  plan: Record<string, unknown>;
+  remappedStepNo: ReadonlyMap<number, number>;
+} {
   if (!isRecord(plan) || !Array.isArray(plan.steps)) throw new TaskWorkflowGateError(['plan.steps']);
   const steps = plan.steps.map((step, index) => {
     if (
@@ -215,19 +218,53 @@ function revisedPlanWithoutStep(plan: unknown, failedStepNo: number): Record<str
     return remapped;
   };
   return {
-    ...plan,
-    steps: remaining.map((entry, index) => ({
-      ...entry.step,
-      step_no: index + 1,
-      depends_on: entry.dependsOn.map((dependency) => (
-        remapReference(dependency, `step:${entry.stepNo}:depends_on`)
-      )),
-      input_bindings: entry.inputBindings.map(({ binding, sourceStepNo }) => ({
-        ...binding,
-        source_step_no: remapReference(sourceStepNo, `step:${entry.stepNo}:input_bindings`),
+    plan: {
+      ...plan,
+      steps: remaining.map((entry, index) => ({
+        ...entry.step,
+        step_no: index + 1,
+        depends_on: entry.dependsOn.map((dependency) => (
+          remapReference(dependency, `step:${entry.stepNo}:depends_on`)
+        )),
+        input_bindings: entry.inputBindings.map(({ binding, sourceStepNo }) => ({
+          ...binding,
+          source_step_no: remapReference(sourceStepNo, `step:${entry.stepNo}:input_bindings`),
+        })),
       })),
-    })),
+    },
+    remappedStepNo,
   };
+}
+
+function remapPendingInputs(pendingInputs: unknown, remappedStepNo: ReadonlyMap<number, number>): unknown[] {
+  if (!Array.isArray(pendingInputs)) throw new TaskWorkflowGateError(['pending_inputs']);
+  return pendingInputs.map((pendingInput, pendingIndex) => {
+    if (!isRecord(pendingInput) || !Array.isArray(pendingInput.targets)) {
+      throw new TaskWorkflowGateError([`pending_inputs:${pendingIndex}`]);
+    }
+    return {
+      ...pendingInput,
+      targets: pendingInput.targets.map((target, targetIndex) => {
+        if (
+          !isRecord(target)
+          || typeof target.step_no !== 'number'
+          || !Number.isInteger(target.step_no)
+          || typeof target.tool_id !== 'string'
+          || !target.tool_id
+          || typeof target.field !== 'string'
+          || !target.field
+          || typeof target.multiple !== 'boolean'
+        ) {
+          throw new TaskWorkflowGateError([`pending_inputs:${pendingIndex}:targets:${targetIndex}`]);
+        }
+        const stepNo = remappedStepNo.get(target.step_no);
+        if (stepNo === undefined) {
+          throw new TaskWorkflowGateError([`pending_inputs:${pendingIndex}:targets:${targetIndex}:step_no`]);
+        }
+        return { ...target, step_no: stepNo };
+      }),
+    };
+  });
 }
 
 function allowedActions(failure: Record<string, unknown> | null): string[] {
@@ -313,7 +350,7 @@ export class TaskWorkflowService {
     idempotencyKey: string;
     actor: WorkflowActor;
     confirmationAnswers: Record<string, unknown>;
-    inputRoles: string[];
+    inputValues: Record<string, unknown>;
   }): Promise<CommandResult> {
     const hash = requestHash(input);
     const replay = await this.replay<CommandResult>(input.taskId, 'confirmation', input.idempotencyKey, hash);
@@ -327,7 +364,10 @@ export class TaskWorkflowService {
     const missingAnswers = (taskShape(task).clarification_questions ?? [])
       .map((requirement) => requirement.key)
       .filter((key) => !(key in input.confirmationAnswers));
-    const missingInputs = pendingInputKeys(plan).filter((key) => !input.inputRoles.includes(key));
+    const missingInputs = pendingInputKeys(plan).filter((key) => (
+      !Object.prototype.hasOwnProperty.call(input.inputValues, key)
+      || input.inputValues[key] === undefined
+    ));
     if (missingAnswers.length || missingInputs.length) throw new TaskWorkflowGateError([...missingAnswers, ...missingInputs]);
 
     for (const [key, value] of Object.entries(input.confirmationAnswers)) {
@@ -341,11 +381,12 @@ export class TaskWorkflowService {
         decision: 'confirmed',
         value,
         actorUserId: input.actor.userId,
+        actorService: input.actor.service,
         actorRole: input.actor.role,
         idempotencyKey: `${input.idempotencyKey}:confirmation:${key}`,
       });
     }
-    for (const role of input.inputRoles) {
+    for (const [role, value] of Object.entries(input.inputValues)) {
       await this.repository.recordGate({
         taskId: task.id,
         planVersionId: plan.id,
@@ -354,7 +395,9 @@ export class TaskWorkflowService {
         gateKey: role,
         requiredAuthority: 'owner',
         decision: 'provided',
+        value,
         actorUserId: input.actor.userId,
+        actorService: input.actor.service,
         actorRole: input.actor.role,
         idempotencyKey: `${input.idempotencyKey}:input:${role}`,
       });
@@ -570,7 +613,8 @@ export class TaskWorkflowService {
     if (action === 'skip') {
       if (!failedStep || !task.activePlanVersionId) throw new TaskWorkflowGateError(['resume.failure']);
       const activePlan = await this.requirePlan(task, task.activePlanVersionId);
-      const revisedPlan = revisedPlanWithoutStep(activePlan.plan, failedStep.stepNo);
+      const { plan: revisedPlan, remappedStepNo } = revisedPlanWithoutStep(activePlan.plan, failedStep.stepNo);
+      const pendingInputs = remapPendingInputs(activePlan.pendingInputs, remappedStepNo);
       const revision = await this.repository.createPlanRevision({
         taskId: task.id,
         expectedVersion: input.expectedVersion,
@@ -578,7 +622,7 @@ export class TaskWorkflowService {
         to: 'awaiting_confirmation',
         candidateId: activePlan.candidateId ?? undefined,
         plan: revisedPlan,
-        pendingInputs: activePlan.pendingInputs,
+        pendingInputs,
       });
       transitioned = revision.task;
     } else if (action === 'abort') {

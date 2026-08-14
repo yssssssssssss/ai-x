@@ -1754,3 +1754,43 @@ test('real Tavily runs only through a valid lease and persists real provenance',
       && Number.isInteger(source.originalIndex);
   }));
 });
+
+test('failed Skill provenance retains its persisted receipt when config capture then fails', async () => {
+  const originalRoot = getConfigRoot();
+  const missingRoot = mkdtempSync(join(tmpdir(), 'missing-skill-receipt-root-'));
+  class ConfigBreakingAfterSkillResultLLM extends CountingRealLLM {
+    override async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
+      const result = await super.generateStructured<T>(options);
+      setConfigRoot(missingRoot);
+      return result;
+    }
+  }
+
+  try {
+    const { repository, lease } = await claimedExecution(
+      new Date(Date.now() + 60_000),
+      planSteps.slice(0, 2),
+    );
+    const result = await buildEngine(
+      repository,
+      new ToolRouter().register(new CountingRealTavilyAdapter()),
+      new ConfigBreakingAfterSkillResultLLM(),
+    ).execute({ lease, expectedModel: 'pinned-model' });
+
+    assert.equal(result.status, 'paused');
+    assert.equal(result.failure?.kind, 'schema');
+    const calls = await repository.listModelCalls(lease.attemptId);
+    assert.equal(calls.length, 1);
+    const receipt = calls[0]!;
+    assert.equal(receipt.stage, 'skill');
+    const skillStep = (await repository.listExecutionSteps(lease.attemptId))[1];
+    assert.equal(skillStep?.skillProvenance?.status, 'failed');
+    assert.match(String(skillStep?.skillProvenance?.captureFailure), /ENOENT|no such file/iu);
+    assert.equal(skillStep?.skillProvenance?.modelReceiptId, receipt.id);
+    assert.equal(skillStep?.skillProvenance?.promptHash, receipt.promptHash);
+    assert.equal(skillStep?.skillProvenance?.traceId, receipt.traceId);
+  } finally {
+    setConfigRoot(originalRoot);
+    rmSync(missingRoot, { recursive: true, force: true });
+  }
+});

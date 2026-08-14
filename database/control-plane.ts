@@ -315,6 +315,10 @@ export interface ControlGateRecord {
   gateKey: string;
   requiredAuthority: string;
   decision: string;
+  value: unknown;
+  actorUserId: string | null;
+  actorRole: string | null;
+  idempotencyKey: string;
 }
 
 export interface ControlCommandRecord {
@@ -2052,7 +2056,7 @@ export class ControlPlaneRepository {
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'trusted-p0-v1', $12)`,
         [
           input.taskId, input.planVersionId, input.planHash, input.gateType, input.gateKey,
-          input.requiredAuthority, input.decision, input.value == null ? null : JSON.stringify(input.value),
+          input.requiredAuthority, input.decision, input.value === undefined ? null : JSON.stringify(input.value),
           input.actorUserId ?? null, input.actorService ?? null, input.actorRole ?? null,
           input.idempotencyKey,
         ],
@@ -2064,7 +2068,8 @@ export class ControlPlaneRepository {
     const connection = await this.database.connect();
     try {
       const result = await connection.query(
-        `SELECT gate_type, gate_key, required_authority, decision
+        `SELECT gate_type, gate_key, required_authority, decision, value_json,
+                actor_user_id, actor_role, idempotency_key
          FROM control_gate_records
          WHERE task_id = $1 AND plan_version_id = $2 ORDER BY created_at`,
         [taskId, planVersionId],
@@ -2074,6 +2079,10 @@ export class ControlPlaneRepository {
         gateKey: asString(row.gate_key, 'gate_key'),
         requiredAuthority: asString(row.required_authority, 'required_authority'),
         decision: asString(row.decision, 'decision'),
+        value: row.value_json,
+        actorUserId: row.actor_user_id == null ? null : asString(row.actor_user_id, 'actor_user_id'),
+        actorRole: row.actor_role == null ? null : asString(row.actor_role, 'actor_role'),
+        idempotencyKey: asString(row.idempotency_key, 'idempotency_key'),
       }));
     } finally {
       connection.release();

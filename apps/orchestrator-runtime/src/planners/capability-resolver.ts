@@ -1,10 +1,13 @@
-import type { PendingInput } from '../../../../packages/api-contract/research-deliverable.ts';
+import type {
+  CurrentCapabilityApproval,
+  PendingInput,
+} from '../../../../packages/api-contract/research-deliverable.ts';
 import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
 import type { ToolManifest, ToolRegistryEntry } from '../runtime/config-loader.ts';
 import type { CapabilitySkillRegistryEntry as LoadedCapabilitySkillRegistryEntry } from '../runtime/skill-loader.ts';
 
 export type CapabilitySkillRegistryEntry = LoadedCapabilitySkillRegistryEntry;
-export type CapabilityApprovalAuthority = Exclude<NonNullable<ToolManifest['approver_rule']>, 'none'>;
+export type CapabilityApprovalAuthority = CurrentCapabilityApproval['authority'];
 export type CapabilityReasonCode =
   | 'skill_inactive'
   | 'task_type_mismatch'
@@ -23,11 +26,7 @@ export interface CapabilityToolState {
   real_adapter_qualified: boolean;
 }
 
-export interface CapabilityApproval {
-  capability_type: 'skill' | 'tool';
-  capability_id: string;
-  authority: CapabilityApprovalAuthority;
-}
+export type CapabilityApproval = CurrentCapabilityApproval;
 
 export type CapabilityPendingInput = Omit<PendingInput, 'targets'> & {
   capability_id: string;
@@ -41,6 +40,7 @@ export interface CapabilityDecisionReason {
 
 export interface CapabilityDecision {
   skill: CapabilitySkillRegistryEntry;
+  required_approvals: CapabilityApproval[];
   reasons: CapabilityDecisionReason[];
   pending_inputs: CapabilityPendingInput[];
 }
@@ -58,6 +58,43 @@ export interface CapabilityResolveInput {
 export interface CapabilityResolution {
   eligible: CapabilityDecision[];
   rejected: CapabilityDecision[];
+}
+
+const APPROVAL_AUTHORITY_RANK: Record<CapabilityApprovalAuthority, number> = {
+  owner: 0,
+  legal: 1,
+  security: 2,
+};
+
+function selectSkillApproval(
+  skillId: string,
+  approvals: readonly CapabilityApproval[],
+): CapabilityApproval | undefined {
+  const approval = approvals
+    .filter((candidate) => (
+      candidate.capability_type === 'skill' && candidate.capability_id === skillId
+    ))
+    .sort((left, right) => (
+      APPROVAL_AUTHORITY_RANK[left.authority] - APPROVAL_AUTHORITY_RANK[right.authority]
+    ))[0];
+  return approval ? { ...approval } : undefined;
+}
+
+function requiredToolApproval(
+  toolId: string,
+  toolsById: ReadonlyMap<string, ToolRegistryEntry>,
+  manifestsById: ReadonlyMap<string, ToolManifest>,
+  approvals: readonly CapabilityApproval[],
+): CapabilityApproval | undefined {
+  if (toolsById.get(toolId)?.risk_level !== 'high') return undefined;
+  const authority = manifestsById.get(toolId)?.approver_rule;
+  if (!authority || authority === 'none') return undefined;
+  const approval = approvals.find((candidate) => (
+    candidate.capability_type === 'tool'
+    && candidate.capability_id === toolId
+    && candidate.authority === authority
+  ));
+  return approval ? { ...approval } : undefined;
 }
 
 function requiredToolRejections(
@@ -140,6 +177,7 @@ export function resolveCapabilities(input: CapabilityResolveInput): CapabilityRe
       const skillId = skill.id ?? '(no-id)';
       rejected.push({
         skill,
+        required_approvals: [],
         reasons: [{
           code: 'skill_inactive',
           message: `skill ${skillId} is ${skill.status}, not active`,
@@ -149,6 +187,7 @@ export function resolveCapabilities(input: CapabilityResolveInput): CapabilityRe
       continue;
     }
 
+    const requiredApprovals: CapabilityApproval[] = [];
     const reasons: CapabilityDecisionReason[] = [];
     if (!skill.task_types.includes(input.task.task_type)) {
       reasons.push({
@@ -157,26 +196,36 @@ export function resolveCapabilities(input: CapabilityResolveInput): CapabilityRe
         related_id: input.task.task_type,
       });
     } else {
+      if (skill.risk_level === 'high') {
+        const approval = selectSkillApproval(skill.id, input.approval_capabilities);
+        if (approval) {
+          requiredApprovals.push(approval);
+        } else {
+          reasons.push({
+            code: 'approval_unavailable',
+            message: `high-risk skill ${skill.id} has no approval capability`,
+            related_id: skill.id,
+          });
+        }
+      }
       for (const toolId of skill.required_tools) {
-        reasons.push(...requiredToolRejections(
+        const toolReasons = requiredToolRejections(
           toolId,
           toolsById,
           manifestsById,
           statesById,
           input.approval_capabilities,
-        ));
-      }
-      if (
-        skill.risk_level === 'high'
-        && !input.approval_capabilities.some((approval) => (
-          approval.capability_type === 'skill' && approval.capability_id === skill.id
-        ))
-      ) {
-        reasons.push({
-          code: 'approval_unavailable',
-          message: `high-risk skill ${skill.id} has no approval capability`,
-          related_id: skill.id,
-        });
+        );
+        reasons.push(...toolReasons);
+        if (toolReasons.length === 0) {
+          const approval = requiredToolApproval(
+            toolId,
+            toolsById,
+            manifestsById,
+            input.approval_capabilities,
+          );
+          if (approval) requiredApprovals.push(approval);
+        }
       }
     }
 
@@ -189,7 +238,7 @@ export function resolveCapabilities(input: CapabilityResolveInput): CapabilityRe
         capability_id: skill.id,
       }));
     if (reasons.length > 0) {
-      rejected.push({ skill, reasons, pending_inputs: pendingInputs });
+      rejected.push({ skill, required_approvals: requiredApprovals, reasons, pending_inputs: pendingInputs });
       continue;
     }
     if (pendingInputs.length > 0) {
@@ -199,7 +248,7 @@ export function resolveCapabilities(input: CapabilityResolveInput): CapabilityRe
       });
     }
     reasons.push({ code: 'eligible', message: `skill ${skill.id} passed all capability filters` });
-    eligible.push({ skill, reasons, pending_inputs: pendingInputs });
+    eligible.push({ skill, required_approvals: requiredApprovals, reasons, pending_inputs: pendingInputs });
   }
 
   return { eligible, rejected };

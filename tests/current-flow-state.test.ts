@@ -13,6 +13,7 @@ interface ServerExecutionStep {
   stepName: string;
   actorType: string;
   actorId: string;
+  skillProvenance: Record<string, unknown> | null;
   state: 'running' | 'succeeded' | 'skipped' | 'failed';
 }
 
@@ -21,6 +22,7 @@ interface ExecLogRow {
   step_name: string;
   actor_type: string;
   actor_id: string;
+  skillProvenance: Record<string, unknown> | null;
   status: 'running' | 'succeeded' | 'skipped' | 'failed';
 }
 
@@ -399,20 +401,30 @@ test('buildConfirmationAnswers leaves no missing requirement auto-filled from su
   }
 });
 
-test('executionStepsToExecLog preserves each server execution state without synthesizing plan success', async () => {
+test('executionStepsToExecLog preserves server state and Skill provenance without synthesizing plan success', async () => {
   const { executionStepsToExecLog } = await loadCurrentFlowStateModule();
+  const succeededProvenance = {
+    skillBodyHash: 'sha256:succeeded-body',
+    modelReceiptId: '11111111-1111-4111-8111-111111111111',
+    status: 'succeeded',
+  };
+  const failedProvenance = {
+    skillBodyHash: 'sha256:failed-body',
+    modelReceiptId: '22222222-2222-4222-8222-222222222222',
+    status: 'failed',
+  };
   const serverSteps: ServerExecutionStep[] = [
-    { stepNo: 1, stepName: '检索中', actorType: 'tool', actorId: 'tavily-web-search', state: 'running' },
-    { stepNo: 2, stepName: '竞品研究', actorType: 'skill', actorId: 'competitive-web-research', state: 'succeeded' },
-    { stepNo: 3, stepName: '可选增强', actorType: 'tool', actorId: 'optional-lab', state: 'skipped' },
-    { stepNo: 4, stepName: '质量复核', actorType: 'reviewer', actorId: 'research-plan-reviewer', state: 'failed' },
+    { stepNo: 1, stepName: '检索中', actorType: 'tool', actorId: 'tavily-web-search', state: 'running', skillProvenance: null },
+    { stepNo: 2, stepName: '竞品研究', actorType: 'skill', actorId: 'competitive-web-research', state: 'succeeded', skillProvenance: succeededProvenance },
+    { stepNo: 3, stepName: '可选增强', actorType: 'tool', actorId: 'optional-lab', state: 'skipped', skillProvenance: null },
+    { stepNo: 4, stepName: '质量复核', actorType: 'skill', actorId: 'research-plan-reviewer', state: 'failed', skillProvenance: failedProvenance },
   ];
 
   assert.deepEqual(executionStepsToExecLog(serverSteps), [
-    { step_no: 1, step_name: '检索中', actor_type: 'tool', actor_id: 'tavily-web-search', status: 'running' },
-    { step_no: 2, step_name: '竞品研究', actor_type: 'skill', actor_id: 'competitive-web-research', status: 'succeeded' },
-    { step_no: 3, step_name: '可选增强', actor_type: 'tool', actor_id: 'optional-lab', status: 'skipped' },
-    { step_no: 4, step_name: '质量复核', actor_type: 'reviewer', actor_id: 'research-plan-reviewer', status: 'failed' },
+    { step_no: 1, step_name: '检索中', actor_type: 'tool', actor_id: 'tavily-web-search', status: 'running', skillProvenance: null },
+    { step_no: 2, step_name: '竞品研究', actor_type: 'skill', actor_id: 'competitive-web-research', status: 'succeeded', skillProvenance: succeededProvenance },
+    { step_no: 3, step_name: '可选增强', actor_type: 'tool', actor_id: 'optional-lab', status: 'skipped', skillProvenance: null },
+    { step_no: 4, step_name: '质量复核', actor_type: 'skill', actor_id: 'research-plan-reviewer', status: 'failed', skillProvenance: failedProvenance },
   ]);
 });
 

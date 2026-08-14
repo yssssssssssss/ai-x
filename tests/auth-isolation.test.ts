@@ -125,6 +125,13 @@ function currentFixturePlan(label: string): Omit<CurrentExecutionPlan, 'task_id'
         depends_on: [],
       }],
     },
+    problem_graph_provenance: {
+      receiptId: '11111111-1111-4111-8111-111111111111',
+      modelName: 'auth-fixture-model',
+      modelVersion: '1',
+      promptHash: 'sha256:auth-fixture-problem-graph',
+      traceId: 'trace-auth-fixture-problem-graph',
+    },
     capability_decisions: { eligible: [], rejected: [] },
     steps: [{
       step_no: 1,

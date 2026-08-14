@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { join } from 'node:path';
 import type { PlanCandidate, ResearchTaskData, ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import type {
   CurrentExecutionPlan,
@@ -11,6 +12,7 @@ import type { ProblemGraph } from '../apps/orchestrator-runtime/src/planners/pro
 import {
   PlanCompiler,
   PlanCompilerValidationError,
+  validateCurrentPlanRevision,
   type CurrentPlanCandidateProposal,
   type PlanCompileInput,
 } from '../apps/orchestrator-runtime/src/planners/plan-compiler.ts';
@@ -19,6 +21,7 @@ import { ResearchPlanningService } from '../apps/orchestrator-runtime/src/planne
 import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 import { ToolRouter, type ToolAdapter } from '../apps/orchestrator-runtime/src/runtime/tool-adapter.ts';
+import { getConfigRoot, loadToolManifest } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 import type {
   LLMClient,
   LLMResult,
@@ -54,6 +57,14 @@ const evidencePolicy: EvidenceRequirement[] = [{
   minimumCount: 2,
   required: true,
 }];
+
+const problemGraphProvenance = {
+  receiptId: '11111111-1111-4111-8111-111111111122',
+  modelName: 'problem-graph-model',
+  modelVersion: '2026-08-14',
+  promptHash: 'sha256:problem-graph',
+  traceId: 'trace-problem-graph',
+};
 
 function graph(): ProblemGraph {
   return {
@@ -101,6 +112,7 @@ function capabilityResolution(): CapabilityResolution {
   return {
     eligible: [{
       skill: structuredClone(eligibleSkill),
+      required_approvals: [],
       reasons: [
         { code: 'pending_input_required', message: 'skill requires one pending input' },
         { code: 'eligible', message: 'skill passed all capability filters' },
@@ -114,6 +126,7 @@ function capabilityResolution(): CapabilityResolution {
     }],
     rejected: [{
       skill: { ...structuredClone(eligibleSkill), id: 'rejected-skill', status: 'draft' as const },
+      required_approvals: [],
       reasons: [{ code: 'skill_inactive', message: 'skill is not active' }],
       pending_inputs: [],
     }],
@@ -172,6 +185,7 @@ function input(candidate: CurrentPlanCandidateProposal = validCandidate()): Plan
     candidate,
     task,
     problem_graph: graph(),
+    problem_graph_provenance: structuredClone(problemGraphProvenance),
     capability_resolution: capabilityResolution(),
     evidence_requirements: structuredClone(evidencePolicy),
     activated_nodes: ['D5_competitive'],
@@ -281,6 +295,98 @@ test('rejects an actor rejected by CapabilityResolver', () => {
   }, 'rejected_capability', 'rejected-skill');
 });
 
+test('rejects binding targets that traverse arrays before execution', () => {
+  expectCompileError((value) => {
+    value.candidate.steps[1]!.input = { sources: [null] };
+    value.candidate.steps[1]!.input_bindings = [{
+      target_pointer: '/sources/0',
+      source_step_no: 1,
+      source_pointer: '/results',
+    }];
+  }, 'invalid_binding_target', '/sources/0');
+});
+
+test('rejects binding targets containing prototype segments before execution', () => {
+  expectCompileError((value) => {
+    value.candidate.steps[1]!.input = { safe: { prototype: { value: null } } };
+    value.candidate.steps[1]!.input_bindings = [{
+      target_pointer: '/safe/prototype/value',
+      source_step_no: 1,
+      source_pointer: '/results',
+    }];
+  }, 'invalid_binding_target', '/safe/prototype/value');
+});
+
+test('rejects duplicate decoded binding targets before execution', () => {
+  expectCompileError((value) => {
+    value.candidate.steps[1]!.input = { sources: null };
+    value.candidate.steps[1]!.input_bindings = [
+      { target_pointer: '/sources', source_step_no: 1, source_pointer: '/results' },
+      { target_pointer: '/sources', source_step_no: 1, source_pointer: '/results' },
+    ];
+  }, 'invalid_binding_target', '/sources');
+});
+
+test('rejects input bindings sourced from a registry-optional Tool', () => {
+  expectCompileError((value) => {
+    const optionalToolId = 'aesthetic-quant-lab';
+    value.capability_resolution.eligible[0]!.skill.required_tools = [optionalToolId];
+    value.candidate.steps[0]!.actor_id = optionalToolId;
+  }, 'optional_binding_source', 'aesthetic-quant-lab');
+});
+
+test('rejects non-empty fallback actors until execution can dispatch them', () => {
+  expectCompileError((value) => {
+    value.candidate.steps[0]!.fallback_actor_ids = [eligibleSkill.id];
+  }, 'invalid_fallback', eligibleSkill.id);
+});
+
+function approvalResolution(): CapabilityResolution {
+  const resolution = capabilityResolution();
+  return {
+    ...resolution,
+    eligible: [{
+      ...resolution.eligible[0]!,
+      skill: { ...resolution.eligible[0]!.skill, risk_level: 'high' },
+      required_approvals: [
+        { capability_type: 'skill', capability_id: eligibleSkill.id, authority: 'security' },
+        { capability_type: 'tool', capability_id: 'tavily-web-search', authority: 'legal' },
+      ],
+    }],
+  } as CapabilityResolution;
+}
+
+test('requires approval gates for every frozen high-risk Skill and Tool authority', () => {
+  expectCompileError((value) => {
+    value.capability_resolution = approvalResolution();
+  }, 'approval_required', 'tavily-web-search');
+});
+
+test('rejects an approval role that differs from the frozen capability authority', () => {
+  expectCompileError((value) => {
+    value.capability_resolution = approvalResolution();
+    value.candidate.steps[0]!.requires_approval = true;
+    value.candidate.steps[0]!.approval_role = 'legal';
+    value.candidate.steps[1]!.requires_approval = true;
+    value.candidate.steps[1]!.approval_role = 'owner';
+  }, 'approval_role_mismatch', eligibleSkill.id);
+});
+
+test('preserves exact approval roles when every frozen authority is satisfied', () => {
+  const value = input();
+  value.capability_resolution = approvalResolution();
+  value.candidate.steps[0]!.requires_approval = true;
+  value.candidate.steps[0]!.approval_role = 'legal';
+  value.candidate.steps[1]!.requires_approval = true;
+  value.candidate.steps[1]!.approval_role = 'security';
+
+  const compiled = new PlanCompiler().compile(value);
+  assert.deepEqual(compiled.plan.steps.map((item) => [item.actor_id, item.approval_role]), [
+    ['tavily-web-search', 'legal'],
+    [eligibleSkill.id, 'security'],
+  ]);
+});
+
 test('compiles exact depth and speed candidates, rebuilds numbering, freezes graph and decisions, and derives pending inputs', () => {
   const compiler = new PlanCompiler();
   const depth = compiler.compile(input(validCandidate('depth')));
@@ -290,6 +396,7 @@ test('compiles exact depth and speed candidates, rebuilds numbering, freezes gra
     assert.deepEqual(compiled.plan.steps.map((item) => item.step_no), [1, 2]);
     assert.deepEqual(compiled.plan.problem_graph, graph());
     assert.deepEqual(compiled.plan.capability_decisions, capabilityResolution());
+    assert.deepEqual(compiled.plan.problem_graph_provenance, problemGraphProvenance);
     assert.deepEqual(compiled.plan.evidence_requirements, evidencePolicy);
     assert.deepEqual(compiled.plan.activated_nodes, ['D5_competitive']);
     assert.deepEqual(compiled.pending_inputs, [{
@@ -308,6 +415,24 @@ test('compiles exact depth and speed candidates, rebuilds numbering, freezes gra
   assert.equal(speed.plan.candidate_metadata.title, '快速研究');
   assert.notDeepEqual(depth.plan.candidate_metadata, speed.plan.candidate_metadata);
   assert.equal('purpose' in depth.plan.steps[0]!, false);
+});
+
+test('revision recompilation preserves ProblemGraph receipt provenance in frozen equality', () => {
+  const compiled = new PlanCompiler().compile(input());
+  const plan = {
+    ...compiled.plan,
+    task_id: 'task-1',
+    problem_graph_provenance: structuredClone(problemGraphProvenance),
+  };
+
+  const validated = validateCurrentPlanRevision({
+    plan,
+    task,
+    pending_inputs: compiled.pending_inputs,
+    task_id: 'task-1',
+    candidate_id: 'depth',
+  });
+  assert.deepEqual(validated, plan);
 });
 
 test('keeps Legacy PlanStep unchanged while Current steps use the strict independent contract', () => {
@@ -343,6 +468,13 @@ interface CurrentResearchPlanningFixture {
     traceId: string;
   };
   problemGraph: ProblemGraph;
+  problemGraphProvenance: {
+    receiptId: string;
+    modelName: string;
+    modelVersion: string;
+    promptHash: string;
+    traceId: string;
+  };
   capabilityResolution: CapabilityResolution;
 }
 
@@ -385,6 +517,7 @@ function currentPlanningResult(candidate = validCandidate('depth')): CurrentRese
       traceId: 'trace-fixture',
     },
     problemGraph,
+    problemGraphProvenance: structuredClone(problemGraphProvenance),
     capabilityResolution: capabilityResolution(),
   };
 }
@@ -447,6 +580,7 @@ test('Current planning persists only compiled graph, capability decisions, exact
   assert.equal(harness.repositoryCalls(), 1);
   for (const candidate of harness.persistedCandidates()) {
     assert.deepEqual(candidate.plan.problem_graph, result.problemGraph);
+    assert.deepEqual(candidate.plan.problem_graph_provenance, result.problemGraphProvenance);
     assert.deepEqual(candidate.plan.capability_decisions, result.capabilityResolution);
     assert.deepEqual(candidate.plan.steps.map((item) => item.step_no), [1, 2]);
     assert.deepEqual(candidate.pendingInputs[0]?.targets, [{
@@ -505,6 +639,9 @@ class CurrentPlanningLLM implements LLMClient {
       promptHash: `sha256:${options.schemaName}`,
       modelName: this.identity.requestedModel,
       modelVersion: '1',
+      ...(options.schemaName === 'problem-graph'
+        ? { receiptId: problemGraphProvenance.receiptId }
+        : {}),
       traceId: `trace-${options.schemaName}`,
     };
   }
@@ -592,9 +729,99 @@ test('finalized Current direct skill builds deterministic strict depth/speed pro
       candidate,
       task,
       problem_graph: result.problemGraph,
+      problem_graph_provenance: result.problemGraphProvenance,
       capability_resolution: result.capabilityResolution,
       evidence_requirements: currentPlanningResult().problemGraph.questions[0]!.evidence_requirements,
       activated_nodes: result.activatedNodes,
     }));
+  }
+});
+
+test('direct Current depth and speed prepend every required Tool with remapped strict steps', async () => {
+  const llm = new CurrentPlanningLLM();
+  const skillLoader = new SkillLoader();
+  const tools = new ToolRouter();
+  for (const adapterType of ['tavily', 'internal_api', 'rest_json'] as const) {
+    tools.register({
+      adapterType,
+      implementationId: `qualified-real-${adapterType}`,
+      executionMode: 'real',
+      endpointHost: () => `${adapterType}.fixture.test`,
+      async invoke() { throw new Error('not used during planning'); },
+    });
+  }
+  const planning = new ResearchPlanningService({
+    llm,
+    validator: new SchemaValidator(),
+    skillLoader,
+    tools,
+    approvalAuthorities: ['owner'],
+  });
+
+  const result = await planning.planCurrentFromRequirement(
+    task,
+    `$digital-human-competitive-analysis ${task.research_goal}`,
+  );
+
+  assert.equal(llm.calls.some((call) => call.schemaName === 'current-plan-candidates'), false);
+  const directSkill = skillLoader.getSkill('digital-human-competitive-analysis');
+  assert.ok(directSkill);
+  assert.ok(directSkill.input_schema);
+  const requiredToolIds = directSkill.required_tools ?? [];
+  assert.deepEqual(requiredToolIds, [
+    'tavily-web-search',
+    'ai-spider-search',
+    'experience-model-lab',
+    'virtual-user-lab',
+  ]);
+  const compiler = new PlanCompiler();
+  const validator = new SchemaValidator();
+
+  for (const candidateId of ['depth', 'speed'] as const) {
+    const candidate = result.candidates.find((item) => item.id === candidateId);
+    assert.ok(candidate);
+    const compiled = compiler.compile({
+      candidate,
+      task,
+      problem_graph: result.problemGraph,
+      problem_graph_provenance: result.problemGraphProvenance,
+      capability_resolution: result.capabilityResolution,
+      evidence_requirements: result.problemGraph.questions[0]!.evidence_requirements,
+      activated_nodes: result.activatedNodes,
+    });
+    const steps = compiled.plan.steps;
+    const skillStepNo = requiredToolIds.length + 1;
+    assert.deepEqual(steps.map((item) => item.step_no),
+      Array.from({ length: steps.length }, (_, index) => index + 1));
+    assert.deepEqual(steps.slice(0, requiredToolIds.length).map((item) => item.actor_id), requiredToolIds);
+
+    for (const toolStep of steps.slice(0, requiredToolIds.length)) {
+      assert.equal(toolStep.actor_type, 'tool');
+      const tool = skillLoader.getTool(toolStep.actor_id);
+      assert.ok(tool);
+      const manifest = loadToolManifest(tool.path);
+      validator.validateFileOrThrow(join(getConfigRoot(), manifest.input_schema), toolStep.input);
+    }
+
+    const skillStep = steps[skillStepNo - 1];
+    assert.ok(skillStep);
+    assert.equal(skillStep.actor_type, 'skill');
+    assert.equal(skillStep.actor_id, directSkill.id);
+    assert.deepEqual(skillStep.depends_on, requiredToolIds.map((_, index) => index + 1));
+    assert.deepEqual(skillStep.input_bindings, []);
+    validator.validateFileOrThrow(join(getConfigRoot(), directSkill.input_schema), skillStep.input);
+
+    const reviewers = steps.filter((item) => item.actor_type === 'reviewer');
+    assert.equal(reviewers.length, candidateId === 'depth' ? 1 : 0);
+    if (candidateId === 'depth') {
+      const reviewer = reviewers[0]!;
+      assert.equal(reviewer.step_no, skillStepNo + 1);
+      assert.deepEqual(reviewer.depends_on, [skillStepNo]);
+      assert.deepEqual(reviewer.input_bindings, [{
+        target_pointer: '/result',
+        source_step_no: skillStepNo,
+        source_pointer: skillStep.expected_outputs[0]!.pointer,
+      }]);
+    }
   }
 });

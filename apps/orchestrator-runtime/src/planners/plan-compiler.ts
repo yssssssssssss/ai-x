@@ -1,15 +1,28 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import type {
+  CurrentCapabilityApproval,
   CurrentCapabilityDecisions,
   CurrentExecutionPlan,
   CurrentPlanStep,
   EvidenceRequirement,
   PendingInput,
   ProblemGraph,
+  ProblemGraphProvenance,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { PlanCandidate, ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
 import type { CapabilityResolution } from './capability-resolver.ts';
 import { validateProblemGraphCoverage } from './problem-graph-planner.ts';
+import {
+  StepInputResolutionError,
+  validateStepInputBindings,
+} from '../control/step-input-resolver.ts';
+import {
+  getConfigRoot,
+  loadToolRegistry,
+  type ToolRegistryEntry,
+} from '../runtime/config-loader.ts';
 import { SchemaValidator } from '../schema/validator.ts';
 
 export interface CurrentPlanCandidateProposal extends Omit<PlanCandidate, 'steps'> {
@@ -20,6 +33,7 @@ export interface PlanCompileInput {
   candidate: CurrentPlanCandidateProposal;
   task: ResearchTaskV2;
   problem_graph: ProblemGraph;
+  problem_graph_provenance: ProblemGraphProvenance;
   capability_resolution: CapabilityResolution;
   evidence_requirements: EvidenceRequirement[];
   activated_nodes: string[];
@@ -43,10 +57,15 @@ export type PlanCompilerValidationKind =
   | 'unknown_binding_source'
   | 'unknown_binding_pointer'
   | 'unknown_binding_target'
+  | 'invalid_binding_target'
+  | 'optional_binding_source'
   | 'missing_core_evidence'
   | 'rejected_capability'
   | 'unknown_actor'
   | 'invalid_fallback'
+  | 'approval_required'
+  | 'approval_role_mismatch'
+  | 'pending_input_schema_invalid'
   | 'capability_decisions_invalid';
 
 export class PlanCompilerValidationError extends Error {
@@ -248,7 +267,6 @@ function validateActors(
   resolution: CapabilityResolution,
 ): Map<string, CapabilityResolution['eligible'][number]> {
   const { eligibleSkills, rejectedIds, eligibleTools } = capabilityIds(resolution);
-  const allowedFallbacks = new Set([...eligibleSkills.keys(), ...eligibleTools]);
 
   for (const step of steps) {
     if (rejectedIds.has(step.actor_id)) fail('rejected_capability', step.actor_id);
@@ -258,12 +276,53 @@ function validateActors(
     if (step.actor_type === 'tool' && !eligibleTools.has(step.actor_id)) {
       fail('unknown_actor', step.actor_id);
     }
-    for (const fallbackActorId of step.fallback_actor_ids) {
-      if (rejectedIds.has(fallbackActorId)) fail('rejected_capability', fallbackActorId);
-      if (!allowedFallbacks.has(fallbackActorId)) fail('invalid_fallback', fallbackActorId);
+    if (step.fallback_actor_ids.length > 0) {
+      fail('invalid_fallback', ...step.fallback_actor_ids);
     }
   }
   return eligibleSkills;
+}
+
+function frozenApprovalAuthorities(
+  resolution: CapabilityResolution,
+): Map<string, CurrentCapabilityApproval['authority']> {
+  const authorities = new Map<string, CurrentCapabilityApproval['authority']>();
+  for (const decision of resolution.eligible) {
+    for (const approval of decision.required_approvals) {
+      const belongsToDecision = approval.capability_type === 'skill'
+        ? approval.capability_id === decision.skill.id
+        : decision.skill.required_tools.includes(approval.capability_id);
+      if (!belongsToDecision) {
+        fail('capability_decisions_invalid', approval.capability_id);
+      }
+      const key = `${approval.capability_type}:${approval.capability_id}`;
+      const existing = authorities.get(key);
+      if (existing !== undefined && existing !== approval.authority) {
+        fail('capability_decisions_invalid', approval.capability_id);
+      }
+      authorities.set(key, approval.authority);
+    }
+  }
+  return authorities;
+}
+
+function validateApprovals(steps: CurrentPlanStep[], resolution: CapabilityResolution): void {
+  const authorities = frozenApprovalAuthorities(resolution);
+  for (const step of steps) {
+    const authority = step.actor_type === 'skill' || step.actor_type === 'tool'
+      ? authorities.get(`${step.actor_type}:${step.actor_id}`)
+      : undefined;
+    if (authority === undefined) {
+      if (step.requires_approval || step.approval_role !== undefined) {
+        fail('approval_role_mismatch', step.actor_id);
+      }
+      continue;
+    }
+    if (!step.requires_approval) fail('approval_required', step.actor_id);
+    if (step.approval_role !== authority) {
+      fail('approval_role_mismatch', step.actor_id, authority);
+    }
+  }
 }
 
 function validateRequiredTools(
@@ -298,23 +357,52 @@ function decodePointer(pointer: string): string[] | null {
   return parts.map((part) => part.replaceAll('~1', '/').replaceAll('~0', '~'));
 }
 
-function pointerExists(value: unknown, pointer: string): boolean {
+type TargetPointerStatus = 'valid' | 'missing' | 'array_traversal';
+
+function targetPointerStatus(value: unknown, pointer: string): TargetPointerStatus {
   const parts = decodePointer(pointer);
-  if (!parts) return false;
+  if (!parts) return 'missing';
   let current: unknown = value;
   for (const part of parts) {
-    if (Array.isArray(current)) {
-      if (!/^\d+$/.test(part) || Number(part) >= current.length) return false;
-      current = current[Number(part)];
-      continue;
+    if (Array.isArray(current)) return 'array_traversal';
+    if (current === null || typeof current !== 'object' || !Object.hasOwn(current, part)) {
+      return 'missing';
     }
-    if (current === null || typeof current !== 'object' || !Object.hasOwn(current, part)) return false;
     current = Reflect.get(current, part);
   }
-  return true;
+  return 'valid';
 }
 
-function validateBindings(steps: CurrentPlanStep[]): void {
+export function validateResolverCompatibleTargetPointers(
+  step: CurrentPlanStep,
+  availableSourceStepNos: readonly number[],
+): void {
+  try {
+    validateStepInputBindings(step, availableSourceStepNos);
+  } catch (error) {
+    if (!(error instanceof StepInputResolutionError)) throw error;
+    fail(
+      'invalid_binding_target',
+      ...step.input_bindings.map((binding) => binding.target_pointer),
+      String(step.step_no),
+    );
+  }
+  for (const binding of step.input_bindings) {
+    const status = targetPointerStatus(step.input, binding.target_pointer);
+    if (status === 'array_traversal') {
+      fail('invalid_binding_target', binding.target_pointer, String(step.step_no));
+    }
+    if (status === 'missing') {
+      fail('unknown_binding_target', binding.target_pointer, String(step.step_no));
+    }
+  }
+}
+
+function validateBindings(
+  steps: CurrentPlanStep[],
+  toolsById: ReadonlyMap<string, ToolRegistryEntry>,
+): void {
+  const stepNos = steps.map((step) => step.step_no);
   for (const step of steps) {
     const outputPointers = new Set<string>();
     for (const output of step.expected_outputs) {
@@ -333,8 +421,40 @@ function validateBindings(steps: CurrentPlanStep[]): void {
       if (!source.expected_outputs.some((output) => output.pointer === binding.source_pointer)) {
         fail('unknown_binding_pointer', binding.source_pointer, String(binding.source_step_no));
       }
-      if (!pointerExists(step.input, binding.target_pointer)) {
-        fail('unknown_binding_target', binding.target_pointer, String(step.step_no));
+      if (
+        source.actor_type === 'tool'
+        && (toolsById.get(source.actor_id)?.tier ?? 'optional') === 'optional'
+      ) {
+        fail('optional_binding_source', source.actor_id, String(source.step_no));
+      }
+    }
+    validateResolverCompatibleTargetPointers(step, stepNos);
+  }
+}
+
+function validatePendingInputSchemas(
+  eligibleSkills: ReadonlyMap<string, CapabilityResolution['eligible'][number]>,
+): void {
+  for (const [skillId, decision] of eligibleSkills) {
+    const schemaPath = decision.skill.input_schema;
+    if (!schemaPath || decision.pending_inputs.length === 0) continue;
+    let schema: unknown;
+    try {
+      schema = JSON.parse(readFileSync(join(getConfigRoot(), schemaPath), 'utf8'));
+    } catch {
+      fail('pending_input_schema_invalid', skillId, schemaPath);
+    }
+    const properties = schema !== null && typeof schema === 'object' && !Array.isArray(schema)
+      ? Reflect.get(schema, 'properties')
+      : undefined;
+    for (const pending of decision.pending_inputs) {
+      if (
+        properties === null
+        || typeof properties !== 'object'
+        || Array.isArray(properties)
+        || !Object.hasOwn(properties, pending.role)
+      ) {
+        fail('pending_input_schema_invalid', skillId, pending.role);
       }
     }
   }
@@ -387,6 +507,7 @@ export class PlanCompiler {
         rationale: input.candidate.rationale,
         tradeoffs: input.candidate.tradeoffs,
       },
+      problem_graph_provenance: input.problem_graph_provenance,
       activated_nodes: input.activated_nodes,
     });
     validateProblemGraphCoverage(input.task, input.problem_graph);
@@ -395,14 +516,18 @@ export class PlanCompiler {
     validateQuestions(steps, input.problem_graph);
     validateEvidencePolicy(input.problem_graph, input.evidence_requirements);
     const eligibleSkills = validateActors(steps, input.capability_resolution);
+    validateApprovals(steps, input.capability_resolution);
     validateRequiredTools(steps, eligibleSkills);
-    validateBindings(steps);
+    validatePendingInputSchemas(eligibleSkills);
+    const toolsById = new Map(loadToolRegistry().tools.map((tool) => [tool.id, tool]));
+    validateBindings(steps, toolsById);
 
     const plan: CompiledPlan['plan'] = {
       task_id: '',
       deliverable_type: 'research_plan',
       evidence_requirements: structuredClone(input.evidence_requirements),
       problem_graph: structuredClone(input.problem_graph),
+      problem_graph_provenance: structuredClone(input.problem_graph_provenance),
       capability_decisions: structuredClone(input.capability_resolution) as CurrentCapabilityDecisions,
       steps,
       candidate_metadata: {
@@ -444,6 +569,7 @@ export function validateCurrentPlanRevision(input: {
     candidate,
     task,
     problem_graph: plan.problem_graph,
+    problem_graph_provenance: plan.problem_graph_provenance,
     capability_resolution: plan.capability_decisions as CapabilityResolution,
     evidence_requirements: plan.evidence_requirements,
     activated_nodes: plan.activated_nodes,

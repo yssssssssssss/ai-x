@@ -1,22 +1,17 @@
 import type {
   EvidenceRequirement,
   ProblemGraph,
+  ProblemGraphProvenance,
   ResearchQuestion,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { GuidanceRef, ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
 import type { LLMClient } from '../runtime/llm-client.ts';
 import { hashPrompt } from '../runtime/llm-client.ts';
+import { MissingModelReceiptError } from '../runtime/receipt-llm-client.ts';
 import { loadSchemaText, resolveSchema } from '../runtime/schema-registry.ts';
 import type { SchemaValidator } from '../schema/validator.ts';
 
-export type { ProblemGraph, ResearchQuestion };
-
-export interface ProblemGraphProvenance {
-  modelName: string;
-  modelVersion: string;
-  promptHash: string;
-  traceId: string;
-}
+export type { ProblemGraph, ProblemGraphProvenance, ResearchQuestion };
 
 export interface ProblemGraphResult {
   graph: ProblemGraph;
@@ -105,7 +100,7 @@ function validateSuccessCriteria(task: ResearchTaskV2, graph: ProblemGraph): voi
       if (!criterionIds.has(criterionId)) {
         throwGraphError('unknown_success_criterion', [question.id, criterionId]);
       }
-      covered.add(criterionId);
+      if (question.priority === 'required') covered.add(criterionId);
     }
   }
 
@@ -170,6 +165,12 @@ export class ProblemGraphPlanner {
       },
     });
 
+    if (!generated.receiptId) {
+      throw new MissingModelReceiptError(
+        new Error('problem graph generation succeeded without a persisted receipt'),
+      );
+    }
+
     this.dependencies.validator.validateSchemaOrThrow(
       problemGraphSchema,
       generated.data,
@@ -180,6 +181,7 @@ export class ProblemGraphPlanner {
     return {
       graph: generated.data,
       provenance: {
+        receiptId: generated.receiptId,
         modelName: generated.modelName,
         modelVersion: generated.modelVersion,
         promptHash: generated.promptHash,

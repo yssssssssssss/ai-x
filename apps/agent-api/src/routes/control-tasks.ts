@@ -52,10 +52,6 @@ function version(value: unknown): number | null {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
 }
 
-function stringList(value: unknown): string[] | null {
-  return Array.isArray(value) && value.every((item) => typeof item === 'string') ? value : null;
-}
-
 async function actorFor(req: Request): Promise<WorkflowActor | null> {
   if (!req.userId) return null;
   const user = await getUserById(req.userId);
@@ -268,7 +264,17 @@ router.get('/:id', async (req, res) => {
       return;
     }
     const executionSteps = task.currentAttemptId
-      ? await repository.listExecutionSteps(task.currentAttemptId)
+      ? (await repository.listExecutionSteps(task.currentAttemptId)).map((step) => ({
+          stepNo: step.stepNo,
+          stepName: step.stepName,
+          actorType: step.actorType,
+          actorId: step.actorId,
+          state: step.state,
+          toolProvenance: step.toolProvenance,
+          skillProvenance: step.skillProvenance,
+          failure: step.failure,
+          latencyMs: step.latencyMs,
+        }))
       : [];
     res.json({ kind: 'current', task, executionSteps, ...recovered });
   } catch (error) {
@@ -323,11 +329,11 @@ router.post('/:id/confirm', async (req, res) => {
   const expectedVersion = version(body?.expectedVersion);
   const planVersionId = string(body?.planVersionId);
   const confirmationAnswers = record(body?.confirmationAnswers);
-  const inputRoles = stringList(body?.inputRoles);
+  const inputValues = record(body?.inputValues);
   if (!actor) return;
   if (!await ensureOwnedTask(runtime, req, res, actor)) return;
-  if (expectedVersion == null || !key || !planVersionId || !confirmationAnswers || !inputRoles) {
-    res.status(400).json({ error: 'expectedVersion、Idempotency-Key、planVersionId、confirmationAnswers、inputRoles 必填' });
+  if (expectedVersion == null || !key || !planVersionId || !confirmationAnswers || !inputValues) {
+    res.status(400).json({ error: 'expectedVersion、Idempotency-Key、planVersionId、confirmationAnswers、inputValues 必填' });
     return;
   }
   try {
@@ -338,7 +344,7 @@ router.post('/:id/confirm', async (req, res) => {
       idempotencyKey: key,
       actor,
       confirmationAnswers,
-      inputRoles,
+      inputValues,
     }));
   } catch (error) {
     responseError(res, error);

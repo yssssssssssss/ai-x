@@ -61,6 +61,7 @@ export interface ExecLogRow {
   actor_type: string;
   actor_id: string;
   status: string;
+  skillProvenance: Record<string, unknown> | null;
 }
 
 // 已 finalize 的计划:steps + 激活节点 + 假设(select/execute 前的形态)。

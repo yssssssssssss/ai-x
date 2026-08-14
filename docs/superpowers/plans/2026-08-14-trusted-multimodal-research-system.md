@@ -848,6 +848,8 @@ git commit -m "feat: compile current execution plans"
 
 **Scope correction:** Input Binding is execution-integrity state, so Task 11 also owns additive Migration 007 and the independent `skill_provenance` repository read/write path. Complete Skill provenance requires the database-generated model-call ID; `ModelCallRecorder` therefore returns the inserted ID and `ReceiptLLMClient` propagates it on successful results. All affected recorder fixtures migrate directly with no compatibility alias. Report/progress files record the expanded approved scope.
 
+**Integrated review scope correction:** Task 11 also owns the confirmation-to-execution Pending Input value path, resolver-compatible compiler target validation, optional Tool source/fallback rejection, required-question success coverage, frozen high-risk approval authority, deterministic direct required Tool steps, resume Pending Input remapping, durable ProblemGraph receipt provenance, failed Skill receipt recovery, and shared API/Web `skillProvenance`. These are integrity constraints on the same frozen Current plan and execution boundary, not Phase 4 features. Inline image `dataUrl` remains an internal, 12 MB API-limited actor input only until Phase 5 replaces it with sealed upload Artifacts; it must not enter responses, logs, receipts, or unrelated prompts.
+
 **Interfaces:**
 - Produces: `resolveStepInput(step, sealedOutputs, artifactReader)`、`LLMResult.receiptId`、`TextLLMResult.receiptId`。
 

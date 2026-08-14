@@ -35,6 +35,14 @@ export interface ProblemGraph {
   questions: ResearchQuestion[];
 }
 
+export interface ProblemGraphProvenance {
+  receiptId: string;
+  modelName: string;
+  modelVersion: string;
+  promptHash: string;
+  traceId: string;
+}
+
 export interface CurrentPlanInputBinding {
   target_pointer: string;
   source_step_no: number;
@@ -106,8 +114,15 @@ export interface CurrentCapabilityPendingInput {
   capability_id: string;
 }
 
+export interface CurrentCapabilityApproval {
+  capability_type: 'skill' | 'tool';
+  capability_id: string;
+  authority: 'owner' | 'legal' | 'security';
+}
+
 export interface CurrentCapabilityDecision {
   skill: CurrentCapabilitySkill;
+  required_approvals: CurrentCapabilityApproval[];
   reasons: CurrentCapabilityDecisionReason[];
   pending_inputs: CurrentCapabilityPendingInput[];
 }
@@ -122,6 +137,7 @@ export interface CurrentExecutionPlan {
   deliverable_type: DeliverableType;
   evidence_requirements: EvidenceRequirement[];
   problem_graph: ProblemGraph;
+  problem_graph_provenance: ProblemGraphProvenance;
   capability_decisions: CurrentCapabilityDecisions;
   steps: CurrentPlanStep[];
   candidate_metadata: {

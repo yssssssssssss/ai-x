@@ -81,7 +81,7 @@ skills:
       - design_audit
       - user_research_planning
     inputs:
-      - design
+      - designImage
     outputs:
       - design_review
     intent_tags:

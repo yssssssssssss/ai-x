@@ -51,3 +51,12 @@ Observed failures before implementation:
 - Independent Task11 review found one Important issue: a Skill output rejected by output-schema validation retained its receipt but persisted `outputHash: null`.
 - Added a failing regression that expected the canonical hash of the produced output, then propagated a redacted canonical hash through `SkillOutputSchemaError` and the failed-provenance path. Actor results that fail later during safety or Artifact handling also retain their produced Skill output hash.
 - The focused regression passed after the fix; the exact serial suite and typecheck were rerun afterward.
+
+### Phase 3 Integrated Review Wave
+
+- Pending Input confirmation now carries `inputValues` rather than value-less roles. Owner/idempotency-bound gate rows preserve the value, and `LeaseExecutionEngine` applies it only to a cloned in-memory plan after validating every role, target step, actor, and schema field. The immutable persisted plan and canonical hash are never changed.
+- Compiler preflight now shares the execution resolver's target invariants, rejects optional Tool binding sources and undeployed fallbacks, requires each task success criterion to be covered by an executable required question, and enforces every frozen high-risk Skill/Tool approval authority.
+- Deterministic direct Current plans prepend every required Tool with schema-valid input, remap Skill/reviewer dependencies and bindings, and never call the routed candidate LLM. Resume skip remaps every surviving Pending Input target and rejects targets on the removed step.
+- ProblemGraph receipt ID/model/prompt/trace provenance is frozen into every Current plan and revision. Failed Skill capture retains its already-persisted receipt even when configuration reads fail, while Current API and Web execution state preserve `skillProvenance`.
+- TDD RED: the exact Phase 3 serial suite reported 115 pass / 39 fail / 1 real-provider skip. GREEN: the same suite reported 154 pass / 0 fail / 1 skip; strict-field adjacent regressions reported 41/41; `pnpm typecheck` passed.
+- Phase 5 migration boundary: image `dataUrl` values remain internal gate/actor input under the existing 12 MB API body limit (10 MB upload plus base64 expansion). They are not added to command responses, logs, provenance receipts, or unrelated prompts; Phase 5 must migrate binary payloads to sealed upload Artifacts rather than extend inline transport.

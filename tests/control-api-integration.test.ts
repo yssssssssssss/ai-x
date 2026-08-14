@@ -48,6 +48,7 @@ import type {
   ControlExecutionResult,
   ControlPlanCandidatesResponse,
   ControlWorkflowState,
+  CurrentTaskReadResponse,
 } from '../packages/api-contract/control-workflow.ts';
 
 interface ConversationAdapter {
@@ -532,6 +533,7 @@ function validDeliverableDraft(evidenceId: unknown = 'missing-evidence'): Record
 function planningResult(
   originalInput: string,
   requirement?: ResearchTaskV2,
+  requireBusinessDomainInput = false,
 ): CurrentResearchPlanningResult {
   const structuredTask: ResearchTaskV2 = requirement ?? {
     version: 'research-task-v2',
@@ -587,8 +589,21 @@ function planningResult(
         required_tools: ['tavily-web-search'],
         risk_level: 'low' as const,
       },
-      reasons: [{ code: 'eligible' as const, message: 'eligible' }],
-      pending_inputs: [],
+      reasons: requireBusinessDomainInput
+        ? [
+            { code: 'pending_input_required' as const, message: 'business_domain must be supplied explicitly' },
+            { code: 'eligible' as const, message: 'eligible' },
+          ]
+        : [{ code: 'eligible' as const, message: 'eligible' }],
+      pending_inputs: requireBusinessDomainInput
+        ? [{
+            role: 'business_domain',
+            label: '研究业务领域',
+            multiple: false,
+            capability_id: 'digital-human-competitive-analysis',
+          }]
+        : [],
+      required_approvals: [],
     }],
     rejected: [],
   };
@@ -688,6 +703,7 @@ function planningResult(
     },
     problemGraph,
     problemGraphProvenance: {
+      receiptId: '33333333-3333-4333-8333-333333333333',
       modelName: 'planner',
       modelVersion: '1',
       promptHash: 'sha256:problem-graph',
@@ -936,6 +952,7 @@ after(async () => {
 
 test('production control runtime completes the offline Current API flow and serves the owner deliverable', async () => {
   const originalInput = '请生成基于公开证据的宠物辅食竞品研究计划';
+  const suppliedBusinessDomain = '犬猫鲜食与冻干辅食';
   const { buildControlRuntime } = await loadControlRuntimeModule();
   const tavily = new OfflineRealTavilyAdapter();
   const llm = new OfflineEligibleRealLLM();
@@ -946,7 +963,7 @@ test('production control runtime completes the offline Current API flow and serv
     conversations: conversationAdapter(),
     planning: {
       async plan(input) {
-        return planningResult(input.originalInput);
+        return planningResult(input.originalInput, undefined, true);
       },
     },
     tools,
@@ -1031,6 +1048,20 @@ test('production control runtime completes the offline Current API flow and serv
   const selected = await selectResponse.json() as { state: string; stateVersion: number };
   assert.equal(selected.state, 'awaiting_confirmation');
 
+  const legacyConfirmResponse = await postJson(
+    baseUrl,
+    `/api/control-tasks/${planned.task.id}/confirm`,
+    ownerToken,
+    {
+      expectedVersion: selected.stateVersion,
+      planVersionId: speed.planVersionId,
+      confirmationAnswers: {},
+      inputRoles: ['business_domain'],
+    },
+    `legacy-confirm-${randomUUID()}`,
+  );
+  assert.equal(legacyConfirmResponse.status, 400, await legacyConfirmResponse.clone().text());
+
   const confirmResponse = await postJson(
     baseUrl,
     `/api/control-tasks/${planned.task.id}/confirm`,
@@ -1039,13 +1070,29 @@ test('production control runtime completes the offline Current API flow and serv
       expectedVersion: selected.stateVersion,
       planVersionId: speed.planVersionId,
       confirmationAnswers: {},
-      inputRoles: [],
+      inputValues: { business_domain: suppliedBusinessDomain },
     },
     `confirm-${randomUUID()}`,
   );
-  assert.equal(confirmResponse.status, 200);
+  assert.equal(confirmResponse.status, 200, await confirmResponse.clone().text());
   const confirmed = await confirmResponse.json() as { state: string; stateVersion: number };
   assert.equal(confirmed.state, 'ready');
+
+  const inputGateConnection = await scopedDatabase.connect();
+  try {
+    const persistedInputGate = await inputGateConnection.query(
+      `SELECT gate_key, value_json
+       FROM control_gate_records
+       WHERE task_id = $1 AND plan_version_id = $2 AND gate_type = 'input'`,
+      [planned.task.id, speed.planVersionId],
+    );
+    assert.deepEqual(persistedInputGate.rows, [{
+      gate_key: 'business_domain',
+      value_json: suppliedBusinessDomain,
+    }]);
+  } finally {
+    inputGateConnection.release();
+  }
 
   const executeResponse = await postJson(
     baseUrl,
@@ -1120,7 +1167,7 @@ test('production control runtime completes the offline Current API flow and serv
       artifact?: { state?: unknown };
     }>;
   };
-  assert.deepEqual(skillContext.input, { business_domain: '宠物辅食' });
+  assert.deepEqual(skillContext.input, { business_domain: suppliedBusinessDomain });
   assert.equal(skillContext.prior_outputs?.length, 1);
   assert.equal(skillContext.prior_outputs?.[0]?.stepNo, 1);
   assert.equal(skillContext.prior_outputs?.[0]?.actorId, 'tavily-web-search');
@@ -1146,6 +1193,51 @@ test('production control runtime completes the offline Current API flow and serv
     assert.ok(receipt.traceId);
     assert.ok(receipt.tokens);
   }
+  const skillReceipt = modelReceipts.find((receipt) => receipt.stage === 'skill');
+  const succeededSkillStep = steps.find((step) => step.actorType === 'skill');
+  assert.ok(skillReceipt);
+  assert.ok(succeededSkillStep);
+  assert.equal(succeededSkillStep?.skillProvenance?.modelReceiptId, skillReceipt.id);
+
+  const failedSkillProvenance = {
+    skillBodyHash: 'sha256:failed-api-skill-body',
+    inputSchemaHash: 'sha256:failed-api-input-schema',
+    outputSchemaHash: 'sha256:failed-api-output-schema',
+    inputHash: 'sha256:failed-api-input',
+    outputHash: null,
+    promptHash: 'sha256:failed-api-prompt',
+    traceId: 'trace-failed-api-skill',
+    modelReceiptId: skillReceipt.id,
+    outputArtifactId: null,
+    status: 'failed',
+  };
+  await repository.recordExecutionStep({
+    attemptId: execution.attemptId,
+    stepNo: 99,
+    stepName: 'failed skill provenance exposure',
+    actorType: 'skill',
+    actorId: 'competitive-web-research',
+    state: 'failed',
+    skillProvenance: failedSkillProvenance,
+    failure: { kind: 'fixture_failure', retryable: false },
+    startedAt: new Date('2026-08-14T00:00:00Z'),
+    finishedAt: new Date('2026-08-14T00:00:01Z'),
+  });
+
+  const executionRefreshResponse = await fetch(`${baseUrl}/api/control-tasks/${planned.task.id}`, {
+    headers: { authorization: `Bearer ${ownerToken}` },
+  });
+  assert.equal(executionRefreshResponse.status, 200, await executionRefreshResponse.clone().text());
+  const executionRefresh = await executionRefreshResponse.json() as CurrentTaskReadResponse;
+  assert.deepEqual(
+    executionRefresh.executionSteps
+      .filter((step) => step.actorType === 'skill')
+      .map((step) => ({ state: step.state, skillProvenance: step.skillProvenance })),
+    [
+      { state: 'succeeded', skillProvenance: succeededSkillStep.skillProvenance },
+      { state: 'failed', skillProvenance: failedSkillProvenance },
+    ],
+  );
 
   const connection = await scopedDatabase.connect();
   try {
@@ -1426,8 +1518,16 @@ test('production Current planning persists candidates only when every receipt ma
           WHERE task.original_input = $1) AS candidates`,
       [originalInput],
     );
+    const persistedPlans = await connection.query(
+      `SELECT plan.plan_json
+       FROM control_plan_versions AS plan
+       JOIN control_tasks AS task ON task.id = plan.task_id
+       WHERE task.original_input = $1
+       ORDER BY plan.version`,
+      [originalInput],
+    );
     const receipts = await connection.query(
-      `SELECT stage, requested_model, actual_model, status, failure_json
+      `SELECT id, stage, requested_model, actual_model, prompt_hash, trace_id, status, failure_json
        FROM control_model_calls
        WHERE attempt_id IS NULL AND NOT (id = ANY($1::uuid[]))
        ORDER BY stage`,
@@ -1453,6 +1553,20 @@ test('production Current planning persists candidates only when every receipt ma
         failure: null,
       })),
     );
+    const problemGraphReceipt = receipts.rows.find((row) => row.stage === 'problem_graph');
+    assert.ok(problemGraphReceipt);
+    assert.equal(persistedPlans.rows.length, 2);
+    for (const row of persistedPlans.rows) {
+      assertRecord(row.plan_json);
+      assertRecord(row.plan_json.problem_graph_provenance);
+      assert.deepEqual(row.plan_json.problem_graph_provenance, {
+        receiptId: problemGraphReceipt.id,
+        modelName: problemGraphReceipt.actual_model,
+        modelVersion: `${expectedModel}-fixture-v1`,
+        promptHash: problemGraphReceipt.prompt_hash,
+        traceId: problemGraphReceipt.trace_id,
+      });
+    }
   } finally {
     connection.release();
   }

@@ -149,6 +149,13 @@ async function runOnce(runId: string, batchId: string): Promise<OneRunResult> {
             depends_on: [],
           }],
         },
+        problem_graph_provenance: {
+          receiptId: '00000000-0000-4000-8000-000000000000',
+          modelName: 'gold-disabled',
+          modelVersion: '1',
+          promptHash: 'sha256:gold-disabled-problem-graph',
+          traceId: 'gold-disabled-problem-graph',
+        },
         capability_decisions: { eligible: [], rejected: [] },
         steps: [{
           step_no: 1,
@@ -190,7 +197,7 @@ async function runOnce(runId: string, batchId: string): Promise<OneRunResult> {
     idempotencyKey: `gold-confirm:${runId}`,
     actor: owner,
     confirmationAnswers: {},
-    inputRoles: [],
+    inputValues: {},
   });
   const approved = await workflow.approve({
     taskId: task.id,

@@ -10,6 +10,7 @@ import type {
   CurrentPlanStep,
   EvidenceClass,
   EvidenceRequirement,
+  PendingInput,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import { SchemaValidator } from '../schema/validator.ts';
 import {
@@ -319,6 +320,113 @@ function parsePlan(taskId: string, value: unknown): EnginePlan {
   return { taskId, evidence_requirements: evidenceRequirements, steps };
 }
 
+function parsePendingInputs(value: unknown): PendingInput[] {
+  if (!Array.isArray(value)) {
+    throw new ExecutionAuthenticityError('active plan pending inputs are malformed');
+  }
+  return value.map((item, index) => {
+    if (
+      !isRecord(item)
+      || typeof item.role !== 'string'
+      || item.role.trim().length === 0
+      || typeof item.label !== 'string'
+      || item.label.trim().length === 0
+      || typeof item.multiple !== 'boolean'
+      || !Array.isArray(item.targets)
+      || item.targets.length === 0
+    ) {
+      throw new ExecutionAuthenticityError(`pending input ${index + 1} is malformed`);
+    }
+    const targets = item.targets.map((target) => {
+      if (
+        !isRecord(target)
+        || typeof target.step_no !== 'number'
+        || !Number.isInteger(target.step_no)
+        || target.step_no < 1
+        || typeof target.tool_id !== 'string'
+        || target.tool_id.trim().length === 0
+        || typeof target.field !== 'string'
+        || target.field.trim().length === 0
+        || typeof target.multiple !== 'boolean'
+      ) {
+        throw new ExecutionAuthenticityError(`pending input ${index + 1} target is malformed`);
+      }
+      return {
+        step_no: target.step_no,
+        tool_id: target.tool_id,
+        field: target.field,
+        multiple: target.multiple,
+      };
+    });
+    return {
+      role: item.role,
+      label: item.label,
+      multiple: item.multiple,
+      targets,
+    };
+  });
+}
+
+function overlayPendingInputs(
+  parsedPlan: EnginePlan,
+  pendingInputs: readonly PendingInput[],
+  gates: readonly unknown[],
+  ownerUserId: string,
+): EnginePlan {
+  const plan = structuredClone(parsedPlan);
+  const inputGates = gates.filter(
+    (gate): gate is Record<string, unknown> => isRecord(gate) && gate.gateType === 'input',
+  );
+  if (inputGates.length !== pendingInputs.length) {
+    throw new ExecutionAuthenticityError('input gate records do not match active plan pending inputs');
+  }
+  const roles = new Set<string>();
+  const targetFields = new Set<string>();
+  for (const pendingInput of pendingInputs) {
+    if (roles.has(pendingInput.role)) {
+      throw new ExecutionAuthenticityError(`pending input role ${pendingInput.role} is duplicated`);
+    }
+    roles.add(pendingInput.role);
+    const matchingGates = inputGates.filter((gate) => gate.gateKey === pendingInput.role);
+    if (matchingGates.length !== 1) {
+      throw new ExecutionAuthenticityError(
+        `pending input role ${pendingInput.role} requires exactly one input gate`,
+      );
+    }
+    const gate = matchingGates[0]!;
+    if (
+      gate.requiredAuthority !== 'owner'
+      || gate.decision !== 'provided'
+      || gate.actorRole !== 'owner'
+      || gate.actorUserId !== ownerUserId
+      || !Object.hasOwn(gate, 'value')
+    ) {
+      throw new ExecutionAuthenticityError(`input gate for pending role ${pendingInput.role} is invalid`);
+    }
+    for (const target of pendingInput.targets) {
+      const targetKey = `${target.step_no}\u0000${target.field}`;
+      if (targetFields.has(targetKey)) {
+        throw new ExecutionAuthenticityError(
+          `pending input target ${target.step_no}/${target.field} is duplicated`,
+        );
+      }
+      targetFields.add(targetKey);
+      const step = plan.steps.find((candidate) => candidate.step_no === target.step_no);
+      if (
+        !step
+        || step.actor_id !== target.tool_id
+        || !Object.hasOwn(step.input, target.field)
+      ) {
+        throw new ExecutionAuthenticityError(
+          `pending input target ${target.step_no}/${target.field} does not match the active plan`,
+        );
+      }
+      step.input[target.field] = structuredClone(gate.value);
+    }
+  }
+  return plan;
+}
+
 function isToolSourceRef(value: unknown): value is ToolSourceRef {
   return isRecord(value)
     && typeof value.sourceUrl === 'string'
@@ -455,7 +563,13 @@ export class LeaseExecutionEngine {
     }
     let plan: EnginePlan;
     try {
-      plan = parsePlan(task.id, planVersion.plan);
+      const gates = await this.dependencies.repository.listGateRecords(
+        input.lease.taskId,
+        input.lease.planVersionId,
+      );
+      const parsedPlan = parsePlan(task.id, planVersion.plan);
+      const pendingInputs = parsePendingInputs(planVersion.pendingInputs);
+      plan = overlayPendingInputs(parsedPlan, pendingInputs, gates, task.ownerUserId);
     } catch (error) {
       await this.dependencies.repository.recordExecutionStep({
         attemptId: input.lease.attemptId,
@@ -1071,20 +1185,25 @@ export class LeaseExecutionEngine {
     resolvedInput: Record<string, unknown>;
     producedOutputHash?: string;
   }): Promise<Record<string, unknown>> {
+    let receipt: { id: string; promptHash: string; traceId: string | null } | undefined;
     const fallback = (captureFailure: unknown): Record<string, unknown> => ({
       skillBodyHash: null,
       inputSchemaHash: null,
       outputSchemaHash: null,
       inputHash: hashJson(input.resolvedInput),
       outputHash: input.producedOutputHash ?? null,
-      promptHash: null,
-      traceId: null,
-      modelReceiptId: null,
+      promptHash: receipt?.promptHash ?? null,
+      traceId: receipt?.traceId ?? null,
+      modelReceiptId: receipt?.id ?? null,
       outputArtifactId: null,
       status: 'failed',
       captureFailure: captureFailure instanceof Error ? captureFailure.message : String(captureFailure),
     });
     try {
+      const calls = await this.dependencies.repository.listModelCalls(input.lease.attemptId);
+      receipt = [...calls].reverse().find(
+        (call) => call.stage === 'skill' && call.stepNo === input.step.step_no,
+      );
       const skill = this.dependencies.skillLoader.getSkill(input.step.actor_id);
       if (!skill) return fallback(new Error(`skill ${input.step.actor_id} unavailable during provenance capture`));
       const body = this.dependencies.skillLoader.loadSkillBody(input.step.actor_id);
@@ -1094,10 +1213,6 @@ export class LeaseExecutionEngine {
         prior_outputs: [],
       };
       const prompt = `${SKILL_PROMPT_PREFIX}\n\n${body.body}`;
-      const calls = await this.dependencies.repository.listModelCalls(input.lease.attemptId);
-      const receipt = [...calls].reverse().find(
-        (call) => call.stage === 'skill' && call.stepNo === input.step.step_no,
-      );
       return {
         skillBodyHash: body.hash,
         inputSchemaHash: skill.input_schema ? hashFile(skill.input_schema) : null,

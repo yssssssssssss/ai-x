@@ -72,6 +72,7 @@ export function executionStepsToExecLog(steps: ControlExecutionStepResponse[]): 
     actor_type: step.actorType,
     actor_id: step.actorId,
     status: step.state,
+    skillProvenance: step.skillProvenance,
   }));
 }
 

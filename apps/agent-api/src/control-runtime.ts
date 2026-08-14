@@ -404,6 +404,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
         candidate,
         task: structuredTask,
         problem_graph: planningResult.problemGraph,
+        problem_graph_provenance: planningResult.problemGraphProvenance,
         capability_resolution: planningResult.capabilityResolution,
         evidence_requirements: activePlanShape.evidence_requirements,
         activated_nodes: planningResult.activatedNodes,

@@ -77,9 +77,9 @@ function validGraph(): ProblemGraph {
         id: 'question-action',
         statement: '产品团队应如何选择？',
         rationale: '把事实比较转化为行动建议。',
-        priority: 'optional',
+        priority: 'required',
         success_criterion_ids: ['criterion-action'],
-        evidence_requirements: [],
+        evidence_requirements: structuredClone(evidencePolicy),
         acceptance_criteria: ['建议明确说明适用条件和取舍'],
         depends_on: ['question-market'],
       },
@@ -146,7 +146,13 @@ test('pure validator rejects dependency cycles and reports every question in the
 
 test('pure validator rejects an uncovered success criterion', () => {
   const graph = validGraph();
-  graph.questions[1].success_criterion_ids = [];
+  graph.questions[1].success_criterion_ids = ['criterion-market'];
+  expectGraphError(graph, 'uncovered_success_criterion', ['criterion-action']);
+});
+
+test('pure validator rejects a success criterion covered only by an optional question', () => {
+  const graph = validGraph();
+  graph.questions[1]!.priority = 'optional';
   expectGraphError(graph, 'uncovered_success_criterion', ['criterion-action']);
 });
 
@@ -231,6 +237,7 @@ test('planner loads the registered schema, hashes only finalized inputs, and rec
 
   assert.deepEqual(result.graph, validGraph());
   assert.deepEqual(result.provenance, {
+    receiptId: '11111111-1111-4111-8111-111111111122',
     modelName: 'problem-graph-model',
     modelVersion: '2026-08-14',
     promptHash: call ? hashPrompt(call.prompt, expectedContext, 'problem-graph') : '',

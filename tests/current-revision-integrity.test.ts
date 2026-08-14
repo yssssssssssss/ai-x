@@ -204,6 +204,13 @@ async function createSelectedTask(options: {
             depends_on: [],
           }],
         },
+        problem_graph_provenance: {
+          receiptId: '11111111-1111-4111-8111-111111111111',
+          modelName: 'revision-fixture-model',
+          modelVersion: '1',
+          promptHash: 'sha256:revision-fixture-problem-graph',
+          traceId: 'trace-revision-fixture-problem-graph',
+        },
         capability_decisions: { eligible: [], rejected: [] },
         steps: candidateSteps(candidateId),
         candidate_metadata: {
@@ -282,6 +289,7 @@ function planningResult(originalInput: string): CurrentResearchPlanningResult {
       },
       reasons: [{ code: 'eligible' as const, message: 'eligible' }],
       pending_inputs: [],
+      required_approvals: [],
     }],
     rejected: [],
   };
@@ -317,6 +325,7 @@ function planningResult(originalInput: string): CurrentResearchPlanningResult {
     },
     problemGraph,
     problemGraphProvenance: {
+      receiptId: '22222222-2222-4222-8222-222222222222',
       modelName: 'revision-planner',
       modelVersion: '1',
       promptHash: 'sha256:problem-graph',
@@ -356,6 +365,7 @@ function compiledRevisionPlan(taskId: string, title: string) {
       acceptedClasses: [...requirement.acceptedClasses],
     })),
     problem_graph: result.problemGraph,
+    problem_graph_provenance: result.problemGraphProvenance,
     capability_decisions: result.capabilityResolution,
     steps: candidate.steps.map((step, index) => ({ ...step, step_no: index + 1 })),
     candidate_metadata: {

@@ -108,7 +108,7 @@ export interface ConfirmControlPlanRequest {
   expectedVersion: number;
   planVersionId: string;
   confirmationAnswers: Record<string, unknown>;
-  inputRoles: string[];
+  inputValues: Record<string, unknown>;
   idempotencyKey: string;
 }
 
@@ -168,6 +168,7 @@ export interface ControlExecutionStepResponse {
   actorId: string;
   state: string;
   toolProvenance: Record<string, unknown> | null;
+  skillProvenance: Record<string, unknown> | null;
   failure: Record<string, unknown> | null;
   latencyMs: number | null;
 }

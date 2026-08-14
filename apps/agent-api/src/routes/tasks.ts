@@ -78,7 +78,10 @@ tasksRouter.get('/:id', async (req, res) => {
       status: task.status,
     },
     decisionStates: await listDecisionStates(task.id),
-    executionLog: await listExecutionLog(task.id),
+    executionLog: (await listExecutionLog(task.id)).map((row) => ({
+      ...row,
+      skillProvenance: null,
+    })),
     report: new RunWorkspace(task.id).readReport<Report>(),
   };
   res.json({ kind: 'legacy', ...body });

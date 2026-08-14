@@ -369,11 +369,23 @@ export function useTaskFlow() {
           : candidatesResp.structuredTask.clarification_questions),
         userAnswers,
       );
+      const uploadsByRole = new Map<string, Array<{ dataUrl: string }>>();
+      for (const upload of uploads) {
+        const value = { dataUrl: upload.dataUrl };
+        const values = uploadsByRole.get(upload.role);
+        if (values) values.push(value);
+        else uploadsByRole.set(upload.role, [value]);
+      }
+      const inputValues: Record<string, unknown> = Object.create(null);
+      for (const [role, values] of uploadsByRole) {
+        const pendingInput = selectedCandidate.pendingInputs.find((input) => input.role === role);
+        inputValues[role] = pendingInput?.multiple ? values : values[0];
+      }
       const confirmed = await api.confirmControlPlan(candidatesResp.task.id, {
         expectedVersion: stateVersion,
         planVersionId: selectedCandidate.planVersionId,
         confirmationAnswers: answers,
-        inputRoles: [...new Set(uploads.map((upload) => upload.role))],
+        inputValues,
         idempotencyKey: crypto.randomUUID(),
       });
       setStateVersion(confirmed.stateVersion);

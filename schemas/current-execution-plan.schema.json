@@ -9,6 +9,7 @@
     "deliverable_type",
     "evidence_requirements",
     "problem_graph",
+    "problem_graph_provenance",
     "capability_decisions",
     "steps",
     "candidate_metadata",
@@ -22,6 +23,7 @@
       "items": { "$ref": "#/$defs/evidenceRequirement" }
     },
     "problem_graph": { "$ref": "#/$defs/problemGraph" },
+    "problem_graph_provenance": { "$ref": "#/$defs/problemGraphProvenance" },
     "capability_decisions": { "$ref": "#/$defs/capabilityDecisions" },
     "steps": {
       "type": "array",
@@ -115,6 +117,18 @@
         }
       }
     },
+    "problemGraphProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["receiptId", "modelName", "modelVersion", "promptHash", "traceId"],
+      "properties": {
+        "receiptId": { "type": "string", "format": "uuid" },
+        "modelName": { "type": "string", "minLength": 1 },
+        "modelVersion": { "type": "string", "minLength": 1 },
+        "promptHash": { "type": "string", "minLength": 1 },
+        "traceId": { "type": "string", "minLength": 1 }
+      }
+    },
     "capabilityReason": {
       "type": "object",
       "additionalProperties": false,
@@ -172,12 +186,23 @@
         "risk_level": { "enum": ["low", "medium", "high"] }
       }
     },
+    "capabilityApproval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability_type", "capability_id", "authority"],
+      "properties": {
+        "capability_type": { "enum": ["skill", "tool"] },
+        "capability_id": { "type": "string", "minLength": 1 },
+        "authority": { "enum": ["owner", "legal", "security"] }
+      }
+    },
     "capabilityDecision": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["skill", "reasons", "pending_inputs"],
+      "required": ["skill", "required_approvals", "reasons", "pending_inputs"],
       "properties": {
         "skill": { "$ref": "#/$defs/capabilitySkill" },
+        "required_approvals": { "type": "array", "items": { "$ref": "#/$defs/capabilityApproval" } },
         "reasons": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/capabilityReason" } },
         "pending_inputs": { "type": "array", "items": { "$ref": "#/$defs/capabilityPendingInput" } }
       }

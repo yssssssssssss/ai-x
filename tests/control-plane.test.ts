@@ -298,6 +298,13 @@ test('repository rejects semantically invalid Current revisions before inserting
         depends_on: [],
       }],
     },
+    problem_graph_provenance: {
+      receiptId: '11111111-1111-4111-8111-111111111111',
+      modelName: 'fixture-model',
+      modelVersion: '1',
+      promptHash: 'sha256:fixture-problem-graph',
+      traceId: 'trace-fixture-problem-graph',
+    },
     capability_decisions: { eligible: [], rejected: [] },
     steps: [{
       step_no: 1,
@@ -971,6 +978,53 @@ test('claims one execution attempt and replays the same idempotency key', async 
     }),
     ControlPlaneConflictError,
   );
+});
+
+test('round-trips the explicit pending-input value through gate records', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const task = await repository.createTask({
+    conversationId,
+    ownerUserId: ownerId,
+    originalInput: 'pending input value 测试',
+    taskType: 'competitive_research',
+    structuredTask: { research_goal: '验证输入值持久化' },
+    state: 'awaiting_confirmation',
+  });
+  const planHash = 'sha256:pending-input-value-plan';
+  const plan = await repository.createPlanVersion({
+    taskId: task.id,
+    version: 1,
+    plan: { steps: [] },
+    planHash,
+    pendingInputs: [{ role: 'business_domain' }],
+  });
+  const suppliedValue = '犬猫鲜食与冻干辅食';
+  const gateIdempotencyKey = `input-value-${randomUUID()}`;
+
+  await repository.recordGate({
+    taskId: task.id,
+    planVersionId: plan.id,
+    planHash,
+    gateType: 'input',
+    gateKey: 'business_domain',
+    requiredAuthority: 'owner',
+    decision: 'provided',
+    value: suppliedValue,
+    actorUserId: ownerId,
+    actorRole: 'owner',
+    idempotencyKey: gateIdempotencyKey,
+  });
+
+  assert.deepEqual(await repository.listGateRecords(task.id, plan.id), [{
+    gateType: 'input',
+    gateKey: 'business_domain',
+    requiredAuthority: 'owner',
+    decision: 'provided',
+    value: suppliedValue,
+    actorUserId: ownerId,
+    actorRole: 'owner',
+    idempotencyKey: gateIdempotencyKey,
+  }]);
 });
 
 test('rejects reuse of an idempotency key with a different request hash', async () => {

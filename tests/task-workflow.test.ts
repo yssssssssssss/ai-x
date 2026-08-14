@@ -221,6 +221,13 @@ function currentPlan(
         depends_on: [],
       }],
     },
+    problem_graph_provenance: {
+      receiptId: '11111111-1111-4111-8111-111111111111',
+      modelName: 'workflow-fixture-model',
+      modelVersion: '1',
+      promptHash: 'sha256:workflow-problem-graph',
+      traceId: 'trace-workflow-problem-graph',
+    },
     capability_decisions: {
       eligible: requiredTools.length === 0 ? [] : [{
         skill: {
@@ -233,6 +240,7 @@ function currentPlan(
         },
         reasons: [{ code: 'eligible', message: 'fixture tools are eligible' }],
         pending_inputs: [],
+        required_approvals: [],
       }],
       rejected: [],
     },
@@ -409,7 +417,7 @@ test('malformed persisted workflow gate fails closed during confirmation', async
       idempotencyKey: 'malformed-confirm',
       actor: { userId: ownerId, role: 'owner' },
       confirmationAnswers: {},
-      inputRoles: [],
+      inputValues: {},
     }),
     TaskWorkflowGateError,
   );
@@ -462,7 +470,7 @@ test('confirmation, required input, role matrix, and plan revision gate ready st
       idempotencyKey: 'confirm-missing',
       actor: { userId: ownerId, role: 'owner' },
       confirmationAnswers: {},
-      inputRoles: ['brief'],
+      inputValues: { brief: '研究简报' },
     }),
     TaskWorkflowGateError,
   );
@@ -474,7 +482,7 @@ test('confirmation, required input, role matrix, and plan revision gate ready st
       idempotencyKey: 'confirm-missing-input',
       actor: { userId: ownerId, role: 'owner' },
       confirmationAnswers: { competitors: '头部三家' },
-      inputRoles: [],
+      inputValues: {},
     }),
     TaskWorkflowGateError,
   );
@@ -486,7 +494,7 @@ test('confirmation, required input, role matrix, and plan revision gate ready st
     idempotencyKey: 'confirm-1',
     actor: { userId: ownerId, role: 'owner' },
     confirmationAnswers: { competitors: '头部三家' },
-    inputRoles: ['brief'],
+    inputValues: { brief: '研究简报' },
   });
   assert.equal(confirmed.state, 'awaiting_approval');
 
@@ -538,9 +546,143 @@ test('confirmation, required input, role matrix, and plan revision gate ready st
     idempotencyKey: 'confirm-revised-plan',
     actor: { userId: ownerId, role: 'owner' },
     confirmationAnswers: { competitors: '头部三家' },
-    inputRoles: [],
+    inputValues: {},
   });
   assert.equal(reconfirmed.state, 'awaiting_approval');
+});
+
+test('confirmation persists own input values for execution without mutating the frozen plan', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  let observedInputGates: Array<Record<string, unknown>> = [];
+  const workflow = new TaskWorkflowService(repository, {
+    execute: async ({ lease }) => {
+      observedInputGates = (await repository.listGateRecords(lease.taskId, lease.planVersionId))
+        .filter((gate) => gate.gateType === 'input')
+        .map((gate) => {
+          const record = gate as unknown as Record<string, unknown>;
+          return {
+            gateKey: gate.gateKey,
+            requiredAuthority: gate.requiredAuthority,
+            value: record.value,
+            actorUserId: record.actorUserId,
+            actorRole: record.actorRole,
+            idempotencyKey: record.idempotencyKey,
+          };
+        })
+        .sort((left, right) => String(left.gateKey).localeCompare(String(right.gateKey)));
+      await repository.completeExecution(lease);
+      return { status: 'completed', attemptId: lease.attemptId };
+    },
+  });
+  const pendingInputs = [
+    {
+      role: 'brief',
+      label: '研究简报',
+      multiple: false,
+      targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'brief', multiple: false }],
+    },
+    {
+      role: 'includeArchived',
+      label: '包含历史资料',
+      multiple: false,
+      targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'includeArchived', multiple: false }],
+    },
+    {
+      role: 'reviewerNote',
+      label: '审阅备注',
+      multiple: false,
+      targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'reviewerNote', multiple: false }],
+    },
+  ];
+  const created = await createCandidateTask(repository, 'input-values', {
+    candidateId: 'depth',
+    plan: currentPlan('', 'input-values', [currentStep({
+      input: {
+        brief: 'frozen placeholder',
+        includeArchived: true,
+        reviewerNote: 'frozen placeholder',
+      },
+    })]),
+    pendingInputs,
+  });
+  const selection = await workflow.select({
+    taskId: created.task.id,
+    expectedVersion: created.task.stateVersion,
+    idempotencyKey: 'input-values-select',
+    actor: { userId: ownerId, role: 'owner' },
+    planVersionId: created.candidates[0]!.id,
+  });
+  const selectedBeforeConfirmation = await repository.getPlanVersionDetail(selection.planVersionId);
+  assert.ok(selectedBeforeConfirmation);
+  const frozenPlan = structuredClone(selectedBeforeConfirmation.plan);
+  const inheritedInputValues = Object.assign(
+    Object.create({ brief: { competitors: ['A', 'B'] } }) as Record<string, unknown>,
+    { includeArchived: false, reviewerNote: null },
+  );
+
+  await assert.rejects(
+    () => workflow.confirm({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      expectedVersion: selection.stateVersion,
+      idempotencyKey: 'input-values-inherited-confirm',
+      actor: { userId: ownerId, role: 'owner' },
+      confirmationAnswers: {},
+      inputValues: inheritedInputValues,
+    }),
+    (error: unknown) => error instanceof TaskWorkflowGateError && error.unresolved.includes('brief'),
+  );
+
+  const ready = await workflow.confirm({
+    taskId: created.task.id,
+    planVersionId: selection.planVersionId,
+    expectedVersion: selection.stateVersion,
+    idempotencyKey: 'input-values-confirm',
+    actor: { userId: ownerId, role: 'owner' },
+    confirmationAnswers: {},
+    inputValues: {
+      brief: { competitors: ['A', 'B'] },
+      includeArchived: false,
+      reviewerNote: null,
+    },
+  });
+  assert.equal(ready.state, 'ready');
+
+  const execution = await workflow.execute({
+    taskId: created.task.id,
+    planVersionId: selection.planVersionId,
+    expectedVersion: ready.stateVersion,
+    idempotencyKey: 'input-values-execute',
+    actor: { userId: ownerId, role: 'owner' },
+  });
+  assert.equal(execution.state, 'completed');
+  assert.deepEqual(observedInputGates, [
+    {
+      gateKey: 'brief',
+      requiredAuthority: 'owner',
+      value: { competitors: ['A', 'B'] },
+      actorUserId: ownerId,
+      actorRole: 'owner',
+      idempotencyKey: 'input-values-confirm:input:brief',
+    },
+    {
+      gateKey: 'includeArchived',
+      requiredAuthority: 'owner',
+      value: false,
+      actorUserId: ownerId,
+      actorRole: 'owner',
+      idempotencyKey: 'input-values-confirm:input:includeArchived',
+    },
+    {
+      gateKey: 'reviewerNote',
+      requiredAuthority: 'owner',
+      value: null,
+      actorUserId: ownerId,
+      actorRole: 'owner',
+      idempotencyKey: 'input-values-confirm:input:reviewerNote',
+    },
+  ]);
+  assert.deepEqual((await repository.getPlanVersionDetail(selection.planVersionId))?.plan, frozenPlan);
 });
 
 test('disabled execution claim creates no real execution work and pauses the task', async () => {
@@ -564,7 +706,7 @@ test('disabled execution claim creates no real execution work and pauses the tas
     idempotencyKey: 'disabled-confirm',
     actor: { userId: ownerId, role: 'owner' },
     confirmationAnswers: {},
-    inputRoles: [],
+    inputValues: {},
   });
 
   const execution = await workflow.execute({
@@ -633,7 +775,7 @@ test('Workflow owns the lease and invokes a real execution driver once per comma
     idempotencyKey: 'real-confirm',
     actor: { userId: ownerId, role: 'owner' },
     confirmationAnswers: {},
-    inputRoles: [],
+    inputValues: {},
   });
   const command = {
     taskId: task.id,
@@ -687,7 +829,7 @@ test('concurrent execute commands invoke the external driver only once', async (
     idempotencyKey: 'concurrent-confirm',
     actor: { userId: ownerId, role: 'owner' },
     confirmationAnswers: {},
-    inputRoles: [],
+    inputValues: {},
   });
   const base = {
     taskId: task.id,
@@ -736,7 +878,7 @@ test('reconstructs an execution result after driver state commit but before comm
     idempotencyKey: 'crash-confirm',
     actor: { userId: ownerId, role: 'owner' },
     confirmationAnswers: {},
-    inputRoles: [],
+    inputValues: {},
   });
   const command = {
     taskId: task.id,
@@ -761,6 +903,8 @@ async function createPausedTask(input: {
   failedStepNo: number;
   steps: CurrentPlanStep[];
   allowedActions: string[];
+  pendingInputs?: unknown[];
+  planFactory?: (taskId: string, steps: CurrentPlanStep[]) => CurrentExecutionPlan;
 }) {
   const task = await input.repository.createTask({
     conversationId,
@@ -774,9 +918,9 @@ async function createPausedTask(input: {
     taskId: task.id,
     version: 1,
     candidateId: 'speed',
-    plan: currentPlan(task.id, input.suffix, input.steps),
+    plan: input.planFactory?.(task.id, input.steps) ?? currentPlan(task.id, input.suffix, input.steps),
     planHash: `sha256:${input.suffix}-resume-plan`,
-    pendingInputs: [],
+    pendingInputs: input.pendingInputs ?? [],
   });
   const claim = await input.repository.claimExecution({
     taskId: task.id,
@@ -919,6 +1063,174 @@ test('resume rejects core skip and safely renumbers a strict Current plan after 
     ...currentPlan(optional.task.id, 'optional-resume', originalOptionalSteps),
     steps: expectedSteps,
   });
+});
+
+test('resume skip remaps every remaining PendingInput target with the step map', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const workflow = new TaskWorkflowService(repository);
+  const steps = [
+    currentStep({
+      step_name: 'core search',
+      actor_type: 'tool',
+      actor_id: 'tavily-web-search',
+      expected_outputs: [{ pointer: '/results', description: 'core results' }],
+    }),
+    currentStep({
+      step_no: 2,
+      step_name: 'failed optional search',
+      actor_type: 'tool',
+      actor_id: 'ai-spider-search',
+      expected_outputs: [{ pointer: '/results', description: 'optional results' }],
+    }),
+    currentStep({
+      step_no: 3,
+      step_name: 'analysis skill',
+      actor_type: 'skill',
+      actor_id: 'analysis-skill',
+      depends_on: [1],
+      input: { brief: null, sources: null },
+      input_bindings: [{ target_pointer: '/sources', source_step_no: 1, source_pointer: '/results' }],
+      expected_outputs: [{ pointer: '/analysis', description: 'analysis result' }],
+    }),
+    currentStep({
+      step_no: 4,
+      step_name: 'review skill',
+      actor_type: 'skill',
+      actor_id: 'review-skill',
+      depends_on: [3],
+      input: { brief: null, analysis: null },
+      input_bindings: [{ target_pointer: '/analysis', source_step_no: 3, source_pointer: '/analysis' }],
+      expected_outputs: [{ pointer: '/review', description: 'review result' }],
+    }),
+  ];
+  const pendingInputs = [{
+    role: 'brief',
+    label: '研究简报',
+    multiple: true,
+    targets: [
+      { step_no: 3, tool_id: 'analysis-skill', field: 'brief', multiple: true },
+      { step_no: 4, tool_id: 'review-skill', field: 'brief', multiple: true },
+    ],
+  }];
+  const paused = await createPausedTask({
+    repository,
+    suffix: 'pending-target-remap',
+    failedStepNo: 2,
+    steps,
+    allowedActions: ['retry', 'skip', 'abort'],
+    pendingInputs,
+    planFactory(taskId, planSteps) {
+      const plan = currentPlan(taskId, 'pending-target-remap', planSteps);
+      plan.capability_decisions.eligible.push(
+        {
+          skill: {
+            id: 'analysis-skill',
+            status: 'active',
+            task_types: ['competitive_research'],
+            inputs: ['brief'],
+            outputs: ['analysis'],
+            required_tools: [],
+          },
+          reasons: [
+            { code: 'pending_input_required', message: 'analysis requires a brief' },
+            { code: 'eligible', message: 'analysis skill is eligible' },
+          ],
+          pending_inputs: [{
+            role: 'brief',
+            label: '研究简报',
+            multiple: true,
+            capability_id: 'analysis-skill',
+          }],
+          required_approvals: [],
+        },
+        {
+          skill: {
+            id: 'review-skill',
+            status: 'active',
+            task_types: ['competitive_research'],
+            inputs: ['brief'],
+            outputs: ['review'],
+            required_tools: [],
+          },
+          reasons: [
+            { code: 'pending_input_required', message: 'review requires a brief' },
+            { code: 'eligible', message: 'review skill is eligible' },
+          ],
+          pending_inputs: [{
+            role: 'brief',
+            label: '研究简报',
+            multiple: true,
+            capability_id: 'review-skill',
+          }],
+          required_approvals: [],
+        },
+      );
+      return plan;
+    },
+  });
+
+  const resumed = await workflow.resume({
+    taskId: paused.task.id,
+    expectedVersion: paused.paused.stateVersion,
+    idempotencyKey: 'pending-target-remap-skip',
+    actor: { userId: ownerId, role: 'owner' },
+    action: 'skip',
+    failedStepNo: 2,
+  });
+  assert.equal(resumed.state, 'awaiting_confirmation');
+  const revisedTask = await repository.getTaskDetail(paused.task.id);
+  const revisedPlan = await repository.getPlanVersionDetail(revisedTask?.activePlanVersionId ?? '');
+  assert.deepEqual(revisedPlan?.pendingInputs, [{
+    role: 'brief',
+    label: '研究简报',
+    multiple: true,
+    targets: [
+      { step_no: 2, tool_id: 'analysis-skill', field: 'brief', multiple: true },
+      { step_no: 3, tool_id: 'review-skill', field: 'brief', multiple: true },
+    ],
+  }]);
+});
+
+test('resume skip rejects a PendingInput target that points at the removed step', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const workflow = new TaskWorkflowService(repository);
+  const paused = await createPausedTask({
+    repository,
+    suffix: 'removed-pending-target',
+    failedStepNo: 1,
+    steps: [
+      currentStep({
+        step_name: 'failed optional search',
+        actor_type: 'tool',
+        actor_id: 'ai-spider-search',
+        input: { brief: null },
+        expected_outputs: [{ pointer: '/results', description: 'optional results' }],
+      }),
+      currentStep({ step_no: 2, step_name: 'remaining analysis' }),
+    ],
+    allowedActions: ['retry', 'skip', 'abort'],
+    pendingInputs: [{
+      role: 'brief',
+      label: '研究简报',
+      multiple: false,
+      targets: [{ step_no: 1, tool_id: 'ai-spider-search', field: 'brief', multiple: false }],
+    }],
+  });
+
+  await assert.rejects(
+    () => workflow.resume({
+      taskId: paused.task.id,
+      expectedVersion: paused.paused.stateVersion,
+      idempotencyKey: 'removed-pending-target-skip',
+      actor: { userId: ownerId, role: 'owner' },
+      action: 'skip',
+      failedStepNo: 1,
+    }),
+    TaskWorkflowGateError,
+  );
+  const unchanged = await repository.getTaskDetail(paused.task.id);
+  assert.equal(unchanged?.state, 'paused');
+  assert.equal(unchanged?.activePlanVersionId, paused.plan.id);
 });
 
 test('resume rejects skipping an optional step referenced by a remaining dependency or input binding', async () => {

@@ -135,6 +135,7 @@ export class ControlPlanningService {
         candidate,
         task: planningResult.structuredTask,
         problem_graph: planningResult.problemGraph,
+        problem_graph_provenance: planningResult.problemGraphProvenance,
         capability_resolution: planningResult.capabilityResolution,
         evidence_requirements: evidenceRequirements,
         activated_nodes: planningResult.activatedNodes,

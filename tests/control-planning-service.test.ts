@@ -199,6 +199,7 @@ function researchPlanningResult(originalInput: string): ResearchPlanningResult {
       },
       reasons: [{ code: 'eligible' as const, message: 'eligible' }],
       pending_inputs: [],
+      required_approvals: [],
     }],
     rejected: [],
   };
@@ -253,6 +254,7 @@ function researchPlanningResult(originalInput: string): ResearchPlanningResult {
     },
     problemGraph,
     problemGraphProvenance: {
+      receiptId: '11111111-1111-4111-8111-111111111111',
       modelName: 'planning-fake',
       modelVersion: '1',
       promptHash: 'sha256:problem-graph',
