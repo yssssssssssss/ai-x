@@ -41,3 +41,11 @@ Status: complete
 
 - Review-gated package regressions now reject missing, duplicate, and dangling coverage while the old `research-deliverable-v1` marker remains the only no-coverage `legacy_text` path.
 - The exact requested eight-file serial suite ran 177 tests: 176 passed, one real-provider test skipped, zero failed. `pnpm typecheck` passed.
+
+## Legacy Coverage Type Correction
+
+- Refined `CurrentReportPackageResponse<TPayload>` into presentation-mode-specific envelopes: `legacy_text` alone permits absent coverage, while `current_text` and future `multimodal` retain the full review-gated `ResearchDeliverableEnvelope` and required `reportReview`.
+- Removed untyped document/visual placeholders from the modeled response. Until real `ReportDocument` and `VisualAssetManifest` contracts exist, all modes reject those fields rather than representing them as `unknown`.
+- Updated the Web API client and Markdown consumer to use the shared discriminated union. Reader selection and runtime validation remain unchanged; review-gated packages still require coverage and a passing Review.
+- RED: `pnpm typecheck` failed with TS2741 because the legacy fixture without coverage was still forced into `ResearchDeliverableEnvelope`.
+- GREEN: the exact requested three-file suite passed 52/52 and `pnpm typecheck` passed.

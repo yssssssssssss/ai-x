@@ -273,6 +273,11 @@ export interface ResearchDeliverableEnvelope<TPayload> {
   capabilityProvenance: CapabilityProvenance[];
 }
 
+export type LegacyResearchDeliverableEnvelope<TPayload> =
+  Omit<ResearchDeliverableEnvelope<TPayload>, 'coverage'> & {
+    coverage?: ResearchDeliverableCoverage;
+  };
+
 export interface ResearchPlanPayload {
   title: string;
   researchGoal: string;

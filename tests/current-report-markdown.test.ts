@@ -1,19 +1,18 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { test } from 'node:test';
+import type { CurrentReportPackageResponse } from '../packages/api-contract/control-workflow.ts';
 import type {
   ResearchDeliverableEnvelope,
   ResearchPlanPayload,
 } from '../packages/api-contract/research-deliverable.ts';
-import type { EvidenceManifest } from '../apps/orchestrator-runtime/src/evidence/evidence-service.ts';
 
-interface CurrentResearchPlanResponse {
-  deliverable: ResearchDeliverableEnvelope<ResearchPlanPayload>;
-  evidenceManifest: EvidenceManifest & {
+type CurrentResearchPlanResponse = CurrentReportPackageResponse<ResearchPlanPayload> & {
+  evidenceManifest: CurrentReportPackageResponse<ResearchPlanPayload>['evidenceManifest'] & {
     storageUri: string;
     contentSha256: string;
   };
-}
+};
 
 interface CurrentReportMarkdownModule {
   currentResearchPlanToMarkdown(response: CurrentResearchPlanResponse): string;
@@ -184,7 +183,7 @@ function buildResponse(
     contentSha256: manifestContentSha256,
   };
 
-  return { deliverable, evidenceManifest };
+  return { presentationMode: 'legacy_text', deliverable, evidenceManifest };
 }
 
 function assertIncludes(markdown: string, expected: string, label: string): void {

@@ -1,13 +1,7 @@
-import type {
-  ResearchDeliverableEnvelope,
-  ResearchPlanPayload,
-} from '../../../packages/api-contract/research-deliverable.ts';
-import type { EvidenceManifest } from '../../orchestrator-runtime/src/evidence/evidence-service.ts';
+import type { CurrentReportPackageResponse } from '../../../packages/api-contract/control-workflow.ts';
+import type { ResearchPlanPayload } from '../../../packages/api-contract/research-deliverable.ts';
 
-export interface CurrentResearchPlanResponse {
-  deliverable: ResearchDeliverableEnvelope<ResearchPlanPayload>;
-  evidenceManifest: EvidenceManifest;
-}
+export type CurrentResearchPlanResponse = CurrentReportPackageResponse<ResearchPlanPayload>;
 
 function appendList(lines: string[], items: string[]): void {
   for (const item of items) lines.push(`- ${item}`);

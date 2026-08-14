@@ -97,6 +97,7 @@ import type {
   ConfirmControlPlanRequest,
   ControlCommandResponse,
   ControlExecutionResult,
+  CurrentReportPackageResponse,
   CurrentTaskReadResponse,
   ExecutionControlPlanRequest,
   PlanControlTaskRequest,
@@ -105,17 +106,12 @@ import type {
   SelectControlPlanResponse,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import type {
-  ResearchDeliverableEnvelope,
   ResearchPlanPayload,
 } from '../../../../packages/api-contract/research-deliverable.ts';
-import type { EvidenceManifest } from '../../../orchestrator-runtime/src/evidence/evidence-service.ts';
 import type { PlanProgress } from '../../../../packages/api-contract/plan.ts';
 import type { User, TaskDetail, TaskSummary, SkillItem } from '../../../../packages/api-contract/http.ts';
 
-export interface ControlDeliverableResponse {
-  deliverable: ResearchDeliverableEnvelope<ResearchPlanPayload>;
-  evidenceManifest: EvidenceManifest;
-}
+export type ControlDeliverableResponse = CurrentReportPackageResponse<ResearchPlanPayload>;
 
 export interface ClarifyControlTaskRequest {
   expectedVersion: number;

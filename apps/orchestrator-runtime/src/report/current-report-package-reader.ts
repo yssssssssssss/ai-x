@@ -3,7 +3,10 @@ import type {
   CurrentReportPackageResponse,
   ReportReviewArtifact,
 } from '../../../../packages/api-contract/control-workflow.ts';
-import type { ResearchDeliverableEnvelope } from '../../../../packages/api-contract/research-deliverable.ts';
+import type {
+  LegacyResearchDeliverableEnvelope,
+  ResearchDeliverableEnvelope,
+} from '../../../../packages/api-contract/research-deliverable.ts';
 import type {
   ControlArtifact,
   ControlPlaneRepository,
@@ -220,7 +223,7 @@ export class CurrentReportPackageReader {
     if (schemaVersion === LEGACY_DELIVERABLE_SCHEMA_VERSION) {
       return {
         presentationMode: 'legacy_text',
-        deliverable: deliverable as unknown as ResearchDeliverableEnvelope<unknown>,
+        deliverable: deliverable as unknown as LegacyResearchDeliverableEnvelope<unknown>,
         evidenceManifest,
       };
     }

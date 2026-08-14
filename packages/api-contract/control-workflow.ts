@@ -2,6 +2,7 @@ import type { ResearchTaskData, ResearchTaskV2 } from './plan.ts';
 import type {
   CurrentExecutionPlan,
   EvidenceManifest,
+  LegacyResearchDeliverableEnvelope,
   PendingInput,
   ResearchDeliverableEnvelope,
 } from './research-deliverable.ts';
@@ -191,29 +192,29 @@ export interface ReportReviewArtifact {
   revisionRound: 0 | 1;
 }
 
-interface CoreReportPackageResponse {
-  deliverable: ResearchDeliverableEnvelope<unknown>;
+interface CoreReportPackageResponse<TDeliverable> {
+  deliverable: TDeliverable;
   evidenceManifest: EvidenceManifest;
-  reportDocument?: unknown;
-  visualAssetManifest?: unknown;
 }
 
-export type CurrentReportPackageResponse =
-  | CoreReportPackageResponse & {
+export type CurrentReportPackageResponse<TPayload = unknown> =
+  | CoreReportPackageResponse<LegacyResearchDeliverableEnvelope<TPayload>> & {
       presentationMode: 'legacy_text';
       reportReview?: never;
+      reportDocument?: never;
+      visualAssetManifest?: never;
     }
-  | CoreReportPackageResponse & {
+  | CoreReportPackageResponse<ResearchDeliverableEnvelope<TPayload>> & {
       presentationMode: 'current_text';
       reportReview: ReportReviewArtifact;
       reportDocument?: never;
       visualAssetManifest?: never;
     }
-  | CoreReportPackageResponse & {
+  | CoreReportPackageResponse<ResearchDeliverableEnvelope<TPayload>> & {
       presentationMode: 'multimodal';
       reportReview: ReportReviewArtifact;
-      reportDocument: unknown;
-      visualAssetManifest: unknown;
+      reportDocument?: never;
+      visualAssetManifest?: never;
     };
 
 

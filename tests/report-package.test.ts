@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ControlArtifact } from '../database/control-plane.ts';
+import type { CurrentReportPackageResponse } from '../packages/api-contract/control-workflow.ts';
+import type { ResearchDeliverableEnvelope } from '../packages/api-contract/research-deliverable.ts';
 import { ArtifactIntegrityError } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
 import {
   EvidenceService,
@@ -420,6 +422,27 @@ test('returns historical research-deliverable-v1 Artifacts as legacy_text withou
   assert.equal(result?.reportReview, undefined);
   assert.equal('reportDocument' in (result ?? {}), false);
   assert.equal('visualAssetManifest' in (result ?? {}), false);
+});
+
+test('models legacy coverage as optional while current coverage remains required', () => {
+  const fullDeliverable = deliverable() as unknown as ResearchDeliverableEnvelope<unknown>;
+  const { coverage: _coverage, ...deliverableWithoutCoverage } = fullDeliverable;
+  const legacyPackage: CurrentReportPackageResponse = {
+    presentationMode: 'legacy_text',
+    deliverable: deliverableWithoutCoverage,
+    evidenceManifest: manifest(),
+  };
+
+  assert.equal(legacyPackage.deliverable.coverage, undefined);
+
+  const currentWithoutCoverage = {
+    presentationMode: 'current_text' as const,
+    deliverable: deliverableWithoutCoverage,
+    evidenceManifest: manifest(),
+    reportReview: review(),
+  };
+  // @ts-expect-error current_text packages require explicit coverage
+  const _invalidCurrentPackage: CurrentReportPackageResponse = currentWithoutCoverage;
 });
 
 test('never silently downgrades an unknown deliverable schema marker', async () => {
