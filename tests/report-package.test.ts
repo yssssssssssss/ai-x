@@ -23,6 +23,49 @@ const manifestArtifactId = 'manifest-1';
 const deliverableArtifactId = 'deliverable-1';
 const reviewArtifactId = 'review-1';
 const evidenceContentSha256 = `sha256:${'1'.repeat(64)}`;
+const REQUIRED_REVIEW_DIMENSIONS = [
+  'requirement_coverage',
+  'question_coverage',
+  'evidence_coverage',
+  'reasoning_quality',
+  'recommendation_quality',
+  'visual_quality',
+  'risk_disclosure',
+] as const satisfies readonly ReportReviewArtifact['dimensions'][number]['id'][];
+
+function passingReviewDimensions(): ReportReviewArtifact['dimensions'] {
+  return REQUIRED_REVIEW_DIMENSIONS.map((id) => ({ id, passed: true, issues: [] }));
+}
+
+const INVALID_PASS_DIMENSION_CASES: Array<{
+  name: string;
+  dimensions: () => ReportReviewArtifact['dimensions'];
+}> = [{
+  name: 'a missing required dimension',
+  dimensions: () => passingReviewDimensions().slice(1),
+}, {
+  name: 'a duplicate dimension',
+  dimensions: () => {
+    const dimensions = passingReviewDimensions();
+    return [...dimensions, { ...dimensions[0]! }];
+  },
+}, {
+  name: 'an unknown dimension',
+  dimensions: () => [
+    ...passingReviewDimensions().slice(1),
+    { id: 'unknown_dimension', passed: true, issues: [] },
+  ] as unknown as ReportReviewArtifact['dimensions'],
+}, {
+  name: 'a failed dimension',
+  dimensions: () => passingReviewDimensions().map((dimension, index) => (
+    index === 0 ? { ...dimension, passed: false } : dimension
+  )),
+}, {
+  name: 'issues on a passed dimension',
+  dimensions: () => passingReviewDimensions().map((dimension, index) => (
+    index === 0 ? { ...dimension, issues: ['unresolved issue'] } : dimension
+  )),
+}];
 
 function artifact(
   id: string,
@@ -100,7 +143,7 @@ function review(overrides: Partial<ReportReviewArtifact> = {}): ReportReviewArti
     ...binding,
     deliverableArtifactId,
     verdict: 'pass',
-    dimensions: [{ id: 'reasoning_quality', passed: true, issues: [] }],
+    dimensions: passingReviewDimensions(),
     revisionRound: 0,
     ...overrides,
   };
@@ -153,6 +196,7 @@ function setup(options: {
     deliverableArtifactId,
     'deliverable',
     options.deliverableSchemaVersion ?? REVIEW_GATED_DELIVERABLE_SCHEMA_VERSION,
+    { storageUri: '/artifacts/deliverables/final-r0.json' },
   );
   artifacts.add(evidenceArtifact, evidenceValue());
   artifacts.add(evidenceManifestArtifact, manifest());
@@ -177,18 +221,67 @@ test('returns a verified review-gated current_text package and reads every JSON 
   const result = await fixture.reader.read(binding);
 
   assert.equal(result?.presentationMode, 'current_text');
+  if (result?.presentationMode !== 'current_text') assert.fail('expected a current_text package');
   assert.deepEqual(result?.deliverable, deliverable());
   assert.deepEqual(result?.evidenceManifest, manifest());
   assert.deepEqual(result?.reportReview, review());
   assert.equal('reportDocument' in (result ?? {}), false);
   assert.equal('visualAssetManifest' in (result ?? {}), false);
+  assert.deepEqual(result.reportReview.dimensions.map(({ id }) => id), [...REQUIRED_REVIEW_DIMENSIONS]);
+  assert.equal(
+    new Set(result.reportReview.dimensions.map(({ id }) => id)).size,
+    REQUIRED_REVIEW_DIMENSIONS.length,
+  );
   assert.deepEqual(fixture.artifacts.reads, [
+    reviewArtifactId,
     deliverableArtifactId,
     manifestArtifactId,
     evidenceArtifactId,
-    reviewArtifactId,
   ]);
 });
+test('reads the final revised deliverable through the Review binding instead of an arbitrary draft', async () => {
+  const revisedDeliverableArtifactId = 'deliverable-revised';
+  const fixture = setup({
+    review: review({
+      deliverableArtifactId: revisedDeliverableArtifactId,
+      revisionRound: 1,
+    }),
+    reviewArtifact: artifact(reviewArtifactId, 'report_review', 'report-review-v1', {
+      storageUri: '/artifacts/reports/review-r1.json',
+    }),
+  });
+  fixture.artifacts.add(
+    artifact(
+      revisedDeliverableArtifactId,
+      'deliverable',
+      REVIEW_GATED_DELIVERABLE_SCHEMA_VERSION,
+      { storageUri: '/artifacts/deliverables/final-r1.json' },
+    ),
+    deliverable({ methodSummary: 'Final revised synthesis' }),
+  );
+
+  const result = await fixture.reader.read(binding);
+  if (result?.presentationMode !== 'current_text') assert.fail('expected a current_text package');
+
+  assert.equal(result?.deliverable.methodSummary, 'Final revised synthesis');
+  assert.equal(result.reportReview.deliverableArtifactId, revisedDeliverableArtifactId);
+  assert.deepEqual(fixture.artifacts.reads, [
+    reviewArtifactId,
+    revisedDeliverableArtifactId,
+    manifestArtifactId,
+    evidenceArtifactId,
+  ]);
+});
+
+for (const invalid of INVALID_PASS_DIMENSION_CASES) {
+  test(`rejects a pass Review with ${invalid.name}`, async () => {
+    const { reader } = setup({
+      review: review({ dimensions: invalid.dimensions() }),
+    });
+    await assert.rejects(reader.read(binding), /dimension|review|pass|schema/i);
+  });
+}
+
 
 test('rejects a review-gated package when its Review Artifact is missing', async () => {
   const { reader } = setup({ review: null });

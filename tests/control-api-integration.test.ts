@@ -177,6 +177,9 @@ class OfflineEligibleRealLLM implements LLMClient {
   };
   calls = 0;
   skillContexts: object[] = [];
+  private reviewCall = 0;
+
+  constructor(private readonly reviewVerdicts: readonly ('pass' | 'revise' | 'block')[] = ['pass']) {}
 
   async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
     this.calls += 1;
@@ -261,9 +264,25 @@ class OfflineEligibleRealLLM implements LLMClient {
       } | undefined;
       data = validDeliverableDraft(deliverableContext?.verifiedEvidence?.[0]?.evidenceId);
     } else if (options.schemaName === 'report-review') {
+      const verdict = this.reviewVerdicts[this.reviewCall]
+        ?? this.reviewVerdicts[this.reviewVerdicts.length - 1]
+        ?? 'pass';
+      this.reviewCall += 1;
       data = {
-        verdict: 'pass',
-        dimensions: [{ id: 'reasoning_quality', passed: true, issues: [] }],
+        verdict,
+        dimensions: [
+          'requirement_coverage',
+          'question_coverage',
+          'evidence_coverage',
+          'reasoning_quality',
+          'recommendation_quality',
+          'visual_quality',
+          'risk_disclosure',
+        ].map((id) => ({
+          id,
+          passed: verdict === 'pass' || id !== 'risk_disclosure',
+          issues: verdict === 'pass' || id !== 'risk_disclosure' ? [] : [`${verdict} requires revision`],
+        })),
       };
     } else {
       data = { ok: true };
@@ -500,7 +519,7 @@ function validDeliverableDraft(evidenceId: unknown = 'missing-evidence'): Record
         inclusionCriteria: ['存在可核验的公开产品资料'],
         exclusionCriteria: ['无公开资料或已停止销售'],
       },
-      researchQuestions: ['主要竞品如何定位宠物类型与消费场景？'],
+      researchQuestions: ['competitive-question', '主要竞品如何定位宠物类型与消费场景？'],
       comparisonDimensions: [{
         id: 'positioning',
         name: '产品定位',
@@ -525,7 +544,7 @@ function validDeliverableDraft(evidenceId: unknown = 'missing-evidence'): Record
       }],
       analysisMethods: ['横向维度对比'],
       deliverables: ['竞品研究计划'],
-      qualityChecks: ['每项事实均关联可追溯公开来源'],
+      qualityChecks: ['verifiable-comparison', '每项事实均关联可追溯公开来源'],
     },
     recommendations: [{
       id: 'R1',
@@ -964,12 +983,12 @@ after(async () => {
   if (errors.length) throw new AggregateError(errors, 'control API integration cleanup failed');
 });
 
-test('production control runtime completes the offline Current API flow and serves the owner deliverable', async () => {
+test('production control runtime returns the revised final deliverable ID for pass and pause review outcomes', async () => {
   const originalInput = '请生成基于公开证据的宠物辅食竞品研究计划';
   const suppliedBusinessDomain = '犬猫鲜食与冻干辅食';
   const { buildControlRuntime } = await loadControlRuntimeModule();
   const tavily = new OfflineRealTavilyAdapter();
-  const llm = new OfflineEligibleRealLLM();
+  const llm = new OfflineEligibleRealLLM(['revise', 'pass', 'revise', 'block']);
   const tools = new ToolRouter().register(tavily);
   const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
   const controlRuntime = await buildControlRuntime({
@@ -1151,6 +1170,7 @@ test('production control runtime completes the offline Current API flow and serv
   const reportReview = ownerDeliverableBody.reportReview;
   assertRecord(reportReview);
   assert.equal(reportReview.verdict, 'pass');
+  assert.equal(reportReview.revisionRound, 1);
   assert.equal(reportReview.taskId, planned.task.id);
   assert.equal(reportReview.planVersionId, speed.planVersionId);
   assert.equal(reportReview.attemptId, execution.attemptId);
@@ -1207,6 +1227,8 @@ test('production control runtime completes the offline Current API flow and serv
     { stage: 'skill', status: 'succeeded' },
     { stage: 'llm', status: 'succeeded' },
     { stage: 'reviewer', status: 'succeeded' },
+    { stage: 'deliverable', status: 'succeeded' },
+    { stage: 'deliverable_review', status: 'succeeded' },
     { stage: 'deliverable', status: 'succeeded' },
     { stage: 'deliverable_review', status: 'succeeded' },
   ]);
@@ -1268,22 +1290,31 @@ test('production control runtime completes the offline Current API flow and serv
   const connection = await scopedDatabase.connect();
   try {
     const terminalArtifacts = await connection.query(
-      `SELECT id, kind, state
+      `SELECT id, kind, state, storage_uri, created_at
        FROM control_artifacts
        WHERE attempt_id = $1 AND kind IN ('deliverable', 'evidence_manifest', 'report_review', 'execution_summary')
-       ORDER BY kind`,
+       ORDER BY kind, created_at, id`,
       [execution.attemptId],
     );
     assert.deepEqual(
       terminalArtifacts.rows.map((row) => ({ kind: row.kind, state: row.state })),
       [
         { kind: 'deliverable', state: 'SEALED' },
+        { kind: 'deliverable', state: 'SEALED' },
         { kind: 'evidence_manifest', state: 'SEALED' },
         { kind: 'report_review', state: 'SEALED' },
       ],
     );
+    const deliverableArtifacts = terminalArtifacts.rows.filter((row) => row.kind === 'deliverable');
+    assert.equal(deliverableArtifacts.length, 2);
+    assert.equal(new Set(deliverableArtifacts.map((row) => row.id)).size, 2);
+    assert.ok(deliverableArtifacts.some((row) => row.id === execution.deliverableArtifactId));
     assert.equal(
-      terminalArtifacts.rows.find((row) => row.kind === 'deliverable')?.id,
+      deliverableArtifacts.find((row) => String(row.storage_uri).endsWith('/deliverables/final-r1.json'))?.id,
+      execution.deliverableArtifactId,
+    );
+    assert.notEqual(
+      deliverableArtifacts.find((row) => String(row.storage_uri).endsWith('/deliverables/final-r0.json'))?.id,
       execution.deliverableArtifactId,
     );
     assert.equal(
@@ -1374,6 +1405,83 @@ test('production control runtime completes the offline Current API flow and serv
     assert.deepEqual(revalidationFailures, []);
   } finally {
     connection.release();
+  }
+
+  const pausedPlanResponse = await postJson(baseUrl, '/api/control-tasks/plan', ownerToken, {
+    originalInput: `请生成需要修订后暂停的竞品计划 ${randomUUID()}`,
+    conversationId,
+  });
+  assert.equal(pausedPlanResponse.status, 200, await pausedPlanResponse.clone().text());
+  const pausedPlanned = await pausedPlanResponse.json() as ControlPlanCandidatesResponse;
+  const pausedSpeed = pausedPlanned.candidates.find((candidate) => candidate.candidateId === 'speed');
+  assert.ok(pausedSpeed);
+  const pausedSelectResponse = await postJson(
+    baseUrl,
+    `/api/control-tasks/${pausedPlanned.task.id}/select`,
+    ownerToken,
+    { expectedVersion: pausedPlanned.task.stateVersion, planVersionId: pausedSpeed.planVersionId },
+    `paused-select-${randomUUID()}`,
+  );
+  assert.equal(pausedSelectResponse.status, 200, await pausedSelectResponse.clone().text());
+  const pausedSelected = await pausedSelectResponse.json() as { stateVersion: number };
+  const pausedConfirmResponse = await postJson(
+    baseUrl,
+    `/api/control-tasks/${pausedPlanned.task.id}/confirm`,
+    ownerToken,
+    {
+      expectedVersion: pausedSelected.stateVersion,
+      planVersionId: pausedSpeed.planVersionId,
+      confirmationAnswers: {},
+      inputValues: { business_domain: suppliedBusinessDomain },
+    },
+    `paused-confirm-${randomUUID()}`,
+  );
+  assert.equal(pausedConfirmResponse.status, 200, await pausedConfirmResponse.clone().text());
+  const pausedConfirmed = await pausedConfirmResponse.json() as { stateVersion: number };
+  const pausedExecuteResponse = await postJson(
+    baseUrl,
+    `/api/control-tasks/${pausedPlanned.task.id}/execute`,
+    ownerToken,
+    { expectedVersion: pausedConfirmed.stateVersion, planVersionId: pausedSpeed.planVersionId },
+    `paused-execute-${randomUUID()}`,
+  );
+  assert.equal(pausedExecuteResponse.status, 200, await pausedExecuteResponse.clone().text());
+  const pausedExecution = await pausedExecuteResponse.json() as ExecutionResponse;
+  assert.equal(pausedExecution.status, 'paused');
+  assert.equal(pausedExecution.state, 'paused');
+  assert.equal(pausedExecution.reviewStatus, 'paused');
+
+  const pausedConnection = await scopedDatabase.connect();
+  try {
+    const terminalArtifacts = await pausedConnection.query(
+      `SELECT id, kind, storage_uri
+       FROM control_artifacts
+       WHERE attempt_id = $1 AND kind IN ('deliverable', 'report_review')
+       ORDER BY kind, created_at`,
+      [pausedExecution.attemptId],
+    );
+    const pausedDeliverables = terminalArtifacts.rows.filter((row) => row.kind === 'deliverable');
+    assert.equal(pausedDeliverables.length, 2);
+    assert.equal(new Set(pausedDeliverables.map((row) => row.id)).size, 2);
+    const finalReviewArtifact = terminalArtifacts.rows.find((row) => row.kind === 'report_review');
+    assert.ok(finalReviewArtifact);
+    assert.equal(finalReviewArtifact.id, pausedExecution.reportReviewArtifactId);
+    const finalReview: unknown = JSON.parse(readFileSync(String(finalReviewArtifact.storage_uri), 'utf8'));
+    assertRecord(finalReview);
+    assert.equal(finalReview.revisionRound, 1);
+    assert.equal(finalReview.verdict, 'block');
+    assert.equal(finalReview.deliverableArtifactId, pausedExecution.deliverableArtifactId);
+    assert.ok(pausedDeliverables.some((row) => row.id === pausedExecution.deliverableArtifactId));
+    assert.equal(
+      pausedDeliverables.find((row) => String(row.storage_uri).endsWith('/deliverables/final-r1.json'))?.id,
+      pausedExecution.deliverableArtifactId,
+    );
+    assert.notEqual(
+      pausedDeliverables.find((row) => String(row.storage_uri).endsWith('/deliverables/final-r0.json'))?.id,
+      pausedExecution.deliverableArtifactId,
+    );
+  } finally {
+    pausedConnection.release();
   }
 });
 

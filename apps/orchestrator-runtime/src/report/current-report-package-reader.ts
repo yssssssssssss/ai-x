@@ -17,6 +17,7 @@ import {
 } from '../evidence/evidence-service.ts';
 import { ReportEvidenceValidator } from '../evidence/report-evidence-validator.ts';
 import { SchemaValidator } from '../schema/validator.ts';
+import { assertReportReviewInvariant } from './report-review-service.ts';
 
 export const REVIEW_GATED_DELIVERABLE_SCHEMA_VERSION = 'research-deliverable-v1-review-gated';
 const LEGACY_DELIVERABLE_SCHEMA_VERSION = 'research-deliverable-v1';
@@ -87,19 +88,56 @@ export class CurrentReportPackageReader {
   }
 
   async read(binding: ReportPackageBinding): Promise<CurrentReportPackageResponse | null> {
-    const selectedDeliverable = await this.dependencies.repository.findSealedArtifact({
+    const selectedReview = await this.dependencies.repository.findSealedArtifact({
       taskId: binding.taskId,
       attemptId: binding.attemptId,
-      kind: 'deliverable',
+      kind: 'report_review',
     });
-    if (!selectedDeliverable) return null;
+    let review: ReportReviewArtifact | null = null;
+    let deliverableArtifactId: string;
+    if (selectedReview) {
+      const verifiedReview = await this.dependencies.artifacts.readVerifiedJson<unknown>(
+        selectedReview.id,
+      );
+      assertArtifactBinding(
+        verifiedReview.artifact,
+        selectedReview.id,
+        'report_review',
+        binding,
+        'Review',
+      );
+      if (verifiedReview.artifact.schemaVersion !== 'report-review-v1') {
+        throw new Error('Review Artifact schema version is invalid');
+      }
+      this.schemaValidator.validateOrThrow('report-review', verifiedReview.value);
+      const reviewRecord = record(verifiedReview.value);
+      if (!reviewRecord) throw new Error('Review JSON schema is invalid');
+      assertJsonIdentity(reviewRecord, binding, 'Review');
+      review = verifiedReview.value as ReportReviewArtifact;
+      assertReportReviewInvariant(review);
+      if (review.verdict !== 'pass') {
+        throw new Error('final Review verdict must be pass');
+      }
+      if (basename(verifiedReview.artifact.storageUri) !== `review-r${review.revisionRound}.json`) {
+        throw new Error('Review revision round does not match the final Review Artifact');
+      }
+      deliverableArtifactId = review.deliverableArtifactId;
+    } else {
+      const selectedDeliverable = await this.dependencies.repository.findSealedArtifact({
+        taskId: binding.taskId,
+        attemptId: binding.attemptId,
+        kind: 'deliverable',
+      });
+      if (!selectedDeliverable) return null;
+      deliverableArtifactId = selectedDeliverable.id;
+    }
 
     const verifiedDeliverable = await this.dependencies.artifacts.readVerifiedJson<unknown>(
-      selectedDeliverable.id,
+      deliverableArtifactId,
     );
     assertArtifactBinding(
       verifiedDeliverable.artifact,
-      selectedDeliverable.id,
+      deliverableArtifactId,
       'deliverable',
       binding,
       'deliverable',
@@ -167,6 +205,17 @@ export class CurrentReportPackageReader {
     });
 
     const schemaVersion = verifiedDeliverable.artifact.schemaVersion;
+    if (review) {
+      if (schemaVersion !== REVIEW_GATED_DELIVERABLE_SCHEMA_VERSION) {
+        throw new Error(`Review-bound deliverable Artifact schema marker ${schemaVersion} is unsupported`);
+      }
+      return {
+        presentationMode: 'current_text',
+        deliverable: deliverable as unknown as ResearchDeliverableEnvelope<unknown>,
+        evidenceManifest,
+        reportReview: review,
+      };
+    }
     if (schemaVersion === LEGACY_DELIVERABLE_SCHEMA_VERSION) {
       return {
         presentationMode: 'legacy_text',
@@ -174,49 +223,9 @@ export class CurrentReportPackageReader {
         evidenceManifest,
       };
     }
-    if (schemaVersion !== REVIEW_GATED_DELIVERABLE_SCHEMA_VERSION) {
-      throw new Error(`deliverable Artifact schema marker ${schemaVersion} is unsupported`);
+    if (schemaVersion === REVIEW_GATED_DELIVERABLE_SCHEMA_VERSION) {
+      throw new Error('review-gated report Review Artifact is missing');
     }
-
-    const selectedReview = await this.dependencies.repository.findSealedArtifact({
-      taskId: binding.taskId,
-      attemptId: binding.attemptId,
-      kind: 'report_review',
-    });
-    if (!selectedReview) throw new Error('review-gated report Review Artifact is missing');
-    const verifiedReview = await this.dependencies.artifacts.readVerifiedJson<unknown>(selectedReview.id);
-    assertArtifactBinding(
-      verifiedReview.artifact,
-      selectedReview.id,
-      'report_review',
-      binding,
-      'Review',
-    );
-    if (verifiedReview.artifact.schemaVersion !== 'report-review-v1') {
-      throw new Error('Review Artifact schema version is invalid');
-    }
-    this.schemaValidator.validateOrThrow('report-review', verifiedReview.value);
-    const reviewRecord = verifiedReview.value as Record<string, unknown>;
-    assertJsonIdentity(reviewRecord, binding, 'Review');
-    if (reviewRecord.deliverableArtifactId !== verifiedDeliverable.artifact.id) {
-      throw new Error('Review is not bound to the final deliverable Artifact');
-    }
-    if (reviewRecord.verdict !== 'pass') {
-      throw new Error('final Review verdict must be pass');
-    }
-    const revisionRound = reviewRecord.revisionRound;
-    if (
-      (revisionRound !== 0 && revisionRound !== 1)
-      || basename(verifiedReview.artifact.storageUri) !== `review-r${revisionRound}.json`
-    ) {
-      throw new Error('Review revision round does not match the final Review Artifact');
-    }
-
-    return {
-      presentationMode: 'current_text',
-      deliverable: deliverable as unknown as ResearchDeliverableEnvelope<unknown>,
-      evidenceManifest,
-      reportReview: verifiedReview.value as ReportReviewArtifact,
-    };
+    throw new Error(`deliverable Artifact schema marker ${schemaVersion} is unsupported`);
   }
 }

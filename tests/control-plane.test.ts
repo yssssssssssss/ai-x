@@ -15,6 +15,7 @@ import {
   ControlPlaneConflictError,
   ControlPlaneRepository,
   canonicalPlanHash,
+  type ControlExecutionLease,
   type ControlPlanVersionDetail,
   type ControlTask,
 } from '../database/control-plane.ts';
@@ -283,6 +284,96 @@ before(async () => {
     connection.release();
   }
 });
+
+type LeaseTaskState = 'executing' | 'reviewing' | 'composing_report';
+
+interface LeaseStateFixture {
+  repository: ControlPlaneRepository;
+  task: { id: string };
+  plan: { id: string };
+  claim: { attemptId: string };
+  lease: ControlExecutionLease;
+  stateVersion: number;
+}
+
+async function createLeaseStateFixture(taskState: LeaseTaskState, expired: boolean): Promise<LeaseStateFixture> {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const task = await repository.createTask({
+    conversationId,
+    ownerUserId: ownerId,
+    originalInput: `${taskState} lease recovery ${randomUUID()}`,
+    taskType: 'competitive_research',
+    structuredTask: { research_goal: `recover an expired ${taskState} lease` },
+    state: 'ready',
+  });
+  const plan = await repository.createPlanVersion({
+    taskId: task.id,
+    version: 1,
+    plan: { steps: [] },
+    planHash: `sha256:${randomUUID()}`,
+  });
+  const leaseToken = randomUUID();
+  const leaseOwner = `lease-recovery-${taskState}`;
+  const claim = await repository.claimExecution({
+    taskId: task.id,
+    planVersionId: plan.id,
+    expectedVersion: task.stateVersion,
+    idempotencyKey: randomUUID(),
+    requestHash: `sha256:${randomUUID()}`,
+    leaseOwner,
+    leaseTokenHash: `sha256:${createHash('sha256').update(leaseToken).digest('hex')}`,
+    leaseExpiresAt: new Date(Date.now() + 60_000),
+  });
+  let stateVersion = claim.stateVersion;
+  if (taskState === 'reviewing' || taskState === 'composing_report') {
+    const reviewing = await repository.transitionTask({
+      taskId: task.id,
+      expectedVersion: stateVersion,
+      from: 'executing',
+      to: 'reviewing',
+    });
+    stateVersion = reviewing.stateVersion;
+  }
+  if (taskState === 'composing_report') {
+    const composing = await repository.transitionTask({
+      taskId: task.id,
+      expectedVersion: stateVersion,
+      from: 'reviewing',
+      to: 'composing_report',
+    });
+    stateVersion = composing.stateVersion;
+  }
+  if (expired) {
+    const connection = await scopedDatabase.connect();
+    try {
+      await connection.query(
+        `UPDATE control_execution_attempts
+         SET lease_expires_at = now() - interval '1 second'
+         WHERE id = $1`,
+        [claim.attemptId],
+      );
+    } finally {
+      connection.release();
+    }
+  }
+  const lease: ControlExecutionLease = {
+    taskId: task.id,
+    planVersionId: plan.id,
+    attemptId: claim.attemptId,
+    leaseOwner,
+    leaseToken,
+  };
+  return { repository, task, plan, claim, lease, stateVersion };
+}
+
+async function assertLeaseRecoveryPaused(
+  repository: ControlPlaneRepository,
+  taskId: string,
+  attemptId: string,
+): Promise<void> {
+  assert.equal((await repository.getTaskDetail(taskId))?.state, 'paused');
+  assert.equal((await repository.listAttempts(taskId)).find((attempt) => attempt.id === attemptId)?.state, 'paused');
+}
 
 test('keeps legacy schema available while creating the isolated control plane schema', async () => {
   const connection = await scopedDatabase.connect();
@@ -1379,6 +1470,128 @@ test('atomically refuses to seal a terminal artifact after its execution lease e
   );
   assert.equal((await repository.getArtifact(staged.id))?.state, 'FAILED');
   assert.equal((await repository.getTaskDetail(task.id))?.state, 'paused');
+});
+
+for (const taskState of ['executing', 'reviewing', 'composing_report'] as const) {
+  test(`expireExecutionLease pauses an expired ${taskState} task and attempt`, async () => {
+    const fixture = await createLeaseStateFixture(taskState, true);
+
+    const paused = await fixture.repository.expireExecutionLease({
+      taskId: fixture.task.id,
+      attemptId: fixture.claim.attemptId,
+    });
+
+    assert.equal(paused.state, 'paused');
+    await assertLeaseRecoveryPaused(fixture.repository, fixture.task.id, fixture.claim.attemptId);
+  });
+}
+
+const expiredLeaseBranches = [
+  {
+    name: 'requireActiveLease',
+    invoke: async (fixture: LeaseStateFixture) => {
+      await fixture.repository.requireActiveLease(fixture.lease);
+    },
+  },
+  {
+    name: 'heartbeatExecutionLease',
+    invoke: async (fixture: LeaseStateFixture) => {
+      await fixture.repository.heartbeatExecutionLease({
+        ...fixture.lease,
+        extendUntil: new Date(Date.now() + 60_000),
+      });
+    },
+  },
+  {
+    name: 'completeExecution',
+    invoke: async (fixture: LeaseStateFixture) => {
+      await fixture.repository.completeExecution(fixture.lease);
+    },
+  },
+  {
+    name: 'sealArtifact',
+    invoke: async (fixture: LeaseStateFixture) => {
+      const staged = await fixture.repository.createStagingArtifact({
+        taskId: fixture.task.id,
+        planVersionId: fixture.plan.id,
+        attemptId: fixture.claim.attemptId,
+        kind: 'deliverable',
+        storageUri: join(workspaceRoot, `${fixture.claim.attemptId}-expired-terminal.json`),
+        schemaVersion: 'research-deliverable-v1',
+        sensitivity: 'internal',
+        redactionPolicyVersion: 'v1',
+      });
+      await fixture.repository.sealArtifact({
+        artifactId: staged.id,
+        contentSha256: `sha256:${'a'.repeat(64)}`,
+        byteSize: 2,
+        ...fixture.lease,
+      });
+    },
+  },
+] as const;
+
+for (const taskState of ['executing', 'reviewing', 'composing_report'] as const) {
+  for (const branch of expiredLeaseBranches) {
+    test(`${branch.name} recovers an expired ${taskState} lease to the same paused task and attempt state`, async () => {
+      const fixture = await createLeaseStateFixture(taskState, true);
+
+      await assert.rejects(() => branch.invoke(fixture), ControlPlaneConflictError);
+
+      await assertLeaseRecoveryPaused(fixture.repository, fixture.task.id, fixture.claim.attemptId);
+    });
+  }
+}
+
+test('terminal CAS recovery invalidates every sealed trusted review artifact without leaving an orphan review', async () => {
+  const fixture = await createLeaseStateFixture('reviewing', false);
+  const store = new ControlArtifactStore({ root: workspaceRoot, registry: fixture.repository });
+  const artifacts = await Promise.all([
+    store.writeJson({
+      taskId: fixture.task.id,
+      planVersionId: fixture.plan.id,
+      attemptId: fixture.claim.attemptId,
+      kind: 'evidence_manifest',
+      relativePath: 'evidence/manifest.json',
+      value: { version: 'evidence-v1', entries: [] },
+      activeLease: fixture.lease,
+    }),
+    store.writeJson({
+      taskId: fixture.task.id,
+      planVersionId: fixture.plan.id,
+      attemptId: fixture.claim.attemptId,
+      kind: 'deliverable',
+      relativePath: 'deliverables/final-r0.json',
+      value: { version: 'research-deliverable-v1', taskId: fixture.task.id },
+      activeLease: fixture.lease,
+    }),
+    store.writeJson({
+      taskId: fixture.task.id,
+      planVersionId: fixture.plan.id,
+      attemptId: fixture.claim.attemptId,
+      kind: 'report_review',
+      relativePath: 'reviews/review-r0.json',
+      value: { version: 'report-review-v1', verdict: 'pass' },
+      activeLease: fixture.lease,
+    }),
+  ]);
+  assert.ok(artifacts.every((artifact) => artifact.state === 'SEALED'));
+
+  await fixture.repository.invalidateTerminalArtifacts({
+    taskId: fixture.task.id,
+    planVersionId: fixture.plan.id,
+    attemptId: fixture.claim.attemptId,
+    reason: 'terminal completion CAS was lost',
+  });
+
+  assert.deepEqual(
+    await Promise.all(artifacts.map(async (artifact) => (await fixture.repository.getArtifact(artifact.id))?.state)),
+    ['FAILED', 'FAILED', 'FAILED'],
+  );
+  await assert.rejects(
+    () => fixture.repository.requireSealedArtifact(artifacts[2]!.id),
+    ArtifactNotSealedError,
+  );
 });
 
 test('refuses to overwrite an already sealed artifact path', async () => {

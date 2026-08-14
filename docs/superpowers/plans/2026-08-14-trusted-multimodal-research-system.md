@@ -907,6 +907,9 @@ git commit -m "feat: bind sealed outputs into current steps"
 
 ## Phase 4：结果融合和报告审查
 
+**Integrated Phase 4 integrity correction:** Tool fact materials are EvidenceEntry/JSON-pointer scoped; deliverable revisions use immutable round-specific paths and terminal Review-bound IDs; review coverage IDs are explicit; the seven semantic dimensions are complete and fail closed; lease recovery covers `executing`/`reviewing`/`composing_report`; paused review writes an abort-only failed step; and terminal recovery invalidates Review, Manifest, and Deliverable together. Real ArtifactStore/PostgreSQL regressions cover these contracts.
+
+
 ### Task 12: SynthesisMaterializer
 
 **用户收益：** Skill、LLM、Reviewer 的真实内容会进入最终报告，而不是只记录“执行过”。
@@ -920,29 +923,29 @@ git commit -m "feat: bind sealed outputs into current steps"
 **Interfaces:**
 - Produces: `materialize(input): Promise<SynthesisMaterial[]>`。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 覆盖：Tool→fact_source、Skill/LLM→analysis/inference、Reviewer→review、tampered Artifact、foreign attempt、blocked sensitivity、内容脱敏。
 
-- [ ] **Step 2: 写报告消费证明测试**
+- [x] **Step 2: 写报告消费证明测试**
 
 同一 Evidence 下分别改变 Skill 和 Reviewer Artifact，断言传给 Deliverable LLM 的 context 内容变化；Artifact ID/Hash 相同形状但正文不同不能得到相同 context hash。
 
-- [ ] **Step 3: 运行并确认失败**
+- [x] **Step 3: 运行并确认失败**
 
 Run: `pnpm exec tsx --test tests/synthesis-materializer.test.ts`
 
 Expected: FAIL，现有 service 只传 sealed output metadata。
 
-- [ ] **Step 4: 实现 Materializer**
+- [x] **Step 4: 实现 Materializer**
 
 使用 `readVerifiedJson`，检查 Task/Plan/Attempt、Schema、Hash 和 sensitivity；返回设计规格中的 `SynthesisMaterial[]`。
 
-- [ ] **Step 5: 修改 Deliverable Context**
+- [x] **Step 5: 修改 Deliverable Context**
 
 删除只有 metadata 的 `sealedOutputs`；context 改为：finalized requirement、problem graph、verified evidence、synthesis materials、gaps。
 
-- [ ] **Step 6: 运行测试和提交**
+- [x] **Step 6: 运行测试和提交**
 
 Run: `pnpm exec tsx --test tests/synthesis-materializer.test.ts tests/current-deliverable-service.test.ts tests/lease-execution-engine.test.ts`
 
@@ -969,29 +972,29 @@ git commit -m "feat: synthesize from verified step materials"
 **Interfaces:**
 - Produces: `ReportReviewArtifact`、`reviewing` 状态、一次 `revise()`。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 覆盖 pass、revise 后 pass、第二次仍 revise→paused、block→paused、model drift、Receipt failure、review artifact seal。
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `pnpm exec tsx --test tests/report-review-service.test.ts`
 
 Expected: FAIL。
 
-- [ ] **Step 3: 实现确定性 Gate**
+- [x] **Step 3: 实现确定性 Gate**
 
 先运行 requirement/question/evidence/root coverage；失败直接返回 block，不消耗 Reviewer LLM。
 
-- [ ] **Step 4: 实现语义 Review**
+- [x] **Step 4: 实现语义 Review**
 
 调用 `ReceiptLLMClient`，schemaName=`report-review`，stage=`deliverable_review`；输出严格通过 report-review schema。
 
-- [ ] **Step 5: 接入一次修订**
+- [x] **Step 5: 接入一次修订**
 
 `verdict=revise` 时调用 DeliverableComposer.revise 一次，随后重新执行所有确定性和语义审查；不允许循环。
 
-- [ ] **Step 6: 运行测试和提交**
+- [x] **Step 6: 运行测试和提交**
 
 Run: `pnpm exec tsx --test tests/report-review-service.test.ts tests/current-deliverable-service.test.ts tests/model-receipt.test.ts`
 
@@ -1025,25 +1028,25 @@ git commit -m "feat: review and revise current deliverables"
 - Phase 4 `current_text` 返回 verified deliverable、evidenceManifest 和 reportReview；`reportDocument`、`visualAssetManifest` 可选且必须缺席。
 - Phase 5 Tasks 16–19 扩展 `multimodal`，届时 document/assets 成为必需。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 覆盖 review-gated package happy path；missing/tampered/wrong Task/Plan/Attempt Review；Review 非 pass/非最终轮次；referenced Evidence/Finding Graph 重验；历史 marker fallback；foreign/missing 404。
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `pnpm exec tsx --test --test-concurrency=1 tests/report-package.test.ts`
 
 Expected: FAIL，尚无 Verified Core Package reader。
 
-- [ ] **Step 3: 实现核心读取深模块**
+- [x] **Step 3: 实现核心读取深模块**
 
 所有 JSON Artifact 使用 `readVerifiedJson()`。验证 Deliverable、Evidence Manifest、Review 的 SEALED/schemaVersion/Task/Plan/Attempt；resolver 逐项重读 Evidence Artifact，再执行 Manifest 与 Finding Graph 验证。Review 必须绑定最终 Deliverable、`verdict=pass` 且 revisionRound 匹配最终 Review Artifact。
 
-- [ ] **Step 4: 用 schemaVersion marker 做历史兼容**
+- [x] **Step 4: 用 schemaVersion marker 做历史兼容**
 
 Task 13 新交付写 `research-deliverable-v1-review-gated`，缺失/篡改/错误/blocked Review 一律拒绝且不可降级。历史 `research-deliverable-v1` 返回 `legacy_text`；未知 marker 拒绝。Phase 4 不创建伪 `reportDocument` 或 `visualAssetManifest`。
 
-- [ ] **Step 5: 运行测试和阶段门禁**
+- [x] **Step 5: 运行测试和阶段门禁**
 
 Run:
 
@@ -1052,7 +1055,7 @@ pnpm exec tsx --test --test-concurrency=1 tests/report-package.test.ts tests/con
 pnpm typecheck
 ```
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add packages/api-contract/control-workflow.ts packages/api-contract/research-deliverable.ts \

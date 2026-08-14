@@ -1,14 +1,17 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Ajv from 'ajv';
-import { test } from 'node:test';
+import { afterEach, test } from 'node:test';
 import type {
   CurrentExecutionPlan,
   ResearchDeliverableEnvelope,
   ResearchPlanPayload,
 } from '../packages/api-contract/research-deliverable.ts';
+import { ArtifactNotSealedError, type ControlArtifact } from '../database/control-plane.ts';
+import { ControlArtifactStore, type ArtifactWriteInput } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
 import {
   EvidenceService,
   type EvidenceArtifactResolver,
@@ -16,7 +19,7 @@ import {
   type FindingGraph,
 } from '../apps/orchestrator-runtime/src/evidence/evidence-service.ts';
 import type { MaterializeInput, SynthesisMaterial } from '../apps/orchestrator-runtime/src/report/synthesis-materializer.ts';
-import type { ArtifactWriteInput } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
+import type { ReportReviewArtifact } from '../apps/orchestrator-runtime/src/report/report-review-service.ts';
 import type {
   LLMClient,
   LLMProviderIdentity,
@@ -69,17 +72,17 @@ interface DeliverableGenerateResult {
   deliverableArtifactId: string;
 }
 
-interface CurrentDeliverableServiceLike {
-  generate(input: DeliverableGenerateInput): Promise<DeliverableGenerateResult>;
+interface DeliverableRevisionInput extends DeliverableGenerateInput {
+  review: ReportReviewArtifact;
 }
 
-interface SealedArtifactResult {
-  id: string;
-  state: 'SEALED';
+interface CurrentDeliverableServiceLike {
+  generate(input: DeliverableGenerateInput): Promise<DeliverableGenerateResult>;
+  revise(input: DeliverableRevisionInput): Promise<DeliverableGenerateResult>;
 }
 
 interface ArtifactWriterLike {
-  writeJson(input: ArtifactWriteInput): Promise<SealedArtifactResult>;
+  writeJson(input: ArtifactWriteInput): Promise<{ id: string }>;
 }
 
 interface RuntimeSchemaValidator {
@@ -115,6 +118,11 @@ async function loadCurrentDeliverableModule(): Promise<CurrentDeliverableModule>
   assert.equal(typeof moduleExports.CurrentDeliverableService, 'function');
   return moduleExports as unknown as CurrentDeliverableModule;
 }
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 const taskId = 'task-current-1';
 const planVersionId = 'plan-version-current-1';
@@ -273,6 +281,75 @@ class RecordingSchemaValidator implements RuntimeSchemaValidator {
     );
   }
 }
+class MemoryArtifactRegistry {
+  readonly artifacts = new Map<string, ControlArtifact>();
+
+  async createStagingArtifact(input: {
+    taskId: string;
+    planVersionId?: string;
+    attemptId?: string;
+    kind: string;
+    storageUri: string;
+    schemaVersion: string;
+    sensitivity: string;
+    redactionPolicyVersion: string;
+  }): Promise<ControlArtifact> {
+    const artifact: ControlArtifact = {
+      id: randomUUID(),
+      taskId: input.taskId,
+      planVersionId: input.planVersionId ?? null,
+      attemptId: input.attemptId ?? null,
+      kind: input.kind,
+      state: 'STAGING',
+      storageUri: input.storageUri,
+      contentSha256: null,
+      byteSize: null,
+      schemaVersion: input.schemaVersion,
+      sensitivity: input.sensitivity,
+      redactionPolicyVersion: input.redactionPolicyVersion,
+      failureReason: null,
+    };
+    this.artifacts.set(artifact.id, artifact);
+    return artifact;
+  }
+
+  async sealArtifact(input: {
+    artifactId: string;
+    contentSha256: string;
+    byteSize: number;
+  }): Promise<ControlArtifact> {
+    const current = this.artifacts.get(input.artifactId);
+    if (!current) throw new Error('missing staging artifact');
+    const sealed: ControlArtifact = {
+      ...current,
+      state: 'SEALED',
+      contentSha256: input.contentSha256,
+      byteSize: input.byteSize,
+    };
+    this.artifacts.set(sealed.id, sealed);
+    return sealed;
+  }
+
+  async failArtifact(artifactId: string, failureReason: string): Promise<void> {
+    const current = this.artifacts.get(artifactId);
+    if (!current) throw new Error('missing staging artifact');
+    this.artifacts.set(artifactId, { ...current, state: 'FAILED', failureReason });
+  }
+
+  async getArtifact(artifactId: string): Promise<ControlArtifact | null> {
+    return this.artifacts.get(artifactId) ?? null;
+  }
+
+  async listStagingArtifacts(): Promise<ControlArtifact[]> {
+    return [...this.artifacts.values()].filter((artifact) => artifact.state === 'STAGING');
+  }
+
+  async requireSealedArtifact(artifactId: string): Promise<ControlArtifact> {
+    const artifact = this.artifacts.get(artifactId);
+    if (!artifact || artifact.state !== 'SEALED') throw new ArtifactNotSealedError(artifactId);
+    return artifact;
+  }
+}
 
 function sealedEvidence(): {
   evidenceManifest: SealedEvidenceManifest;
@@ -353,6 +430,7 @@ function generateInput(overrides: Partial<DeliverableGenerateInput> = {}): Deliv
 async function createHarness(
   draft: unknown = validDeliverableDraft(),
   materializer?: { materialize(input: MaterializeInput): Promise<SynthesisMaterial[]> },
+  artifactWriter?: ArtifactWriterLike,
 ): Promise<{
   service: CurrentDeliverableServiceLike;
   validator: RecordingSchemaValidator;
@@ -361,10 +439,10 @@ async function createHarness(
 }> {
   const { CurrentDeliverableService } = await loadCurrentDeliverableModule();
   const writes: ArtifactWriteInput[] = [];
-  const artifacts: ArtifactWriterLike = {
+  const artifacts: ArtifactWriterLike = artifactWriter ?? {
     async writeJson(input) {
       writes.push(input);
-      return { id: deliverableArtifactId, state: 'SEALED' };
+      return { id: deliverableArtifactId };
     },
   };
   const validator = new RecordingSchemaValidator();
@@ -417,11 +495,67 @@ test('generates and seals a machine-owned research plan deliverable envelope', a
     result.deliverable.payload,
   ));
   assert.equal(writes.length, 1);
-  assert.equal(writes[0]?.relativePath, 'deliverables/final.json');
+  assert.equal(writes[0]?.relativePath, 'deliverables/final-r0.json');
   assert.equal(writes[0]?.kind, 'deliverable');
   assert.equal(writes[0]?.schemaVersion, 'research-deliverable-v1-review-gated');
   assert.deepEqual(writes[0]?.value, result.deliverable);
   assert.equal(result.deliverableArtifactId, deliverableArtifactId);
+});
+test('writes round 0 and revised round 1 deliverables to distinct immutable paths', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'current-deliverable-rounds-'));
+  tempDirs.push(root);
+  const registry = new MemoryArtifactRegistry();
+  const store = new ControlArtifactStore({ root, registry });
+  const { service } = await createHarness(validDeliverableDraft(), undefined, store);
+
+  const round0 = await service.generate(generateInput());
+  const round0Artifact = await registry.requireSealedArtifact(round0.deliverableArtifactId);
+  const round0Value = (await store.readVerifiedJson<DeliverableEnvelope>(round0.deliverableArtifactId)).value;
+
+  const round1 = await service.revise({
+    ...generateInput(),
+    review: {
+      version: 'report-review-v1',
+      taskId,
+      planVersionId,
+      attemptId,
+      deliverableArtifactId: round0.deliverableArtifactId,
+      verdict: 'revise',
+      dimensions: [
+        { id: 'requirement_coverage', passed: true, issues: [] },
+        { id: 'question_coverage', passed: true, issues: [] },
+        { id: 'evidence_coverage', passed: true, issues: [] },
+        { id: 'reasoning_quality', passed: false, issues: ['strengthen reasoning'] },
+        { id: 'recommendation_quality', passed: true, issues: [] },
+        { id: 'visual_quality', passed: true, issues: [] },
+        { id: 'risk_disclosure', passed: true, issues: [] },
+      ],
+      revisionRound: 0,
+    },
+  });
+  const round1Artifact = await registry.requireSealedArtifact(round1.deliverableArtifactId);
+  assert.match(round0Artifact.storageUri, /deliverables\/final-r0\.json$/u);
+  assert.notEqual(round1.deliverableArtifactId, round0.deliverableArtifactId);
+  assert.notEqual(round1Artifact.storageUri, round0Artifact.storageUri);
+  assert.match(round1Artifact.storageUri, /deliverables\/final-r1\.json$/u);
+  assert.deepEqual(
+    (await store.readVerifiedJson<DeliverableEnvelope>(round0.deliverableArtifactId)).value,
+    round0Value,
+  );
+
+  await assert.rejects(() => store.writeJson({
+    taskId,
+    planVersionId,
+    attemptId,
+    kind: 'deliverable',
+    relativePath: 'deliverables/final-r0.json',
+    schemaVersion: 'research-deliverable-v1-review-gated',
+    value: { overwritten: true },
+  }), (error: unknown) => error instanceof Error && 'code' in error && error.code === 'EEXIST');
+  assert.deepEqual(
+    (await store.readVerifiedJson<DeliverableEnvelope>(round0.deliverableArtifactId)).value,
+    round0Value,
+  );
 });
 test('changes synthesis content when verified Skill or Reviewer material changes', async () => {
   const material = (text: string): SynthesisMaterial[] => [{

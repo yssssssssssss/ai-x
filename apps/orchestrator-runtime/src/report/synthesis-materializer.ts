@@ -1,5 +1,6 @@
 import type { ControlArtifact } from '../../../../database/control-plane.ts';
 import type { EvidenceEntry } from '../../../../packages/api-contract/research-deliverable.ts';
+import { EvidenceService } from '../evidence/evidence-service.ts';
 import { containsBlockedSensitiveData, redactSensitiveValue } from '../runtime/redaction.ts';
 
 export type SynthesisSemanticRole = 'fact_source' | 'analysis' | 'inference' | 'review';
@@ -85,6 +86,7 @@ const SCHEMA_BY_KIND: Record<string, string> = {
   llm_output: 'llm-output-v1',
   review_output: 'review-output-v1',
 };
+const EVIDENCE_SERVICE = new EvidenceService();
 
 function isRealToolEvidence(entry: EvidenceEntry): boolean {
   return entry.kind === 'tool_output'
@@ -96,15 +98,11 @@ function isRealToolEvidence(entry: EvidenceEntry): boolean {
     && entry.toolProof.redactedOutputHash.startsWith('sha256:');
 }
 
-function roleFor(output: MaterializeStepOutput, evidenceEntries: readonly EvidenceEntry[]): SynthesisSemanticRole | null {
-  if (output.actorType === 'tool') {
-    const isEvidence = evidenceEntries.some((entry) => (
-      entry.artifactId === output.artifact.id
-      && entry.artifactContentSha256 === output.artifact.contentSha256
-      && isRealToolEvidence(entry)
-    ));
-    return isEvidence ? 'fact_source' : null;
-  }
+function roleFor(
+  output: MaterializeStepOutput,
+  selectedToolEvidence: readonly EvidenceEntry[],
+): SynthesisSemanticRole | null {
+  if (output.actorType === 'tool') return selectedToolEvidence.length > 0 ? 'fact_source' : null;
   if (output.actorType === 'skill') return 'analysis';
   if (output.actorType === 'llm') return 'inference';
   return 'review';
@@ -187,18 +185,50 @@ export class SynthesisMaterializer {
     const materials: SynthesisMaterial[] = [];
     for (const output of input.outputs) {
       assertValidStep(output, input);
-      const role = roleFor(output, evidenceEntries);
+      const selectedToolEvidence = output.actorType === 'tool'
+        ? evidenceEntries.filter((entry) => (
+            entry.artifactId === output.artifact.id
+            && entry.artifactContentSha256 === output.artifact.contentSha256
+            && isRealToolEvidence(entry)
+          ))
+        : [];
+      const role = roleFor(output, selectedToolEvidence);
       if (!role) continue;
       const verified = await this.reader.readVerifiedJson<unknown>(output.artifact.id);
       assertArtifact(output, verified.artifact, input);
-      if (containsBlockedSensitiveData(verified.value)) {
+      const validator = input.validator ?? this.defaultValidator;
+      let materialValue: unknown = verified.value;
+      if (output.actorType === 'tool') {
+        await validator?.validateArtifact?.(verified.value, verified.artifact);
+        const evidenceResolver = {
+          resolveArtifact: (artifactId: string) => artifactId === verified.artifact.id
+            ? {
+                artifact: {
+                  id: verified.artifact.id,
+                  contentSha256: verified.artifact.contentSha256!,
+                },
+                value: verified.value,
+              }
+            : null,
+        };
+        materialValue = {
+          evidence: selectedToolEvidence.map((entry) => ({
+            evidenceId: entry.id,
+            jsonPointer: entry.jsonPointer,
+            ...(entry.sourceUrl ? { sourceUrl: entry.sourceUrl } : {}),
+            value: EVIDENCE_SERVICE.resolveEvidenceValue(entry, evidenceResolver),
+          })),
+        };
+      }
+      if (containsBlockedSensitiveData(materialValue)) {
         throw new SynthesisMaterializationError(
           'artifact_blocked',
           `Artifact ${verified.artifact.id} contains blocked sensitive business data`,
         );
       }
-      const validator = input.validator ?? this.defaultValidator;
-      await validator?.validateArtifact?.(verified.value, verified.artifact);
+      if (output.actorType !== 'tool') {
+        await validator?.validateArtifact?.(verified.value, verified.artifact);
+      }
       materials.push({
         stepNo: output.stepNo,
         actorType: output.actorType,
@@ -206,7 +236,7 @@ export class SynthesisMaterializer {
         questionIds: [...(output.questionIds ?? [])],
         artifactId: verified.artifact.id,
         artifactContentSha256: verified.artifact.contentSha256!,
-        value: structuredClone(redactMaterialValue(verified.value)),
+        value: structuredClone(redactMaterialValue(materialValue)),
         semanticRole: role,
       });
     }

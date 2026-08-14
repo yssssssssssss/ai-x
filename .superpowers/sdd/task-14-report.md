@@ -22,3 +22,17 @@ Status: complete
 - Required serial suite: 58/58 passed across report package, control API integration, auth isolation, and report review service tests.
 - `pnpm typecheck`: passed.
 - Lease/database regression: 21/21 passed.
+
+## Phase 4 Integrity Closure
+
+- Tool synthesis material is now EvidenceEntry-scoped: only strict Artifact ID/hash and JSON-pointer-selected values enter `fact_source`, each with its Evidence ID, pointer, and optional source URL. Unreferenced siblings and top-level answers are excluded.
+- The package reader resolves the final Review first, revalidates the complete pass invariant, then reads the exact Deliverable named by `review.deliverableArtifactId`; it no longer trusts an arbitrary latest draft. Historical no-Review Deliverables retain explicit legacy compatibility.
+- Lease expiry and expired `requireActiveLease`, heartbeat, completion, and seal paths atomically pause the attempt and task from `executing`, `reviewing`, or `composing_report`. Terminal recovery invalidates SEALED/STAGING `evidence_manifest`, `deliverable`, and `report_review` together, so no trusted orphan Review remains.
+- Real PostgreSQL and `ControlArtifactStore` regressions cover the state matrix, immutable file collision, final revised API ID, and terminal trusted-artifact invalidation.
+
+- Workflow command-loss recovery uses verified terminal Review content rather than an arbitrary latest draft, preserving the same final Deliverable, Evidence Manifest, Review IDs, and review status across idempotent replay.
+
+### TDD and Verification
+
+- RED: Evidence scoping produced 2 expected failures across 7 tests; report identity/dimension regressions produced 16 expected failures across 71 tests; lease/recovery produced 20 expected failures across 107 tests with one real-provider skip.
+- GREEN: `pnpm exec tsx --test --test-concurrency=1 tests/synthesis-materializer.test.ts tests/current-deliverable-service.test.ts tests/report-review-service.test.ts tests/report-package.test.ts tests/lease-execution-engine.test.ts tests/task-workflow.test.ts tests/control-plane.test.ts tests/control-api-integration.test.ts` passed 184/184 runnable tests with one real-provider skip; `pnpm typecheck` passed.

@@ -20,6 +20,12 @@ import type {
   CurrentDeliverableGenerateInput,
   CurrentDeliverableGenerateResult,
 } from '../apps/orchestrator-runtime/src/report/current-deliverable-service.ts';
+import type {
+  DeliverableComposer,
+  ReportReviewInput,
+  ReportReviewResult,
+} from '../apps/orchestrator-runtime/src/report/report-review-service.ts';
+import type { ReportReviewDimension } from '../packages/api-contract/control-workflow.ts';
 import { CurrentReportValidationError } from '../apps/orchestrator-runtime/src/evidence/report-evidence-validator.ts';
 import {
   LLMInvocationError,
@@ -79,6 +85,38 @@ type DeliverableAwareExecutionResult = LeaseExecutionResult & {
 
 interface TestDeliverables {
   generate(input: CurrentDeliverableGenerateInput): Promise<CurrentDeliverableGenerateResult>;
+}
+
+interface TestReportReview {
+  review(input: ReportReviewInput, composer?: DeliverableComposer): Promise<ReportReviewResult>;
+}
+
+function passingReviewDimensions(): ReportReviewDimension[] {
+  return [
+    'requirement_coverage',
+    'question_coverage',
+    'evidence_coverage',
+    'reasoning_quality',
+    'recommendation_quality',
+    'visual_quality',
+    'risk_disclosure',
+  ].map((id) => ({ id: id as ReportReviewDimension['id'], passed: true, issues: [] }));
+}
+
+class RecordingReportReviewFake implements TestReportReview {
+  readonly calls: ReportReviewInput[] = [];
+
+  constructor(
+    private readonly implementation: (
+      input: ReportReviewInput,
+      composer?: DeliverableComposer,
+    ) => Promise<ReportReviewResult>,
+  ) {}
+
+  async review(input: ReportReviewInput, composer?: DeliverableComposer): Promise<ReportReviewResult> {
+    this.calls.push(input);
+    return this.implementation(input, composer);
+  }
 }
 
 function minimalDeliverable(
@@ -165,8 +203,8 @@ class RecordingDeliverablesFake implements TestDeliverables {
 
 type DeliverableAwareLeaseExecutionEngineDependencies = Omit<
   ConstructorParameters<typeof LeaseExecutionEngine>[0],
-  'deliverables'
-> & { deliverables: TestDeliverables };
+  'deliverables' | 'reportReview'
+> & { deliverables: TestDeliverables; reportReview?: TestReportReview };
 
 const DeliverableAwareLeaseExecutionEngine = LeaseExecutionEngine as unknown as new (
   dependencies: DeliverableAwareLeaseExecutionEngineDependencies,
@@ -601,6 +639,7 @@ async function claimedExecution(
   expiresAt = new Date(Date.now() + 60_000),
   steps = planSteps,
   planExtras: Record<string, unknown> = {},
+  structuredTask: Record<string, unknown> = { research_goal: 'compare digital human products' },
 ): Promise<{
   repository: ControlPlaneRepository;
   lease: ControlExecutionLease;
@@ -611,7 +650,7 @@ async function claimedExecution(
     ownerUserId: ownerId,
     originalInput: 'lease-only execution',
     taskType: 'competitive_research',
-    structuredTask: { research_goal: 'compare digital human products' },
+    structuredTask,
     state: 'ready',
   });
   const plan = await repository.createPlanVersion({
@@ -659,6 +698,7 @@ function buildEngine(
   tools: ToolRouter,
   llm: LLMClient,
   deliverables: TestDeliverables = new RecordingDeliverablesFake(),
+  reportReview?: TestReportReview,
 ): LeaseExecutionEngine {
   return new DeliverableAwareLeaseExecutionEngine({
     repository,
@@ -666,6 +706,7 @@ function buildEngine(
     tools,
     llm,
     deliverables,
+    ...(reportReview ? { reportReview } : {}),
     skillLoader: new SkillLoader(),
     validator: new SchemaValidator(),
     heartbeatMs: 60_000,
@@ -1060,6 +1101,197 @@ test('executes the current plan with real Tool provenance and complete model rec
   const attempts = await repository.listAttempts(lease.taskId);
   assert.equal(attempts[0]?.state, 'completed');
 });
+
+test('passes finalized success criteria and required ProblemGraph question IDs to report review', async () => {
+  const structuredTask = {
+    version: 'research-task-v2',
+    task_type: 'competitive_research',
+    business_domain: 'digital humans',
+    research_goal: 'compare digital human products',
+    target_audience: ['product team'],
+    scope: ['public sources'],
+    constraints: [],
+    success_criteria: [
+      { id: 'criterion-evidence', statement: 'Every fact is evidence backed' },
+      { id: 'criterion-coverage', statement: 'Every required question is answered' },
+    ],
+    expected_deliverables: ['research plan'],
+    assumptions: [],
+    ambiguities: [],
+    clarification_questions: [],
+    blocking_issues: [],
+    sensitivity: 'public',
+    pii_detected: false,
+  };
+  const problemGraph = {
+    version: 'problem-graph-v1',
+    questions: [
+      {
+        id: 'question-required',
+        statement: 'What is the evidence-backed differentiation?',
+        rationale: 'Required for the research goal',
+        priority: 'required',
+        success_criterion_ids: ['criterion-evidence', 'criterion-coverage'],
+        evidence_requirements: [],
+        acceptance_criteria: ['answer is evidence backed'],
+        depends_on: [],
+      },
+      {
+        id: 'question-optional',
+        statement: 'What adjacent detail may help?',
+        rationale: 'Useful but non-blocking',
+        priority: 'optional',
+        success_criterion_ids: [],
+        evidence_requirements: [],
+        acceptance_criteria: [],
+        depends_on: [],
+      },
+    ],
+  };
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]!],
+    { problem_graph: problemGraph },
+    structuredTask,
+  );
+  const review = new RecordingReportReviewFake(async (input) => ({
+    version: 'report-review-v1',
+    taskId: input.task.id,
+    planVersionId: input.plan.id,
+    attemptId: input.attempt.id,
+    deliverableArtifactId: input.deliverableArtifactId,
+    verdict: 'pass',
+    dimensions: passingReviewDimensions(),
+    revisionRound: 0,
+    status: 'completed',
+    artifactId: 'review-identifiers',
+  }));
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new CountingRealLLM(),
+    new RecordingDeliverablesFake(),
+    review,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed');
+  assert.equal(review.calls.length, 1);
+  assert.deepEqual(review.calls[0]?.requirementIds, ['criterion-evidence', 'criterion-coverage']);
+  assert.deepEqual(review.calls[0]?.questionIds, ['question-required']);
+});
+
+const reviewStructuredTaskFixture = {
+  version: 'research-task-v2',
+  task_type: 'competitive_research',
+  business_domain: 'digital humans',
+  research_goal: 'compare digital human products',
+  target_audience: ['product team'],
+  scope: ['public evidence'],
+  constraints: [],
+  success_criteria: [{ id: 'criterion-review', statement: 'review every evidence-backed conclusion' }],
+  expected_deliverables: ['research plan'],
+  assumptions: [],
+  ambiguities: [],
+  clarification_questions: [],
+  blocking_issues: [],
+  sensitivity: 'public',
+  pii_detected: false,
+};
+const reviewProblemGraphFixture = {
+  version: 'problem-graph-v1',
+  questions: [{
+    id: 'question-review',
+    statement: 'Is the report complete and evidence backed?',
+    rationale: 'Required before delivery',
+    priority: 'required',
+    success_criterion_ids: ['criterion-review'],
+    evidence_requirements: [],
+    acceptance_criteria: ['the report passes review'],
+    depends_on: [],
+  }],
+};
+
+const pausedReviewCases = [
+  {
+    name: 'deterministic report review block',
+    verdict: 'block' as const,
+    revisionRound: 0 as const,
+    failureDimension: 'requirement_coverage' as const,
+  },
+  {
+    name: 'semantic report review block',
+    verdict: 'block' as const,
+    revisionRound: 0 as const,
+    failureDimension: 'risk_disclosure' as const,
+  },
+  {
+    name: 'second report review revise verdict',
+    verdict: 'revise' as const,
+    revisionRound: 1 as const,
+    failureDimension: 'recommendation_quality' as const,
+  },
+];
+
+for (const reviewCase of pausedReviewCases) {
+  test(`records ${reviewCase.name} as one deterministic non-retryable execution step`, async () => {
+    const { repository, lease } = await claimedExecution(
+      new Date(Date.now() + 60_000),
+      [planSteps[0]!],
+      { problem_graph: reviewProblemGraphFixture },
+      reviewStructuredTaskFixture,
+    );
+    const reviewStore = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+    const review = new RecordingReportReviewFake(async (input) => {
+      const dimensions = passingReviewDimensions().map((dimension) => dimension.id === reviewCase.failureDimension
+        ? { ...dimension, passed: false, issues: [`${reviewCase.name} fixture issue`] }
+        : dimension);
+      const reviewArtifact = {
+        version: 'report-review-v1' as const,
+        taskId: input.task.id,
+        planVersionId: input.plan.id,
+        attemptId: input.attempt.id,
+        deliverableArtifactId: input.deliverableArtifactId,
+        verdict: reviewCase.verdict,
+        dimensions,
+        revisionRound: reviewCase.revisionRound,
+      };
+      const sealed = await reviewStore.writeJson({
+        taskId: input.task.id,
+        planVersionId: input.plan.id,
+        attemptId: input.attempt.id,
+        kind: 'report_review',
+        relativePath: `reviews/review-r${reviewCase.revisionRound}.json`,
+        value: reviewArtifact,
+        schemaVersion: 'report-review-v1',
+        activeLease: input.activeLease,
+      });
+      return { ...reviewArtifact, status: 'paused', artifactId: sealed.id };
+    });
+
+    const result = await buildEngine(
+      repository,
+      new ToolRouter().register(new CountingRealTavilyAdapter()),
+      new CountingRealLLM(),
+      new RecordingDeliverablesFake(),
+      review,
+    ).execute({ lease, expectedModel: 'pinned-model' });
+
+    assert.equal(result.status, 'paused');
+    assert.equal(result.failedStepNo, planSteps.slice(0, 1).length + 2);
+    assert.equal(result.failure?.retryable, false);
+    assert.deepEqual(result.failure?.allowedActions, ['abort']);
+    const steps = await repository.listExecutionSteps(lease.attemptId);
+    assert.equal(new Set(steps.map((step) => step.stepNo)).size, steps.length);
+    const failedReviewSteps = steps.filter((step) => step.state === 'failed' && step.failure?.kind === 'report_review');
+    assert.equal(failedReviewSteps.length, 1);
+    assert.equal(failedReviewSteps[0]?.stepNo, 3);
+    assert.equal(failedReviewSteps[0]?.actorType, 'reviewer');
+    assert.equal(failedReviewSteps[0]?.failure?.retryable, false);
+    assert.deepEqual(failedReviewSteps[0]?.failure?.allowedActions, ['abort']);
+    assert.equal((await repository.getArtifact(result.reportReviewArtifactId ?? ''))?.state, 'SEALED');
+  });
+}
 
 test('validates resolved Skill input before the Skill LLM side effect', async () => {
   const invalidSteps: CurrentPlanStep[] = [
@@ -1634,6 +1866,101 @@ test('invalidates terminal artifacts when the lease expires during deliverable g
   } finally {
     connection.release();
   }
+});
+
+test('terminal lease recovery invalidates a sealed report review with its manifest and revised deliverable', async () => {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]!],
+    { problem_graph: reviewProblemGraphFixture },
+    reviewStructuredTaskFixture,
+  );
+  const terminalStore = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+  const deliverables = new RecordingDeliverablesFake(async (input) => {
+    const deliverable = minimalDeliverable(input);
+    const artifact = await terminalStore.writeJson({
+      taskId: input.task.id,
+      planVersionId: input.plan.id,
+      attemptId: input.attempt.id,
+      kind: 'deliverable',
+      relativePath: 'deliverables/final-r1.json',
+      schemaVersion: 'research-deliverable-v1',
+      value: deliverable,
+      activeLease: input.activeLease,
+    });
+    return { deliverable, deliverableArtifactId: artifact.id };
+  });
+  const reportReview = new RecordingReportReviewFake(async (input) => {
+    const reviewArtifact = {
+      version: 'report-review-v1' as const,
+      taskId: input.task.id,
+      planVersionId: input.plan.id,
+      attemptId: input.attempt.id,
+      deliverableArtifactId: input.deliverableArtifactId,
+      verdict: 'pass' as const,
+      dimensions: passingReviewDimensions(),
+      revisionRound: 1 as const,
+    };
+    const artifact = await terminalStore.writeJson({
+      taskId: input.task.id,
+      planVersionId: input.plan.id,
+      attemptId: input.attempt.id,
+      kind: 'report_review',
+      relativePath: 'reviews/review-r1.json',
+      schemaVersion: 'report-review-v1',
+      value: reviewArtifact,
+      activeLease: input.activeLease,
+    });
+    const connection = await scopedDatabase.connect();
+    try {
+      await connection.query(
+        `UPDATE control_execution_attempts
+         SET lease_expires_at = now() - interval '1 second'
+         WHERE id = $1`,
+        [input.attempt.id],
+      );
+    } finally {
+      connection.release();
+    }
+    return { ...reviewArtifact, status: 'completed', artifactId: artifact.id };
+  });
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new CountingRealLLM(),
+    deliverables,
+    reportReview,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'paused');
+  assert.equal(result.failure?.kind, 'lease_lost');
+  assert.equal((await repository.getTaskDetail(lease.taskId))?.state, 'paused');
+  assert.equal((await repository.listAttempts(lease.taskId))[0]?.state, 'paused');
+  const connection = await scopedDatabase.connect();
+  try {
+    const terminalArtifacts = await connection.query(
+      `SELECT kind, state FROM control_artifacts
+       WHERE attempt_id = $1 AND kind IN ('evidence_manifest', 'deliverable', 'report_review')
+       ORDER BY kind`,
+      [lease.attemptId],
+    );
+    assert.deepEqual(
+      terminalArtifacts.rows.map((row) => ({ kind: row.kind, state: row.state })),
+      [
+        { kind: 'deliverable', state: 'FAILED' },
+        { kind: 'evidence_manifest', state: 'FAILED' },
+        { kind: 'report_review', state: 'FAILED' },
+      ],
+    );
+  } finally {
+    connection.release();
+  }
+  assert.equal(await repository.findSealedArtifact({
+    taskId: lease.taskId,
+    attemptId: lease.attemptId,
+    kind: 'report_review',
+  }), null);
 });
 
 

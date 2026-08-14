@@ -4,6 +4,10 @@ import { test } from 'node:test';
 import type { ControlArtifact } from '../database/control-plane.ts';
 import type { EvidenceEntry } from '../packages/api-contract/research-deliverable.ts';
 import {
+  EvidenceService,
+  type EvidenceArtifactResolver,
+} from '../apps/orchestrator-runtime/src/evidence/evidence-service.ts';
+import {
   SynthesisMaterializer,
   type MaterializeInput,
   type SynthesisMaterial,
@@ -13,6 +17,8 @@ const taskId = 'task-materializer-1';
 const planVersionId = 'plan-materializer-1';
 const attemptId = 'attempt-materializer-1';
 const hash = (value: unknown): string => `sha256:${createHash('sha256').update(JSON.stringify(value)).digest('hex')}`;
+const defaultToolResult = { title: 'fact', url: 'https://source.example/item' };
+const defaultToolOutput = { results: [defaultToolResult] };
 
 class Reader {
   readonly reads: string[] = [];
@@ -65,12 +71,12 @@ function evidenceFor(id: string, contentSha256: string): EvidenceEntry {
     artifactId: id,
     artifactContentSha256: contentSha256,
     jsonPointer: '/output/results/0',
-    sourceUrl: 'https://source.example/item',
+    sourceUrl: defaultToolResult.url,
     stepNo: 1,
     toolProof: {
       implementationId: 'tavily',
       executionMode: 'real',
-      redactedOutputHash: hash({ title: 'fact' }),
+      redactedOutputHash: hash(defaultToolOutput),
     },
     sensitivity: 'public',
     redaction: 'masked',
@@ -78,7 +84,7 @@ function evidenceFor(id: string, contentSha256: string): EvidenceEntry {
 }
 
 function input(reader: Reader, overrides: Partial<MaterializeInput> = {}): MaterializeInput {
-  const toolValue = { output: { results: [{ title: 'fact' }] }, redactedOutputHash: hash({ title: 'fact' }) };
+  const toolValue = { output: defaultToolOutput, redactedOutputHash: hash(defaultToolOutput) };
   const tool = artifact('artifact-tool', 'tool_output', toolValue);
   const skill = artifact('artifact-skill', 'skill_output', {
     conclusion: '分析结论',
@@ -116,16 +122,94 @@ function input(reader: Reader, overrides: Partial<MaterializeInput> = {}): Mater
   };
 }
 
+interface PublicToolValue {
+  output: {
+    results: Array<{ title: string; url: string }>;
+  };
+  redactedOutputHash: string;
+  answer?: string;
+}
+
+function realEvidenceEntries(
+  artifactId: string,
+  artifactContentSha256: string,
+  value: PublicToolValue,
+  bindings: ReadonlyArray<{ evidenceId: string; resultIndex: number }>,
+): EvidenceEntry[] {
+  const resolver: EvidenceArtifactResolver = {
+    resolveArtifact: (candidateId) => candidateId === artifactId
+      ? {
+          artifact: { id: artifactId, contentSha256: artifactContentSha256 },
+          value,
+        }
+      : null,
+  };
+  return new EvidenceService().createManifest({
+    taskId,
+    planVersionId,
+    attemptId,
+    collectedAt: '2026-08-14T00:00:00.000Z',
+    entries: bindings.map(({ evidenceId, resultIndex }) => {
+      const selected = value.output.results[resultIndex];
+      assert.ok(selected, `missing fixture result ${resultIndex}`);
+      return {
+        id: evidenceId,
+        kind: 'tool_output',
+        evidenceClass: 'public_source',
+        artifactId,
+        artifactContentSha256,
+        jsonPointer: `/output/results/${resultIndex}`,
+        sourceUrl: selected.url,
+        stepNo: 1,
+        toolProof: {
+          implementationId: 'tavily',
+          executionMode: 'real',
+          redactedOutputHash: value.redactedOutputHash,
+        },
+        sensitivity: 'public',
+        redaction: 'masked',
+      };
+    }),
+  }, resolver).entries;
+}
+
+function toolOnlyInput(
+  reader: Reader,
+  tool: { artifact: ControlArtifact; value: unknown },
+  evidenceEntries: readonly EvidenceEntry[],
+): MaterializeInput {
+  const source = input(reader);
+  const toolOutput = source.outputs[0];
+  assert.ok(toolOutput);
+  reader.values = new Map([[tool.artifact.id, tool]]);
+  return {
+    ...source,
+    outputs: [{
+      ...toolOutput,
+      artifact: {
+        id: tool.artifact.id,
+        contentSha256: tool.artifact.contentSha256,
+        state: 'SEALED',
+      },
+    }],
+    evidenceEntries,
+  };
+}
+
 test('materializes all actor roles from verified sealed JSON and preserves bindings', async () => {
   const reader = new Reader(new Map());
   const materials = await new SynthesisMaterializer(reader).materialize(input(reader));
   assert.deepEqual(materials.map((item) => item.semanticRole), ['fact_source', 'analysis', 'inference', 'review']);
   assert.deepEqual(materials.map((item) => item.artifactId), ['artifact-tool', 'artifact-skill', 'artifact-llm', 'artifact-reviewer']);
-  assert.equal(materials[0]?.artifactContentSha256, hash({ output: { results: [{ title: 'fact' }] }, redactedOutputHash: hash({ title: 'fact' }) }));
-  const toolValue = materials[0]?.value;
-  assert.ok(toolValue && typeof toolValue === 'object' && !Array.isArray(toolValue));
-  const outputValue = (toolValue as Record<string, unknown>).output;
-  assert.deepEqual(outputValue, { results: [{ title: 'fact' }] });
+  assert.equal(materials[0]?.artifactContentSha256, hash({ output: defaultToolOutput, redactedOutputHash: hash(defaultToolOutput) }));
+  assert.deepEqual(materials[0]?.value, {
+    evidence: [{
+      evidenceId: 'E-artifact-tool',
+      jsonPointer: '/output/results/0',
+      sourceUrl: defaultToolResult.url,
+      value: defaultToolResult,
+    }],
+  });
   assert.equal(reader.reads.length, 4);
 });
 
@@ -184,6 +268,87 @@ test('consumes material content, not only artifact metadata', async () => {
   const second = await new SynthesisMaterializer(reader).materialize(source);
   assert.notDeepEqual(first, second);
   assert.equal((second.find((item) => item.actorType === 'skill')?.value as { conclusion: string }).conclusion, 'different analysis');
+});
+
+test('scopes a proven Tool fact source to an ordered collection of EvidenceService bindings', async () => {
+  const firstSelected = { title: 'selected first', url: 'https://source.example/selected-first' };
+  const unreferencedSibling = { title: 'UNREFERENCED_SIBLING_MUST_NOT_REACH_CONTEXT', url: 'https://source.example/unreferenced' };
+  const secondSelected = { title: 'selected second', url: 'https://source.example/selected-second' };
+  const output = { results: [firstSelected, unreferencedSibling, secondSelected] };
+  const value: PublicToolValue = {
+    output,
+    redactedOutputHash: hash(output),
+    answer: 'UNREFERENCED_TOP_LEVEL_ANSWER_MUST_NOT_REACH_CONTEXT',
+  };
+  const tool = artifact('artifact-tool-scoped', 'tool_output', value);
+  const entries = realEvidenceEntries(tool.artifact.id, tool.artifact.contentSha256!, value, [
+    { evidenceId: 'E-selected-second', resultIndex: 2 },
+    { evidenceId: 'E-selected-first', resultIndex: 0 },
+  ]);
+  const reader = new Reader(new Map());
+
+  const materials = await new SynthesisMaterializer(reader).materialize(toolOnlyInput(reader, tool, entries));
+
+  assert.equal(materials.length, 1);
+  assert.equal(materials[0]?.semanticRole, 'fact_source');
+  const materialText = JSON.stringify(materials[0]?.value);
+  assert.equal(materialText.includes(unreferencedSibling.title), false);
+  assert.equal(materialText.includes(value.answer!), false);
+  assert.deepEqual(materials[0]?.value, {
+    evidence: [
+      {
+        evidenceId: 'E-selected-second',
+        jsonPointer: '/output/results/2',
+        sourceUrl: secondSelected.url,
+        value: secondSelected,
+      },
+      {
+        evidenceId: 'E-selected-first',
+        jsonPointer: '/output/results/0',
+        sourceUrl: firstSelected.url,
+        value: firstSelected,
+      },
+    ],
+  });
+});
+
+test('does not materialize a Tool fact source for stale hash or foreign Artifact evidence', async () => {
+  const currentOutput = { results: [{ title: 'current value', url: 'https://source.example/current' }] };
+  const currentValue: PublicToolValue = {
+    output: currentOutput,
+    redactedOutputHash: hash(currentOutput),
+  };
+  const currentTool = artifact('artifact-tool-current', 'tool_output', currentValue);
+  const foreignTool = artifact('artifact-tool-foreign', 'tool_output', currentValue);
+  const staleOutput = { results: [{ title: 'stale value', url: 'https://source.example/stale' }] };
+  const staleValue: PublicToolValue = {
+    output: staleOutput,
+    redactedOutputHash: hash(staleOutput),
+  };
+  const staleTool = artifact(currentTool.artifact.id, 'tool_output', staleValue);
+  const cases = [
+    {
+      name: 'foreign Artifact identity',
+      entries: realEvidenceEntries(foreignTool.artifact.id, foreignTool.artifact.contentSha256!, currentValue, [
+        { evidenceId: 'E-foreign', resultIndex: 0 },
+      ]),
+    },
+    {
+      name: 'stale Artifact content hash',
+      entries: realEvidenceEntries(staleTool.artifact.id, staleTool.artifact.contentSha256!, staleValue, [
+        { evidenceId: 'E-stale', resultIndex: 0 },
+      ]),
+    },
+  ];
+
+  for (const item of cases) {
+    const reader = new Reader(new Map());
+    const materials = await new SynthesisMaterializer(reader).materialize(
+      toolOnlyInput(reader, currentTool, item.entries),
+    );
+    assert.deepEqual(materials, [], item.name);
+    assert.deepEqual(reader.reads, [], item.name);
+  }
 });
 
 void ({} as SynthesisMaterial[]);

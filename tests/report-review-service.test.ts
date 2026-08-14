@@ -9,6 +9,7 @@ import {
   type ReportReviewArtifact,
   type ReportReviewInput,
 } from '../apps/orchestrator-runtime/src/report/report-review-service.ts';
+import { SchemaValidationError, SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 
 const lease: ControlExecutionLease = {
   taskId: 'task-1',
@@ -17,6 +18,49 @@ const lease: ControlExecutionLease = {
   leaseOwner: 'worker-1',
   leaseToken: 'lease-token',
 };
+const REQUIRED_REVIEW_DIMENSIONS = [
+  'requirement_coverage',
+  'question_coverage',
+  'evidence_coverage',
+  'reasoning_quality',
+  'recommendation_quality',
+  'visual_quality',
+  'risk_disclosure',
+] as const satisfies readonly ReportReviewArtifact['dimensions'][number]['id'][];
+
+function passingReviewDimensions(): ReportReviewArtifact['dimensions'] {
+  return REQUIRED_REVIEW_DIMENSIONS.map((id) => ({ id, passed: true, issues: [] }));
+}
+
+const INVALID_PASS_DIMENSION_CASES: Array<{
+  name: string;
+  dimensions: () => ReportReviewArtifact['dimensions'];
+}> = [{
+  name: 'a missing required dimension',
+  dimensions: () => passingReviewDimensions().slice(1),
+}, {
+  name: 'a duplicate dimension',
+  dimensions: () => {
+    const dimensions = passingReviewDimensions();
+    return [...dimensions, { ...dimensions[0]! }];
+  },
+}, {
+  name: 'an unknown dimension',
+  dimensions: () => [
+    ...passingReviewDimensions().slice(1),
+    { id: 'unknown_dimension', passed: true, issues: [] },
+  ] as unknown as ReportReviewArtifact['dimensions'],
+}, {
+  name: 'a failed dimension',
+  dimensions: () => passingReviewDimensions().map((dimension, index) => (
+    index === 0 ? { ...dimension, passed: false } : dimension
+  )),
+}, {
+  name: 'issues on a passed dimension',
+  dimensions: () => passingReviewDimensions().map((dimension, index) => (
+    index === 0 ? { ...dimension, issues: ['unresolved issue'] } : dimension
+  )),
+}];
 
 function report(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -94,7 +138,13 @@ class RevisionComposer {
   }
 }
 
-function semantic(verdict: ReportReviewArtifact['verdict'], revisionRound: 0 | 1 = 0): ReportReviewArtifact {
+function semantic(
+  verdict: ReportReviewArtifact['verdict'],
+  revisionRound: 0 | 1 = 0,
+  overrides: Partial<ReportReviewArtifact> = {},
+): ReportReviewArtifact {
+  const dimensions = passingReviewDimensions();
+  if (verdict !== 'pass') dimensions[0] = { ...dimensions[0]!, passed: false, issues: ['needs work'] };
   return {
     version: 'report-review-v1',
     taskId: lease.taskId,
@@ -102,13 +152,33 @@ function semantic(verdict: ReportReviewArtifact['verdict'], revisionRound: 0 | 1
     attemptId: lease.attemptId,
     deliverableArtifactId: 'deliverable-1',
     verdict,
-    dimensions: [{ id: 'reasoning_quality', passed: verdict === 'pass', issues: verdict === 'pass' ? [] : ['needs work'] }],
+    dimensions,
     revisionRound,
+    ...overrides,
   };
 }
 
 function service(llm: RecordingLlm, artifacts: RecordingArtifacts, composer?: RevisionComposer): ReportReviewService {
   return new ReportReviewService({ llm, artifacts, composer });
+}
+
+test('report-review schema accepts pass only with every required dimension exactly once', () => {
+  const candidate = semantic('pass');
+  assert.doesNotThrow(() => new SchemaValidator().validateOrThrow('report-review', candidate));
+  assert.deepEqual(candidate.dimensions.map(({ id }) => id), [...REQUIRED_REVIEW_DIMENSIONS]);
+  assert.equal(new Set(candidate.dimensions.map(({ id }) => id)).size, REQUIRED_REVIEW_DIMENSIONS.length);
+});
+
+for (const invalid of INVALID_PASS_DIMENSION_CASES) {
+  test(`report-review schema rejects pass with ${invalid.name}`, () => {
+    assert.throws(
+      () => new SchemaValidator().validateOrThrow(
+        'report-review',
+        semantic('pass', 0, { dimensions: invalid.dimensions() }),
+      ),
+      SchemaValidationError,
+    );
+  });
 }
 
 test('passes a deliverable after deterministic gates and semantic review', async () => {
@@ -121,7 +191,24 @@ test('passes a deliverable after deterministic gates and semantic review', async
   assert.equal(llm.calls[0]?.schemaName, 'report-review');
   assert.equal(llm.calls[0]?.receipt.stage, 'deliverable_review');
   assert.equal(artifacts.writes[0]?.activeLease, lease);
+  assert.deepEqual(result.dimensions.map(({ id }) => id), [...REQUIRED_REVIEW_DIMENSIONS]);
+  assert.equal(new Set(result.dimensions.map(({ id }) => id)).size, REQUIRED_REVIEW_DIMENSIONS.length);
+  assert.equal(artifacts.writes[0]?.relativePath, 'reports/review-r0.json');
 });
+
+for (const invalid of INVALID_PASS_DIMENSION_CASES) {
+  test(`review service rejects pass with ${invalid.name}`, async () => {
+    const llm = new RecordingLlm([
+      semantic('pass', 0, { dimensions: invalid.dimensions() }),
+    ]);
+    const artifacts = new RecordingArtifacts();
+    await assert.rejects(
+      service(llm, artifacts).review(input()),
+      SchemaValidationError,
+    );
+    assert.equal(artifacts.writes.length, 0);
+  });
+}
 
 test('revises exactly once and passes after re-running every gate', async () => {
   const revised = report({ requirementIds: ['req-1'], questionIds: ['q-1'] });
@@ -134,6 +221,13 @@ test('revises exactly once and passes after re-running every gate', async () => 
   assert.equal(result.status, 'completed');
   assert.equal(composer.calls, 1);
   assert.equal(llm.calls.length, 2);
+  assert.equal(result.deliverableArtifactId, 'deliverable-revised');
+  assert.equal(artifacts.writes.length, 1);
+  assert.equal(artifacts.writes[0]?.relativePath, 'reports/review-r1.json');
+  assert.equal(
+    (artifacts.writes[0]?.value as ReportReviewArtifact).deliverableArtifactId,
+    'deliverable-revised',
+  );
 });
 
 test('pauses when the single revision still requests revision', async () => {

@@ -1,9 +1,10 @@
 import type { ControlExecutionLease } from '../../../../database/control-plane.ts';
-import type {
-  ReportReviewArtifact,
-  ReportReviewDimension,
-  ReportReviewDimensionId,
-  ReportReviewVerdict,
+import {
+  REPORT_REVIEW_DIMENSION_IDS,
+  type ReportReviewArtifact,
+  type ReportReviewDimension,
+  type ReportReviewDimensionId,
+  type ReportReviewVerdict,
 } from '../../../../packages/api-contract/control-workflow.ts';
 export type {
   ReportReviewArtifact,
@@ -88,6 +89,28 @@ function record(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+const REPORT_REVIEW_DIMENSION_ID_SET: ReadonlySet<string> = new Set(
+  REPORT_REVIEW_DIMENSION_IDS,
+);
+
+export function assertReportReviewInvariant(
+  review: Pick<ReportReviewArtifact, 'verdict' | 'dimensions'>,
+): void {
+  if (review.dimensions.length !== REPORT_REVIEW_DIMENSION_IDS.length) {
+    throw new Error('Review dimensions must contain every required dimension exactly once');
+  }
+  const seen = new Set<ReportReviewDimensionId>();
+  for (const dimension of review.dimensions) {
+    if (!REPORT_REVIEW_DIMENSION_ID_SET.has(dimension.id) || seen.has(dimension.id)) {
+      throw new Error('Review dimensions must contain every required dimension exactly once');
+    }
+    seen.add(dimension.id);
+    if (review.verdict === 'pass' && (!dimension.passed || dimension.issues.length !== 0)) {
+      throw new Error('Review verdict pass requires every dimension to pass without issues');
+    }
+  }
+}
+
 function ids(values: readonly (string | { id: string })[] | undefined): string[] {
   if (!values) return [];
   return values.map((value) => typeof value === 'string' ? value : value.id);
@@ -113,13 +136,18 @@ function issueDimension(id: ReportReviewDimensionId, issues: string[]): ReportRe
 
 function deterministicDimensions(input: ReportReviewInput, deliverable: unknown): ReportReviewDimension[] {
   const issues: Record<ReportReviewDimensionId, string[]> = {
-    requirement_coverage: [], question_coverage: [], evidence_coverage: [],
-    reasoning_quality: [], recommendation_quality: [], visual_quality: [], risk_disclosure: [],
+    requirement_coverage: [],
+    question_coverage: [],
+    evidence_coverage: [],
+    reasoning_quality: [],
+    recommendation_quality: [],
+    visual_quality: [],
+    risk_disclosure: [],
   };
   const report = record(deliverable);
   if (!report) {
     issues.reasoning_quality.push('deliverable must be an object');
-    return Object.entries(issues).map(([id, entries]) => issueDimension(id as ReportReviewDimensionId, entries));
+    return REPORT_REVIEW_DIMENSION_IDS.map((id) => issueDimension(id, issues[id]));
   }
   if (report.version !== 'research-deliverable-v1') issues.reasoning_quality.push('unsupported deliverable version');
   if (report.taskId !== input.task.id) issues.reasoning_quality.push('deliverable task identity mismatch');
@@ -160,7 +188,7 @@ function deterministicDimensions(input: ReportReviewInput, deliverable: unknown)
     if (roots.length === 0) issues.recommendation_quality.push(`recommendation ${String(value?.id ?? '')} has no summary root`);
     for (const summaryId of roots) if (typeof summaryId !== 'string' || !summaryIds.has(summaryId)) issues.recommendation_quality.push(`recommendation ${String(value?.id ?? '')} references unknown summary`);
   }
-  return Object.entries(issues).map(([id, entries]) => issueDimension(id as ReportReviewDimensionId, entries));
+  return REPORT_REVIEW_DIMENSION_IDS.map((id) => issueDimension(id, issues[id]));
 }
 
 function deterministicFailure(dimensions: readonly ReportReviewDimension[]): boolean {
@@ -221,11 +249,13 @@ export class ReportReviewService {
       verdict: value.verdict, dimensions: value.dimensions as ReportReviewDimension[], revisionRound,
     };
     this.validator.validateOrThrow('report-review', artifact);
+    assertReportReviewInvariant(artifact);
     return artifact;
   }
 
   private async seal(input: ReportReviewInput, artifact: ReportReviewArtifact, status: 'completed' | 'paused'): Promise<ReportReviewResult> {
     this.validator.validateOrThrow('report-review', artifact);
+    assertReportReviewInvariant(artifact);
     const sealed = await this.dependencies.artifacts.writeJson({
       taskId: input.task.id, planVersionId: input.plan.id, attemptId: input.attempt.id,
       kind: 'report_review', relativePath: `reports/review-r${artifact.revisionRound}.json`, value: artifact,

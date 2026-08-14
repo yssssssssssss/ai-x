@@ -432,7 +432,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       lease,
       expectedModel: expectedActualModel,
     }),
-  }, planRevisionDriver);
+  }, planRevisionDriver, artifacts);
 
   return {
     controlPlanning,

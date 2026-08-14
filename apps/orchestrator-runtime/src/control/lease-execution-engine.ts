@@ -324,6 +324,46 @@ function parsePlan(taskId: string, value: unknown): EnginePlan {
   }
   return { taskId, evidence_requirements: evidenceRequirements, steps };
 }
+interface ReviewCoverageIds {
+  requirementIds: string[];
+  questionIds: string[];
+}
+
+function parseReviewCoverageIds(structuredTask: unknown, plan: unknown): ReviewCoverageIds {
+  if (!isRecord(structuredTask) || structuredTask.version !== 'research-task-v2') {
+    throw new ExecutionAuthenticityError('finalized task is not research-task-v2');
+  }
+  const criteria = structuredTask.success_criteria;
+  if (!Array.isArray(criteria) || criteria.length === 0) {
+    throw new ExecutionAuthenticityError('finalized task success criteria are malformed');
+  }
+  const requirementIds = criteria.map((criterion, index) => {
+    if (!isRecord(criterion) || typeof criterion.id !== 'string' || criterion.id.trim().length === 0) {
+      throw new ExecutionAuthenticityError(`success criterion ${index + 1} is malformed`);
+    }
+    return criterion.id;
+  });
+
+  const planRecord = isRecord(plan) ? plan : null;
+  const problemGraph = planRecord && isRecord(planRecord.problem_graph) ? planRecord.problem_graph : null;
+  const questions = problemGraph?.questions;
+  if (problemGraph?.version !== 'problem-graph-v1' || !Array.isArray(questions)) {
+    throw new ExecutionAuthenticityError('active plan ProblemGraph is malformed');
+  }
+  const questionIds = questions.flatMap((question, index) => {
+    if (
+      !isRecord(question)
+      || typeof question.id !== 'string'
+      || question.id.trim().length === 0
+      || (question.priority !== 'required' && question.priority !== 'optional')
+    ) {
+      throw new ExecutionAuthenticityError(`ProblemGraph question ${index + 1} is malformed`);
+    }
+    return question.priority === 'required' ? [question.id] : [];
+  });
+  return { requirementIds, questionIds };
+}
+
 
 function parsePendingInputs(value: unknown): PendingInput[] {
   if (!Array.isArray(value)) {
@@ -596,6 +636,7 @@ export class LeaseExecutionEngine {
       throw new ExecutionAuthenticityError('lease task or plan is unavailable');
     }
     let plan: EnginePlan;
+    let reviewCoverage: ReviewCoverageIds | null = null;
     try {
       const gates = await this.dependencies.repository.listGateRecords(
         input.lease.taskId,
@@ -604,6 +645,9 @@ export class LeaseExecutionEngine {
       const parsedPlan = parsePlan(task.id, planVersion.plan);
       const pendingInputs = parsePendingInputs(planVersion.pendingInputs);
       plan = overlayPendingInputs(parsedPlan, pendingInputs, gates, task.ownerUserId);
+      if (this.dependencies.reportReview) {
+        reviewCoverage = parseReviewCoverageIds(task.structuredTask, planVersion.plan);
+      }
     } catch (error) {
       await this.dependencies.repository.recordExecutionStep({
         attemptId: input.lease.attemptId,
@@ -1001,6 +1045,7 @@ export class LeaseExecutionEngine {
         activeLease: input.lease,
       };
       const deliverable = await this.withLeaseHeartbeat(input.lease, () => this.dependencies.deliverables.generate(deliverableInput));
+      let deliverableArtifactId = deliverable.deliverableArtifactId;
       let reportReviewArtifactId: string | undefined;
       let reviewStatus: ReportReviewResult['status'] | undefined;
       if (this.dependencies.reportReview) {
@@ -1016,20 +1061,44 @@ export class LeaseExecutionEngine {
               revise: (revision) => this.dependencies.deliverables.revise!({ ...deliverableInput, review: revision.review }),
             }
           : undefined;
+        if (!reviewCoverage) {
+          throw new ExecutionAuthenticityError('report review coverage identifiers are unavailable');
+        }
         const review = await this.withLeaseHeartbeat(input.lease, () => this.dependencies.reportReview!.review({
           task: { id: task.id },
           plan: { id: planVersion.id },
           attempt: { id: input.lease.attemptId },
           deliverableArtifactId: deliverable.deliverableArtifactId,
           deliverable: deliverable.deliverable,
+          requirementIds: reviewCoverage.requirementIds,
+          questionIds: reviewCoverage.questionIds,
           evidenceIds: sealedEvidenceManifest.value.entries.map((entry) => entry.id),
           expectedModel: input.expectedModel,
           activeLease: input.lease,
         }, composer));
         reportReviewArtifactId = review.artifactId;
         reviewStatus = review.status;
+        deliverableArtifactId = review.deliverableArtifactId;
         if (review.status === 'paused') {
-          const failure = { kind: 'report_review', retryable: false, verdict: review.verdict, message: 'report review paused execution' };
+          const failure = {
+            kind: 'report_review',
+            retryable: false,
+            allowedActions: ['abort'],
+            verdict: review.verdict,
+            message: 'report review paused execution',
+          };
+          const failedStepNo = plan.steps.length + 2;
+          await this.dependencies.repository.recordExecutionStep({
+            attemptId: input.lease.attemptId,
+            stepNo: failedStepNo,
+            stepName: 'report review',
+            actorType: 'reviewer',
+            actorId: 'report-review',
+            state: 'failed',
+            failure,
+            startedAt: new Date(),
+            finishedAt: new Date(),
+          });
           await this.dependencies.repository.pauseExecution({
             taskId: input.lease.taskId,
             attemptId: input.lease.attemptId,
@@ -1039,11 +1108,11 @@ export class LeaseExecutionEngine {
           return {
             status: 'paused',
             attemptId: input.lease.attemptId,
-            deliverableArtifactId: deliverable.deliverableArtifactId,
+            deliverableArtifactId,
             evidenceManifestArtifactId: sealedEvidenceManifest.artifact.id,
             reportReviewArtifactId,
             reviewStatus,
-            failedStepNo: plan.steps.length + 2,
+            failedStepNo,
             failure,
           };
         }
@@ -1061,7 +1130,7 @@ export class LeaseExecutionEngine {
       return {
         status,
         attemptId: input.lease.attemptId,
-        deliverableArtifactId: deliverable.deliverableArtifactId,
+        deliverableArtifactId,
         evidenceManifestArtifactId: sealedEvidenceManifest.artifact.id,
         ...(reportReviewArtifactId === undefined ? {} : { reportReviewArtifactId }),
         ...(reviewStatus === undefined ? {} : { reviewStatus }),

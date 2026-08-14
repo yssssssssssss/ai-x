@@ -415,6 +415,75 @@ export class ControlPlaneRepository {
       connection.release();
     }
   }
+  private async pauseExpiredExecutionLease(
+    connection: MigrationConnection,
+    input: {
+      taskId: string;
+      attemptId: string;
+      planVersionId?: string;
+      leaseOwner?: string;
+      leaseToken?: string;
+    },
+  ): Promise<ControlTask | null> {
+    const leaseTokenHash = input.leaseToken === undefined ? null : hashLeaseToken(input.leaseToken);
+    const locked = await connection.query(
+      `SELECT attempt.plan_version_id
+       FROM control_execution_attempts AS attempt
+       JOIN control_tasks AS task ON task.id = attempt.task_id
+       WHERE attempt.id = $1
+         AND attempt.task_id = $2
+         AND ($3::uuid IS NULL OR attempt.plan_version_id = $3::uuid)
+         AND ($4::text IS NULL OR attempt.lease_owner = $4)
+         AND ($5::text IS NULL OR attempt.lease_token_hash = $5)
+         AND attempt.state = 'active'
+         AND attempt.lease_expires_at <= now()
+         AND task.state IN ('executing', 'reviewing', 'composing_report')
+         AND task.current_attempt_id = attempt.id
+         AND task.active_plan_version_id = attempt.plan_version_id
+       FOR UPDATE OF attempt, task`,
+      [input.attemptId, input.taskId, input.planVersionId ?? null, input.leaseOwner ?? null, leaseTokenHash],
+    );
+    const lockedRow = locked.rows[0];
+    if (!lockedRow) return null;
+    const planVersionId = asString(lockedRow.plan_version_id, 'plan_version_id');
+
+    const attempt = await connection.query(
+      `UPDATE control_execution_attempts
+       SET state = 'paused', failure_kind = 'worker_loss', finished_at = now()
+       WHERE id = $1
+         AND task_id = $2
+         AND plan_version_id = $3
+         AND ($4::text IS NULL OR lease_owner = $4)
+         AND ($5::text IS NULL OR lease_token_hash = $5)
+         AND state = 'active'
+         AND lease_expires_at <= now()
+       RETURNING id`,
+      [input.attemptId, input.taskId, planVersionId, input.leaseOwner ?? null, leaseTokenHash],
+    );
+    if (!attempt.rows[0]) {
+      throw new ControlPlaneConflictError(`execution lease ${input.attemptId} changed during expiry recovery`);
+    }
+
+    const task = await connection.query(
+      `UPDATE control_tasks
+       SET state = 'paused', state_version = state_version + 1, updated_at = now()
+       WHERE id = $1
+         AND state IN ('executing', 'reviewing', 'composing_report')
+         AND current_attempt_id = $2
+         AND active_plan_version_id = $3
+       RETURNING id, state, state_version, active_plan_version_id, current_attempt_id`,
+      [input.taskId, input.attemptId, planVersionId],
+    );
+    const row = task.rows[0];
+    if (!row) throw new ControlPlaneConflictError(`task ${input.taskId} changed during expiry recovery`);
+    return {
+      id: asString(row.id, 'id'),
+      state: asString(row.state, 'state') as ControlTaskState,
+      stateVersion: asNumber(row.state_version, 'state_version'),
+      activePlanVersionId: typeof row.active_plan_version_id === 'string' ? row.active_plan_version_id : null,
+      currentAttemptId: typeof row.current_attempt_id === 'string' ? row.current_attempt_id : null,
+    };
+  }
 
   async createTask(input: {
     conversationId: string;
@@ -1514,32 +1583,13 @@ export class ControlPlaneRepository {
           [input.artifactId],
         );
         if (leaseBound) {
-          await connection.query(
-            `UPDATE control_execution_attempts
-             SET state = 'paused', failure_kind = 'worker_loss', finished_at = now()
-             WHERE id = $1
-               AND task_id = $2
-               AND plan_version_id = $3
-               AND state = 'active'
-               AND lease_expires_at <= now()`,
-            [input.attemptId, input.taskId, input.planVersionId],
-          );
-          await connection.query(
-            `UPDATE control_tasks AS task
-             SET state = 'paused', state_version = state_version + 1, updated_at = now()
-             WHERE task.id = $1
-               AND task.state = 'executing'
-               AND task.current_attempt_id = $2
-               AND task.active_plan_version_id = $3
-               AND EXISTS (
-                 SELECT 1 FROM control_execution_attempts AS attempt
-                 WHERE attempt.id = $2
-                   AND attempt.task_id = task.id
-                   AND attempt.plan_version_id = $3
-                   AND attempt.state = 'paused'
-               )`,
-            [input.taskId, input.attemptId, input.planVersionId],
-          );
+          await this.pauseExpiredExecutionLease(connection, {
+            taskId: input.taskId!,
+            planVersionId: input.planVersionId!,
+            attemptId: input.attemptId!,
+            leaseOwner: input.leaseOwner!,
+            leaseToken: input.leaseToken!,
+          });
         }
       }
       return null;
@@ -1572,7 +1622,7 @@ export class ControlPlaneRepository {
          WHERE task_id = $1
            AND plan_version_id = $2
            AND attempt_id = $3
-           AND kind IN ('evidence_manifest', 'deliverable')
+           AND kind IN ('evidence_manifest', 'deliverable', 'report_review')
            AND state IN ('STAGING', 'SEALED')`,
         [input.taskId, input.planVersionId, input.attemptId, input.reason],
       );
@@ -2133,8 +2183,7 @@ export class ControlPlaneRepository {
   }
 
   async requireActiveLease(input: ControlExecutionLease): Promise<ActiveExecutionLease> {
-    const connection = await this.database.connect();
-    try {
+    const outcome = await this.transaction(async (connection): Promise<ActiveExecutionLease | null> => {
       const result = await connection.query(
         `SELECT attempt.id AS attempt_id, attempt.task_id, attempt.plan_version_id,
                 attempt.lease_owner, attempt.lease_expires_at, task.state_version
@@ -2153,7 +2202,10 @@ export class ControlPlaneRepository {
         [input.attemptId, input.taskId, input.planVersionId, input.leaseOwner, hashLeaseToken(input.leaseToken)],
       );
       const row = result.rows[0];
-      if (!row) throw new ControlPlaneConflictError(`execution lease ${input.attemptId} is invalid or expired`);
+      if (!row) {
+        await this.pauseExpiredExecutionLease(connection, input);
+        return null;
+      }
       return {
         attemptId: asString(row.attempt_id, 'attempt_id'),
         taskId: asString(row.task_id, 'task_id'),
@@ -2162,13 +2214,13 @@ export class ControlPlaneRepository {
         leaseExpiresAt: asDate(row.lease_expires_at, 'lease_expires_at'),
         stateVersion: asNumber(row.state_version, 'state_version'),
       };
-    } finally {
-      connection.release();
-    }
+    });
+    if (!outcome) throw new ControlPlaneConflictError(`execution lease ${input.attemptId} is invalid or expired`);
+    return outcome;
   }
 
   async heartbeatExecutionLease(input: ControlExecutionLease & { extendUntil: Date }): Promise<ActiveExecutionLease> {
-    return this.transaction(async (connection) => {
+    const outcome = await this.transaction(async (connection): Promise<ActiveExecutionLease | null> => {
       const result = await connection.query(
         `UPDATE control_execution_attempts AS attempt
          SET lease_heartbeat_at = now(),
@@ -2190,7 +2242,10 @@ export class ControlPlaneRepository {
         [input.attemptId, input.taskId, input.planVersionId, input.leaseOwner, hashLeaseToken(input.leaseToken), input.extendUntil],
       );
       const row = result.rows[0];
-      if (!row) throw new ControlPlaneConflictError(`execution lease ${input.attemptId} cannot heartbeat`);
+      if (!row) {
+        await this.pauseExpiredExecutionLease(connection, input);
+        return null;
+      }
       return {
         attemptId: asString(row.attempt_id, 'attempt_id'),
         taskId: asString(row.task_id, 'task_id'),
@@ -2200,6 +2255,8 @@ export class ControlPlaneRepository {
         stateVersion: asNumber(row.state_version, 'state_version'),
       };
     });
+    if (!outcome) throw new ControlPlaneConflictError(`execution lease ${input.attemptId} cannot heartbeat`);
+    return outcome;
   }
 
   async recordExecutionStep(input: {
@@ -2339,7 +2396,7 @@ export class ControlPlaneRepository {
     input: ControlExecutionLease,
     options: { status: 'completed' | 'completed_with_gaps' } = { status: 'completed' },
   ): Promise<ControlTask> {
-    return this.transaction(async (connection) => {
+    const outcome = await this.transaction(async (connection): Promise<ControlTask | null> => {
       const attempt = await connection.query(
         `UPDATE control_execution_attempts
          SET state = 'completed', finished_at = now()
@@ -2353,7 +2410,10 @@ export class ControlPlaneRepository {
          RETURNING id`,
         [input.attemptId, input.taskId, input.planVersionId, input.leaseOwner, hashLeaseToken(input.leaseToken)],
       );
-      if (!attempt.rows[0]) throw new ControlPlaneConflictError(`execution lease ${input.attemptId} cannot complete`);
+      if (!attempt.rows[0]) {
+        await this.pauseExpiredExecutionLease(connection, input);
+        return null;
+      }
       const task = await connection.query(
         `UPDATE control_tasks
          SET state = $4, state_version = state_version + 1, updated_at = now()
@@ -2374,22 +2434,16 @@ export class ControlPlaneRepository {
         currentAttemptId: typeof row.current_attempt_id === 'string' ? row.current_attempt_id : null,
       };
     });
+    if (!outcome) throw new ControlPlaneConflictError(`execution lease ${input.attemptId} cannot complete`);
+    return outcome;
   }
 
   async expireExecutionLease(input: { taskId: string; attemptId: string }): Promise<ControlTask> {
     return this.transaction(async (connection) => {
-      const attempt = await connection.query(
-        `UPDATE control_execution_attempts
-         SET state = 'paused', failure_kind = 'worker_loss', finished_at = now()
-         WHERE id = $1
-           AND task_id = $2
-           AND state = 'active'
-           AND lease_expires_at <= now()
-         RETURNING id, plan_version_id`,
-        [input.attemptId, input.taskId],
-      );
-      const attemptRow = attempt.rows[0];
-      if (!attemptRow) throw new ControlPlaneConflictError(`execution lease ${input.attemptId} is not expired and active`);
+      const task = await this.pauseExpiredExecutionLease(connection, input);
+      if (!task) {
+        throw new ControlPlaneConflictError(`execution lease ${input.attemptId} is not expired and active`);
+      }
       const stepNo = await connection.query(
         `SELECT COALESCE(MAX(step_no), 0) + 1 AS step_no FROM control_execution_steps WHERE attempt_id = $1`,
         [input.attemptId],
@@ -2400,25 +2454,7 @@ export class ControlPlaneRepository {
          VALUES ($1, $2, 'worker lease expired', 'system', 'worker-loss', 'failed', $3, now(), now())`,
         [input.attemptId, asNumber(stepNo.rows[0]?.step_no, 'step_no'), JSON.stringify({ kind: 'worker_loss', retryable: true, allowedActions: ['retry', 'abort'] })],
       );
-      const task = await connection.query(
-        `UPDATE control_tasks
-         SET state = 'paused', state_version = state_version + 1, updated_at = now()
-         WHERE id = $1
-           AND state = 'executing'
-           AND current_attempt_id = $2
-           AND active_plan_version_id = $3
-         RETURNING id, state, state_version, active_plan_version_id, current_attempt_id`,
-        [input.taskId, input.attemptId, attemptRow.plan_version_id],
-      );
-      const row = task.rows[0];
-      if (!row) throw new ControlPlaneConflictError(`task ${input.taskId} is not executing expired attempt ${input.attemptId}`);
-      return {
-        id: asString(row.id, 'id'),
-        state: asString(row.state, 'state') as ControlTaskState,
-        stateVersion: asNumber(row.state_version, 'state_version'),
-        activePlanVersionId: typeof row.active_plan_version_id === 'string' ? row.active_plan_version_id : null,
-        currentAttemptId: typeof row.current_attempt_id === 'string' ? row.current_attempt_id : null,
-      };
+      return task;
     });
   }
 

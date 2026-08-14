@@ -206,6 +206,7 @@ export interface CurrentDeliverableGenerateInput {
   expectedModel: string;
   stepNo?: number;
   revisionInstruction?: string;
+  revisionRound?: 0 | 1;
   activeLease?: ControlExecutionLease;
 }
 
@@ -375,7 +376,7 @@ export class CurrentDeliverableService {
       planVersionId: input.plan.id,
       attemptId: input.attempt.id,
       kind: 'deliverable',
-      relativePath: 'deliverables/final.json',
+      relativePath: `deliverables/final-r${input.revisionRound ?? 0}.json`,
       schemaVersion: 'research-deliverable-v1-review-gated',
       sensitivity: 'internal',
       redactionPolicyVersion: 'v1',
@@ -388,12 +389,16 @@ export class CurrentDeliverableService {
     };
   }
   async revise(input: CurrentDeliverableRevisionInput): Promise<CurrentDeliverableGenerateResult> {
+    if (input.review.revisionRound !== 0) {
+      throw new Error('deliverable revision requires a round 0 Review');
+    }
     const revisionInstruction = input.review.dimensions
       .flatMap((dimension) => dimension.issues)
       .join('; ');
     return this.generate({
       ...input,
       revisionInstruction,
+      revisionRound: 1,
     });
   }
 }

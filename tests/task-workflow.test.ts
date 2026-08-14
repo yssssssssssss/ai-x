@@ -1,3 +1,5 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,6 +21,8 @@ import {
   TaskWorkflowGateError,
   TaskWorkflowService,
 } from '../apps/orchestrator-runtime/src/control/task-workflow.ts';
+import { ControlArtifactStore } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
+import { REPORT_REVIEW_DIMENSION_IDS } from '../packages/api-contract/control-workflow.ts';
 import {
   runMigrations,
   type MigrationConnection,
@@ -895,51 +899,121 @@ test('concurrent execute commands invoke the external driver only once', async (
   assert.equal((await repository.listAttempts(task.id)).length, 1);
 });
 
-test('reconstructs an execution result after driver state commit but before command persistence', async () => {
-  const repository = new ControlPlaneRepository(scopedDatabase);
-  let driverCalls = 0;
-  const workflow = new TaskWorkflowService(repository, {
-    execute: async ({ lease }) => {
-      driverCalls += 1;
-      await repository.completeExecution(lease);
-      throw new Error('simulated process crash after state commit');
-    },
-  });
-  const created = await createCandidateTask(repository, 'crash', {
-    candidateId: 'depth',
-  });
-  const task = created.task;
-  const selection = await workflow.select({
-    taskId: task.id,
-    expectedVersion: task.stateVersion,
-    idempotencyKey: 'crash-select',
-    actor: { userId: ownerId, role: 'owner' },
-    planVersionId: created.candidates[0]!.id,
-  });
-  const ready = await workflow.confirm({
-    taskId: task.id,
-    planVersionId: selection.planVersionId,
-    expectedVersion: selection.stateVersion,
-    idempotencyKey: 'crash-confirm',
-    actor: { userId: ownerId, role: 'owner' },
-    confirmationAnswers: {},
-    inputValues: {},
-  });
-  const command = {
-    taskId: task.id,
-    planVersionId: selection.planVersionId,
-    expectedVersion: ready.stateVersion,
-    idempotencyKey: 'crash-execute',
-    actor: { userId: ownerId, role: 'owner' as const },
-  };
+test('reconstructs final artifact IDs after driver state commit but before command persistence', async () => {
+  const artifactRoot = mkdtempSync(join(tmpdir(), 'task-workflow-command-loss-'));
+  try {
+    const repository = new ControlPlaneRepository(scopedDatabase);
+    const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+    let driverCalls = 0;
+    let expectedArtifactIds: {
+      deliverableArtifactId: string;
+      evidenceManifestArtifactId: string;
+      reportReviewArtifactId: string;
+    } | undefined;
+    const workflow = new TaskWorkflowService(repository, {
+      execute: async ({ lease }) => {
+        driverCalls += 1;
+        const evidenceManifest = await artifacts.writeJson({
+          taskId: lease.taskId,
+          planVersionId: lease.planVersionId,
+          attemptId: lease.attemptId,
+          kind: 'evidence_manifest',
+          relativePath: 'evidence/manifest.json',
+          schemaVersion: 'evidence-v1',
+          activeLease: lease,
+          value: {
+            version: 'evidence-v1',
+            taskId: lease.taskId,
+            planVersionId: lease.planVersionId,
+            attemptId: lease.attemptId,
+          },
+        });
+        const deliverable = await artifacts.writeJson({
+          taskId: lease.taskId,
+          planVersionId: lease.planVersionId,
+          attemptId: lease.attemptId,
+          kind: 'deliverable',
+          relativePath: 'deliverables/final-r1.json',
+          schemaVersion: 'research-deliverable-v1-review-gated',
+          activeLease: lease,
+          value: {
+            version: 'research-deliverable-v1',
+            taskId: lease.taskId,
+            planVersionId: lease.planVersionId,
+            attemptId: lease.attemptId,
+          },
+        });
+        const reportReview = await artifacts.writeJson({
+          taskId: lease.taskId,
+          planVersionId: lease.planVersionId,
+          attemptId: lease.attemptId,
+          kind: 'report_review',
+          relativePath: 'reports/review-r1.json',
+          schemaVersion: 'report-review-v1',
+          activeLease: lease,
+          value: {
+            version: 'report-review-v1',
+            taskId: lease.taskId,
+            planVersionId: lease.planVersionId,
+            attemptId: lease.attemptId,
+            deliverableArtifactId: deliverable.id,
+            verdict: 'pass',
+            dimensions: REPORT_REVIEW_DIMENSION_IDS.map((id) => ({ id, passed: true, issues: [] })),
+            revisionRound: 1,
+          },
+        });
+        expectedArtifactIds = {
+          deliverableArtifactId: deliverable.id,
+          evidenceManifestArtifactId: evidenceManifest.id,
+          reportReviewArtifactId: reportReview.id,
+        };
+        await repository.completeExecution(lease);
+        throw new Error('simulated process crash after state commit');
+      },
+    }, undefined, artifacts);
+    const created = await createCandidateTask(repository, 'crash', {
+      candidateId: 'depth',
+    });
+    const task = created.task;
+    const selection = await workflow.select({
+      taskId: task.id,
+      expectedVersion: task.stateVersion,
+      idempotencyKey: 'crash-select',
+      actor: { userId: ownerId, role: 'owner' },
+      planVersionId: created.candidates[0]!.id,
+    });
+    const ready = await workflow.confirm({
+      taskId: task.id,
+      planVersionId: selection.planVersionId,
+      expectedVersion: selection.stateVersion,
+      idempotencyKey: 'crash-confirm',
+      actor: { userId: ownerId, role: 'owner' },
+      confirmationAnswers: {},
+      inputValues: {},
+    });
+    const command = {
+      taskId: task.id,
+      planVersionId: selection.planVersionId,
+      expectedVersion: ready.stateVersion,
+      idempotencyKey: 'crash-execute',
+      actor: { userId: ownerId, role: 'owner' as const },
+    };
 
-  await assert.rejects(() => workflow.execute(command), /simulated process crash/);
-  const replay = await workflow.execute(command);
+    await assert.rejects(() => workflow.execute(command), /simulated process crash/);
+    const replay = await workflow.execute(command);
 
-  assert.equal(replay.executionDisabled, false);
-  assert.equal(replay.state, 'completed');
-  assert.equal('status' in replay && replay.status, 'completed');
-  assert.equal(driverCalls, 1);
+    assert.ok(expectedArtifactIds);
+    assert.equal(replay.executionDisabled, false);
+    assert.equal(replay.state, 'completed');
+    assert.equal('status' in replay && replay.status, 'completed');
+    assert.equal('deliverableArtifactId' in replay && replay.deliverableArtifactId, expectedArtifactIds.deliverableArtifactId);
+    assert.equal('evidenceManifestArtifactId' in replay && replay.evidenceManifestArtifactId, expectedArtifactIds.evidenceManifestArtifactId);
+    assert.equal('reportReviewArtifactId' in replay && replay.reportReviewArtifactId, expectedArtifactIds.reportReviewArtifactId);
+    assert.equal('reviewStatus' in replay && replay.reviewStatus, 'completed');
+    assert.equal(driverCalls, 1);
+  } finally {
+    rmSync(artifactRoot, { recursive: true, force: true });
+  }
 });
 
 async function createPausedTask(input: {
@@ -999,6 +1073,82 @@ async function createPausedTask(input: {
   });
   return { task, plan, paused };
 }
+
+test('report review failure rejects retry and permits only abort recovery', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const workflow = new TaskWorkflowService(repository);
+  const task = await repository.createTask({
+    conversationId,
+    ownerUserId: ownerId,
+    originalInput: 'non-retryable report review recovery',
+    taskType: 'competitive_research',
+    structuredTask: currentTask(),
+    state: 'ready',
+  });
+  const planSteps = [currentStep({ actor_type: 'tool', actor_id: 'tavily-web-search' })];
+  const plan = await repository.createPlanVersion({
+    taskId: task.id,
+    version: 1,
+    candidateId: 'speed',
+    plan: currentPlan(task.id, 'report-review-recovery', planSteps),
+    planHash: `sha256:${randomUUID()}`,
+  });
+  const claim = await repository.claimExecution({
+    taskId: task.id,
+    planVersionId: plan.id,
+    expectedVersion: task.stateVersion,
+    idempotencyKey: `review-claim-${randomUUID()}`,
+    requestHash: `sha256:${randomUUID()}`,
+    leaseOwner: 'review-recovery-test',
+    leaseTokenHash: `sha256:${randomUUID()}`,
+  });
+  const failedStepNo = planSteps.length + 2;
+  await repository.recordExecutionStep({
+    attemptId: claim.attemptId,
+    stepNo: failedStepNo,
+    stepName: 'report review',
+    actorType: 'reviewer',
+    actorId: 'report-review',
+    state: 'failed',
+    failure: {
+      kind: 'report_review',
+      retryable: false,
+      allowedActions: ['abort'],
+      verdict: 'block',
+    },
+  });
+  const paused = await repository.pauseExecution({
+    taskId: task.id,
+    attemptId: claim.attemptId,
+    expectedVersion: claim.stateVersion,
+    reason: 'report_review',
+  });
+
+  await assert.rejects(
+    () => workflow.resume({
+      taskId: task.id,
+      expectedVersion: paused.stateVersion,
+      idempotencyKey: `review-retry-${randomUUID()}`,
+      actor: { userId: ownerId, role: 'owner' },
+      action: 'retry',
+      failedStepNo,
+    }),
+    TaskWorkflowGateError,
+  );
+  assert.equal((await repository.getTaskDetail(task.id))?.state, 'paused');
+  assert.equal((await repository.listAttempts(task.id))[0]?.state, 'paused');
+
+  const aborted = await workflow.resume({
+    taskId: task.id,
+    expectedVersion: paused.stateVersion,
+    idempotencyKey: `review-abort-${randomUUID()}`,
+    actor: { userId: ownerId, role: 'owner' },
+    action: 'abort',
+    failedStepNo,
+  });
+  assert.equal(aborted.state, 'cancelled');
+  assert.equal((await repository.listAttempts(task.id))[0]?.state, 'cancelled');
+});
 
 test('resume rejects core skip and safely renumbers a strict Current plan after optional skip', async () => {
   const repository = new ControlPlaneRepository(scopedDatabase);

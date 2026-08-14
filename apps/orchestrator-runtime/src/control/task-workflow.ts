@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { basename } from 'node:path';
 import {
   ControlPlaneAuthorizationError as TaskWorkflowAuthorizationError,
   ControlPlaneConflictError,
@@ -7,11 +8,14 @@ import {
   type ControlTaskDetail,
   type ControlTaskState,
   type ControlExecutionLease,
+  type ControlArtifact,
 } from '../../../../database/control-plane.ts';
 import type {
   ControlExecutionResult,
   DisabledExecutionResponse,
+  ReportReviewArtifact,
 } from '../../../../packages/api-contract/control-workflow.ts';
+import { assertReportReviewInvariant } from '../report/report-review-service.ts';
 export { TaskWorkflowAuthorizationError };
 
 export type WorkflowRole = 'owner' | 'legal' | 'security' | 'gold';
@@ -59,6 +63,10 @@ export interface WorkflowExecutionDriver {
     failedStepNo?: number;
     failure?: Record<string, unknown>;
   }>;
+}
+
+export interface WorkflowArtifactReader {
+  readVerifiedJson<T>(artifactId: string): Promise<{ artifact: ControlArtifact; value: T }>;
 }
 
 export interface WorkflowPlanRevisionDriver {
@@ -293,6 +301,7 @@ export class TaskWorkflowService {
     private readonly repository: ControlPlaneRepository,
     private readonly executionDriver?: WorkflowExecutionDriver,
     private readonly planRevisionDriver?: WorkflowPlanRevisionDriver,
+    private readonly terminalArtifacts?: WorkflowArtifactReader,
   ) {}
 
   private async requireTask(taskId: string): Promise<ControlTaskDetail> {
@@ -317,6 +326,91 @@ export class TaskWorkflowService {
       throw new ControlPlaneConflictError(`plan version ${planVersionId} is not active for task ${task.id}`);
     }
     return plan;
+  }
+
+  private async recoverTerminalArtifacts(input: {
+    taskId: string;
+    planVersionId: string;
+    attemptId: string;
+    status: 'completed' | 'completed_with_gaps' | 'paused';
+  }): Promise<Partial<ControlExecutionResult>> {
+    const selectedReview = await this.repository.findSealedArtifact({
+      taskId: input.taskId,
+      attemptId: input.attemptId,
+      kind: 'report_review',
+    });
+    if (!selectedReview) return {};
+    if (!this.terminalArtifacts) {
+      throw new ControlPlaneConflictError('terminal Artifact reader is required to recover reviewed execution');
+    }
+
+    const verifiedReview = await this.terminalArtifacts.readVerifiedJson<unknown>(selectedReview.id);
+    const reviewValue = isRecord(verifiedReview.value) ? verifiedReview.value : null;
+    if (
+      verifiedReview.artifact.id !== selectedReview.id
+      || verifiedReview.artifact.state !== 'SEALED'
+      || !verifiedReview.artifact.contentSha256
+      || verifiedReview.artifact.kind !== 'report_review'
+      || verifiedReview.artifact.schemaVersion !== 'report-review-v1'
+      || verifiedReview.artifact.taskId !== input.taskId
+      || verifiedReview.artifact.planVersionId !== input.planVersionId
+      || verifiedReview.artifact.attemptId !== input.attemptId
+      || !reviewValue
+      || reviewValue.version !== 'report-review-v1'
+      || reviewValue.taskId !== input.taskId
+      || reviewValue.planVersionId !== input.planVersionId
+      || reviewValue.attemptId !== input.attemptId
+      || typeof reviewValue.deliverableArtifactId !== 'string'
+      || (reviewValue.revisionRound !== 0 && reviewValue.revisionRound !== 1)
+      || basename(verifiedReview.artifact.storageUri) !== `review-r${reviewValue.revisionRound}.json`
+      || (input.status !== 'paused' && reviewValue.verdict !== 'pass')
+    ) {
+      throw new ControlPlaneConflictError('terminal Review Artifact cannot reconstruct execution result');
+    }
+    assertReportReviewInvariant(reviewValue as unknown as ReportReviewArtifact);
+
+    const verifiedDeliverable = await this.terminalArtifacts.readVerifiedJson<unknown>(
+      reviewValue.deliverableArtifactId,
+    );
+    if (
+      verifiedDeliverable.artifact.id !== reviewValue.deliverableArtifactId
+      || verifiedDeliverable.artifact.state !== 'SEALED'
+      || !verifiedDeliverable.artifact.contentSha256
+      || verifiedDeliverable.artifact.kind !== 'deliverable'
+      || verifiedDeliverable.artifact.taskId !== input.taskId
+      || verifiedDeliverable.artifact.planVersionId !== input.planVersionId
+      || verifiedDeliverable.artifact.attemptId !== input.attemptId
+    ) {
+      throw new ControlPlaneConflictError('terminal Deliverable Artifact cannot reconstruct execution result');
+    }
+
+    const selectedManifest = await this.repository.findSealedArtifact({
+      taskId: input.taskId,
+      attemptId: input.attemptId,
+      kind: 'evidence_manifest',
+    });
+    if (!selectedManifest) {
+      throw new ControlPlaneConflictError('terminal Evidence Manifest is missing');
+    }
+    const verifiedManifest = await this.terminalArtifacts.readVerifiedJson<unknown>(selectedManifest.id);
+    if (
+      verifiedManifest.artifact.id !== selectedManifest.id
+      || verifiedManifest.artifact.state !== 'SEALED'
+      || !verifiedManifest.artifact.contentSha256
+      || verifiedManifest.artifact.kind !== 'evidence_manifest'
+      || verifiedManifest.artifact.taskId !== input.taskId
+      || verifiedManifest.artifact.planVersionId !== input.planVersionId
+      || verifiedManifest.artifact.attemptId !== input.attemptId
+    ) {
+      throw new ControlPlaneConflictError('terminal Evidence Manifest cannot reconstruct execution result');
+    }
+
+    return {
+      deliverableArtifactId: verifiedDeliverable.artifact.id,
+      evidenceManifestArtifactId: verifiedManifest.artifact.id,
+      reportReviewArtifactId: verifiedReview.artifact.id,
+      reviewStatus: input.status === 'paused' ? 'paused' : 'completed',
+    };
   }
 
   private async replay<T>(taskId: string, commandType: string, idempotencyKey: string, hash: string): Promise<T | null> {
@@ -698,6 +792,12 @@ export class TaskWorkflowService {
             ? await this.repository.listExecutionSteps(claim.attemptId)
             : [];
           const latestFailure = [...failedSteps].reverse().find((step) => step.state === 'failed');
+          const terminalArtifacts = await this.recoverTerminalArtifacts({
+            taskId: task.id,
+            planVersionId: input.planVersionId,
+            attemptId: claim.attemptId,
+            status: finalTask.state,
+          });
           const recovered: WorkflowExecutionResponse = {
             attemptId: claim.attemptId,
             state: finalTask.state,
@@ -706,6 +806,7 @@ export class TaskWorkflowService {
             executionDisabled: false,
             failedStepNo: latestFailure?.stepNo,
             failure: latestFailure?.failure ?? undefined,
+            ...terminalArtifacts,
           };
           try {
             await this.repository.recordCommand({

@@ -163,14 +163,16 @@ export interface ControlExecutionResult {
 }
 
 export type ReportReviewVerdict = 'pass' | 'revise' | 'block';
-export type ReportReviewDimensionId =
-  | 'requirement_coverage'
-  | 'question_coverage'
-  | 'evidence_coverage'
-  | 'reasoning_quality'
-  | 'recommendation_quality'
-  | 'visual_quality'
-  | 'risk_disclosure';
+export const REPORT_REVIEW_DIMENSION_IDS = [
+  'requirement_coverage',
+  'question_coverage',
+  'evidence_coverage',
+  'reasoning_quality',
+  'recommendation_quality',
+  'visual_quality',
+  'risk_disclosure',
+] as const;
+export type ReportReviewDimensionId = typeof REPORT_REVIEW_DIMENSION_IDS[number];
 
 export interface ReportReviewDimension {
   id: ReportReviewDimensionId;
