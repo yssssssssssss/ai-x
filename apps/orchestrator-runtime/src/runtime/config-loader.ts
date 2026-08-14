@@ -201,6 +201,8 @@ export interface SkillRegistryEntry {
   status: 'draft' | 'active' | 'deprecated';
   task_types?: string[];
   intent_tags?: string[];
+  inputs?: string[];
+  outputs?: string[];
   input_schema?: string; // KB skill 为 markdown 过程式, 无 JSON schema
   output_schema?: string;
   entry?: string; // SKILL.md 文件夹路径(KB 派生)
@@ -250,6 +252,8 @@ export interface SkillManifest {
   when_to_use: string;
   owner: string;
   status: 'draft' | 'active' | 'deprecated';
+  inputs?: string[];
+  outputs?: string[];
   input_schema: string;
   output_schema: string;
   required_tools?: string[];

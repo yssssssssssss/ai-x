@@ -28,6 +28,27 @@ const TOOL_ACTIVE_REQUIRED: (keyof ToolRegistryEntry)[] = [
   'id', 'name', 'path', 'adapter_type', 'auth_required', 'risk_level',
 ];
 
+const CAPABILITY_ARRAY_FIELDS = ['task_types', 'inputs', 'outputs', 'required_tools'] as const;
+
+
+function lintCapabilityArrays(skill: SkillRegistryEntry, target: string, issues: LintIssue[]): void {
+  const knowledgeBaseSkill = skill.entry !== undefined || skill.path?.startsWith('knowledge-base/') === true;
+  for (const field of CAPABILITY_ARRAY_FIELDS) {
+    const value = skill[field];
+    if (knowledgeBaseSkill && value === undefined && field !== 'task_types') continue;
+    if (!Array.isArray(value)) {
+      issues.push({ level: 'error', target, message: `active skill 的 ${field} 必须是数组` });
+      continue;
+    }
+    if (!knowledgeBaseSkill && value.length === 0) {
+      issues.push({ level: 'error', target, message: `active native skill 的 ${field} 不得为空数组` });
+    }
+    if (field === 'task_types' && value.length === 0) {
+      issues.push({ level: 'error', target, message: 'active skill 的 task_types 不得为空数组' });
+    }
+  }
+}
+
 function lintSkills(issues: LintIssue[]): void {
   const { skills } = loadSkillRegistry();
   const knownTools = new Set(loadToolRegistry().tools.map((t) => t.id));
@@ -41,6 +62,7 @@ function lintSkills(issues: LintIssue[]): void {
         issues.push({ level: 'error', target: tgt, message: `active skill 缺必填字段 "${String(f)}"` });
       }
     }
+    lintCapabilityArrays(s, tgt, issues);
     const skillPath = s.path ?? s.entry;
     if (skillPath && !fileExists(skillPath)) {
       issues.push({ level: 'error', target: tgt, message: `path/entry 不存在: ${skillPath}` });
