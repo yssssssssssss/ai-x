@@ -72,3 +72,14 @@
 - Final focused gate：用户指定 7 文件串行命令 —— 51 tests / 51 pass / 0 fail / 0 skip。
 - Final TypeScript gate：`pnpm typecheck` —— passed。
 - Final Web gate：`pnpm --dir apps/web build` —— passed；Vite 44 modules transformed，production assets emitted。
+
+## Phase 2 final blockers：post-activation recovery 与 Web stable submission key
+
+- 后端 RED：真实 PostgreSQL + production runtime 回归中，第一次 clarification 在 requirement activation 后注入 planner failure；数据库已有且仅新增 1 个 requirement version、task `stateVersion` 已 `+1`，但 route catch 删除了 pending command，断言得到 `command_status/reclaimable = null`。
+- 后端 GREEN：`recoverCommandAfterFailure()` 在 task 仍为旧版本时 token-fenced 删除；恰好前进一版且仍 `awaiting_clarification` 时仅把同 token pending 立即过期。`reserveCommand()` 允许同 key/hash 的该 `+1` 版本 reclaim；`RequirementRefinementService` 仅在 active ID、stored clarification、stored `ResearchTaskV2` 与 expectedVersion+1 全匹配时复用 active requirement，跳过 requirement LLM/新版本并重跑下游 planner/persistence。
+- 后端验收：首次请求 500 后 requirement versions 为 2（初始 ambiguity v1 + clarification v2）；第二次同 key/同 hash/旧 expectedVersion 返回原 task 的 depth/speed candidates，版本数仍为 2；第三次返回 durable replay；同 key 不同 hash 返回 409；requirement LLM 总调用数为 2（understand + 首次 clarify），retry 未再调用。
+- Web RED：新增纯状态测试先以 `createClarificationSubmissionState is not a function` 精确失败；覆盖 in-flight duplicate 无第二个 effect、error retry 复用 key、changed payload 换 key、success 清理 pending identity、obsolete failure 不得覆盖后续 success。
+- Web GREEN：`useTaskFlow` 用同步 `useRef` state model 在 API 调用前门禁重复点击，以 request identity fence 接受 settle；仅当前失败写 error，成功清理 logical identity；暴露 `clarificationSubmitting` 并传给 `CurrentStage1Clarify.disabled`。
+- 验证：指定四文件串行套件 29/29 passed；`pnpm typecheck` passed；`pnpm --dir apps/web build` passed（44 modules transformed）。
+
+- 最终修复文件：`database/control-plane.ts`；`apps/agent-api/src/routes/control-tasks.ts`；`apps/orchestrator-runtime/src/control/requirement-refinement-service.ts`；`apps/web/src/current-flow-state.ts`；`apps/web/src/hooks/useTaskFlow.ts`；`apps/web/src/pages/Workbench.tsx`；`tests/control-api-integration.test.ts`；`tests/current-flow-state.test.ts`；Task7 plan/report/progress。

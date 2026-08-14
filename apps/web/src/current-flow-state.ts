@@ -159,6 +159,64 @@ export function buildClarificationSubmission(
     ),
   };
 }
+
+export interface ClarificationSubmissionState {
+  pending: { fingerprint: string; idempotencyKey: string } | null;
+  activeRequestId: string | null;
+}
+
+export interface ClarificationSubmissionRequest {
+  requestId: string;
+  idempotencyKey: string;
+}
+
+function stableClarificationValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableClarificationValue);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => [key, stableClarificationValue(child)]),
+  );
+}
+
+export function createClarificationSubmissionState(): ClarificationSubmissionState {
+  return { pending: null, activeRequestId: null };
+}
+
+export function beginClarificationSubmission(
+  state: ClarificationSubmissionState,
+  payload: unknown,
+  createIdentity: () => ClarificationSubmissionRequest,
+): { state: ClarificationSubmissionState; request: ClarificationSubmissionRequest | null } {
+  const fingerprint = JSON.stringify(stableClarificationValue(payload));
+  if (state.activeRequestId && state.pending?.fingerprint === fingerprint) {
+    return { state, request: null };
+  }
+  const identity = createIdentity();
+  const pending = state.pending?.fingerprint === fingerprint
+    ? state.pending
+    : { fingerprint, idempotencyKey: identity.idempotencyKey };
+  return {
+    state: { pending, activeRequestId: identity.requestId },
+    request: { requestId: identity.requestId, idempotencyKey: pending.idempotencyKey },
+  };
+}
+
+export function settleClarificationSubmission(
+  state: ClarificationSubmissionState,
+  requestId: string,
+  outcome: 'success' | 'failure',
+): { state: ClarificationSubmissionState; accepted: boolean } {
+  if (state.activeRequestId !== requestId) return { state, accepted: false };
+  return {
+    state: {
+      pending: outcome === 'success' ? null : state.pending,
+      activeRequestId: null,
+    },
+    accepted: true,
+  };
+}
 export interface CurrentTaskHydrationInput {
   task: {
     id: string;

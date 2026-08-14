@@ -2,6 +2,7 @@ import type {
   ControlPlaneRepository,
   ControlTaskDetail,
 } from '../../../../database/control-plane.ts';
+import { ControlPlaneConflictError } from '../../../../database/control-plane.ts';
 import type { ControlRequirementVersion } from '../../../../packages/api-contract/control-workflow.ts';
 import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
 import type { ResearchPlanningResult } from '../planners/research-planning-service.ts';
@@ -91,6 +92,20 @@ function needsClarification(requirement: ResearchTaskV2): boolean {
   return hasBlockingAmbiguity(requirement) || requirement.clarification_questions.length > 0;
 }
 
+function stableValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => [key, stableValue(child)]),
+  );
+}
+
+function sameStoredValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(stableValue(left)) === JSON.stringify(stableValue(right));
+}
+
 export class RequirementRefinementService {
   private readonly dependencies: RequirementRefinementDependencies;
 
@@ -141,6 +156,26 @@ export class RequirementRefinementService {
     if (!task) throw new Error(`task ${input.taskId} does not exist`);
     const active = await this.dependencies.repository.getActiveRequirementVersion(input.taskId);
     if (!active) throw new Error(`task ${input.taskId} has no active requirement version to clarify`);
+    const expectedVersion = input.expectedVersion ?? input.expectedStateVersion;
+    if (expectedVersion !== undefined && task.stateVersion !== expectedVersion) {
+      const resumesActivatedRequirement = task.state === 'awaiting_clarification'
+        && task.stateVersion === expectedVersion + 1
+        && task.activeRequirementVersionId === active.id
+        && active.taskId === task.id
+        && sameStoredValue(active.clarification, input.answers)
+        && sameStoredValue(active.structuredTask, task.structuredTask);
+      if (!resumesActivatedRequirement) {
+        throw new ControlPlaneConflictError(
+          `task ${input.taskId} has no matching activated clarification at version ${expectedVersion + 1}`,
+        );
+      }
+      return this.finishRefinement({
+        taskId: input.taskId,
+        conversationId: input.conversationId,
+        originalInput: task.originalInput,
+        requirement: active.structuredTask,
+      });
+    }
     return this.refine({
       taskId: input.taskId,
       conversationId: input.conversationId,
@@ -150,6 +185,31 @@ export class RequirementRefinementService {
       expectedVersion: input.expectedVersion,
       expectedStateVersion: input.expectedStateVersion,
     });
+  }
+
+  private async finishRefinement(input: {
+    taskId: string;
+    conversationId: string;
+    originalInput: string;
+    requirement: ResearchTaskV2;
+  }): Promise<RequirementRefinementResult> {
+    const status = needsClarification(input.requirement)
+      ? 'clarification_required'
+      : 'ready_to_plan';
+    const planningResult = status === 'ready_to_plan' && this.dependencies.planner
+      ? await this.dependencies.planner.plan({
+          originalInput: input.originalInput,
+          requirement: input.requirement,
+        }) as ResearchPlanningResult
+      : undefined;
+    await this.appendMessage({
+      conversationId: input.conversationId,
+      role: 'assistant',
+      content: JSON.stringify({ status, requirement: input.requirement }),
+    });
+    return planningResult
+      ? { status, taskId: input.taskId, requirement: input.requirement, planningResult }
+      : { status, taskId: input.taskId, requirement: input.requirement };
   }
 
   private async refine(input: {
@@ -189,7 +249,7 @@ export class RequirementRefinementService {
       ?? input.expectedStateVersion
       ?? task?.stateVersion
       ?? 0;
-    const stored = await this.dependencies.repository.createAndActivateRequirementVersion({
+    await this.dependencies.repository.createAndActivateRequirementVersion({
       taskId: input.taskId,
       ownerUserId: input.ownerUserId,
       expectedVersion,
@@ -198,22 +258,11 @@ export class RequirementRefinementService {
       structuredTask: requirement,
       modelCallId: null,
     });
-    const status = needsClarification(requirement)
-      ? 'clarification_required'
-      : 'ready_to_plan';
-    const planningResult = status === 'ready_to_plan' && this.dependencies.planner
-      ? await this.dependencies.planner.plan({
-          originalInput: input.originalInput,
-          requirement,
-        }) as ResearchPlanningResult
-      : undefined;
-    await this.appendMessage({
+    return this.finishRefinement({
+      taskId: input.taskId,
       conversationId: input.conversationId,
-      role: 'assistant',
-      content: JSON.stringify({ status, requirement }),
+      originalInput: input.originalInput,
+      requirement,
     });
-    return planningResult
-      ? { status, taskId: input.taskId, requirement, planningResult }
-      : { status, taskId: input.taskId, requirement };
   }
 }

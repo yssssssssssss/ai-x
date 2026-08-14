@@ -13,8 +13,10 @@ import {
   createControlTasksRouter,
   type ControlTasksRuntime,
 } from '../apps/agent-api/src/routes/control-tasks.ts';
+import type { CurrentPlanningResponse } from '../apps/agent-api/src/routes/control-planning.ts';
 import { ControlArtifactStore } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
 import type { ResearchPlanningResult } from '../apps/orchestrator-runtime/src/planners/research-planning-service.ts';
+import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import {
   MockLLMClient,
   type LLMClient,
@@ -232,6 +234,36 @@ class OfflineEligibleRealLLM implements LLMClient {
       traceId: `trace-text-${this.calls}`,
       tokens: { prompt: 8, completion: 4, total: 12 },
     };
+  }
+}
+
+class ClarificationRetryLLM implements LLMClient {
+  readonly identity: LLMProviderIdentity = {
+    provider: 'clarification-retry-fixture',
+    endpointHost: 'clarification-retry.fixture.test',
+    requestedModel: 'clarification-retry-model',
+    mode: 'mock',
+    eligibleAsReal: false,
+  };
+  requirementCalls = 0;
+
+  async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
+    if (options.schemaName !== 'research-task-v2') throw new Error(`unexpected schema ${options.schemaName}`);
+    this.requirementCalls += 1;
+    const data = this.requirementCalls === 1
+      ? clarificationRequirement()
+      : resolvedClarificationRequirement();
+    return {
+      data: data as T,
+      promptHash: hashPrompt(options.prompt),
+      modelName: this.identity.requestedModel,
+      modelVersion: 'fixture-v1',
+      traceId: `trace-clarification-${this.requirementCalls}`,
+    };
+  }
+
+  async generateText(): Promise<never> {
+    throw new Error('not used');
   }
 }
 
@@ -576,7 +608,7 @@ async function closeLocalServer(localServer: Server): Promise<void> {
   await closed;
 }
 
-function clarificationRequirement(): Record<string, unknown> {
+function clarificationRequirement(): ResearchTaskV2 {
   return {
     version: 'research-task-v2',
     task_type: 'competitive_research',
@@ -585,7 +617,7 @@ function clarificationRequirement(): Record<string, unknown> {
     target_audience: [],
     scope: ['公开资料'],
     constraints: [],
-    success_criteria: [],
+    success_criteria: [{ id: 'audience-confirmed', statement: '确认目标受众后生成可执行研究计划' }],
     expected_deliverables: ['研究计划'],
     assumptions: [],
     ambiguities: [{ id: 'audience', statement: '目标受众未确定', blocking: true }],
@@ -593,6 +625,15 @@ function clarificationRequirement(): Record<string, unknown> {
     blocking_issues: [],
     sensitivity: 'public',
     pii_detected: false,
+  };
+}
+
+function resolvedClarificationRequirement(): ResearchTaskV2 {
+  return {
+    ...clarificationRequirement(),
+    target_audience: ['产品团队'],
+    ambiguities: [],
+    clarification_questions: [],
   };
 }
 
@@ -1294,6 +1335,129 @@ test('failed clarification releases its pending command so a retry can complete'
     assert.equal(calls, 2);
   } finally {
     await Promise.all([closeLocalServer(first.server), closeLocalServer(second.server)]);
+  }
+});
+
+test('post-activation clarification failure reclaims the same command without another requirement version', async () => {
+  const { buildControlRuntime } = await loadControlRuntimeModule();
+  const llm = new ClarificationRetryLLM();
+  let plannerCalls = 0;
+  const controlRuntime = buildControlRuntime({
+    repository,
+    conversations: conversationAdapter(),
+    planning: {
+      async plan(input) {
+        plannerCalls += 1;
+        if (plannerCalls === 1) throw new Error('simulated post-activation planner failure');
+        return {
+          ...planningResult(input.originalInput),
+          structuredTask: resolvedClarificationRequirement(),
+        } as ResearchPlanningResult;
+      },
+    },
+    tools: new ToolRouter(),
+    llm,
+    validator: new SchemaValidator(),
+    skillLoader: new SkillLoader(),
+    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
+    expectedActualModel: llm.identity.requestedModel,
+  });
+  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+  const app = await listenLocalApp(
+    (createAgentApiApp as unknown as PlannedCreateAgentApiApp)({ controlRuntime }),
+  );
+  const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  const originalInput = `post-activation-retry-${randomUUID()}`;
+  try {
+    const plannedResponse = await postJson(app.baseUrl, '/api/control-tasks/plan', token, {
+      originalInput,
+      conversationId,
+    });
+    assert.equal(plannedResponse.status, 200, await plannedResponse.clone().text());
+    const planned = await plannedResponse.json() as CurrentPlanningResponse;
+    assert.equal(planned.status, 'clarification_required');
+    const requestBody = {
+      expectedVersion: planned.task.stateVersion,
+      clarificationAnswers: { audience: '产品团队' },
+      assumptionEdits: {},
+    };
+    const key = `post-activation-${randomUUID()}`;
+
+    const failed = await postJson(
+      app.baseUrl,
+      `/api/control-tasks/${planned.task.id}/clarify`,
+      token,
+      requestBody,
+      key,
+    );
+    assert.equal(failed.status, 500);
+    const afterFailure = await scopedDatabase.connect();
+    try {
+      const persisted = await afterFailure.query(
+        `SELECT
+           (SELECT count(*)::int FROM control_requirement_versions WHERE task_id = $1) AS requirement_versions,
+           (SELECT state_version::int FROM control_tasks WHERE id = $1) AS state_version,
+           (SELECT command_status FROM control_commands
+             WHERE task_id = $1 AND command_type = 'clarification' AND idempotency_key = $2) AS command_status,
+           (SELECT reservation_expires_at <= now() FROM control_commands
+             WHERE task_id = $1 AND command_type = 'clarification' AND idempotency_key = $2) AS reclaimable`,
+        [planned.task.id, key],
+      );
+      assert.deepEqual(persisted.rows[0], {
+        requirement_versions: 2,
+        state_version: planned.task.stateVersion + 1,
+        command_status: 'pending',
+        reclaimable: true,
+      });
+    } finally {
+      afterFailure.release();
+    }
+
+    const retried = await postJson(
+      app.baseUrl,
+      `/api/control-tasks/${planned.task.id}/clarify`,
+      token,
+      requestBody,
+      key,
+    );
+    assert.equal(retried.status, 200, await retried.clone().text());
+    const retriedBody = await retried.json() as ControlPlanCandidatesResponse;
+    assert.equal(retriedBody.kind, 'current');
+    assert.equal(retriedBody.task.id, planned.task.id);
+    assert.deepEqual(retriedBody.candidates.map((candidate) => candidate.candidateId), ['depth', 'speed']);
+    const replay = await postJson(
+      app.baseUrl,
+      `/api/control-tasks/${planned.task.id}/clarify`,
+      token,
+      requestBody,
+      key,
+    );
+    assert.equal(replay.status, 200, await replay.clone().text());
+    assert.deepEqual(await replay.json(), retriedBody);
+
+    const conflict = await postJson(
+      app.baseUrl,
+      `/api/control-tasks/${planned.task.id}/clarify`,
+      token,
+      { ...requestBody, clarificationAnswers: { audience: '消费者' } },
+      key,
+    );
+    assert.equal(conflict.status, 409);
+
+    const afterSuccess = await scopedDatabase.connect();
+    try {
+      const versions = await afterSuccess.query(
+        'SELECT count(*)::int AS count FROM control_requirement_versions WHERE task_id = $1',
+        [planned.task.id],
+      );
+      assert.equal(versions.rows[0]?.count, 2);
+    } finally {
+      afterSuccess.release();
+    }
+    assert.equal(llm.requirementCalls, 2, 'retry must not rerun requirement understanding');
+    assert.equal(plannerCalls, 2, 'retry may rerun downstream planning exactly once');
+  } finally {
+    await closeLocalServer(app.server);
   }
 });
 

@@ -45,6 +45,16 @@ interface FlowTransition {
   effect: 'load-deliverable' | null;
 }
 
+interface ClarificationSubmissionState {
+  pending: { fingerprint: string; idempotencyKey: string } | null;
+  activeRequestId: string | null;
+}
+
+interface ClarificationSubmissionRequest {
+  requestId: string;
+  idempotencyKey: string;
+}
+
 interface CurrentFlowStateModule {
   buildConfirmationAnswers(
     requirements: ConfirmationRequirement[],
@@ -57,6 +67,17 @@ interface CurrentFlowStateModule {
   hydrateCurrentTask(input: {
     task: { id: string; state: string; stateVersion: number; originalInput: string; conversationId: string; structuredTask: unknown };
   }): { phase: string; stateVersion: number; originalInput: string; clarification: unknown | null };
+  createClarificationSubmissionState(): ClarificationSubmissionState;
+  beginClarificationSubmission(
+    state: ClarificationSubmissionState,
+    payload: unknown,
+    createIdentity: () => ClarificationSubmissionRequest,
+  ): { state: ClarificationSubmissionState; request: ClarificationSubmissionRequest | null };
+  settleClarificationSubmission(
+    state: ClarificationSubmissionState,
+    requestId: string,
+    outcome: 'success' | 'failure',
+  ): { state: ClarificationSubmissionState; accepted: boolean };
 }
 interface ClarificationQuestion {
   key: string;
@@ -171,6 +192,75 @@ test('missing blocking clarification answers remain unresolved despite suggestio
     ],
     assumptions: [],
   }, { audience: 'new users' }), ['scope']);
+});
+
+test('one logical clarification payload uses one key and only one request while in flight', async () => {
+  const {
+    createClarificationSubmissionState,
+    beginClarificationSubmission,
+    settleClarificationSubmission,
+  } = await loadCurrentFlowStateModule();
+  const payload = {
+    expectedVersion: 4,
+    clarificationAnswers: { audience: 'new users' },
+    assumptionEdits: { scope: 'mobile' },
+  };
+  let identities = 0;
+  const createIdentity = () => {
+    identities += 1;
+    return { requestId: `request-${identities}`, idempotencyKey: `key-${identities}` };
+  };
+
+  const first = beginClarificationSubmission(
+    createClarificationSubmissionState(),
+    payload,
+    createIdentity,
+  );
+  const duplicate = beginClarificationSubmission(first.state, {
+    assumptionEdits: { scope: 'mobile' },
+    clarificationAnswers: { audience: 'new users' },
+    expectedVersion: 4,
+  }, createIdentity);
+
+  assert.deepEqual(first.request, { requestId: 'request-1', idempotencyKey: 'key-1' });
+  assert.equal(duplicate.request, null);
+  assert.equal(identities, 1);
+
+  const failed = settleClarificationSubmission(first.state, 'request-1', 'failure');
+  assert.equal(failed.accepted, true);
+  const retried = beginClarificationSubmission(failed.state, payload, createIdentity);
+  assert.equal(retried.request?.idempotencyKey, 'key-1');
+  assert.equal(identities, 2, 'retry needs a new request identity but must reuse the logical key');
+});
+
+test('changed clarification payload gets a new key and stale failure cannot overwrite later success', async () => {
+  const {
+    createClarificationSubmissionState,
+    beginClarificationSubmission,
+    settleClarificationSubmission,
+  } = await loadCurrentFlowStateModule();
+  let identity = 0;
+  const createIdentity = () => {
+    identity += 1;
+    return { requestId: `request-${identity}`, idempotencyKey: `key-${identity}` };
+  };
+  const first = beginClarificationSubmission(createClarificationSubmissionState(), {
+    clarificationAnswers: { audience: 'new users' },
+  }, createIdentity);
+  assert.ok(first.request);
+  const changed = beginClarificationSubmission(first.state, {
+    clarificationAnswers: { audience: 'buyers' },
+  }, createIdentity);
+  assert.deepEqual(changed.request, { requestId: 'request-2', idempotencyKey: 'key-2' });
+
+  const succeeded = settleClarificationSubmission(changed.state, 'request-2', 'success');
+  assert.equal(succeeded.accepted, true);
+  assert.equal(succeeded.state.pending, null, 'success clears the logical submission identity');
+  assert.equal(succeeded.state.activeRequestId, null);
+
+  const staleFailure = settleClarificationSubmission(succeeded.state, 'request-1', 'failure');
+  assert.equal(staleFailure.accepted, false);
+  assert.deepEqual(staleFailure.state, succeeded.state);
 });
 
 test('buildConfirmationAnswers returns only explicit user answers, including false', async () => {

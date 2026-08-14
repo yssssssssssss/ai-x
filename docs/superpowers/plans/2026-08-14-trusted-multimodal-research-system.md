@@ -519,20 +519,20 @@ git commit -m "feat: add current requirement refinement loop"
 
 **Files:**
 - Modify: `apps/agent-api/src/routes/control-planning.ts`
-- Modify: `apps/agent-api/src/routes/control-tasks.ts`
+- Modify: `apps/agent-api/src/routes/control-tasks.ts`（clarification reservation 的 post-activation failure recovery）
 - Modify: `apps/agent-api/src/server.ts`
 - Modify: `apps/agent-api/src/control-runtime.ts` (runtime exposure seam; existing `controlPlanning` service)
 - Modify: `apps/orchestrator-runtime/src/control/control-planning-service.ts`
-- Modify: `apps/orchestrator-runtime/src/control/requirement-refinement-service.ts`
-- Modify: `database/control-plane.ts`
+- Modify: `apps/orchestrator-runtime/src/control/requirement-refinement-service.ts`（匹配 active requirement 的 retry resume）
+- Modify: `database/control-plane.ts`（token-fenced immediate reclaim）
 - Create: `database/migrations/005_clarification_command_reservation.sql`
 - Modify: `apps/web/src/api/client.ts`
 - Modify: `packages/api-contract/control-workflow.ts`
 - Modify: `packages/api-contract/http.ts`
 - Create: `apps/web/src/components/stages/CurrentStage1Clarify.tsx`
-- Modify: `apps/web/src/hooks/useTaskFlow.ts`
-- Modify: `apps/web/src/current-flow-state.ts`
-- Modify: `apps/web/src/pages/Workbench.tsx`
+- Modify: `apps/web/src/hooks/useTaskFlow.ts`（stable logical submission identity / stale request fence）
+- Modify: `apps/web/src/current-flow-state.ts`（纯 submission state model）
+- Modify: `apps/web/src/pages/Workbench.tsx`（clarificationSubmitting disabled wiring）
 - Test: `tests/control-clarification.test.ts`
 - Test: `tests/control-api-integration.test.ts`
 - Test: `tests/control-planning-service.test.ts`
@@ -547,6 +547,9 @@ git commit -m "feat: add current requirement refinement loop"
 - Produces: `ControlPlaneRepository.createAndActivateRequirementVersion()`；同一事务锁 task、校验双 owner/state/version、插入下一 requirement version 并 CAS 激活完整 `ResearchTaskV2`。
 - Produces: 数据库 durable clarification command reservation（pending/completed、token fence、expiry/reclaim、reserve/complete/release/wait），且不跨 LLM 持有事务。
 - Produces: Current GET 的 `originalInput`/active `structuredTask` 与 Web refresh hydration。
+- Produces: `ControlPlaneRepository.recoverCommandAfterFailure()`；task 仍是 expectedVersion 时 token-fenced 删除 pending，恰好由本请求 requirement activation 前进一版时保留 command 并立即过期，允许同 key/hash/旧 expectedVersion reclaim。
+- Produces: `RequirementRefinementService.clarify()` 的 post-activation resume；仅 active requirement ID、stored clarification、stored `ResearchTaskV2` 与 expectedVersion+1 全部匹配时跳过 requirement LLM/新版本，并仅重跑下游 planner/persistence；其余 fail closed。
+- Produces: Web clarification logical submission state；同 payload 在 in-flight/transport retry 复用 idempotency key，changed payload 换 key，success 清理 identity，request identity fence 忽略 stale settle；`clarificationSubmitting` 禁用提交组件。
 
 - [ ] **Step 1: 写 HTTP 测试**
 

@@ -220,7 +220,7 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
         });
         res.json(response);
       } catch (error) {
-        await repository.releaseCommand({ ...command, reservationToken });
+        await repository.recoverCommandAfterFailure({ ...command, reservationToken });
         throw error;
       }
     } catch (error) {

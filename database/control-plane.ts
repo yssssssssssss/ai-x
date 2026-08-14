@@ -1469,10 +1469,13 @@ export class ControlPlaneRepository {
         if (expiresAt.getTime() > Date.now()) return { status: 'pending' };
       }
 
+      const taskStateVersion = asNumber(task.state_version, 'state_version');
+      const resumesActivatedRequirement = Boolean(existing)
+        && taskStateVersion === input.expectedVersion + 1;
       if (task.state !== 'awaiting_clarification') {
         throw new ControlPlaneConflictError(`task ${input.taskId} is not awaiting_clarification`);
       }
-      if (asNumber(task.state_version, 'state_version') !== input.expectedVersion) {
+      if (taskStateVersion !== input.expectedVersion && !resumesActivatedRequirement) {
         throw new ControlPlaneConflictError(`task ${input.taskId} is not at version ${input.expectedVersion}`);
       }
 
@@ -1585,6 +1588,56 @@ export class ControlPlaneRepository {
           input.reservationToken,
         ],
       );
+    });
+  }
+
+  async recoverCommandAfterFailure(input: {
+    taskId: string;
+    commandType: string;
+    idempotencyKey: string;
+    requestHash: string;
+    expectedVersion: number;
+    reservationToken: string;
+  }): Promise<void> {
+    await this.transaction(async (connection) => {
+      const taskResult = await connection.query(
+        `SELECT state, state_version
+         FROM control_tasks
+         WHERE id = $1
+         FOR UPDATE`,
+        [input.taskId],
+      );
+      const task = taskResult.rows[0];
+      if (!task) return;
+      const taskStateVersion = asNumber(task.state_version, 'state_version');
+      const commandValues = [
+        input.taskId,
+        input.commandType,
+        input.idempotencyKey,
+        input.requestHash,
+        input.expectedVersion,
+        input.reservationToken,
+      ];
+      if (taskStateVersion === input.expectedVersion) {
+        await connection.query(
+          `DELETE FROM control_commands
+           WHERE task_id = $1 AND command_type = $2 AND idempotency_key = $3
+             AND request_hash = $4 AND expected_version = $5
+             AND command_status = 'pending' AND reservation_token = $6`,
+          commandValues,
+        );
+        return;
+      }
+      if (task.state === 'awaiting_clarification' && taskStateVersion === input.expectedVersion + 1) {
+        await connection.query(
+          `UPDATE control_commands
+           SET reservation_expires_at = now()
+           WHERE task_id = $1 AND command_type = $2 AND idempotency_key = $3
+             AND request_hash = $4 AND expected_version = $5
+             AND command_status = 'pending' AND reservation_token = $6`,
+          commandValues,
+        );
+      }
     });
   }
 

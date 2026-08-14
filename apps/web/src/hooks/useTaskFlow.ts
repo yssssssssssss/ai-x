@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   api,
   type ClarificationRequiredResponse,
@@ -12,7 +12,16 @@ import {
   type PlanResponse,
   type Upload,
 } from '../api/client.ts';
-import { buildConfirmationAnswers, executionStepsToExecLog, hydrateCurrentTask, type ConfirmationRequirement, type ReportState } from '../current-flow-state.ts';
+import {
+  beginClarificationSubmission,
+  buildConfirmationAnswers,
+  createClarificationSubmissionState,
+  executionStepsToExecLog,
+  hydrateCurrentTask,
+  settleClarificationSubmission,
+  type ConfirmationRequirement,
+  type ReportState,
+} from '../current-flow-state.ts';
 
 const CURRENT_TASK_STORAGE_KEY = 'ur_current_task_id';
 
@@ -82,6 +91,8 @@ export function useTaskFlow() {
   const [deliverableError, setDeliverableError] = useState('');
   const [error, setError] = useState('');
   const [progress, setProgress] = useState<PlanProgress[]>([]);
+  const clarificationSubmission = useRef(createClarificationSubmissionState());
+  const [clarificationSubmitting, setClarificationSubmitting] = useState(false);
 
   async function refreshExecutionSteps(taskId: string): Promise<void> {
     const current = await api.controlTask(taskId);
@@ -159,6 +170,8 @@ export function useTaskFlow() {
   }, []);
 
   function reset() {
+    clarificationSubmission.current = createClarificationSubmissionState();
+    setClarificationSubmitting(false);
     localStorage.removeItem(CURRENT_TASK_STORAGE_KEY);
     setPhase('idle');
     setClarification(null);
@@ -178,6 +191,8 @@ export function useTaskFlow() {
   }
 
   async function submitInput(text: string) {
+    clarificationSubmission.current = createClarificationSubmissionState();
+    setClarificationSubmitting(false);
     localStorage.removeItem(CURRENT_TASK_STORAGE_KEY);
     setPhase('planning');
     setClarification(null);
@@ -228,13 +243,30 @@ export function useTaskFlow() {
 
   async function submitClarification(input: Omit<ClarifyControlTaskRequest, 'idempotencyKey'>) {
     if (!clarification) return;
+    const started = beginClarificationSubmission(
+      clarificationSubmission.current,
+      { taskId: clarification.task.id, ...input },
+      () => ({ requestId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID() }),
+    );
+    clarificationSubmission.current = started.state;
+    if (!started.request) return;
+    const { requestId, idempotencyKey } = started.request;
+    setClarificationSubmitting(true);
     setPhase('clarifying');
     setError('');
     try {
       const response = await api.clarifyControlTask(clarification.task.id, {
         ...input,
-        idempotencyKey: crypto.randomUUID(),
+        idempotencyKey,
       });
+      const settled = settleClarificationSubmission(
+        clarificationSubmission.current,
+        requestId,
+        'success',
+      );
+      clarificationSubmission.current = settled.state;
+      if (!settled.accepted) return;
+      setClarificationSubmitting(false);
       setStateVersion(response.task.stateVersion);
       if (response.status === 'clarification_required') {
         setClarification(response);
@@ -245,6 +277,14 @@ export function useTaskFlow() {
         setPhase('picking');
       }
     } catch (cause) {
+      const settled = settleClarificationSubmission(
+        clarificationSubmission.current,
+        requestId,
+        'failure',
+      );
+      clarificationSubmission.current = settled.state;
+      if (!settled.accepted) return;
+      setClarificationSubmitting(false);
       setError(message(cause, '澄清提交失败'));
       setPhase('clarifying');
     }
@@ -387,6 +427,7 @@ export function useTaskFlow() {
     phase,
     clarification,
     submitClarification,
+    clarificationSubmitting,
     candidatesResp,
     selectedCandidate,
     selectedCandidateId: selectedCandidate?.planVersionId ?? null,

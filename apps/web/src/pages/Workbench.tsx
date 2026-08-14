@@ -32,6 +32,7 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
     phase,
     clarification,
     submitClarification,
+    clarificationSubmitting,
     candidatesResp,
     selectedCandidateId,
     plan,
@@ -90,7 +91,7 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
           <div className="chat-column" aria-live="polite">
             {phase === 'idle' && <Welcome onPick={flow.submitInput} />}
             {clarification && phase === 'clarifying' && (
-              <CurrentStage1Clarify response={clarification} onSubmit={submitClarification} disabled={false} />
+              <CurrentStage1Clarify response={clarification} onSubmit={submitClarification} disabled={clarificationSubmitting} />
             )}
 
             {originalInput && phase !== 'idle' && <UserBubble text={originalInput} />}
