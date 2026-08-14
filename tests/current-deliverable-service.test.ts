@@ -15,6 +15,7 @@ import {
   type EvidenceManifest,
   type FindingGraph,
 } from '../apps/orchestrator-runtime/src/evidence/evidence-service.ts';
+import type { MaterializeInput, SynthesisMaterial } from '../apps/orchestrator-runtime/src/report/synthesis-materializer.ts';
 import type { ArtifactWriteInput } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
 import type {
   LLMClient,
@@ -91,6 +92,7 @@ type CurrentDeliverableServiceConstructor = new (dependencies: {
   validator: RuntimeSchemaValidator;
   evidence: EvidenceService;
   artifacts: ArtifactWriterLike;
+  materializer?: { materialize(input: MaterializeInput): Promise<SynthesisMaterial[]> };
 }) => CurrentDeliverableServiceLike;
 
 interface CurrentDeliverableModule {
@@ -348,7 +350,10 @@ function generateInput(overrides: Partial<DeliverableGenerateInput> = {}): Deliv
   };
 }
 
-async function createHarness(draft: unknown = validDeliverableDraft()): Promise<{
+async function createHarness(
+  draft: unknown = validDeliverableDraft(),
+  materializer?: { materialize(input: MaterializeInput): Promise<SynthesisMaterial[]> },
+): Promise<{
   service: CurrentDeliverableServiceLike;
   validator: RecordingSchemaValidator;
   llm: StaticDeliverableLLM;
@@ -370,6 +375,7 @@ async function createHarness(draft: unknown = validDeliverableDraft()): Promise<
       validator,
       evidence: new EvidenceService(),
       artifacts,
+      materializer,
     }),
     validator,
     llm,
@@ -415,6 +421,41 @@ test('generates and seals a machine-owned research plan deliverable envelope', a
   assert.equal(writes[0]?.kind, 'deliverable');
   assert.deepEqual(writes[0]?.value, result.deliverable);
   assert.equal(result.deliverableArtifactId, deliverableArtifactId);
+});
+test('changes synthesis content when verified Skill or Reviewer material changes', async () => {
+  const material = (text: string): SynthesisMaterial[] => [{
+    stepNo: 2,
+    actorType: 'skill',
+    actorId: 'analyst',
+    questionIds: ['q1'],
+    artifactId: 'artifact-skill',
+    artifactContentSha256: `sha256:${text}`,
+    value: { analysis: text },
+    semanticRole: 'analysis',
+  }, {
+    stepNo: 3,
+    actorType: 'reviewer',
+    actorId: 'review',
+    questionIds: ['q1'],
+    artifactId: 'artifact-reviewer',
+    artifactContentSha256: `sha256:review-${text}`,
+    value: { review: text },
+    semanticRole: 'review',
+  }];
+  const firstHarness = await createHarness(validDeliverableDraft(), {
+    async materialize(_input) { return material('first'); },
+  });
+  await firstHarness.service.generate(generateInput());
+  const firstContext = JSON.stringify(firstHarness.llm.structuredCalls[0]?.context);
+  const secondHarness = await createHarness(validDeliverableDraft(), {
+    async materialize(_input) { return material('second'); },
+  });
+  await secondHarness.service.generate(generateInput());
+  const secondContext = JSON.stringify(secondHarness.llm.structuredCalls[0]?.context);
+  assert.notEqual(createHash('sha256').update(firstContext).digest('hex'), createHash('sha256').update(secondContext).digest('hex'));
+  assert.equal(firstContext.includes('sealedOutputs'), false);
+  assert.match(firstContext, /first/);
+  assert.match(secondContext, /second/);
 });
 
 test('appends machine-observed gaps when the LLM omits risksAndOpenIssues', async () => {

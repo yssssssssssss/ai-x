@@ -35,6 +35,7 @@ import type {
   PendingInput,
 } from '../../../packages/api-contract/research-deliverable.ts';
 import { CurrentDeliverableService } from '../../orchestrator-runtime/src/report/current-deliverable-service.ts';
+import { SynthesisMaterializer } from '../../orchestrator-runtime/src/report/synthesis-materializer.ts';
 import { buildRuntime } from '../../orchestrator-runtime/src/runtime/agent-runtime.ts';
 import type { LLMClient } from '../../orchestrator-runtime/src/runtime/llm-client.ts';
 import { ReceiptLLMClient } from '../../orchestrator-runtime/src/runtime/receipt-llm-client.ts';
@@ -357,6 +358,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     validator,
     evidence,
     artifacts,
+    materializer: new SynthesisMaterializer(artifacts),
   });
   const engine = new LeaseExecutionEngine({
     repository,

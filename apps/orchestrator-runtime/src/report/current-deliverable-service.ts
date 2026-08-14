@@ -12,8 +12,11 @@ import type {
   EvidenceService,
 } from '../evidence/evidence-service.ts';
 import { ReportEvidenceValidator } from '../evidence/report-evidence-validator.ts';
+import {
+  type MaterializeStepOutput,
+  type SynthesisMaterializerLike,
+} from './synthesis-materializer.ts';
 import { redactSensitiveValue, redactString } from '../runtime/redaction.ts';
-
 const researchPlanSchemaPath = join(
   process.cwd(),
   'schemas/deliverables/research-plan.schema.json',
@@ -192,6 +195,8 @@ export interface CurrentDeliverableGenerateInput {
   };
   attempt: { id: string };
   researchGoal: string;
+  finalizedRequirement?: unknown;
+  problemGraph?: unknown;
   evidenceManifest: SealedEvidenceManifest;
   evidenceResolver: EvidenceArtifactResolver;
   outputs: unknown[];
@@ -257,6 +262,7 @@ export class CurrentDeliverableService {
     validator: PayloadValidator;
     evidence: Pick<EvidenceService, 'validateManifest' | 'resolveEvidenceValue' | 'validateFindingGraph'>;
     artifacts: ArtifactWriter;
+    materializer?: SynthesisMaterializerLike;
   }) {
     this.reportValidator = new ReportEvidenceValidator(dependencies.evidence);
   }
@@ -266,6 +272,15 @@ export class CurrentDeliverableService {
     this.dependencies.evidence.validateManifest(evidenceManifest, input.evidenceResolver);
     const sanitizedGaps = [...new Set(input.gaps.map((gap) => redactString(gap)))];
     const outputData = sealedOutputData(input.outputs);
+    const synthesisMaterials = this.dependencies.materializer
+      ? await this.dependencies.materializer.materialize({
+          taskId: input.task.id,
+          planVersionId: input.plan.id,
+          attemptId: input.attempt.id,
+          outputs: input.outputs as MaterializeStepOutput[],
+          evidenceEntries: evidenceManifest.entries,
+        })
+      : [];
     const verifiedEvidence = evidenceManifest.entries.map((entry) => ({
       evidenceId: entry.id,
       ...(entry.sourceUrl ? { sourceUrl: entry.sourceUrl } : {}),
@@ -275,8 +290,12 @@ export class CurrentDeliverableService {
     }));
     const context = {
       researchGoal: redactString(input.researchGoal),
-      sealedOutputs: outputData.references,
+      ...(input.finalizedRequirement === undefined
+        ? {}
+        : { finalizedRequirement: redactSensitiveValue(input.finalizedRequirement) }),
+      ...(input.problemGraph === undefined ? {} : { problemGraph: redactSensitiveValue(input.problemGraph) }),
       verifiedEvidence,
+      synthesisMaterials,
       gaps: sanitizedGaps,
     };
     const lastEvidenceStep = evidenceManifest.entries.reduce(

@@ -112,7 +112,9 @@ interface StepResult {
 }
 
 interface EngineSealedStepOutput extends BindingSealedStepOutput {
-  output: unknown;
+  actorType: CurrentPlanStep['actor_type'];
+  questionIds: string[];
+  output?: unknown;
 }
 
 export interface LeaseExecutionResult {
@@ -699,8 +701,10 @@ export class LeaseExecutionEngine {
         if (artifact.state !== 'SEALED' || !artifact.contentSha256) {
           throw new ExecutionAuthenticityError(`step Artifact ${artifact.id} was not sealed`);
         }
-        const sealedOutput: BindingSealedStepOutput = {
+        const sealedOutput: EngineSealedStepOutput = {
           stepNo: step.step_no,
+          actorType: step.actor_type,
+          questionIds: [...step.question_ids],
           actorId: step.actor_id,
           kind: result.kind,
           state: 'succeeded',
@@ -976,6 +980,8 @@ export class LeaseExecutionEngine {
         },
         attempt: { id: input.lease.attemptId },
         researchGoal,
+        finalizedRequirement: task.structuredTask,
+        problemGraph: (planVersion.plan as Record<string, unknown>).problem_graph,
         evidenceManifest: sealedEvidenceManifest,
         evidenceResolver,
         outputs,
