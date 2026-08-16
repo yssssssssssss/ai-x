@@ -166,7 +166,7 @@ const CONTRACTS: readonly DeliverableContractFixture[] = [{
       id: 'screenshot-1',
       dimension: 'onboarding',
       sampleIds: ['sample-a'],
-      assetIds: ['asset-screenshot-a'],
+      assetIds: ['asset-screenshot-original', 'asset-screenshot-a'],
       caption: 'Guided setup entry point',
     }],
   },
@@ -514,27 +514,20 @@ function generationInput(contract: DeliverableContractFixture): CurrentDeliverab
 for (const contract of PROFESSIONAL_CONTRACTS) {
   test(`CurrentDeliverable generates and validates ${contract.deliverableId} through the generic pipeline`, async () => {
     const llm = new ContractGenerationLLM(contract.payload);
-    const evidence = {
-      validateManifest(): void {},
-      resolveEvidenceValue(): unknown { return null; },
-      validateFindingGraph(): void {},
-    } as unknown as EvidenceService;
-    const service = new CurrentDeliverableService({
-      llm,
-      validator: new SchemaValidator(),
-      evidence,
-      artifacts: {
-        async writeJson(): Promise<{ id: string }> {
-          return { id: `artifact-${contract.deliverableId}` };
-        },
-      },
-    });
+    let writes = 0;
+    const service = generationServiceFor(contract, llm, () => { writes += 1; });
+    const visualAssets = contract.deliverableId === 'competitive_analysis_report'
+      ? verifiedVisualPair(contract, 'asset-screenshot-original', 'asset-screenshot-a')
+      : contract.deliverableId === 'design_audit_report'
+        ? verifiedVisualPair(contract, 'asset-checkout-original', 'asset-checkout-annotation')
+        : [];
 
-    const result = await service.generate(generationInput(contract));
+    const result = await service.generate(Object.assign(generationInput(contract), { visualAssets }));
 
     assert.equal(result.deliverable.deliverableType, contract.deliverableId);
     assert.deepEqual(result.deliverable.payload, contract.payload);
-    assert.equal(result.deliverableArtifactId, `artifact-${contract.deliverableId}`);
+    assert.equal(result.deliverableArtifactId, `artifact-${contract.deliverableId}-phase6`);
+    assert.equal(writes, 1);
     assert.equal(llm.calls.length, 1);
     assert.equal(
       llm.calls[0]?.schemaName,
@@ -732,17 +725,63 @@ function verifiedInventoryAsset(
     },
   } as VerifiedVisualAsset;
 }
+function verifiedAnnotationAsset(
+  contract: DeliverableContractFixture,
+  assetId: string,
+  original: VerifiedVisualAsset,
+): VerifiedVisualAsset {
+  const base = verifiedInventoryAsset(contract, assetId, {
+    taskId: original.artifact.taskId,
+    planVersionId: original.artifact.planVersionId ?? undefined,
+    attemptId: original.artifact.attemptId ?? undefined,
+  });
+  const manifestDraft = {
+    ...base.manifest,
+    source: { kind: 'derived' as const },
+    derivedFrom: {
+      assetId: original.artifact.id,
+      manifestArtifactId: original.manifestArtifact.id,
+      contentSha256: original.manifest.contentSha256,
+      manifestHash: original.manifest.manifestHash,
+    },
+    derivation: { kind: 'annotation' as const, overlayArtifactId: `overlay-${assetId}` },
+  };
+  const { manifestHash: _manifestHash, ...manifestWithoutHash } = manifestDraft;
+  const manifest = { ...manifestDraft, manifestHash: canonicalFixtureHash(manifestWithoutHash) };
+  const manifestBytes = Buffer.from(JSON.stringify(manifest, null, 2));
+  return {
+    ...base,
+    manifest,
+    manifestArtifact: {
+      ...base.manifestArtifact,
+      contentSha256: `sha256:${createHash('sha256').update(manifestBytes).digest('hex')}`,
+      byteSize: manifestBytes.byteLength,
+    },
+  } as VerifiedVisualAsset;
+}
+
+function verifiedVisualPair(
+  contract: DeliverableContractFixture,
+  originalAssetId: string,
+  annotationAssetId: string,
+  bindingOverrides: Partial<{ taskId: string; planVersionId: string; attemptId: string }> = {},
+): VerifiedVisualAsset[] {
+  const original = verifiedInventoryAsset(contract, originalAssetId, bindingOverrides);
+  return [original, verifiedAnnotationAsset(contract, annotationAssetId, original)];
+}
+
 
 const VISUAL_PAYLOAD_CASES = [{
   deliverableId: 'competitive_analysis_report',
+  originalAssetId: 'asset-screenshot-original',
   assetId: 'asset-screenshot-a',
   field: 'screenshotComparisons',
 }, {
   deliverableId: 'design_audit_report',
+  originalAssetId: 'asset-checkout-original',
   assetId: 'asset-checkout-annotation',
   field: 'annotatedScreenshots',
 }] as const;
-
 for (const visualCase of VISUAL_PAYLOAD_CASES) {
   const contract = PROFESSIONAL_CONTRACTS.find(({ deliverableId }) => deliverableId === visualCase.deliverableId)!;
 
@@ -760,10 +799,10 @@ for (const visualCase of VISUAL_PAYLOAD_CASES) {
       artifacts: { async writeJson() { writes += 1; return { id: 'must-not-write' }; } },
     });
     const input = Object.assign(generationInput(contract), {
-      visualAssets: [verifiedInventoryAsset(contract, 'asset-unrelated')],
+      visualAssets: verifiedVisualPair(contract, 'asset-unrelated-original', 'asset-unrelated-annotation'),
     });
 
-    await assert.rejects(() => service.generate(input), /verified visual|asset.*inventory|unverified asset/i);
+    await assert.rejects(() => service.generate(input), /lineage|verified visual|asset.*inventory|unverified asset/i);
     assert.equal(writes, 0);
     assert.equal(llm.calls.length, 1, 'payload Asset ids are known only after synthesis returns');
   });
@@ -781,13 +820,16 @@ for (const visualCase of VISUAL_PAYLOAD_CASES) {
       artifacts: { async writeJson() { return { id: `artifact-${contract.deliverableId}` }; } },
     });
     const input = Object.assign(generationInput(contract), {
-      visualAssets: [verifiedInventoryAsset(contract, visualCase.assetId)],
+      visualAssets: verifiedVisualPair(contract, visualCase.originalAssetId, visualCase.assetId),
     });
 
     await service.generate(input);
 
     const context = llm.calls[0]?.context as { verifiedVisualAssetIds?: string[] };
-    assert.deepEqual(context.verifiedVisualAssetIds, [visualCase.assetId]);
+    assert.deepEqual(
+      context.verifiedVisualAssetIds,
+      [visualCase.assetId, visualCase.originalAssetId].sort((left, right) => left.localeCompare(right)),
+    );
     assert.match(llm.calls[0]?.prompt ?? '', /verified visual.*asset|asset.*verified inventory/i);
   });
 
@@ -814,7 +856,12 @@ for (const visualCase of VISUAL_PAYLOAD_CASES) {
         artifacts: { async writeJson() { return { id: 'must-not-write' }; } },
       });
       const input = Object.assign(generationInput(contract), {
-        visualAssets: [verifiedInventoryAsset(contract, visualCase.assetId, mismatch.override)],
+        visualAssets: verifiedVisualPair(
+          contract,
+          visualCase.originalAssetId,
+          visualCase.assetId,
+          mismatch.override,
+        ),
       });
 
       await assert.rejects(() => service.generate(input), /visual asset.*(task|plan|attempt)|binding|foreign/i);
@@ -822,3 +869,210 @@ for (const visualCase of VISUAL_PAYLOAD_CASES) {
     });
   }
 }
+test('persisted competitive research_plan execution keeps the declared research_plan Evidence Policy', async () => {
+  const contract = CONTRACTS.find(({ deliverableId }) => deliverableId === 'research_plan');
+  assert.ok(contract);
+  const llm = new ContractGenerationLLM(contract.payload);
+  const input = generationInput(contract);
+  input.finalizedRequirement = {
+    ...requirementFor(contract),
+    task_type: 'competitive_research',
+    expected_deliverables: ['research_plan'],
+  };
+  const service = new CurrentDeliverableService({
+    llm,
+    validator: new SchemaValidator(),
+    evidence: {
+      validateManifest(): void {},
+      resolveEvidenceValue(): unknown { return null; },
+      validateFindingGraph(): void {},
+    } as unknown as EvidenceService,
+    artifacts: { async writeJson() { return { id: 'artifact-persisted-research-plan' }; } },
+  });
+
+  const result = await service.generate(input);
+
+  assert.equal(result.deliverable.deliverableType, 'research_plan');
+  const context = asRecord(llm.calls[0]?.context, 'synthesis context');
+  const selectedContract = asRecord(context.deliverableContract, 'selected deliverable contract');
+  const policy = asRecord(selectedContract.evidencePolicy, 'selected Evidence Policy');
+  assert.equal(policy.deliverable_type, 'research_plan');
+  const requirements = policy.requirements;
+  assert.ok(Array.isArray(requirements));
+  assert.equal(asRecord(requirements[0], 'research-plan requirement').id, 'public-market-evidence');
+});
+
+test('new competitive research planning still resolves competitive_analysis_report', () => {
+  const resolved = resolveDeliverable('competitive_research', ['competitive analysis report']);
+  assert.equal(resolved.id, 'competitive_analysis_report');
+  const policy = loadEvidencePolicy().policies.find((candidate) => (
+    candidate.task_type === 'competitive_research'
+    && candidate.deliverable_type === resolved.id
+  ));
+  assert.ok(policy);
+  assert.equal(policy.deliverable_type, 'competitive_analysis_report');
+  assert.deepEqual(policy.requirements[0]?.accepted_classes, ['public_source', 'screenshot']);
+});
+
+function generationServiceFor(
+  contract: DeliverableContractFixture,
+  llm: ContractGenerationLLM,
+  onWrite: () => void,
+): CurrentDeliverableService {
+  return new CurrentDeliverableService({
+    llm,
+    validator: new SchemaValidator(),
+    evidence: {
+      validateManifest(): void {},
+      resolveEvidenceValue(): unknown { return null; },
+      validateFindingGraph(): void {},
+    } as unknown as EvidenceService,
+    artifacts: {
+      async writeJson() {
+        onWrite();
+        return { id: `artifact-${contract.deliverableId}-phase6` };
+      },
+    },
+  });
+}
+
+function rehashVisualManifest(asset: VerifiedVisualAsset): VerifiedVisualAsset {
+  const { manifestHash: _manifestHash, ...draft } = asset.manifest;
+  asset.manifest = { ...asset.manifest, manifestHash: canonicalFixtureHash(draft) };
+  const manifestBytes = Buffer.from(JSON.stringify(asset.manifest, null, 2));
+  asset.manifestArtifact.contentSha256 = `sha256:${createHash('sha256').update(manifestBytes).digest('hex')}`;
+  asset.manifestArtifact.byteSize = manifestBytes.byteLength;
+  return asset;
+}
+
+
+function verifiedRawSourceAsset(
+  contract: DeliverableContractFixture,
+  assetId: string,
+): VerifiedVisualAsset {
+  const raw = verifiedInventoryAsset(contract, assetId);
+  raw.manifest.source = {
+    kind: 'tool_artifact',
+    artifactId: 'raw-source-artifact',
+    artifactContentSha256: `sha256:${'c'.repeat(64)}`,
+    jsonPointer: '/output/results/0',
+    url: 'https://source.test/raw-screenshot',
+  };
+  return rehashVisualManifest(raw);
+}
+
+test('visual-required competitive generation fails before LLM or sealing without a visual inventory', async () => {
+  const contract = PROFESSIONAL_CONTRACTS.find(({ deliverableId }) => deliverableId === 'competitive_analysis_report');
+  assert.ok(contract);
+  const llm = new ContractGenerationLLM(contract.payload);
+  let writes = 0;
+  const service = generationServiceFor(contract, llm, () => { writes += 1; });
+
+  await assert.rejects(
+    () => service.generate(Object.assign(generationInput(contract), { visualAssets: [] })),
+    /visual.*(?:required|inventory)|screenshot.*(?:required|inventory)/iu,
+  );
+  assert.equal(llm.calls.length, 0);
+  assert.equal(writes, 0);
+});
+
+test('competitive screenshot comparisons require an original and its annotation lineage pair', async () => {
+  const contract = PROFESSIONAL_CONTRACTS.find(({ deliverableId }) => deliverableId === 'competitive_analysis_report');
+  assert.ok(contract);
+  const original = verifiedInventoryAsset(contract, 'asset-competitive-original');
+  const annotation = verifiedAnnotationAsset(contract, 'asset-competitive-annotation', original);
+  const invalidCases = [
+    { label: 'original only', assetIds: [original.artifact.id], assets: [original] },
+    { label: 'annotation only', assetIds: [annotation.artifact.id], assets: [annotation] },
+  ];
+
+  for (const invalid of invalidCases) {
+    const payload = structuredClone(contract.payload);
+    const comparison = (payload.screenshotComparisons as Array<Record<string, unknown>>)[0];
+    assert.ok(comparison);
+    comparison.assetIds = invalid.assetIds;
+    const llm = new ContractGenerationLLM(payload);
+    let writes = 0;
+    const service = generationServiceFor(contract, llm, () => { writes += 1; });
+    await assert.rejects(
+      () => service.generate(Object.assign(generationInput(contract), {
+        visualAssets: invalid.assets,
+      })),
+      /original|annotation|lineage|pair|screenshot/i,
+      invalid.label,
+    );
+    assert.equal(writes, 0, invalid.label);
+  }
+});
+
+test('competitive screenshot comparisons accept the exact original-to-annotation pair', async () => {
+  const contract = PROFESSIONAL_CONTRACTS.find(({ deliverableId }) => deliverableId === 'competitive_analysis_report');
+  assert.ok(contract);
+  const original = verifiedInventoryAsset(contract, 'asset-competitive-original-accepted');
+  const annotation = verifiedAnnotationAsset(contract, 'asset-competitive-annotation-accepted', original);
+  const payload = structuredClone(contract.payload);
+  const comparison = (payload.screenshotComparisons as Array<Record<string, unknown>>)[0];
+  assert.ok(comparison);
+  comparison.assetIds = [original.artifact.id, annotation.artifact.id];
+  const llm = new ContractGenerationLLM(payload);
+  let writes = 0;
+  const service = generationServiceFor(contract, llm, () => { writes += 1; });
+
+  await service.generate(Object.assign(generationInput(contract), {
+    visualAssets: [original, annotation],
+  }));
+
+  assert.equal(llm.calls.length, 1);
+  assert.equal(writes, 1);
+});
+
+test('design annotatedScreenshots require an annotation whose derivedFrom is the exact original', async () => {
+  const contract = PROFESSIONAL_CONTRACTS.find(({ deliverableId }) => deliverableId === 'design_audit_report');
+  assert.ok(contract);
+  const original = verifiedInventoryAsset(contract, 'asset-design-original');
+  const annotation = verifiedAnnotationAsset(contract, 'asset-design-annotation', original);
+  const invalidPayload = structuredClone(contract.payload);
+  const invalidScreenshot = (invalidPayload.annotatedScreenshots as Array<Record<string, unknown>>)[0];
+  assert.ok(invalidScreenshot);
+  invalidScreenshot.assetId = original.artifact.id;
+  const invalidLlm = new ContractGenerationLLM(invalidPayload);
+  let invalidWrites = 0;
+  const invalidService = generationServiceFor(contract, invalidLlm, () => { invalidWrites += 1; });
+
+  await assert.rejects(
+    () => invalidService.generate(Object.assign(generationInput(contract), {
+      visualAssets: [original, annotation],
+    })),
+    /annotation|derivedFrom|lineage|original/i,
+  );
+  assert.equal(invalidWrites, 0);
+
+  const validPayload = structuredClone(contract.payload);
+  const validScreenshot = (validPayload.annotatedScreenshots as Array<Record<string, unknown>>)[0];
+  assert.ok(validScreenshot);
+  validScreenshot.assetId = annotation.artifact.id;
+  const validLlm = new ContractGenerationLLM(validPayload);
+  let validWrites = 0;
+  const validService = generationServiceFor(contract, validLlm, () => { validWrites += 1; });
+  await validService.generate(Object.assign(generationInput(contract), {
+    visualAssets: [original, annotation],
+  }));
+  assert.equal(validLlm.calls.length, 1);
+  assert.equal(validWrites, 1);
+});
+
+test('raw source visual inventory items fail before deliverable LLM invocation or sealing', async () => {
+  const contract = PROFESSIONAL_CONTRACTS.find(({ deliverableId }) => deliverableId === 'competitive_analysis_report');
+  assert.ok(contract);
+  const rawSource = verifiedRawSourceAsset(contract, 'asset-raw-source');
+  const llm = new ContractGenerationLLM(contract.payload);
+  let writes = 0;
+  const service = generationServiceFor(contract, llm, () => { writes += 1; });
+
+  await assert.rejects(
+    () => service.generate(Object.assign(generationInput(contract), { visualAssets: [rawSource] })),
+    /raw|source|visual.*role|inventory/i,
+  );
+  assert.equal(llm.calls.length, 0);
+  assert.equal(writes, 0);
+});

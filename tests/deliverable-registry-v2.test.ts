@@ -33,6 +33,7 @@ import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-load
 import { ToolRouter } from '../apps/orchestrator-runtime/src/runtime/tool-adapter.ts';
 import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 import { lintRegistries } from '../harness/linters/registry-linter.ts';
+import type { VerifiedVisualAsset } from '../apps/orchestrator-runtime/src/report/visual-asset-service.ts';
 
 import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import type { EvidenceRequirement, ResearchPlanPayload } from '../packages/api-contract/research-deliverable.ts';
@@ -370,7 +371,15 @@ class RegistryIntegrationLLM {
           subQuestionSummaries: [{ id: 'S1', findingIds: ['F1'], analysisIds: ['A1'], summary: 'summary' }],
           overallConclusions: [{ id: 'C1', summaryIds: ['S1'], statement: 'conclusion' }],
         },
-        payload: {},
+        payload: {
+          screenshotComparisons: [{
+            id: 'comparison-1',
+            dimension: 'registry',
+            sampleIds: [],
+            assetIds: ['asset-registry-original', 'asset-registry-annotation'],
+            caption: 'Registry visual pair',
+          }],
+        },
         recommendations: [{ id: 'R1', summaryIds: ['S1'], statement: 'recommendation' }],
         coverage: {
           questionBindings: [{ questionId: 'Q1', summaryIds: ['S1'] }],
@@ -385,6 +394,91 @@ class RegistryIntegrationLLM {
     };
   }
 }
+function nonResearchVisualPair(): VerifiedVisualAsset[] {
+  const binding = {
+    taskId: 'task-registry-integration',
+    planVersionId: 'plan-registry-integration',
+    attemptId: 'attempt-registry-integration',
+  };
+  const bytes = Buffer.from([0]);
+  const originalManifest = {
+    version: 'visual-asset-manifest-v1' as const,
+    ...binding,
+    assetId: 'asset-registry-original',
+    contentSha256: 'sha256:original',
+    mediaType: 'image/png' as const,
+    byteSize: bytes.byteLength,
+    width: 1,
+    height: 1,
+    exportPolicy: 'allow' as const,
+    source: { kind: 'user_upload' as const, fileName: 'original.png' },
+    derivedFrom: null,
+    derivation: null,
+    manifestHash: 'sha256:original-manifest',
+  };
+  const original = {
+    artifact: {
+      id: originalManifest.assetId,
+      ...binding,
+      kind: 'visual_asset' as const,
+      state: 'SEALED' as const,
+      storageUri: '/private/asset-registry-original',
+      contentSha256: originalManifest.contentSha256,
+      byteSize: bytes.byteLength,
+      schemaVersion: 'binary-v1',
+      sensitivity: 'internal',
+      redactionPolicyVersion: 'v1',
+      failureReason: null,
+      mediaType: 'image/png' as const,
+      metadata: { width: 1, height: 1 },
+    },
+    bytes,
+    metadata: { contentType: 'image/png' as const, byteSize: bytes.byteLength, width: 1, height: 1 },
+    manifest: originalManifest,
+    manifestArtifact: {
+      id: 'manifest-registry-original',
+      ...binding,
+      kind: 'visual_asset_manifest' as const,
+      state: 'SEALED' as const,
+      storageUri: '/private/manifest-registry-original',
+      contentSha256: 'sha256:original-manifest-artifact',
+      byteSize: 1,
+      schemaVersion: 'visual-asset-manifest-v1',
+      sensitivity: 'internal',
+      redactionPolicyVersion: 'v1',
+      failureReason: null,
+    },
+  } as VerifiedVisualAsset;
+  const annotationManifest = {
+    ...originalManifest,
+    assetId: 'asset-registry-annotation',
+    source: { kind: 'derived' as const },
+    derivedFrom: {
+      assetId: original.artifact.id,
+      manifestArtifactId: original.manifestArtifact.id,
+      contentSha256: original.manifest.contentSha256,
+      manifestHash: original.manifest.manifestHash,
+    },
+    derivation: { kind: 'annotation' as const, overlayArtifactId: 'overlay-registry' },
+    manifestHash: 'sha256:annotation-manifest',
+  };
+  const annotation = {
+    ...original,
+    artifact: {
+      ...original.artifact,
+      id: annotationManifest.assetId,
+      storageUri: '/private/asset-registry-annotation',
+    },
+    manifest: annotationManifest,
+    manifestArtifact: {
+      ...original.manifestArtifact,
+      id: 'manifest-registry-annotation',
+      storageUri: '/private/manifest-registry-annotation',
+    },
+  } as VerifiedVisualAsset;
+  return [original, annotation];
+}
+
 
 test('CurrentDeliverableService and ReportEvidenceValidator accept a registry-selected nonresearch contract', async () => {
   const customEntry: DeliverableRegistryEntry = {
@@ -453,6 +547,7 @@ test('CurrentDeliverableService and ReportEvidenceValidator accept a registry-se
     },
     evidenceResolver: { resolveArtifact: () => null },
     outputs: [],
+    visualAssets: nonResearchVisualPair(),
     gaps: [],
     expectedModel: 'pinned-model',
   };

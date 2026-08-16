@@ -298,9 +298,44 @@ function deliverableSelection(finalizedRequirement: unknown): {
     expectedDeliverables: [...expectedDeliverables] as string[],
   };
 }
-function verifiedVisualAssetIds(input: CurrentDeliverableGenerateInput): string[] | undefined {
+type VisualAssetRole = 'original' | 'annotation';
+
+interface VerifiedVisualInventory {
+  assets: readonly VerifiedVisualAsset[];
+  ids: readonly string[];
+  roles: ReadonlyMap<string, VisualAssetRole>;
+}
+
+function sameVisualReference(
+  reference: VerifiedVisualAsset['manifest']['derivedFrom'],
+  original: VerifiedVisualAsset,
+): boolean {
+  return reference !== null
+    && reference !== undefined
+    && reference.assetId === original.artifact.id
+    && reference.manifestArtifactId === original.manifestArtifact.id
+    && reference.contentSha256 === original.manifest.contentSha256
+    && reference.manifestHash === original.manifest.manifestHash;
+}
+
+function classifyVisualAsset(asset: VerifiedVisualAsset): VisualAssetRole {
+  const { manifest } = asset;
+  if (
+    manifest.derivedFrom === null
+    && manifest.derivation === null
+    && manifest.source.kind === 'user_upload'
+  ) return 'original';
+  if (
+    manifest.source.kind === 'derived'
+    && manifest.derivation?.kind === 'annotation'
+    && manifest.derivedFrom !== null
+  ) return 'annotation';
+  throw new Error(`visual Asset ${asset.artifact.id} has an unsupported visual source or role`);
+}
+
+function verifiedVisualInventory(input: CurrentDeliverableGenerateInput): VerifiedVisualInventory | undefined {
   if (input.visualAssets === undefined) return undefined;
-  const ids = new Set<string>();
+  const roles = new Map<string, VisualAssetRole>();
   for (const asset of input.visualAssets) {
     const bindingMatches = asset.artifact.taskId === input.task.id
       && asset.artifact.planVersionId === input.plan.id
@@ -317,53 +352,100 @@ function verifiedVisualAssetIds(input: CurrentDeliverableGenerateInput): string[
     if (
       asset.artifact.state !== 'SEALED'
       || asset.manifestArtifact.state !== 'SEALED'
+      || asset.artifact.kind !== 'visual_asset'
+      || asset.manifestArtifact.kind !== 'visual_asset_manifest'
+      || asset.manifestArtifact.schemaVersion !== 'visual-asset-manifest-v1'
       || asset.artifact.id !== asset.manifest.assetId
       || (asset.manifest.exportPolicy !== 'allow' && asset.manifest.exportPolicy !== 'mask')
     ) {
       throw new Error(`visual Asset ${asset.artifact.id} is not an exact sealed exportable verified inventory item`);
     }
-    if (ids.has(asset.artifact.id)) {
+    if (roles.has(asset.artifact.id)) {
       throw new Error(`verified visual Asset inventory contains duplicate id ${asset.artifact.id}`);
     }
-    ids.add(asset.artifact.id);
+    roles.set(asset.artifact.id, classifyVisualAsset(asset));
   }
-  return [...ids].sort((left, right) => left.localeCompare(right));
+  const assets = [...input.visualAssets];
+  const originals = assets.filter((asset) => roles.get(asset.artifact.id) === 'original');
+  for (const annotation of assets.filter((asset) => roles.get(asset.artifact.id) === 'annotation')) {
+    if (!originals.some((original) => sameVisualReference(annotation.manifest.derivedFrom, original))) {
+      throw new Error(`visual Asset ${annotation.artifact.id} annotation lineage does not reference an exact verified original`);
+    }
+  }
+  return {
+    assets,
+    ids: assets.map((asset) => asset.artifact.id).sort((left, right) => left.localeCompare(right)),
+    roles,
+  };
 }
 
-function visualPayloadReferences(deliverableId: string, payload: unknown): string[] {
-  const value = unknownRecord(payload);
-  if (!value) return [];
-  if (deliverableId === 'competitive_analysis_report') {
-    return Array.isArray(value.screenshotComparisons)
-      ? value.screenshotComparisons.flatMap((candidate) => {
-          const comparison = unknownRecord(candidate);
-          return Array.isArray(comparison?.assetIds)
-            ? comparison.assetIds.filter((assetId): assetId is string => typeof assetId === 'string')
-            : [];
-        })
-      : [];
+function assertVisualPreflight(
+  deliverableId: string,
+  inventory: VerifiedVisualInventory | undefined,
+): void {
+  if (deliverableId !== 'competitive_analysis_report' && deliverableId !== 'design_audit_report') return;
+  if (!inventory || inventory.assets.length === 0) {
+    throw new Error(`${deliverableId} requires a non-empty verified visual inventory before synthesis`);
   }
-  if (deliverableId === 'design_audit_report') {
-    return Array.isArray(value.annotatedScreenshots)
-      ? value.annotatedScreenshots.flatMap((candidate) => {
-          const screenshot = unknownRecord(candidate);
-          return typeof screenshot?.assetId === 'string' ? [screenshot.assetId] : [];
-        })
-      : [];
+  const originals = inventory.assets.filter((asset) => inventory.roles.get(asset.artifact.id) === 'original');
+  const annotations = inventory.assets.filter((asset) => inventory.roles.get(asset.artifact.id) === 'annotation');
+  const hasPair = annotations.some((annotation) => originals.some(
+    (original) => sameVisualReference(annotation.manifest.derivedFrom, original),
+  ));
+  if (!hasPair) {
+    throw new Error(`${deliverableId} requires a verified original and annotation lineage pair`);
   }
-  return [];
 }
 
 function assertPayloadVisualReferences(
   deliverableId: string,
   payload: unknown,
-  verifiedIds: readonly string[] | undefined,
+  inventory: VerifiedVisualInventory | undefined,
 ): void {
-  if (verifiedIds === undefined) return;
-  const verified = new Set(verifiedIds);
-  for (const assetId of visualPayloadReferences(deliverableId, payload)) {
-    if (!verified.has(assetId)) {
-      throw new Error(`unverified Asset ${assetId} is absent from the verified visual Asset inventory`);
+  if (deliverableId !== 'competitive_analysis_report' && deliverableId !== 'design_audit_report') return;
+  if (!inventory) throw new Error(`${deliverableId} requires a verified visual inventory`);
+  const byId = new Map(inventory.assets.map((asset) => [asset.artifact.id, asset]));
+  const value = unknownRecord(payload);
+  if (!value) throw new Error('deliverable payload must be an object');
+  if (deliverableId === 'competitive_analysis_report') {
+    const comparisons = value.screenshotComparisons;
+    if (!Array.isArray(comparisons) || comparisons.length === 0) {
+      throw new Error('competitive screenshot comparisons require a verified visual inventory');
+    }
+    for (const candidate of comparisons) {
+      const comparison = unknownRecord(candidate);
+      const ids = comparison?.assetIds;
+      if (!Array.isArray(ids) || ids.length !== 2 || ids.some((id) => typeof id !== 'string')) {
+        throw new Error('competitive screenshot comparison requires an original and annotation pair');
+      }
+      const original = byId.get(ids[0] as string);
+      const annotation = byId.get(ids[1] as string);
+      if (
+        !original || !annotation
+        || inventory.roles.get(original.artifact.id) !== 'original'
+        || inventory.roles.get(annotation.artifact.id) !== 'annotation'
+        || !sameVisualReference(annotation.manifest.derivedFrom, original)
+      ) {
+        throw new Error('competitive screenshot comparison has invalid original/annotation lineage');
+      }
+    }
+    return;
+  }
+  const screenshots = value.annotatedScreenshots;
+  if (!Array.isArray(screenshots) || screenshots.length === 0) {
+    throw new Error('design annotatedScreenshots require a verified annotation');
+  }
+  for (const candidate of screenshots) {
+    const screenshot = unknownRecord(candidate);
+    const annotationId = screenshot?.assetId;
+    const annotation = typeof annotationId === 'string' ? byId.get(annotationId) : undefined;
+    if (
+      !annotation
+      || inventory.roles.get(annotation.artifact.id) !== 'annotation'
+      || !inventory.assets.some((original) => inventory.roles.get(original.artifact.id) === 'original'
+        && sameVisualReference(annotation.manifest.derivedFrom, original))
+    ) {
+      throw new Error('design annotatedScreenshot does not reference an exact annotation lineage');
     }
   }
 }
@@ -479,7 +561,8 @@ export class CurrentDeliverableService {
     }
     const draftSchema = createDeliverableDraftSchema(contract.payloadSchema);
     const schemaName = `${contract.entry.id.replace(/_/gu, '-')}-deliverable-content`;
-    const verifiedVisualIds = verifiedVisualAssetIds(input);
+    const visualInventory = verifiedVisualInventory(input);
+    assertVisualPreflight(contract.entry.id, visualInventory);
     const evidenceManifest = input.evidenceManifest.value;
     this.dependencies.evidence.validateManifest(evidenceManifest, input.evidenceResolver);
     const sanitizedGaps = [...new Set(input.gaps.map((gap) => redactString(gap)))];
@@ -501,13 +584,21 @@ export class CurrentDeliverableService {
       ),
     }));
     const requiredCoverage = coverageRequirements(input.finalizedRequirement, input.problemGraph);
+    const producerVisualInventory = visualInventory?.assets.map((asset) => ({
+      assetId: asset.artifact.id,
+      role: visualInventory?.roles.get(asset.artifact.id),
+      ...(asset.manifest.derivedFrom === null ? {} : { derivedFromAssetId: asset.manifest.derivedFrom?.assetId }),
+    }));
     const context = {
       researchGoal: redactString(input.researchGoal),
       finalizedRequirement: redactSensitiveValue(input.finalizedRequirement),
       problemGraph: redactSensitiveValue(input.problemGraph),
       coverageRequirements: requiredCoverage,
       ...(input.revisionInstruction === undefined ? {} : { revisionInstruction: redactString(input.revisionInstruction) }),
-      ...(verifiedVisualIds === undefined ? {} : { verifiedVisualAssetIds: verifiedVisualIds }),
+      ...(visualInventory === undefined ? {} : {
+        verifiedVisualAssetIds: visualInventory.ids,
+        verifiedVisualInventory: producerVisualInventory,
+      }),
       deliverableContract: {
         id: contract.entry.id,
         reviewRubric: contract.reviewRubric,
@@ -528,9 +619,9 @@ export class CurrentDeliverableService {
       capabilityProvenance?: unknown;
     }>({
       prompt: contract.synthesisPrompt
-        + (verifiedVisualIds === undefined
+        + (visualInventory === undefined
           ? ''
-          : '\nVerified visual Asset inventory: reference only Asset ids in context.verifiedVisualAssetIds; never invent or reuse any other Asset id.')
+          : '\nVerified visual Asset inventory: reference only typed Asset ids in context.verifiedVisualAssetIds; never invent or reuse any other Asset id.')
         + (input.revisionInstruction ? '\nAddress the review issues in the revision instruction.' : ''),
       schema: draftSchema,
       schemaName,
@@ -555,7 +646,7 @@ export class CurrentDeliverableService {
     );
 
     const draft = contentDraft as DeliverableDraft;
-    assertPayloadVisualReferences(contract.entry.id, draft.payload, verifiedVisualIds);
+    assertPayloadVisualReferences(contract.entry.id, draft.payload, visualInventory);
     const risksAndOpenIssues = [...(draft.risksAndOpenIssues ?? [])];
     const observedRisks = new Set(risksAndOpenIssues);
     for (const gap of sanitizedGaps) {

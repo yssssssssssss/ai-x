@@ -466,11 +466,20 @@ export function resolveExecutionDeliverable(
   if (typeof taskType !== 'string' || !taskType.trim()) throw new Error('task type must be a non-empty string');
   const entries = validatedEntries();
   const mapped = entries.some((entry) => entry.task_types.includes(taskType));
-  const selected = validateSelectedResources(mapped
-    ? resolveTaskMapping(entries, taskType)
-    : resolveActiveDeliverableId(entries, declaredDeliverableId));
-  assertExpectedDeliverableCompatibility(selected, expectedDeliverables, mapped);
-  return selected;
+  const declared = resolveActiveDeliverableId(entries, declaredDeliverableId);
+  const declaredIsExpected = [
+    declared.id,
+    ...(declared.aliases ?? []),
+    ...(declared.id === 'research_plan' ? ['research plan'] : []),
+  ].some((value) => expectedDeliverables.includes(value));
+  const selected = declaredIsExpected
+    ? declared
+    : mapped
+      ? resolveTaskMapping(entries, taskType)
+      : declared;
+  const validated = validateSelectedResources(selected);
+  assertExpectedDeliverableCompatibility(validated, expectedDeliverables, mapped && validated.id === 'research_plan');
+  return validated;
 }
 
 function contractResources(
@@ -482,14 +491,20 @@ function contractResources(
   const reviewRubricPath = safeResourcePath(entry.review_rubric, 'review_rubric');
   const matchingPolicies = loadEvidencePolicy().policies.filter((policy) => (
     policy.deliverable_type === entry.id
-    && entry.task_types.includes(policy.task_type)
-    && (selectedTaskType === undefined || policy.task_type === selectedTaskType)
-    && policy.requirements.some((requirement) => requirement.id === entry.evidence_policy)
+    && (selectedTaskType === undefined
+      ? entry.task_types.includes(policy.task_type)
+      : policy.task_type === selectedTaskType)
   ));
   if (matchingPolicies.length !== 1) {
-    throw new Error(`evidence_policy "${entry.evidence_policy}" must resolve exactly once for ${entry.id}`);
+    throw new Error(`evidence_policy for ${entry.id} and task ${selectedTaskType ?? '(mapped task)'} must resolve exactly once`);
   }
   const evidencePolicy = matchingPolicies[0]!;
+  if (
+    (selectedTaskType === undefined || entry.task_types.includes(selectedTaskType))
+    && !evidencePolicy.requirements.some((requirement) => requirement.id === entry.evidence_policy)
+  ) {
+    throw new Error(`evidence_policy "${entry.evidence_policy}" must select an exact requirement in ${entry.id}`);
+  }
   return {
     entry,
     payloadSchemaPath,
@@ -515,7 +530,7 @@ export function resolveExecutionDeliverableContract(
   declaredDeliverableId: string,
 ): DeliverableContractResources {
   const entry = resolveExecutionDeliverable(taskType, expectedDeliverables, declaredDeliverableId);
-  return contractResources(entry, entry.task_types.includes(taskType) ? taskType : undefined);
+  return contractResources(entry, taskType);
 }
 
 export function resolveDeliverableContractById(deliverableId: string): DeliverableContractResources {

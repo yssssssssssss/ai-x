@@ -21,14 +21,33 @@
 4. **Task-specific visual references must be restricted to the verified attempt inventory**
    - `tests/multi-deliverable-contract.test.ts` covers competitive `screenshotComparisons` and design `annotatedScreenshots`.
    - Generation must reject referenced ids absent from the supplied verified inventory after the LLM returns but before any Artifact write/seal, reject a supplied inventory item with a foreign Task, Plan, or Attempt binding before LLM invocation, accept the exact same binding tuple, and expose only verified ids in synthesis prompt/context. The lease pass-Review fixture derives and re-verifies a real PNG annotation with exact original lineage, binds its competitive screenshot comparison to the verified original/annotation Asset ids, keeps the verified chart separate for Chart block assertions, and rewrites every competitive payload/finding Evidence reference to the exact collected Manifest id before sealing. Its final document must contain the exact original→annotation image-comparison and chart without duplicating either paired image as a standalone block; the completion assertion serializes the execution result as its failure diagnostic without changing the expected status.
+   - Generic professional generation supplies an empty inventory only for non-visual VOC/A11y and exact same-binding original+annotation pairs for competitive/design; the payload Asset references match those pairs.
    - Expected RED: `CurrentDeliverableService` currently has no verified visual inventory input or payload-reference validation and does not provide a verified-id allowlist to synthesis.
 
+5. **Persisted plan execution must honor the declared historical deliverable contract**
+   - `tests/multi-deliverable-contract.test.ts` executes a persisted `competitive_research` requirement whose selected plan declares `research_plan`, and asserts the `research_plan` contract plus its `public-market-evidence` policy; a newly compiled competitive plan must still resolve to `competitive_analysis_report`.
+   - Expected RED: execution remaps the persisted plan by task type, selecting `competitive_analysis_report` or rejecting before the declared `research_plan` contract is consumed.
+
+6. **Visual Evidence Policy and payload schema must agree when no visual inventory exists**
+   - `tests/multi-deliverable-contract.test.ts` runs competitive generation with an explicit empty visual inventory and requires a clear visual preflight failure before LLM invocation or Artifact sealing.
+   - Expected RED: the public-source-only collector reaches a payload that requires screenshot references, invents or accepts impossible Asset ids, and only fails after synthesis or sealing.
+
+7. **Visual references must carry typed source and lineage roles**
+   - `tests/multi-deliverable-contract.test.ts` requires competitive screenshot comparisons to contain an exact original/annotation pair, design `annotatedScreenshots` to reference an annotation whose `derivedFrom` is the exact original, and rejects raw-source or foreign-bound inventory before LLM/seal while accepting the exact pair.
+   - Expected RED: ID-only allowlisting accepts an original without its annotation, a raw source as a deliverable visual, or an annotation with the wrong lineage role.
+
+ 
 ## Integrated Production Fixes
 
 1. Required VOC, design-audit, and accessibility Evidence Policies retain their specialized accepted classes and now also accept the production collector's factual `public_source` class.
 2. `ReportDocument` composition deterministically projects every professional payload contract into its named template sections: facts/lists/metrics/actions; payload-captioned competitive visuals pair each verified annotation with its exact payload-listed original by Asset/Manifest/hash lineage and omit duplicate standalone rendering; design annotation comparisons retain the same exact lineage requirement.
 3. Server-owned `canonicalizeExpectedDeliverables()` validates the LLM-provided list and maps it through the task type's unique active Registry entry to one canonical id. Requirement understanding, clarification, legacy requirement planning, and Current direct planning all canonicalize before persistence, messages, or planner invocation; no natural-language label is added as a Registry alias, and the public resolver remains strict.
 4. `LeaseExecutionEngine` performs one verified same-Task/Plan/Attempt visual-material discovery before Deliverable synthesis, passes the exportable Asset allowlist to `CurrentDeliverableService`, and reuses that same discovery result for post-Review composition. Synthesis context contains only verified ids; foreign inventory bindings fail before LLM invocation, and generated competitive/design payload references fail before Artifact sealing unless present in the allowlist. Design composition additionally requires exact annotation-to-original lineage.
+
+5. Final-review follow-up hardens the boundary: a persisted plan ID wins only when its declared deliverable is supported by the persisted expectedDeliverables; typed visual inventory validation rejects raw/foreign roles before synthesis, requires competitive original-plus-annotation or design annotation lineage, and checks generated references before sealing. This follow-up was production-edited without new validation evidence.
+
+6. Deliverable resource resolution selects exactly one Evidence Policy by `(task_type, deliverable_type)`. Canonical task mappings still require the Registry `evidence_policy` requirement id; persisted `competitive_research` plans explicitly declaring `research_plan` use the unique historical `public-market-evidence` policy without adding aliases or duplicate policy entries. This production correction has no new validation evidence.
+7. Phase6 test fixtures now provide one shared exact-lineage annotation builder and same-binding original+annotation pairs for generic professional and visual-reference cases; duplicate helper drift and nullable binding fixture values were removed. No new validation evidence is claimed.
 
 ## Verification Status
 
