@@ -807,6 +807,7 @@ function buildEngine(
   llm: LLMClient,
   deliverables: TestDeliverables = new RecordingDeliverablesFake(),
   reportReview?: TestReportReview,
+  skillLoader: SkillLoader = new SkillLoader(),
 ): LeaseExecutionEngine {
   return new DeliverableAwareLeaseExecutionEngine({
     repository,
@@ -815,7 +816,7 @@ function buildEngine(
     llm,
     deliverables,
     ...(reportReview ? { reportReview } : {}),
-    skillLoader: new SkillLoader(),
+    skillLoader,
     validator: new SchemaValidator(),
     heartbeatMs: 60_000,
   });
@@ -2176,6 +2177,21 @@ test('continues after an optional Tool failure and completes with a sanitized ga
   const { repository, lease } = await claimedExecution(
     new Date(Date.now() + 60_000),
     optionalSteps,
+    {
+      deliverable_type: 'research_plan',
+      evidence_requirements: [{
+        id: 'research-plan',
+        acceptedClasses: ['user_input', 'knowledge', 'public_source'],
+        minimumCount: 1,
+        required: true,
+      }],
+    },
+    {
+      task_type: 'user_research_planning',
+      research_goal: 'compare digital human products',
+      expected_deliverables: ['research_plan'],
+      success_criteria: [{ id: 'research-plan', statement: 'plan is evidence backed' }],
+    },
   );
   const coreAdapter = new CountingRealTavilyAdapter();
   const optionalAdapter = new FailingRealAdapter('internal_api');
@@ -2191,8 +2207,7 @@ test('continues after an optional Tool failure and completes with a sanitized ga
   assert.equal(result.status, 'completed_with_gaps');
   assert.equal(result.gapCount, 1);
   assert.equal(result.deliverableArtifactId, 'deliverable-1');
-  assert.equal(coreAdapter.calls, 1);
-  assert.equal(optionalAdapter.calls, 1);
+  assert.equal(optionalAdapter.calls, 2);
   assert.equal(llm.calls, 2);
   assert.equal(deliverables.calls.length, 1);
   const deliverableInput = deliverables.calls[0];
@@ -2613,16 +2628,48 @@ test('terminal lease recovery invalidates sealed report document, review, manife
 
 
 test('provenance capture failure cannot mask the Tool failure or leave execution active', async () => {
-  const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), [planSteps[0]]);
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]],
+    {
+      deliverable_type: 'research_plan',
+      evidence_requirements: [{
+        id: 'research-plan',
+        acceptedClasses: ['user_input', 'knowledge', 'public_source'],
+        minimumCount: 1,
+        required: true,
+      }],
+    },
+    {
+      task_type: 'user_research_planning',
+      research_goal: 'capture a research plan',
+      expected_deliverables: ['research_plan'],
+      success_criteria: [{ id: 'research-plan', statement: 'plan is evidence backed' }],
+    },
+  );
   const originalRoot = getConfigRoot();
   const missingRoot = mkdtempSync(join(tmpdir(), 'missing-config-root-'));
 
   const adapter = new ConfigBreakingAdapter(() => setConfigRoot(missingRoot));
+  const stableSkillLoader = new SkillLoader();
+  const tavilyTool = stableSkillLoader.getTool('tavily-web-search');
+  assert.ok(tavilyTool);
+  const cachedSkillLoader = {
+    getTool(id: string) {
+      return id === 'tavily-web-search' ? tavilyTool : stableSkillLoader.getTool(id);
+    },
+    getSkill(id: string) {
+      return stableSkillLoader.getSkill(id);
+    },
+  } as SkillLoader;
   try {
     const result = await buildEngine(
       repository,
       new ToolRouter().register(adapter),
       new CountingRealLLM(),
+      undefined,
+      undefined,
+      cachedSkillLoader,
     ).execute({ lease, expectedModel: 'pinned-model' });
     assert.equal(result.status, 'paused');
     assert.equal(result.failure?.kind, 'network');

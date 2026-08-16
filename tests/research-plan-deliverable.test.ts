@@ -102,7 +102,7 @@ test('ResearchPlanPayload 拒绝缺失 comparisonDimensions', () => {
   );
 });
 
-test('Evidence Policy 为竞品研究方案要求公开来源', () => {
+test('Evidence Policy 保留历史竞品方案并提供五类 canonical mappings', () => {
   const policy = parseYaml(readFileSync(join(process.cwd(), 'orchestrator/evidence-policy.yaml'), 'utf8')) as {
     version: number;
     policies: Array<{
@@ -118,7 +118,10 @@ test('Evidence Policy 为竞品研究方案要求公开来源', () => {
   };
 
   assert.equal(policy.version, 1);
-  assert.deepEqual(policy.policies, [{
+  const historical = policy.policies.find((entry) => (
+    entry.task_type === 'competitive_research' && entry.deliverable_type === 'research_plan'
+  ));
+  assert.deepEqual(historical, {
     task_type: 'competitive_research',
     deliverable_type: 'research_plan',
     requirements: [{
@@ -127,10 +130,62 @@ test('Evidence Policy 为竞品研究方案要求公开来源', () => {
       minimum_count: 1,
       required: true,
     }],
-  }]);
+  });
+  assert.deepEqual(policy.policies.filter((entry) => entry !== historical), [
+    {
+      task_type: 'user_research_planning',
+      deliverable_type: 'research_plan',
+      requirements: [{
+        id: 'research-plan',
+        accepted_classes: ['user_input', 'knowledge', 'public_source'],
+        minimum_count: 1,
+        required: true,
+      }],
+    },
+    {
+      task_type: 'competitive_research',
+      deliverable_type: 'competitive_analysis_report',
+      requirements: [{
+        id: 'competitive-analysis-report',
+        accepted_classes: ['public_source', 'screenshot'],
+        minimum_count: 1,
+        required: true,
+      }],
+    },
+    {
+      task_type: 'voc_diagnosis',
+      deliverable_type: 'voc_diagnosis_report',
+      requirements: [{
+        id: 'voc-diagnosis-report',
+        accepted_classes: ['dataset', 'user_input', 'public_source'],
+        minimum_count: 1,
+        required: true,
+      }],
+    },
+    {
+      task_type: 'design_audit',
+      deliverable_type: 'design_audit_report',
+      requirements: [{
+        id: 'design-audit-report',
+        accepted_classes: ['screenshot', 'user_input', 'public_source'],
+        minimum_count: 1,
+        required: true,
+      }],
+    },
+    {
+      task_type: 'a11y_audit',
+      deliverable_type: 'accessibility_audit_report',
+      requirements: [{
+        id: 'accessibility-audit-report',
+        accepted_classes: ['screenshot', 'user_input', 'public_source'],
+        minimum_count: 1,
+        required: true,
+      }],
+    },
+  ]);
 });
 
-test('Deliverable Registry 将 research_plan 绑定到冻结 payload schema', () => {
+test('Deliverable Registry 将五类 active deliverable 绑定到冻结 payload schema', () => {
   const registry = parseYaml(readFileSync(join(process.cwd(), 'orchestrator/deliverable-registry.yaml'), 'utf8')) as {
     version: number;
     deliverables: Array<{
@@ -141,11 +196,42 @@ test('Deliverable Registry 将 research_plan 绑定到冻结 payload schema', ()
     }>;
   };
 
-  assert.equal(registry.version, 1);
-  assert.deepEqual(registry.deliverables, [{
-    id: 'research_plan',
-    status: 'active',
-    envelope_version: 'research-deliverable-v1',
-    payload_schema: 'schemas/deliverables/research-plan.schema.json',
-  }]);
+  assert.equal(registry.version, 2);
+  assert.deepEqual(registry.deliverables.map(({ id, status, envelope_version, payload_schema }) => ({
+    id,
+    status,
+    envelope_version,
+    payload_schema,
+  })), [
+    {
+      id: 'research_plan',
+      status: 'active',
+      envelope_version: 'research-deliverable-v1',
+      payload_schema: 'schemas/deliverables/research-plan.schema.json',
+    },
+    {
+      id: 'competitive_analysis_report',
+      status: 'active',
+      envelope_version: 'research-deliverable-v1',
+      payload_schema: 'schemas/deliverables/competitive-analysis-report.schema.json',
+    },
+    {
+      id: 'voc_diagnosis_report',
+      status: 'active',
+      envelope_version: 'research-deliverable-v1',
+      payload_schema: 'schemas/deliverables/voc-diagnosis-report.schema.json',
+    },
+    {
+      id: 'design_audit_report',
+      status: 'active',
+      envelope_version: 'research-deliverable-v1',
+      payload_schema: 'schemas/deliverables/design-audit-report.schema.json',
+    },
+    {
+      id: 'accessibility_audit_report',
+      status: 'active',
+      envelope_version: 'research-deliverable-v1',
+      payload_schema: 'schemas/deliverables/accessibility-audit-report.schema.json',
+    },
+  ]);
 });

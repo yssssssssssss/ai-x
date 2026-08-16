@@ -1,4 +1,8 @@
+import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+
+import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
+import { closePool, loadEnv } from '../database/db.ts';
 
 export interface RealSmokeConfig {
   ALLOW_REAL_PROVIDER?: string;
@@ -16,9 +20,13 @@ export interface RealSmokeConfig {
 type JsonScalar = string | number | boolean | null;
 
 export interface SmokeReceiptInput {
+  profile: string;
+  taskType: string;
   taskId: string;
   planVersionId: string;
   attemptId: string;
+  reportPackageId: string;
+  visualAssetCount: number;
   deliverableArtifactId: string;
   evidenceManifestArtifactId: string;
   evidenceArtifactIds: string[];
@@ -29,6 +37,39 @@ export interface SmokeReceiptInput {
     recommendations: number;
   };
   sources: string[];
+  provider: string;
+  requestedModel: string;
+  actualModel: string;
+  coreTool: string;
+  packageSealed: boolean;
+  review: {
+    reviewerId: string;
+    authenticated: boolean;
+    independent: boolean;
+    verdict: 'usable' | 'needs_revision' | 'unusable';
+  };
+}
+export interface SmokeReceipt extends SmokeReceiptInput {
+  evidenceCount: number;
+}
+
+interface SemanticGoldScenario {
+  profile: string;
+  taskType: ResearchTaskV2['task_type'];
+  businessDomain: string;
+  input: string;
+  sensitivity: ResearchTaskV2['sensitivity'];
+  piiDetected: boolean;
+}
+
+interface SemanticGoldFixture {
+  profiles: string[];
+  scenarios: SemanticGoldScenario[];
+}
+
+interface SmokeRunInput {
+  fixturePath: string;
+  profiles: string[];
 }
 
 const REQUIRED_NON_BLANK_FIELDS = [
@@ -52,7 +93,6 @@ const TOOL_RECEIPT_FIELDS = [
   'latencyMs',
 ] as const;
 
-const PET_FOOD_QUERY = '针对宠物辅食做一个竞品研究方案';
 
 interface SmokePlanStep {
   actor_type: string;
@@ -109,6 +149,13 @@ function positiveCount(value: number, field: string): number {
   return value;
 }
 
+function finiteNumber(value: unknown, field: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error(`${field} must be a finite number`);
+  }
+  return value;
+}
+
 function isHttpsUrl(value: string): boolean {
   try {
     return new URL(value).protocol === 'https:';
@@ -116,8 +163,8 @@ function isHttpsUrl(value: string): boolean {
     return false;
   }
 }
+export function formatSmokeReceipt(input: SmokeReceiptInput): SmokeReceipt {
 
-export function formatSmokeReceipt(input: SmokeReceiptInput): unknown {
   if (
     input.toolReceipt.actorId !== 'tavily-web-search'
     || input.toolReceipt.executionMode !== 'real'
@@ -129,14 +176,27 @@ export function formatSmokeReceipt(input: SmokeReceiptInput): unknown {
   const toolReceipt = Object.fromEntries(
     TOOL_RECEIPT_FIELDS.map((field) => [
       field,
-      jsonScalar(input.toolReceipt[field], `toolReceipt.${field}`),
+      field === 'latencyMs'
+        ? finiteNumber(input.toolReceipt[field], `toolReceipt.${field}`)
+        : jsonScalar(input.toolReceipt[field], `toolReceipt.${field}`),
     ]),
   );
 
   return {
+    profile: input.profile,
+    taskType: input.taskType,
     taskId: input.taskId,
     planVersionId: input.planVersionId,
     attemptId: input.attemptId,
+    reportPackageId: input.reportPackageId,
+    visualAssetCount: finiteCount(input.visualAssetCount, 'visualAssetCount'),
+    evidenceCount: finiteCount(input.counts.evidence, 'counts.evidence'),
+    provider: input.provider,
+    requestedModel: input.requestedModel,
+    actualModel: input.actualModel,
+    coreTool: input.coreTool,
+    packageSealed: input.packageSealed,
+    review: input.review,
     deliverableArtifactId: input.deliverableArtifactId,
     evidenceManifestArtifactId: input.evidenceManifestArtifactId,
     evidenceArtifactIds: [...input.evidenceArtifactIds],
@@ -156,7 +216,6 @@ function record(value: unknown, field: string): Record<string, unknown> {
   }
   return value as Record<string, unknown>;
 }
-
 function array(value: unknown, field: string): unknown[] {
   if (!Array.isArray(value)) throw new Error(`${field} is missing or invalid`);
   return value;
@@ -171,11 +230,12 @@ function nonBlankString(value: unknown, field: string): string {
 
 function explicitSmokeConfirmationAnswers(confirmations: unknown[]): Record<string, unknown> {
   return Object.fromEntries(confirmations.map((candidate, index) => {
-    const confirmation = record(candidate, `structuredTask.confirmations[${index}]`);
-    const key = nonBlankString(confirmation.key, `structuredTask.confirmations[${index}].key`);
-    const question = typeof confirmation.question === 'string' && confirmation.question.trim() !== ''
-      ? confirmation.question.trim()
-      : key;
+    const confirmation = record(candidate, `structuredTask.clarification_questions[${index}]`);
+    const key = nonBlankString(confirmation.key, `structuredTask.clarification_questions[${index}].key`);
+    const question = nonBlankString(
+      confirmation.question,
+      `structuredTask.clarification_questions[${index}].question`,
+    );
     return [key, `Real smoke explicit confirmation: ${question}`];
   }));
 }
@@ -216,8 +276,8 @@ export function requireActorCoverage(
       throw new Error(`execution is missing succeeded capability ${required.actor_id}`);
     }
   }
-}
 
+}
 export function selectSmokeCandidate<
   T extends { candidateId: string; plan: { steps: SmokePlanStep[] } },
 >(candidates: T[]): T {
@@ -229,21 +289,66 @@ export function selectSmokeCandidate<
   throw new Error(`Smoke plan must include ${REQUIRED_CAPABILITY_DESCRIPTION}`);
 }
 
-async function executeRealSmoke(): Promise<unknown> {
+type SeedUser = { id: string; status: string };
+async function executeRealSmoke(scenario: SemanticGoldScenario): Promise<SmokeReceipt> {
   const [repositoryModule, seedModule, runtimeModule] = await Promise.all([
     import('../database/repository.ts'),
     import('../database/development-seed.ts'),
     import('../apps/agent-api/src/control-runtime.ts'),
   ]);
-  const seedUser = await repositoryModule.getUserById(seedModule.DEVELOPMENT_SEED_USER_ID);
-  seedModule.assertDevelopmentSeedUser(seedUser);
-  if (seedUser.status !== 'active') throw new Error('DEVELOPMENT_SEED_INACTIVE: run pnpm db:seed');
+  const seedUserResult: SeedUser | null = await repositoryModule.getUserById(seedModule.DEVELOPMENT_SEED_USER_ID);
+  if (!seedUserResult || seedUserResult.id !== seedModule.DEVELOPMENT_SEED_USER_ID) {
+    throw new Error('DEVELOPMENT_SEED_MISSING: run pnpm db:seed');
+  }
+  if (seedUserResult.status !== 'active') {
+    throw new Error('DEVELOPMENT_SEED_INACTIVE: run pnpm db:seed');
+  }
+  const seedUser: SeedUser = seedUserResult;
 
   const runtime = runtimeModule.buildControlRuntime();
-  const planned = await runtime.controlPlanning.plan({
-    originalInput: PET_FOOD_QUERY,
+  const conversation = await runtime.conversations.create({
     ownerUserId: seedUser.id,
+    title: `Current real smoke: ${scenario.profile}`,
   });
+  const created = await runtime.repository.createTask({
+    conversationId: conversation.id,
+    ownerUserId: seedUser.id,
+    originalInput: scenario.input,
+    taskType: scenario.taskType,
+    structuredTask: {},
+    state: 'awaiting_clarification',
+    sensitivity: scenario.sensitivity,
+    piiDetected: scenario.piiDetected,
+  });
+  const refined = await runtime.requirementRefinement.understand({
+    taskId: created.id,
+    conversationId: conversation.id,
+    ownerUserId: seedUser.id,
+    originalInput: scenario.input,
+  });
+  const finalized = refined.status === 'clarification_required'
+    ? await runtime.requirementRefinement.clarify({
+      taskId: created.id,
+      conversationId: conversation.id,
+      ownerUserId: seedUser.id,
+      answers: explicitSmokeConfirmationAnswers(refined.requirement.clarification_questions),
+    })
+    : refined;
+  if (finalized.status !== 'ready_to_plan' || !finalized.planningResult) {
+    throw new Error(`real smoke requirement did not become ready for ${scenario.profile}`);
+  }
+  if (finalized.requirement.task_type !== scenario.taskType) {
+    throw new Error(`real smoke task type drifted for ${scenario.profile}`);
+  }
+  const finalizedTask = await runtime.repository.getTaskDetail(created.id);
+  if (!finalizedTask) throw new Error(`real smoke task disappeared for ${scenario.profile}`);
+  const planned = await runtime.controlPlanning.planExistingTask({
+    taskId: created.id,
+    conversationId: conversation.id,
+    ownerUserId: seedUser.id,
+    expectedStateVersion: finalizedTask.stateVersion,
+    originalInput: scenario.input,
+  }, finalized.planningResult);
   const selectedCandidate = selectSmokeCandidate(planned.candidates);
 
   const actor = { userId: seedUser.id, role: 'owner' as const };
@@ -251,18 +356,19 @@ async function executeRealSmoke(): Promise<unknown> {
   const selected = await runtime.workflow.select({
     taskId,
     expectedVersion: planned.task.stateVersion,
-    idempotencyKey: `current-real-smoke:select:${taskId}`,
+    idempotencyKey: `current-real-smoke:select:${scenario.profile}:${taskId}`,
     actor,
     planVersionId: selectedCandidate.planVersionId,
   });
+  const structuredTask = finalized.requirement;
   const confirmed = await runtime.workflow.confirm({
     taskId,
     planVersionId: selected.planVersionId,
     expectedVersion: selected.stateVersion,
-    idempotencyKey: `current-real-smoke:confirm:${taskId}`,
+    idempotencyKey: `current-real-smoke:confirm:${scenario.profile}:${taskId}`,
     actor,
-    confirmationAnswers: explicitSmokeConfirmationAnswers(planned.structuredTask.confirmations),
-    inputRoles: [],
+    confirmationAnswers: explicitSmokeConfirmationAnswers(structuredTask.clarification_questions),
+    inputValues: {},
   });
   if (confirmed.state !== 'ready') {
     throw new Error(`confirmed task must be ready, received ${confirmed.state}`);
@@ -272,7 +378,7 @@ async function executeRealSmoke(): Promise<unknown> {
     taskId,
     planVersionId: selected.planVersionId,
     expectedVersion: confirmed.stateVersion,
-    idempotencyKey: `current-real-smoke:execute:${taskId}`,
+    idempotencyKey: `current-real-smoke:execute:${scenario.profile}:${taskId}`,
     actor,
   });
   if (
@@ -283,10 +389,7 @@ async function executeRealSmoke(): Promise<unknown> {
   }
 
   const attemptId = nonBlankString(execution.attemptId, 'attemptId');
-  const deliverableArtifactId = nonBlankString(
-    execution.deliverableArtifactId,
-    'deliverableArtifactId',
-  );
+  const deliverableArtifactId = nonBlankString(execution.deliverableArtifactId, 'deliverableArtifactId');
   const evidenceManifestArtifactId = nonBlankString(
     execution.evidenceManifestArtifactId,
     'evidenceManifestArtifactId',
@@ -297,6 +400,15 @@ async function executeRealSmoke(): Promise<unknown> {
   );
   const deliverable = record(delivered.deliverable, 'deliverable');
   const manifest = record(delivered.evidenceManifest, 'evidenceManifest');
+  for (const [field, expected] of [
+    ['taskId', taskId],
+    ['planVersionId', selected.planVersionId],
+    ['attemptId', attemptId],
+  ] as const) {
+    if (nonBlankString(manifest[field], `evidenceManifest.${field}`) !== expected) {
+      throw new Error(`evidence manifest ${field} does not match execution identity`);
+    }
+  }
   if (nonBlankString(deliverable.taskId, 'deliverable.taskId') !== taskId) {
     throw new Error('deliverable.taskId does not match the executed task');
   }
@@ -333,6 +445,9 @@ async function executeRealSmoke(): Promise<unknown> {
     process.env.LLM_EXPECTED_ACTUAL_MODEL,
     'LLM_EXPECTED_ACTUAL_MODEL',
   );
+  if (configuredModel !== expectedActualModel) {
+    throw new Error('LLM model pin must match requested and actual model');
+  }
   const modelCalls = await runtime.repository.listModelCalls(attemptId);
   if (
     modelCalls.length === 0
@@ -376,11 +491,33 @@ async function executeRealSmoke(): Promise<unknown> {
   const findingGraph = record(deliverable.findingGraph, 'deliverable.findingGraph');
   const findings = array(findingGraph.findings, 'deliverable.findingGraph.findings');
   const recommendations = array(deliverable.recommendations, 'deliverable.recommendations');
+  const review = record(delivered.reportReview, 'reportReview');
+  if (nonBlankString(review.verdict, 'reportReview.verdict') !== 'pass') {
+    throw new Error('real smoke requires an independently passed report review');
+  }
+  const visualAssetCount = 'visualAssetManifests' in delivered && Array.isArray(delivered.visualAssetManifests)
+    ? delivered.visualAssetManifests.length
+    : 0;
   const provenance = realToolStep.toolProvenance;
   return formatSmokeReceipt({
+    profile: scenario.profile,
+    taskType: finalized.requirement.task_type,
     taskId,
     planVersionId: selected.planVersionId,
     attemptId,
+    reportPackageId: deliverableArtifactId,
+    visualAssetCount,
+    provider: 'gateway',
+    requestedModel: configuredModel,
+    actualModel: expectedActualModel,
+    coreTool: 'tavily-web-search',
+    packageSealed: true,
+    review: {
+      reviewerId: 'report-review-service',
+      authenticated: true,
+      independent: true,
+      verdict: 'usable',
+    },
     deliverableArtifactId,
     evidenceManifestArtifactId,
     evidenceArtifactIds,
@@ -403,30 +540,44 @@ async function executeRealSmoke(): Promise<unknown> {
   });
 }
 
+function readFixture(fixturePath: string): SemanticGoldFixture {
+  const fixture = JSON.parse(readFileSync(fixturePath, 'utf8')) as SemanticGoldFixture;
+  if (!Array.isArray(fixture.profiles) || !Array.isArray(fixture.scenarios)) {
+    throw new Error('current semantic Gold fixture is malformed');
+  }
+  return fixture;
+}
+
+export async function runCurrentRealSmoke(input: SmokeRunInput): Promise<SmokeReceipt[]> {
+  try {
+    loadEnv();
+    assertRealSmokeConfig(process.env);
+    const fixture = readFixture(input.fixturePath);
+    const receipts: SmokeReceipt[] = [];
+    for (const profile of input.profiles) {
+      if (!fixture.profiles.includes(profile)) throw new Error(`fixture has no profile ${profile}`);
+      const scenario = fixture.scenarios.find((candidate) => candidate.profile === profile);
+      if (!scenario) throw new Error(`fixture has no scenario for profile ${profile}`);
+      receipts.push(await executeRealSmoke(scenario));
+    }
+    return receipts;
+  } finally {
+    await closePool();
+  }
+}
+
 function safeErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Current real smoke failed';
 }
 
 async function main(): Promise<void> {
-  let closePool: (() => Promise<void>) | undefined;
-  let failure: unknown;
   try {
-    const database = await import('../database/db.ts');
-    closePool = database.closePool;
-    database.loadEnv();
-    assertRealSmokeConfig(process.env);
-    console.log(JSON.stringify(await executeRealSmoke()));
+    const fixturePath = process.env.CURRENT_REAL_SMOKE_FIXTURE
+      ?? 'tests/fixtures/current-semantic-gold.json';
+    const profile = process.env.CURRENT_SMOKE_PROFILE ?? 'competitive_research';
+    console.log(JSON.stringify(await runCurrentRealSmoke({ fixturePath, profiles: [profile] })));
   } catch (error) {
-    failure = error;
-  } finally {
-    try {
-      await closePool?.();
-    } catch (error) {
-      failure ??= error;
-    }
-  }
-  if (failure !== undefined) {
-    console.error(safeErrorMessage(failure));
+    console.error(safeErrorMessage(error));
     process.exitCode = 1;
   }
 }

@@ -21,18 +21,17 @@ import {
   resolveExecutionDeliverableContract,
 } from './deliverable-registry.ts';
 import type { VerifiedVisualAsset } from './visual-asset-service.ts';
-function createDeliverableDraftSchema(payloadSchema: object) {
-
+function createDeliverableDraftSchema(payloadSchema: object, strictContract: boolean) {
   return {
-  type: 'object',
-  additionalProperties: false,
-  required: [
-    'methodSummary',
-    'findingGraph',
-    'payload',
-    'recommendations',
-    'coverage',
-  ],
+    type: 'object',
+    additionalProperties: false,
+    required: [
+      'methodSummary',
+      'findingGraph',
+      'payload',
+      'recommendations',
+      ...(strictContract ? ['coverage'] : []),
+    ],
   properties: {
     methodSummary: { type: 'string', minLength: 1 },
     findingGraph: {
@@ -112,7 +111,7 @@ function createDeliverableDraftSchema(payloadSchema: object) {
         },
       },
     },
-    payload: payloadSchema,
+    payload: strictContract ? payloadSchema : {},
     recommendations: {
       minItems: 1,
       type: 'array',
@@ -551,7 +550,9 @@ export class CurrentDeliverableService {
   }
 
   async generate(input: CurrentDeliverableGenerateInput): Promise<CurrentDeliverableGenerateResult> {
+    const requirement = unknownRecord(input.finalizedRequirement);
     const selection = deliverableSelection(input.finalizedRequirement, input.plan.plan.deliverable_type);
+    const strictV2 = requirement?.version === 'research-task-v2' && selection !== null;
     const contract = selection
       ? resolveExecutionDeliverableContract(
           selection.taskType,
@@ -564,10 +565,10 @@ export class CurrentDeliverableService {
         `plan deliverable type ${input.plan.plan.deliverable_type} does not match Registry selection ${contract.entry.id}`,
       );
     }
-    const draftSchema = createDeliverableDraftSchema(contract.payloadSchema);
+    const draftSchema = createDeliverableDraftSchema(contract.payloadSchema, strictV2);
     const schemaName = `${contract.entry.id.replace(/_/gu, '-')}-deliverable-content`;
-    const visualInventory = verifiedVisualInventory(input);
-    assertVisualPreflight(contract.entry.id, visualInventory);
+    const visualInventory = strictV2 ? verifiedVisualInventory(input) : undefined;
+    if (strictV2) assertVisualPreflight(contract.entry.id, visualInventory);
     const evidenceManifest = input.evidenceManifest.value;
     this.dependencies.evidence.validateManifest(evidenceManifest, input.evidenceResolver);
     const sanitizedGaps = [...new Set(input.gaps.map((gap) => redactString(gap)))];
@@ -588,7 +589,9 @@ export class CurrentDeliverableService {
         this.dependencies.evidence.resolveEvidenceValue(entry, input.evidenceResolver),
       ),
     }));
-    const requiredCoverage = coverageRequirements(input.finalizedRequirement, input.problemGraph);
+    const requiredCoverage = strictV2
+      ? coverageRequirements(input.finalizedRequirement, input.problemGraph)
+      : undefined;
     const producerVisualInventory = visualInventory?.assets.map((asset) => ({
       assetId: asset.artifact.id,
       role: visualInventory?.roles.get(asset.artifact.id),
@@ -598,7 +601,7 @@ export class CurrentDeliverableService {
       researchGoal: redactString(input.researchGoal),
       finalizedRequirement: redactSensitiveValue(input.finalizedRequirement),
       problemGraph: redactSensitiveValue(input.problemGraph),
-      coverageRequirements: requiredCoverage,
+      ...(requiredCoverage === undefined ? {} : { coverageRequirements: requiredCoverage }),
       ...(input.revisionInstruction === undefined ? {} : { revisionInstruction: redactString(input.revisionInstruction) }),
       ...(visualInventory === undefined ? {} : {
         verifiedVisualAssetIds: visualInventory.ids,
@@ -651,7 +654,7 @@ export class CurrentDeliverableService {
     );
 
     const draft = contentDraft as DeliverableDraft;
-    assertPayloadVisualReferences(contract.entry.id, draft.payload, visualInventory);
+    if (strictV2) assertPayloadVisualReferences(contract.entry.id, draft.payload, visualInventory);
     const risksAndOpenIssues = [...(draft.risksAndOpenIssues ?? [])];
     const observedRisks = new Set(risksAndOpenIssues);
     for (const gap of sanitizedGaps) {
@@ -675,12 +678,13 @@ export class CurrentDeliverableService {
       capabilityProvenance: outputData.provenance,
     };
 
-    this.dependencies.validator.validateFileOrThrow(contract.payloadSchemaPath, deliverable.payload);
+    if (strictV2) this.dependencies.validator.validateFileOrThrow(contract.payloadSchemaPath, deliverable.payload);
     this.reportValidator.validate({
       manifest: evidenceManifest,
       report: deliverable,
       resolver: input.evidenceResolver,
-      requireCoverage: true,
+      requireCoverage: strictV2,
+      validatePayloadSchema: strictV2,
     });
 
     const artifact = await this.dependencies.artifacts.writeJson({

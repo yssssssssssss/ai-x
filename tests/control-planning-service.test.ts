@@ -145,8 +145,8 @@ async function loadControlPlanningModule(): Promise<ControlPlanningModule> {
 }
 
 const evidencePolicy: EvidenceRequirement[] = [{
-  id: 'public-market-evidence',
-  acceptedClasses: ['public_source'],
+  id: 'research-plan',
+  acceptedClasses: ['user_input', 'knowledge', 'public_source'],
   minimumCount: 1,
   required: true,
 }];
@@ -154,14 +154,14 @@ const evidencePolicy: EvidenceRequirement[] = [{
 function researchPlanningResult(originalInput: string): ResearchPlanningResult {
   const structuredTask: ResearchTaskV2 = {
     version: 'research-task-v2',
-    task_type: 'competitive_research',
+    task_type: 'user_research_planning',
     business_domain: '宠物辅食',
     research_goal: '形成可信的宠物辅食市场研究计划',
     target_audience: ['宠物食品产品与市场团队'],
     scope: ['公开可访问资料'],
     constraints: [{ id: 'c1', statement: '仅用公开来源', source: 'user' }],
     success_criteria: [{ id: 's1', statement: '所有结论可追溯' }],
-    expected_deliverables: ['研究计划'],
+    expected_deliverables: ['research_plan'],
     assumptions: [],
     ambiguities: [],
     clarification_questions: [],

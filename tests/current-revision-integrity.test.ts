@@ -69,8 +69,8 @@ let conversationId = '';
 let closeSharedPool: (() => Promise<void>) | undefined;
 
 const evidenceRequirements = [{
-  id: 'public-source',
-  acceptedClasses: ['public_source'] as const,
+  id: 'research-plan',
+  acceptedClasses: ['user_input', 'knowledge', 'public_source'] as const,
   minimumCount: 1,
   required: true,
 }];
@@ -146,14 +146,14 @@ after(async () => {
 function finalizedTask(researchGoal = '研究国内宠物辅食品牌'): ResearchTaskV2 {
   return {
     version: 'research-task-v2',
-    task_type: 'competitive_research',
+    task_type: 'user_research_planning',
     business_domain: '宠物辅食',
     research_goal: researchGoal,
     target_audience: ['产品团队'],
     scope: ['公开资料'],
     constraints: [],
     success_criteria: [{ id: 'source-backed', statement: '结论可追溯' }],
-    expected_deliverables: ['研究计划'],
+    expected_deliverables: ['research_plan'],
     assumptions: [],
     ambiguities: [],
     clarification_questions: [],
@@ -193,7 +193,7 @@ async function createSelectedTask(options: {
     conversationId,
     ownerUserId: ownerId,
     originalInput: `original ${suffix}`,
-    taskType: 'competitive_research',
+    taskType: 'user_research_planning',
     structuredTask: options.structuredTask ?? finalizedTask(),
     candidates: (['depth', 'speed'] as const).map((candidateId) => ({
       candidateId,
@@ -721,7 +721,7 @@ test('production runtime fails closed before creating a revision when planning c
     conversationId,
     ownerUserId: ownerId,
     originalInput: 'no active plan',
-    taskType: 'competitive_research',
+    taskType: 'user_research_planning',
     structuredTask: { research_goal: '缺少 active plan', confirmations: [], blocking_issues: [] },
     state: 'awaiting_confirmation',
   });
@@ -738,7 +738,7 @@ test('production runtime fails closed before creating a revision when planning c
     conversationId,
     ownerUserId: ownerId,
     originalInput: 'no candidate',
-    taskType: 'competitive_research',
+    taskType: 'user_research_planning',
     structuredTask: { research_goal: '缺少 candidate', confirmations: [], blocking_issues: [] },
     state: 'awaiting_confirmation',
   });

@@ -450,6 +450,8 @@ function generateInput(overrides: Partial<DeliverableGenerateInput> = {}): Deliv
     researchGoal: '形成可信的宠物辅食竞品研究计划',
     finalizedRequirement: {
       version: 'research-task-v2',
+      task_type: 'user_research_planning',
+      expected_deliverables: ['research_plan'],
       success_criteria: [{ id: 'criterion1', statement: '结论可追溯' }],
     },
     problemGraph: {

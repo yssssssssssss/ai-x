@@ -1724,9 +1724,9 @@ git commit -m "feat: recover and schedule current executions"
 
 测试固定 planner/provider fixture 是否满足：需求字段、澄清、问题覆盖、能力约束、报告章节和 Evidence 引用。测试不通过源文本匹配实现细节，而验证公开契约和业务不变量。
 
-- [ ] **Step 3: 扩展真实 Smoke**
+- [x] **Step 3: 扩展真实 Smoke**
 
-Smoke receipt 增加：Requirement Version、Problem Graph counts、Capability Decisions、Report Review verdict、Chart/Visual counts、Report Package IDs；继续禁止输出 Secret/Base64/Prompt。
+已导出 fixture-driven `runCurrentRealSmoke`，通过真实 Current runtime 逐 profile 执行，并将 Gateway/Tavily/model pin、sealed package、Report Review、Evidence/Visual 计数与 Task/Plan/Attempt/Package identity 写入脱敏 receipt；缺少真实 provider 配置时测试在 runner 调用前显式 skip。
 
 - [ ] **Step 4: 恢复 Current Gold**
 

@@ -53,6 +53,15 @@ export class GoldBatchService {
   constructor(private readonly store: GoldBatchStore) {}
 
   async createBatch(input: { batchId: string; pins: GoldPins }): Promise<{ machineState: GoldMachineState; pinsHash: string }> {
+    if (input.pins.provider !== 'gateway') {
+      throw new GoldBatchPolicyError('Gold batch requires the gateway provider');
+    }
+    if (input.pins.requestedModel !== input.pins.expectedActualModel) {
+      throw new GoldBatchPolicyError('Gold batch model pin drift detected');
+    }
+    if (input.pins.coreTool !== 'tavily-web-search') {
+      throw new GoldBatchPolicyError('Gold batch requires tavily-web-search as the core Tool');
+    }
     if (await this.store.getBatch(input.batchId)) throw new GoldBatchPolicyError(`batch ${input.batchId} already exists`);
     const hash = pinsHash(input.pins);
     await this.store.createBatch({ batchId: input.batchId, pinsHash: hash, pins: input.pins });
@@ -65,7 +74,7 @@ export class GoldBatchService {
     attemptId: string;
     result:
       | { kind: 'infra'; code: 'rate_limit' | 'server' | 'timeout' | 'network' | 'quota' | 'worker_loss' }
-      | { kind: 'success'; sealed: boolean; fullReal: boolean }
+      | { kind: 'success'; sealed: boolean; fullReal: boolean; reportPackageId?: string; packageSealed?: boolean }
       | { kind: 'quality_failed' }
       | { kind: 'integrity_failed'; reason: 'model_drift' | 'proof_drift' | 'checksum_drift' | 'fake_tool' };
   }): Promise<void> {
@@ -87,10 +96,17 @@ export class GoldBatchService {
       await this.store.updateBatch(input.batchId, { state: 'INVALIDATED', decision: 'INVALIDATED' });
       return;
     }
-    if (input.result.kind === 'success' && (!input.result.sealed || !input.result.fullReal)) {
-      await this.store.updateSlot(input.batchId, input.slotNo, { attemptId: input.attemptId, state: 'INVALIDATED' });
-      await this.store.updateBatch(input.batchId, { state: 'INVALIDATED', decision: 'INVALIDATED' });
-      return;
+    if (input.result.kind === 'success') {
+      const reportPackageId = input.result.reportPackageId?.trim();
+      const packageSealed = input.result.packageSealed ?? input.result.sealed;
+      if (!reportPackageId || !packageSealed) {
+        throw new GoldBatchPolicyError('Gold success requires a non-empty sealed Report Package');
+      }
+      if (!input.result.fullReal || !input.result.sealed) {
+        await this.store.updateSlot(input.batchId, input.slotNo, { attemptId: input.attemptId, state: 'INVALIDATED' });
+        await this.store.updateBatch(input.batchId, { state: 'INVALIDATED', decision: 'INVALIDATED' });
+        return;
+      }
     }
     await this.store.updateSlot(input.batchId, input.slotNo, {
       attemptId: input.attemptId,
@@ -106,11 +122,13 @@ export class GoldBatchService {
     batchId: string;
     attemptId: string;
     reviewerId: string;
+    authenticated?: boolean;
     independence: { capabilityOwner: boolean; operator: boolean; artifactEditor: boolean };
     verdict: 'usable' | 'needs_revision' | 'unusable';
   }): Promise<void> {
     const batch = await this.store.getBatch(input.batchId);
     if (!batch || batch.state !== 'READY_FOR_REVIEW') throw new GoldBatchPolicyError('batch is not ready for review');
+    if (input.authenticated !== true) throw new GoldBatchPolicyError('reviewer is not authenticated');
     if (Object.values(input.independence).some(Boolean)) throw new GoldBatchPolicyError('reviewer is not independent');
     const slots = await this.store.getSlots(input.batchId);
     if (!slots.some((slot) => slot.attemptId === input.attemptId)) throw new GoldBatchPolicyError('attempt is not in this batch');

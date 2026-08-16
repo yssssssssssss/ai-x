@@ -14,8 +14,10 @@ loadEnv();
 const connectionString =
   process.env.DATABASE_URL ?? 'postgres://localhost:5432/user_research_ai';
 
-export const pool = new Pool({ connectionString });
+export let pool = new Pool({ connectionString });
 
 export async function closePool(): Promise<void> {
-  await pool.end();
+  const previous = pool;
+  await previous.end();
+  pool = new Pool({ connectionString });
 }

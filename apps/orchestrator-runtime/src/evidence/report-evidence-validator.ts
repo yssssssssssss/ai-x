@@ -215,6 +215,7 @@ export class ReportEvidenceValidator {
     report: unknown;
     resolver: EvidenceArtifactResolver;
     requireCoverage?: boolean;
+    validatePayloadSchema?: boolean;
   }): asserts input is {
     manifest: EvidenceManifest;
     report: EvidenceReport;
@@ -272,7 +273,7 @@ export class ReportEvidenceValidator {
     ) {
       throw new CurrentReportValidationError('report shape is invalid');
     }
-    if (deliverableContract) {
+    if (deliverableContract && input.validatePayloadSchema === true) {
       try {
         const payloadSchema = Object.fromEntries(
           Object.entries(deliverableContract.payloadSchema)

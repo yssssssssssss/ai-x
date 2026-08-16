@@ -70,7 +70,7 @@ test('retries structured infra failures but permanently occupies first capabilit
   assert.equal((await store.getSlots('batch-1'))[0].infraRetries, 1);
   await service.recordAttempt({ batchId: 'batch-1', slotNo: 1, attemptId: 'a2', result: { kind: 'quality_failed' } });
   assert.equal((await store.getSlots('batch-1'))[0].attemptId, 'a2');
-  await assert.rejects(() => service.recordAttempt({ batchId: 'batch-1', slotNo: 1, attemptId: 'a3', result: { kind: 'success', sealed: true, fullReal: true } }), GoldBatchPolicyError);
+  await assert.rejects(() => service.recordAttempt({ batchId: 'batch-1', slotNo: 1, attemptId: 'a3', result: { kind: 'success', sealed: true, fullReal: true, reportPackageId: 'package-a3' } }), GoldBatchPolicyError);
 });
 
 test('invalidates batch on model or proof drift and blocks further slots', async () => {
@@ -79,7 +79,7 @@ test('invalidates batch on model or proof drift and blocks further slots', async
   await service.createBatch({ batchId: 'batch-1', pins: pins() });
   await service.recordAttempt({ batchId: 'batch-1', slotNo: 1, attemptId: 'a1', result: { kind: 'integrity_failed', reason: 'model_drift' } });
   assert.equal((await store.getBatch('batch-1'))?.state, 'INVALIDATED');
-  await assert.rejects(() => service.recordAttempt({ batchId: 'batch-1', slotNo: 2, attemptId: 'a2', result: { kind: 'success', sealed: true, fullReal: true } }), GoldBatchPolicyError);
+  await assert.rejects(() => service.recordAttempt({ batchId: 'batch-1', slotNo: 2, attemptId: 'a2', result: { kind: 'success', sealed: true, fullReal: true, reportPackageId: 'package-a2' } }), GoldBatchPolicyError);
 });
 
 test('requires three sealed slots and independent reviews before PASSED decision', async () => {
@@ -87,11 +87,11 @@ test('requires three sealed slots and independent reviews before PASSED decision
   const service = new GoldBatchService(store);
   await service.createBatch({ batchId: 'batch-1', pins: pins() });
   for (const slotNo of [1, 2, 3] as const) {
-    await service.recordAttempt({ batchId: 'batch-1', slotNo, attemptId: `a${slotNo}`, result: { kind: 'success', sealed: true, fullReal: true } });
+    await service.recordAttempt({ batchId: 'batch-1', slotNo, attemptId: `a${slotNo}`, result: { kind: 'success', sealed: true, fullReal: true, reportPackageId: `package-a${slotNo}` } });
   }
-  await service.submitReview({ batchId: 'batch-1', attemptId: 'a1', reviewerId: 'r1', independence: { capabilityOwner: false, operator: false, artifactEditor: false }, verdict: 'usable' });
-  await service.submitReview({ batchId: 'batch-1', attemptId: 'a2', reviewerId: 'r1', independence: { capabilityOwner: false, operator: false, artifactEditor: false }, verdict: 'usable' });
-  await service.submitReview({ batchId: 'batch-1', attemptId: 'a3', reviewerId: 'r1', independence: { capabilityOwner: false, operator: false, artifactEditor: false }, verdict: 'needs_revision' });
+  await service.submitReview({ batchId: 'batch-1', attemptId: 'a1', reviewerId: 'r1', authenticated: true, independence: { capabilityOwner: false, operator: false, artifactEditor: false }, verdict: 'usable' });
+  await service.submitReview({ batchId: 'batch-1', attemptId: 'a2', reviewerId: 'r1', authenticated: true, independence: { capabilityOwner: false, operator: false, artifactEditor: false }, verdict: 'usable' });
+  await service.submitReview({ batchId: 'batch-1', attemptId: 'a3', reviewerId: 'r1', authenticated: true, independence: { capabilityOwner: false, operator: false, artifactEditor: false }, verdict: 'needs_revision' });
   const decision = await service.decide({ batchId: 'batch-1' });
   assert.equal(decision, 'PASSED');
 });

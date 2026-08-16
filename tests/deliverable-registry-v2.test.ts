@@ -36,7 +36,7 @@ import { lintRegistries } from '../harness/linters/registry-linter.ts';
 import type { VerifiedVisualAsset } from '../apps/orchestrator-runtime/src/report/visual-asset-service.ts';
 
 import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
-import type { EvidenceRequirement, ResearchPlanPayload } from '../packages/api-contract/research-deliverable.ts';
+import type { EvidenceRequirement } from '../packages/api-contract/research-deliverable.ts';
 interface DeliverableRegistryEntry {
   id: string;
   status: 'active' | 'inactive';
@@ -394,18 +394,51 @@ class RegistryIntegrationLLM {
     };
   }
 }
-function nonResearchVisualPair(): VerifiedVisualAsset[] {
-  const binding = {
-    taskId: 'task-registry-integration',
-    planVersionId: 'plan-registry-integration',
-    attemptId: 'attempt-registry-integration',
-  };
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => [key, canonical(child)]),
+  );
+}
+
+function canonicalHash(value: unknown): string {
+  return `sha256:${createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex')}`;
+}
+
+function nonResearchVisualPair(binding: {
+  taskId: string;
+  planVersionId: string;
+  attemptId: string;
+} = {
+  taskId: 'task-registry-integration',
+  planVersionId: 'plan-registry-integration',
+  attemptId: 'attempt-registry-integration',
+}): VerifiedVisualAsset[] {
   const bytes = Buffer.from([0]);
-  const originalManifest = {
+  const contentSha256 = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+  const manifestArtifact = (id: string, manifest: unknown) => {
+    const digest = digestJson(manifest);
+    return {
+      id,
+      ...binding,
+      kind: 'visual_asset_manifest' as const,
+      state: 'SEALED' as const,
+      storageUri: `/private/${id}`,
+      ...digest,
+      schemaVersion: 'visual-asset-manifest-v1',
+      sensitivity: 'internal',
+      redactionPolicyVersion: 'v1',
+      failureReason: null,
+    };
+  };
+  const originalManifestDraft = {
     version: 'visual-asset-manifest-v1' as const,
     ...binding,
     assetId: 'asset-registry-original',
-    contentSha256: 'sha256:original',
+    contentSha256,
     mediaType: 'image/png' as const,
     byteSize: bytes.byteLength,
     width: 1,
@@ -414,7 +447,10 @@ function nonResearchVisualPair(): VerifiedVisualAsset[] {
     source: { kind: 'user_upload' as const, fileName: 'original.png' },
     derivedFrom: null,
     derivation: null,
-    manifestHash: 'sha256:original-manifest',
+  };
+  const originalManifest = {
+    ...originalManifestDraft,
+    manifestHash: canonicalHash(originalManifestDraft),
   };
   const original = {
     artifact: {
@@ -423,7 +459,7 @@ function nonResearchVisualPair(): VerifiedVisualAsset[] {
       kind: 'visual_asset' as const,
       state: 'SEALED' as const,
       storageUri: '/private/asset-registry-original',
-      contentSha256: originalManifest.contentSha256,
+      contentSha256,
       byteSize: bytes.byteLength,
       schemaVersion: 'binary-v1',
       sensitivity: 'internal',
@@ -435,21 +471,9 @@ function nonResearchVisualPair(): VerifiedVisualAsset[] {
     bytes,
     metadata: { contentType: 'image/png' as const, byteSize: bytes.byteLength, width: 1, height: 1 },
     manifest: originalManifest,
-    manifestArtifact: {
-      id: 'manifest-registry-original',
-      ...binding,
-      kind: 'visual_asset_manifest' as const,
-      state: 'SEALED' as const,
-      storageUri: '/private/manifest-registry-original',
-      contentSha256: 'sha256:original-manifest-artifact',
-      byteSize: 1,
-      schemaVersion: 'visual-asset-manifest-v1',
-      sensitivity: 'internal',
-      redactionPolicyVersion: 'v1',
-      failureReason: null,
-    },
+    manifestArtifact: manifestArtifact('manifest-registry-original', originalManifest),
   } as VerifiedVisualAsset;
-  const annotationManifest = {
+  const annotationManifestDraft = {
     ...originalManifest,
     assetId: 'asset-registry-annotation',
     source: { kind: 'derived' as const },
@@ -460,7 +484,11 @@ function nonResearchVisualPair(): VerifiedVisualAsset[] {
       manifestHash: original.manifest.manifestHash,
     },
     derivation: { kind: 'annotation' as const, overlayArtifactId: 'overlay-registry' },
-    manifestHash: 'sha256:annotation-manifest',
+  };
+  const { manifestHash: _originalHash, ...annotationManifestWithoutHash } = annotationManifestDraft;
+  const annotationManifest = {
+    ...annotationManifestWithoutHash,
+    manifestHash: canonicalHash(annotationManifestWithoutHash),
   };
   const annotation = {
     ...original,
@@ -470,11 +498,7 @@ function nonResearchVisualPair(): VerifiedVisualAsset[] {
       storageUri: '/private/asset-registry-annotation',
     },
     manifest: annotationManifest,
-    manifestArtifact: {
-      ...original.manifestArtifact,
-      id: 'manifest-registry-annotation',
-      storageUri: '/private/manifest-registry-annotation',
-    },
+    manifestArtifact: manifestArtifact('manifest-registry-annotation', annotationManifest),
   } as VerifiedVisualAsset;
   return [original, annotation];
 }
@@ -868,7 +892,7 @@ function nonresearchEnvelope(overrides: Record<string, unknown> = {}): Record<st
       subQuestionSummaries: [{ id: 'S1', findingIds: ['F1'], analysisIds: ['A1'], summary: 'Summary' }],
       overallConclusions: [{ id: 'C1', summaryIds: ['S1'], statement: 'Conclusion' }],
     },
-    payload: researchPlanPayload(),
+    payload: competitiveAnalysisPayload(),
     recommendations: [{ id: 'R1', summaryIds: ['S1'], statement: 'Act' }],
     coverage: {
       questionBindings: [{ questionId: 'Q1', summaryIds: ['S1'] }],
@@ -884,39 +908,42 @@ function nonresearchEnvelope(overrides: Record<string, unknown> = {}): Record<st
   };
 }
 
-function researchPlanPayload(): ResearchPlanPayload {
+function competitiveAnalysisPayload(): Record<string, unknown> {
   return {
-    title: 'Competitive analysis',
-    researchGoal: 'Compare verified product evidence',
-    scope: { market: 'Test market', subjects: ['Product A'], timeWindow: 'Current' },
-    competitorSampling: {
-      strategy: 'Verified sample',
-      targetCount: 1,
-      inclusionCriteria: ['Evidence available'],
-      exclusionCriteria: ['Evidence unavailable'],
-    },
-    researchQuestions: ['What differs?'],
-    comparisonDimensions: [{
-      id: 'positioning',
-      name: 'Positioning',
-      purpose: 'Compare claims',
-      collectionFields: ['claim'],
+    competitorSamples: [{
+      id: 'sample-1',
+      name: 'Product A',
+      rationale: 'Primary verified sample',
+      evidenceIds: ['E1'],
     }],
-    sourcePlan: [{
-      evidenceClass: 'dataset',
-      sourceTypes: ['verified dataset'],
-      purpose: 'Verify claims',
+    dimensionMatrix: [{
+      dimension: 'positioning',
+      values: [{ sampleId: 'sample-1', value: 'Verified positioning', evidenceIds: ['E1'] }],
     }],
-    executionPlan: [{
-      phase: 'Analysis',
-      activities: ['Compare evidence'],
-      duration: 'One day',
-      outputs: ['Analysis report'],
+    differences: [{
+      id: 'difference-1',
+      dimension: 'positioning',
+      statement: 'Differentiated positioning',
+      evidenceIds: ['E1'],
     }],
-    collectionTemplate: [{ field: 'claim', description: 'Verified claim', evidenceRequired: true }],
-    analysisMethods: ['Comparison'],
-    deliverables: ['Competitive analysis report'],
-    qualityChecks: ['Every fact is traceable'],
+    impacts: [{
+      differenceId: 'difference-1',
+      audience: 'Product team',
+      statement: 'Clarifies product choice',
+    }],
+    actionRecommendations: [{
+      id: 'action-1',
+      differenceIds: ['difference-1'],
+      priority: 'P1',
+      statement: 'Validate positioning',
+    }],
+    screenshotComparisons: [{
+      id: 'screenshot-1',
+      dimension: 'positioning',
+      sampleIds: ['sample-1'],
+      assetIds: ['asset-registry-original'],
+      caption: 'Verified screenshot comparison',
+    }],
   };
 }
 
@@ -1112,7 +1139,11 @@ function compositionFixture() {
       artifact: sealedJsonArtifact('review-nonresearch', 'report_review', 'report-review-v1', review),
       value: review,
     },
-    visualAssets: [],
+    visualAssets: nonResearchVisualPair({
+      taskId: 'task-nonresearch',
+      planVersionId: 'plan-nonresearch',
+      attemptId: 'attempt-nonresearch',
+    }),
     charts: [],
   };
 }
@@ -1138,6 +1169,7 @@ test('ReportCompositionService selects the nonresearch Registry template', async
     id: NONRESEARCH_ENTRY.report_template,
     subtitle: 'NONRESEARCH_TEMPLATE_SENTINEL',
   }));
+  const fixture = compositionFixture();
   const service = new ReportCompositionService({
     artifacts: {
       async readVerifiedJson(): Promise<never> { throw new Error('not used'); },
@@ -1146,7 +1178,14 @@ test('ReportCompositionService selects the nonresearch Registry template', async
       },
     },
     visualAssets: {
-      async readVerified(): Promise<never> { throw new Error('no visual assets expected'); },
+      async readVerified(input: { assetId: string; manifestArtifactId: string }) {
+        const asset = fixture.visualAssets.find((candidate) => (
+          candidate.artifact.id === input.assetId
+          && candidate.manifestArtifact.id === input.manifestArtifactId
+        ));
+        if (!asset) throw new Error('missing visual asset');
+        return asset;
+      },
     },
     repository: {
       async listArtifactsForAttempt(): Promise<[]> { return []; },
@@ -1163,7 +1202,7 @@ test('ReportCompositionService selects the nonresearch Registry template', async
     taskId: activeLease.taskId,
     planVersionId: activeLease.planVersionId,
     attemptId: activeLease.attemptId,
-    ...compositionFixture(),
+    ...fixture,
     activeLease,
   } as never);
   assert.equal(result.document.subtitle, 'NONRESEARCH_TEMPLATE_SENTINEL');

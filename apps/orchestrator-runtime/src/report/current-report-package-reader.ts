@@ -270,6 +270,7 @@ export class CurrentReportPackageReader {
       report: deliverable,
       resolver,
       requireCoverage: schemaVersion === REVIEW_GATED_DELIVERABLE_SCHEMA_VERSION,
+      validatePayloadSchema: false,
     });
 
     if (review) {

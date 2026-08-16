@@ -54,3 +54,18 @@
 Main observed the final Phase 6 integrated suite at 127 total / 126 passed / 1 existing provider skip / 0 failed. `pnpm typecheck`, Registry linter, and Knowledge linter passed. The final competitive projection correction pairs payload-listed original and annotation Assets by exact Asset/Manifest/content-hash/Manifest-hash lineage, emits one payload-captioned image comparison, and does not duplicate the paired annotation as a standalone image. No commit has been created; this evidence is recorded without a pre-commit GREEN or phase-complete claim.
 
 8. Legacy compatibility correction (2026-08-17): `CurrentDeliverableService` and `LeaseExecutionEngine` now treat structured tasks as Registry v2 only when `version === 'research-task-v2'`. Legacy `ResearchTaskData` with task-type-only input resolves the persisted `plan.deliverable_type` through the historical exact Evidence Policy/Registry contract; v2 still rejects missing or malformed paired `task_type`/`expected_deliverables`, with no broad fallback for malformed v2. This was a production edit only; no tests, typecheck, lint, build, formatter, or commit was run.
+9. Legacy/current package compatibility correction (2026-08-17): Report Package reads now preserve binding, evidence, historical-marker, and Review error ordering without applying selected Registry payload schemas; payload schema validation is explicit for genuine v2 deliverable generation only. Shared CurrentDeliverable success fixtures now carry complete canonical v2 selection metadata, while malformed v2 RED fixtures remain fail-closed. Production and stale-fixture edits only; no tests, typecheck, lint, build, formatter, or commit was run.
+
+
+## Focused 14-failure canonical Registry sweep (2026-08-17)
+
+- The fresh quality log exposed 14 failures, all attributable to stale Phase6 Registry assumptions rather than a confirmed production regression: research-plan fixtures used `competitive_research`, revision fixtures expected the pre-cutover candidate/resource shape, nonresearch Composer fixtures supplied research-plan payload blocks, generic optional/provenance fixtures selected competitive evidence requirements, and policy assertions assumed one mapping.
+- Updated stale fixtures in `tests/control-planning-service.test.ts`, `tests/current-revision-integrity.test.ts`, `tests/deliverable-registry-v2.test.ts`, `tests/lease-execution-engine.test.ts`, and `tests/research-plan-deliverable.test.ts`. Canonical planning fixtures now use `user_research_planning`/`research_plan`; explicit competitive and historical compatibility cases remain competitive.
+- Registry policy coverage now distinguishes the five canonical active mappings from the retained historical `competitive_research → research_plan` policy. Composer fixtures use a complete competitive payload and same-binding verified visual assets; optional retry expectations preserve the existing retry contract.
+- Validation was intentionally not run for this sweep; no production regression was confirmed and no commit was created.
+
+## Follow-up stale-fixture correction (artifact 2161, 2026-08-17)
+
+- Canonicalization returns the Registry id in `ResearchTaskV2.expected_deliverables`; the planning and revision fixtures now use `['research_plan']` rather than the localized `['研究计划']` label while retaining `user_research_planning`.
+- Nonresearch Composer fixtures now construct sealed visual Assets with real byte/content hashes, canonical Manifest hashes, sealed Manifest Artifact digests, and a same-binding `readVerified` reader for the composition-service path.
+- The follow-up is fixture-only; no production change, validation command, or commit was made.
