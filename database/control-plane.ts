@@ -59,6 +59,7 @@ export interface ControlExecutionLease {
   attemptId: string;
   leaseOwner: string;
   leaseToken: string;
+  retryOf?: string | null;
 }
 
 export interface ActiveExecutionLease {
@@ -76,6 +77,7 @@ export interface ControlExecutionStep {
   actorType: string;
   actorId: string;
   state: string;
+  outputArtifactId: string | null;
   toolProvenance: Record<string, unknown> | null;
   skillProvenance: Record<string, unknown> | null;
   failure: Record<string, unknown> | null;
@@ -1437,10 +1439,11 @@ export class ControlPlaneRepository {
     leaseOwner: string;
     leaseTokenHash: string;
     leaseExpiresAt?: Date;
+    retryOf?: string | null;
   }): Promise<ControlExecutionClaim> {
     return this.transaction(async (connection) => {
       const taskResult = await connection.query(
-        `SELECT state, state_version
+        `SELECT state, state_version, current_attempt_id
          FROM control_tasks
          WHERE id = $1
          FOR UPDATE`,
@@ -1448,19 +1451,14 @@ export class ControlPlaneRepository {
       );
       const task = taskResult.rows[0];
       if (!task) throw new ControlPlaneConflictError(`task ${input.taskId} does not exist`);
-
       const planResult = await connection.query(
-        `SELECT task_id
-         FROM control_plan_versions
-         WHERE id = $1
-         FOR KEY SHARE`,
+        `SELECT task_id FROM control_plan_versions WHERE id = $1 FOR KEY SHARE`,
         [input.planVersionId],
       );
       const plan = planResult.rows[0];
       if (!plan || plan.task_id !== input.taskId) {
         throw new ControlPlaneConflictError(`plan version ${input.planVersionId} does not belong to task ${input.taskId}`);
       }
-
       const commandResult = await connection.query(
         `SELECT request_hash, response_json
          FROM control_commands
@@ -1472,37 +1470,41 @@ export class ControlPlaneRepository {
         if (existingCommand.request_hash !== input.requestHash) {
           throw new ControlPlaneConflictError(`idempotency key ${input.idempotencyKey} was reused with a different request`);
         }
-        const response = commandResponse(existingCommand.response_json);
-        return { ...response, replayed: true };
+        return { ...commandResponse(existingCommand.response_json), replayed: true };
       }
-
       if (task.state !== 'ready' || asNumber(task.state_version, 'state_version') !== input.expectedVersion) {
         throw new ControlPlaneConflictError(`task ${input.taskId} is no longer ready at version ${input.expectedVersion}`);
       }
-
+      const retryOf = input.retryOf ?? (typeof task.current_attempt_id === 'string' ? task.current_attempt_id : null);
+      if (retryOf) {
+        const previousAttempt = await connection.query(
+          `SELECT task_id FROM control_execution_attempts WHERE id = $1 FOR KEY SHARE`,
+          [retryOf],
+        );
+        if (!previousAttempt.rows[0] || previousAttempt.rows[0].task_id !== input.taskId) {
+          throw new ControlPlaneConflictError(`retry attempt ${retryOf} does not belong to task ${input.taskId}`);
+        }
+      }
       const nextAttemptResult = await connection.query(
         `SELECT COALESCE(MAX(attempt_no), 0) + 1 AS attempt_no
-         FROM control_execution_attempts
-         WHERE task_id = $1`,
+         FROM control_execution_attempts WHERE task_id = $1`,
         [input.taskId],
       );
       const attemptNo = asNumber(nextAttemptResult.rows[0]?.attempt_no, 'attempt_no');
       const expiresAt = input.leaseExpiresAt ?? new Date(Date.now() + 5 * 60 * 1000);
       const attemptResult = await connection.query(
         `INSERT INTO control_execution_attempts
-           (task_id, plan_version_id, attempt_no, state, lease_owner, lease_token_hash, lease_expires_at, lease_heartbeat_at)
-         VALUES ($1, $2, $3, 'active', $4, $5, $6, now())
+           (task_id, plan_version_id, attempt_no, state, retry_of,
+            lease_owner, lease_token_hash, lease_expires_at, lease_heartbeat_at)
+         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, now())
          RETURNING id`,
-        [input.taskId, input.planVersionId, attemptNo, input.leaseOwner, input.leaseTokenHash, expiresAt],
+        [input.taskId, input.planVersionId, attemptNo, retryOf, input.leaseOwner, input.leaseTokenHash, expiresAt],
       );
       const attemptId = asString(attemptResult.rows[0]?.id, 'attempt_id');
       const updatedTask = await connection.query(
         `UPDATE control_tasks
-         SET state = 'executing',
-             state_version = state_version + 1,
-             current_attempt_id = $2,
-             active_plan_version_id = $3,
-             updated_at = now()
+         SET state = 'executing', state_version = state_version + 1,
+             current_attempt_id = $2, active_plan_version_id = $3, updated_at = now()
          WHERE id = $1 AND state = 'ready' AND state_version = $4
          RETURNING state_version`,
         [input.taskId, attemptId, input.planVersionId, input.expectedVersion],
@@ -2478,6 +2480,7 @@ export class ControlPlaneRepository {
     actorType: string;
     actorId: string;
     state: 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped';
+    outputArtifactId?: string;
     toolProvenance?: Record<string, unknown>;
     skillProvenance?: Record<string, unknown>;
     failure?: Record<string, unknown>;
@@ -2489,13 +2492,14 @@ export class ControlPlaneRepository {
       await connection.query(
         `INSERT INTO control_execution_steps
            (attempt_id, step_no, step_name, actor_type, actor_id, state,
-            tool_provenance, skill_provenance, failure_json, latency_ms, started_at, finished_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            output_artifact_id, tool_provenance, skill_provenance, failure_json, latency_ms, started_at, finished_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
          ON CONFLICT (attempt_id, step_no) DO UPDATE
          SET step_name = EXCLUDED.step_name,
              actor_type = EXCLUDED.actor_type,
              actor_id = EXCLUDED.actor_id,
              state = EXCLUDED.state,
+             output_artifact_id = COALESCE(EXCLUDED.output_artifact_id, control_execution_steps.output_artifact_id),
              tool_provenance = COALESCE(EXCLUDED.tool_provenance, control_execution_steps.tool_provenance),
              skill_provenance = COALESCE(EXCLUDED.skill_provenance, control_execution_steps.skill_provenance),
              failure_json = COALESCE(EXCLUDED.failure_json, control_execution_steps.failure_json),
@@ -2504,6 +2508,7 @@ export class ControlPlaneRepository {
              finished_at = EXCLUDED.finished_at`,
         [
           input.attemptId, input.stepNo, input.stepName, input.actorType, input.actorId, input.state,
+          input.outputArtifactId ?? null,
           input.toolProvenance == null ? null : JSON.stringify(input.toolProvenance),
           input.skillProvenance == null ? null : JSON.stringify(input.skillProvenance),
           input.failure == null ? null : JSON.stringify(input.failure),
@@ -2517,7 +2522,8 @@ export class ControlPlaneRepository {
     const connection = await this.database.connect();
     try {
       const result = await connection.query(
-        `SELECT step_no, step_name, actor_type, actor_id, state, tool_provenance, skill_provenance, failure_json, latency_ms
+        `SELECT step_no, step_name, actor_type, actor_id, state, output_artifact_id,
+                tool_provenance, skill_provenance, failure_json, latency_ms
          FROM control_execution_steps WHERE attempt_id = $1 ORDER BY step_no`,
         [attemptId],
       );
@@ -2527,6 +2533,7 @@ export class ControlPlaneRepository {
         actorType: asString(row.actor_type, 'actor_type'),
         actorId: asString(row.actor_id, 'actor_id'),
         state: asString(row.state, 'state'),
+        outputArtifactId: typeof row.output_artifact_id === 'string' ? row.output_artifact_id : null,
         toolProvenance: asRecord(row.tool_provenance),
         skillProvenance: asRecord(row.skill_provenance),
         failure: asRecord(row.failure_json),

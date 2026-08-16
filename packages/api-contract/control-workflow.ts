@@ -233,6 +233,7 @@ export interface ControlExecutionStepResponse {
   actorType: string;
   actorId: string;
   state: string;
+  outputArtifactId: string | null;
   toolProvenance: Record<string, unknown> | null;
   skillProvenance: Record<string, unknown> | null;
   failure: Record<string, unknown> | null;

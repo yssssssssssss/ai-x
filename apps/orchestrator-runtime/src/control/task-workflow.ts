@@ -794,7 +794,9 @@ export class TaskWorkflowService {
       requestHash: hash,
       leaseOwner,
       leaseTokenHash: leaseTokenHash(leaseToken),
+      retryOf: task.currentAttemptId,
     });
+
 
     if (this.executionDriver) {
       if (claim.replayed) {
@@ -851,6 +853,7 @@ export class TaskWorkflowService {
           attemptId: claim.attemptId,
           leaseOwner,
           leaseToken,
+          retryOf: task.currentAttemptId,
         },
       });
       const finalTask = await this.requireTask(task.id);

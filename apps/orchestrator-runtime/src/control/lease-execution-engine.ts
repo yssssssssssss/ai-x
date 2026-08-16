@@ -132,6 +132,11 @@ interface EngineSealedStepOutput extends BindingSealedStepOutput {
   questionIds: string[];
   output?: unknown;
 }
+interface ReusableExecution {
+  output: unknown;
+  outputArtifactId: string;
+  provenance: Record<string, unknown>;
+}
 
 export interface LeaseExecutionResult {
   status: 'completed' | 'completed_with_gaps' | 'paused';
@@ -806,11 +811,51 @@ export class LeaseExecutionEngine {
       });
       throw preflightError;
     }
+    const reusable = await this.loadReusableExecutions(input.lease, plan, planVersion.planHash, researchGoal);
     const outputs: EngineSealedStepOutput[] = [];
     const resolvedArtifacts = new Map<string, ResolvedEvidenceArtifact>();
     const gaps: string[] = [];
 
     for (const step of plan.steps) {
+      const checkpoint = reusable.get(step.step_no);
+      if (checkpoint) {
+        active = await this.refreshLease(input.lease);
+        const artifact = await this.dependencies.repository.getArtifact(checkpoint.outputArtifactId);
+        if (!artifact || artifact.state !== 'SEALED' || !artifact.contentSha256) {
+          throw new ExecutionAuthenticityError(`reusable step Artifact ${checkpoint.outputArtifactId} is unavailable`);
+        }
+        const sealedOutput: EngineSealedStepOutput = {
+          stepNo: step.step_no,
+          actorType: step.actor_type,
+          questionIds: [...step.question_ids],
+          actorId: step.actor_id,
+          kind: artifact.kind as StepArtifactKind,
+          state: 'succeeded',
+          taskId: input.lease.taskId,
+          planVersionId: input.lease.planVersionId,
+          attemptId: input.lease.attemptId,
+          artifact: { id: artifact.id, contentSha256: artifact.contentSha256, state: 'SEALED' },
+          output: checkpoint.output,
+        };
+        outputs.push(sealedOutput);
+        if (step.actor_type === 'tool') {
+          resolvedArtifacts.set(artifact.id, {
+            artifact: { id: artifact.id, contentSha256: artifact.contentSha256 },
+            value: { output: checkpoint.output },
+          });
+        }
+        await this.dependencies.repository.recordExecutionStep({
+          attemptId: input.lease.attemptId,
+          stepNo: step.step_no,
+          stepName: step.step_name,
+          actorType: step.actor_type,
+          actorId: step.actor_id,
+          state: 'succeeded',
+          outputArtifactId: checkpoint.outputArtifactId,
+          toolProvenance: checkpoint.provenance,
+        });
+        continue;
+      }
       const startedAt = new Date();
       active = await this.refreshLease(input.lease);
       await this.dependencies.repository.recordExecutionStep({
@@ -899,8 +944,11 @@ export class LeaseExecutionEngine {
           actorType: step.actor_type,
           actorId: step.actor_id,
           state: 'succeeded',
+          outputArtifactId: artifact.id,
           toolProvenance: result.toolReceipt && result.toolResolution
             ? {
+                planHash: planVersion.planHash,
+                stepHash: hashJson(step),
                 registryHash: hashFile(CONFIG_PATHS.toolRegistry),
                 manifestHash: result.manifestHash,
                 inputSchemaHash: result.inputSchemaHash,
@@ -1361,6 +1409,77 @@ export class LeaseExecutionEngine {
         failure,
       };
     }
+  }
+
+  private async loadReusableExecutions(
+    lease: ControlExecutionLease,
+    plan: EnginePlan,
+    planHash: string,
+    researchGoal: string,
+  ): Promise<Map<number, ReusableExecution>> {
+    const reusable = new Map<number, ReusableExecution>();
+    if (!lease.retryOf) return reusable;
+    const previous = await this.dependencies.repository.listExecutionSteps(lease.retryOf);
+    let invalid = false;
+    for (const step of plan.steps) {
+      if (invalid) break;
+      const prior = previous.find((candidate) => candidate.stepNo === step.step_no);
+      if (!prior || prior.state !== 'succeeded' || !prior.outputArtifactId || !prior.toolProvenance) {
+        invalid = true;
+        continue;
+      }
+      if (step.actor_type !== 'tool' || step.input_bindings.length > 0) {
+        invalid = true;
+        continue;
+      }
+      const tool = this.dependencies.skillLoader.getTool(step.actor_id);
+      if (!tool) {
+        invalid = true;
+        continue;
+      }
+      const manifest = loadToolManifest(tool.path);
+      const resolution = this.dependencies.tools.resolve(manifest);
+      const current = resolution ? {
+        planHash,
+        stepHash: hashJson(step),
+        inputHash: hashJson(Object.keys(step.input).length > 0 ? step.input : { query: researchGoal }),
+        manifestHash: hashFile(tool.path),
+        inputSchemaHash: hashFile(manifest.input_schema),
+        outputSchemaHash: hashFile(manifest.output_schema),
+        configHash: toolConfigHash(manifest, resolution),
+      } : null;
+      const fields: Array<'planHash' | 'stepHash' | 'inputHash' | 'manifestHash' | 'inputSchemaHash' | 'outputSchemaHash' | 'configHash'> = [
+        'planHash', 'stepHash', 'inputHash', 'manifestHash', 'inputSchemaHash', 'outputSchemaHash', 'configHash',
+      ];
+      if (!current || !fields.every((field) => current[field] === prior.toolProvenance?.[field])) {
+        invalid = true;
+        continue;
+      }
+      const artifact = await this.dependencies.repository.getArtifact(prior.outputArtifactId);
+      if (
+        !artifact
+        || artifact.state !== 'SEALED'
+        || !artifact.contentSha256
+        || artifact.taskId !== lease.taskId
+        || artifact.planVersionId !== lease.planVersionId
+        || artifact.attemptId !== lease.retryOf
+      ) {
+        invalid = true;
+        continue;
+      }
+      try {
+        const stored = await this.dependencies.artifacts.readVerifiedJson<Record<string, unknown>>(artifact.id);
+        const output = isRecord(stored.value) && 'output' in stored.value ? stored.value.output : stored.value;
+        reusable.set(step.step_no, {
+          output,
+          outputArtifactId: artifact.id,
+          provenance: { ...prior.toolProvenance, outputArtifactId: artifact.id },
+        });
+      } catch {
+        invalid = true;
+      }
+    }
+    return reusable;
   }
 
   private async preflight(plan: EnginePlan, researchGoal: string): Promise<ExecutionAuthenticityError | null> {
