@@ -27,6 +27,13 @@ export function validateChartSpec(
   if ((spec.type === 'comparison' || spec.type === 'trend') && spec.yAxis?.min !== undefined && spec.yAxis.min !== 0) {
     throw new ChartSpecValidationError(`${spec.type} charts require a zero yAxis baseline`);
   }
+  if (
+    (spec.type === 'comparison' || spec.type === 'trend')
+    && spec.yAxis?.min === 0
+    && spec.series.some((series) => series.values.some((chartValue) => chartValue !== null && chartValue < 0))
+  ) {
+    throw new ChartSpecValidationError(`${spec.type} charts cannot use a zero yAxis baseline with negative values`);
+  }
 
   const seriesKeys = new Set<string>();
   for (const series of spec.series) {

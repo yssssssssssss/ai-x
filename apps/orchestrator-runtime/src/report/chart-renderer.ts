@@ -7,6 +7,10 @@ import type {
   VisualAssetReference,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { VisualAssetService, VisualAssetResult } from './visual-asset-service.ts';
+import {
+  validateChartSpec,
+  type ChartEvidenceResolver,
+} from './chart-spec-validator.ts';
 
 export interface ChartTableAlternative {
   caption: string;
@@ -245,6 +249,7 @@ export interface RenderAndSealChartSvgInput extends ChartDimensions {
   planVersionId: string;
   attemptId: string;
   spec: ChartSpec;
+  evidenceResolver: ChartEvidenceResolver;
   original: VisualAssetReference;
   assets: VisualAssetService;
   exportPolicy: VisualAssetExportPolicy;
@@ -255,13 +260,14 @@ export interface SealedChartSvg extends RenderedChartSvg {
 }
 
 export async function renderAndSealChartSvg(input: RenderAndSealChartSvgInput): Promise<SealedChartSvg> {
-  const rendered = renderChartSvg(input.spec, input);
+  const validatedSpec = validateChartSpec(input.spec, input.evidenceResolver);
+  const rendered = renderChartSvg(validatedSpec, input);
   const derived = await input.assets.derive({
     taskId: input.taskId,
     planVersionId: input.planVersionId,
     attemptId: input.attemptId,
     original: input.original,
-    derivation: { kind: 'chart_svg', chartId: input.spec.chartId },
+    derivation: { kind: 'chart_svg', chartId: validatedSpec.chartId },
     bytes: Buffer.from(rendered.svg, 'utf8'),
     exportPolicy: input.exportPolicy,
   });

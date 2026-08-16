@@ -25,6 +25,7 @@ const evidenceValue = {
     discoverability: 4,
     usability: 3,
     trust: 5,
+    negativeHeatmap: -2,
   },
 };
 
@@ -47,6 +48,7 @@ const evidencePointers = {
   'E-discoverability': '/metrics/discoverability',
   'E-usability': '/metrics/usability',
   'E-trust': '/metrics/trust',
+  'E-negative-heatmap': '/metrics/negativeHeatmap',
 } as const;
 
 const manifest = evidenceService.createManifest({
@@ -66,9 +68,11 @@ const manifest = evidenceService.createManifest({
   })) as EvidenceEntry[],
 }, artifactResolver);
 
-const evidenceById = new Map(manifest.entries.map((entry) => [entry.id, entry]));
+const evidenceById: Record<string, EvidenceEntry> = Object.fromEntries(
+  manifest.entries.map((entry) => [entry.id, entry]),
+);
 const evidenceResolver: ChartEvidenceResolver = (evidenceId) => {
-  const entry = evidenceById.get(evidenceId);
+  const entry = evidenceById[evidenceId];
   return entry ? evidenceService.resolveEvidenceValue(entry, artifactResolver) : undefined;
 };
 
@@ -181,6 +185,21 @@ test('rejects a misleading non-zero baseline for comparison and trend charts', (
     spec.yAxis = { min: 1 };
     expectInvalid(spec, /baseline|zero|yAxis|min/i);
   }
+});
+
+test('rejects zero-baseline comparison and trend charts whose negative values would be clipped', () => {
+  for (const spec of [comparisonSpec(), trendSpec()]) {
+    spec.series[0]!.values[0] = -2;
+    spec.series[0]!.evidenceIds[0] = ['E-negative-heatmap'];
+    expectInvalid(spec, /negative|clip|baseline|zero/i);
+  }
+});
+
+test('keeps negative values valid for heatmaps because cartesian zero-baseline clipping does not apply', () => {
+  const spec = heatmapSpec();
+  spec.series[0]!.values[0] = -2;
+  spec.series[0]!.evidenceIds[0] = ['E-negative-heatmap'];
+  assert.deepEqual(validateChartSpec(spec, evidenceResolver), spec);
 });
 
 for (const [type, build] of [

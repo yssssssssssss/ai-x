@@ -1,7 +1,15 @@
 import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { ChartSpec } from '../apps/orchestrator-runtime/src/report/chart-spec-validator.ts';
+import {
+  EvidenceService,
+  type EvidenceArtifactResolver,
+  type EvidenceEntry,
+} from '../apps/orchestrator-runtime/src/evidence/evidence-service.ts';
+import type {
+  ChartEvidenceResolver,
+  ChartSpec,
+} from '../apps/orchestrator-runtime/src/report/chart-spec-validator.ts';
 import {
   renderAndSealChartSvg,
   renderChartSvg,
@@ -17,6 +25,56 @@ const binding = {
   taskId: 'task-chart-render-1',
   planVersionId: 'plan-chart-render-1',
   attemptId: 'attempt-chart-render-1',
+};
+
+const RENDER_EVIDENCE_ARTIFACT_ID = 'artifact-chart-render-evidence-1';
+const RENDER_EVIDENCE_ARTIFACT_HASH = `sha256:${'e'.repeat(64)}`;
+const renderEvidenceValue = {
+  metrics: {
+    actorRevenue: 12,
+    actorRetention: 87,
+    competitorRevenue: 10,
+    competitorRetention: 81,
+  },
+};
+const renderArtifactResolver: EvidenceArtifactResolver = {
+  resolveArtifact: (artifactId) => artifactId === RENDER_EVIDENCE_ARTIFACT_ID
+    ? {
+        artifact: {
+          id: RENDER_EVIDENCE_ARTIFACT_ID,
+          contentSha256: RENDER_EVIDENCE_ARTIFACT_HASH,
+        },
+        value: renderEvidenceValue,
+      }
+    : null,
+};
+const renderEvidenceService = new EvidenceService();
+const RENDER_EVIDENCE_POINTERS: Record<string, string> = {
+  'E-actor-revenue': '/metrics/actorRevenue',
+  'E-actor-retention': '/metrics/actorRetention',
+  'E-competitor-revenue': '/metrics/competitorRevenue',
+  'E-competitor-retention': '/metrics/competitorRetention',
+};
+const renderEvidenceManifest = renderEvidenceService.createManifest({
+  ...binding,
+  collectedAt: '2026-08-16T00:00:00.000Z',
+  entries: Object.entries(RENDER_EVIDENCE_POINTERS).map(([id, jsonPointer]) => ({
+    id,
+    kind: 'knowledge_excerpt',
+    evidenceClass: 'dataset',
+    artifactId: RENDER_EVIDENCE_ARTIFACT_ID,
+    artifactContentSha256: RENDER_EVIDENCE_ARTIFACT_HASH,
+    jsonPointer,
+    sensitivity: 'internal',
+    redaction: 'none',
+  })) as EvidenceEntry[],
+}, renderArtifactResolver);
+const renderEvidenceById: Record<string, EvidenceEntry> = Object.fromEntries(
+  renderEvidenceManifest.entries.map((entry) => [entry.id, entry]),
+);
+const renderEvidenceResolver: ChartEvidenceResolver = (evidenceId) => {
+  const entry = renderEvidenceById[evidenceId];
+  return entry ? renderEvidenceService.resolveEvidenceValue(entry, renderArtifactResolver) : undefined;
 };
 
 function comparisonSpec(): ChartSpec {
@@ -260,6 +318,78 @@ class SvgAwareArtifactStore {
   }
 }
 
+async function createSealHarness() {
+  const artifacts = new SvgAwareArtifactStore();
+  const assets = new VisualAssetService({ artifacts: artifacts as never });
+  const original = await assets.ingest({
+    ...binding,
+    source: { kind: 'user_upload', fileName: 'chart-source.png', bytes: PNG },
+    exportPolicy: 'allow',
+  });
+  return { artifacts, assets, original };
+}
+
+class RecordingVisualAssets {
+  deriveCalls = 0;
+
+  constructor(private readonly service: VisualAssetService) {}
+
+  async derive(input: Parameters<VisualAssetService['derive']>[0]) {
+    this.deriveCalls += 1;
+    return this.service.derive(input);
+  }
+}
+
+test('rejects an Evidence-value mismatch before calling VisualAssetService.derive', async () => {
+  const fixture = await createSealHarness();
+  const assets = new RecordingVisualAssets(fixture.assets);
+  const spec = comparisonSpec();
+  spec.series[0]!.values[0] = 99;
+
+  await assert.rejects(
+    () => renderAndSealChartSvg({
+      ...binding,
+      spec,
+      evidenceResolver: renderEvidenceResolver,
+      original: {
+        assetId: fixture.original.assetArtifact.id,
+        manifestArtifactId: fixture.original.manifestArtifact.id,
+      },
+      assets: assets as never,
+      exportPolicy: 'allow',
+      width: 800,
+      height: 480,
+    }),
+    /value|Evidence|match/i,
+  );
+  assert.equal(assets.deriveCalls, 0);
+});
+
+test('rejects dangling Evidence before calling VisualAssetService.derive', async () => {
+  const fixture = await createSealHarness();
+  const assets = new RecordingVisualAssets(fixture.assets);
+  const spec = comparisonSpec();
+  spec.series[0]!.evidenceIds[0] = ['E-does-not-exist'];
+
+  await assert.rejects(
+    () => renderAndSealChartSvg({
+      ...binding,
+      spec,
+      evidenceResolver: renderEvidenceResolver,
+      original: {
+        assetId: fixture.original.assetArtifact.id,
+        manifestArtifactId: fixture.original.manifestArtifact.id,
+      },
+      assets: assets as never,
+      exportPolicy: 'allow',
+      width: 800,
+      height: 480,
+    }),
+    /E-does-not-exist|dangling|resolve/i,
+  );
+  assert.equal(assets.deriveCalls, 0);
+});
+
 test('seals server SVG through VisualAssetService with chart_svg lineage', async () => {
   const artifacts = new SvgAwareArtifactStore();
   const assets = new VisualAssetService({ artifacts: artifacts as never });
@@ -272,6 +402,7 @@ test('seals server SVG through VisualAssetService with chart_svg lineage', async
   const result = await renderAndSealChartSvg({
     ...binding,
     spec: comparisonSpec(),
+    evidenceResolver: renderEvidenceResolver,
     original: {
       assetId: original.assetArtifact.id,
       manifestArtifactId: original.manifestArtifact.id,
