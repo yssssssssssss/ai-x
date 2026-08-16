@@ -9,7 +9,6 @@ import type {
   ChartSpec,
   EvidenceManifest,
   ResearchDeliverableEnvelope,
-  ResearchPlanPayload,
   VisualAssetManifest,
   VisualAssetReference,
 } from '../../../../packages/api-contract/research-deliverable.ts';
@@ -26,6 +25,7 @@ import {
   type ReportDocument,
   type VerifiedChart,
 } from './report-document-composer.ts';
+import { resolveDeliverableContractById } from './deliverable-registry.ts';
 import type {
   VerifiedVisualAsset,
   VisualAssetService,
@@ -61,7 +61,7 @@ export interface ReportAttemptMaterials {
 
 export interface ReportCompositionInput extends ReportBinding {
   requiredQuestionIds: string[];
-  deliverable: VerifiedArtifactValue<ResearchDeliverableEnvelope<ResearchPlanPayload>>;
+  deliverable: VerifiedArtifactValue<ResearchDeliverableEnvelope<unknown>>;
   evidenceManifest: VerifiedArtifactValue<EvidenceManifest>;
   evidenceArtifactResolver: EvidenceArtifactResolver;
   review: VerifiedArtifactValue<PassedReportReviewArtifact>;
@@ -255,6 +255,13 @@ export class ReportCompositionService implements ReportCompositionPort {
     ) {
       throw new Error('ReportDocument composition lease identity does not match the report binding');
     }
+    const contract = resolveDeliverableContractById(input.deliverable.value.deliverableType);
+    if (input.deliverable.value.deliverableType !== contract.entry.id) {
+      throw new Error('ReportDocument Deliverable type does not match its active Registry contract');
+    }
+    if (input.deliverable.value.version !== contract.entry.envelope_version) {
+      throw new Error('ReportDocument Deliverable version does not match its active Registry contract');
+    }
     const visualAssets = await Promise.all(input.visualAssets.map((asset) =>
       this.dependencies.visualAssets.readVerified({
         assetId: asset.artifact.id,
@@ -268,7 +275,7 @@ export class ReportCompositionService implements ReportCompositionPort {
       }),
     })));
     const document = composeReportDocument({
-      templateId: 'research-plan',
+      templateId: contract.entry.report_template,
       requiredQuestionIds: input.requiredQuestionIds,
       deliverable: input.deliverable,
       evidenceManifest: input.evidenceManifest,

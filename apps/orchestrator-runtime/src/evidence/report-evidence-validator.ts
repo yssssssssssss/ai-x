@@ -2,6 +2,11 @@ import type {
   ResearchDeliverableCoverage,
   ResearchDeliverableEnvelope,
 } from '../../../../packages/api-contract/research-deliverable.ts';
+import { SchemaValidator } from '../schema/validator.ts';
+import {
+  resolveDeliverableContractById,
+  type DeliverableContractResources,
+} from '../report/deliverable-registry.ts';
 
 import {
   EvidenceGraphValidationError,
@@ -200,7 +205,10 @@ type EvidenceReport = CurrentEvidenceReport | (
 );
 
 export class ReportEvidenceValidator {
-  constructor(private readonly evidence: Pick<EvidenceService, 'validateFindingGraph'>) {}
+  constructor(
+    private readonly evidence: Pick<EvidenceService, 'validateFindingGraph'>,
+    private readonly schemas: Pick<SchemaValidator, 'validateSchemaOrThrow'> = new SchemaValidator(),
+  ) {}
 
   validate(input: {
     manifest: EvidenceManifest;
@@ -214,13 +222,31 @@ export class ReportEvidenceValidator {
     requireCoverage?: boolean;
   } {
     const report = record(input.report);
-    if (
-      !report
-      || (report.version !== 'current-evidence-report-v1' && report.version !== 'research-deliverable-v1')
-    ) {
+    if (!report) {
       throw new CurrentReportValidationError('report is not a current evidence report');
     }
-    const isDeliverable = report.version === 'research-deliverable-v1';
+    const isCurrentEvidenceReport = report.version === 'current-evidence-report-v1';
+    let deliverableContract: DeliverableContractResources | null = null;
+    if (!isCurrentEvidenceReport) {
+      if (typeof report.deliverableType !== 'string' || !report.deliverableType) {
+        throw new CurrentReportValidationError('report deliverableType is invalid');
+      }
+      try {
+        deliverableContract = resolveDeliverableContractById(report.deliverableType);
+      } catch (error) {
+        throw new CurrentReportValidationError(
+          `report deliverable contract is invalid: ${error instanceof Error ? error.message : String(error)}`,
+          error instanceof Error ? error : undefined,
+        );
+      }
+      if (report.deliverableType !== deliverableContract.entry.id) {
+        throw new CurrentReportValidationError('report deliverableType does not match the active Registry contract');
+      }
+      if (report.version !== deliverableContract.entry.envelope_version) {
+        throw new CurrentReportValidationError('report version does not match the active deliverable contract');
+      }
+    }
+    const isDeliverable = deliverableContract !== null;
     if (
       typeof report.taskId !== 'string'
       || typeof report.methodSummary !== 'string'
@@ -231,9 +257,10 @@ export class ReportEvidenceValidator {
       || (isDeliverable && (
         typeof report.planVersionId !== 'string'
         || typeof report.attemptId !== 'string'
-        || report.deliverableType !== 'research_plan'
+        || typeof report.deliverableType !== 'string'
+        || !report.deliverableType
         || typeof report.evidenceManifestArtifactId !== 'string'
-        || !record(report.payload)
+        || !Object.hasOwn(report, 'payload')
         || !Array.isArray(report.capabilityProvenance)
         || !report.capabilityProvenance.every((candidate) => {
           const provenance = record(candidate);
@@ -244,6 +271,24 @@ export class ReportEvidenceValidator {
       ))
     ) {
       throw new CurrentReportValidationError('report shape is invalid');
+    }
+    if (deliverableContract) {
+      try {
+        const payloadSchema = Object.fromEntries(
+          Object.entries(deliverableContract.payloadSchema)
+            .filter(([key]) => key !== '$schema' && key !== '$id'),
+        );
+        this.schemas.validateSchemaOrThrow(
+          payloadSchema,
+          report.payload,
+          `${deliverableContract.entry.id} payload`,
+        );
+      } catch (error) {
+        throw new CurrentReportValidationError(
+          `report payload does not match the active deliverable contract: ${error instanceof Error ? error.message : String(error)}`,
+          error instanceof Error ? error : undefined,
+        );
+      }
     }
     if (report.taskId !== input.manifest.taskId) {
       throw new CurrentReportValidationError('report taskId does not match evidence manifest');

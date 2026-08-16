@@ -3,7 +3,6 @@ import type {
   EvidenceEntry,
   CurrentExecutionPlan,
   ResearchDeliverableEnvelope,
-  ResearchPlanPayload,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import type {
   EvidenceArtifactResolver,
@@ -181,7 +180,7 @@ function createDeliverableDraftSchema(payloadSchema: object) {
   } as const;
 }
 
-type DeliverableEnvelope = ResearchDeliverableEnvelope<ResearchPlanPayload>;
+type DeliverableEnvelope = ResearchDeliverableEnvelope<unknown>;
 type DeliverableDraft = Pick<
   DeliverableEnvelope,
   | 'methodSummary'

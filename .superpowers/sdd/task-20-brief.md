@@ -27,7 +27,7 @@ Expected: FAIL。
 
 Runtime 解析并验证 v2 Registry；DeliverableService 不再直接引用固定 research-plan schema path；Engine 不再硬编码 `deliverable_type === research_plan`。
 
-Main observed final verification at 86 total / 85 pass / 1 existing provider skip / 0 fail, passing `pnpm typecheck`, and `registry-linter: OK`. Step 4 remains unchecked because commit is pending; this worker ran no command.
+Review-blocker implementation fact (2026-08-17): Planning resolves and passes an explicit Registry-selected id/policy; Compiler freezes it without global lookup and preserves legacy calls; the direct RED helper supplies the same `FrozenDeliverableSelection`; the report pipeline consumes selected schema/prompt/rubric/template; aliases are exact and explicit; Engine governs resources by canonical id without rebinding legacy plan evidence. Task 21 mappings now close this pipeline for all five task types. Main observed the final joint eight-file suite at 202 total / 201 pass / 1 existing provider skip / 0 fail; `pnpm typecheck`, `registry-linter`, and `knowledge-linter` passed. This worker ran no command and created no commit.
 
 - [ ] **Step 4: 运行测试和提交**
 

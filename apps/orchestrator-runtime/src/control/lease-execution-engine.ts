@@ -59,7 +59,8 @@ import type { CurrentDeliverableGenerateInput, CurrentDeliverableRevisionInput }
 import type { DeliverableComposer, ReportReviewInput, ReportReviewResult } from '../report/report-review-service.ts';
 import {
   resolveDeliverableContractById,
-  resolveExecutionDeliverable,
+  resolveExecutionDeliverableContract,
+  type DeliverableContractResources,
 } from '../report/deliverable-registry.ts';
 import { ReportCompositionService, type ReportCompositionPort } from '../report/report-composition-service.ts';
 import { VisualAssetService } from '../report/visual-asset-service.ts';
@@ -225,7 +226,10 @@ function toolConfigHash(manifest: ToolManifest, resolution: ToolAdapterResolutio
   });
 }
 
-function resolvePlanDeliverableId(structuredTask: unknown, plan: unknown): string {
+function resolvePlanDeliverableContract(
+  structuredTask: unknown,
+  plan: unknown,
+): DeliverableContractResources {
   if (!isRecord(plan) || typeof plan.deliverable_type !== 'string' || !plan.deliverable_type.trim()) {
     throw new ExecutionAuthenticityError('plan deliverable type is malformed');
   }
@@ -235,7 +239,7 @@ function resolvePlanDeliverableId(structuredTask: unknown, plan: unknown): strin
   const hasTaskType = typeof taskType === 'string' && taskType.trim().length > 0;
   const hasExpectedDeliverables = Array.isArray(expectedDeliverables);
   if (!hasTaskType && !hasExpectedDeliverables) {
-    return resolveDeliverableContractById(plan.deliverable_type).entry.id;
+    return resolveDeliverableContractById(plan.deliverable_type);
   }
   if (typeof taskType !== 'string' || !taskType.trim()) {
     throw new ExecutionAuthenticityError('finalized task task_type is malformed');
@@ -248,14 +252,14 @@ function resolvePlanDeliverableId(structuredTask: unknown, plan: unknown): strin
   ) {
     throw new ExecutionAuthenticityError('finalized task expected_deliverables are malformed');
   }
-  return resolveExecutionDeliverable(
+  return resolveExecutionDeliverableContract(
     taskType,
     expectedDeliverables as string[],
     plan.deliverable_type,
-  ).id;
+  );
 }
 
-function parsePlan(taskId: string, value: unknown, expectedDeliverableId: string): EnginePlan {
+function parsePlan(taskId: string, value: unknown, contract: DeliverableContractResources): EnginePlan {
   if (!isRecord(value) || !Array.isArray(value.steps)) {
     throw new ExecutionAuthenticityError('active plan is malformed');
   }
@@ -326,9 +330,9 @@ function parsePlan(taskId: string, value: unknown, expectedDeliverableId: string
       ...(typeof item.purpose === 'string' ? { purpose: item.purpose } : {}),
     };
   });
-  if (value.deliverable_type !== expectedDeliverableId) {
+  if (value.deliverable_type !== contract.entry.id) {
     throw new ExecutionAuthenticityError(
-      `plan deliverable type ${String(value.deliverable_type)} does not match Registry selection ${expectedDeliverableId}`,
+      `plan deliverable type ${String(value.deliverable_type)} does not match Registry selection ${contract.entry.id}`,
     );
   }
   const rawRequirements = value.evidence_requirements;
@@ -692,8 +696,9 @@ export class LeaseExecutionEngine {
         input.lease.taskId,
         input.lease.planVersionId,
       );
-      deliverableId = resolvePlanDeliverableId(task.structuredTask, planVersion.plan);
-      const parsedPlan = parsePlan(task.id, planVersion.plan, deliverableId);
+      const deliverableContract = resolvePlanDeliverableContract(task.structuredTask, planVersion.plan);
+      deliverableId = deliverableContract.entry.id;
+      const parsedPlan = parsePlan(task.id, planVersion.plan, deliverableContract);
       const pendingInputs = parsePendingInputs(planVersion.pendingInputs);
       plan = overlayPendingInputs(parsedPlan, pendingInputs, gates, task.ownerUserId);
       if (this.dependencies.reportReview) {

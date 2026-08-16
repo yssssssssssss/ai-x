@@ -6,6 +6,7 @@ import type {
   CurrentCapabilityDecisions,
   CurrentExecutionPlan,
   CurrentPlanStep,
+  DeliverableType,
   EvidenceRequirement,
   PendingInput,
   ProblemGraph,
@@ -29,9 +30,15 @@ export interface CurrentPlanCandidateProposal extends Omit<PlanCandidate, 'steps
   steps: CurrentPlanStep[];
 }
 
+export interface FrozenDeliverableSelection {
+  deliverableId: DeliverableType;
+  evidenceRequirements: EvidenceRequirement[];
+}
+
 export interface PlanCompileInput {
   candidate: CurrentPlanCandidateProposal;
   task: ResearchTaskV2;
+  deliverable_selection?: FrozenDeliverableSelection;
   problem_graph: ProblemGraph;
   problem_graph_provenance: ProblemGraphProvenance;
   capability_resolution: CapabilityResolution;
@@ -497,11 +504,28 @@ export class PlanCompiler {
   constructor(private readonly validator = new SchemaValidator()) {}
 
   compile(input: PlanCompileInput): CompiledPlan {
+    const deliverableSelection: FrozenDeliverableSelection = input.deliverable_selection
+      ? {
+        deliverableId: input.deliverable_selection.deliverableId,
+        evidenceRequirements: structuredClone(input.deliverable_selection.evidenceRequirements),
+      }
+      : {
+        deliverableId: 'research_plan',
+        evidenceRequirements: structuredClone(input.evidence_requirements),
+      };
+    if (
+      input.deliverable_selection
+      && !isDeepStrictEqual(input.evidence_requirements, deliverableSelection.evidenceRequirements)
+    ) {
+      throw new Error(
+        `Evidence requirements do not match frozen deliverable selection ${deliverableSelection.deliverableId}`,
+      );
+    }
     validateProposalShape(input.candidate);
     this.validator.validateOrThrow('current-execution-plan', {
       task_id: '',
-      deliverable_type: 'research_plan',
-      evidence_requirements: input.evidence_requirements,
+      deliverable_type: deliverableSelection.deliverableId,
+      evidence_requirements: deliverableSelection.evidenceRequirements,
       problem_graph: input.problem_graph,
       capability_decisions: input.capability_resolution,
       steps: input.candidate.steps,
@@ -517,7 +541,7 @@ export class PlanCompiler {
     const steps = copySteps(input.candidate);
     validateStepDependencies(steps);
     validateQuestions(steps, input.problem_graph);
-    validateEvidencePolicy(input.problem_graph, input.evidence_requirements);
+    validateEvidencePolicy(input.problem_graph, deliverableSelection.evidenceRequirements);
     const eligibleSkills = validateActors(steps, input.capability_resolution);
     validateApprovals(steps, input.capability_resolution);
     validateRequiredTools(steps, eligibleSkills);
@@ -527,8 +551,8 @@ export class PlanCompiler {
 
     const plan: CompiledPlan['plan'] = {
       task_id: '',
-      deliverable_type: 'research_plan',
-      evidence_requirements: structuredClone(input.evidence_requirements),
+      deliverable_type: deliverableSelection.deliverableId,
+      evidence_requirements: structuredClone(deliverableSelection.evidenceRequirements),
       problem_graph: structuredClone(input.problem_graph),
       problem_graph_provenance: structuredClone(input.problem_graph_provenance),
       capability_decisions: structuredClone(input.capability_resolution) as CurrentCapabilityDecisions,
@@ -571,6 +595,10 @@ export function validateCurrentPlanRevision(input: {
   const compiled = new PlanCompiler(validator).compile({
     candidate,
     task,
+    deliverable_selection: {
+      deliverableId: plan.deliverable_type,
+      evidenceRequirements: plan.evidence_requirements,
+    },
     problem_graph: plan.problem_graph,
     problem_graph_provenance: plan.problem_graph_provenance,
     capability_resolution: plan.capability_decisions as CapabilityResolution,

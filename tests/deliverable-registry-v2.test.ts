@@ -1,16 +1,27 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { afterEach, test } from 'node:test';
 import { stringify as stringifyYaml } from 'yaml';
-import type { ControlExecutionLease, ControlPlaneRepository } from '../database/control-plane.ts';
-import type { EvidenceManifest, EvidenceService } from '../apps/orchestrator-runtime/src/evidence/evidence-service.ts';
+import type { ControlArtifact, ControlExecutionLease, ControlPlaneRepository } from '../database/control-plane.ts';
+import { EvidenceService, type EvidenceManifest } from '../apps/orchestrator-runtime/src/evidence/evidence-service.ts';
 import {
   CurrentDeliverableService,
   type CurrentDeliverableGenerateInput,
 } from '../apps/orchestrator-runtime/src/report/current-deliverable-service.ts';
 import { LeaseExecutionEngine } from '../apps/orchestrator-runtime/src/control/lease-execution-engine.ts';
+import { ReportEvidenceValidator } from '../apps/orchestrator-runtime/src/evidence/report-evidence-validator.ts';
+import {
+  PlanCompiler,
+  type FrozenDeliverableSelection,
+  type PlanCompileInput,
+} from '../apps/orchestrator-runtime/src/planners/plan-compiler.ts';
+import { ResearchPlanningService } from '../apps/orchestrator-runtime/src/planners/research-planning-service.ts';
+import { ReportReviewService, type ReportReviewArtifact } from '../apps/orchestrator-runtime/src/report/report-review-service.ts';
+import { ReportCompositionService } from '../apps/orchestrator-runtime/src/report/report-composition-service.ts';
+import { composeReportDocument } from '../apps/orchestrator-runtime/src/report/report-document-composer.ts';
 import type {
   LLMClient,
   LLMProviderIdentity,
@@ -23,6 +34,8 @@ import { ToolRouter } from '../apps/orchestrator-runtime/src/runtime/tool-adapte
 import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 import { lintRegistries } from '../harness/linters/registry-linter.ts';
 
+import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
+import type { EvidenceRequirement, ResearchPlanPayload } from '../packages/api-contract/research-deliverable.ts';
 interface DeliverableRegistryEntry {
   id: string;
   status: 'active' | 'inactive';
@@ -33,10 +46,16 @@ interface DeliverableRegistryEntry {
   review_rubric: string;
   evidence_policy: string;
   report_template: string;
+  aliases?: string[];
 }
 
 interface DeliverableRegistryModule {
   resolveDeliverable(taskType: string, expectedDeliverables: readonly string[]): DeliverableRegistryEntry;
+  resolveExecutionDeliverable(
+    taskType: string,
+    expectedDeliverables: readonly string[],
+    declaredDeliverableId: string,
+  ): DeliverableRegistryEntry;
 }
 
 const registryModulePath: string = '../apps/orchestrator-runtime/src/report/deliverable-registry.ts';
@@ -367,11 +386,18 @@ class RegistryIntegrationLLM {
   }
 }
 
-test('CurrentDeliverableService uses the registry-selected schema and synthesis prompt', async () => {
+test('CurrentDeliverableService and ReportEvidenceValidator accept a registry-selected nonresearch contract', async () => {
   const customEntry: DeliverableRegistryEntry = {
-    ...RESEARCH_PLAN_ENTRY,
-    payload_schema: 'schemas/deliverables/registry-selected.schema.json',
-    synthesis_prompt: 'orchestrator/prompts/deliverables/registry-selected.md',
+    id: 'competitive_analysis_report',
+    status: 'active',
+    task_types: ['competitive_research'],
+    aliases: ['competitive analysis report'],
+    envelope_version: 'research-deliverable-v1',
+    payload_schema: 'schemas/deliverables/competitive-analysis-report.schema.json',
+    synthesis_prompt: 'orchestrator/prompts/deliverables/competitive-analysis-report.md',
+    review_rubric: 'orchestrator/report-rubrics/competitive-analysis-report.yaml',
+    evidence_policy: 'competitive-analysis-evidence',
+    report_template: 'competitive-analysis-report',
   };
   const root = registryFixture([customEntry]);
   writeFixtureFile(root, customEntry.synthesis_prompt, 'REGISTRY_SELECTED_SYNTHESIS_PROMPT\n');
@@ -406,14 +432,14 @@ test('CurrentDeliverableService uses the registry-selected schema and synthesis 
     task: { id: evidenceManifest.taskId },
     plan: {
       id: evidenceManifest.planVersionId,
-      plan: { deliverable_type: 'research_plan' },
+      plan: { deliverable_type: customEntry.id },
     },
     attempt: { id: evidenceManifest.attemptId },
     researchGoal: 'Use the selected deliverable contract',
     finalizedRequirement: {
       version: 'research-task-v2',
-      task_type: 'user_research_planning',
-      expected_deliverables: ['research plan'],
+      task_type: 'competitive_research',
+      expected_deliverables: [customEntry.id],
       success_criteria: [{ id: 'SC1', statement: 'covered' }],
     },
     problemGraph: { questions: [{ id: 'Q1', priority: 'required' }] },
@@ -431,11 +457,12 @@ test('CurrentDeliverableService uses the registry-selected schema and synthesis 
     expectedModel: 'pinned-model',
   };
 
-  await service.generate(input);
+  const result = await service.generate(input);
 
   assert.deepEqual(validatedFiles, [join(root, customEntry.payload_schema)]);
   assert.equal(llm.calls.length, 1);
   assert.match(llm.calls[0]?.prompt ?? '', /REGISTRY_SELECTED_SYNTHESIS_PROMPT/u);
+  assert.equal(result.deliverable.deliverableType, customEntry.id);
 });
 
 class NoCallLLM implements LLMClient {
@@ -464,6 +491,7 @@ test('LeaseExecutionEngine accepts a registry-resolved non-research_plan before 
     ...RESEARCH_PLAN_ENTRY,
     id: 'competitive_analysis_report',
     task_types: ['competitive_research'],
+    aliases: ['competitive analysis report'],
   };
   registryFixture([competitiveEntry]);
   const lease: ControlExecutionLease = {
@@ -539,3 +567,539 @@ test('LeaseExecutionEngine accepts a registry-resolved non-research_plan before 
   assert.equal(llm.calls, 0);
   assert.equal(recordedSteps.at(-1)?.stepName, 'evidence manifest');
 });
+
+const NONRESEARCH_ENTRY: DeliverableRegistryEntry = {
+  id: 'competitive_analysis_report',
+  status: 'active',
+  task_types: ['competitive_research'],
+  aliases: ['competitive analysis report'],
+  envelope_version: 'research-deliverable-v1',
+  payload_schema: 'schemas/deliverables/competitive-analysis-report.schema.json',
+  synthesis_prompt: 'orchestrator/prompts/deliverables/competitive-analysis-report.md',
+  review_rubric: 'orchestrator/report-rubrics/competitive-analysis-report.yaml',
+  evidence_policy: 'competitive-analysis-evidence',
+  report_template: 'competitive-analysis-report',
+};
+
+function planningRequirement(deliverableId: string): ResearchTaskV2 {
+  return {
+    version: 'research-task-v2',
+    task_type: 'competitive_research',
+    business_domain: 'product',
+    research_goal: 'compare products',
+    target_audience: ['product team'],
+    scope: ['public evidence'],
+    constraints: [],
+    success_criteria: [{ id: 'SC1', statement: 'conclusions are traceable' }],
+    expected_deliverables: [deliverableId],
+    assumptions: [],
+    ambiguities: [],
+    clarification_questions: [],
+    blocking_issues: [],
+    sensitivity: 'internal',
+    pii_detected: false,
+  };
+}
+
+function planningCompileInput(
+  deliverableSelection: FrozenDeliverableSelection,
+  evidenceRequirements: EvidenceRequirement[] = deliverableSelection.evidenceRequirements,
+): PlanCompileInput {
+  return {
+    candidate: {
+      id: 'depth',
+      title: 'Registry-selected plan',
+      rationale: 'Use the selected report contract',
+      tradeoffs: 'Thorough over fast',
+      assumptions: [],
+      activated_nodes: [],
+      steps: [{
+        step_no: 1,
+        step_name: 'Review evidence',
+        actor_type: 'reviewer',
+        actor_id: 'registry-reviewer',
+        question_ids: ['Q1'],
+        depends_on: [],
+        input: {},
+        input_bindings: [],
+        expected_outputs: [{ pointer: '/review', description: 'review' }],
+        acceptance_criteria: ['evidence is reviewed'],
+        requires_approval: false,
+        fallback_actor_ids: [],
+      }],
+    },
+    task: planningRequirement(deliverableSelection.deliverableId),
+    deliverable_selection: {
+      deliverableId: deliverableSelection.deliverableId,
+      evidenceRequirements: structuredClone(deliverableSelection.evidenceRequirements),
+    },
+    problem_graph: {
+      version: 'problem-graph-v1',
+      questions: [{
+        id: 'Q1',
+        statement: 'What does verified evidence show?',
+        rationale: 'Required for the report',
+        priority: 'required',
+        success_criterion_ids: ['SC1'],
+        evidence_requirements: structuredClone(evidenceRequirements),
+        acceptance_criteria: ['answer is traceable'],
+        depends_on: [],
+      }],
+    },
+    problem_graph_provenance: {
+      receiptId: '11111111-1111-4111-8111-111111111111',
+      modelName: 'fixture-model',
+      modelVersion: 'fixture-v1',
+      promptHash: 'sha256:fixture',
+      traceId: 'trace-fixture',
+    },
+    capability_resolution: { eligible: [], rejected: [] },
+    evidence_requirements: structuredClone(evidenceRequirements),
+    activated_nodes: [],
+  };
+}
+
+test('production planning resolves task type to the Registry Evidence Policy', async () => {
+  registryFixture([NONRESEARCH_ENTRY]);
+  const expectedEvidence: EvidenceRequirement[] = [{
+    id: NONRESEARCH_ENTRY.evidence_policy,
+    acceptedClasses: ['user_input'],
+    minimumCount: 1,
+    required: true,
+  }];
+  let plannedEvidence: EvidenceRequirement[] | undefined;
+  const planning = new ResearchPlanningService({
+    llm: { identity: { requestedModel: 'fixture-model' } },
+  } as never);
+  const compileInput = planningCompileInput({
+    deliverableId: NONRESEARCH_ENTRY.id,
+    evidenceRequirements: expectedEvidence,
+  });
+  Reflect.set(planning, 'routedPlanner', {
+    async planCurrent(_context: unknown, evidenceRequirements: EvidenceRequirement[]) {
+      plannedEvidence = structuredClone(evidenceRequirements);
+      return {
+        activated: [],
+        decisionStates: [],
+        candidates: [compileInput.candidate],
+        guidanceSources: [],
+        planProvenance: compileInput.problem_graph_provenance,
+        problemGraph: compileInput.problem_graph,
+        problemGraphProvenance: compileInput.problem_graph_provenance,
+        capabilityResolution: compileInput.capability_resolution,
+      };
+    },
+  });
+
+  await planning.planCurrentFromRequirement(planningRequirement(NONRESEARCH_ENTRY.id));
+
+  assert.deepEqual(plannedEvidence, expectedEvidence);
+});
+
+test('current execution plan schema accepts the exact active Registry deliverable ID', () => {
+  registryFixture([NONRESEARCH_ENTRY]);
+  const evidenceRequirements: EvidenceRequirement[] = [{
+    id: NONRESEARCH_ENTRY.evidence_policy,
+    acceptedClasses: ['user_input'],
+    minimumCount: 1,
+    required: true,
+  }];
+  const compiled = new PlanCompiler().compile(planningCompileInput({
+    deliverableId: NONRESEARCH_ENTRY.id,
+    evidenceRequirements,
+  }));
+  assert.doesNotThrow(() => new SchemaValidator().validateOrThrow('current-execution-plan', {
+    ...compiled.plan,
+    deliverable_type: NONRESEARCH_ENTRY.id,
+  }));
+});
+
+test('PlanCompiler freezes the Registry-selected deliverable and matching Evidence Policy', () => {
+  registryFixture([NONRESEARCH_ENTRY]);
+  const evidenceRequirements: EvidenceRequirement[] = [{
+    id: NONRESEARCH_ENTRY.evidence_policy,
+    acceptedClasses: ['user_input'],
+    minimumCount: 1,
+    required: true,
+  }];
+  const compiled = new PlanCompiler().compile(planningCompileInput({
+    deliverableId: NONRESEARCH_ENTRY.id,
+    evidenceRequirements,
+  }));
+  assert.equal(compiled.plan.deliverable_type, NONRESEARCH_ENTRY.id);
+  assert.deepEqual(compiled.plan.evidence_requirements, evidenceRequirements);
+});
+
+test('PlanCompiler rejects Evidence Policy requirements that do not match the frozen selection', () => {
+  registryFixture([NONRESEARCH_ENTRY]);
+  const frozenEvidence: EvidenceRequirement[] = [{
+    id: NONRESEARCH_ENTRY.evidence_policy,
+    acceptedClasses: ['user_input'],
+    minimumCount: 1,
+    required: true,
+  }];
+  const mismatched: EvidenceRequirement[] = [{
+    id: 'generic-evidence',
+    acceptedClasses: ['user_input'],
+    minimumCount: 1,
+    required: true,
+  }];
+  assert.throws(
+    () => new PlanCompiler().compile(planningCompileInput(
+      {
+        deliverableId: NONRESEARCH_ENTRY.id,
+        evidenceRequirements: frozenEvidence,
+      },
+      mismatched,
+    )),
+    {
+      message: `Evidence requirements do not match frozen deliverable selection ${NONRESEARCH_ENTRY.id}`,
+    },
+  );
+});
+
+function nonresearchEnvelope(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    version: 'research-deliverable-v1',
+    taskId: 'task-nonresearch',
+    planVersionId: 'plan-nonresearch',
+    attemptId: 'attempt-nonresearch',
+    deliverableType: NONRESEARCH_ENTRY.id,
+    evidenceManifestArtifactId: 'evidence-manifest-nonresearch',
+    methodSummary: 'Compare verified evidence',
+    findingGraph: {
+      findings: [{ id: 'F1', kind: 'fact', evidenceIds: ['E1'], statement: 'Verified fact' }],
+      analyses: [{ id: 'A1', findingIds: ['F1'], statement: 'Analysis' }],
+      subQuestionSummaries: [{ id: 'S1', findingIds: ['F1'], analysisIds: ['A1'], summary: 'Summary' }],
+      overallConclusions: [{ id: 'C1', summaryIds: ['S1'], statement: 'Conclusion' }],
+    },
+    payload: researchPlanPayload(),
+    recommendations: [{ id: 'R1', summaryIds: ['S1'], statement: 'Act' }],
+    coverage: {
+      questionBindings: [{ questionId: 'Q1', summaryIds: ['S1'] }],
+      successCriterionBindings: [{
+        successCriterionId: 'SC1',
+        conclusionIds: ['C1'],
+        recommendationIds: ['R1'],
+      }],
+    },
+    risksAndOpenIssues: [],
+    capabilityProvenance: [],
+    ...overrides,
+  };
+}
+
+function researchPlanPayload(): ResearchPlanPayload {
+  return {
+    title: 'Competitive analysis',
+    researchGoal: 'Compare verified product evidence',
+    scope: { market: 'Test market', subjects: ['Product A'], timeWindow: 'Current' },
+    competitorSampling: {
+      strategy: 'Verified sample',
+      targetCount: 1,
+      inclusionCriteria: ['Evidence available'],
+      exclusionCriteria: ['Evidence unavailable'],
+    },
+    researchQuestions: ['What differs?'],
+    comparisonDimensions: [{
+      id: 'positioning',
+      name: 'Positioning',
+      purpose: 'Compare claims',
+      collectionFields: ['claim'],
+    }],
+    sourcePlan: [{
+      evidenceClass: 'dataset',
+      sourceTypes: ['verified dataset'],
+      purpose: 'Verify claims',
+    }],
+    executionPlan: [{
+      phase: 'Analysis',
+      activities: ['Compare evidence'],
+      duration: 'One day',
+      outputs: ['Analysis report'],
+    }],
+    collectionTemplate: [{ field: 'claim', description: 'Verified claim', evidenceRequired: true }],
+    analysisMethods: ['Comparison'],
+    deliverables: ['Competitive analysis report'],
+    qualityChecks: ['Every fact is traceable'],
+  };
+}
+
+test('ReportEvidenceValidator applies generic envelope invariants to a nonresearch deliverable', () => {
+  registryFixture([NONRESEARCH_ENTRY]);
+  const evidenceManifest: EvidenceManifest = {
+    version: 'evidence-v1',
+    taskId: 'task-nonresearch',
+    planVersionId: 'plan-nonresearch',
+    attemptId: 'attempt-nonresearch',
+    collectedAt: '2026-08-17T00:00:00.000Z',
+    manifestHash: `sha256:${'a'.repeat(64)}`,
+    entries: [],
+  };
+  const validator = new ReportEvidenceValidator(
+    { validateFindingGraph(): void {} } as unknown as EvidenceService,
+  );
+  assert.doesNotThrow(() => validator.validate({
+    manifest: evidenceManifest,
+    report: nonresearchEnvelope(),
+    resolver: { resolveArtifact: () => null },
+    requireCoverage: true,
+  }));
+  assert.throws(
+    () => validator.validate({
+      manifest: evidenceManifest,
+      report: nonresearchEnvelope({ taskId: 'other-task' }),
+      resolver: { resolveArtifact: () => null },
+      requireCoverage: true,
+    }),
+    /taskId.*does not match/iu,
+  );
+});
+
+const REVIEW_DIMENSION_IDS = [
+  'requirement_coverage',
+  'question_coverage',
+  'evidence_coverage',
+  'reasoning_quality',
+  'recommendation_quality',
+  'visual_quality',
+  'risk_disclosure',
+] as const;
+
+function passingReview(deliverableArtifactId: string): ReportReviewArtifact {
+  return {
+    version: 'report-review-v1',
+    taskId: 'task-nonresearch',
+    planVersionId: 'plan-nonresearch',
+    attemptId: 'attempt-nonresearch',
+    deliverableArtifactId,
+    verdict: 'pass',
+    dimensions: REVIEW_DIMENSION_IDS.map((id) => ({ id, passed: true, issues: [] })),
+    revisionRound: 0,
+  };
+}
+
+test('ReportReviewService selects the nonresearch Registry rubric', async () => {
+  const root = registryFixture([NONRESEARCH_ENTRY]);
+  writeFixtureFile(root, NONRESEARCH_ENTRY.review_rubric, stringifyYaml({
+    version: 1,
+    id: 'competitive-analysis-report',
+    marker: 'NONRESEARCH_RUBRIC_SENTINEL',
+    dimensions: REVIEW_DIMENSION_IDS.map((id) => ({ id, required: true })),
+  }));
+  const calls: StructuredLLMCallOptions[] = [];
+  const deliverableArtifactId = 'deliverable-nonresearch';
+  const service = new ReportReviewService({
+    llm: {
+      async generateStructured<T>(options: StructuredLLMCallOptions) {
+        calls.push(options);
+        return {
+          data: passingReview(deliverableArtifactId) as T,
+          promptHash: 'sha256:review',
+          modelName: 'fixture-model',
+          modelVersion: 'fixture-v1',
+          traceId: 'trace-review',
+        };
+      },
+    },
+    artifacts: {
+      async writeJson() { return { id: 'review-nonresearch', state: 'SEALED' }; },
+    },
+  });
+  const activeLease: ControlExecutionLease = {
+    taskId: 'task-nonresearch',
+    planVersionId: 'plan-nonresearch',
+    attemptId: 'attempt-nonresearch',
+    leaseOwner: 'review-worker',
+    leaseToken: 'review-token',
+  };
+  const result = await service.review({
+    task: { id: activeLease.taskId },
+    plan: { id: activeLease.planVersionId },
+    attempt: { id: activeLease.attemptId },
+    deliverableArtifactId,
+    deliverable: nonresearchEnvelope(),
+    successCriterionIds: ['SC1'],
+    questionIds: ['Q1'],
+    evidenceIds: ['E1'],
+    expectedModel: 'fixture-model',
+    activeLease,
+  });
+  assert.equal(result.verdict, 'pass');
+  assert.match(JSON.stringify(calls[0]), /NONRESEARCH_RUBRIC_SENTINEL/u);
+});
+
+function digestJson(value: unknown): { contentSha256: string; byteSize: number } {
+  const bytes = Buffer.from(JSON.stringify(value, null, 2));
+  return {
+    contentSha256: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
+    byteSize: bytes.byteLength,
+  };
+}
+
+function sealedJsonArtifact(
+  id: string,
+  kind: string,
+  schemaVersion: string,
+  value: unknown,
+): ControlArtifact {
+  return {
+    id,
+    taskId: 'task-nonresearch',
+    planVersionId: 'plan-nonresearch',
+    attemptId: 'attempt-nonresearch',
+    kind,
+    state: 'SEALED',
+    storageUri: `/private/${id}`,
+    ...digestJson(value),
+    schemaVersion,
+    sensitivity: 'internal',
+    redactionPolicyVersion: 'v1',
+    failureReason: null,
+    mediaType: null,
+    metadata: null,
+  };
+}
+
+function compositionFixture() {
+  const resolvedEvidence = {
+    artifact: {
+      id: 'evidence-source-nonresearch',
+      contentSha256: `sha256:${'b'.repeat(64)}`,
+    },
+    value: { claim: 'verified' },
+  };
+  const evidenceArtifactResolver = {
+    resolveArtifact: (artifactId: string) => (
+      artifactId === resolvedEvidence.artifact.id ? resolvedEvidence : null
+    ),
+  };
+  const evidenceManifest = new EvidenceService().createManifest({
+    taskId: 'task-nonresearch',
+    planVersionId: 'plan-nonresearch',
+    attemptId: 'attempt-nonresearch',
+    collectedAt: '2026-08-17T00:00:00.000Z',
+    entries: [{
+      id: 'E1',
+      kind: 'knowledge_excerpt',
+      evidenceClass: 'dataset',
+      artifactId: resolvedEvidence.artifact.id,
+      artifactContentSha256: resolvedEvidence.artifact.contentSha256,
+      jsonPointer: '/claim',
+      sensitivity: 'public',
+      redaction: 'none',
+    }],
+  }, evidenceArtifactResolver);
+  const deliverable = nonresearchEnvelope() as never;
+  const review = passingReview('deliverable-nonresearch');
+  return {
+    requiredQuestionIds: ['Q1'],
+    deliverable: {
+      artifact: sealedJsonArtifact(
+        'deliverable-nonresearch',
+        'deliverable',
+        'research-deliverable-v1-review-gated',
+        deliverable,
+      ),
+      value: deliverable,
+    },
+    evidenceManifest: {
+      artifact: sealedJsonArtifact(
+        'evidence-manifest-nonresearch',
+        'evidence_manifest',
+        'evidence-v1',
+        evidenceManifest,
+      ),
+      value: evidenceManifest,
+    },
+    evidenceArtifactResolver,
+    review: {
+      artifact: sealedJsonArtifact('review-nonresearch', 'report_review', 'report-review-v1', review),
+      value: review,
+    },
+    visualAssets: [],
+    charts: [],
+  };
+}
+
+test('Composer validates the nonresearch payload schema and uses its Registry template', () => {
+  const root = registryFixture([NONRESEARCH_ENTRY]);
+  writeFixtureFile(root, `orchestrator/report-templates/${NONRESEARCH_ENTRY.report_template}.yaml`, stringifyYaml({
+    ...REPORT_TEMPLATE,
+    id: NONRESEARCH_ENTRY.report_template,
+    subtitle: 'NONRESEARCH_TEMPLATE_SENTINEL',
+  }));
+  const document = composeReportDocument({
+    templateId: NONRESEARCH_ENTRY.report_template,
+    ...compositionFixture(),
+  } as never);
+  assert.equal(document.subtitle, 'NONRESEARCH_TEMPLATE_SENTINEL');
+});
+
+test('ReportCompositionService selects the nonresearch Registry template', async () => {
+  const root = registryFixture([NONRESEARCH_ENTRY]);
+  writeFixtureFile(root, `orchestrator/report-templates/${NONRESEARCH_ENTRY.report_template}.yaml`, stringifyYaml({
+    ...REPORT_TEMPLATE,
+    id: NONRESEARCH_ENTRY.report_template,
+    subtitle: 'NONRESEARCH_TEMPLATE_SENTINEL',
+  }));
+  const service = new ReportCompositionService({
+    artifacts: {
+      async readVerifiedJson(): Promise<never> { throw new Error('not used'); },
+      async writeJson(input: { value: unknown }) {
+        return sealedJsonArtifact('report-document-nonresearch', 'report_document', 'report-document-v1', input.value);
+      },
+    },
+    visualAssets: {
+      async readVerified(): Promise<never> { throw new Error('no visual assets expected'); },
+    },
+    repository: {
+      async listArtifactsForAttempt(): Promise<[]> { return []; },
+    },
+  } as never);
+  const activeLease: ControlExecutionLease = {
+    taskId: 'task-nonresearch',
+    planVersionId: 'plan-nonresearch',
+    attemptId: 'attempt-nonresearch',
+    leaseOwner: 'composition-worker',
+    leaseToken: 'composition-token',
+  };
+  const result = await service.composeAndStore({
+    taskId: activeLease.taskId,
+    planVersionId: activeLease.planVersionId,
+    attemptId: activeLease.attemptId,
+    ...compositionFixture(),
+    activeLease,
+  } as never);
+  assert.equal(result.document.subtitle, 'NONRESEARCH_TEMPLATE_SENTINEL');
+});
+
+test('resolveExecutionDeliverable fallback accepts the exact active Registry ID', async () => {
+  registryFixture([NONRESEARCH_ENTRY]);
+  const { resolveExecutionDeliverable } = await loadRegistryModule();
+  assert.equal(
+    resolveExecutionDeliverable('unmapped_task', [NONRESEARCH_ENTRY.id], NONRESEARCH_ENTRY.id).id,
+    NONRESEARCH_ENTRY.id,
+  );
+});
+
+test('resolveExecutionDeliverable fallback accepts an explicit Registry alias', async () => {
+  const entry = { ...NONRESEARCH_ENTRY, aliases: ['competition_report'] };
+  registryFixture([entry]);
+  const { resolveExecutionDeliverable } = await loadRegistryModule();
+  assert.equal(
+    resolveExecutionDeliverable('unmapped_task', ['competition_report'], 'competition_report').id,
+    entry.id,
+  );
+});
+
+for (const label of ['竞品分析报告', 'analysis', 'competitive analysis']) {
+  test(`resolveExecutionDeliverable fallback rejects non-explicit label ${label}`, async () => {
+    registryFixture([NONRESEARCH_ENTRY]);
+    const { resolveExecutionDeliverable } = await loadRegistryModule();
+    assert.throws(
+      () => resolveExecutionDeliverable('unmapped_task', [label], NONRESEARCH_ENTRY.id),
+      /incompatible|unsupported|alias|exact/iu,
+    );
+  });
+}

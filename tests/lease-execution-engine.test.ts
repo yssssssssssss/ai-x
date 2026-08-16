@@ -15,7 +15,6 @@ import type {
   ChartSpec,
   CurrentPlanStep,
   ResearchDeliverableEnvelope,
-  ResearchPlanPayload,
 } from '../packages/api-contract/research-deliverable.ts';
 import type {
   CurrentDeliverableGenerateInput,
@@ -123,7 +122,7 @@ interface TestReportCompositionInput {
   requiredQuestionIds: string[];
   deliverable: {
     artifact: ControlArtifact;
-    value: ResearchDeliverableEnvelope<ResearchPlanPayload>;
+    value: ResearchDeliverableEnvelope<Record<string, unknown>>;
   };
   evidenceManifest: { artifact: ControlArtifact; value: EvidenceManifest };
   evidenceArtifactResolver: EvidenceArtifactResolver;
@@ -180,7 +179,7 @@ class RecordingReportReviewFake implements TestReportReview {
 
 function minimalDeliverable(
   input: CurrentDeliverableGenerateInput,
-): ResearchDeliverableEnvelope<ResearchPlanPayload> {
+): ResearchDeliverableEnvelope<Record<string, unknown>> {
   return {
     version: 'research-deliverable-v1',
     taskId: input.task.id,
@@ -201,45 +200,40 @@ function minimalDeliverable(
       overallConclusions: [{ id: 'C1', summaryIds: ['S1'], statement: 'Fixture conclusion' }],
     },
     payload: {
-      title: 'Test research plan',
-      researchGoal: input.researchGoal,
-      scope: {
-        market: 'Test market',
-        subjects: ['Test subject'],
-        timeWindow: 'Current period',
-      },
-      competitorSampling: {
-        strategy: 'Evidence-backed sample',
-        targetCount: 1,
-        inclusionCriteria: ['Public evidence is available'],
-        exclusionCriteria: ['Public evidence is unavailable'],
-      },
-      researchQuestions: ['What differentiates the competitor?'],
-      comparisonDimensions: [{
-        id: 'dimension-1',
-        name: 'Differentiation',
-        purpose: 'Compare offerings',
-        collectionFields: ['Positioning'],
+      competitorSamples: [{
+        id: 'sample-a',
+        name: 'Product A',
+        rationale: 'Primary market comparator',
+        evidenceIds: ['E1'],
       }],
-      sourcePlan: [{
-        evidenceClass: 'public_source',
-        sourceTypes: ['Public web page'],
-        purpose: 'Verify competitor claims',
+      dimensionMatrix: [{
+        dimension: 'onboarding',
+        values: [{ sampleId: 'sample-a', value: 'Guided setup', evidenceIds: ['E1'] }],
       }],
-      executionPlan: [{
-        phase: 'Research',
-        activities: ['Collect public evidence'],
-        duration: 'One day',
-        outputs: ['Research plan'],
+      differences: [{
+        id: 'difference-1',
+        dimension: 'onboarding',
+        statement: 'Product A provides guided setup',
+        evidenceIds: ['E1'],
       }],
-      collectionTemplate: [{
-        field: 'positioning',
-        description: 'Public positioning claim',
-        evidenceRequired: true,
+      impacts: [{
+        differenceId: 'difference-1',
+        audience: 'First-time users',
+        statement: 'Guidance reduces setup uncertainty',
       }],
-      analysisMethods: ['Evidence comparison'],
-      deliverables: ['Research plan'],
-      qualityChecks: ['Every claim traces to sealed evidence'],
+      actionRecommendations: [{
+        id: 'action-1',
+        differenceIds: ['difference-1'],
+        priority: 'P1',
+        statement: 'Prototype a guided setup path',
+      }],
+      screenshotComparisons: [{
+        id: 'screenshot-1',
+        dimension: 'onboarding',
+        sampleIds: ['sample-a'],
+        assetIds: ['asset-screenshot-a'],
+        caption: 'Guided setup entry point',
+      }],
     },
     recommendations: [{ id: 'R1', summaryIds: ['S1'], statement: 'Fixture recommendation' }],
     coverage: {
@@ -738,10 +732,10 @@ async function claimedExecution(
     version: 1,
     plan: {
       task_id: task.id,
-      deliverable_type: 'research_plan',
+      deliverable_type: 'competitive_analysis_report',
       evidence_requirements: [{
-        id: 'one-public-source',
-        acceptedClasses: ['public_source'],
+        id: 'competitive-analysis-report',
+        acceptedClasses: ['public_source', 'screenshot'],
         minimumCount: 1,
         required: true,
       }],
@@ -858,7 +852,7 @@ test('rejects a plan without deliverable type before execution side effects', as
   assert.equal((await repository.listAttempts(lease.taskId))[0]?.state, 'paused');
 });
 
-test('rejects a current research plan without evidence requirements before execution side effects', async () => {
+test('rejects a current competitive report without evidence requirements before execution side effects', async () => {
   const { repository, lease } = await claimedExecution(
     new Date(Date.now() + 60_000),
     [planSteps[0]],
@@ -1015,10 +1009,10 @@ test('executes the current plan with real Tool provenance and complete model rec
     new Date(Date.now() + 60_000),
     planSteps,
     {
-      deliverable_type: 'research_plan',
+      deliverable_type: 'competitive_analysis_report',
       evidence_requirements: [{
-        id: 'one-public-source',
-        acceptedClasses: ['public_source'],
+        id: 'competitive-analysis-report',
+        acceptedClasses: ['public_source', 'screenshot'],
         minimumCount: 1,
         required: true,
       }],
@@ -1035,7 +1029,7 @@ test('executes the current plan with real Tool provenance and complete model rec
   if (!deliverableInput) assert.fail('current deliverable generation input must be recorded');
   assert.deepEqual(deliverableInput.task, { id: lease.taskId });
   assert.equal(deliverableInput.plan.id, lease.planVersionId);
-  assert.equal(deliverableInput.plan.plan.deliverable_type, 'research_plan');
+  assert.equal(deliverableInput.plan.plan.deliverable_type, 'competitive_analysis_report');
   assert.deepEqual(deliverableInput.plan.plan.steps, planSteps);
   assert.deepEqual(deliverableInput.attempt, { id: lease.attemptId });
   assert.equal(deliverableInput.researchGoal, 'compare digital human products');
@@ -1195,7 +1189,7 @@ test('passes finalized success criteria and required ProblemGraph question IDs t
       { id: 'criterion-evidence', statement: 'Every fact is evidence backed' },
       { id: 'criterion-coverage', statement: 'Every required question is answered' },
     ],
-    expected_deliverables: ['research plan'],
+    expected_deliverables: ['competitive analysis report'],
     assumptions: [],
     ambiguities: [],
     clarification_questions: [],
@@ -1270,7 +1264,7 @@ const reviewStructuredTaskFixture = {
   scope: ['public evidence'],
   constraints: [],
   success_criteria: [{ id: 'criterion-review', statement: 'review every evidence-backed conclusion' }],
-  expected_deliverables: ['research plan'],
+  expected_deliverables: ['competitive analysis report'],
   assumptions: [],
   ambiguities: [],
   clarification_questions: [],
@@ -1784,7 +1778,7 @@ test('pauses execution when current deliverable validation fails', async () => {
     new Date(Date.now() + 60_000),
     [planSteps[0]],
     {
-      deliverable_type: 'research_plan',
+      deliverable_type: 'competitive_analysis_report',
       evidence_requirements: [{
         id: 'one-public-source',
         acceptedClasses: ['public_source'],
@@ -1834,7 +1828,7 @@ test('rejects completion when a required evidence minimum is not met', async () 
     new Date(Date.now() + 60_000),
     [planSteps[0]],
     {
-      deliverable_type: 'research_plan',
+      deliverable_type: 'competitive_analysis_report',
       evidence_requirements: [{
         id: 'two-public-sources',
         acceptedClasses: ['public_source'],
@@ -1881,7 +1875,7 @@ test('completes when sealed real Tool evidence meets the required minimum', asyn
     new Date(Date.now() + 60_000),
     [planSteps[0]],
     {
-      deliverable_type: 'research_plan',
+      deliverable_type: 'competitive_analysis_report',
       evidence_requirements: [{
         id: 'one-public-source',
         acceptedClasses: ['public_source'],

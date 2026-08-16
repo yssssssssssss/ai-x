@@ -12,7 +12,7 @@ import type {
   PlanProgress,
 } from '../../../../packages/api-contract/plan.ts';
 import {
-  resolveEvidenceRequirements,
+  resolvePlanningDeliverableSelection,
   type CurrentResearchPlanningResult,
 } from '../planners/research-planning-service.ts';
 import { PlanCompiler } from '../planners/plan-compiler.ts';
@@ -128,18 +128,18 @@ export class ControlPlanningService {
     ) {
       throw new Error('Current planning requires exactly depth and speed candidates');
     }
-    const evidenceRequirements = resolveEvidenceRequirements(
-      planningResult.structuredTask.task_type,
-      'research_plan',
+    const deliverableSelection = resolvePlanningDeliverableSelection(
+      planningResult.structuredTask,
     );
     return planningResult.candidates.map((candidate) => {
       const compiled = this.compiler.compile({
         candidate,
         task: planningResult.structuredTask,
+        deliverable_selection: deliverableSelection,
         problem_graph: planningResult.problemGraph,
         problem_graph_provenance: planningResult.problemGraphProvenance,
         capability_resolution: planningResult.capabilityResolution,
-        evidence_requirements: evidenceRequirements,
+        evidence_requirements: deliverableSelection.evidenceRequirements,
         activated_nodes: planningResult.activatedNodes,
       });
       return {

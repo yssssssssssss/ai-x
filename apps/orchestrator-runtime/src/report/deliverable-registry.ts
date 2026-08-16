@@ -19,6 +19,7 @@ export interface DeliverableRegistryEntry {
   review_rubric: string;
   evidence_policy: string;
   report_template: string;
+  aliases?: string[];
 }
 
 export interface DeliverableRegistryDiagnostic {
@@ -50,6 +51,7 @@ const ENTRY_FIELDS = [
   'review_rubric',
   'evidence_policy',
   'report_template',
+  'aliases',
 ] as const;
 const RESOURCE_PATH_FIELDS = ['payload_schema', 'synthesis_prompt', 'review_rubric'] as const;
 const SAFE_RESOURCE_ID = /^[a-z0-9]+(?:[-_][a-z0-9]+)*$/u;
@@ -159,6 +161,7 @@ function validateEntry(value: unknown, index: number, diagnostics: DeliverableRe
   if (unexpectedField) diagnostics.push(diagnostic(target, `registry entry contains unsupported field "${unexpectedField}"`));
 
   for (const field of ENTRY_FIELDS) {
+    if (field === 'aliases') continue;
     if (value[field] === undefined || value[field] === null || value[field] === '') {
       diagnostics.push(diagnostic(target, `registry entry is missing required field "${field}"`));
     }
@@ -179,6 +182,17 @@ function validateEntry(value: unknown, index: number, diagnostics: DeliverableRe
     diagnostics.push(diagnostic(target, 'task_types must contain safe non-empty strings'));
   } else if (new Set(value.task_types).size !== value.task_types.length) {
     diagnostics.push(diagnostic(target, 'task_types must not contain duplicates'));
+  }
+  if (value.aliases !== undefined) {
+    if (!Array.isArray(value.aliases) || value.aliases.length === 0) {
+      diagnostics.push(diagnostic(target, 'aliases must be a non-empty array'));
+    } else if (value.aliases.some((alias) => (
+      typeof alias !== 'string' || alias.length === 0 || alias !== alias.trim()
+    ))) {
+      diagnostics.push(diagnostic(target, 'aliases must contain trimmed, non-empty strings'));
+    } else if (new Set(value.aliases).size !== value.aliases.length) {
+      diagnostics.push(diagnostic(target, 'aliases must not contain duplicates'));
+    }
   }
 
   for (const field of ['envelope_version', ...RESOURCE_PATH_FIELDS, 'evidence_policy', 'report_template'] as const) {
@@ -202,6 +216,14 @@ function validateEntry(value: unknown, index: number, diagnostics: DeliverableRe
       typeof taskType === 'string' && SAFE_RESOURCE_ID.test(taskType) && taskType === taskType.trim()
     ))
     && new Set(value.task_types).size === value.task_types.length
+    && (value.aliases === undefined || (
+      Array.isArray(value.aliases)
+      && value.aliases.length > 0
+      && value.aliases.every((alias) => (
+        typeof alias === 'string' && alias.length > 0 && alias === alias.trim()
+      ))
+      && new Set(value.aliases).size === value.aliases.length
+    ))
     && typeof value.envelope_version === 'string' && value.envelope_version.trim().length > 0
     && RESOURCE_PATH_FIELDS.every((field) => typeof value[field] === 'string' && value[field].trim().length > 0)
     && typeof value.evidence_policy === 'string' && SAFE_RESOURCE_ID.test(value.evidence_policy)
@@ -218,6 +240,7 @@ function validateEntry(value: unknown, index: number, diagnostics: DeliverableRe
     review_rubric: value.review_rubric as string,
     evidence_policy: value.evidence_policy as string,
     report_template: value.report_template as string,
+    ...(value.aliases === undefined ? {} : { aliases: [...(value.aliases as string[])] }),
   };
 }
 
@@ -230,17 +253,18 @@ function validateActiveResources(entry: DeliverableRegistryEntry, diagnostics: D
       diagnostics.push(diagnostic(target, `evidence_policy resource does not exist: ${EVIDENCE_POLICY_PATH}`));
     } else {
       const policies = loadEvidencePolicy().policies;
-      const matchingPolicies = policies.filter((policy) => (
-        policy.deliverable_type === entry.id && entry.task_types.includes(policy.task_type)
-      ));
-      const selectedPolicy = matchingPolicies.find((policy) => (
-        policy.requirements.some((requirement) => requirement.id === entry.evidence_policy)
-      ));
-      if (!selectedPolicy) {
-        diagnostics.push(diagnostic(
-          target,
-          `evidence_policy "${entry.evidence_policy}" is not defined for active task mapping`,
+      for (const taskType of entry.task_types) {
+        const selectedPolicy = policies.find((policy) => (
+          policy.task_type === taskType
+          && policy.deliverable_type === entry.id
+          && policy.requirements.some((requirement) => requirement.id === entry.evidence_policy)
         ));
+        if (!selectedPolicy) {
+          diagnostics.push(diagnostic(
+            target,
+            `evidence_policy "${entry.evidence_policy}" is not defined for task mapping ${taskType}`,
+          ));
+        }
       }
     }
   } catch (error) {
@@ -262,7 +286,7 @@ function validateActiveResources(entry: DeliverableRegistryEntry, diagnostics: D
   }
 }
 
-export function inspectDeliverableRegistry(): {
+function parseDeliverableRegistry(validateResources: boolean): {
   entries: DeliverableRegistryEntry[];
   diagnostics: DeliverableRegistryDiagnostic[];
 } {
@@ -296,10 +320,22 @@ export function inspectDeliverableRegistry(): {
   });
   const ids = new Set<string>();
   const taskOwners = new Map<string, string>();
+  const activeIdentifierOwners = new Map<string, string>();
   for (const entry of entries) {
     if (ids.has(entry.id)) diagnostics.push(diagnostic(`deliverable:${entry.id}`, `duplicate deliverable id "${entry.id}"`));
     ids.add(entry.id);
     if (entry.status !== 'active') continue;
+    for (const identifier of [entry.id, ...(entry.aliases ?? [])]) {
+      const owner = activeIdentifierOwners.get(identifier);
+      if (owner && owner !== entry.id) {
+        diagnostics.push(diagnostic(
+          `deliverable:${entry.id}`,
+          `active alias "${identifier}" is ambiguous between ${owner} and ${entry.id}`,
+        ));
+      } else {
+        activeIdentifierOwners.set(identifier, entry.id);
+      }
+    }
     for (const taskType of entry.task_types) {
       const owner = taskOwners.get(taskType);
       if (owner) {
@@ -311,26 +347,45 @@ export function inspectDeliverableRegistry(): {
         taskOwners.set(taskType, entry.id);
       }
     }
-    validateActiveResources(entry, diagnostics);
+    if (validateResources) validateActiveResources(entry, diagnostics);
   }
   return { entries, diagnostics };
 }
+export function inspectDeliverableRegistry(): {
+  entries: DeliverableRegistryEntry[];
+  diagnostics: DeliverableRegistryDiagnostic[];
+} {
+  return parseDeliverableRegistry(true);
+}
+
 
 function validatedEntries(): DeliverableRegistryEntry[] {
-  const inspection = inspectDeliverableRegistry();
+  const inspection = parseDeliverableRegistry(false);
   if (inspection.diagnostics.length > 0) {
     throw new Error(`Deliverable Registry v2 invalid: ${inspection.diagnostics.map((item) => `${item.target}: ${item.message}`).join('; ')}`);
   }
   return inspection.entries;
 }
 
-function normalizedExpectedDeliverable(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9]+/gu, ' ').trim();
+function validateSelectedResources(entry: DeliverableRegistryEntry): DeliverableRegistryEntry {
+  const diagnostics: DeliverableRegistryDiagnostic[] = [];
+  validateActiveResources(entry, diagnostics);
+  if (diagnostics.length > 0) {
+    throw new Error(`Deliverable Registry v2 invalid: ${diagnostics.map((item) => `${item.target}: ${item.message}`).join('; ')}`);
+  }
+  return entry;
+}
+
+function cloneEntry(entry: DeliverableRegistryEntry): DeliverableRegistryEntry {
+  const clone = { ...entry, task_types: [...entry.task_types] };
+  if (entry.aliases) clone.aliases = [...entry.aliases];
+  return clone;
 }
 
 function assertExpectedDeliverableCompatibility(
   entry: DeliverableRegistryEntry,
   expectedDeliverables: readonly string[],
+  allowMappedResearchPlanAlias = false,
 ): void {
   if (!Array.isArray(expectedDeliverables) || expectedDeliverables.length === 0) {
     throw new Error(`deliverable ${entry.id} is incompatible with empty expectedDeliverables`);
@@ -338,15 +393,12 @@ function assertExpectedDeliverableCompatibility(
   if (expectedDeliverables.some((value) => typeof value !== 'string' || !value.trim())) {
     throw new Error('expectedDeliverables must contain non-empty strings');
   }
-  const expectedId = normalizedExpectedDeliverable(entry.id);
-  const comparableLabels = expectedDeliverables.map(normalizedExpectedDeliverable).filter(Boolean);
-  const hasLocalizedLabel = expectedDeliverables.some((value) => (
-    normalizedExpectedDeliverable(value) === '' && /[\p{L}\p{N}]/u.test(value)
-  ));
-  if (
-    !hasLocalizedLabel
-    && !comparableLabels.some((label) => label === expectedId || label.includes(expectedId) || expectedId.includes(label))
-  ) {
+  const compatibleIds = new Set([
+    entry.id,
+    ...(entry.aliases ?? []),
+    ...(allowMappedResearchPlanAlias && entry.id === 'research_plan' ? ['research plan'] : []),
+  ]);
+  if (!expectedDeliverables.some((value) => compatibleIds.has(value))) {
     throw new Error(`deliverable ${entry.id} is incompatible with expectedDeliverables`);
   }
 }
@@ -354,7 +406,6 @@ function assertExpectedDeliverableCompatibility(
 function resolveTaskMapping(
   entries: readonly DeliverableRegistryEntry[],
   taskType: string,
-  expectedDeliverables: readonly string[],
 ): DeliverableRegistryEntry {
   const mapped = entries.filter((entry) => entry.task_types.includes(taskType));
   const active = mapped.filter((entry) => entry.status === 'active');
@@ -363,26 +414,23 @@ function resolveTaskMapping(
     throw new Error(`unsupported task type "${taskType}": no active deliverable is mapped`);
   }
   if (active.length > 1) throw new Error(`duplicate active task mapping for "${taskType}"`);
-  const selected = active[0]!;
-  assertExpectedDeliverableCompatibility(selected, expectedDeliverables);
-  return { ...selected, task_types: [...selected.task_types] };
+  return cloneEntry(active[0]!);
 }
 
 function resolveActiveDeliverableId(
   entries: readonly DeliverableRegistryEntry[],
   deliverableId: string,
-  expectedDeliverables?: readonly string[],
 ): DeliverableRegistryEntry {
-  const matching = entries.filter((entry) => entry.id === deliverableId);
+  const matching = entries.filter((entry) => (
+    entry.id === deliverableId || entry.aliases?.includes(deliverableId)
+  ));
   const active = matching.filter((entry) => entry.status === 'active');
   if (active.length === 0) {
     if (matching.length > 0) throw new Error(`deliverable "${deliverableId}" is inactive`);
     throw new Error(`unsupported deliverable "${deliverableId}"`);
   }
-  if (active.length > 1) throw new Error(`duplicate active deliverable id "${deliverableId}"`);
-  const selected = active[0]!;
-  if (expectedDeliverables) assertExpectedDeliverableCompatibility(selected, expectedDeliverables);
-  return { ...selected, task_types: [...selected.task_types] };
+  if (active.length > 1) throw new Error(`ambiguous active deliverable id or alias "${deliverableId}"`);
+  return cloneEntry(active[0]!);
 }
 
 export function resolveDeliverable(
@@ -390,7 +438,9 @@ export function resolveDeliverable(
   expectedDeliverables: readonly string[],
 ): DeliverableRegistryEntry {
   if (typeof taskType !== 'string' || !taskType.trim()) throw new Error('task type must be a non-empty string');
-  return resolveTaskMapping(validatedEntries(), taskType, expectedDeliverables);
+  const selected = validateSelectedResources(resolveTaskMapping(validatedEntries(), taskType));
+  assertExpectedDeliverableCompatibility(selected, expectedDeliverables, true);
+  return selected;
 }
 
 export function resolveExecutionDeliverable(
@@ -400,22 +450,31 @@ export function resolveExecutionDeliverable(
 ): DeliverableRegistryEntry {
   if (typeof taskType !== 'string' || !taskType.trim()) throw new Error('task type must be a non-empty string');
   const entries = validatedEntries();
-  if (entries.some((entry) => entry.task_types.includes(taskType))) {
-    return resolveTaskMapping(entries, taskType, expectedDeliverables);
-  }
-  return resolveActiveDeliverableId(entries, declaredDeliverableId, expectedDeliverables);
+  const mapped = entries.some((entry) => entry.task_types.includes(taskType));
+  const selected = validateSelectedResources(mapped
+    ? resolveTaskMapping(entries, taskType)
+    : resolveActiveDeliverableId(entries, declaredDeliverableId));
+  assertExpectedDeliverableCompatibility(selected, expectedDeliverables, mapped);
+  return selected;
 }
 
-function contractResources(entry: DeliverableRegistryEntry): DeliverableContractResources {
+function contractResources(
+  entry: DeliverableRegistryEntry,
+  selectedTaskType?: string,
+): DeliverableContractResources {
   const payloadSchemaPath = safeResourcePath(entry.payload_schema, 'payload_schema');
   const synthesisPromptPath = safeResourcePath(entry.synthesis_prompt, 'synthesis_prompt');
   const reviewRubricPath = safeResourcePath(entry.review_rubric, 'review_rubric');
-  const evidencePolicy = loadEvidencePolicy().policies.find((policy) => (
+  const matchingPolicies = loadEvidencePolicy().policies.filter((policy) => (
     policy.deliverable_type === entry.id
     && entry.task_types.includes(policy.task_type)
+    && (selectedTaskType === undefined || policy.task_type === selectedTaskType)
     && policy.requirements.some((requirement) => requirement.id === entry.evidence_policy)
   ));
-  if (!evidencePolicy) throw new Error(`evidence_policy "${entry.evidence_policy}" is unavailable for ${entry.id}`);
+  if (matchingPolicies.length !== 1) {
+    throw new Error(`evidence_policy "${entry.evidence_policy}" must resolve exactly once for ${entry.id}`);
+  }
+  const evidencePolicy = matchingPolicies[0]!;
   return {
     entry,
     payloadSchemaPath,
@@ -433,21 +492,18 @@ export function resolveDeliverableContract(
   taskType: string,
   expectedDeliverables: readonly string[],
 ): DeliverableContractResources {
-  return contractResources(resolveDeliverable(taskType, expectedDeliverables));
+  return contractResources(resolveDeliverable(taskType, expectedDeliverables), taskType);
 }
 export function resolveExecutionDeliverableContract(
   taskType: string,
   expectedDeliverables: readonly string[],
   declaredDeliverableId: string,
 ): DeliverableContractResources {
-  return contractResources(resolveExecutionDeliverable(
-    taskType,
-    expectedDeliverables,
-    declaredDeliverableId,
-  ));
+  const entry = resolveExecutionDeliverable(taskType, expectedDeliverables, declaredDeliverableId);
+  return contractResources(entry, entry.task_types.includes(taskType) ? taskType : undefined);
 }
 
-
 export function resolveDeliverableContractById(deliverableId: string): DeliverableContractResources {
-  return contractResources(resolveActiveDeliverableId(validatedEntries(), deliverableId));
+  const entry = resolveActiveDeliverableId(validatedEntries(), deliverableId);
+  return contractResources(validateSelectedResources(entry));
 }

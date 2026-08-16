@@ -88,15 +88,15 @@ function toCurrentExecutionPlan(
 ): Pick<CurrentExecutionPlan, 'task_id' | 'deliverable_type' | 'evidence_requirements'> & { steps: PlanCandidate['steps'] } {
   return {
     task_id: taskId,
-    deliverable_type: 'research_plan',
+    deliverable_type: 'competitive_analysis_report',
     evidence_requirements: evidenceRequirements,
     steps: candidate.steps,
   };
 }
 
 const publicSourcePolicy: EvidenceRequirement[] = [{
-  id: 'public-market-evidence',
-  acceptedClasses: ['public_source'],
+  id: 'competitive-analysis-report',
+  acceptedClasses: ['public_source', 'screenshot'],
   minimumCount: 1,
   required: true,
 }];
@@ -139,7 +139,7 @@ test('plans a competitive query into two candidates with ResearchTask provenance
 
   const evidenceRequirements = planningModule.resolveEvidenceRequirements(
     result.task.task_type,
-    'research_plan',
+    'competitive_analysis_report',
   );
   for (const candidate of result.candidates) {
     const plan = toCurrentExecutionPlan(
@@ -147,7 +147,7 @@ test('plans a competitive query into two candidates with ResearchTask provenance
       candidate,
       evidenceRequirements,
     );
-    assert.equal(plan.deliverable_type, 'research_plan');
+    assert.equal(plan.deliverable_type, 'competitive_analysis_report');
     assert.deepEqual(plan.evidence_requirements, publicSourcePolicy);
     assert.ok(plan.steps.length > 0);
   }

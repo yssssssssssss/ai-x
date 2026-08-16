@@ -1,11 +1,9 @@
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
 import type { ControlArtifact } from '../../../../database/control-plane.ts';
 import type { ReportReviewArtifact } from '../../../../packages/api-contract/control-workflow.ts';
 import type {
   ChartSpec,
   ResearchDeliverableEnvelope,
-  ResearchPlanPayload,
   VisualAssetReference,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import {
@@ -14,10 +12,7 @@ import {
   type EvidenceManifest,
 } from '../evidence/evidence-service.ts';
 import { ReportEvidenceValidator } from '../evidence/report-evidence-validator.ts';
-import {
-  loadReportTemplate,
-  type ReportTemplateSectionId,
-} from '../runtime/config-loader.ts';
+import type { ReportTemplateSectionId } from '../runtime/config-loader.ts';
 import { SchemaValidator } from '../schema/validator.ts';
 import {
   chartTableAlternative,
@@ -29,6 +24,10 @@ import {
   type ChartEvidenceResolver,
 } from './chart-spec-validator.ts';
 import { assertValidReportReviewArtifact } from './report-review-service.ts';
+import {
+  resolveDeliverableContractById,
+  type DeliverableContractResources,
+} from './deliverable-registry.ts';
 import {
   assertVisualAssetManifestSchema,
   type VerifiedVisualAsset,
@@ -136,9 +135,9 @@ export interface VerifiedChart {
 }
 
 export interface ComposeReportDocumentInput {
-  templateId: 'research-plan';
+  templateId?: string;
   requiredQuestionIds: string[];
-  deliverable: ArtifactValue<ResearchDeliverableEnvelope<ResearchPlanPayload>>;
+  deliverable: ArtifactValue<ResearchDeliverableEnvelope<unknown>>;
   evidenceManifest: ArtifactValue<EvidenceManifest>;
   evidenceArtifactResolver: EvidenceArtifactResolver;
   review: ArtifactValue<ReportReviewArtifact>;
@@ -168,12 +167,6 @@ export class ReportDocumentValidationError extends Error {
 
 const EVIDENCE_SERVICE = new EvidenceService();
 const REPORT_EVIDENCE_VALIDATOR: ReportEvidenceValidator = new ReportEvidenceValidator(EVIDENCE_SERVICE);
-const RESEARCH_PLAN_PAYLOAD_SCHEMA = join(
-  process.cwd(),
-  'schemas',
-  'deliverables',
-  'research-plan.schema.json',
-);
 const DOCUMENT_SCHEMA = new SchemaValidator();
 
 function canonical(value: unknown): unknown {
@@ -334,8 +327,21 @@ function chartManifestSpecHash(asset: VerifiedVisualAsset): string {
   return derivation.specHash;
 }
 
-function assertCompositionInput(input: ComposeReportDocumentInput): ArtifactBinding {
+function assertCompositionInput(input: ComposeReportDocumentInput): {
+  binding: ArtifactBinding;
+  contract: DeliverableContractResources;
+} {
   const deliverable = input.deliverable.value;
+  const contract = resolveDeliverableContractById(deliverable.deliverableType);
+  if (deliverable.deliverableType !== contract.entry.id) {
+    fail('Deliverable deliverableType does not match its active Registry contract');
+  }
+  if (deliverable.version !== contract.entry.envelope_version) {
+    fail('Deliverable version does not match its active Registry contract');
+  }
+  if (input.templateId !== undefined && input.templateId !== contract.entry.report_template) {
+    fail(`requested Report Template ${input.templateId} does not match the active Registry contract`);
+  }
   const binding: ArtifactBinding = {
     taskId: deliverable.taskId,
     planVersionId: deliverable.planVersionId,
@@ -346,15 +352,19 @@ function assertCompositionInput(input: ComposeReportDocumentInput): ArtifactBind
     binding,
     'Deliverable',
     'deliverable',
-    ['research-deliverable-v1-review-gated'],
+    [`${contract.entry.envelope_version}-review-gated`],
   );
   assertSealedJsonValue(input.deliverable.artifact, deliverable, 'Deliverable');
   assertValueBinding(deliverable, binding, 'Deliverable');
-  if (deliverable.version !== 'research-deliverable-v1' || deliverable.deliverableType !== 'research_plan') {
-    fail('Deliverable must be a current research_plan');
-  }
-  DOCUMENT_SCHEMA.validateFileOrThrow(RESEARCH_PLAN_PAYLOAD_SCHEMA, deliverable.payload);
-
+  const payloadSchema = Object.fromEntries(
+    Object.entries(contract.payloadSchema)
+      .filter(([key]) => key !== '$schema' && key !== '$id'),
+  );
+  DOCUMENT_SCHEMA.validateSchemaOrThrow(
+    payloadSchema,
+    deliverable.payload,
+    `${contract.entry.id} payload`,
+  );
   assertSealedArtifact(
     input.evidenceManifest.artifact,
     binding,
@@ -481,22 +491,73 @@ function assertCompositionInput(input: ComposeReportDocumentInput): ArtifactBind
       fail(`${label} SVG lineage does not reference a verified sealed Visual Asset`);
     }
   }
-  return binding;
+  return { binding, contract };
 }
 
 function paragraph(id: string, text: string): ReportParagraphBlock {
   return { id, type: 'paragraph', text };
 }
 
-function composeExecutiveSummary(deliverable: ResearchDeliverableEnvelope<ResearchPlanPayload>): string {
+interface ResearchPlanRenderPayload {
+  title: string;
+  researchGoal: string;
+  scope: { market: string; subjects: string[]; timeWindow: string };
+  competitorSampling: { strategy: string; targetCount: number };
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function researchPlanRenderPayload(value: unknown): ResearchPlanRenderPayload | null {
+  const payload = record(value);
+  const scope = record(payload?.scope);
+  const sampling = record(payload?.competitorSampling);
+  if (
+    !payload
+    || typeof payload.title !== 'string'
+    || typeof payload.researchGoal !== 'string'
+    || !scope
+    || typeof scope.market !== 'string'
+    || !Array.isArray(scope.subjects)
+    || !scope.subjects.every((subject) => typeof subject === 'string')
+    || typeof scope.timeWindow !== 'string'
+    || !sampling
+    || typeof sampling.strategy !== 'string'
+    || typeof sampling.targetCount !== 'number'
+  ) return null;
+  return {
+    title: payload.title,
+    researchGoal: payload.researchGoal,
+    scope: {
+      market: scope.market,
+      subjects: scope.subjects,
+      timeWindow: scope.timeWindow,
+    },
+    competitorSampling: {
+      strategy: sampling.strategy,
+      targetCount: sampling.targetCount,
+    },
+  };
+}
+
+function deliverableLabel(deliverableType: string): string {
+  return deliverableType.replace(/[_-]+/gu, ' ').replace(/\b\w/gu, (letter) => letter.toUpperCase());
+}
+
+function reportTitle(deliverable: ResearchDeliverableEnvelope<unknown>): string {
+  const title = record(deliverable.payload)?.title;
+  return typeof title === 'string' && title.trim() ? title : deliverableLabel(deliverable.deliverableType);
+}
+
+function composeExecutiveSummary(deliverable: ResearchDeliverableEnvelope<unknown>): string {
   return deliverable.findingGraph.analyses[0]?.statement
     ?? deliverable.findingGraph.overallConclusions[0]?.statement
     ?? deliverable.methodSummary;
 }
 
-function scopeText(payload: ResearchPlanPayload): string {
-  return `${payload.scope.market}; ${payload.scope.subjects.join(', ')}; ${payload.scope.timeWindow}.`;
-}
 
 function sourceCaption(asset: VerifiedVisualAsset, index: number): string {
   if (asset.manifest.source.kind === 'user_upload') return asset.manifest.source.fileName;
@@ -517,20 +578,33 @@ function composeSectionBlocks(
   executiveSummary: string,
 ): ReportBlock[] {
   const deliverable = input.deliverable.value;
-  const payload = deliverable.payload;
+  const researchPlanPayload = researchPlanRenderPayload(deliverable.payload);
   switch (sectionId) {
     case 'cover':
-      return [paragraph('cover-title', payload.title), paragraph('cover-subtitle', 'Evidence-bound professional research plan.')];
+      return [
+        paragraph('cover-title', reportTitle(deliverable)),
+        paragraph(
+          'cover-subtitle',
+          deliverable.deliverableType === 'research_plan'
+            ? 'Evidence-bound professional research plan.'
+            : `Evidence-bound ${deliverableLabel(deliverable.deliverableType)}.`,
+        ),
+      ];
     case 'executive-summary':
       return [paragraph('executive-summary-text', executiveSummary)];
     case 'background':
-      return [paragraph('background-goal', payload.researchGoal)];
+      return [paragraph('background-goal', researchPlanPayload?.researchGoal ?? deliverable.methodSummary)];
     case 'scope-method':
-      return [
-        paragraph('scope', scopeText(payload)),
-        paragraph('method-summary', deliverable.methodSummary),
-        paragraph('sampling-strategy', payload.competitorSampling.strategy),
-      ];
+      return researchPlanPayload
+        ? [
+            paragraph(
+              'scope',
+              `${researchPlanPayload.scope.market}; ${researchPlanPayload.scope.subjects.join(', ')}; ${researchPlanPayload.scope.timeWindow}.`,
+            ),
+            paragraph('method-summary', deliverable.methodSummary),
+            paragraph('sampling-strategy', researchPlanPayload.competitorSampling.strategy),
+          ]
+        : [paragraph('method-summary', deliverable.methodSummary)];
     case 'key-metrics': {
       const metrics: ReportMetricBlock[] = [];
       for (const chart of input.charts) {
@@ -548,9 +622,10 @@ function composeSectionBlocks(
           }
         }
       }
-      return metrics.length > 0
-        ? metrics
-        : [paragraph('sampling-target', `Target competitor sample: ${payload.competitorSampling.targetCount}.`)];
+      if (metrics.length > 0) return metrics;
+      return researchPlanPayload
+        ? [paragraph('sampling-target', `Target competitor sample: ${researchPlanPayload.competitorSampling.targetCount}.`)]
+        : [];
     }
     case 'findings':
       return deliverable.findingGraph.findings.map((finding, index) => finding.kind === 'fact'
@@ -692,12 +767,12 @@ export function assertValidReportDocument(
 }
 
 export function composeReportDocument(input: ComposeReportDocumentInput): ReportDocument {
-  assertCompositionInput(input);
-  const template = loadReportTemplate(input.templateId);
+  const { contract } = assertCompositionInput(input);
+  const template = contract.reportTemplate;
   const executiveSummary = composeExecutiveSummary(input.deliverable.value);
   const document: ReportDocument = {
     version: 'report-document-v1',
-    title: input.deliverable.value.payload.title,
+    title: reportTitle(input.deliverable.value),
     subtitle: template.subtitle,
     executiveSummary,
     sections: template.sections.map((section): ReportSection => ({

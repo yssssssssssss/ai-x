@@ -14,6 +14,7 @@ import {
   loadEvidencePolicy,
   type EvidencePolicyRequirement,
 } from '../runtime/config-loader.ts';
+import { resolveDeliverable } from '../report/deliverable-registry.ts';
 import { parseDirectInvoke } from '../runtime/direct-invoke.ts';
 import { hashPrompt } from '../runtime/llm-client.ts';
 import { DirectPlanner } from './direct-planner.ts';
@@ -27,7 +28,10 @@ import type {
 import { RoutedPlanner } from './routed-planner.ts';
 import type { CapabilityResolution } from './capability-resolver.ts';
 import type { ProblemGraphProvenance } from './problem-graph-planner.ts';
-import type { CurrentPlanCandidateProposal } from './plan-compiler.ts';
+import type {
+  CurrentPlanCandidateProposal,
+  FrozenDeliverableSelection,
+} from './plan-compiler.ts';
 
 export interface ResearchPlanningInput {
   originalInput: string;
@@ -167,14 +171,14 @@ export class ResearchPlanningService {
       promptHash: hashPrompt(originalInput, requirement, 'research-task-v2'),
       traceId: `trace_requirement_${hashPrompt(originalInput, requirement).slice(-12)}`,
     };
-    const evidenceRequirements = resolveEvidenceRequirements(requirement.task_type, 'research_plan');
+    const deliverableSelection = resolvePlanningDeliverableSelection(requirement);
     const artifacts = await this.routedPlanner.planCurrent({
       task,
       direct,
       requirement,
       taskProvenance,
       emit,
-    }, evidenceRequirements);
+    }, deliverableSelection.evidenceRequirements);
     return {
       task,
       structuredTask: requirement,
@@ -235,4 +239,14 @@ export function resolveEvidenceRequirements(
     minimumCount: requirement.minimum_count,
     required: requirement.required,
   }));
+}
+
+export function resolvePlanningDeliverableSelection(
+  task: Pick<ResearchTaskV2, 'task_type' | 'expected_deliverables'>,
+): FrozenDeliverableSelection {
+  const deliverable = resolveDeliverable(task.task_type, task.expected_deliverables);
+  return {
+    deliverableId: deliverable.id,
+    evidenceRequirements: resolveEvidenceRequirements(task.task_type, deliverable.id),
+  };
 }

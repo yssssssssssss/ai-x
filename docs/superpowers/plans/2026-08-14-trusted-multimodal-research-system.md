@@ -1461,7 +1461,7 @@ Expected: FAIL。
 
 Runtime 解析并验证 v2 Registry；DeliverableService 不再直接引用固定 research-plan schema path；Engine 不再硬编码 `deliverable_type === research_plan`。
 
-Implementation fact (2026-08-17): v2 runtime/linter/service/engine wiring and the sole research-plan mapping/resources are present. Strict public unsupported-task rejection is preserved while execution supports a compatible plan-declared active Registry ID fallback, and `DeliverableType` is Registry-driven. Main observed the final suite at 86 total / 85 pass / 1 existing provider skip / 0 fail, passing `pnpm typecheck`, and `registry-linter: OK`. Step 4 remains unchecked because commit is pending.
+Implementation fact (2026-08-17 review-blocker cutover): Planning and direct RED fixtures pass explicit canonical Registry selections into a global-state-free Compiler; report generation, evidence validation, review, and composition consume selected schema/prompt/rubric/template; aliases are strict exact matches; Engine resolves canonical resources without rebinding legacy plan evidence. Task 21 extends the production Registry from the original `user_research_planning -> research_plan` mapping to all five task types, closing the planning/report pipeline gate without changing this runtime contract. Main observed the final joint eight-file suite at 202 total / 201 pass / 1 existing provider skip / 0 fail; `pnpm typecheck`, `registry-linter`, and `knowledge-linter` passed. Step 4 remains unchecked only because commit is pending; this worker ran no command.
 
 - [ ] **Step 4: 运行测试和提交**
 
@@ -1505,7 +1505,7 @@ git commit -m "feat: resolve current deliverables from registry"
 **Interfaces:**
 - Produces: 五个 task type 的完整 Active mapping。
 
-- [ ] **Step 1: 写契约失败测试**
+- [x] **Step 1: 写契约失败测试**
 
 每种 task type 断言 Registry、Schema、Prompt、Rubric、Template、Evidence Policy 全部存在且能加载。
 
@@ -1515,7 +1515,7 @@ Run: `pnpm exec tsx --test tests/multi-deliverable-contract.test.ts`
 
 Expected: FAIL。
 
-- [ ] **Step 3: 定义报告必需维度**
+- [x] **Step 3: 定义报告必需维度**
 
 - Competitive：样本、维度矩阵、差异、影响、行动建议、截图对比。
 - VOC：数据集、主题、频率、情感、代表原话、严重度、优先级。
@@ -1524,7 +1524,7 @@ Expected: FAIL。
 
 所有 Schema `additionalProperties=false`，关键数组 `minItems=1`。
 
-- [ ] **Step 4: 更新 Registry/Policy**
+- [x] **Step 4: 更新 Registry/Policy**
 
 映射：
 
@@ -1536,7 +1536,9 @@ design_audit → design_audit_report
 a11y_audit → accessibility_audit_report
 ```
 
-- [ ] **Step 5: 运行测试和阶段门禁**
+Implementation and verification fact (2026-08-17): Added all four professional payload Schemas, synthesis Prompts, seven-dimension report-review Rubrics, ordered 13-section Report Templates, unique active Registry mappings with explicit exact aliases, and exact task/deliverable Evidence Policies. The existing `research_plan` mapping and Task 20 selection/resource-validation runtime remain unchanged. Main observed the final Task 20 + Task 21 eight-file suite at 202 total / 201 pass / 1 existing provider skip / 0 fail; `pnpm typecheck`, Registry linter, and Knowledge linter all passed. Review and commit remain pending.
+
+- [x] **Step 5: 运行测试和阶段门禁**
 
 Run:
 

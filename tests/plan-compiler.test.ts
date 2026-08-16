@@ -42,7 +42,7 @@ const task: ResearchTaskV2 = {
     { id: 'criterion-source', statement: '结论均有公开来源' },
     { id: 'criterion-action', statement: '形成可执行建议' },
   ],
-  expected_deliverables: ['研究计划'],
+  expected_deliverables: ['competitive analysis report'],
   assumptions: [],
   ambiguities: [],
   clarification_questions: [],
@@ -502,8 +502,8 @@ function currentPlanningResult(candidate = validCandidate('depth')): CurrentRese
   const problemGraph = graph();
   for (const question of problemGraph.questions) {
     question.evidence_requirements = [{
-      id: 'public-market-evidence',
-      acceptedClasses: ['public_source'],
+      id: 'competitive-analysis-report',
+      acceptedClasses: ['public_source', 'screenshot'],
       minimumCount: 1,
       required: true,
     }];

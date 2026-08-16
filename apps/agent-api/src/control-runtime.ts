@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { pool } from '../../../database/db.ts';
 import { ControlPlaneAuthorizationError, ControlPlaneRepository } from '../../../database/control-plane.ts';
 import { createConversation, getOwnedConversation, listMessages, writeMessage } from '../../../database/repository.ts';
@@ -17,7 +18,7 @@ import {
 } from '../../orchestrator-runtime/src/control/requirement-refinement-service.ts';
 import {
   ResearchPlanningService,
-  resolveEvidenceRequirements,
+  resolvePlanningDeliverableSelection,
   type CurrentResearchPlanningResult,
   type ResearchPlanningInput,
 } from '../../orchestrator-runtime/src/planners/research-planning-service.ts';
@@ -424,6 +425,16 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
         throw new Error(`active plan ${activePlan.id} has malformed pending inputs`);
       }
       const activePlanShape = activePlan.plan as CurrentExecutionPlan;
+      const deliverableSelection = resolvePlanningDeliverableSelection(structuredTask);
+      if (
+        activePlanShape.deliverable_type !== deliverableSelection.deliverableId
+        || !isDeepStrictEqual(
+          activePlanShape.evidence_requirements,
+          deliverableSelection.evidenceRequirements,
+        )
+      ) {
+        throw new Error(`active plan ${activePlan.id} does not match the current Deliverable Registry contract`);
+      }
 
       const planningResult = await planning.plan({
         originalInput: `${researchGoal}\n\nRevision instruction: ${input.instruction}`,
@@ -436,10 +447,11 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       const compiled = new PlanCompiler(validator).compile({
         candidate,
         task: structuredTask,
+        deliverable_selection: deliverableSelection,
         problem_graph: planningResult.problemGraph,
         problem_graph_provenance: planningResult.problemGraphProvenance,
         capability_resolution: planningResult.capabilityResolution,
-        evidence_requirements: activePlanShape.evidence_requirements,
+        evidence_requirements: deliverableSelection.evidenceRequirements,
         activated_nodes: planningResult.activatedNodes,
       });
       return {

@@ -19,6 +19,10 @@ import {
   CurrentReportValidationError,
   validateReportCoverage,
 } from '../evidence/report-evidence-validator.ts';
+import {
+  resolveDeliverableContractById,
+  type DeliverableContractResources,
+} from './deliverable-registry.ts';
 
 
 export interface ReportReviewResult extends ReportReviewArtifact {
@@ -91,6 +95,21 @@ function record(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function activeDeliverableContract(deliverable: unknown): DeliverableContractResources {
+  const value = record(deliverable);
+  if (!value || typeof value.deliverableType !== 'string' || !value.deliverableType) {
+    throw new Error('review deliverable has no Registry deliverableType');
+  }
+  const contract = resolveDeliverableContractById(value.deliverableType);
+  if (value.deliverableType !== contract.entry.id) {
+    throw new Error('review deliverableType does not match its active Registry contract');
+  }
+  if (value.version !== contract.entry.envelope_version) {
+    throw new Error('review deliverable version does not match its active Registry contract');
+  }
+  return contract;
+}
+
 const REPORT_REVIEW_DIMENSION_ID_SET: ReadonlySet<string> = new Set(
   REPORT_REVIEW_DIMENSION_IDS,
 );
@@ -141,7 +160,6 @@ function deterministicDimensions(input: ReportReviewInput, deliverable: unknown)
     issues.reasoning_quality.push('deliverable must be an object');
     return REPORT_REVIEW_DIMENSION_IDS.map((id) => issueDimension(id, issues[id]));
   }
-  if (report.version !== 'research-deliverable-v1') issues.reasoning_quality.push('unsupported deliverable version');
   if (report.taskId !== input.task.id) issues.reasoning_quality.push('deliverable task identity mismatch');
   if (report.planVersionId !== input.plan.id) issues.reasoning_quality.push('deliverable plan identity mismatch');
   if (report.attemptId !== input.attempt.id) issues.reasoning_quality.push('deliverable attempt identity mismatch');
@@ -216,6 +234,7 @@ export class ReportReviewService {
 
   async review(input: ReportReviewInput, composerOverride?: DeliverableComposer): Promise<ReportReviewResult> {
     if (input.activeLease.taskId !== input.task.id || input.activeLease.planVersionId !== input.plan.id || input.activeLease.attemptId !== input.attempt.id) throw new Error('review lease identity does not match input');
+    const contract = activeDeliverableContract(input.deliverable);
     const round = input.revisionRound ?? 0;
     const dimensions = deterministicDimensions(input, input.deliverable);
     if (this.dependencies.evidence?.validate && !deterministicFailure(dimensions)) await this.dependencies.evidence.validate({
@@ -227,7 +246,7 @@ export class ReportReviewService {
       attemptId: input.attempt.id, deliverableArtifactId: input.deliverableArtifactId,
       verdict: 'block', dimensions, revisionRound: round,
     }, 'paused');
-    const artifact = await this.semanticReview(input, dimensions, round);
+    const artifact = await this.semanticReview(input, dimensions, round, contract);
     if (artifact.verdict === 'pass') return this.seal(input, artifact, 'completed');
     const composer = composerOverride ?? this.dependencies.composer;
     if (artifact.verdict === 'block' || round === 1 || !composer) return this.seal(input, artifact, 'paused');
@@ -238,14 +257,21 @@ export class ReportReviewService {
     return this.review({ ...input, deliverable: revised.deliverable, deliverableArtifactId: revised.deliverableArtifactId, revisionRound: 1 }, composerOverride);
   }
 
-  private async semanticReview(input: ReportReviewInput, dimensions: ReportReviewDimension[], revisionRound: 0 | 1): Promise<ReportReviewArtifact> {
+  private async semanticReview(
+    input: ReportReviewInput,
+    dimensions: ReportReviewDimension[],
+    revisionRound: 0 | 1,
+    contract: DeliverableContractResources,
+  ): Promise<ReportReviewArtifact> {
     const generated = await this.dependencies.llm.generateStructured<Partial<ReportReviewArtifact>>({
-      prompt: 'Review the current deliverable. Return only a report-review-v1 artifact.',
+      prompt: 'Review the current deliverable against the selected Registry review rubric. Return only a report-review-v1 artifact.',
       schema: REVIEW_SCHEMA,
       schemaName: 'report-review',
       context: {
         taskId: input.task.id, planVersionId: input.plan.id, attemptId: input.attempt.id,
         deliverable: redactSensitiveValue(input.deliverable), deterministicDimensions: dimensions,
+        deliverableContractId: contract.entry.id,
+        reviewRubric: contract.reviewRubric,
       },
       receipt: { stage: 'deliverable_review', attemptId: input.attempt.id, expectedModel: input.expectedModel },
     });
