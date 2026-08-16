@@ -37,6 +37,8 @@ const reviewArtifactId = 'review-1';
 const reportDocumentArtifactId = 'report-document-1';
 const imageAssetId = 'asset-image-1';
 const imageManifestArtifactId = 'manifest-image-1';
+const annotationAssetId = 'asset-annotation-1';
+const annotationManifestArtifactId = 'manifest-annotation-1';
 const chartAssetId = 'asset-chart-1';
 const chartManifestArtifactId = 'manifest-chart-1';
 const evidenceContentSha256 = `sha256:${'1'.repeat(64)}`;
@@ -226,6 +228,22 @@ function packageReportDocument(): ReportDocument {
   };
 }
 
+function packageImageComparisonDocument(): ReportDocument {
+  const document = packageReportDocument();
+  const section = document.sections[0]!;
+  const chart = section.blocks.find(({ type }) => type === 'chart');
+  assert.ok(chart?.type === 'chart');
+  section.blocks = [{
+    id: 'image-comparison-1',
+    type: 'image-comparison',
+    beforeAssetRef: { assetId: imageAssetId, manifestArtifactId: imageManifestArtifactId },
+    afterAssetRef: { assetId: annotationAssetId, manifestArtifactId: annotationManifestArtifactId },
+    caption: 'Verified original and annotation',
+    altText: 'Verified original compared with its exact annotation.',
+  }, chart];
+  return document;
+}
+
 function packageVisualManifest(
   assetId: string,
   mediaType: VisualAssetManifest['mediaType'],
@@ -287,6 +305,30 @@ function packageVerifiedVisualAsset(
       height: visualManifest.height,
     },
   };
+}
+
+function packageVerifiedAnnotation(
+  original: FixtureVerifiedVisualAsset,
+  lineageOverrides: Partial<NonNullable<VisualAssetManifest['derivedFrom']>> = {},
+): FixtureVerifiedVisualAsset {
+  const annotation = packageVerifiedVisualAsset(
+    annotationAssetId,
+    annotationManifestArtifactId,
+    'image/png',
+  );
+  annotation.manifest.source = { kind: 'derived' };
+  annotation.manifest.derivedFrom = {
+    assetId: original.artifact.id,
+    manifestArtifactId: original.manifestArtifact.id,
+    contentSha256: original.manifest.contentSha256,
+    manifestHash: original.manifest.manifestHash,
+    ...lineageOverrides,
+  };
+  annotation.manifest.derivation = {
+    kind: 'annotation',
+    overlayArtifactId: 'overlay-annotation-1',
+  };
+  return annotation;
 }
 
 class FixtureArtifacts {
@@ -500,6 +542,63 @@ test('revalidates ReportDocument Chart values, chart_svg specHash, and sealed ta
     tableMismatchFixture.reader.read(binding),
     /chart|table|spec|sealed|match/i,
   );
+});
+
+test('rejects image comparisons unless the after Manifest is an exact annotation of the before Asset', async () => {
+  const before = packageVerifiedVisualAsset(imageAssetId, imageManifestArtifactId, 'image/png');
+  const chart = packageVerifiedVisualAsset(chartAssetId, chartManifestArtifactId, 'image/svg+xml');
+  const validAfter = packageVerifiedAnnotation(before);
+  const valid = setup({
+    reportDocument: packageImageComparisonDocument(),
+    visualAssets: [before, validAfter, chart],
+  });
+  const validResult = await valid.reader.read(binding);
+  assert.equal(validResult?.presentationMode, 'multimodal');
+  if (validResult?.presentationMode !== 'multimodal') assert.fail('expected a multimodal package');
+  assert.deepEqual(validResult.visualAssetManifests, [before.manifest, validAfter.manifest, chart.manifest]);
+
+  const unrelatedAfter = packageVerifiedVisualAsset(
+    annotationAssetId,
+    annotationManifestArtifactId,
+    'image/png',
+  );
+  const unrelated = setup({
+    reportDocument: packageImageComparisonDocument(),
+    visualAssets: [before, unrelatedAfter, chart],
+  });
+  await assert.rejects(
+    unrelated.reader.read(binding),
+    /image comparison|annotation|derivedFrom|lineage|before|after/i,
+  );
+
+  const tamperedLineageCases: Array<{
+    name: string;
+    overrides: Partial<NonNullable<VisualAssetManifest['derivedFrom']>>;
+  }> = [{
+    name: 'assetId',
+    overrides: { assetId: 'asset-unrelated-original' },
+  }, {
+    name: 'manifestArtifactId',
+    overrides: { manifestArtifactId: 'manifest-unrelated-original' },
+  }, {
+    name: 'contentSha256',
+    overrides: { contentSha256: `sha256:${'d'.repeat(64)}` },
+  }, {
+    name: 'manifestHash',
+    overrides: { manifestHash: `sha256:${'e'.repeat(64)}` },
+  }];
+  for (const candidate of tamperedLineageCases) {
+    const tamperedAfter = packageVerifiedAnnotation(before, candidate.overrides);
+    const fixture = setup({
+      reportDocument: packageImageComparisonDocument(),
+      visualAssets: [before, tamperedAfter, chart],
+    });
+    await assert.rejects(
+      fixture.reader.read(binding),
+      /image comparison|annotation|derivedFrom|lineage|before|after/i,
+      candidate.name,
+    );
+  }
 });
 
 test('never downgrades a tampered ReportDocument to current_text', async () => {

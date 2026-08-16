@@ -328,6 +328,21 @@ export class CurrentReportPackageReader {
           continue;
         }
         if (block.type === 'image-comparison') {
+          const before = verifiedAssets.get(visualReferenceKey(block.beforeAssetRef));
+          const after = verifiedAssets.get(visualReferenceKey(block.afterAssetRef));
+          const lineage = after?.manifest.derivedFrom;
+          if (
+            !before
+            || !after
+            || after.manifest.derivation?.kind !== 'annotation'
+            || !lineage
+            || lineage.assetId !== before.artifact.id
+            || lineage.manifestArtifactId !== before.manifestArtifact.id
+            || lineage.contentSha256 !== before.manifest.contentSha256
+            || lineage.manifestHash !== before.manifest.manifestHash
+          ) {
+            throw new Error(`image comparison ${block.id} after annotation lineage does not exactly match its before Asset`);
+          }
           visualReferences.set(visualReferenceKey(block.beforeAssetRef), block.beforeAssetRef);
           visualReferences.set(visualReferenceKey(block.afterAssetRef), block.afterAssetRef);
           continue;
