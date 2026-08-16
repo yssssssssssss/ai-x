@@ -114,6 +114,7 @@ interface StepResult {
   artifactValue?: unknown;
   toolReceipt?: ToolInvocationReceipt;
   toolAttemptReceipts?: ToolRetryAttemptReceipt[];
+  toolTier?: 'core' | 'optional';
   toolResolution?: ToolAdapterResolution;
   manifestHash?: string;
   inputSchemaHash?: string;
@@ -581,6 +582,46 @@ function stepContract(step: EngineStep): Record<string, unknown> {
   };
 
 }
+function detailsFrom(error: unknown): Record<string, unknown> {
+  if (error instanceof ToolInvocationError) return error.details;
+  return isRecord(error) && isRecord(error.details) ? error.details : {};
+}
+
+function attemptReceiptsFrom(error: unknown): ToolRetryAttemptReceipt[] | undefined {
+  const details = detailsFrom(error);
+  const retry = isRecord(details.retry) ? details.retry : details;
+  return Array.isArray(retry.attemptReceipts)
+    ? retry.attemptReceipts as ToolRetryAttemptReceipt[]
+    : undefined;
+}
+
+function attachAttemptReceipts(
+  failure: Record<string, unknown>,
+  attemptReceipts: ToolRetryAttemptReceipt[] | undefined,
+): void {
+  if (!attemptReceipts) return;
+  const retry = isRecord(failure.retry) ? failure.retry : {};
+  failure.retry = { ...retry, attemptReceipts };
+}
+function attachActorResult(error: unknown, actorResult: unknown): void {
+  if (!isRecord(error)) return;
+  error.details = {
+    ...(isRecord(error.details) ? error.details : {}),
+    actorResult,
+  };
+}
+
+function leaseLostWithRetry(
+  message: string,
+  retry: { attempts: number; maxAttempts: number; attemptReceipts: ToolRetryAttemptReceipt[] },
+): ControlPlaneConflictError {
+  const error = new ControlPlaneConflictError(message) as ControlPlaneConflictError & {
+    details?: Record<string, unknown>;
+  };
+  error.details = { retry };
+  return error;
+}
+
 function failureFrom(error: unknown): Record<string, unknown> {
   if (error instanceof ToolInvocationError) {
     return {
@@ -588,6 +629,7 @@ function failureFrom(error: unknown): Record<string, unknown> {
       retryable: error.retryable,
       providerStatus: error.providerStatus,
       message: error.sanitizedMessage,
+
       receipt: error.receipt,
       ...error.details,
     };
@@ -604,7 +646,7 @@ function failureFrom(error: unknown): Record<string, unknown> {
     return { kind: 'safety', retryable: false, message: error.message };
   }
   if (error instanceof ControlPlaneConflictError) {
-    return { kind: 'lease_lost', retryable: true, message: error.message };
+    return { kind: 'lease_lost', retryable: true, message: error.message, ...detailsFrom(error) };
   }
   if (error instanceof ExecutionAuthenticityError) {
     return { kind: 'authenticity', retryable: false, message: error.message, ...error.details };
@@ -776,6 +818,8 @@ export class LeaseExecutionEngine {
       });
       let resolvedInput = structuredClone(step.input);
       let producedSkillOutputHash: string | undefined;
+      let toolAttemptReceipts: ToolRetryAttemptReceipt[] | undefined;
+      let actorResult: StepResult | undefined;
       try {
         try {
           resolvedInput = await resolveStepInput(step, outputs, this.dependencies.artifacts);
@@ -788,7 +832,7 @@ export class LeaseExecutionEngine {
           }
           throw error;
         }
-        const actorResult = await this.withLeaseHeartbeat(input.lease, () => this.runStep({
+        actorResult = await this.withLeaseHeartbeat(input.lease, () => this.runStep({
           step,
           lease: input.lease,
           researchGoal,
@@ -798,6 +842,7 @@ export class LeaseExecutionEngine {
         }));
         const actorOutputHash = actorResult.skillProvenance?.outputHash;
         if (typeof actorOutputHash === 'string') producedSkillOutputHash = actorOutputHash;
+        toolAttemptReceipts = actorResult.toolAttemptReceipts;
         const result = sanitizeStepResult(actorResult);
         await this.dependencies.repository.requireActiveLease(input.lease);
         const artifactValue = result.artifactValue ?? result.output;
@@ -865,6 +910,7 @@ export class LeaseExecutionEngine {
                 endpointHost: result.toolReceipt.endpointHost,
                 sourceRefs: result.sourceRefs,
                 attemptReceipts: result.toolAttemptReceipts,
+                toolTier: result.toolTier,
                 outputArtifactId: artifact.id,
                 status: 'succeeded',
               }
@@ -877,19 +923,34 @@ export class LeaseExecutionEngine {
           finishedAt: new Date(),
         });
       } catch (error) {
+        const fencedActorResult = actorResult ?? (
+          isRecord(detailsFrom(error).actorResult)
+            ? detailsFrom(error).actorResult as StepResult
+            : undefined
+        );
+        toolAttemptReceipts = fencedActorResult?.toolAttemptReceipts ?? toolAttemptReceipts;
+        const attemptReceipts = attemptReceiptsFrom(error) ?? toolAttemptReceipts;
         const failure = failureFrom(error);
+        attachAttemptReceipts(failure, attemptReceipts);
         let failedToolProvenance: Record<string, unknown> | undefined;
         let failedSkillProvenance: Record<string, unknown> | undefined;
-        let toolTier: 'core' | 'optional' = 'core';
+        let toolTier: 'core' | 'optional' = 'optional';
         if (step.actor_type === 'tool') {
           try {
-            toolTier = this.dependencies.skillLoader.getTool(step.actor_id)?.tier ?? 'core';
+            toolTier = this.dependencies.skillLoader.getTool(step.actor_id)?.tier ?? 'optional';
           } catch {
-            // Config loss is itself unsafe; default core forbids skip.
+            // Registry default is optional; missing config remains non-blocking for enhanced tools.
           }
           failure.toolTier = toolTier;
-          failedToolProvenance = this.failedToolProvenance(step, researchGoal, resolvedInput, error);
-          failedToolProvenance.toolTier = toolTier;
+          const toolProvenance = await this.failedToolProvenance(
+            step,
+            researchGoal,
+            resolvedInput,
+            error,
+            attemptReceipts,
+          );
+          toolProvenance.toolTier = toolTier;
+          failedToolProvenance = toolProvenance;
           if (toolTier === 'optional' && failure.kind !== 'safety' && failure.kind !== 'lease_lost' && !isIntegrityFailure(error)) {
             failure.allowedActions ??= [];
             await this.dependencies.repository.recordExecutionStep({
@@ -1395,11 +1456,17 @@ export class LeaseExecutionEngine {
         heartbeatFailure ??= error;
       });
     }, Math.max(1, Math.floor(this.dependencies.heartbeatMs / 2)));
+    let operationSucceeded = false;
+    let operationResult: T | undefined;
     try {
-      const result = await operation();
+      operationResult = await operation();
+      operationSucceeded = true;
       if (heartbeatFailure) throw heartbeatFailure;
       await this.dependencies.repository.requireActiveLease(lease);
-      return result;
+      return operationResult as T;
+    } catch (error) {
+      if (operationSucceeded) attachActorResult(error, operationResult);
+      throw error;
     } finally {
       clearInterval(timer);
     }
@@ -1434,14 +1501,16 @@ export class LeaseExecutionEngine {
     }
   }
 
-  private failedToolProvenance(
+  private async failedToolProvenance(
     step: EngineStep,
     researchGoal: string,
     resolvedInput: Record<string, unknown>,
     error: unknown,
-  ): Record<string, unknown> {
+    fallbackAttemptReceipts?: ToolRetryAttemptReceipt[],
+  ): Promise<Record<string, unknown>> {
     const receipt = error instanceof ToolInvocationError ? error.receipt : null;
-    const details = error instanceof ToolInvocationError ? error.details : {};
+    const details = detailsFrom(error);
+    const attemptReceipts = attemptReceiptsFrom(error) ?? fallbackAttemptReceipts;
     const refs = Array.isArray(details.sourceRefs)
       ? details.sourceRefs.filter(isToolSourceRef)
       : [];
@@ -1459,6 +1528,7 @@ export class LeaseExecutionEngine {
       executionMode: receipt?.executionMode ?? 'unknown',
       endpointHost: receipt?.endpointHost ?? null,
       sourceRefs: refs,
+      ...(attemptReceipts ? { attemptReceipts } : {}),
       status: 'failed',
       captureFailure: captureFailure instanceof Error ? captureFailure.message : String(captureFailure),
     });
@@ -1482,6 +1552,7 @@ export class LeaseExecutionEngine {
         executionMode: receipt?.executionMode ?? resolution?.executionMode ?? 'unknown',
         endpointHost: receipt?.endpointHost ?? resolution?.endpointHost ?? null,
         sourceRefs: refs,
+        ...(attemptReceipts ? { attemptReceipts } : {}),
         status: 'failed',
       };
     } catch (captureFailure) {
@@ -1606,7 +1677,11 @@ export class LeaseExecutionEngine {
     });
     if (retryResult.status === 'failed') {
       if (retryResult.failure.kind === 'lease_lost') {
-        throw new ControlPlaneConflictError('execution lease lost during tool retry');
+        throw leaseLostWithRetry('execution lease lost during tool retry', {
+          attempts: retryResult.failure.attempts,
+          maxAttempts: retryResult.failure.maxAttempts,
+          attemptReceipts: retryResult.attemptReceipts,
+        });
       }
       const lastAttempt = retryResult.attemptReceipts[retryResult.attemptReceipts.length - 1];
       throw new ToolInvocationError(step.actor_id, {
@@ -1624,10 +1699,24 @@ export class LeaseExecutionEngine {
         },
       });
     }
+    try {
+      await this.dependencies.repository.requireActiveLease(lease);
+    } catch {
+      throw leaseLostWithRetry('execution lease lost after tool retry', {
+        attempts: retryResult.attemptReceipts.length,
+        maxAttempts: manifest.retry_policy?.max_attempts ?? retryResult.attemptReceipts.length,
+        attemptReceipts: retryResult.attemptReceipts,
+      });
+    }
     const result = {
       output: retryResult.output,
       receipt: retryResult.receipt,
       latencyMs: retryResult.latencyMs ?? retryResult.receipt.latencyMs,
+    };
+    const retryContext = {
+      attempts: retryResult.attemptReceipts.length,
+      maxAttempts: manifest.retry_policy?.max_attempts ?? retryResult.attemptReceipts.length,
+      attemptReceipts: retryResult.attemptReceipts,
     };
     try {
       this.dependencies.validator.validateFileOrThrow(join(getConfigRoot(), manifest.output_schema), result.output);
@@ -1641,6 +1730,7 @@ export class LeaseExecutionEngine {
         details: {
           outputHash: hashJson(result.output),
           sourceRefs: sourceRefs(result.output),
+          retry: retryContext,
         },
       });
     }
@@ -1658,6 +1748,7 @@ export class LeaseExecutionEngine {
         details: {
           outputHash: hashJson(result.output),
           sourceRefs: sourceRefs(result.output),
+          retry: retryContext,
         },
       });
     }
@@ -1678,6 +1769,7 @@ export class LeaseExecutionEngine {
       kind: 'tool_output',
       toolReceipt: result.receipt,
       toolAttemptReceipts: retryResult.attemptReceipts,
+      toolTier: tool.tier ?? 'optional',
       toolResolution: resolution,
       manifestHash: hashFile(tool.path),
       inputSchemaHash: hashFile(manifest.input_schema),

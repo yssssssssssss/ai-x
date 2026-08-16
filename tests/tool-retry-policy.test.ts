@@ -252,6 +252,9 @@ test('stops before the next provider call when the lease is lost during backoff 
   assert.equal(result.failure?.kind, 'lease_lost');
   assert.equal(result.failure?.attempts, 1);
   assert.equal(calls, 1);
+  assert.equal(result.attemptReceipts.length, 1);
+  assert.equal(result.attemptReceipts[0]?.status, 'failed');
+  assert.equal(result.attemptReceipts[0]?.failure?.kind, 'network');
 });
 
 test('returns a structured final failure after retry exhaustion', async () => {

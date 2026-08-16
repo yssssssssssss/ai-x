@@ -432,6 +432,40 @@ class InvalidSchemaRealAdapter implements ToolAdapter {
   }
 }
 
+class TransientThenInvalidSchemaAdapter implements ToolAdapter {
+  readonly adapterType = 'tavily' as const;
+  readonly implementationId = 'test-transient-then-schema-v1';
+  readonly executionMode = 'real' as const;
+  calls = 0;
+
+  endpointHost(): string {
+    return 'api.tavily.test';
+  }
+
+  async invoke(options: { toolId: string; manifest: ToolManifest }): Promise<ToolInvokeResult> {
+    this.calls += 1;
+    const attemptReceipt = {
+      declaredAdapterType: options.manifest.adapter_type,
+      resolvedAdapterType: this.adapterType,
+      implementationId: this.implementationId,
+      executionMode: this.executionMode,
+      endpointHost: this.endpointHost(),
+      status: this.calls === 1 ? 'failed' as const : 'ok' as const,
+      latencyMs: this.calls,
+    };
+    if (this.calls === 1) {
+      throw new ToolInvocationError(options.toolId, {
+        kind: 'network',
+        retryable: true,
+        providerStatus: null,
+        sanitizedMessage: 'transient dependency outage',
+        receipt: attemptReceipt,
+      });
+    }
+    return { output: { results: 'invalid' }, latencyMs: this.calls, receipt: attemptReceipt };
+  }
+}
+
 class SensitiveBusinessRealAdapter extends CountingRealTavilyAdapter {
   override async invoke(options: { toolId: string; input: object; manifest: ToolManifest }): Promise<ToolInvokeResult> {
     const result = await super.invoke(options);
@@ -1199,8 +1233,13 @@ test('executes the current plan with real Tool provenance and complete model rec
     const evidenceEntry = evidence.entries[0];
     assertUnknownRecord(evidenceEntry);
     const toolProvenance = steps[0]?.toolProvenance ?? {};
+    assert.equal(toolProvenance.toolTier, 'core');
+    assert.ok(Array.isArray(toolProvenance.attemptReceipts));
+    assert.equal(toolProvenance.attemptReceipts.length, 1);
+    assert.equal(toolProvenance.attemptReceipts[0]?.status, 'succeeded');
     const toolProof = evidenceEntry.toolProof;
     assertUnknownRecord(toolProof);
+    assert.equal(evidenceEntry.toolTier, 'core');
     assert.equal(toolProvenance.outputArtifactId, toolArtifactId);
     assert.equal(evidenceEntry.artifactId, toolProvenance.outputArtifactId);
     assert.equal(evidenceEntry.artifactContentSha256, toolArtifactContentSha256);
@@ -2544,6 +2583,7 @@ test('provenance capture failure cannot mask the Tool failure or leave execution
   const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), [planSteps[0]]);
   const originalRoot = getConfigRoot();
   const missingRoot = mkdtempSync(join(tmpdir(), 'missing-config-root-'));
+
   const adapter = new ConfigBreakingAdapter(() => setConfigRoot(missingRoot));
   try {
     const result = await buildEngine(
@@ -2558,6 +2598,36 @@ test('provenance capture failure cannot mask the Tool failure or leave execution
     setConfigRoot(originalRoot);
     rmSync(missingRoot, { recursive: true, force: true });
   }
+});
+test('preserves all Tool attempt receipts when a transient failure is followed by schema-invalid output', async () => {
+  const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), [planSteps[0]]);
+  const adapter = new TransientThenInvalidSchemaAdapter();
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(adapter),
+    new CountingRealLLM(),
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'paused');
+  assert.equal(result.failure?.kind, 'schema');
+  assert.equal(adapter.calls, 2);
+  const step = (await repository.listExecutionSteps(lease.attemptId))[0];
+  assert.ok(step);
+  assertUnknownRecord(step.failure);
+  assertUnknownRecord(step.failure.retry);
+  const terminalReceipts = step.failure.retry.attemptReceipts;
+  assert.ok(Array.isArray(terminalReceipts));
+  assert.equal(terminalReceipts.length, 2);
+  assert.equal(terminalReceipts[0]?.status, 'failed');
+  assert.equal(terminalReceipts[0]?.failure?.kind, 'network');
+  assert.equal(terminalReceipts[1]?.status, 'succeeded');
+  assertUnknownRecord(step.toolProvenance);
+  const provenanceReceipts = step.toolProvenance.attemptReceipts;
+  assert.ok(Array.isArray(provenanceReceipts));
+  assert.equal(provenanceReceipts.length, 2);
+  assert.equal(provenanceReceipts[0]?.status, 'failed');
+  assert.equal(provenanceReceipts[0]?.failure?.kind, 'network');
+  assert.equal(provenanceReceipts[1]?.status, 'succeeded');
 });
 test('persists the real Tool receipt when output schema validation fails', async () => {
   const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), [planSteps[0]]);
