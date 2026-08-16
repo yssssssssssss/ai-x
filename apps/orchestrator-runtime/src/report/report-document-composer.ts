@@ -1,16 +1,19 @@
 import { createHash } from 'node:crypto';
+import { join } from 'node:path';
 import type { ControlArtifact } from '../../../../database/control-plane.ts';
-import {
-  REPORT_REVIEW_DIMENSION_IDS,
-  type ReportReviewArtifact,
-} from '../../../../packages/api-contract/control-workflow.ts';
+import type { ReportReviewArtifact } from '../../../../packages/api-contract/control-workflow.ts';
 import type {
   ChartSpec,
   ResearchDeliverableEnvelope,
   ResearchPlanPayload,
   VisualAssetReference,
 } from '../../../../packages/api-contract/research-deliverable.ts';
-import type { EvidenceManifest } from '../evidence/evidence-service.ts';
+import {
+  EvidenceService,
+  type EvidenceArtifactResolver,
+  type EvidenceManifest,
+} from '../evidence/evidence-service.ts';
+import { ReportEvidenceValidator } from '../evidence/report-evidence-validator.ts';
 import {
   loadReportTemplate,
   type ReportTemplateSectionId,
@@ -25,6 +28,7 @@ import {
   validateChartSpec,
   type ChartEvidenceResolver,
 } from './chart-spec-validator.ts';
+import { assertValidReportReviewArtifact } from './report-review-service.ts';
 import {
   assertVisualAssetManifestSchema,
   type VerifiedVisualAsset,
@@ -34,6 +38,10 @@ export type ReportAssetReference = VisualAssetReference;
 
 export interface ReportChartReference extends ReportAssetReference {
   chartId: string;
+}
+
+export interface ReportVerifiedChartReference extends ReportChartReference {
+  specHash: string;
 }
 
 export interface ReportParagraphBlock {
@@ -133,6 +141,7 @@ export interface ComposeReportDocumentInput {
   deliverable: ArtifactValue<ResearchDeliverableEnvelope<ResearchPlanPayload>>;
   evidenceManifest: ArtifactValue<EvidenceManifest>;
   evidenceResolver: ChartEvidenceResolver;
+  evidenceArtifactResolver: EvidenceArtifactResolver;
   review: ArtifactValue<ReportReviewArtifact>;
   visualAssets: VerifiedVisualAsset[];
   charts: VerifiedChart[];
@@ -142,7 +151,7 @@ export interface ReportDocumentReferenceContext {
   requiredQuestionIds: string[];
   evidenceIds: string[];
   visualAssets: ReportAssetReference[];
-  charts: ReportChartReference[];
+  charts: ReportVerifiedChartReference[];
 }
 
 interface ArtifactBinding {
@@ -158,6 +167,14 @@ export class ReportDocumentValidationError extends Error {
   }
 }
 
+const EVIDENCE_SERVICE = new EvidenceService();
+const REPORT_EVIDENCE_VALIDATOR: ReportEvidenceValidator = new ReportEvidenceValidator(EVIDENCE_SERVICE);
+const RESEARCH_PLAN_PAYLOAD_SCHEMA = join(
+  process.cwd(),
+  'schemas',
+  'deliverables',
+  'research-plan.schema.json',
+);
 const DOCUMENT_SCHEMA = new SchemaValidator();
 
 function canonical(value: unknown): unknown {
@@ -302,14 +319,20 @@ function assetReferenceKey(reference: ReportAssetReference): string {
   return `${reference.assetId}\u0000${reference.manifestArtifactId}`;
 }
 
-function chartReferenceKey(reference: ReportChartReference): string {
-  return `${reference.chartId}\u0000${assetReferenceKey(reference)}`;
+function chartReferenceKey(reference: ReportVerifiedChartReference): string {
+  return `${reference.chartId}\u0000${assetReferenceKey(reference)}\u0000${reference.specHash}`;
 }
 
 function assertChartTable(spec: ChartSpec, table: ChartTableAlternative, label: string): void {
   if (canonicalHash(table) !== canonicalHash(chartTableAlternative(spec))) {
     fail(`${label} table alternative does not match the validated Chart Spec`);
   }
+}
+
+function chartManifestSpecHash(asset: VerifiedVisualAsset): string {
+  const derivation = asset.manifest.derivation;
+  if (derivation?.kind !== 'chart_svg') fail(`Chart Asset ${asset.artifact.id} has no verified specHash lineage`);
+  return derivation.specHash;
 }
 
 function assertCompositionInput(input: ComposeReportDocumentInput): ArtifactBinding {
@@ -331,6 +354,7 @@ function assertCompositionInput(input: ComposeReportDocumentInput): ArtifactBind
   if (deliverable.version !== 'research-deliverable-v1' || deliverable.deliverableType !== 'research_plan') {
     fail('Deliverable must be a current research_plan');
   }
+  DOCUMENT_SCHEMA.validateFileOrThrow(RESEARCH_PLAN_PAYLOAD_SCHEMA, deliverable.payload);
 
   assertSealedArtifact(
     input.evidenceManifest.artifact,
@@ -344,17 +368,21 @@ function assertCompositionInput(input: ComposeReportDocumentInput): ArtifactBind
   if (input.evidenceManifest.value.version !== 'evidence-v1') {
     fail('Evidence Manifest value version must be evidence-v1');
   }
-  const { manifestHash: evidenceManifestHash, ...evidenceManifestDraft } = input.evidenceManifest.value;
-  if (evidenceManifestHash !== canonicalHash(evidenceManifestDraft)) {
-    fail('Evidence Manifest hash integrity check failed');
-  }
+  EVIDENCE_SERVICE.validateManifest(input.evidenceManifest.value, input.evidenceArtifactResolver);
   if (deliverable.evidenceManifestArtifactId !== input.evidenceManifest.artifact.id) {
     fail(`Deliverable is bound to Evidence Manifest ${deliverable.evidenceManifestArtifactId}, not ${input.evidenceManifest.artifact.id}`);
   }
+  REPORT_EVIDENCE_VALIDATOR.validate({
+    manifest: input.evidenceManifest.value,
+    report: deliverable,
+    resolver: input.evidenceArtifactResolver,
+    requireCoverage: true,
+  });
 
   assertSealedArtifact(input.review.artifact, binding, 'Review', 'report_review', ['report-review-v1']);
   assertSealedJsonValue(input.review.artifact, input.review.value, 'Review');
   assertValueBinding(input.review.value, binding, 'Review');
+  assertValidReportReviewArtifact(input.review.value, DOCUMENT_SCHEMA);
   if (input.review.value.version !== 'report-review-v1') fail('Review value version must be report-review-v1');
   if (input.review.value.verdict !== 'pass') {
     fail(`Review verdict must be pass, received ${input.review.value.verdict}`);
@@ -362,12 +390,6 @@ function assertCompositionInput(input: ComposeReportDocumentInput): ArtifactBind
   if (input.review.value.deliverableArtifactId !== input.deliverable.artifact.id) {
     fail(`Review Deliverable binding ${input.review.value.deliverableArtifactId} does not match ${input.deliverable.artifact.id}`);
   }
-  const reviewDimensions = new Map(input.review.value.dimensions.map((dimension) => [dimension.id, dimension]));
-  for (const id of REPORT_REVIEW_DIMENSION_IDS) {
-    const dimension = reviewDimensions.get(id);
-    if (!dimension?.passed || dimension.issues.length > 0) fail(`Review dimension ${id} did not pass cleanly`);
-  }
-  if (reviewDimensions.size !== REPORT_REVIEW_DIMENSION_IDS.length) fail('Review dimensions are incomplete or duplicated');
 
   assertUnique(input.requiredQuestionIds, 'required question id');
   const coveredQuestionIds = new Set(deliverable.coverage.questionBindings.map(({ questionId }) => questionId));
@@ -596,8 +618,8 @@ export function assertValidReportDocument(
           fail(`image comparison block ${block.id} references a dangling or missing Asset`);
         }
       } else if (block.type === 'chart') {
-        if (!chartReferences.has(chartReferenceKey(block.chartRef))) {
-          fail(`chart block ${block.id} references a dangling or missing Chart`);
+        if (!chartReferences.has(chartReferenceKey({ ...block.chartRef, specHash: block.specHash }))) {
+          fail(`chart block ${block.id} reference or specHash does not match its verified Chart Manifest digest`);
         }
         if (block.specHash !== chartSpecHash(block.spec)) {
           fail(`chart block ${block.id} spec digest does not match its Chart Spec`);
@@ -637,7 +659,11 @@ export function composeReportDocument(input: ComposeReportDocumentInput): Report
     requiredQuestionIds: input.requiredQuestionIds,
     evidenceIds: input.evidenceManifest.value.entries.map(({ id }) => id),
     visualAssets: input.visualAssets.map(assetReference),
-    charts: input.charts.map(({ spec, asset }) => ({ chartId: spec.chartId, ...assetReference(asset) })),
+    charts: input.charts.map(({ spec, asset }) => ({
+      chartId: spec.chartId,
+      ...assetReference(asset),
+      specHash: chartManifestSpecHash(asset),
+    })),
   });
   return document;
 }

@@ -14,16 +14,21 @@ import type {
 } from '../packages/api-contract/research-deliverable.ts';
 import {
   EvidenceService,
+  type EvidenceArtifactResolver,
   type EvidenceManifest,
   type ResolvedEvidenceArtifact,
 } from '../apps/orchestrator-runtime/src/evidence/evidence-service.ts';
+import { ReportEvidenceValidator } from '../apps/orchestrator-runtime/src/evidence/report-evidence-validator.ts';
 import {
   assertValidReportDocument,
   composeReportDocument,
+  type ReportChartReference,
   type ReportDocument,
+  type ReportDocumentReferenceContext,
 } from '../apps/orchestrator-runtime/src/report/report-document-composer.ts';
 import type { VerifiedVisualAsset } from '../apps/orchestrator-runtime/src/report/visual-asset-service.ts';
 import type { ChartTableAlternative } from '../apps/orchestrator-runtime/src/report/chart-renderer.ts';
+import { assertValidReportReviewArtifact } from '../apps/orchestrator-runtime/src/report/report-review-service.ts';
 import {
   SchemaValidationError,
   SchemaValidator,
@@ -49,6 +54,13 @@ const PNG = Buffer.from(
 const CHART_SVG = Buffer.from(
   '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450" viewBox="0 0 800 450"></svg>',
 );
+const resolvedEvidenceArtifact: ResolvedEvidenceArtifact = {
+  artifact: { id: evidenceArtifactId, contentSha256: sha('e') },
+  value: { metrics: { competitorScore: 87 } },
+};
+const evidenceArtifactResolver: EvidenceArtifactResolver = {
+  resolveArtifact: (artifactId) => artifactId === evidenceArtifactId ? resolvedEvidenceArtifact : null,
+};
 const REQUIRED_SECTION_IDS = [
   'cover',
   'executive-summary',
@@ -227,10 +239,6 @@ function deliverable(): ResearchDeliverableEnvelope<ResearchPlanPayload> {
 }
 
 function evidenceManifest(): EvidenceManifest {
-  const resolved: ResolvedEvidenceArtifact = {
-    artifact: { id: evidenceArtifactId, contentSha256: sha('e') },
-    value: { metrics: { competitorScore: 87 } },
-  };
   return new EvidenceService().createManifest({
     ...binding,
     collectedAt: '2026-08-16T00:00:00.000Z',
@@ -244,9 +252,7 @@ function evidenceManifest(): EvidenceManifest {
       sensitivity: 'internal',
       redaction: 'none',
     }],
-  }, {
-    resolveArtifact: (artifactId) => artifactId === evidenceArtifactId ? resolved : null,
-  });
+  }, evidenceArtifactResolver);
 }
 
 function review(overrides: Partial<ReportReviewArtifact> = {}): ReportReviewArtifact {
@@ -435,6 +441,7 @@ function composeInput() {
       value: evidenceManifestValue,
     },
     evidenceResolver: (evidenceId: string): unknown | undefined => evidenceId === 'evidence-1' ? 87 : undefined,
+    evidenceArtifactResolver,
     review: {
       artifact: sealedJsonArtifact(
         reviewArtifactId,
@@ -472,15 +479,24 @@ function resealChartForCurrentSpec(chart: VerifiedChartFixture): void {
   );
 }
 
-function referenceContext() {
+function referenceContext(): Omit<ReportDocumentReferenceContext, 'charts'> & {
+  charts: Array<ReportChartReference & { specHash: string }>;
+} {
+  const sealedChart = verifiedChart();
+  const derivation = sealedChart.asset.manifest.derivation as unknown as {
+    kind: 'chart_svg';
+    chartId: string;
+    specHash: string;
+  };
   return {
     requiredQuestionIds: ['question-1'],
     evidenceIds: ['evidence-1'],
     visualAssets: [{ assetId: imageAssetId, manifestArtifactId: imageManifestArtifactId }],
     charts: [{
-      chartId: 'chart-1',
+      chartId: derivation.chartId,
       assetId: chartAssetId,
       manifestArtifactId: chartManifestArtifactId,
+      specHash: derivation.specHash,
     }],
   };
 }
@@ -854,4 +870,163 @@ test('ReportDocument chart block carries the validated ChartSpec digest and tabu
   assert.deepEqual(block.table.rows[0]?.cells, [87]);
   assert.deepEqual(block.table.rows[0]?.evidenceIds, [['evidence-1']]);
   assert.doesNotThrow(() => schemaValidator.validateOrThrow('report-document', document));
+});
+
+test('ReportDocument validation binds inline Chart data to the verified chart_svg Manifest specHash', () => {
+  const document = reportDocument();
+  const chart = document.sections
+    .flatMap(({ blocks }) => blocks)
+    .find(({ type }) => type === 'chart');
+  assert.ok(chart && chart.type === 'chart');
+
+  const changedSpec = structuredClone(chart.spec);
+  changedSpec.title = 'Changed inline ChartSpec with the same chart id';
+  chart.spec = changedSpec;
+  chart.specHash = canonicalHash(changedSpec);
+  chart.table = chartTable(changedSpec);
+
+  const references = referenceContext();
+  assert.notEqual(chart.specHash, references.charts[0]!.specHash);
+  assert.throws(
+    () => assertValidReportDocument(document, references),
+    /chart.*(reference|manifest|lineage|spec).*digest|specHash/i,
+  );
+});
+
+test('composer reuses EvidenceService.validateManifest for invalid JSON pointers and Artifact hashes', () => {
+  const evidence = new EvidenceService();
+  const invalidPointer = composeInput();
+  invalidPointer.visualAssets = [];
+  invalidPointer.charts = [];
+  invalidPointer.evidenceManifest.value.entries[0]!.jsonPointer = 'metrics/competitorScore';
+  const { manifestHash: _pointerHash, ...pointerDraft } = invalidPointer.evidenceManifest.value;
+  invalidPointer.evidenceManifest.value.manifestHash = canonicalHash(pointerDraft);
+  invalidPointer.evidenceManifest.artifact = sealedJsonArtifact(
+    evidenceManifestArtifactId,
+    'evidence_manifest',
+    'evidence-v1',
+    invalidPointer.evidenceManifest.value,
+  );
+  assert.throws(
+    () => evidence.validateManifest(invalidPointer.evidenceManifest.value, evidenceArtifactResolver),
+    /JSON pointer|pointer/i,
+  );
+  assert.throws(
+    () => composeReportDocument(invalidPointer),
+    /JSON pointer|pointer|Evidence Manifest/i,
+  );
+
+  const wrongArtifactHash = composeInput();
+  wrongArtifactHash.visualAssets = [];
+  wrongArtifactHash.charts = [];
+  wrongArtifactHash.evidenceManifest.value.entries[0]!.artifactContentSha256 = sha('f');
+  const { manifestHash: _artifactHash, ...artifactDraft } = wrongArtifactHash.evidenceManifest.value;
+  wrongArtifactHash.evidenceManifest.value.manifestHash = canonicalHash(artifactDraft);
+  wrongArtifactHash.evidenceManifest.artifact = sealedJsonArtifact(
+    evidenceManifestArtifactId,
+    'evidence_manifest',
+    'evidence-v1',
+    wrongArtifactHash.evidenceManifest.value,
+  );
+  assert.throws(
+    () => evidence.validateManifest(wrongArtifactHash.evidenceManifest.value, evidenceArtifactResolver),
+    /Artifact content hash.*match/i,
+  );
+  assert.throws(
+    () => composeReportDocument(wrongArtifactHash),
+    /Artifact content hash.*match|Evidence Manifest/i,
+  );
+});
+
+test('composer reuses assertValidReportReviewArtifact for schema-invalid pass dimensions', () => {
+  const input = composeInput();
+  input.visualAssets = [];
+  input.charts = [];
+  (input.review.value.dimensions[0] as unknown as Record<string, unknown>).passed = 'yes';
+  input.review.artifact = sealedJsonArtifact(
+    reviewArtifactId,
+    'report_review',
+    'report-review-v1',
+    input.review.value,
+  );
+
+  assert.throws(() => assertValidReportReviewArtifact(input.review.value), SchemaValidationError);
+  assert.throws(
+    () => composeReportDocument(input),
+    /Review.*(schema|dimension|passed|boolean)|schema.*Review/i,
+  );
+});
+
+test('composer reuses Deliverable envelope, payload, and report validators after sealed JSON verification', () => {
+  const reportValidator = new ReportEvidenceValidator(new EvidenceService());
+
+  const invalidEnvelope = composeInput();
+  invalidEnvelope.visualAssets = [];
+  invalidEnvelope.charts = [];
+  invalidEnvelope.deliverable.value.capabilityProvenance = [{ id: 'missing-type' }] as never;
+  invalidEnvelope.deliverable.artifact = sealedJsonArtifact(
+    deliverableArtifactId,
+    'deliverable',
+    'research-deliverable-v1-review-gated',
+    invalidEnvelope.deliverable.value,
+  );
+  assert.throws(
+    () => reportValidator.validate({
+      manifest: invalidEnvelope.evidenceManifest.value,
+      report: invalidEnvelope.deliverable.value,
+      resolver: evidenceArtifactResolver,
+      requireCoverage: true,
+    }),
+    /report shape|provenance/i,
+  );
+  assert.throws(
+    () => composeReportDocument(invalidEnvelope),
+    /Deliverable.*(shape|schema|provenance)|report shape/i,
+  );
+
+  const invalidPayload = composeInput();
+  invalidPayload.visualAssets = [];
+  invalidPayload.charts = [];
+  invalidPayload.deliverable.value.payload.competitorSampling.targetCount = 0;
+  invalidPayload.deliverable.artifact = sealedJsonArtifact(
+    deliverableArtifactId,
+    'deliverable',
+    'research-deliverable-v1-review-gated',
+    invalidPayload.deliverable.value,
+  );
+  assert.throws(
+    () => schemaValidator.validateFileOrThrow(
+      `${process.cwd()}/schemas/deliverables/research-plan.schema.json`,
+      invalidPayload.deliverable.value.payload,
+    ),
+    SchemaValidationError,
+  );
+  assert.throws(
+    () => composeReportDocument(invalidPayload),
+    /Deliverable.*payload|research-plan|targetCount|schema/i,
+  );
+
+  const invalidReport = composeInput();
+  invalidReport.visualAssets = [];
+  invalidReport.charts = [];
+  invalidReport.deliverable.value.recommendations[0]!.summaryIds = ['missing-summary'];
+  invalidReport.deliverable.artifact = sealedJsonArtifact(
+    deliverableArtifactId,
+    'deliverable',
+    'research-deliverable-v1-review-gated',
+    invalidReport.deliverable.value,
+  );
+  assert.throws(
+    () => reportValidator.validate({
+      manifest: invalidReport.evidenceManifest.value,
+      report: invalidReport.deliverable.value,
+      resolver: evidenceArtifactResolver,
+      requireCoverage: true,
+    }),
+    /recommendation.*unknown summary/i,
+  );
+  assert.throws(
+    () => composeReportDocument(invalidReport),
+    /recommendation.*unknown summary|Deliverable.*report/i,
+  );
 });
