@@ -1,4 +1,4 @@
-import { useMemo, useReducer } from 'react';
+import { useId, useMemo, useReducer } from 'react';
 import type { ChartSpec, VisualAssetManifest } from '../../../../packages/api-contract/research-deliverable.ts';
 import type {
   ReportDocument,
@@ -57,6 +57,49 @@ interface ReportDocumentViewModelInput {
   document: ReportDocument;
   visualAssetManifests: VisualAssetManifest[];
   assetUrl(input: { assetId: string }): string;
+}
+
+export interface ReportTableShape {
+  headers: Array<{ id: string; label: string; scope: 'col' }>;
+  rows: Array<{
+    key: string;
+    header: { id: string; label: string; scope: 'row'; headers: string[] };
+    cells: Array<{ value: number | null; headers: string[] }>;
+  }>;
+}
+
+export function createReportTableShape(
+  table: ChartTableAlternative,
+  idPrefix = 'report-table',
+): ReportTableShape {
+  if (table.columns.length === 0) throw new Error('report table requires at least one sealed column');
+  const headers = table.columns.map((label, index) => ({
+    id: `${idPrefix}-column-${index + 1}`,
+    label,
+    scope: 'col' as const,
+  }));
+  return {
+    headers,
+    rows: table.rows.map((row, rowIndex) => {
+      if (row.cells.length + 1 !== headers.length) {
+        throw new Error(`report table row ${row.key} does not match its sealed column count`);
+      }
+      const header = {
+        id: `${idPrefix}-row-${rowIndex + 1}`,
+        label: row.label,
+        scope: 'row' as const,
+        headers: [headers[0]!.id],
+      };
+      return {
+        key: row.key,
+        header,
+        cells: row.cells.map((value, index) => ({
+          value,
+          headers: [header.id, headers[index + 1]!.id],
+        })),
+      };
+    }),
+  };
 }
 
 function sectionParagraphKind(section: ReportSection): ReportViewBlockKind {
@@ -209,16 +252,30 @@ function EvidenceBlock({
 }
 
 function TableBlock({ table }: { table: ChartTableAlternative }) {
+  const idPrefix = useId();
+  const shape = createReportTableShape(table, idPrefix);
   return (
     <div className="report-table-wrap">
       <table className="report-table">
         <caption>{table.caption}</caption>
-        <thead><tr><th scope="col">系列</th>{table.columns.map((column) => <th scope="col" key={column}>{column}</th>)}</tr></thead>
+        <thead>
+          <tr>
+            {shape.headers.map((header) => (
+              <th id={header.id} scope={header.scope} key={header.id}>{header.label}</th>
+            ))}
+          </tr>
+        </thead>
         <tbody>
-          {table.rows.map((row) => (
+          {shape.rows.map((row) => (
             <tr key={row.key}>
-              <th scope="row">{row.label}</th>
-              {row.cells.map((cell, index) => <td key={table.columns[index]}>{cell === null ? '—' : cell}</td>)}
+              <th id={row.header.id} scope={row.header.scope} headers={row.header.headers.join(' ')}>
+                {row.header.label}
+              </th>
+              {row.cells.map((cell, index) => (
+                <td key={shape.headers[index + 1]!.id} headers={cell.headers.join(' ')}>
+                  {cell.value === null ? '—' : cell.value}
+                </td>
+              ))}
             </tr>
           ))}
         </tbody>

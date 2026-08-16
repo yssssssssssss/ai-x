@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Pool } from 'pg';
@@ -35,9 +35,9 @@ import type {
   EvidenceArtifactResolver,
   EvidenceManifest,
 } from '../apps/orchestrator-runtime/src/evidence/evidence-service.ts';
-import {
-  composeReportDocument,
-  type ReportDocument,
+import type {
+  ReportDocument,
+  VerifiedChart,
 } from '../apps/orchestrator-runtime/src/report/report-document-composer.ts';
 import {
   VisualAssetService,
@@ -49,6 +49,7 @@ import {
 } from '../apps/orchestrator-runtime/src/report/chart-renderer.ts';
 import { chartSpecHash } from '../apps/orchestrator-runtime/src/report/chart-spec-validator.ts';
 import { CurrentReportPackageReader } from '../apps/orchestrator-runtime/src/report/current-report-package-reader.ts';
+import { ReportCompositionService } from '../apps/orchestrator-runtime/src/report/report-composition-service.ts';
 import {
   LLMInvocationError,
   type LLMClient,
@@ -126,6 +127,8 @@ interface TestReportCompositionInput {
   evidenceManifest: { artifact: ControlArtifact; value: EvidenceManifest };
   evidenceArtifactResolver: EvidenceArtifactResolver;
   review: { artifact: ControlArtifact; value: ReportReviewArtifact & { verdict: 'pass' } };
+  visualAssets: VerifiedVisualAsset[];
+  charts: VerifiedChart[];
   activeLease: ControlExecutionLease;
 }
 
@@ -136,6 +139,14 @@ interface TestReportCompositionResult {
 
 interface TestReportComposition {
   composeAndStore(input: TestReportCompositionInput): Promise<TestReportCompositionResult>;
+}
+
+interface DiscoverableReportComposition {
+  discoverAttemptMaterials(input: {
+    taskId: string;
+    planVersionId: string;
+    attemptId: string;
+  }): Promise<{ visualAssets: VerifiedVisualAsset[]; charts: VerifiedChart[] }>;
 }
 
 function passingReviewDimensions(): ReportReviewDimension[] {
@@ -1303,6 +1314,68 @@ test('pass Review composes and lease-seals a verified image and Chart ReportDocu
     },
     exportPolicy: 'allow',
   });
+  const verifiedImage = await visualAssets.readVerified({
+    assetId: original.assetArtifact.id,
+    manifestArtifactId: original.manifestArtifact.id,
+  });
+  const spec: ChartSpec = {
+    version: 'chart-spec-v1',
+    chartId: 'chart-production-wiring',
+    type: 'comparison',
+    title: 'Verified comparison with missing numeric observation',
+    categories: ['Score'],
+    series: [{
+      key: 'competitor:a',
+      label: 'Competitor A',
+      values: [null],
+      evidenceIds: [[]],
+    }],
+    yAxis: { min: 0 },
+  };
+  const sealedChart = await renderAndSealChartSvg({
+    taskId: lease.taskId,
+    planVersionId: lease.planVersionId,
+    attemptId: lease.attemptId,
+    spec,
+    evidenceResolver: () => undefined,
+    original: {
+      assetId: original.assetArtifact.id,
+      manifestArtifactId: original.manifestArtifact.id,
+    },
+    assets: visualAssets,
+    exportPolicy: 'allow',
+    width: 800,
+    height: 450,
+  });
+  const verifiedChart = await visualAssets.readVerified({
+    assetId: sealedChart.derived.assetArtifact.id,
+    manifestArtifactId: sealedChart.derived.manifestArtifact.id,
+  });
+  const verifiedChartInput = {
+    version: 'verified-chart-v1' as const,
+    taskId: lease.taskId,
+    planVersionId: lease.planVersionId,
+    attemptId: lease.attemptId,
+    spec,
+    specHash: chartSpecHash(spec),
+    table: chartTableAlternative(spec),
+    assetRef: {
+      assetId: verifiedChart.artifact.id,
+      manifestArtifactId: verifiedChart.manifestArtifact.id,
+    },
+  };
+  await store.writeJson({
+    taskId: lease.taskId,
+    planVersionId: lease.planVersionId,
+    attemptId: lease.attemptId,
+    kind: 'chart_spec',
+    relativePath: `charts/${spec.chartId}.json`,
+    value: verifiedChartInput,
+    schemaVersion: 'verified-chart-v1',
+    sensitivity: 'internal',
+    redactionPolicyVersion: 'v1',
+    activeLease: lease,
+  });
 
   const deliverables = new RecordingDeliverablesFake(async (input) => {
     const value = minimalDeliverable(input);
@@ -1348,82 +1421,59 @@ test('pass Review composes and lease-seals a verified image and Chart ReportDocu
     return { ...value, status: 'completed', artifactId: artifact.id };
   });
 
+  const expectedVisualAssetManifests: Array<VerifiedVisualAsset['manifest']> = [
+    structuredClone(verifiedImage.manifest),
+    structuredClone(verifiedChart.manifest),
+  ];
+  const productionCompositionDependencies = { artifacts: store, visualAssets, repository };
+  const productionComposition = new ReportCompositionService(productionCompositionDependencies);
   let compositionCalls = 0;
-  let expectedVisualAssetManifests: Array<VerifiedVisualAsset['manifest']> = [];
+  const discovered = await (productionComposition as unknown as DiscoverableReportComposition)
+    .discoverAttemptMaterials({
+      taskId: lease.taskId,
+      planVersionId: lease.planVersionId,
+      attemptId: lease.attemptId,
+    });
+  assert.deepEqual(discovered.visualAssets.map(({ artifact, manifestArtifact }) => ({
+    assetId: artifact.id,
+    manifestArtifactId: manifestArtifact.id,
+  })), [{
+    assetId: verifiedImage.artifact.id,
+    manifestArtifactId: verifiedImage.manifestArtifact.id,
+  }]);
+  assert.equal(discovered.charts.length, 1);
+  assert.deepEqual(discovered.charts[0], {
+    spec,
+    specHash: verifiedChartInput.specHash,
+    table: verifiedChartInput.table,
+    asset: verifiedChart,
+  });
   const reportComposition: TestReportComposition = {
     async composeAndStore(input) {
       compositionCalls += 1;
       assert.deepEqual(input.activeLease, lease);
       assert.deepEqual(input.requiredQuestionIds, ['question-review']);
-      const verifiedImage = await visualAssets.readVerified({
-        assetId: original.assetArtifact.id,
-        manifestArtifactId: original.manifestArtifact.id,
-      });
-      const spec: ChartSpec = {
-        version: 'chart-spec-v1',
-        chartId: 'chart-production-wiring',
-        type: 'comparison',
-        title: 'Verified comparison with missing numeric observation',
-        categories: ['Score'],
-        series: [{
-          key: 'competitor:a',
-          label: 'Competitor A',
-          values: [null],
-          evidenceIds: [[]],
-        }],
-        yAxis: { min: 0 },
-      };
-      const sealedChart = await renderAndSealChartSvg({
-        taskId: input.taskId,
-        planVersionId: input.planVersionId,
-        attemptId: input.attemptId,
+      assert.deepEqual(
+        input.visualAssets.map(({ artifact, manifestArtifact }) => ({
+          assetId: artifact.id,
+          manifestArtifactId: manifestArtifact.id,
+        })),
+        [{ assetId: verifiedImage.artifact.id, manifestArtifactId: verifiedImage.manifestArtifact.id }],
+      );
+      assert.deepEqual(input.charts.map(({ spec: chartSpec, specHash, table, asset }) => ({
+        spec: chartSpec,
+        specHash,
+        table,
+        assetId: asset.artifact.id,
+        manifestArtifactId: asset.manifestArtifact.id,
+      })), [{
         spec,
-        evidenceResolver: () => undefined,
-        original: {
-          assetId: original.assetArtifact.id,
-          manifestArtifactId: original.manifestArtifact.id,
-        },
-        assets: visualAssets,
-        exportPolicy: 'allow',
-        width: 800,
-        height: 450,
-      });
-      const verifiedChart = await visualAssets.readVerified({
-        assetId: sealedChart.derived.assetArtifact.id,
-        manifestArtifactId: sealedChart.derived.manifestArtifact.id,
-      });
-      expectedVisualAssetManifests = [
-        structuredClone(verifiedImage.manifest),
-        structuredClone(verifiedChart.manifest),
-      ];
-      const document = composeReportDocument({
-        templateId: 'research-plan',
-        requiredQuestionIds: input.requiredQuestionIds,
-        deliverable: input.deliverable,
-        evidenceManifest: input.evidenceManifest,
-        evidenceArtifactResolver: input.evidenceArtifactResolver,
-        review: input.review,
-        visualAssets: [verifiedImage],
-        charts: [{
-          spec,
-          specHash: chartSpecHash(spec),
-          table: chartTableAlternative(spec),
-          asset: verifiedChart,
-        }],
-      });
-      const artifact = await store.writeJson({
-        taskId: input.taskId,
-        planVersionId: input.planVersionId,
-        attemptId: input.attemptId,
-        kind: 'report_document',
-        relativePath: 'reports/report-document.json',
-        value: document,
-        schemaVersion: 'report-document-v1',
-        sensitivity: 'internal',
-        redactionPolicyVersion: 'v1',
-        activeLease: input.activeLease,
-      });
-      return { artifact, document };
+        specHash: verifiedChartInput.specHash,
+        table: verifiedChartInput.table,
+        assetId: verifiedChart.artifact.id,
+        manifestArtifactId: verifiedChart.manifestArtifact.id,
+      }]);
+      return productionComposition.composeAndStore(input);
     },
   };
 
@@ -1468,6 +1518,83 @@ test('pass Review composes and lease-seals a verified image and Chart ReportDocu
   if (reportPackage?.presentationMode !== 'multimodal') assert.fail('expected multimodal package');
   assert.deepEqual(reportPackage.reportDocument, storedDocument.value);
   assert.deepEqual(reportPackage.visualAssetManifests, expectedVisualAssetManifests);
+});
+
+async function reportMaterialDiscoveryFixture(): Promise<{
+  repository: ControlPlaneRepository;
+  lease: ControlExecutionLease;
+  manifestArtifact: ControlArtifact;
+  discover(): Promise<{ visualAssets: VerifiedVisualAsset[]; charts: unknown[] }>;
+}> {
+  const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), [planSteps[0]!]);
+  const store = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+  const visualAssets = new VisualAssetService({ artifacts: store });
+  const asset = await visualAssets.ingest({
+    taskId: lease.taskId,
+    planVersionId: lease.planVersionId,
+    attemptId: lease.attemptId,
+    source: {
+      kind: 'user_upload',
+      fileName: 'discovery.png',
+      bytes: Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+        'base64',
+      ),
+    },
+    exportPolicy: 'allow',
+  });
+  const dependencies = { artifacts: store, visualAssets, repository };
+  const service = new ReportCompositionService(dependencies) as unknown as DiscoverableReportComposition;
+  return {
+    repository,
+    lease,
+    manifestArtifact: asset.manifestArtifact,
+    discover: () => service.discoverAttemptMaterials({
+      taskId: lease.taskId,
+      planVersionId: lease.planVersionId,
+      attemptId: lease.attemptId,
+    }),
+  };
+}
+
+test('production report material discovery rejects foreign, tampered, and unsealed visual Manifests', async () => {
+  const foreign = await reportMaterialDiscoveryFixture();
+  const foreignValue = JSON.parse(readFileSync(foreign.manifestArtifact.storageUri, 'utf8')) as Record<string, unknown>;
+  const { manifestHash: _manifestHash, ...foreignDraft } = foreignValue;
+  const reboundDraft = { ...foreignDraft, taskId: randomUUID() };
+  const rebound = { ...reboundDraft, manifestHash: canonicalJsonHash(reboundDraft) };
+  const reboundBytes = Buffer.from(JSON.stringify(rebound, null, 2));
+  writeFileSync(foreign.manifestArtifact.storageUri, reboundBytes);
+  const foreignConnection = await scopedDatabase.connect();
+  try {
+    await foreignConnection.query(
+      `UPDATE control_artifacts SET content_sha256 = $2, byte_size = $3 WHERE id = $1`,
+      [
+        foreign.manifestArtifact.id,
+        `sha256:${createHash('sha256').update(reboundBytes).digest('hex')}`,
+        reboundBytes.byteLength,
+      ],
+    );
+  } finally {
+    foreignConnection.release();
+  }
+  await assert.rejects(foreign.discover(), /task|binding|foreign|match/i);
+
+  const tampered = await reportMaterialDiscoveryFixture();
+  writeFileSync(tampered.manifestArtifact.storageUri, '{}');
+  await assert.rejects(tampered.discover(), /hash|integrity|tamper|manifest/i);
+
+  const unsealed = await reportMaterialDiscoveryFixture();
+  const unsealedConnection = await scopedDatabase.connect();
+  try {
+    await unsealedConnection.query(
+      `UPDATE control_artifacts SET state = 'STAGING' WHERE id = $1`,
+      [unsealed.manifestArtifact.id],
+    );
+  } finally {
+    unsealedConnection.release();
+  }
+  await assert.rejects(unsealed.discover(), /sealed|state|manifest/i);
 });
 
 
@@ -2127,7 +2254,7 @@ test('invalidates terminal artifacts when the lease expires during deliverable g
   }
 });
 
-test('terminal lease recovery invalidates a sealed report review with its manifest and revised deliverable', async () => {
+test('terminal lease recovery invalidates sealed report document, review, manifest, and deliverable together', async () => {
   const { repository, lease } = await claimedExecution(
     new Date(Date.now() + 60_000),
     [planSteps[0]!],
@@ -2170,6 +2297,22 @@ test('terminal lease recovery invalidates a sealed report review with its manife
       value: reviewArtifact,
       activeLease: input.activeLease,
     });
+    await terminalStore.writeJson({
+      taskId: input.task.id,
+      planVersionId: input.plan.id,
+      attemptId: input.attempt.id,
+      kind: 'report_document',
+      relativePath: 'reports/report-document.json',
+      schemaVersion: 'report-document-v1',
+      value: {
+        version: 'report-document-v1',
+        title: 'Lease-fenced report',
+        subtitle: 'Must be invalidated with its terminal inputs',
+        executiveSummary: 'This sealed document cannot survive terminal CAS loss.',
+        sections: [],
+      },
+      activeLease: input.activeLease,
+    });
     const connection = await scopedDatabase.connect();
     try {
       await connection.query(
@@ -2200,7 +2343,7 @@ test('terminal lease recovery invalidates a sealed report review with its manife
   try {
     const terminalArtifacts = await connection.query(
       `SELECT kind, state FROM control_artifacts
-       WHERE attempt_id = $1 AND kind IN ('evidence_manifest', 'deliverable', 'report_review')
+       WHERE attempt_id = $1 AND kind IN ('evidence_manifest', 'deliverable', 'report_document', 'report_review')
        ORDER BY kind`,
       [lease.attemptId],
     );
@@ -2209,6 +2352,7 @@ test('terminal lease recovery invalidates a sealed report review with its manife
       [
         { kind: 'deliverable', state: 'FAILED' },
         { kind: 'evidence_manifest', state: 'FAILED' },
+        { kind: 'report_document', state: 'FAILED' },
         { kind: 'report_review', state: 'FAILED' },
       ],
     );
@@ -2219,6 +2363,11 @@ test('terminal lease recovery invalidates a sealed report review with its manife
     taskId: lease.taskId,
     attemptId: lease.attemptId,
     kind: 'report_review',
+  }), null);
+  assert.equal(await repository.findSealedArtifact({
+    taskId: lease.taskId,
+    attemptId: lease.attemptId,
+    kind: 'report_document',
   }), null);
 });
 

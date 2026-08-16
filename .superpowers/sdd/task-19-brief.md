@@ -54,13 +54,23 @@ pnpm exec tsx --test tests/report-bundle.test.ts
 pnpm --dir apps/web build
 ```
 
-Observed by Main: Task19 six-file suite 121 total / 120 pass / 1 existing skip / 0 fail; focused production writer 2/2; `pnpm typecheck` passed; Web build passed with a 242 KB main chunk and lazy ECharts chunk.
+Observed by Main after all five reviewer fixes: lease execution, report package, report bundle, and ControlPlane suites 130 total / 129 pass / 1 existing provider skip / 0 fail; `pnpm typecheck` passed; Web build passed with a 246 KB main chunk and lazy ECharts.
 
 - [x] **Step 8: 浏览器验收**
 
 在 1280×800 和 1440×900 验证：导航、Chart、图片放大、对比、Evidence 展开、Print Preview、ZIP 下载；控制台无错误。
 
 Observed by Main at 1280×800 and 1440×900: report render, `#comparison` navigation, Evidence `e1`/`e2` expansion, 125% zoom, interactive Chart plus one table, and print mode with actions/interactive Chart hidden, sealed SVG visible, and repeated table heading behavior. Separate pre-render Gateway blocker: clarification persisted no ambiguities but remained `awaiting_clarification`, and retry returned 500; this is not a Task19 renderer failure.
+
+### Reviewer Fix Closure
+
+1. Production composition deterministically discovers exact sealed attempt Visual Assets and Chart inputs, verifies binding/hash/schema/spec/table/lineage, and passes them through `LeaseExecutionEngine`.
+2. Terminal recovery invalidates `report_document` with Evidence Manifest, Deliverable, and Review.
+3. The Web boundary fail-closes the full VisualAssetManifest presentation shape, explicit export policy, exact referenced Asset set, and package Task/Plan/Attempt binding.
+4. Web and optional Chart tables consume the complete sealed columns once, export a pure table shape, emit explicit header associations, and enforce row width.
+5. Markdown consumes the same sealed columns directly and keeps header, separator, and data widths equal without a duplicate `Series`.
+
+Final observed evidence is 130 total / 129 pass / 1 existing provider skip / 0 fail for the affected four-suite set; typecheck and Web build passed. This documentation sync ran no command and created no commit.
 
 - [ ] **Step 9: 阶段门禁和提交**
 

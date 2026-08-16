@@ -1382,6 +1382,8 @@ A4、封面、目录、页眉页脚、page-break、SVG 不截断、表格重复�
 
 Production composition follow-up implemented: after the final pass Review, `LeaseExecutionEngine` enters `composing_report`, re-reads the final verified Artifact set, and invokes an active-lease `ReportCompositionService` that seals `reports/report-document.json`. The production runtime uses the real ArtifactStore/VisualAssetService. Text-only professional documents are multimodal with `visualAssetManifests: []`; image/Chart documents retain exact ordered verified Manifests. No follow-up verification command was run in the worker assignment.
 
+Reviewer-blocker closure implemented: (1) exact sealed attempt Visual Asset/Chart discovery with binding/hash/schema/spec/table/lineage verification and LeaseExecutionEngine handoff; (2) `report_document` terminal invalidation; (3) fail-closed Web VisualAssetManifest presentation-shape, export-policy, referenced-set, and package-binding validation; (4) pure associated Web table shape plus Web/Chart sealed-column and row-width enforcement; (5) Markdown sealed columns with equal header/separator/data widths and no duplicated `Series`.
+
 - [x] **Step 7: 运行测试和 Build**
 
 Run:
@@ -1391,7 +1393,7 @@ pnpm exec tsx --test tests/report-bundle.test.ts
 pnpm --dir apps/web build
 ```
 
-Observed by Main: Task19 six-file suite 121 total / 120 pass / 1 existing skip / 0 fail; focused production writer 2/2; `pnpm typecheck` passed; Web build passed with a 242 KB main chunk and lazy ECharts chunk.
+Observed by Main after all five reviewer fixes: lease execution, report package, report bundle, and ControlPlane suites 130 total / 129 pass / 1 existing provider skip / 0 fail; `pnpm typecheck` passed; Web build passed with a 246 KB main chunk and lazy ECharts. This documentation sync ran no command and created no commit.
 
 - [x] **Step 8: 浏览器验收**
 

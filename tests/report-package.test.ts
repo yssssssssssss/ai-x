@@ -786,6 +786,12 @@ test('runtime package client validates text modes and fail-closes multimodal pac
     visualAssetManifests: [image, chart],
   };
   assert.equal(parseControlDeliverableResponse(multimodal).presentationMode, 'multimodal');
+  const { exportPolicy: _exportPolicy, ...imageWithoutExportPolicy } = image;
+  const { mediaType: _mediaType, ...imageWithoutMediaType } = image;
+  const wrongBindingManifests = (['taskId', 'planVersionId', 'attemptId'] as const).map((field) => ({
+    ...multimodal,
+    visualAssetManifests: [{ ...image, [field]: `foreign-${field}` }, chart],
+  }));
 
   for (const invalid of [
     { ...multimodal, reportDocument: undefined },
@@ -805,6 +811,9 @@ test('runtime package client validates text modes and fail-closes multimodal pac
       visualAssetManifests: undefined,
       visualAssetManifest: image,
     },
+    { ...multimodal, visualAssetManifests: [imageWithoutExportPolicy, chart] },
+    { ...multimodal, visualAssetManifests: [imageWithoutMediaType, chart] },
+    ...wrongBindingManifests,
   ]) {
     assert.throws(
       () => parseControlDeliverableResponse(invalid),

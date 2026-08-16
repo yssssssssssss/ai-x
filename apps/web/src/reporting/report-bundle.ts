@@ -225,15 +225,19 @@ function markdownCell(value: string | number | null): string {
 }
 
 function tableMarkdown(table: ChartTableAlternative): string[] {
-  const headings = ['Series', ...table.columns];
+  if (table.columns.length === 0) throw new Error('Markdown table requires at least one sealed column');
   const lines = [
     `*${table.caption}*`,
     '',
-    `| ${headings.map(markdownCell).join(' | ')} |`,
-    `| ${headings.map(() => '---').join(' | ')} |`,
+    `| ${table.columns.map(markdownCell).join(' | ')} |`,
+    `| ${table.columns.map(() => '---').join(' | ')} |`,
   ];
   for (const row of table.rows) {
-    lines.push(`| ${[row.label, ...row.cells].map(markdownCell).join(' | ')} |`);
+    const cells = [row.label, ...row.cells];
+    if (cells.length !== table.columns.length) {
+      throw new Error(`Markdown table row ${row.key} does not match its sealed column count`);
+    }
+    lines.push(`| ${cells.map(markdownCell).join(' | ')} |`);
     const evidenceIds = [...new Set(row.evidenceIds.flat())];
     if (evidenceIds.length > 0) lines.push(`Evidence: ${evidenceIds.join(', ')}`);
   }

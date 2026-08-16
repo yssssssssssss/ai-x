@@ -13,15 +13,20 @@
   - Requires immutable interaction state for Finding Evidence expansion, original/annotation selection, and image zoom.
   - Requires Print CSS for A4, cover, TOC, fixed header and footer, page breaks, unbroken SVG, repeated table headings, and monochrome differentiation.
   - Requires Stage4 presentation dispatch to select `ReportDocumentView` for multimodal packages while preserving the current text renderer for `legacy_text` and `current_text`.
+  - Requires Web/Print table headers to use the sealed `table.columns` exactly once, with one row-header/data-cell association per column; Markdown header, separator, and every data row must have the same sealed column count without a duplicated `Series` header.
 - `tests/report-package.test.ts`
   - Cleanly cuts over the API union to required `reportDocument` plus plural `visualAssetManifests: VisualAssetManifest[]` for multimodal packages; no singular alias remains.
   - Keeps `legacy_text` and `current_text` free of Phase 5 fields.
   - Requires `CurrentReportPackageReader` to read a sealed `report_document`, resolve every image and Chart reference through the exact `assetId`/`manifestArtifactId` pair using verified Visual Asset reads, return only the referenced Manifest values, and never downgrade tampered or incomplete documents to `current_text`.
   - Requires the Web package parser to reject missing/empty/mismatched/extra Manifest sets, missing ReportDocument, the obsolete singular alias, and Phase 5 fields on text modes.
+  - Requires full VisualAssetManifest schema validation at the Web boundary, including `exportPolicy` and every required field, plus exact Task/Plan/Attempt binding to the multimodal package.
 - `tests/lease-execution-engine.test.ts`
   - Requires a pass Review to invoke production-shaped report composition before lease completion, using the exact sealed final Deliverable, Evidence Manifest/resolver, pass Review, required question ids, verified image, and sealed Chart inputs.
   - Uses the real `composeReportDocument`, `VisualAssetService`, SVG Chart renderer, database-backed `ControlArtifactStore`, and `writeJson(activeLease)` to require a `SEALED report_document` Artifact rather than a mock-only document.
   - Reads the completed attempt through the real `CurrentReportPackageReader` and requires the stored image/Chart references to produce the exact ordered plural Manifest set.
+  - Requires production discovery of pre-existing attempt materials: exact SEALED Visual Asset/Manifest pairs and persisted `chart_svg` + `spec/specHash/table` inputs are re-read and passed to the real `ReportCompositionService`; the composition port must not create test-only Assets.
+  - Requires foreign-bound, checksum-tampered, or unsealed Visual Asset Manifests to fail discovery rather than be ignored or rendered.
+  - Requires terminal lease-loss/CAS recovery to invalidate `report_document` together with Evidence Manifest, Deliverable, and Review, leaving no sealed terminal ReportDocument.
 - `tests/control-api-integration.test.ts`
   - Extends the production `buildControlRuntime` + real LeaseExecutionEngine/ArtifactStore/DB/API path: even with no visual Assets or Charts, a pass Review must compose and seal the professional text ReportDocument, and the owner API must return `multimodal` with `visualAssetManifests: []`.
   - Verifies the API ReportDocument is the exact value re-read from the `SEALED`, `report-document-v1` Artifact and contains no synthesized visual blocks.
@@ -83,3 +88,17 @@ Per the GREEN assignment constraint, no test, typecheck, build, lint, formatter,
 
 - The real Gateway clarification path persisted `ambiguities=[]` while the Task remained `awaiting_clarification`; a clarification retry returned HTTP 500. This blocks a fresh real-task journey before Task19, but is not a Task19 package, renderer, print, bundle, or composition failure.
 - No commit was created.
+
+### Reviewer Blocker Fix Follow-up
+
+1. `ReportCompositionService.discoverAttemptMaterials` deterministically enumerates the exact Task/Plan/Attempt report-material kinds, rejects live non-SEALED or foreign/tampered values, re-reads each Manifest through `ControlArtifactStore` and `VisualAssetService`, and reconstructs Charts only from sealed `verified-chart-v1` inputs whose ChartSpec hash, table, `chart_svg` derivation, and original-asset lineage match. `LeaseExecutionEngine` passes those verified visuals and Charts into `composeAndStore`.
+2. Terminal invalidation now fails `report_document` together with Evidence Manifest, Deliverable, and Review after lease loss or completion CAS failure.
+3. The Web response parser validates every required VisualAssetManifest field, exact allowed fields, scalar ranges, explicit media/export enums, source/derivation/lineage structure, SVG derivation rule, exact referenced Asset set, and Deliverable Task/Plan/Attempt binding before casting.
+4. `createReportTableShape` is a pure exported mapper that consumes the complete sealed `table.columns` once, emits unique column/row ids and explicit `headers` associations, and rejects row/header width mismatches; `ChartBlock` follows the same complete-column rule.
+5. Markdown uses `table.columns` directly, emits equal header/separator/data column counts, and no longer prepends a duplicate `Series` column.
+
+### Reviewer Fix Final Evidence
+
+- Main-agent verification of the lease execution, report package, report bundle, and ControlPlane suites observed 130 total / 129 pass / 1 existing provider skip / 0 fail.
+- `pnpm typecheck` passed. The Web production build passed with a 246 KB main chunk and ECharts retained as a lazy chunk.
+- This documentation-only sync ran no production, test, validation, browser, dependency, or Git command. No commit was created.

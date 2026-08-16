@@ -7,6 +7,7 @@ import type {
   EvidenceManifest,
   VisualAssetManifest,
 } from '../packages/api-contract/research-deliverable.ts';
+import type { ChartTableAlternative } from '../apps/orchestrator-runtime/src/report/chart-renderer.ts';
 
 const taskId = 'task-report-bundle-1';
 const planVersionId = 'plan-report-bundle-1';
@@ -62,6 +63,15 @@ interface ViewBlock {
 }
 
 interface ReportDocumentViewModule {
+  ReportDocumentView: unknown;
+  createReportTableShape(table: ChartTableAlternative): {
+    headers: Array<{ id: string; label: string; scope: 'col' }>;
+    rows: Array<{
+      key: string;
+      header: { id: string; label: string; scope: 'row'; headers: string[] };
+      cells: Array<{ value: number | null; headers: string[] }>;
+    }>;
+  };
   createReportDocumentViewModel(input: {
     document: ReportDocument;
     visualAssetManifests: VisualAssetManifest[];
@@ -110,7 +120,9 @@ async function loadReportDocumentViewModule(): Promise<ReportDocumentViewModule>
     'ReportDocumentView must expose its pure block mapping for focused Node tests',
   );
   assert.equal(typeof exports.createReportDocumentInteractionState, 'function');
+  assert.equal(typeof exports.createReportTableShape, 'function');
   assert.equal(typeof exports.reduceReportDocumentInteraction, 'function');
+  assert.equal(typeof exports.ReportDocumentView, 'function');
   return exports as unknown as ReportDocumentViewModule;
 }
 
@@ -462,6 +474,18 @@ test('Markdown uses deterministic relative image paths, sealed SVG references, a
   assert.match(markdown, /assets\/asset-annotation\.png/u);
   assert.match(markdown, /!\[Competitor A has a verified score of 87\.\]\(assets\/asset-chart\.svg\)/u);
   assert.match(markdown, /\|\s*Competitor A\s*\|\s*87\s*\|/u, 'Chart table alternative must remain editable');
+  const chartBlock = reportDocument().sections
+    .flatMap(({ blocks }) => blocks)
+    .find(({ type }) => type === 'chart');
+  assert.ok(chartBlock?.type === 'chart');
+  const markdownTableLines = markdown.split('\n').filter((line) => line.startsWith('|'));
+  const markdownCells = (line: string): string[] => line.split('|').slice(1, -1).map((cell) => cell.trim());
+  assert.deepEqual(markdownCells(markdownTableLines[0] ?? ''), chartBlock.table.columns);
+  assert.equal(markdownCells(markdownTableLines[1] ?? '').length, chartBlock.table.columns.length);
+  assert.deepEqual(
+    markdownCells(markdownTableLines[2] ?? ''),
+    [chartBlock.table.rows[0]!.label, ...chartBlock.table.rows[0]!.cells.map(String)],
+  );
   assert.match(markdown, /evidence-1/u);
   assert.doesNotMatch(markdown, /(?:src|href)=|blob:|file:|https?:\/\/|\/private\//iu);
   assert.doesNotMatch(markdown, /asset-blocked|Blocked internal source image/u);
@@ -573,6 +597,34 @@ test('ReportDocument view model maps navigation and every professional block wit
   assert.equal(comparison?.altText, 'Original evidence compared with its verified annotation.');
   assert.equal(comparison?.originalAssetId, originalAssetId);
   assert.equal(comparison?.annotationAssetId, annotationAssetId);
+});
+
+test('ReportDocumentView table shape uses sealed columns once with explicit row and cell associations', async () => {
+  const { createReportTableShape } = await loadReportDocumentViewModule();
+  const document = reportDocument();
+  const chart = document.sections.flatMap(({ blocks }) => blocks).find(({ type }) => type === 'chart');
+  assert.ok(chart?.type === 'chart');
+  const shape = createReportTableShape(chart.table);
+
+  assert.deepEqual(shape.headers.map(({ label }) => label), chart.table.columns);
+  assert.equal(shape.headers.filter(({ label }) => label === 'Series').length, 1);
+  assert.equal(new Set(shape.headers.map(({ id }) => id)).size, shape.headers.length);
+  assert.equal(shape.rows.length, chart.table.rows.length);
+  for (let rowIndex = 0; rowIndex < shape.rows.length; rowIndex += 1) {
+    const rendered = shape.rows[rowIndex]!;
+    const sourceRow: ChartTableAlternative['rows'][number] = chart.table.rows[rowIndex]!;
+    assert.equal(rendered.header.label, sourceRow.label);
+    assert.equal(rendered.header.scope, 'row');
+    assert.deepEqual(rendered.header.headers, [shape.headers[0]!.id]);
+    assert.deepEqual(rendered.cells.map(({ value }) => value), sourceRow.cells);
+    assert.equal(rendered.cells.length + 1, shape.headers.length);
+    for (let cellIndex = 0; cellIndex < rendered.cells.length; cellIndex += 1) {
+      assert.deepEqual(
+        rendered.cells[cellIndex]!.headers,
+        [rendered.header.id, shape.headers[cellIndex + 1]!.id],
+      );
+    }
+  }
 });
 
 test('ReportDocument interactions expand Finding evidence and control original/annotation image zoom', async () => {

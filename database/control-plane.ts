@@ -1695,7 +1695,7 @@ export class ControlPlaneRepository {
          WHERE task_id = $1
            AND plan_version_id = $2
            AND attempt_id = $3
-           AND kind IN ('evidence_manifest', 'deliverable', 'report_review')
+           AND kind IN ('evidence_manifest', 'deliverable', 'report_document', 'report_review')
            AND state IN ('STAGING', 'SEALED')`,
         [input.taskId, input.planVersionId, input.attemptId, input.reason],
       );
@@ -1738,6 +1738,31 @@ export class ControlPlaneRepository {
         [input.taskId, input.attemptId, input.kind],
       );
       return result.rows[0] ? artifactFromRow(result.rows[0]) : null;
+    } finally {
+      connection.release();
+    }
+  }
+
+  async listArtifactsForAttempt(input: {
+    taskId: string;
+    planVersionId: string;
+    attemptId: string;
+    kinds: string[];
+  }): Promise<ControlArtifact[]> {
+    if (input.kinds.length === 0) return [];
+    const connection = await this.database.connect();
+    try {
+      const result = await connection.query(
+        `SELECT *
+         FROM control_artifacts
+         WHERE task_id = $1
+           AND plan_version_id = $2
+           AND attempt_id = $3
+           AND kind = ANY($4::text[])
+         ORDER BY created_at, id`,
+        [input.taskId, input.planVersionId, input.attemptId, input.kinds],
+      );
+      return result.rows.map(artifactFromRow);
     } finally {
       connection.release();
     }

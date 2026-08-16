@@ -369,7 +369,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
   });
   const evidence = new EvidenceService();
   const reportValidator: ReportEvidenceValidator = new ReportEvidenceValidator(evidence);
-  const reportComposition = new ReportCompositionService({ artifacts, visualAssets });
+  const reportComposition = new ReportCompositionService({ artifacts, visualAssets, repository });
   const reportPackageReader = new CurrentReportPackageReader({
     artifacts,
     repository,

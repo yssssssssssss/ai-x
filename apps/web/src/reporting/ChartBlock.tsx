@@ -180,6 +180,15 @@ export function ChartBlock({ spec, table, height = 420, showTable = true, onEvid
     };
   }, [spec]);
 
+  const columns = table?.columns ?? ['Series', ...spec.categories];
+  const rows = table?.rows ?? spec.series;
+  for (const row of rows) {
+    const values = 'cells' in row ? row.cells : row.values;
+    if (values.length + 1 !== columns.length) {
+      throw new Error(`Chart table row ${row.key} does not match its sealed column count`);
+    }
+  }
+
   return (
     <figure aria-labelledby={captionId} style={{ margin: 0 }}>
       <figcaption id={captionId} style={{ fontWeight: 600, marginBottom: 8 }}>{spec.title}</figcaption>
@@ -197,16 +206,19 @@ export function ChartBlock({ spec, table, height = 420, showTable = true, onEvid
             </caption>
             <thead>
               <tr>
-                <th scope="col" style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #cbd5e1' }}>Series</th>
-                {(table?.columns ?? spec.categories).map((category) => (
-                  <th key={category} scope="col" style={{ textAlign: 'right', padding: 8, borderBottom: '1px solid #cbd5e1' }}>
-                    {category}
+                {columns.map((column, index) => (
+                  <th
+                    key={`${index}-${column}`}
+                    scope="col"
+                    style={{ textAlign: index === 0 ? 'left' : 'right', padding: 8, borderBottom: '1px solid #cbd5e1' }}
+                  >
+                    {column}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {(table?.rows ?? spec.series).map((series) => {
+              {rows.map((series) => {
                 const values = 'cells' in series ? series.cells : series.values;
                 return (
                   <tr key={series.key}>
@@ -214,7 +226,7 @@ export function ChartBlock({ spec, table, height = 420, showTable = true, onEvid
                       {series.label}
                     </th>
                     {values.map((value, index) => (
-                      <td key={(table?.columns ?? spec.categories)[index]} style={{ textAlign: 'right', padding: 8, borderBottom: '1px solid #e2e8f0' }}>
+                      <td key={`${index + 1}-${columns[index + 1]}`} style={{ textAlign: 'right', padding: 8, borderBottom: '1px solid #e2e8f0' }}>
                         <span>{value === null ? 'Missing' : value}</span>
                         <EvidenceIds ids={series.evidenceIds[index] ?? []} onSelect={onEvidenceSelect} />
                       </td>

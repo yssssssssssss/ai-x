@@ -57,7 +57,8 @@ import {
 import { CurrentReportValidationError } from '../evidence/report-evidence-validator.ts';
 import type { CurrentDeliverableGenerateInput, CurrentDeliverableRevisionInput } from '../report/current-deliverable-service.ts';
 import type { DeliverableComposer, ReportReviewInput, ReportReviewResult } from '../report/report-review-service.ts';
-import type { ReportCompositionPort } from '../report/report-composition-service.ts';
+import { ReportCompositionService, type ReportCompositionPort } from '../report/report-composition-service.ts';
+import { VisualAssetService } from '../report/visual-asset-service.ts';
 import {
   readVerifiedStepArtifact,
   resolveStepInput,
@@ -1150,6 +1151,29 @@ export class LeaseExecutionEngine {
           if (verifiedReview.value.verdict !== 'pass') {
             throw new ExecutionAuthenticityError('ReportDocument composition requires the final pass Review');
           }
+          const materialDiscovery = this.dependencies.reportComposition.discoverAttemptMaterials
+            ? this.dependencies.reportComposition
+            : new ReportCompositionService({
+                artifacts: this.dependencies.artifacts,
+                visualAssets: new VisualAssetService({ artifacts: this.dependencies.artifacts }),
+                repository: this.dependencies.repository,
+              });
+          const evidenceById = new Map(
+            verifiedEvidenceManifest.value.entries.map((entry) => [entry.id, entry]),
+          );
+          const evidenceService = new EvidenceService();
+          const materials = await this.withLeaseHeartbeat(input.lease, () =>
+            materialDiscovery.discoverAttemptMaterials!({
+              taskId: input.lease.taskId,
+              planVersionId: input.lease.planVersionId,
+              attemptId: input.lease.attemptId,
+              evidenceResolver: (evidenceId) => {
+                const entry = evidenceById.get(evidenceId);
+                return entry
+                  ? evidenceService.resolveEvidenceValue(entry, evidenceResolver)
+                  : undefined;
+              },
+            }));
           const composition = await this.withLeaseHeartbeat(input.lease, () =>
             this.dependencies.reportComposition!.composeAndStore({
               taskId: input.lease.taskId,
@@ -1160,8 +1184,8 @@ export class LeaseExecutionEngine {
               evidenceManifest: verifiedEvidenceManifest,
               evidenceArtifactResolver: evidenceResolver,
               review: verifiedReview,
-              visualAssets: [],
-              charts: [],
+              visualAssets: materials.visualAssets,
+              charts: materials.charts,
               activeLease: input.lease,
             }));
           if (
