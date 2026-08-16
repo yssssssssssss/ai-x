@@ -5,7 +5,9 @@ import type { CurrentReportPackageResponse, ReportReviewArtifact } from '../pack
 import type {
   ResearchDeliverableEnvelope,
   ResearchPlanPayload,
+  VisualAssetManifest,
 } from '../packages/api-contract/research-deliverable.ts';
+import type { ReportDocument } from '../apps/orchestrator-runtime/src/report/report-document-composer.ts';
 
 type CurrentResearchPlanResponse = CurrentReportPackageResponse<ResearchPlanPayload> & {
   evidenceManifest: CurrentReportPackageResponse<ResearchPlanPayload>['evidenceManifest'] & {
@@ -326,16 +328,58 @@ test('currentResearchPlanToMarkdown renders a pass-reviewed current_text package
   assertIncludes(markdown, '宠物辅食竞品研究计划', 'current report title');
 });
 
-test('currentResearchPlanToMarkdown rejects multimodal until the Phase 5 renderer exists', async () => {
+test('text Markdown renderer rejects a valid multimodal package delegated to Task19', async () => {
   const { currentResearchPlanToMarkdown } = await loadCurrentReportMarkdownModule();
-  const multimodal = {
-    ...buildCurrentResponse(),
+  const current = buildCurrentResponse();
+  const assetId = 'asset-current-report-image';
+  const manifestArtifactId = 'manifest-current-report-image';
+  const reportDocument: ReportDocument = {
+    version: 'report-document-v1',
+    title: '宠物辅食竞品研究计划',
+    subtitle: '多模态研究报告',
+    executiveSummary: '公开证据支持后续研究执行。',
+    sections: [{
+      id: 'visual-evidence',
+      title: '视觉证据',
+      questionIds: [],
+      blocks: [{
+        id: 'image-current-report',
+        type: 'image',
+        assetRef: { assetId, manifestArtifactId },
+        caption: '公开视觉证据',
+        altText: '公开视觉证据截图。',
+      }],
+    }],
+  };
+  const visualAssetManifest: VisualAssetManifest = {
+    version: 'visual-asset-manifest-v1',
+    taskId: current.deliverable.taskId,
+    planVersionId: current.deliverable.planVersionId,
+    attemptId: current.deliverable.attemptId,
+    assetId,
+    contentSha256: `sha256:${'d'.repeat(64)}`,
+    mediaType: 'image/png',
+    byteSize: 12,
+    width: 1,
+    height: 1,
+    exportPolicy: 'allow',
+    source: { kind: 'user_upload', fileName: 'public-evidence.png' },
+    derivedFrom: null,
+    derivation: null,
+    manifestHash: `sha256:${'e'.repeat(64)}`,
+  };
+  const multimodal: CurrentResearchPlanResponse = {
     presentationMode: 'multimodal',
-  } as CurrentResearchPlanResponse;
+    deliverable: current.deliverable,
+    evidenceManifest: current.evidenceManifest,
+    reportReview: current.reportReview,
+    reportDocument,
+    visualAssetManifests: [visualAssetManifest],
+  };
 
   assert.throws(
     () => currentResearchPlanToMarkdown(multimodal),
-    /multimodal|phase 5|renderer/i,
+    /multimodal|renderer/i,
   );
 });
 

@@ -69,7 +69,7 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
   }
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '272px 1fr', height: '100%' }}>
+    <div className="workbench" style={{ display: 'grid', gridTemplateColumns: '272px 1fr', height: '100%' }}>
       <Sidebar user={user} history={history} onNewTask={newTask} onOpenLabs={() => setView('labs')} onOpenTask={openTask} onLogout={onLogout} />
       {view === 'labs' ? (
         <main style={{ height: '100%', overflow: 'hidden' }}>
@@ -88,7 +88,7 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
       ) : (
       <main style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
         <div style={{ flex: 1, overflowY: 'auto', padding: '32px 0' }}>
-          <div className="chat-column" aria-live="polite">
+          <div className={`chat-column${deliverable?.presentationMode === 'multimodal' ? ' chat-column-report' : ''}`} aria-live="polite">
             {phase === 'idle' && <Welcome onPick={flow.submitInput} />}
             {clarification && phase === 'clarifying' && (
               <CurrentStage1Clarify response={clarification} onSubmit={submitClarification} disabled={clarificationSubmitting} />

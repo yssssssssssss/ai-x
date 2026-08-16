@@ -6,6 +6,8 @@ import type {
 import type {
   LegacyResearchDeliverableEnvelope,
   ResearchDeliverableEnvelope,
+  VisualAssetManifest,
+  VisualAssetReference,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import type {
   ControlArtifact,
@@ -21,6 +23,8 @@ import {
 import { ReportEvidenceValidator } from '../evidence/report-evidence-validator.ts';
 import { SchemaValidator } from '../schema/validator.ts';
 import { assertValidReportReviewArtifact } from './report-review-service.ts';
+import type { ReportDocument } from './report-document-composer.ts';
+import type { VerifiedVisualAsset, VisualAssetService } from './visual-asset-service.ts';
 
 export const REVIEW_GATED_DELIVERABLE_SCHEMA_VERSION = 'research-deliverable-v1-review-gated';
 const LEGACY_DELIVERABLE_SCHEMA_VERSION = 'research-deliverable-v1';
@@ -37,6 +41,7 @@ interface CurrentReportPackageReaderDependencies {
   evidence?: Pick<EvidenceService, 'validateManifest' | 'validateFindingGraph'>;
   reportValidator?: Pick<ReportEvidenceValidator, 'validate'>;
   schemaValidator?: Pick<SchemaValidator, 'validateOrThrow'>;
+  visualAssets?: Pick<VisualAssetService, 'readVerified'>;
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -76,6 +81,55 @@ function assertJsonIdentity(
     throw new Error(`${label} planVersionId is invalid`);
   }
   if (value.attemptId !== binding.attemptId) throw new Error(`${label} attemptId is invalid`);
+}
+
+function reportAssetReferences(document: ReportDocument): VisualAssetReference[] {
+  const references: VisualAssetReference[] = [];
+  const seen = new Set<string>();
+  const manifestByAsset = new Map<string, string>();
+  const append = (reference: VisualAssetReference): void => {
+    const priorManifest = manifestByAsset.get(reference.assetId);
+    if (priorManifest && priorManifest !== reference.manifestArtifactId) {
+      throw new Error(`ReportDocument visual Asset ${reference.assetId} has conflicting Manifest references`);
+    }
+    manifestByAsset.set(reference.assetId, reference.manifestArtifactId);
+    const key = `${reference.assetId}\u0000${reference.manifestArtifactId}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    references.push(reference);
+  };
+  for (const block of document.sections.flatMap(({ blocks }) => blocks)) {
+    if (block.type === 'image') append(block.assetRef);
+    if (block.type === 'image-comparison') {
+      append(block.beforeAssetRef);
+      append(block.afterAssetRef);
+    }
+    if (block.type === 'chart') append(block.chartRef);
+  }
+  return references;
+}
+
+function assertVerifiedVisualReference(
+  asset: VerifiedVisualAsset,
+  reference: VisualAssetReference,
+  binding: ReportPackageBinding,
+): VisualAssetManifest {
+  assertArtifactBinding(asset.artifact, reference.assetId, 'visual_asset', binding, 'Visual Asset');
+  assertArtifactBinding(
+    asset.manifestArtifact,
+    reference.manifestArtifactId,
+    'visual_asset_manifest',
+    binding,
+    'Visual Asset Manifest',
+  );
+  if (asset.manifestArtifact.schemaVersion !== 'visual-asset-manifest-v1') {
+    throw new Error('Visual Asset Manifest Artifact schema version is invalid');
+  }
+  if (asset.manifest.assetId !== reference.assetId) {
+    throw new Error('Visual Asset Manifest does not match its ReportDocument reference');
+  }
+  assertJsonIdentity(asset.manifest as unknown as Record<string, unknown>, binding, 'Visual Asset Manifest');
+  return asset.manifest;
 }
 
 export class CurrentReportPackageReader {
@@ -212,11 +266,50 @@ export class CurrentReportPackageReader {
       if (schemaVersion !== REVIEW_GATED_DELIVERABLE_SCHEMA_VERSION) {
         throw new Error(`Review-bound deliverable Artifact schema marker ${schemaVersion} is unsupported`);
       }
+      const selectedDocument = await this.dependencies.repository.findSealedArtifact({
+        taskId: binding.taskId,
+        attemptId: binding.attemptId,
+        kind: 'report_document',
+      });
+      if (!selectedDocument) {
+        return {
+          presentationMode: 'current_text',
+          deliverable: deliverable as unknown as ResearchDeliverableEnvelope<unknown>,
+          evidenceManifest,
+          reportReview: review,
+        };
+      }
+      const verifiedDocument = await this.dependencies.artifacts.readVerifiedJson<unknown>(
+        selectedDocument.id,
+      );
+      assertArtifactBinding(
+        verifiedDocument.artifact,
+        selectedDocument.id,
+        'report_document',
+        binding,
+        'ReportDocument',
+      );
+      if (verifiedDocument.artifact.schemaVersion !== 'report-document-v1') {
+        throw new Error('ReportDocument Artifact schema version is invalid');
+      }
+      this.schemaValidator.validateOrThrow('report-document', verifiedDocument.value);
+      const reportDocument = verifiedDocument.value as ReportDocument;
+      const references = reportAssetReferences(reportDocument);
+      if (references.length > 0 && !this.dependencies.visualAssets) {
+        throw new Error('multimodal ReportDocument requires a verified visual Asset reader');
+      }
+      const visualAssetManifests: VisualAssetManifest[] = [];
+      for (const reference of references) {
+        const asset = await this.dependencies.visualAssets!.readVerified(reference);
+        visualAssetManifests.push(assertVerifiedVisualReference(asset, reference, binding));
+      }
       return {
-        presentationMode: 'current_text',
+        presentationMode: 'multimodal',
         deliverable: deliverable as unknown as ResearchDeliverableEnvelope<unknown>,
         evidenceManifest,
         reportReview: review,
+        reportDocument,
+        visualAssetManifests,
       };
     }
     if (schemaVersion === LEGACY_DELIVERABLE_SCHEMA_VERSION) {

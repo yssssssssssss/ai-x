@@ -9,9 +9,13 @@ import type {
 import type {
   CurrentPlanStep,
   EvidenceClass,
+  EvidenceManifest,
   EvidenceRequirement,
   PendingInput,
+  ResearchDeliverableEnvelope,
+  ResearchPlanPayload,
 } from '../../../../packages/api-contract/research-deliverable.ts';
+import type { PassedReportReviewArtifact } from '../../../../packages/api-contract/control-workflow.ts';
 import { SchemaValidator } from '../schema/validator.ts';
 import {
   CONFIG_PATHS,
@@ -53,6 +57,7 @@ import {
 import { CurrentReportValidationError } from '../evidence/report-evidence-validator.ts';
 import type { CurrentDeliverableGenerateInput, CurrentDeliverableRevisionInput } from '../report/current-deliverable-service.ts';
 import type { DeliverableComposer, ReportReviewInput, ReportReviewResult } from '../report/report-review-service.ts';
+import type { ReportCompositionPort } from '../report/report-composition-service.ts';
 import {
   readVerifiedStepArtifact,
   resolveStepInput,
@@ -627,6 +632,7 @@ export class LeaseExecutionEngine {
     reportReview?: {
       review(input: ReportReviewInput, composer?: DeliverableComposer): Promise<ReportReviewResult>;
     };
+    reportComposition?: ReportCompositionPort;
   }) {
     this.llm = new ReceiptLLMClient(dependencies.llm, dependencies.repository);
   }
@@ -1070,14 +1076,15 @@ export class LeaseExecutionEngine {
         if (!reviewCoverage) {
           throw new ExecutionAuthenticityError('report review coverage identifiers are unavailable');
         }
+        const finalReviewCoverage = reviewCoverage;
         const review = await this.withLeaseHeartbeat(input.lease, () => this.dependencies.reportReview!.review({
           task: { id: task.id },
           plan: { id: planVersion.id },
           attempt: { id: input.lease.attemptId },
           deliverableArtifactId: deliverable.deliverableArtifactId,
           deliverable: deliverable.deliverable,
-          successCriterionIds: reviewCoverage.successCriterionIds,
-          questionIds: reviewCoverage.questionIds,
+          successCriterionIds: finalReviewCoverage.successCriterionIds,
+          questionIds: finalReviewCoverage.questionIds,
           evidenceIds: sealedEvidenceManifest.value.entries.map((entry) => entry.id),
           expectedModel: input.expectedModel,
           activeLease: input.lease,
@@ -1129,6 +1136,45 @@ export class LeaseExecutionEngine {
           to: 'composing_report',
         });
         active = { ...active, stateVersion: composingTask.stateVersion };
+        if (this.dependencies.reportComposition) {
+          await this.dependencies.repository.requireActiveLease(input.lease);
+          const [verifiedDeliverable, verifiedEvidenceManifest, verifiedReview] = await Promise.all([
+            this.dependencies.artifacts.readVerifiedJson<ResearchDeliverableEnvelope<ResearchPlanPayload>>(
+              deliverableArtifactId,
+            ),
+            this.dependencies.artifacts.readVerifiedJson<EvidenceManifest>(
+              sealedEvidenceManifest.artifact.id,
+            ),
+            this.dependencies.artifacts.readVerifiedJson<PassedReportReviewArtifact>(review.artifactId),
+          ]);
+          if (verifiedReview.value.verdict !== 'pass') {
+            throw new ExecutionAuthenticityError('ReportDocument composition requires the final pass Review');
+          }
+          const composition = await this.withLeaseHeartbeat(input.lease, () =>
+            this.dependencies.reportComposition!.composeAndStore({
+              taskId: input.lease.taskId,
+              planVersionId: input.lease.planVersionId,
+              attemptId: input.lease.attemptId,
+              requiredQuestionIds: [...finalReviewCoverage.questionIds],
+              deliverable: verifiedDeliverable,
+              evidenceManifest: verifiedEvidenceManifest,
+              evidenceArtifactResolver: evidenceResolver,
+              review: verifiedReview,
+              visualAssets: [],
+              charts: [],
+              activeLease: input.lease,
+            }));
+          if (
+            composition.artifact.state !== 'SEALED'
+            || composition.artifact.taskId !== input.lease.taskId
+            || composition.artifact.planVersionId !== input.lease.planVersionId
+            || composition.artifact.attemptId !== input.lease.attemptId
+            || composition.artifact.kind !== 'report_document'
+            || composition.artifact.schemaVersion !== 'report-document-v1'
+          ) {
+            throw new ExecutionAuthenticityError('ReportDocument composition did not return a sealed bound Artifact');
+          }
+        }
       }
       await this.dependencies.repository.requireActiveLease(input.lease);
       const status = gaps.length > 0 ? 'completed_with_gaps' : 'completed';

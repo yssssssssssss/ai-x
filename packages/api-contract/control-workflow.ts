@@ -5,7 +5,9 @@ import type {
   LegacyResearchDeliverableEnvelope,
   PendingInput,
   ResearchDeliverableEnvelope,
+  VisualAssetManifest,
 } from './research-deliverable.ts';
+import type { ReportDocument } from '../../apps/orchestrator-runtime/src/report/report-document-composer.ts';
 
 export type ControlWorkflowState =
   | 'awaiting_clarification'
@@ -204,19 +206,19 @@ export type CurrentReportPackageResponse<TPayload = unknown> =
       presentationMode: 'legacy_text';
       reportReview?: never;
       reportDocument?: never;
-      visualAssetManifest?: never;
+      visualAssetManifests?: never;
     }
   | CoreReportPackageResponse<ResearchDeliverableEnvelope<TPayload>> & {
       presentationMode: 'current_text';
       reportReview: PassedReportReviewArtifact;
       reportDocument?: never;
-      visualAssetManifest?: never;
+      visualAssetManifests?: never;
     }
   | CoreReportPackageResponse<ResearchDeliverableEnvelope<TPayload>> & {
       presentationMode: 'multimodal';
       reportReview: PassedReportReviewArtifact;
-      reportDocument?: never;
-      visualAssetManifest?: never;
+      reportDocument: ReportDocument;
+      visualAssetManifests: VisualAssetManifest[];
     };
 
 

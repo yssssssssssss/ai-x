@@ -27,6 +27,18 @@ async function req<T>(path: string, opts: { method?: string; body?: unknown; hea
   return data as T;
 }
 
+async function reqBlob(path: string): Promise<Response> {
+  const headers: Record<string, string> = {};
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetch(`/api${path}`, { headers });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({})) as { error?: string };
+    throw new ApiError(response.status, data.error ?? `HTTP ${response.status}`);
+  }
+  return response;
+}
+
 export class ApiError extends Error {
   constructor(public readonly status: number, message: string) {
     super(message);
@@ -105,6 +117,7 @@ import type {
   SelectControlPlanResponse,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import type { PlanProgress } from '../../../../packages/api-contract/plan.ts';
+import type { VisualAssetManifest } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { User, TaskDetail, TaskSummary, SkillItem } from '../../../../packages/api-contract/http.ts';
 import { parseControlDeliverableResponse } from '../report-package-response.ts';
 export type { ControlDeliverableResponse } from '../report-package-response.ts';
@@ -115,6 +128,11 @@ export interface ClarifyControlTaskRequest {
   clarificationAnswers: Record<string, unknown>;
   assumptionEdits: Record<string, string>;
   idempotencyKey: string;
+}
+
+export interface ControlVisualAssetResponse {
+  blob: Blob;
+  mediaType: VisualAssetManifest['mediaType'];
 }
 
 export const api = {
@@ -208,6 +226,21 @@ export const api = {
     req<ControlCommandResponse>(`/control-tasks/${taskId}/resume`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
   executeControlPlan: (taskId: string, body: ExecutionControlPlanRequest) =>
     req<ControlExecutionResult>(`/control-tasks/${taskId}/execute`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
+  controlVisualAsset: async (taskId: string, assetId: string): Promise<ControlVisualAssetResponse> => {
+    const response = await reqBlob(
+      `/control-tasks/${encodeURIComponent(taskId)}/assets/${encodeURIComponent(assetId)}`,
+    );
+    const mediaType = response.headers.get('content-type')?.split(';', 1)[0];
+    if (
+      mediaType !== 'image/png'
+      && mediaType !== 'image/jpeg'
+      && mediaType !== 'image/webp'
+      && mediaType !== 'image/svg+xml'
+    ) {
+      throw new ApiError(502, '视觉资产媒体类型无效');
+    }
+    return { blob: await response.blob(), mediaType };
+  },
   controlDeliverable: async (taskId: string) => parseControlDeliverableResponse(
     await req<unknown>(`/control-tasks/${taskId}/deliverable`),
   ),

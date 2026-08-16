@@ -1354,11 +1354,11 @@ git commit -m "feat: compose professional current reports"
 - Consumes: `CurrentReportPackageResponse`。
 - Produces: Web view、Print view、ZIP bundle。
 
-- [ ] **Step 1: 安装 ZIP 依赖**
+- [x] **Step 1: 安装 ZIP 依赖**（依赖与锁文件已存在；本次未运行安装命令）
 
 Run: `pnpm --dir apps/web add fflate`
 
-- [ ] **Step 2: 写 Bundle 失败测试**
+- [x] **Step 2: 写 Bundle 失败测试**
 
 验证 ZIP 含 `report.md`、`assets/`、`evidence-manifest.json`、`visual-assets.json`、`report-review.json`；blocked asset 不进入 ZIP；Markdown 使用相对路径。
 
@@ -1368,19 +1368,21 @@ Run: `pnpm exec tsx --test tests/report-bundle.test.ts`
 
 Expected: FAIL。
 
-- [ ] **Step 4: 实现 Web Blocks**
+- [x] **Step 4: 实现 Web Blocks**
 
 支持章节导航、Metric/Table/Chart/Image/Comparison/Evidence/Recommendation/Risk；点击 Finding 展开 Evidence；图片支持原图/标注切换；所有图片有 alt。
 
-- [ ] **Step 5: 实现 Print CSS**
+- [x] **Step 5: 实现 Print CSS**
 
 A4、封面、目录、页眉页脚、page-break、SVG 不截断、表格重复表头、黑白打印可区分。
 
-- [ ] **Step 6: 实现 Bundle**
+- [x] **Step 6: 实现 Bundle**
 
 使用 `fflate.zipSync`，只加入 owner 已读取且 `exportPolicy!=block` 的 assets；Manifest 与 Markdown 一起打包。
 
-- [ ] **Step 7: 运行测试和 Build**
+Production composition follow-up implemented: after the final pass Review, `LeaseExecutionEngine` enters `composing_report`, re-reads the final verified Artifact set, and invokes an active-lease `ReportCompositionService` that seals `reports/report-document.json`. The production runtime uses the real ArtifactStore/VisualAssetService. Text-only professional documents are multimodal with `visualAssetManifests: []`; image/Chart documents retain exact ordered verified Manifests. No follow-up verification command was run in the worker assignment.
+
+- [x] **Step 7: 运行测试和 Build**
 
 Run:
 
@@ -1389,9 +1391,13 @@ pnpm exec tsx --test tests/report-bundle.test.ts
 pnpm --dir apps/web build
 ```
 
-- [ ] **Step 8: 浏览器验收**
+Observed by Main: Task19 six-file suite 121 total / 120 pass / 1 existing skip / 0 fail; focused production writer 2/2; `pnpm typecheck` passed; Web build passed with a 242 KB main chunk and lazy ECharts chunk.
+
+- [x] **Step 8: 浏览器验收**
 
 在 1280×800 和 1440×900 验证：导航、Chart、图片放大、对比、Evidence 展开、Print Preview、ZIP 下载；控制台无错误。
+
+Observed by Main at 1280×800 and 1440×900: report render, `#comparison` navigation, Evidence `e1`/`e2` expansion, 125% zoom, interactive Chart plus one table, and print mode with actions/interactive Chart hidden, sealed SVG visible, and `thead` as `table-header-group`. A separate Gateway clarification defect leaves fresh tasks in `awaiting_clarification` and returns 500 on retry; it precedes Task19 and is not a renderer failure.
 
 - [ ] **Step 9: 阶段门禁和提交**
 

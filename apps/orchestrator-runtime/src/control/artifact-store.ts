@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { FileHandle } from 'node:fs/promises';
 import { mkdir } from 'node:fs/promises';
-import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
+import { isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 import {
   configureFsSafeNative,
   FsSafeError,

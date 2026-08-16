@@ -1,8 +1,114 @@
+import { useCallback, useMemo, useState } from 'react';
+import type { ReportDocument } from '../../../../orchestrator-runtime/src/report/report-document-composer.ts';
 import type { CurrentResearchPlanResponse } from '../../current-report-markdown.ts';
 import { assertCurrentReportTextMode, currentResearchPlanToMarkdown } from '../../current-report-markdown.ts';
+import { api, type ControlVisualAssetResponse } from '../../api/client.ts';
+import { createReportBundle } from '../../reporting/report-bundle.ts';
+import { ReportDocumentView } from '../../reporting/ReportDocumentView.tsx';
 import { Header } from './Stage1Understand.tsx';
 
+type MultimodalResearchPlanResponse = Extract<
+  CurrentResearchPlanResponse,
+  { presentationMode: 'multimodal' }
+>;
+
+export function selectCurrentStage4Renderer(report: unknown): {
+  component: 'CurrentTextReport' | 'ReportDocumentView';
+  reportDocument?: ReportDocument;
+} {
+  if (
+    report !== null
+    && typeof report === 'object'
+    && !Array.isArray(report)
+    && (report as Record<string, unknown>).presentationMode === 'multimodal'
+  ) {
+    const reportDocument = (report as Record<string, unknown>).reportDocument;
+    if (reportDocument !== null && typeof reportDocument === 'object' && !Array.isArray(reportDocument)) {
+      return { component: 'ReportDocumentView', reportDocument: reportDocument as ReportDocument };
+    }
+  }
+  return { component: 'CurrentTextReport' };
+}
+
 export function CurrentStage4Report({ report }: { report: CurrentResearchPlanResponse }) {
+  const selected = selectCurrentStage4Renderer(report);
+  if (selected.component === 'ReportDocumentView' && report.presentationMode === 'multimodal') {
+    return <MultimodalCurrentReport report={report} />;
+  }
+  return <CurrentTextReport report={report} />;
+}
+
+function MultimodalCurrentReport({ report }: { report: MultimodalResearchPlanResponse }) {
+  const [bundleStatus, setBundleStatus] = useState<'idle' | 'working' | 'error'>('idle');
+  const taskId = report.deliverable.taskId;
+  const loadVisualAsset = useMemo(() => {
+    const cache = new Map<string, Promise<ControlVisualAssetResponse>>();
+    return (assetId: string) => {
+      const cached = cache.get(assetId);
+      if (cached) return cached;
+      const pending = api.controlVisualAsset(taskId, assetId).catch((error: unknown) => {
+        cache.delete(assetId);
+        throw error;
+      });
+      cache.set(assetId, pending);
+      return pending;
+    };
+  }, [taskId]);
+  const loadAsset = useCallback(async (assetId: string) => {
+    const { blob } = await loadVisualAsset(assetId);
+    return blob;
+  }, [loadVisualAsset]);
+  const assetUrl = useCallback(
+    ({ assetId }: { assetId: string }) => `/api/control-tasks/${encodeURIComponent(taskId)}/assets/${encodeURIComponent(assetId)}`,
+    [taskId],
+  );
+
+  async function downloadBundle() {
+    setBundleStatus('working');
+    try {
+      const bytes = await createReportBundle({
+        report,
+        readAsset: async ({ assetId }) => {
+          const { blob, mediaType } = await loadVisualAsset(assetId);
+          return { bytes: new Uint8Array(await blob.arrayBuffer()), mediaType };
+        },
+      });
+      const ownedBytes = new Uint8Array(bytes.byteLength);
+      ownedBytes.set(bytes);
+      const url = URL.createObjectURL(new Blob([ownedBytes.buffer], { type: 'application/zip' }));
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `research-report-${taskId}.zip`;
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      setBundleStatus('idle');
+    } catch {
+      setBundleStatus('error');
+    }
+  }
+
+  return (
+    <ReportDocumentView
+      document={report.reportDocument}
+      visualAssetManifests={report.visualAssetManifests}
+      taskId={taskId}
+      assetUrl={assetUrl}
+      loadAsset={loadAsset}
+      actions={(
+        <>
+          <button type="button" className="btn-ghost" onClick={() => window.print()}>打印 / PDF</button>
+          <button type="button" className="btn-ghost" onClick={() => void downloadBundle()} disabled={bundleStatus === 'working'}>
+            {bundleStatus === 'working' ? '正在打包…' : '下载 Markdown ZIP'}
+          </button>
+          {bundleStatus === 'error' ? <span role="alert">报告包生成失败，请重试</span> : null}
+        </>
+      )}
+    />
+  );
+}
+
+function CurrentTextReport({ report }: { report: CurrentResearchPlanResponse }) {
   assertCurrentReportTextMode(report);
   const { deliverable, evidenceManifest } = report;
   const { payload, findingGraph } = deliverable;

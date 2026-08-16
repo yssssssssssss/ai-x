@@ -4,7 +4,6 @@ import {
   type ReportReviewArtifact,
   type ReportReviewDimension,
   type ReportReviewDimensionId,
-  type ReportReviewVerdict,
 } from '../../../../packages/api-contract/control-workflow.ts';
 export type {
   ReportReviewArtifact,

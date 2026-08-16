@@ -12,6 +12,7 @@ import {
   type LeaseExecutionResult,
 } from '../apps/orchestrator-runtime/src/control/lease-execution-engine.ts';
 import type {
+  ChartSpec,
   CurrentPlanStep,
   ResearchDeliverableEnvelope,
   ResearchPlanPayload,
@@ -25,8 +26,29 @@ import type {
   ReportReviewInput,
   ReportReviewResult,
 } from '../apps/orchestrator-runtime/src/report/report-review-service.ts';
-import type { ReportReviewDimension } from '../packages/api-contract/control-workflow.ts';
+import type {
+  ReportReviewArtifact,
+  ReportReviewDimension,
+} from '../packages/api-contract/control-workflow.ts';
 import { CurrentReportValidationError } from '../apps/orchestrator-runtime/src/evidence/report-evidence-validator.ts';
+import type {
+  EvidenceArtifactResolver,
+  EvidenceManifest,
+} from '../apps/orchestrator-runtime/src/evidence/evidence-service.ts';
+import {
+  composeReportDocument,
+  type ReportDocument,
+} from '../apps/orchestrator-runtime/src/report/report-document-composer.ts';
+import {
+  VisualAssetService,
+  type VerifiedVisualAsset,
+} from '../apps/orchestrator-runtime/src/report/visual-asset-service.ts';
+import {
+  chartTableAlternative,
+  renderAndSealChartSvg,
+} from '../apps/orchestrator-runtime/src/report/chart-renderer.ts';
+import { chartSpecHash } from '../apps/orchestrator-runtime/src/report/chart-spec-validator.ts';
+import { CurrentReportPackageReader } from '../apps/orchestrator-runtime/src/report/current-report-package-reader.ts';
 import {
   LLMInvocationError,
   type LLMClient,
@@ -50,6 +72,7 @@ import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validat
 import {
   ControlPlaneConflictError,
   ControlPlaneRepository,
+  type ControlArtifact,
   type ControlExecutionLease,
 } from '../database/control-plane.ts';
 import {
@@ -89,6 +112,30 @@ interface TestDeliverables {
 
 interface TestReportReview {
   review(input: ReportReviewInput, composer?: DeliverableComposer): Promise<ReportReviewResult>;
+}
+
+interface TestReportCompositionInput {
+  taskId: string;
+  planVersionId: string;
+  attemptId: string;
+  requiredQuestionIds: string[];
+  deliverable: {
+    artifact: ControlArtifact;
+    value: ResearchDeliverableEnvelope<ResearchPlanPayload>;
+  };
+  evidenceManifest: { artifact: ControlArtifact; value: EvidenceManifest };
+  evidenceArtifactResolver: EvidenceArtifactResolver;
+  review: { artifact: ControlArtifact; value: ReportReviewArtifact & { verdict: 'pass' } };
+  activeLease: ControlExecutionLease;
+}
+
+interface TestReportCompositionResult {
+  artifact: ControlArtifact;
+  document: ReportDocument;
+}
+
+interface TestReportComposition {
+  composeAndStore(input: TestReportCompositionInput): Promise<TestReportCompositionResult>;
 }
 
 function passingReviewDimensions(): ReportReviewDimension[] {
@@ -221,6 +268,14 @@ type DeliverableAwareLeaseExecutionEngineDependencies = Omit<
 
 const DeliverableAwareLeaseExecutionEngine = LeaseExecutionEngine as unknown as new (
   dependencies: DeliverableAwareLeaseExecutionEngineDependencies,
+) => LeaseExecutionEngine;
+
+type ReportCompositionAwareDependencies = DeliverableAwareLeaseExecutionEngineDependencies & {
+  reportComposition: TestReportComposition;
+};
+
+const ReportCompositionAwareLeaseExecutionEngine = LeaseExecutionEngine as unknown as new (
+  dependencies: ReportCompositionAwareDependencies,
 ) => LeaseExecutionEngine;
 
 class ScopedEngineDatabase implements MigrationDatabase {
@@ -1224,6 +1279,197 @@ const reviewProblemGraphFixture = {
     depends_on: [],
   }],
 };
+
+test('pass Review composes and lease-seals a verified image and Chart ReportDocument for package dispatch', async () => {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]!],
+    { problem_graph: reviewProblemGraphFixture },
+    reviewStructuredTaskFixture,
+  );
+  const store = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+  const visualAssets = new VisualAssetService({ artifacts: store });
+  const original = await visualAssets.ingest({
+    taskId: lease.taskId,
+    planVersionId: lease.planVersionId,
+    attemptId: lease.attemptId,
+    source: {
+      kind: 'user_upload',
+      fileName: 'verified-source.png',
+      bytes: Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+        'base64',
+      ),
+    },
+    exportPolicy: 'allow',
+  });
+
+  const deliverables = new RecordingDeliverablesFake(async (input) => {
+    const value = minimalDeliverable(input);
+    const evidenceId = input.evidenceManifest.value.entries[0]?.id;
+    assert.ok(evidenceId);
+    const fact = value.findingGraph.findings[0];
+    assert.ok(fact?.kind === 'fact');
+    fact.evidenceIds = [evidenceId];
+    value.coverage.questionBindings = [{ questionId: 'question-review', summaryIds: ['S1'] }];
+    const artifact = await store.writeJson({
+      taskId: input.task.id,
+      planVersionId: input.plan.id,
+      attemptId: input.attempt.id,
+      kind: 'deliverable',
+      relativePath: 'deliverables/final-r0.json',
+      value,
+      schemaVersion: 'research-deliverable-v1-review-gated',
+      activeLease: input.activeLease,
+    });
+    return { deliverable: value, deliverableArtifactId: artifact.id };
+  });
+  const reportReview = new RecordingReportReviewFake(async (input) => {
+    const value: ReportReviewArtifact & { verdict: 'pass' } = {
+      version: 'report-review-v1',
+      taskId: input.task.id,
+      planVersionId: input.plan.id,
+      attemptId: input.attempt.id,
+      deliverableArtifactId: input.deliverableArtifactId,
+      verdict: 'pass',
+      dimensions: passingReviewDimensions(),
+      revisionRound: 0,
+    };
+    const artifact = await store.writeJson({
+      taskId: input.task.id,
+      planVersionId: input.plan.id,
+      attemptId: input.attempt.id,
+      kind: 'report_review',
+      relativePath: 'reports/review-r0.json',
+      value,
+      schemaVersion: 'report-review-v1',
+      activeLease: input.activeLease,
+    });
+    return { ...value, status: 'completed', artifactId: artifact.id };
+  });
+
+  let compositionCalls = 0;
+  let expectedVisualAssetManifests: Array<VerifiedVisualAsset['manifest']> = [];
+  const reportComposition: TestReportComposition = {
+    async composeAndStore(input) {
+      compositionCalls += 1;
+      assert.deepEqual(input.activeLease, lease);
+      assert.deepEqual(input.requiredQuestionIds, ['question-review']);
+      const verifiedImage = await visualAssets.readVerified({
+        assetId: original.assetArtifact.id,
+        manifestArtifactId: original.manifestArtifact.id,
+      });
+      const spec: ChartSpec = {
+        version: 'chart-spec-v1',
+        chartId: 'chart-production-wiring',
+        type: 'comparison',
+        title: 'Verified comparison with missing numeric observation',
+        categories: ['Score'],
+        series: [{
+          key: 'competitor:a',
+          label: 'Competitor A',
+          values: [null],
+          evidenceIds: [[]],
+        }],
+        yAxis: { min: 0 },
+      };
+      const sealedChart = await renderAndSealChartSvg({
+        taskId: input.taskId,
+        planVersionId: input.planVersionId,
+        attemptId: input.attemptId,
+        spec,
+        evidenceResolver: () => undefined,
+        original: {
+          assetId: original.assetArtifact.id,
+          manifestArtifactId: original.manifestArtifact.id,
+        },
+        assets: visualAssets,
+        exportPolicy: 'allow',
+        width: 800,
+        height: 450,
+      });
+      const verifiedChart = await visualAssets.readVerified({
+        assetId: sealedChart.derived.assetArtifact.id,
+        manifestArtifactId: sealedChart.derived.manifestArtifact.id,
+      });
+      expectedVisualAssetManifests = [
+        structuredClone(verifiedImage.manifest),
+        structuredClone(verifiedChart.manifest),
+      ];
+      const document = composeReportDocument({
+        templateId: 'research-plan',
+        requiredQuestionIds: input.requiredQuestionIds,
+        deliverable: input.deliverable,
+        evidenceManifest: input.evidenceManifest,
+        evidenceArtifactResolver: input.evidenceArtifactResolver,
+        review: input.review,
+        visualAssets: [verifiedImage],
+        charts: [{
+          spec,
+          specHash: chartSpecHash(spec),
+          table: chartTableAlternative(spec),
+          asset: verifiedChart,
+        }],
+      });
+      const artifact = await store.writeJson({
+        taskId: input.taskId,
+        planVersionId: input.planVersionId,
+        attemptId: input.attemptId,
+        kind: 'report_document',
+        relativePath: 'reports/report-document.json',
+        value: document,
+        schemaVersion: 'report-document-v1',
+        sensitivity: 'internal',
+        redactionPolicyVersion: 'v1',
+        activeLease: input.activeLease,
+      });
+      return { artifact, document };
+    },
+  };
+
+  const engine = new ReportCompositionAwareLeaseExecutionEngine({
+    repository,
+    artifacts: store,
+    tools: new ToolRouter().register(new CountingRealTavilyAdapter()),
+    llm: new CountingRealLLM(),
+    deliverables,
+    reportReview,
+    reportComposition,
+    skillLoader: new SkillLoader(),
+    validator: new SchemaValidator(),
+    heartbeatMs: 60_000,
+  });
+  const result = await engine.execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed');
+  assert.equal(compositionCalls, 1);
+  const reportDocumentArtifact = await repository.findSealedArtifact({
+    taskId: lease.taskId,
+    attemptId: lease.attemptId,
+    kind: 'report_document',
+  });
+  assert.ok(reportDocumentArtifact);
+  assert.equal(reportDocumentArtifact.state, 'SEALED');
+  assert.equal(reportDocumentArtifact.schemaVersion, 'report-document-v1');
+  const storedDocument = await store.readVerifiedJson<ReportDocument>(reportDocumentArtifact.id);
+  assert.ok(storedDocument.value.sections.flatMap(({ blocks }) => blocks).some(({ type }) => type === 'image'));
+  assert.ok(storedDocument.value.sections.flatMap(({ blocks }) => blocks).some(({ type }) => type === 'chart'));
+
+  const reportPackage = await new CurrentReportPackageReader({
+    artifacts: store,
+    repository,
+    visualAssets,
+  }).read({
+    taskId: lease.taskId,
+    planVersionId: lease.planVersionId,
+    attemptId: lease.attemptId,
+  });
+  assert.equal(reportPackage?.presentationMode, 'multimodal');
+  if (reportPackage?.presentationMode !== 'multimodal') assert.fail('expected multimodal package');
+  assert.deepEqual(reportPackage.reportDocument, storedDocument.value);
+  assert.deepEqual(reportPackage.visualAssetManifests, expectedVisualAssetManifests);
+});
+
 
 const pausedReviewCases = [
   {

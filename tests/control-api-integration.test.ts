@@ -1188,7 +1188,7 @@ test('production control runtime returns the revised final deliverable ID for pa
   assert.equal(ownerDeliverableResponse.status, 200);
   const ownerDeliverableBody: unknown = await ownerDeliverableResponse.json();
   assertRecord(ownerDeliverableBody);
-  assert.equal(ownerDeliverableBody.presentationMode, 'current_text');
+  assert.equal(ownerDeliverableBody.presentationMode, 'multimodal');
   const envelope = ownerDeliverableBody.deliverable;
   assertRecord(envelope);
   assert.equal(envelope.taskId, planned.task.id);
@@ -1202,7 +1202,14 @@ test('production control runtime returns the revised final deliverable ID for pa
   assert.equal(reportReview.planVersionId, speed.planVersionId);
   assert.equal(reportReview.attemptId, execution.attemptId);
   assert.equal(reportReview.deliverableArtifactId, execution.deliverableArtifactId);
-  assert.equal('reportDocument' in ownerDeliverableBody, false);
+  const reportDocument = ownerDeliverableBody.reportDocument;
+  assertRecord(reportDocument);
+  assert.equal(reportDocument.version, 'report-document-v1');
+  assert.equal(reportDocument.title, '宠物辅食竞品研究计划');
+  assert.ok(Array.isArray(reportDocument.sections));
+  assert.ok(reportDocument.sections.length > 0);
+  assert.doesNotMatch(JSON.stringify(reportDocument), /"type":"(?:image|image-comparison|chart)"/u);
+  assert.deepEqual(ownerDeliverableBody.visualAssetManifests, []);
   assert.equal('visualAssetManifest' in ownerDeliverableBody, false);
   assert.match(JSON.stringify(ownerDeliverableBody), new RegExp(evidenceUrl.replaceAll('.', '\\.'), 'u'));
 
@@ -1317,9 +1324,11 @@ test('production control runtime returns the revised final deliverable ID for pa
   const connection = await scopedDatabase.connect();
   try {
     const terminalArtifacts = await connection.query(
-      `SELECT id, kind, state, storage_uri, created_at
+      `SELECT id, kind, state, storage_uri, schema_version, created_at
        FROM control_artifacts
-       WHERE attempt_id = $1 AND kind IN ('deliverable', 'evidence_manifest', 'report_review', 'execution_summary')
+       WHERE attempt_id = $1 AND kind IN (
+         'deliverable', 'evidence_manifest', 'report_document', 'report_review', 'execution_summary'
+       )
        ORDER BY kind, created_at, id`,
       [execution.attemptId],
     );
@@ -1329,6 +1338,7 @@ test('production control runtime returns the revised final deliverable ID for pa
         { kind: 'deliverable', state: 'SEALED' },
         { kind: 'deliverable', state: 'SEALED' },
         { kind: 'evidence_manifest', state: 'SEALED' },
+        { kind: 'report_document', state: 'SEALED' },
         { kind: 'report_review', state: 'SEALED' },
       ],
     );
@@ -1352,6 +1362,13 @@ test('production control runtime returns the revised final deliverable ID for pa
       terminalArtifacts.rows.find((row) => row.kind === 'report_review')?.id,
       execution.reportReviewArtifactId,
     );
+    const reportDocumentArtifact = terminalArtifacts.rows.find((row) => row.kind === 'report_document');
+    assert.ok(reportDocumentArtifact);
+    assert.ok(typeof reportDocumentArtifact.id === 'string');
+    assert.equal(reportDocumentArtifact.schema_version, 'report-document-v1');
+    assert.match(String(reportDocumentArtifact.storage_uri), /\/reports\/report-document\.json$/u);
+    const verifiedReportDocument = await artifacts.readVerifiedJson<unknown>(reportDocumentArtifact.id);
+    assert.deepEqual(verifiedReportDocument.value, ownerDeliverableBody.reportDocument);
 
     const referencedArtifacts = await connection.query(
       `SELECT id, kind, storage_uri, content_sha256

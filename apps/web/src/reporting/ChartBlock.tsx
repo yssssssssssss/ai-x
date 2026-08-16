@@ -1,11 +1,13 @@
 import { useEffect, useId, useRef } from 'react';
-import * as echarts from 'echarts';
 import type { EChartsOption } from 'echarts';
 import type { ChartSpec } from '../../../../packages/api-contract/research-deliverable.ts';
+import type { ChartTableAlternative } from '../../../orchestrator-runtime/src/report/chart-renderer.ts';
 
 export interface ChartBlockProps {
   spec: ChartSpec;
+  table?: ChartTableAlternative;
   height?: number;
+  showTable?: boolean;
   onEvidenceSelect?: (evidenceId: string) => void;
 }
 
@@ -153,20 +155,28 @@ function EvidenceIds({
   );
 }
 
-export function ChartBlock({ spec, height = 420, onEvidenceSelect }: ChartBlockProps) {
+export function ChartBlock({ spec, table, height = 420, showTable = true, onEvidenceSelect }: ChartBlockProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const captionId = useId();
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return undefined;
-    const chart = echarts.init(container, undefined, { renderer: 'svg' });
-    chart.setOption(chartOption(spec), { notMerge: true, lazyUpdate: false, silent: true });
-    const observer = new ResizeObserver(() => chart.resize());
-    observer.observe(container);
+    let cancelled = false;
+    let observer: ResizeObserver | undefined;
+    let disposeChart: (() => void) | undefined;
+    void import('echarts').then(({ init }) => {
+      if (cancelled) return;
+      const chart = init(container, undefined, { renderer: 'svg' });
+      chart.setOption(chartOption(spec), { notMerge: true, lazyUpdate: false, silent: true });
+      observer = new ResizeObserver(() => chart.resize());
+      observer.observe(container);
+      disposeChart = () => chart.dispose();
+    }).catch(() => {});
     return () => {
-      observer.disconnect();
-      chart.dispose();
+      cancelled = true;
+      observer?.disconnect();
+      disposeChart?.();
     };
   }, [spec]);
 
@@ -179,38 +189,43 @@ export function ChartBlock({ spec, height = 420, onEvidenceSelect }: ChartBlockP
         aria-label={`${spec.title} chart. A complete tabular text alternative follows.`}
         style={{ width: '100%', height, minHeight: 240 }}
       />
-      <div style={{ overflowX: 'auto', marginTop: 16 }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <caption style={{ textAlign: 'left', paddingBottom: 8 }}>
-            Tabular data and Evidence for {spec.title}
-          </caption>
-          <thead>
-            <tr>
-              <th scope="col" style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #cbd5e1' }}>Series</th>
-              {spec.categories.map((category) => (
-                <th key={category} scope="col" style={{ textAlign: 'right', padding: 8, borderBottom: '1px solid #cbd5e1' }}>
-                  {category}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {spec.series.map((series) => (
-              <tr key={series.key}>
-                <th scope="row" style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e2e8f0' }}>
-                  {series.label}
-                </th>
-                {series.values.map((value, index) => (
-                  <td key={spec.categories[index]} style={{ textAlign: 'right', padding: 8, borderBottom: '1px solid #e2e8f0' }}>
-                    <span>{value === null ? 'Missing' : value}</span>
-                    <EvidenceIds ids={series.evidenceIds[index] ?? []} onSelect={onEvidenceSelect} />
-                  </td>
+      {showTable ? (
+        <div style={{ overflowX: 'auto', marginTop: 16 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <caption style={{ textAlign: 'left', paddingBottom: 8 }}>
+              {table?.caption ?? `Tabular data and Evidence for ${spec.title}`}
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col" style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #cbd5e1' }}>Series</th>
+                {(table?.columns ?? spec.categories).map((category) => (
+                  <th key={category} scope="col" style={{ textAlign: 'right', padding: 8, borderBottom: '1px solid #cbd5e1' }}>
+                    {category}
+                  </th>
                 ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {(table?.rows ?? spec.series).map((series) => {
+                const values = 'cells' in series ? series.cells : series.values;
+                return (
+                  <tr key={series.key}>
+                    <th scope="row" style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #e2e8f0' }}>
+                      {series.label}
+                    </th>
+                    {values.map((value, index) => (
+                      <td key={(table?.columns ?? spec.categories)[index]} style={{ textAlign: 'right', padding: 8, borderBottom: '1px solid #e2e8f0' }}>
+                        <span>{value === null ? 'Missing' : value}</span>
+                        <EvidenceIds ids={series.evidenceIds[index] ?? []} onSelect={onEvidenceSelect} />
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
     </figure>
   );
 }

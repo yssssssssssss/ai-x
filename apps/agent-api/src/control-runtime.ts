@@ -34,6 +34,7 @@ import { CurrentDeliverableService } from '../../orchestrator-runtime/src/report
 import { SynthesisMaterializer } from '../../orchestrator-runtime/src/report/synthesis-materializer.ts';
 import { ReportReviewService } from '../../orchestrator-runtime/src/report/report-review-service.ts';
 import { CurrentReportPackageReader } from '../../orchestrator-runtime/src/report/current-report-package-reader.ts';
+import { ReportCompositionService } from '../../orchestrator-runtime/src/report/report-composition-service.ts';
 import {
   ImageAnnotationService,
   type ImageAnnotationInput,
@@ -368,12 +369,14 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
   });
   const evidence = new EvidenceService();
   const reportValidator: ReportEvidenceValidator = new ReportEvidenceValidator(evidence);
+  const reportComposition = new ReportCompositionService({ artifacts, visualAssets });
   const reportPackageReader = new CurrentReportPackageReader({
     artifacts,
     repository,
     evidence,
     reportValidator,
     schemaValidator: validator,
+    visualAssets,
   });
   const deliverables = new CurrentDeliverableService({
     llm: new ReceiptLLMClient(llm, repository),
@@ -396,6 +399,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     heartbeatMs: 30_000,
     deliverables,
     reportReview,
+    reportComposition,
   });
   const planRevisionDriver: WorkflowPlanRevisionDriver = {
     async revise(input) {
