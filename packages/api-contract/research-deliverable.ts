@@ -252,9 +252,29 @@ export interface VisualAssetLineage {
   manifestHash: string;
 }
 
+export type ChartType = 'comparison' | 'trend' | 'heatmap';
+
+export interface ChartSeries {
+  key: string;
+  label: string;
+  values: Array<number | null>;
+  evidenceIds: string[][];
+}
+
+export interface ChartSpec {
+  version: 'chart-spec-v1';
+  chartId: string;
+  type: ChartType;
+  title: string;
+  categories: string[];
+  series: ChartSeries[];
+  yAxis?: { min: number };
+}
+
 export type VisualAssetDerivation =
   | { kind: 'annotation'; overlayArtifactId: string }
-  | { kind: 'heatmap' };
+  | { kind: 'heatmap' }
+  | { kind: 'chart_svg'; chartId: string };
 
 export interface VisualAssetManifest {
   version: 'visual-asset-manifest-v1';
@@ -263,7 +283,7 @@ export interface VisualAssetManifest {
   attemptId: string;
   assetId: string;
   contentSha256: string;
-  mediaType: 'image/png' | 'image/jpeg' | 'image/webp';
+  mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/svg+xml';
   byteSize: number;
   width: number;
   height: number;

@@ -28,7 +28,7 @@
     "attemptId": { "$ref": "#/definitions/nonEmptyString" },
     "assetId": { "$ref": "#/definitions/nonEmptyString" },
     "contentSha256": { "$ref": "#/definitions/sha256" },
-    "mediaType": { "enum": ["image/png", "image/jpeg", "image/webp"] },
+    "mediaType": { "enum": ["image/png", "image/jpeg", "image/webp", "image/svg+xml"] },
     "byteSize": { "type": "integer", "minimum": 1, "maximum": 10485760 },
     "width": { "type": "integer", "minimum": 1 },
     "height": { "type": "integer", "minimum": 1 },
@@ -87,6 +87,15 @@
           "additionalProperties": false,
           "required": ["kind"],
           "properties": { "kind": { "const": "heatmap" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "chartId"],
+          "properties": {
+            "kind": { "const": "chart_svg" },
+            "chartId": { "$ref": "#/definitions/nonEmptyString" }
+          }
         }
       ]
     },
@@ -115,6 +124,19 @@
           "derivation": { "type": "null" }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "derivation": {
+            "type": "object",
+            "required": ["kind"],
+            "properties": { "kind": { "const": "chart_svg" } }
+          }
+        }
+      },
+      "then": { "properties": { "mediaType": { "const": "image/svg+xml" } } },
+      "else": { "properties": { "mediaType": { "not": { "const": "image/svg+xml" } } } }
     }
   ],
   "definitions": {

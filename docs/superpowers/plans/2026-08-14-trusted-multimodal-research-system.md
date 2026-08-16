@@ -1234,7 +1234,7 @@ git commit -m "feat: manage verified report visual assets"
 **Interfaces:**
 - Produces: `validateChartSpec(spec, evidenceResolver)`、服务端 SEALED SVG Artifact 和交互式 ECharts SVG block。
 
-- [ ] **Step 1: 安装服务端和 Web 依赖**
+- [x] **Step 1: 安装服务端和 Web 依赖**
 
 Run:
 
@@ -1243,7 +1243,7 @@ pnpm add echarts
 pnpm --dir apps/web add echarts
 ```
 
-- [ ] **Step 2: 写失败测试**
+- [x] **Step 2: 写失败测试**
 
 覆盖 unsupported type、series 长度不匹配、无 Evidence、dangling Evidence、null→0、误导性 non-zero baseline、happy path；Renderer 测试 SVG 无 script/foreignObject/remote URL，并通过 VisualAssetService seal 为 `chart_svg`。
 
@@ -1253,15 +1253,17 @@ Run: `pnpm exec tsx --test tests/chart-spec.test.ts tests/chart-renderer.test.ts
 
 Expected: FAIL。
 
-- [ ] **Step 4: 实现 Schema 和 Validator**
+- [x] **Step 4: 实现 Schema 和 Validator**
 
 Validator 检查每个 series 的 evidenceIds；数据点必须存在于解析后的 Evidence Value；缺失值保持 null。
 
-- [ ] **Step 5: 实现服务端和 Web SVG Renderer**
+- [x] **Step 5: 实现服务端和 Web SVG Renderer**
 
 服务端使用 ECharts SSR SVG renderer 从已验证 Chart Spec 生成 SVG 字节，经 `VisualAssetService.derive` seal；Web `ChartBlock` 使用 ECharts `renderer: 'svg'` 提供交互视图，颜色从 actor/competitor stable key 派生，组件 unmount 时 dispose，并在旁边提供表格型文本替代。Markdown Bundle 和 Print 使用已封存 SVG，不依赖客户端重新计算数据。
 
-- [ ] **Step 6: 运行测试和 Web Build**
+Observed execution evidence from the main agent: Chart Spec + renderer suite 15/15 passed, `pnpm typecheck` passed, and `pnpm --dir apps/web build` passed. This worker ran no validation commands or commit; Step 7 remains open.
+
+- [x] **Step 6: 运行测试和 Web Build**
 
 Run:
 

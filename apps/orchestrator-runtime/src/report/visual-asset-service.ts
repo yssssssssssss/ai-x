@@ -388,6 +388,7 @@ function metadataFromArtifact(artifact: ControlArtifact): TrustedBinaryMetadata 
     artifact.mediaType !== 'image/png'
     && artifact.mediaType !== 'image/jpeg'
     && artifact.mediaType !== 'image/webp'
+    && artifact.mediaType !== 'image/svg+xml'
   ) {
     throw new Error('visual Asset has no trusted image media type');
   }
@@ -459,7 +460,7 @@ function assertPersistenceManifestInput(input: AssetBinding & {
     attemptId: input.attemptId,
     assetId: 'pending-visual-asset',
     contentSha256: `sha256:${'0'.repeat(64)}`,
-    mediaType: 'image/png',
+    mediaType: input.derivation?.kind === 'chart_svg' ? 'image/svg+xml' : 'image/png',
     byteSize: 1,
     width: 1,
     height: 1,
@@ -604,6 +605,9 @@ export class VisualAssetService {
       schemaVersion: 'visual-asset-v1',
       sensitivity: 'internal',
       redactionPolicyVersion: 'v1',
+      ...(input.derivation?.kind === 'chart_svg'
+        ? { trustedMediaType: 'image/svg+xml' as const }
+        : {}),
     });
     assertBinding(assetArtifact, input, 'visual Asset');
     const metadata = metadataFromArtifact(assetArtifact);

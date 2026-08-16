@@ -59,9 +59,10 @@ export interface ArtifactWriteInput extends ArtifactWriteBase {
 
 export interface BinaryArtifactWriteInput extends ArtifactWriteBase {
   bytes: Uint8Array;
+  trustedMediaType?: 'image/svg+xml';
 }
 
-export type TrustedBinaryContentType = 'image/png' | 'image/jpeg' | 'image/webp';
+export type TrustedBinaryContentType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/svg+xml';
 
 export interface TrustedBinaryMetadata {
   contentType: TrustedBinaryContentType;
@@ -196,10 +197,40 @@ function hasAcceptablePngEnvelope(bytes: Buffer): boolean {
   return false;
 }
 
-async function inspectBinary(bytes: Buffer): Promise<TrustedBinaryMetadata> {
+function inspectTrustedSvg(bytes: Buffer): TrustedBinaryMetadata {
+  const svg = bytes.toString('utf8').trim();
+  if (!svg.startsWith('<svg') || !svg.endsWith('</svg>') || Buffer.byteLength(svg) !== bytes.byteLength) {
+    throw new BinaryArtifactValidationError('trusted SVG must be a standalone UTF-8 svg document');
+  }
+  if (
+    /<\/?(?:script|foreignObject|iframe|object|embed)\b/i.test(svg)
+    || /<!DOCTYPE\b|<!ENTITY\b/i.test(svg)
+    || /\son[a-z]+\s*=/i.test(svg)
+    || /(?:href|xlink:href|src)\s*=\s*["'](?!#)[^"']*["']/i.test(svg)
+    || /url\(\s*["']?(?!#)[^)]+\)/i.test(svg)
+  ) {
+    throw new BinaryArtifactValidationError('trusted SVG contains executable or external content');
+  }
+  const root = svg.match(/^<svg\b[^>]*>/i)?.[0];
+  const width = Number(root?.match(/\bwidth=["']([1-9]\d*)["']/i)?.[1]);
+  const height = Number(root?.match(/\bheight=["']([1-9]\d*)["']/i)?.[1]);
+  if (!Number.isInteger(width) || !Number.isInteger(height)) {
+    throw new BinaryArtifactValidationError('trusted SVG width and height must be positive integers');
+  }
+  if (width * height > MAX_BINARY_PIXEL_COUNT) {
+    throw new BinaryArtifactValidationError('pixel count exceeds 20 megapixels');
+  }
+  return { contentType: 'image/svg+xml', byteSize: bytes.byteLength, width, height };
+}
+
+async function inspectBinary(
+  bytes: Buffer,
+  trustedMediaType?: BinaryArtifactWriteInput['trustedMediaType'],
+): Promise<TrustedBinaryMetadata> {
   if (bytes.byteLength > MAX_BINARY_BYTE_SIZE) {
     throw new BinaryArtifactValidationError('byte size exceeds 10 MiB');
   }
+  if (trustedMediaType === 'image/svg+xml') return inspectTrustedSvg(bytes);
   let dimensions: { width: number; height: number; type?: string };
   try {
     dimensions = imageSize(bytes);
@@ -479,7 +510,7 @@ export class ControlArtifactStore {
       throw new BinaryArtifactValidationError('byte size exceeds 10 MiB');
     }
     const bytes = Buffer.from(input.bytes);
-    return this.writeBytes(input, bytes, await inspectBinary(bytes));
+    return this.writeBytes(input, bytes, await inspectBinary(bytes, input.trustedMediaType));
   }
 
   async reconcileStaging(): Promise<void> {
@@ -537,7 +568,10 @@ export class ControlArtifactStore {
     metadata: TrustedBinaryMetadata;
   }> {
     const { artifact, bytes } = await this.readVerifiedBytes(artifactId, true, MAX_BINARY_BYTE_SIZE);
-    const metadata = await inspectBinary(bytes);
+    const metadata = await inspectBinary(
+      bytes,
+      artifact.mediaType === 'image/svg+xml' ? 'image/svg+xml' : undefined,
+    );
     const persisted = artifact.metadata;
     if (
       artifact.mediaType !== metadata.contentType
