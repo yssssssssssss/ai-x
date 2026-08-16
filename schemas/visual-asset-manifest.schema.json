@@ -91,10 +91,11 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind", "chartId"],
+          "required": ["kind", "chartId", "specHash"],
           "properties": {
             "kind": { "const": "chart_svg" },
-            "chartId": { "$ref": "#/definitions/nonEmptyString" }
+            "chartId": { "$ref": "#/definitions/nonEmptyString" },
+            "specHash": { "$ref": "#/definitions/sha256" }
           }
         }
       ]

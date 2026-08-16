@@ -274,7 +274,7 @@ export interface ChartSpec {
 export type VisualAssetDerivation =
   | { kind: 'annotation'; overlayArtifactId: string }
   | { kind: 'heatmap' }
-  | { kind: 'chart_svg'; chartId: string };
+  | { kind: 'chart_svg'; chartId: string; specHash: string };
 
 export interface VisualAssetManifest {
   version: 'visual-asset-manifest-v1';

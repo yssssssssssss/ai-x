@@ -8,6 +8,7 @@ import type {
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { VisualAssetService, VisualAssetResult } from './visual-asset-service.ts';
 import {
+  chartSpecHash,
   validateChartSpec,
   type ChartEvidenceResolver,
 } from './chart-spec-validator.ts';
@@ -158,7 +159,7 @@ function chartOption(spec: ChartSpec): EChartsOption {
   return heatmapSeries(spec);
 }
 
-function tableAlternative(spec: ChartSpec): ChartTableAlternative {
+export function chartTableAlternative(spec: ChartSpec): ChartTableAlternative {
   return {
     caption: spec.title,
     columns: ['Series', ...spec.categories],
@@ -237,7 +238,7 @@ export function renderChartSvg(spec: ChartSpec, dimensions: ChartDimensions): Re
     chart.setOption(chartOption(spec), { notMerge: true, lazyUpdate: false, silent: true });
     return {
       svg: sanitizeSvg(chart.renderToSVGString({ useViewBox: true })),
-      table: tableAlternative(spec),
+      table: chartTableAlternative(spec),
     };
   } finally {
     chart.dispose();
@@ -267,7 +268,11 @@ export async function renderAndSealChartSvg(input: RenderAndSealChartSvgInput): 
     planVersionId: input.planVersionId,
     attemptId: input.attemptId,
     original: input.original,
-    derivation: { kind: 'chart_svg', chartId: validatedSpec.chartId },
+    derivation: {
+      kind: 'chart_svg',
+      chartId: validatedSpec.chartId,
+      specHash: chartSpecHash(validatedSpec),
+    },
     bytes: Buffer.from(rendered.svg, 'utf8'),
     exportPolicy: input.exportPolicy,
   });

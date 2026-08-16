@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { ChartSpec } from '../../../../packages/api-contract/research-deliverable.ts';
 import { SchemaValidator } from '../schema/validator.ts';
 
@@ -13,6 +14,20 @@ export class ChartSpecValidationError extends Error {
 }
 
 const CHART_SPEC_VALIDATOR = new SchemaValidator();
+
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => [key, canonical(child)]),
+  );
+}
+
+export function chartSpecHash(spec: ChartSpec): string {
+  return `sha256:${createHash('sha256').update(JSON.stringify(canonical(spec))).digest('hex')}`;
+}
 
 export function validateChartSpec(
   value: unknown,

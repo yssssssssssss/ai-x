@@ -6,9 +6,10 @@ import {
   type EvidenceArtifactResolver,
   type EvidenceEntry,
 } from '../apps/orchestrator-runtime/src/evidence/evidence-service.ts';
-import type {
-  ChartEvidenceResolver,
-  ChartSpec,
+import {
+  chartSpecHash,
+  type ChartEvidenceResolver,
+  type ChartSpec,
 } from '../apps/orchestrator-runtime/src/report/chart-spec-validator.ts';
 import {
   renderAndSealChartSvg,
@@ -399,9 +400,11 @@ test('seals server SVG through VisualAssetService with chart_svg lineage', async
     exportPolicy: 'allow',
   });
 
+  const spec = comparisonSpec();
+
   const result = await renderAndSealChartSvg({
     ...binding,
-    spec: comparisonSpec(),
+    spec,
     evidenceResolver: renderEvidenceResolver,
     original: {
       assetId: original.assetArtifact.id,
@@ -427,6 +430,7 @@ test('seals server SVG through VisualAssetService with chart_svg lineage', async
   assert.deepEqual(result.derived.manifest.derivation, {
     kind: 'chart_svg',
     chartId: 'chart-comparison-1',
+    specHash: chartSpecHash(spec),
   });
   assert.equal(
     Buffer.from(artifacts.binaryWrites.at(-1)!.bytes).toString('utf8'),

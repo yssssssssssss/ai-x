@@ -34,7 +34,7 @@ Composer 只接收 verified Deliverable/Manifest/Assets/Charts/Review；按模�
 
 Run: `pnpm exec tsx --test tests/report-document.test.ts tests/current-report-markdown.test.ts`
 
-Observed by the main agent: report-document + current-report-markdown 15/15 passed; `pnpm typecheck` passed. Commit remains pending.
+Main-agent final evidence after the four reviewer fixes: report-document + chart-spec + chart-renderer + current-report-markdown 39/39 passed; `pnpm typecheck` passed. The Task17 producer-to-ReportDocument gate is closed; Task19 renderer consumption and commit remain pending.
 
 ```bash
 git add schemas/report-document.schema.json \
