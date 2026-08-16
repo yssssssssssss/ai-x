@@ -1322,7 +1322,7 @@ Composer 只接收 verified Deliverable/Manifest/Assets/Charts/Review；按模�
 
 Run: `pnpm exec tsx --test tests/report-document.test.ts tests/current-report-markdown.test.ts`
 
-Main-agent final P1 evidence after Manifest-sourced reference `specHash` identity and post-seal Evidence/Review/payload/report validator reuse: report-document + chart-spec + chart-renderer + current-report-markdown 43/43 passed; `pnpm typecheck` passed. Focused Task18 re-review, Task19 renderer consumption, and commit remain pending.
+Main-agent final evidence after removing the independent Chart resolver and deriving Chart Evidence only from verified Manifest entries plus the sealed Artifact resolver: report-document + chart-spec + chart-renderer + current-report-markdown 44/44 passed; `pnpm typecheck` passed. Final focused Task18 re-review, Task19 renderer consumption, and commit remain pending.
 
 ```bash
 git add schemas/report-document.schema.json \

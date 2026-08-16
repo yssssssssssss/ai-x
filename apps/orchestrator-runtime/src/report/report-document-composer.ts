@@ -140,7 +140,6 @@ export interface ComposeReportDocumentInput {
   requiredQuestionIds: string[];
   deliverable: ArtifactValue<ResearchDeliverableEnvelope<ResearchPlanPayload>>;
   evidenceManifest: ArtifactValue<EvidenceManifest>;
-  evidenceResolver: ChartEvidenceResolver;
   evidenceArtifactResolver: EvidenceArtifactResolver;
   review: ArtifactValue<ReportReviewArtifact>;
   visualAssets: VerifiedVisualAsset[];
@@ -400,6 +399,15 @@ function assertCompositionInput(input: ComposeReportDocumentInput): ArtifactBind
   const evidenceIds = input.evidenceManifest.value.entries.map(({ id }) => id);
   assertUnique(evidenceIds, 'Evidence id');
   const evidenceSet = new Set(evidenceIds);
+  const evidenceEntries = new Map(
+    input.evidenceManifest.value.entries.map((entry) => [entry.id, entry]),
+  );
+  const verifiedChartEvidenceResolver: ChartEvidenceResolver = (evidenceId) => {
+    const entry = evidenceEntries.get(evidenceId);
+    return entry
+      ? EVIDENCE_SERVICE.resolveEvidenceValue(entry, input.evidenceArtifactResolver)
+      : undefined;
+  };
   for (const finding of deliverable.findingGraph.findings) {
     if (finding.kind !== 'fact') continue;
     if (finding.evidenceIds.length === 0) fail(`Fact ${finding.id} has no Evidence`);
@@ -424,7 +432,7 @@ function assertCompositionInput(input: ComposeReportDocumentInput): ArtifactBind
   for (const [index, chart] of input.charts.entries()) {
     const label = `Chart ${chart.spec.chartId || index + 1}`;
     assertVerifiedVisualAsset(chart.asset, binding, label);
-    const validatedSpec = validateChartSpec(chart.spec, input.evidenceResolver);
+    const validatedSpec = validateChartSpec(chart.spec, verifiedChartEvidenceResolver);
     const validatedSpecHash = chartSpecHash(validatedSpec);
     if (chart.specHash !== validatedSpecHash) {
       fail(`${label} spec digest ${chart.specHash} does not match the exact Chart Spec ${validatedSpecHash}`);

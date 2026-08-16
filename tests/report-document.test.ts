@@ -851,6 +851,22 @@ test('composer validates ChartSpec values through the real Evidence resolver and
   );
 });
 
+test('composer derives Chart Evidence from the verified Manifest resolver and rejects an independent resolver split', () => {
+  const input = composeInput();
+  input.evidenceResolver = (evidenceId: string): unknown | undefined => evidenceId === 'evidence-1' ? 12 : undefined;
+  input.charts[0]!.spec.series[0]!.values[0] = 12;
+  input.charts[0]!.table = chartTable(input.charts[0]!.spec);
+  resealChartForCurrentSpec(input.charts[0]!);
+
+  const evidenceEntry = input.evidenceManifest.value.entries[0]!;
+  assert.equal(new EvidenceService().resolveEvidenceValue(evidenceEntry, evidenceArtifactResolver), 87);
+  assert.equal(input.evidenceResolver('evidence-1'), 12);
+  assert.throws(
+    () => composeReportDocument(input),
+    /Chart Spec|value.*Evidence|Evidence.*value|verified Manifest|match/i,
+  );
+});
+
 test('ReportDocument chart block carries the validated ChartSpec digest and tabular text alternative for Task19', () => {
   const input = composeInput();
   const document = composeReportDocument(input);
