@@ -8,6 +8,7 @@ import {
   type ToolRegistryEntry,
   type DecisionNode,
 } from '../../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import { inspectDeliverableRegistry } from '../../apps/orchestrator-runtime/src/report/deliverable-registry.ts';
 
 // registry linter(方案 §2.4 校验器之一 · P0-03 门禁):
 //   - status=active 的 skill/tool 必须字段完整、schema 文件存在、required_tools 存在
@@ -126,12 +127,19 @@ function lintDecisionNodes(issues: LintIssue[]): void {
     }
   });
 }
+function lintDeliverables(issues: LintIssue[]): void {
+  for (const item of inspectDeliverableRegistry().diagnostics) {
+    issues.push({ level: 'error', target: item.target, message: item.message });
+  }
+}
+
 
 export function lintRegistries(): LintIssue[] {
   const issues: LintIssue[] = [];
   lintSkills(issues);
   lintTools(issues);
   lintDecisionNodes(issues);
+  lintDeliverables(issues);
   return issues;
 }
 

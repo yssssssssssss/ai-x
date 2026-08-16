@@ -1,6 +1,11 @@
-version: 1
+version: 2
 deliverables:
   - id: research_plan
     status: active
+    task_types: [user_research_planning]
     envelope_version: research-deliverable-v1
     payload_schema: schemas/deliverables/research-plan.schema.json
+    synthesis_prompt: orchestrator/prompts/deliverables/research-plan.md
+    review_rubric: orchestrator/report-rubrics/research-plan.yaml
+    evidence_policy: research-plan
+    report_template: research-plan

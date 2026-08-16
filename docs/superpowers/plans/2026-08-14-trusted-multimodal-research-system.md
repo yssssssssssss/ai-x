@@ -1447,7 +1447,7 @@ git commit -m "feat: deliver professional multimodal reports"
 **Interfaces:**
 - Produces: `resolveDeliverable(taskType, expectedDeliverables)`。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 覆盖缺 schema/prompt/rubric/policy/template、重复 task mapping、unsupported task type、inactive deliverable、research_plan happy path。
 
@@ -1457,9 +1457,11 @@ Run: `pnpm exec tsx --test tests/deliverable-registry-v2.test.ts`
 
 Expected: FAIL。
 
-- [ ] **Step 3: 实现 Registry Loader**
+- [x] **Step 3: 实现 Registry Loader**
 
 Runtime 解析并验证 v2 Registry；DeliverableService 不再直接引用固定 research-plan schema path；Engine 不再硬编码 `deliverable_type === research_plan`。
+
+Implementation fact (2026-08-17): v2 runtime/linter/service/engine wiring and the sole research-plan mapping/resources are present. Strict public unsupported-task rejection is preserved while execution supports a compatible plan-declared active Registry ID fallback, and `DeliverableType` is Registry-driven. Main observed the final suite at 86 total / 85 pass / 1 existing provider skip / 0 fail, passing `pnpm typecheck`, and `registry-linter: OK`. Step 4 remains unchecked because commit is pending.
 
 - [ ] **Step 4: 运行测试和提交**
 

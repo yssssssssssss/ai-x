@@ -57,6 +57,10 @@ import {
 import { CurrentReportValidationError } from '../evidence/report-evidence-validator.ts';
 import type { CurrentDeliverableGenerateInput, CurrentDeliverableRevisionInput } from '../report/current-deliverable-service.ts';
 import type { DeliverableComposer, ReportReviewInput, ReportReviewResult } from '../report/report-review-service.ts';
+import {
+  resolveDeliverableContractById,
+  resolveExecutionDeliverable,
+} from '../report/deliverable-registry.ts';
 import { ReportCompositionService, type ReportCompositionPort } from '../report/report-composition-service.ts';
 import { VisualAssetService } from '../report/visual-asset-service.ts';
 import {
@@ -221,7 +225,37 @@ function toolConfigHash(manifest: ToolManifest, resolution: ToolAdapterResolutio
   });
 }
 
-function parsePlan(taskId: string, value: unknown): EnginePlan {
+function resolvePlanDeliverableId(structuredTask: unknown, plan: unknown): string {
+  if (!isRecord(plan) || typeof plan.deliverable_type !== 'string' || !plan.deliverable_type.trim()) {
+    throw new ExecutionAuthenticityError('plan deliverable type is malformed');
+  }
+  const requirement = isRecord(structuredTask) ? structuredTask : null;
+  const taskType = requirement?.task_type;
+  const expectedDeliverables = requirement?.expected_deliverables;
+  const hasTaskType = typeof taskType === 'string' && taskType.trim().length > 0;
+  const hasExpectedDeliverables = Array.isArray(expectedDeliverables);
+  if (!hasTaskType && !hasExpectedDeliverables) {
+    return resolveDeliverableContractById(plan.deliverable_type).entry.id;
+  }
+  if (typeof taskType !== 'string' || !taskType.trim()) {
+    throw new ExecutionAuthenticityError('finalized task task_type is malformed');
+  }
+  if (
+    !Array.isArray(expectedDeliverables)
+    || !expectedDeliverables.every(
+      (deliverable) => typeof deliverable === 'string' && deliverable.trim().length > 0,
+    )
+  ) {
+    throw new ExecutionAuthenticityError('finalized task expected_deliverables are malformed');
+  }
+  return resolveExecutionDeliverable(
+    taskType,
+    expectedDeliverables as string[],
+    plan.deliverable_type,
+  ).id;
+}
+
+function parsePlan(taskId: string, value: unknown, expectedDeliverableId: string): EnginePlan {
   if (!isRecord(value) || !Array.isArray(value.steps)) {
     throw new ExecutionAuthenticityError('active plan is malformed');
   }
@@ -292,8 +326,10 @@ function parsePlan(taskId: string, value: unknown): EnginePlan {
       ...(typeof item.purpose === 'string' ? { purpose: item.purpose } : {}),
     };
   });
-  if (value.deliverable_type !== 'research_plan') {
-    throw new ExecutionAuthenticityError('plan deliverable type is unsupported');
+  if (value.deliverable_type !== expectedDeliverableId) {
+    throw new ExecutionAuthenticityError(
+      `plan deliverable type ${String(value.deliverable_type)} does not match Registry selection ${expectedDeliverableId}`,
+    );
   }
   const rawRequirements = value.evidence_requirements;
   if (!Array.isArray(rawRequirements) || rawRequirements.length === 0) {
@@ -650,12 +686,14 @@ export class LeaseExecutionEngine {
     }
     let plan: EnginePlan;
     let reviewCoverage: ReviewCoverageIds | null = null;
+    let deliverableId: string;
     try {
       const gates = await this.dependencies.repository.listGateRecords(
         input.lease.taskId,
         input.lease.planVersionId,
       );
-      const parsedPlan = parsePlan(task.id, planVersion.plan);
+      deliverableId = resolvePlanDeliverableId(task.structuredTask, planVersion.plan);
+      const parsedPlan = parsePlan(task.id, planVersion.plan, deliverableId);
       const pendingInputs = parsePendingInputs(planVersion.pendingInputs);
       plan = overlayPendingInputs(parsedPlan, pendingInputs, gates, task.ownerUserId);
       if (this.dependencies.reportReview) {
@@ -1041,7 +1079,7 @@ export class LeaseExecutionEngine {
           id: planVersion.id,
           plan: {
             ...(planVersion.plan as Record<string, unknown>),
-            deliverable_type: 'research_plan',
+            deliverable_type: deliverableId,
             steps: (planVersion.plan as Record<string, unknown>).steps as unknown[],
           },
         },

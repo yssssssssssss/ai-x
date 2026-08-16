@@ -17,7 +17,7 @@ export interface EvidenceRequirement {
   required: boolean;
 }
 
-export type DeliverableType = 'research_plan';
+export type DeliverableType = string;
 
 export interface ResearchQuestion {
   id: string;

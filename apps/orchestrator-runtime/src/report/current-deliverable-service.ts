@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import type { ControlExecutionLease } from '../../../../database/control-plane.ts';
 import type {
   EvidenceEntry,
@@ -19,15 +17,13 @@ import {
 } from './synthesis-materializer.ts';
 import { redactSensitiveValue, redactString } from '../runtime/redaction.ts';
 import type { ReportReviewArtifact } from './report-review-service.ts';
-const researchPlanSchemaPath = join(
-  process.cwd(),
-  'schemas/deliverables/research-plan.schema.json',
-);
-const researchPlanPayloadSchema = JSON.parse(
-  readFileSync(researchPlanSchemaPath, 'utf8'),
-) as object;
+import {
+  resolveDeliverableContractById,
+  resolveExecutionDeliverableContract,
+} from './deliverable-registry.ts';
+function createDeliverableDraftSchema(payloadSchema: object) {
 
-const deliverableDraftSchema = {
+  return {
   type: 'object',
   additionalProperties: false,
   required: [
@@ -116,7 +112,7 @@ const deliverableDraftSchema = {
         },
       },
     },
-    payload: researchPlanPayloadSchema,
+    payload: payloadSchema,
     recommendations: {
       minItems: 1,
       type: 'array',
@@ -182,7 +178,8 @@ const deliverableDraftSchema = {
     },
     risksAndOpenIssues: { type: 'array', items: { type: 'string' } },
   },
-} as const;
+  } as const;
+}
 
 type DeliverableEnvelope = ResearchDeliverableEnvelope<ResearchPlanPayload>;
 type DeliverableDraft = Pick<
@@ -274,6 +271,33 @@ function unknownRecord(value: unknown): Record<string, unknown> | null {
     ? value as Record<string, unknown>
     : null;
 }
+function deliverableSelection(finalizedRequirement: unknown): {
+  taskType: string;
+  expectedDeliverables: string[];
+} | null {
+  const requirement = unknownRecord(finalizedRequirement);
+  const taskType = requirement?.task_type;
+  const expectedDeliverables = requirement?.expected_deliverables;
+  const hasTaskType = typeof taskType === 'string' && taskType.trim().length > 0;
+  const hasExpectedDeliverables = Array.isArray(expectedDeliverables);
+  if (!hasTaskType && !hasExpectedDeliverables) return null;
+  if (typeof taskType !== 'string' || !taskType.trim()) {
+    throw new Error('finalized requirement task_type is required for deliverable resolution');
+  }
+  if (
+    !Array.isArray(expectedDeliverables)
+    || !expectedDeliverables.every(
+      (deliverable) => typeof deliverable === 'string' && deliverable.trim().length > 0,
+    )
+  ) {
+    throw new Error('finalized requirement expected_deliverables are required for deliverable resolution');
+  }
+  return {
+    taskType,
+    expectedDeliverables: [...expectedDeliverables] as string[],
+  };
+}
+
 
 function coverageRequirements(finalizedRequirement: unknown, problemGraph: unknown): {
   requiredQuestionIds: string[];
@@ -370,6 +394,21 @@ export class CurrentDeliverableService {
   }
 
   async generate(input: CurrentDeliverableGenerateInput): Promise<CurrentDeliverableGenerateResult> {
+    const selection = deliverableSelection(input.finalizedRequirement);
+    const contract = selection
+      ? resolveExecutionDeliverableContract(
+          selection.taskType,
+          selection.expectedDeliverables,
+          input.plan.plan.deliverable_type,
+        )
+      : resolveDeliverableContractById(input.plan.plan.deliverable_type);
+    if (input.plan.plan.deliverable_type !== contract.entry.id) {
+      throw new Error(
+        `plan deliverable type ${input.plan.plan.deliverable_type} does not match Registry selection ${contract.entry.id}`,
+      );
+    }
+    const draftSchema = createDeliverableDraftSchema(contract.payloadSchema);
+    const schemaName = `${contract.entry.id.replace(/_/gu, '-')}-deliverable-content`;
     const evidenceManifest = input.evidenceManifest.value;
     this.dependencies.evidence.validateManifest(evidenceManifest, input.evidenceResolver);
     const sanitizedGaps = [...new Set(input.gaps.map((gap) => redactString(gap)))];
@@ -397,6 +436,12 @@ export class CurrentDeliverableService {
       problemGraph: redactSensitiveValue(input.problemGraph),
       coverageRequirements: requiredCoverage,
       ...(input.revisionInstruction === undefined ? {} : { revisionInstruction: redactString(input.revisionInstruction) }),
+      deliverableContract: {
+        id: contract.entry.id,
+        reviewRubric: contract.reviewRubric,
+        evidencePolicy: contract.evidencePolicy,
+        reportTemplate: contract.reportTemplate,
+      },
       verifiedEvidence,
       synthesisMaterials,
       gaps: sanitizedGaps,
@@ -410,13 +455,10 @@ export class CurrentDeliverableService {
     const generated = await this.dependencies.llm.generateStructured<DeliverableDraft & {
       capabilityProvenance?: unknown;
     }>({
-      prompt:
-        'Generate only the content fields for a research plan deliverable, including explicit coverage.questionBindings '
-        + 'and coverage.successCriterionBindings rooted in actual summary, conclusion, and recommendation node IDs. '
-        + 'Do not generate version, task, plan, attempt, deliverable type, evidence manifest identifiers, or capability provenance.'
-        + (input.revisionInstruction ? ' Address the review issues in the revision instruction.' : ''),
-      schema: deliverableDraftSchema,
-      schemaName: 'research-plan-deliverable-content',
+      prompt: contract.synthesisPrompt
+        + (input.revisionInstruction ? '\nAddress the review issues in the revision instruction.' : ''),
+      schema: draftSchema,
+      schemaName,
       context,
       receipt: {
         stage: 'deliverable',
@@ -432,9 +474,9 @@ export class CurrentDeliverableService {
         )
       : generated.data;
     this.dependencies.validator.validateSchemaOrThrow(
-      deliverableDraftSchema,
+      draftSchema,
       contentDraft,
-      'research-plan-deliverable-content',
+      schemaName,
     );
 
     const draft = contentDraft as DeliverableDraft;
@@ -446,7 +488,7 @@ export class CurrentDeliverableService {
       risksAndOpenIssues.push(gap);
     }
     const deliverable: DeliverableEnvelope = {
-      version: 'research-deliverable-v1',
+      version: contract.entry.envelope_version as DeliverableEnvelope['version'],
       taskId: input.task.id,
       planVersionId: input.plan.id,
       attemptId: input.attempt.id,
@@ -461,7 +503,7 @@ export class CurrentDeliverableService {
       capabilityProvenance: outputData.provenance,
     };
 
-    this.dependencies.validator.validateFileOrThrow(researchPlanSchemaPath, deliverable.payload);
+    this.dependencies.validator.validateFileOrThrow(contract.payloadSchemaPath, deliverable.payload);
     this.reportValidator.validate({
       manifest: evidenceManifest,
       report: deliverable,
@@ -475,7 +517,7 @@ export class CurrentDeliverableService {
       attemptId: input.attempt.id,
       kind: 'deliverable',
       relativePath: `deliverables/final-r${input.revisionRound ?? 0}.json`,
-      schemaVersion: 'research-deliverable-v1-review-gated',
+      schemaVersion: `${contract.entry.envelope_version}-review-gated`,
       sensitivity: 'internal',
       redactionPolicyVersion: 'v1',
       activeLease: input.activeLease,
