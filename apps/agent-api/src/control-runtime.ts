@@ -35,6 +35,11 @@ import { SynthesisMaterializer } from '../../orchestrator-runtime/src/report/syn
 import { ReportReviewService } from '../../orchestrator-runtime/src/report/report-review-service.ts';
 import { CurrentReportPackageReader } from '../../orchestrator-runtime/src/report/current-report-package-reader.ts';
 import {
+  ImageAnnotationService,
+  type ImageAnnotationInput,
+  type ImageAnnotationResult,
+} from '../../orchestrator-runtime/src/report/image-annotation-service.ts';
+import {
   VisualAssetService,
   type VerifiedVisualAsset,
 } from '../../orchestrator-runtime/src/report/visual-asset-service.ts';
@@ -237,6 +242,7 @@ export interface ControlRuntime {
   workflow: TaskWorkflowService;
   repository: ControlPlaneRepository;
   artifacts: ControlArtifactStore;
+  annotateVisualAsset(input: ImageAnnotationInput): Promise<ImageAnnotationResult>;
   getDeliverable(taskId: string, ownerUserId: string): Promise<CurrentReportPackageResponse | null>;
   readVisualAsset(input: {
     taskId: string;
@@ -301,6 +307,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     registry: repository,
   });
   const visualAssets = new VisualAssetService({ artifacts });
+  const imageAnnotations = new ImageAnnotationService({ assets: visualAssets, artifacts });
   const expectedActualModel = overrides.expectedActualModel
     ?? (overrides.llm
       ? llm.identity.requestedModel
@@ -451,6 +458,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     workflow,
     repository,
     artifacts,
+    annotateVisualAsset: (input) => imageAnnotations.annotate(input),
     async getDeliverable(taskId, ownerUserId) {
       const task = await repository.getTaskDetail(taskId);
       if (

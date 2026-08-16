@@ -69,6 +69,11 @@ function expectedManifestHash(manifest: object): string {
   return digest(JSON.stringify(stable(draft)));
 }
 
+function rehashedManifest(manifest: Record<string, unknown>): Record<string, unknown> {
+  const { manifestHash: _manifestHash, ...draft } = manifest;
+  return { ...draft, manifestHash: digest(JSON.stringify(stable(draft))) };
+}
+
 function sniff(bytes: Buffer): { contentType: string; width: number; height: number } {
   if (bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
     return { contentType: 'image/png', width: 1, height: 1 };
@@ -320,6 +325,84 @@ test('re-resolves and rejects a redirect target that resolves to a private or me
   assert.equal(redirected.artifacts.binaryWrites.length, 0);
 });
 
+test('pins each redirect hop transport to validated addresses while preserving HTTP Host and TLS SNI', async () => {
+  const artifacts = new FakeArtifactStore();
+  const artifact = toolArtifact();
+  artifacts.seedJson(artifact, {
+    output: { results: [{ oss_url: 'https://cdn.example.test/screenshot.png' }] },
+  });
+  const resolved: Record<string, string[]> = {
+    'cdn.example.test': ['93.184.216.34'],
+    'images.example.test': ['1.1.1.1'],
+  };
+  const transportCalls: Array<{
+    url: URL;
+    validatedAddresses: string[];
+    hostHeader: string;
+    serverName: string | null;
+  }> = [];
+  const unsafeTransportLookups: string[] = [];
+  const transport = {
+    async request(input: {
+      url: URL;
+      validatedAddresses: string[];
+      hostHeader: string;
+      serverName: string | null;
+      signal: AbortSignal;
+    }): Promise<Response> {
+      transportCalls.push({
+        url: new URL(input.url),
+        validatedAddresses: [...input.validatedAddresses],
+        hostHeader: input.hostHeader,
+        serverName: input.serverName,
+      });
+      if (input.url.hostname === 'cdn.example.test') {
+        return new Response(null, {
+          status: 302,
+          headers: { location: 'https://images.example.test/final.png' },
+        });
+      }
+      return new Response(PNG, {
+        status: 200,
+        headers: { 'content-type': 'image/png', 'content-length': String(PNG.byteLength) },
+      });
+    },
+  };
+  const service = new VisualAssetService({
+    artifacts: artifacts as never,
+    resolveHost: async (hostname: string) => resolved[hostname] ?? [],
+    transport,
+    fetch: async () => {
+      unsafeTransportLookups.push('169.254.169.254');
+      throw new Error('unpinned fetch performed a private metadata DNS lookup');
+    },
+  } as never);
+
+  const result = await ingestTool(service, artifact);
+
+  assert.equal(result.manifest.assetId, result.assetArtifact.id);
+  assert.deepEqual(unsafeTransportLookups, []);
+  assert.deepEqual(transportCalls.map((call) => ({
+    url: call.url.toString(),
+    validatedAddresses: call.validatedAddresses,
+    hostHeader: call.hostHeader,
+    serverName: call.serverName,
+  })), [
+    {
+      url: 'https://cdn.example.test/screenshot.png',
+      validatedAddresses: ['93.184.216.34'],
+      hostHeader: 'cdn.example.test',
+      serverName: 'cdn.example.test',
+    },
+    {
+      url: 'https://images.example.test/final.png',
+      validatedAddresses: ['1.1.1.1'],
+      hostHeader: 'images.example.test',
+      serverName: 'images.example.test',
+    },
+  ]);
+});
+
 test('rejects MIME-signature disagreement before publishing a Binary Artifact', async () => {
   const spoofed = harness({
     response: new Response(JPEG, {
@@ -471,6 +554,48 @@ for (const kind of ['annotation', 'heatmap'] as const) {
   });
 }
 
+test('validates exportPolicy against the Manifest schema before publishing any Artifact', async () => {
+  const fixture = harness();
+
+  await assert.rejects(
+    () => fixture.service.ingest({
+      ...binding,
+      source: { kind: 'user_upload', fileName: 'invalid-policy.png', bytes: PNG },
+      exportPolicy: 'download',
+    } as never),
+    /exportPolicy|schema|manifest/i,
+  );
+  assert.equal(fixture.artifacts.binaryWrites.length, 0);
+  assert.equal(fixture.artifacts.jsonWrites.length, 0);
+});
+
+test('validates derivation against the Manifest schema before publishing a Derived Artifact', async () => {
+  const fixture = harness();
+  const original = await fixture.service.ingest({
+    ...binding,
+    source: { kind: 'user_upload', fileName: 'original.png', bytes: PNG },
+    exportPolicy: 'allow',
+  });
+  const binaryWrites = fixture.artifacts.binaryWrites.length;
+  const jsonWrites = fixture.artifacts.jsonWrites.length;
+
+  await assert.rejects(
+    () => fixture.service.derive({
+      ...binding,
+      original: {
+        assetId: original.assetArtifact.id,
+        manifestArtifactId: original.manifestArtifact.id,
+      },
+      derivation: { kind: 'annotation' },
+      bytes: PNG,
+      exportPolicy: 'allow',
+    } as never),
+    /derivation|overlayArtifactId|schema|manifest/i,
+  );
+  assert.equal(fixture.artifacts.binaryWrites.length, binaryWrites);
+  assert.equal(fixture.artifacts.jsonWrites.length, jsonWrites);
+});
+
 test('readVerified binds verified bytes to an untampered manifest hash and asset identity', async () => {
   const fixture = harness();
   const ingested = await fixture.service.ingest({
@@ -498,4 +623,69 @@ test('readVerified binds verified bytes to an untampered manifest hash and asset
     }),
     /manifest hash|integrity/i,
   );
+});
+
+test('rejects recomputed-hash SEALED Manifests that violate schema or Artifact schemaVersion', async () => {
+  const cases: Array<{
+    label: string;
+    mutateManifest?: (manifest: Record<string, unknown>) => Record<string, unknown>;
+    schemaVersion?: string;
+  }> = [
+    {
+      label: 'missing exportPolicy',
+      mutateManifest(manifest) {
+        const { exportPolicy: _exportPolicy, ...withoutPolicy } = manifest;
+        return withoutPolicy;
+      },
+    },
+    {
+      label: 'invalid exportPolicy',
+      mutateManifest: (manifest) => ({ ...manifest, exportPolicy: 'download' }),
+    },
+    {
+      label: 'malformed source',
+      mutateManifest: (manifest) => ({
+        ...manifest,
+        source: { kind: 'tool_artifact', url: 'https://cdn.example.test/screenshot.png' },
+      }),
+    },
+    {
+      label: 'malformed root derivation',
+      mutateManifest: (manifest) => ({
+        ...manifest,
+        derivedFrom: null,
+        derivation: { kind: 'heatmap' },
+      }),
+    },
+    {
+      label: 'wrong Manifest Artifact schemaVersion',
+      schemaVersion: 'visual-asset-manifest-v0',
+    },
+  ];
+
+  for (const current of cases) {
+    const fixture = harness();
+    const ingested = await fixture.service.ingest({
+      ...binding,
+      source: { kind: 'user_upload', fileName: 'schema-checked.png', bytes: PNG },
+      exportPolicy: 'allow',
+    });
+    const manifestArtifact = fixture.artifacts.artifacts.get(ingested.manifestArtifact.id)!;
+    const mutated = rehashedManifest(current.mutateManifest
+      ? current.mutateManifest(structuredClone(ingested.manifest) as unknown as Record<string, unknown>)
+      : structuredClone(ingested.manifest) as unknown as Record<string, unknown>);
+    fixture.artifacts.jsonValues.set(ingested.manifestArtifact.id, mutated);
+    manifestArtifact.contentSha256 = digest(JSON.stringify(mutated, null, 2));
+    manifestArtifact.byteSize = Buffer.byteLength(JSON.stringify(mutated, null, 2));
+    if (current.schemaVersion) manifestArtifact.schemaVersion = current.schemaVersion;
+
+    await assert.rejects(
+      () => fixture.service.readVerified({
+        assetId: ingested.assetArtifact.id,
+        manifestArtifactId: ingested.manifestArtifact.id,
+      }),
+      /manifest|schema|exportPolicy|source|derivation|schemaVersion/i,
+      current.label,
+    );
+  }
 });

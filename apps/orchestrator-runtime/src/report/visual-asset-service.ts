@@ -1,6 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
-import { isIP } from 'node:net';
+import { once } from 'node:events';
+import type { IncomingMessage } from 'node:http';
+import { Agent as HttpAgent, request as httpRequest } from 'node:http';
+import { Agent as HttpsAgent, request as httpsRequest } from 'node:https';
+import { isIP, type LookupFunction } from 'node:net';
+import { Readable } from 'node:stream';
 import type { ControlArtifact } from '../../../../database/control-plane.ts';
 import type {
   VisualAssetDerivation,
@@ -14,6 +19,7 @@ import type {
   TrustedBinaryMetadata,
 } from '../control/artifact-store.ts';
 import { resolveJsonPointer } from '../evidence/evidence-service.ts';
+import { SchemaValidator } from '../schema/validator.ts';
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
@@ -28,6 +34,18 @@ type ArtifactStorePort = Pick<
 
 type ResolveHost = (hostname: string) => Promise<string[]>;
 type FetchPort = (input: string | URL, init?: RequestInit) => Promise<Response>;
+
+interface PinnedRequestInput {
+  url: URL;
+  validatedAddresses: string[];
+  hostHeader: string;
+  serverName: string | null;
+  signal: AbortSignal;
+}
+
+export interface VisualAssetTransport {
+  request(input: PinnedRequestInput): Promise<Response>;
+}
 
 interface AssetBinding {
   taskId: string;
@@ -196,13 +214,80 @@ function parseHttpUrl(value: string, context: string): URL {
   return url;
 }
 
-async function assertPublicTarget(url: URL, resolveHost: ResolveHost): Promise<void> {
+async function resolvePublicTarget(url: URL, resolveHost: ResolveHost): Promise<string[]> {
   const hostname = normalizedHostname(url);
   const literalFamily = isIP(hostname);
   const addresses = literalFamily ? [hostname] : await resolveHost(hostname);
   if (addresses.length === 0 || addresses.some((address) => !isPublicAddress(address))) {
     throw new Error(`HTTP target ${hostname} does not resolve exclusively to public addresses; private, loopback, link-local, and metadata addresses are forbidden`);
   }
+  return [...new Set(addresses)];
+}
+
+function responseHeaders(response: IncomingMessage): Headers {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(response.headers)) {
+    if (Array.isArray(value)) {
+      for (const item of value) headers.append(name, item);
+    } else if (value !== undefined) {
+      headers.set(name, String(value));
+    }
+  }
+  return headers;
+}
+
+async function nodePinnedRequest(input: PinnedRequestInput): Promise<Response> {
+  const pinnedAddress = input.validatedAddresses[0];
+  if (!pinnedAddress) throw new Error('HTTP target has no validated address');
+  const pinnedFamily = isIP(pinnedAddress);
+  const lookupPinnedAddress: LookupFunction = (_hostname, options, callback) => {
+    if (options.all) {
+      callback(null, input.validatedAddresses.map((address) => ({
+        address,
+        family: isIP(address),
+      })));
+      return;
+    }
+    callback(null, pinnedAddress, pinnedFamily);
+  };
+  const headers = {
+    accept: 'image/png, image/jpeg, image/webp',
+    host: input.hostHeader,
+  };
+  const agent = input.url.protocol === 'https:'
+    ? new HttpsAgent({ keepAlive: false, lookup: lookupPinnedAddress })
+    : new HttpAgent({ keepAlive: false, lookup: lookupPinnedAddress });
+  const outgoing = input.url.protocol === 'https:'
+    ? httpsRequest(input.url, {
+        agent: agent as HttpsAgent,
+        headers,
+        servername: input.serverName ?? undefined,
+        signal: input.signal,
+      })
+    : httpRequest(input.url, {
+        agent: agent as HttpAgent,
+        headers,
+        signal: input.signal,
+      });
+  outgoing.once('close', () => agent.destroy());
+  const response = once(outgoing, 'response', { signal: input.signal });
+  outgoing.end();
+  const [incoming] = await response as [IncomingMessage];
+  const status = incoming.statusCode ?? 500;
+  const hasNoBody = status === 204 || status === 205 || status === 304;
+  const body = hasNoBody ? null : Readable.toWeb(incoming);
+  return new Response(body as ConstructorParameters<typeof Response>[0], {
+    status,
+    statusText: incoming.statusMessage,
+    headers: responseHeaders(incoming),
+  });
+}
+
+const NODE_PINNED_TRANSPORT: VisualAssetTransport = { request: nodePinnedRequest };
+function transportFromFetch(fetch: FetchPort): VisualAssetTransport {
+  return {
+    request: ({ url, signal }) => fetch(url, { redirect: 'manual', signal }),
+  };
 }
 
 function detectImageContentType(bytes: Buffer): TrustedBinaryMetadata['contentType'] {
@@ -249,13 +334,17 @@ async function readBoundedBody(response: Response): Promise<Buffer> {
 
 async function downloadImage(
   initialUrl: string,
-  dependencies: { resolveHost: ResolveHost; fetch: FetchPort },
+  dependencies: { resolveHost: ResolveHost; transport: VisualAssetTransport },
 ): Promise<Buffer> {
   let url = parseHttpUrl(initialUrl, 'Tool Artifact pointer');
   for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
-    await assertPublicTarget(url, dependencies.resolveHost);
-    const response = await dependencies.fetch(url, {
-      redirect: 'manual',
+    const validatedAddresses = await resolvePublicTarget(url, dependencies.resolveHost);
+    const hostname = normalizedHostname(url);
+    const response = await dependencies.transport.request({
+      url,
+      validatedAddresses,
+      hostHeader: url.host,
+      serverName: url.protocol === 'https:' && isIP(hostname) === 0 ? hostname : null,
       signal: AbortSignal.timeout(REMOTE_REQUEST_TIMEOUT_MS),
     });
     if (REDIRECT_STATUS[response.status] === true) {
@@ -266,7 +355,10 @@ async function downloadImage(
       url = parseHttpUrl(new URL(location, url).toString(), 'redirect target');
       continue;
     }
-    if (!response.ok) throw new Error(`remote image HTTP request failed with status ${response.status}`);
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(`remote image HTTP request failed with status ${response.status}`);
+    }
     const bytes = await readBoundedBody(response);
     const signatureType = detectImageContentType(bytes);
     const headerType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
@@ -342,27 +434,58 @@ function manifestDraft(input: AssetBinding & {
   };
 }
 
-function assertManifest(manifest: VisualAssetManifest): void {
-  if (!manifest || manifest.version !== 'visual-asset-manifest-v1') {
-    throw new Error('visual Asset manifest version is invalid');
-  }
+const MANIFEST_VALIDATOR = new SchemaValidator();
+
+export function assertVisualAssetManifestSchema(value: unknown): asserts value is VisualAssetManifest {
+  MANIFEST_VALIDATOR.validateOrThrow('visual-asset-manifest', value);
+}
+
+function assertManifest(manifest: unknown): asserts manifest is VisualAssetManifest {
+  assertVisualAssetManifestSchema(manifest);
   const { manifestHash, ...draft } = manifest;
   if (manifestHash !== hash(draft)) throw new Error('visual Asset manifest hash integrity check failed');
+}
+
+function assertPersistenceManifestInput(input: AssetBinding & {
+  source: VisualAssetSource;
+  exportPolicy: VisualAssetExportPolicy;
+  derivedFrom: VisualAssetManifest['derivedFrom'];
+  derivation: VisualAssetDerivation | null;
+}): void {
+  const draft: Omit<VisualAssetManifest, 'manifestHash'> = {
+    version: 'visual-asset-manifest-v1',
+    taskId: input.taskId,
+    planVersionId: input.planVersionId,
+    attemptId: input.attemptId,
+    assetId: 'pending-visual-asset',
+    contentSha256: `sha256:${'0'.repeat(64)}`,
+    mediaType: 'image/png',
+    byteSize: 1,
+    width: 1,
+    height: 1,
+    exportPolicy: input.exportPolicy,
+    source: input.source,
+    derivedFrom: input.derivedFrom,
+    derivation: input.derivation,
+  };
+  assertVisualAssetManifestSchema({ ...draft, manifestHash: hash(draft) });
 }
 
 export class VisualAssetService {
   private readonly artifacts: ArtifactStorePort;
   private readonly resolveHost: ResolveHost;
-  private readonly fetch: FetchPort;
+  private readonly transport: VisualAssetTransport;
 
   constructor(dependencies: {
     artifacts: ArtifactStorePort;
     resolveHost?: ResolveHost;
+    transport?: VisualAssetTransport;
     fetch?: FetchPort;
   }) {
     this.artifacts = dependencies.artifacts;
     this.resolveHost = dependencies.resolveHost ?? defaultResolveHost;
-    this.fetch = dependencies.fetch ?? globalThis.fetch;
+    this.transport = dependencies.transport
+      ?? (dependencies.fetch ? transportFromFetch(dependencies.fetch) : NODE_PINNED_TRANSPORT);
   }
 
   async ingest(input: VisualAssetIngestInput): Promise<VisualAssetResult> {
@@ -391,7 +514,7 @@ export class VisualAssetService {
         throw new Error('Tool Artifact JSON pointer does not resolve to a remote URL');
       }
       const url = parseHttpUrl(pointed, 'Tool Artifact pointer').toString();
-      bytes = await downloadImage(url, { resolveHost: this.resolveHost, fetch: this.fetch });
+      bytes = await downloadImage(url, { resolveHost: this.resolveHost, transport: this.transport });
       source = {
         kind: 'tool_artifact',
         artifactId: resolved.artifact.id,
@@ -425,9 +548,12 @@ export class VisualAssetService {
   async readVerified(reference: VisualAssetReference): Promise<VerifiedVisualAsset> {
     const [binary, manifestResult] = await Promise.all([
       this.artifacts.readVerifiedBinary(reference.assetId),
-      this.artifacts.readVerifiedJson<VisualAssetManifest>(reference.manifestArtifactId),
+      this.artifacts.readVerifiedJson<unknown>(reference.manifestArtifactId),
     ]);
     const manifest = manifestResult.value;
+    if (manifestResult.artifact.schemaVersion !== 'visual-asset-manifest-v1') {
+      throw new Error('visual Asset manifest Artifact schemaVersion is invalid');
+    }
     assertManifest(manifest);
     if (
       binary.artifact.id !== reference.assetId
@@ -466,6 +592,7 @@ export class VisualAssetService {
     derivedFrom: VisualAssetManifest['derivedFrom'];
     derivation: VisualAssetDerivation | null;
   }): Promise<VisualAssetResult> {
+    assertPersistenceManifestInput(input);
     const token = randomUUID();
     const assetArtifact = await this.artifacts.writeBinary({
       taskId: input.taskId,
@@ -482,6 +609,7 @@ export class VisualAssetService {
     const metadata = metadataFromArtifact(assetArtifact);
     const draft = manifestDraft({ ...input, artifact: assetArtifact, metadata });
     const manifest: VisualAssetManifest = { ...draft, manifestHash: hash(draft) };
+    assertVisualAssetManifestSchema(manifest);
     const manifestArtifact = await this.artifacts.writeJson({
       taskId: input.taskId,
       planVersionId: input.planVersionId,
@@ -494,6 +622,9 @@ export class VisualAssetService {
       redactionPolicyVersion: 'v1',
     });
     assertBinding(manifestArtifact, input, 'visual Asset manifest');
+    if (manifestArtifact.schemaVersion !== 'visual-asset-manifest-v1') {
+      throw new Error('visual Asset manifest Artifact schemaVersion is invalid');
+    }
     return { assetArtifact, manifestArtifact, manifest };
   }
 }

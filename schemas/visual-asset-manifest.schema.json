@@ -92,6 +92,31 @@
     },
     "manifestHash": { "$ref": "#/definitions/sha256" }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "source": {
+            "type": "object",
+            "required": ["kind"],
+            "properties": { "kind": { "const": "derived" } }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "derivedFrom": { "$ref": "#/definitions/lineage" },
+          "derivation": { "not": { "type": "null" } }
+        }
+      },
+      "else": {
+        "properties": {
+          "derivedFrom": { "type": "null" },
+          "derivation": { "type": "null" }
+        }
+      }
+    }
+  ],
   "definitions": {
     "nonEmptyString": { "type": "string", "minLength": 1 },
     "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },

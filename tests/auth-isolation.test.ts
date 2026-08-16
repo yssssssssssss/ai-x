@@ -454,6 +454,10 @@ test('visual Asset route serves owner bytes and hides foreign, missing, and bloc
   const allowedAssetId = randomUUID();
   const blockedAssetId = randomUUID();
   const missingAssetId = randomUUID();
+  const missingPolicyAssetId = randomUUID();
+  const malformedSourceAssetId = randomUUID();
+  const malformedDerivationAssetId = randomUUID();
+  const wrongSchemaVersionAssetId = randomUUID();
   const storageUri = `/private/tasks/${currentTaskId}/visuals/${allowedAssetId}.png`;
   const reads: Array<{ taskId: string; assetId: string; ownerUserId: string }> = [];
   const readVisualAsset = async (input: {
@@ -463,19 +467,52 @@ test('visual Asset route serves owner bytes and hides foreign, missing, and bloc
   }) => {
     reads.push(input);
     if (input.taskId !== currentTaskId || input.ownerUserId !== ownerUserId) return null;
-    if (input.assetId !== allowedAssetId && input.assetId !== blockedAssetId) return null;
+    const readableAssetIds: readonly string[] = [
+      allowedAssetId,
+      blockedAssetId,
+      missingPolicyAssetId,
+      malformedSourceAssetId,
+      malformedDerivationAssetId,
+      wrongSchemaVersionAssetId,
+    ];
+    if (!readableAssetIds.includes(input.assetId)) return null;
+    const manifest: Record<string, unknown> = {
+      version: 'visual-asset-manifest-v1',
+      taskId: currentTaskId,
+      planVersionId: currentPlanVersionId,
+      attemptId: 'attempt-route-fixture',
+      assetId: input.assetId,
+      contentSha256: `sha256:${'a'.repeat(64)}`,
+      mediaType: 'image/png',
+      byteSize: assetBytes.byteLength,
+      width: 1,
+      height: 1,
+      exportPolicy: input.assetId === blockedAssetId ? 'block' : 'allow',
+      source: { kind: 'user_upload', fileName: 'route-fixture.png' },
+      derivedFrom: null,
+      derivation: null,
+      manifestHash: `sha256:${'b'.repeat(64)}`,
+    };
+    if (input.assetId === missingPolicyAssetId) delete manifest.exportPolicy;
+    if (input.assetId === malformedSourceAssetId) {
+      manifest.source = { kind: 'tool_artifact', url: 'https://cdn.example.test/unbound.png' };
+    }
+    if (input.assetId === malformedDerivationAssetId) manifest.derivation = { kind: 'heatmap' };
     return {
       artifact: {
         id: input.assetId,
         storageUri,
         contentSha256: `sha256:${'a'.repeat(64)}`,
+        schemaVersion: 'visual-asset-v1',
+      },
+      manifestArtifact: {
+        id: `${input.assetId}-manifest`,
+        schemaVersion: input.assetId === wrongSchemaVersionAssetId
+          ? 'visual-asset-manifest-v0'
+          : 'visual-asset-manifest-v1',
       },
       bytes: assetBytes,
-      manifest: {
-        assetId: input.assetId,
-        mediaType: 'image/png',
-        exportPolicy: input.assetId === blockedAssetId ? 'block' : 'allow',
-      },
+      manifest,
     };
   };
   const controlRuntime = {
@@ -507,6 +544,10 @@ test('visual Asset route serves owner bytes and hides foreign, missing, and bloc
       await request(allowedAssetId, foreignToken),
       await request(missingAssetId, ownerToken),
       await request(blockedAssetId, ownerToken),
+      await request(missingPolicyAssetId, ownerToken),
+      await request(malformedSourceAssetId, ownerToken),
+      await request(malformedDerivationAssetId, ownerToken),
+      await request(wrongSchemaVersionAssetId, ownerToken),
     ];
     const hiddenBodies: Array<Record<string, unknown>> = [];
     for (const response of hiddenResponses) {
@@ -515,17 +556,28 @@ test('visual Asset route serves owner bytes and hides foreign, missing, and bloc
       hiddenBodies.push(body);
       assert.deepEqual(Object.keys(body), ['error']);
       const serialized = JSON.stringify(body);
-      assert.equal(serialized.includes(allowedAssetId), false);
-      assert.equal(serialized.includes(missingAssetId), false);
-      assert.equal(serialized.includes(blockedAssetId), false);
+      for (const hiddenId of [
+        allowedAssetId,
+        missingAssetId,
+        blockedAssetId,
+        missingPolicyAssetId,
+        malformedSourceAssetId,
+        malformedDerivationAssetId,
+        wrongSchemaVersionAssetId,
+      ]) {
+        assert.equal(serialized.includes(hiddenId), false);
+      }
       assert.equal(serialized.includes(storageUri), false);
     }
-    assert.deepEqual(hiddenBodies[1], hiddenBodies[0]);
-    assert.deepEqual(hiddenBodies[2], hiddenBodies[0]);
+    for (const body of hiddenBodies.slice(1)) assert.deepEqual(body, hiddenBodies[0]);
     assert.deepEqual(reads, [
       { taskId: currentTaskId, assetId: allowedAssetId, ownerUserId },
       { taskId: currentTaskId, assetId: missingAssetId, ownerUserId },
       { taskId: currentTaskId, assetId: blockedAssetId, ownerUserId },
+      { taskId: currentTaskId, assetId: missingPolicyAssetId, ownerUserId },
+      { taskId: currentTaskId, assetId: malformedSourceAssetId, ownerUserId },
+      { taskId: currentTaskId, assetId: malformedDerivationAssetId, ownerUserId },
+      { taskId: currentTaskId, assetId: wrongSchemaVersionAssetId, ownerUserId },
     ]);
   } finally {
     server.close();

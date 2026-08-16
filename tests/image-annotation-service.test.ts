@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
+import sharp from 'sharp';
 import { ImageAnnotationService } from '../apps/orchestrator-runtime/src/report/image-annotation-service.ts';
 
 const ORIGINAL_PNG = Buffer.from(
@@ -354,6 +355,30 @@ test('renders a new annotation Asset with immutable original lineage and the sea
     manifestHash: originalManifest().manifestHash,
   });
   assert.deepEqual(result.derived.manifest.derivation, {
+    kind: 'annotation',
+    overlayArtifactId: 'artifact-overlay-1',
+  });
+});
+
+test('default production construction uses a controlled renderer that emits a real Derived PNG', async () => {
+  const assets = new RecordingVisualAssets();
+  const artifacts = new RecordingJsonArtifacts();
+  const service = new ImageAnnotationService({
+    assets: assets as never,
+    artifacts: artifacts as never,
+  } as never);
+
+  const result = await annotate(service, [validAnnotations[0]]);
+
+  assert.equal(result.derived.assetArtifact.id, 'artifact-annotated-1');
+  assert.equal(assets.derives.length, 1);
+  const renderedBytes = Buffer.from(assets.derives[0]!.bytes as Uint8Array);
+  assert.notDeepEqual(renderedBytes, ORIGINAL_PNG);
+  const metadata = await sharp(renderedBytes, { failOn: 'warning' }).metadata();
+  assert.equal(metadata.format, 'png');
+  assert.equal(metadata.width, 1);
+  assert.equal(metadata.height, 1);
+  assert.deepEqual(assets.derives[0]!.derivation, {
     kind: 'annotation',
     overlayArtifactId: 'artifact-overlay-1',
   });

@@ -1208,6 +1208,13 @@ git commit -m "feat: manage verified report visual assets"
 - [x] Asset route 在读 Asset 前执行 Task/Conversation owner 隔离；foreign、missing、blocked 和读取失败统一 generic 404；成功响应仅含 Manifest content type 与 verified bytes，不暴露 storage URI。
 - [x] Observed verification: `pnpm exec tsx --test --test-concurrency=1 tests/visual-asset-service.test.ts tests/image-annotation-service.test.ts tests/auth-isolation.test.ts tests/evidence-service.test.ts` => 39/39 pass, 0 fail; `pnpm typecheck` passed. No commit was made.
 
+#### Task 16 reviewer blocker correction（2026-08-16）
+
+- [x] Production remote ingestion now binds every HTTP(S) hop to its validated public IP set with a fresh Node Agent lookup, while the original hostname remains the HTTP Host and HTTPS SNI identity; redirects repeat validation and pinning before transport.
+- [x] The complete Visual Asset Manifest schema is enforced before persistence and on read, including Manifest Artifact schemaVersion, strict source shape, and root-versus-derived lineage coupling. The Asset route independently fails closed unless the Manifest is schema-valid and explicitly exportable as `allow` or `mask`.
+- [x] The default Image Annotation path now uses a controlled `sharp` SVG composite renderer to create a real PNG Derived Artifact. Production runtime constructs it and exposes `annotateVisualAsset`; injected renderers remain test-only alternatives.
+- [x] Final evidence observed by the main agent after the Node Response body type and UUID fixture-array type corrections: Task16 four-file suite 44/44 pass, 0 fail; `pnpm typecheck` passed. DNS pinning, Manifest/schemaVersion/route fail-closed validation, and the default production PNG annotation renderer are closed. No commit was made.
+
 ### Task 17: Chart Spec、Evidence 校验和 SVG Renderer
 
 **用户收益：** 报告自动生成可信对比图、趋势图和热力图，所有数字都能点回来源。

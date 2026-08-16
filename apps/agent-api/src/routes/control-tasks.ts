@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import type { PlanProgress } from '../../../../packages/api-contract/plan.ts';
+import type { VisualAssetManifest } from '../../../../packages/api-contract/research-deliverable.ts';
 import { ControlPlaneConflictError, type ControlPlaneRepository } from '../../../../database/control-plane.ts';
 import { getUserById } from '../../../../database/repository.ts';
 import {
@@ -9,6 +10,7 @@ import {
   type TaskWorkflowService,
   type WorkflowActor,
 } from '../../../orchestrator-runtime/src/control/task-workflow.ts';
+import { assertVisualAssetManifestSchema } from '../../../orchestrator-runtime/src/report/visual-asset-service.ts';
 import type { CurrentPlanningResponse } from './control-planning.ts';
 import { requireAuth } from '../middleware.ts';
 
@@ -41,12 +43,9 @@ export interface ControlTasksRuntime {
     ownerUserId: string;
   }): Promise<{
     artifact: { id: string };
+    manifestArtifact: { schemaVersion: string };
     bytes: Uint8Array;
-    manifest: {
-      assetId: string;
-      mediaType: 'image/png' | 'image/jpeg' | 'image/webp';
-      exportPolicy: 'allow' | 'mask' | 'block';
-    };
+    manifest: unknown;
   } | null>;
   clarification?: ControlClarificationPort;
 }
@@ -272,8 +271,16 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
       if (
         !asset
         || asset.artifact.id !== req.params.assetId
-        || asset.manifest.assetId !== req.params.assetId
-        || asset.manifest.exportPolicy === 'block'
+        || asset.manifestArtifact.schemaVersion !== 'visual-asset-manifest-v1'
+      ) {
+        hidden();
+        return;
+      }
+      assertVisualAssetManifestSchema(asset.manifest);
+      const manifest: VisualAssetManifest = asset.manifest;
+      if (
+        manifest.assetId !== req.params.assetId
+        || (manifest.exportPolicy !== 'allow' && manifest.exportPolicy !== 'mask')
       ) {
         hidden();
         return;
@@ -281,7 +288,7 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
       res.set({
         'Cache-Control': 'private, no-store',
         'Content-Disposition': 'inline',
-        'Content-Type': asset.manifest.mediaType,
+        'Content-Type': manifest.mediaType,
       });
       res.send(Buffer.from(asset.bytes));
     } catch {

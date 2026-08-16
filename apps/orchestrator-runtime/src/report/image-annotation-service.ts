@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import sharp from 'sharp';
 import type { ControlArtifact } from '../../../../database/control-plane.ts';
 import type {
   VisualAssetExportPolicy,
@@ -6,7 +7,7 @@ import type {
   VisualAssetReference,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { ControlArtifactStore } from '../control/artifact-store.ts';
-import type { VisualAssetService } from './visual-asset-service.ts';
+import type { VisualAssetResult, VisualAssetService } from './visual-asset-service.ts';
 
 export type AnnotationSeverity = 'low' | 'medium' | 'high' | 'critical';
 
@@ -65,6 +66,11 @@ export interface ImageAnnotationInput {
   exportPolicy: VisualAssetExportPolicy;
 }
 
+export interface ImageAnnotationResult {
+  overlayArtifact: ControlArtifact;
+  derived: VisualAssetResult;
+}
+
 interface VerifiedOriginal {
   artifact: ControlArtifact;
   bytes: Buffer;
@@ -83,6 +89,75 @@ const SEVERITIES: Record<AnnotationSeverity, true> = {
   medium: true,
   high: true,
   critical: true,
+};
+
+const COLOR_BY_SEVERITY: Record<AnnotationSeverity, string> = {
+  low: '#2563eb',
+  medium: '#d97706',
+  high: '#dc2626',
+  critical: '#7f1d1d',
+};
+
+function escapeXml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&apos;');
+}
+
+function renderPrimitive(annotation: ImageAnnotation, width: number, height: number): string {
+  const color = COLOR_BY_SEVERITY[annotation.severity];
+  const title = `<title>${escapeXml(annotation.label)}</title>`;
+  const minimumDimension = Math.min(width, height);
+  const strokeWidth = Math.max(1, minimumDimension * 0.006);
+  if (annotation.shape === 'rectangle') {
+    return `<g>${title}<rect x="${annotation.x * width}" y="${annotation.y * height}" width="${annotation.width * width}" height="${annotation.height * height}" fill="${color}" fill-opacity="0.18" stroke="${color}" stroke-width="${strokeWidth}"/></g>`;
+  }
+  if (annotation.shape === 'dot') {
+    const radius = Math.max(2, minimumDimension * 0.012);
+    return `<g>${title}<circle cx="${annotation.x * width}" cy="${annotation.y * height}" r="${radius}" fill="${color}" stroke="#ffffff" stroke-width="${Math.max(1, strokeWidth / 2)}"/></g>`;
+  }
+  if (annotation.shape === 'arrow') {
+    const startX = annotation.start.x * width;
+    const startY = annotation.start.y * height;
+    const endX = annotation.end.x * width;
+    const endY = annotation.end.y * height;
+    const dx = endX - startX;
+    const dy = endY - startY;
+    const length = Math.hypot(dx, dy);
+    if (length === 0) {
+      return `<g>${title}<circle cx="${endX}" cy="${endY}" r="${Math.max(2, strokeWidth)}" fill="${color}"/></g>`;
+    }
+    const arrowSize = Math.max(5, minimumDimension * 0.025);
+    const unitX = dx / length;
+    const unitY = dy / length;
+    const baseX = endX - unitX * arrowSize;
+    const baseY = endY - unitY * arrowSize;
+    const sideX = -unitY * arrowSize * 0.55;
+    const sideY = unitX * arrowSize * 0.55;
+    return `<g>${title}<line x1="${startX}" y1="${startY}" x2="${endX}" y2="${endY}" stroke="${color}" stroke-width="${strokeWidth}" stroke-linecap="round"/><polygon points="${endX},${endY} ${baseX + sideX},${baseY + sideY} ${baseX - sideX},${baseY - sideY}" fill="${color}"/></g>`;
+  }
+  const radius = Math.max(7, minimumDimension * 0.025);
+  const fontSize = Math.max(9, radius * 1.15);
+  return `<g>${title}<circle cx="${annotation.x * width}" cy="${annotation.y * height}" r="${radius}" fill="${color}" stroke="#ffffff" stroke-width="${Math.max(1, strokeWidth / 2)}"/><text x="${annotation.x * width}" y="${annotation.y * height}" fill="#ffffff" font-family="sans-serif" font-size="${fontSize}" font-weight="700" text-anchor="middle" dominant-baseline="central">${annotation.number}</text></g>`;
+}
+
+const renderControlledAnnotation: RenderSvg = async ({ originalBytes, overlay }) => {
+  const image = sharp(originalBytes, {
+    failOn: 'warning',
+    limitInputPixels: 20_000_000,
+  });
+  const metadata = await image.metadata();
+  const width = metadata.width;
+  const height = metadata.height;
+  if (!width || !height) throw new Error('original image has no decodable dimensions');
+  const primitives = overlay.annotations
+    .map((annotation) => renderPrimitive(annotation, width, height))
+    .join('');
+  const svg = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${primitives}</svg>`);
+  return image.composite([{ input: svg, blend: 'over' }]).png().toBuffer();
 };
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -201,13 +276,17 @@ function validateOriginal(original: VerifiedOriginal, input: ImageAnnotationInpu
 }
 
 export class ImageAnnotationService {
+  private readonly renderSvg: RenderSvg;
+
   constructor(private readonly dependencies: {
     assets: VisualAssetPort;
     artifacts: JsonArtifactPort;
-    renderSvg: RenderSvg;
-  }) {}
+    renderSvg?: RenderSvg;
+  }) {
+    this.renderSvg = dependencies.renderSvg ?? renderControlledAnnotation;
+  }
 
-  async annotate(input: ImageAnnotationInput) {
+  async annotate(input: ImageAnnotationInput): Promise<ImageAnnotationResult> {
     if (!Array.isArray(input.annotations) || input.annotations.length === 0) {
       throw new Error('annotations must contain at least one supported shape');
     }
@@ -248,7 +327,7 @@ export class ImageAnnotationService {
     ) {
       throw new Error('sealed image annotation Artifact binding does not match');
     }
-    const renderedBytes = await this.dependencies.renderSvg({
+    const renderedBytes = await this.renderSvg({
       originalBytes: Buffer.from(original.bytes),
       overlay: structuredClone(overlay),
     });
