@@ -35,6 +35,19 @@ export interface ControlTasksRuntime {
   repository: ControlPlaneRepository;
   workflow: TaskWorkflowService;
   getDeliverable(taskId: string, ownerUserId: string): Promise<unknown | null>;
+  readVisualAsset?(input: {
+    taskId: string;
+    assetId: string;
+    ownerUserId: string;
+  }): Promise<{
+    artifact: { id: string };
+    bytes: Uint8Array;
+    manifest: {
+      assetId: string;
+      mediaType: 'image/png' | 'image/jpeg' | 'image/webp';
+      exportPolicy: 'allow' | 'mask' | 'block';
+    };
+  } | null>;
   clarification?: ControlClarificationPort;
 }
 
@@ -107,11 +120,12 @@ async function ensureOwnedTask(
   req: Request,
   res: Response,
   actor: WorkflowActor,
+  hiddenError = '任务不存在',
 ): Promise<boolean> {
   const taskId = typeof req.params.id === 'string' ? req.params.id : req.params.id[0] ?? '';
   const task = await runtime.repository.getTaskDetail(taskId);
   if (!task || task.ownerUserId !== actor.userId || task.conversationOwnerUserId !== actor.userId) {
-    res.status(404).json({ error: '任务不存在' });
+    res.status(404).json({ error: hiddenError });
     return false;
   }
   return true;
@@ -237,6 +251,41 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
       }
     } catch (error) {
       responseError(res, error);
+    }
+  });
+
+  router.get('/:id/assets/:assetId', async (req, res) => {
+    const actor = await authenticatedActor(req, res);
+    if (!actor) return;
+    const hidden = () => res.status(404).json({ error: '资源不存在' });
+    if (!await ensureOwnedTask(runtime, req, res, actor, '资源不存在')) return;
+    if (!runtime.readVisualAsset) {
+      hidden();
+      return;
+    }
+    try {
+      const asset = await runtime.readVisualAsset({
+        taskId: req.params.id,
+        assetId: req.params.assetId,
+        ownerUserId: actor.userId,
+      });
+      if (
+        !asset
+        || asset.artifact.id !== req.params.assetId
+        || asset.manifest.assetId !== req.params.assetId
+        || asset.manifest.exportPolicy === 'block'
+      ) {
+        hidden();
+        return;
+      }
+      res.set({
+        'Cache-Control': 'private, no-store',
+        'Content-Disposition': 'inline',
+        'Content-Type': asset.manifest.mediaType,
+      });
+      res.send(Buffer.from(asset.bytes));
+    } catch {
+      hidden();
     }
   });
 

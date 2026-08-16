@@ -443,6 +443,96 @@ test('Current task GET and every command hide foreign and missing task IDs behin
   }
 });
 
+test('visual Asset route serves owner bytes and hides foreign, missing, and blocked Assets behind one 404', async () => {
+  process.env.JWT_SECRET = `test-only-${randomUUID()}`;
+  // Static import would load the app and shared DB pool before this test installs its scoped environment.
+  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+  const assetBytes = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64',
+  );
+  const allowedAssetId = randomUUID();
+  const blockedAssetId = randomUUID();
+  const missingAssetId = randomUUID();
+  const storageUri = `/private/tasks/${currentTaskId}/visuals/${allowedAssetId}.png`;
+  const reads: Array<{ taskId: string; assetId: string; ownerUserId: string }> = [];
+  const readVisualAsset = async (input: {
+    taskId: string;
+    assetId: string;
+    ownerUserId: string;
+  }) => {
+    reads.push(input);
+    if (input.taskId !== currentTaskId || input.ownerUserId !== ownerUserId) return null;
+    if (input.assetId !== allowedAssetId && input.assetId !== blockedAssetId) return null;
+    return {
+      artifact: {
+        id: input.assetId,
+        storageUri,
+        contentSha256: `sha256:${'a'.repeat(64)}`,
+      },
+      bytes: assetBytes,
+      manifest: {
+        assetId: input.assetId,
+        mediaType: 'image/png',
+        exportPolicy: input.assetId === blockedAssetId ? 'block' : 'allow',
+      },
+    };
+  };
+  const controlRuntime = {
+    repository: controlRepository,
+    workflow: {},
+    getDeliverable: async () => null,
+    readVisualAsset,
+  };
+  const server = createAgentApiApp({ controlRuntime: controlRuntime as never }).listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const ownerToken = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  const foreignToken = signToken({ userId: foreignUserId, email: 'foreign@test.local' });
+  const request = (assetId: string, token: string) => fetch(
+    `${baseUrl}/api/control-tasks/${currentTaskId}/assets/${assetId}`,
+    { headers: { authorization: `Bearer ${token}` } },
+  );
+
+  try {
+    const ownerResponse = await request(allowedAssetId, ownerToken);
+    assert.equal(ownerResponse.status, 200);
+    assert.equal(ownerResponse.headers.get('content-type'), 'image/png');
+    assert.deepEqual(Buffer.from(await ownerResponse.arrayBuffer()), assetBytes);
+    assert.equal(ownerResponse.headers.get('x-storage-uri'), null);
+
+    const hiddenResponses = [
+      await request(allowedAssetId, foreignToken),
+      await request(missingAssetId, ownerToken),
+      await request(blockedAssetId, ownerToken),
+    ];
+    const hiddenBodies: Array<Record<string, unknown>> = [];
+    for (const response of hiddenResponses) {
+      assert.equal(response.status, 404);
+      const body = await response.json() as Record<string, unknown>;
+      hiddenBodies.push(body);
+      assert.deepEqual(Object.keys(body), ['error']);
+      const serialized = JSON.stringify(body);
+      assert.equal(serialized.includes(allowedAssetId), false);
+      assert.equal(serialized.includes(missingAssetId), false);
+      assert.equal(serialized.includes(blockedAssetId), false);
+      assert.equal(serialized.includes(storageUri), false);
+    }
+    assert.deepEqual(hiddenBodies[1], hiddenBodies[0]);
+    assert.deepEqual(hiddenBodies[2], hiddenBodies[0]);
+    assert.deepEqual(reads, [
+      { taskId: currentTaskId, assetId: allowedAssetId, ownerUserId },
+      { taskId: currentTaskId, assetId: missingAssetId, ownerUserId },
+      { taskId: currentTaskId, assetId: blockedAssetId, ownerUserId },
+    ]);
+  } finally {
+    server.close();
+    await once(server, 'close');
+  }
+});
+
 test('foreign and missing planning conversations return 404 without SSE existence disclosure', async () => {
   process.env.JWT_SECRET = `test-only-${randomUUID()}`;
   const leakedConversationId = conversationId;

@@ -126,7 +126,7 @@ function isUnknownRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function resolvePointer(value: unknown, jsonPointer: string): unknown | undefined {
+export function resolveJsonPointer(value: unknown, jsonPointer: string): unknown | undefined {
   const segments = jsonPointer.slice(1).split('/').map((segment) => segment.replace(/~1/g, '/').replace(/~0/g, '~'));
   let current: unknown = value;
   for (const segment of segments) {
@@ -181,7 +181,7 @@ export class EvidenceService {
     if (resolved.artifact.contentSha256 !== entry.artifactContentSha256) {
       throw new EvidenceGraphValidationError(`evidence ${entry.id} Artifact content hash does not match`);
     }
-    const resolvedResult = resolvePointer(resolved.value, entry.jsonPointer);
+    const resolvedResult = resolveJsonPointer(resolved.value, entry.jsonPointer);
     if (resolvedResult === undefined) {
       throw new EvidenceGraphValidationError(`evidence ${entry.id} pointer does not resolve`);
     }

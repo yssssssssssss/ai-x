@@ -1200,6 +1200,14 @@ git add schemas/visual-asset-manifest.schema.json \
 git commit -m "feat: manage verified report visual assets"
 ```
 
+#### Task 16 execution note（2026-08-16）
+
+- [x] 新增 per-asset Visual Asset Manifest / Image Annotation Schema 与共享类型；Manifest 使用排除自身字段后的 canonical JSON SHA-256，绑定 Task/Plan/Attempt、Binary identity、可信媒体元数据、export policy 和不可变 lineage。
+- [x] `VisualAssetService` 仅从 SEALED、kind/hash/binding 匹配的 Tool Artifact RFC 6901 pointer 接受 HTTP(S) URL；逐跳手动 redirect、逐目标 DNS/公网地址校验、实际响应体 10 MiB 限额、MIME/signature 一致后才调用唯一 Binary ArtifactStore。用户上传、derive 和 verified read 同样只经 ArtifactStore。
+- [x] `ImageAnnotationService` 仅接受 rectangle/dot/arrow/numbered callout，严格验证 normalized bounds、Finding/label/severity 和 root-original identity；先封存 overlay，再从原图副本渲染并建立 annotation lineage。Heatmap 由通用 derive 建立同等不可变 lineage。
+- [x] Asset route 在读 Asset 前执行 Task/Conversation owner 隔离；foreign、missing、blocked 和读取失败统一 generic 404；成功响应仅含 Manifest content type 与 verified bytes，不暴露 storage URI。
+- [x] Observed verification: `pnpm exec tsx --test --test-concurrency=1 tests/visual-asset-service.test.ts tests/image-annotation-service.test.ts tests/auth-isolation.test.ts tests/evidence-service.test.ts` => 39/39 pass, 0 fail; `pnpm typecheck` passed. No commit was made.
+
 ### Task 17: Chart Spec、Evidence 校验和 SVG Renderer
 
 **用户收益：** 报告自动生成可信对比图、趋势图和热力图，所有数字都能点回来源。

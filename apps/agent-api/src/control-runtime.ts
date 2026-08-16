@@ -34,6 +34,10 @@ import { CurrentDeliverableService } from '../../orchestrator-runtime/src/report
 import { SynthesisMaterializer } from '../../orchestrator-runtime/src/report/synthesis-materializer.ts';
 import { ReportReviewService } from '../../orchestrator-runtime/src/report/report-review-service.ts';
 import { CurrentReportPackageReader } from '../../orchestrator-runtime/src/report/current-report-package-reader.ts';
+import {
+  VisualAssetService,
+  type VerifiedVisualAsset,
+} from '../../orchestrator-runtime/src/report/visual-asset-service.ts';
 import { buildRuntime } from '../../orchestrator-runtime/src/runtime/agent-runtime.ts';
 import type { LLMClient } from '../../orchestrator-runtime/src/runtime/llm-client.ts';
 import { ReceiptLLMClient } from '../../orchestrator-runtime/src/runtime/receipt-llm-client.ts';
@@ -234,6 +238,11 @@ export interface ControlRuntime {
   repository: ControlPlaneRepository;
   artifacts: ControlArtifactStore;
   getDeliverable(taskId: string, ownerUserId: string): Promise<CurrentReportPackageResponse | null>;
+  readVisualAsset(input: {
+    taskId: string;
+    assetId: string;
+    ownerUserId: string;
+  }): Promise<VerifiedVisualAsset | null>;
 }
 function defaultConversations(): RuntimeConversationAdapter {
   return {
@@ -291,6 +300,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     root: join(process.env.RUN_WORKSPACE_ROOT ?? './run-workspaces', 'current-control'),
     registry: repository,
   });
+  const visualAssets = new VisualAssetService({ artifacts });
   const expectedActualModel = overrides.expectedActualModel
     ?? (overrides.llm
       ? llm.identity.requestedModel
@@ -458,6 +468,39 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
         planVersionId: task.activePlanVersionId,
         attemptId: task.currentAttemptId,
       });
+    },
+    async readVisualAsset(input) {
+      const task = await repository.getTaskDetail(input.taskId);
+      if (
+        !task
+        || task.ownerUserId !== input.ownerUserId
+        || task.conversationOwnerUserId !== input.ownerUserId
+      ) {
+        return null;
+      }
+      const asset = await repository.getArtifact(input.assetId);
+      if (
+        !asset
+        || asset.taskId !== input.taskId
+        || asset.kind !== 'visual_asset'
+        || asset.state !== 'SEALED'
+        || !asset.planVersionId
+        || !asset.attemptId
+        || !asset.storageUri.endsWith('.image')
+      ) {
+        return null;
+      }
+      const manifestStorageUri = `${asset.storageUri.slice(0, -'.image'.length)}.manifest.json`;
+      const candidates = await repository.listArtifactsByStorageUri(manifestStorageUri);
+      const manifest = candidates.find((candidate) =>
+        candidate.state === 'SEALED'
+        && candidate.kind === 'visual_asset_manifest'
+        && candidate.taskId === asset.taskId
+        && candidate.planVersionId === asset.planVersionId
+        && candidate.attemptId === asset.attemptId,
+      );
+      if (!manifest) return null;
+      return visualAssets.readVerified({ assetId: asset.id, manifestArtifactId: manifest.id });
     },
   };
 }

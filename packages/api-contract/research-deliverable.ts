@@ -227,6 +227,53 @@ export interface CapabilityProvenance {
   type: string;
 }
 
+export type VisualAssetExportPolicy = 'allow' | 'mask' | 'block';
+
+export interface VisualAssetReference {
+  assetId: string;
+  manifestArtifactId: string;
+}
+
+export type VisualAssetSource =
+  | {
+      kind: 'tool_artifact';
+      artifactId: string;
+      artifactContentSha256: string;
+      jsonPointer: string;
+      url: string;
+    }
+  | { kind: 'user_upload'; fileName: string }
+  | { kind: 'derived' };
+
+export interface VisualAssetLineage {
+  assetId: string;
+  manifestArtifactId: string;
+  contentSha256: string;
+  manifestHash: string;
+}
+
+export type VisualAssetDerivation =
+  | { kind: 'annotation'; overlayArtifactId: string }
+  | { kind: 'heatmap' };
+
+export interface VisualAssetManifest {
+  version: 'visual-asset-manifest-v1';
+  taskId: string;
+  planVersionId: string;
+  attemptId: string;
+  assetId: string;
+  contentSha256: string;
+  mediaType: 'image/png' | 'image/jpeg' | 'image/webp';
+  byteSize: number;
+  width: number;
+  height: number;
+  exportPolicy: VisualAssetExportPolicy;
+  source: VisualAssetSource;
+  derivedFrom: VisualAssetLineage | null;
+  derivation: VisualAssetDerivation | null;
+  manifestHash: string;
+}
+
 export interface EvidenceEntry {
   id: string;
   kind: EvidenceKind;
