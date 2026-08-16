@@ -33,6 +33,7 @@ import {
   SchemaValidationError,
   SchemaValidator,
 } from '../apps/orchestrator-runtime/src/schema/validator.ts';
+import { createReportDocumentViewModel } from '../apps/web/src/reporting/report-document-view-model.ts';
 
 const binding = {
   taskId: 'task-report-document-1',
@@ -45,6 +46,8 @@ const evidenceArtifactId = 'evidence-source-report-document-1';
 const reviewArtifactId = 'review-report-document-1';
 const imageAssetId = 'asset-image-report-document-1';
 const imageManifestArtifactId = 'manifest-image-report-document-1';
+const annotationAssetId = 'asset-annotation-report-document-1';
+const annotationManifestArtifactId = 'manifest-annotation-report-document-1';
 const chartAssetId = 'asset-chart-report-document-1';
 const chartManifestArtifactId = 'manifest-chart-report-document-1';
 const PNG = Buffer.from(
@@ -320,6 +323,45 @@ function verifiedImage(): VerifiedVisualAsset {
     manifest,
     manifestArtifact: sealedJsonArtifact(
       imageManifestArtifactId,
+      'visual_asset_manifest',
+      'visual-asset-manifest-v1',
+      manifest,
+    ),
+  };
+}
+
+function verifiedAnnotation(original: VerifiedVisualAsset): VerifiedVisualAsset {
+  const manifest = visualManifest({
+    assetId: annotationAssetId,
+    mediaType: 'image/png',
+    bytes: PNG,
+    width: 1,
+    height: 1,
+    derivedFrom: {
+      assetId: original.artifact.id,
+      manifestArtifactId: original.manifestArtifact.id,
+      contentSha256: original.manifest.contentSha256,
+      manifestHash: original.manifest.manifestHash,
+    },
+    derivation: { kind: 'annotation', overlayArtifactId: 'overlay-report-document-1' },
+  });
+  return {
+    artifact: artifact(annotationAssetId, 'visual_asset', 'binary-v1', {
+      contentSha256: manifest.contentSha256,
+      byteSize: manifest.byteSize,
+      mediaType: manifest.mediaType,
+      metadata: { width: manifest.width, height: manifest.height },
+    }),
+    bytes: Buffer.from(PNG),
+    metadata: {
+      contentType: manifest.mediaType,
+      byteSize: manifest.byteSize,
+      width: manifest.width,
+      height: manifest.height,
+    },
+    manifest,
+    manifestArtifact: sealedJsonArtifact(
+      annotationManifestArtifactId,
       'visual_asset_manifest',
       'visual-asset-manifest-v1',
       manifest,
@@ -732,6 +774,47 @@ test('composer omits visual blocks rather than generating placeholders when no v
   assert.equal(blocks.some(({ type }) => ['image', 'image-comparison', 'chart'].includes(type)), false);
   assert.equal(JSON.stringify(document).toLowerCase().includes('placeholder'), false);
   assert.deepEqual(document.sections.map(({ id }) => id), [...REQUIRED_SECTION_IDS]);
+});
+
+test('composer pairs an annotation with its original into a production-view image comparison', () => {
+  const input = composeInput();
+  const original = input.visualAssets[0]!;
+  const annotation = verifiedAnnotation(original);
+  input.visualAssets = [original, annotation];
+  input.charts = [];
+
+  const document = composeReportDocument(input);
+  const comparison = document.sections
+    .flatMap(({ blocks }) => blocks)
+    .find(({ type }) => type === 'image-comparison');
+  assert.ok(comparison?.type === 'image-comparison');
+  assert.deepEqual(comparison.beforeAssetRef, {
+    assetId: original.artifact.id,
+    manifestArtifactId: original.manifestArtifact.id,
+  });
+  assert.deepEqual(comparison.afterAssetRef, {
+    assetId: annotation.artifact.id,
+    manifestArtifactId: annotation.manifestArtifact.id,
+  });
+
+  const model = createReportDocumentViewModel({
+    document,
+    visualAssetManifests: [original.manifest, annotation.manifest],
+    assetUrl: ({ assetId }) => `/api/control-tasks/${binding.taskId}/assets/${assetId}`,
+  });
+  const viewComparison = model.sections
+    .flatMap(({ blocks }) => blocks)
+    .find(({ kind }) => kind === 'comparison');
+  assert.deepEqual(viewComparison, {
+    id: comparison.id,
+    kind: 'comparison',
+    originalAssetId: original.artifact.id,
+    annotationAssetId: annotation.artifact.id,
+    originalSrc: `/api/control-tasks/${binding.taskId}/assets/${original.artifact.id}`,
+    annotationSrc: `/api/control-tasks/${binding.taskId}/assets/${annotation.artifact.id}`,
+    caption: comparison.caption,
+    altText: comparison.altText,
+  });
 });
 
 test('composer creates a schema-valid professional research-plan document with ordered sections and sealed references', () => {

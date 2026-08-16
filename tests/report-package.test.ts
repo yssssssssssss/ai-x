@@ -22,6 +22,8 @@ import {
   REVIEW_GATED_DELIVERABLE_SCHEMA_VERSION,
 } from '../apps/orchestrator-runtime/src/report/current-report-package-reader.ts';
 import { parseControlDeliverableResponse } from '../apps/web/src/report-package-response.ts';
+import { chartTableAlternative } from '../apps/orchestrator-runtime/src/report/chart-renderer.ts';
+import { chartSpecHash } from '../apps/orchestrator-runtime/src/report/chart-spec-validator.ts';
 
 const binding = {
   taskId: 'task-1',
@@ -214,18 +216,9 @@ function packageReportDocument(): ReportDocument {
           assetId: chartAssetId,
           manifestArtifactId: chartManifestArtifactId,
         },
-        specHash: `sha256:${'c'.repeat(64)}`,
+        specHash: chartSpecHash(spec),
         spec,
-        table: {
-          caption: spec.title,
-          columns: ['Series', 'Score'],
-          rows: [{
-            key: 'competitor:a',
-            label: 'Competitor A',
-            cells: [87],
-            evidenceIds: [['evidence-entry-1']],
-          }],
-        },
+        table: chartTableAlternative(spec),
         caption: spec.title,
         altText: 'Competitor A has a verified score of 87.',
       }],
@@ -251,13 +244,13 @@ function packageVisualManifest(
     derivedFrom: mediaType === 'image/svg+xml' ? {
       assetId: imageAssetId,
       manifestArtifactId: imageManifestArtifactId,
-      contentSha256: `sha256:${imageAssetId.padEnd(64, 'a').slice(0, 64)}`,
+      contentSha256: `sha256:${'a'.repeat(64)}`,
       manifestHash: `sha256:${'f'.repeat(64)}`,
     } : null,
     derivation: mediaType === 'image/svg+xml' ? {
       kind: 'chart_svg',
       chartId: 'chart-1',
-      specHash: `sha256:${'c'.repeat(64)}`,
+      specHash: chartSpecHash(packageChartSpec()),
     } : null,
     manifestHash: `sha256:${'f'.repeat(64)}`,
   };
@@ -449,6 +442,64 @@ test('returns multimodal only from a sealed ReportDocument and its exact verifie
     chartId: 'chart-1',
   }]);
   assert.equal(fixture.visualAssets.reads.some(({ assetId }) => assetId === extra.artifact.id), false);
+});
+
+test('revalidates ReportDocument Chart values, chart_svg specHash, and sealed table before multimodal return', async () => {
+  const evidenceMismatch = packageReportDocument();
+  const evidenceMismatchBlock = evidenceMismatch.sections
+    .flatMap(({ blocks }) => blocks)
+    .find(({ type }) => type === 'chart');
+  assert.ok(evidenceMismatchBlock?.type === 'chart');
+  evidenceMismatchBlock.spec.series[0]!.values[0] = 12;
+  evidenceMismatchBlock.specHash = chartSpecHash(evidenceMismatchBlock.spec);
+  evidenceMismatchBlock.table = chartTableAlternative(evidenceMismatchBlock.spec);
+  const evidenceMismatchChart = packageVerifiedVisualAsset(chartAssetId, chartManifestArtifactId, 'image/svg+xml');
+  assert.ok(evidenceMismatchChart.manifest.derivation?.kind === 'chart_svg');
+  evidenceMismatchChart.manifest.derivation.specHash = evidenceMismatchBlock.specHash;
+  const evidenceMismatchFixture = setup({
+    reportDocument: evidenceMismatch,
+    visualAssets: [
+      packageVerifiedVisualAsset(imageAssetId, imageManifestArtifactId, 'image/png'),
+      evidenceMismatchChart,
+    ],
+  });
+  await assert.rejects(
+    evidenceMismatchFixture.reader.read(binding),
+    /chart|spec|evidence|value|match/i,
+  );
+
+  const manifestMismatch = packageVerifiedVisualAsset(chartAssetId, chartManifestArtifactId, 'image/svg+xml');
+  assert.ok(manifestMismatch.manifest.derivation?.kind === 'chart_svg');
+  manifestMismatch.manifest.derivation.specHash = `sha256:${'d'.repeat(64)}`;
+  const manifestMismatchFixture = setup({
+    reportDocument: packageReportDocument(),
+    visualAssets: [
+      packageVerifiedVisualAsset(imageAssetId, imageManifestArtifactId, 'image/png'),
+      manifestMismatch,
+    ],
+  });
+  await assert.rejects(
+    manifestMismatchFixture.reader.read(binding),
+    /chart|specHash|manifest|digest|match/i,
+  );
+
+  const tableMismatch = packageReportDocument();
+  const tableMismatchBlock = tableMismatch.sections
+    .flatMap(({ blocks }) => blocks)
+    .find(({ type }) => type === 'chart');
+  assert.ok(tableMismatchBlock?.type === 'chart');
+  tableMismatchBlock.table.rows[0]!.cells[0] = 12;
+  const tableMismatchFixture = setup({
+    reportDocument: tableMismatch,
+    visualAssets: [
+      packageVerifiedVisualAsset(imageAssetId, imageManifestArtifactId, 'image/png'),
+      packageVerifiedVisualAsset(chartAssetId, chartManifestArtifactId, 'image/svg+xml'),
+    ],
+  });
+  await assert.rejects(
+    tableMismatchFixture.reader.read(binding),
+    /chart|table|spec|sealed|match/i,
+  );
 });
 
 test('never downgrades a tampered ReportDocument to current_text', async () => {

@@ -179,7 +179,9 @@ export class ReportCompositionService implements ReportCompositionPort {
       verifiedAssets.push(verified);
     }
 
-    const visualAssets = verifiedAssets.filter(({ manifest }) => manifest.derivation?.kind !== 'chart_svg');
+    const lineageVisualAssets = verifiedAssets.filter(({ manifest }) => manifest.derivation?.kind !== 'chart_svg');
+    const visualAssets = lineageVisualAssets.filter(({ manifest }) =>
+      manifest.exportPolicy === 'allow' || manifest.exportPolicy === 'mask');
     const chartAssets = new Map(
       verifiedAssets
         .filter(({ manifest }) => manifest.derivation?.kind === 'chart_svg')
@@ -188,7 +190,7 @@ export class ReportCompositionService implements ReportCompositionPort {
           manifestArtifactId: asset.manifestArtifact.id,
         }), asset]),
     );
-    const visualByReference = new Map(visualAssets.map((asset) => [referenceKey({
+    const visualByReference = new Map(lineageVisualAssets.map((asset) => [referenceKey({
       assetId: asset.artifact.id,
       manifestArtifactId: asset.manifestArtifact.id,
     }), asset]));
@@ -234,7 +236,9 @@ export class ReportCompositionService implements ReportCompositionPort {
       }
       usedChartAssets.add(key);
       chartIds.add(spec.chartId);
-      charts.push({ spec, specHash, table: expectedTable, asset });
+      if (asset.manifest.exportPolicy === 'allow' || asset.manifest.exportPolicy === 'mask') {
+        charts.push({ spec, specHash, table: expectedTable, asset });
+      }
     }
 
     if (usedChartAssets.size !== chartAssets.size) {

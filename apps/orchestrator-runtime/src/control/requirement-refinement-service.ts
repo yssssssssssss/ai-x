@@ -118,6 +118,23 @@ function sameStoredValue(left: unknown, right: unknown): boolean {
   return JSON.stringify(stableValue(left)) === JSON.stringify(stableValue(right));
 }
 
+function hasNoClarificationChanges(
+  answers: Record<string, unknown>,
+  requirement: ResearchTaskV2,
+): boolean {
+  return Object.entries(answers).every(([key, value]) =>
+    key === 'assumption_edits'
+    && value !== null
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && Object.entries(value as Record<string, unknown>).every(([assumptionKey, editedValue]) =>
+      requirement.assumptions.some((assumption) =>
+        assumption.editable
+        && assumption.key === assumptionKey
+        && sameStoredValue(assumption.value, editedValue)))
+  );
+}
+
 export class RequirementRefinementService {
   private readonly dependencies: RequirementRefinementDependencies;
 
@@ -180,19 +197,16 @@ export class RequirementRefinementService {
       && task.activeRequirementVersionId === active.id
       && active.taskId === task.id
       && sameStoredValue(active.structuredTask, task.structuredTask);
-    const hasNoClarificationChanges = Object.entries(input.answers).every(([key, value]) =>
-      key === 'assumption_edits'
-      && value !== null
-      && typeof value === 'object'
-      && !Array.isArray(value)
-      && Object.keys(value).length === 0
+    const unchangedClarification = hasNoClarificationChanges(
+      input.answers,
+      active.structuredTask,
     );
     if (
       expectedVersion !== undefined
       && task.stateVersion === expectedVersion
       && matchesActiveRequirement
       && !needsClarification(active.structuredTask)
-      && hasNoClarificationChanges
+      && unchangedClarification
     ) {
       return this.finishRefinement({
         taskId: input.taskId,

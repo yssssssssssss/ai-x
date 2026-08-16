@@ -907,7 +907,7 @@ function clarificationRequirement(): ResearchTaskV2 {
     constraints: [],
     success_criteria: [{ id: 'audience-confirmed', statement: '确认目标受众后生成可执行研究计划' }],
     expected_deliverables: ['研究计划'],
-    assumptions: [],
+    assumptions: [{ key: 'scope', value: '公开资料', editable: true }],
     ambiguities: [{ id: 'audience', statement: '目标受众未确定', blocking: true }],
     clarification_questions: [{ key: 'audience', question: '目标受众是谁？', rationale: '决定研究方法' }],
     blocking_issues: [],
@@ -2210,7 +2210,7 @@ test('post-activation clarification failure reclaims the same command without an
   }
 });
 
-test('latest-version fresh-key clarification recovers a finalized active requirement after refresh', async () => {
+test('latest-version fresh-key clarification recovers hydrated unchanged assumptions after refresh', async () => {
   const { buildControlRuntime } = await loadControlRuntimeModule();
   const llm = new ClarificationRetryLLM();
   let plannerCalls = 0;
@@ -2289,6 +2289,12 @@ test('latest-version fresh-key clarification recovers a finalized active require
     assert.deepEqual(refreshedRequirement.clarification_questions, []);
     assert.deepEqual(refreshedRequirement.blocking_issues, []);
     assert.deepEqual(refreshed.candidates, []);
+    const hydratedAssumptionEdits = Object.fromEntries(
+      refreshedRequirement.assumptions
+        .filter(({ editable }) => editable)
+        .map(({ key, value }) => [key, value]),
+    );
+    assert.deepEqual(hydratedAssumptionEdits, { scope: '公开资料' });
 
     const freshKey = `refreshed-finalized-recovery-${randomUUID()}`;
     assert.notEqual(freshKey, failedKey);
@@ -2299,7 +2305,7 @@ test('latest-version fresh-key clarification recovers a finalized active require
       {
         expectedVersion: refreshed.task.stateVersion,
         clarificationAnswers: {},
-        assumptionEdits: {},
+        assumptionEdits: hydratedAssumptionEdits,
       },
       freshKey,
     );

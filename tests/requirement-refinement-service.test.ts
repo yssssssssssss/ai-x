@@ -366,6 +366,67 @@ test('post-activation retry reuses one requirement-version assistant message key
   );
 });
 
+test('hydrated assumption edits equal to the finalized active Requirement recover without another version or LLM call', async () => {
+  const { RequirementRefinementService } = await loadModule();
+  const finalized = requirement({
+    target_audience: ['enterprise buyers'],
+    assumptions: [{ key: 'scope', value: 'public web sources', editable: true }],
+  });
+  const llm = new FixtureLLM([ambiguousRequirement, finalized]);
+  const repository = makeRepository();
+  const conversations = makeConversations();
+  let plannerCalls = 0;
+  const service = new RequirementRefinementService({
+    llm,
+    validator: new SchemaValidator(),
+    repository,
+    conversations,
+    planner: {
+      async plan() {
+        plannerCalls += 1;
+        if (plannerCalls === 1) throw new Error('simulated failure after finalized Requirement activation');
+      },
+    },
+  });
+
+  await service.understand({
+    taskId,
+    conversationId,
+    ownerUserId,
+    originalInput: 'compare competitors',
+  });
+  await assert.rejects(
+    () => service.clarify({
+      taskId,
+      conversationId,
+      ownerUserId,
+      answers: { audience: 'enterprise buyers' },
+      expectedVersion: 2,
+    }),
+    /simulated failure after finalized Requirement activation/,
+  );
+  assert.equal(repository.versions.length, 2);
+  assert.equal(llm.calls.length, 2);
+
+  const result = await service.clarify({
+    taskId,
+    conversationId,
+    ownerUserId,
+    answers: { assumption_edits: { scope: 'public web sources' } },
+    expectedVersion: 3,
+  });
+
+  assert.equal(result.status, 'ready_to_plan');
+  assert.deepEqual(result.requirement, finalized);
+  assert.deepEqual(result.clarificationRecovery, {
+    mode: 'latest_finalized_requirement',
+    activeRequirementVersionId: 'requirement-2',
+  });
+  assert.equal(repository.versions.length, 2, 'unchanged hydrated edits must not create Requirement v3');
+  assert.equal(llm.calls.length, 2, 'unchanged hydrated edits must not call requirement clarification again');
+  assert.equal(plannerCalls, 2);
+});
+
 test('only owner-scoped conversation history is sent to the refinement LLM', async () => {
   const { RequirementRefinementService } = await loadModule();
   const llm = new FixtureLLM([requirement()]);

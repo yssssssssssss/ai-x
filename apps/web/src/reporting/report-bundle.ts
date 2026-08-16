@@ -29,6 +29,7 @@ const MEDIA_EXTENSION: Record<VisualAssetManifest['mediaType'], string> = {
   'image/webp': '.webp',
   'image/svg+xml': '.svg',
 };
+
 function assetReferences(document: ReportDocument): VisualAssetReference[] {
   const references: VisualAssetReference[] = [];
   const seen = new Set<string>();
@@ -150,7 +151,10 @@ function safeAssetReference(reference: VisualAssetReference): Record<string, str
   return { assetId: reference.assetId };
 }
 
-function safeReportBlock(block: ReportBlock): Record<string, unknown> {
+function safeReportBlock(
+  block: ReportBlock,
+  evidenceIndexItems?: readonly string[],
+): Record<string, unknown> {
   if (block.type === 'paragraph') return { id: block.id, type: block.type, text: block.text };
   if (block.type === 'fact') {
     return { id: block.id, type: block.type, text: block.text, evidenceIds: block.evidenceIds };
@@ -158,7 +162,13 @@ function safeReportBlock(block: ReportBlock): Record<string, unknown> {
   if (block.type === 'metric') {
     return { id: block.id, type: block.type, label: block.label, value: block.value, evidenceIds: block.evidenceIds };
   }
-  if (block.type === 'list') return { id: block.id, type: block.type, items: block.items };
+  if (block.type === 'list') {
+    return {
+      id: block.id,
+      type: block.type,
+      items: evidenceIndexItems ? [...evidenceIndexItems] : block.items,
+    };
+  }
   if (block.type === 'image') {
     return {
       id: block.id,
@@ -192,6 +202,7 @@ function safeReportBlock(block: ReportBlock): Record<string, unknown> {
 function safeReportDocument(
   document: ReportDocument,
   exportableAssetIds: ReadonlySet<string>,
+  evidenceIndexItems: readonly string[],
 ): Record<string, unknown> {
   const include = (block: ReportBlock): boolean => {
     if (block.type === 'image') return exportableAssetIds.has(block.assetRef.assetId);
@@ -211,7 +222,12 @@ function safeReportDocument(
       id: section.id,
       title: section.title,
       questionIds: section.questionIds,
-      blocks: section.blocks.filter(include).map(safeReportBlock),
+      blocks: section.blocks.filter(include).map((block) => safeReportBlock(
+        block,
+        section.id === 'appendix' && block.type === 'list' && block.id === 'evidence-index'
+          ? evidenceIndexItems
+          : undefined,
+      )),
     })),
   };
 }
@@ -248,6 +264,7 @@ function reportMarkdown(
   document: ReportDocument,
   manifests: ReadonlyMap<string, VisualAssetManifest>,
   assetPaths: ReadonlyMap<string, string>,
+  evidenceIndexItems: readonly string[],
 ): string {
   const lines = [
     `# ${document.title}`,
@@ -273,7 +290,12 @@ function reportMarkdown(
       if (block.type === 'metric') {
         sectionLines.push(`**${block.label}: ${block.value}**`, '', `Evidence: ${block.evidenceIds.join(', ')}`, '');
       }
-      if (block.type === 'list') sectionLines.push(...block.items.map((item) => `- ${item}`), '');
+      if (block.type === 'list') {
+        const items = section.id === 'appendix' && block.id === 'evidence-index'
+          ? evidenceIndexItems
+          : block.items;
+        sectionLines.push(...items.map((item) => `- ${item}`), '');
+      }
       if (block.type === 'image' && exportable(block.assetRef.assetId)) {
         sectionLines.push(`![${block.altText}](${assetPaths.get(block.assetRef.assetId)})`, '', `*${block.caption}*`, '');
       }
@@ -336,6 +358,8 @@ export async function createReportBundle({ report, readAsset }: CreateReportBund
     mediaType,
     width,
   }));
+  const evidenceIndexItems = report.evidenceManifest.entries.map((entry) =>
+    `${entry.id}: ${entry.evidenceClass} Evidence.`);
   const entries = new Map<string, Uint8Array>([
     ['assets/', new Uint8Array()],
     ...readAssets.map(({ path, bytes }) => [path, bytes] as const),
@@ -343,9 +367,15 @@ export async function createReportBundle({ report, readAsset }: CreateReportBund
     ['report-document.json', jsonBytes(safeReportDocument(
       report.reportDocument,
       new Set(exportable.map(({ assetId }) => assetId)),
+      evidenceIndexItems,
     ))],
     ['report-review.json', jsonBytes(safeReview(report.reportReview))],
-    ['report.md', strToU8(reportMarkdown(report.reportDocument, manifestByAsset, assetPaths))],
+    ['report.md', strToU8(reportMarkdown(
+      report.reportDocument,
+      manifestByAsset,
+      assetPaths,
+      evidenceIndexItems,
+    ))],
     ['visual-assets.json', jsonBytes(visualAssets)],
   ]);
   const sortedEntries = Object.fromEntries([...entries].sort(([left], [right]) => left.localeCompare(right)));

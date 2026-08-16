@@ -1525,7 +1525,7 @@ test('pass Review composes and lease-seals a verified image and Chart ReportDocu
   assert.deepEqual(reportPackage.visualAssetManifests, expectedVisualAssetManifests);
 });
 
-async function reportMaterialDiscoveryFixture(): Promise<{
+async function reportMaterialDiscoveryFixture(exportPolicy: 'allow' | 'mask' | 'block' = 'allow'): Promise<{
   repository: ControlPlaneRepository;
   lease: ControlExecutionLease;
   manifestArtifact: ControlArtifact;
@@ -1546,7 +1546,7 @@ async function reportMaterialDiscoveryFixture(): Promise<{
         'base64',
       ),
     },
-    exportPolicy: 'allow',
+    exportPolicy,
   });
   const dependencies = { artifacts: store, visualAssets, repository };
   const service = new ReportCompositionService(dependencies) as unknown as DiscoverableReportComposition;
@@ -1600,6 +1600,15 @@ test('production report material discovery rejects foreign, tampered, and unseal
     unsealedConnection.release();
   }
   await assert.rejects(unsealed.discover(), /sealed|state|manifest/i);
+});
+
+test('production report material discovery ignores an unrelated export-blocked screenshot', async () => {
+  const blocked = await reportMaterialDiscoveryFixture('block');
+
+  const discovered = await blocked.discover();
+
+  assert.deepEqual(discovered.visualAssets, []);
+  assert.deepEqual(discovered.charts, []);
 });
 
 

@@ -426,6 +426,22 @@ function assertCompositionInput(input: ComposeReportDocumentInput): ArtifactBind
     if (visualReferences.has(key)) fail(`Visual Asset reference ${asset.artifact.id} must be unique`);
     visualReferences.set(key, asset);
   }
+  for (const asset of input.visualAssets) {
+    if (asset.manifest.derivation?.kind !== 'annotation') continue;
+    const lineage = asset.manifest.derivedFrom;
+    const original = lineage
+      ? visualReferences.get(assetReferenceKey(lineage))
+      : undefined;
+    if (
+      asset.manifest.source.kind !== 'derived'
+      || !lineage
+      || !original
+      || lineage.contentSha256 !== original.manifest.contentSha256
+      || lineage.manifestHash !== original.manifest.manifestHash
+    ) {
+      fail(`Annotation Asset ${asset.artifact.id} lineage does not reference its exact verified original`);
+    }
+  }
 
   const chartIds = new Set<string>();
   const chartAssetReferences = new Set<string>();
@@ -556,14 +572,42 @@ function composeSectionBlocks(
             summaryById.get(summaryId) ?? fail(`Question ${questionBinding.questionId} references missing Summary ${summaryId}`),
           )));
     }
-    case 'visual-evidence':
-      return input.visualAssets.map((asset, index): ReportImageBlock => ({
-        id: `image-${index + 1}`,
-        type: 'image',
-        assetRef: assetReference(asset),
-        caption: sourceCaption(asset, index),
-        altText: `Verified visual evidence, ${asset.metadata.width} by ${asset.metadata.height} pixels.`,
-      }));
+    case 'visual-evidence': {
+      const annotationsByOriginal = new Map<string, VerifiedVisualAsset[]>();
+      for (const asset of input.visualAssets) {
+        if (asset.manifest.derivation?.kind !== 'annotation' || !asset.manifest.derivedFrom) continue;
+        const key = assetReferenceKey(asset.manifest.derivedFrom);
+        const annotations = annotationsByOriginal.get(key) ?? [];
+        annotations.push(asset);
+        annotationsByOriginal.set(key, annotations);
+      }
+      const blocks: ReportBlock[] = [];
+      let imageIndex = 0;
+      let comparisonIndex = 0;
+      for (const asset of input.visualAssets) {
+        if (asset.manifest.derivation?.kind === 'annotation') continue;
+        imageIndex += 1;
+        blocks.push({
+          id: `image-${imageIndex}`,
+          type: 'image',
+          assetRef: assetReference(asset),
+          caption: sourceCaption(asset, imageIndex - 1),
+          altText: `Verified visual evidence, ${asset.metadata.width} by ${asset.metadata.height} pixels.`,
+        });
+        for (const annotation of annotationsByOriginal.get(assetReferenceKey(assetReference(asset))) ?? []) {
+          comparisonIndex += 1;
+          blocks.push({
+            id: `image-comparison-${comparisonIndex}`,
+            type: 'image-comparison',
+            beforeAssetRef: assetReference(asset),
+            afterAssetRef: assetReference(annotation),
+            caption: `${sourceCaption(asset, imageIndex - 1)} with verified annotation.`,
+            altText: `Original visual evidence compared with its verified annotation.`,
+          });
+        }
+      }
+      return blocks;
+    }
     case 'comparison':
       return input.charts.map(({ spec, specHash, table, asset }, index): ReportChartBlock => ({
         id: `chart-${index + 1}`,

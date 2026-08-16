@@ -1402,6 +1402,14 @@ Observed by Main after all five reviewer fixes: lease execution, report package,
 
 Observed by Main at 1280×800 and 1440×900: report render, `#comparison` navigation, Evidence `e1`/`e2` expansion, 125% zoom, interactive Chart plus one table, and print mode with actions/interactive Chart hidden, sealed SVG visible, and `thead` as `table-header-group`. A separate Gateway clarification defect leaves fresh tasks in `awaiting_clarification` and returns 500 on retry; it precedes Task19 and is not a renderer failure.
 
+#### Phase 5 final integrated correction（2026-08-17）
+
+- Hydrated editable assumption values equal to the active finalized Requirement reuse the existing latest-version recovery path; actual changes continue through ordinary refinement and existing atomic fences.
+- Multimodal package replay resolves Chart values from verified Evidence, binds inline Chart identity/digest to the exact verified `chart_svg` Manifest, checks its deterministic sealed table, and executes full ReportDocument semantic validation before return.
+- Exact annotation `derivedFrom` lineage now yields the production `image-comparison` view without a duplicate standalone annotation; blocked discovery assets remain available only for internal lineage validation and are excluded from composer-visible visual/Chart output.
+- Bundle JSON and Markdown rebuild Evidence list entries from verified safe Manifest fields, removing internal Artifact/model/provenance metadata while retaining public Evidence id/class and asset projections.
+- Verification observed by Main: the six-file Phase 5 integrated suite completed at 137 total / 136 pass / 1 existing provider skip / 0 fail; after the behavior-preserving pure ReportDocument view-model extraction, the focused report-document + report-bundle suite completed at 32/32, `pnpm typecheck` passed, and the Web production build passed. Final Phase 5 re-review remains pending; no phase-complete/final-approval or commit claim is made.
+
 - [ ] **Step 9: 阶段门禁和提交**
 
 Run: `pnpm quality`

@@ -519,6 +519,33 @@ test('bundle JSON files are distribution-safe and do not leak storage URIs, hash
   }
 });
 
+test('bundle JSON and Markdown remove internal Artifact provenance from Evidence lists but retain safe Evidence content', async () => {
+  const { createReportBundle } = await loadReportBundleModule();
+  const report = multimodalReport();
+  const appendix = report.reportDocument.sections.find(({ id }) => id === 'appendix');
+  assert.ok(appendix);
+  appendix.blocks = [{
+    id: 'evidence-index',
+    type: 'list',
+    items: [
+      'evidence-1: dataset Evidence from Artifact private-evidence-artifact. Provenance modelCallId model-call-private.',
+    ],
+  }];
+
+  const bytes = await createReportBundle({ report, readAsset: assetReader([]) });
+  const bundle = await unzip(bytes);
+  const exported = [bundle.text('report-document.json'), bundle.text('report.md')];
+
+  for (const text of exported) {
+    assert.match(text, /evidence-1/u);
+    assert.match(text, /dataset Evidence/u);
+    assert.doesNotMatch(
+      text,
+      /private-evidence-artifact|model-call-private|modelCallId|Provenance|from Artifact/iu,
+    );
+  }
+});
+
 test('bundle bytes and filenames are deterministic across input manifest order and asset read timing', async () => {
   const { createReportBundle } = await loadReportBundleModule();
   const first = multimodalReport();

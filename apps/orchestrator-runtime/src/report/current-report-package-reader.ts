@@ -1,4 +1,5 @@
 import { basename } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import type {
   CurrentReportPackageResponse,
   PassedReportReviewArtifact,
@@ -22,8 +23,13 @@ import {
 } from '../evidence/evidence-service.ts';
 import { ReportEvidenceValidator } from '../evidence/report-evidence-validator.ts';
 import { SchemaValidator } from '../schema/validator.ts';
+import { chartTableAlternative } from './chart-renderer.ts';
+import { chartSpecHash, validateChartSpec } from './chart-spec-validator.ts';
 import { assertValidReportReviewArtifact } from './report-review-service.ts';
-import type { ReportDocument } from './report-document-composer.ts';
+import {
+  assertValidReportDocument,
+  type ReportDocument,
+} from './report-document-composer.ts';
 import type { VerifiedVisualAsset, VisualAssetService } from './visual-asset-service.ts';
 
 export const REVIEW_GATED_DELIVERABLE_SCHEMA_VERSION = 'research-deliverable-v1-review-gated';
@@ -38,7 +44,7 @@ interface ReportPackageBinding {
 interface CurrentReportPackageReaderDependencies {
   artifacts: Pick<ControlArtifactStore, 'readVerifiedJson'>;
   repository: Pick<ControlPlaneRepository, 'findSealedArtifact'>;
-  evidence?: Pick<EvidenceService, 'validateManifest' | 'validateFindingGraph'>;
+  evidence?: Pick<EvidenceService, 'resolveEvidenceValue' | 'validateManifest' | 'validateFindingGraph'>;
   reportValidator?: Pick<ReportEvidenceValidator, 'validate'>;
   schemaValidator?: Pick<SchemaValidator, 'validateOrThrow'>;
   visualAssets?: Pick<VisualAssetService, 'readVerified'>;
@@ -109,6 +115,10 @@ function reportAssetReferences(document: ReportDocument): VisualAssetReference[]
   return references;
 }
 
+function visualReferenceKey(reference: VisualAssetReference): string {
+  return `${reference.assetId}\u0000${reference.manifestArtifactId}`;
+}
+
 function assertVerifiedVisualReference(
   asset: VerifiedVisualAsset,
   reference: VisualAssetReference,
@@ -133,7 +143,7 @@ function assertVerifiedVisualReference(
 }
 
 export class CurrentReportPackageReader {
-  private readonly evidence: Pick<EvidenceService, 'validateManifest' | 'validateFindingGraph'>;
+  private readonly evidence: Pick<EvidenceService, 'resolveEvidenceValue' | 'validateManifest' | 'validateFindingGraph'>;
   private readonly reportValidator: Pick<ReportEvidenceValidator, 'validate'>;
   private readonly schemaValidator: Pick<SchemaValidator, 'validateOrThrow'>;
 
@@ -299,10 +309,56 @@ export class CurrentReportPackageReader {
         throw new Error('multimodal ReportDocument requires a verified visual Asset reader');
       }
       const visualAssetManifests: VisualAssetManifest[] = [];
+      const verifiedAssets = new Map<string, VerifiedVisualAsset>();
       for (const reference of references) {
         const asset = await this.dependencies.visualAssets!.readVerified(reference);
         visualAssetManifests.push(assertVerifiedVisualReference(asset, reference, binding));
+        verifiedAssets.set(visualReferenceKey(reference), asset);
       }
+      const evidenceEntries = new Map(evidenceManifest.entries.map((entry) => [entry.id, entry]));
+      const chartEvidenceResolver = (evidenceId: string): unknown | undefined => {
+        const entry = evidenceEntries.get(evidenceId);
+        return entry ? this.evidence.resolveEvidenceValue(entry, resolver) : undefined;
+      };
+      const visualReferences = new Map<string, VisualAssetReference>();
+      const chartReferences: Array<VisualAssetReference & { chartId: string; specHash: string }> = [];
+      for (const block of reportDocument.sections.flatMap(({ blocks }) => blocks)) {
+        if (block.type === 'image') {
+          visualReferences.set(visualReferenceKey(block.assetRef), block.assetRef);
+          continue;
+        }
+        if (block.type === 'image-comparison') {
+          visualReferences.set(visualReferenceKey(block.beforeAssetRef), block.beforeAssetRef);
+          visualReferences.set(visualReferenceKey(block.afterAssetRef), block.afterAssetRef);
+          continue;
+        }
+        if (block.type !== 'chart') continue;
+        const asset = verifiedAssets.get(visualReferenceKey(block.chartRef));
+        if (!asset) throw new Error(`Chart ${block.chartRef.chartId} has no verified visual Asset`);
+        const validatedSpec = validateChartSpec(block.spec, chartEvidenceResolver);
+        const expectedSpecHash = chartSpecHash(validatedSpec);
+        const derivation = asset.manifest.derivation;
+        if (
+          block.specHash !== expectedSpecHash
+          || derivation?.kind !== 'chart_svg'
+          || block.chartRef.chartId !== validatedSpec.chartId
+          || derivation.chartId !== validatedSpec.chartId
+          || derivation.specHash !== expectedSpecHash
+        ) {
+          throw new Error(`Chart ${block.chartRef.chartId} specHash or chartId does not match its verified Manifest derivation`);
+        }
+        if (!isDeepStrictEqual(block.table, chartTableAlternative(validatedSpec))) {
+          throw new Error(`Chart ${block.chartRef.chartId} sealed table does not match its Chart Spec`);
+        }
+        chartReferences.push({ ...block.chartRef, specHash: derivation.specHash });
+      }
+      const currentDeliverable = deliverable as unknown as ResearchDeliverableEnvelope<unknown>;
+      assertValidReportDocument(reportDocument, {
+        requiredQuestionIds: currentDeliverable.coverage.questionBindings.map(({ questionId }) => questionId),
+        evidenceIds: evidenceManifest.entries.map(({ id }) => id),
+        visualAssets: [...visualReferences.values()],
+        charts: chartReferences,
+      });
       return {
         presentationMode: 'multimodal',
         deliverable: deliverable as unknown as ResearchDeliverableEnvelope<unknown>,
