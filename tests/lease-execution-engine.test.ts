@@ -2261,6 +2261,39 @@ test('does not skip an optional tool when lease is lost during artifact seal', a
   assert.equal((await repository.listAttempts(lease.taskId))[0]?.state, 'paused');
   assert.deepEqual(await repository.listModelCalls(lease.attemptId), []);
 });
+test('persists only Tool attempt receipts when the final lease fence loses the lease', async () => {
+  const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), [planSteps[0]]);
+  const originalRequireActiveLease = repository.requireActiveLease.bind(repository);
+  let requireCalls = 0;
+  repository.requireActiveLease = async (candidate) => {
+    requireCalls += 1;
+    if (requireCalls === 6) await expireLease(repository, lease);
+    return originalRequireActiveLease(candidate);
+  };
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new CountingRealLLM(),
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'paused');
+  assert.equal(result.failure?.kind, 'lease_lost');
+  const steps = await repository.listExecutionSteps(lease.attemptId);
+  const failedStep = steps.find((step) => step.state === 'failed');
+  assert.ok(failedStep);
+  assert.equal(failedStep.failure?.kind, 'lease_lost');
+  const failure = failedStep.failure;
+  assertUnknownRecord(failure);
+  assertUnknownRecord(failure.retry);
+  assert.ok(Array.isArray(failure.toolAttemptReceipts));
+  assert.equal(failure.toolAttemptReceipts.length, 1);
+  assert.ok(Array.isArray(failure.retry.attemptReceipts));
+  assert.equal(failure.retry.attemptReceipts.length, 1);
+  assert.equal(failure.actorResult, undefined);
+  assert.doesNotMatch(JSON.stringify(failure), /actorResult|digital human competitors|verified public source|secret-value|secret-token|promptHash|Authorization/u);
+});
+
 
 
 test('discards Tool output when the lease is lost while awaiting the provider', async () => {

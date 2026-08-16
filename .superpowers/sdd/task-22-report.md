@@ -17,9 +17,9 @@
 
 ## Implementation Status
 
-- `apps/orchestrator-runtime/src/control/lease-execution-engine.ts` now returns `toolResolution` on successful Tool `StepResult`s, defaults an unspecified ToolRegistry tier to `optional`, and preserves successful actor results and retry receipts when the outer lease heartbeat fence detects lease loss.
+- `apps/orchestrator-runtime/src/control/lease-execution-engine.ts` now returns `toolResolution` on successful Tool `StepResult`s, defaults an unspecified ToolRegistry tier to `optional`, and preserves only successful Tool attempt receipts when the outer lease heartbeat fence detects lease loss.
 - Successful Tool provenance preserves `toolTier` alongside all `attemptReceipts`; terminal Tool failures preserve receipts in failure records and failed provenance across retry exhaustion, lease loss, output schema failure, safety blocking, and later integrity failures without changing existing failure kinds or pause semantics.
-- Retry receipts are carried from `invokeWithRetry` through the actor result and error details, so post-invocation validation, sealing, and the terminal lease fence cannot discard provider-attempt history.
+- Retry receipts are carried from `invokeWithRetry` through the actor result and receipts-only lease error details, so post-invocation validation, sealing, and the terminal lease fence cannot discard provider-attempt history or persist unsanitized actor output.
 - Added `apps/orchestrator-runtime/src/control/tool-retry-policy.ts` with the typed retry contract, transient failure classification, independent attempt contexts/receipts, lease fences, and structured failures.
 - Only provider invocation is inside the retry boundary; input/output validation, safety blocking, redaction, artifact sealing, and provenance remain outside it.
 

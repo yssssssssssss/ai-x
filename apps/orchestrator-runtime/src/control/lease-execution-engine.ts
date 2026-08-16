@@ -589,12 +589,25 @@ function detailsFrom(error: unknown): Record<string, unknown> {
 
 function attemptReceiptsFrom(error: unknown): ToolRetryAttemptReceipt[] | undefined {
   const details = detailsFrom(error);
+  if (Array.isArray(details.toolAttemptReceipts)) {
+    return details.toolAttemptReceipts as ToolRetryAttemptReceipt[];
+  }
   const retry = isRecord(details.retry) ? details.retry : details;
   return Array.isArray(retry.attemptReceipts)
     ? retry.attemptReceipts as ToolRetryAttemptReceipt[]
     : undefined;
 }
 
+function attachToolAttemptReceipts(error: unknown, actorResult: unknown): void {
+  if (
+    !isRecord(actorResult)
+    || !Array.isArray(actorResult.toolAttemptReceipts)
+    || !isRecord(error)
+  ) return;
+  error.details = {
+    toolAttemptReceipts: actorResult.toolAttemptReceipts as ToolRetryAttemptReceipt[],
+  };
+}
 function attachAttemptReceipts(
   failure: Record<string, unknown>,
   attemptReceipts: ToolRetryAttemptReceipt[] | undefined,
@@ -602,13 +615,6 @@ function attachAttemptReceipts(
   if (!attemptReceipts) return;
   const retry = isRecord(failure.retry) ? failure.retry : {};
   failure.retry = { ...retry, attemptReceipts };
-}
-function attachActorResult(error: unknown, actorResult: unknown): void {
-  if (!isRecord(error)) return;
-  error.details = {
-    ...(isRecord(error.details) ? error.details : {}),
-    actorResult,
-  };
 }
 
 function leaseLostWithRetry(
@@ -923,12 +929,6 @@ export class LeaseExecutionEngine {
           finishedAt: new Date(),
         });
       } catch (error) {
-        const fencedActorResult = actorResult ?? (
-          isRecord(detailsFrom(error).actorResult)
-            ? detailsFrom(error).actorResult as StepResult
-            : undefined
-        );
-        toolAttemptReceipts = fencedActorResult?.toolAttemptReceipts ?? toolAttemptReceipts;
         const attemptReceipts = attemptReceiptsFrom(error) ?? toolAttemptReceipts;
         const failure = failureFrom(error);
         attachAttemptReceipts(failure, attemptReceipts);
@@ -1465,7 +1465,7 @@ export class LeaseExecutionEngine {
       await this.dependencies.repository.requireActiveLease(lease);
       return operationResult as T;
     } catch (error) {
-      if (operationSucceeded) attachActorResult(error, operationResult);
+      if (operationSucceeded) attachToolAttemptReceipts(error, operationResult);
       throw error;
     } finally {
       clearInterval(timer);
