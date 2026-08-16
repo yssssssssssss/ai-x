@@ -2210,6 +2210,129 @@ test('post-activation clarification failure reclaims the same command without an
   }
 });
 
+test('latest-version fresh-key clarification recovers a finalized active requirement after refresh', async () => {
+  const { buildControlRuntime } = await loadControlRuntimeModule();
+  const llm = new ClarificationRetryLLM();
+  let plannerCalls = 0;
+  const controlRuntime = buildControlRuntime({
+    repository,
+    conversations: conversationAdapter(),
+    planning: {
+      async plan(input) {
+        plannerCalls += 1;
+        if (plannerCalls === 1) throw new Error('simulated post-activation planner failure before candidate persistence');
+        return planningResult(input.originalInput, resolvedClarificationRequirement());
+      },
+    },
+    tools: new ToolRouter(),
+    llm,
+    validator: new SchemaValidator(),
+    skillLoader: new SkillLoader(),
+    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
+    expectedActualModel: llm.identity.requestedModel,
+  });
+  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+  const app = await listenLocalApp(
+    (createAgentApiApp as unknown as PlannedCreateAgentApiApp)({ controlRuntime }),
+  );
+  const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  const originalInput = `latest-version-fresh-key-recovery-${randomUUID()}`;
+  try {
+    const plannedResponse = await postJson(app.baseUrl, '/api/control-tasks/plan', token, {
+      originalInput,
+      conversationId,
+    });
+    assert.equal(plannedResponse.status, 200, await plannedResponse.clone().text());
+    const planned = await plannedResponse.json() as CurrentPlanningResponse;
+    assert.equal(planned.status, 'clarification_required');
+
+    const failedKey = `post-activation-failure-${randomUUID()}`;
+    const failed = await postJson(
+      app.baseUrl,
+      `/api/control-tasks/${planned.task.id}/clarify`,
+      token,
+      {
+        expectedVersion: planned.task.stateVersion,
+        clarificationAnswers: { audience: '产品团队' },
+        assumptionEdits: {},
+      },
+      failedKey,
+    );
+    assert.equal(failed.status, 500);
+    assert.equal(llm.requirementCalls, 2);
+
+    const beforeRecoveryConnection = await scopedDatabase.connect();
+    let requirementVersionsBeforeRecovery = 0;
+    try {
+      const beforeRecovery = await beforeRecoveryConnection.query(
+        `SELECT
+           (SELECT count(*)::int FROM control_requirement_versions WHERE task_id = $1) AS requirement_versions,
+           (SELECT count(*)::int FROM control_plan_versions WHERE task_id = $1) AS plans`,
+        [planned.task.id],
+      );
+      requirementVersionsBeforeRecovery = Number(beforeRecovery.rows[0]?.requirement_versions);
+      assert.deepEqual(beforeRecovery.rows[0], { requirement_versions: 2, plans: 0 });
+    } finally {
+      beforeRecoveryConnection.release();
+    }
+
+    const refreshedResponse = await fetch(`${app.baseUrl}/api/control-tasks/${planned.task.id}`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(refreshedResponse.status, 200, await refreshedResponse.clone().text());
+    const refreshed = await refreshedResponse.json() as CurrentTaskReadResponse;
+    assert.equal(refreshed.task.state, 'awaiting_clarification');
+    assert.equal(refreshed.task.stateVersion, planned.task.stateVersion + 1);
+    assert.deepEqual(refreshed.task.structuredTask, resolvedClarificationRequirement());
+    const refreshedRequirement = refreshed.task.structuredTask as ResearchTaskV2;
+    assert.deepEqual(refreshedRequirement.ambiguities, []);
+    assert.deepEqual(refreshedRequirement.clarification_questions, []);
+    assert.deepEqual(refreshedRequirement.blocking_issues, []);
+    assert.deepEqual(refreshed.candidates, []);
+
+    const freshKey = `refreshed-finalized-recovery-${randomUUID()}`;
+    assert.notEqual(freshKey, failedKey);
+    const recoveredResponse = await postJson(
+      app.baseUrl,
+      `/api/control-tasks/${planned.task.id}/clarify`,
+      token,
+      {
+        expectedVersion: refreshed.task.stateVersion,
+        clarificationAnswers: {},
+        assumptionEdits: {},
+      },
+      freshKey,
+    );
+    assert.equal(recoveredResponse.status, 200, await recoveredResponse.clone().text());
+    const recovered = await recoveredResponse.json() as ControlPlanCandidatesResponse;
+    assert.equal(recovered.task.state, 'awaiting_selection');
+    assert.deepEqual(recovered.candidates.map((candidate) => candidate.candidateId), ['depth', 'speed']);
+
+    const afterRecoveryConnection = await scopedDatabase.connect();
+    try {
+      const afterRecovery = await afterRecoveryConnection.query(
+        `SELECT
+           (SELECT count(*)::int FROM control_requirement_versions WHERE task_id = $1) AS requirement_versions,
+           (SELECT count(*)::int FROM control_plan_versions WHERE task_id = $1) AS plans,
+           (SELECT command_status FROM control_commands
+             WHERE task_id = $1 AND command_type = 'clarification' AND idempotency_key = $2) AS command_status`,
+        [planned.task.id, freshKey],
+      );
+      assert.deepEqual(afterRecovery.rows[0], {
+        requirement_versions: requirementVersionsBeforeRecovery,
+        plans: 2,
+        command_status: 'completed',
+      });
+    } finally {
+      afterRecoveryConnection.release();
+    }
+    assert.equal(llm.requirementCalls, 2, 'refresh recovery must reuse the finalized active requirement');
+    assert.equal(plannerCalls, 2);
+  } finally {
+    await closeLocalServer(app.server);
+  }
+});
+
 test('response delivery failure after atomic clarification commit replays the persisted response', async () => {
   const { buildControlRuntime } = await loadControlRuntimeModule();
   const llm = new ClarificationRetryLLM();

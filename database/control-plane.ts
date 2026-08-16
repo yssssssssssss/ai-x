@@ -182,6 +182,21 @@ function stableValue(value: unknown): unknown {
   );
 }
 
+function sameStoredValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(stableValue(left)) === JSON.stringify(stableValue(right));
+}
+
+function isFinalizedRequirement(value: unknown): boolean {
+  const requirement = asRecord(value);
+  if (!requirement) return false;
+  return Array.isArray(requirement.ambiguities)
+    && requirement.ambiguities.length === 0
+    && Array.isArray(requirement.blocking_issues)
+    && requirement.blocking_issues.length === 0
+    && Array.isArray(requirement.clarification_questions)
+    && requirement.clarification_questions.length === 0;
+}
+
 function canonicalPlan(plan: unknown): { json: string; hash: string } {
   const json = JSON.stringify(stableValue(plan));
   if (json === undefined) throw new ControlPlaneConflictError('plan is not JSON serializable');
@@ -381,6 +396,10 @@ export interface PersistClarificationCandidatesInput {
   taskType: string;
   structuredTask: ResearchTaskV2;
   activatedNodes: string[];
+  clarificationRecovery?: {
+    mode: 'latest_finalized_requirement';
+    activeRequirementVersionId: string;
+  };
   candidates: Array<{
     candidateId: ControlCandidateId;
     title: string;
@@ -954,15 +973,22 @@ export class ControlPlaneRepository {
   async persistClarificationCandidatesAndCompleteCommand(
     input: PersistClarificationCandidatesInput,
   ): Promise<ControlPlanCandidatesResponse> {
-    if (input.expectedStateVersion !== input.command.expectedVersion + 1) {
+    if (input.clarificationRecovery) {
+      if (input.expectedStateVersion !== input.command.expectedVersion) {
+        throw new ControlPlaneConflictError(
+          'latest finalized requirement recovery must use the command expected version',
+        );
+      }
+    } else if (input.expectedStateVersion !== input.command.expectedVersion + 1) {
       throw new ControlPlaneConflictError('clarification planning state version is not activation successor');
     }
     return this.transaction(async (connection) => {
       const taskResult = await connection.query(
         `SELECT task.id, task.conversation_id, task.owner_user_id,
                 conversation.owner_user_id AS conversation_owner_user_id,
-                task.state, task.state_version, task.active_plan_version_id,
-                task.current_attempt_id
+                task.task_type, task.structured_task, task.state, task.state_version,
+                task.active_plan_version_id, task.current_attempt_id,
+                task.active_requirement_version_id
          FROM control_tasks AS task
          JOIN conversations AS conversation ON conversation.id = task.conversation_id
          WHERE task.id = $1
@@ -1009,6 +1035,36 @@ export class ControlPlaneRepository {
         || commandRow.reservation_token !== input.command.reservationToken
       ) {
         throw new ControlPlaneConflictError('clarification command reservation fence was lost');
+      }
+
+      if (input.clarificationRecovery) {
+        const activeRequirementVersionId = input.clarificationRecovery.activeRequirementVersionId;
+        if (
+          taskRow.active_requirement_version_id !== activeRequirementVersionId
+          || !sameStoredValue(taskRow.structured_task, input.structuredTask)
+        ) {
+          throw new ControlPlaneConflictError(
+            `task ${input.taskId} no longer matches the finalized requirement recovery`,
+          );
+        }
+        const requirementResult = await connection.query(
+          `SELECT task_id, structured_task_json
+           FROM control_requirement_versions
+           WHERE id = $1
+           FOR SHARE`,
+          [activeRequirementVersionId],
+        );
+        const requirementRow = requirementResult.rows[0];
+        if (
+          !requirementRow
+          || requirementRow.task_id !== input.taskId
+          || !sameStoredValue(requirementRow.structured_task_json, input.structuredTask)
+          || !isFinalizedRequirement(input.structuredTask)
+        ) {
+          throw new ControlPlaneConflictError(
+            `active requirement ${activeRequirementVersionId} is not the finalized recovery requirement`,
+          );
+        }
       }
 
       const structuredTask = asRecord(input.structuredTask);

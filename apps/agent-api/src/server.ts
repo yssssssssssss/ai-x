@@ -113,6 +113,7 @@ function refinementClarificationPort(runtime: ControlRuntime): ControlClarificat
         expectedStateVersion: clarifiedTask.stateVersion,
         originalInput: clarifiedTask.originalInput,
         commandReservation: input.commandReservation,
+        clarificationRecovery: result.clarificationRecovery,
       }, result.planningResult);
     },
   };

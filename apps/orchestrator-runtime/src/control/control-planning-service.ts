@@ -16,6 +16,7 @@ import {
   type CurrentResearchPlanningResult,
 } from '../planners/research-planning-service.ts';
 import { PlanCompiler } from '../planners/plan-compiler.ts';
+import type { ClarificationRecoveryContext } from './requirement-refinement-service.ts';
 
 type ProvisionalExecutionPlan = Omit<CurrentExecutionPlan, 'task_id'> & {
   task_id?: '';
@@ -78,6 +79,7 @@ export interface ControlPlanningDependencies {
       taskType: string;
       structuredTask: CurrentResearchPlanningResult['structuredTask'];
       activatedNodes: string[];
+      clarificationRecovery?: ClarificationRecoveryContext;
       candidates: Array<{
         candidateId: PlanCandidate['id'];
         title: string;
@@ -219,6 +221,7 @@ export class ControlPlanningService {
       expectedStateVersion: number;
       originalInput: string;
       commandReservation?: ClarificationCommandReservation;
+      clarificationRecovery?: ClarificationRecoveryContext;
     },
     planningResult: CurrentResearchPlanningResult,
   ): Promise<ControlPlanCandidatesResponse> {
@@ -242,6 +245,7 @@ export class ControlPlanningService {
         taskType: planningResult.task.task_type,
         structuredTask,
         activatedNodes: planningResult.activatedNodes,
+        clarificationRecovery: input.clarificationRecovery,
         candidates: planningResult.candidates.map((candidate) => {
           const prepared = preparedById.get(candidate.id);
           if (!prepared) throw new Error(`prepared candidate ${candidate.id} is missing`);

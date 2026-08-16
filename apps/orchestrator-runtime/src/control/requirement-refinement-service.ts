@@ -54,9 +54,20 @@ export interface ClarifyInput {
   expectedVersion?: number;
   expectedStateVersion?: number;
 }
+export interface ClarificationRecoveryContext {
+  mode: 'latest_finalized_requirement';
+  activeRequirementVersionId: string;
+}
+
 export type RequirementRefinementResult =
   | { status: 'clarification_required'; taskId: string; requirement: ResearchTaskV2 }
-  | { status: 'ready_to_plan'; taskId: string; requirement: ResearchTaskV2; planningResult?: CurrentResearchPlanningResult };
+  | {
+    status: 'ready_to_plan';
+    taskId: string;
+    requirement: ResearchTaskV2;
+    planningResult?: CurrentResearchPlanningResult;
+    clarificationRecovery?: ClarificationRecoveryContext;
+  };
 
 interface RequirementRepository {
   createAndActivateRequirementVersion(input: {
@@ -165,13 +176,40 @@ export class RequirementRefinementService {
     const active = await this.dependencies.repository.getActiveRequirementVersion(input.taskId);
     if (!active) throw new Error(`task ${input.taskId} has no active requirement version to clarify`);
     const expectedVersion = input.expectedVersion ?? input.expectedStateVersion;
+    const matchesActiveRequirement = task.state === 'awaiting_clarification'
+      && task.activeRequirementVersionId === active.id
+      && active.taskId === task.id
+      && sameStoredValue(active.structuredTask, task.structuredTask);
+    const hasNoClarificationChanges = Object.entries(input.answers).every(([key, value]) =>
+      key === 'assumption_edits'
+      && value !== null
+      && typeof value === 'object'
+      && !Array.isArray(value)
+      && Object.keys(value).length === 0
+    );
+    if (
+      expectedVersion !== undefined
+      && task.stateVersion === expectedVersion
+      && matchesActiveRequirement
+      && !needsClarification(active.structuredTask)
+      && hasNoClarificationChanges
+    ) {
+      return this.finishRefinement({
+        taskId: input.taskId,
+        conversationId: input.conversationId,
+        originalInput: task.originalInput,
+        requirement: active.structuredTask,
+        requirementVersionId: active.id,
+        clarificationRecovery: {
+          mode: 'latest_finalized_requirement',
+          activeRequirementVersionId: active.id,
+        },
+      }, onProgress);
+    }
     if (expectedVersion !== undefined && task.stateVersion !== expectedVersion) {
-      const resumesActivatedRequirement = task.state === 'awaiting_clarification'
+      const resumesActivatedRequirement = matchesActiveRequirement
         && task.stateVersion === expectedVersion + 1
-        && task.activeRequirementVersionId === active.id
-        && active.taskId === task.id
-        && sameStoredValue(active.clarification, input.answers)
-        && sameStoredValue(active.structuredTask, task.structuredTask);
+        && sameStoredValue(active.clarification, input.answers);
       if (!resumesActivatedRequirement) {
         throw new ControlPlaneConflictError(
           `task ${input.taskId} has no matching activated clarification at version ${expectedVersion + 1}`,
@@ -202,6 +240,7 @@ export class RequirementRefinementService {
     originalInput: string;
     requirement: ResearchTaskV2;
     requirementVersionId: string;
+    clarificationRecovery?: ClarificationRecoveryContext;
   }, onProgress?: (event: PlanProgress) => void): Promise<RequirementRefinementResult> {
     const status = needsClarification(input.requirement)
       ? 'clarification_required'
@@ -218,9 +257,18 @@ export class RequirementRefinementService {
           requirement: input.requirement,
         }, onProgress) as CurrentResearchPlanningResult
       : undefined;
-    return planningResult
-      ? { status, taskId: input.taskId, requirement: input.requirement, planningResult }
-      : { status, taskId: input.taskId, requirement: input.requirement };
+    if (status === 'ready_to_plan') {
+      return {
+        status,
+        taskId: input.taskId,
+        requirement: input.requirement,
+        ...(planningResult ? { planningResult } : {}),
+        ...(input.clarificationRecovery
+          ? { clarificationRecovery: input.clarificationRecovery }
+          : {}),
+      };
+    }
+    return { status, taskId: input.taskId, requirement: input.requirement };
   }
 
   private async refine(input: {
