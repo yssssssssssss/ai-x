@@ -1261,7 +1261,7 @@ Validator 检查每个 series 的 evidenceIds；数据点必须存在于解析�
 
 服务端使用 ECharts SSR SVG renderer；`renderAndSealChartSvg` 必须先用调用方提供的 Evidence resolver 执行 `validateChartSpec`，验证通过后才渲染并调用 `VisualAssetService.derive` seal。Web `ChartBlock` 使用 ECharts `renderer: 'svg'` 提供交互视图，颜色从 actor/competitor stable key 派生，组件 unmount 时 dispose，并在旁边提供表格型文本替代。
 
-Task17 只交付 `ChartBlock` 和服务端 SEALED SVG 能力；Report Document/Package、Markdown/Print 和生产 Stage4 对这些能力的消费属于 Tasks 18/19 cross-task gate，当前尚未完成。Reviewer fixes 已 GREEN：main agent 最终观察 Chart Spec + renderer suite 19/19 passed，`pnpm typecheck` passed。本 worker 未运行验证命令或提交，Step 7 remains open.
+Cross-task persisted-Chart follow-up: `renderAndSealChartSvg` uses one active lease for SVG binary, Manifest, and a discoverable SEALED `verified-chart-v1` `chart_spec` JSON containing exact binding/spec/specHash/table/Asset reference, returns its Artifact id, and fails closed on an unsealed or misbound result. Chart identity remains in `spec.chartId` without a redundant alias. Main-agent verification observed chart-renderer + lease-execution-engine at 48 total / 47 pass / 1 existing provider skip / 0 fail; `pnpm typecheck` passed. Step 7 remains open.
 
 - [x] **Step 6: 运行测试和 Web Build**
 
@@ -1383,6 +1383,7 @@ A4、封面、目录、页眉页脚、page-break、SVG 不截断、表格重复�
 Production composition follow-up implemented: after the final pass Review, `LeaseExecutionEngine` enters `composing_report`, re-reads the final verified Artifact set, and invokes an active-lease `ReportCompositionService` that seals `reports/report-document.json`. The production runtime uses the real ArtifactStore/VisualAssetService. Text-only professional documents are multimodal with `visualAssetManifests: []`; image/Chart documents retain exact ordered verified Manifests. No follow-up verification command was run in the worker assignment.
 
 Reviewer-blocker closure implemented: (1) exact sealed attempt Visual Asset/Chart discovery with binding/hash/schema/spec/table/lineage verification and LeaseExecutionEngine handoff; (2) `report_document` terminal invalidation; (3) fail-closed Web VisualAssetManifest presentation-shape, export-policy, referenced-set, and package-binding validation; (4) pure associated Web table shape plus Web/Chart sealed-column and row-width enforcement; (5) Markdown sealed columns with equal header/separator/data widths and no duplicated `Series`.
+Task17-to-Task19 persisted Chart cutover complete: the real renderer lease-seals and returns the exact `verified-chart-v1` `chart_spec` material consumed by `discoverAttemptMaterials`, alongside its matching `chart_svg` Asset/Manifest lineage. Main observed chart-renderer + lease-execution-engine at 48 total / 47 pass / 1 existing provider skip / 0 fail and passing `pnpm typecheck`; the Task19 production Chart discovery gate is closed. No commit was created.
 
 - [x] **Step 7: 运行测试和 Build**
 

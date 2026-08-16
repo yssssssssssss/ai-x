@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import type { ControlExecutionLease } from '../database/control-plane.ts';
 import {
   EvidenceService,
   type EvidenceArtifactResolver,
@@ -26,6 +27,11 @@ const binding = {
   taskId: 'task-chart-render-1',
   planVersionId: 'plan-chart-render-1',
   attemptId: 'attempt-chart-render-1',
+};
+const activeLease: ControlExecutionLease = {
+  ...binding,
+  leaseOwner: 'task17-chart-renderer-test',
+  leaseToken: 'task17-chart-renderer-lease-token',
 };
 
 const RENDER_EVIDENCE_ARTIFACT_ID = 'artifact-chart-render-evidence-1';
@@ -193,7 +199,7 @@ type FakeArtifact = {
   planVersionId: string;
   attemptId: string;
   kind: string;
-  state: 'SEALED';
+  state: 'STAGING' | 'SEALED';
   storageUri: string;
   contentSha256: string;
   byteSize: number;
@@ -214,6 +220,7 @@ type BinaryWrite = {
   schemaVersion?: string;
   sensitivity?: string;
   redactionPolicyVersion?: string;
+  activeLease?: ControlExecutionLease;
 };
 type JsonWrite = Omit<BinaryWrite, 'bytes'> & { value: unknown };
 
@@ -319,8 +326,14 @@ class SvgAwareArtifactStore {
   }
 }
 
-async function createSealHarness() {
-  const artifacts = new SvgAwareArtifactStore();
+class UnsealedChartSpecArtifactStore extends SvgAwareArtifactStore {
+  override async writeJson(input: JsonWrite): Promise<FakeArtifact> {
+    const artifact = await super.writeJson(input);
+    return input.kind === 'chart_spec' ? { ...artifact, state: 'STAGING' } : artifact;
+  }
+}
+
+async function createSealHarness(artifacts = new SvgAwareArtifactStore()) {
   const assets = new VisualAssetService({ artifacts: artifacts as never });
   const original = await assets.ingest({
     ...binding,
@@ -357,6 +370,8 @@ test('rejects an Evidence-value mismatch before calling VisualAssetService.deriv
         manifestArtifactId: fixture.original.manifestArtifact.id,
       },
       assets: assets as never,
+      artifacts: fixture.artifacts,
+      activeLease,
       exportPolicy: 'allow',
       width: 800,
       height: 480,
@@ -382,6 +397,8 @@ test('rejects dangling Evidence before calling VisualAssetService.derive', async
         manifestArtifactId: fixture.original.manifestArtifact.id,
       },
       assets: assets as never,
+      artifacts: fixture.artifacts,
+      activeLease,
       exportPolicy: 'allow',
       width: 800,
       height: 480,
@@ -411,6 +428,8 @@ test('seals server SVG through VisualAssetService with chart_svg lineage', async
       manifestArtifactId: original.manifestArtifact.id,
     },
     assets,
+    artifacts,
+    activeLease,
     exportPolicy: 'allow',
     width: 800,
     height: 480,
@@ -436,4 +455,74 @@ test('seals server SVG through VisualAssetService with chart_svg lineage', async
     Buffer.from(artifacts.binaryWrites.at(-1)!.bytes).toString('utf8'),
     result.svg,
   );
+  const chartSpecWrite = artifacts.jsonWrites.find((write) => write.kind === 'chart_spec');
+  const derivedManifestWrite = artifacts.jsonWrites
+    .filter((write) => write.kind === 'visual_asset_manifest')
+    .at(-1);
+  const derivedBinaryWrite = artifacts.binaryWrites.at(-1);
+  assert.ok(chartSpecWrite);
+  assert.ok(derivedManifestWrite);
+  assert.ok(derivedBinaryWrite);
+  assert.deepEqual(derivedBinaryWrite.activeLease, activeLease);
+  assert.deepEqual(derivedManifestWrite.activeLease, activeLease);
+  assert.deepEqual(chartSpecWrite.activeLease, activeLease);
+  assert.deepEqual({
+    taskId: chartSpecWrite.taskId,
+    planVersionId: chartSpecWrite.planVersionId,
+    attemptId: chartSpecWrite.attemptId,
+    kind: chartSpecWrite.kind,
+    relativePath: chartSpecWrite.relativePath,
+    schemaVersion: chartSpecWrite.schemaVersion,
+  }, {
+    ...binding,
+    kind: 'chart_spec',
+    relativePath: 'charts/chart-comparison-1.json',
+    schemaVersion: 'verified-chart-v1',
+  });
+  assert.deepEqual(chartSpecWrite.value, {
+    version: 'verified-chart-v1',
+    ...binding,
+    spec,
+    specHash: chartSpecHash(spec),
+    table: result.table,
+    assetRef: {
+      assetId: result.derived.assetArtifact.id,
+      manifestArtifactId: result.derived.manifestArtifact.id,
+    },
+  });
+  const persistedChart = await artifacts.readVerifiedJson(result.chartSpecArtifactId);
+  assert.equal(persistedChart.artifact.id, result.chartSpecArtifactId);
+  assert.equal(persistedChart.artifact.state, 'SEALED');
+  assert.equal(persistedChart.artifact.kind, 'chart_spec');
+  assert.equal(persistedChart.artifact.schemaVersion, 'verified-chart-v1');
+  assert.deepEqual(persistedChart.value, chartSpecWrite.value);
+});
+
+test('fails closed when the verified Chart JSON Artifact does not seal', async () => {
+  const artifacts = new UnsealedChartSpecArtifactStore();
+  const fixture = await createSealHarness(artifacts);
+  const spec = comparisonSpec();
+
+  await assert.rejects(
+    () => renderAndSealChartSvg({
+      ...binding,
+      spec,
+      evidenceResolver: renderEvidenceResolver,
+      original: {
+        assetId: fixture.original.assetArtifact.id,
+        manifestArtifactId: fixture.original.manifestArtifact.id,
+      },
+      assets: fixture.assets,
+      artifacts,
+      activeLease,
+      exportPolicy: 'allow',
+      width: 800,
+      height: 480,
+    }),
+    /chart|artifact|sealed/i,
+  );
+
+  const chartSpecWrite = artifacts.jsonWrites.find((write) => write.kind === 'chart_spec');
+  assert.ok(chartSpecWrite);
+  assert.deepEqual(chartSpecWrite.activeLease, activeLease);
 });

@@ -46,6 +46,7 @@ import {
 import {
   chartTableAlternative,
   renderAndSealChartSvg,
+  type ChartTableAlternative,
 } from '../apps/orchestrator-runtime/src/report/chart-renderer.ts';
 import { chartSpecHash } from '../apps/orchestrator-runtime/src/report/chart-spec-validator.ts';
 import { CurrentReportPackageReader } from '../apps/orchestrator-runtime/src/report/current-report-package-reader.ts';
@@ -1343,6 +1344,8 @@ test('pass Review composes and lease-seals a verified image and Chart ReportDocu
       manifestArtifactId: original.manifestArtifact.id,
     },
     assets: visualAssets,
+    artifacts: store,
+    activeLease: lease,
     exportPolicy: 'allow',
     width: 800,
     height: 450,
@@ -1351,8 +1354,22 @@ test('pass Review composes and lease-seals a verified image and Chart ReportDocu
     assetId: sealedChart.derived.assetArtifact.id,
     manifestArtifactId: sealedChart.derived.manifestArtifact.id,
   });
-  const verifiedChartInput = {
-    version: 'verified-chart-v1' as const,
+  const persistedChartInput = await store.readVerifiedJson<{
+    version: 'verified-chart-v1';
+    taskId: string;
+    planVersionId: string;
+    attemptId: string;
+    spec: ChartSpec;
+    specHash: string;
+    table: ChartTableAlternative;
+    assetRef: { assetId: string; manifestArtifactId: string };
+  }>(sealedChart.chartSpecArtifactId);
+  const verifiedChartInput = persistedChartInput.value;
+  assert.equal(persistedChartInput.artifact.kind, 'chart_spec');
+  assert.equal(persistedChartInput.artifact.state, 'SEALED');
+  assert.equal(persistedChartInput.artifact.schemaVersion, 'verified-chart-v1');
+  assert.deepEqual(verifiedChartInput, {
+    version: 'verified-chart-v1',
     taskId: lease.taskId,
     planVersionId: lease.planVersionId,
     attemptId: lease.attemptId,
@@ -1363,18 +1380,6 @@ test('pass Review composes and lease-seals a verified image and Chart ReportDocu
       assetId: verifiedChart.artifact.id,
       manifestArtifactId: verifiedChart.manifestArtifact.id,
     },
-  };
-  await store.writeJson({
-    taskId: lease.taskId,
-    planVersionId: lease.planVersionId,
-    attemptId: lease.attemptId,
-    kind: 'chart_spec',
-    relativePath: `charts/${spec.chartId}.json`,
-    value: verifiedChartInput,
-    schemaVersion: 'verified-chart-v1',
-    sensitivity: 'internal',
-    redactionPolicyVersion: 'v1',
-    activeLease: lease,
   });
 
   const deliverables = new RecordingDeliverablesFake(async (input) => {

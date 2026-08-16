@@ -24,7 +24,7 @@
   - Requires a pass Review to invoke production-shaped report composition before lease completion, using the exact sealed final Deliverable, Evidence Manifest/resolver, pass Review, required question ids, verified image, and sealed Chart inputs.
   - Uses the real `composeReportDocument`, `VisualAssetService`, SVG Chart renderer, database-backed `ControlArtifactStore`, and `writeJson(activeLease)` to require a `SEALED report_document` Artifact rather than a mock-only document.
   - Reads the completed attempt through the real `CurrentReportPackageReader` and requires the stored image/Chart references to produce the exact ordered plural Manifest set.
-  - Requires production discovery of pre-existing attempt materials: exact SEALED Visual Asset/Manifest pairs and persisted `chart_svg` + `spec/specHash/table` inputs are re-read and passed to the real `ReportCompositionService`; the composition port must not create test-only Assets.
+  - Requires production discovery of pre-existing attempt materials: the real Task17 `renderAndSealChartSvg` path must first persist and return a SEALED `verified-chart-v1` `chart_spec` Artifact containing exact `spec/specHash/table` plus its `chart_svg` Asset/Manifest references under the same active lease; `discoverAttemptMaterials` then re-reads that production output instead of relying on a test-only manual Chart input write.
   - Requires foreign-bound, checksum-tampered, or unsealed Visual Asset Manifests to fail discovery rather than be ignored or rendered.
   - Requires terminal lease-loss/CAS recovery to invalidate `report_document` together with Evidence Manifest, Deliverable, and Review, leaving no sealed terminal ReportDocument.
 - `tests/control-api-integration.test.ts`
@@ -102,3 +102,10 @@ Per the GREEN assignment constraint, no test, typecheck, build, lint, formatter,
 - Main-agent verification of the lease execution, report package, report bundle, and ControlPlane suites observed 130 total / 129 pass / 1 existing provider skip / 0 fail.
 - `pnpm typecheck` passed. The Web production build passed with a 246 KB main chunk and ECharts retained as a lazy chunk.
 - This documentation-only sync ran no production, test, validation, browser, dependency, or Git command. No commit was created.
+
+### Production Chart Publication Follow-up
+
+- Task17 now publishes the production `chart_spec` material consumed by `discoverAttemptMaterials`: a SEALED `verified-chart-v1` JSON Artifact with exact Task/Plan/Attempt binding, canonical `specHash`, exact table, and the matching `chart_svg` Asset/Manifest reference.
+- The same active lease is propagated to the SVG binary, Visual Asset Manifest, and Chart JSON writes. A non-SEALED or misbound Chart JSON result fails before an Artifact id is returned.
+- Chart identity remains in `spec.chartId` with no redundant top-level alias, matching the existing Task19 `PersistedVerifiedChart` consumer.
+- Main-agent verification observed the chart-renderer + lease-execution-engine suite at 48 total / 47 pass / 1 existing provider skip / 0 fail; `pnpm typecheck` passed. This closes the Task19 production Chart discovery gate. This worker ran no validation command or commit.

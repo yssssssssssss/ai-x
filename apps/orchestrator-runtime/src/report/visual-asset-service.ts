@@ -6,7 +6,7 @@ import { Agent as HttpAgent, request as httpRequest } from 'node:http';
 import { Agent as HttpsAgent, request as httpsRequest } from 'node:https';
 import { isIP, type LookupFunction } from 'node:net';
 import { Readable } from 'node:stream';
-import type { ControlArtifact } from '../../../../database/control-plane.ts';
+import type { ControlArtifact, ControlExecutionLease } from '../../../../database/control-plane.ts';
 import type {
   VisualAssetDerivation,
   VisualAssetExportPolicy,
@@ -68,6 +68,7 @@ export interface VisualAssetIngestInput extends AssetBinding {
 }
 
 export interface VisualAssetDeriveInput extends AssetBinding {
+  activeLease?: ControlExecutionLease;
   original: VisualAssetReference;
   derivation: VisualAssetDerivation;
   bytes: Uint8Array;
@@ -592,6 +593,7 @@ export class VisualAssetService {
     exportPolicy: VisualAssetExportPolicy;
     derivedFrom: VisualAssetManifest['derivedFrom'];
     derivation: VisualAssetDerivation | null;
+    activeLease?: ControlExecutionLease;
   }): Promise<VisualAssetResult> {
     assertPersistenceManifestInput(input);
     const token = randomUUID();
@@ -605,6 +607,7 @@ export class VisualAssetService {
       schemaVersion: 'visual-asset-v1',
       sensitivity: 'internal',
       redactionPolicyVersion: 'v1',
+      ...(input.activeLease ? { activeLease: input.activeLease } : {}),
       ...(input.derivation?.kind === 'chart_svg'
         ? { trustedMediaType: 'image/svg+xml' as const }
         : {}),
@@ -624,6 +627,7 @@ export class VisualAssetService {
       schemaVersion: 'visual-asset-manifest-v1',
       sensitivity: 'internal',
       redactionPolicyVersion: 'v1',
+      ...(input.activeLease ? { activeLease: input.activeLease } : {}),
     });
     assertBinding(manifestArtifact, input, 'visual Asset manifest');
     if (manifestArtifact.schemaVersion !== 'visual-asset-manifest-v1') {
