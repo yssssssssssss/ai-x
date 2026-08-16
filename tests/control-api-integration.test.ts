@@ -213,7 +213,7 @@ class OfflineEligibleRealLLM implements LLMClient {
           id: 'verifiable-comparison',
           statement: '输出基于公开证据且可追溯的竞品研究计划',
         }],
-        expected_deliverables: ['宠物辅食竞品研究计划'],
+        expected_deliverables: ['competitive_analysis_report'],
         assumptions: [],
         ambiguities: [],
         clarification_questions: [],
@@ -589,14 +589,14 @@ function planningResult(
 ): CurrentResearchPlanningResult {
   const structuredTask: ResearchTaskV2 = requirement ?? {
     version: 'research-task-v2',
-    task_type: 'competitive_research',
+    task_type: 'user_research_planning',
     business_domain: '宠物辅食',
     research_goal: '形成基于公开证据的宠物辅食竞品研究计划',
     target_audience: ['宠物食品产品与市场团队'],
     scope: ['公开资料'],
     constraints: [],
     success_criteria: [{ id: 'verifiable-comparison', statement: '结论可追溯' }],
-    expected_deliverables: ['竞品研究计划'],
+    expected_deliverables: ['research_plan'],
     assumptions: [],
     ambiguities: [],
     clarification_questions: [],
@@ -604,12 +604,19 @@ function planningResult(
     sensitivity: 'public',
     pii_detected: false,
   };
-  const evidenceRequirements = [{
-    id: 'public-market-evidence',
-    acceptedClasses: ['public_source'] as const,
-    minimumCount: 1,
-    required: true,
-  }];
+  const evidenceRequirements = structuredTask.task_type === 'competitive_research'
+    ? [{
+        id: 'competitive-analysis-report',
+        acceptedClasses: ['public_source', 'screenshot'] as const,
+        minimumCount: 1,
+        required: true,
+      }]
+    : [{
+        id: 'research-plan',
+        acceptedClasses: ['user_input', 'knowledge', 'public_source'] as const,
+        minimumCount: 1,
+        required: true,
+      }];
   const problemGraph = {
     version: 'problem-graph-v1' as const,
     questions: [{
@@ -906,7 +913,7 @@ function clarificationRequirement(): ResearchTaskV2 {
     scope: ['公开资料'],
     constraints: [],
     success_criteria: [{ id: 'audience-confirmed', statement: '确认目标受众后生成可执行研究计划' }],
-    expected_deliverables: ['研究计划'],
+    expected_deliverables: ['competitive_analysis_report'],
     assumptions: [{ key: 'scope', value: '公开资料', editable: true }],
     ambiguities: [{ id: 'audience', statement: '目标受众未确定', blocking: true }],
     clarification_questions: [{ key: 'audience', question: '目标受众是谁？', rationale: '决定研究方法' }],

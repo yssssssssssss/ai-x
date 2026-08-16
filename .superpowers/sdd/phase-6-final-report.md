@@ -52,3 +52,5 @@
 ## Verification Status
 
 Main observed the final Phase 6 integrated suite at 127 total / 126 passed / 1 existing provider skip / 0 failed. `pnpm typecheck`, Registry linter, and Knowledge linter passed. The final competitive projection correction pairs payload-listed original and annotation Assets by exact Asset/Manifest/content-hash/Manifest-hash lineage, emits one payload-captioned image comparison, and does not duplicate the paired annotation as a standalone image. No commit has been created; this evidence is recorded without a pre-commit GREEN or phase-complete claim.
+
+8. Legacy compatibility correction (2026-08-17): `CurrentDeliverableService` and `LeaseExecutionEngine` now treat structured tasks as Registry v2 only when `version === 'research-task-v2'`. Legacy `ResearchTaskData` with task-type-only input resolves the persisted `plan.deliverable_type` through the historical exact Evidence Policy/Registry contract; v2 still rejects missing or malformed paired `task_type`/`expected_deliverables`, with no broad fallback for malformed v2. This was a production edit only; no tests, typecheck, lint, build, formatter, or commit was run.

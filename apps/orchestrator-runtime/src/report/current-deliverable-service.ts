@@ -272,16 +272,22 @@ function unknownRecord(value: unknown): Record<string, unknown> | null {
     ? value as Record<string, unknown>
     : null;
 }
-function deliverableSelection(finalizedRequirement: unknown): {
+function deliverableSelection(
+  finalizedRequirement: unknown,
+  persistedDeliverableId: string,
+): {
   taskType: string;
   expectedDeliverables: string[];
 } | null {
   const requirement = unknownRecord(finalizedRequirement);
-  const taskType = requirement?.task_type;
-  const expectedDeliverables = requirement?.expected_deliverables;
-  const hasTaskType = typeof taskType === 'string' && taskType.trim().length > 0;
-  const hasExpectedDeliverables = Array.isArray(expectedDeliverables);
-  if (!hasTaskType && !hasExpectedDeliverables) return null;
+  if (requirement?.version !== 'research-task-v2') {
+    const taskType = requirement?.task_type;
+    return typeof taskType === 'string' && taskType.trim()
+      ? { taskType, expectedDeliverables: [persistedDeliverableId] }
+      : null;
+  }
+  const taskType = requirement.task_type;
+  const expectedDeliverables = requirement.expected_deliverables;
   if (typeof taskType !== 'string' || !taskType.trim()) {
     throw new Error('finalized requirement task_type is required for deliverable resolution');
   }
@@ -299,7 +305,6 @@ function deliverableSelection(finalizedRequirement: unknown): {
   };
 }
 type VisualAssetRole = 'original' | 'annotation';
-
 interface VerifiedVisualInventory {
   assets: readonly VerifiedVisualAsset[];
   ids: readonly string[];
@@ -546,7 +551,7 @@ export class CurrentDeliverableService {
   }
 
   async generate(input: CurrentDeliverableGenerateInput): Promise<CurrentDeliverableGenerateResult> {
-    const selection = deliverableSelection(input.finalizedRequirement);
+    const selection = deliverableSelection(input.finalizedRequirement, input.plan.plan.deliverable_type);
     const contract = selection
       ? resolveExecutionDeliverableContract(
           selection.taskType,

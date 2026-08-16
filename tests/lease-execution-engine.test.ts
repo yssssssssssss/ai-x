@@ -851,6 +851,96 @@ test('rejects a plan without deliverable type before execution side effects', as
   await assertNoExecutionArtifacts(lease.attemptId);
   assert.equal((await repository.listAttempts(lease.taskId))[0]?.state, 'paused');
 });
+test('legacy task_type-only execution uses the persisted research_plan deliverable contract', async () => {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]],
+    {
+      deliverable_type: 'research_plan',
+      evidence_requirements: [{
+        id: 'public-market-evidence',
+        acceptedClasses: ['public_source'],
+        minimumCount: 1,
+        required: true,
+      }],
+    },
+    {
+      task_type: 'competitive_research',
+      research_goal: 'compare digital human products',
+    },
+  );
+  const adapter = new CountingRealTavilyAdapter();
+  const llm = new CountingRealLLM();
+  const deliverables = new RecordingDeliverablesFake();
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(adapter),
+    llm,
+    deliverables,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed');
+  assert.equal(adapter.calls, 1);
+  assert.equal(deliverables.calls.length, 1);
+  assert.equal(deliverables.calls[0]?.plan.plan.deliverable_type, 'research_plan');
+  assert.deepEqual(deliverables.calls[0]?.finalizedRequirement, {
+    task_type: 'competitive_research',
+    research_goal: 'compare digital human products',
+  });
+  assert.equal(result.evidenceManifestArtifactId !== undefined, true);
+  assert.equal(result.deliverableArtifactId, 'deliverable-1');
+});
+
+test('research-task-v2 without expected_deliverables remains rejected during engine preflight', async () => {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]],
+    { deliverable_type: 'research_plan' },
+    {
+      version: 'research-task-v2',
+      task_type: 'competitive_research',
+      research_goal: 'compare digital human products',
+    },
+  );
+  const adapter = new CountingRealTavilyAdapter();
+  const llm = new CountingRealLLM();
+
+  await assert.rejects(
+    () => buildEngine(repository, new ToolRouter().register(adapter), llm)
+      .execute({ lease, expectedModel: 'pinned-model' }),
+    /expected_deliverables are malformed/,
+  );
+  assert.equal(adapter.calls, 0);
+  assert.equal(llm.calls, 0);
+  await assertNoExecutionArtifacts(lease.attemptId);
+  assert.equal((await repository.listAttempts(lease.taskId))[0]?.state, 'paused');
+});
+
+test('research-task-v2 without task_type remains rejected during engine preflight', async () => {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]],
+    { deliverable_type: 'research_plan' },
+    {
+      version: 'research-task-v2',
+      research_goal: 'compare digital human products',
+      expected_deliverables: ['research_plan'],
+    },
+  );
+  const adapter = new CountingRealTavilyAdapter();
+  const llm = new CountingRealLLM();
+
+  await assert.rejects(
+    () => buildEngine(repository, new ToolRouter().register(adapter), llm)
+      .execute({ lease, expectedModel: 'pinned-model' }),
+    /task_type is malformed/,
+  );
+  assert.equal(adapter.calls, 0);
+  assert.equal(llm.calls, 0);
+  await assertNoExecutionArtifacts(lease.attemptId);
+  assert.equal((await repository.listAttempts(lease.taskId))[0]?.state, 'paused');
+});
 
 test('rejects a current competitive report without evidence requirements before execution side effects', async () => {
   const { repository, lease } = await claimedExecution(

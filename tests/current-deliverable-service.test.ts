@@ -553,6 +553,60 @@ test('generates and seals a machine-owned research plan deliverable envelope', a
   assert.deepEqual(writes[0]?.value, result.deliverable);
   assert.equal(result.deliverableArtifactId, deliverableArtifactId);
 });
+test('legacy task_type-only generation falls back to the persisted plan deliverable id', async () => {
+  const { service, llm, writes } = await createHarness();
+
+  const result = await service.generate(generateInput({
+    plan: {
+      id: planVersionId,
+      plan: { deliverable_type: 'research_plan' },
+    },
+    finalizedRequirement: {
+      task_type: 'competitive_research',
+      success_criteria: [{ id: 'criterion1', statement: '结论可追溯' }],
+    },
+  }));
+
+  assert.equal(result.deliverable.deliverableType, 'research_plan');
+  assert.equal(llm.structuredCalls.length, 1);
+  const context = llm.structuredCalls[0]?.context as {
+    deliverableContract?: { id?: string };
+  };
+  assert.equal(context.deliverableContract?.id, 'research_plan');
+  assert.equal(writes.length, 1);
+});
+
+test('research-task-v2 without expected_deliverables remains rejected by deliverable selection', async () => {
+  const { service, llm, writes } = await createHarness();
+
+  await assert.rejects(
+    () => service.generate(generateInput({
+      finalizedRequirement: {
+        version: 'research-task-v2',
+        task_type: 'competitive_research',
+      },
+    })),
+    /expected_deliverables are required/,
+  );
+  assert.equal(llm.structuredCalls.length, 0);
+  assert.equal(writes.length, 0);
+});
+
+test('research-task-v2 without task_type remains rejected by deliverable selection', async () => {
+  const { service, llm, writes } = await createHarness();
+
+  await assert.rejects(
+    () => service.generate(generateInput({
+      finalizedRequirement: {
+        version: 'research-task-v2',
+        expected_deliverables: ['research_plan'],
+      },
+    })),
+    /task_type is required/,
+  );
+  assert.equal(llm.structuredCalls.length, 0);
+  assert.equal(writes.length, 0);
+});
 test('writes round 0 and revised round 1 deliverables to distinct immutable paths', async () => {
   const root = mkdtempSync(join(tmpdir(), 'current-deliverable-rounds-'));
   tempDirs.push(root);

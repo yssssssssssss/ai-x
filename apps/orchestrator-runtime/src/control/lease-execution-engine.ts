@@ -234,13 +234,14 @@ function resolvePlanDeliverableContract(
     throw new ExecutionAuthenticityError('plan deliverable type is malformed');
   }
   const requirement = isRecord(structuredTask) ? structuredTask : null;
-  const taskType = requirement?.task_type;
-  const expectedDeliverables = requirement?.expected_deliverables;
-  const hasTaskType = typeof taskType === 'string' && taskType.trim().length > 0;
-  const hasExpectedDeliverables = Array.isArray(expectedDeliverables);
-  if (!hasTaskType && !hasExpectedDeliverables) {
-    return resolveDeliverableContractById(plan.deliverable_type);
+  if (requirement?.version !== 'research-task-v2') {
+    const taskType = requirement?.task_type;
+    return typeof taskType === 'string' && taskType.trim()
+      ? resolveExecutionDeliverableContract(taskType, [plan.deliverable_type], plan.deliverable_type)
+      : resolveDeliverableContractById(plan.deliverable_type);
   }
+  const taskType = requirement.task_type;
+  const expectedDeliverables = requirement.expected_deliverables;
   if (typeof taskType !== 'string' || !taskType.trim()) {
     throw new ExecutionAuthenticityError('finalized task task_type is malformed');
   }
@@ -258,7 +259,6 @@ function resolvePlanDeliverableContract(
     plan.deliverable_type,
   );
 }
-
 function parsePlan(taskId: string, value: unknown, contract: DeliverableContractResources): EnginePlan {
   if (!isRecord(value) || !Array.isArray(value.steps)) {
     throw new ExecutionAuthenticityError('active plan is malformed');
