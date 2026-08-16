@@ -1300,27 +1300,29 @@ git commit -m "feat: render evidence-bound report charts"
 **Interfaces:**
 - Produces: `composeReportDocument(input): ReportDocument`。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 覆盖缺执行摘要、无 Evidence 的 Fact block、dangling asset、重复 section/block ID、required question 无 section、专业 research-plan happy path。
 
-- [ ] **Step 2: 运行并确认失败**
+- [x] **Step 2: 运行并确认失败**
 
 Run: `pnpm exec tsx --test tests/report-document.test.ts`
 
 Expected: FAIL。
 
-- [ ] **Step 3: 定义模板 YAML**
+- [x] **Step 3: 定义模板 YAML**
 
 模板固定章节：cover、executive-summary、background、scope-method、key-metrics、findings、question-analysis、visual-evidence、comparison、conclusion、recommendations、risks、appendix。
 
-- [ ] **Step 4: 实现 Composer**
+- [x] **Step 4: 实现 Composer**
 
 Composer 只接收 verified Deliverable/Manifest/Assets/Charts/Review；按模板生成 blocks。没有视觉数据时省略视觉 block，不生成占位图。
 
 - [ ] **Step 5: 运行测试和提交**
 
 Run: `pnpm exec tsx --test tests/report-document.test.ts tests/current-report-markdown.test.ts`
+
+Observed by the main agent: report-document + current-report-markdown 15/15 passed; `pnpm typecheck` passed. The Task17 chart-to-ReportDocument producer gate is closed; Task19 Stage4/Markdown/Print rendering and commit remain pending.
 
 ```bash
 git add schemas/report-document.schema.json \

@@ -28,6 +28,7 @@ export const CONFIG_PATHS = {
   skillRegistry: 'orchestrator/skill-registry.yaml',
   toolRegistry: 'orchestrator/tool-registry.yaml',
   evidencePolicy: 'orchestrator/evidence-policy.yaml',
+  reportTemplates: 'orchestrator/report-templates',
 } as const;
 
 export interface EvidencePolicyRequirement {
@@ -46,6 +47,82 @@ export interface EvidencePolicyEntry {
 export interface EvidencePolicyConfig {
   version: number;
   policies: EvidencePolicyEntry[];
+}
+
+export const REPORT_TEMPLATE_SECTION_IDS = [
+  'cover',
+  'executive-summary',
+  'background',
+  'scope-method',
+  'key-metrics',
+  'findings',
+  'question-analysis',
+  'visual-evidence',
+  'comparison',
+  'conclusion',
+  'recommendations',
+  'risks',
+  'appendix',
+] as const;
+
+export type ReportTemplateSectionId = typeof REPORT_TEMPLATE_SECTION_IDS[number];
+
+export interface ReportTemplateSection {
+  id: ReportTemplateSectionId;
+  title: string;
+}
+
+export interface ReportTemplateConfig {
+  version: 1;
+  id: string;
+  subtitle: string;
+  sections: ReportTemplateSection[];
+}
+
+function reportTemplateError(field: string, detail: string): Error {
+  return new Error(`Report Template ${field}: ${detail}`);
+}
+
+function strictRecord(value: unknown, field: string, allowedKeys: readonly string[]): Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw reportTemplateError(field, 'must be an object');
+  }
+  const record = value as Record<string, unknown>;
+  const unexpected = Object.keys(record).find((key) => !allowedKeys.includes(key));
+  if (unexpected) throw reportTemplateError(field, `contains unsupported field ${unexpected}`);
+  return record;
+}
+
+function nonEmptyTemplateString(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw reportTemplateError(field, 'must be a non-empty string');
+  }
+  return value;
+}
+
+function parseReportTemplate(value: unknown, expectedId: string): ReportTemplateConfig {
+  const config = strictRecord(value, 'root', ['version', 'id', 'subtitle', 'sections']);
+  if (config.version !== 1) throw reportTemplateError('version', 'must equal 1');
+  const id = nonEmptyTemplateString(config.id, 'id');
+  if (id !== expectedId) throw reportTemplateError('id', `must equal ${expectedId}`);
+  const subtitle = nonEmptyTemplateString(config.subtitle, 'subtitle');
+  if (!Array.isArray(config.sections)) throw reportTemplateError('sections', 'must be an array');
+  if (config.sections.length !== REPORT_TEMPLATE_SECTION_IDS.length) {
+    throw reportTemplateError('sections', `must contain ${REPORT_TEMPLATE_SECTION_IDS.length} ordered sections`);
+  }
+  const sections = config.sections.map((value, index): ReportTemplateSection => {
+    const section = strictRecord(value, `sections[${index}]`, ['id', 'title']);
+    const sectionId = nonEmptyTemplateString(section.id, `sections[${index}].id`);
+    const expectedSectionId = REPORT_TEMPLATE_SECTION_IDS[index]!;
+    if (sectionId !== expectedSectionId) {
+      throw reportTemplateError(`sections[${index}].id`, `must equal ${expectedSectionId}`);
+    }
+    return {
+      id: expectedSectionId,
+      title: nonEmptyTemplateString(section.title, `sections[${index}].title`),
+    };
+  });
+  return { version: 1, id, subtitle, sections };
 }
 const SUPPORTED_EVIDENCE_CLASSES: Readonly<Record<EvidenceClass, true>> = {
   public_source: true,
@@ -287,6 +364,20 @@ export function loadEvidencePolicy(): EvidencePolicyConfig {
     throw evidencePolicyError('YAML', detail);
   }
   return parseEvidencePolicy(value);
+}
+
+export function loadReportTemplate(templateId: string): ReportTemplateConfig {
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(templateId)) {
+    throw reportTemplateError('id', 'contains unsafe path characters');
+  }
+  let value: unknown;
+  try {
+    value = loadYaml<unknown>(orchestratorPath(`report-templates/${templateId}.yaml`));
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw reportTemplateError('YAML', detail);
+  }
+  return parseReportTemplate(value, templateId);
 }
 
 // 读取某个 tool/skill 的完整 manifest(相对项目根的 path)。
