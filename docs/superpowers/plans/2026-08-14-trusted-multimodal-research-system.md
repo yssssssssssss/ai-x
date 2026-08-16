@@ -1776,6 +1776,11 @@ git commit -m "test: gate trusted multimodal research reports"
 
 ---
 
+## Task 22 Implementation Fact (Unverified)
+
+- `invokeWithRetry(input)` is implemented at `apps/orchestrator-runtime/src/control/tool-retry-policy.ts` and integrated at the LeaseExecutionEngine provider-call boundary. The policy retries only network/timeout/429/5xx failures, records independent attempt contexts/receipts, and fences lease ownership before and around backoff.
+- This implementation fact is recorded without test/typecheck/lint/build/formatter validation; no GREEN or completion claim is made.
+
 ## Final Completion Ledger
 
 实施完成后必须逐项确认：

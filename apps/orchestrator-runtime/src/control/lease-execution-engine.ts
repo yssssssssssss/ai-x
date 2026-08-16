@@ -39,8 +39,10 @@ import {
   ToolInvocationError,
   ToolRouter,
   type ToolAdapterResolution,
+  type ToolFailureKind,
   type ToolInvocationReceipt,
 } from '../runtime/tool-adapter.ts';
+import { invokeWithRetry, type ToolRetryAttemptReceipt } from './tool-retry-policy.ts';
 import {
   containsBlockedSensitiveData,
   redactSensitiveValue,
@@ -111,6 +113,7 @@ interface StepResult {
   kind: StepArtifactKind;
   artifactValue?: unknown;
   toolReceipt?: ToolInvocationReceipt;
+  toolAttemptReceipts?: ToolRetryAttemptReceipt[];
   toolResolution?: ToolAdapterResolution;
   manifestHash?: string;
   inputSchemaHash?: string;
@@ -861,7 +864,7 @@ export class LeaseExecutionEngine {
                 executionMode: result.toolReceipt.executionMode,
                 endpointHost: result.toolReceipt.endpointHost,
                 sourceRefs: result.sourceRefs,
-                toolTier: this.dependencies.skillLoader.getTool(step.actor_id)?.tier ?? 'core',
+                attemptReceipts: result.toolAttemptReceipts,
                 outputArtifactId: artifact.id,
                 status: 'succeeded',
               }
@@ -1421,7 +1424,7 @@ export class LeaseExecutionEngine {
     await this.dependencies.repository.requireActiveLease(input.lease);
     switch (input.step.actor_type) {
       case 'tool':
-        return this.runTool(input.step, input.researchGoal, input.resolvedInput);
+        return this.runTool(input.step, input.researchGoal, input.resolvedInput, input.lease);
       case 'skill':
         return this.runSkill(input);
       case 'llm':
@@ -1544,6 +1547,7 @@ export class LeaseExecutionEngine {
     step: EngineStep,
     researchGoal: string,
     resolvedInput: Record<string, unknown>,
+    lease: ControlExecutionLease,
   ): Promise<StepResult> {
     const tool = this.dependencies.skillLoader.getTool(step.actor_id);
     if (!tool) throw new ExecutionAuthenticityError(`tool ${step.actor_id} is not active`);
@@ -1587,7 +1591,44 @@ export class LeaseExecutionEngine {
         details: { inputHash: hashJson(toolInput) },
       });
     }
-    const result = await this.dependencies.tools.invoke({ toolId: step.actor_id, input: toolInput, manifest });
+    const retryResult = await invokeWithRetry({
+      manifest,
+      isLeaseActive: async () => {
+        try {
+          await this.dependencies.repository.requireActiveLease(lease);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+      invoke: () => this.dependencies.tools.invoke({ toolId: step.actor_id, input: toolInput, manifest }),
+    });
+    if (retryResult.status === 'failed') {
+      if (retryResult.failure.kind === 'lease_lost') {
+        throw new ControlPlaneConflictError('execution lease lost during tool retry');
+      }
+      const lastAttempt = retryResult.attemptReceipts[retryResult.attemptReceipts.length - 1];
+      throw new ToolInvocationError(step.actor_id, {
+        kind: retryResult.failure.kind as ToolFailureKind,
+        retryable: retryResult.failure.retryable,
+        providerStatus: retryResult.failure.providerStatus,
+        sanitizedMessage: retryResult.failure.lastFailure ?? retryResult.failure.kind,
+        receipt: lastAttempt?.receipt,
+        details: {
+          retry: {
+            attempts: retryResult.failure.attempts,
+            maxAttempts: retryResult.failure.maxAttempts,
+            attemptReceipts: retryResult.attemptReceipts,
+          },
+        },
+      });
+    }
+    const result = {
+      output: retryResult.output,
+      receipt: retryResult.receipt,
+      latencyMs: retryResult.latencyMs ?? retryResult.receipt.latencyMs,
+    };
     try {
       this.dependencies.validator.validateFileOrThrow(join(getConfigRoot(), manifest.output_schema), result.output);
     } catch {
@@ -1636,6 +1677,7 @@ export class LeaseExecutionEngine {
       },
       kind: 'tool_output',
       toolReceipt: result.receipt,
+      toolAttemptReceipts: retryResult.attemptReceipts,
       toolResolution: resolution,
       manifestHash: hashFile(tool.path),
       inputSchemaHash: hashFile(manifest.input_schema),
