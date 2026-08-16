@@ -1,0 +1,35 @@
+# Phase 6 Final Integrated Review
+
+## RED Scenarios
+
+1. **Evidence Policies must be achievable by the production collector**
+   - `tests/multi-deliverable-contract.test.ts` builds a fully validated `EvidenceManifest` through `EvidenceService` and requires every configured task/deliverable pair's required policy minimum to be satisfiable by the collector class.
+   - `tests/lease-execution-engine.test.ts` runs one real core Tool path, requires a SEALED same-Task/Plan/Attempt Manifest, then applies every production Evidence Policy to the classes actually emitted by that collector path.
+   - Expected RED: VOC, design-audit, and accessibility policies accept only classes the current collector does not emit, so both the policy assertions and the real collector Manifest matrix expose the mismatch.
+
+2. **Professional payloads must survive ReportDocument composition**
+   - `tests/report-document.test.ts` composes all four professional payload fixtures and requires task-specific values in the template sections that name those dimensions.
+   - Competitive retains matrix/differences, impacts, prioritized actions, and screenshot comparison captions; VOC retains themes, representative quotes, severity, and priority; design audit retains issues, annotation text, remediation, and retest; accessibility retains POUR/component findings, screen-reader behavior, remediation, and verification.
+   - Expected RED: the composer currently projects only the generic finding graph/recommendations and research-plan payload fields, so the unique professional payload values are absent.
+
+3. **Localized expected deliverables must be canonicalized at the understanding/planning boundary**
+   - `tests/requirement-refinement-service.test.ts` supplies Chinese LLM labels for all five task types and requires the canonical Registry id before persistence and planner invocation. Existing explicit and hydrated-recovery fixtures also expect canonical `competitive_analysis_report`. Initial understanding keeps exactly one Requirement row; clarification keeps exactly v1/v2, with every returned, stored, and planned task remaining `research-task-v2`.
+   - `tests/multi-deliverable-contract.test.ts` requires direct current planning to normalize the same five localized labels before strict Registry resolution.
+   - The strict Registry resolver is separately required to reject arbitrary external labels; normalization is a task-type boundary operation, not fuzzy Registry matching.
+   - Expected RED: refinement persists localized labels unchanged, while direct planning rejects them as incompatible.
+
+4. **Task-specific visual references must be restricted to the verified attempt inventory**
+   - `tests/multi-deliverable-contract.test.ts` covers competitive `screenshotComparisons` and design `annotatedScreenshots`.
+   - Generation must reject referenced ids absent from the supplied verified inventory after the LLM returns but before any Artifact write/seal, reject a supplied inventory item with a foreign Task, Plan, or Attempt binding before LLM invocation, accept the exact same binding tuple, and expose only verified ids in synthesis prompt/context. The lease pass-Review fixture derives and re-verifies a real PNG annotation with exact original lineage, binds its competitive screenshot comparison to the verified original/annotation Asset ids, keeps the verified chart separate for Chart block assertions, and rewrites every competitive payload/finding Evidence reference to the exact collected Manifest id before sealing. Its final document must contain the exact original→annotation image-comparison and chart without duplicating either paired image as a standalone block; the completion assertion serializes the execution result as its failure diagnostic without changing the expected status.
+   - Expected RED: `CurrentDeliverableService` currently has no verified visual inventory input or payload-reference validation and does not provide a verified-id allowlist to synthesis.
+
+## Integrated Production Fixes
+
+1. Required VOC, design-audit, and accessibility Evidence Policies retain their specialized accepted classes and now also accept the production collector's factual `public_source` class.
+2. `ReportDocument` composition deterministically projects every professional payload contract into its named template sections: facts/lists/metrics/actions; payload-captioned competitive visuals pair each verified annotation with its exact payload-listed original by Asset/Manifest/hash lineage and omit duplicate standalone rendering; design annotation comparisons retain the same exact lineage requirement.
+3. Server-owned `canonicalizeExpectedDeliverables()` validates the LLM-provided list and maps it through the task type's unique active Registry entry to one canonical id. Requirement understanding, clarification, legacy requirement planning, and Current direct planning all canonicalize before persistence, messages, or planner invocation; no natural-language label is added as a Registry alias, and the public resolver remains strict.
+4. `LeaseExecutionEngine` performs one verified same-Task/Plan/Attempt visual-material discovery before Deliverable synthesis, passes the exportable Asset allowlist to `CurrentDeliverableService`, and reuses that same discovery result for post-Review composition. Synthesis context contains only verified ids; foreign inventory bindings fail before LLM invocation, and generated competitive/design payload references fail before Artifact sealing unless present in the allowlist. Design composition additionally requires exact annotation-to-original lineage.
+
+## Verification Status
+
+Main observed the final Phase 6 integrated suite at 127 total / 126 passed / 1 existing provider skip / 0 failed. `pnpm typecheck`, Registry linter, and Knowledge linter passed. The final competitive projection correction pairs payload-listed original and annotation Assets by exact Asset/Manifest/content-hash/Manifest-hash lineage, emits one payload-captioned image comparison, and does not duplicate the paired annotation as a standalone image. No commit has been created; this evidence is recorded without a pre-commit GREEN or phase-complete claim.

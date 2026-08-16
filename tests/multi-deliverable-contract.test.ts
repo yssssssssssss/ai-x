@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -16,7 +17,8 @@ import {
 } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 import type { StructuredLLMCallOptions } from '../apps/orchestrator-runtime/src/runtime/llm-client.ts';
 import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
-import type { EvidenceManifest, EvidenceService } from '../apps/orchestrator-runtime/src/evidence/evidence-service.ts';
+import { EvidenceService, type EvidenceManifest } from '../apps/orchestrator-runtime/src/evidence/evidence-service.ts';
+import type { VerifiedVisualAsset } from '../apps/orchestrator-runtime/src/report/visual-asset-service.ts';
 import { lintRegistries } from '../harness/linters/registry-linter.ts';
 import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import type { EvidenceRequirement } from '../packages/api-contract/research-deliverable.ts';
@@ -540,4 +542,283 @@ for (const contract of PROFESSIONAL_CONTRACTS) {
     );
     assert.match(llm.calls[0]?.prompt ?? '', /\S/u);
   });
+}
+
+const LOCALIZED_DELIVERABLES: Record<ResearchTaskV2['task_type'], string> = {
+  user_research_planning: '用户研究计划',
+  competitive_research: '竞品分析报告',
+  voc_diagnosis: '用户之声诊断报告',
+  design_audit: '设计走查报告',
+  a11y_audit: '无障碍审计报告',
+};
+
+function routedPlanningResult() {
+  return {
+    activated: [],
+    decisionStates: [],
+    candidates: [],
+    guidanceSources: [],
+    planProvenance: {
+      modelName: 'fixture-model',
+      modelVersion: 'fixture-v1',
+      promptHash: 'sha256:fixture',
+      traceId: 'trace-fixture',
+    },
+    problemGraph: { version: 'problem-graph-v1', questions: [] },
+    problemGraphProvenance: {
+      receiptId: '11111111-1111-4111-8111-111111111111',
+      modelName: 'fixture-model',
+      modelVersion: 'fixture-v1',
+      promptHash: 'sha256:fixture',
+      traceId: 'trace-fixture',
+    },
+    capabilityResolution: { eligible: [], rejected: [] },
+  };
+}
+
+for (const contract of CONTRACTS) {
+  test(`planning canonicalizes localized ${contract.taskType} expected_deliverables before Registry resolution`, async () => {
+    const localized = LOCALIZED_DELIVERABLES[contract.taskType];
+    let plannedExpectedDeliverables: string[] | undefined;
+    const planning = new ResearchPlanningService({
+      llm: { identity: { requestedModel: 'fixture-model' } },
+    } as never);
+    Reflect.set(planning, 'routedPlanner', {
+      async planCurrent(context: { requirement: ResearchTaskV2 }) {
+        plannedExpectedDeliverables = [...context.requirement.expected_deliverables];
+        return routedPlanningResult();
+      },
+    });
+
+    const result = await planning.planCurrentFromRequirement({
+      ...requirementFor(contract),
+      expected_deliverables: [localized],
+    });
+
+    assert.deepEqual(result.structuredTask.expected_deliverables, [contract.deliverableId]);
+    assert.deepEqual(plannedExpectedDeliverables, [contract.deliverableId]);
+  });
+}
+
+function collectorManifest(taskType: string, deliverableId: string): EvidenceManifest {
+  const artifactId = `artifact-collector-${taskType}-${deliverableId}`;
+  const artifactContentSha256 = `sha256:${'b'.repeat(64)}`;
+  const sourceUrl = 'https://source.test/phase-6';
+  const output = { results: [{ title: 'Verified source', url: sourceUrl }] };
+  const redactedOutputHash = `sha256:${createHash('sha256').update(JSON.stringify(output)).digest('hex')}`;
+  const resolver = {
+    resolveArtifact(candidateId: string) {
+      return candidateId === artifactId
+        ? {
+            artifact: { id: artifactId, contentSha256: artifactContentSha256 },
+            value: { output, redactedOutputHash },
+          }
+        : null;
+    },
+  };
+  return new EvidenceService().createManifest({
+    taskId: `task-${taskType}`,
+    planVersionId: `plan-${taskType}-${deliverableId}`,
+    attemptId: `attempt-${taskType}-${deliverableId}`,
+    collectedAt: '2026-08-17T00:00:00.000Z',
+    entries: [{
+      id: 'E1-1',
+      kind: 'tool_output',
+      evidenceClass: 'public_source',
+      toolId: 'tavily-web-search',
+      toolTier: 'core',
+      artifactId,
+      artifactContentSha256,
+      jsonPointer: '/output/results/0',
+      sourceUrl,
+      stepNo: 1,
+      toolProof: { implementationId: 'tavily', executionMode: 'real', redactedOutputHash },
+      sensitivity: 'public',
+      redaction: 'masked',
+    }],
+  }, resolver);
+}
+
+for (const policy of loadEvidencePolicy().policies) {
+  test(`${policy.task_type}/${policy.deliverable_type} required Evidence Policy is achievable by a production collector Manifest`, () => {
+    const manifest = collectorManifest(policy.task_type, policy.deliverable_type);
+    const requiredRequirements = policy.requirements.filter(({ required }) => required);
+    assert.ok(requiredRequirements.length > 0, `${policy.task_type}/${policy.deliverable_type} must require Evidence`);
+    for (const requirement of requiredRequirements) {
+      const actual = manifest.entries.filter((entry) => (
+        entry.toolTier === 'core' && requirement.accepted_classes.includes(entry.evidenceClass)
+      )).length;
+      assert.ok(
+        actual >= requirement.minimum_count,
+        `${requirement.id} requires ${requirement.accepted_classes.join('|')} but the collector Manifest contains ${manifest.entries.map(({ evidenceClass }) => evidenceClass).join('|')}`,
+      );
+    }
+  });
+}
+
+function canonicalFixtureHash(value: unknown): string {
+  const canonicalize = (child: unknown): unknown => {
+    if (Array.isArray(child)) return child.map(canonicalize);
+    if (child === null || typeof child !== 'object') return child;
+    return Object.fromEntries(
+      Object.entries(child as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, canonicalize(nested)]),
+    );
+  };
+  return `sha256:${createHash('sha256').update(JSON.stringify(canonicalize(value))).digest('hex')}`;
+}
+
+function verifiedInventoryAsset(
+  contract: DeliverableContractFixture,
+  assetId: string,
+  bindingOverrides: Partial<{ taskId: string; planVersionId: string; attemptId: string }> = {},
+): VerifiedVisualAsset {
+  const binding = {
+    taskId: `task-${contract.taskType}`,
+    planVersionId: `plan-${contract.taskType}`,
+    attemptId: `attempt-${contract.taskType}`,
+    ...bindingOverrides,
+  };
+  const bytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
+  const contentSha256 = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+  const manifestDraft = {
+    version: 'visual-asset-manifest-v1' as const,
+    ...binding,
+    assetId,
+    contentSha256,
+    mediaType: 'image/png' as const,
+    byteSize: bytes.byteLength,
+    width: 1,
+    height: 1,
+    exportPolicy: 'allow' as const,
+    source: { kind: 'user_upload' as const, fileName: `${assetId}.png` },
+    derivedFrom: null,
+    derivation: null,
+  };
+  const manifest = { ...manifestDraft, manifestHash: canonicalFixtureHash(manifestDraft) };
+  const manifestBytes = Buffer.from(JSON.stringify(manifest, null, 2));
+  return {
+    artifact: {
+      id: assetId,
+      ...binding,
+      kind: 'visual_asset',
+      state: 'SEALED',
+      storageUri: `/private/${assetId}`,
+      contentSha256,
+      byteSize: bytes.byteLength,
+      schemaVersion: 'binary-v1',
+      sensitivity: 'internal',
+      redactionPolicyVersion: 'v1',
+      failureReason: null,
+      mediaType: 'image/png',
+      metadata: { width: 1, height: 1 },
+    },
+    bytes,
+    metadata: { contentType: 'image/png', byteSize: bytes.byteLength, width: 1, height: 1 },
+    manifest,
+    manifestArtifact: {
+      id: `manifest-${assetId}`,
+      ...binding,
+      kind: 'visual_asset_manifest',
+      state: 'SEALED',
+      storageUri: `/private/manifest-${assetId}`,
+      contentSha256: `sha256:${createHash('sha256').update(manifestBytes).digest('hex')}`,
+      byteSize: manifestBytes.byteLength,
+      schemaVersion: 'visual-asset-manifest-v1',
+      sensitivity: 'internal',
+      redactionPolicyVersion: 'v1',
+      failureReason: null,
+    },
+  } as VerifiedVisualAsset;
+}
+
+const VISUAL_PAYLOAD_CASES = [{
+  deliverableId: 'competitive_analysis_report',
+  assetId: 'asset-screenshot-a',
+  field: 'screenshotComparisons',
+}, {
+  deliverableId: 'design_audit_report',
+  assetId: 'asset-checkout-annotation',
+  field: 'annotatedScreenshots',
+}] as const;
+
+for (const visualCase of VISUAL_PAYLOAD_CASES) {
+  const contract = PROFESSIONAL_CONTRACTS.find(({ deliverableId }) => deliverableId === visualCase.deliverableId)!;
+
+  test(`${visualCase.field} rejects an Asset id absent from the supplied verified visual inventory`, async () => {
+    const llm = new ContractGenerationLLM(contract.payload);
+    let writes = 0;
+    const service = new CurrentDeliverableService({
+      llm,
+      validator: new SchemaValidator(),
+      evidence: {
+        validateManifest(): void {},
+        resolveEvidenceValue(): unknown { return null; },
+        validateFindingGraph(): void {},
+      } as unknown as EvidenceService,
+      artifacts: { async writeJson() { writes += 1; return { id: 'must-not-write' }; } },
+    });
+    const input = Object.assign(generationInput(contract), {
+      visualAssets: [verifiedInventoryAsset(contract, 'asset-unrelated')],
+    });
+
+    await assert.rejects(() => service.generate(input), /verified visual|asset.*inventory|unverified asset/i);
+    assert.equal(writes, 0);
+    assert.equal(llm.calls.length, 1, 'payload Asset ids are known only after synthesis returns');
+  });
+
+  test(`${visualCase.field} accepts only the exact same Task/Plan/Attempt Asset and exposes only verified ids to synthesis`, async () => {
+    const llm = new ContractGenerationLLM(contract.payload);
+    const service = new CurrentDeliverableService({
+      llm,
+      validator: new SchemaValidator(),
+      evidence: {
+        validateManifest(): void {},
+        resolveEvidenceValue(): unknown { return null; },
+        validateFindingGraph(): void {},
+      } as unknown as EvidenceService,
+      artifacts: { async writeJson() { return { id: `artifact-${contract.deliverableId}` }; } },
+    });
+    const input = Object.assign(generationInput(contract), {
+      visualAssets: [verifiedInventoryAsset(contract, visualCase.assetId)],
+    });
+
+    await service.generate(input);
+
+    const context = llm.calls[0]?.context as { verifiedVisualAssetIds?: string[] };
+    assert.deepEqual(context.verifiedVisualAssetIds, [visualCase.assetId]);
+    assert.match(llm.calls[0]?.prompt ?? '', /verified visual.*asset|asset.*verified inventory/i);
+  });
+
+  for (const mismatch of [{
+    name: 'Task',
+    override: { taskId: 'task-foreign' },
+  }, {
+    name: 'Plan',
+    override: { planVersionId: 'plan-foreign' },
+  }, {
+    name: 'Attempt',
+    override: { attemptId: 'attempt-foreign' },
+  }] as const) {
+    test(`${visualCase.field} rejects the right Asset id when its ${mismatch.name} binding is foreign`, async () => {
+      const llm = new ContractGenerationLLM(contract.payload);
+      const service = new CurrentDeliverableService({
+        llm,
+        validator: new SchemaValidator(),
+        evidence: {
+          validateManifest(): void {},
+          resolveEvidenceValue(): unknown { return null; },
+          validateFindingGraph(): void {},
+        } as unknown as EvidenceService,
+        artifacts: { async writeJson() { return { id: 'must-not-write' }; } },
+      });
+      const input = Object.assign(generationInput(contract), {
+        visualAssets: [verifiedInventoryAsset(contract, visualCase.assetId, mismatch.override)],
+      });
+
+      await assert.rejects(() => service.generate(input), /visual asset.*(task|plan|attempt)|binding|foreign/i);
+      assert.equal(llm.calls.length, 0);
+    });
+  }
 }

@@ -1078,6 +1078,29 @@ export class LeaseExecutionEngine {
 
     try {
       active = await this.refreshLease(input.lease);
+      const materialDiscovery = this.dependencies.reportComposition?.discoverAttemptMaterials
+        ? this.dependencies.reportComposition
+        : new ReportCompositionService({
+            artifacts: this.dependencies.artifacts,
+            visualAssets: new VisualAssetService({ artifacts: this.dependencies.artifacts }),
+            repository: this.dependencies.repository,
+          });
+      const evidenceById = new Map(
+        sealedEvidenceManifest.value.entries.map((entry) => [entry.id, entry]),
+      );
+      const evidenceService = new EvidenceService();
+      const reportMaterials = await this.withLeaseHeartbeat(input.lease, () =>
+        materialDiscovery.discoverAttemptMaterials!({
+          taskId: input.lease.taskId,
+          planVersionId: input.lease.planVersionId,
+          attemptId: input.lease.attemptId,
+          evidenceResolver: (evidenceId) => {
+            const entry = evidenceById.get(evidenceId);
+            return entry
+              ? evidenceService.resolveEvidenceValue(entry, evidenceResolver)
+              : undefined;
+          },
+        }));
       const deliverableInput: CurrentDeliverableGenerateInput = {
         task: { id: task.id },
         plan: {
@@ -1099,6 +1122,7 @@ export class LeaseExecutionEngine {
         expectedModel: input.expectedModel,
         stepNo: plan.steps.length + 1,
         activeLease: input.lease,
+        visualAssets: reportMaterials.visualAssets,
       };
       const deliverable = await this.withLeaseHeartbeat(input.lease, () => this.dependencies.deliverables.generate(deliverableInput));
       let deliverableArtifactId = deliverable.deliverableArtifactId;
@@ -1194,29 +1218,7 @@ export class LeaseExecutionEngine {
           if (verifiedReview.value.verdict !== 'pass') {
             throw new ExecutionAuthenticityError('ReportDocument composition requires the final pass Review');
           }
-          const materialDiscovery = this.dependencies.reportComposition.discoverAttemptMaterials
-            ? this.dependencies.reportComposition
-            : new ReportCompositionService({
-                artifacts: this.dependencies.artifacts,
-                visualAssets: new VisualAssetService({ artifacts: this.dependencies.artifacts }),
-                repository: this.dependencies.repository,
-              });
-          const evidenceById = new Map(
-            verifiedEvidenceManifest.value.entries.map((entry) => [entry.id, entry]),
-          );
-          const evidenceService = new EvidenceService();
-          const materials = await this.withLeaseHeartbeat(input.lease, () =>
-            materialDiscovery.discoverAttemptMaterials!({
-              taskId: input.lease.taskId,
-              planVersionId: input.lease.planVersionId,
-              attemptId: input.lease.attemptId,
-              evidenceResolver: (evidenceId) => {
-                const entry = evidenceById.get(evidenceId);
-                return entry
-                  ? evidenceService.resolveEvidenceValue(entry, evidenceResolver)
-                  : undefined;
-              },
-            }));
+          const materials = reportMaterials;
           const composition = await this.withLeaseHeartbeat(input.lease, () =>
             this.dependencies.reportComposition!.composeAndStore({
               taskId: input.lease.taskId,

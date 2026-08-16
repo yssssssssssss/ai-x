@@ -10,6 +10,7 @@ import type {
 } from '../apps/orchestrator-runtime/src/runtime/llm-client.ts';
 import { ReceiptLLMClient, ModelDriftError } from '../apps/orchestrator-runtime/src/runtime/receipt-llm-client.ts';
 import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
+import { resolveDeliverable } from '../apps/orchestrator-runtime/src/report/deliverable-registry.ts';
 
 type RefinementModule = typeof import('../apps/orchestrator-runtime/src/control/requirement-refinement-service.ts');
 
@@ -33,7 +34,7 @@ function requirement(overrides: Partial<ResearchTaskV2> = {}): ResearchTaskV2 {
     scope: ['public web sources'],
     constraints: [],
     success_criteria: [{ id: 'criterion-1', statement: 'produce a comparison matrix' }],
-    expected_deliverables: ['research plan'],
+    expected_deliverables: ['competitive_analysis_report'],
     assumptions: [],
     ambiguities: [],
     clarification_questions: [],
@@ -467,4 +468,123 @@ test('model drift fails closed before requirement activation', async () => {
   assert.equal(repository.versions.length, 0);
   assert.equal(repository.activations.length, 0);
   assert.equal(recorder.calls[0]?.status, 'failed');
+});
+
+const LOCALIZED_REFINEMENT_CASES: Array<{
+  taskType: ResearchTaskV2['task_type'];
+  localized: string;
+  canonical: string;
+}> = [
+  { taskType: 'user_research_planning', localized: '用户研究计划', canonical: 'research_plan' },
+  { taskType: 'competitive_research', localized: '竞品分析报告', canonical: 'competitive_analysis_report' },
+  { taskType: 'voc_diagnosis', localized: '用户之声诊断报告', canonical: 'voc_diagnosis_report' },
+  { taskType: 'design_audit', localized: '设计走查报告', canonical: 'design_audit_report' },
+  { taskType: 'a11y_audit', localized: '无障碍审计报告', canonical: 'accessibility_audit_report' },
+];
+
+for (const refinementCase of LOCALIZED_REFINEMENT_CASES) {
+  test(`canonicalizes ${refinementCase.taskType} localized expected_deliverables before persistence and planning`, async () => {
+    const { RequirementRefinementService } = await loadModule();
+    const generated = requirement({
+      task_type: refinementCase.taskType,
+      expected_deliverables: [refinementCase.localized],
+    });
+    const llm = new FixtureLLM([generated]);
+    const repository = makeRepository();
+    const conversations = makeConversations();
+    let plannedRequirement: ResearchTaskV2 | undefined;
+    const service = new RequirementRefinementService({
+      llm,
+      validator: new SchemaValidator(),
+      repository,
+      conversations,
+      planner: {
+        async plan(input: { requirement: ResearchTaskV2 }) {
+          plannedRequirement = input.requirement;
+        },
+      },
+    });
+
+    const result = await service.understand({
+      taskId,
+      conversationId,
+      ownerUserId,
+      originalInput: `请生成${refinementCase.localized}`,
+    });
+
+    assert.equal(result.status, 'ready_to_plan');
+    assert.deepEqual(result.requirement.expected_deliverables, [refinementCase.canonical]);
+    assert.deepEqual(repository.versions[0]?.structuredTask.expected_deliverables, [refinementCase.canonical]);
+    assert.deepEqual(plannedRequirement?.expected_deliverables, [refinementCase.canonical]);
+    assert.deepEqual(repository.versions.map(({ version }) => version), [1]);
+    assert.equal(result.requirement.version, 'research-task-v2');
+    assert.equal(repository.versions[0]?.structuredTask.version, 'research-task-v2');
+    assert.equal(plannedRequirement?.version, 'research-task-v2');
+  });
+}
+
+test('clarification LLM output is canonicalized before Requirement v2 persistence and planning', async () => {
+  const { RequirementRefinementService } = await loadModule();
+  const clarified = requirement({
+    task_type: 'competitive_research',
+    target_audience: ['enterprise buyers'],
+    expected_deliverables: ['竞品分析报告'],
+  });
+  const localizedAmbiguous = requirement({
+    expected_deliverables: ['竞品分析报告'],
+    ambiguities: [{ id: 'audience', statement: 'target audience is unclear', blocking: true }],
+    clarification_questions: [{
+      key: 'audience',
+      question: 'Who is the target audience?',
+      rationale: 'The comparison depends on audience needs',
+    }],
+  });
+  const llm = new FixtureLLM([localizedAmbiguous, clarified]);
+  const repository = makeRepository();
+  const conversations = makeConversations();
+  let plannedRequirement: ResearchTaskV2 | undefined;
+  const service = new RequirementRefinementService({
+    llm,
+    validator: new SchemaValidator(),
+    repository,
+    conversations,
+    planner: {
+      async plan(input: { requirement: ResearchTaskV2 }) {
+        plannedRequirement = input.requirement;
+      },
+    },
+  });
+
+  await service.understand({
+    taskId,
+    conversationId,
+    ownerUserId,
+    originalInput: '请生成竞品分析报告',
+  });
+  const result = await service.clarify({
+    taskId,
+    conversationId,
+    ownerUserId,
+    answers: { audience: 'enterprise buyers' },
+  });
+
+  assert.equal(result.status, 'ready_to_plan');
+  assert.deepEqual(result.requirement.expected_deliverables, ['competitive_analysis_report']);
+  assert.deepEqual(
+    repository.versions.map(({ structuredTask }) => structuredTask.expected_deliverables),
+    [['competitive_analysis_report'], ['competitive_analysis_report']],
+  );
+  assert.deepEqual(plannedRequirement?.expected_deliverables, ['competitive_analysis_report']);
+  assert.deepEqual(repository.versions.map(({ version }) => version), [1, 2]);
+  assert.ok(repository.versions.every(({ structuredTask }) => structuredTask.version === 'research-task-v2'));
+  assert.equal(plannedRequirement?.version, 'research-task-v2');
+});
+
+test('strict Registry resolver still rejects arbitrary external expected_deliverables labels', () => {
+  for (const refinementCase of LOCALIZED_REFINEMENT_CASES) {
+    assert.throws(
+      () => resolveDeliverable(refinementCase.taskType, ['外部任意报告标签']),
+      /incompatible|expectedDeliverables/i,
+    );
+  }
 });

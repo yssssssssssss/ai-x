@@ -20,6 +20,7 @@ import {
   resolveDeliverableContractById,
   resolveExecutionDeliverableContract,
 } from './deliverable-registry.ts';
+import type { VerifiedVisualAsset } from './visual-asset-service.ts';
 function createDeliverableDraftSchema(payloadSchema: object) {
 
   return {
@@ -255,6 +256,7 @@ export interface CurrentDeliverableGenerateInput {
   revisionInstruction?: string;
   revisionRound?: 0 | 1;
   activeLease?: ControlExecutionLease;
+  visualAssets?: readonly VerifiedVisualAsset[];
 }
 
 export interface CurrentDeliverableGenerateResult {
@@ -295,6 +297,75 @@ function deliverableSelection(finalizedRequirement: unknown): {
     taskType,
     expectedDeliverables: [...expectedDeliverables] as string[],
   };
+}
+function verifiedVisualAssetIds(input: CurrentDeliverableGenerateInput): string[] | undefined {
+  if (input.visualAssets === undefined) return undefined;
+  const ids = new Set<string>();
+  for (const asset of input.visualAssets) {
+    const bindingMatches = asset.artifact.taskId === input.task.id
+      && asset.artifact.planVersionId === input.plan.id
+      && asset.artifact.attemptId === input.attempt.id
+      && asset.manifestArtifact.taskId === input.task.id
+      && asset.manifestArtifact.planVersionId === input.plan.id
+      && asset.manifestArtifact.attemptId === input.attempt.id
+      && asset.manifest.taskId === input.task.id
+      && asset.manifest.planVersionId === input.plan.id
+      && asset.manifest.attemptId === input.attempt.id;
+    if (!bindingMatches) {
+      throw new Error(`visual Asset ${asset.artifact.id} binding is foreign to the Task, Plan, or Attempt`);
+    }
+    if (
+      asset.artifact.state !== 'SEALED'
+      || asset.manifestArtifact.state !== 'SEALED'
+      || asset.artifact.id !== asset.manifest.assetId
+      || (asset.manifest.exportPolicy !== 'allow' && asset.manifest.exportPolicy !== 'mask')
+    ) {
+      throw new Error(`visual Asset ${asset.artifact.id} is not an exact sealed exportable verified inventory item`);
+    }
+    if (ids.has(asset.artifact.id)) {
+      throw new Error(`verified visual Asset inventory contains duplicate id ${asset.artifact.id}`);
+    }
+    ids.add(asset.artifact.id);
+  }
+  return [...ids].sort((left, right) => left.localeCompare(right));
+}
+
+function visualPayloadReferences(deliverableId: string, payload: unknown): string[] {
+  const value = unknownRecord(payload);
+  if (!value) return [];
+  if (deliverableId === 'competitive_analysis_report') {
+    return Array.isArray(value.screenshotComparisons)
+      ? value.screenshotComparisons.flatMap((candidate) => {
+          const comparison = unknownRecord(candidate);
+          return Array.isArray(comparison?.assetIds)
+            ? comparison.assetIds.filter((assetId): assetId is string => typeof assetId === 'string')
+            : [];
+        })
+      : [];
+  }
+  if (deliverableId === 'design_audit_report') {
+    return Array.isArray(value.annotatedScreenshots)
+      ? value.annotatedScreenshots.flatMap((candidate) => {
+          const screenshot = unknownRecord(candidate);
+          return typeof screenshot?.assetId === 'string' ? [screenshot.assetId] : [];
+        })
+      : [];
+  }
+  return [];
+}
+
+function assertPayloadVisualReferences(
+  deliverableId: string,
+  payload: unknown,
+  verifiedIds: readonly string[] | undefined,
+): void {
+  if (verifiedIds === undefined) return;
+  const verified = new Set(verifiedIds);
+  for (const assetId of visualPayloadReferences(deliverableId, payload)) {
+    if (!verified.has(assetId)) {
+      throw new Error(`unverified Asset ${assetId} is absent from the verified visual Asset inventory`);
+    }
+  }
 }
 
 
@@ -408,6 +479,7 @@ export class CurrentDeliverableService {
     }
     const draftSchema = createDeliverableDraftSchema(contract.payloadSchema);
     const schemaName = `${contract.entry.id.replace(/_/gu, '-')}-deliverable-content`;
+    const verifiedVisualIds = verifiedVisualAssetIds(input);
     const evidenceManifest = input.evidenceManifest.value;
     this.dependencies.evidence.validateManifest(evidenceManifest, input.evidenceResolver);
     const sanitizedGaps = [...new Set(input.gaps.map((gap) => redactString(gap)))];
@@ -435,6 +507,7 @@ export class CurrentDeliverableService {
       problemGraph: redactSensitiveValue(input.problemGraph),
       coverageRequirements: requiredCoverage,
       ...(input.revisionInstruction === undefined ? {} : { revisionInstruction: redactString(input.revisionInstruction) }),
+      ...(verifiedVisualIds === undefined ? {} : { verifiedVisualAssetIds: verifiedVisualIds }),
       deliverableContract: {
         id: contract.entry.id,
         reviewRubric: contract.reviewRubric,
@@ -455,6 +528,9 @@ export class CurrentDeliverableService {
       capabilityProvenance?: unknown;
     }>({
       prompt: contract.synthesisPrompt
+        + (verifiedVisualIds === undefined
+          ? ''
+          : '\nVerified visual Asset inventory: reference only Asset ids in context.verifiedVisualAssetIds; never invent or reuse any other Asset id.')
         + (input.revisionInstruction ? '\nAddress the review issues in the revision instruction.' : ''),
       schema: draftSchema,
       schemaName,
@@ -479,6 +555,7 @@ export class CurrentDeliverableService {
     );
 
     const draft = contentDraft as DeliverableDraft;
+    assertPayloadVisualReferences(contract.entry.id, draft.payload, verifiedVisualIds);
     const risksAndOpenIssues = [...(draft.risksAndOpenIssues ?? [])];
     const observedRisks = new Set(risksAndOpenIssues);
     for (const gap of sanitizedGaps) {

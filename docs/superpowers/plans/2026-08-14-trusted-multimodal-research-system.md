@@ -1553,6 +1553,14 @@ pnpm quality
 
 Commit: `git commit -m "feat: add task-specific research deliverables"`
 
+#### Phase 6 integrated cross-task correction（2026-08-17）
+
+- Evidence Policies for VOC, design audit, and accessibility retain their specialized classes and accept the production collector's `public_source` class.
+- Professional contract payloads are projected into deterministic semantic ReportDocument blocks. Competitive payload-listed original and annotation Assets are paired by exact Asset/Manifest/content-hash/Manifest-hash lineage into one payload-captioned image comparison without a duplicate standalone annotation; design comparisons retain exact annotation lineage.
+- A server-owned canonicalizer runs after Requirement LLM understanding/clarification and at both requirement-planning entry points; it validates the natural-language list, uses the task type's unique active Registry mapping, and emits one canonical id without adding aliases or weakening the public strict resolver.
+- Lease execution discovers the exact same-Task/Plan/Attempt verified visual inventory once before Deliverable synthesis, supplies only exportable ids to the LLM context, validates competitive/design payload references before sealing, and reuses the same verified materials after Review for composition.
+- Main observed the final Phase 6 integrated suite at 127 total / 126 passed / 1 existing provider skip / 0 failed. `pnpm typecheck`, Registry linter, and Knowledge linter passed. No commit has been created; this evidence is recorded without a pre-commit GREEN or phase-complete claim.
+
 ---
 
 ## Phase 7：恢复、并行和 Gold

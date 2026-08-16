@@ -1129,3 +1129,155 @@ test('composer reuses Deliverable envelope, payload, and report validators after
     /recommendation.*unknown summary|Deliverable.*report/i,
   );
 });
+
+function professionalComposeInput(input: {
+  templateId: string;
+  deliverableId: string;
+  payload: Record<string, unknown>;
+  visuals: 'none' | 'source' | 'annotation';
+}): Parameters<typeof composeReportDocument>[0] {
+  const compose = composeInput() as unknown as Parameters<typeof composeReportDocument>[0];
+  compose.templateId = input.templateId;
+  compose.deliverable.value.deliverableType = input.deliverableId;
+  compose.deliverable.value.payload = structuredClone(input.payload);
+  compose.deliverable.artifact = sealedJsonArtifact(
+    deliverableArtifactId,
+    'deliverable',
+    'research-deliverable-v1-review-gated',
+    compose.deliverable.value,
+  );
+  compose.charts = [];
+  if (input.visuals === 'none') {
+    compose.visualAssets = [];
+  } else {
+    const source = verifiedImage();
+    compose.visualAssets = input.visuals === 'annotation'
+      ? [source, verifiedAnnotation(source)]
+      : [source];
+  }
+  return compose;
+}
+
+function reportSectionText(document: ReportDocument, sectionId: string): string {
+  const section = document.sections.find(({ id }) => id === sectionId);
+  assert.ok(section, `missing ReportDocument section ${sectionId}`);
+  return JSON.stringify(section.blocks);
+}
+
+test('competitive ReportDocument projects matrix, actions, impact, and screenshot comparison into selected sections', () => {
+  const document = composeReportDocument(professionalComposeInput({
+    templateId: 'competitive-analysis-report',
+    deliverableId: 'competitive_analysis_report',
+    visuals: 'source',
+    payload: {
+      competitorSamples: [{ id: 'sample-a', name: 'Phase6 Product A', rationale: 'Primary comparator', evidenceIds: ['evidence-1'] }],
+      dimensionMatrix: [{ dimension: 'onboarding', values: [{ sampleId: 'sample-a', value: 'Phase6 guided matrix value', evidenceIds: ['evidence-1'] }] }],
+      differences: [{ id: 'difference-1', dimension: 'onboarding', statement: 'Phase6 competitor difference', evidenceIds: ['evidence-1'] }],
+      impacts: [{ differenceId: 'difference-1', audience: 'New users', statement: 'Phase6 novice impact' }],
+      actionRecommendations: [{ id: 'action-1', differenceIds: ['difference-1'], priority: 'P1', statement: 'Phase6 prioritized action' }],
+      screenshotComparisons: [{ id: 'screenshot-1', dimension: 'onboarding', sampleIds: ['sample-a'], assetIds: [imageAssetId], caption: 'Phase6 screenshot comparison' }],
+    },
+  }));
+
+  assert.match(reportSectionText(document, 'findings'), /Phase6 guided matrix value/);
+  assert.match(reportSectionText(document, 'findings'), /Phase6 competitor difference/);
+  assert.match(reportSectionText(document, 'comparison'), /Phase6 novice impact/);
+  assert.match(reportSectionText(document, 'recommendations'), /Phase6 prioritized action/);
+  assert.match(reportSectionText(document, 'visual-evidence'), /Phase6 screenshot comparison/);
+  assert.match(reportSectionText(document, 'recommendations'), /P1/);
+  const screenshot = document.sections
+    .find(({ id }) => id === 'visual-evidence')
+    ?.blocks.find((block) => (
+      block.type === 'image'
+      && block.assetRef.assetId === imageAssetId
+      && block.caption.includes('Phase6 screenshot comparison')
+    ));
+  assert.ok(screenshot?.type === 'image');
+});
+
+test('VOC ReportDocument projects themes, quotes, severity, and priority into diagnosis sections', () => {
+  const document = composeReportDocument(professionalComposeInput({
+    templateId: 'voc-diagnosis-report',
+    deliverableId: 'voc_diagnosis_report',
+    visuals: 'none',
+    payload: {
+      datasets: [{ id: 'dataset-1', name: 'Support feedback', source: 'ticket export', recordCount: 120 }],
+      themes: [{ id: 'theme-1', label: 'Phase6 setup delay theme', datasetIds: ['dataset-1'], evidenceIds: ['evidence-1'] }],
+      frequencies: [{ themeId: 'theme-1', count: 38, share: 0.3167 }],
+      sentiments: [{ themeId: 'theme-1', label: 'negative', score: -0.7 }],
+      representativeQuotes: [{ themeId: 'theme-1', quote: 'Phase6 representative quote', evidenceId: 'evidence-1' }],
+      severities: [{ themeId: 'theme-1', level: 'high', rationale: 'Phase6 severe activation block' }],
+      priorities: [{ themeId: 'theme-1', level: 'P1', rationale: 'Phase6 priority rationale' }],
+    },
+  }));
+
+  assert.match(reportSectionText(document, 'findings'), /Phase6 setup delay theme/);
+  assert.match(reportSectionText(document, 'findings'), /Phase6 representative quote/);
+  assert.match(reportSectionText(document, 'comparison'), /Phase6 severe activation block/);
+  assert.match(reportSectionText(document, 'comparison'), /Phase6 priority rationale/);
+  assert.match(reportSectionText(document, 'comparison'), /high/);
+  assert.match(reportSectionText(document, 'comparison'), /P1/);
+});
+
+test('design-audit ReportDocument projects issues, annotations, remediation, and retest into selected sections', () => {
+  const document = composeReportDocument(professionalComposeInput({
+    templateId: 'design-audit-report',
+    deliverableId: 'design_audit_report',
+    visuals: 'annotation',
+    payload: {
+      pages: [{ id: 'page-1', name: 'Checkout', state: 'default' }],
+      issues: [{ id: 'issue-1', pageId: 'page-1', statement: 'Phase6 primary hierarchy issue' }],
+      principles: [{ issueId: 'issue-1', principle: 'clear hierarchy', rationale: 'Phase6 principle rationale' }],
+      severities: [{ issueId: 'issue-1', level: 'major', rationale: 'Phase6 design severity' }],
+      annotatedScreenshots: [{ issueId: 'issue-1', assetId: annotationAssetId, annotation: 'Phase6 competing actions annotation' }],
+      remediations: [{ issueId: 'issue-1', action: 'Phase6 establish one primary action', acceptanceCriteria: ['One dominant action'] }],
+      retests: [{ issueId: 'issue-1', method: 'Expert review', expectedResult: 'Phase6 primary action found first' }],
+    },
+  }));
+
+  assert.match(reportSectionText(document, 'findings'), /Phase6 primary hierarchy issue/);
+  assert.match(reportSectionText(document, 'visual-evidence'), /Phase6 competing actions annotation/);
+  assert.match(reportSectionText(document, 'recommendations'), /Phase6 establish one primary action/);
+  assert.match(reportSectionText(document, 'appendix'), /Phase6 primary action found first/);
+  const annotationComparison = document.sections
+    .find(({ id }) => id === 'visual-evidence')
+    ?.blocks.find((block) => (
+      block.type === 'image-comparison'
+      && block.afterAssetRef.assetId === annotationAssetId
+      && block.caption.includes('Phase6 competing actions annotation')
+    ));
+  assert.ok(annotationComparison?.type === 'image-comparison');
+});
+
+test('accessibility ReportDocument projects POUR, screen-reader behavior, remediation, and verification into selected sections', () => {
+  const document = composeReportDocument(professionalComposeInput({
+    templateId: 'accessibility-audit-report',
+    deliverableId: 'accessibility_audit_report',
+    visuals: 'none',
+    payload: {
+      platforms: [{ name: 'Web', assistiveTechnology: 'VoiceOver', browser: 'Safari' }],
+      pourPrinciples: [{ issueId: 'issue-1', principle: 'Operable', rationale: 'Phase6 keyboard rationale' }],
+      components: [{ issueId: 'issue-1', component: 'Phase6 checkout button', selector: '#checkout' }],
+      conformanceLevels: [
+        { issueId: 'issue-1', level: 'A', criterion: '2.1.1 Keyboard' },
+        { issueId: 'issue-2', level: 'B', criterion: 'Phase6 classification B' },
+        { issueId: 'issue-3', level: 'C', criterion: 'Phase6 classification C' },
+      ],
+      priorities: [
+        { issueId: 'issue-1', level: 'P0', rationale: 'Blocks keyboard users' },
+        { issueId: 'issue-2', level: 'P1', rationale: 'Major barrier' },
+        { issueId: 'issue-3', level: 'P2', rationale: 'Material degradation' },
+        { issueId: 'issue-4', level: 'P3', rationale: 'Minor improvement' },
+      ],
+      screenReaderBehavior: [{ issueId: 'issue-1', observed: 'Phase6 purpose is not announced', expected: 'Name and role are announced' }],
+      remediations: [{ issueId: 'issue-1', action: 'Phase6 use a named native button' }],
+      verification: [{ issueId: 'issue-1', method: 'VoiceOver retest', expectedResult: 'Phase6 control is reachable and announced' }],
+    },
+  }));
+
+  assert.match(reportSectionText(document, 'findings'), /Operable/);
+  assert.match(reportSectionText(document, 'findings'), /Phase6 checkout button/);
+  assert.match(reportSectionText(document, 'visual-evidence'), /Phase6 purpose is not announced/);
+  assert.match(reportSectionText(document, 'recommendations'), /Phase6 use a named native button/);
+  assert.match(reportSectionText(document, 'appendix'), /Phase6 control is reachable and announced/);
+});

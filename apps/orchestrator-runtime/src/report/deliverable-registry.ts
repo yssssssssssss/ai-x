@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 import { parse as parseYaml } from 'yaml';
+import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
 import {
   getConfigRoot,
   loadEvidencePolicy,
@@ -415,6 +416,20 @@ function resolveTaskMapping(
   }
   if (active.length > 1) throw new Error(`duplicate active task mapping for "${taskType}"`);
   return cloneEntry(active[0]!);
+}
+
+export function canonicalizeExpectedDeliverables(requirement: ResearchTaskV2): ResearchTaskV2 {
+  const selected = resolveTaskMapping(validatedEntries(), requirement.task_type);
+  if (!Array.isArray(requirement.expected_deliverables) || requirement.expected_deliverables.length === 0) {
+    throw new Error(`deliverable ${selected.id} is incompatible with empty expectedDeliverables`);
+  }
+  if (requirement.expected_deliverables.some((label) => typeof label !== 'string' || !label.trim())) {
+    throw new Error(`deliverable ${selected.id} is incompatible with expectedDeliverables`);
+  }
+  return {
+    ...requirement,
+    expected_deliverables: [selected.id],
+  };
 }
 
 function resolveActiveDeliverableId(

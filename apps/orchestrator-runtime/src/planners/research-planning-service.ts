@@ -14,7 +14,10 @@ import {
   loadEvidencePolicy,
   type EvidencePolicyRequirement,
 } from '../runtime/config-loader.ts';
-import { resolveDeliverable } from '../report/deliverable-registry.ts';
+import {
+  canonicalizeExpectedDeliverables,
+  resolveDeliverable,
+} from '../report/deliverable-registry.ts';
 import { parseDirectInvoke } from '../runtime/direct-invoke.ts';
 import { hashPrompt } from '../runtime/llm-client.ts';
 import { DirectPlanner } from './direct-planner.ts';
@@ -128,24 +131,25 @@ export class ResearchPlanningService {
     originalInput = requirement.research_goal,
     onProgress?: (event: PlanProgress) => void,
   ): Promise<ResearchPlanningResult> {
+    const canonicalRequirement = canonicalizeExpectedDeliverables(requirement);
     const task: ResearchTaskData = {
-      task_type: requirement.task_type,
-      business_domain: requirement.business_domain,
-      research_goal: requirement.research_goal,
-      assumptions: requirement.assumptions,
-      confirmations: requirement.clarification_questions,
-      blocking_issues: requirement.blocking_issues,
-      sensitivity: requirement.sensitivity,
-      pii_detected: requirement.pii_detected,
+      task_type: canonicalRequirement.task_type,
+      business_domain: canonicalRequirement.business_domain,
+      research_goal: canonicalRequirement.research_goal,
+      assumptions: canonicalRequirement.assumptions,
+      confirmations: canonicalRequirement.clarification_questions,
+      blocking_issues: canonicalRequirement.blocking_issues,
+      sensitivity: canonicalRequirement.sensitivity,
+      pii_detected: canonicalRequirement.pii_detected,
     };
     const emit = onProgress ?? (() => {});
     const provenance: PlanProvenance = {
       modelName: this.dependencies.llm.identity.requestedModel,
       modelVersion: 'research-task-v2',
-      promptHash: hashPrompt(originalInput, requirement, 'research-task-v2'),
-      traceId: `trace_requirement_${hashPrompt(originalInput, requirement).slice(-12)}`,
+      promptHash: hashPrompt(originalInput, canonicalRequirement, 'research-task-v2'),
+      traceId: `trace_requirement_${hashPrompt(originalInput, canonicalRequirement).slice(-12)}`,
     };
-    return this.planTask(task, parseDirectInvoke(originalInput), provenance, emit, requirement);
+    return this.planTask(task, parseDirectInvoke(originalInput), provenance, emit, canonicalRequirement);
   }
 
   async planCurrentFromRequirement(
@@ -153,35 +157,36 @@ export class ResearchPlanningService {
     originalInput = requirement.research_goal,
     onProgress?: (event: PlanProgress) => void,
   ): Promise<CurrentResearchPlanningResult> {
+    const canonicalRequirement = canonicalizeExpectedDeliverables(requirement);
     const task: ResearchTaskData = {
-      task_type: requirement.task_type,
-      business_domain: requirement.business_domain,
-      research_goal: requirement.research_goal,
-      assumptions: requirement.assumptions,
-      confirmations: requirement.clarification_questions,
-      blocking_issues: requirement.blocking_issues,
-      sensitivity: requirement.sensitivity,
-      pii_detected: requirement.pii_detected,
+      task_type: canonicalRequirement.task_type,
+      business_domain: canonicalRequirement.business_domain,
+      research_goal: canonicalRequirement.research_goal,
+      assumptions: canonicalRequirement.assumptions,
+      confirmations: canonicalRequirement.clarification_questions,
+      blocking_issues: canonicalRequirement.blocking_issues,
+      sensitivity: canonicalRequirement.sensitivity,
+      pii_detected: canonicalRequirement.pii_detected,
     };
     const emit = onProgress ?? (() => {});
     const direct = parseDirectInvoke(originalInput);
     const taskProvenance: PlanProvenance = {
       modelName: this.dependencies.llm.identity.requestedModel,
       modelVersion: 'research-task-v2',
-      promptHash: hashPrompt(originalInput, requirement, 'research-task-v2'),
-      traceId: `trace_requirement_${hashPrompt(originalInput, requirement).slice(-12)}`,
+      promptHash: hashPrompt(originalInput, canonicalRequirement, 'research-task-v2'),
+      traceId: `trace_requirement_${hashPrompt(originalInput, canonicalRequirement).slice(-12)}`,
     };
-    const deliverableSelection = resolvePlanningDeliverableSelection(requirement);
+    const deliverableSelection = resolvePlanningDeliverableSelection(canonicalRequirement);
     const artifacts = await this.routedPlanner.planCurrent({
       task,
       direct,
-      requirement,
+      requirement: canonicalRequirement,
       taskProvenance,
       emit,
     }, deliverableSelection.evidenceRequirements);
     return {
       task,
-      structuredTask: requirement,
+      structuredTask: canonicalRequirement,
       activatedNodes: artifacts.activated.map((node) => node.key),
       decisionStates: artifacts.decisionStates,
       candidates: artifacts.candidates,

@@ -67,7 +67,7 @@ import {
   type ToolAdapter,
   type ToolInvokeResult,
 } from '../apps/orchestrator-runtime/src/runtime/tool-adapter.ts';
-import { getConfigRoot, setConfigRoot, type ToolManifest } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import { getConfigRoot, loadEvidencePolicy, setConfigRoot, type ToolManifest } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 import {
@@ -1313,6 +1313,36 @@ test('pass Review composes and lease-seals a verified image and Chart ReportDocu
     assetId: original.assetArtifact.id,
     manifestArtifactId: original.manifestArtifact.id,
   });
+  const annotation = await visualAssets.derive({
+    taskId: lease.taskId,
+    planVersionId: lease.planVersionId,
+    attemptId: lease.attemptId,
+    activeLease: lease,
+    original: {
+      assetId: verifiedImage.artifact.id,
+      manifestArtifactId: verifiedImage.manifestArtifact.id,
+    },
+    derivation: { kind: 'annotation', overlayArtifactId: 'overlay-production-wiring' },
+    bytes: Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64',
+    ),
+    exportPolicy: 'allow',
+  });
+  const verifiedAnnotation = await visualAssets.readVerified({
+    assetId: annotation.assetArtifact.id,
+    manifestArtifactId: annotation.manifestArtifact.id,
+  });
+  assert.deepEqual(verifiedAnnotation.manifest.derivedFrom, {
+    assetId: verifiedImage.artifact.id,
+    manifestArtifactId: verifiedImage.manifestArtifact.id,
+    contentSha256: verifiedImage.manifest.contentSha256,
+    manifestHash: verifiedImage.manifest.manifestHash,
+  });
+  assert.deepEqual(verifiedAnnotation.manifest.derivation, {
+    kind: 'annotation',
+    overlayArtifactId: 'overlay-production-wiring',
+  });
   const spec: ChartSpec = {
     version: 'chart-spec-v1',
     chartId: 'chart-production-wiring',
@@ -1378,8 +1408,30 @@ test('pass Review composes and lease-seals a verified image and Chart ReportDocu
 
   const deliverables = new RecordingDeliverablesFake(async (input) => {
     const value = minimalDeliverable(input);
+    const payload = value.payload as {
+      competitorSamples: Array<{ evidenceIds: string[] }>;
+      dimensionMatrix: Array<{ values: Array<{ evidenceIds: string[] }> }>;
+      differences: Array<{ evidenceIds: string[] }>;
+      screenshotComparisons: Array<{
+        id: string;
+        dimension: string;
+        sampleIds: string[];
+        assetIds: string[];
+        caption: string;
+      }>;
+    };
+    payload.screenshotComparisons = [{
+      id: 'screenshot-production-wiring',
+      dimension: 'verified visual comparison',
+      sampleIds: ['sample-a'],
+      assetIds: [verifiedImage.artifact.id, verifiedAnnotation.artifact.id],
+      caption: 'Verified source image and derived annotation comparison',
+    }];
     const evidenceId = input.evidenceManifest.value.entries[0]?.id;
     assert.ok(evidenceId);
+    payload.competitorSamples[0]!.evidenceIds = [evidenceId];
+    payload.dimensionMatrix[0]!.values[0]!.evidenceIds = [evidenceId];
+    payload.differences[0]!.evidenceIds = [evidenceId];
     const fact = value.findingGraph.findings[0];
     assert.ok(fact?.kind === 'fact');
     fact.evidenceIds = [evidenceId];
@@ -1422,6 +1474,7 @@ test('pass Review composes and lease-seals a verified image and Chart ReportDocu
 
   const expectedVisualAssetManifests: Array<VerifiedVisualAsset['manifest']> = [
     structuredClone(verifiedImage.manifest),
+    structuredClone(verifiedAnnotation.manifest),
     structuredClone(verifiedChart.manifest),
   ];
   const productionCompositionDependencies = { artifacts: store, visualAssets, repository };
@@ -1439,6 +1492,9 @@ test('pass Review composes and lease-seals a verified image and Chart ReportDocu
   })), [{
     assetId: verifiedImage.artifact.id,
     manifestArtifactId: verifiedImage.manifestArtifact.id,
+  }, {
+    assetId: verifiedAnnotation.artifact.id,
+    manifestArtifactId: verifiedAnnotation.manifestArtifact.id,
   }]);
   assert.equal(discovered.charts.length, 1);
   assert.deepEqual(discovered.charts[0], {
@@ -1457,7 +1513,10 @@ test('pass Review composes and lease-seals a verified image and Chart ReportDocu
           assetId: artifact.id,
           manifestArtifactId: manifestArtifact.id,
         })),
-        [{ assetId: verifiedImage.artifact.id, manifestArtifactId: verifiedImage.manifestArtifact.id }],
+        [
+          { assetId: verifiedImage.artifact.id, manifestArtifactId: verifiedImage.manifestArtifact.id },
+          { assetId: verifiedAnnotation.artifact.id, manifestArtifactId: verifiedAnnotation.manifestArtifact.id },
+        ],
       );
       assert.deepEqual(input.charts.map(({ spec: chartSpec, specHash, table, asset }) => ({
         spec: chartSpec,
@@ -1490,7 +1549,7 @@ test('pass Review composes and lease-seals a verified image and Chart ReportDocu
   });
   const result = await engine.execute({ lease, expectedModel: 'pinned-model' });
 
-  assert.equal(result.status, 'completed');
+  assert.equal(result.status, 'completed', JSON.stringify(result));
   assert.equal(compositionCalls, 1);
   const reportDocumentArtifact = await repository.findSealedArtifact({
     taskId: lease.taskId,
@@ -1501,8 +1560,19 @@ test('pass Review composes and lease-seals a verified image and Chart ReportDocu
   assert.equal(reportDocumentArtifact.state, 'SEALED');
   assert.equal(reportDocumentArtifact.schemaVersion, 'report-document-v1');
   const storedDocument = await store.readVerifiedJson<ReportDocument>(reportDocumentArtifact.id);
-  assert.ok(storedDocument.value.sections.flatMap(({ blocks }) => blocks).some(({ type }) => type === 'image'));
-  assert.ok(storedDocument.value.sections.flatMap(({ blocks }) => blocks).some(({ type }) => type === 'chart'));
+  const documentBlocks = storedDocument.value.sections.flatMap(({ blocks }) => blocks);
+  const imageComparison = documentBlocks.find((block) => (
+    block.type === 'image-comparison'
+    && block.beforeAssetRef.assetId === verifiedImage.artifact.id
+    && block.afterAssetRef.assetId === verifiedAnnotation.artifact.id
+  ));
+  assert.ok(imageComparison?.type === 'image-comparison');
+  assert.ok(documentBlocks.some(({ type }) => type === 'chart'));
+  const standaloneImageIds = documentBlocks.flatMap((block) => (
+    block.type === 'image' ? [block.assetRef.assetId] : []
+  ));
+  assert.equal(standaloneImageIds.includes(verifiedImage.artifact.id), false);
+  assert.equal(standaloneImageIds.includes(verifiedAnnotation.artifact.id), false);
 
   const reportPackage = await new CurrentReportPackageReader({
     artifacts: store,
@@ -2535,5 +2605,63 @@ test('failed Skill provenance retains its persisted receipt when config capture 
   } finally {
     setConfigRoot(originalRoot);
     rmSync(missingRoot, { recursive: true, force: true });
+  }
+});
+
+test('one production Tool collector Manifest can satisfy every configured required Evidence Policy', async () => {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]!],
+    {
+      deliverable_type: 'competitive_analysis_report',
+      evidence_requirements: [{
+        id: 'collector-proof',
+        acceptedClasses: ['public_source'],
+        minimumCount: 1,
+        required: true,
+      }],
+    },
+    {
+      version: 'research-task-v2',
+      task_type: 'competitive_research',
+      research_goal: 'Compare verified competitors',
+      expected_deliverables: ['competitive_analysis_report'],
+      success_criteria: [{ id: 'fixture-criterion', statement: 'comparison is evidence backed' }],
+    },
+  );
+  const deliverables = new RecordingDeliverablesFake();
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new CountingRealLLM(),
+    deliverables,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed');
+  const evidenceInput = deliverables.calls[0]?.evidenceManifest;
+  assert.ok(evidenceInput);
+  assert.equal(evidenceInput.artifact.state, 'SEALED');
+  assert.equal(evidenceInput.value.taskId, lease.taskId);
+  assert.equal(evidenceInput.value.planVersionId, lease.planVersionId);
+  assert.equal(evidenceInput.value.attemptId, lease.attemptId);
+  const manifestArtifact = await repository.getArtifact(evidenceInput.artifact.id);
+  assert.equal(manifestArtifact?.state, 'SEALED');
+  assert.equal(manifestArtifact?.taskId, lease.taskId);
+  assert.equal(manifestArtifact?.planVersionId, lease.planVersionId);
+  assert.equal(manifestArtifact?.attemptId, lease.attemptId);
+
+  for (const policy of loadEvidencePolicy().policies) {
+    const requiredRequirements = policy.requirements.filter(({ required }) => required);
+    assert.ok(requiredRequirements.length > 0, `${policy.task_type}/${policy.deliverable_type} must require Evidence`);
+    for (const requirement of requiredRequirements) {
+      const actual = evidenceInput.value.entries.filter((entry) => (
+        entry.toolTier === 'core' && requirement.accepted_classes.includes(entry.evidenceClass)
+      )).length;
+      assert.ok(
+        actual >= requirement.minimum_count,
+        `${policy.task_type}/${policy.deliverable_type}/${requirement.id} must be achievable by collector output`,
+      );
+    }
   }
 });

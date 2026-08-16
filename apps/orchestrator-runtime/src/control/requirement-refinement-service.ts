@@ -5,6 +5,7 @@ import type {
 import { ControlPlaneConflictError } from '../../../../database/control-plane.ts';
 import type { ControlRequirementVersion } from '../../../../packages/api-contract/control-workflow.ts';
 import type { PlanProgress, ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
+import { canonicalizeExpectedDeliverables } from '../report/deliverable-registry.ts';
 import type { CurrentResearchPlanningResult } from '../planners/research-planning-service.ts';
 import type { LLMClient } from '../runtime/llm-client.ts';
 import { hashPrompt } from '../runtime/llm-client.ts';
@@ -316,7 +317,7 @@ export class RequirementRefinementService {
       },
     });
     this.dependencies.validator.validateOrThrow('research-task-v2', generated.data);
-    const requirement = generated.data;
+    const requirement = canonicalizeExpectedDeliverables(generated.data);
     const task = await this.dependencies.repository.getTaskDetail?.(input.taskId);
     const expectedVersion = input.expectedVersion
       ?? input.expectedStateVersion

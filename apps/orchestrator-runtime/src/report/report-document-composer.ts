@@ -542,6 +542,323 @@ function researchPlanRenderPayload(value: unknown): ResearchPlanRenderPayload | 
     },
   };
 }
+function payloadRecords(payload: unknown, field: string): Record<string, unknown>[] {
+  const value = record(payload)?.[field];
+  return Array.isArray(value)
+    ? value.flatMap((candidate) => {
+        const item = record(candidate);
+        return item ? [item] : [];
+      })
+    : [];
+}
+
+function payloadString(value: Record<string, unknown>, field: string): string {
+  return typeof value[field] === 'string' ? value[field] : '';
+}
+
+function payloadStrings(value: Record<string, unknown>, field: string): string[] {
+  return Array.isArray(value[field])
+    ? value[field].filter((item): item is string => typeof item === 'string')
+    : [];
+}
+
+function professionalSectionBlocks(
+  sectionId: ReportTemplateSectionId,
+  input: ComposeReportDocumentInput,
+): ReportBlock[] {
+  const deliverable = input.deliverable.value;
+  const payload = deliverable.payload;
+  if (deliverable.deliverableType === 'competitive_analysis_report') {
+    if (sectionId === 'scope-method') {
+      return [{
+        id: 'competitive-samples',
+        type: 'list',
+        items: payloadRecords(payload, 'competitorSamples').map((sample) =>
+          `${payloadString(sample, 'name')}: ${payloadString(sample, 'rationale')}`),
+      }];
+    }
+    if (sectionId === 'findings') {
+      const matrix = payloadRecords(payload, 'dimensionMatrix').flatMap((row, rowIndex) =>
+        payloadRecords(row, 'values').map((value, valueIndex) => ({
+          id: `competitive-matrix-${rowIndex + 1}-${valueIndex + 1}`,
+          type: 'fact' as const,
+          text: `${payloadString(row, 'dimension')} — ${payloadString(value, 'sampleId')}: ${payloadString(value, 'value')}`,
+          evidenceIds: payloadStrings(value, 'evidenceIds'),
+        })));
+      const differences = payloadRecords(payload, 'differences').map((difference, index) => ({
+        id: `competitive-difference-${index + 1}`,
+        type: 'fact' as const,
+        text: `${payloadString(difference, 'dimension')}: ${payloadString(difference, 'statement')}`,
+        evidenceIds: payloadStrings(difference, 'evidenceIds'),
+      }));
+      return [...matrix, ...differences];
+    }
+    if (sectionId === 'visual-evidence') {
+      const assetsById = new Map(input.visualAssets.map((asset) => [asset.artifact.id, asset]));
+      return payloadRecords(payload, 'screenshotComparisons').flatMap((comparison, comparisonIndex) => {
+        const selected = payloadStrings(comparison, 'assetIds').map((assetId) =>
+          assetsById.get(assetId)
+            ?? fail(`Screenshot comparison references missing verified visual Asset ${assetId}`));
+        const selectedByReference = new Map(selected.map((asset) => [
+          assetReferenceKey(assetReference(asset)),
+          asset,
+        ]));
+        const pairedReferences = new Set<string>();
+        const blocks: ReportBlock[] = [];
+        let comparisonBlockIndex = 0;
+        for (const annotation of selected) {
+          if (annotation.manifest.derivation?.kind !== 'annotation') continue;
+          const lineage = annotation.manifest.derivedFrom;
+          if (!lineage) fail(`Screenshot annotation ${annotation.artifact.id} has no original lineage`);
+          const original = selectedByReference.get(assetReferenceKey(lineage));
+          if (
+            !original
+            || lineage.contentSha256 !== original.manifest.contentSha256
+            || lineage.manifestHash !== original.manifest.manifestHash
+          ) {
+            fail(`Screenshot annotation ${annotation.artifact.id} does not match its exact verified original lineage`);
+          }
+          pairedReferences.add(assetReferenceKey(assetReference(original)));
+          pairedReferences.add(assetReferenceKey(assetReference(annotation)));
+          comparisonBlockIndex += 1;
+          blocks.push({
+            id: `competitive-screenshot-comparison-${comparisonIndex + 1}-${comparisonBlockIndex}`,
+            type: 'image-comparison',
+            beforeAssetRef: assetReference(original),
+            afterAssetRef: assetReference(annotation),
+            caption: payloadString(comparison, 'caption'),
+            altText: `Verified ${payloadString(comparison, 'dimension')} screenshot annotation comparison.`,
+          });
+        }
+        let imageBlockIndex = 0;
+        for (const asset of selected) {
+          if (pairedReferences.has(assetReferenceKey(assetReference(asset)))) continue;
+          imageBlockIndex += 1;
+          blocks.push({
+            id: `competitive-screenshot-${comparisonIndex + 1}-${imageBlockIndex}`,
+            type: 'image',
+            assetRef: assetReference(asset),
+            caption: payloadString(comparison, 'caption'),
+            altText: `Verified ${payloadString(comparison, 'dimension')} screenshot comparison.`,
+          });
+        }
+        return blocks;
+      });
+    }
+    if (sectionId === 'comparison') {
+      return [{
+        id: 'competitive-impacts',
+        type: 'list',
+        items: payloadRecords(payload, 'impacts').map((impact) =>
+          `${payloadString(impact, 'audience')}: ${payloadString(impact, 'statement')}`),
+      }];
+    }
+    if (sectionId === 'recommendations') {
+      return [{
+        id: 'competitive-actions',
+        type: 'list',
+        items: payloadRecords(payload, 'actionRecommendations').map((action) =>
+          `${payloadString(action, 'priority')}: ${payloadString(action, 'statement')}`),
+      }];
+    }
+  }
+  if (deliverable.deliverableType === 'voc_diagnosis_report') {
+    if (sectionId === 'scope-method') {
+      return [{
+        id: 'voc-datasets',
+        type: 'list',
+        items: payloadRecords(payload, 'datasets').map((dataset) =>
+          `${payloadString(dataset, 'name')} — ${payloadString(dataset, 'source')}: ${String(dataset.recordCount ?? '')} records`),
+      }];
+    }
+    if (sectionId === 'key-metrics') {
+      const evidenceByTheme = new Map(
+        payloadRecords(payload, 'themes').map((theme) => [
+          payloadString(theme, 'id'),
+          payloadStrings(theme, 'evidenceIds'),
+        ]),
+      );
+      const frequencies = payloadRecords(payload, 'frequencies').flatMap((frequency, index): ReportMetricBlock[] => {
+        const themeId = payloadString(frequency, 'themeId');
+        const evidenceIds = evidenceByTheme.get(themeId)
+          ?? fail(`VOC frequency references missing theme ${themeId}`);
+        return [{
+          id: `voc-frequency-count-${index + 1}`,
+          type: 'metric',
+          label: `${themeId} count`,
+          value: typeof frequency.count === 'number' ? frequency.count : 0,
+          evidenceIds,
+        }, {
+          id: `voc-frequency-share-${index + 1}`,
+          type: 'metric',
+          label: `${themeId} share`,
+          value: typeof frequency.share === 'number' ? frequency.share : 0,
+          evidenceIds,
+        }];
+      });
+      const sentiments = payloadRecords(payload, 'sentiments').map((sentiment, index): ReportMetricBlock => {
+        const themeId = payloadString(sentiment, 'themeId');
+        return {
+          id: `voc-sentiment-${index + 1}`,
+          type: 'metric',
+          label: `${themeId} ${payloadString(sentiment, 'label')} sentiment`,
+          value: typeof sentiment.score === 'number' ? sentiment.score : 0,
+          evidenceIds: evidenceByTheme.get(themeId)
+            ?? fail(`VOC sentiment references missing theme ${themeId}`),
+        };
+      });
+      return [...frequencies, ...sentiments];
+    }
+    if (sectionId === 'findings') {
+      const themes = payloadRecords(payload, 'themes').map((theme, index): ReportFactBlock => ({
+        id: `voc-theme-${index + 1}`,
+        type: 'fact',
+        text: payloadString(theme, 'label'),
+        evidenceIds: payloadStrings(theme, 'evidenceIds'),
+      }));
+      const quotes = payloadRecords(payload, 'representativeQuotes').map((quote, index): ReportFactBlock => ({
+        id: `voc-quote-${index + 1}`,
+        type: 'fact',
+        text: `“${payloadString(quote, 'quote')}”`,
+        evidenceIds: [payloadString(quote, 'evidenceId')],
+      }));
+      return [...themes, ...quotes];
+    }
+    if (sectionId === 'comparison') {
+      return [{
+        id: 'voc-severity-priority',
+        type: 'list',
+        items: [
+          ...payloadRecords(payload, 'severities').map((severity) =>
+            `${payloadString(severity, 'themeId')} — ${payloadString(severity, 'level')}: ${payloadString(severity, 'rationale')}`),
+          ...payloadRecords(payload, 'priorities').map((priority) =>
+            `${payloadString(priority, 'themeId')} — ${payloadString(priority, 'level')}: ${payloadString(priority, 'rationale')}`),
+        ],
+      }];
+    }
+  }
+  if (deliverable.deliverableType === 'design_audit_report') {
+    if (sectionId === 'scope-method') {
+      return [{
+        id: 'design-pages',
+        type: 'list',
+        items: payloadRecords(payload, 'pages').map((page) =>
+          `${payloadString(page, 'name')} — ${payloadString(page, 'state')}`),
+      }];
+    }
+    if (sectionId === 'findings') {
+      return [{
+        id: 'design-findings',
+        type: 'list',
+        items: [
+          ...payloadRecords(payload, 'issues').map((issue) => payloadString(issue, 'statement')),
+          ...payloadRecords(payload, 'principles').map((principle) =>
+            `${payloadString(principle, 'principle')}: ${payloadString(principle, 'rationale')}`),
+          ...payloadRecords(payload, 'severities').map((severity) =>
+            `${payloadString(severity, 'level')}: ${payloadString(severity, 'rationale')}`),
+        ],
+      }];
+    }
+    if (sectionId === 'visual-evidence') {
+      const assetsById = new Map(input.visualAssets.map((asset) => [asset.artifact.id, asset]));
+      return payloadRecords(payload, 'annotatedScreenshots').map((screenshot, index): ReportImageComparisonBlock => {
+        const assetId = payloadString(screenshot, 'assetId');
+        const annotation = assetsById.get(assetId)
+          ?? fail(`Annotated screenshot references missing verified visual Asset ${assetId}`);
+        const originalReference = annotation.manifest.derivedFrom;
+        if (annotation.manifest.derivation?.kind !== 'annotation' || !originalReference) {
+          fail(`Annotated screenshot Asset ${assetId} does not have verified annotation lineage`);
+        }
+        const original = input.visualAssets.find((asset) =>
+          assetReferenceKey(assetReference(asset)) === assetReferenceKey(originalReference));
+        if (!original) fail(`Annotated screenshot Asset ${assetId} has missing original visual lineage`);
+        return {
+          id: `design-annotation-${index + 1}`,
+          type: 'image-comparison',
+          beforeAssetRef: assetReference(original),
+          afterAssetRef: assetReference(annotation),
+          caption: payloadString(screenshot, 'annotation'),
+          altText: `Verified design issue annotation for ${payloadString(screenshot, 'issueId')}.`,
+        };
+      });
+    }
+    if (sectionId === 'recommendations') {
+      return [{
+        id: 'design-remediations',
+        type: 'list',
+        items: payloadRecords(payload, 'remediations').map((remediation) =>
+          `${payloadString(remediation, 'action')} — ${payloadStrings(remediation, 'acceptanceCriteria').join('; ')}`),
+      }];
+    }
+    if (sectionId === 'appendix') {
+      return [{
+        id: 'design-retests',
+        type: 'list',
+        items: payloadRecords(payload, 'retests').map((retest) =>
+          `${payloadString(retest, 'method')}: ${payloadString(retest, 'expectedResult')}`),
+      }];
+    }
+  }
+  if (deliverable.deliverableType === 'accessibility_audit_report') {
+    if (sectionId === 'scope-method') {
+      return [{
+        id: 'accessibility-platforms',
+        type: 'list',
+        items: payloadRecords(payload, 'platforms').map((platform) =>
+          `${payloadString(platform, 'name')} — ${payloadString(platform, 'assistiveTechnology')} / ${payloadString(platform, 'browser')}`),
+      }];
+    }
+    if (sectionId === 'key-metrics') {
+      return [{
+        id: 'accessibility-levels-priorities',
+        type: 'list',
+        items: [
+          ...payloadRecords(payload, 'conformanceLevels').map((level) =>
+            `${payloadString(level, 'issueId')} — ${payloadString(level, 'level')}: ${payloadString(level, 'criterion')}`),
+          ...payloadRecords(payload, 'priorities').map((priority) =>
+            `${payloadString(priority, 'issueId')} — ${payloadString(priority, 'level')}: ${payloadString(priority, 'rationale')}`),
+        ],
+      }];
+    }
+    if (sectionId === 'findings') {
+      return [{
+        id: 'accessibility-findings',
+        type: 'list',
+        items: [
+          ...payloadRecords(payload, 'pourPrinciples').map((principle) =>
+            `${payloadString(principle, 'principle')}: ${payloadString(principle, 'rationale')}`),
+          ...payloadRecords(payload, 'components').map((component) =>
+            `${payloadString(component, 'component')} (${payloadString(component, 'selector')})`),
+        ],
+      }];
+    }
+    if (sectionId === 'visual-evidence') {
+      return [{
+        id: 'accessibility-screen-reader-behavior',
+        type: 'list',
+        items: payloadRecords(payload, 'screenReaderBehavior').map((behavior) =>
+          `${payloadString(behavior, 'observed')} — expected: ${payloadString(behavior, 'expected')}`),
+      }];
+    }
+    if (sectionId === 'recommendations') {
+      return [{
+        id: 'accessibility-remediations',
+        type: 'list',
+        items: payloadRecords(payload, 'remediations').map((remediation) =>
+          payloadString(remediation, 'action')),
+      }];
+    }
+    if (sectionId === 'appendix') {
+      return [{
+        id: 'accessibility-verification',
+        type: 'list',
+        items: payloadRecords(payload, 'verification').map((verification) =>
+          `${payloadString(verification, 'method')}: ${payloadString(verification, 'expectedResult')}`),
+      }];
+    }
+  }
+  return [];
+}
 
 function deliverableLabel(deliverableType: string): string {
   return deliverableType.replace(/[_-]+/gu, ' ').replace(/\b\w/gu, (letter) => letter.toUpperCase());
@@ -579,6 +896,7 @@ function composeSectionBlocks(
 ): ReportBlock[] {
   const deliverable = input.deliverable.value;
   const researchPlanPayload = researchPlanRenderPayload(deliverable.payload);
+  const professionalBlocks = professionalSectionBlocks(sectionId, input);
   switch (sectionId) {
     case 'cover':
       return [
@@ -595,6 +913,9 @@ function composeSectionBlocks(
     case 'background':
       return [paragraph('background-goal', researchPlanPayload?.researchGoal ?? deliverable.methodSummary)];
     case 'scope-method':
+      if (professionalBlocks.length > 0) {
+        return [paragraph('method-summary', deliverable.methodSummary), ...professionalBlocks];
+      }
       return researchPlanPayload
         ? [
             paragraph(
@@ -622,20 +943,25 @@ function composeSectionBlocks(
           }
         }
       }
-      if (metrics.length > 0) return metrics;
+      if (metrics.length > 0 || professionalBlocks.length > 0) {
+        return [...metrics, ...professionalBlocks];
+      }
       return researchPlanPayload
         ? [paragraph('sampling-target', `Target competitor sample: ${researchPlanPayload.competitorSampling.targetCount}.`)]
         : [];
     }
     case 'findings':
-      return deliverable.findingGraph.findings.map((finding, index) => finding.kind === 'fact'
-        ? {
-            id: `finding-fact-${index + 1}`,
-            type: 'fact',
-            text: finding.statement,
-            evidenceIds: [...finding.evidenceIds],
-          }
-        : paragraph(`finding-inference-${index + 1}`, finding.statement));
+      return [
+        ...deliverable.findingGraph.findings.map((finding, index) => finding.kind === 'fact'
+          ? {
+              id: `finding-fact-${index + 1}`,
+              type: 'fact' as const,
+              text: finding.statement,
+              evidenceIds: [...finding.evidenceIds],
+            }
+          : paragraph(`finding-inference-${index + 1}`, finding.statement)),
+        ...professionalBlocks,
+      ];
     case 'question-analysis': {
       const summaryById = new Map(
         deliverable.findingGraph.subQuestionSummaries.map((summary) => [summary.id, summary.summary]),
@@ -648,6 +974,7 @@ function composeSectionBlocks(
           )));
     }
     case 'visual-evidence': {
+      if (professionalBlocks.length > 0) return professionalBlocks;
       const annotationsByOriginal = new Map<string, VerifiedVisualAsset[]>();
       for (const asset of input.visualAssets) {
         if (asset.manifest.derivation?.kind !== 'annotation' || !asset.manifest.derivedFrom) continue;
@@ -684,28 +1011,37 @@ function composeSectionBlocks(
       return blocks;
     }
     case 'comparison':
-      return input.charts.map(({ spec, specHash, table, asset }, index): ReportChartBlock => ({
-        id: `chart-${index + 1}`,
-        type: 'chart',
-        chartRef: { chartId: spec.chartId, ...assetReference(asset) },
-        specHash,
-        spec: structuredClone(spec),
-        table: structuredClone(table),
-        caption: spec.title,
-        altText: chartAltText(spec),
-      }));
+      return [
+        ...input.charts.map(({ spec, specHash, table, asset }, index): ReportChartBlock => ({
+          id: `chart-${index + 1}`,
+          type: 'chart',
+          chartRef: { chartId: spec.chartId, ...assetReference(asset) },
+          specHash,
+          spec: structuredClone(spec),
+          table: structuredClone(table),
+          caption: spec.title,
+          altText: chartAltText(spec),
+        })),
+        ...professionalBlocks,
+      ];
     case 'conclusion':
       return deliverable.findingGraph.overallConclusions.map((conclusion, index) =>
         paragraph(`conclusion-${index + 1}`, conclusion.statement));
     case 'recommendations':
-      return deliverable.recommendations.map((recommendation, index) =>
-        paragraph(`recommendation-${index + 1}`, recommendation.statement));
+      return [
+        ...deliverable.recommendations.map((recommendation, index) =>
+          paragraph(`recommendation-${index + 1}`, recommendation.statement)),
+        ...professionalBlocks,
+      ];
     case 'risks':
       return deliverable.risksAndOpenIssues.map((risk, index) => paragraph(`risk-${index + 1}`, risk));
     case 'appendix': {
       const evidenceItems = input.evidenceManifest.value.entries.map((entry) =>
         `${entry.id}: ${entry.evidenceClass} Evidence from Artifact ${entry.artifactId}.`);
-      return evidenceItems.length > 0 ? [{ id: 'evidence-index', type: 'list', items: evidenceItems }] : [];
+      return [
+        ...professionalBlocks,
+        ...(evidenceItems.length > 0 ? [{ id: 'evidence-index', type: 'list' as const, items: evidenceItems }] : []),
+      ];
     }
   }
 }

@@ -25,20 +25,20 @@ policies:
     deliverable_type: voc_diagnosis_report
     requirements:
       - id: voc-diagnosis-report
-        accepted_classes: [dataset, user_input]
+        accepted_classes: [dataset, user_input, public_source]
         minimum_count: 1
         required: true
   - task_type: design_audit
     deliverable_type: design_audit_report
     requirements:
       - id: design-audit-report
-        accepted_classes: [screenshot, user_input]
+        accepted_classes: [screenshot, user_input, public_source]
         minimum_count: 1
         required: true
   - task_type: a11y_audit
     deliverable_type: accessibility_audit_report
     requirements:
       - id: accessibility-audit-report
-        accepted_classes: [screenshot, user_input]
+        accepted_classes: [screenshot, user_input, public_source]
         minimum_count: 1
         required: true
