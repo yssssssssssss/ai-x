@@ -73,6 +73,7 @@ import {
   validateStepInputBindings,
   type SealedStepOutput as BindingSealedStepOutput,
 } from './step-input-resolver.ts';
+import { ExecutionScheduler } from './execution-scheduler.ts';
 
 type EngineStep = CurrentPlanStep & { purpose?: string };
 
@@ -730,6 +731,7 @@ export class LeaseExecutionEngine {
       review(input: ReportReviewInput, composer?: DeliverableComposer): Promise<ReportReviewResult>;
     };
     reportComposition?: ReportCompositionPort;
+    scheduler?: ExecutionScheduler;
   }) {
     this.llm = new ReceiptLLMClient(dependencies.llm, dependencies.repository);
   }
@@ -815,8 +817,23 @@ export class LeaseExecutionEngine {
     const outputs: EngineSealedStepOutput[] = [];
     const resolvedArtifacts = new Map<string, ResolvedEvidenceArtifact>();
     const gaps: string[] = [];
+    const stepByKey = new Map(plan.steps.map((step) => [String(step.step_no), step]));
+    const scheduler = this.dependencies.scheduler ?? new ExecutionScheduler({ execute: async (step) => step.key });
+    const schedule = await scheduler.schedule({
+      steps: plan.steps.map((step, index) => ({
+        key: String(step.step_no),
+        dependsOn: step.depends_on.length > 0
+          ? step.depends_on.map(String)
+          : index > 0 ? [String(plan.steps[index - 1]!.step_no)] : [],
+        tier: step.actor_type === 'tool' ? this.dependencies.skillLoader.getTool(step.actor_id)?.tier ?? 'core' : 'core',
+      })),
+    }, {});
 
-    for (const step of plan.steps) {
+    for (const wave of schedule.waves) {
+      for (const stepKey of wave) {
+        const step = stepByKey.get(stepKey);
+        if (!step) throw new ExecutionAuthenticityError(`scheduler returned unknown step ${stepKey}`);
+
       const checkpoint = reusable.get(step.step_no);
       if (checkpoint) {
         active = await this.refreshLease(input.lease);
@@ -1061,6 +1078,7 @@ export class LeaseExecutionEngine {
         if (isIntegrityFailure(error)) throw error;
         return { status: 'paused', attemptId: input.lease.attemptId, failedStepNo: step.step_no, failure };
       }
+    }
     }
     let sealedEvidenceManifest!: CurrentDeliverableGenerateInput['evidenceManifest'];
     let evidenceResolver!: EvidenceArtifactResolver;
@@ -1792,7 +1810,13 @@ export class LeaseExecutionEngine {
         }
       },
       sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
-      invoke: () => this.dependencies.tools.invoke({ toolId: step.actor_id, input: toolInput, manifest }),
+      invoke: () => this.dependencies.tools.invoke({
+        toolId: step.actor_id,
+        input: toolInput,
+        manifest,
+        attemptId: lease.attemptId,
+        retryOf: lease.retryOf,
+      }),
     });
     if (retryResult.status === 'failed') {
       if (retryResult.failure.kind === 'lease_lost') {

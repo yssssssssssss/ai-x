@@ -4,6 +4,7 @@ import { ExecutionRecoveryService } from '../apps/orchestrator-runtime/src/contr
 
 type RecoveryExecution = {
   taskId: string;
+  planVersionId: string;
   attemptId: string;
   taskState: 'executing' | 'paused' | 'completed' | 'failed' | 'cancelled';
   attemptState: 'active' | 'paused' | 'completed' | 'failed' | 'cancelled';
@@ -23,6 +24,7 @@ type RecoveryArtifact = {
 class MemoryRecoveryStore {
   readonly executions: RecoveryExecution[] = [
     {
+      planVersionId: 'expired-plan',
       taskId: 'expired-task',
       attemptId: 'expired-attempt',
       taskState: 'executing',
@@ -30,6 +32,7 @@ class MemoryRecoveryStore {
       leaseExpiresAt: new Date('2026-08-17T00:00:00.000Z'),
     },
     {
+      planVersionId: 'live-plan',
       taskId: 'live-task',
       attemptId: 'live-attempt',
       taskState: 'executing',
@@ -44,6 +47,7 @@ class MemoryRecoveryStore {
     { id: 'sealed-deliverable', kind: 'deliverable', state: 'SEALED', storageUri: '/runs/deliverable.json' },
     { id: 'sealed-review', kind: 'report_review', state: 'SEALED', storageUri: '/runs/review.json' },
     { id: 'sealed-document', kind: 'report_document', state: 'SEALED', storageUri: '/runs/document.json' },
+    { id: 'live-staging', kind: 'other', state: 'STAGING', storageUri: '/runs/live.json' },
     { id: 'sealed-other', kind: 'other', state: 'SEALED', storageUri: '/runs/other.json' },
   ];
 
@@ -67,8 +71,9 @@ class MemoryRecoveryStore {
     this.calls.pause.push(input);
   }
 
-  async listArtifacts() {
-    return this.artifacts.map((artifact) => ({ ...artifact }));
+  async listArtifactsForAttempt(input: { taskId: string; planVersionId: string; attemptId: string }) {
+    if (input.attemptId !== 'expired-attempt' || input.taskId !== 'expired-task' || input.planVersionId !== 'expired-plan') return [];
+    return this.artifacts.filter((artifact) => artifact.id !== 'live-staging').map((artifact) => ({ ...artifact }));
   }
 
   async quarantineArtifact(input: { artifactId: string; quarantineUri: string }) {
@@ -129,6 +134,8 @@ test('recover quarantines STAGING artifacts before failing their registry record
   const orphan = store.artifacts.find((artifact) => artifact.id === 'orphan-staging');
   assert.equal(orphan?.state, 'FAILED');
   assert.match(orphan?.quarantinedUri ?? '', /orphan-staging/);
+  assert.equal(store.artifacts.find((artifact) => artifact.id === 'live-staging')?.state, 'STAGING');
+  assert.equal(store.calls.quarantine.some((call) => call.artifactId === 'live-staging'), false);
   assert.equal(store.calls.quarantine.length, 1);
   assert.equal(store.calls.fail.length, 1);
   assert.equal(store.calls.quarantine[0]?.artifactId, 'orphan-staging');

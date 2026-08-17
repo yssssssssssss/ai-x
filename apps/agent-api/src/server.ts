@@ -1,9 +1,14 @@
-import { loadEnv, pool } from '../../../database/db.ts';
+import { closePool, loadEnv, pool } from '../../../database/db.ts';
 loadEnv(); // 读 .env:DATABASE_URL / LLM 网关 / JWT_SECRET
 
 import express from 'express';
 import { ControlPlaneRepository, type ControlTaskDetail } from '../../../database/control-plane.ts';
 import { TaskWorkflowService } from '../../orchestrator-runtime/src/control/task-workflow.ts';
+import {
+  ControlPlaneExecutionRecoveryStore,
+  ExecutionRecoveryController,
+  ExecutionRecoveryService,
+} from '../../orchestrator-runtime/src/control/execution-recovery-service.ts';
 import { authRouter } from './routes/auth.ts';
 import { conversationsRouter } from './routes/conversations.ts';
 import { tasksRouter } from './routes/tasks.ts';
@@ -151,11 +156,23 @@ export function createAgentApiApp(deps: AgentApiDependencies = {}) {
   }
   return app;
 }
-
 if (import.meta.url === `file://${process.argv[1]}`) {
   const PORT = Number(process.env.API_PORT ?? 3001);
+  const recovery = new ExecutionRecoveryController(
+    new ExecutionRecoveryService({
+      store: new ControlPlaneExecutionRecoveryStore(new ControlPlaneRepository(pool)),
+    }),
+  );
+  await recovery.start();
   const controlRuntime = buildControlRuntime();
-  createAgentApiApp({ controlRuntime }).listen(PORT, () => {
+  const server = createAgentApiApp({ controlRuntime }).listen(PORT, () => {
     console.log(`agent-api listening on http://localhost:${PORT}`);
   });
+  const shutdown = async () => {
+    await recovery.stop();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await closePool();
+  };
+  process.once('SIGINT', () => { void shutdown(); });
+  process.once('SIGTERM', () => { void shutdown(); });
 }

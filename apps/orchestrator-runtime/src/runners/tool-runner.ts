@@ -46,7 +46,13 @@ export class ToolActorRunner implements ActorRunner {
     }
 
     this.validator.validateFileOrThrow(join(getConfigRoot(), manifest.input_schema), toolInput);
-    const res = await this.toolAdapter.invoke({ toolId: step.actor_id, input: toolInput, manifest });
+    const res = await this.toolAdapter.invoke({
+      toolId: step.actor_id,
+      input: toolInput,
+      manifest,
+      attemptId: ctx.attemptId,
+      retryOf: ctx.retryOf,
+    });
     this.validator.validateFileOrThrow(join(getConfigRoot(), manifest.output_schema), res.output);
 
     const outputRef = ctx.ws.writeToolOutput(step.step_no, res.output);

@@ -28,6 +28,8 @@ export interface ToolInvocationReceipt {
   endpointHost: string | null;
   status: ToolInvocationStatus;
   latencyMs: number;
+  attemptId?: string;
+  retryOf?: string | null;
 }
 
 export interface ToolAdapterResolution {
@@ -58,7 +60,13 @@ export interface ToolAdapter {
   readonly implementationId: string;
   readonly executionMode: ToolExecutionMode;
   endpointHost?(manifest: ToolManifest): string | null;
-  invoke(opts: { toolId: string; input: object; manifest: ToolManifest }): Promise<ToolInvokeResult>;
+  invoke(opts: {
+    toolId: string;
+    input: object;
+    manifest: ToolManifest;
+    attemptId?: string;
+    retryOf?: string | null;
+  }): Promise<ToolInvokeResult>;
 }
 
 
@@ -92,8 +100,13 @@ export class ToolInvocationError extends Error {
   }
 }
 
-function receiptFromResolution(resolution: ToolAdapterResolution, status: ToolInvocationStatus, latencyMs: number): ToolInvocationReceipt {
-  return { ...resolution, status, latencyMs };
+function receiptFromResolution(
+  resolution: ToolAdapterResolution,
+  status: ToolInvocationStatus,
+  latencyMs: number,
+  context?: { attemptId?: string; retryOf?: string | null },
+): ToolInvocationReceipt {
+  return { ...resolution, status, latencyMs, ...context };
 }
 
 function directReceipt(adapter: ToolAdapter, manifest: ToolManifest, status: ToolInvocationStatus, latencyMs: number): ToolInvocationReceipt {
@@ -108,7 +121,11 @@ function directReceipt(adapter: ToolAdapter, manifest: ToolManifest, status: Too
   };
 }
 
-function unknownReceipt(declaredAdapterType: ToolManifest['adapter_type'], latencyMs: number): ToolInvocationReceipt {
+function unknownReceipt(
+  declaredAdapterType: ToolManifest['adapter_type'],
+  latencyMs: number,
+  context?: { attemptId?: string; retryOf?: string | null },
+): ToolInvocationReceipt {
   return {
     declaredAdapterType,
     resolvedAdapterType: 'unknown',
@@ -117,6 +134,7 @@ function unknownReceipt(declaredAdapterType: ToolManifest['adapter_type'], laten
     endpointHost: null,
     status: 'failed',
     latencyMs,
+    ...context,
   };
 }
 
@@ -534,45 +552,41 @@ export class ToolRouter implements ToolAdapter {
     };
   }
 
-  async invoke(opts: { toolId: string; input: object; manifest: ToolManifest }): Promise<ToolInvokeResult> {
+  async invoke(opts: {
+    toolId: string;
+    input: object;
+    manifest: ToolManifest;
+    attemptId?: string;
+    retryOf?: string | null;
+  }): Promise<ToolInvokeResult> {
     const start = performance.now();
     const resolution = this.resolve(opts.manifest);
     if (!resolution) {
       const latencyMs = Math.round(performance.now() - start);
       throw new ToolInvocationError(opts.toolId, {
-        kind: 'configuration',
-        retryable: false,
-        providerStatus: null,
+        kind: 'configuration', retryable: false, providerStatus: null,
         sanitizedMessage: `No adapter registered for adapter_type=${opts.manifest.adapter_type}`,
-        receipt: unknownReceipt(opts.manifest.adapter_type, latencyMs),
+        receipt: unknownReceipt(opts.manifest.adapter_type, latencyMs, opts),
       });
     }
-
     try {
       const result = await this.byType.get(opts.manifest.adapter_type)!.invoke(opts);
       const latencyMs = Math.round(performance.now() - start);
-      return { ...result, latencyMs, receipt: receiptFromResolution(resolution, 'ok', latencyMs) };
+      return { ...result, latencyMs, receipt: receiptFromResolution(resolution, 'ok', latencyMs, opts) };
     } catch (err) {
+      const latencyMs = Math.round(performance.now() - start);
       if (err instanceof ToolInvocationError) {
-        const latencyMs = Math.round(performance.now() - start);
-        const receipt = receiptFromResolution(resolution, 'failed', latencyMs);
         throw new ToolInvocationError(opts.toolId, {
-          kind: err.kind,
-          retryable: err.retryable,
-          providerStatus: err.providerStatus,
+          kind: err.kind, retryable: err.retryable, providerStatus: err.providerStatus,
           sanitizedMessage: err.sanitizedMessage,
-          receipt,
-          details: err.details,
+          receipt: receiptFromResolution(resolution, 'failed', latencyMs, opts), details: err.details,
         });
       }
       const structured = errorFromUnknown(opts.toolId, err, 'network');
-      const latencyMs = Math.round(performance.now() - start);
       throw new ToolInvocationError(opts.toolId, {
-        kind: structured.kind,
-        retryable: structured.retryable,
-        providerStatus: structured.providerStatus,
+        kind: structured.kind, retryable: structured.retryable, providerStatus: structured.providerStatus,
         sanitizedMessage: structured.sanitizedMessage,
-        receipt: receiptFromResolution(resolution, 'failed', latencyMs),
+        receipt: receiptFromResolution(resolution, 'failed', latencyMs, opts),
       });
     }
   }

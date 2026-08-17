@@ -22,8 +22,15 @@ type GoldFixture = {
     researchGoal: string;
     sensitivity: 'public' | 'internal' | 'confidential';
     piiDetected: boolean;
+    variant: 'clear' | 'ambiguous' | 'missing_input' | 'constraint_conflict' | 'pii';
     requiredCoreTool: string;
     expectedDeliverableType: string;
+    expectedTaskType: string;
+    expectedDeliverableIds: string[];
+    clarificationKeys: string[];
+    clarificationThemes: string[];
+    forbiddenCapabilities: string[];
+    reportSections: string[];
     minPublicSources: number;
     minVisualAssets: number;
   }>;
@@ -97,21 +104,26 @@ test('semantic Gold fixture contains exactly 25 scenarios and five profiles', ()
   assert.deepEqual(fixture.profiles, [...TASK_TYPES]);
   assert.equal(fixture.scenarios.length, 25);
   assert.equal(new Set(fixture.scenarios.map((scenario) => scenario.id)).size, 25);
-
+});
+test('every semantic Gold scenario carries profile contracts and exactly five PII variants', () => {
+  const variants = new Set(['clear', 'ambiguous', 'missing_input', 'constraint_conflict', 'pii']);
+  assert.equal(fixture.scenarios.filter((scenario) => scenario.piiDetected).length, 5);
   for (const taskType of TASK_TYPES) {
     const scenarios = fixture.scenarios.filter((scenario) => scenario.taskType === taskType);
-    assert.equal(scenarios.length, 5, `${taskType} must have five semantic scenarios`);
-    assert.ok(scenarios.every((scenario) => scenario.profile === taskType));
+    assert.deepEqual(new Set(scenarios.map((scenario) => scenario.variant)), variants);
+    assert.equal(scenarios.filter((scenario) => scenario.piiDetected).length, 1);
   }
-});
-
-test('every semantic Gold scenario is public-safe and executable through the core tool', () => {
   for (const scenario of fixture.scenarios) {
     assert.ok(scenario.input.trim());
     assert.ok(scenario.researchGoal.trim());
-    assert.equal(scenario.piiDetected, false, scenario.id);
+    assert.equal(scenario.expectedTaskType, scenario.taskType, scenario.id);
+    assert.deepEqual(scenario.expectedDeliverableIds, [scenario.expectedDeliverableType]);
+    assert.ok(Array.isArray(scenario.clarificationKeys));
+    assert.ok(Array.isArray(scenario.clarificationThemes));
+    assert.ok(scenario.forbiddenCapabilities.length > 0);
+    assert.ok(scenario.reportSections.length > 0);
+    assert.ok(scenario.reportSections.includes('findings'));
     assert.equal(scenario.requiredCoreTool, 'tavily-web-search');
-    assert.equal(scenario.expectedDeliverableType, 'research_plan');
     assert.ok(scenario.minPublicSources >= 1);
     assert.ok(scenario.minVisualAssets >= 0);
     assert.doesNotMatch(JSON.stringify(scenario), /Bearer |api[_-]?key|password|secret|base64|data:image/i);

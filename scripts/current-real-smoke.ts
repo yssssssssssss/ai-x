@@ -60,6 +60,7 @@ interface SemanticGoldScenario {
   input: string;
   sensitivity: ResearchTaskV2['sensitivity'];
   piiDetected: boolean;
+  variant?: 'clear' | 'ambiguous' | 'missing_input' | 'constraint_conflict' | 'pii';
 }
 
 interface SemanticGoldFixture {
@@ -556,8 +557,10 @@ export async function runCurrentRealSmoke(input: SmokeRunInput): Promise<SmokeRe
     const receipts: SmokeReceipt[] = [];
     for (const profile of input.profiles) {
       if (!fixture.profiles.includes(profile)) throw new Error(`fixture has no profile ${profile}`);
-      const scenario = fixture.scenarios.find((candidate) => candidate.profile === profile);
-      if (!scenario) throw new Error(`fixture has no scenario for profile ${profile}`);
+      const candidates = fixture.scenarios.filter((candidate) => candidate.profile === profile);
+      const scenario = candidates.find((candidate) => candidate.variant === 'clear' && candidate.piiDetected === false);
+      if (!scenario) throw new Error(`fixture has no safe clear scenario for profile ${profile}`);
+      if (scenario.piiDetected) throw new Error(`PII scenario ${profile} cannot enter real smoke`);
       receipts.push(await executeRealSmoke(scenario));
     }
     return receipts;

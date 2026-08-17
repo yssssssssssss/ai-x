@@ -1536,6 +1536,51 @@ export class ControlPlaneRepository {
       connection.release();
     }
   }
+  async listRecoverableExecutions(): Promise<Array<{
+    taskId: string;
+    planVersionId: string;
+    attemptId: string;
+    taskState: string;
+    attemptState: string;
+    leaseExpiresAt: Date;
+    failureKind?: string;
+  }>> {
+    const connection = await this.database.connect();
+    try {
+      const result = await connection.query(
+        `SELECT task.id AS task_id, task.state AS task_state,
+                attempt.plan_version_id, attempt.id AS attempt_id,
+                attempt.state AS attempt_state, attempt.lease_expires_at,
+                attempt.failure_kind
+         FROM control_execution_attempts AS attempt
+         JOIN control_tasks AS task ON task.id = attempt.task_id
+         WHERE task.state IN ('executing', 'reviewing', 'composing_report')
+           AND attempt.state = 'active'
+         ORDER BY attempt.attempt_no`,
+      );
+      return result.rows.map((row) => ({
+        taskId: asString(row.task_id, 'task_id'),
+        planVersionId: asString(row.plan_version_id, 'plan_version_id'),
+        attemptId: asString(row.attempt_id, 'attempt_id'),
+        taskState: asString(row.task_state, 'task_state'),
+        attemptState: asString(row.attempt_state, 'attempt_state'),
+        leaseExpiresAt: asDate(row.lease_expires_at, 'lease_expires_at'),
+        failureKind: typeof row.failure_kind === 'string' ? row.failure_kind : undefined,
+      }));
+    } finally {
+      connection.release();
+    }
+  }
+
+  async quarantineArtifact(input: { artifactId: string; quarantineUri: string }): Promise<void> {
+    await this.transaction(async (connection) => {
+      await connection.query(
+        `UPDATE control_artifacts SET storage_uri = $2 WHERE id = $1 AND state = 'STAGING'`,
+        [input.artifactId, input.quarantineUri],
+      );
+    });
+  }
+
 
   async createStagingArtifact(input: {
     taskId: string;

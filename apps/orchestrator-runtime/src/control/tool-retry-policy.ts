@@ -118,6 +118,21 @@ async function leaseActive(check: () => Promise<boolean>): Promise<boolean> {
     return false;
   }
 }
+function safeReceipt(receipt: ToolInvocationReceipt | undefined): ToolInvocationReceipt | undefined {
+  if (!receipt) return undefined;
+  return {
+    declaredAdapterType: receipt.declaredAdapterType,
+    resolvedAdapterType: receipt.resolvedAdapterType,
+    implementationId: receipt.implementationId,
+    executionMode: receipt.executionMode,
+    endpointHost: receipt.endpointHost,
+    status: receipt.status,
+    latencyMs: receipt.latencyMs,
+    ...(receipt.attemptId === undefined ? {} : { attemptId: receipt.attemptId }),
+    ...(receipt.retryOf === undefined ? {} : { retryOf: receipt.retryOf }),
+  };
+}
+
 
 function leaseLost(
   attempts: number,
@@ -153,12 +168,12 @@ export async function invokeWithRetry<T = unknown>(input: ToolRetryInput<T>): Pr
         attempt,
         attemptId: context.attemptId,
         status: 'succeeded',
-        receipt: result.receipt,
+        receipt: safeReceipt(result.receipt),
       });
       return {
         status: 'succeeded',
         output: result.output,
-        receipt: result.receipt,
+        receipt: safeReceipt(result.receipt)!,
         latencyMs: result.latencyMs,
         attemptReceipts,
       };
@@ -168,7 +183,7 @@ export async function invokeWithRetry<T = unknown>(input: ToolRetryInput<T>): Pr
         attempt,
         attemptId: context.attemptId,
         status: 'failed',
-        receipt: info.receipt,
+        receipt: safeReceipt(info.receipt),
         failure: { kind: info.kind, providerStatus: info.providerStatus },
       });
       const canRetry = retryableFailure(info) && attempt < maxAttempts;
