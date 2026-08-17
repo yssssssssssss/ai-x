@@ -804,7 +804,8 @@ for (const visualCase of VISUAL_PAYLOAD_CASES) {
 
     await assert.rejects(() => service.generate(input), /lineage|verified visual|asset.*inventory|unverified asset/i);
     assert.equal(writes, 0);
-    assert.equal(llm.calls.length, 1, 'payload Asset ids are known only after synthesis returns');
+    assert.equal(llm.calls.length, 3, 'invalid payload Asset ids exhaust bounded synthesis repair');
+    assert.match(JSON.stringify(llm.calls[1]?.context), /validationFeedback/i);
   });
 
   test(`${visualCase.field} accepts only the exact same Task/Plan/Attempt Asset and exposes only verified ids to synthesis`, async () => {
