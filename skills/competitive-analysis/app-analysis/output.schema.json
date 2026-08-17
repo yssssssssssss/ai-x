@@ -10,13 +10,12 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["competitor", "scene", "summary", "evidence_refs"],
+        "required": ["competitor", "scene", "summary"],
         "properties": {
           "competitor": { "type": "string", "minLength": 1 },
           "scene": { "type": "string", "minLength": 1 },
           "summary": { "type": "string", "minLength": 1 },
-          "metrics": { "type": "object", "additionalProperties": { "type": "number" } },
-          "evidence_refs": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+          "metrics": { "type": "object", "additionalProperties": { "type": "number" } }
         }
       }
     },

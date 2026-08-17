@@ -27,7 +27,6 @@ const payloadFixtures: Record<string, Record<string, unknown>> = {
       scene: '首页',
       summary: '主行动入口更集中。',
       metrics: { attention_focus: 0.82 },
-      evidence_refs: ['artifact://tool-output/1'],
     }],
     recommendations: ['减少首屏视觉竞争。'],
   },
@@ -119,4 +118,18 @@ test('six Skill payload schemas are inlined and reject missing or extra fields',
       `skill:${skillId}`,
     ));
   }
+});
+
+test('competitive app payload cannot create an unbound evidence reference', () => {
+  const loader = new SkillLoader();
+  const validator = new SchemaValidator();
+  const payload = structuredClone(payloadFixtures['competitive-app-analysis']);
+  assert.ok(payload);
+  const comparisons = payload.screen_comparisons as Array<Record<string, unknown>>;
+  comparisons[0]!.evidence_refs = ['artifact://unbound'];
+  assert.throws(() => validator.validateSchemaOrThrow(
+    loader.loadSkillSchemas('competitive-app-analysis').output,
+    envelope(payload),
+    'skill:competitive-app-analysis',
+  ));
 });
