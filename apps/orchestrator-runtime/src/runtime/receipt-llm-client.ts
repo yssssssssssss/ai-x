@@ -113,7 +113,8 @@ export class ReceiptLLMClient implements LLMClient {
       throw new MissingModelReceiptError(new Error('missing receipt context'));
     }
     const finishedAt = new Date();
-    const expectedModel = receipt.expectedModel;
+    const identity = result.providerIdentity ?? this.inner.identity;
+    const expectedModel = result.expectedModel ?? receipt.expectedModel;
     const drift = expectedModel !== undefined && expectedModel !== result.modelName;
     let receiptId: string;
     try {
@@ -121,9 +122,9 @@ export class ReceiptLLMClient implements LLMClient {
         attemptId: receipt.attemptId,
         stage: receipt.stage,
         stepNo: receipt.stepNo,
-        provider: this.inner.identity.provider,
-        endpointHost: this.inner.identity.endpointHost,
-        requestedModel: this.inner.identity.requestedModel,
+        provider: identity.provider,
+        endpointHost: identity.endpointHost,
+        requestedModel: identity.requestedModel,
         actualModel: result.modelName,
         modelVersion: result.modelVersion,
         promptHash: result.promptHash,
@@ -137,8 +138,8 @@ export class ReceiptLLMClient implements LLMClient {
         startedAt,
         finishedAt,
       });
-    } catch (err) {
-      throw new MissingModelReceiptError(err);
+    } catch (error) {
+      throw new MissingModelReceiptError(error);
     }
     if (drift && expectedModel !== undefined) {
       throw new ModelDriftError(expectedModel, result.modelName);

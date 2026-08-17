@@ -46,6 +46,7 @@ import {
   type VerifiedVisualAsset,
 } from '../../orchestrator-runtime/src/report/visual-asset-service.ts';
 import { buildRuntime } from '../../orchestrator-runtime/src/runtime/agent-runtime.ts';
+import { VisualInputMaterializer } from '../../orchestrator-runtime/src/report/visual-input-materializer.ts';
 import type { LLMClient } from '../../orchestrator-runtime/src/runtime/llm-client.ts';
 import { ReceiptLLMClient } from '../../orchestrator-runtime/src/runtime/receipt-llm-client.ts';
 import { SchemaValidator } from '../../orchestrator-runtime/src/schema/validator.ts';
@@ -401,6 +402,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     deliverables,
     reportReview,
     reportComposition,
+    visualInputMaterializer: new VisualInputMaterializer({ visualAssets, imageAnnotations }),
   });
   const planRevisionDriver: WorkflowPlanRevisionDriver = {
     async revise(input) {

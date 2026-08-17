@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { ControlPlaneConflictError } from '../../../../database/control-plane.ts';
 import type {
   ActiveExecutionLease,
+  ControlGateRecord,
   ControlExecutionLease,
   ControlPlaneRepository,
 } from '../../../../database/control-plane.ts';
@@ -49,6 +50,7 @@ import {
   redactString,
   redactToolOutput,
 } from '../runtime/redaction.ts';
+import { compactLlmInput } from '../runtime/llm-input-compactor.ts';
 import { ArtifactIntegrityError, ControlArtifactStore } from './artifact-store.ts';
 import {
   EvidenceService,
@@ -735,6 +737,12 @@ export class LeaseExecutionEngine {
     };
     reportComposition?: ReportCompositionPort;
     scheduler?: ExecutionScheduler;
+    visualInputMaterializer?: {
+      materialize(input: {
+        lease: ControlExecutionLease;
+        gates: ControlGateRecord[];
+      }): Promise<void>;
+    };
   }) {
     this.llm = new ReceiptLLMClient(dependencies.llm, dependencies.repository);
   }
@@ -757,6 +765,10 @@ export class LeaseExecutionEngine {
         input.lease.taskId,
         input.lease.planVersionId,
       );
+      await this.dependencies.visualInputMaterializer?.materialize({
+        lease: input.lease,
+        gates,
+      });
       const deliverableContract = resolvePlanDeliverableContract(task.structuredTask, planVersion.plan);
       deliverableId = deliverableContract.entry.id;
       const parsedPlan = parsePlan(task.id, planVersion.plan, deliverableContract);
@@ -1482,7 +1494,7 @@ export class LeaseExecutionEngine {
       const current = resolution ? {
         planHash,
         stepHash: hashJson(step),
-        inputHash: hashJson(Object.keys(step.input).length > 0 ? step.input : { query: researchGoal }),
+        inputHash: hashJson(step.input),
         manifestHash: hashFile(tool.path),
         inputSchemaHash: hashFile(manifest.input_schema),
         outputSchemaHash: hashFile(manifest.output_schema),
@@ -1568,7 +1580,7 @@ export class LeaseExecutionEngine {
         if (!tool) return new ExecutionAuthenticityError(`tool ${step.actor_id} is not active`);
         const manifest = loadToolManifest(tool.path);
         const resolution = this.dependencies.tools.resolve(manifest);
-        const toolInput = Object.keys(step.input).length > 0 ? step.input : { query: researchGoal };
+        const toolInput = step.input;
         if (step.input_bindings.length === 0) {
           this.dependencies.validator.validateFileOrThrow(join(getConfigRoot(), manifest.input_schema), toolInput);
         }
@@ -1681,7 +1693,7 @@ export class LeaseExecutionEngine {
       manifestHash: null,
       inputSchemaHash: null,
       outputSchemaHash: null,
-      inputHash: hashJson(Object.keys(resolvedInput).length > 0 ? resolvedInput : { query: researchGoal }),
+      inputHash: hashJson(resolvedInput),
       outputHash: typeof details.outputHash === 'string' ? details.outputHash : null,
       configHash: null,
       declaredAdapterType: receipt?.declaredAdapterType ?? 'unknown',
@@ -1699,7 +1711,7 @@ export class LeaseExecutionEngine {
       if (!tool) return fallback(new Error(`tool ${step.actor_id} unavailable during provenance capture`));
       const manifest = loadToolManifest(tool.path);
       const resolution = this.dependencies.tools.resolve(manifest);
-      const toolInput = Object.keys(resolvedInput).length > 0 ? resolvedInput : { query: researchGoal };
+      const toolInput = resolvedInput;
       return {
         registryHash: hashFile(CONFIG_PATHS.toolRegistry),
         manifestHash: hashFile(tool.path),
@@ -1803,7 +1815,7 @@ export class LeaseExecutionEngine {
         },
       );
     }
-    const toolInput = Object.keys(resolvedInput).length > 0 ? resolvedInput : { query: researchGoal };
+    const toolInput = resolvedInput;
     try {
       this.dependencies.validator.validateFileOrThrow(join(getConfigRoot(), manifest.input_schema), toolInput);
     } catch {
@@ -1977,7 +1989,7 @@ export class LeaseExecutionEngine {
     }
     const skillContext = {
       research_goal: input.researchGoal,
-      input: input.resolvedInput,
+      input: compactLlmInput(input.resolvedInput),
       prior_outputs: verifiedPriorOutputs(input.outputs, input.step),
       ...stepContract(input.step),
     };

@@ -95,6 +95,15 @@ function record(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function issueText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  const candidate = record(value);
+  for (const key of ['message', 'issue', 'statement', 'rationale']) {
+    if (typeof candidate?.[key] === 'string' && candidate[key].trim()) return candidate[key] as string;
+  }
+  return JSON.stringify(redactSensitiveValue(value));
+}
+
 function activeDeliverableContract(deliverable: unknown): DeliverableContractResources {
   const value = record(deliverable);
   if (!value || typeof value.deliverableType !== 'string' || !value.deliverableType) {
@@ -277,10 +286,32 @@ export class ReportReviewService {
     });
     const value = record(generated.data);
     if (!value || (value.verdict !== 'pass' && value.verdict !== 'revise' && value.verdict !== 'block') || !Array.isArray(value.dimensions)) throw new Error('review output is missing required fields');
+    const deterministicById = new Map(dimensions.map((dimension) => [dimension.id, dimension]));
+    const projectedDimensions = value.dimensions.map((dimension) => {
+      const candidate = record(dimension);
+      if (!candidate) return dimension;
+      const baseline = typeof candidate.id === 'string'
+        ? deterministicById.get(candidate.id as ReportReviewDimensionId)
+        : undefined;
+      const providedIssues = Array.isArray(candidate.issues) ? candidate.issues.map(issueText) : null;
+      const passed = typeof candidate.passed === 'boolean'
+        ? candidate.passed
+        : providedIssues && providedIssues.length > 0
+          ? false
+          : baseline?.passed ?? false;
+      const issues = providedIssues
+        ?? baseline?.issues
+        ?? (passed ? [] : ['semantic review did not provide dimension issues']);
+      return { id: candidate.id, passed, issues };
+    });
+    const normalizedVerdict = value.verdict !== 'pass'
+      && projectedDimensions.every((dimension) => record(dimension)?.passed === true)
+      ? 'pass'
+      : value.verdict;
     const artifact: ReportReviewArtifact = {
       version: 'report-review-v1', taskId: input.task.id, planVersionId: input.plan.id,
       attemptId: input.attempt.id, deliverableArtifactId: input.deliverableArtifactId,
-      verdict: value.verdict, dimensions: value.dimensions as ReportReviewDimension[], revisionRound,
+      verdict: normalizedVerdict, dimensions: projectedDimensions as ReportReviewDimension[], revisionRound,
     };
     this.validator.validateOrThrow('report-review', artifact);
     assertReportReviewInvariant(artifact);

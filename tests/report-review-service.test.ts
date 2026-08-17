@@ -202,6 +202,45 @@ test('passes a deliverable after deterministic gates and semantic review', async
   assert.equal(artifacts.writes[0]?.relativePath, 'reports/review-r0.json');
 });
 
+test('drops undeclared semantic review dimension fields before strict validation', async () => {
+  const dimensions = passingReviewDimensions().map(({ id }) => ({
+    id,
+    score: 5,
+    rationale: 'extra model explanation',
+  }));
+  const llm = new RecordingLlm([
+    semantic('revise', 0, { dimensions: dimensions as unknown as ReportReviewArtifact['dimensions'] }),
+  ]);
+  const artifacts = new RecordingArtifacts();
+
+  const result = await service(llm, artifacts).review(input());
+
+  assert.ok(result.dimensions.every((dimension) => dimension.passed && dimension.issues.length === 0 && !('score' in dimension) && !('rationale' in dimension)));
+  assert.equal(result.verdict, 'pass');
+  assert.equal(result.status, 'completed');
+});
+
+test('derives failed dimensions when semantic review supplies issues without passed flags', async () => {
+  const dimensions = passingReviewDimensions().map(({ id }) => ({
+    id,
+    issues: id === 'evidence_coverage' ? [{ message: 'evidence needs clarification' }] : [],
+  }));
+  const llm = new RecordingLlm([
+    semantic('revise', 0, { dimensions: dimensions as unknown as ReportReviewArtifact['dimensions'] }),
+  ]);
+  const artifacts = new RecordingArtifacts();
+
+  const result = await service(llm, artifacts).review(input());
+
+  assert.equal(result.verdict, 'revise');
+  assert.equal(result.status, 'paused');
+  assert.equal(result.dimensions.find(({ id }) => id === 'evidence_coverage')?.passed, false);
+  assert.deepEqual(
+    result.dimensions.find(({ id }) => id === 'evidence_coverage')?.issues,
+    ['evidence needs clarification'],
+  );
+});
+
 for (const invalid of INVALID_PASS_DIMENSION_CASES) {
   test(`review service rejects pass with ${invalid.name}`, async () => {
     const llm = new RecordingLlm([

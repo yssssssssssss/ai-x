@@ -7,10 +7,12 @@ export function CurrentStage1Clarify({
   response,
   onSubmit,
   disabled = false,
+  error = '',
 }: {
   response: ClarificationRequiredResponse;
   onSubmit: (request: Omit<ClarifyControlTaskRequest, 'idempotencyKey'>) => void;
   disabled?: boolean;
+  error?: string;
 }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [assumptionEdits, setAssumptionEdits] = useState<Record<string, string>>(
@@ -76,6 +78,12 @@ export function CurrentStage1Clarify({
           ))}
         </div>
       )}
+      {error && (
+        <div role="alert" style={{ marginBottom: 12, color: 'var(--danger)', fontSize: 13 }}>
+          {error}
+        </div>
+      )}
+
 
       <button
         type="button"

@@ -18,6 +18,8 @@ export interface LLMResult<T> {
   traceId: string;
   receiptId?: string;
   tokens?: TokenUsage;
+  providerIdentity?: LLMProviderIdentity;
+  expectedModel?: string;
 }
 
 export type LLMFailureKind =

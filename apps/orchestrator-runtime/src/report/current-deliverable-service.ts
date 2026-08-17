@@ -271,6 +271,35 @@ function unknownRecord(value: unknown): Record<string, unknown> | null {
     ? value as Record<string, unknown>
     : null;
 }
+
+function projectPayloadToSchema(payload: unknown, schema: object): unknown {
+  const value = unknownRecord(payload);
+  const schemaProperties = unknownRecord(unknownRecord(schema)?.properties);
+  if (!value || !schemaProperties) return payload;
+  return Object.fromEntries(
+    Object.entries(value).filter(([key]) => Object.hasOwn(schemaProperties, key)),
+  );
+}
+
+const REQUIRED_DRAFT_KEYS = ['methodSummary', 'findingGraph', 'payload', 'recommendations', 'coverage'] as const;
+
+function deliverableDraftRecord(value: unknown): Record<string, unknown> | null {
+  const root = unknownRecord(value);
+  if (!root) return null;
+  const queue: Record<string, unknown>[] = [root];
+  const seen = new Set<Record<string, unknown>>();
+  while (queue.length > 0) {
+    const candidate = queue.shift()!;
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
+    if (REQUIRED_DRAFT_KEYS.every((key) => Object.hasOwn(candidate, key))) return candidate;
+    for (const child of Object.values(candidate)) {
+      const nested = unknownRecord(child);
+      if (nested) queue.push(nested);
+    }
+  }
+  return root;
+}
 function deliverableSelection(
   finalizedRequirement: unknown,
   persistedDeliverableId: string,
@@ -623,69 +652,88 @@ export class CurrentDeliverableService {
     );
     const stepNo = input.stepNo
       ?? (input.plan.plan.steps ? input.plan.plan.steps.length + 1 : lastEvidenceStep + 1);
-    const generated = await this.dependencies.llm.generateStructured<DeliverableDraft & {
-      capabilityProvenance?: unknown;
-    }>({
-      prompt: contract.synthesisPrompt
-        + (visualInventory === undefined
-          ? ''
-          : '\nVerified visual Asset inventory: reference only typed Asset ids in context.verifiedVisualAssetIds; never invent or reuse any other Asset id.')
-        + (input.revisionInstruction ? '\nAddress the review issues in the revision instruction.' : ''),
-      schema: draftSchema,
-      schemaName,
-      context,
-      receipt: {
-        stage: 'deliverable',
-        attemptId: input.attempt.id,
-        stepNo,
-        expectedModel: input.expectedModel,
-      },
-    });
-    const generatedRecord = unknownRecord(generated.data);
-    const contentDraft: unknown = generatedRecord
-      ? Object.fromEntries(
-          Object.entries(generatedRecord).filter(([key]) => key !== 'capabilityProvenance'),
-        )
-      : generated.data;
-    this.dependencies.validator.validateSchemaOrThrow(
-      draftSchema,
-      contentDraft,
-      schemaName,
-    );
-
-    const draft = contentDraft as DeliverableDraft;
-    if (strictV2) assertPayloadVisualReferences(contract.entry.id, draft.payload, visualInventory);
-    const risksAndOpenIssues = [...(draft.risksAndOpenIssues ?? [])];
-    const observedRisks = new Set(risksAndOpenIssues);
-    for (const gap of sanitizedGaps) {
-      if (observedRisks.has(gap)) continue;
-      observedRisks.add(gap);
-      risksAndOpenIssues.push(gap);
-    }
-    const deliverable: DeliverableEnvelope = {
-      version: contract.entry.envelope_version as DeliverableEnvelope['version'],
-      taskId: input.task.id,
-      planVersionId: input.plan.id,
-      attemptId: input.attempt.id,
-      deliverableType: input.plan.plan.deliverable_type,
-      evidenceManifestArtifactId: input.evidenceManifest.artifact.id,
-      methodSummary: draft.methodSummary,
-      findingGraph: draft.findingGraph,
-      payload: draft.payload,
-      recommendations: draft.recommendations,
-      coverage: draft.coverage,
-      risksAndOpenIssues,
-      capabilityProvenance: outputData.provenance,
+    const generateDraft = async (validationFeedback: string[] = []): Promise<unknown> => {
+      const generated = await this.dependencies.llm.generateStructured<DeliverableDraft & {
+        capabilityProvenance?: unknown;
+      }>({
+        prompt: contract.synthesisPrompt
+          + '\nEvery evidenceIds entry must reference only context.verifiedEvidence[].evidenceId. Never place a Visual Asset id in evidenceIds; Visual Asset ids are allowed only in typed visual fields such as screenshotComparisons.assetIds.'
+          + (visualInventory === undefined
+            ? ''
+            : '\nVerified visual Asset inventory: reference only typed Asset ids in context.verifiedVisualAssetIds; never invent or reuse any other Asset id.')
+          + (input.revisionInstruction ? '\nAddress the review issues in the revision instruction.' : '')
+          + (validationFeedback.length > 0
+            ? `\nThe previous draft failed schema validation. Correct every issue: ${validationFeedback.join('; ')}`
+            : ''),
+        schema: draftSchema,
+        schemaName,
+        context: validationFeedback.length > 0
+          ? { ...context, validationFeedback }
+          : context,
+        receipt: {
+          stage: 'deliverable',
+          attemptId: input.attempt.id,
+          stepNo,
+          expectedModel: input.expectedModel,
+        },
+      });
+      const generatedRecord = deliverableDraftRecord(generated.data);
+      return generatedRecord
+        ? Object.fromEntries(
+            Object.entries(generatedRecord).filter(([key]) => key !== 'capabilityProvenance'),
+          )
+        : generated.data;
     };
-
-    if (strictV2) this.dependencies.validator.validateFileOrThrow(contract.payloadSchemaPath, deliverable.payload);
-    this.reportValidator.validate({
-      manifest: evidenceManifest,
-      report: deliverable,
-      resolver: input.evidenceResolver,
-      requireCoverage: strictV2,
-      validatePayloadSchema: strictV2,
-    });
+    let validationFeedback: string[] = [];
+    let deliverable: DeliverableEnvelope | null = null;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const generatedDraft = await generateDraft(validationFeedback);
+      const generatedRecord = unknownRecord(generatedDraft);
+      const contentDraft = generatedRecord
+        ? { ...generatedRecord, payload: projectPayloadToSchema(generatedRecord.payload, contract.payloadSchema) }
+        : generatedDraft;
+      try {
+        this.dependencies.validator.validateSchemaOrThrow(draftSchema, contentDraft, schemaName);
+        const draft = contentDraft as DeliverableDraft;
+        if (strictV2) assertPayloadVisualReferences(contract.entry.id, draft.payload, visualInventory);
+        const risksAndOpenIssues = [...(draft.risksAndOpenIssues ?? [])];
+        const observedRisks = new Set(risksAndOpenIssues);
+        for (const gap of sanitizedGaps) {
+          if (observedRisks.has(gap)) continue;
+          observedRisks.add(gap);
+          risksAndOpenIssues.push(gap);
+        }
+        const candidate: DeliverableEnvelope = {
+          version: contract.entry.envelope_version as DeliverableEnvelope['version'],
+          taskId: input.task.id,
+          planVersionId: input.plan.id,
+          attemptId: input.attempt.id,
+          deliverableType: input.plan.plan.deliverable_type,
+          evidenceManifestArtifactId: input.evidenceManifest.artifact.id,
+          methodSummary: draft.methodSummary,
+          findingGraph: draft.findingGraph,
+          payload: draft.payload,
+          recommendations: draft.recommendations,
+          coverage: draft.coverage,
+          risksAndOpenIssues,
+          capabilityProvenance: outputData.provenance,
+        };
+        if (strictV2) this.dependencies.validator.validateFileOrThrow(contract.payloadSchemaPath, candidate.payload);
+        this.reportValidator.validate({
+          manifest: evidenceManifest,
+          report: candidate,
+          resolver: input.evidenceResolver,
+          requireCoverage: strictV2,
+          validatePayloadSchema: strictV2,
+        });
+        deliverable = candidate;
+        break;
+      } catch (error) {
+        if (attempt === 3) throw error;
+        validationFeedback = [error instanceof Error ? error.message : String(error)];
+      }
+    }
+    if (!deliverable) throw new Error('deliverable generation exhausted without a validated result');
 
     const artifact = await this.dependencies.artifacts.writeJson({
       taskId: input.task.id,

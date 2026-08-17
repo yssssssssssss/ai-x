@@ -10,6 +10,7 @@ import { closePool, pool } from '../database/db.ts';
 import { createUser } from '../database/repository.ts';
 import type { ControlTaskDetail } from '../database/control-plane.ts';
 import type { CurrentPlanningResponse } from '../apps/agent-api/src/routes/control-planning.ts';
+import { LLMInvocationError } from '../apps/orchestrator-runtime/src/runtime/llm-client.ts';
 
 process.env.JWT_SECRET = 'clarification-test-secret';
 
@@ -132,6 +133,10 @@ function clarificationRepository(getTaskDetail: (id: string) => Promise<ControlT
       const key = commandKey(input.taskId, input.commandType, input.idempotencyKey);
       if (commands.get(key)?.reservationToken === input.reservationToken) commands.delete(key);
     },
+    async recoverCommandAfterFailure(input: { taskId: string; commandType: string; idempotencyKey: string; reservationToken: string }) {
+      const key = commandKey(input.taskId, input.commandType, input.idempotencyKey);
+      if (commands.get(key)?.reservationToken === input.reservationToken) commands.delete(key);
+    },
   };
 }
 
@@ -198,6 +203,40 @@ test('foreign and missing clarification tasks are both 404', async () => {
     server.close();
   }
 });
+test('clarify preserves a retryable Gateway 429 response instead of hiding it as 500', async () => {
+  const repository = clarificationRepository(async () => task);
+  const runtime = {
+    repository,
+    workflow: {},
+    getDeliverable: async () => null,
+    clarification: {
+      clarify: async () => {
+        throw new LLMInvocationError('rate_limit', true, 429, 'gateway HTTP 429');
+      },
+    },
+  } as unknown as ControlTasksRuntime;
+  const app = express();
+  app.use(express.json());
+  app.use('/api/control-tasks', createControlTasksRouter(runtime));
+  const { server, baseUrl } = await listen(app);
+  try {
+    const response = await post(baseUrl, `/api/control-tasks/${task.id}/clarify`, ownerToken, {
+      expectedVersion: 1,
+      clarificationAnswers: { audience: 'new users' },
+      assumptionEdits: {},
+      idempotencyKey: 'rate-limit',
+    });
+    assert.equal(response.status, 429);
+    assert.deepEqual(await response.json(), {
+      error: 'gateway HTTP 429',
+      kind: 'rate_limit',
+      retryable: true,
+    });
+  } finally {
+    server.close();
+  }
+});
+
 
 test('clarify keeps awaiting_clarification when a blocking answer is missing and returns candidates when complete', async () => {
   let calls = 0;

@@ -255,13 +255,17 @@ class StaticDeliverableLLM implements LLMClient {
     eligibleAsReal: false,
   };
   readonly structuredCalls: StructuredLLMCallOptions[] = [];
+  private callIndex = 0;
 
-  constructor(private readonly draft: unknown) {}
+  constructor(private readonly draft: unknown | unknown[]) {}
 
   async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
     this.structuredCalls.push(options);
+    const drafts = Array.isArray(this.draft) ? this.draft : [this.draft];
+    const data = drafts[Math.min(this.callIndex, drafts.length - 1)];
+    this.callIndex += 1;
     return {
-      data: this.draft as T,
+      data: data as T,
       promptHash: 'sha256:deliverable-prompt',
       modelName: 'pinned-model',
       modelVersion: 'fixture-v1',
@@ -534,6 +538,10 @@ test('generates and seals a machine-owned research plan deliverable envelope', a
     successCriterionIds: ['criterion1'],
   });
   assert.match(llm.structuredCalls[0]?.prompt ?? '', /coverage|binding/i);
+  assert.match(
+    llm.structuredCalls[0]?.prompt ?? '',
+    /evidenceIds.*verifiedEvidence.*Visual Asset/is,
+  );
   assert.equal(validator.schemaCalls.length, 1);
   assert.equal(validator.schemaCalls[0]?.label, 'research-plan-deliverable-content');
 
@@ -554,6 +562,41 @@ test('generates and seals a machine-owned research plan deliverable envelope', a
   assert.equal(writes[0]?.schemaVersion, 'research-deliverable-v1-review-gated');
   assert.deepEqual(writes[0]?.value, result.deliverable);
   assert.equal(result.deliverableArtifactId, deliverableArtifactId);
+});
+
+test('retries deliverable generation once with schema validation feedback', async () => {
+  const invalidShape = { title: 'wrong top-level shape' };
+  const invalidEvidence = validDeliverableDraft();
+  invalidEvidence.findingGraph.subQuestionSummaries[0]!.findingIds = [];
+  invalidEvidence.findingGraph.subQuestionSummaries[0]!.analysisIds = [];
+  const valid = validDeliverableDraft();
+  const { service, llm } = await createHarness([invalidShape, invalidEvidence, valid]);
+
+  const result = await service.generate(generateInput());
+
+  assert.ok(result.deliverableArtifactId);
+  assert.equal(llm.structuredCalls.length, 3);
+  assert.match(JSON.stringify(llm.structuredCalls[1]?.context), /validationFeedback.*methodSummary.*findingGraph.*payload/);
+  assert.match(JSON.stringify(llm.structuredCalls[2]?.context), /validationFeedback.*no roots/);
+});
+
+test('drops undeclared payload root fields before strict validation and sealing', async () => {
+  const draft = validDeliverableDraft();
+  Object.assign(draft.payload, { unexpectedPayloadField: 'must not be sealed' });
+  const { service } = await createHarness(draft);
+
+  const result = await service.generate(generateInput());
+
+  assert.equal('unexpectedPayloadField' in result.deliverable.payload, false);
+});
+
+test('unwraps a nested object only when it contains every required deliverable draft field', async () => {
+  const wrapped = { result: { content: validDeliverableDraft() }, explanation: 'model wrapper' };
+  const { service } = await createHarness(wrapped);
+
+  const result = await service.generate(generateInput());
+
+  assert.equal(result.deliverable.methodSummary, validDeliverableDraft().methodSummary);
 });
 test('legacy task_type-only generation falls back to the persisted plan deliverable id', async () => {
   const { service, llm, writes } = await createHarness();

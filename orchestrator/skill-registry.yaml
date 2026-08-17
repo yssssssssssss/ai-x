@@ -57,6 +57,7 @@ skills:
       - competitive_research
     inputs:
       - research_goal
+      - competitor_screenshots
     outputs:
       - competitive_analysis
     intent_tags:
@@ -65,6 +66,7 @@ skills:
       - screenshot
       - app-teardown
     required_tools:
+      - tavily-web-search
       - ai-spider-search
       - aesthetic-quant-lab
       - attention-analysis-lab

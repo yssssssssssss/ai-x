@@ -235,6 +235,66 @@ test('explicit requirements return ready_to_plan and invoke planner with finaliz
   assert.deepEqual(repository.events, ['persist_activate']);
 });
 
+test('non-blocking questions proceed to planning instead of creating an endless clarification loop', async () => {
+  const { RequirementRefinementService } = await loadModule();
+  const nonBlocking = requirement({
+    ambiguities: [{ id: 'format', statement: 'report format can be confirmed later', blocking: false }],
+    clarification_questions: [{
+      key: 'format',
+      question: 'Which report format is preferred?',
+      rationale: 'This changes presentation but does not block research.',
+    }],
+  });
+  const repository = makeRepository();
+  let plannerCalls = 0;
+  const service = new RequirementRefinementService({
+    llm: new FixtureLLM([nonBlocking]),
+    validator: new SchemaValidator(),
+    repository,
+    conversations: makeConversations(),
+    planner: { async plan() { plannerCalls += 1; } },
+  });
+
+  const result = await service.understand({
+    taskId,
+    conversationId,
+    ownerUserId,
+    originalInput: 'compare competitors with screenshots',
+  });
+
+  assert.equal(result.status, 'ready_to_plan');
+  assert.equal(plannerCalls, 1);
+});
+
+test('blocking issues proceed to planning and remain available for the approval gate', async () => {
+  const { RequirementRefinementService } = await loadModule();
+  const approvalRequired = requirement({
+    blocking_issues: [{
+      key: 'internal-screenshot-use',
+      kind: 'compliance_risk',
+      reason: 'Internal use is allowed but distribution requires approval.',
+    }],
+  });
+  const plannedRequirements: ResearchTaskV2[] = [];
+  const service = new RequirementRefinementService({
+    llm: new FixtureLLM([approvalRequired]),
+    validator: new SchemaValidator(),
+    repository: makeRepository(),
+    conversations: makeConversations(),
+    planner: { async plan(input: { requirement: ResearchTaskV2 }) { plannedRequirements.push(input.requirement); } },
+  });
+
+  const result = await service.understand({
+    taskId,
+    conversationId,
+    ownerUserId,
+    originalInput: 'compare internal screenshots',
+  });
+
+  assert.equal(result.status, 'ready_to_plan');
+  assert.deepEqual(plannedRequirements[0]?.blocking_issues, approvalRequired.blocking_issues);
+});
+
 test('ambiguous requirements return clarification_required without invoking planner', async () => {
   const { RequirementRefinementService } = await loadModule();
   const llm = new FixtureLLM([ambiguousRequirement]);

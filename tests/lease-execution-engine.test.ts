@@ -14,6 +14,7 @@ import {
 import type {
   ChartSpec,
   CurrentPlanStep,
+  EvidenceRequirement,
   ResearchDeliverableEnvelope,
 } from '../packages/api-contract/research-deliverable.ts';
 import type {
@@ -925,6 +926,40 @@ test('legacy task_type-only execution uses the persisted research_plan deliverab
   });
   assert.equal(result.evidenceManifestArtifactId !== undefined, true);
   assert.equal(result.deliverableArtifactId, 'deliverable-1');
+});
+
+test('engine preflight preserves a schema-valid empty Tool input without injecting query', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const adapter: ToolAdapter = {
+    adapterType: 'rest_json',
+    implementationId: 'qualified-real-rest-json',
+    executionMode: 'real',
+    endpointHost: () => 'aesthetic.fixture.test',
+    async invoke() { throw new Error('not used during preflight'); },
+  };
+  const engine = buildEngine(
+    repository,
+    new ToolRouter().register(adapter),
+    new CountingRealLLM(),
+  ) as unknown as {
+    preflight(plan: {
+      taskId: string;
+      evidence_requirements: EvidenceRequirement[];
+      steps: CurrentPlanStep[];
+    }, researchGoal: string): Promise<Error | null>;
+  };
+  const error = await engine.preflight({
+    taskId: 'task-empty-tool-input',
+    evidence_requirements: [],
+    steps: [{
+      ...planSteps[0]!,
+      actor_id: 'aesthetic-quant-lab',
+      step_name: 'empty aesthetic input',
+      input: {},
+    }],
+  }, 'must not be injected as query');
+
+  assert.equal(error, null);
 });
 
 test('research-task-v2 without expected_deliverables remains rejected during engine preflight', async () => {

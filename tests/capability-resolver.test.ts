@@ -268,11 +268,20 @@ test('returns explicit eligible and rejected reasons deterministically', () => {
 test('active capability loader preserves native declarations and normalizes KB arrays without invalidating KB skills', () => {
   const skills = new SkillLoader().listCapabilitySkills();
   const nativeSkill = skills.find((entry) => entry.id === 'competitive-web-research');
+  const appScreenshotSkill = skills.find((entry) => entry.id === 'competitive-app-analysis');
   const knowledgeBaseSkill = skills.find((entry) => entry.id === 'competitive-analysis');
 
   assert.deepEqual(nativeSkill?.inputs, ['research_goal']);
   assert.deepEqual(nativeSkill?.outputs, ['competitive_analysis']);
   assert.deepEqual(nativeSkill?.required_tools, ['tavily-web-search']);
+  assert.deepEqual(appScreenshotSkill?.inputs, ['research_goal', 'competitor_screenshots']);
+  assert.deepEqual(appScreenshotSkill?.required_tools, [
+    'tavily-web-search',
+    'ai-spider-search',
+    'aesthetic-quant-lab',
+    'attention-analysis-lab',
+    'vision-brand-lab',
+  ]);
   assert.deepEqual(knowledgeBaseSkill?.inputs, []);
   assert.deepEqual(knowledgeBaseSkill?.outputs, []);
   assert.deepEqual(knowledgeBaseSkill?.required_tools, []);

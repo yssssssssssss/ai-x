@@ -39,7 +39,7 @@ import {
   ProblemGraphPlanner,
   type ProblemGraphProvenance,
 } from './problem-graph-planner.ts';
-import type { CurrentPlanCandidateProposal } from './plan-compiler.ts';
+import { PlanCompiler, PlanCompilerValidationError, type CurrentPlanCandidateProposal } from './plan-compiler.ts';
 import { loadSchemaText, resolveSchema } from '../runtime/schema-registry.ts';
 
 interface SchemaWithDefinitions {
@@ -197,6 +197,36 @@ export interface CurrentPlanArtifacts {
   problemGraph: ProblemGraph;
   problemGraphProvenance: ProblemGraphProvenance;
   capabilityResolution: CapabilityResolution;
+}
+
+function planCompilerFeedback(input: {
+  candidates: Array<Omit<CurrentPlanCandidateProposal, 'activated_nodes'>>;
+  task: ResearchTaskV2;
+  problemGraph: ProblemGraph;
+  problemGraphProvenance: ProblemGraphProvenance;
+  capabilityResolution: CapabilityResolution;
+  evidenceRequirements: EvidenceRequirement[];
+  activatedNodes: string[];
+}): string[] {
+  const compiler = new PlanCompiler();
+  const issues: string[] = [];
+  for (const candidate of input.candidates) {
+    try {
+      compiler.compile({
+        candidate: { ...candidate, activated_nodes: input.activatedNodes },
+        task: input.task,
+        problem_graph: input.problemGraph,
+        problem_graph_provenance: input.problemGraphProvenance,
+        capability_resolution: input.capabilityResolution,
+        evidence_requirements: input.evidenceRequirements,
+        activated_nodes: input.activatedNodes,
+      });
+    } catch (error) {
+      if (!(error instanceof PlanCompilerValidationError)) throw error;
+      issues.push(`${candidate.id}: ${error.kind}: ${error.issueIds.join(', ')}`);
+    }
+  }
+  return issues;
 }
 
 // 引导召回:对每个激活的决策节点,用其 related_tags 从知识库召回方法论/模型(每节点 top-3),
@@ -534,6 +564,9 @@ export class RoutedPlanner implements PlanStrategy {
           skillInput,
         );
       }
+      for (const pending of directDecision.pending_inputs) {
+        skillInput[pending.role] = pending.multiple ? [] : null;
+      }
       const skillApproval = requiredApprovals.find((item) => (
         item.capability_type === 'skill' && item.capability_id === ctx.direct!.skillName
       ));
@@ -649,24 +682,49 @@ export class RoutedPlanner implements PlanStrategy {
       evidence_requirements: evidenceRequirements,
     };
     ctx.emit({ phase: 'candidates', status: 'start', label: '生成候选方案' });
-    const planGen = await llm.generateStructured<{
+    type CandidateEnvelope = {
       candidates: Array<Omit<CurrentPlanCandidateProposal, 'activated_nodes'>>;
-    }>({
+    };
+    const generateCandidates = (validationFeedback: string[] = []) => llm.generateStructured<CandidateEnvelope>({
       prompt:
         `基于 finalized ResearchTaskV2、ProblemGraph、Evidence Policy 和 eligible capability shortlist 生成 depth/speed 两份 Current 候选。` +
         `每个 step 必须精确包含 step_no、step_name、actor_type、actor_id、question_ids、depends_on、input、input_bindings、expected_outputs、acceptance_criteria、requires_approval、fallback_actor_ids。` +
         `fallback_actor_ids 必须为空数组，当前执行器不支持 fallback 调度。` +
-        `Skill 的 required_tools 必须作为更早的 Tool step；所有引用必须真实存在；不得使用 capability_resolution.rejected 中的 actor。`,
+        `Skill 的 required_tools 必须作为更早的 Tool step；所有引用必须真实存在；不得使用 capability_resolution.rejected 中的 actor。` +
+        (validationFeedback.length > 0
+          ? `上一次候选未通过 Plan Compiler 校验，必须逐项修复：${validationFeedback.join('；')}。`
+          : ''),
       schema: currentPlanProposalSchema,
       schemaName: 'current-plan-candidates',
-      context: candidateContext,
+      context: validationFeedback.length > 0
+        ? { ...candidateContext, validation_feedback: validationFeedback }
+        : candidateContext,
       receipt: {
         stage: 'planning',
         contextManifestHash: hashPrompt('', candidateContext),
         expectedModel: this.deps.expectedActualModel ?? llm.identity.requestedModel,
       },
     });
+    const compilerFeedback = (envelope: CandidateEnvelope) => planCompilerFeedback({
+      candidates: envelope.candidates,
+      task: ctx.requirement,
+      problemGraph: problemGraphResult.graph,
+      problemGraphProvenance: problemGraphResult.provenance,
+      capabilityResolution,
+      evidenceRequirements,
+      activatedNodes: activatedNodeKeys,
+    });
+    let planGen = await generateCandidates();
     validator.validateSchemaOrThrow(currentPlanProposalSchema, planGen.data, 'current-plan-candidates');
+    let validationFeedback = compilerFeedback(planGen.data);
+    if (validationFeedback.length > 0) {
+      planGen = await generateCandidates(validationFeedback);
+      validator.validateSchemaOrThrow(currentPlanProposalSchema, planGen.data, 'current-plan-candidates');
+      validationFeedback = compilerFeedback(planGen.data);
+      if (validationFeedback.length > 0) {
+        throw new Error(`Current plan candidates failed Compiler repair: ${validationFeedback.join('; ')}`);
+      }
+    }
     const candidates: CurrentPlanCandidateProposal[] = planGen.data.candidates.map((candidate) => ({
       ...candidate,
       activated_nodes: activatedNodeKeys,

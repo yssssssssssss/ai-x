@@ -86,3 +86,105 @@ test('Gateway response without actual model records unknown and fails model pin'
   assert.equal(recorder.calls[0].status, 'failed');
   assert.equal(recorder.calls[0].failure?.kind, 'model_drift');
 });
+
+test('Gateway model pool switches immediately after 429 and receipts the successful fallback pin', async () => {
+  process.env.LLM_GATEWAY_BASE_URL = 'https://llm.test/v1';
+  process.env.LLM_GATEWAY_API_KEY = 'secret-key';
+  process.env.LLM_MODEL_NAME = 'primary-route';
+  process.env.LLM_EXPECTED_ACTUAL_MODEL = 'primary-actual';
+  process.env.LLM_MODEL_ROUTES = 'primary-route=primary-actual,fallback-route=fallback-actual';
+  const attemptedModels: string[] = [];
+  globalThis.fetch = async (_input, init) => {
+    const request = JSON.parse(String(init?.body)) as { model: string };
+    attemptedModels.push(request.model);
+    if (request.model === 'primary-route') {
+      return new Response(JSON.stringify({ error: { message: 'throughput exceeded' } }), {
+        status: 429,
+        headers: { 'content-type': 'application/json', 'retry-after': '0.001' },
+      });
+    }
+    return new Response(JSON.stringify({
+      id: 'trace-fallback',
+      model: 'fallback-actual',
+      choices: [{ message: { content: 'fallback answer' } }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const recorder = new MemoryRecorder();
+  const llm = new ReceiptLLMClient(new GatewayLLMClient({ timeoutMs: 50 }), recorder);
+
+  const result = await llm.generateText({
+    prompt: 'use fallback',
+    receipt: { stage: 'planning', expectedModel: 'primary-actual' },
+  });
+
+  assert.equal(result.text, 'fallback answer');
+  assert.deepEqual(attemptedModels, ['primary-route', 'fallback-route']);
+  assert.equal(recorder.calls.length, 1);
+  assert.equal(recorder.calls[0].requestedModel, 'fallback-route');
+  assert.equal(recorder.calls[0].actualModel, 'fallback-actual');
+  assert.equal(recorder.calls[0].status, 'succeeded');
+});
+
+test('Gateway model pool switches after a retryable 503 provider failure', async () => {
+  process.env.LLM_GATEWAY_BASE_URL = 'https://llm.test/v1';
+  process.env.LLM_GATEWAY_API_KEY = 'secret-key';
+  process.env.LLM_MODEL_NAME = 'primary-route';
+  process.env.LLM_EXPECTED_ACTUAL_MODEL = 'primary-actual';
+  process.env.LLM_MODEL_ROUTES = 'primary-route=primary-actual,fallback-route=fallback-actual';
+  const attemptedModels: string[] = [];
+  globalThis.fetch = async (_input, init) => {
+    const request = JSON.parse(String(init?.body)) as { model: string };
+    attemptedModels.push(request.model);
+    if (request.model === 'primary-route') return new Response('unavailable', { status: 503 });
+    return new Response(JSON.stringify({
+      id: 'trace-fallback-503',
+      model: 'fallback-actual',
+      choices: [{ message: { content: 'recovered' } }],
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const recorder = new MemoryRecorder();
+  const llm = new ReceiptLLMClient(new GatewayLLMClient({ timeoutMs: 50 }), recorder);
+
+  const result = await llm.generateText({
+    prompt: 'recover from 503',
+    receipt: { stage: 'skill', expectedModel: 'primary-actual' },
+  });
+
+  assert.equal(result.text, 'recovered');
+  assert.deepEqual(attemptedModels, ['primary-route', 'fallback-route']);
+  assert.equal(recorder.calls[0]?.requestedModel, 'fallback-route');
+});
+
+test('Gateway model pool round-robins the starting route across successful logical calls', async () => {
+  process.env.LLM_GATEWAY_BASE_URL = 'https://llm.test/v1';
+  process.env.LLM_GATEWAY_API_KEY = 'secret-key';
+  process.env.LLM_MODEL_NAME = 'route-a';
+  process.env.LLM_EXPECTED_ACTUAL_MODEL = 'actual-a';
+  process.env.LLM_MODEL_ROUTES = 'route-a=actual-a,route-b=actual-b,route-c=actual-c';
+  const attemptedModels: string[] = [];
+  globalThis.fetch = async (_input, init) => {
+    const request = JSON.parse(String(init?.body)) as { model: string };
+    attemptedModels.push(request.model);
+    const actualModel = request.model.replace('route-', 'actual-');
+    return new Response(JSON.stringify({
+      id: `trace-${request.model}`,
+      model: actualModel,
+      choices: [{ message: { content: request.model } }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const recorder = new MemoryRecorder();
+  const llm = new ReceiptLLMClient(new GatewayLLMClient({ timeoutMs: 50 }), recorder);
+
+  await llm.generateText({ prompt: 'first', receipt: { stage: 'first', expectedModel: 'actual-a' } });
+  await llm.generateText({ prompt: 'second', receipt: { stage: 'second', expectedModel: 'actual-a' } });
+  await llm.generateText({ prompt: 'third', receipt: { stage: 'third', expectedModel: 'actual-a' } });
+
+  assert.deepEqual(attemptedModels, ['route-a', 'route-b', 'route-c']);
+  assert.deepEqual(recorder.calls.map((call) => [call.requestedModel, call.actualModel]), [
+    ['route-a', 'actual-a'],
+    ['route-b', 'actual-b'],
+    ['route-c', 'actual-c'],
+  ]);
+});

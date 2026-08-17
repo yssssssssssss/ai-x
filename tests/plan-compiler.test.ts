@@ -631,6 +631,9 @@ class CurrentPlanningLLM implements LLMClient {
     eligibleAsReal: true,
   };
   readonly calls: StructuredLLMCallOptions[] = [];
+  private candidateCalls = 0;
+
+  constructor(private readonly firstCandidateDefect: 'missing-tool' | 'unknown-binding' | null = null) {}
 
   async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
     this.calls.push(options);
@@ -640,11 +643,29 @@ class CurrentPlanningLLM implements LLMClient {
     } else if (options.schemaName === 'decision-states') {
       data = [];
     } else if (options.schemaName === 'current-plan-candidates') {
-      const depth = validCandidate('depth');
-      const speed = validCandidate('speed');
-      const { activated_nodes: _depthNodes, ...depthProposal } = depth;
-      const { activated_nodes: _speedNodes, ...speedProposal } = speed;
-      data = { candidates: [depthProposal, speedProposal] };
+      const defect = this.candidateCalls === 0 ? this.firstCandidateDefect : null;
+      this.candidateCalls += 1;
+      const proposal = (id: 'depth' | 'speed') => {
+        const { activated_nodes: _nodes, ...candidate } = validCandidate(id);
+        if (defect === 'missing-tool') {
+          return {
+            ...candidate,
+            steps: candidate.steps
+              .filter((step) => step.actor_type !== 'tool')
+              .map((step) => ({ ...step, depends_on: [], input_bindings: [] })),
+          };
+        }
+        if (defect === 'unknown-binding') {
+          return {
+            ...candidate,
+            steps: candidate.steps.map((step) => step.actor_type === 'skill'
+              ? { ...step, input_bindings: [{ ...step.input_bindings[0]!, target_pointer: '/missing' }] }
+              : step),
+          };
+        }
+        return candidate;
+      };
+      data = { candidates: [proposal('depth'), proposal('speed')] };
     } else {
       throw new Error(`unexpected schema ${options.schemaName}`);
     }
@@ -713,6 +734,47 @@ test('Current planning assembles Task8 graph and Task9 real-adapter capability s
   assert.deepEqual(result.candidates.map((candidate) => candidate.id), ['depth', 'speed']);
 });
 
+test('Current planning retries once with complete Compiler feedback before returning candidates', async () => {
+  for (const scenario of [
+    { defect: 'missing-tool' as const, expectedFeedback: /(required_tool_missing|requires earlier tool).*tavily-web-search/ },
+    { defect: 'unknown-binding' as const, expectedFeedback: /unknown_binding_target.*missing/ },
+  ]) {
+    const llm = new CurrentPlanningLLM(scenario.defect);
+    const tools = new ToolRouter();
+    tools.register({
+      adapterType: 'tavily',
+      implementationId: 'qualified-real-tavily',
+      executionMode: 'real',
+      endpointHost: () => 'tavily.fixture.test',
+      async invoke() { throw new Error('not used during planning'); },
+    });
+    const planning = new ResearchPlanningService({
+      llm,
+      validator: new SchemaValidator(),
+      skillLoader: new SkillLoader(),
+      tools,
+      approvalAuthorities: ['owner'],
+    } as never);
+
+    const result = await planning.planCurrentFromRequirement(task, task.research_goal);
+    const candidateCalls = llm.calls.filter((call) => call.schemaName === 'current-plan-candidates');
+    assert.equal(candidateCalls.length, 2);
+    assert.match(JSON.stringify(candidateCalls[1]?.context), scenario.expectedFeedback);
+    const compiler = new PlanCompiler();
+    for (const candidate of result.candidates) {
+      assert.doesNotThrow(() => compiler.compile({
+        candidate,
+        task,
+        problem_graph: result.problemGraph,
+        problem_graph_provenance: result.problemGraphProvenance,
+        capability_resolution: result.capabilityResolution,
+        evidence_requirements: currentPlanningResult().problemGraph.questions[0]!.evidence_requirements,
+        activated_nodes: result.activatedNodes,
+      }));
+    }
+  }
+});
+
 test('finalized Current direct skill builds deterministic strict depth/speed proposals without candidate LLM routing', async () => {
   const llm = new CurrentPlanningLLM();
   const tools = new ToolRouter();
@@ -749,6 +811,49 @@ test('finalized Current direct skill builds deterministic strict depth/speed pro
       evidence_requirements: currentPlanningResult().problemGraph.questions[0]!.evidence_requirements,
       activated_nodes: result.activatedNodes,
     }));
+  }
+});
+
+test('direct screenshot Skill exposes missing screenshot roles as pending inputs', async () => {
+  const llm = new CurrentPlanningLLM();
+  const tools = new ToolRouter();
+  for (const adapterType of ['internal_api', 'rest_json'] as const) {
+    tools.register({
+      adapterType,
+      implementationId: `qualified-real-${adapterType}`,
+      executionMode: 'real',
+      endpointHost: () => `${adapterType}.fixture.test`,
+      async invoke() { throw new Error('not used during planning'); },
+    });
+  }
+  const planning = new ResearchPlanningService({
+    llm,
+    validator: new SchemaValidator(),
+    skillLoader: new SkillLoader(),
+    tools,
+    approvalAuthorities: ['owner'],
+  });
+
+  const result = await planning.planCurrentFromRequirement(
+    task,
+    `$competitive-app-analysis ${task.research_goal}`,
+  );
+  const compiler = new PlanCompiler();
+  for (const candidate of result.candidates) {
+    const compiled = compiler.compile({
+      candidate,
+      task,
+      problem_graph: result.problemGraph,
+      problem_graph_provenance: result.problemGraphProvenance,
+      capability_resolution: result.capabilityResolution,
+      evidence_requirements: currentPlanningResult().problemGraph.questions[0]!.evidence_requirements,
+      activated_nodes: result.activatedNodes,
+    });
+    assert.ok(Object.hasOwn(
+      candidate.steps.find((step) => step.actor_id === 'competitive-app-analysis')?.input ?? {},
+      'competitor_screenshots',
+    ));
+    assert.deepEqual(compiled.pending_inputs.map((input) => input.role), ['competitor_screenshots']);
   }
 });
 

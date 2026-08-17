@@ -13,6 +13,9 @@ node_modules/
 .pids/
 apps/web/dist/
 
+# 本地真实运行输入：保留原文件，但不提交到源码仓库
+run-inputs/
+
 # 运行期工作区:中间文件/tool 输出/失败记录,不入库、不进 git
 run-workspaces/*
 !run-workspaces/README.md
