@@ -622,6 +622,14 @@ test('malformed LLM Current candidate never reaches the repository', async () =>
   assert.equal(harness.repositoryCalls(), 0);
 });
 
+type CurrentCandidateFixtureMode =
+  | 'missing-tool'
+  | 'unknown-binding'
+  | 'over-limit-once'
+  | 'over-limit-always'
+  | 'exact-limit'
+  | null;
+
 class CurrentPlanningLLM implements LLMClient {
   readonly identity = {
     provider: 'current-planning-fixture',
@@ -633,7 +641,7 @@ class CurrentPlanningLLM implements LLMClient {
   readonly calls: StructuredLLMCallOptions[] = [];
   private candidateCalls = 0;
 
-  constructor(private readonly firstCandidateDefect: 'missing-tool' | 'unknown-binding' | null = null) {}
+  constructor(private readonly candidateFixtureMode: CurrentCandidateFixtureMode = null) {}
 
   async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
     this.calls.push(options);
@@ -643,7 +651,11 @@ class CurrentPlanningLLM implements LLMClient {
     } else if (options.schemaName === 'decision-states') {
       data = [];
     } else if (options.schemaName === 'current-plan-candidates') {
-      const defect = this.candidateCalls === 0 ? this.firstCandidateDefect : null;
+      const defect = this.candidateFixtureMode === 'over-limit-always'
+        ? 'over-limit'
+        : this.candidateCalls === 0
+          ? this.candidateFixtureMode
+          : null;
       this.candidateCalls += 1;
       const proposal = (id: 'depth' | 'speed') => {
         const { activated_nodes: _nodes, ...candidate } = validCandidate(id);
@@ -662,6 +674,27 @@ class CurrentPlanningLLM implements LLMClient {
               ? { ...step, input_bindings: [{ ...step.input_bindings[0]!, target_pointer: '/missing' }] }
               : step),
           };
+        }
+        if (defect === 'over-limit' || defect === 'over-limit-once' || defect === 'exact-limit') {
+          const targetLengths = defect === 'exact-limit'
+            ? { depth: 8, speed: 4 }
+            : { depth: 9, speed: 5 };
+          const targetLength = targetLengths[id];
+          while (candidate.steps.length < targetLength) {
+            const stepNo = candidate.steps.length + 1;
+            candidate.steps.push(step({
+              step_no: stepNo,
+              step_name: `补充分析 ${stepNo}`,
+              actor_type: 'llm',
+              actor_id: 'current-planning-model',
+              question_ids: ['question-action'],
+              depends_on: [stepNo - 1],
+              input: {},
+              input_bindings: [],
+              expected_outputs: [{ pointer: `/analysis-${stepNo}`, description: '补充分析' }],
+              acceptance_criteria: ['形成补充分析'],
+            }));
+          }
         }
         return candidate;
       };
@@ -684,6 +717,26 @@ class CurrentPlanningLLM implements LLMClient {
   async generateText(_options: TextLLMCallOptions): Promise<TextLLMResult> {
     throw new Error('not used');
   }
+}
+
+function routedPlanningHarness(candidateFixtureMode: CurrentCandidateFixtureMode) {
+  const llm = new CurrentPlanningLLM(candidateFixtureMode);
+  const tools = new ToolRouter();
+  tools.register({
+    adapterType: 'tavily',
+    implementationId: 'qualified-real-tavily',
+    executionMode: 'real',
+    endpointHost: () => 'tavily.fixture.test',
+    async invoke() { throw new Error('not used during planning'); },
+  });
+  const planning = new ResearchPlanningService({
+    llm,
+    validator: new SchemaValidator(),
+    skillLoader: new SkillLoader(),
+    tools,
+    approvalAuthorities: ['owner'],
+  } as never);
+  return { llm, planning };
 }
 
 test('Current planning assembles Task8 graph and Task9 real-adapter capability shortlist before candidate generation', async () => {
@@ -717,6 +770,7 @@ test('Current planning assembles Task8 graph and Task9 real-adapter capability s
   const candidateCall = llm.calls.find((call) => call.schemaName === 'current-plan-candidates');
   assert.ok(candidateCall);
   assert.match(candidateCall.prompt, /fallback_actor_ids 必须为空数组/);
+  assert.match(candidateCall.prompt, /depth 总步数不得超过 8，speed 总步数不得超过 4/);
   const candidateContext = candidateCall.context as {
     problem_graph: ProblemGraph;
     capability_resolution: CapabilityResolution;
@@ -773,6 +827,35 @@ test('Current planning retries once with complete Compiler feedback before retur
       }));
     }
   }
+});
+
+test('Current routed planning repairs candidates that exceed the depth/speed step limits', async () => {
+  const { llm, planning } = routedPlanningHarness('over-limit-once');
+
+  const result = await planning.planCurrentFromRequirement(task, task.research_goal);
+  const candidateCalls = llm.calls.filter((call) => call.schemaName === 'current-plan-candidates');
+  assert.equal(candidateCalls.length, 2);
+  assert.match(JSON.stringify(candidateCalls[1]?.context), /depth: routed_step_limit_exceeded: actual=9, max=8/);
+  assert.match(JSON.stringify(candidateCalls[1]?.context), /speed: routed_step_limit_exceeded: actual=5, max=4/);
+  assert.deepEqual(result.candidates.map((candidate) => candidate.steps.length), [2, 2]);
+});
+
+test('Current routed planning fails closed when repaired candidates still exceed step limits', async () => {
+  const { llm, planning } = routedPlanningHarness('over-limit-always');
+
+  await assert.rejects(
+    () => planning.planCurrentFromRequirement(task, task.research_goal),
+    /failed candidate validation repair: depth: routed_step_limit_exceeded: actual=9, max=8; speed: routed_step_limit_exceeded: actual=5, max=4/,
+  );
+  assert.equal(llm.calls.filter((call) => call.schemaName === 'current-plan-candidates').length, 2);
+});
+
+test('Current routed planning accepts candidates exactly at the depth/speed step limits', async () => {
+  const { llm, planning } = routedPlanningHarness('exact-limit');
+
+  const result = await planning.planCurrentFromRequirement(task, task.research_goal);
+  assert.equal(llm.calls.filter((call) => call.schemaName === 'current-plan-candidates').length, 1);
+  assert.deepEqual(result.candidates.map((candidate) => candidate.steps.length), [8, 4]);
 });
 
 test('finalized Current direct skill builds deterministic strict depth/speed proposals without candidate LLM routing', async () => {
@@ -894,6 +977,8 @@ test('direct Current depth and speed prepend every required Tool with remapped s
     'experience-model-lab',
     'virtual-user-lab',
   ]);
+  assert.equal(result.candidates.find((candidate) => candidate.id === 'depth')?.steps.length, 6);
+  assert.equal(result.candidates.find((candidate) => candidate.id === 'speed')?.steps.length, 5);
   const compiler = new PlanCompiler();
   const validator = new SchemaValidator();
 

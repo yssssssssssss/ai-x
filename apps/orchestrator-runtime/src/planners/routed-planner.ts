@@ -199,7 +199,9 @@ export interface CurrentPlanArtifacts {
   capabilityResolution: CapabilityResolution;
 }
 
-function planCompilerFeedback(input: {
+const ROUTED_STEP_LIMITS = { depth: 8, speed: 4 } as const;
+
+function routedCandidateValidationFeedback(input: {
   candidates: Array<Omit<CurrentPlanCandidateProposal, 'activated_nodes'>>;
   task: ResearchTaskV2;
   problemGraph: ProblemGraph;
@@ -211,6 +213,12 @@ function planCompilerFeedback(input: {
   const compiler = new PlanCompiler();
   const issues: string[] = [];
   for (const candidate of input.candidates) {
+    const maxSteps = ROUTED_STEP_LIMITS[candidate.id];
+    if (candidate.steps.length > maxSteps) {
+      issues.push(
+        `${candidate.id}: routed_step_limit_exceeded: actual=${candidate.steps.length}, max=${maxSteps}`,
+      );
+    }
     try {
       compiler.compile({
         candidate: { ...candidate, activated_nodes: input.activatedNodes },
@@ -688,11 +696,12 @@ export class RoutedPlanner implements PlanStrategy {
     const generateCandidates = (validationFeedback: string[] = []) => llm.generateStructured<CandidateEnvelope>({
       prompt:
         `基于 finalized ResearchTaskV2、ProblemGraph、Evidence Policy 和 eligible capability shortlist 生成 depth/speed 两份 Current 候选。` +
+        `depth 总步数不得超过 ${ROUTED_STEP_LIMITS.depth}，speed 总步数不得超过 ${ROUTED_STEP_LIMITS.speed}；只选择与 research_goal/when_to_use 最匹配的少数能力，不得堆叠整个 shortlist。` +
         `每个 step 必须精确包含 step_no、step_name、actor_type、actor_id、question_ids、depends_on、input、input_bindings、expected_outputs、acceptance_criteria、requires_approval、fallback_actor_ids。` +
         `fallback_actor_ids 必须为空数组，当前执行器不支持 fallback 调度。` +
         `Skill 的 required_tools 必须作为更早的 Tool step；所有引用必须真实存在；不得使用 capability_resolution.rejected 中的 actor。` +
         (validationFeedback.length > 0
-          ? `上一次候选未通过 Plan Compiler 校验，必须逐项修复：${validationFeedback.join('；')}。`
+          ? `上一次候选未通过候选校验，必须逐项修复：${validationFeedback.join('；')}。`
           : ''),
       schema: currentPlanProposalSchema,
       schemaName: 'current-plan-candidates',
@@ -705,7 +714,7 @@ export class RoutedPlanner implements PlanStrategy {
         expectedModel: this.deps.expectedActualModel ?? llm.identity.requestedModel,
       },
     });
-    const compilerFeedback = (envelope: CandidateEnvelope) => planCompilerFeedback({
+    const candidateValidationFeedback = (envelope: CandidateEnvelope) => routedCandidateValidationFeedback({
       candidates: envelope.candidates,
       task: ctx.requirement,
       problemGraph: problemGraphResult.graph,
@@ -716,13 +725,13 @@ export class RoutedPlanner implements PlanStrategy {
     });
     let planGen = await generateCandidates();
     validator.validateSchemaOrThrow(currentPlanProposalSchema, planGen.data, 'current-plan-candidates');
-    let validationFeedback = compilerFeedback(planGen.data);
+    let validationFeedback = candidateValidationFeedback(planGen.data);
     if (validationFeedback.length > 0) {
       planGen = await generateCandidates(validationFeedback);
       validator.validateSchemaOrThrow(currentPlanProposalSchema, planGen.data, 'current-plan-candidates');
-      validationFeedback = compilerFeedback(planGen.data);
+      validationFeedback = candidateValidationFeedback(planGen.data);
       if (validationFeedback.length > 0) {
-        throw new Error(`Current plan candidates failed Compiler repair: ${validationFeedback.join('; ')}`);
+        throw new Error(`Current plan candidates failed candidate validation repair: ${validationFeedback.join('; ')}`);
       }
     }
     const candidates: CurrentPlanCandidateProposal[] = planGen.data.candidates.map((candidate) => ({
