@@ -17,7 +17,6 @@ import type {
 // 薄入口:只做鉴权/会话/转发/读库,判断全在 orchestrator+LLM。
 
 export const tasksRouter = Router();
-tasksRouter.use(requireAuth);
 
 // owner 隔离:取任务并校验归属,不属于当前用户 → 404(不泄露存在性)
 async function getOwnedTask(taskId: string, userId: string) {
@@ -56,6 +55,9 @@ tasksRouter.post('/:id/execute', (_req, res) => {
 tasksRouter.post('/:id/resume', (_req, res) => {
   res.status(410).json({ error: 'legacy task resume 已移除；请使用 /api/control-tasks/:id/resume' });
 });
+
+// Legacy read routes remain owner-scoped and require an active authenticated user.
+tasksRouter.use(requireAuth);
 
 // 历史任务(owner 隔离)
 tasksRouter.get('/', async (req, res) => {
