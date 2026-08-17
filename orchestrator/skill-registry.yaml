@@ -58,6 +58,7 @@ skills:
       skill。
     owner: 竞品分析组
     status: active
+    payload_schema: skills/competitive-analysis/app-analysis/output.schema.json
     task_types:
       - competitive_research
     inputs:

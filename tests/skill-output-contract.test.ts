@@ -21,6 +21,16 @@ const envelope = (payload: Record<string, unknown> = {}) => ({
 });
 
 const payloadFixtures: Record<string, Record<string, unknown>> = {
+  'competitive-app-analysis': {
+    screen_comparisons: [{
+      competitor: '竞品 A',
+      scene: '首页',
+      summary: '主行动入口更集中。',
+      metrics: { attention_focus: 0.82 },
+      evidence_refs: ['artifact://tool-output/1'],
+    }],
+    recommendations: ['减少首屏视觉竞争。'],
+  },
   'analyze-satisfaction': {
     analysis_status: 'complete',
     data_requests: [],
@@ -82,7 +92,7 @@ test('every active Skill loads the unified effective output contract', () => {
   }
 });
 
-test('five KB Skill payload schemas are inlined and reject missing or extra fields', () => {
+test('six Skill payload schemas are inlined and reject missing or extra fields', () => {
   const loader = new SkillLoader();
   const validator = new SchemaValidator();
   for (const [skillId, payload] of Object.entries(payloadFixtures)) {
