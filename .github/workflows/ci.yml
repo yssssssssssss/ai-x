@@ -30,10 +30,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - run: corepack enable
       - run: corepack prepare pnpm@9.12.1 --activate
       - run: pnpm install --frozen-lockfile
       - run: pnpm --dir apps/web install --frozen-lockfile
       - run: pnpm db:migrate
       - run: pnpm quality
+      # Current real smoke is an explicit command-level gate; credentials are never stored in CI defaults.
+      # ALLOW_REAL_PROVIDER=1 LLM_PROVIDER=gateway TOOL_ADAPTER=real pnpm smoke:current:real

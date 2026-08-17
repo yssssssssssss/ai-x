@@ -1,0 +1,30 @@
+version: 1
+id: accessibility-audit-report
+subtitle: Evidence-backed accessibility audit
+sections:
+  - id: cover
+    title: Cover
+  - id: executive-summary
+    title: Executive Summary
+  - id: background
+    title: Accessibility Context and Objectives
+  - id: scope-method
+    title: Platforms, Assistive Technology, and Method
+  - id: key-metrics
+    title: Conformance and Priority Metrics
+  - id: findings
+    title: POUR and Component Findings
+  - id: question-analysis
+    title: Accessibility Question Analysis
+  - id: visual-evidence
+    title: Tested Behavior and Visual Evidence
+  - id: comparison
+    title: Cross-Platform Impact Analysis
+  - id: conclusion
+    title: Conclusions
+  - id: recommendations
+    title: Remediation Plan
+  - id: risks
+    title: Coverage Gaps and Residual Risk
+  - id: appendix
+    title: Verification Matrix and Appendix

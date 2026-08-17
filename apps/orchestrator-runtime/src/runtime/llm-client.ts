@@ -16,6 +16,7 @@ export interface LLMResult<T> {
   modelName: string;
   modelVersion: string;
   traceId: string;
+  receiptId?: string;
   tokens?: TokenUsage;
 }
 
@@ -81,6 +82,7 @@ export interface ModelCallRecordInput {
   endpointHost: string;
   requestedModel: string;
   actualModel: string;
+  modelVersion?: string;
   promptHash: string;
   contextManifestHash?: string;
   traceId?: string;
@@ -92,7 +94,7 @@ export interface ModelCallRecordInput {
 }
 
 export interface ModelCallRecorder {
-  recordModelCall(input: ModelCallRecordInput): Promise<void>;
+  recordModelCall(input: ModelCallRecordInput): Promise<string>;
 }
 
 export type LegacyStructuredLLMCallOptions = Omit<StructuredLLMCallOptions, 'receipt'> & { receipt?: LLMReceiptContext };
@@ -257,7 +259,7 @@ export const defaultFixtures: FixtureMap = {
   },
   // 段2c 候选计划(candidates,恰好 2 份 depth/speed);steps 只用真实存在的能力(过幻觉校验)。
   // depth = tool + skill + reviewer(可测复核回流);speed = tool + llm(可测 llm 步)。
-  'execution-plan-candidates': {
+  'current-plan-candidates': {
     candidates: [
       {
         id: 'depth',

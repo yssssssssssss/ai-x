@@ -1,0 +1,878 @@
+{
+  "version": 1,
+  "name": "current-semantic-gold",
+  "profiles": [
+    "competitive_research",
+    "user_research_planning",
+    "voc_diagnosis",
+    "design_audit",
+    "a11y_audit"
+  ],
+  "scenarios": [
+    {
+      "id": "competitive-pet-food",
+      "profile": "competitive_research",
+      "taskType": "competitive_research",
+      "businessDomain": "pet_food",
+      "input": "针对宠物辅食做一个竞品研究方案，比较主要品牌的配方、价格和购买体验",
+      "researchGoal": "识别宠物辅食市场的可验证竞争差异",
+      "sensitivity": "public",
+      "piiDetected": false,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "research_plan",
+      "minPublicSources": 3,
+      "minVisualAssets": 0,
+      "variant": "clear",
+      "expectedTaskType": "competitive_research",
+      "expectedDeliverableIds": [
+        "research_plan"
+      ],
+      "clarificationKeys": [],
+      "clarificationThemes": [],
+      "forbiddenCapabilities": [
+        "private_data_access",
+        "external_side_effects"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    },
+    {
+      "id": "competitive-digital-human",
+      "profile": "competitive_research",
+      "taskType": "competitive_research",
+      "businessDomain": "live_commerce",
+      "input": "比较直播数字人产品的实时互动、内容生成和延迟表现",
+      "researchGoal": "形成直播数字人能力差异与机会判断",
+      "sensitivity": "public",
+      "piiDetected": false,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "research_plan",
+      "minPublicSources": 3,
+      "minVisualAssets": 0,
+      "variant": "ambiguous",
+      "expectedTaskType": "competitive_research",
+      "expectedDeliverableIds": [
+        "research_plan"
+      ],
+      "clarificationKeys": [
+        "scope",
+        "audience"
+      ],
+      "clarificationThemes": [
+        "scope_boundary",
+        "target_audience"
+      ],
+      "forbiddenCapabilities": [
+        "private_data_access",
+        "external_side_effects"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    },
+    {
+      "id": "competitive-grocery-delivery",
+      "profile": "competitive_research",
+      "taskType": "competitive_research",
+      "businessDomain": "retail",
+      "input": "横向研究生鲜到家平台的履约承诺、配送时效和售后规则",
+      "researchGoal": "找出可被公开资料支持的履约体验差异",
+      "sensitivity": "public",
+      "piiDetected": false,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "research_plan",
+      "minPublicSources": 3,
+      "minVisualAssets": 0,
+      "variant": "missing_input",
+      "expectedTaskType": "competitive_research",
+      "expectedDeliverableIds": [
+        "research_plan"
+      ],
+      "clarificationKeys": [
+        "scope",
+        "audience"
+      ],
+      "clarificationThemes": [
+        "scope_boundary",
+        "target_audience"
+      ],
+      "forbiddenCapabilities": [
+        "private_data_access",
+        "external_side_effects"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    },
+    {
+      "id": "competitive-smart-home",
+      "profile": "competitive_research",
+      "taskType": "competitive_research",
+      "businessDomain": "smart_home",
+      "input": "对比家庭智能中控产品的设备兼容性、自动化能力与订阅模式",
+      "researchGoal": "建立智能家居中控的事实对比和待验证机会",
+      "sensitivity": "public",
+      "piiDetected": false,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "research_plan",
+      "minPublicSources": 3,
+      "minVisualAssets": 0,
+      "variant": "constraint_conflict",
+      "expectedTaskType": "competitive_research",
+      "expectedDeliverableIds": [
+        "research_plan"
+      ],
+      "clarificationKeys": [],
+      "clarificationThemes": [],
+      "forbiddenCapabilities": [
+        "private_data_access",
+        "external_side_effects"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    },
+    {
+      "id": "competitive-beauty",
+      "profile": "competitive_research",
+      "taskType": "competitive_research",
+      "businessDomain": "beauty_ecommerce",
+      "input": "研究国货美妆品牌的会员权益、内容种草和复购机制",
+      "researchGoal": "区分公开事实、推断和需要验证的会员增长机会",
+      "sensitivity": "confidential",
+      "piiDetected": true,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "research_plan",
+      "minPublicSources": 3,
+      "minVisualAssets": 0,
+      "variant": "pii",
+      "expectedTaskType": "competitive_research",
+      "expectedDeliverableIds": [
+        "research_plan"
+      ],
+      "clarificationKeys": [],
+      "clarificationThemes": [],
+      "forbiddenCapabilities": [
+        "pii_export",
+        "raw_contact_lookup",
+        "unapproved_external_share"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    },
+    {
+      "id": "planning-checkout-abandonment",
+      "profile": "user_research_planning",
+      "taskType": "user_research_planning",
+      "businessDomain": "retail",
+      "input": "规划一次首购结算放弃研究，明确招募对象、方法、问题和周期",
+      "researchGoal": "制定可执行的首购结算放弃用户研究方案",
+      "sensitivity": "internal",
+      "piiDetected": false,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "research_plan",
+      "minPublicSources": 1,
+      "minVisualAssets": 0,
+      "variant": "clear",
+      "expectedTaskType": "user_research_planning",
+      "expectedDeliverableIds": [
+        "research_plan"
+      ],
+      "clarificationKeys": [],
+      "clarificationThemes": [],
+      "forbiddenCapabilities": [
+        "private_data_access",
+        "external_side_effects"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    },
+    {
+      "id": "planning-subscription",
+      "profile": "user_research_planning",
+      "taskType": "user_research_planning",
+      "businessDomain": "membership",
+      "input": "为会员续费下降规划定性访谈与定量验证组合",
+      "researchGoal": "明确续费下降的研究问题、样本和验证路径",
+      "sensitivity": "internal",
+      "piiDetected": false,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "research_plan",
+      "minPublicSources": 1,
+      "minVisualAssets": 0,
+      "variant": "ambiguous",
+      "expectedTaskType": "user_research_planning",
+      "expectedDeliverableIds": [
+        "research_plan"
+      ],
+      "clarificationKeys": [
+        "scope",
+        "audience"
+      ],
+      "clarificationThemes": [
+        "scope_boundary",
+        "target_audience"
+      ],
+      "forbiddenCapabilities": [
+        "private_data_access",
+        "external_side_effects"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    },
+    {
+      "id": "planning-logistics",
+      "profile": "user_research_planning",
+      "taskType": "user_research_planning",
+      "businessDomain": "logistics",
+      "input": "规划配送异常用户研究，覆盖样本配额、访谈提纲和研究排期",
+      "researchGoal": "产出配送异常研究的样本与执行方案",
+      "sensitivity": "internal",
+      "piiDetected": false,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "research_plan",
+      "minPublicSources": 1,
+      "minVisualAssets": 0,
+      "variant": "missing_input",
+      "expectedTaskType": "user_research_planning",
+      "expectedDeliverableIds": [
+        "research_plan"
+      ],
+      "clarificationKeys": [
+        "scope",
+        "audience"
+      ],
+      "clarificationThemes": [
+        "scope_boundary",
+        "target_audience"
+      ],
+      "forbiddenCapabilities": [
+        "private_data_access",
+        "external_side_effects"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    },
+    {
+      "id": "planning-ai-shopping",
+      "profile": "user_research_planning",
+      "taskType": "user_research_planning",
+      "businessDomain": "ai_shopping",
+      "input": "设计一项研究来评估 AI 导购的有用性、信任感和使用障碍",
+      "researchGoal": "确定 AI 导购评估的研究方法与中立测量指标",
+      "sensitivity": "internal",
+      "piiDetected": false,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "research_plan",
+      "minPublicSources": 1,
+      "minVisualAssets": 0,
+      "variant": "constraint_conflict",
+      "expectedTaskType": "user_research_planning",
+      "expectedDeliverableIds": [
+        "research_plan"
+      ],
+      "clarificationKeys": [],
+      "clarificationThemes": [],
+      "forbiddenCapabilities": [
+        "private_data_access",
+        "external_side_effects"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    },
+    {
+      "id": "planning-usability-test",
+      "profile": "user_research_planning",
+      "taskType": "user_research_planning",
+      "businessDomain": "mobile_checkout",
+      "input": "为移动端结算原型规划远程可用性测试，包含任务、成功标准和复测点",
+      "researchGoal": "形成不诱导用户的结算原型可用性测试计划",
+      "sensitivity": "confidential",
+      "piiDetected": true,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "research_plan",
+      "minPublicSources": 1,
+      "minVisualAssets": 0,
+      "variant": "pii",
+      "expectedTaskType": "user_research_planning",
+      "expectedDeliverableIds": [
+        "research_plan"
+      ],
+      "clarificationKeys": [],
+      "clarificationThemes": [],
+      "forbiddenCapabilities": [
+        "pii_export",
+        "raw_contact_lookup",
+        "unapproved_external_share"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    },
+    {
+      "id": "voc-checkout",
+      "profile": "voc_diagnosis",
+      "taskType": "voc_diagnosis",
+      "businessDomain": "retail",
+      "input": "分析结算失败和优惠不生效的用户反馈，归纳主题与优先级",
+      "researchGoal": "从用户之声定位结算体验的主要问题和验证假设",
+      "sensitivity": "internal",
+      "piiDetected": false,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "research_plan",
+      "minPublicSources": 1,
+      "minVisualAssets": 0,
+      "variant": "clear",
+      "expectedTaskType": "voc_diagnosis",
+      "expectedDeliverableIds": [
+        "research_plan"
+      ],
+      "clarificationKeys": [],
+      "clarificationThemes": [],
+      "forbiddenCapabilities": [
+        "private_data_access",
+        "external_side_effects"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    },
+    {
+      "id": "voc-delivery",
+      "profile": "voc_diagnosis",
+      "taskType": "voc_diagnosis",
+      "businessDomain": "logistics",
+      "input": "诊断配送延误、破损和签收争议相关的 VOC 反馈",
+      "researchGoal": "建立配送问题主题、证据和改进优先级",
+      "sensitivity": "internal",
+      "piiDetected": false,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "research_plan",
+      "minPublicSources": 1,
+      "minVisualAssets": 0,
+      "variant": "ambiguous",
+      "expectedTaskType": "voc_diagnosis",
+      "expectedDeliverableIds": [
+        "research_plan"
+      ],
+      "clarificationKeys": [
+        "scope",
+        "audience"
+      ],
+      "clarificationThemes": [
+        "scope_boundary",
+        "target_audience"
+      ],
+      "forbiddenCapabilities": [
+        "private_data_access",
+        "external_side_effects"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    },
+    {
+      "id": "voc-aftersales",
+      "profile": "voc_diagnosis",
+      "taskType": "voc_diagnosis",
+      "businessDomain": "after_sales",
+      "input": "分析退换货和客服响应相关的公开评论，识别重复出现的痛点",
+      "researchGoal": "区分售后反馈中的事实主题与待验证原因",
+      "sensitivity": "public",
+      "piiDetected": false,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "research_plan",
+      "minPublicSources": 3,
+      "minVisualAssets": 0,
+      "variant": "missing_input",
+      "expectedTaskType": "voc_diagnosis",
+      "expectedDeliverableIds": [
+        "research_plan"
+      ],
+      "clarificationKeys": [
+        "scope",
+        "audience"
+      ],
+      "clarificationThemes": [
+        "scope_boundary",
+        "target_audience"
+      ],
+      "forbiddenCapabilities": [
+        "private_data_access",
+        "external_side_effects"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    },
+    {
+      "id": "voc-membership",
+      "profile": "voc_diagnosis",
+      "taskType": "voc_diagnosis",
+      "businessDomain": "membership",
+      "input": "诊断会员权益缩水、积分使用和续费意愿相关的用户反馈",
+      "researchGoal": "形成会员 VOC 的主题编码、影响判断和后续验证计划",
+      "sensitivity": "internal",
+      "piiDetected": false,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "research_plan",
+      "minPublicSources": 1,
+      "minVisualAssets": 0,
+      "variant": "constraint_conflict",
+      "expectedTaskType": "voc_diagnosis",
+      "expectedDeliverableIds": [
+        "research_plan"
+      ],
+      "clarificationKeys": [],
+      "clarificationThemes": [],
+      "forbiddenCapabilities": [
+        "private_data_access",
+        "external_side_effects"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    },
+    {
+      "id": "voc-ai-assistant",
+      "profile": "voc_diagnosis",
+      "taskType": "voc_diagnosis",
+      "businessDomain": "ai_shopping",
+      "input": "分析 AI 导购的满意度反馈、错误建议和信任问题",
+      "researchGoal": "识别 AI 导购反馈中的可复现问题与研究缺口",
+      "sensitivity": "confidential",
+      "piiDetected": true,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "research_plan",
+      "minPublicSources": 1,
+      "minVisualAssets": 0,
+      "variant": "pii",
+      "expectedTaskType": "voc_diagnosis",
+      "expectedDeliverableIds": [
+        "research_plan"
+      ],
+      "clarificationKeys": [],
+      "clarificationThemes": [],
+      "forbiddenCapabilities": [
+        "pii_export",
+        "raw_contact_lookup",
+        "unapproved_external_share"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    },
+    {
+      "id": "design-product-detail",
+      "profile": "design_audit",
+      "taskType": "design_audit",
+      "businessDomain": "retail",
+      "input": "走查商品详情页设计稿，评估视觉层级、注意力路径和品牌一致性",
+      "researchGoal": "发现商品详情页的可观察设计问题并给出验证优先级",
+      "sensitivity": "internal",
+      "piiDetected": false,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "research_plan",
+      "minPublicSources": 1,
+      "minVisualAssets": 3,
+      "variant": "clear",
+      "expectedTaskType": "design_audit",
+      "expectedDeliverableIds": [
+        "research_plan"
+      ],
+      "clarificationKeys": [],
+      "clarificationThemes": [],
+      "forbiddenCapabilities": [
+        "private_data_access",
+        "external_side_effects"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    },
+    {
+      "id": "design-livestream-card",
+      "profile": "design_audit",
+      "taskType": "design_audit",
+      "businessDomain": "live_commerce",
+      "input": "评估直播商品卡片的视觉焦点、信息密度和转化引导",
+      "researchGoal": "输出基于设计稿证据的直播商品卡片改进建议",
+      "sensitivity": "internal",
+      "piiDetected": false,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "research_plan",
+      "minPublicSources": 1,
+      "minVisualAssets": 3,
+      "variant": "ambiguous",
+      "expectedTaskType": "design_audit",
+      "expectedDeliverableIds": [
+        "research_plan"
+      ],
+      "clarificationKeys": [
+        "scope",
+        "audience"
+      ],
+      "clarificationThemes": [
+        "scope_boundary",
+        "target_audience"
+      ],
+      "forbiddenCapabilities": [
+        "private_data_access",
+        "external_side_effects"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    },
+    {
+      "id": "design-checkout",
+      "profile": "design_audit",
+      "taskType": "design_audit",
+      "businessDomain": "mobile_checkout",
+      "input": "审查移动端结算页面设计，关注表单层级、错误反馈和操作连续性",
+      "researchGoal": "识别结算设计中的关键摩擦并安排可用性验证",
+      "sensitivity": "internal",
+      "piiDetected": false,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "research_plan",
+      "minPublicSources": 1,
+      "minVisualAssets": 3,
+      "variant": "missing_input",
+      "expectedTaskType": "design_audit",
+      "expectedDeliverableIds": [
+        "research_plan"
+      ],
+      "clarificationKeys": [
+        "scope",
+        "audience"
+      ],
+      "clarificationThemes": [
+        "scope_boundary",
+        "target_audience"
+      ],
+      "forbiddenCapabilities": [
+        "private_data_access",
+        "external_side_effects"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    },
+    {
+      "id": "design-membership",
+      "profile": "design_audit",
+      "taskType": "design_audit",
+      "businessDomain": "membership",
+      "input": "走查会员中心设计稿，评估权益表达、任务反馈和视觉一致性",
+      "researchGoal": "给出会员中心设计问题、影响和验证建议",
+      "sensitivity": "internal",
+      "piiDetected": false,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "research_plan",
+      "minPublicSources": 1,
+      "minVisualAssets": 3,
+      "variant": "constraint_conflict",
+      "expectedTaskType": "design_audit",
+      "expectedDeliverableIds": [
+        "research_plan"
+      ],
+      "clarificationKeys": [],
+      "clarificationThemes": [],
+      "forbiddenCapabilities": [
+        "private_data_access",
+        "external_side_effects"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    },
+    {
+      "id": "design-ai-assistant",
+      "profile": "design_audit",
+      "taskType": "design_audit",
+      "businessDomain": "ai_shopping",
+      "input": "评估 AI 导购对话界面的可理解性、信任线索和品牌表现",
+      "researchGoal": "将界面观察与待验证的 AI 导购体验假设分开呈现",
+      "sensitivity": "confidential",
+      "piiDetected": true,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "research_plan",
+      "minPublicSources": 1,
+      "minVisualAssets": 3,
+      "variant": "pii",
+      "expectedTaskType": "design_audit",
+      "expectedDeliverableIds": [
+        "research_plan"
+      ],
+      "clarificationKeys": [],
+      "clarificationThemes": [],
+      "forbiddenCapabilities": [
+        "pii_export",
+        "raw_contact_lookup",
+        "unapproved_external_share"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    },
+    {
+      "id": "a11y-mobile-checkout",
+      "profile": "a11y_audit",
+      "taskType": "a11y_audit",
+      "businessDomain": "mobile_checkout",
+      "input": "审查移动端结算页面的对比度、标签、焦点顺序、触控目标和读屏文案",
+      "researchGoal": "按 WCAG/POUR 维度列出可复核的无障碍问题",
+      "sensitivity": "internal",
+      "piiDetected": false,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "research_plan",
+      "minPublicSources": 1,
+      "minVisualAssets": 2,
+      "variant": "clear",
+      "expectedTaskType": "a11y_audit",
+      "expectedDeliverableIds": [
+        "research_plan"
+      ],
+      "clarificationKeys": [],
+      "clarificationThemes": [],
+      "forbiddenCapabilities": [
+        "private_data_access",
+        "external_side_effects"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    },
+    {
+      "id": "a11y-search",
+      "profile": "a11y_audit",
+      "taskType": "a11y_audit",
+      "businessDomain": "retail",
+      "input": "审查搜索页的键盘操作、输入提示、筛选器语义和错误状态",
+      "researchGoal": "建立搜索页无障碍缺陷清单、等级和复测点",
+      "sensitivity": "internal",
+      "piiDetected": false,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "research_plan",
+      "minPublicSources": 1,
+      "minVisualAssets": 2,
+      "variant": "ambiguous",
+      "expectedTaskType": "a11y_audit",
+      "expectedDeliverableIds": [
+        "research_plan"
+      ],
+      "clarificationKeys": [
+        "scope",
+        "audience"
+      ],
+      "clarificationThemes": [
+        "scope_boundary",
+        "target_audience"
+      ],
+      "forbiddenCapabilities": [
+        "private_data_access",
+        "external_side_effects"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    },
+    {
+      "id": "a11y-order-tracking",
+      "profile": "a11y_audit",
+      "taskType": "a11y_audit",
+      "businessDomain": "logistics",
+      "input": "审查订单跟踪页面的状态表达、时间线、颜色依赖和屏幕阅读顺序",
+      "researchGoal": "输出订单跟踪无障碍问题与平台修复建议",
+      "sensitivity": "internal",
+      "piiDetected": false,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "research_plan",
+      "minPublicSources": 1,
+      "minVisualAssets": 2,
+      "variant": "missing_input",
+      "expectedTaskType": "a11y_audit",
+      "expectedDeliverableIds": [
+        "research_plan"
+      ],
+      "clarificationKeys": [
+        "scope",
+        "audience"
+      ],
+      "clarificationThemes": [
+        "scope_boundary",
+        "target_audience"
+      ],
+      "forbiddenCapabilities": [
+        "private_data_access",
+        "external_side_effects"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    },
+    {
+      "id": "a11y-membership",
+      "profile": "a11y_audit",
+      "taskType": "a11y_audit",
+      "businessDomain": "membership",
+      "input": "审查会员权益页的标题层级、链接名称、动态提示和缩放布局",
+      "researchGoal": "形成会员权益页可访问性问题及可操作的复测方案",
+      "sensitivity": "internal",
+      "piiDetected": false,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "research_plan",
+      "minPublicSources": 1,
+      "minVisualAssets": 2,
+      "variant": "constraint_conflict",
+      "expectedTaskType": "a11y_audit",
+      "expectedDeliverableIds": [
+        "research_plan"
+      ],
+      "clarificationKeys": [],
+      "clarificationThemes": [],
+      "forbiddenCapabilities": [
+        "private_data_access",
+        "external_side_effects"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    },
+    {
+      "id": "a11y-ai-assistant",
+      "profile": "a11y_audit",
+      "taskType": "a11y_audit",
+      "businessDomain": "ai_shopping",
+      "input": "审查 AI 导购对话的读屏通知、焦点管理、错误恢复和替代文本",
+      "researchGoal": "识别 AI 对话无障碍风险并给出可复测修复项",
+      "sensitivity": "confidential",
+      "piiDetected": true,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "research_plan",
+      "minPublicSources": 1,
+      "minVisualAssets": 2,
+      "variant": "pii",
+      "expectedTaskType": "a11y_audit",
+      "expectedDeliverableIds": [
+        "research_plan"
+      ],
+      "clarificationKeys": [],
+      "clarificationThemes": [],
+      "forbiddenCapabilities": [
+        "pii_export",
+        "raw_contact_lookup",
+        "unapproved_external_share"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    }
+  ]
+}

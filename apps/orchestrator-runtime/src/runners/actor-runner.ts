@@ -25,6 +25,7 @@ export interface ExecCtx {
   plan: { steps: PlanStep[]; task_id: string };
   graphHash: string;
   attemptId?: string;
+  retryOf?: string | null;
   contextManifestHash?: string;
   expectedModel?: string;
   uploads?: Array<{ role: string; dataUrl: string }>;

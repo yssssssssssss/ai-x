@@ -4,9 +4,11 @@ import {
   MockLLMClient,
   type LLMClient,
   type LLMProviderIdentity,
+  type LLMResult,
   type ModelCallRecordInput,
   type StructuredLLMCallOptions,
   type TextLLMCallOptions,
+  type TextLLMResult,
 } from '../apps/orchestrator-runtime/src/runtime/llm-client.ts';
 import {
   MissingModelReceiptError,
@@ -17,13 +19,14 @@ import {
 class MemoryModelRecorder {
   readonly calls: ModelCallRecordInput[] = [];
 
-  async recordModelCall(input: ModelCallRecordInput): Promise<void> {
+  async recordModelCall(input: ModelCallRecordInput): Promise<string> {
     this.calls.push(input);
+    return '11111111-1111-4111-8111-111111111119';
   }
 }
 
 class FailingModelRecorder {
-  async recordModelCall(_input: ModelCallRecordInput): Promise<void> {
+  async recordModelCall(_input: ModelCallRecordInput): Promise<string> {
     throw new Error('database unavailable');
   }
 }
@@ -66,6 +69,7 @@ test('records successful structured call receipt with identity, timestamps, and 
 
   assert.deepEqual(result.data, { ok: true });
   assert.equal(result.modelName, 'mock-model');
+  assert.equal(result.receiptId, '11111111-1111-4111-8111-111111111119');
   assert.equal(recorder.calls.length, 1);
   assert.equal(recorder.calls[0].attemptId, '11111111-1111-4111-8111-111111111111');
   assert.equal(recorder.calls[0].stage, 'plan');
@@ -114,6 +118,70 @@ test('records model drift receipt before rejecting with typed error', async () =
     kind: 'model_drift',
     expectedModel: 'pinned-model',
     actualModel: 'actual-model',
+  });
+});
+
+test('planning pin compares the returned actual model while preserving the requested model in the failed receipt', async () => {
+  const recorder = new MemoryModelRecorder();
+  const provider: LLMClient = {
+    identity: {
+      provider: 'gateway',
+      endpointHost: 'llm.test',
+      requestedModel: 'gateway-routing-alias',
+      mode: 'real',
+      eligibleAsReal: true,
+    },
+    async generateStructured<T>(_options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
+      return {
+        data: { task_type: 'competitive_research' } as T,
+        promptHash: 'sha256:planning',
+        modelName: 'backend-drifted-model',
+        modelVersion: '1',
+        traceId: 'trace-planning-drift',
+      };
+    },
+    async generateText(_options: TextLLMCallOptions): Promise<TextLLMResult> {
+      return {
+        text: 'unused',
+        promptHash: 'sha256:unused',
+        modelName: 'backend-drifted-model',
+        modelVersion: '1',
+        traceId: 'trace-unused',
+      };
+    },
+  };
+  const llm = new ReceiptLLMClient(provider, recorder);
+
+  await assert.rejects(
+    () => llm.generateStructured({
+      prompt: 'understand current planning task',
+      schema: {},
+      schemaName: 'research-task',
+      receipt: {
+        stage: 'task_understanding',
+        expectedModel: 'pinned-production-model',
+      },
+    }),
+    ModelDriftError,
+  );
+
+  assert.equal(recorder.calls.length, 1);
+  assert.deepEqual({
+    stage: recorder.calls[0].stage,
+    requestedModel: recorder.calls[0].requestedModel,
+    actualModel: recorder.calls[0].actualModel,
+    status: recorder.calls[0].status,
+    failure: recorder.calls[0].failure,
+  }, {
+    stage: 'task_understanding',
+    requestedModel: 'gateway-routing-alias',
+    actualModel: 'backend-drifted-model',
+    status: 'failed',
+    failure: {
+      kind: 'model_drift',
+      expectedModel: 'pinned-production-model',
+      actualModel: 'backend-drifted-model',
+    },
   });
 });
 

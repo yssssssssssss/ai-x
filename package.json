@@ -6,7 +6,7 @@
   "type": "module",
   "packageManager": "pnpm@9.12.1",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "db:migrate": "tsx database/run-migrations.ts",
@@ -24,6 +24,7 @@
     "cutover:rehearse": "tsx apps/orchestrator-runtime/src/cutover/cutover-cli.ts rehearse",
     "cutover:verify-rehearsal": "tsx apps/orchestrator-runtime/src/cutover/cutover-cli.ts verify-rehearsal",
     "dev:stack": "tsx scripts/dev-stack.ts",
+    "smoke:current:real": "tsx scripts/current-real-smoke.ts",
     "labs:install": "for d in external-tools/*-lab; do (echo \"npm install @ $d\" && cd \"$d\" && npm install); done",
     "labs:dev": "node scripts/start-labs.mjs",
     "test": "tsx --test tests/*.test.ts",
@@ -31,19 +32,24 @@
     "quality": "pnpm typecheck && pnpm lint:registry && pnpm lint:knowledge && pnpm test"
   },
   "dependencies": {
+    "@openclaw/fs-safe": "0.5.5",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
     "bcryptjs": "^3.0.3",
+    "echarts": "^6.1.0",
     "express": "^5.2.1",
+    "image-size": "^2.0.2",
     "jsonwebtoken": "^9.0.3",
     "pg": "^8.13.1",
+    "sharp": "^0.35.3",
     "yaml": "^2.6.1"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/jsonwebtoken": "^9.0.10",
-    "@types/node": "^20.17.0",
+    "@types/node": "^22.20.1",
     "@types/pg": "^8.11.10",
+    "fflate": "^0.8.3",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }

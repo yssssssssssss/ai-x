@@ -124,13 +124,19 @@ export class PostgresGoldBatchStore implements GoldBatchStore {
     }
   }
 
-  async appendReview(batchKey: string, review: { attemptId: string; reviewerId: string; verdict: string }): Promise<void> {
+  async appendReview(batchKey: string, review: {
+    attemptId: string;
+    reviewerId: string;
+    authenticated: boolean;
+    independence: { capabilityOwner: boolean; operator: boolean; artifactEditor: boolean };
+    verdict: string;
+  }): Promise<void> {
     const connection = await this.database.connect();
     try {
       await connection.query(
         `INSERT INTO gold_reviews (batch_id, attempt_id, reviewer_user_id, independence_json, verdict)
          SELECT id, $2, $3, $4, $5 FROM gold_batches WHERE batch_key = $1`,
-        [batchKey, review.attemptId, review.reviewerId, JSON.stringify({ validated: true }), review.verdict],
+        [batchKey, review.attemptId, review.reviewerId, JSON.stringify({ authenticated: review.authenticated, ...review.independence }), review.verdict],
       );
     } finally {
       connection.release();

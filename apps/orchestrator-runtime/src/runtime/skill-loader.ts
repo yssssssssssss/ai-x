@@ -20,10 +20,70 @@ export interface SkillCandidate {
   manifestHash: string;
 }
 
+type CapabilityArrays = {
+  task_types: string[];
+  inputs: string[];
+  outputs: string[];
+  required_tools: string[];
+};
+
+type ActiveCapabilitySkillRegistryEntry = Omit<
+  SkillRegistryEntry,
+  'status' | keyof CapabilityArrays
+> & CapabilityArrays & { status: 'active' };
+
+type InactiveCapabilitySkillRegistryEntry = Partial<Omit<
+  SkillRegistryEntry,
+  'status' | keyof CapabilityArrays
+>> & CapabilityArrays & { status: 'draft' | 'deprecated' };
+
+export type CapabilitySkillRegistryEntry =
+  | ActiveCapabilitySkillRegistryEntry
+  | InactiveCapabilitySkillRegistryEntry;
+
 export class SkillLoader {
   // 第一层:发现所有 active skill 的轻量索引(供 LLM 语义选择)
   listActiveSkills(): SkillRegistryEntry[] {
     return loadSkillRegistry().skills.filter((s) => s.status === 'active');
+  }
+
+  listCapabilitySkills(): CapabilitySkillRegistryEntry[] {
+    return loadSkillRegistry().skills.map((skill): CapabilitySkillRegistryEntry => {
+      const taskTypes = skill.task_types ?? [];
+      const inputs = skill.inputs ?? [];
+      const outputs = skill.outputs ?? [];
+      const requiredTools = skill.required_tools ?? [];
+      if (skill.status !== 'active') {
+        return {
+          ...skill,
+          status: skill.status,
+          task_types: Array.isArray(taskTypes) ? taskTypes : [],
+          inputs: Array.isArray(inputs) ? inputs : [],
+          outputs: Array.isArray(outputs) ? outputs : [],
+          required_tools: Array.isArray(requiredTools) ? requiredTools : [],
+        };
+      }
+
+      const knowledgeBaseSkill = skill.entry !== undefined || skill.path?.startsWith('knowledge-base/') === true;
+      if (
+        !Array.isArray(taskTypes)
+        || !Array.isArray(inputs)
+        || !Array.isArray(outputs)
+        || !Array.isArray(requiredTools)
+        || taskTypes.length === 0
+        || (!knowledgeBaseSkill && (inputs.length === 0 || outputs.length === 0 || requiredTools.length === 0))
+      ) {
+        throw new Error(`active skill capability metadata invalid: ${skill.id}`);
+      }
+      return {
+        ...skill,
+        status: 'active',
+        task_types: taskTypes,
+        inputs,
+        outputs,
+        required_tools: requiredTools,
+      };
+    });
   }
 
   listActiveTools(): ToolRegistryEntry[] {

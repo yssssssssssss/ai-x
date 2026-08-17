@@ -49,6 +49,22 @@ test('active skill 缺 owner 被拒', () => {
   assert.ok(issues.some((i) => i.message.includes('owner')), '应报缺 owner');
 });
 
+test('active native skill requires non-empty task/input/output arrays and a required_tools array', () => {
+  const dir = fixtureRoot({
+    decisionGraph: goodGraph,
+    toolRegistry: emptyTools,
+    skillRegistry:
+      'version: 1\nskills:\n  - id: s1\n    name: n\n    path: skills/x/SKILL.md\n    when_to_use: w\n    owner: o\n    status: active\n    task_types: competitive_research\n    inputs: research_goal\n    outputs: {}\n    required_tools: tool-1\n    risk_level: low\n',
+  });
+  setConfigRoot(dir);
+  const issues = lintRegistries();
+  rmSync(dir, { recursive: true, force: true });
+
+  for (const field of ['task_types', 'inputs', 'outputs', 'required_tools']) {
+    assert.ok(issues.some((issue) => issue.message.includes(field)), `应报 ${field} 非数组`);
+  }
+});
+
 test('draft skill 缺字段不拦(不参与自动路由)', () => {
   const dir = fixtureRoot({
     decisionGraph: goodGraph,

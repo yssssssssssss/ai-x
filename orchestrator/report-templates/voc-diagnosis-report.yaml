@@ -1,0 +1,30 @@
+version: 1
+id: voc-diagnosis-report
+subtitle: Evidence-backed voice-of-customer diagnosis
+sections:
+  - id: cover
+    title: Cover
+  - id: executive-summary
+    title: Executive Summary
+  - id: background
+    title: Business Context and Objectives
+  - id: scope-method
+    title: Dataset Scope and Method
+  - id: key-metrics
+    title: Frequency and Sentiment Metrics
+  - id: findings
+    title: Themes and Representative Quotes
+  - id: question-analysis
+    title: Diagnosis Question Analysis
+  - id: visual-evidence
+    title: Evidence Highlights
+  - id: comparison
+    title: Severity and Priority Analysis
+  - id: conclusion
+    title: Conclusions
+  - id: recommendations
+    title: Prioritized Responses
+  - id: risks
+    title: Data Limitations and Open Issues
+  - id: appendix
+    title: Dataset Notes and Appendix

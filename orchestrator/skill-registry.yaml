@@ -10,6 +10,10 @@ skills:
     task_types:
       - competitive_research
       - user_research_planning
+    inputs:
+      - business_domain
+    outputs:
+      - competitive_analysis
     intent_tags:
       - digital_human
       - live_commerce
@@ -31,6 +35,10 @@ skills:
     status: active
     task_types:
       - competitive_research
+    inputs:
+      - research_goal
+    outputs:
+      - competitive_analysis
     intent_tags:
       - competitive
       - web-research
@@ -47,6 +55,10 @@ skills:
     status: active
     task_types:
       - competitive_research
+    inputs:
+      - research_goal
+    outputs:
+      - competitive_analysis
     intent_tags:
       - competitive
       - ui-competitive
@@ -68,6 +80,10 @@ skills:
     task_types:
       - design_audit
       - user_research_planning
+    inputs:
+      - designImage
+    outputs:
+      - design_review
     intent_tags:
       - design_review
       - aesthetic

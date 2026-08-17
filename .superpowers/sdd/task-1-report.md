@@ -42,3 +42,12 @@ Command: `pnpm exec tsx --test tests/cutover-cli.test.ts`
 
 - The first required RED command was blocked by missing local dependency links in the worktree; `pnpm install --offline` was required before the specified test command could run.
 - `docs/superpowers/plans/2026-08-09-cutover-operator-cli.md` is untracked in the worktree but was not modified or committed by this task.
+
+---
+
+- Files:
+  - `docs/plans/2026-08-11-current-trusted-research-flow.md`
+  - `.superpowers/sdd/task-1-report.md`
+- Verification: targeted text check for `Milestone 2|客户端不得提交|ResearchDeliverableEnvelope` succeeded; the assigned section retains explicit Current/Legacy/Select/Envelope/Evidence/client-plan constraints and no longer carries the stale Milestone 2/3 roadmap.
+- Commit: `docs: design trusted multimodal research flow` (this commit).
+- Concerns: none.

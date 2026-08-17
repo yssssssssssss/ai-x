@@ -1,0 +1,30 @@
+version: 1
+id: competitive-analysis-report
+subtitle: Evidence-backed competitive analysis
+sections:
+  - id: cover
+    title: Cover
+  - id: executive-summary
+    title: Executive Summary
+  - id: background
+    title: Market Context and Objectives
+  - id: scope-method
+    title: Competitor Sample and Method
+  - id: key-metrics
+    title: Comparison Metrics
+  - id: findings
+    title: Dimension Matrix and Key Differences
+  - id: question-analysis
+    title: Research Question Analysis
+  - id: visual-evidence
+    title: Screenshot Comparisons
+  - id: comparison
+    title: Competitive Impact Analysis
+  - id: conclusion
+    title: Conclusions
+  - id: recommendations
+    title: Prioritized Actions
+  - id: risks
+    title: Limitations and Open Issues
+  - id: appendix
+    title: Sources and Appendix

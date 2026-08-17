@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "chart-spec-v1",
+  "title": "Evidence-bound Chart Spec",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "chartId", "type", "title", "categories", "series"],
+  "properties": {
+    "version": { "const": "chart-spec-v1" },
+    "chartId": { "$ref": "#/definitions/nonEmptyString" },
+    "type": { "enum": ["comparison", "trend", "heatmap"] },
+    "title": { "$ref": "#/definitions/nonEmptyString" },
+    "categories": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/definitions/nonEmptyString" }
+    },
+    "series": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "label", "values", "evidenceIds"],
+        "properties": {
+          "key": { "$ref": "#/definitions/nonEmptyString" },
+          "label": { "$ref": "#/definitions/nonEmptyString" },
+          "values": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "oneOf": [
+                { "type": "number" },
+                { "type": "null" }
+              ]
+            }
+          },
+          "evidenceIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": { "$ref": "#/definitions/nonEmptyString" }
+            }
+          }
+        }
+      }
+    },
+    "yAxis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min"],
+      "properties": { "min": { "type": "number" } }
+    }
+  },
+  "definitions": {
+    "nonEmptyString": { "type": "string", "minLength": 1, "pattern": "\\S" }
+  }
+}

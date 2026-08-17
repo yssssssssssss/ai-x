@@ -1,0 +1,2546 @@
+import assert from 'node:assert/strict';
+import { createHash, randomUUID } from 'node:crypto';
+import { EventEmitter, once } from 'node:events';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer, type Server } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { after, before, test } from 'node:test';
+import express, { type Express } from 'express';
+import { Pool } from 'pg';
+import { signToken } from '../apps/agent-api/src/auth.ts';
+import {
+  createControlTasksRouter,
+  type ControlTasksRuntime,
+} from '../apps/agent-api/src/routes/control-tasks.ts';
+import type { CurrentPlanningResponse } from '../apps/agent-api/src/routes/control-planning.ts';
+import { ControlArtifactStore } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
+import type {
+  CurrentResearchPlanningResult,
+  ResearchPlanningInput,
+} from '../apps/orchestrator-runtime/src/planners/research-planning-service.ts';
+import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
+import {
+  MockLLMClient,
+  type LLMClient,
+  type LLMProviderIdentity,
+  type LLMResult,
+  type StructuredLLMCallOptions,
+  type TextLLMCallOptions,
+  type TextLLMResult,
+} from '../apps/orchestrator-runtime/src/runtime/llm-client.ts';
+import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
+import {
+  ToolRouter,
+  type ToolAdapter,
+  type ToolInvokeResult,
+} from '../apps/orchestrator-runtime/src/runtime/tool-adapter.ts';
+import type { ToolManifest } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
+import { ControlPlaneAuthorizationError, ControlPlaneRepository } from '../database/control-plane.ts';
+import { writeMessage } from '../database/repository.ts';
+import {
+  runMigrations,
+  type MigrationConnection,
+  type MigrationDatabase,
+} from '../database/migration-runner.ts';
+import type {
+  ControlExecutionResult,
+  ControlPlanCandidatesResponse,
+  ControlWorkflowState,
+  CurrentTaskReadResponse,
+} from '../packages/api-contract/control-workflow.ts';
+
+interface ConversationAdapter {
+  create(input: { ownerUserId: string; title: string }): Promise<{ id: string }>;
+  requireOwned(input: { conversationId: string; ownerUserId: string }): Promise<{ id: string }>;
+  listMessages(input: {
+    conversationId: string;
+    ownerUserId: string;
+  }): Promise<Array<{ role: string; content: string }>>;
+  appendMessage(input: {
+    conversationId: string;
+    role: 'user' | 'assistant';
+    content: string;
+    idempotencyKey?: string;
+  }): Promise<void>;
+}
+
+interface ControlRuntimeOverrides {
+  repository: ControlPlaneRepository;
+  conversations: ConversationAdapter;
+  planning?: {
+    plan(input: ResearchPlanningInput): Promise<CurrentResearchPlanningResult>;
+  };
+  tools: ToolRouter;
+  llm: LLMClient;
+  validator: SchemaValidator;
+  skillLoader: SkillLoader;
+  artifacts: ControlArtifactStore;
+  expectedActualModel?: string;
+}
+
+interface ControlRuntimeHarness {
+  controlPlanning: {
+    plan(input: {
+      originalInput: string;
+      conversationId?: string;
+      ownerUserId: string;
+    }): Promise<ControlPlanCandidatesResponse>;
+  };
+}
+
+interface ControlRuntimeModule {
+  buildControlRuntime(overrides: ControlRuntimeOverrides): ControlRuntimeHarness;
+}
+
+type PlannedCreateAgentApiApp = (dependencies: { controlRuntime: unknown }) => Express;
+type ClosePool = () => Promise<void>;
+
+type ExecutionResponse = ControlExecutionResult & {
+  state: ControlWorkflowState;
+  deliverableArtifactId: string;
+  evidenceManifestArtifactId: string;
+  reportReviewArtifactId: string;
+};
+
+class ScopedIntegrationDatabase implements MigrationDatabase {
+  constructor(
+    private readonly database: Pool,
+    private readonly schema: string,
+  ) {}
+
+  async connect(): Promise<MigrationConnection> {
+    const client = await this.database.connect();
+    await client.query(`SET search_path TO "${this.schema}", public`);
+    return {
+      async query(sql, values = []) {
+        const result = await client.query(sql, [...values]);
+        return { rows: result.rows };
+      },
+      release() {
+        client.release();
+      },
+    };
+  }
+}
+
+class OfflineRealTavilyAdapter implements ToolAdapter {
+  readonly adapterType = 'tavily' as const;
+  readonly implementationId = 'offline-real-tavily-fixture-v1';
+  readonly executionMode = 'real' as const;
+  calls = 0;
+
+  endpointHost(): string {
+    return 'tavily.fixture.test';
+  }
+
+  async invoke(options: {
+    toolId: string;
+    input: object;
+    manifest: ToolManifest;
+  }): Promise<ToolInvokeResult> {
+    this.calls += 1;
+    return {
+      output: {
+        answer: null,
+        response_time: 0.01,
+        results: [{
+          title: '宠物辅食公开市场资料',
+          url: evidenceUrl,
+          snippet: '公开页面展示宠物辅食产品定位、适用场景与品牌信息。',
+          score: 0.99,
+          published_date: null,
+        }],
+      },
+      latencyMs: 1,
+      receipt: {
+        declaredAdapterType: options.manifest.adapter_type,
+        resolvedAdapterType: this.adapterType,
+        implementationId: this.implementationId,
+        executionMode: this.executionMode,
+        endpointHost: this.endpointHost(),
+        status: 'ok',
+        latencyMs: 1,
+      },
+    };
+  }
+}
+
+class OfflineEligibleRealLLM implements LLMClient {
+  readonly identity: LLMProviderIdentity = {
+    provider: 'offline-fixture',
+    endpointHost: 'llm.fixture.test',
+    requestedModel: 'fixture-real-model',
+    mode: 'real',
+    eligibleAsReal: true,
+  };
+  calls = 0;
+  skillContexts: object[] = [];
+  private reviewCall = 0;
+
+  constructor(private readonly reviewVerdicts: readonly ('pass' | 'revise' | 'block')[] = ['pass']) {}
+
+  async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
+    this.calls += 1;
+    let data: unknown;
+    if (options.schemaName.startsWith('skill:')) {
+      this.skillContexts.push(structuredClone(options.context ?? {}));
+      data = {
+        comparison_matrix: [{
+          competitor: '公开竞品 A',
+          dimension: '产品定位',
+          assessment: '公开来源支持其宠物辅食场景定位',
+          source: 'tool_result',
+        }],
+        differentiation_opportunities: ['按宠物类型与使用场景细分研究样本'],
+        sources: [evidenceUrl],
+      };
+    } else if (options.schemaName === 'research-task-v2') {
+      data = {
+        version: 'research-task-v2',
+        task_type: 'competitive_research',
+        business_domain: '宠物辅食',
+        research_goal: '形成基于公开证据的宠物辅食竞品研究计划',
+        target_audience: ['宠物食品产品与市场团队'],
+        scope: ['公开可访问的宠物辅食竞品资料'],
+        constraints: [{
+          id: 'public-evidence-only',
+          statement: '仅使用公开可验证来源',
+          source: 'user',
+        }],
+        success_criteria: [{
+          id: 'verifiable-comparison',
+          statement: '输出基于公开证据且可追溯的竞品研究计划',
+        }],
+        expected_deliverables: ['competitive_analysis_report'],
+        assumptions: [],
+        ambiguities: [],
+        clarification_questions: [],
+        blocking_issues: [],
+        sensitivity: 'public',
+        pii_detected: false,
+      };
+    } else if (options.schemaName === 'decision-states') {
+      data = [];
+    } else if (options.schemaName === 'problem-graph') {
+      const graphContext = options.context as {
+        task: ResearchTaskV2;
+        evidencePolicy: Array<{
+          id: string;
+          acceptedClasses: Array<'public_source'>;
+          minimumCount: number;
+          required: boolean;
+        }>;
+      };
+      data = {
+        version: 'problem-graph-v1',
+        questions: [{
+          id: 'competitive-question',
+          statement: '主要竞品的公开定位差异是什么？',
+          rationale: '回答竞品研究目标',
+          priority: 'required',
+          success_criterion_ids: graphContext.task.success_criteria.map((criterion) => criterion.id),
+          evidence_requirements: graphContext.evidencePolicy,
+          acceptance_criteria: ['至少一个公开来源支撑结论'],
+          depends_on: [],
+        }],
+      };
+    } else if (options.schemaName === 'current-plan-candidates') {
+      data = {
+        candidates: planningResult('offline-current-candidate').candidates.map((candidate) => {
+          const { activated_nodes: _activatedNodes, ...proposal } = candidate;
+          return {
+            ...proposal,
+            steps: proposal.steps.map((step) => step.actor_type === 'skill'
+              ? { ...step, actor_id: 'competitive-web-research' }
+              : step),
+          };
+        }),
+      };
+    } else if (options.schemaName === 'research-plan-deliverable-content') {
+      const deliverableContext = options.context as {
+        verifiedEvidence?: Array<{ evidenceId?: unknown }>;
+        coverageRequirements?: {
+          requiredQuestionIds: string[];
+          successCriterionIds: string[];
+        };
+      } | undefined;
+      data = validDeliverableDraft(
+        deliverableContext?.verifiedEvidence?.[0]?.evidenceId,
+        deliverableContext?.coverageRequirements,
+      );
+    } else if (options.schemaName === 'report-review') {
+      const verdict = this.reviewVerdicts[this.reviewCall]
+        ?? this.reviewVerdicts[this.reviewVerdicts.length - 1]
+        ?? 'pass';
+      this.reviewCall += 1;
+      data = {
+        verdict,
+        dimensions: [
+          'requirement_coverage',
+          'question_coverage',
+          'evidence_coverage',
+          'reasoning_quality',
+          'recommendation_quality',
+          'visual_quality',
+          'risk_disclosure',
+        ].map((id) => ({
+          id,
+          passed: verdict === 'pass' || id !== 'risk_disclosure',
+          issues: verdict === 'pass' || id !== 'risk_disclosure' ? [] : [`${verdict} requires revision`],
+        })),
+      };
+    } else {
+      data = { ok: true };
+    }
+    return {
+      data: data as T,
+      promptHash: hashPrompt(options.prompt),
+      modelName: this.identity.requestedModel,
+      modelVersion: 'fixture-real-model-v1',
+      traceId: `trace-structured-${this.calls}`,
+      tokens: { prompt: 12, completion: 8, total: 20 },
+    };
+  }
+
+  async generateText(options: TextLLMCallOptions): Promise<TextLLMResult> {
+    this.calls += 1;
+    return {
+      text: `offline ${options.receipt.stage} result grounded in ${evidenceUrl}`,
+      promptHash: hashPrompt(options.prompt),
+      modelName: this.identity.requestedModel,
+      modelVersion: 'fixture-real-model-v1',
+      traceId: `trace-text-${this.calls}`,
+      tokens: { prompt: 8, completion: 4, total: 12 },
+    };
+  }
+}
+
+class ClarificationRetryLLM implements LLMClient {
+  readonly identity: LLMProviderIdentity = {
+    provider: 'clarification-retry-fixture',
+    endpointHost: 'clarification-retry.fixture.test',
+    requestedModel: 'clarification-retry-model',
+    mode: 'mock',
+    eligibleAsReal: false,
+  };
+  requirementCalls = 0;
+
+  async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
+    if (options.schemaName !== 'research-task-v2') throw new Error(`unexpected schema ${options.schemaName}`);
+    this.requirementCalls += 1;
+    const data = this.requirementCalls === 1
+      ? clarificationRequirement()
+      : resolvedClarificationRequirement();
+    return {
+      data: data as T,
+      promptHash: hashPrompt(options.prompt),
+      modelName: this.identity.requestedModel,
+      modelVersion: 'fixture-v1',
+      traceId: `trace-clarification-${this.requirementCalls}`,
+    };
+  }
+
+  async generateText(): Promise<never> {
+    throw new Error('not used');
+  }
+}
+
+class PlanningModelFixtureLLM implements LLMClient {
+  readonly identity: LLMProviderIdentity;
+  private readonly fixtures: MockLLMClient;
+
+  constructor(
+    requestedModel: string,
+    private readonly actualModel: string,
+  ) {
+    this.identity = {
+      provider: 'planning-model-fixture',
+      endpointHost: 'planning-model.fixture.test',
+      requestedModel,
+      mode: 'mock',
+      eligibleAsReal: false,
+    };
+    this.fixtures = new MockLLMClient();
+  }
+
+  async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
+    let data: unknown;
+    if (options.schemaName === 'research-task-v2') {
+      data = resolvedClarificationRequirement();
+    } else if (options.schemaName === 'decision-states') {
+      data = [];
+    } else if (options.schemaName === 'problem-graph') {
+      const graphContext = options.context as {
+        task: ResearchTaskV2;
+        evidencePolicy: unknown[];
+      };
+      data = {
+        version: 'problem-graph-v1',
+        questions: [{
+          id: 'model-receipt-question',
+          statement: '如何生成可执行研究计划？',
+          rationale: '覆盖成功标准',
+          priority: 'required',
+          success_criterion_ids: graphContext.task.success_criteria.map((criterion) => criterion.id),
+          evidence_requirements: graphContext.evidencePolicy,
+          acceptance_criteria: ['研究计划可执行'],
+          depends_on: [],
+        }],
+      };
+    } else if (options.schemaName === 'current-plan-candidates') {
+      const systemStep = (actorType: 'llm' | 'reviewer', actorId: string, dependsOn: number[]) => ({
+        step_no: 99,
+        step_name: actorId,
+        actor_type: actorType,
+        actor_id: actorId,
+        question_ids: ['model-receipt-question'],
+        depends_on: dependsOn,
+        input: {},
+        input_bindings: [],
+        expected_outputs: [{ pointer: '/result', description: `${actorId} result` }],
+        acceptance_criteria: ['研究计划可执行'],
+        requires_approval: false,
+        fallback_actor_ids: [],
+      });
+      data = {
+        candidates: [
+          {
+            id: 'depth',
+            title: '深度研究',
+            rationale: '包含复核',
+            tradeoffs: '耗时更长',
+            steps: [
+              systemStep('llm', 'research-synthesis', []),
+              systemStep('reviewer', 'evidence-reviewer', [1]),
+            ],
+            assumptions: [],
+          },
+          {
+            id: 'speed',
+            title: '快速研究',
+            rationale: '最短路径',
+            tradeoffs: '复核较少',
+            steps: [systemStep('llm', 'research-synthesis', [])],
+            assumptions: [],
+          },
+        ],
+      };
+    } else {
+      const generated = await this.fixtures.generateStructured<T>(options);
+      return {
+        ...generated,
+        modelName: this.actualModel,
+        modelVersion: `${this.actualModel}-fixture-v1`,
+      };
+    }
+    return {
+      data: data as T,
+      promptHash: hashPrompt(options.prompt),
+      modelName: this.actualModel,
+      modelVersion: `${this.actualModel}-fixture-v1`,
+      traceId: `trace-${options.schemaName}`,
+    };
+  }
+
+  async generateText(options: TextLLMCallOptions): Promise<TextLLMResult> {
+    const generated = await this.fixtures.generateText(options);
+    return {
+      ...generated,
+      modelName: this.actualModel,
+      modelVersion: `${this.actualModel}-fixture-v1`,
+    };
+  }
+}
+
+const originalJwtSecret = process.env.JWT_SECRET;
+const originalPgOptions = process.env.PGOPTIONS;
+const schema = `control_api_integration_${randomUUID().replaceAll('-', '')}`;
+const artifactRoot = mkdtempSync(join(tmpdir(), 'control-api-integration-artifacts-'));
+const database = new Pool({
+  connectionString: process.env.DATABASE_URL ?? 'postgres://localhost:5432/user_research_ai',
+});
+const scopedDatabase = new ScopedIntegrationDatabase(database, schema);
+const repository = new ControlPlaneRepository(scopedDatabase);
+const evidenceUrl = 'https://evidence.test/pet-supplement-market';
+const runtimeModulePath: string = '../apps/agent-api/src/control-runtime.ts';
+const runtimeModuleFile = new URL(runtimeModulePath, import.meta.url);
+
+let ownerUserId = '';
+let foreignUserId = '';
+let conversationId = '';
+let server: Server | undefined;
+let closeSharedPool: ClosePool | undefined;
+
+function hashPrompt(prompt: string): string {
+  return `sha256:${createHash('sha256').update(prompt).digest('hex')}`;
+}
+
+function restoreEnvironment(name: 'JWT_SECRET' | 'PGOPTIONS', value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+    return;
+  }
+  process.env[name] = value;
+}
+
+function validDeliverableDraft(
+  evidenceId: unknown = 'missing-evidence',
+  coverageRequirements: {
+    requiredQuestionIds: string[];
+    successCriterionIds: string[];
+  } = {
+    requiredQuestionIds: ['competitive-question'],
+    successCriterionIds: ['verifiable-comparison'],
+  },
+): Record<string, unknown> {
+  return {
+    methodSummary: '使用离线真实模式适配器采集公开资料，并按冻结研究维度形成计划。',
+    findingGraph: {
+      findings: [{
+        id: 'F1',
+        kind: 'fact',
+        evidenceIds: [String(evidenceId)],
+        statement: '公开页面提供了可核验的宠物辅食产品与品牌信息。',
+      }],
+      analyses: [{
+        id: 'A1',
+        findingIds: ['F1'],
+        statement: '公开事实足以支持研究样本与产品定位维度设计。',
+      }],
+      subQuestionSummaries: [{
+        id: 'S1',
+        findingIds: ['F1'],
+        analysisIds: ['A1'],
+        summary: '公开资料支持以产品定位作为首个比较维度。',
+      }],
+      overallConclusions: [{
+        id: 'C1',
+        summaryIds: ['S1'],
+        statement: '研究计划应优先覆盖产品定位、适用宠物与使用场景。',
+      }],
+    },
+    payload: {
+      title: '宠物辅食竞品研究计划',
+      researchGoal: '形成基于公开证据的宠物辅食竞品研究计划',
+      scope: {
+        market: '中国大陆宠物辅食市场',
+        subjects: ['犬用辅食', '猫用辅食'],
+        timeWindow: '最近十二个月',
+      },
+      competitorSampling: {
+        strategy: '按公开市场影响力与产品覆盖分层抽样',
+        targetCount: 6,
+        inclusionCriteria: ['存在可核验的公开产品资料'],
+        exclusionCriteria: ['无公开资料或已停止销售'],
+      },
+      researchQuestions: ['competitive-question', '主要竞品如何定位宠物类型与消费场景？'],
+      comparisonDimensions: [{
+        id: 'positioning',
+        name: '产品定位',
+        purpose: '比较目标宠物、消费场景与核心卖点',
+        collectionFields: ['目标宠物', '消费场景', '核心卖点'],
+      }],
+      sourcePlan: [{
+        evidenceClass: 'public_source',
+        sourceTypes: ['品牌官网', '公开商品页'],
+        purpose: '核验产品信息与品牌定位',
+      }],
+      executionPlan: [{
+        phase: '公开资料采集',
+        activities: ['检索并记录入样品牌公开资料'],
+        duration: '2 个工作日',
+        outputs: ['竞品信息采集表'],
+      }],
+      collectionTemplate: [{
+        field: '核心卖点',
+        description: '品牌对产品价值的公开表述',
+        evidenceRequired: true,
+      }],
+      analysisMethods: ['横向维度对比'],
+      deliverables: ['竞品研究计划'],
+      qualityChecks: ['verifiable-comparison', '每项事实均关联可追溯公开来源'],
+    },
+    recommendations: [{
+      id: 'R1',
+      summaryIds: ['S1'],
+      statement: '按产品定位维度继续采集公开信息。',
+    }],
+    coverage: {
+      questionBindings: coverageRequirements.requiredQuestionIds.map((questionId) => ({
+        questionId,
+        summaryIds: ['S1'],
+      })),
+      successCriterionBindings: coverageRequirements.successCriterionIds.map((successCriterionId) => ({
+        successCriterionId,
+        conclusionIds: ['C1'],
+        recommendationIds: ['R1'],
+      })),
+    },
+    risksAndOpenIssues: [],
+  };
+}
+
+function planningResult(
+  originalInput: string,
+  requirement?: ResearchTaskV2,
+  requireBusinessDomainInput = false,
+): CurrentResearchPlanningResult {
+  const structuredTask: ResearchTaskV2 = requirement ?? {
+    version: 'research-task-v2',
+    task_type: 'user_research_planning',
+    business_domain: '宠物辅食',
+    research_goal: '形成基于公开证据的宠物辅食竞品研究计划',
+    target_audience: ['宠物食品产品与市场团队'],
+    scope: ['公开资料'],
+    constraints: [],
+    success_criteria: [{ id: 'verifiable-comparison', statement: '结论可追溯' }],
+    expected_deliverables: ['research_plan'],
+    assumptions: [],
+    ambiguities: [],
+    clarification_questions: [],
+    blocking_issues: [],
+    sensitivity: 'public',
+    pii_detected: false,
+  };
+  const evidenceRequirements = structuredTask.task_type === 'competitive_research'
+    ? [{
+        id: 'competitive-analysis-report',
+        acceptedClasses: ['public_source', 'screenshot'] as const,
+        minimumCount: 1,
+        required: true,
+      }]
+    : [{
+        id: 'research-plan',
+        acceptedClasses: ['user_input', 'knowledge', 'public_source'] as const,
+        minimumCount: 1,
+        required: true,
+      }];
+  const problemGraph = {
+    version: 'problem-graph-v1' as const,
+    questions: [{
+      id: 'competitive-question',
+      statement: '主要竞品的公开定位差异是什么？',
+      rationale: '回答竞品研究目标',
+      priority: 'required' as const,
+      success_criterion_ids: [structuredTask.success_criteria[0]!.id],
+      evidence_requirements: evidenceRequirements.map((item) => ({
+        ...item,
+        acceptedClasses: [...item.acceptedClasses],
+      })),
+      acceptance_criteria: ['至少一个公开来源支撑结论'],
+      depends_on: [],
+    }],
+  };
+  const capabilityResolution = {
+    eligible: [{
+      skill: {
+        id: 'digital-human-competitive-analysis',
+        name: '数字人竞品分析',
+        path: 'skills/competitive-analysis/digital-human/SKILL.md',
+        when_to_use: '竞品研究',
+        owner: '竞品分析组',
+        status: 'active' as const,
+        task_types: ['competitive_research'],
+        inputs: ['business_domain'],
+        outputs: ['competitive_analysis'],
+        required_tools: ['tavily-web-search'],
+        risk_level: 'low' as const,
+      },
+      reasons: requireBusinessDomainInput
+        ? [
+            { code: 'pending_input_required' as const, message: 'business_domain must be supplied explicitly' },
+            { code: 'eligible' as const, message: 'eligible' },
+          ]
+        : [{ code: 'eligible' as const, message: 'eligible' }],
+      pending_inputs: requireBusinessDomainInput
+        ? [{
+            role: 'business_domain',
+            label: '研究业务领域',
+            multiple: false,
+            capability_id: 'digital-human-competitive-analysis',
+          }]
+        : [],
+      required_approvals: [],
+    }],
+    rejected: [],
+  };
+  const steps = (mode: 'depth' | 'speed') => [
+    {
+      step_no: 99,
+      step_name: `${mode} 公开来源检索`,
+      actor_type: 'tool' as const,
+      actor_id: 'tavily-web-search',
+      question_ids: ['competitive-question'],
+      depends_on: [],
+      input: {
+        query: originalInput,
+        max_results: 3,
+        search_depth: mode === 'depth' ? 'advanced' : 'basic',
+        include_answer: false,
+      },
+      input_bindings: [],
+      expected_outputs: [{ pointer: '/results', description: '公开来源结果' }],
+      acceptance_criteria: ['返回至少一个公开来源'],
+      requires_approval: false,
+      fallback_actor_ids: [],
+    },
+    {
+      step_no: 99,
+      step_name: `${mode} 竞品分析`,
+      actor_type: 'skill' as const,
+      actor_id: 'digital-human-competitive-analysis',
+      question_ids: ['competitive-question'],
+      depends_on: [1],
+      input: { business_domain: structuredTask.business_domain },
+      input_bindings: [],
+      expected_outputs: [{ pointer: '/comparison_matrix', description: '竞品对比矩阵' }],
+      acceptance_criteria: ['分析引用公开来源'],
+      requires_approval: false,
+      fallback_actor_ids: [],
+    },
+    {
+      step_no: 99,
+      step_name: `${mode} 研究摘要`,
+      actor_type: 'llm' as const,
+      actor_id: 'research-synthesis',
+      question_ids: ['competitive-question'],
+      depends_on: [2],
+      input: { comparison_matrix: null },
+      input_bindings: [{ target_pointer: '/comparison_matrix', source_step_no: 2, source_pointer: '/comparison_matrix' }],
+      expected_outputs: [{ pointer: '/text', description: '研究摘要' }],
+      acceptance_criteria: ['摘要覆盖研究问题'],
+      requires_approval: false,
+      fallback_actor_ids: [],
+    },
+    {
+      step_no: 99,
+      step_name: `${mode} 证据复核`,
+      actor_type: 'reviewer' as const,
+      actor_id: 'evidence-reviewer',
+      question_ids: ['competitive-question'],
+      depends_on: [3],
+      input: { summary: null },
+      input_bindings: [{ target_pointer: '/summary', source_step_no: 3, source_pointer: '/text' }],
+      expected_outputs: [{ pointer: '/review', description: '证据复核' }],
+      acceptance_criteria: ['所有结论可追溯'],
+      requires_approval: false,
+      fallback_actor_ids: [],
+    },
+  ];
+  const candidate = (id: 'depth' | 'speed') => ({
+    id,
+    title: id === 'depth' ? '深度研究' : '快速研究',
+    rationale: id === 'depth' ? '优先覆盖更多研究维度' : '优先形成可信的最小闭环',
+    tradeoffs: id === 'depth' ? '执行时间更长' : '研究维度更聚焦',
+    steps: steps(id),
+    assumptions: [],
+    activated_nodes: ['D5_competitive', 'D6_evidence'],
+  });
+  return {
+    task: {
+      task_type: structuredTask.task_type,
+      business_domain: structuredTask.business_domain,
+      research_goal: structuredTask.research_goal,
+      assumptions: [],
+      confirmations: [],
+      blocking_issues: [],
+      sensitivity: 'public',
+      pii_detected: false,
+    },
+    structuredTask,
+    activatedNodes: ['D5_competitive', 'D6_evidence'],
+    decisionStates: [],
+    candidates: [candidate('depth'), candidate('speed')],
+    guidanceSources: [],
+    provenance: {
+      modelName: 'planner',
+      modelVersion: '1',
+      promptHash: originalInput,
+      traceId: 'trace-planner',
+    },
+    problemGraph,
+    problemGraphProvenance: {
+      receiptId: '33333333-3333-4333-8333-333333333333',
+      modelName: 'planner',
+      modelVersion: '1',
+      promptHash: 'sha256:problem-graph',
+      traceId: 'trace-problem-graph',
+    },
+    capabilityResolution,
+  };
+}
+
+function conversationAdapter(): ConversationAdapter {
+  return {
+    async create(input) {
+      const connection = await scopedDatabase.connect();
+      try {
+        const result = await connection.query(
+          `INSERT INTO conversations (owner_user_id, title)
+           VALUES ($1, $2) RETURNING id`,
+          [input.ownerUserId, input.title],
+        );
+        return { id: String(result.rows[0]?.id) };
+      } finally {
+        connection.release();
+      }
+    },
+    async requireOwned(input) {
+      const connection = await scopedDatabase.connect();
+      try {
+        const result = await connection.query(
+          `SELECT id FROM conversations WHERE id = $1 AND owner_user_id = $2`,
+          [input.conversationId, input.ownerUserId],
+        );
+        const id = result.rows[0]?.id;
+        if (typeof id !== 'string') {
+          throw new ControlPlaneAuthorizationError('conversation is not owned by requester');
+        }
+        return { id };
+      } finally {
+        connection.release();
+      }
+    },
+    async listMessages(input) {
+      const connection = await scopedDatabase.connect();
+      try {
+        const result = await connection.query(
+          `SELECT message.sender_type, message.content
+           FROM messages AS message
+           JOIN conversations AS conversation ON conversation.id = message.conversation_id
+           WHERE message.conversation_id = $1 AND conversation.owner_user_id = $2
+           ORDER BY message.created_at ASC`,
+          [input.conversationId, input.ownerUserId],
+        );
+        return result.rows.map((row) => ({
+          role: String(row.sender_type),
+          content: typeof row.content === 'string' ? row.content : JSON.stringify(row.content),
+        }));
+      } finally {
+        connection.release();
+      }
+    },
+    async appendMessage(input) {
+      const connection = await scopedDatabase.connect();
+      try {
+        await connection.query(
+          `INSERT INTO messages
+             (conversation_id, sender_type, message_type, content, idempotency_key)
+           VALUES ($1, $2, 'text', $3, $4)
+           ON CONFLICT (conversation_id, idempotency_key)
+             WHERE idempotency_key IS NOT NULL
+           DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key`,
+          [input.conversationId, input.role, JSON.stringify(input.content), input.idempotencyKey ?? null],
+        );
+      } finally {
+        connection.release();
+      }
+    },
+  };
+}
+
+async function loadControlRuntimeModule(): Promise<ControlRuntimeModule> {
+  assert.equal(
+    existsSync(runtimeModuleFile),
+    true,
+    'production control runtime composition module must exist',
+  );
+  // The planned production module is absent in this RED. Keep the path dynamic so
+  // the explicit existence assertion, rather than the module loader, states the gap.
+  const moduleExports = await import(runtimeModulePath) as unknown as Record<string, unknown>;
+  assert.equal(typeof moduleExports.buildControlRuntime, 'function');
+  return moduleExports as unknown as ControlRuntimeModule;
+}
+
+async function closeServer(): Promise<void> {
+  if (!server?.listening) return;
+  await new Promise<void>((resolve, reject) => {
+    server?.close((error) => error ? reject(error) : resolve());
+  });
+}
+
+async function postJson(
+  baseUrl: string,
+  path: string,
+  token: string,
+  body: Record<string, unknown>,
+  idempotencyKey?: string,
+): Promise<Response> {
+  return fetch(`${baseUrl}${path}`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+      ...(idempotencyKey ? { 'idempotency-key': idempotencyKey } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+function parseSseEvents(body: string): Array<{ event: string; data: unknown }> {
+  return body.trim().split('\n\n').map((block) => {
+    const lines = block.split('\n');
+    const event = lines.find((line) => line.startsWith('event: '))?.slice('event: '.length) ?? '';
+    const data = lines.find((line) => line.startsWith('data: '))?.slice('data: '.length) ?? 'null';
+    return { event, data: JSON.parse(data) as unknown };
+  });
+}
+
+async function listenLocalApp(app: Express): Promise<{ server: Server; baseUrl: string }> {
+  const localServer = createServer(app);
+  localServer.listen(0, '127.0.0.1');
+  await once(localServer, 'listening');
+  const address = localServer.address();
+  assert.ok(address && typeof address !== 'string');
+  return { server: localServer, baseUrl: `http://127.0.0.1:${address.port}` };
+}
+
+async function closeLocalServer(localServer: Server): Promise<void> {
+  const closed = once(localServer, 'close');
+  localServer.close();
+  await closed;
+}
+
+function clarificationRequirement(): ResearchTaskV2 {
+  return {
+    version: 'research-task-v2',
+    task_type: 'competitive_research',
+    business_domain: '宠物辅食',
+    research_goal: '确认目标受众后生成研究计划',
+    target_audience: [],
+    scope: ['公开资料'],
+    constraints: [],
+    success_criteria: [{ id: 'audience-confirmed', statement: '确认目标受众后生成可执行研究计划' }],
+    expected_deliverables: ['competitive_analysis_report'],
+    assumptions: [{ key: 'scope', value: '公开资料', editable: true }],
+    ambiguities: [{ id: 'audience', statement: '目标受众未确定', blocking: true }],
+    clarification_questions: [{ key: 'audience', question: '目标受众是谁？', rationale: '决定研究方法' }],
+    blocking_issues: [],
+    sensitivity: 'public',
+    pii_detected: false,
+  };
+}
+
+function resolvedClarificationRequirement(): ResearchTaskV2 {
+  return {
+    ...clarificationRequirement(),
+    target_audience: ['产品团队'],
+    ambiguities: [],
+    clarification_questions: [],
+  };
+}
+
+function controlTasksApp(runtime: ControlTasksRuntime): Express {
+  const app = express();
+  app.use(express.json());
+  app.use('/api/control-tasks', createControlTasksRouter(runtime));
+  return app;
+}
+
+function assertRecord(value: unknown): asserts value is Record<string, unknown> {
+  assert.ok(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+before(async () => {
+  await database.query(`CREATE SCHEMA "${schema}"`);
+  await runMigrations({
+    database: scopedDatabase,
+    migrationsDir: join(process.cwd(), 'database', 'migrations'),
+    lockKey: 761_831_015,
+  });
+  process.env.PGOPTIONS = `-c search_path=${schema},public`;
+  process.env.JWT_SECRET = `control-api-integration-${randomUUID()}`;
+
+  const connection = await scopedDatabase.connect();
+  try {
+    const ownerEmail = `owner-${randomUUID()}@test.local`;
+    const foreignEmail = `foreign-${randomUUID()}@test.local`;
+    const users = await connection.query(
+      `INSERT INTO users (email, display_name, password_hash, role, status)
+       VALUES
+         ($1, 'control api owner', 'x', 'member', 'active'),
+         ($2, 'control api foreign user', 'x', 'member', 'active')
+       RETURNING id, email`,
+      [ownerEmail, foreignEmail],
+    );
+    const userIds = new Map(users.rows.map((row) => [String(row.email), String(row.id)]));
+    ownerUserId = userIds.get(ownerEmail) ?? '';
+    foreignUserId = userIds.get(foreignEmail) ?? '';
+    assert.ok(ownerUserId);
+    assert.ok(foreignUserId);
+    const conversation = await connection.query(
+      `INSERT INTO conversations (owner_user_id, title)
+       VALUES ($1, 'offline Current integration') RETURNING id`,
+      [ownerUserId],
+    );
+    conversationId = String(conversation.rows[0]?.id);
+    await connection.query(
+      `INSERT INTO control_model_calls
+         (id, stage, attempt_id, step_no, provider, endpoint_host, requested_model, actual_model, model_version,
+          prompt_hash, context_manifest_hash, trace_id, status, started_at, finished_at)
+       VALUES ('33333333-3333-4333-8333-333333333333', 'problem_graph', NULL, NULL, 'fixture', 'fixture.test',
+               'planner', 'planner', '1', 'sha256:problem-graph',
+               NULL, 'trace-problem-graph', 'succeeded', now(), now())`,
+    );
+  } finally {
+    connection.release();
+  }
+});
+
+after(async () => {
+  const errors: unknown[] = [];
+  try {
+    await closeServer();
+  } catch (error) {
+    errors.push(error);
+  }
+  try {
+    await closeSharedPool?.();
+  } catch (error) {
+    errors.push(error);
+  }
+  try {
+    await database.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+  } catch (error) {
+    errors.push(error);
+  }
+  try {
+    await database.end();
+  } catch (error) {
+    errors.push(error);
+  }
+  rmSync(artifactRoot, { recursive: true, force: true });
+  restoreEnvironment('JWT_SECRET', originalJwtSecret);
+  restoreEnvironment('PGOPTIONS', originalPgOptions);
+  if (errors.length) throw new AggregateError(errors, 'control API integration cleanup failed');
+});
+
+test('production control runtime returns the revised final deliverable ID for pass and pause review outcomes', async () => {
+  const originalInput = '请生成基于公开证据的宠物辅食竞品研究计划';
+  const suppliedBusinessDomain = '犬猫鲜食与冻干辅食';
+  const { buildControlRuntime } = await loadControlRuntimeModule();
+  const tavily = new OfflineRealTavilyAdapter();
+  const llm = new OfflineEligibleRealLLM(['revise', 'pass', 'revise', 'block']);
+  const tools = new ToolRouter().register(tavily);
+  const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+  const controlRuntime = await buildControlRuntime({
+    repository,
+    conversations: conversationAdapter(),
+    planning: {
+      async plan(input) {
+        return planningResult(input.originalInput, undefined, true);
+      },
+    },
+    tools,
+    llm,
+    validator: new SchemaValidator(),
+    skillLoader: new SkillLoader(),
+    artifacts,
+  });
+
+  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+  ({ closePool: closeSharedPool } = await import('../database/db.ts'));
+  const createApp = createAgentApiApp as unknown as PlannedCreateAgentApiApp;
+  server = createServer(createApp({ controlRuntime }));
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const ownerToken = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  const foreignToken = signToken({ userId: foreignUserId, email: 'foreign@test.local' });
+
+  const planResponse = await postJson(baseUrl, '/api/control-tasks/plan', ownerToken, {
+    originalInput,
+    conversationId,
+  });
+  assert.equal(planResponse.status, 200, await planResponse.clone().text());
+  const planned = await planResponse.json() as ControlPlanCandidatesResponse;
+  assert.equal(planned.kind, 'current');
+  const refreshedResponse = await fetch(`${baseUrl}/api/control-tasks/${planned.task.id}`, {
+    headers: { authorization: `Bearer ${ownerToken}` },
+  });
+  assert.equal(refreshedResponse.status, 200, await refreshedResponse.clone().text());
+  const refreshed = await refreshedResponse.json() as {
+    task: { originalInput: string; structuredTask: unknown };
+    activatedNodes: string[];
+    candidates: ControlPlanCandidatesResponse['candidates'];
+  };
+  assert.equal(refreshed.task.originalInput, originalInput);
+  assert.deepEqual(refreshed.task.structuredTask, planned.structuredTask);
+  assert.deepEqual(refreshed.activatedNodes, planned.activatedNodes);
+  assert.deepEqual(
+    refreshed.candidates.map(({ planVersionId, candidateId, planHash }) => ({ planVersionId, candidateId, planHash })),
+    planned.candidates.map(({ planVersionId, candidateId, planHash }) => ({ planVersionId, candidateId, planHash })),
+  );
+  assert.deepEqual(planned.candidates.map((candidate) => candidate.candidateId), ['depth', 'speed']);
+  const foreignRefresh = await fetch(`${baseUrl}/api/control-tasks/${planned.task.id}`, {
+    headers: { authorization: `Bearer ${foreignToken}` },
+  });
+  assert.equal(foreignRefresh.status, 404);
+  const planningConnection = await scopedDatabase.connect();
+  try {
+    const persisted = await planningConnection.query(
+      `SELECT
+         (SELECT count(*)::int FROM control_tasks WHERE original_input = $1) AS tasks,
+         (SELECT count(*)::int
+          FROM control_plan_versions AS plan
+          JOIN control_tasks AS task ON task.id = plan.task_id
+          WHERE task.original_input = $1) AS candidates`,
+      [originalInput],
+    );
+    assert.deepEqual(persisted.rows[0], { tasks: 1, candidates: 2 });
+  } finally {
+    planningConnection.release();
+  }
+  for (const candidate of planned.candidates) {
+    assert.deepEqual(
+      candidate.plan.steps.map((step) => step.actor_type),
+      ['tool', 'skill', 'llm', 'reviewer'],
+    );
+  }
+  const speed = planned.candidates.find((candidate) => candidate.candidateId === 'speed');
+  assert.ok(speed);
+
+  const selectResponse = await postJson(
+    baseUrl,
+    `/api/control-tasks/${planned.task.id}/select`,
+    ownerToken,
+    { expectedVersion: planned.task.stateVersion, planVersionId: speed.planVersionId },
+    `select-${randomUUID()}`,
+  );
+  assert.equal(selectResponse.status, 200);
+  const selected = await selectResponse.json() as { state: string; stateVersion: number };
+  assert.equal(selected.state, 'awaiting_confirmation');
+
+  const legacyConfirmResponse = await postJson(
+    baseUrl,
+    `/api/control-tasks/${planned.task.id}/confirm`,
+    ownerToken,
+    {
+      expectedVersion: selected.stateVersion,
+      planVersionId: speed.planVersionId,
+      confirmationAnswers: {},
+      inputRoles: ['business_domain'],
+    },
+    `legacy-confirm-${randomUUID()}`,
+  );
+  assert.equal(legacyConfirmResponse.status, 400, await legacyConfirmResponse.clone().text());
+
+  const confirmResponse = await postJson(
+    baseUrl,
+    `/api/control-tasks/${planned.task.id}/confirm`,
+    ownerToken,
+    {
+      expectedVersion: selected.stateVersion,
+      planVersionId: speed.planVersionId,
+      confirmationAnswers: {},
+      inputValues: { business_domain: suppliedBusinessDomain },
+    },
+    `confirm-${randomUUID()}`,
+  );
+  assert.equal(confirmResponse.status, 200, await confirmResponse.clone().text());
+  const confirmed = await confirmResponse.json() as { state: string; stateVersion: number };
+  assert.equal(confirmed.state, 'ready');
+
+  const inputGateConnection = await scopedDatabase.connect();
+  try {
+    const persistedInputGate = await inputGateConnection.query(
+      `SELECT gate_key, value_json
+       FROM control_gate_records
+       WHERE task_id = $1 AND plan_version_id = $2 AND gate_type = 'input'`,
+      [planned.task.id, speed.planVersionId],
+    );
+    assert.deepEqual(persistedInputGate.rows, [{
+      gate_key: 'business_domain',
+      value_json: suppliedBusinessDomain,
+    }]);
+  } finally {
+    inputGateConnection.release();
+  }
+
+  const executeResponse = await postJson(
+    baseUrl,
+    `/api/control-tasks/${planned.task.id}/execute`,
+    ownerToken,
+    { expectedVersion: confirmed.stateVersion, planVersionId: speed.planVersionId },
+    `execute-${randomUUID()}`,
+  );
+  if (executeResponse.status !== 200) {
+    const failedTask = await repository.getTaskDetail(planned.task.id);
+    const failedSteps = failedTask?.currentAttemptId
+      ? await repository.listExecutionSteps(failedTask.currentAttemptId)
+      : [];
+    assert.fail(JSON.stringify({
+      response: await executeResponse.clone().json(),
+      state: failedTask?.state,
+      failures: failedSteps.map((step) => step.failure),
+    }));
+  }
+  assert.equal(executeResponse.status, 200, await executeResponse.clone().text());
+  const execution = await executeResponse.json() as ExecutionResponse;
+  assert.equal(execution.executionDisabled, false);
+  assert.equal(execution.state, 'completed', JSON.stringify(execution));
+  assert.equal(execution.status, 'completed', JSON.stringify(execution));
+  assert.match(execution.deliverableArtifactId, /^[0-9a-f-]{36}$/);
+  assert.match(execution.evidenceManifestArtifactId, /^[0-9a-f-]{36}$/);
+  assert.match(execution.reportReviewArtifactId, /^[0-9a-f-]{36}$/);
+
+  const ownerDeliverableResponse = await fetch(
+    `${baseUrl}/api/control-tasks/${planned.task.id}/deliverable`,
+    { headers: { authorization: `Bearer ${ownerToken}` } },
+  );
+  assert.equal(ownerDeliverableResponse.status, 200);
+  const ownerDeliverableBody: unknown = await ownerDeliverableResponse.json();
+  assertRecord(ownerDeliverableBody);
+  assert.equal(ownerDeliverableBody.presentationMode, 'multimodal');
+  const envelope = ownerDeliverableBody.deliverable;
+  assertRecord(envelope);
+  assert.equal(envelope.taskId, planned.task.id);
+  assert.equal(envelope.deliverableType, 'research_plan');
+  assert.equal(envelope.evidenceManifestArtifactId, execution.evidenceManifestArtifactId);
+  const reportReview = ownerDeliverableBody.reportReview;
+  assertRecord(reportReview);
+  assert.equal(reportReview.verdict, 'pass');
+  assert.equal(reportReview.revisionRound, 1);
+  assert.equal(reportReview.taskId, planned.task.id);
+  assert.equal(reportReview.planVersionId, speed.planVersionId);
+  assert.equal(reportReview.attemptId, execution.attemptId);
+  assert.equal(reportReview.deliverableArtifactId, execution.deliverableArtifactId);
+  const reportDocument = ownerDeliverableBody.reportDocument;
+  assertRecord(reportDocument);
+  assert.equal(reportDocument.version, 'report-document-v1');
+  assert.equal(reportDocument.title, '宠物辅食竞品研究计划');
+  assert.ok(Array.isArray(reportDocument.sections));
+  assert.ok(reportDocument.sections.length > 0);
+  assert.doesNotMatch(JSON.stringify(reportDocument), /"type":"(?:image|image-comparison|chart)"/u);
+  assert.deepEqual(ownerDeliverableBody.visualAssetManifests, []);
+  assert.equal('visualAssetManifest' in ownerDeliverableBody, false);
+  assert.match(JSON.stringify(ownerDeliverableBody), new RegExp(evidenceUrl.replaceAll('.', '\\.'), 'u'));
+
+  const foreignDeliverableResponse = await fetch(
+    `${baseUrl}/api/control-tasks/${planned.task.id}/deliverable`,
+    { headers: { authorization: `Bearer ${foreignToken}` } },
+  );
+  assert.equal(foreignDeliverableResponse.status, 404);
+  const missingDeliverableResponse = await fetch(
+    `${baseUrl}/api/control-tasks/${randomUUID()}/deliverable`,
+    { headers: { authorization: `Bearer ${ownerToken}` } },
+  );
+  assert.equal(missingDeliverableResponse.status, 404);
+
+  const steps = await repository.listExecutionSteps(execution.attemptId);
+  assert.deepEqual(
+    steps.map(({ actorType, state }) => ({ actorType, state })),
+    [
+      { actorType: 'tool', state: 'succeeded' },
+      { actorType: 'skill', state: 'succeeded' },
+      { actorType: 'llm', state: 'succeeded' },
+      { actorType: 'reviewer', state: 'succeeded' },
+    ],
+  );
+  assert.equal(steps[0]?.toolProvenance?.executionMode, 'real');
+  assert.equal(llm.skillContexts.length, 1);
+  const skillContext = llm.skillContexts[0] as {
+    input?: unknown;
+    prior_outputs?: Array<{
+      stepNo?: unknown;
+      actorId?: unknown;
+      kind?: unknown;
+      output?: { results?: Array<{ url?: unknown }> };
+      artifact?: { state?: unknown };
+    }>;
+  };
+  assert.deepEqual(skillContext.input, { business_domain: suppliedBusinessDomain });
+  assert.equal(skillContext.prior_outputs?.length, 1);
+  assert.equal(skillContext.prior_outputs?.[0]?.stepNo, 1);
+  assert.equal(skillContext.prior_outputs?.[0]?.actorId, 'tavily-web-search');
+  assert.equal(skillContext.prior_outputs?.[0]?.kind, 'tool_output');
+  assert.equal(skillContext.prior_outputs?.[0]?.output?.results?.[0]?.url, evidenceUrl);
+  assert.equal(skillContext.prior_outputs?.[0]?.artifact?.state, 'SEALED');
+  assert.equal(steps[0]?.toolProvenance?.implementationId, tavily.implementationId);
+  assert.equal(tavily.calls, 1);
+
+  const modelReceipts = await repository.listModelCalls(execution.attemptId);
+  assert.deepEqual(modelReceipts.map(({ stage, status }) => ({ stage, status })), [
+    { stage: 'skill', status: 'succeeded' },
+    { stage: 'llm', status: 'succeeded' },
+    { stage: 'reviewer', status: 'succeeded' },
+    { stage: 'deliverable', status: 'succeeded' },
+    { stage: 'deliverable_review', status: 'succeeded' },
+    { stage: 'deliverable', status: 'succeeded' },
+    { stage: 'deliverable_review', status: 'succeeded' },
+  ]);
+  for (const receipt of modelReceipts) {
+    assert.equal(receipt.provider, llm.identity.provider);
+    assert.equal(receipt.endpointHost, llm.identity.endpointHost);
+    assert.equal(receipt.requestedModel, llm.identity.requestedModel);
+    assert.equal(receipt.actualModel, llm.identity.requestedModel);
+    assert.match(receipt.promptHash, /^sha256:/);
+    assert.ok(receipt.traceId);
+    assert.ok(receipt.tokens);
+  }
+  const skillReceipt = modelReceipts.find((receipt) => receipt.stage === 'skill');
+  const succeededSkillStep = steps.find((step) => step.actorType === 'skill');
+  assert.ok(skillReceipt);
+  assert.ok(succeededSkillStep);
+  assert.equal(succeededSkillStep?.skillProvenance?.modelReceiptId, skillReceipt.id);
+
+  const failedSkillProvenance = {
+    skillBodyHash: 'sha256:failed-api-skill-body',
+    inputSchemaHash: 'sha256:failed-api-input-schema',
+    outputSchemaHash: 'sha256:failed-api-output-schema',
+    inputHash: 'sha256:failed-api-input',
+    outputHash: null,
+    promptHash: 'sha256:failed-api-prompt',
+    traceId: 'trace-failed-api-skill',
+    modelReceiptId: skillReceipt.id,
+    outputArtifactId: null,
+    status: 'failed',
+  };
+  await repository.recordExecutionStep({
+    attemptId: execution.attemptId,
+    stepNo: 99,
+    stepName: 'failed skill provenance exposure',
+    actorType: 'skill',
+    actorId: 'competitive-web-research',
+    state: 'failed',
+    skillProvenance: failedSkillProvenance,
+    failure: { kind: 'fixture_failure', retryable: false },
+    startedAt: new Date('2026-08-14T00:00:00Z'),
+    finishedAt: new Date('2026-08-14T00:00:01Z'),
+  });
+
+  const executionRefreshResponse = await fetch(`${baseUrl}/api/control-tasks/${planned.task.id}`, {
+    headers: { authorization: `Bearer ${ownerToken}` },
+  });
+  assert.equal(executionRefreshResponse.status, 200, await executionRefreshResponse.clone().text());
+  const executionRefresh = await executionRefreshResponse.json() as CurrentTaskReadResponse;
+  assert.deepEqual(
+    executionRefresh.executionSteps
+      .filter((step) => step.actorType === 'skill')
+      .map((step) => ({ state: step.state, skillProvenance: step.skillProvenance })),
+    [
+      { state: 'succeeded', skillProvenance: succeededSkillStep.skillProvenance },
+      { state: 'failed', skillProvenance: failedSkillProvenance },
+    ],
+  );
+
+  const connection = await scopedDatabase.connect();
+  try {
+    const terminalArtifacts = await connection.query(
+      `SELECT id, kind, state, storage_uri, schema_version, created_at
+       FROM control_artifacts
+       WHERE attempt_id = $1 AND kind IN (
+         'deliverable', 'evidence_manifest', 'report_document', 'report_review', 'execution_summary'
+       )
+       ORDER BY kind, created_at, id`,
+      [execution.attemptId],
+    );
+    assert.deepEqual(
+      terminalArtifacts.rows.map((row) => ({ kind: row.kind, state: row.state })),
+      [
+        { kind: 'deliverable', state: 'SEALED' },
+        { kind: 'deliverable', state: 'SEALED' },
+        { kind: 'evidence_manifest', state: 'SEALED' },
+        { kind: 'report_document', state: 'SEALED' },
+        { kind: 'report_review', state: 'SEALED' },
+      ],
+    );
+    const deliverableArtifacts = terminalArtifacts.rows.filter((row) => row.kind === 'deliverable');
+    assert.equal(deliverableArtifacts.length, 2);
+    assert.equal(new Set(deliverableArtifacts.map((row) => row.id)).size, 2);
+    assert.ok(deliverableArtifacts.some((row) => row.id === execution.deliverableArtifactId));
+    assert.equal(
+      deliverableArtifacts.find((row) => String(row.storage_uri).endsWith('/deliverables/final-r1.json'))?.id,
+      execution.deliverableArtifactId,
+    );
+    assert.notEqual(
+      deliverableArtifacts.find((row) => String(row.storage_uri).endsWith('/deliverables/final-r0.json'))?.id,
+      execution.deliverableArtifactId,
+    );
+    assert.equal(
+      terminalArtifacts.rows.find((row) => row.kind === 'evidence_manifest')?.id,
+      execution.evidenceManifestArtifactId,
+    );
+    assert.equal(
+      terminalArtifacts.rows.find((row) => row.kind === 'report_review')?.id,
+      execution.reportReviewArtifactId,
+    );
+    const reportDocumentArtifact = terminalArtifacts.rows.find((row) => row.kind === 'report_document');
+    assert.ok(reportDocumentArtifact);
+    assert.ok(typeof reportDocumentArtifact.id === 'string');
+    assert.equal(reportDocumentArtifact.schema_version, 'report-document-v1');
+    assert.match(String(reportDocumentArtifact.storage_uri), /\/reports\/report-document\.json$/u);
+    const verifiedReportDocument = await artifacts.readVerifiedJson<unknown>(reportDocumentArtifact.id);
+    assert.deepEqual(verifiedReportDocument.value, ownerDeliverableBody.reportDocument);
+
+    const referencedArtifacts = await connection.query(
+      `SELECT id, kind, storage_uri, content_sha256
+       FROM control_artifacts
+       WHERE attempt_id = $1 AND kind IN ('tool_output', 'evidence_manifest', 'report_review')`,
+      [execution.attemptId],
+    );
+    const toolArtifact = referencedArtifacts.rows.find((row) => row.kind === 'tool_output');
+    const manifestArtifact = referencedArtifacts.rows.find((row) => row.kind === 'evidence_manifest');
+    const reviewArtifact = referencedArtifacts.rows.find((row) => row.kind === 'report_review');
+    assert.ok(toolArtifact);
+    assert.ok(manifestArtifact);
+    assert.ok(reviewArtifact);
+    const toolStorageUri = String(toolArtifact.storage_uri);
+    const manifestStorageUri = String(manifestArtifact.storage_uri);
+    const originalToolContent = readFileSync(toolStorageUri, 'utf8');
+    const originalManifestContent = readFileSync(manifestStorageUri, 'utf8');
+    const reviewStorageUri = String(reviewArtifact.storage_uri);
+    const originalReviewContent = readFileSync(reviewStorageUri, 'utf8');
+    const originalManifestHash = String(manifestArtifact.content_sha256);
+    const ownerDeliverableUrl = `${baseUrl}/api/control-tasks/${planned.task.id}/deliverable`;
+    const revalidationFailures: string[] = [];
+    const expectOwnerReadRejected = async (mutation: string): Promise<void> => {
+      const response = await fetch(ownerDeliverableUrl, {
+        headers: { authorization: `Bearer ${ownerToken}` },
+      });
+      if (response.status === 200) revalidationFailures.push(mutation);
+    };
+
+    try {
+      writeFileSync(toolStorageUri, JSON.stringify({ tampered: true }));
+      await expectOwnerReadRejected('referenced Tool Artifact content');
+    } finally {
+      writeFileSync(toolStorageUri, originalToolContent);
+    }
+
+    try {
+      writeFileSync(reviewStorageUri, JSON.stringify({ tampered: true }));
+      await expectOwnerReadRejected('Report Review Artifact content');
+    } finally {
+      writeFileSync(reviewStorageUri, originalReviewContent);
+    }
+
+    const mutateManifestEntry = async (
+      mutation: string,
+      mutate: (entry: Record<string, unknown>) => void,
+    ): Promise<void> => {
+      const manifestValue: unknown = JSON.parse(originalManifestContent);
+      assertRecord(manifestValue);
+      assert.ok(Array.isArray(manifestValue.entries));
+      const entry = manifestValue.entries[0];
+      assertRecord(entry);
+      mutate(entry);
+      const mutatedContent = JSON.stringify(manifestValue, null, 2);
+      const mutatedHash = `sha256:${createHash('sha256').update(mutatedContent).digest('hex')}`;
+      try {
+        writeFileSync(manifestStorageUri, mutatedContent);
+        await connection.query(
+          `UPDATE control_artifacts SET content_sha256 = $2 WHERE id = $1`,
+          [manifestArtifact.id, mutatedHash],
+        );
+        await expectOwnerReadRejected(mutation);
+      } finally {
+        writeFileSync(manifestStorageUri, originalManifestContent);
+        await connection.query(
+          `UPDATE control_artifacts SET content_sha256 = $2 WHERE id = $1`,
+          [manifestArtifact.id, originalManifestHash],
+        );
+      }
+    };
+
+    await mutateManifestEntry('Evidence JSON pointer', (entry) => {
+      entry.jsonPointer = '/output/results/999';
+    });
+    await mutateManifestEntry('Evidence Artifact hash', (entry) => {
+      entry.artifactContentSha256 = `sha256:${'0'.repeat(64)}`;
+    });
+    assert.deepEqual(revalidationFailures, []);
+  } finally {
+    connection.release();
+  }
+
+  const pausedPlanResponse = await postJson(baseUrl, '/api/control-tasks/plan', ownerToken, {
+    originalInput: `请生成需要修订后暂停的竞品计划 ${randomUUID()}`,
+    conversationId,
+  });
+  assert.equal(pausedPlanResponse.status, 200, await pausedPlanResponse.clone().text());
+  const pausedPlanned = await pausedPlanResponse.json() as ControlPlanCandidatesResponse;
+  const pausedSpeed = pausedPlanned.candidates.find((candidate) => candidate.candidateId === 'speed');
+  assert.ok(pausedSpeed);
+  const pausedSelectResponse = await postJson(
+    baseUrl,
+    `/api/control-tasks/${pausedPlanned.task.id}/select`,
+    ownerToken,
+    { expectedVersion: pausedPlanned.task.stateVersion, planVersionId: pausedSpeed.planVersionId },
+    `paused-select-${randomUUID()}`,
+  );
+  assert.equal(pausedSelectResponse.status, 200, await pausedSelectResponse.clone().text());
+  const pausedSelected = await pausedSelectResponse.json() as { stateVersion: number };
+  const pausedConfirmResponse = await postJson(
+    baseUrl,
+    `/api/control-tasks/${pausedPlanned.task.id}/confirm`,
+    ownerToken,
+    {
+      expectedVersion: pausedSelected.stateVersion,
+      planVersionId: pausedSpeed.planVersionId,
+      confirmationAnswers: {},
+      inputValues: { business_domain: suppliedBusinessDomain },
+    },
+    `paused-confirm-${randomUUID()}`,
+  );
+  assert.equal(pausedConfirmResponse.status, 200, await pausedConfirmResponse.clone().text());
+  const pausedConfirmed = await pausedConfirmResponse.json() as { stateVersion: number };
+  const pausedExecuteResponse = await postJson(
+    baseUrl,
+    `/api/control-tasks/${pausedPlanned.task.id}/execute`,
+    ownerToken,
+    { expectedVersion: pausedConfirmed.stateVersion, planVersionId: pausedSpeed.planVersionId },
+    `paused-execute-${randomUUID()}`,
+  );
+  assert.equal(pausedExecuteResponse.status, 200, await pausedExecuteResponse.clone().text());
+  const pausedExecution = await pausedExecuteResponse.json() as ExecutionResponse;
+  assert.equal(pausedExecution.status, 'paused');
+  assert.equal(pausedExecution.state, 'paused');
+  assert.equal(pausedExecution.reviewStatus, 'paused');
+
+  const pausedConnection = await scopedDatabase.connect();
+  try {
+    const terminalArtifacts = await pausedConnection.query(
+      `SELECT id, kind, storage_uri
+       FROM control_artifacts
+       WHERE attempt_id = $1 AND kind IN ('deliverable', 'report_review')
+       ORDER BY kind, created_at`,
+      [pausedExecution.attemptId],
+    );
+    const pausedDeliverables = terminalArtifacts.rows.filter((row) => row.kind === 'deliverable');
+    assert.equal(pausedDeliverables.length, 2);
+    assert.equal(new Set(pausedDeliverables.map((row) => row.id)).size, 2);
+    const finalReviewArtifact = terminalArtifacts.rows.find((row) => row.kind === 'report_review');
+    assert.ok(finalReviewArtifact);
+    assert.equal(finalReviewArtifact.id, pausedExecution.reportReviewArtifactId);
+    const finalReview: unknown = JSON.parse(readFileSync(String(finalReviewArtifact.storage_uri), 'utf8'));
+    assertRecord(finalReview);
+    assert.equal(finalReview.revisionRound, 1);
+    assert.equal(finalReview.verdict, 'block');
+    assert.equal(finalReview.deliverableArtifactId, pausedExecution.deliverableArtifactId);
+    assert.ok(pausedDeliverables.some((row) => row.id === pausedExecution.deliverableArtifactId));
+    assert.equal(
+      pausedDeliverables.find((row) => String(row.storage_uri).endsWith('/deliverables/final-r1.json'))?.id,
+      pausedExecution.deliverableArtifactId,
+    );
+    assert.notEqual(
+      pausedDeliverables.find((row) => String(row.storage_uri).endsWith('/deliverables/final-r0.json'))?.id,
+      pausedExecution.deliverableArtifactId,
+    );
+  } finally {
+    pausedConnection.release();
+  }
+});
+
+test('production plan stream forwards requirement-backed planning progress in order', async () => {
+  const { buildControlRuntime } = await loadControlRuntimeModule();
+  const expectedModel = 'progress-planning-model';
+  const controlRuntime = buildControlRuntime({
+    repository,
+    conversations: conversationAdapter(),
+    tools: new ToolRouter(),
+    llm: new PlanningModelFixtureLLM(expectedModel, expectedModel),
+    validator: new SchemaValidator(),
+    skillLoader: new SkillLoader(),
+    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
+    expectedActualModel: expectedModel,
+  });
+  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+  const app = await listenLocalApp(
+    (createAgentApiApp as unknown as PlannedCreateAgentApiApp)({ controlRuntime }),
+  );
+  try {
+    const response = await postJson(
+      app.baseUrl,
+      '/api/control-tasks/plan/stream',
+      signToken({ userId: ownerUserId, email: 'owner@test.local' }),
+      { originalInput: `progress-stream-${randomUUID()}`, conversationId },
+    );
+    assert.equal(response.status, 200);
+    const events = parseSseEvents(await response.text());
+    assert.deepEqual(events.map((event) => event.event), [
+      'conversation',
+      'progress',
+      'progress',
+      'progress',
+      'progress',
+      'progress',
+      'progress',
+      'result',
+    ]);
+    assert.deepEqual(
+      events.slice(1, -1).map((event) => {
+        const progress = event.data as { phase: string; status: string };
+        return `${progress.phase}:${progress.status}`;
+      }),
+      [
+        'activate:done',
+        'guidance:done',
+        'states:start',
+        'states:done',
+        'candidates:start',
+        'candidates:done',
+      ],
+    );
+    const result = events.at(-1)?.data as ControlPlanCandidatesResponse;
+    assert.equal(result.task.state, 'awaiting_selection');
+    assert.deepEqual(result.candidates.map((candidate) => candidate.candidateId), ['depth', 'speed']);
+  } finally {
+    await closeLocalServer(app.server);
+  }
+});
+
+
+test('production Current planning rejects model drift before candidate persistence and records a failed receipt', async () => {
+  const { buildControlRuntime } = await loadControlRuntimeModule();
+  const originalInput = `planning-model-drift-${randomUUID()}`;
+  const expectedModel = 'expected-planning-model';
+  const requestedModel = 'gateway-routing-alias';
+  const actualModel = 'unexpected-planning-model';
+  const receiptConnection = await scopedDatabase.connect();
+  const existingReceipts = await receiptConnection.query(
+    'SELECT id FROM control_model_calls WHERE attempt_id IS NULL',
+  );
+  receiptConnection.release();
+  const runtime = buildControlRuntime({
+    repository,
+    conversations: conversationAdapter(),
+    tools: new ToolRouter(),
+    llm: new PlanningModelFixtureLLM(requestedModel, actualModel),
+    validator: new SchemaValidator(),
+    skillLoader: new SkillLoader(),
+    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
+    expectedActualModel: expectedModel,
+  });
+  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+  const app = await listenLocalApp(
+    (createAgentApiApp as unknown as PlannedCreateAgentApiApp)({ controlRuntime: runtime }),
+  );
+  try {
+    const response = await postJson(
+      app.baseUrl,
+      '/api/control-tasks/plan',
+      signToken({ userId: ownerUserId, email: 'owner@test.local' }),
+      { originalInput, conversationId },
+    );
+    assert.equal(response.status, 502);
+    assert.match(await response.text(), /model drift/i);
+  } finally {
+    await closeLocalServer(app.server);
+  }
+
+  const connection = await scopedDatabase.connect();
+  try {
+    const persisted = await connection.query(
+      `SELECT
+         (SELECT count(*)::int FROM control_tasks WHERE original_input = $1) AS tasks,
+         (SELECT count(*)::int
+          FROM control_plan_versions AS plan
+          JOIN control_tasks AS task ON task.id = plan.task_id
+          WHERE task.original_input = $1) AS candidates`,
+      [originalInput],
+    );
+    const receipts = await connection.query(
+      `SELECT stage, requested_model, actual_model, status, failure_json
+       FROM control_model_calls
+       WHERE attempt_id IS NULL AND NOT (id = ANY($1::uuid[]))
+       ORDER BY stage`,
+      [existingReceipts.rows.map((row) => row.id)],
+    );
+
+    assert.deepEqual(persisted.rows[0], { tasks: 1, candidates: 0 });
+    assert.deepEqual(receipts.rows, [{
+      stage: 'requirement_understanding',
+      requested_model: requestedModel,
+      actual_model: actualModel,
+      status: 'failed',
+      failure_json: {
+        kind: 'model_drift',
+        expectedModel,
+        actualModel,
+      },
+    }]);
+  } finally {
+    connection.release();
+  }
+});
+
+test('production Current planning persists candidates only when every receipt matches the model pin', async () => {
+  const { buildControlRuntime } = await loadControlRuntimeModule();
+  const originalInput = `planning-model-match-${randomUUID()}`;
+  const expectedModel = 'expected-planning-model';
+  const requestedModel = 'gateway-routing-alias';
+  const receiptConnection = await scopedDatabase.connect();
+  const existingReceipts = await receiptConnection.query(
+    'SELECT id FROM control_model_calls WHERE attempt_id IS NULL',
+  );
+  receiptConnection.release();
+  const runtime = buildControlRuntime({
+    repository,
+    conversations: conversationAdapter(),
+    tools: new ToolRouter(),
+    llm: new PlanningModelFixtureLLM(requestedModel, expectedModel),
+    validator: new SchemaValidator(),
+    skillLoader: new SkillLoader(),
+    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
+    expectedActualModel: expectedModel,
+  });
+  // Delayed import preserves the test-controlled DB/JWT environment used by this integration file.
+  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+  const app = await listenLocalApp(
+    (createAgentApiApp as unknown as PlannedCreateAgentApiApp)({ controlRuntime: runtime }),
+  );
+  let planned: ControlPlanCandidatesResponse;
+  try {
+    const response = await postJson(
+      app.baseUrl,
+      '/api/control-tasks/plan',
+      signToken({ userId: ownerUserId, email: 'owner@test.local' }),
+      { originalInput, conversationId },
+    );
+    assert.equal(response.status, 200, await response.clone().text());
+    planned = await response.json() as ControlPlanCandidatesResponse;
+  } finally {
+    await closeLocalServer(app.server);
+  }
+
+  const connection = await scopedDatabase.connect();
+  try {
+    const persisted = await connection.query(
+      `SELECT
+         (SELECT count(*)::int FROM control_tasks WHERE original_input = $1) AS tasks,
+         (SELECT count(*)::int
+          FROM control_plan_versions AS plan
+          JOIN control_tasks AS task ON task.id = plan.task_id
+          WHERE task.original_input = $1) AS candidates`,
+      [originalInput],
+    );
+    const persistedPlans = await connection.query(
+      `SELECT plan.plan_json
+       FROM control_plan_versions AS plan
+       JOIN control_tasks AS task ON task.id = plan.task_id
+       WHERE task.original_input = $1
+       ORDER BY plan.version`,
+      [originalInput],
+    );
+    const receipts = await connection.query(
+      `SELECT id, stage, requested_model, actual_model, prompt_hash, trace_id, status, failure_json
+       FROM control_model_calls
+       WHERE attempt_id IS NULL AND NOT (id = ANY($1::uuid[]))
+       ORDER BY stage`,
+      [existingReceipts.rows.map((row) => row.id)],
+    );
+
+    assert.equal(planned.task.state, 'awaiting_selection');
+    assert.deepEqual(planned.candidates.map((candidate) => candidate.candidateId), ['depth', 'speed']);
+    assert.deepEqual(persisted.rows[0], { tasks: 1, candidates: 2 });
+    assert.deepEqual(
+      receipts.rows.map((row) => ({
+        stage: row.stage,
+        requestedModel: row.requested_model,
+        actualModel: row.actual_model,
+        status: row.status,
+        failure: row.failure_json,
+      })),
+      ['planning', 'planning_decision', 'problem_graph', 'requirement_understanding'].map((stage) => ({
+        stage,
+        requestedModel,
+        actualModel: expectedModel,
+        status: 'succeeded',
+        failure: null,
+      })),
+    );
+    const problemGraphReceipt = receipts.rows.find((row) => row.stage === 'problem_graph');
+    assert.ok(problemGraphReceipt);
+    assert.equal(persistedPlans.rows.length, 2);
+    for (const row of persistedPlans.rows) {
+      assertRecord(row.plan_json);
+      assertRecord(row.plan_json.problem_graph_provenance);
+      assert.deepEqual(row.plan_json.problem_graph_provenance, {
+        receiptId: problemGraphReceipt.id,
+        modelName: problemGraphReceipt.actual_model,
+        modelVersion: `${expectedModel}-fixture-v1`,
+        promptHash: problemGraphReceipt.prompt_hash,
+        traceId: problemGraphReceipt.trace_id,
+      });
+    }
+  } finally {
+    connection.release();
+  }
+});
+
+test('supplied foreign and missing planning conversations return 404 before creating a task', async () => {
+  const { buildControlRuntime } = await loadControlRuntimeModule();
+  const foreignConversation = await scopedDatabase.connect();
+  let foreignConversationId = '';
+  try {
+    const result = await foreignConversation.query(
+      `INSERT INTO conversations (owner_user_id, title) VALUES ($1, 'foreign planning conversation') RETURNING id`,
+      [foreignUserId],
+    );
+    foreignConversationId = String(result.rows[0]?.id);
+  } finally {
+    foreignConversation.release();
+  }
+  const runtime = buildControlRuntime({
+    repository,
+    conversations: conversationAdapter(),
+    planning: { async plan() { throw new Error('planning must not run'); } },
+    tools: new ToolRouter(),
+    llm: new OfflineEligibleRealLLM(),
+    validator: new SchemaValidator(),
+    skillLoader: new SkillLoader(),
+    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
+    expectedActualModel: 'fixture-real-model',
+  });
+  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+  const app = await listenLocalApp(
+    (createAgentApiApp as unknown as PlannedCreateAgentApiApp)({ controlRuntime: runtime }),
+  );
+  const ownerToken = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  const cases = [
+    { conversationId: foreignConversationId, originalInput: `foreign-no-write-${randomUUID()}` },
+    { conversationId: randomUUID(), originalInput: `missing-no-write-${randomUUID()}` },
+  ];
+  try {
+    for (const target of cases) {
+      const response = await postJson(app.baseUrl, '/api/control-tasks/plan', ownerToken, target);
+      assert.equal(response.status, 404, await response.clone().text());
+    }
+    const connection = await scopedDatabase.connect();
+    try {
+      const tasks = await connection.query(
+        'SELECT count(*)::int AS count FROM control_tasks WHERE original_input = ANY($1::text[])',
+        [cases.map((target) => target.originalInput)],
+      );
+      assert.equal(tasks.rows[0]?.count, 0);
+    } finally {
+      connection.release();
+    }
+  } finally {
+    await closeLocalServer(app.server);
+  }
+});
+
+test('writeMessage reuses one assistant row for the same conversation idempotency key', async () => {
+  const marker = `assistant-idempotency-${randomUUID()}`;
+  const input = {
+    conversationId,
+    senderType: 'assistant' as const,
+    messageType: 'text' as const,
+    content: { marker },
+    idempotencyKey: `requirement:${randomUUID()}:assistant`,
+  };
+  const first = await writeMessage(input);
+  const second = await writeMessage(input);
+  assert.equal(second.id, first.id);
+  const connection = await scopedDatabase.connect();
+  try {
+    const count = await connection.query(
+      'SELECT count(*)::int AS count FROM messages WHERE conversation_id = $1 AND content = $2::jsonb',
+      [conversationId, JSON.stringify(input.content)],
+    );
+    assert.equal(count.rows[0]?.count, 1);
+  } finally {
+    connection.release();
+  }
+});
+
+test('migration 005 preserves legacy completed commands and permits pending reservations', async () => {
+  const compatibilitySchema = `command_reservation_compat_${randomUUID().replaceAll('-', '')}`;
+  await database.query(`CREATE SCHEMA "${compatibilitySchema}"`);
+  const client = await database.connect();
+  try {
+    await client.query(`SET search_path TO "${compatibilitySchema}", public`);
+    await client.query(`
+      CREATE TABLE control_commands (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        task_id UUID NOT NULL,
+        command_type TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        expected_version BIGINT NOT NULL,
+        state_before TEXT NOT NULL,
+        state_after TEXT NOT NULL,
+        response_json JSONB NOT NULL,
+        actor_user_id UUID,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (task_id, command_type, idempotency_key)
+      )
+    `);
+    const legacyTaskId = randomUUID();
+    await client.query(
+      `INSERT INTO control_commands
+         (task_id, command_type, idempotency_key, request_hash, expected_version,
+          state_before, state_after, response_json)
+       VALUES ($1, 'selection', 'legacy-key', 'sha256:legacy', 0,
+               'awaiting_selection', 'awaiting_confirmation', $2)`,
+      [legacyTaskId, JSON.stringify({ state: 'awaiting_confirmation', stateVersion: 1 })],
+    );
+    await client.query(readFileSync(
+      join(process.cwd(), 'database', 'migrations', '005_clarification_command_reservation.sql'),
+      'utf8',
+    ));
+    const upgraded = await client.query(
+      `SELECT command_status, response_json, reservation_token, reservation_expires_at
+       FROM control_commands WHERE task_id = $1`,
+      [legacyTaskId],
+    );
+    assert.deepEqual(upgraded.rows[0], {
+      command_status: 'completed',
+      response_json: { state: 'awaiting_confirmation', stateVersion: 1 },
+      reservation_token: null,
+      reservation_expires_at: null,
+    });
+    await client.query(
+      `INSERT INTO control_commands
+         (task_id, command_type, idempotency_key, request_hash, expected_version,
+          state_before, state_after, response_json, command_status,
+          reservation_token, reservation_expires_at)
+       VALUES ($1, 'clarification', 'pending-key', 'sha256:pending', 0,
+               'awaiting_clarification', 'awaiting_clarification', NULL, 'pending', $2, now() + interval '1 minute')`,
+      [randomUUID(), randomUUID()],
+    );
+  } finally {
+    client.release();
+    await database.query(`DROP SCHEMA IF EXISTS "${compatibilitySchema}" CASCADE`);
+  }
+});
+
+test('migration 006 adds nullable message idempotency without changing legacy rows', async () => {
+  const compatibilitySchema = `message_idempotency_compat_${randomUUID().replaceAll('-', '')}`;
+  await database.query(`CREATE SCHEMA "${compatibilitySchema}"`);
+  const client = await database.connect();
+  try {
+    await client.query(`SET search_path TO "${compatibilitySchema}", public`);
+    await client.query(`
+      CREATE TABLE messages (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        conversation_id UUID NOT NULL,
+        sender_type TEXT NOT NULL,
+        message_type TEXT NOT NULL,
+        content JSONB NOT NULL,
+        artifact_id UUID,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+    const conversation = randomUUID();
+    await client.query(
+      `INSERT INTO messages (conversation_id, sender_type, message_type, content)
+       VALUES ($1, 'assistant', 'text', '{"legacy":true}')`,
+      [conversation],
+    );
+    await client.query(readFileSync(
+      join(process.cwd(), 'database', 'migrations', '006_message_idempotency.sql'),
+      'utf8',
+    ));
+    const legacy = await client.query(
+      'SELECT idempotency_key FROM messages WHERE conversation_id = $1',
+      [conversation],
+    );
+    assert.deepEqual(legacy.rows, [{ idempotency_key: null }]);
+    await client.query(
+      `INSERT INTO messages (conversation_id, sender_type, message_type, content, idempotency_key)
+       VALUES ($1, 'assistant', 'text', '{}', 'requirement:1:assistant')`,
+      [conversation],
+    );
+    await assert.rejects(() => client.query(
+      `INSERT INTO messages (conversation_id, sender_type, message_type, content, idempotency_key)
+       VALUES ($1, 'assistant', 'text', '{}', 'requirement:1:assistant')`,
+      [conversation],
+    ));
+    await client.query(
+      `INSERT INTO messages (conversation_id, sender_type, message_type, content)
+       VALUES ($1, 'assistant', 'text', '{}'), ($1, 'assistant', 'text', '{}')`,
+      [conversation],
+    );
+  } finally {
+    client.release();
+    await database.query(`DROP SCHEMA IF EXISTS "${compatibilitySchema}" CASCADE`);
+  }
+});
+test('clarification idempotency is durable across concurrent and newly created routers', async () => {
+
+  const created = await repository.createTask({
+    conversationId,
+    ownerUserId,
+    originalInput: '$competitive-research compare pet supplements',
+    taskType: 'competitive_research',
+    structuredTask: clarificationRequirement(),
+    state: 'awaiting_clarification',
+  });
+  const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  let calls = 0;
+  const signals = new EventEmitter();
+  const blocked = once(signals, 'release');
+  const pendingObserved = once(signals, 'pending');
+  const duplicateCallObserved = once(signals, 'duplicate');
+  const instrumentedRepository = Object.create(repository) as ControlPlaneRepository;
+  instrumentedRepository.reserveCommand = async (input) => {
+    const reservation = await repository.reserveCommand(input);
+    if (reservation.status === 'pending') signals.emit('pending');
+    return reservation;
+  };
+  const response = {
+    kind: 'current' as const,
+    status: 'clarification_required' as const,
+    conversationId,
+    task: { ...created },
+    structuredTask: clarificationRequirement(),
+    activatedNodes: [],
+    candidates: [],
+  };
+  const runtime = {
+    repository: instrumentedRepository,
+    workflow: {},
+    getDeliverable: async () => null,
+    clarification: {
+      async clarify() {
+        calls += 1;
+        if (calls > 1) signals.emit('duplicate');
+        await blocked;
+        return response;
+      },
+    },
+  } as unknown as ControlTasksRuntime;
+  const first = await listenLocalApp(controlTasksApp(runtime));
+  const second = await listenLocalApp(controlTasksApp(runtime));
+  const requestBody = {
+    expectedVersion: created.stateVersion,
+    clarificationAnswers: { audience: '产品团队' },
+    assumptionEdits: {},
+  };
+  const key = `durable-${randomUUID()}`;
+  try {
+    const firstRequest = postJson(first.baseUrl, `/api/control-tasks/${created.id}/clarify`, token, requestBody, key);
+    const concurrentRequest = postJson(second.baseUrl, `/api/control-tasks/${created.id}/clarify`, token, requestBody, key);
+    await Promise.race([pendingObserved, duplicateCallObserved]);
+    signals.emit('release');
+    const [firstResponse, concurrentResponse] = await Promise.all([firstRequest, concurrentRequest]);
+    assert.equal(firstResponse.status, 200, await firstResponse.clone().text());
+    assert.equal(concurrentResponse.status, 200, await concurrentResponse.clone().text());
+    assert.deepEqual(await concurrentResponse.json(), await firstResponse.json());
+    assert.equal(calls, 1);
+
+    const restarted = await listenLocalApp(controlTasksApp(runtime));
+    try {
+      const replay = await postJson(restarted.baseUrl, `/api/control-tasks/${created.id}/clarify`, token, requestBody, key);
+      assert.equal(replay.status, 200, await replay.clone().text());
+      assert.deepEqual(await replay.json(), response);
+      assert.equal(calls, 1);
+      const conflict = await postJson(restarted.baseUrl, `/api/control-tasks/${created.id}/clarify`, token, {
+        ...requestBody,
+        clarificationAnswers: { audience: '消费者' },
+      }, key);
+      assert.equal(conflict.status, 409);
+      assert.equal(calls, 1);
+    } finally {
+      await closeLocalServer(restarted.server);
+    }
+  } finally {
+    signals.emit('release');
+    await Promise.all([closeLocalServer(first.server), closeLocalServer(second.server)]);
+  }
+});
+
+test('failed clarification releases its pending command so a retry can complete', async () => {
+  const created = await repository.createTask({
+    conversationId,
+    ownerUserId,
+    originalInput: 'retry clarification after failure',
+    taskType: 'competitive_research',
+    structuredTask: clarificationRequirement(),
+    state: 'awaiting_clarification',
+  });
+  const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  let calls = 0;
+  const response = {
+    kind: 'current' as const,
+    status: 'clarification_required' as const,
+    conversationId,
+    task: { ...created },
+    structuredTask: clarificationRequirement(),
+    activatedNodes: [],
+    candidates: [],
+  };
+  const runtime = {
+    repository,
+    workflow: {},
+    getDeliverable: async () => null,
+    clarification: {
+      async clarify() {
+        calls += 1;
+        if (calls === 1) throw new Error('simulated refinement failure');
+        return response;
+      },
+    },
+  } as unknown as ControlTasksRuntime;
+  const first = await listenLocalApp(controlTasksApp(runtime));
+  const second = await listenLocalApp(controlTasksApp(runtime));
+  const requestBody = { expectedVersion: created.stateVersion, clarificationAnswers: {}, assumptionEdits: {} };
+  const key = `release-${randomUUID()}`;
+  try {
+    const failed = await postJson(first.baseUrl, `/api/control-tasks/${created.id}/clarify`, token, requestBody, key);
+    assert.equal(failed.status, 500);
+    assert.equal(await repository.getCommand(created.id, 'clarification', key), null);
+
+    const retried = await postJson(second.baseUrl, `/api/control-tasks/${created.id}/clarify`, token, requestBody, key);
+    assert.equal(retried.status, 200, await retried.clone().text());
+    assert.deepEqual((await repository.getCommand(created.id, 'clarification', key))?.response, response);
+    assert.equal(calls, 2);
+  } finally {
+    await Promise.all([closeLocalServer(first.server), closeLocalServer(second.server)]);
+  }
+});
+
+test('post-activation clarification failure reclaims the same command without another requirement version', async () => {
+  const { buildControlRuntime } = await loadControlRuntimeModule();
+  const llm = new ClarificationRetryLLM();
+  let plannerCalls = 0;
+  const controlRuntime = buildControlRuntime({
+    repository,
+    conversations: conversationAdapter(),
+    planning: {
+      async plan(input) {
+        plannerCalls += 1;
+        if (plannerCalls === 1) throw new Error('simulated post-activation planner failure');
+        return planningResult(input.originalInput, resolvedClarificationRequirement());
+      },
+    },
+    tools: new ToolRouter(),
+    llm,
+    validator: new SchemaValidator(),
+    skillLoader: new SkillLoader(),
+    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
+    expectedActualModel: llm.identity.requestedModel,
+  });
+  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+  const app = await listenLocalApp(
+    (createAgentApiApp as unknown as PlannedCreateAgentApiApp)({ controlRuntime }),
+  );
+  const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  const originalInput = `post-activation-retry-${randomUUID()}`;
+  try {
+    const plannedResponse = await postJson(app.baseUrl, '/api/control-tasks/plan', token, {
+      originalInput,
+      conversationId,
+    });
+    assert.equal(plannedResponse.status, 200, await plannedResponse.clone().text());
+    const planned = await plannedResponse.json() as CurrentPlanningResponse;
+    assert.equal(planned.status, 'clarification_required');
+    const requestBody = {
+      expectedVersion: planned.task.stateVersion,
+      clarificationAnswers: { audience: '产品团队' },
+      assumptionEdits: {},
+    };
+    const key = `post-activation-${randomUUID()}`;
+
+    const failed = await postJson(
+      app.baseUrl,
+      `/api/control-tasks/${planned.task.id}/clarify`,
+      token,
+      requestBody,
+      key,
+    );
+    assert.equal(failed.status, 500);
+    const afterFailure = await scopedDatabase.connect();
+    try {
+      const persisted = await afterFailure.query(
+        `SELECT
+           (SELECT count(*)::int FROM control_requirement_versions WHERE task_id = $1) AS requirement_versions,
+           (SELECT state_version::int FROM control_tasks WHERE id = $1) AS state_version,
+           (SELECT command_status FROM control_commands
+             WHERE task_id = $1 AND command_type = 'clarification' AND idempotency_key = $2) AS command_status,
+           (SELECT reservation_expires_at <= now() FROM control_commands
+             WHERE task_id = $1 AND command_type = 'clarification' AND idempotency_key = $2) AS reclaimable`,
+        [planned.task.id, key],
+      );
+      assert.deepEqual(persisted.rows[0], {
+        requirement_versions: 2,
+        state_version: planned.task.stateVersion + 1,
+        command_status: 'pending',
+        reclaimable: true,
+      });
+    } finally {
+      afterFailure.release();
+    }
+
+    const retried = await postJson(
+      app.baseUrl,
+      `/api/control-tasks/${planned.task.id}/clarify`,
+      token,
+      requestBody,
+      key,
+    );
+    assert.equal(retried.status, 200, await retried.clone().text());
+    const retriedBody = await retried.json() as ControlPlanCandidatesResponse;
+    assert.equal(retriedBody.kind, 'current');
+    assert.equal(retriedBody.task.id, planned.task.id);
+    assert.deepEqual(retriedBody.candidates.map((candidate) => candidate.candidateId), ['depth', 'speed']);
+    const replay = await postJson(
+      app.baseUrl,
+      `/api/control-tasks/${planned.task.id}/clarify`,
+      token,
+      requestBody,
+      key,
+    );
+    assert.equal(replay.status, 200, await replay.clone().text());
+    assert.deepEqual(await replay.json(), retriedBody);
+
+    const conflict = await postJson(
+      app.baseUrl,
+      `/api/control-tasks/${planned.task.id}/clarify`,
+      token,
+      { ...requestBody, clarificationAnswers: { audience: '消费者' } },
+      key,
+    );
+    assert.equal(conflict.status, 409);
+
+    const afterSuccess = await scopedDatabase.connect();
+    try {
+      const versions = await afterSuccess.query(
+        'SELECT count(*)::int AS count FROM control_requirement_versions WHERE task_id = $1',
+        [planned.task.id],
+      );
+      assert.equal(versions.rows[0]?.count, 2);
+    } finally {
+      afterSuccess.release();
+    }
+    assert.equal(llm.requirementCalls, 2, 'retry must not rerun requirement understanding');
+    assert.equal(plannerCalls, 2, 'retry may rerun downstream planning exactly once');
+  } finally {
+    await closeLocalServer(app.server);
+  }
+});
+
+test('latest-version fresh-key clarification recovers hydrated unchanged assumptions after refresh', async () => {
+  const { buildControlRuntime } = await loadControlRuntimeModule();
+  const llm = new ClarificationRetryLLM();
+  let plannerCalls = 0;
+  const controlRuntime = buildControlRuntime({
+    repository,
+    conversations: conversationAdapter(),
+    planning: {
+      async plan(input) {
+        plannerCalls += 1;
+        if (plannerCalls === 1) throw new Error('simulated post-activation planner failure before candidate persistence');
+        return planningResult(input.originalInput, resolvedClarificationRequirement());
+      },
+    },
+    tools: new ToolRouter(),
+    llm,
+    validator: new SchemaValidator(),
+    skillLoader: new SkillLoader(),
+    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
+    expectedActualModel: llm.identity.requestedModel,
+  });
+  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+  const app = await listenLocalApp(
+    (createAgentApiApp as unknown as PlannedCreateAgentApiApp)({ controlRuntime }),
+  );
+  const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  const originalInput = `latest-version-fresh-key-recovery-${randomUUID()}`;
+  try {
+    const plannedResponse = await postJson(app.baseUrl, '/api/control-tasks/plan', token, {
+      originalInput,
+      conversationId,
+    });
+    assert.equal(plannedResponse.status, 200, await plannedResponse.clone().text());
+    const planned = await plannedResponse.json() as CurrentPlanningResponse;
+    assert.equal(planned.status, 'clarification_required');
+
+    const failedKey = `post-activation-failure-${randomUUID()}`;
+    const failed = await postJson(
+      app.baseUrl,
+      `/api/control-tasks/${planned.task.id}/clarify`,
+      token,
+      {
+        expectedVersion: planned.task.stateVersion,
+        clarificationAnswers: { audience: '产品团队' },
+        assumptionEdits: {},
+      },
+      failedKey,
+    );
+    assert.equal(failed.status, 500);
+    assert.equal(llm.requirementCalls, 2);
+
+    const beforeRecoveryConnection = await scopedDatabase.connect();
+    let requirementVersionsBeforeRecovery = 0;
+    try {
+      const beforeRecovery = await beforeRecoveryConnection.query(
+        `SELECT
+           (SELECT count(*)::int FROM control_requirement_versions WHERE task_id = $1) AS requirement_versions,
+           (SELECT count(*)::int FROM control_plan_versions WHERE task_id = $1) AS plans`,
+        [planned.task.id],
+      );
+      requirementVersionsBeforeRecovery = Number(beforeRecovery.rows[0]?.requirement_versions);
+      assert.deepEqual(beforeRecovery.rows[0], { requirement_versions: 2, plans: 0 });
+    } finally {
+      beforeRecoveryConnection.release();
+    }
+
+    const refreshedResponse = await fetch(`${app.baseUrl}/api/control-tasks/${planned.task.id}`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(refreshedResponse.status, 200, await refreshedResponse.clone().text());
+    const refreshed = await refreshedResponse.json() as CurrentTaskReadResponse;
+    assert.equal(refreshed.task.state, 'awaiting_clarification');
+    assert.equal(refreshed.task.stateVersion, planned.task.stateVersion + 1);
+    assert.deepEqual(refreshed.task.structuredTask, resolvedClarificationRequirement());
+    const refreshedRequirement = refreshed.task.structuredTask as ResearchTaskV2;
+    assert.deepEqual(refreshedRequirement.ambiguities, []);
+    assert.deepEqual(refreshedRequirement.clarification_questions, []);
+    assert.deepEqual(refreshedRequirement.blocking_issues, []);
+    assert.deepEqual(refreshed.candidates, []);
+    const hydratedAssumptionEdits = Object.fromEntries(
+      refreshedRequirement.assumptions
+        .filter(({ editable }) => editable)
+        .map(({ key, value }) => [key, value]),
+    );
+    assert.deepEqual(hydratedAssumptionEdits, { scope: '公开资料' });
+
+    const freshKey = `refreshed-finalized-recovery-${randomUUID()}`;
+    assert.notEqual(freshKey, failedKey);
+    const recoveredResponse = await postJson(
+      app.baseUrl,
+      `/api/control-tasks/${planned.task.id}/clarify`,
+      token,
+      {
+        expectedVersion: refreshed.task.stateVersion,
+        clarificationAnswers: {},
+        assumptionEdits: hydratedAssumptionEdits,
+      },
+      freshKey,
+    );
+    assert.equal(recoveredResponse.status, 200, await recoveredResponse.clone().text());
+    const recovered = await recoveredResponse.json() as ControlPlanCandidatesResponse;
+    assert.equal(recovered.task.state, 'awaiting_selection');
+    assert.deepEqual(recovered.candidates.map((candidate) => candidate.candidateId), ['depth', 'speed']);
+
+    const afterRecoveryConnection = await scopedDatabase.connect();
+    try {
+      const afterRecovery = await afterRecoveryConnection.query(
+        `SELECT
+           (SELECT count(*)::int FROM control_requirement_versions WHERE task_id = $1) AS requirement_versions,
+           (SELECT count(*)::int FROM control_plan_versions WHERE task_id = $1) AS plans,
+           (SELECT command_status FROM control_commands
+             WHERE task_id = $1 AND command_type = 'clarification' AND idempotency_key = $2) AS command_status`,
+        [planned.task.id, freshKey],
+      );
+      assert.deepEqual(afterRecovery.rows[0], {
+        requirement_versions: requirementVersionsBeforeRecovery,
+        plans: 2,
+        command_status: 'completed',
+      });
+    } finally {
+      afterRecoveryConnection.release();
+    }
+    assert.equal(llm.requirementCalls, 2, 'refresh recovery must reuse the finalized active requirement');
+    assert.equal(plannerCalls, 2);
+  } finally {
+    await closeLocalServer(app.server);
+  }
+});
+
+test('response delivery failure after atomic clarification commit replays the persisted response', async () => {
+  const { buildControlRuntime } = await loadControlRuntimeModule();
+  const llm = new ClarificationRetryLLM();
+  const instrumentedRepository = Object.create(repository) as ControlPlaneRepository;
+  let failResponseDelivery = true;
+  let atomicCalls = 0;
+  instrumentedRepository.persistClarificationCandidatesAndCompleteCommand = async (input) => {
+    atomicCalls += 1;
+    const response = await repository.persistClarificationCandidatesAndCompleteCommand(input);
+    if (failResponseDelivery) {
+      failResponseDelivery = false;
+      throw new Error('simulated HTTP response delivery failure after commit');
+    }
+    return response;
+  };
+  let plannerCalls = 0;
+  const controlRuntime = buildControlRuntime({
+    repository: instrumentedRepository,
+    conversations: conversationAdapter(),
+    planning: {
+      async plan(input) {
+        plannerCalls += 1;
+        return planningResult(input.originalInput, resolvedClarificationRequirement());
+      },
+    },
+    tools: new ToolRouter(),
+    llm,
+    validator: new SchemaValidator(),
+    skillLoader: new SkillLoader(),
+    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: instrumentedRepository }),
+    expectedActualModel: llm.identity.requestedModel,
+  });
+  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+  const app = await listenLocalApp(
+    (createAgentApiApp as unknown as PlannedCreateAgentApiApp)({ controlRuntime }),
+  );
+  const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  try {
+    const plannedResponse = await postJson(app.baseUrl, '/api/control-tasks/plan', token, {
+      originalInput: `response-delivery-replay-${randomUUID()}`,
+      conversationId,
+    });
+    assert.equal(plannedResponse.status, 200, await plannedResponse.clone().text());
+    const planned = await plannedResponse.json() as CurrentPlanningResponse;
+    assert.equal(planned.status, 'clarification_required');
+    const key = `response-delivery-${randomUUID()}`;
+    const requestBody = {
+      expectedVersion: planned.task.stateVersion,
+      clarificationAnswers: { audience: '产品团队' },
+      assumptionEdits: {},
+    };
+
+    const failed = await postJson(
+      app.baseUrl,
+      `/api/control-tasks/${planned.task.id}/clarify`,
+      token,
+      requestBody,
+      key,
+    );
+    assert.equal(failed.status, 500);
+    const persistedResponse = (
+      await repository.getCommand(planned.task.id, 'clarification', key)
+    )?.response as ControlPlanCandidatesResponse;
+    assert.equal(persistedResponse.task.state, 'awaiting_selection');
+    const recoveredResponse = await fetch(`${app.baseUrl}/api/control-tasks/${planned.task.id}`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(recoveredResponse.status, 200, await recoveredResponse.clone().text());
+    const recovered = await recoveredResponse.json() as {
+      candidates: ControlPlanCandidatesResponse['candidates'];
+      activatedNodes: string[];
+    };
+    assert.deepEqual(
+      recovered.candidates.map(({ planVersionId, candidateId, planHash }) => ({ planVersionId, candidateId, planHash })),
+      persistedResponse.candidates.map(({ planVersionId, candidateId, planHash }) => ({ planVersionId, candidateId, planHash })),
+    );
+    assert.deepEqual(recovered.activatedNodes, persistedResponse.activatedNodes);
+    const repeatedRecovery = await fetch(`${app.baseUrl}/api/control-tasks/${planned.task.id}`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(repeatedRecovery.status, 200);
+
+    const connection = await scopedDatabase.connect();
+    try {
+      const persisted = await connection.query(
+        `SELECT
+           (SELECT count(*)::int FROM control_plan_versions WHERE task_id = $1) AS plans,
+           (SELECT count(*)::int
+              FROM messages
+             WHERE conversation_id = $2
+               AND idempotency_key = 'requirement:' ||
+                 (SELECT active_requirement_version_id::text FROM control_tasks WHERE id = $1) ||
+                 ':assistant') AS assistant_messages`,
+        [planned.task.id, conversationId],
+      );
+      assert.deepEqual(persisted.rows[0], { plans: 2, assistant_messages: 1 });
+    } finally {
+      connection.release();
+    }
+
+    const replay = await postJson(
+      app.baseUrl,
+      `/api/control-tasks/${planned.task.id}/clarify`,
+      token,
+      requestBody,
+      key,
+    );
+    assert.equal(replay.status, 200, await replay.clone().text());
+    assert.deepEqual(await replay.json(), persistedResponse);
+    assert.equal(atomicCalls, 1);
+    assert.equal(plannerCalls, 1);
+    assert.equal(llm.requirementCalls, 2);
+  } finally {
+    await closeLocalServer(app.server);
+  }
+});
+
+test('expired clarification reservations are reclaimed with token fencing', async () => {
+  const created = await repository.createTask({
+    conversationId,
+    ownerUserId,
+    originalInput: 'reclaim expired clarification reservation',
+    taskType: 'competitive_research',
+    structuredTask: clarificationRequirement(),
+    state: 'awaiting_clarification',
+  });
+  const input = {
+    taskId: created.id,
+    commandType: 'clarification',
+    idempotencyKey: `reclaim-${randomUUID()}`,
+    requestHash: `sha256:${'a'.repeat(64)}`,
+    expectedVersion: created.stateVersion,
+    actorUserId: ownerUserId,
+  };
+  const first = await repository.reserveCommand(input);
+  assert.equal(first.status, 'reserved');
+  assert.ok(first.reservationToken);
+  const connection = await scopedDatabase.connect();
+  try {
+    await connection.query(
+      `UPDATE control_commands
+       SET reservation_expires_at = now() - interval '1 second'
+       WHERE task_id = $1 AND command_type = $2 AND idempotency_key = $3`,
+      [input.taskId, input.commandType, input.idempotencyKey],
+    );
+  } finally {
+    connection.release();
+  }
+  const reclaimed = await repository.reserveCommand(input);
+  assert.equal(reclaimed.status, 'reserved');
+  assert.ok(reclaimed.reservationToken);
+  assert.notEqual(reclaimed.reservationToken, first.reservationToken);
+  await assert.rejects(() => repository.completeCommand({
+    ...input,
+    reservationToken: first.reservationToken!,
+    stateAfter: 'awaiting_clarification',
+    response: { stale: true },
+  }), /reservation|fence|lost/i);
+  await repository.completeCommand({
+    ...input,
+    reservationToken: reclaimed.reservationToken!,
+    stateAfter: 'awaiting_clarification',
+    response: { reclaimed: true },
+  });
+  assert.deepEqual((await repository.getCommand(input.taskId, input.commandType, input.idempotencyKey))?.response, { reclaimed: true });
+});
+
+test('clarification route rejects tasks outside awaiting_clarification before refinement', async () => {
+  const created = await repository.createTask({
+    conversationId,
+    ownerUserId,
+    originalInput: 'selection cannot be clarified',
+    taskType: 'competitive_research',
+    structuredTask: clarificationRequirement(),
+    state: 'awaiting_selection',
+  });
+  let calls = 0;
+  const runtime = {
+    repository,
+    workflow: {},
+    getDeliverable: async () => null,
+    clarification: { async clarify() { calls += 1; throw new Error('must not run'); } },
+  } as unknown as ControlTasksRuntime;
+  const app = await listenLocalApp(controlTasksApp(runtime));
+  try {
+    const response = await postJson(
+      app.baseUrl,
+      `/api/control-tasks/${created.id}/clarify`,
+      signToken({ userId: ownerUserId, email: 'owner@test.local' }),
+      { expectedVersion: created.stateVersion, clarificationAnswers: {}, assumptionEdits: {} },
+      `state-gate-${randomUUID()}`,
+    );
+    assert.equal(response.status, 409);
+    assert.equal(calls, 0);
+  } finally {
+    await closeLocalServer(app.server);
+  }
+});

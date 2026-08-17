@@ -27,6 +27,18 @@ async function req<T>(path: string, opts: { method?: string; body?: unknown; hea
   return data as T;
 }
 
+async function reqBlob(path: string): Promise<Response> {
+  const headers: Record<string, string> = {};
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetch(`/api${path}`, { headers });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({})) as { error?: string };
+    throw new ApiError(response.status, data.error ?? `HTTP ${response.status}`);
+  }
+  return response;
+}
+
 export class ApiError extends Error {
   constructor(public readonly status: number, message: string) {
     super(message);
@@ -40,6 +52,7 @@ export type {
   Assumption,
   PlanStep,
   ResearchTaskData,
+  ResearchTaskV2,
   PendingUpload,
   PlanCandidate,
   PlanPhaseKey,
@@ -61,119 +74,174 @@ export type {
   SkillItem,
 } from '../../../../packages/api-contract/http.ts';
 
-// api 方法体实际引用的类型(export type 只做 re-export、不引入本地绑定,故这里单独 import)。
 import type {
-  User,
-  Upload,
-  PlanCandidatesResponse,
-  SelectResponse,
-  ExecuteResponse,
-  TaskDetail,
-  TaskSummary,
-  SkillItem,
-} from '../../../../packages/api-contract/http.ts';
-import type { PlanProgress } from '../../../../packages/api-contract/plan.ts';
+  CurrentPlanningResponse,
+} from '../../../agent-api/src/routes/control-planning.ts';
 
 export type {
   ApprovalControlPlanRequest,
   ConfirmControlPlanRequest,
   ControlCommandResponse,
+  ControlExecutionResult,
+  ControlPlanCandidatesResponse,
   ControlTaskResponse,
   ControlWorkflowState as ControlTaskState,
-  CreateControlTaskRequest,
-  DisabledExecutionResponse,
+  CurrentTaskReadResponse,
+  CurrentPlanCandidate,
   ExecutionControlPlanRequest,
-  PlanMutationRequest,
+  PlanControlTaskRequest,
   ResumeControlPlanRequest,
+  SelectControlPlanRequest,
   SelectControlPlanResponse,
 } from '../../../../packages/api-contract/control-workflow.ts';
+export type {
+  CapabilityProvenance,
+  CurrentRecommendation,
+  EvidenceEntry,
+  FindingGraph,
+  ResearchDeliverableEnvelope,
+  ResearchPlanPayload,
+} from '../../../../packages/api-contract/research-deliverable.ts';
+export type { ClarificationRequiredResponse, CurrentPlanningResponse } from '../../../agent-api/src/routes/control-planning.ts';
 
 import type {
   ApprovalControlPlanRequest,
   ConfirmControlPlanRequest,
   ControlCommandResponse,
-  ControlTaskResponse,
-  CreateControlTaskRequest,
-  DisabledExecutionResponse,
+  ControlExecutionResult,
+  CurrentTaskReadResponse,
   ExecutionControlPlanRequest,
-  PlanMutationRequest,
+  PlanControlTaskRequest,
   ResumeControlPlanRequest,
+  SelectControlPlanRequest,
   SelectControlPlanResponse,
 } from '../../../../packages/api-contract/control-workflow.ts';
+import type { PlanProgress } from '../../../../packages/api-contract/plan.ts';
+import type { VisualAssetManifest } from '../../../../packages/api-contract/research-deliverable.ts';
+import type { User, TaskDetail, TaskSummary, SkillItem } from '../../../../packages/api-contract/http.ts';
+import { parseControlDeliverableResponse } from '../report-package-response.ts';
+export type { ControlDeliverableResponse } from '../report-package-response.ts';
 
-// ---- API ----
+
+export interface ClarifyControlTaskRequest {
+  expectedVersion: number;
+  clarificationAnswers: Record<string, unknown>;
+  assumptionEdits: Record<string, string>;
+  idempotencyKey: string;
+}
+
+export interface ControlVisualAssetResponse {
+  blob: Blob;
+  mediaType: VisualAssetManifest['mediaType'];
+}
+
 export const api = {
   register: (b: { email: string; password: string; displayName: string }) =>
     req<{ token: string; user: User }>('/auth/register', { method: 'POST', body: b }),
   login: (b: { email: string; password: string }) =>
     req<{ token: string; user: User }>('/auth/login', { method: 'POST', body: b }),
   me: () => req<{ user: User }>('/auth/me'),
-
-  plan: (b: { originalInput: string; conversationId?: string }) =>
-    req<PlanCandidatesResponse>('/tasks/plan', { method: 'POST', body: b }),
-  // 流式规划:SSE 逐阶段回调 onProgress(PlanProgress);终态 result→resolve、error→throw ApiError。
-  // 事件分派(conversation/progress/result/error)在此消化,caller 只拿类型化进度与最终候选。
-  planStream: async (
-    b: { originalInput: string; conversationId?: string },
-    opts: { onProgress?: (ev: PlanProgress) => void } = {},
-  ): Promise<PlanCandidatesResponse> => {
+  // Current 规划流:SSE conversation/progress/result/error 在 client 层收口。
+  planControlStream: async (
+    body: PlanControlTaskRequest,
+    handlers: {
+      onConversation?: (conversationId: string) => void;
+      onProgress?: (event: PlanProgress) => void;
+    } = {},
+  ): Promise<CurrentPlanningResponse> => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const token = getToken();
     if (token) headers.Authorization = `Bearer ${token}`;
-    const res = await fetch('/api/tasks/plan/stream', { method: 'POST', headers, body: JSON.stringify(b) });
-    if (!res.ok || !res.body) throw new ApiError(res.status, `HTTP ${res.status}`);
-    const reader = res.body.getReader();
+    const response = await fetch('/api/control-tasks/plan/stream', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    });
+    if (!response.ok || !response.body) throw new ApiError(response.status, `HTTP ${response.status}`);
+
+    const reader = response.body.getReader();
     const decoder = new TextDecoder();
-    let buf = '';
-    let result: PlanCandidatesResponse | null = null;
+    let buffer = '';
+    let result: CurrentPlanningResponse | null = null;
+    const consume = (block: string): void => {
+      let event = 'message';
+      let data = '';
+      for (const line of block.split('\n')) {
+        if (line.startsWith('event:')) event = line.slice(6).trim();
+        else if (line.startsWith('data:')) data += line.slice(5).trim();
+      }
+      if (!data) return;
+      const parsed: unknown = JSON.parse(data);
+      if (event === 'conversation') {
+        const conversation = parsed as { conversationId?: unknown };
+        if (typeof conversation.conversationId === 'string') handlers.onConversation?.(conversation.conversationId);
+      } else if (event === 'progress') {
+        handlers.onProgress?.(parsed as PlanProgress);
+      } else if (event === 'result') {
+        result = parsed as CurrentPlanningResponse;
+      } else if (event === 'error') {
+        const failure = parsed as { error?: unknown };
+        throw new ApiError(502, typeof failure.error === 'string' ? failure.error : '规划失败');
+      }
+    };
+
     for (;;) {
       const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let sep: number;
-      while ((sep = buf.indexOf('\n\n')) >= 0) {
-        const block = buf.slice(0, sep);
-        buf = buf.slice(sep + 2);
-        let event = 'message';
-        let data = '';
-        for (const line of block.split('\n')) {
-          if (line.startsWith('event:')) event = line.slice(6).trim();
-          else if (line.startsWith('data:')) data += line.slice(5).trim();
-        }
-        if (!data) continue;
-        const parsed = JSON.parse(data);
-        if (event === 'progress') opts.onProgress?.(parsed as PlanProgress);
-        else if (event === 'result') result = parsed as PlanCandidatesResponse;
-        else if (event === 'error') throw new ApiError(502, String(parsed?.error ?? '规划失败'));
+      buffer = `${buffer}${decoder.decode(value, { stream: !done })}`.replaceAll('\r\n', '\n');
+      let separator = buffer.indexOf('\n\n');
+      while (separator >= 0) {
+        consume(buffer.slice(0, separator));
+        buffer = buffer.slice(separator + 2);
+        separator = buffer.indexOf('\n\n');
       }
+      if (done) break;
     }
+    if (buffer.trim()) consume(buffer);
     if (!result) throw new ApiError(502, '规划未返回结果');
     return result;
   },
-  selectCandidate: (taskId: string, candidateId: 'depth' | 'speed') =>
-    req<SelectResponse>(`/tasks/${taskId}/select`, { method: 'POST', body: { candidateId } }),
-  execute: (taskId: string, uploads?: Upload[]) =>
-    req<ExecuteResponse>(`/tasks/${taskId}/execute`, { method: 'POST', body: uploads?.length ? { uploads } : {} }),
-  resume: (taskId: string, action: 'skip' | 'abort') =>
-    req<ExecuteResponse>(`/tasks/${taskId}/resume`, { method: 'POST', body: { action } }),
+  clarifyControlTask: (
+    taskId: string,
+    body: ClarifyControlTaskRequest,
+  ) => req<CurrentPlanningResponse>(`/control-tasks/${taskId}/clarify`, {
+    method: 'POST',
+    body,
+    headers: { 'Idempotency-Key': body.idempotencyKey },
+  }),
   listTasks: () => req<{ tasks: TaskSummary[] }>('/tasks'),
   taskDetail: (id: string) =>
     req<TaskDetail>(`/tasks/${id}`),
   feedback: (id: string, b: { rating?: number; adopted?: boolean; comment?: string }) =>
     req<{ id: string }>(`/tasks/${id}/feedback`, { method: 'POST', body: b }),
   skills: () => req<{ skills: SkillItem[] }>('/skills'),
-  createControlTask: (b: CreateControlTaskRequest) =>
-    req<{ task: ControlTaskResponse }>('/control-tasks', { method: 'POST', body: b }),
-  selectControlPlan: (taskId: string, b: PlanMutationRequest) =>
-    req<SelectControlPlanResponse>(`/control-tasks/${taskId}/select`, { method: 'POST', body: b, headers: { 'Idempotency-Key': b.idempotencyKey } }),
-  confirmControlPlan: (taskId: string, b: ConfirmControlPlanRequest) =>
-    req<ControlCommandResponse>(`/control-tasks/${taskId}/confirm`, { method: 'POST', body: b, headers: { 'Idempotency-Key': b.idempotencyKey } }),
-  approveControlPlan: (taskId: string, b: ApprovalControlPlanRequest) =>
-    req<ControlCommandResponse>(`/control-tasks/${taskId}/approve`, { method: 'POST', body: b, headers: { 'Idempotency-Key': b.idempotencyKey } }),
-  reviseControlPlan: (taskId: string, b: PlanMutationRequest) =>
-    req<SelectControlPlanResponse>(`/control-tasks/${taskId}/revise`, { method: 'POST', body: b, headers: { 'Idempotency-Key': b.idempotencyKey } }),
-  resumeControlPlan: (taskId: string, b: ResumeControlPlanRequest) =>
-    req<ControlCommandResponse>(`/control-tasks/${taskId}/resume`, { method: 'POST', body: b, headers: { 'Idempotency-Key': b.idempotencyKey } }),
-  executeControlPlan: (taskId: string, b: ExecutionControlPlanRequest) =>
-    req<DisabledExecutionResponse>(`/control-tasks/${taskId}/execute`, { method: 'POST', body: b, headers: { 'Idempotency-Key': b.idempotencyKey } }),
+  controlTask: (taskId: string) =>
+    req<CurrentTaskReadResponse>(`/control-tasks/${taskId}`),
+  selectControlPlan: (taskId: string, body: SelectControlPlanRequest) =>
+    req<SelectControlPlanResponse>(`/control-tasks/${taskId}/select`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
+  confirmControlPlan: (taskId: string, body: ConfirmControlPlanRequest) =>
+    req<ControlCommandResponse>(`/control-tasks/${taskId}/confirm`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
+  approveControlPlan: (taskId: string, body: ApprovalControlPlanRequest) =>
+    req<ControlCommandResponse>(`/control-tasks/${taskId}/approve`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
+  resumeControlPlan: (taskId: string, body: ResumeControlPlanRequest) =>
+    req<ControlCommandResponse>(`/control-tasks/${taskId}/resume`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
+  executeControlPlan: (taskId: string, body: ExecutionControlPlanRequest) =>
+    req<ControlExecutionResult>(`/control-tasks/${taskId}/execute`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
+  controlVisualAsset: async (taskId: string, assetId: string): Promise<ControlVisualAssetResponse> => {
+    const response = await reqBlob(
+      `/control-tasks/${encodeURIComponent(taskId)}/assets/${encodeURIComponent(assetId)}`,
+    );
+    const mediaType = response.headers.get('content-type')?.split(';', 1)[0];
+    if (
+      mediaType !== 'image/png'
+      && mediaType !== 'image/jpeg'
+      && mediaType !== 'image/webp'
+      && mediaType !== 'image/svg+xml'
+    ) {
+      throw new ApiError(502, '视觉资产媒体类型无效');
+    }
+    return { blob: await response.blob(), mediaType };
+  },
+  controlDeliverable: async (taskId: string) => parseControlDeliverableResponse(
+    await req<unknown>(`/control-tasks/${taskId}/deliverable`),
+  ),
 };
