@@ -290,6 +290,10 @@ async function inspectBinary(
   return { contentType, byteSize: bytes.byteLength, width, height };
 }
 
+export async function inspectTrustedRaster(bytes: Buffer): Promise<TrustedBinaryMetadata> {
+  return inspectBinary(bytes);
+}
+
 export class ControlArtifactStore {
 
   constructor(

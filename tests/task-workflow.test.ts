@@ -471,6 +471,62 @@ test('rejects extra input roles before writing gates or transitioning state', as
   assert.equal(persisted?.state, 'awaiting_confirmation');
   assert.deepEqual(await repository.listGateRecords(created.task.id, selection.planVersionId), []);
 });
+
+test('rejects invalid nested visual inputs before writing gates or transitioning state', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const workflow = new TaskWorkflowService(repository);
+  const created = await createCandidateTask(repository, 'invalid-visual-input', {
+    candidateId: 'speed',
+    plan: currentPlan('', 'invalid-visual-input', [currentStep({ input: { screenshots: null } })]),
+    pendingInputs: [{
+      role: 'screenshots',
+      label: '竞品截图',
+      multiple: true,
+      targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'screenshots', multiple: true }],
+    }],
+  });
+  const selection = await workflow.select({
+    taskId: created.task.id,
+    expectedVersion: created.task.stateVersion,
+    idempotencyKey: 'invalid-visual-input-select',
+    actor: { userId: ownerId, role: 'owner' },
+    planVersionId: created.candidates.find((candidate) => candidate.candidateId === 'speed')!.id,
+  });
+  const invalidDataUrls: unknown[] = [
+    'data:image/gif;base64,AAAA',
+    'data:image/png;base64,',
+    'data:image/jpeg;base64,%%%',
+    'data:image/webp;base64,Y Q==',
+    'data:image/jpeg;base64,YQ==\n',
+    'data:image/png;base64,AB==',
+    'data:image/png;base64,YQ==',
+    'data:image/png;base64,iVBORw0KGgo=',
+    'data:image/jpeg;base64,/9j/',
+    'data:image/webp;base64,UklGRgAAAABXRUJQ',
+    null,
+  ];
+
+  for (const [index, dataUrl] of invalidDataUrls.entries()) {
+    await assert.rejects(
+      () => workflow.confirm({
+        taskId: created.task.id,
+        planVersionId: selection.planVersionId,
+        expectedVersion: selection.stateVersion,
+        idempotencyKey: `invalid-visual-input-confirm-${index}`,
+        actor: { userId: ownerId, role: 'owner' },
+        confirmationAnswers: {},
+        inputValues: { screenshots: { nested: [{ dataUrl }] } },
+      }),
+      TaskWorkflowGateError,
+    );
+  }
+
+  const persisted = await repository.getTaskDetail(created.task.id);
+  assert.equal(persisted?.state, 'awaiting_confirmation');
+  assert.equal(persisted?.stateVersion, selection.stateVersion);
+  assert.deepEqual(await repository.listGateRecords(created.task.id, selection.planVersionId), []);
+});
+
 test('confirmation, required input, role matrix, and plan revision gate ready state', async () => {
   const repository = new ControlPlaneRepository(scopedDatabase);
   const workflow = new TaskWorkflowService(repository, undefined, {

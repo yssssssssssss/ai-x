@@ -20,6 +20,7 @@ import type {
 } from '../control/artifact-store.ts';
 import { resolveJsonPointer } from '../evidence/evidence-service.ts';
 import { SchemaValidator } from '../schema/validator.ts';
+import { sniffSupportedImageContentType } from './image-content-type.ts';
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
@@ -291,17 +292,6 @@ function transportFromFetch(fetch: FetchPort): VisualAssetTransport {
   };
 }
 
-function detectImageContentType(bytes: Buffer): TrustedBinaryMetadata['contentType'] {
-  if (bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
-    return 'image/png';
-  }
-  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
-  if (bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP') {
-    return 'image/webp';
-  }
-  throw new Error('remote image signature is unsupported');
-}
-
 async function readBoundedBody(response: Response): Promise<Buffer> {
   const statedLength = response.headers.get('content-length');
   if (statedLength !== null) {
@@ -361,7 +351,8 @@ async function downloadImage(
       throw new Error(`remote image HTTP request failed with status ${response.status}`);
     }
     const bytes = await readBoundedBody(response);
-    const signatureType = detectImageContentType(bytes);
+    const signatureType = sniffSupportedImageContentType(bytes);
+    if (signatureType === null) throw new Error('remote image signature is unsupported');
     const headerType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
     if (headerType !== signatureType) {
       throw new Error(`remote image MIME Content-Type ${headerType ?? '(missing)'} disagrees with its signature ${signatureType}`);

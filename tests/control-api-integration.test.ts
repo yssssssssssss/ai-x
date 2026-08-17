@@ -1262,6 +1262,15 @@ test('production control runtime returns the revised final deliverable ID for pa
   assert.match(execution.evidenceManifestArtifactId, /^[0-9a-f-]{36}$/);
   assert.match(execution.reportReviewArtifactId, /^[0-9a-f-]{36}$/);
 
+  const completedResumeResponse = await postJson(
+    baseUrl,
+    `/api/control-tasks/${planned.task.id}/resume`,
+    ownerToken,
+    { expectedVersion: execution.stateVersion, action: 'retry' },
+    `completed-resume-${randomUUID()}`,
+  );
+  assert.equal(completedResumeResponse.status, 409, await completedResumeResponse.clone().text());
+
   const ownerDeliverableResponse = await fetch(
     `${baseUrl}/api/control-tasks/${planned.task.id}/deliverable`,
     { headers: { authorization: `Bearer ${ownerToken}` } },

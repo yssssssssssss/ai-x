@@ -15,6 +15,10 @@ import type {
   DisabledExecutionResponse,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import { assertValidReportReviewArtifact } from '../report/report-review-service.ts';
+import {
+  parseVisualInputDataUrls,
+  VisualInputDataUrlError,
+} from '../report/visual-input-data-url.ts';
 export { TaskWorkflowAuthorizationError };
 
 export type WorkflowRole = 'owner' | 'legal' | 'security' | 'gold';
@@ -479,6 +483,14 @@ export class TaskWorkflowService {
     ));
     if (missingAnswers.length || missingInputs.length || extraInputs.length) {
       throw new TaskWorkflowGateError([...missingAnswers, ...missingInputs, ...extraInputs]);
+    }
+    try {
+      await parseVisualInputDataUrls(input.inputValues);
+    } catch (error) {
+      if (error instanceof VisualInputDataUrlError) {
+        throw new TaskWorkflowGateError(['input_values.dataUrl']);
+      }
+      throw error;
     }
 
     for (const [key, value] of Object.entries(input.confirmationAnswers)) {
