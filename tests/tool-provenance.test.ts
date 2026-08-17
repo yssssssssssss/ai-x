@@ -80,6 +80,43 @@ test('ToolRouter receipt records real Tavily identity and endpoint host', async 
   assert.equal(typeof result.receipt.latencyMs, 'number');
 });
 
+test('ToolRouter preserves retry lineage through adapter invocation and receipt', async () => {
+  let capturedLineage: { attemptId?: string; retryOf?: string | null } | undefined;
+  const adapter = {
+    adapterType: 'tavily' as const,
+    implementationId: 'capturing-real-adapter',
+    executionMode: 'real' as const,
+    async invoke(options: Parameters<ToolAdapter['invoke']>[0]) {
+      capturedLineage = { attemptId: options.attemptId, retryOf: options.retryOf };
+      return {
+        output: {},
+        latencyMs: 0,
+        receipt: {
+          declaredAdapterType: 'tavily' as const,
+          resolvedAdapterType: 'tavily' as const,
+          implementationId: 'capturing-real-adapter',
+          executionMode: 'real' as const,
+          endpointHost: null,
+          status: 'ok' as const,
+          latencyMs: 0,
+        },
+      };
+    },
+  } satisfies ToolAdapter;
+
+  const result = await new ToolRouter().register(adapter).invoke({
+    toolId: 'tavily-web-search',
+    input: { query: 'AI search' },
+    manifest: manifestWith('tavily'),
+    attemptId: 'attempt-2',
+    retryOf: 'attempt-1',
+  });
+
+  assert.deepEqual(capturedLineage, { attemptId: 'attempt-2', retryOf: 'attempt-1' });
+  assert.equal(result.receipt.attemptId, 'attempt-2');
+  assert.equal(result.receipt.retryOf, 'attempt-1');
+});
+
 test('ToolRouter receipt records FakeO2 fake identity without mismatch', async () => {
   const router = new ToolRouter().register(new FakeO2Adapter());
 
