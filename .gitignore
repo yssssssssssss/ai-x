@@ -38,3 +38,6 @@ references/
 
 # 独立子仓库(自带 .git / node_modules / .venv / 3.3G 临时文件),不纳入主仓库
 external-tools/users-research-all/
+
+# 本地 Skill 能力评测结果：包含 LLM 生成内容，不纳入源码
+skill-evaluations/*

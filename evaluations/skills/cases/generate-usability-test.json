@@ -1,0 +1,35 @@
+{
+  "skill_id": "generate-usability-test",
+  "title": "首次移动结算原型可用性测试",
+  "research_goal": "验证首次购买用户能否在不受主持人提示的情况下确认费用、修改配送并从支付失败中恢复。",
+  "input_materials": {
+    "data_classification": "synthetic_evaluation_data",
+    "test_object": {
+      "product": "购物 App 首次结算高保真可点击原型",
+      "form": "移动端远程共享屏幕原型",
+      "stage": "形成性测试",
+      "start_state": "测试账号购物车已有一件商品，未保存地址",
+      "covered_states": ["订单确认", "地址录入", "配送选择", "优惠确认", "支付失败恢复"]
+    },
+    "target_users": "过去一年完成过移动购物，但过去 90 天未使用本产品结算的成年用户",
+    "format": "60 分钟远程主持式测试，参与者口述思考；主持人不控制参与者设备",
+    "target_tasks": [
+      {"id": "T1", "scenario_goal": "为下周生日礼物完成下单，并在付款前确认最终费用与周五前送达", "start": "购物车", "end": "准备提交订单", "success_evidence": "正确地址和配送承诺已设置，能准确说出最终应付金额"},
+      {"id": "T2", "scenario_goal": "得知原支付方式失败后，找到一种可接受方式继续完成购买", "start": "支付失败状态", "end": "订单成功状态", "success_evidence": "无需主持人提示恢复并看到订单成功确认"}
+    ],
+    "measurement_constraints": "记录完成、关键错误、提示次数、时长和任务后单题难易度；标准量表具体措辞仅从运行时正典取用。"
+  },
+  "tool_outputs": [],
+  "expected_deliverables": [
+    "不给按钮名或操作步骤的 scenarios，并明确每项 task success criteria",
+    "开场、同意、think-aloud script、必要时的中性提醒和收尾",
+    "含行为、错误、路径、引语、提示和结果的 observation sheet",
+    "success/SEQ/SUS plan、统计口径和执行时点",
+    "招募 screener、偏误与可用性自检及五部分本次运行说明"
+  ],
+  "risk_checks": [
+    "no coaching，任务文本和主持脚本不得泄露点击路径或按钮名",
+    "task success criteria explicit，完成、失败、提示后完成必须可区分",
+    "过程不打断不辩解；标准量表和样本建议不得凭记忆编造"
+  ]
+}

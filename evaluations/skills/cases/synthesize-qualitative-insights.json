@@ -1,0 +1,32 @@
+{
+  "skill_id": "synthesize-qualitative-insights",
+  "title": "AI 购物助手信任障碍跨场洞察综合",
+  "research_goal": "综合六场合成访谈，回答高客单购物中 AI 助手如何建立或损害信任，并形成证据充分、可指导下一步验证的洞察。",
+  "input_materials": {
+    "data_classification": "synthetic_evaluation_data",
+    "research_questions": ["用户何时开始信任建议？", "哪些证据缺口导致退出或延迟决策？", "助手如何更好衔接购买？"],
+    "sessions": [
+      {"id": "S01", "summary": "追问预算和佩戴场景后认为助手懂需求；因推荐无来源退出查官网。", "quotes": ["追问挺对，但我不知道结论从哪来。", "每个结论旁边直接放来源和日期。"], "counterpoint": "最终仍购买了助手候选中的第二款。"},
+      {"id": "S02", "summary": "家电比较表帮助缩小候选；统一能耗口径和更新时间增强信任。", "quotes": ["口径一样我才敢比较。", "看到更新时间后，我少开了两个网页。"], "counterpoint": "对平台自营商品仍怀疑排序偏向。"},
+      {"id": "S03", "summary": "母婴用品建议引用了标准，但适龄条件未解释；转向社群确认。", "quotes": ["有标准名字不代表适合我家孩子。", "我最后还是去群里问了。"], "counterpoint": "清单功能便于与伴侣共同决策。"},
+      {"id": "S04", "summary": "价格趋势和佣金披露提升信任；库存变化使原建议失效。", "quotes": ["告诉我有佣金反而更坦诚。", "下单时没货，前面的比较白做了。"], "counterpoint": "愿意开启价格提醒后再决定。"},
+      {"id": "S05", "summary": "助手记住相机使用场景，但详情页返回后比较状态丢失。", "quotes": ["它记得我要拍运动，这点很省事。", "去详情再回来，比较得重来。"], "counterpoint": "高质量追问减少了初始候选数量。"},
+      {"id": "S06", "summary": "护肤推荐解释了成分来源；退换与过敏风险信息不足导致不下单。", "quotes": ["成分出处清楚，我愿意继续看。", "能不能拆封退没有说，我不敢买。"], "counterpoint": "参与者表示若补足风险信息会重试。"}
+    ],
+    "sample_boundary": "六场均为高客单或高风险决策的合成访谈；频次只按六场材料计算，不代表总体比例。",
+    "requested_additions": ["机会假设", "验证建议"]
+  },
+  "tool_outputs": [],
+  "expected_deliverables": [
+    "分析底稿先完成跨场聚类再拔高，形成 hierarchical themes",
+    "以材料份数为分母的 frequency、主动反例与逐条 evidence",
+    "D/Q markers、结构化 insights、推导链、匿名原话和 analysis appendix",
+    "按研究问题组织、结论先行且剥离方法术语的业务交付正文",
+    "明确标假设的机会与验证建议，以及五部分本次运行说明"
+  ],
+  "risk_checks": [
+    "frequency is sample frequency，必须写为 x/6 场而非总体用户占比",
+    "opportunities remain hypotheses，不得从访谈相关性声称因果或商业规模",
+    "每条洞察必须回指主题和 S01–S06 原话；正文不得堆叠亲和图、框架名或 D/Q 术语"
+  ]
+}

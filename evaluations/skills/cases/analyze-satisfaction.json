@@ -1,0 +1,53 @@
+{
+  "skill_id": "analyze-satisfaction",
+  "title": "购物 App 满意度驱动与下滑诊断",
+  "research_goal": "识别本期总体满意度的关键驱动、IPA 象限和相较上期的下滑来源，并给出有证据边界的改进优先级。",
+  "input_materials": {
+    "data_classification": "synthetic_evaluation_data",
+    "scale": "所有满意度指标均为 1–7 分，分数越高越满意",
+    "current_period": {
+      "window": "2026-Q2",
+      "n": 600,
+      "overall_satisfaction_mean": 5.18,
+      "attributes": [
+        {"name": "搜索相关性", "mean": 5.32, "derived_importance_spearman": 0.54},
+        {"name": "价格透明", "mean": 4.71, "derived_importance_spearman": 0.63},
+        {"name": "结算顺畅", "mean": 4.58, "derived_importance_spearman": 0.69},
+        {"name": "配送可预期", "mean": 5.01, "derived_importance_spearman": 0.47},
+        {"name": "页面稳定", "mean": 5.66, "derived_importance_spearman": 0.38}
+      ],
+      "computed_statistic_note": "derived_importance_spearman 已由固定合成行级数据计算后提供；未提供 p 值、置信区间或因果模型。",
+      "segments": [
+        {"dimension": "user_type", "name": "new", "n": 260, "overall_mean": 4.82, "checkout_mean": 4.21},
+        {"dimension": "user_type", "name": "returning", "n": 340, "overall_mean": 5.46, "checkout_mean": 4.86},
+        {"dimension": "device", "name": "iOS", "n": 280, "overall_mean": 5.34, "checkout_mean": 4.79},
+        {"dimension": "device", "name": "Android", "n": 320, "overall_mean": 5.04, "checkout_mean": 4.40}
+      ]
+    },
+    "comparison_period": {
+      "window": "2026-Q1",
+      "n": 590,
+      "overall_satisfaction_mean": 5.46,
+      "attribute_means": {"搜索相关性": 5.38, "价格透明": 5.03, "结算顺畅": 5.12, "配送可预期": 5.09, "页面稳定": 5.70},
+      "segments": [
+        {"dimension": "user_type", "name": "new", "n": 250, "overall_mean": 5.20},
+        {"dimension": "user_type", "name": "returning", "n": 340, "overall_mean": 5.65},
+        {"dimension": "device", "name": "iOS", "n": 275, "overall_mean": 5.52},
+        {"dimension": "device", "name": "Android", "n": 315, "overall_mean": 5.41}
+      ]
+    },
+    "ipa_rule": "表现以本期属性均值衡量，重要性以已提供 Spearman 系数衡量；象限分割线使用五项属性各自中位数并明确展示。"
+  },
+  "tool_outputs": [],
+  "expected_deliverables": [
+    "基于已提供计算统计量的 driver ranking",
+    "写明分割线和成员的 IPA quadrants",
+    "本期对比上期并保留各期和分群样本量的 decline attribution",
+    "结论摘要、改进 priorities、数据研判/算力声明和五部分本次运行说明"
+  ],
+  "risk_checks": [
+    "no significance claim without supplied test，不得编造 p 值、区间或显著性",
+    "sample sizes retained，比较和分群结论必须携带对应 n",
+    "相关不等于因果，下降来源只能表述为定位证据而非已证实根因"
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "skill_id": "competitive-web-research",
+  "title": "购物助手十二个月公开资料竞品研究",
+  "research_goal": "基于固定公开资料，比较三家虚构购物助手在过去十二个月的能力与策略变化，并找出我方可验证的空白。",
+  "input_materials": {
+    "data_classification": "synthetic_evaluation_data",
+    "business_domain": "面向消费者的 AI 购物助手",
+    "comparison_window": {"start": "2025-08-01", "end": "2026-07-31"},
+    "competitors": ["选购星", "比价狐", "清单猫"],
+    "dimensions": ["需求理解", "商品比较", "证据透明", "决策辅助", "商业化策略"]
+  },
+  "tool_outputs": [
+    {
+      "data_classification": "synthetic_evaluation_data",
+      "tool": "fixed_public_web_search",
+      "records": [
+        {"id": "W1", "competitor": "选购星", "date": "2025-09-18", "url": "https://example.com/synthetic/xuangouxing-compare", "snippet": "发布三商品参数并排比较，并显示参数来源链接。"},
+        {"id": "W2", "competitor": "选购星", "date": "2026-04-09", "url": "https://example.com/synthetic/xuangouxing-followup", "snippet": "增加预算与使用场景的追问，但未披露排序商业关系。"},
+        {"id": "W3", "competitor": "比价狐", "date": "2025-11-02", "url": "https://example.com/synthetic/bijiahu-price", "snippet": "上线跨店到手价拆解和七日价格趋势。"},
+        {"id": "W4", "competitor": "比价狐", "date": "2026-06-16", "url": "https://example.com/synthetic/bijiahu-affiliate", "snippet": "帮助页声明部分跳转链接含合成佣金关系标记。"},
+        {"id": "W5", "competitor": "清单猫", "date": "2025-12-12", "url": "https://example.com/synthetic/qingdanmao-list", "snippet": "支持把对话结果保存为可协作购物清单。"},
+        {"id": "W6", "competitor": "清单猫", "date": "2026-07-05", "url": "https://example.com/synthetic/qingdanmao-evidence", "snippet": "回答展示信息更新时间，但不提供逐条原始来源链接。"}
+      ]
+    }
+  ],
+  "expected_deliverables": [
+    "带日期、URL、证据摘录和适用维度的 evidence table",
+    "三家购物助手的 capability/strategy comparison",
+    "结论先行并逐条标注 web evidence 或 llm_inference",
+    "面向我方的 gaps 与差异化机会清单"
+  ],
+  "risk_checks": [
+    "no claims beyond snippets，未被记录支持的判断必须标 llm_inference",
+    "dates and URLs retained，矩阵结论须能回指具体记录",
+    "不得采集评论、交易或用户数据，也不得调用真实网络工具"
+  ]
+}

@@ -1,0 +1,1079 @@
+[
+  {
+    "skill_id": "digital-human-competitive-analysis",
+    "kb_mode": "not_applicable",
+    "required_sources": [],
+    "conditional_sources": [],
+    "optional_sources": [],
+    "retrieval_tags": [],
+    "source_status_policy": "not_applicable",
+    "unresolved_items": [
+      "methods/competitive-research-method.md (missing; native Skill references it)"
+    ]
+  },
+  {
+    "skill_id": "competitive-web-research",
+    "kb_mode": "not_applicable",
+    "required_sources": [],
+    "conditional_sources": [],
+    "optional_sources": [],
+    "retrieval_tags": [],
+    "source_status_policy": "not_applicable",
+    "unresolved_items": []
+  },
+  {
+    "skill_id": "competitive-app-analysis",
+    "kb_mode": "not_applicable",
+    "required_sources": [],
+    "conditional_sources": [],
+    "optional_sources": [],
+    "retrieval_tags": [],
+    "source_status_policy": "not_applicable",
+    "unresolved_items": []
+  },
+  {
+    "skill_id": "design-experience-review",
+    "kb_mode": "manual_review",
+    "required_sources": [],
+    "conditional_sources": [],
+    "optional_sources": [],
+    "retrieval_tags": [],
+    "source_status_policy": "not_applicable",
+    "unresolved_items": []
+  },
+  {
+    "skill_id": "accessibility-review",
+    "kb_mode": "required",
+    "required_sources": [
+      {
+        "path": "methods/standards/accessibility-adaptation.md",
+        "role": "standard",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/collection/accessibility-audit.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/analysis/issue-prioritization.md",
+        "role": "method",
+        "status": "draft"
+      }
+    ],
+    "conditional_sources": [
+      {
+        "path": "methods/toolbox/collection/usability-testing.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when real-user validation is needed"
+      }
+    ],
+    "optional_sources": [
+      {
+        "path": "models/nielsen-heuristics.md",
+        "role": "model",
+        "status": "draft"
+      }
+    ],
+    "retrieval_tags": [
+      "accessibility",
+      "a11y",
+      "wcag"
+    ],
+    "source_status_policy": "draft_allowed_with_warning",
+    "unresolved_items": []
+  },
+  {
+    "skill_id": "analyze-satisfaction",
+    "kb_mode": "required",
+    "required_sources": [
+      {
+        "path": "methods/toolbox/analysis/key-driver-analysis.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/analysis/satisfaction-analysis-models.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/analysis/satisfaction-drop-attribution.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "models/ect.md",
+        "role": "model",
+        "status": "draft"
+      }
+    ],
+    "conditional_sources": [
+      {
+        "path": "methods/toolbox/analysis/data-standardization.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when metrics use mixed scales"
+      },
+      {
+        "path": "methods/toolbox/collection/satisfaction-survey.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when metric definitions are needed"
+      }
+    ],
+    "optional_sources": [
+      {
+        "path": "methods/toolbox/analysis/voc-analysis.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/analysis/issue-prioritization.md",
+        "role": "method",
+        "status": "draft"
+      }
+    ],
+    "retrieval_tags": [
+      "satisfaction",
+      "drivers",
+      "ipa"
+    ],
+    "source_status_policy": "draft_allowed_with_warning",
+    "unresolved_items": [
+      "methods/toolbox/analysis/ipa-matrix.md (missing; referenced by SKILL.md)"
+    ]
+  },
+  {
+    "skill_id": "build-experience-metrics",
+    "kb_mode": "required",
+    "required_sources": [
+      {
+        "path": "methods/toolbox/analysis/experience-metrics-heart.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/analysis/longitudinal-benchmark-tracking.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "assets/scales/standardized-ux-scales.md",
+        "role": "asset",
+        "status": "draft"
+      }
+    ],
+    "conditional_sources": [
+      {
+        "path": "methods/standards/sampling.md",
+        "role": "standard",
+        "status": "draft",
+        "trigger": "when defining sample size"
+      },
+      {
+        "path": "methods/toolbox/collection/satisfaction-survey.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when collecting subjective metrics"
+      },
+      {
+        "path": "methods/toolbox/analysis/data-standardization.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when normalizing metrics"
+      }
+    ],
+    "optional_sources": [
+      {
+        "path": "methods/scenarios/comprehensive-business/cross-line-topics/b-end-experience-measurement.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/analysis/key-driver-analysis.md",
+        "role": "method",
+        "status": "draft"
+      }
+    ],
+    "retrieval_tags": [
+      "experience-metrics",
+      "heart",
+      "gsm"
+    ],
+    "source_status_policy": "draft_allowed_with_warning",
+    "unresolved_items": []
+  },
+  {
+    "skill_id": "code-open-feedback",
+    "kb_mode": "required",
+    "required_sources": [
+      {
+        "path": "methods/toolbox/analysis/voc-analysis.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/analysis/voc-product-line-classification.md",
+        "role": "method",
+        "status": "draft"
+      }
+    ],
+    "conditional_sources": [
+      {
+        "path": "methods/toolbox/analysis/affinity-diagram.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when clustering codes"
+      },
+      {
+        "path": "methods/toolbox/analysis/text-analysis.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when lexical analysis is needed"
+      }
+    ],
+    "optional_sources": [
+      {
+        "path": "methods/toolbox/analysis/issue-prioritization.md",
+        "role": "method",
+        "status": "draft"
+      }
+    ],
+    "retrieval_tags": [
+      "voc",
+      "feedback",
+      "coding"
+    ],
+    "source_status_policy": "draft_allowed_with_warning",
+    "unresolved_items": []
+  },
+  {
+    "skill_id": "competitive-analysis",
+    "kb_mode": "required",
+    "required_sources": [
+      {
+        "path": "methods/toolbox/analysis/competitive-analysis.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/collection/desk-research.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/analysis/opportunity-research.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "models/kano.md",
+        "role": "model",
+        "status": "draft"
+      }
+    ],
+    "conditional_sources": [
+      {
+        "path": "methods/toolbox/analysis/issue-prioritization.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when ranking actions"
+      },
+      {
+        "path": "methods/toolbox/analysis/key-driver-analysis.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when comparing satisfaction drivers"
+      }
+    ],
+    "optional_sources": [
+      {
+        "path": "methods/toolbox/analysis/affinity-diagram.md",
+        "role": "method",
+        "status": "draft"
+      }
+    ],
+    "retrieval_tags": [
+      "competitive",
+      "strategy",
+      "aarr"
+    ],
+    "source_status_policy": "draft_allowed_with_warning",
+    "unresolved_items": [
+      "models/aarrr.md (missing; referenced by SKILL.md)",
+      "models/kano.md contradiction: SKILL.md claims missing, but index and file exist"
+    ]
+  },
+  {
+    "skill_id": "conversion-funnel-analysis",
+    "kb_mode": "required",
+    "required_sources": [
+      {
+        "path": "methods/toolbox/analysis/conversion-funnel.md",
+        "role": "method",
+        "status": "draft"
+      }
+    ],
+    "conditional_sources": [
+      {
+        "path": "methods/toolbox/analysis/feature-adoption.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when funnel is feature adoption"
+      },
+      {
+        "path": "methods/toolbox/collection/interviews.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when qualitative validation is needed"
+      },
+      {
+        "path": "methods/toolbox/analysis/voc-analysis.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when open feedback exists"
+      },
+      {
+        "path": "methods/toolbox/analysis/ab-testing.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when validating optimization"
+      }
+    ],
+    "optional_sources": [
+      {
+        "path": "methods/toolbox/analysis/issue-prioritization.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/analysis/experience-metrics-heart.md",
+        "role": "method",
+        "status": "draft"
+      }
+    ],
+    "retrieval_tags": [
+      "funnel",
+      "conversion",
+      "diagnosis"
+    ],
+    "source_status_policy": "draft_allowed_with_warning",
+    "unresolved_items": [
+      "models/fogg-behavior-model.md (missing; referenced behavior model)"
+    ]
+  },
+  {
+    "skill_id": "feature-adoption-analysis",
+    "kb_mode": "required",
+    "required_sources": [
+      {
+        "path": "methods/toolbox/analysis/feature-adoption.md",
+        "role": "method",
+        "status": "draft"
+      }
+    ],
+    "conditional_sources": [
+      {
+        "path": "methods/toolbox/analysis/conversion-funnel.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when comparing funnels"
+      },
+      {
+        "path": "models/ect.md",
+        "role": "model",
+        "status": "draft",
+        "trigger": "when explaining repeat-use gaps"
+      },
+      {
+        "path": "methods/toolbox/collection/interviews.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when causes need validation"
+      },
+      {
+        "path": "methods/toolbox/analysis/voc-analysis.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when feedback exists"
+      }
+    ],
+    "optional_sources": [
+      {
+        "path": "methods/toolbox/analysis/ab-testing.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/analysis/experience-metrics-heart.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "models/kano.md",
+        "role": "model",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/analysis/issue-prioritization.md",
+        "role": "method",
+        "status": "draft"
+      }
+    ],
+    "retrieval_tags": [
+      "adoption",
+      "activation",
+      "retention"
+    ],
+    "source_status_policy": "draft_allowed_with_warning",
+    "unresolved_items": [
+      "models/fogg-behavior-model.md (missing; cited as behavior mechanism)"
+    ]
+  },
+  {
+    "skill_id": "generate-interview-guide",
+    "kb_mode": "required",
+    "required_sources": [
+      {
+        "path": "methods/toolbox/collection/interview-guide-design.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "models/orid.md",
+        "role": "model",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/collection/respondent-bias.md",
+        "role": "method",
+        "status": "draft"
+      }
+    ],
+    "conditional_sources": [
+      {
+        "path": "methods/toolbox/collection/interviews.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "for one-to-one interviews"
+      },
+      {
+        "path": "methods/toolbox/collection/intercept-interview.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "for intercept format"
+      },
+      {
+        "path": "methods/toolbox/collection/online-focus-group.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "for focus-group format"
+      },
+      {
+        "path": "methods/toolbox/collection/participant-recruitment.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when screening is requested"
+      }
+    ],
+    "optional_sources": [
+      {
+        "path": "assets/question-bank/index.md",
+        "role": "asset",
+        "status": "unindexed"
+      }
+    ],
+    "retrieval_tags": [
+      "interview",
+      "guide",
+      "orid"
+    ],
+    "source_status_policy": "draft_allowed_with_warning",
+    "unresolved_items": [
+      "assets/question-bank/interview/<主题>.md (dynamic topic path)",
+      "methods/scenarios/<业务线>/... (dynamic business-line path)"
+    ]
+  },
+  {
+    "skill_id": "generate-persona",
+    "kb_mode": "required",
+    "required_sources": [
+      {
+        "path": "methods/toolbox/collection/persona.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/analysis/affinity-diagram.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/analysis/qualitative-insight-frameworks.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "models/user-insight.md",
+        "role": "model",
+        "status": "draft"
+      }
+    ],
+    "conditional_sources": [
+      {
+        "path": "models/g7-brand-segmentation.md",
+        "role": "model",
+        "status": "draft",
+        "trigger": "when brand attitude is a segmentation variable"
+      },
+      {
+        "path": "models/user-cultivation-growth.md",
+        "role": "model",
+        "status": "draft",
+        "trigger": "when lifecycle is a segmentation variable"
+      },
+      {
+        "path": "methods/toolbox/collection/interviews.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when materials are interviews"
+      }
+    ],
+    "optional_sources": [
+      {
+        "path": "methods/toolbox/collection/experience-map.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/collection/scenario-based-need-discovery.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/standards/sampling.md",
+        "role": "standard",
+        "status": "draft"
+      }
+    ],
+    "retrieval_tags": [
+      "persona",
+      "segmentation",
+      "qualitative"
+    ],
+    "source_status_policy": "draft_allowed_with_warning",
+    "unresolved_items": []
+  },
+  {
+    "skill_id": "generate-research-plan",
+    "kb_mode": "required",
+    "required_sources": [
+      {
+        "path": "methods/standards/requirement-elicitation.md",
+        "role": "standard",
+        "status": "draft"
+      },
+      {
+        "path": "methods/standards/research-project-workflow.md",
+        "role": "standard",
+        "status": "draft"
+      }
+    ],
+    "conditional_sources": [
+      {
+        "path": "methods/standards/sampling.md",
+        "role": "standard",
+        "status": "draft",
+        "trigger": "when sample design is in scope"
+      }
+    ],
+    "optional_sources": [
+      {
+        "path": "methods/scenarios/category-consumption/cross-category/category-research.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/scenarios/category-consumption/cross-category/churn-user-research.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/scenarios/product-experience/iteration/iteration-evaluation-diagnosis.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/scenarios/product-experience/iteration/continuous-discovery.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/scenarios/comprehensive-business/cross-line-topics/b-end-experience-measurement.md",
+        "role": "method",
+        "status": "draft"
+      }
+    ],
+    "retrieval_tags": [
+      "research-plan",
+      "requirements",
+      "sampling"
+    ],
+    "source_status_policy": "draft_allowed_with_warning",
+    "unresolved_items": [
+      "methods/scenarios/<业务线>/... (dynamic business-line path)"
+    ]
+  },
+  {
+    "skill_id": "generate-survey",
+    "kb_mode": "required",
+    "required_sources": [
+      {
+        "path": "methods/standards/questionnaire-design.md",
+        "role": "standard",
+        "status": "draft"
+      }
+    ],
+    "conditional_sources": [
+      {
+        "path": "methods/toolbox/collection/satisfaction-survey.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when measuring satisfaction"
+      },
+      {
+        "path": "methods/toolbox/collection/qualitative-questionnaire.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when open-ended exploration is requested"
+      },
+      {
+        "path": "methods/toolbox/collection/scale-development.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when no validated scale fits"
+      },
+      {
+        "path": "assets/scales/standardized-ux-scales.md",
+        "role": "asset",
+        "status": "draft",
+        "trigger": "when the case requests a validated standard scale"
+      }
+    ],
+    "optional_sources": [
+      {
+        "path": "assets/question-bank/index.md",
+        "role": "asset",
+        "status": "unindexed"
+      },
+      {
+        "path": "models/ect.md",
+        "role": "model",
+        "status": "draft"
+      },
+      {
+        "path": "models/g7-brand-segmentation.md",
+        "role": "model",
+        "status": "draft"
+      },
+      {
+        "path": "models/cognitive-biases.md",
+        "role": "model",
+        "status": "draft"
+      }
+    ],
+    "retrieval_tags": [
+      "survey",
+      "questionnaire",
+      "scales"
+    ],
+    "source_status_policy": "draft_allowed_with_warning",
+    "unresolved_items": []
+  },
+  {
+    "skill_id": "generate-usability-test",
+    "kb_mode": "required",
+    "required_sources": [
+      {
+        "path": "methods/toolbox/collection/usability-testing.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "assets/scales/standardized-ux-scales.md",
+        "role": "asset",
+        "status": "draft"
+      },
+      {
+        "path": "methods/standards/sampling.md",
+        "role": "standard",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/collection/participant-recruitment.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/collection/respondent-bias.md",
+        "role": "method",
+        "status": "draft"
+      }
+    ],
+    "conditional_sources": [
+      {
+        "path": "methods/toolbox/collection/eye-tracking.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when visual attention is in scope"
+      },
+      {
+        "path": "methods/toolbox/collection/experience-evaluation-rating.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when quantitative rating is requested"
+      }
+    ],
+    "optional_sources": [],
+    "retrieval_tags": [
+      "usability",
+      "testing",
+      "seq",
+      "sus"
+    ],
+    "source_status_policy": "draft_allowed_with_warning",
+    "unresolved_items": [
+      "methods/scenarios/<业务线>/... (dynamic business-line path)"
+    ]
+  },
+  {
+    "skill_id": "issue-prioritization",
+    "kb_mode": "required",
+    "required_sources": [
+      {
+        "path": "methods/toolbox/analysis/issue-prioritization.md",
+        "role": "method",
+        "status": "draft"
+      }
+    ],
+    "conditional_sources": [
+      {
+        "path": "assets/playbooks/priority-frameworks-overview.md",
+        "role": "asset",
+        "status": "draft",
+        "trigger": "when choosing frameworks"
+      },
+      {
+        "path": "methods/toolbox/analysis/priority-quadrant-method.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when four-quadrant decision is requested"
+      },
+      {
+        "path": "models/kano.md",
+        "role": "model",
+        "status": "draft",
+        "trigger": "when classifying needs"
+      }
+    ],
+    "optional_sources": [
+      {
+        "path": "methods/toolbox/analysis/affinity-diagram.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/analysis/key-driver-analysis.md",
+        "role": "method",
+        "status": "draft"
+      }
+    ],
+    "retrieval_tags": [
+      "prioritization",
+      "severity",
+      "rice"
+    ],
+    "source_status_policy": "draft_allowed_with_warning",
+    "unresolved_items": []
+  },
+  {
+    "skill_id": "jobs-to-be-done",
+    "kb_mode": "required",
+    "required_sources": [
+      {
+        "path": "models/jtbd.md",
+        "role": "model",
+        "status": "draft"
+      },
+      {
+        "path": "models/user-needs.md",
+        "role": "model",
+        "status": "draft"
+      },
+      {
+        "path": "models/user-insight.md",
+        "role": "model",
+        "status": "draft"
+      },
+      {
+        "path": "models/means-end-laddering.md",
+        "role": "model",
+        "status": "draft"
+      }
+    ],
+    "conditional_sources": [
+      {
+        "path": "models/5w2h.md",
+        "role": "model",
+        "status": "draft",
+        "trigger": "when concrete situation is needed"
+      },
+      {
+        "path": "models/job-map.md",
+        "role": "model",
+        "status": "draft",
+        "trigger": "when job process needs decomposition"
+      },
+      {
+        "path": "models/four-forces.md",
+        "role": "model",
+        "status": "draft",
+        "trigger": "when switching is in scope"
+      },
+      {
+        "path": "methods/toolbox/collection/job-interview.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when extracting desired outcomes"
+      },
+      {
+        "path": "methods/toolbox/collection/switch-interview.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when switching material exists"
+      }
+    ],
+    "optional_sources": [
+      {
+        "path": "methods/toolbox/analysis/competitive-analysis.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/analysis/opportunity-research.md",
+        "role": "method",
+        "status": "draft"
+      }
+    ],
+    "retrieval_tags": [
+      "jtbd",
+      "jobs",
+      "needs"
+    ],
+    "source_status_policy": "draft_allowed_with_warning",
+    "unresolved_items": []
+  },
+  {
+    "skill_id": "journey-map",
+    "kb_mode": "required",
+    "required_sources": [
+      {
+        "path": "methods/toolbox/collection/experience-map.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/analysis/qualitative-insight-frameworks.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "models/user-insight.md",
+        "role": "model",
+        "status": "draft"
+      }
+    ],
+    "conditional_sources": [
+      {
+        "path": "methods/toolbox/collection/persona.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when lightweight segmentation is needed"
+      },
+      {
+        "path": "methods/toolbox/analysis/affinity-diagram.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when clustering stages"
+      },
+      {
+        "path": "methods/toolbox/collection/scenario-based-need-discovery.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when deepening needs"
+      },
+      {
+        "path": "methods/toolbox/collection/interviews.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when material is interviews"
+      }
+    ],
+    "optional_sources": [
+      {
+        "path": "methods/standards/sampling.md",
+        "role": "standard",
+        "status": "draft"
+      }
+    ],
+    "retrieval_tags": [
+      "journey",
+      "experience-map",
+      "touchpoints"
+    ],
+    "source_status_policy": "draft_allowed_with_warning",
+    "unresolved_items": []
+  },
+  {
+    "skill_id": "run-heuristic-evaluation",
+    "kb_mode": "required",
+    "required_sources": [
+      {
+        "path": "models/nielsen-heuristics.md",
+        "role": "model",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/collection/heuristic-evaluation.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/analysis/issue-prioritization.md",
+        "role": "method",
+        "status": "draft"
+      }
+    ],
+    "conditional_sources": [
+      {
+        "path": "methods/toolbox/collection/usability-testing.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when real-user validation is needed"
+      }
+    ],
+    "optional_sources": [
+      {
+        "path": "methods/toolbox/collection/experience-evaluation-rating.md",
+        "role": "method",
+        "status": "draft"
+      }
+    ],
+    "retrieval_tags": [
+      "heuristic",
+      "usability",
+      "nielsen"
+    ],
+    "source_status_policy": "draft_allowed_with_warning",
+    "unresolved_items": []
+  },
+  {
+    "skill_id": "structure-interview-transcript",
+    "kb_mode": "required",
+    "required_sources": [
+      {
+        "path": "methods/toolbox/collection/interview-guide-design.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/analysis/affinity-diagram.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "models/orid.md",
+        "role": "one_of",
+        "status": "draft",
+        "trigger": "select one transcript-structuring lens"
+      },
+      {
+        "path": "methods/toolbox/analysis/qualitative-insight-frameworks.md",
+        "role": "one_of",
+        "status": "draft",
+        "trigger": "select one transcript-structuring lens"
+      }
+    ],
+    "conditional_sources": [],
+    "optional_sources": [
+      {
+        "path": "methods/toolbox/collection/respondent-bias.md",
+        "role": "method",
+        "status": "draft"
+      }
+    ],
+    "retrieval_tags": [
+      "transcript",
+      "interview",
+      "single-session"
+    ],
+    "source_status_policy": "draft_allowed_with_warning",
+    "unresolved_items": []
+  },
+  {
+    "skill_id": "synthesize-qualitative-insights",
+    "kb_mode": "required",
+    "required_sources": [
+      {
+        "path": "methods/toolbox/analysis/affinity-diagram.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/analysis/qualitative-insight-frameworks.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "models/user-insight.md",
+        "role": "model",
+        "status": "draft"
+      }
+    ],
+    "conditional_sources": [
+      {
+        "path": "methods/toolbox/analysis/qualitative-coding.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when formal coding is needed"
+      },
+      {
+        "path": "methods/toolbox/analysis/text-analysis.md",
+        "role": "method",
+        "status": "draft",
+        "trigger": "when lexical analysis is useful"
+      }
+    ],
+    "optional_sources": [
+      {
+        "path": "methods/toolbox/collection/interviews.md",
+        "role": "method",
+        "status": "draft"
+      },
+      {
+        "path": "methods/toolbox/collection/scenario-based-need-discovery.md",
+        "role": "method",
+        "status": "draft"
+      }
+    ],
+    "retrieval_tags": [
+      "qualitative",
+      "insight",
+      "themes"
+    ],
+    "source_status_policy": "draft_allowed_with_warning",
+    "unresolved_items": []
+  }
+]

@@ -1,0 +1,64 @@
+{
+  "skill_id": "digital-human-competitive-analysis",
+  "title": "直播电商数字人竞品能力评测",
+  "research_goal": "比较三家虚构直播电商数字人的能力、延迟与内容生产方式，识别我方下一季度可验证的差异化机会。",
+  "input_materials": {
+    "data_classification": "synthetic_evaluation_data",
+    "business_domain": "面向品牌自播团队的中文直播电商数字人",
+    "competitors": [
+      {"name": "星播一号", "facts": {"features": ["脚本驱动", "商品卡联动", "中文口型"], "median_response_latency_ms": 920, "content_model": "模板脚本加人工审核"}},
+      {"name": "云掌柜", "facts": {"features": ["实时问答", "多主播切换", "库存提醒"], "median_response_latency_ms": 1450, "content_model": "知识库检索后生成"}},
+      {"name": "灵犀Live", "facts": {"features": ["情绪语音", "自动切片", "多语言字幕"], "median_response_latency_ms": 1180, "content_model": "生成式脚本加敏感词拦截"}}
+    ],
+    "dimensions": ["功能覆盖", "响应延迟", "内容生产", "直播运营", "观众体验"]
+  },
+  "tool_outputs": [
+    {
+      "data_classification": "synthetic_evaluation_data",
+      "tool": "fixed_web_snippets",
+      "records": [
+        {"competitor": "星播一号", "url": "https://example.com/synthetic/starcast-release", "date": "2026-05-12", "snippet": "公开演示展示商品卡联动与模板脚本审核。"},
+        {"competitor": "云掌柜", "url": "https://example.com/synthetic/cloudseller-demo", "date": "2026-06-03", "snippet": "公开演示展示知识库问答和库存提醒。"},
+        {"competitor": "灵犀Live", "url": "https://example.com/synthetic/lingxi-live", "date": "2026-06-21", "snippet": "公开演示展示情绪语音与自动切片。"}
+      ]
+    },
+    {
+      "data_classification": "synthetic_evaluation_data",
+      "tool": "fixed_screenshot_analysis",
+      "records": [
+        {"competitor": "星播一号", "observation": "控制台将脚本审核状态与商品卡状态并列。"},
+        {"competitor": "云掌柜", "observation": "控制台突出待回答问题队列和库存告警。"},
+        {"competitor": "灵犀Live", "observation": "控制台突出语音情绪和切片任务。"}
+      ]
+    },
+    {
+      "data_classification": "synthetic_evaluation_data",
+      "tool": "fixed_experience_model_hits",
+      "records": [
+        {"competitor": "星播一号", "finding": "脚本审核可控，但临场问答证据不足。"},
+        {"competitor": "云掌柜", "finding": "问答覆盖强，响应延迟最高。"},
+        {"competitor": "灵犀Live", "finding": "内容复用能力强，库存联动证据不足。"}
+      ]
+    },
+    {
+      "data_classification": "synthetic_evaluation_data",
+      "tool": "fixed_simulated_persona_reviews",
+      "simulation_notice": "以下虚拟用户为模拟评测角色，不代表真实用户。",
+      "records": [
+        {"persona": "品牌运营模拟角色", "comment": "更看重审核可控和异常提醒。"},
+        {"persona": "高频观众模拟角色", "comment": "更看重回答速度和不重复播报。"}
+      ]
+    }
+  ],
+  "expected_deliverables": [
+    "结论先行且逐条标注事实来源或 llm_inference",
+    "三家竞品按功能、延迟、内容、运营和体验展开的 comparison matrix",
+    "可验证的 differentiation opportunities",
+    "保留 URL、日期和工具记录的 source list"
+  ],
+  "risk_checks": [
+    "distinguish tool facts from inference，并把纯推断列入待人工确认",
+    "virtual users are simulated，不得写成真实访谈或真实用户意见",
+    "只使用给定的公开合成证据，不请求登录、付费或授权数据"
+  ]
+}

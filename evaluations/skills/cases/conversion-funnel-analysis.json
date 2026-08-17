@@ -1,0 +1,41 @@
+{
+  "skill_id": "conversion-funnel-analysis",
+  "title": "移动购物支付漏斗诊断",
+  "research_goal": "定位曝光到支付路径中最大的相对流失，并比较新老用户和设备差异，形成待验证归因与回测方案。",
+  "input_materials": {
+    "data_classification": "synthetic_evaluation_data",
+    "funnel_definition": {
+      "window": "2026-07-01 至 2026-07-31，UTC+8",
+      "population": "窗口内首次进入指定活动页的去重登录用户",
+      "type": "封闭、有序漏斗",
+      "attribution_window": "首次曝光后 24 小时",
+      "steps": ["exposure", "detail", "cart", "checkout", "pay"],
+      "counting_rule": "每步按 user_id 去重，后一步用户必须出现于前一步"
+    },
+    "counts": {
+      "overall": {"exposure": 10000, "detail": 7000, "cart": 3500, "checkout": 2100, "pay": 1680},
+      "by_user_type": [
+        {"segment": "new", "exposure": 6000, "detail": 3900, "cart": 1710, "checkout": 900, "pay": 630},
+        {"segment": "returning", "exposure": 4000, "detail": 3100, "cart": 1790, "checkout": 1200, "pay": 1050}
+      ],
+      "by_device": [
+        {"segment": "iOS", "exposure": 5500, "detail": 4070, "cart": 2140, "checkout": 1330, "pay": 1120},
+        {"segment": "Android", "exposure": 4500, "detail": 2930, "cart": 1360, "checkout": 770, "pay": 560}
+      ]
+    },
+    "known_data_quality": "各分组在每一步相加均等于 overall；本 case 未提供埋点漏发审计、访谈或实验结果。"
+  },
+  "tool_outputs": [],
+  "expected_deliverables": [
+    "口径、数据可信度、分步人数/转化率/相对流失率 conversion table 与总转化",
+    "基于相对流失而非绝对流失的 largest losses",
+    "新老用户×设备视角的 segment diagnosis",
+    "基于 Fogg 的 causes-as-hypotheses、定性求证和 validation plan",
+    "优化优先级、回测指标、自检和五部分本次运行说明"
+  ],
+  "risk_checks": [
+    "counts reconcile，先验证各层级合计与单调递减",
+    "causes remain hypotheses，不得把分群差异写成已证实原因",
+    "不得用绝对流失人数替代相对流失率定位病灶"
+  ]
+}
