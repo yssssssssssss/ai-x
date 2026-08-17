@@ -160,6 +160,17 @@ test('RoutedPlanner rejects malformed candidate fields before returning a plan',
   );
 });
 
+test('RoutedPlanner rejects non-array assumptions instead of coercing provider output', async () => {
+  for (const assumptions of [{ scope: 'must not be coerced' }, 'must not be coerced']) {
+    const malformed = candidate('depth') as unknown as Record<string, unknown>;
+    malformed.assumptions = assumptions;
+    await assert.rejects(
+      () => planWith([malformed, candidate('speed')]),
+      /current-plan-candidates|校验失败/,
+    );
+  }
+});
+
 test('RoutedPlanner dispatches the current candidate schema object to the LLM', async () => {
   const fixtures = structuredClone(defaultFixtures);
   const llm = new RecordingPlanningLLM(fixtures);

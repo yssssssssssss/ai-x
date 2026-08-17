@@ -635,6 +635,8 @@ test('malformed LLM Current candidate never reaches the repository', async () =>
 type CurrentCandidateFixtureMode =
   | 'missing-tool'
   | 'unknown-binding'
+  | 'object-assumptions'
+  | 'string-assumptions'
   | 'over-limit-once'
   | 'over-limit-always'
   | 'exact-limit'
@@ -683,6 +685,14 @@ class CurrentPlanningLLM implements LLMClient {
             steps: candidate.steps.map((step) => step.actor_type === 'skill'
               ? { ...step, input_bindings: [{ ...step.input_bindings[0]!, target_pointer: '/missing' }] }
               : step),
+          };
+        }
+        if (defect === 'object-assumptions' || defect === 'string-assumptions') {
+          return {
+            ...candidate,
+            assumptions: defect === 'object-assumptions'
+              ? { scope: 'must not be coerced' }
+              : 'must not be coerced',
           };
         }
         if (defect === 'over-limit' || defect === 'over-limit-once' || defect === 'exact-limit') {
@@ -850,6 +860,18 @@ test('Current routed planning repairs candidates that exceed the depth/speed ste
   assert.match(JSON.stringify(candidateCalls[1]?.context), /depth: routed_step_limit_exceeded: actual=9, max=8/);
   assert.match(JSON.stringify(candidateCalls[1]?.context), /speed: routed_step_limit_exceeded: actual=5, max=4/);
   assert.deepEqual(result.candidates.map((candidate) => candidate.steps.length), [2, 2]);
+});
+
+test('Current routed planning rejects non-array assumptions instead of coercing provider output', async () => {
+  for (const fixtureMode of ['object-assumptions', 'string-assumptions'] as const) {
+    const { llm, planning } = routedPlanningHarness(fixtureMode);
+
+    await assert.rejects(
+      () => planning.planCurrentFromRequirement(task, task.research_goal),
+      /assumptions.*array|array.*assumptions/iu,
+    );
+    assert.equal(llm.calls.filter((call) => call.schemaName === 'current-plan-candidates').length, 1);
+  }
 });
 
 test('Current routed planning fails closed when repaired candidates still exceed step limits', async () => {
