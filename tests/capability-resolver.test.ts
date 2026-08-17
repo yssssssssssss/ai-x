@@ -287,6 +287,37 @@ test('active capability loader preserves native declarations and normalizes KB a
   assert.deepEqual(knowledgeBaseSkill?.required_tools, []);
 });
 
+test('production capability registry preserves the valid M1 secondary task routes', () => {
+  const skills = new SkillLoader().listCapabilitySkills();
+  const expectedRoutes = [
+    ['accessibility-review', 'design_audit'],
+    ['generate-usability-test', 'user_research_planning'],
+    ['journey-map', 'voc_diagnosis'],
+  ] as const satisfies ReadonlyArray<readonly [string, ResearchTaskV2['task_type']]>;
+
+  for (const [skillId, taskType] of expectedRoutes) {
+    const productionSkill = skills.find((entry) => entry.id === skillId);
+    assert.ok(productionSkill, `${skillId} must exist in the production registry`);
+
+    const resolution = resolveCapabilities(input({
+      task: { ...task, task_type: taskType },
+      available_input_roles: [],
+      skills: [productionSkill],
+      tools: [],
+      tool_states: [],
+      tool_manifests: [],
+    }));
+
+    assert.deepEqual(resolution.rejected, [], `${skillId} must accept ${taskType}`);
+    assert.deepEqual(resolution.eligible.map((decision) => decision.skill.id), [skillId]);
+  }
+
+  assert.ok(
+    skills.every((entry) => !entry.task_types.includes('cross_cutting')),
+    'cross_cutting is not a Current ResearchTaskV2 task type',
+  );
+});
+
 test('capability loader preserves inactive skills for explicit resolver rejection', () => {
   const realRoot = getConfigRoot();
   const fixtureRoot = mkdtempSync(join(tmpdir(), 'capability-loader-'));

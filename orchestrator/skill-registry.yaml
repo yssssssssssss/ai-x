@@ -131,6 +131,7 @@ skills:
     risk_level: low
     task_types:
       - a11y_audit
+      - design_audit
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
   - id: analyze-satisfaction
@@ -353,6 +354,7 @@ skills:
     risk_level: low
     task_types:
       - design_audit
+      - user_research_planning
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
   - id: issue-prioritization
@@ -425,6 +427,7 @@ skills:
     risk_level: low
     task_types:
       - user_research_planning
+      - voc_diagnosis
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
   - id: run-heuristic-evaluation
