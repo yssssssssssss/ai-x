@@ -817,7 +817,7 @@ test('finalized Current direct skill builds deterministic strict depth/speed pro
 test('direct screenshot Skill exposes missing screenshot roles as pending inputs', async () => {
   const llm = new CurrentPlanningLLM();
   const tools = new ToolRouter();
-  for (const adapterType of ['internal_api', 'rest_json'] as const) {
+  for (const adapterType of ['tavily', 'internal_api', 'rest_json'] as const) {
     tools.register({
       adapterType,
       implementationId: `qualified-real-${adapterType}`,

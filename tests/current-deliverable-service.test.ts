@@ -1021,16 +1021,19 @@ const invalidDraftCases: Array<{ name: string; draft: () => unknown }> = [{
 }];
 
 for (const invalid of invalidDraftCases) {
-  test(`rejects ${invalid.name} with typed schema validation before writing`, async () => {
-    const { service, validator, writes } = await createHarness(invalid.draft());
+  test(`rejects ${invalid.name} with typed schema validation after bounded retries without writing`, async () => {
+    const { service, validator, llm, writes } = await createHarness(invalid.draft());
 
     await assert.rejects(
       () => service.generate(generateInput()),
       (error: unknown) => error instanceof SchemaValidationError,
     );
 
-    assert.equal(validator.schemaCalls.length, 1);
-    assert.equal(validator.schemaCalls[0]?.label, 'research-plan-deliverable-content');
+    assert.equal(llm.structuredCalls.length, 3);
+    assert.deepEqual(
+      validator.schemaCalls.map((call) => call.label),
+      Array.from({ length: 3 }, () => 'research-plan-deliverable-content'),
+    );
     assert.equal(writes.length, 0);
   });
 }
