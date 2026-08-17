@@ -4,14 +4,24 @@ import { once } from 'node:events';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import { signToken } from '../apps/agent-api/src/auth.ts';
 import { createAgentApiApp } from '../apps/agent-api/src/server.ts';
+import { closePool } from '../database/db.ts';
+import { DEVELOPMENT_SEED_USER_ID } from '../database/development-seed.ts';
 import {
   CutoverGateError,
   assertMigrationPlanFrozen,
   backupInventoryFromFiles,
 } from '../apps/orchestrator-runtime/src/cutover/cutover-service.ts';
+
+const originalJwtSecret = process.env.JWT_SECRET;
+
+after(async () => {
+  await closePool();
+  if (originalJwtSecret === undefined) delete process.env.JWT_SECRET;
+  else process.env.JWT_SECRET = originalJwtSecret;
+});
 
 test('backup inventory records sha256 and requires restore checks for every artifact', () => {
   const root = mkdtempSync(join(tmpdir(), 'cutover-inventory-'));
@@ -46,13 +56,14 @@ test('migration plan freeze rejects missing production schema version', () => {
 });
 
 test('agent app factory supports read-only smoke without exposing old mutation routes', async () => {
+  process.env.JWT_SECRET = 'cutover-sensors-test-secret';
   const app = createAgentApiApp();
   const server = createServer(app);
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
-  const token = signToken({ userId: '00000000-0000-0000-0000-000000000001', email: 'owner@test.local' });
+  const token = signToken({ userId: DEVELOPMENT_SEED_USER_ID, email: 'owner@test.local' });
   try {
     const health = await fetch(`http://127.0.0.1:${address.port}/api/healthz`);
     assert.equal(health.status, 200);

@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { loadSchemaText, resolveSchema } from '../apps/orchestrator-runtime/src/runtime/schema-registry.ts';
+
 import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 
 // P0-03 验收:样例过校验;非法结构被拒。
@@ -111,4 +113,52 @@ test('ResearchReport finding_ids 引用不存在的发现 id 被拒(引用完整
 
 test('validateOrThrow 不合规时抛 SchemaValidationError', () => {
   assert.throws(() => v.validateOrThrow('research-task', {}), /validation failed/);
+});
+
+test('ResearchTaskV2 要求成功标准、歧义和澄清问题', () => {
+  const errors = v.validate('research-task-v2', {
+    version: 'research-task-v2',
+    task_type: 'competitive_research',
+    business_domain: '宠物消费',
+    research_goal: '分析宠物辅食竞品',
+  });
+  assert.ok(errors.length > 0);
+  assert.ok(errors.some((error) => error.includes('success_criteria')));
+});
+
+test('ResearchTaskV2 合法 fixture 通过校验并保持 snake_case 字段', () => {
+  const valid = {
+    version: 'research-task-v2',
+    task_type: 'competitive_research',
+    business_domain: '宠物消费',
+    research_goal: '分析宠物辅食竞品',
+    target_audience: ['一线城市宠物主'],
+    scope: ['国内电商渠道'],
+    constraints: [{ id: 'c1', statement: '仅使用公开来源', source: 'user' }],
+    success_criteria: [{ id: 'sc1', statement: '输出可验证的竞品能力对比' }],
+    expected_deliverables: ['research_report'],
+    assumptions: [{ key: 'sample', value: '头部品牌', editable: true }],
+    ambiguities: [{ id: 'a1', statement: '是否包含线下渠道', blocking: true }],
+    clarification_questions: [{ key: 'channel', question: '是否包含线下渠道？', rationale: '决定样本范围' }],
+    blocking_issues: [{ key: 'channel', reason: '渠道范围未确认', kind: 'scope' }],
+    sensitivity: 'internal',
+    pii_detected: false,
+  };
+  assert.deepEqual(v.validate('research-task-v2', valid), []);
+});
+
+test('ResearchTaskV2 拒绝旧版或 camelCase 字段', () => {
+  const errors = v.validate('research-task-v2', {
+    version: 'research-task-v2',
+    taskType: 'competitive_research',
+    businessDomain: '宠物消费',
+    researchGoal: '分析宠物辅食竞品',
+  });
+  assert.ok(errors.length > 0);
+});
+
+test('ResearchTaskV2 通过现有 schema registry 注册并可加载', () => {
+  const spec = resolveSchema('research-task-v2');
+  assert.equal(spec.file, 'research-task-v2.schema.json');
+  assert.ok(loadSchemaText(spec)?.includes('research-task-v2'));
 });

@@ -111,7 +111,7 @@ async function runOnce(runId: string, batchId: string): Promise<OneRunResult> {
   const conversation = await createConversation({ ownerUserId: SEED_USER_ID, title: `gold disabled ${runId}` });
   const repository = new ControlPlaneRepository(pool);
   const workflow = new TaskWorkflowService(repository);
-  const task = await repository.createTask({
+  const created = await repository.createTaskWithCandidates({
     conversationId: conversation.id,
     ownerUserId: SEED_USER_ID,
     originalInput: SCENARIO_INPUT,
@@ -120,18 +120,75 @@ async function runOnce(runId: string, batchId: string): Promise<OneRunResult> {
       confirmations: [],
       blocking_issues: [{ key: 'gold-service', required_authority: 'gold' }],
     },
-    state: 'awaiting_selection',
+    candidates: [{
+      candidateId: 'speed',
+      plan: {
+        task_id: '',
+        deliverable_type: 'research_plan',
+        evidence_requirements: [{
+          id: 'gold-disabled-public-source',
+          acceptedClasses: ['public_source'],
+          minimumCount: 1,
+          required: true,
+        }],
+        problem_graph: {
+          version: 'problem-graph-v1',
+          questions: [{
+            id: 'gold-disabled-question',
+            statement: '为什么金标服务当前不可执行？',
+            rationale: '记录基础设施阻断原因。',
+            priority: 'required',
+            success_criterion_ids: ['gold-disabled'],
+            evidence_requirements: [{
+              id: 'gold-disabled-public-source',
+              acceptedClasses: ['public_source'],
+              minimumCount: 1,
+              required: true,
+            }],
+            acceptance_criteria: ['明确记录阻断原因'],
+            depends_on: [],
+          }],
+        },
+        problem_graph_provenance: {
+          receiptId: '00000000-0000-4000-8000-000000000000',
+          modelName: 'gold-disabled',
+          modelVersion: '1',
+          promptHash: 'sha256:gold-disabled-problem-graph',
+          traceId: 'gold-disabled-problem-graph',
+        },
+        capability_decisions: { eligible: [], rejected: [] },
+        steps: [{
+          step_no: 1,
+          step_name: '记录金标服务阻断',
+          actor_type: 'llm',
+          actor_id: 'gold-disabled-recorder',
+          question_ids: ['gold-disabled-question'],
+          depends_on: [],
+          input: {},
+          input_bindings: [],
+          expected_outputs: [{ pointer: '/reason', description: '阻断原因' }],
+          acceptance_criteria: ['输出阻断原因'],
+          requires_approval: false,
+          fallback_actor_ids: [],
+        }],
+        candidate_metadata: {
+          title: '金标服务禁用',
+          rationale: '保留可审计的禁用探针。',
+          tradeoffs: '不执行真实研究。',
+        },
+        activated_nodes: [],
+      },
+      pendingInputs: [],
+    }],
   });
+  const task = created.task;
   const owner = { userId: SEED_USER_ID, role: 'owner' as const };
   const selected = await workflow.select({
     taskId: task.id,
     expectedVersion: task.stateVersion,
     idempotencyKey: `gold-select:${runId}`,
     actor: owner,
-    candidateId: 'gold-disabled',
-    plan: { steps: [] },
-    planHash: `sha256:gold-disabled:${runId}`,
-    pendingInputs: [],
+    planVersionId: created.candidates[0]!.id,
   });
   const confirmed = await workflow.confirm({
     taskId: task.id,
@@ -140,7 +197,7 @@ async function runOnce(runId: string, batchId: string): Promise<OneRunResult> {
     idempotencyKey: `gold-confirm:${runId}`,
     actor: owner,
     confirmationAnswers: {},
-    inputRoles: [],
+    inputValues: {},
   });
   const approved = await workflow.approve({
     taskId: task.id,

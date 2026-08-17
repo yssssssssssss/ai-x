@@ -115,6 +115,19 @@ export async function listRecentConversations(
   return rows;
 }
 
+export async function getOwnedConversation(
+  conversationId: string,
+  ownerUserId: string,
+): Promise<ConversationRow | null> {
+  const { rows } = await pool.query<ConversationRow>(
+    `SELECT id, owner_user_id, title, status, summary, last_message_at, updated_at
+     FROM conversations
+     WHERE id = $1 AND owner_user_id = $2`,
+    [conversationId, ownerUserId],
+  );
+  return rows[0] ?? null;
+}
+
 // ---- 消息 ----
 export async function writeMessage(input: {
   conversationId: string;
@@ -122,10 +135,15 @@ export async function writeMessage(input: {
   messageType: 'text' | 'plan' | 'execution_update' | 'report' | 'error';
   content: unknown;
   artifactId?: string;
+  idempotencyKey?: string;
 }): Promise<{ id: string }> {
   const { rows } = await pool.query<{ id: string }>(
-    `INSERT INTO messages (conversation_id, sender_type, message_type, content, artifact_id)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO messages
+       (conversation_id, sender_type, message_type, content, artifact_id, idempotency_key)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (conversation_id, idempotency_key)
+       WHERE idempotency_key IS NOT NULL
+     DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key
      RETURNING id`,
     [
       input.conversationId,
@@ -133,6 +151,7 @@ export async function writeMessage(input: {
       input.messageType,
       JSON.stringify(input.content),
       input.artifactId ?? null,
+      input.idempotencyKey ?? null,
     ],
   );
   // 更新会话最后消息时间(会话记忆/断点恢复用)
@@ -143,16 +162,18 @@ export async function writeMessage(input: {
   return rows[0];
 }
 
-// 会话消息回放(验收:按 conversation_id 时间序回放)
-export async function listMessages(conversationId: string): Promise<
-  Array<{ id: string; sender_type: string; message_type: string; content: unknown }>
-> {
+// 会话消息回放(验收:按 conversation_id 和 owner 时间序回放)
+export async function listMessages(
+  conversationId: string,
+  ownerUserId: string,
+): Promise<Array<{ id: string; sender_type: string; message_type: string; content: unknown }>> {
   const { rows } = await pool.query(
-    `SELECT id, sender_type, message_type, content
-     FROM messages
-     WHERE conversation_id = $1
-     ORDER BY created_at ASC`,
-    [conversationId],
+    `SELECT m.id, m.sender_type, m.message_type, m.content
+     FROM messages m
+     JOIN conversations c ON c.id = m.conversation_id
+     WHERE m.conversation_id = $1 AND c.owner_user_id = $2
+     ORDER BY m.created_at ASC`,
+    [conversationId, ownerUserId],
   );
   return rows;
 }

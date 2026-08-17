@@ -5,6 +5,7 @@
 
 import type {
   ResearchTaskData,
+  ResearchTaskV2,
   PlanStep,
   PlanCandidate,
   Assumption,
@@ -60,6 +61,7 @@ export interface ExecLogRow {
   actor_type: string;
   actor_id: string;
   status: string;
+  skillProvenance: Record<string, unknown> | null;
 }
 
 // 已 finalize 的计划:steps + 激活节点 + 假设(select/execute 前的形态)。
@@ -88,7 +90,7 @@ export interface SelectResponse {
 export interface PlanResponse {
   conversationId: string;
   taskId: string;
-  task: ResearchTaskData;
+  task: ResearchTaskData | ResearchTaskV2;
   activatedNodes: string[];
   plan: FinalizedPlan;
   pendingUploads: PendingUpload[];

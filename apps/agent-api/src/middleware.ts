@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import { verifyToken } from './auth.ts';
+import { getUserById } from '../../../database/repository.ts';
 
 // requireAuth:校验 Bearer JWT → 挂 req.userId / req.userEmail。
 // 无 token 或非法 → 401。所有业务路由挂此中间件,配合 owner 隔离。
@@ -14,7 +15,7 @@ declare global {
   }
 }
 
-export function requireAuth(req: Request, res: Response, next: NextFunction): void {
+export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
   const header = req.header('authorization');
   const token = header?.startsWith('Bearer ') ? header.slice(7) : null;
   if (!token) {
@@ -26,7 +27,12 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
     res.status(401).json({ error: '登录已失效或 token 非法' });
     return;
   }
-  req.userId = payload.userId;
-  req.userEmail = payload.email;
+  const user = await getUserById(payload.userId);
+  if (!user || user.status !== 'active') {
+    res.status(401).json({ error: '登录已失效或用户不可用' });
+    return;
+  }
+  req.userId = user.id;
+  req.userEmail = user.email;
   next();
 }

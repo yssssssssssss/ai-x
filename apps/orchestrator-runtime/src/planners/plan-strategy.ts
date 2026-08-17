@@ -11,7 +11,10 @@ import type { DecisionNode } from '../runtime/config-loader.ts';
 import type { LLMClient } from '../runtime/llm-client.ts';
 import type { SkillLoader } from '../runtime/skill-loader.ts';
 import type { SchemaValidator } from '../schema/validator.ts';
-import type { PlanCandidate, PlanProgress, ResearchTaskData } from '../plan-types.ts';
+import type { GuidanceRef, PlanCandidate, PlanProgress, ResearchTaskData } from '../plan-types.ts';
+import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
+import type { CapabilityApprovalAuthority } from './capability-resolver.ts';
+import type { ToolRouter } from '../runtime/tool-adapter.ts';
 
 // $<skill> 直呼解析结果(parseDirectInvoke 的非空返回)。命中直呼支路时非 null。
 export interface DirectInvoke {
@@ -43,12 +46,18 @@ export interface PlannerDeps {
   llm: LLMClient;
   validator: SchemaValidator;
   skillLoader: SkillLoader;
+  // 网关实际返回的规范模型 ID(drift 门禁锚点)。注入后 planning receipt 用它做比对,
+  // 否则回退到 llm.identity.requestedModel(本地 mock 场景)。
+  expectedActualModel?: string;
+  tools?: ToolRouter;
+  approvalAuthorities?: readonly CapabilityApprovalAuthority[];
 }
 
 // 策略入参:公共前置产出的运行态数据 + 流式进度回调。deps 不在此(构造期注入)。
 export interface PlanContext {
   task: ResearchTaskData;
   direct: DirectInvoke | null;
+  requirement?: ResearchTaskV2;
   // 段1 taskGen 的溯源,direct 支路无路由 LLM,用它兜底 planProvenance。
   taskProvenance: PlanProvenance;
   emit: (ev: PlanProgress) => void;
@@ -60,7 +69,7 @@ export interface PlanArtifacts {
   decisionStates: DecisionStateRec[];
   candidates: PlanCandidate[];
   planProvenance: PlanProvenance;
-  guidanceSources: Array<{ type: 'knowledge'; ref: string; hash: string }>;
+  guidanceSources: GuidanceRef[];
 }
 
 // 单一契约:planner 拿 ctx,产出统一 PlanArtifacts。抛错即规划失败,由 glue/调用方处理。

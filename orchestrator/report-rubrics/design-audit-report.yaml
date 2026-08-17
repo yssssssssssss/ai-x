@@ -1,0 +1,24 @@
+version: 1
+id: design-audit-report
+dimensions:
+  - id: requirement_coverage
+    required: true
+    criterion: Every requested page, state, and audit scope is addressed.
+  - id: question_coverage
+    required: true
+    criterion: Each required design question is answered by identified issues.
+  - id: evidence_coverage
+    required: true
+    criterion: Issues and annotations are traceable to audited pages and screenshots.
+  - id: reasoning_quality
+    required: true
+    criterion: Principles and severity judgments are consistently applied and justified.
+  - id: recommendation_quality
+    required: true
+    criterion: Remediations are specific, feasible, and have testable acceptance criteria.
+  - id: visual_quality
+    required: true
+    criterion: Annotated screenshots clearly locate each issue without obscuring context.
+  - id: risk_disclosure
+    required: true
+    criterion: Untested states, subjective judgments, and audit limitations are explicit.

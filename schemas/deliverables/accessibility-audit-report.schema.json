@@ -1,0 +1,141 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "accessibility-audit-report.schema.json",
+  "title": "AccessibilityAuditReportPayload",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "platforms",
+    "pourPrinciples",
+    "components",
+    "conformanceLevels",
+    "priorities",
+    "screenReaderBehavior",
+    "remediations",
+    "verification"
+  ],
+  "properties": {
+    "platforms": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/platform" }
+    },
+    "pourPrinciples": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/pourPrinciple" }
+    },
+    "components": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/component" }
+    },
+    "conformanceLevels": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/conformanceLevel" }
+    },
+    "priorities": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/priority" }
+    },
+    "screenReaderBehavior": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/screenReaderBehavior" }
+    },
+    "remediations": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/remediation" }
+    },
+    "verification": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/verification" }
+    }
+  },
+  "$defs": {
+    "nonEmptyString": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "assistiveTechnology", "browser"],
+      "properties": {
+        "name": { "$ref": "#/$defs/nonEmptyString" },
+        "assistiveTechnology": { "$ref": "#/$defs/nonEmptyString" },
+        "browser": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "pourPrinciple": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["issueId", "principle", "rationale"],
+      "properties": {
+        "issueId": { "$ref": "#/$defs/nonEmptyString" },
+        "principle": { "enum": ["Perceivable", "Operable", "Understandable", "Robust"] },
+        "rationale": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["issueId", "component", "selector"],
+      "properties": {
+        "issueId": { "$ref": "#/$defs/nonEmptyString" },
+        "component": { "$ref": "#/$defs/nonEmptyString" },
+        "selector": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "conformanceLevel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["issueId", "level", "criterion"],
+      "properties": {
+        "issueId": { "$ref": "#/$defs/nonEmptyString" },
+        "level": { "enum": ["A", "B", "C"] },
+        "criterion": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "priority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["issueId", "level", "rationale"],
+      "properties": {
+        "issueId": { "$ref": "#/$defs/nonEmptyString" },
+        "level": { "enum": ["P0", "P1", "P2", "P3"] },
+        "rationale": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "screenReaderBehavior": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["issueId", "observed", "expected"],
+      "properties": {
+        "issueId": { "$ref": "#/$defs/nonEmptyString" },
+        "observed": { "$ref": "#/$defs/nonEmptyString" },
+        "expected": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "remediation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["issueId", "action"],
+      "properties": {
+        "issueId": { "$ref": "#/$defs/nonEmptyString" },
+        "action": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["issueId", "method", "expectedResult"],
+      "properties": {
+        "issueId": { "$ref": "#/$defs/nonEmptyString" },
+        "method": { "$ref": "#/$defs/nonEmptyString" },
+        "expectedResult": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    }
+  }
+}

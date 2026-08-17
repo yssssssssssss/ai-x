@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { parse as parseYaml } from 'yaml';
+import type { EvidenceClass } from '../../../../packages/api-contract/research-deliverable.ts';
 
 // 配置层统一读取入口。配置是 git/YAML 真相源,不入 DB。
 // linter 与 skill-loader 共用此模块,避免重复解析逻辑。
@@ -26,7 +27,236 @@ export const CONFIG_PATHS = {
   decisionGraph: 'orchestrator/decision-graph.yaml',
   skillRegistry: 'orchestrator/skill-registry.yaml',
   toolRegistry: 'orchestrator/tool-registry.yaml',
+  evidencePolicy: 'orchestrator/evidence-policy.yaml',
+  reportTemplates: 'orchestrator/report-templates',
 } as const;
+
+export interface EvidencePolicyRequirement {
+  id: string;
+  accepted_classes: EvidenceClass[];
+  minimum_count: number;
+  required: boolean;
+}
+
+export interface EvidencePolicyEntry {
+  task_type: string;
+  deliverable_type: string;
+  requirements: EvidencePolicyRequirement[];
+}
+
+export interface EvidencePolicyConfig {
+  version: number;
+  policies: EvidencePolicyEntry[];
+}
+
+export const REPORT_TEMPLATE_SECTION_IDS = [
+  'cover',
+  'executive-summary',
+  'background',
+  'scope-method',
+  'key-metrics',
+  'findings',
+  'question-analysis',
+  'visual-evidence',
+  'comparison',
+  'conclusion',
+  'recommendations',
+  'risks',
+  'appendix',
+] as const;
+
+export type ReportTemplateSectionId = typeof REPORT_TEMPLATE_SECTION_IDS[number];
+
+export interface ReportTemplateSection {
+  id: ReportTemplateSectionId;
+  title: string;
+}
+
+export interface ReportTemplateConfig {
+  version: 1;
+  id: string;
+  subtitle: string;
+  sections: ReportTemplateSection[];
+}
+
+function reportTemplateError(field: string, detail: string): Error {
+  return new Error(`Report Template ${field}: ${detail}`);
+}
+
+function strictRecord(value: unknown, field: string, allowedKeys: readonly string[]): Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw reportTemplateError(field, 'must be an object');
+  }
+  const record = value as Record<string, unknown>;
+  const unexpected = Object.keys(record).find((key) => !allowedKeys.includes(key));
+  if (unexpected) throw reportTemplateError(field, `contains unsupported field ${unexpected}`);
+  return record;
+}
+
+function nonEmptyTemplateString(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw reportTemplateError(field, 'must be a non-empty string');
+  }
+  return value;
+}
+
+function parseReportTemplate(value: unknown, expectedId: string): ReportTemplateConfig {
+  const config = strictRecord(value, 'root', ['version', 'id', 'subtitle', 'sections']);
+  if (config.version !== 1) throw reportTemplateError('version', 'must equal 1');
+  const id = nonEmptyTemplateString(config.id, 'id');
+  if (id !== expectedId) throw reportTemplateError('id', `must equal ${expectedId}`);
+  const subtitle = nonEmptyTemplateString(config.subtitle, 'subtitle');
+  if (!Array.isArray(config.sections)) throw reportTemplateError('sections', 'must be an array');
+  if (config.sections.length !== REPORT_TEMPLATE_SECTION_IDS.length) {
+    throw reportTemplateError('sections', `must contain ${REPORT_TEMPLATE_SECTION_IDS.length} ordered sections`);
+  }
+  const sections = config.sections.map((value, index): ReportTemplateSection => {
+    const section = strictRecord(value, `sections[${index}]`, ['id', 'title']);
+    const sectionId = nonEmptyTemplateString(section.id, `sections[${index}].id`);
+    const expectedSectionId = REPORT_TEMPLATE_SECTION_IDS[index]!;
+    if (sectionId !== expectedSectionId) {
+      throw reportTemplateError(`sections[${index}].id`, `must equal ${expectedSectionId}`);
+    }
+    return {
+      id: expectedSectionId,
+      title: nonEmptyTemplateString(section.title, `sections[${index}].title`),
+    };
+  });
+  return { version: 1, id, subtitle, sections };
+}
+const SUPPORTED_EVIDENCE_CLASSES: Readonly<Record<EvidenceClass, true>> = {
+  public_source: true,
+  screenshot: true,
+  user_input: true,
+  knowledge: true,
+  dataset: true,
+  simulation: true,
+  derived: true,
+};
+
+function evidencePolicyError(field: string, detail: string): Error {
+  return new Error(`Evidence Policy ${field}: ${detail}`);
+}
+
+function parseEvidencePolicy(value: unknown): EvidencePolicyConfig {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw evidencePolicyError('root', 'must be an object');
+  }
+  const root = value as { version?: unknown; policies?: unknown };
+  if (root.version !== 1) {
+    throw evidencePolicyError('version', 'must equal 1');
+  }
+  if (!Array.isArray(root.policies)) {
+    throw evidencePolicyError('policies', 'must be an array');
+  }
+
+  const policyKeys = new Set<string>();
+  const policies = root.policies.map((rawPolicy, policyIndex): EvidencePolicyEntry => {
+    const policyPath = `policies[${policyIndex}]`;
+    if (rawPolicy === null || typeof rawPolicy !== 'object' || Array.isArray(rawPolicy)) {
+      throw evidencePolicyError(policyPath, 'must be an object');
+    }
+    const policy = rawPolicy as {
+      task_type?: unknown;
+      deliverable_type?: unknown;
+      requirements?: unknown;
+    };
+    const taskType = policy.task_type;
+    const deliverableType = policy.deliverable_type;
+    if (typeof taskType !== 'string' || taskType.trim().length === 0) {
+      throw evidencePolicyError(`${policyPath}.task_type`, 'must be a non-empty string');
+    }
+    if (typeof deliverableType !== 'string' || deliverableType.trim().length === 0) {
+      throw evidencePolicyError(`${policyPath}.deliverable_type`, 'must be a non-empty string');
+    }
+
+    const policyKey = JSON.stringify([taskType, deliverableType]);
+    if (policyKeys.has(policyKey)) {
+      throw evidencePolicyError(
+        'duplicate task_type/deliverable_type',
+        `${taskType}/${deliverableType}`,
+      );
+    }
+    policyKeys.add(policyKey);
+
+    if (!Array.isArray(policy.requirements) || policy.requirements.length === 0) {
+      throw evidencePolicyError(`${policyPath}.requirements`, 'must be a non-empty array');
+    }
+
+    const requirementIds = new Set<string>();
+    const requirements = policy.requirements.map(
+      (rawRequirement, requirementIndex): EvidencePolicyRequirement => {
+        const requirementPath = `${policyPath}.requirements[${requirementIndex}]`;
+        if (
+          rawRequirement === null
+          || typeof rawRequirement !== 'object'
+          || Array.isArray(rawRequirement)
+        ) {
+          throw evidencePolicyError(requirementPath, 'must be an object');
+        }
+        const requirement = rawRequirement as {
+          id?: unknown;
+          accepted_classes?: unknown;
+          minimum_count?: unknown;
+          required?: unknown;
+        };
+        const requirementId = requirement.id;
+        if (typeof requirementId !== 'string' || requirementId.trim().length === 0) {
+          throw evidencePolicyError(`${requirementPath}.id`, 'must be a non-empty string');
+        }
+        if (requirementIds.has(requirementId)) {
+          throw evidencePolicyError(
+            `duplicate requirement id in ${policyPath}.requirements`,
+            requirementId,
+          );
+        }
+        requirementIds.add(requirementId);
+
+        const acceptedClasses = requirement.accepted_classes;
+        if (
+          !Array.isArray(acceptedClasses)
+          || acceptedClasses.length === 0
+          || !acceptedClasses.every(
+            (evidenceClass): evidenceClass is EvidenceClass =>
+              typeof evidenceClass === 'string'
+              && SUPPORTED_EVIDENCE_CLASSES[evidenceClass as EvidenceClass] === true,
+          )
+        ) {
+          throw evidencePolicyError(
+            `${requirementPath}.accepted_classes`,
+            'must be a non-empty array of supported EvidenceClass values',
+          );
+        }
+        const minimumCount = requirement.minimum_count;
+        if (
+          typeof minimumCount !== 'number'
+          || !Number.isInteger(minimumCount)
+          || minimumCount < 0
+        ) {
+          throw evidencePolicyError(
+            `${requirementPath}.minimum_count`,
+            'must be a non-negative integer',
+          );
+        }
+        const required = requirement.required;
+        if (typeof required !== 'boolean') {
+          throw evidencePolicyError(`${requirementPath}.required`, 'must be a boolean');
+        }
+
+        return {
+          id: requirementId,
+          accepted_classes: acceptedClasses,
+          minimum_count: minimumCount,
+          required,
+        };
+      },
+    );
+
+    return { task_type: taskType, deliverable_type: deliverableType, requirements };
+  });
+
+  return { version: 1, policies };
+}
 
 // ---- 类型 ----
 export interface DecisionNode {
@@ -48,6 +278,8 @@ export interface SkillRegistryEntry {
   status: 'draft' | 'active' | 'deprecated';
   task_types?: string[];
   intent_tags?: string[];
+  inputs?: string[];
+  outputs?: string[];
   input_schema?: string; // KB skill 为 markdown 过程式, 无 JSON schema
   output_schema?: string;
   entry?: string; // SKILL.md 文件夹路径(KB 派生)
@@ -97,6 +329,8 @@ export interface SkillManifest {
   when_to_use: string;
   owner: string;
   status: 'draft' | 'active' | 'deprecated';
+  inputs?: string[];
+  outputs?: string[];
   input_schema: string;
   output_schema: string;
   required_tools?: string[];
@@ -119,6 +353,31 @@ export function loadSkillRegistry(): { version: number; skills: SkillRegistryEnt
 
 export function loadToolRegistry(): { version: number; tools: ToolRegistryEntry[] } {
   return loadYaml(orchestratorPath('tool-registry.yaml'));
+}
+
+export function loadEvidencePolicy(): EvidencePolicyConfig {
+  let value: unknown;
+  try {
+    value = loadYaml<unknown>(orchestratorPath('evidence-policy.yaml'));
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw evidencePolicyError('YAML', detail);
+  }
+  return parseEvidencePolicy(value);
+}
+
+export function loadReportTemplate(templateId: string): ReportTemplateConfig {
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(templateId)) {
+    throw reportTemplateError('id', 'contains unsafe path characters');
+  }
+  let value: unknown;
+  try {
+    value = loadYaml<unknown>(orchestratorPath(`report-templates/${templateId}.yaml`));
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw reportTemplateError('YAML', detail);
+  }
+  return parseReportTemplate(value, templateId);
 }
 
 // 读取某个 tool/skill 的完整 manifest(相对项目根的 path)。

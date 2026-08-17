@@ -118,6 +118,15 @@ export class SchemaValidator {
     if (errors.length > 0) throw new SchemaValidationError(absPath, errors);
   }
 
+  validateSchemaOrThrow(schema: object, value: unknown, label: string): void {
+    const validate = this.ajv.compile(schema);
+    if (validate(value)) return;
+    const errors = (validate.errors ?? []).map(
+      (error) => `${error.instancePath || '(root)'} ${error.message ?? 'invalid'}`,
+    );
+    throw new SchemaValidationError(label, errors);
+  }
+
   // 软校验:不合规先重试一次(regenerate),仍失败则由调用方降级为 need_clarify。
   // regenerate 返回新数据;返回 null 视为放弃。
   async validateOrRetry<T>(

@@ -1,7 +1,7 @@
-import type { ResearchTaskData } from '../../api/client.ts';
+import type { ResearchTaskData, ResearchTaskV2 } from '../../api/client.ts';
 
-// 段1 · 任务理解:展示结构化 ResearchTaskData + 激活的决策节点。诚实标注"由 LLM 结构化"。
-export function Stage1Understand({ task, activatedNodes }: { task: ResearchTaskData; activatedNodes: string[] }) {
+// 段1 · 任务理解:展示结构化 ResearchTask + 激活的决策节点。诚实标注"由 LLM 结构化"。
+export function Stage1Understand({ task, activatedNodes }: { task: ResearchTaskData | ResearchTaskV2; activatedNodes: string[] }) {
   return (
     <section className="stage-card">
       <Header n="1" title="任务理解" note="由 LLM 结构化为 ResearchTask" />

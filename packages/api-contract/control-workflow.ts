@@ -1,10 +1,24 @@
+import type { ResearchTaskData, ResearchTaskV2 } from './plan.ts';
+import type {
+  CurrentExecutionPlan,
+  EvidenceManifest,
+  LegacyResearchDeliverableEnvelope,
+  PendingInput,
+  ResearchDeliverableEnvelope,
+  VisualAssetManifest,
+} from './research-deliverable.ts';
+import type { ReportDocument } from '../../apps/orchestrator-runtime/src/report/report-document-composer.ts';
+
 export type ControlWorkflowState =
+  | 'awaiting_clarification'
   | 'awaiting_selection'
   | 'awaiting_confirmation'
   | 'awaiting_approval'
   | 'ready'
   | 'executing'
   | 'paused'
+  | 'reviewing'
+  | 'composing_report'
   | 'completed'
   | 'completed_with_gaps'
   | 'failed'
@@ -12,6 +26,38 @@ export type ControlWorkflowState =
   | 'rejected';
 
 export type ControlWorkflowRole = 'owner' | 'legal' | 'security' | 'gold';
+
+export interface ControlRequirementVersion {
+  id: string;
+  taskId: string;
+  version: number;
+  rawInputHash: string;
+  clarification: unknown;
+  structuredTask: ResearchTaskV2;
+  modelCallId: string | null;
+  createdAt: Date;
+}
+
+export interface CreateRequirementVersionRequest {
+  taskId: string;
+  version: number;
+  rawInputHash: string;
+  clarification: unknown;
+  structuredTask: ResearchTaskV2;
+  modelCallId?: string | null;
+}
+
+export interface ActivateRequirementVersionRequest {
+  taskId: string;
+  requirementVersionId: string;
+  expectedVersion: number;
+  ownerUserId: string;
+}
+export interface PlanControlTaskRequest {
+  originalInput: string;
+  conversationId?: string;
+}
+
 
 export interface ControlTaskResponse {
   id: string;
@@ -28,12 +74,29 @@ export interface CreateControlTaskRequest {
   sensitivity?: string;
 }
 
-export interface PlanMutationRequest {
-  expectedVersion: number;
-  candidateId: string;
-  plan: unknown;
+export interface CurrentPlanCandidate {
+  planVersionId: string;
+  candidateId: 'depth' | 'speed';
+  title: string;
+  rationale: string;
+  tradeoffs: string;
   planHash: string;
-  pendingInputs: unknown[];
+  plan: CurrentExecutionPlan;
+  pendingInputs: PendingInput[];
+}
+
+export interface ControlPlanCandidatesResponse {
+  kind: 'current';
+  conversationId: string;
+  task: ControlTaskResponse;
+  structuredTask: ResearchTaskData | ResearchTaskV2;
+  activatedNodes: string[];
+  candidates: CurrentPlanCandidate[];
+}
+
+export interface SelectControlPlanRequest {
+  expectedVersion: number;
+  planVersionId: string;
   idempotencyKey: string;
 }
 
@@ -43,11 +106,17 @@ export interface SelectControlPlanResponse {
   stateVersion: number;
 }
 
+export interface ReviseControlPlanRequest {
+  expectedVersion: number;
+  revisionInstruction: string;
+  idempotencyKey: string;
+}
+
 export interface ConfirmControlPlanRequest {
   expectedVersion: number;
   planVersionId: string;
   confirmationAnswers: Record<string, unknown>;
-  inputRoles: string[];
+  inputValues: Record<string, unknown>;
   idempotencyKey: string;
 }
 
@@ -81,6 +150,77 @@ export interface DisabledExecutionResponse extends ControlCommandResponse {
   attemptId: string;
   executionDisabled: true;
 }
+export interface ControlExecutionResult {
+  attemptId: string;
+  state: ControlWorkflowState;
+  stateVersion: number;
+  status: 'completed' | 'completed_with_gaps' | 'paused';
+  executionDisabled: false;
+  deliverableArtifactId?: string;
+  evidenceManifestArtifactId?: string;
+  reportReviewArtifactId?: string;
+  reviewStatus?: 'completed' | 'paused';
+  gapCount?: number;
+  failedStepNo?: number;
+  failure?: Record<string, unknown>;
+}
+
+export type ReportReviewVerdict = 'pass' | 'revise' | 'block';
+export const REPORT_REVIEW_DIMENSION_IDS = [
+  'requirement_coverage',
+  'question_coverage',
+  'evidence_coverage',
+  'reasoning_quality',
+  'recommendation_quality',
+  'visual_quality',
+  'risk_disclosure',
+] as const;
+export type ReportReviewDimensionId = typeof REPORT_REVIEW_DIMENSION_IDS[number];
+
+export interface ReportReviewDimension {
+  id: ReportReviewDimensionId;
+  passed: boolean;
+  issues: string[];
+}
+
+export interface ReportReviewArtifact {
+  version: 'report-review-v1';
+  taskId: string;
+  planVersionId: string;
+  attemptId: string;
+  deliverableArtifactId: string;
+  verdict: ReportReviewVerdict;
+  dimensions: ReportReviewDimension[];
+  revisionRound: 0 | 1;
+}
+
+export type PassedReportReviewArtifact = ReportReviewArtifact & { verdict: 'pass' };
+
+interface CoreReportPackageResponse<TDeliverable> {
+  deliverable: TDeliverable;
+  evidenceManifest: EvidenceManifest;
+}
+
+export type CurrentReportPackageResponse<TPayload = unknown> =
+  | CoreReportPackageResponse<LegacyResearchDeliverableEnvelope<TPayload>> & {
+      presentationMode: 'legacy_text';
+      reportReview?: never;
+      reportDocument?: never;
+      visualAssetManifests?: never;
+    }
+  | CoreReportPackageResponse<ResearchDeliverableEnvelope<TPayload>> & {
+      presentationMode: 'current_text';
+      reportReview: PassedReportReviewArtifact;
+      reportDocument?: never;
+      visualAssetManifests?: never;
+    }
+  | CoreReportPackageResponse<ResearchDeliverableEnvelope<TPayload>> & {
+      presentationMode: 'multimodal';
+      reportReview: PassedReportReviewArtifact;
+      reportDocument: ReportDocument;
+      visualAssetManifests: VisualAssetManifest[];
+    };
+
 
 export interface LegacyTaskReadResponse<T> {
   kind: 'legacy';
@@ -93,13 +233,21 @@ export interface ControlExecutionStepResponse {
   actorType: string;
   actorId: string;
   state: string;
+  outputArtifactId: string | null;
   toolProvenance: Record<string, unknown> | null;
+  skillProvenance: Record<string, unknown> | null;
   failure: Record<string, unknown> | null;
   latencyMs: number | null;
 }
 
 export interface CurrentTaskReadResponse {
   kind: 'current';
-  task: ControlTaskResponse;
+  task: ControlTaskResponse & {
+    conversationId: string;
+    originalInput: string;
+    structuredTask: ResearchTaskData | ResearchTaskV2;
+  };
   executionSteps: ControlExecutionStepResponse[];
+  activatedNodes: string[];
+  candidates: CurrentPlanCandidate[];
 }

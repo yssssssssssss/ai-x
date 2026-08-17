@@ -1,0 +1,30 @@
+version: 1
+id: design-audit-report
+subtitle: Evidence-backed design audit
+sections:
+  - id: cover
+    title: Cover
+  - id: executive-summary
+    title: Executive Summary
+  - id: background
+    title: Product Context and Objectives
+  - id: scope-method
+    title: Audited Pages, States, and Method
+  - id: key-metrics
+    title: Issue and Severity Metrics
+  - id: findings
+    title: Design Issues and Principles
+  - id: question-analysis
+    title: Audit Question Analysis
+  - id: visual-evidence
+    title: Annotated Screenshots
+  - id: comparison
+    title: Cross-Page Pattern Analysis
+  - id: conclusion
+    title: Conclusions
+  - id: recommendations
+    title: Remediation Plan
+  - id: risks
+    title: Untested States and Open Issues
+  - id: appendix
+    title: Retest Plan and Appendix

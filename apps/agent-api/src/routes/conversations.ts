@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   createConversation,
+  getOwnedConversation,
   listRecentConversations,
   listMessages,
 } from '../../../../database/repository.ts';
@@ -23,6 +24,11 @@ conversationsRouter.post('/', async (req, res) => {
 });
 
 conversationsRouter.get('/:id/messages', async (req, res) => {
-  const msgs = await listMessages(req.params.id);
+  const conversation = await getOwnedConversation(req.params.id, req.userId!);
+  if (!conversation) {
+    res.status(404).json({ error: '会话不存在' });
+    return;
+  }
+  const msgs = await listMessages(conversation.id, req.userId!);
   res.json({ messages: msgs });
 });
