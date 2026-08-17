@@ -92,7 +92,7 @@ function scorecard(
       id,
       score: scores[id as keyof typeof dimensionWeights] ?? max_score,
       max_score,
-      evidence: [`output quote for ${id}`],
+      evidence: ['output'],
       defects: [],
     })),
     critical_defects: [],
@@ -101,11 +101,15 @@ function scorecard(
   };
 }
 
-function result<T>(data: T, callNumber: number): LLMResult<T> {
+function result<T>(
+  data: T,
+  callNumber: number,
+  modelName: string,
+): LLMResult<T> {
   return {
     data,
     promptHash: `sha256:prompt-${callNumber}`,
-    modelName: 'fake-model',
+    modelName,
     modelVersion: 'v1',
     traceId: `trace-${callNumber}`,
     tokens: { prompt: 10, completion: 5, total: 15 },
@@ -113,13 +117,7 @@ function result<T>(data: T, callNumber: number): LLMResult<T> {
 }
 
 class FakeLLM implements LLMClient {
-  readonly identity: LLMProviderIdentity = {
-    provider: 'fake',
-    endpointHost: 'fake.test',
-    requestedModel: 'fake-model',
-    mode: 'mock',
-    eligibleAsReal: false,
-  };
+  readonly identity: LLMProviderIdentity;
 
   readonly calls: StructuredCall[] = [];
 
@@ -128,13 +126,32 @@ class FakeLLM implements LLMClient {
       { answer: 'grounded output' },
       scorecard(),
     ],
-  ) {}
+    options: {
+      requestedModel?: string;
+      actualModels?: readonly string[];
+    } = {},
+  ) {
+    this.identity = {
+      provider: 'fake',
+      endpointHost: 'fake.test',
+      requestedModel: options.requestedModel ?? 'fake-model',
+      mode: 'mock',
+      eligibleAsReal: false,
+    };
+    this.actualModels = options.actualModels ?? [];
+  }
+
+  private readonly actualModels: readonly string[];
 
   async generateStructured<T>(opts: StructuredCall): Promise<LLMResult<T>> {
     this.calls.push(opts);
     const response = this.responses[this.calls.length - 1];
     if (response instanceof Error) throw response;
-    return result(response as T, this.calls.length);
+    return result(
+      response as T,
+      this.calls.length,
+      this.actualModels[this.calls.length - 1] ?? this.identity.requestedModel,
+    );
   }
 
   async generateText(): Promise<never> {
@@ -182,6 +199,7 @@ function makeEvaluator(options: {
   entry?: SkillRegistryEntry;
   validator?: FakeValidator;
   scorecardSchemaPath?: string;
+  expectedActualModel?: string;
 } = {}) {
   const llm =
     options.llm ??
@@ -195,6 +213,7 @@ function makeEvaluator(options: {
     skillLoader: fakeSkillLoader(options.entry),
     validator: validator as unknown as SchemaValidator,
     scorecardSchemaPath: options.scorecardSchemaPath ?? scorecardSchemaPath,
+    expectedActualModel: options.expectedActualModel,
   });
   return { evaluator, llm, validator };
 }
@@ -480,6 +499,110 @@ test('degrades a scorecard with empty dimension evidence to needs_review', async
   assert.equal(record.errorStage, 'scoring');
   assert.equal(record.scorecard?.total_score, null);
   assert.deepEqual(record.output, { answer: 'output' });
+});
+
+for (const invalidEvidence of [
+  { name: 'fabricated quote', value: 'quote absent from generated output' },
+  { name: 'blank quote', value: ' \t\n ' },
+] as const) {
+  test(`does not accept six-dimensional ${invalidEvidence.name} evidence as a passing evaluation`, async () => {
+    const invalid = scorecard({}, {
+      dimensions: scorecard().dimensions.map((dimension) => ({
+        ...dimension,
+        evidence: [invalidEvidence.value],
+      })),
+    });
+    const { evaluator } = makeEvaluator({
+      llm: new FakeLLM([{ answer: 'grounded output' }, invalid]),
+    });
+
+    const record = await evaluator.evaluate(loadedCase);
+
+    assert.notEqual(record.status, 'succeeded');
+    assert.notEqual(record.scorecard?.verdict, 'pass');
+  });
+}
+
+test('accepts non-empty verbatim evidence excerpts from generated output scalars', async () => {
+  const generatedOutput = {
+    answer: 'grounded output with an exact scalar excerpt',
+    detail: { summary: 'nested scalar evidence' },
+  };
+  const valid = scorecard({}, {
+    dimensions: scorecard().dimensions.map((dimension) => ({
+      ...dimension,
+      evidence: ['exact scalar excerpt', 'nested scalar'],
+    })),
+  });
+  const { evaluator } = makeEvaluator({
+    llm: new FakeLLM([generatedOutput, valid]),
+  });
+
+  const record = await evaluator.evaluate(loadedCase);
+
+  assert.equal(record.status, 'succeeded');
+  assert.equal(record.scorecard?.verdict, 'pass');
+});
+
+test('accepts a requested routing alias when both evaluator stages return the expected canonical model', async () => {
+  const llm = new FakeLLM(
+    [{ answer: 'canonical output' }, scorecard()],
+    {
+      requestedModel: 'gateway-routing-alias',
+      actualModels: ['canonical-model-id', 'canonical-model-id'],
+    },
+  );
+  const { evaluator } = makeEvaluator({
+    llm,
+    expectedActualModel: 'canonical-model-id',
+  });
+
+  const record = await evaluator.evaluate(loadedCase);
+
+  assert.equal(record.status, 'succeeded');
+  assert.equal(record.modelName, 'canonical-model-id');
+  assert.equal(structuredCall(llm, 0).receipt.expectedModel, 'canonical-model-id');
+  assert.equal(structuredCall(llm, 1).receipt.expectedModel, 'canonical-model-id');
+});
+
+test('fails generation when its actual model drifts from the expected canonical model', async () => {
+  const llm = new FakeLLM(
+    [{ answer: 'drifted output' }, scorecard()],
+    {
+      requestedModel: 'gateway-routing-alias',
+      actualModels: ['unexpected-generation-model', 'canonical-model-id'],
+    },
+  );
+  const { evaluator } = makeEvaluator({
+    llm,
+    expectedActualModel: 'canonical-model-id',
+  });
+
+  const record = await evaluator.evaluate(loadedCase);
+
+  assert.equal(llm.calls.length, 1);
+  assert.equal(record.status, 'failed');
+  assert.equal(record.errorStage, 'generation');
+});
+
+test('fails rather than requesting review when only the scoring actual model drifts', async () => {
+  const llm = new FakeLLM(
+    [{ answer: 'canonical output' }, scorecard()],
+    {
+      requestedModel: 'gateway-routing-alias',
+      actualModels: ['canonical-model-id', 'unexpected-scoring-model'],
+    },
+  );
+  const { evaluator } = makeEvaluator({
+    llm,
+    expectedActualModel: 'canonical-model-id',
+  });
+
+  const record = await evaluator.evaluate(loadedCase);
+
+  assert.equal(llm.calls.length, 2);
+  assert.equal(record.status, 'failed');
+  assert.equal(record.errorStage, 'scoring');
 });
 
 test('preserves Round 0 prompts and contexts when KB is not provided', async () => {

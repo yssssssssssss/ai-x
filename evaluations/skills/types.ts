@@ -98,6 +98,7 @@ export interface EvaluationManifest {
   startedAt: string;
   completedAt?: string;
   provider: string;
+  expectedActualModel?: string;
   modelName?: string;
   modelVersion?: string;
   activeSkillCount: number;

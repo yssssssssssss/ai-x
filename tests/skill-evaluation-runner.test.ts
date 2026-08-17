@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import {
   existsSync,
@@ -5,6 +6,8 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -88,7 +91,7 @@ function scorecard(
           id,
           score,
           max_score,
-          evidence: [`output quote for ${id}`],
+          evidence: [skillId],
           defects: [],
         };
       });
@@ -134,19 +137,33 @@ function fixture(skillIds: string[]) {
     );
   }
   const activeSkills = skillIds.map(activeSkill);
+  const skillHashes = new Map(
+    skillIds.map((skillId) => [skillId, `sha256:${skillId}`]),
+  );
   return {
     root,
     casesDir,
     outputRoot,
     activeSkills,
+    skillHashes,
     skillLoader: {
       listActiveSkills: () => activeSkills,
+      loadSkillBody: (skillId: string) => ({
+        body: `# ${skillId}\n\n${skillHashes.get(skillId)}`,
+        hash: skillHashes.get(skillId)!,
+        path: `skills/${skillId}/SKILL.md`,
+      }),
     },
   };
 }
 
 function readJson<T>(path: string): T {
   return JSON.parse(readFileSync(path, 'utf8')) as T;
+}
+
+function evaluationCaseHash(casesDir: string, skillId: string): string {
+  const bytes = readFileSync(join(casesDir, `${skillId}.json`));
+  return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
 }
 
 function delay(ms: number): Promise<void> {
@@ -561,10 +578,184 @@ test('resume validates KB mode and snapshot before reusing artifacts', async () 
   assert.equal(rerun.records[0].status, 'succeeded');
 });
 
+for (const priorKbMode of ['gold', 'live'] as const) {
+  test(`resume rejects changing prior ${priorKbMode} KB mode to none`, async () => {
+    const setup = fixture(['alpha']);
+    const baseOptions = {
+      runId: `${priorKbMode}-to-none`,
+      outputRoot: setup.outputRoot,
+      casesDir: setup.casesDir,
+      concurrency: 1 as const,
+    };
+    await runEvaluationBatch(
+      {
+        ...baseOptions,
+        resume: false,
+        kbMode: priorKbMode,
+        kbSnapshotId: 'sha256:test-snapshot',
+      },
+      {
+        skillLoader: setup.skillLoader,
+        evaluator: {
+          evaluate: async (loadedCase, kb) =>
+            successRecord(loadedCase, {
+              kbAssessment: kbAssessment(
+                loadedCase.data.skill_id,
+                kb!.knowledgeContext.mode,
+              ),
+            }),
+        },
+        kb: kbDependencies(['alpha'], priorKbMode),
+      },
+    );
+
+    let evaluateCalls = 0;
+    await assert.rejects(
+      runEvaluationBatch(
+        { ...baseOptions, resume: true, kbMode: 'none' },
+        {
+          skillLoader: setup.skillLoader,
+          evaluator: {
+            evaluate: async (loadedCase) => {
+              evaluateCalls += 1;
+              return successRecord(loadedCase);
+            },
+          },
+        },
+      ),
+      /KB mode|kbMode|knowledge/i,
+    );
+    assert.equal(evaluateCalls, 0);
+  });
+}
+
+test('resume rejects a provider that differs from the prior manifest', async () => {
+  const setup = fixture(['alpha']);
+  const options = {
+    runId: 'provider-mismatch',
+    outputRoot: setup.outputRoot,
+    casesDir: setup.casesDir,
+    concurrency: 1 as const,
+  };
+  await runEvaluationBatch(
+    { ...options, resume: false },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: { evaluate: async (loadedCase) => successRecord(loadedCase) },
+      provider: 'provider-a',
+    },
+  );
+
+  let evaluateCalls = 0;
+  await assert.rejects(
+    runEvaluationBatch(
+      { ...options, resume: true },
+      {
+        skillLoader: setup.skillLoader,
+        evaluator: {
+          evaluate: async (loadedCase) => {
+            evaluateCalls += 1;
+            return successRecord(loadedCase);
+          },
+        },
+        provider: 'provider-b',
+      },
+    ),
+    /provider/i,
+  );
+  assert.equal(evaluateCalls, 0);
+});
+
+test('resume rejects changing the expected actual model before artifact reuse', async () => {
+  const setup = fixture(['alpha']);
+  const options = {
+    runId: 'expected-model-mismatch',
+    outputRoot: setup.outputRoot,
+    casesDir: setup.casesDir,
+    concurrency: 1 as const,
+  };
+  const modelADependencies = {
+    skillLoader: setup.skillLoader,
+    evaluator: {
+      evaluate: async (loadedCase: LoadedEvaluationCase) =>
+        successRecord(loadedCase, { modelName: 'model-a' }),
+    },
+    provider: 'same-provider',
+    expectedActualModel: 'model-a',
+  };
+  await runEvaluationBatch({ ...options, resume: false }, modelADependencies);
+  let evaluateCalls = 0;
+  const modelBDependencies = {
+    skillLoader: setup.skillLoader,
+    evaluator: {
+      evaluate: async (loadedCase: LoadedEvaluationCase) => {
+        evaluateCalls += 1;
+        return successRecord(loadedCase, { modelName: 'model-b' });
+      },
+    },
+    provider: 'same-provider',
+    expectedActualModel: 'model-b',
+  };
+
+  await assert.rejects(
+    runEvaluationBatch({ ...options, resume: true }, modelBDependencies),
+    /expected.*model|model.*mismatch/i,
+  );
+  assert.equal(evaluateCalls, 0);
+});
+
+test('resume rejects an active Skill set that differs from the prior manifest', async () => {
+  const setup = fixture(['alpha', 'beta']);
+  const options = {
+    runId: 'active-skill-mismatch',
+    outputRoot: setup.outputRoot,
+    casesDir: setup.casesDir,
+    concurrency: 1 as const,
+  };
+  await runEvaluationBatch(
+    { ...options, resume: false },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: { evaluate: async (loadedCase) => successRecord(loadedCase) },
+    },
+  );
+  const resumeCasesDir = join(setup.root, 'resume-cases');
+  mkdirSync(resumeCasesDir);
+  writeFileSync(
+    join(resumeCasesDir, 'alpha.json'),
+    readFileSync(join(setup.casesDir, 'alpha.json')),
+  );
+
+  let evaluateCalls = 0;
+  const alphaOnlyLoader = {
+    ...setup.skillLoader,
+    listActiveSkills: () => [activeSkill('alpha')],
+  };
+  await assert.rejects(
+    runEvaluationBatch(
+      { ...options, casesDir: resumeCasesDir, resume: true },
+      {
+        skillLoader: alphaOnlyLoader,
+        evaluator: {
+          evaluate: async (loadedCase) => {
+            evaluateCalls += 1;
+            return successRecord(loadedCase);
+          },
+        },
+      },
+    ),
+    /active Skill/i,
+  );
+  assert.equal(evaluateCalls, 0);
+});
+
 test('CLI parses KB flags before building runtime', async () => {
   let captured: unknown;
   await runEvaluationCli(['--kb-mode', 'gold', '--kb-snapshot', 'sha256:test-snapshot'], {
-    env: { LLM_PROVIDER: 'real-provider' },
+    env: {
+      LLM_PROVIDER: 'real-provider',
+      LLM_EXPECTED_ACTUAL_MODEL: 'test-model',
+    },
     loadEnvFile: () => undefined,
     buildRuntime: () => {
       const skillLoader = new SkillLoader();
@@ -592,7 +783,10 @@ test('CLI parses KB flags before building runtime', async () => {
   });
   await assert.rejects(
     runEvaluationCli(['--kb-mode', 'bogus'], {
-      env: { LLM_PROVIDER: 'real-provider' },
+      env: {
+        LLM_PROVIDER: 'real-provider',
+        LLM_EXPECTED_ACTUAL_MODEL: 'test-model',
+      },
       loadEnvFile: () => undefined,
       buildRuntime: () => { throw new Error('runtime should not build'); },
     }),
@@ -795,41 +989,33 @@ test('cleans mutually exclusive artifacts across success failure and resume retr
 });
 
 
-test('resume skips only a complete parseable result and retains score and model metadata', async () => {
+test('resume skips only an exact provenance match and retains score and model metadata', async () => {
   const setup = fixture(['alpha']);
-  const runDir = join(setup.outputRoot, 'resume-run');
-  const skillDir = join(runDir, 'alpha');
-  mkdirSync(skillDir, { recursive: true });
-  writeFileSync(join(skillDir, 'output.json'), '{"answer":"existing"}\n');
-  writeFileSync(
-    join(skillDir, 'scorecard.json'),
-    `${JSON.stringify(scorecard('alpha', 88))}\n`,
-  );
-  const previousRecord: SkillEvaluationRecord = {
-    skillId: 'alpha',
-    skillHash: 'sha256:previous-skill',
-    caseHash: 'sha256:previous-case',
-    modelName: 'resume-model',
-    modelVersion: 'resume-v2',
-    elapsedMs: 44,
-    status: 'succeeded',
-    output: { answer: 'existing' },
-    scorecard: scorecard('alpha', 88),
+  const options = {
+    runId: 'resume-run',
+    outputRoot: setup.outputRoot,
+    casesDir: setup.casesDir,
+    concurrency: 1 as const,
   };
-  writeFileSync(
-    join(runDir, 'manifest.json'),
-    JSON.stringify({ records: [previousRecord] }),
+  await runEvaluationBatch(
+    { ...options, resume: false },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: {
+        evaluate: async (loadedCase) =>
+          successRecord(loadedCase, {
+            modelName: 'resume-model',
+            modelVersion: 'resume-v2',
+            elapsedMs: 44,
+            scorecard: scorecard('alpha', 88),
+          }),
+      },
+    },
   );
   let evaluateCalls = 0;
 
   const manifest = await runEvaluationBatch(
-    {
-      runId: 'resume-run',
-      outputRoot: setup.outputRoot,
-      casesDir: setup.casesDir,
-      concurrency: 1,
-      resume: true,
-    },
+    { ...options, resume: true },
     {
       skillLoader: setup.skillLoader,
       evaluator: {
@@ -850,7 +1036,65 @@ test('resume skips only a complete parseable result and retains score and model 
   assert.equal(manifest.counts.skipped, 1);
 });
 
-test('resume skips a complete pair even when the prior manifest record is missing', async () => {
+test('resume reruns a provenance-matched pair whose evidence quotes are fabricated', async () => {
+  const setup = fixture(['alpha']);
+  const options = {
+    runId: 'fabricated-resume-evidence',
+    outputRoot: setup.outputRoot,
+    casesDir: setup.casesDir,
+    concurrency: 1 as const,
+  };
+  await runEvaluationBatch(
+    { ...options, resume: false },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: { evaluate: async (loadedCase) => successRecord(loadedCase) },
+    },
+  );
+  const runDirectory = join(setup.outputRoot, options.runId);
+  const fabricatedScorecard = scorecard('alpha', 90, {
+    dimensions: scorecard('alpha', 90).dimensions.map((dimension) => ({
+      ...dimension,
+      evidence: ['fabricated quote absent from generated output'],
+    })),
+  });
+  const priorManifest = readJson<EvaluationManifest>(
+    join(runDirectory, 'manifest.json'),
+  );
+  priorManifest.records[0] = {
+    ...priorManifest.records[0],
+    scorecard: fabricatedScorecard,
+  };
+  writeFileSync(
+    join(runDirectory, 'manifest.json'),
+    JSON.stringify(priorManifest),
+  );
+  writeFileSync(
+    join(runDirectory, 'alpha', 'scorecard.json'),
+    JSON.stringify(fabricatedScorecard),
+  );
+  let evaluateCalls = 0;
+
+  const resumed = await runEvaluationBatch(
+    { ...options, resume: true },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: {
+        evaluate: async (loadedCase) => {
+          evaluateCalls += 1;
+          return successRecord(loadedCase);
+        },
+      },
+    },
+  );
+
+  assert.equal(fabricatedScorecard.dimensions.length, 6);
+  assert.equal(evaluateCalls, 1);
+  assert.equal(resumed.records[0].status, 'succeeded');
+  assert.equal(resumed.counts.skipped, 0);
+});
+
+test('resume reruns a complete output and score pair without prior provenance', async () => {
   const setup = fixture(['alpha']);
   const runDir = join(setup.outputRoot, 'pair-without-record');
   const skillDir = join(runDir, 'alpha');
@@ -878,9 +1122,205 @@ test('resume skips a complete pair even when the prior manifest record is missin
     },
   );
 
-  assert.equal(evaluateCalls, 0);
-  assert.equal(resumed.records[0].status, 'skipped');
-  assert.equal(resumed.records[0].scorecard?.total_score, 88);
+  assert.equal(evaluateCalls, 1);
+  assert.equal(resumed.records[0].status, 'succeeded');
+  assert.deepEqual(resumed.records[0].output, successRecord({
+    data: evaluationCase('alpha'),
+    sourcePath: '',
+    caseHash: evaluationCaseHash(setup.casesDir, 'alpha'),
+  }).output);
+});
+
+test('partial Skill resume preserves the full prior manifest and updates only the selected Skill', async () => {
+  const setup = fixture(['alpha', 'beta']);
+  const options = {
+    runId: 'partial-resume',
+    outputRoot: setup.outputRoot,
+    casesDir: setup.casesDir,
+    concurrency: 1 as const,
+  };
+  const initial = await runEvaluationBatch(
+    { ...options, resume: false },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: { evaluate: async (loadedCase) => successRecord(loadedCase) },
+    },
+  );
+  const priorBeta = initial.records.find(({ skillId }) => skillId === 'beta')!;
+  writeFileSync(
+    join(setup.outputRoot, options.runId, 'alpha', 'scorecard.json'),
+    '{',
+  );
+  const evaluated: string[] = [];
+
+  const resumed = await runEvaluationBatch(
+    { ...options, resume: true, skillId: 'alpha' },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: {
+        evaluate: async (loadedCase) => {
+          evaluated.push(loadedCase.data.skill_id);
+          return successRecord(loadedCase, {
+            output: { answer: 'alpha refreshed' },
+          });
+        },
+      },
+    },
+  );
+
+  assert.deepEqual(evaluated, ['alpha']);
+  assert.deepEqual(resumed.activeSkillIds, ['alpha', 'beta']);
+  assert.equal(resumed.activeSkillCount, 2);
+  assert.deepEqual(
+    resumed.records.map(({ skillId }) => skillId),
+    ['alpha', 'beta'],
+  );
+  assert.deepEqual(
+    resumed.records.find(({ skillId }) => skillId === 'alpha')?.output,
+    { answer: 'alpha refreshed' },
+  );
+  assert.deepEqual(
+    resumed.records.find(({ skillId }) => skillId === 'beta'),
+    priorBeta,
+  );
+  assert.deepEqual(
+    readJson<EvaluationManifest>(
+      join(setup.outputRoot, options.runId, 'manifest.json'),
+    ),
+    resumed,
+  );
+});
+
+test('partial resume cannot publish a completed manifest with a missing prior Skill record', async () => {
+  const setup = fixture(['alpha', 'beta']);
+  const options = {
+    runId: 'incomplete-running-partial-resume',
+    outputRoot: setup.outputRoot,
+    casesDir: setup.casesDir,
+    concurrency: 1 as const,
+  };
+  const completed = await runEvaluationBatch(
+    { ...options, resume: false },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: { evaluate: async (loadedCase) => successRecord(loadedCase) },
+    },
+  );
+  const runDirectory = join(setup.outputRoot, options.runId);
+  const { completedAt: _completedAt, ...prior } = completed;
+  writeFileSync(
+    join(runDirectory, 'manifest.json'),
+    JSON.stringify({
+      ...prior,
+      status: 'running',
+      records: prior.records.filter(({ skillId }) => skillId === 'alpha'),
+      counts: {
+        succeeded: 1,
+        needs_review: 0,
+        failed: 0,
+        skipped: 0,
+      },
+    }),
+  );
+
+  const outcome: { manifest: EvaluationManifest } | { error: unknown } = await runEvaluationBatch(
+    { ...options, resume: true, skillId: 'alpha' },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: { evaluate: async (loadedCase) => successRecord(loadedCase) },
+    },
+  ).then(
+    (manifest) => ({ manifest }),
+    (error: unknown) => ({ error }),
+  );
+
+  if ('manifest' in outcome) {
+    assert.notEqual(outcome.manifest.status, 'completed');
+  }
+  const persisted = readJson<EvaluationManifest>(
+    join(runDirectory, 'manifest.json'),
+  );
+  assert.notEqual(persisted.status, 'completed');
+});
+
+test('resume reruns when the evaluation case hash changes', async () => {
+  const setup = fixture(['alpha']);
+  const options = {
+    runId: 'changed-case-hash',
+    outputRoot: setup.outputRoot,
+    casesDir: setup.casesDir,
+    concurrency: 1 as const,
+  };
+  const initial = await runEvaluationBatch(
+    { ...options, resume: false },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: { evaluate: async (loadedCase) => successRecord(loadedCase) },
+    },
+  );
+  writeFileSync(
+    join(setup.casesDir, 'alpha.json'),
+    `${JSON.stringify({
+      ...evaluationCase('alpha'),
+      research_goal: 'Evaluate alpha after the case changed',
+    }, null, 2)}\n`,
+  );
+  let evaluateCalls = 0;
+
+  const resumed = await runEvaluationBatch(
+    { ...options, resume: true },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: {
+        evaluate: async (loadedCase) => {
+          evaluateCalls += 1;
+          return successRecord(loadedCase);
+        },
+      },
+    },
+  );
+
+  assert.equal(evaluateCalls, 1);
+  assert.notEqual(resumed.records[0].caseHash, initial.records[0].caseHash);
+  assert.equal(resumed.records[0].status, 'succeeded');
+});
+
+test('resume reruns when the active Skill body hash changes', async () => {
+  const setup = fixture(['alpha']);
+  const options = {
+    runId: 'changed-skill-hash',
+    outputRoot: setup.outputRoot,
+    casesDir: setup.casesDir,
+    concurrency: 1 as const,
+  };
+  await runEvaluationBatch(
+    { ...options, resume: false },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: { evaluate: async (loadedCase) => successRecord(loadedCase) },
+    },
+  );
+  setup.skillHashes.set('alpha', 'sha256:alpha-updated-body');
+  let evaluateCalls = 0;
+
+  const resumed = await runEvaluationBatch(
+    { ...options, resume: true },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: {
+        evaluate: async (loadedCase) => {
+          evaluateCalls += 1;
+          return successRecord(loadedCase, {
+            skillHash: setup.skillHashes.get('alpha')!,
+          });
+        },
+      },
+    },
+  );
+
+  assert.equal(evaluateCalls, 1);
+  assert.equal(resumed.records[0].skillHash, 'sha256:alpha-updated-body');
+  assert.equal(resumed.records[0].status, 'succeeded');
 });
 
 test('resume reruns output paired with a fallback scorecard and no prior record', async () => {
@@ -1025,8 +1465,8 @@ test('resume reruns scorecards whose persisted verdict conflicts with normalizat
       },
     },
   );
-  assert.equal(validEvaluateCalls, 0);
-  assert.equal(resumed.records[0].status, 'skipped');
+  assert.equal(validEvaluateCalls, 1);
+  assert.equal(resumed.records[0].status, 'succeeded');
 });
 
 test('resume reruns complete artifacts from a prior needs_review record', async () => {
@@ -1203,26 +1643,31 @@ test('resume reruns parseable artifacts with invalid output or scorecard shapes'
 
 test('resume preloads valid prior records before workers can be interrupted', async () => {
   const setup = fixture(['beta', 'alpha']);
-  const runDir = join(setup.outputRoot, 'interrupted-resume');
-  const alphaDir = join(runDir, 'alpha');
-  mkdirSync(alphaDir, { recursive: true });
-  writeFileSync(join(alphaDir, 'output.json'), JSON.stringify({ answer: 'existing' }));
-  writeFileSync(join(alphaDir, 'scorecard.json'), JSON.stringify(scorecard('alpha', 87)));
-  const previousRecord: SkillEvaluationRecord = {
-    skillId: 'alpha',
-    skillHash: 'sha256:preserved-skill',
-    caseHash: 'sha256:preserved-case',
-    modelName: 'preserved-model',
-    modelVersion: 'preserved-v1',
-    elapsedMs: 91,
-    status: 'succeeded',
-    output: { answer: 'existing' },
-    scorecard: scorecard('alpha', 87),
+  const options = {
+    runId: 'interrupted-resume',
+    outputRoot: setup.outputRoot,
+    casesDir: setup.casesDir,
+    concurrency: 1 as const,
   };
-  writeFileSync(
-    join(runDir, 'manifest.json'),
-    JSON.stringify({ records: [previousRecord] }),
+  await runEvaluationBatch(
+    { ...options, resume: false },
+    {
+      skillLoader: setup.skillLoader,
+      evaluator: {
+        evaluate: async (loadedCase) =>
+          loadedCase.data.skill_id === 'alpha'
+            ? successRecord(loadedCase, {
+                modelName: 'preserved-model',
+                modelVersion: 'preserved-v1',
+                elapsedMs: 91,
+                scorecard: scorecard('alpha', 87),
+              })
+            : successRecord(loadedCase),
+      },
+    },
   );
+  const runDir = join(setup.outputRoot, options.runId);
+  writeFileSync(join(runDir, 'beta', 'scorecard.json'), '{');
   let releaseBeta!: () => void;
   const betaBlocked = new Promise<void>((resolve) => {
     releaseBeta = resolve;
@@ -1233,13 +1678,7 @@ test('resume preloads valid prior records before workers can be interrupted', as
   });
 
   const running = runEvaluationBatch(
-    {
-      runId: 'interrupted-resume',
-      outputRoot: setup.outputRoot,
-      casesDir: setup.casesDir,
-      concurrency: 1,
-      resume: true,
-    },
+    { ...options, resume: true },
     {
       skillLoader: setup.skillLoader,
       evaluator: {
@@ -1262,7 +1701,7 @@ test('resume preloads valid prior records before workers can be interrupted', as
     interrupted.records.map(({ skillId, status }) => [skillId, status]),
     [['alpha', 'skipped']],
   );
-  assert.equal(interrupted.records[0].skillHash, 'sha256:preserved-skill');
+  assert.equal(interrupted.records[0].skillHash, 'sha256:alpha');
   assert.equal(interrupted.records[0].modelName, 'preserved-model');
   assert.equal(interrupted.records[0].elapsedMs, 91);
 });
@@ -1335,6 +1774,132 @@ test('rejects traversal run IDs before writing outside the output root', async (
     /runId must be a single safe path segment/,
   );
   assert.equal(existsSync(outsideManifest), false);
+});
+
+test('rejects a symlink run directory without writing through to its target', async () => {
+  const setup = fixture(['alpha']);
+  const externalTarget = join(setup.root, 'external-run-target');
+  mkdirSync(setup.outputRoot);
+  mkdirSync(externalTarget);
+  symlinkSync(externalTarget, join(setup.outputRoot, 'linked-run'), 'dir');
+
+  await assert.rejects(
+    runEvaluationBatch(
+      {
+        runId: 'linked-run',
+        outputRoot: setup.outputRoot,
+        casesDir: setup.casesDir,
+        concurrency: 1,
+        resume: true,
+      },
+      {
+        skillLoader: setup.skillLoader,
+        evaluator: { evaluate: async (loadedCase) => successRecord(loadedCase) },
+      },
+    ),
+    /symbolic link|symlink/i,
+  );
+  assert.deepEqual(readdirSync(externalTarget), []);
+});
+
+test('rejects a symlink Skill directory without writing through to its target', async () => {
+  const setup = fixture(['alpha']);
+  const runDirectory = join(setup.outputRoot, 'linked-skill-run');
+  const externalTarget = join(setup.root, 'external-skill-target');
+  mkdirSync(runDirectory, { recursive: true });
+  mkdirSync(externalTarget);
+  symlinkSync(externalTarget, join(runDirectory, 'alpha'), 'dir');
+
+  await assert.rejects(
+    runEvaluationBatch(
+      {
+        runId: 'linked-skill-run',
+        outputRoot: setup.outputRoot,
+        casesDir: setup.casesDir,
+        concurrency: 1,
+        resume: true,
+      },
+      {
+        skillLoader: setup.skillLoader,
+        evaluator: { evaluate: async (loadedCase) => successRecord(loadedCase) },
+      },
+    ),
+    /symbolic link|symlink/i,
+  );
+  assert.deepEqual(readdirSync(externalTarget), []);
+});
+
+test('rejects a Skill directory swapped to an external symlink while awaiting evaluator', async () => {
+  const setup = fixture(['alpha']);
+  const runDirectory = join(setup.outputRoot, 'await-symlink-swap');
+  const displacedDirectory = join(runDirectory, 'alpha-before-swap');
+  const externalTarget = join(setup.root, 'await-symlink-external');
+  mkdirSync(externalTarget);
+
+  await assert.rejects(
+    runEvaluationBatch(
+      {
+        runId: 'await-symlink-swap',
+        outputRoot: setup.outputRoot,
+        casesDir: setup.casesDir,
+        concurrency: 1,
+        resume: false,
+      },
+      {
+        skillLoader: setup.skillLoader,
+        evaluator: {
+          evaluate: async (loadedCase) => {
+            const skillDirectory = join(runDirectory, 'alpha');
+            renameSync(skillDirectory, displacedDirectory);
+            symlinkSync(externalTarget, skillDirectory, 'dir');
+            return successRecord(loadedCase);
+          },
+        },
+      },
+    ),
+    /symbolic link|symlink|escapes/i,
+  );
+
+  assert.equal(existsSync(join(displacedDirectory, 'input.json')), true);
+  assert.deepEqual(readdirSync(externalTarget), []);
+});
+
+test('rejects a run directory swapped to an external symlink while awaiting evaluator', async () => {
+  const setup = fixture(['alpha']);
+  const runDirectory = join(setup.outputRoot, 'await-run-symlink-swap');
+  const displacedDirectory = join(setup.root, 'await-run-displaced');
+  const externalTarget = join(setup.root, 'await-run-symlink-external');
+  mkdirSync(externalTarget);
+
+  await assert.rejects(
+    runEvaluationBatch(
+      {
+        runId: 'await-run-symlink-swap',
+        outputRoot: setup.outputRoot,
+        casesDir: setup.casesDir,
+        concurrency: 1,
+        resume: false,
+      },
+      {
+        skillLoader: setup.skillLoader,
+        evaluator: {
+          evaluate: async (loadedCase) => {
+            renameSync(runDirectory, displacedDirectory);
+            symlinkSync(externalTarget, runDirectory, 'dir');
+            return successRecord(loadedCase);
+          },
+        },
+      },
+    ),
+    /symbolic link|symlink|path mismatch|escapes/i,
+  );
+
+  assert.equal(
+    existsSync(join(displacedDirectory, 'alpha', 'input.json')),
+    true,
+  );
+  assert.equal(existsSync(join(displacedDirectory, '.active.lock')), true);
+  assert.deepEqual(readdirSync(externalTarget), []);
 });
 
 
@@ -1481,35 +2046,146 @@ test('resumes a stale running manifest when the lock PID is gone', async () => {
   assert.equal(existsSync(join(runDir, '.active.lock')), false);
 });
 
-test('reclaims a lock with a live PID prefix but malformed suffix', async () => {
+test('rejects a malformed lock without deleting an unknown owner', async () => {
   const setup = fixture(['alpha']);
   const runDir = join(setup.outputRoot, 'malformed-lock');
+  const lockPath = join(runDir, '.active.lock');
   mkdirSync(runDir, { recursive: true });
   writeFileSync(join(runDir, 'manifest.json'), JSON.stringify({ status: 'running', records: [] }));
-  writeFileSync(join(runDir, '.active.lock'), `${process.pid}garbage`);
+  writeFileSync(lockPath, `${process.pid}garbage`);
   let evaluateCalls = 0;
 
-  const resumed = await runEvaluationBatch(
+  await assert.rejects(
+    runEvaluationBatch(
+      {
+        runId: 'malformed-lock',
+        outputRoot: setup.outputRoot,
+        casesDir: setup.casesDir,
+        concurrency: 1,
+        resume: true,
+      },
+      {
+        skillLoader: setup.skillLoader,
+        evaluator: {
+          evaluate: async (loadedCase) => {
+            evaluateCalls += 1;
+            return successRecord(loadedCase);
+          },
+        },
+      },
+    ),
+    /lock owner is unknown|already active/i,
+  );
+
+  assert.equal(evaluateCalls, 0);
+  assert.equal(readFileSync(lockPath, 'utf8'), `${process.pid}garbage`);
+});
+
+test('each run lock acquisition has a distinct owner token', async () => {
+  const setup = fixture(['alpha']);
+  const options = {
+    runId: 'distinct-lock-owner',
+    outputRoot: setup.outputRoot,
+    casesDir: setup.casesDir,
+    concurrency: 1 as const,
+  };
+  const captureOwner = async (resume: boolean): Promise<string> => {
+    let releaseEvaluator!: () => void;
+    const evaluatorBlocked = new Promise<void>((resolve) => {
+      releaseEvaluator = resolve;
+    });
+    let signalStarted!: () => void;
+    const evaluatorStarted = new Promise<void>((resolve) => {
+      signalStarted = resolve;
+    });
+    const running = runEvaluationBatch(
+      { ...options, resume },
+      {
+        skillLoader: setup.skillLoader,
+        evaluator: {
+          evaluate: async (loadedCase) => {
+            signalStarted();
+            await evaluatorBlocked;
+            return successRecord(loadedCase);
+          },
+        },
+      },
+    );
+    await evaluatorStarted;
+    const owner = readFileSync(
+      join(setup.outputRoot, options.runId, '.active.lock'),
+      'utf8',
+    );
+    releaseEvaluator();
+    await running;
+    return owner;
+  };
+
+  const firstOwner = await captureOwner(false);
+  writeFileSync(
+    join(setup.outputRoot, options.runId, 'alpha', 'scorecard.json'),
+    '{',
+  );
+  const secondOwner = await captureOwner(true);
+
+  assert.notEqual(firstOwner, secondOwner);
+});
+
+test('stale recovery old release does not delete a replacement lock owner', async () => {
+  const setup = fixture(['alpha']);
+  const options = {
+    runId: 'stale-owner-replacement',
+    outputRoot: setup.outputRoot,
+    casesDir: setup.casesDir,
+    concurrency: 1 as const,
+  };
+  const completed = await runEvaluationBatch(
+    { ...options, resume: false },
     {
-      runId: 'malformed-lock',
-      outputRoot: setup.outputRoot,
-      casesDir: setup.casesDir,
-      concurrency: 1,
-      resume: true,
+      skillLoader: setup.skillLoader,
+      evaluator: { evaluate: async (loadedCase) => successRecord(loadedCase) },
     },
+  );
+  const runDirectory = join(setup.outputRoot, options.runId);
+  const lockPath = join(runDirectory, '.active.lock');
+  const { completedAt: _completedAt, ...runningManifest } = completed;
+  writeFileSync(
+    join(runDirectory, 'manifest.json'),
+    JSON.stringify({ ...runningManifest, status: 'running' }),
+  );
+  writeFileSync(join(runDirectory, 'alpha', 'scorecard.json'), '{');
+  writeFileSync(lockPath, '99999999');
+  let releaseEvaluator!: () => void;
+  const evaluatorBlocked = new Promise<void>((resolve) => {
+    releaseEvaluator = resolve;
+  });
+  let signalStarted!: () => void;
+  const evaluatorStarted = new Promise<void>((resolve) => {
+    signalStarted = resolve;
+  });
+
+  const running = runEvaluationBatch(
+    { ...options, resume: true },
     {
       skillLoader: setup.skillLoader,
       evaluator: {
         evaluate: async (loadedCase) => {
-          evaluateCalls += 1;
+          signalStarted();
+          await evaluatorBlocked;
           return successRecord(loadedCase);
         },
       },
     },
   );
+  await evaluatorStarted;
+  const recoveredOwner = readFileSync(lockPath, 'utf8');
+  const replacementOwner = `${recoveredOwner}:replacement-owner`;
+  writeFileSync(lockPath, replacementOwner);
+  releaseEvaluator();
+  await running;
 
-  assert.equal(evaluateCalls, 1);
-  assert.equal(resumed.status, 'completed');
+  assert.equal(existsSync(lockPath), true);
+  assert.equal(readFileSync(lockPath, 'utf8'), replacementOwner);
 });
 
 test('keeps manifest running when summary publication fails', async () => {
@@ -1608,6 +2284,24 @@ for (const provider of [undefined, 'mock'] as const) {
     assert.equal(runtimeBuilds, 0);
   });
 }
+
+test('CLI requires LLM_EXPECTED_ACTUAL_MODEL before building runtime', async () => {
+  let runtimeBuilds = 0;
+  const error = await runEvaluationCli([], {
+    env: { LLM_PROVIDER: 'real-provider' },
+    loadEnvFile: () => undefined,
+    buildRuntime: () => {
+      runtimeBuilds += 1;
+      throw new Error('runtime must not build before model pin validation');
+    },
+  }).then(
+    () => undefined,
+    (cause: unknown) => cause,
+  );
+
+  assert.equal(runtimeBuilds, 0);
+  assert.match(String(error), /LLM_EXPECTED_ACTUAL_MODEL.*required/i);
+});
 
 test('rejects an unknown selected Skill and lists active Skill IDs', async () => {
   const setup = fixture(['alpha', 'beta']);

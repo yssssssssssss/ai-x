@@ -93,3 +93,24 @@ test('rejects source symlinks that resolve outside the KB root', () => {
   writeFileSync(data.index, JSON.stringify([{ id: 'linked', source_path: 'models/linked.md', content_hash: 'sha256:x', status: 'draft' }]));
   assert.throws(() => buildKnowledgeSnapshot(data.index, data.kb), /escapes KB root via symlink/);
 });
+
+test('rejects a source root that is itself a symlink before snapshotting its target', () => {
+  const root = mkdtempSync(join('/tmp', 'kb-snapshot-root-link-'));
+  const outside = join(root, 'outside-kb');
+  mkdirSync(join(outside, 'models'), { recursive: true });
+  writeFileSync(join(outside, 'models', 'sample.md'), 'must not be snapshotted through root link');
+  const index = join(root, 'knowledge.json');
+  writeFileSync(index, JSON.stringify([{
+    id: 'model_sample',
+    source_path: 'models/sample.md',
+    content_hash: 'sha256:fixture',
+    status: 'reviewed',
+  }]));
+  const linkedRoot = join(root, 'knowledge-base');
+  symlinkSync(outside, linkedRoot, 'dir');
+
+  assert.throws(
+    () => buildKnowledgeSnapshot(index, linkedRoot),
+    /source root.*symlink|symlink.*source root/i,
+  );
+});

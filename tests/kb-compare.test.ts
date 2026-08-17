@@ -151,6 +151,129 @@ function fixture(): { root: string; output: string; round0: string; roundA: stri
   };
 }
 
+function rewriteStatuses(
+  roundDirectory: string,
+  statusFor: (index: number) => SkillEvaluationRecord['status'],
+): void {
+  const manifestPath = join(roundDirectory, 'manifest.json');
+  const original = JSON.parse(readFileSync(manifestPath, 'utf8')) as EvaluationManifest;
+  const records = original.records.map((entry, index) => ({ ...entry, status: statusFor(index) }));
+  writeJson(manifestPath, {
+    ...original,
+    records,
+    counts: {
+      succeeded: records.filter((entry) => entry.status === 'succeeded').length,
+      needs_review: records.filter((entry) => entry.status === 'needs_review').length,
+      failed: records.filter((entry) => entry.status === 'failed').length,
+      skipped: records.filter((entry) => entry.status === 'skipped').length,
+    },
+  });
+}
+
+function writeFailingPerfectScore(roundDirectory: string, skillId: string): void {
+  const manifestPath = join(roundDirectory, 'manifest.json');
+  const original = JSON.parse(readFileSync(manifestPath, 'utf8')) as EvaluationManifest;
+  const records = original.records.map((entry) => entry.skillId === skillId ? {
+    ...entry,
+    scorecard: { ...entry.scorecard!, total_score: 100, verdict: 'fail' as const },
+  } : entry);
+  const changed = records.find((entry) => entry.skillId === skillId)!;
+  writeJson(manifestPath, { ...original, records });
+  writeJson(join(roundDirectory, skillId, 'scorecard.json'), changed.scorecard);
+}
+
+test('accepts completed rounds when all or some intact records are skipped', () => {
+  for (const [scenario, shouldSkip] of [
+    ['all', (_index: number) => true],
+    ['some', (index: number) => index % 2 === 0],
+  ] as const) {
+    const setup = fixture();
+    for (const roundDirectory of [setup.round0, setup.roundA, setup.roundB]) {
+      rewriteStatuses(roundDirectory, (index) => shouldSkip(index) ? 'skipped' : 'succeeded');
+    }
+
+    const result = compareEvaluationRounds({
+      round0: setup.round0,
+      roundA: setup.roundA,
+      roundB: setup.roundB,
+      output: setup.compare,
+    });
+
+    assert.equal(result.rows.length, 22, `${scenario} skipped records must remain comparable`);
+  }
+});
+
+test('rejects completed rounds containing intact needs_review or failed records', () => {
+  for (const status of ['needs_review', 'failed'] as const) {
+    const setup = fixture();
+    rewriteStatuses(setup.roundA, (index) => index === 0 ? status : 'succeeded');
+
+    assert.throws(
+      () => compareEvaluationRounds({ round0: setup.round0, roundA: setup.roundA, roundB: setup.roundB, output: setup.compare }),
+      new RegExp(status),
+    );
+  }
+});
+
+test('preserves each round base verdict in JSON, CSV, and Markdown when perfect scores still fail', () => {
+  const setup = fixture();
+  const skillId = SKILL_IDS[0]!;
+  for (const roundDirectory of [setup.round0, setup.roundA, setup.roundB]) {
+    writeFailingPerfectScore(roundDirectory, skillId);
+  }
+
+  compareEvaluationRounds({
+    round0: setup.round0,
+    roundA: setup.roundA,
+    roundB: setup.roundB,
+    output: setup.compare,
+  });
+
+  const json = loadComparisonJson(join(setup.compare, 'kb-comparison.json')) as ComparisonOutput;
+  const jsonRow = json.rows.find((row) => row.skill_id === skillId) as ComparisonOutput['rows'][number] & Record<string, unknown>;
+
+  const csvLines = readFileSync(join(setup.compare, 'kb-comparison.csv'), 'utf8').trim().split('\n');
+  const csvHeaders = csvLines[0]!.split(',');
+  const csvValues = csvLines.find((line) => line.startsWith(`"${skillId}"`))!
+    .split(',')
+    .map((value) => value.slice(1, -1));
+  const csvRow = Object.fromEntries(csvHeaders.map((header, index) => [header, csvValues[index]]));
+
+  const markdownLines = readFileSync(join(setup.compare, 'kb-comparison.md'), 'utf8').split('\n');
+  const markdownHeaders = markdownLines.find((line) => line.startsWith('| skill_id |'))!
+    .split('|')
+    .slice(1, -1)
+    .map((value) => value.trim());
+  const markdownValues = markdownLines.find((line) => line.startsWith(`| ${skillId} |`))!
+    .split('|')
+    .slice(1, -1)
+    .map((value) => value.trim());
+  const markdownRow = Object.fromEntries(markdownHeaders.map((header, index) => [header, markdownValues[index]]));
+
+  const verdicts = {
+    json: {
+      round0: jsonRow.round0_base_verdict,
+      roundA: jsonRow.roundA_base_verdict,
+      roundB: jsonRow.roundB_base_verdict,
+    },
+    csv: {
+      round0: csvRow.round0_base_verdict,
+      roundA: csvRow.roundA_base_verdict,
+      roundB: csvRow.roundB_base_verdict,
+    },
+    markdown: {
+      round0: markdownRow.round0_base_verdict,
+      roundA: markdownRow.roundA_base_verdict,
+      roundB: markdownRow.roundB_base_verdict,
+    },
+  };
+  assert.deepEqual(verdicts, {
+    json: { round0: 'fail', roundA: 'fail', roundB: 'fail' },
+    csv: { round0: 'fail', roundA: 'fail', roundB: 'fail' },
+    markdown: { round0: 'fail', roundA: 'fail', roundB: 'fail' },
+  });
+});
+
 test('compares the same 22 Skills with base scores and KB verdicts sorted by active registry order', () => {
   const setup = fixture();
   const result = compareEvaluationRounds({
@@ -167,10 +290,13 @@ test('compares the same 22 Skills with base scores and KB verdicts sorted by act
     'retrieval_recall',
     'review_notes',
     'round0_base_score',
+    'round0_base_verdict',
     'roundA_base_score',
     'roundA_kb_grounding_verdict',
+    'roundA_base_verdict',
     'roundB_base_score',
     'roundB_kb_grounding_verdict',
+    'roundB_base_verdict',
     'skill_id',
     'unresolved_source_count',
   ].sort());
@@ -231,6 +357,19 @@ test('rejects incomplete completed_with_failures rounds before writing compariso
   assert.throws(
     () => compareEvaluationRounds({ round0: setup.round0, roundA: setup.roundA, roundB: setup.roundB, output: setup.compare }),
     /incomplete|completed/i,
+  );
+  assert.equal(existsSync(join(setup.compare, 'kb-comparison.json')), false);
+});
+
+test('rejects RoundA when its KB mode is not gold before writing comparison artifacts', () => {
+  const setup = fixture();
+  const manifestPath = join(setup.roundA, 'manifest.json');
+  const original = JSON.parse(readFileSync(manifestPath, 'utf8')) as EvaluationManifest;
+  writeJson(manifestPath, { ...original, kb: { ...original.kb!, mode: 'live' } });
+
+  assert.throws(
+    () => compareEvaluationRounds({ round0: setup.round0, roundA: setup.roundA, roundB: setup.roundB, output: setup.compare }),
+    /roundA.*mode|mode.*roundA/i,
   );
   assert.equal(existsSync(join(setup.compare, 'kb-comparison.json')), false);
 });

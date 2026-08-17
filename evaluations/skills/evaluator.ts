@@ -7,6 +7,7 @@ import {
   type LLMClient,
   type LLMResult,
 } from '../../apps/orchestrator-runtime/src/runtime/llm-client.ts';
+import { ModelDriftError } from '../../apps/orchestrator-runtime/src/runtime/receipt-llm-client.ts';
 import type { SkillLoader } from '../../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import type { SchemaValidator } from '../../apps/orchestrator-runtime/src/schema/validator.ts';
 import { assessKnowledgeUsage } from './kb/assessment.ts';
@@ -34,9 +35,49 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function collectScalarLeaves(value: unknown, leaves: string[]): void {
+  if (value === null) {
+    leaves.push('null');
+    return;
+  }
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    leaves.push(String(value));
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectScalarLeaves(item, leaves);
+    return;
+  }
+  if (typeof value === 'object') {
+    for (const item of Object.values(value)) collectScalarLeaves(item, leaves);
+  }
+}
+
+export function validateScorecardEvidence(
+  scorecard: SkillScorecard,
+  generatedOutput: Record<string, unknown>,
+): void {
+  const scalarLeaves: string[] = [];
+  collectScalarLeaves(generatedOutput, scalarLeaves);
+  for (const dimension of scorecard.dimensions) {
+    for (const evidence of dimension.evidence) {
+      const excerpt = evidence.trim();
+      if (excerpt.length === 0) {
+        throw new Error(`score dimension evidence must not be blank: ${dimension.id}`);
+      }
+      if (!scalarLeaves.some((leaf) => leaf.includes(excerpt))) {
+        throw new Error(
+          `score dimension evidence is not a verbatim generated output excerpt: ${dimension.id}`,
+        );
+      }
+    }
+  }
+}
+
 function normalizeScorecard(
   scorecard: SkillScorecard,
   skillId: string,
+  generatedOutput: Record<string, unknown>,
 ): SkillScorecard {
   if (scorecard.skill_id !== skillId) {
     throw new Error(
@@ -83,6 +124,7 @@ function normalizeScorecard(
   for (const id of expectedIds) {
     if (!seen.has(id)) throw new Error(`missing score dimension: ${id}`);
   }
+  validateScorecardEvidence(scorecard, generatedOutput);
 
   let verdict: SkillScorecard['verdict'];
   if (total < 60 || scorecard.critical_defects.length > 0) {
@@ -113,18 +155,21 @@ export class SkillEvaluator {
   private readonly skillLoader: SkillLoader;
   private readonly validator: SchemaValidator;
   private readonly scorecardSchemaPath: string;
+  private readonly expectedActualModel?: string;
 
   constructor(deps: {
     llm: LLMClient;
     skillLoader: SkillLoader;
     validator: SchemaValidator;
     scorecardSchemaPath?: string;
+    expectedActualModel?: string;
   }) {
     this.llm = deps.llm;
     this.skillLoader = deps.skillLoader;
     this.validator = deps.validator;
     this.scorecardSchemaPath =
       deps.scorecardSchemaPath ?? DEFAULT_SCORECARD_SCHEMA_PATH;
+    this.expectedActualModel = deps.expectedActualModel;
   }
 
   async evaluate(
@@ -189,9 +234,15 @@ export class SkillEvaluator {
           receipt: {
             stage: 'skill_evaluation_generation',
             contextManifestHash: hashPrompt('', generationContext),
-            expectedModel: this.llm.identity.requestedModel,
+            expectedModel:
+              this.expectedActualModel ?? this.llm.identity.requestedModel,
           },
         });
+      const expectedModel =
+        this.expectedActualModel ?? this.llm.identity.requestedModel;
+      if (generated.modelName !== expectedModel) {
+        throw new ModelDriftError(expectedModel, generated.modelName);
+      }
 
       Object.assign(base, {
         generationPromptHash: generated.promptHash,
@@ -267,9 +318,15 @@ export class SkillEvaluator {
         receipt: {
           stage: 'skill_evaluation_scoring',
           contextManifestHash: hashPrompt('', scoringContext),
-          expectedModel: this.llm.identity.requestedModel,
+          expectedModel:
+            this.expectedActualModel ?? this.llm.identity.requestedModel,
         },
       });
+      const expectedModel =
+        this.expectedActualModel ?? this.llm.identity.requestedModel;
+      if (scored.modelName !== expectedModel) {
+        throw new ModelDriftError(expectedModel, scored.modelName);
+      }
 
       Object.assign(base, {
         scoringPromptHash: scored.promptHash,
@@ -280,7 +337,11 @@ export class SkillEvaluator {
         this.scorecardSchemaPath,
         scored.data,
       );
-      const scorecard = normalizeScorecard(scored.data, evaluationCase.skill_id);
+      const scorecard = normalizeScorecard(
+        scored.data,
+        evaluationCase.skill_id,
+        generated.data,
+      );
       return {
         ...base,
         elapsedMs: Date.now() - startedAt,
@@ -289,6 +350,15 @@ export class SkillEvaluator {
         scorecard,
       };
     } catch (error) {
+      if (error instanceof ModelDriftError) {
+        return {
+          ...base,
+          elapsedMs: Date.now() - startedAt,
+          status: 'failed',
+          errorStage: 'scoring',
+          errorMessage: error.message,
+        };
+      }
       const message = errorMessage(error);
       return {
         ...base,

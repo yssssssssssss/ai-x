@@ -5,7 +5,7 @@ import { loadSkillRegistry } from '../../../apps/orchestrator-runtime/src/runtim
 import { writeAtomic, writeJsonAtomic } from '../report-writer.ts';
 import type { KBAssessment } from './assessment.ts';
 import type { RetrievalRecord } from './types.ts';
-import type { EvaluationManifest, SkillEvaluationRecord } from '../types.ts';
+import type { EvaluationManifest, EvaluationVerdict, SkillEvaluationRecord } from '../types.ts';
 
 export interface CompareOptions {
   round0: string;
@@ -19,6 +19,9 @@ export interface ComparisonRow {
   round0_base_score: number | null;
   roundA_base_score: number | null;
   roundB_base_score: number | null;
+  round0_base_verdict: EvaluationVerdict | null;
+  roundA_base_verdict: EvaluationVerdict | null;
+  roundB_base_verdict: EvaluationVerdict | null;
   roundA_kb_grounding_verdict: KBAssessment['kb_grounding_verdict'] | null;
   roundB_kb_grounding_verdict: KBAssessment['kb_grounding_verdict'] | null;
   retrieval_recall: number | null;
@@ -141,6 +144,16 @@ function assertSameSnapshot(roundA: EvaluationManifest, roundB: EvaluationManife
     throw new Error('KB index or source mapping hash differs');
   }
 }
+function assertRoundRoles(
+  round0: EvaluationManifest,
+  roundA: EvaluationManifest,
+  roundB: EvaluationManifest,
+): void {
+  if (round0.kb) throw new Error('round0 must not include KB metadata');
+  if (roundA.kb?.mode !== 'gold') throw new Error('roundA KB mode must be gold');
+  if (roundB.kb?.mode !== 'live') throw new Error('roundB KB mode must be live');
+}
+
 
 function assertCompleteRound(
   label: 'round0' | 'roundA' | 'roundB',
@@ -154,7 +167,9 @@ function assertCompleteRound(
   for (const skillId of manifest.activeSkillIds) {
     const record = records.get(skillId);
     if (!record) throw new Error(`${label} is incomplete: missing record for ${skillId}`);
-    if (record.status !== 'succeeded') throw new Error(`${label} is incomplete: ${skillId} status is ${record.status}`);
+    if (record.status !== 'succeeded' && record.status !== 'skipped') {
+      throw new Error(`${label} is incomplete: ${skillId} status is ${record.status}`);
+    }
     if (typeof record.scorecard?.total_score !== 'number') throw new Error(`${label} is incomplete: missing scorecard for ${skillId}`);
     if (!record.output) throw new Error(`${label} is incomplete: missing output for ${skillId}`);
     for (const file of ['output.json', 'scorecard.json']) {
@@ -180,6 +195,7 @@ function activeRegistryOrder(skillIds: string[]): string[] {
 function score(record: SkillEvaluationRecord | undefined): number | null {
   return record?.scorecard?.total_score ?? null;
 }
+
 
 function assessmentFrom(roundDirectory: string, record: SkillEvaluationRecord | undefined): KBAssessment | undefined {
   if (!record) return undefined;
@@ -246,6 +262,9 @@ function renderMarkdown(output: ComparisonOutput): string {
     'round0_base_score',
     'roundA_base_score',
     'roundB_base_score',
+    'round0_base_verdict',
+    'roundA_base_verdict',
+    'roundB_base_verdict',
     'roundA_kb_grounding_verdict',
     'roundB_kb_grounding_verdict',
     'retrieval_recall',
@@ -295,6 +314,9 @@ function renderCsv(rows: ComparisonRow[]): string {
     'round0_base_score',
     'roundA_base_score',
     'roundB_base_score',
+    'round0_base_verdict',
+    'roundA_base_verdict',
+    'roundB_base_verdict',
     'roundA_kb_grounding_verdict',
     'roundB_kb_grounding_verdict',
     'retrieval_recall',
@@ -321,6 +343,7 @@ export function compareEvaluationRounds(options: CompareOptions): ComparisonOutp
   assertSameSkillIds(round0, roundA, roundB);
   assertSameModel(round0, roundA, roundB);
   assertSameCaseHashes(round0, roundA, roundB);
+  assertRoundRoles(round0, roundA, roundB);
   assertSameSnapshot(roundA, roundB);
   assertCompleteRound('round0', round0Directory, round0);
   assertCompleteRound('roundA', roundADirectory, roundA);
@@ -351,6 +374,9 @@ export function compareEvaluationRounds(options: CompareOptions): ComparisonOutp
       round0_base_score: score(round0Records.get(skillId)),
       roundA_base_score: score(roundARecord),
       roundB_base_score: score(roundBRecord),
+      round0_base_verdict: round0Records.get(skillId)?.scorecard?.verdict ?? null,
+      roundA_base_verdict: roundARecord?.scorecard?.verdict ?? null,
+      roundB_base_verdict: roundBRecord?.scorecard?.verdict ?? null,
       roundA_kb_grounding_verdict: roundAAssessment?.kb_grounding_verdict ?? null,
       roundB_kb_grounding_verdict: roundBAssessment?.kb_grounding_verdict ?? null,
       retrieval_recall: roundBAssessment?.retrieval_recall ?? roundBRetrieval?.required_source_recall ?? roundAAssessment?.retrieval_recall ?? null,

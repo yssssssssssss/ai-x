@@ -1,5 +1,6 @@
-import { mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import type { Root } from '@openclaw/fs-safe';
 import type {
   EvaluationManifest,
   LoadedEvaluationCase,
@@ -25,67 +26,115 @@ export function writeJsonAtomic(path: string, value: unknown): void {
   writeAtomic(path, prettyJson(value));
 }
 
-function removeArtifact(path: string): void {
-  try {
-    unlinkSync(path);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+
+async function writeRootAtomic(
+  root: Root,
+  relativePath: string,
+  content: string,
+): Promise<void> {
+  await root.write(relativePath, content, { overwrite: true });
+}
+
+async function writeRootJsonAtomic(
+  root: Root,
+  relativePath: string,
+  value: unknown,
+): Promise<void> {
+  await root.writeJson(relativePath, value, {
+    overwrite: true,
+    space: 2,
+    trailingNewline: true,
+  });
+}
+
+function skillArtifactPath(skillId: string, filename: string): string {
+  if (
+    !skillId ||
+    skillId === '.' ||
+    skillId === '..' ||
+    skillId.includes('/') ||
+    skillId.includes('\\')
+  ) {
+    throw new Error(`Skill ID is not a safe root-relative path segment: ${skillId}`);
   }
+  return `${skillId}/${filename}`;
 }
 
-export function writeManifest(
-  runDirectory: string,
+async function removeRootArtifact(root: Root, relativePath: string): Promise<void> {
+  if (await root.exists(relativePath)) await root.remove(relativePath);
+}
+
+export async function writeManifest(
+  root: Root,
   manifest: EvaluationManifest,
-): void {
-  writeJsonAtomic(join(runDirectory, 'manifest.json'), manifest);
+): Promise<void> {
+  await writeRootJsonAtomic(root, 'manifest.json', manifest);
 }
 
-export function writeInputArtifact(
-  skillDirectory: string,
+export async function writeInputArtifact(
+  root: Root,
+  skillId: string,
   loadedCase: LoadedEvaluationCase,
-): void {
-  writeJsonAtomic(join(skillDirectory, 'input.json'), loadedCase.data);
+): Promise<void> {
+  await root.mkdir(skillId);
+  await writeRootJsonAtomic(root, skillArtifactPath(skillId, 'input.json'), loadedCase.data);
 }
 
-export function writeKbArtifacts(
-  skillDirectory: string,
+export async function writeKbArtifacts(
+  root: Root,
+  skillId: string,
   artifacts: {
     knowledgeContext: KnowledgeContext;
     retrieval: RetrievalRecord;
     kbAssessment?: KBAssessment;
   },
-): void {
-  writeJsonAtomic(join(skillDirectory, 'knowledge-context.json'), artifacts.knowledgeContext);
-  writeJsonAtomic(join(skillDirectory, 'retrieval.json'), artifacts.retrieval);
+): Promise<void> {
+  await root.mkdir(skillId);
+  await writeRootJsonAtomic(
+    root,
+    skillArtifactPath(skillId, 'knowledge-context.json'),
+    artifacts.knowledgeContext,
+  );
+  await writeRootJsonAtomic(
+    root,
+    skillArtifactPath(skillId, 'retrieval.json'),
+    artifacts.retrieval,
+  );
   if (artifacts.kbAssessment !== undefined) {
-    writeJsonAtomic(join(skillDirectory, 'kb-assessment.json'), artifacts.kbAssessment);
+    await writeRootJsonAtomic(
+      root,
+      skillArtifactPath(skillId, 'kb-assessment.json'),
+      artifacts.kbAssessment,
+    );
   }
 }
 
-export function writeEvaluationArtifacts(
-  skillDirectory: string,
+export async function writeEvaluationArtifacts(
+  root: Root,
+  skillId: string,
   record: SkillEvaluationRecord,
-): void {
-  const errorPath = join(skillDirectory, 'error.json');
+): Promise<void> {
+  await root.mkdir(skillId);
+  const errorPath = skillArtifactPath(skillId, 'error.json');
   if (record.status === 'failed') {
     for (const filename of ['output.json', 'output.md', 'scorecard.json']) {
-      removeArtifact(join(skillDirectory, filename));
+      await removeRootArtifact(root, skillArtifactPath(skillId, filename));
     }
-    writeJsonAtomic(errorPath, record);
+    await writeRootJsonAtomic(root, errorPath, record);
     return;
   }
 
-  removeArtifact(errorPath);
-
+  await removeRootArtifact(root, errorPath);
   if (record.output !== undefined) {
-    writeJsonAtomic(join(skillDirectory, 'output.json'), record.output);
-    writeAtomic(
-      join(skillDirectory, 'output.md'),
+    await writeRootJsonAtomic(root, skillArtifactPath(skillId, 'output.json'), record.output);
+    await writeRootAtomic(
+      root,
+      skillArtifactPath(skillId, 'output.md'),
       `# ${record.skillId} evaluation output\n\n\`\`\`json\n${prettyJson(record.output)}\`\`\`\n`,
     );
   }
   if (record.scorecard !== undefined) {
-    writeJsonAtomic(join(skillDirectory, 'scorecard.json'), record.scorecard);
+    await writeRootJsonAtomic(root, skillArtifactPath(skillId, 'scorecard.json'), record.scorecard);
   }
 }
 
@@ -123,10 +172,10 @@ function csvCell(value: string | number | null | undefined): string {
   return `"${String(value ?? '').replaceAll('"', '""')}"`;
 }
 
-export function writeSummaries(
-  runDirectory: string,
+export async function writeSummaries(
+  root: Root,
   records: SkillEvaluationRecord[],
-): void {
+): Promise<void> {
   const rows = summaryRecords(records);
   const columns = [
     'skill',
@@ -161,7 +210,7 @@ export function writeSummaries(
     ),
     '',
   ].join('\n');
-  writeAtomic(join(runDirectory, 'summary.md'), markdown);
+  await writeRootAtomic(root, 'summary.md', markdown);
 
   const csv = [
     csvCell(DISCLAIMER),
@@ -169,5 +218,5 @@ export function writeSummaries(
     ...values.map((row) => row.map((value) => csvCell(value)).join(',')),
     '',
   ].join('\n');
-  writeAtomic(join(runDirectory, 'summary.csv'), csv);
+  await writeRootAtomic(root, 'summary.csv', csv);
 }

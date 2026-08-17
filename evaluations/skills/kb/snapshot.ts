@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, realpathSync, type Stats } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { getConfigRoot, loadSkillRegistry, type SkillRegistryEntry } from '../../../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 import type {
@@ -26,6 +26,90 @@ function hashBytes(bytes: Buffer | string): string {
   return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
 }
 
+export interface PinnedSourceRoot {
+  path: string;
+  real_path: string;
+  dev: number;
+  ino: number;
+}
+
+function pinSourceRoot(root: string): PinnedSourceRoot {
+  const path = resolve(root);
+  const stat = lstatSync(path);
+  if (stat.isSymbolicLink()) throw new Error(`source root is a symlink: ${path}`);
+  if (!stat.isDirectory()) throw new Error(`source root is not a directory: ${path}`);
+  return { path, real_path: realpathSync(path), dev: stat.dev, ino: stat.ino };
+}
+
+function assertPinnedRoot(root: PinnedSourceRoot): void {
+  const stat = lstatSync(root.path);
+  if (stat.isSymbolicLink()) throw new Error(`source root is a symlink: ${root.path}`);
+  if (stat.dev !== root.dev || stat.ino !== root.ino || realpathSync(root.path) !== root.real_path) {
+    throw new Error(`source root changed while reading: ${root.path}`);
+  }
+}
+
+function assertOpenedSourcePath(root: PinnedSourceRoot, sourcePath: string, fullPath: string, descriptorStat: Stats): void {
+  assertPinnedRoot(root);
+  const relativePath = relative(root.path, fullPath);
+  let currentPath = root.path;
+  for (const segment of relativePath.split(sep).filter(Boolean)) {
+    currentPath = join(currentPath, segment);
+    if (lstatSync(currentPath).isSymbolicLink()) throw new Error(`source path escapes KB root via symlink: ${sourcePath}`);
+  }
+  const realPath = realpathSync(fullPath);
+  const realRelative = relative(root.real_path, realPath);
+  if (realRelative === '..' || realRelative.startsWith(`..${sep}`) || realRelative.startsWith(sep)) {
+    throw new Error(`source path escapes KB root via symlink: ${sourcePath}`);
+  }
+  const pathStat = lstatSync(fullPath);
+  if (pathStat.dev !== descriptorStat.dev || pathStat.ino !== descriptorStat.ino) {
+    throw new Error(`source path changed while reading: ${sourcePath}`);
+  }
+}
+
+export function readVerifiedSourceFile(
+  root: string,
+  sourcePath: string,
+  expectedHash?: string,
+  expectedRoot?: PinnedSourceRoot,
+): { bytes: Buffer; content_hash: string; root: PinnedSourceRoot } {
+  const pinnedRoot = pinSourceRoot(root);
+  if (expectedRoot && (
+    pinnedRoot.path !== expectedRoot.path
+    || pinnedRoot.real_path !== expectedRoot.real_path
+    || pinnedRoot.dev !== expectedRoot.dev
+    || pinnedRoot.ino !== expectedRoot.ino
+  )) {
+    throw new Error(`source root changed while reading: ${pinnedRoot.path}`);
+  }
+  const fullPath = resolve(pinnedRoot.path, sourcePath);
+  const relativePath = relative(pinnedRoot.path, fullPath);
+  if (!relativePath || relativePath === '..' || relativePath.startsWith(`..${sep}`) || relativePath.startsWith(sep)) {
+    throw new Error(`source path escapes KB root: ${sourcePath}`);
+  }
+
+  const descriptor = openSync(fullPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const before = fstatSync(descriptor);
+    if (!before.isFile()) throw new Error(`source is not a regular file: ${sourcePath}`);
+    assertOpenedSourcePath(pinnedRoot, sourcePath, fullPath, before);
+    const bytes = readFileSync(descriptor);
+    const after = fstatSync(descriptor);
+    if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) {
+      throw new Error(`source changed while reading: ${sourcePath}`);
+    }
+    assertOpenedSourcePath(pinnedRoot, sourcePath, fullPath, after);
+    const contentHash = hashBytes(bytes);
+    if (expectedHash !== undefined && contentHash !== expectedHash) {
+      throw new Error(`source hash mismatch: expected ${expectedHash}, got ${contentHash}`);
+    }
+    return { bytes, content_hash: contentHash, root: pinnedRoot };
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -41,12 +125,19 @@ function sourceRootFor(indexPath: string, sourceRoot?: string): string {
 }
 
 function assertSafeSourcePath(root: string, sourcePath: string): string {
+  const rootStat = lstatSync(root);
+  if (rootStat.isSymbolicLink()) throw new Error(`source root is a symlink: ${root}`);
   const fullPath = resolve(root, sourcePath);
   const relativePath = relative(root, fullPath);
   if (relativePath === '..' || relativePath.startsWith(`..${sep}`) || relativePath.startsWith(sep)) {
     throw new Error(`source path escapes KB root: ${sourcePath}`);
   }
   if (existsSync(fullPath)) {
+    let currentPath = root;
+    for (const segment of relativePath.split(sep).filter(Boolean)) {
+      currentPath = join(currentPath, segment);
+      if (lstatSync(currentPath).isSymbolicLink()) throw new Error(`source path escapes KB root via symlink: ${sourcePath}`);
+    }
     const realRoot = realpathSync(root);
     const realPath = realpathSync(fullPath);
     const realRelative = relative(realRoot, realPath);
@@ -173,8 +264,18 @@ function validateGoldSelections(
     }
     const required = mapping.required_sources.filter((source) => source.role !== 'one_of').map((source) => canonicalSourceId(source.path, indexItems));
     if (!required.every((sourceId) => selection.selected_source_ids.includes(sourceId))) throw new Error(`gold selection missing required source: ${selection.skill_id}`);
-    const oneOf = mapping.required_sources.filter((source) => source.role === 'one_of').map((source) => canonicalSourceId(source.path, indexItems));
-    if (oneOf.length > 0 && !oneOf.some((sourceId) => selection.selected_source_ids.includes(sourceId))) throw new Error(`gold selection missing one-of source: ${selection.skill_id}`);
+    const oneOfGroups = new Map<string, string[]>();
+    for (const source of mapping.required_sources.filter((rule) => rule.role === 'one_of')) {
+      const group = source.trigger?.trim() || '__default__';
+      const sourceIds = oneOfGroups.get(group) ?? [];
+      sourceIds.push(canonicalSourceId(source.path, indexItems));
+      oneOfGroups.set(group, sourceIds);
+    }
+    for (const sourceIds of oneOfGroups.values()) {
+      if (!sourceIds.some((sourceId) => selection.selected_source_ids.includes(sourceId))) {
+        throw new Error(`gold selection missing one-of source: ${selection.skill_id}`);
+      }
+    }
   }
   const missing = activeSkills.map((skill) => skill.id).filter((id) => !seen.has(id));
   if (missing.length) throw new Error(`missing gold selection: ${missing.join(', ')}`);
@@ -209,12 +310,15 @@ export function buildKnowledgeSnapshot(indexPath = defaultIndexPath(), sourceRoo
     }
   }
   const warnings: string[] = [];
+  let pinnedRoot: PinnedSourceRoot | undefined;
   const sourceFiles = [...items].sort((a, b) => a.source_path.localeCompare(b.source_path)).map((item) => {
     const fullPath = assertSafeSourcePath(root, item.source_path);
     if (!existsSync(fullPath)) throw new Error(`missing source: ${item.source_path}`);
     if (item.status === 'deprecated') throw new Error(`deprecated source: ${item.source_path}`);
     if (item.status === 'draft') warnings.push(`draft source: ${item.source_path}`);
-    return { path: item.source_path, content_hash: hashBytes(readFileSync(fullPath)), status: item.status };
+    const verified = readVerifiedSourceFile(root, item.source_path, undefined, pinnedRoot);
+    pinnedRoot ??= verified.root;
+    return { id: item.id, path: item.source_path, content_hash: verified.content_hash, status: item.status };
   });
   const material = [bytes.toString('utf8'), ...sourceFiles.map((source) => `${source.path}\0${source.content_hash}`)].join('\n');
   const snapshot = {
@@ -222,6 +326,7 @@ export function buildKnowledgeSnapshot(indexPath = defaultIndexPath(), sourceRoo
     index_path: absoluteIndex,
     index_hash: hashBytes(bytes),
     built_at: new Date().toISOString(),
+    source_root: root,
     source_files: sourceFiles,
   };
   return { snapshot, index: new Map(items.map((item) => [item.id, item])), warnings };

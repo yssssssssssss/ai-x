@@ -32,7 +32,8 @@ export interface KnowledgeSnapshot {
   index_path: string;
   index_hash: string;
   built_at: string;
-  source_files: Array<{ path: string; content_hash: string; status: string }>;
+  source_root?: string;
+  source_files: Array<{ id?: string; path: string; content_hash: string; status: string }>;
 }
 
 export interface GoldSourceSelection {
