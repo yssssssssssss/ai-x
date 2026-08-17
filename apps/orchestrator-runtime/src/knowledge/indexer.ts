@@ -1,5 +1,8 @@
 import { parseFrontmatter } from './frontmatter.ts';
-import type { SkillRegistryEntry } from '../runtime/config-loader.ts';
+import {
+  SKILL_RESULT_ENVELOPE_SCHEMA,
+  type SkillRegistryEntry,
+} from '../runtime/config-loader.ts';
 
 export interface KnowledgeIndexItem {
   id: string;
@@ -41,6 +44,7 @@ export function buildIndex(entries: Array<{ relPath: string; md: string }>): {
         owner: (fm.owner as string) ?? '用研团队',
         risk_level: (fm.risk_level as SkillRegistryEntry['risk_level']) ?? 'low',
         task_types: (fm.task_types as string[]) ?? [],
+        output_schema: SKILL_RESULT_ENVELOPE_SCHEMA,
         status: toRegistryStatus(fm.status),
       });
     } else if (fm.id && fm.type !== 'asset') {

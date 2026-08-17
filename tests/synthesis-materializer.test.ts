@@ -213,6 +213,27 @@ test('materializes all actor roles from verified sealed JSON and preserves bindi
   assert.equal(reader.reads.length, 4);
 });
 
+test('accepts legacy and current Skill output artifacts but rejects unknown schema versions', async () => {
+  for (const schemaVersion of ['skill-output-v1', 'skill-output-v2']) {
+    const reader = new Reader(new Map());
+    const source = input(reader);
+    const skill = reader.values.get('artifact-skill');
+    assert.ok(skill);
+    skill.artifact.schemaVersion = schemaVersion;
+    await assert.doesNotReject(() => new SynthesisMaterializer(reader).materialize(source));
+  }
+
+  const reader = new Reader(new Map());
+  const source = input(reader);
+  const skill = reader.values.get('artifact-skill');
+  assert.ok(skill);
+  skill.artifact.schemaVersion = 'skill-output-v3';
+  await assert.rejects(
+    () => new SynthesisMaterializer(reader).materialize(source),
+    /unexpected schema/,
+  );
+});
+
 test('rejects tampered, foreign, unsealed, and sensitive artifacts before materialization', async () => {
   const cases: Array<{ name: string; patch: Partial<ControlArtifact> }> = [
     { name: 'tampered hash', patch: { contentSha256: hash('different') } },

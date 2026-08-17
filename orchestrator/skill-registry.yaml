@@ -19,7 +19,8 @@ skills:
       - live_commerce
       - competitive
     input_schema: skills/competitive-analysis/digital-human/input.schema.json
-    output_schema: skills/competitive-analysis/digital-human/output.schema.json
+    output_schema: schemas/skill-result-envelope.schema.json
+    payload_schema: skills/competitive-analysis/digital-human/output.schema.json
     required_tools:
       - tavily-web-search
       - ai-spider-search
@@ -30,7 +31,8 @@ skills:
   - id: competitive-web-research
     name: 竞品分析·Web搜索
     path: skills/competitive-analysis/web-research/SKILL.md
-    when_to_use: 竞品分析且以网络公开资料为主要信息源(官网/发布会/评测/应用商店/新闻/口碑);查竞品在做什么、战略意图、市场动态。无竞品 app 截图诉求时用本 skill。
+    when_to_use: 竞品分析且以网络公开资料为主要信息源(官网/发布会/评测/应用商店/新闻/口碑);查竞品在做什么、战略意图、市场动态。无竞品 app
+      截图诉求时用本 skill。
     owner: 竞品分析组
     status: active
     task_types:
@@ -43,6 +45,7 @@ skills:
       - competitive
       - web-research
       - business-competitive
+    output_schema: schemas/skill-result-envelope.schema.json
     required_tools:
       - tavily-web-search
     cost_level: low
@@ -50,7 +53,9 @@ skills:
   - id: competitive-app-analysis
     name: 竞品分析·App截图
     path: skills/competitive-analysis/app-analysis/SKILL.md
-    when_to_use: 对竞品 app 界面做截图级分析——视觉美学、注意力热区、品牌视觉一致性、信息架构;诉求提到看竞品页面/界面/截图/设计怎么做的。以竞品截图为信息源时用本 skill。
+    when_to_use: 对竞品 app
+      界面做截图级分析——视觉美学、注意力热区、品牌视觉一致性、信息架构;诉求提到看竞品页面/界面/截图/设计怎么做的。以竞品截图为信息源时用本
+      skill。
     owner: 竞品分析组
     status: active
     task_types:
@@ -71,6 +76,7 @@ skills:
       - aesthetic-quant-lab
       - attention-analysis-lab
       - vision-brand-lab
+    output_schema: schemas/skill-result-envelope.schema.json
     cost_level: medium
     risk_level: low
   - id: design-experience-review
@@ -93,7 +99,8 @@ skills:
       - brand
       - visual
     input_schema: skills/design-review/input.schema.json
-    output_schema: skills/design-review/output.schema.json
+    output_schema: schemas/skill-result-envelope.schema.json
+    payload_schema: skills/design-review/output.schema.json
     required_tools:
       - aesthetic-quant-lab
       - attention-analysis-lab
@@ -123,6 +130,7 @@ skills:
     risk_level: low
     task_types:
       - a11y_audit
+    output_schema: schemas/skill-result-envelope.schema.json
     status: active
   - id: analyze-satisfaction
     name: analyze-satisfaction
@@ -145,7 +153,9 @@ skills:
     risk_level: low
     task_types:
       - voc_diagnosis
+    output_schema: schemas/skill-result-envelope.schema.json
     status: active
+    payload_schema: knowledge-base/skills/analyze-satisfaction/output.schema.json
   - id: build-experience-metrics
     name: build-experience-metrics
     path: knowledge-base/skills/build-experience-metrics
@@ -168,6 +178,7 @@ skills:
     risk_level: low
     task_types:
       - user_research_planning
+    output_schema: schemas/skill-result-envelope.schema.json
     status: active
   - id: code-open-feedback
     name: code-open-feedback
@@ -186,6 +197,7 @@ skills:
     risk_level: low
     task_types:
       - voc_diagnosis
+    output_schema: schemas/skill-result-envelope.schema.json
     status: active
   - id: competitive-analysis
     name: competitive-analysis
@@ -209,6 +221,7 @@ skills:
     risk_level: low
     task_types:
       - competitive_research
+    output_schema: schemas/skill-result-envelope.schema.json
     status: active
   - id: conversion-funnel-analysis
     name: conversion-funnel-analysis
@@ -231,7 +244,9 @@ skills:
     risk_level: low
     task_types:
       - user_research_planning
+    output_schema: schemas/skill-result-envelope.schema.json
     status: active
+    payload_schema: knowledge-base/skills/conversion-funnel-analysis/output.schema.json
   - id: feature-adoption-analysis
     name: feature-adoption-analysis
     path: knowledge-base/skills/feature-adoption-analysis
@@ -251,7 +266,9 @@ skills:
     risk_level: low
     task_types:
       - user_research_planning
+    output_schema: schemas/skill-result-envelope.schema.json
     status: active
+    payload_schema: knowledge-base/skills/feature-adoption-analysis/output.schema.json
   - id: generate-interview-guide
     name: generate-interview-guide
     path: knowledge-base/skills/generate-interview-guide
@@ -265,6 +282,7 @@ skills:
     risk_level: low
     task_types:
       - user_research_planning
+    output_schema: schemas/skill-result-envelope.schema.json
     status: active
   - id: generate-persona
     name: generate-persona
@@ -283,6 +301,7 @@ skills:
     risk_level: low
     task_types:
       - user_research_planning
+    output_schema: schemas/skill-result-envelope.schema.json
     status: active
   - id: generate-research-plan
     name: generate-research-plan
@@ -298,6 +317,7 @@ skills:
     risk_level: low
     task_types:
       - user_research_planning
+    output_schema: schemas/skill-result-envelope.schema.json
     status: active
   - id: generate-survey
     name: generate-survey
@@ -313,6 +333,7 @@ skills:
     risk_level: low
     task_types:
       - user_research_planning
+    output_schema: schemas/skill-result-envelope.schema.json
     status: active
   - id: generate-usability-test
     name: generate-usability-test
@@ -331,6 +352,7 @@ skills:
     risk_level: low
     task_types:
       - design_audit
+    output_schema: schemas/skill-result-envelope.schema.json
     status: active
   - id: issue-prioritization
     name: issue-prioritization
@@ -352,6 +374,7 @@ skills:
     risk_level: low
     task_types:
       - user_research_planning
+    output_schema: schemas/skill-result-envelope.schema.json
     status: active
   - id: jobs-to-be-done
     name: jobs-to-be-done
@@ -376,6 +399,7 @@ skills:
     risk_level: low
     task_types:
       - user_research_planning
+    output_schema: schemas/skill-result-envelope.schema.json
     status: active
   - id: journey-map
     name: journey-map
@@ -400,6 +424,7 @@ skills:
     risk_level: low
     task_types:
       - user_research_planning
+    output_schema: schemas/skill-result-envelope.schema.json
     status: active
   - id: run-heuristic-evaluation
     name: run-heuristic-evaluation
@@ -419,6 +444,7 @@ skills:
     risk_level: low
     task_types:
       - design_audit
+    output_schema: schemas/skill-result-envelope.schema.json
     status: active
   - id: structure-interview-transcript
     name: structure-interview-transcript
@@ -435,7 +461,9 @@ skills:
     risk_level: low
     task_types:
       - user_research_planning
+    output_schema: schemas/skill-result-envelope.schema.json
     status: active
+    payload_schema: knowledge-base/skills/structure-interview-transcript/output.schema.json
   - id: synthesize-qualitative-insights
     name: synthesize-qualitative-insights
     path: knowledge-base/skills/synthesize-qualitative-insights
@@ -452,4 +480,6 @@ skills:
     risk_level: low
     task_types:
       - user_research_planning
+    output_schema: schemas/skill-result-envelope.schema.json
     status: active
+    payload_schema: knowledge-base/skills/synthesize-qualitative-insights/output.schema.json

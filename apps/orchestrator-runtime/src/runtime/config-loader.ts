@@ -31,6 +31,8 @@ export const CONFIG_PATHS = {
   reportTemplates: 'orchestrator/report-templates',
 } as const;
 
+export const SKILL_RESULT_ENVELOPE_SCHEMA = 'schemas/skill-result-envelope.schema.json';
+
 export interface EvidencePolicyRequirement {
   id: string;
   accepted_classes: EvidenceClass[];
@@ -282,6 +284,7 @@ export interface SkillRegistryEntry {
   outputs?: string[];
   input_schema?: string; // KB skill 为 markdown 过程式, 无 JSON schema
   output_schema?: string;
+  payload_schema?: string;
   entry?: string; // SKILL.md 文件夹路径(KB 派生)
   required_tools?: string[];
   cost_level?: string;

@@ -77,6 +77,54 @@ test('draft skill 缺字段不拦(不参与自动路由)', () => {
   assert.equal(issues.filter((i) => i.target.startsWith('skill:')).length, 0);
 });
 
+test('active Skill 必须使用存在的统一输出信封与存在的 payload schema', () => {
+  const dir = fixtureRoot({
+    decisionGraph: goodGraph,
+    toolRegistry: emptyTools,
+    skillRegistry: `version: 1
+skills:
+  - id: missing-output
+    name: missing-output
+    path: knowledge-base/skills/missing-output
+    when_to_use: test
+    owner: test
+    status: active
+    task_types: [competitive_research]
+    risk_level: low
+  - id: wrong-output
+    name: wrong-output
+    path: knowledge-base/skills/wrong-output
+    when_to_use: test
+    owner: test
+    status: active
+    task_types: [competitive_research]
+    output_schema: schemas/wrong.json
+    risk_level: low
+  - id: missing-payload
+    name: missing-payload
+    path: knowledge-base/skills/missing-payload
+    when_to_use: test
+    owner: test
+    status: active
+    task_types: [competitive_research]
+    output_schema: schemas/skill-result-envelope.schema.json
+    payload_schema: schemas/missing-payload.json
+    risk_level: low
+`,
+    toolManifests: {
+      'schemas/wrong.json': '{}',
+      'schemas/skill-result-envelope.schema.json': '{}',
+    },
+  });
+  setConfigRoot(dir);
+  const issues = lintRegistries();
+  rmSync(dir, { recursive: true, force: true });
+
+  assert.ok(issues.some((issue) => issue.target === 'skill:missing-output' && issue.message.includes('output_schema')));
+  assert.ok(issues.some((issue) => issue.target === 'skill:wrong-output' && issue.message.includes('统一 output_schema')));
+  assert.ok(issues.some((issue) => issue.target === 'skill:missing-payload' && issue.message.includes('payload_schema 不存在')));
+});
+
 test('高风险 tool 无 approver_rule 被拒', () => {
   const dir = fixtureRoot({
     decisionGraph: goodGraph,
@@ -106,7 +154,7 @@ test('decision node 缺 tier 被拒', () => {
   assert.ok(issues.some((i) => i.message.includes('tier')), '应报缺 tier');
 });
 
-test('KB skill(无 JSON schema)满足 active 契约类型', () => {
+test('KB Skill 无 input schema 但必须声明统一 output schema', () => {
   const kbSkill: SkillRegistryEntry = {
     id: 'generate-research-plan',
     name: 'generate-research-plan',
@@ -116,9 +164,10 @@ test('KB skill(无 JSON schema)满足 active 契约类型', () => {
     owner: '用研团队',
     risk_level: 'low',
     task_types: ['user_research_planning'],
+    output_schema: 'schemas/skill-result-envelope.schema.json',
     status: 'active',
   };
-  // 无 input_schema/output_schema 也应类型合法(可选)
   assert.equal(kbSkill.input_schema, undefined);
+  assert.equal(kbSkill.output_schema, 'schemas/skill-result-envelope.schema.json');
   assert.equal(kbSkill.status, 'active');
 });

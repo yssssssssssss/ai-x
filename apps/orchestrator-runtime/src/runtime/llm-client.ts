@@ -158,17 +158,46 @@ function injectToolResultFinding<T>(schemaName: string, context: object | undefi
   return out;
 }
 
-// skill 步执行(schemaName 以 skill: 开头)在 mock 下返回符合 digital-human output schema 的最小 fixture,
-// 避免 mock 因无预置 fixture 抛错。真实价值在 gateway:GPT-5.5 读 SKILL.md + tool_outputs 真产出。
-function skillFixtureFor(schemaName: string): unknown | undefined {
+interface FixtureSchema {
+  const?: unknown;
+  enum?: unknown[];
+  type?: string | string[];
+  required?: string[];
+  properties?: Record<string, FixtureSchema>;
+  items?: FixtureSchema;
+  minItems?: number;
+  minimum?: number;
+  oneOf?: FixtureSchema[];
+  anyOf?: FixtureSchema[];
+}
+
+function fixtureValue(schema: FixtureSchema): unknown {
+  if (schema.const !== undefined) return structuredClone(schema.const);
+  if (schema.enum && schema.enum.length > 0) return structuredClone(schema.enum[0]);
+  const alternative = schema.oneOf?.[0] ?? schema.anyOf?.[0];
+  if (alternative) return fixtureValue(alternative);
+  const type = Array.isArray(schema.type)
+    ? schema.type.find((candidate) => candidate !== 'null')
+    : schema.type;
+  if (type === 'object' || schema.properties) {
+    return Object.fromEntries(
+      (schema.required ?? []).map((key) => [key, fixtureValue(schema.properties?.[key] ?? {})]),
+    );
+  }
+  if (type === 'array') {
+    return Array.from({ length: schema.minItems ?? 0 }, () => fixtureValue(schema.items ?? {}));
+  }
+  if (type === 'integer') return Math.ceil(schema.minimum ?? 0);
+  if (type === 'number') return schema.minimum ?? 0;
+  if (type === 'boolean') return false;
+  if (type === 'string') return 'mock';
+  return {};
+}
+
+// Skill mock follows the effective runtime schema, including an inlined domain payload contract.
+function skillFixtureFor(schemaName: string, schema: object): unknown | undefined {
   if (!schemaName.startsWith('skill:')) return undefined;
-  return {
-    comparison_matrix: [
-      { competitor: '竞品A', dimension: '交互体验', assessment: 'mock:实时互动可用', source: 'llm_inference' },
-    ],
-    differentiation_opportunities: ['mock:低延迟实时互动可作为差异化方向'],
-    sources: ['mock'],
-  };
+  return fixtureValue(schema as FixtureSchema);
 }
 
 export type FixtureMap = Record<string, unknown>;
@@ -190,7 +219,7 @@ export class MockLLMClient implements LLMClient {
   }
 
   async generateStructured<T>(opts: LegacyStructuredLLMCallOptions): Promise<LLMResult<T>> {
-    const data = this.fixtures[opts.schemaName] ?? skillFixtureFor(opts.schemaName);
+    const data = this.fixtures[opts.schemaName] ?? skillFixtureFor(opts.schemaName, opts.schema);
     if (data === undefined) {
       throw new Error(`MockLLMClient: 没有为 schemaName="${opts.schemaName}" 预置 fixture`);
     }

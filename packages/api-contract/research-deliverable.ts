@@ -83,6 +83,7 @@ export interface CurrentCapabilitySkill {
   outputs: string[];
   input_schema?: string;
   output_schema?: string;
+  payload_schema?: string;
   entry?: string;
   required_tools: string[];
   cost_level?: string;

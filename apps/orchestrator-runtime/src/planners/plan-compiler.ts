@@ -65,6 +65,7 @@ export type PlanCompilerValidationKind =
   | 'unknown_binding_pointer'
   | 'unknown_binding_target'
   | 'invalid_binding_target'
+  | 'invalid_skill_output_pointer'
   | 'optional_binding_source'
   | 'missing_core_evidence'
   | 'rejected_capability'
@@ -439,6 +440,16 @@ function validateBindings(
   }
 }
 
+function validateSkillOutputPointers(steps: CurrentPlanStep[]): void {
+  for (const step of steps) {
+    if (step.actor_type !== 'skill') continue;
+    const invalid = step.expected_outputs.find((output) => (
+      output.pointer !== '/payload' && !output.pointer.startsWith('/payload/')
+    ));
+    if (invalid) fail('invalid_skill_output_pointer', String(step.step_no), invalid.pointer);
+  }
+}
+
 function validatePendingInputSchemas(
   eligibleSkills: ReadonlyMap<string, CapabilityResolution['eligible'][number]>,
 ): void {
@@ -546,6 +557,7 @@ export class PlanCompiler {
     validateApprovals(steps, input.capability_resolution);
     validateRequiredTools(steps, eligibleSkills);
     validatePendingInputSchemas(eligibleSkills);
+    validateSkillOutputPointers(steps);
     const toolsById = new Map(loadToolRegistry().tools.map((tool) => [tool.id, tool]));
     validateBindings(steps, toolsById);
 

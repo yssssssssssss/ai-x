@@ -180,14 +180,6 @@ function buildSchemaInput(
   return input;
 }
 
-function declaredOutputPointers(outputSchemaPath: string | undefined): string[] {
-  if (!outputSchemaPath) return ['/output'];
-  const schema = loadToolInputSchema(outputSchemaPath) as InputSchema;
-  const properties = schema.properties;
-  if (!properties || Object.keys(properties).length === 0) return ['/output'];
-  return Object.keys(properties).map((property) => `/${property.replaceAll('~', '~0').replaceAll('/', '~1')}`);
-}
-
 export interface CurrentPlanArtifacts {
   activated: DecisionNode[];
   decisionStates: DecisionStateRec[];
@@ -578,7 +570,7 @@ export class RoutedPlanner implements PlanStrategy {
       const skillApproval = requiredApprovals.find((item) => (
         item.capability_type === 'skill' && item.capability_id === ctx.direct!.skillName
       ));
-      const skillOutputPointers = declaredOutputPointers(directDecision.skill.output_schema);
+      const skillOutputPointers = ['/payload'];
       const skillStep: CurrentPlanStep = {
         step_no: skillStepNo,
         step_name: `直呼 ${ctx.direct.skillName}`,
@@ -682,6 +674,7 @@ export class RoutedPlanner implements PlanStrategy {
         when_to_use: decision.skill.when_to_use,
         inputs: decision.skill.inputs,
         outputs: decision.skill.outputs,
+        output_root: '/payload',
         required_tools: decision.skill.required_tools,
         pending_inputs: decision.pending_inputs,
       })),
@@ -699,6 +692,7 @@ export class RoutedPlanner implements PlanStrategy {
         `depth 总步数不得超过 ${ROUTED_STEP_LIMITS.depth}，speed 总步数不得超过 ${ROUTED_STEP_LIMITS.speed}；只选择与 research_goal/when_to_use 最匹配的少数能力，不得堆叠整个 shortlist。` +
         `每个 step 必须精确包含 step_no、step_name、actor_type、actor_id、question_ids、depends_on、input、input_bindings、expected_outputs、acceptance_criteria、requires_approval、fallback_actor_ids。` +
         `fallback_actor_ids 必须为空数组，当前执行器不支持 fallback 调度。` +
+        `Skill step 的 expected_outputs 及后续 binding source_pointer 必须位于统一输出根 /payload 下。` +
         `Skill 的 required_tools 必须作为更早的 Tool step；所有引用必须真实存在；不得使用 capability_resolution.rejected 中的 actor。` +
         (validationFeedback.length > 0
           ? `上一次候选未通过候选校验，必须逐项修复：${validationFeedback.join('；')}。`

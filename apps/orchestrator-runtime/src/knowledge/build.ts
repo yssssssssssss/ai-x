@@ -35,7 +35,13 @@ export function build(): { knowledge: number; skills: number } {
     ? ((parseYaml(readFileSync(registryPath, 'utf8')) as { skills?: SkillRegistryEntry[] }).skills ?? [])
         .filter((s) => !String(s.path ?? '').startsWith('knowledge-base/'))
     : [];
-  const mergedSkills = [...native, ...skills];
+  const derived = skills.map((skill) => {
+    const payloadSchema = `${skill.path}/output.schema.json`;
+    return existsSync(kbPath(payloadSchema))
+      ? { ...skill, payload_schema: payloadSchema }
+      : skill;
+  });
+  const mergedSkills = [...native, ...derived];
 
   const idxDir = kbPath('knowledge-base/.index');
   mkdirSync(idxDir, { recursive: true });

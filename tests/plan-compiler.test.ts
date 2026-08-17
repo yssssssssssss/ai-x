@@ -173,7 +173,7 @@ function validCandidate(id: 'depth' | 'speed' = 'depth'): CurrentPlanCandidatePr
           source_step_no: 1,
           source_pointer: '/results',
         }],
-        expected_outputs: [{ pointer: '/analysis', description: '证据化竞品分析' }],
+        expected_outputs: [{ pointer: '/payload/analysis', description: '证据化竞品分析' }],
         acceptance_criteria: ['结论覆盖两个研究问题'],
       }),
     ],
@@ -282,6 +282,16 @@ test('rejects input bindings whose source output pointer is not declared', () =>
   expectCompileError((value) => {
     value.candidate.steps[1]!.input_bindings[0]!.source_pointer = '/missing';
   }, 'unknown_binding_pointer', '/missing');
+});
+
+test('rejects Skill output pointers outside the unified payload root', () => {
+  expectCompileError(
+    (value) => {
+      value.candidate.steps[1]!.expected_outputs = [{ pointer: '/analysis', description: 'legacy output' }];
+    },
+    'invalid_skill_output_pointer',
+    '/analysis',
+  );
 });
 
 test('rejects unknown question references', () => {
@@ -770,15 +780,17 @@ test('Current planning assembles Task8 graph and Task9 real-adapter capability s
   const candidateCall = llm.calls.find((call) => call.schemaName === 'current-plan-candidates');
   assert.ok(candidateCall);
   assert.match(candidateCall.prompt, /fallback_actor_ids 必须为空数组/);
+  assert.match(candidateCall.prompt, /统一输出根 \/payload/);
   assert.match(candidateCall.prompt, /depth 总步数不得超过 8，speed 总步数不得超过 4/);
   const candidateContext = candidateCall.context as {
     problem_graph: ProblemGraph;
     capability_resolution: CapabilityResolution;
-    skills: Array<{ id: string }>;
+    skills: Array<{ id: string; output_root: string }>;
   };
   assert.deepEqual(candidateContext.problem_graph, result.problemGraph);
   assert.deepEqual(candidateContext.capability_resolution, result.capabilityResolution);
   assert.ok(candidateContext.skills.some((skill) => skill.id === eligibleSkill.id));
+  assert.ok(candidateContext.skills.every((skill) => skill.output_root === '/payload'));
   assert.ok(result.capabilityResolution.eligible.some((decision) => decision.skill.id === eligibleSkill.id));
   assert.ok(result.capabilityResolution.rejected.every((decision) =>
     result.candidates.every((candidate) =>
@@ -970,6 +982,10 @@ test('direct Current depth and speed prepend every required Tool with remapped s
   const directSkill = skillLoader.getSkill('digital-human-competitive-analysis');
   assert.ok(directSkill);
   assert.ok(directSkill.input_schema);
+  assert.equal(
+    result.capabilityResolution.eligible.find((decision) => decision.skill.id === directSkill.id)?.skill.payload_schema,
+    directSkill.payload_schema,
+  );
   const requiredToolIds = directSkill.required_tools ?? [];
   assert.deepEqual(requiredToolIds, [
     'tavily-web-search',
@@ -1012,6 +1028,7 @@ test('direct Current depth and speed prepend every required Tool with remapped s
     assert.ok(skillStep);
     assert.equal(skillStep.actor_type, 'skill');
     assert.equal(skillStep.actor_id, directSkill.id);
+    assert.deepEqual(skillStep.expected_outputs.map((output) => output.pointer), ['/payload']);
     assert.deepEqual(skillStep.depends_on, requiredToolIds.map((_, index) => index + 1));
     assert.deepEqual(skillStep.input_bindings, []);
     validator.validateFileOrThrow(join(getConfigRoot(), directSkill.input_schema), skillStep.input);

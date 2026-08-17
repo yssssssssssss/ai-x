@@ -1,5 +1,3 @@
-import { join } from 'node:path';
-import { getConfigRoot } from '../runtime/config-loader.ts';
 import type { LLMClient } from '../runtime/llm-client.ts';
 import type { SkillLoader } from '../runtime/skill-loader.ts';
 import type { SchemaValidator } from '../schema/validator.ts';
@@ -40,9 +38,7 @@ export class SkillActorRunner implements ActorRunner {
       },
     });
 
-    if (skillEntry.output_schema) {
-      this.validator.validateFileOrThrow(join(getConfigRoot(), skillEntry.output_schema), skillGen.data);
-    }
+    this.validator.validateSchemaOrThrow(output, skillGen.data, `skill:${step.actor_id}`);
 
     const outputRef = ctx.ws.writeToolOutput(step.step_no, skillGen.data);
 

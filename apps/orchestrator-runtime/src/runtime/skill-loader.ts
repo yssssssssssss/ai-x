@@ -41,6 +41,28 @@ export type CapabilitySkillRegistryEntry =
   | ActiveCapabilitySkillRegistryEntry
   | InactiveCapabilitySkillRegistryEntry;
 
+export interface LoadedSkillSchemas {
+  input?: object;
+  output: object;
+}
+
+export function composeSkillOutputSchema(envelope: object, payload?: object): object {
+  const output = structuredClone(envelope) as Record<string, unknown>;
+  delete output.$id;
+  if (!payload) return output;
+  const properties = output.properties;
+  if (
+    properties === null
+    || typeof properties !== 'object'
+    || Array.isArray(properties)
+    || !Object.hasOwn(properties, 'payload')
+  ) {
+    throw new Error('Skill output envelope must declare a payload property');
+  }
+  Reflect.set(properties, 'payload', structuredClone(payload));
+  return output;
+}
+
 export class SkillLoader {
   // 第一层:发现所有 active skill 的轻量索引(供 LLM 语义选择)
   listActiveSkills(): SkillRegistryEntry[] {
@@ -108,15 +130,19 @@ export class SkillLoader {
     return { body, hash: hashFile(rel), path: rel };
   }
 
-  // 第三层:执行期加载 skill 的 input/output schema。
-  // KB 派生 skill 无 JSON schema(markdown 过程式),对应字段返回 undefined,不抛。
-  loadSkillSchemas(id: string): { input?: object; output?: object } {
+  // 第三层:执行期加载 Skill 输入与统一输出信封；有领域 payload 时内联为同一有效合同。
+  loadSkillSchemas(id: string): LoadedSkillSchemas {
     const entry = this.getSkill(id);
     if (!entry) throw new Error(`skill 未找到或非 active: ${id}`);
+    if (!entry.output_schema) throw new Error(`active skill 缺 output_schema: ${id}`);
     const root = getConfigRoot();
+    const envelope = JSON.parse(readFileSync(join(root, entry.output_schema), 'utf8')) as object;
+    const payload = entry.payload_schema
+      ? JSON.parse(readFileSync(join(root, entry.payload_schema), 'utf8')) as object
+      : undefined;
     return {
       input: entry.input_schema ? JSON.parse(readFileSync(join(root, entry.input_schema), 'utf8')) : undefined,
-      output: entry.output_schema ? JSON.parse(readFileSync(join(root, entry.output_schema), 'utf8')) : undefined,
+      output: composeSkillOutputSchema(envelope, payload),
     };
   }
 }

@@ -68,7 +68,13 @@ import {
   type ToolAdapter,
   type ToolInvokeResult,
 } from '../apps/orchestrator-runtime/src/runtime/tool-adapter.ts';
-import { getConfigRoot, loadEvidencePolicy, setConfigRoot, type ToolManifest } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import {
+  getConfigRoot,
+  hashFile,
+  loadEvidencePolicy,
+  setConfigRoot,
+  type ToolManifest,
+} from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 import {
@@ -487,6 +493,23 @@ class SensitiveBusinessRealAdapter extends CountingRealTavilyAdapter {
   }
 }
 
+function digitalHumanSkillOutput(payload: Record<string, unknown> = {
+  comparison_matrix: [{ competitor: 'A', dimension: '体验', assessment: 'ok', source: 'tool_result' }],
+  differentiation_opportunities: ['verified'],
+  sources: ['https://source.test/article'],
+}): Record<string, unknown> {
+  return {
+    version: 'skill-output-v2',
+    status: 'succeeded',
+    summary: '基于已提供材料完成竞品分析。',
+    findings: [{ id: 'finding-1', statement: '竞品体验存在可验证差异。', confidence: 0.8 }],
+    assumptions: [],
+    limitations: [],
+    recommendations: ['继续用公开来源复核关键差异。'],
+    payload,
+  };
+}
+
 class ExpiringRealAdapter extends CountingRealTavilyAdapter {
   constructor(private readonly expire: () => Promise<void>) {
     super();
@@ -514,11 +537,7 @@ class CountingRealLLM implements LLMClient {
     if (options.context) this.contexts.push(options.context);
     this.calls += 1;
     const data = options.schemaName.startsWith('skill:')
-      ? {
-          comparison_matrix: [{ competitor: 'A', dimension: '体验', assessment: 'ok', source: 'tool_result' }],
-          differentiation_opportunities: ['verified'],
-          sources: ['https://source.test/article'],
-        }
+      ? digitalHumanSkillOutput()
       : { ok: true };
     return {
       data: data as T,
@@ -556,7 +575,7 @@ class EchoingSensitiveRealLLM extends CountingRealLLM {
     if (!options.schemaName.startsWith('skill:')) return result;
     return {
       ...result,
-      data: {
+      data: digitalHumanSkillOutput({
         comparison_matrix: [{
           competitor: 'A',
           dimension: '体验',
@@ -565,7 +584,7 @@ class EchoingSensitiveRealLLM extends CountingRealLLM {
         }],
         differentiation_opportunities: [echoedSecrets.skill],
         sources: ['https://source.test/article'],
-      } as T,
+      }) as T,
     };
   }
 
@@ -586,7 +605,7 @@ class BlockedSensitiveStageLLM extends CountingRealLLM {
     if (this.blockedStage !== 'skill' || !options.schemaName.startsWith('skill:')) return result;
     return {
       ...result,
-      data: {
+      data: digitalHumanSkillOutput({
         comparison_matrix: [{
           competitor: 'A',
           dimension: '体验',
@@ -595,7 +614,7 @@ class BlockedSensitiveStageLLM extends CountingRealLLM {
         }],
         differentiation_opportunities: ['verified'],
         sources: ['https://source.test/article'],
-      } as T,
+      }) as T,
     };
   }
 
@@ -709,7 +728,7 @@ const planSteps: CurrentPlanStep[] = [
       source_step_no: 1,
       source_pointer: '/results/0/title',
     }],
-    expected_outputs: [{ pointer: '/comparison_matrix', description: 'comparison' }],
+    expected_outputs: [{ pointer: '/payload/comparison_matrix', description: 'comparison' }],
     acceptance_criteria: ['uses public evidence'],
     requires_approval: false,
     fallback_actor_ids: [],
@@ -1120,7 +1139,7 @@ test('rejects a future binding before any actor side effect', async () => {
       input_bindings: [{
         target_pointer: '/business_domain',
         source_step_no: 2,
-        source_pointer: '/comparison_matrix',
+        source_pointer: '/payload/comparison_matrix',
       }],
     },
   ];
@@ -1266,6 +1285,13 @@ test('executes the current plan with real Tool provenance and complete model rec
     const evidence: unknown = JSON.parse(readFileSync(evidenceUri, 'utf8'));
     assert.ok(evidence && typeof evidence === 'object' && 'entries' in evidence);
     assert.ok(Array.isArray(evidence.entries));
+    const skillArtifactId = steps[1]?.skillProvenance?.outputArtifactId;
+    assert.equal(typeof skillArtifactId, 'string');
+    for (const entry of evidence.entries) {
+      assertUnknownRecord(entry);
+      assert.equal(entry.kind, 'tool_output');
+      assert.notEqual(entry.artifactId, skillArtifactId);
+    }
     const evidenceEntry = evidence.entries[0];
     assertUnknownRecord(evidenceEntry);
     const toolProvenance = steps[0]?.toolProvenance ?? {};
@@ -1296,7 +1322,7 @@ test('executes the current plan with real Tool provenance and complete model rec
       artifactSchemas.rows.map((row) => [String(row.kind), String(row.schema_version)]),
     );
     assert.equal(schemaVersions.tool_output, 'tool-output-v1');
-    assert.equal(schemaVersions.skill_output, 'skill-output-v1');
+    assert.equal(schemaVersions.skill_output, 'skill-output-v2');
     assert.equal(schemaVersions.evidence_manifest, 'evidence-v1');
     const legacySummaries = await connection.query(
       `SELECT count(*) AS count FROM control_artifacts
@@ -1330,6 +1356,7 @@ test('executes the current plan with real Tool provenance and complete model rec
   assert.match(String(skillProvenance.skillBodyHash), /^sha256:/u);
   assert.match(String(skillProvenance.inputSchemaHash), /^sha256:/u);
   assert.match(String(skillProvenance.outputSchemaHash), /^sha256:/u);
+  assert.match(String(skillProvenance.payloadSchemaHash), /^sha256:/u);
   assert.match(String(skillProvenance.inputHash), /^sha256:/u);
   assert.match(String(skillProvenance.outputHash), /^sha256:/u);
   assert.match(String(skillProvenance.promptHash), /^sha256:/u);
@@ -1975,6 +2002,7 @@ test('persists failed Skill provenance and receipt when output schema validation
   assert.equal(skillStep?.skillProvenance?.modelReceiptId, calls[0]?.id);
   assert.match(String(skillStep?.skillProvenance?.skillBodyHash), /^sha256:/u);
   assert.match(String(skillStep?.skillProvenance?.outputSchemaHash), /^sha256:/u);
+  assert.match(String(skillStep?.skillProvenance?.payloadSchemaHash), /^sha256:/u);
   assert.equal(
     skillStep?.skillProvenance?.outputHash,
     canonicalJsonHash({ comparison_matrix: [] }),
@@ -1999,8 +2027,14 @@ test('Skill provenance capture failure preserves the actor failure and pauses th
     assert.equal(result.failure?.kind, 'server');
     assert.equal(result.failure?.message, 'skill provider unavailable');
     assert.equal((await repository.listAttempts(lease.taskId))[0]?.state, 'paused');
+    const calls = await repository.listModelCalls(lease.attemptId);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.status, 'failed');
     const skillStep = (await repository.listExecutionSteps(lease.attemptId))[1];
     assert.equal(skillStep?.skillProvenance?.status, 'failed');
+    assert.equal(skillStep?.skillProvenance?.modelReceiptId, calls[0]?.id);
+    assert.equal(skillStep?.skillProvenance?.promptHash, calls[0]?.promptHash);
+    assert.equal(skillStep?.skillProvenance?.traceId, calls[0]?.traceId);
     assert.match(String(skillStep?.skillProvenance?.captureFailure), /ENOENT|no such file/iu);
   } finally {
     setConfigRoot(originalRoot);
@@ -2851,7 +2885,7 @@ test('real Tavily runs only through a valid lease and persists real provenance',
   }));
 });
 
-test('failed Skill provenance retains its persisted receipt when config capture then fails', async () => {
+test('Skill provenance retains the contract hashes captured before the provider call', async () => {
   const originalRoot = getConfigRoot();
   const missingRoot = mkdtempSync(join(tmpdir(), 'missing-skill-receipt-root-'));
   class ConfigBreakingAfterSkillResultLLM extends CountingRealLLM {
@@ -2863,6 +2897,15 @@ test('failed Skill provenance retains its persisted receipt when config capture 
   }
 
   try {
+    const skill = new SkillLoader().getSkill(planSteps[1]!.actor_id);
+    assert.ok(skill?.input_schema);
+    assert.ok(skill.output_schema);
+    assert.ok(skill.payload_schema);
+    const expectedSchemaHashes = {
+      input: hashFile(skill.input_schema),
+      output: hashFile(skill.output_schema),
+      payload: hashFile(skill.payload_schema),
+    };
     const { repository, lease } = await claimedExecution(
       new Date(Date.now() + 60_000),
       planSteps.slice(0, 2),
@@ -2873,15 +2916,16 @@ test('failed Skill provenance retains its persisted receipt when config capture 
       new ConfigBreakingAfterSkillResultLLM(),
     ).execute({ lease, expectedModel: 'pinned-model' });
 
-    assert.equal(result.status, 'paused');
-    assert.equal(result.failure?.kind, 'schema');
+    assert.equal(result.status, 'completed');
     const calls = await repository.listModelCalls(lease.attemptId);
     assert.equal(calls.length, 1);
     const receipt = calls[0]!;
     assert.equal(receipt.stage, 'skill');
     const skillStep = (await repository.listExecutionSteps(lease.attemptId))[1];
-    assert.equal(skillStep?.skillProvenance?.status, 'failed');
-    assert.match(String(skillStep?.skillProvenance?.captureFailure), /ENOENT|no such file/iu);
+    assert.equal(skillStep?.skillProvenance?.status, 'succeeded');
+    assert.equal(skillStep?.skillProvenance?.inputSchemaHash, expectedSchemaHashes.input);
+    assert.equal(skillStep?.skillProvenance?.outputSchemaHash, expectedSchemaHashes.output);
+    assert.equal(skillStep?.skillProvenance?.payloadSchemaHash, expectedSchemaHashes.payload);
     assert.equal(skillStep?.skillProvenance?.modelReceiptId, receipt.id);
     assert.equal(skillStep?.skillProvenance?.promptHash, receipt.promptHash);
     assert.equal(skillStep?.skillProvenance?.traceId, receipt.traceId);

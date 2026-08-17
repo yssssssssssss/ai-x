@@ -106,7 +106,7 @@ type StepArtifactKind = 'tool_output' | 'skill_output' | 'llm_output' | 'review_
 
 const STEP_ARTIFACT_SCHEMA_VERSIONS: Record<StepArtifactKind, string> = {
   tool_output: 'tool-output-v1',
-  skill_output: 'skill-output-v1',
+  skill_output: 'skill-output-v2',
   llm_output: 'llm-output-v1',
   review_output: 'review-output-v1',
 };
@@ -174,7 +174,14 @@ class ExecutionSafetyError extends Error {
 }
 
 class SkillOutputSchemaError extends LLMInvocationError {
-  constructor(readonly outputHash: string) {
+  constructor(
+    readonly outputHash: string,
+    readonly schemaHashes: {
+      inputSchemaHash: string | null;
+      outputSchemaHash: string;
+      payloadSchemaHash: string | null;
+    },
+  ) {
     super('schema', false, null, 'skill output failed schema validation');
     this.name = 'SkillOutputSchemaError';
   }
@@ -1082,6 +1089,9 @@ export class LeaseExecutionEngine {
             producedOutputHash: error instanceof SkillOutputSchemaError
               ? error.outputHash
               : producedSkillOutputHash,
+            schemaHashes: error instanceof SkillOutputSchemaError
+              ? error.schemaHashes
+              : undefined,
           });
         }
         await this.dependencies.repository.recordExecutionStep({
@@ -1741,12 +1751,18 @@ export class LeaseExecutionEngine {
     resolvedInput: Record<string, unknown>;
     priorOutputs: EngineSealedStepOutput[];
     producedOutputHash?: string;
+    schemaHashes?: {
+      inputSchemaHash: string | null;
+      outputSchemaHash: string;
+      payloadSchemaHash: string | null;
+    };
   }): Promise<Record<string, unknown>> {
     let receipt: { id: string; promptHash: string; traceId: string | null } | undefined;
     const fallback = (captureFailure: unknown): Record<string, unknown> => ({
       skillBodyHash: null,
-      inputSchemaHash: null,
-      outputSchemaHash: null,
+      inputSchemaHash: input.schemaHashes?.inputSchemaHash ?? null,
+      outputSchemaHash: input.schemaHashes?.outputSchemaHash ?? null,
+      payloadSchemaHash: input.schemaHashes?.payloadSchemaHash ?? null,
       inputHash: hashJson(input.resolvedInput),
       outputHash: input.producedOutputHash ?? null,
       promptHash: receipt?.promptHash ?? null,
@@ -1773,8 +1789,12 @@ export class LeaseExecutionEngine {
       const prompt = `${SKILL_PROMPT_PREFIX}\n${JSON.stringify(stepContract(input.step))}\n\n${body.body}`;
       return {
         skillBodyHash: body.hash,
-        inputSchemaHash: skill.input_schema ? hashFile(skill.input_schema) : null,
-        outputSchemaHash: skill.output_schema ? hashFile(skill.output_schema) : null,
+        inputSchemaHash: input.schemaHashes?.inputSchemaHash
+          ?? (skill.input_schema ? hashFile(skill.input_schema) : null),
+        outputSchemaHash: input.schemaHashes?.outputSchemaHash
+          ?? (skill.output_schema ? hashFile(skill.output_schema) : null),
+        payloadSchemaHash: input.schemaHashes?.payloadSchemaHash
+          ?? (skill.payload_schema ? hashFile(skill.payload_schema) : null),
         inputHash: hashJson(input.resolvedInput),
         outputHash: input.producedOutputHash ?? null,
         promptHash: receipt?.promptHash ?? hashPrompt(prompt, context, `skill:${input.step.actor_id}`),
@@ -1977,6 +1997,12 @@ export class LeaseExecutionEngine {
     if (!skill) throw new ExecutionAuthenticityError(`skill ${input.step.actor_id} is not active`);
     const body = this.dependencies.skillLoader.loadSkillBody(input.step.actor_id);
     const schemas = this.dependencies.skillLoader.loadSkillSchemas(input.step.actor_id);
+    if (!skill.output_schema) throw new ExecutionAuthenticityError(`skill ${input.step.actor_id} has no output contract`);
+    const schemaHashes = {
+      inputSchemaHash: skill.input_schema ? hashFile(skill.input_schema) : null,
+      outputSchemaHash: hashFile(skill.output_schema),
+      payloadSchemaHash: skill.payload_schema ? hashFile(skill.payload_schema) : null,
+    };
     if (skill.input_schema) {
       try {
         this.dependencies.validator.validateFileOrThrow(
@@ -2007,15 +2033,17 @@ export class LeaseExecutionEngine {
         expectedModel: input.expectedModel,
       },
     });
-    if (skill.output_schema) {
-      try {
-        this.dependencies.validator.validateFileOrThrow(
-          join(getConfigRoot(), skill.output_schema),
-          result.data,
-        );
-      } catch {
-        throw new SkillOutputSchemaError(hashJson(redactSensitiveValue(result.data)));
-      }
+    try {
+      this.dependencies.validator.validateSchemaOrThrow(
+        schemas.output,
+        result.data,
+        `skill:${input.step.actor_id}`,
+      );
+    } catch {
+      throw new SkillOutputSchemaError(
+        hashJson(redactSensitiveValue(result.data)),
+        schemaHashes,
+      );
     }
     if (!result.receiptId) {
       throw new MissingModelReceiptError(new Error('successful Skill call has no receipt ID'));
@@ -2026,8 +2054,9 @@ export class LeaseExecutionEngine {
       outputHash: hashJson(redactSensitiveValue(result.data)),
       skillProvenance: {
         skillBodyHash: body.hash,
-        inputSchemaHash: skill.input_schema ? hashFile(skill.input_schema) : null,
-        outputSchemaHash: skill.output_schema ? hashFile(skill.output_schema) : null,
+        inputSchemaHash: schemaHashes.inputSchemaHash,
+        outputSchemaHash: schemaHashes.outputSchemaHash,
+        payloadSchemaHash: schemaHashes.payloadSchemaHash,
         inputHash: hashJson(input.resolvedInput),
         outputHash: hashJson(redactSensitiveValue(result.data)),
         promptHash: result.promptHash,

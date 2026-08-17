@@ -189,14 +189,23 @@ class OfflineEligibleRealLLM implements LLMClient {
     if (options.schemaName.startsWith('skill:')) {
       this.skillContexts.push(structuredClone(options.context ?? {}));
       data = {
-        comparison_matrix: [{
-          competitor: '公开竞品 A',
-          dimension: '产品定位',
-          assessment: '公开来源支持其宠物辅食场景定位',
-          source: 'tool_result',
-        }],
-        differentiation_opportunities: ['按宠物类型与使用场景细分研究样本'],
-        sources: [evidenceUrl],
+        version: 'skill-output-v2',
+        status: 'succeeded',
+        summary: '基于公开来源完成宠物辅食竞品分析。',
+        findings: [{ id: 'finding-1', statement: '公开资料支持竞品场景定位差异。', confidence: 0.9 }],
+        assumptions: [],
+        limitations: [],
+        recommendations: ['按宠物类型与使用场景细分研究样本。'],
+        payload: {
+          comparison_matrix: [{
+            competitor: '公开竞品 A',
+            dimension: '产品定位',
+            assessment: '公开来源支持其宠物辅食场景定位',
+            source: 'tool_result',
+          }],
+          differentiation_opportunities: ['按宠物类型与使用场景细分研究样本'],
+          sources: [evidenceUrl],
+        },
       };
     } else if (options.schemaName === 'research-task-v2') {
       data = {
@@ -697,7 +706,7 @@ function planningResult(
       depends_on: [1],
       input: { business_domain: structuredTask.business_domain },
       input_bindings: [],
-      expected_outputs: [{ pointer: '/comparison_matrix', description: '竞品对比矩阵' }],
+      expected_outputs: [{ pointer: '/payload/comparison_matrix', description: '竞品对比矩阵' }],
       acceptance_criteria: ['分析引用公开来源'],
       requires_approval: false,
       fallback_actor_ids: [],
@@ -710,7 +719,7 @@ function planningResult(
       question_ids: ['competitive-question'],
       depends_on: [2],
       input: { comparison_matrix: null },
-      input_bindings: [{ target_pointer: '/comparison_matrix', source_step_no: 2, source_pointer: '/comparison_matrix' }],
+      input_bindings: [{ target_pointer: '/comparison_matrix', source_step_no: 2, source_pointer: '/payload/comparison_matrix' }],
       expected_outputs: [{ pointer: '/text', description: '研究摘要' }],
       acceptance_criteria: ['摘要覆盖研究问题'],
       requires_approval: false,

@@ -1,7 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getConfigRoot } from '../../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 import {
   hashPrompt,
   type LLMClient,
@@ -261,21 +259,20 @@ export class SkillEvaluator {
         );
       }
 
-      if (skill.output_schema) {
-        try {
-          this.validator.validateFileOrThrow(
-            join(getConfigRoot(), skill.output_schema),
-            generated.data,
-          );
-        } catch (error) {
-          return {
-            ...base,
-            elapsedMs: Date.now() - startedAt,
-            status: 'failed',
-            errorStage: 'schema_validation',
-            errorMessage: errorMessage(error),
-          };
-        }
+      try {
+        this.validator.validateSchemaOrThrow(
+          outputSchema,
+          generated.data,
+          `skill:${skill.id}`,
+        );
+      } catch (error) {
+        return {
+          ...base,
+          elapsedMs: Date.now() - startedAt,
+          status: 'failed',
+          errorStage: 'schema_validation',
+          errorMessage: errorMessage(error),
+        };
       }
     } catch (error) {
       return {

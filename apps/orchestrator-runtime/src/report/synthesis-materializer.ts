@@ -80,11 +80,11 @@ const KIND_BY_ACTOR: Record<SynthesisActorType, string> = {
   reviewer: 'review_output',
 };
 
-const SCHEMA_BY_KIND: Record<string, string> = {
-  tool_output: 'tool-output-v1',
-  skill_output: 'skill-output-v1',
-  llm_output: 'llm-output-v1',
-  review_output: 'review-output-v1',
+const SCHEMAS_BY_KIND: Record<string, readonly string[]> = {
+  tool_output: ['tool-output-v1'],
+  skill_output: ['skill-output-v1', 'skill-output-v2'],
+  llm_output: ['llm-output-v1'],
+  review_output: ['review-output-v1'],
 };
 const EVIDENCE_SERVICE = new EvidenceService();
 
@@ -160,7 +160,8 @@ function assertArtifact(
       `verified Artifact ${artifact.id} does not match step ${output.stepNo}`,
     );
   }
-  if (SCHEMA_BY_KIND[output.kind] && artifact.schemaVersion !== SCHEMA_BY_KIND[output.kind]) {
+  const acceptedSchemas = SCHEMAS_BY_KIND[output.kind];
+  if (acceptedSchemas && !acceptedSchemas.includes(artifact.schemaVersion)) {
     throw new SynthesisMaterializationError(
       'artifact_schema_mismatch',
       `Artifact ${artifact.id} has unexpected schema ${artifact.schemaVersion}`,

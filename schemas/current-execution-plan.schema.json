@@ -184,6 +184,7 @@
         "outputs": { "type": "array", "items": { "type": "string" } },
         "input_schema": { "type": "string" },
         "output_schema": { "type": "string" },
+        "payload_schema": { "type": "string" },
         "entry": { "type": "string" },
         "required_tools": { "type": "array", "items": { "type": "string" } },
         "cost_level": { "type": "string" },

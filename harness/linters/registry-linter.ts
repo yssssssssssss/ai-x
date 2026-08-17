@@ -4,6 +4,7 @@ import {
   loadToolRegistry,
   loadToolManifest,
   fileExists,
+  SKILL_RESULT_ENVELOPE_SCHEMA,
   type SkillRegistryEntry,
   type ToolRegistryEntry,
   type DecisionNode,
@@ -23,7 +24,7 @@ export interface LintIssue {
 }
 
 const SKILL_ACTIVE_REQUIRED: (keyof SkillRegistryEntry)[] = [
-  'id', 'name', 'path', 'when_to_use', 'owner', 'risk_level',
+  'id', 'name', 'path', 'when_to_use', 'owner', 'risk_level', 'output_schema',
 ];
 const TOOL_ACTIVE_REQUIRED: (keyof ToolRegistryEntry)[] = [
   'id', 'name', 'path', 'adapter_type', 'auth_required', 'risk_level',
@@ -73,6 +74,12 @@ function lintSkills(issues: LintIssue[]): void {
     }
     if (s.output_schema && !fileExists(s.output_schema)) {
       issues.push({ level: 'error', target: tgt, message: `output_schema 不存在: ${s.output_schema}` });
+    }
+    if (s.output_schema && s.output_schema !== SKILL_RESULT_ENVELOPE_SCHEMA) {
+      issues.push({ level: 'error', target: tgt, message: `active skill 必须使用统一 output_schema: ${SKILL_RESULT_ENVELOPE_SCHEMA}` });
+    }
+    if (s.payload_schema && !fileExists(s.payload_schema)) {
+      issues.push({ level: 'error', target: tgt, message: `payload_schema 不存在: ${s.payload_schema}` });
     }
     for (const t of s.required_tools ?? []) {
       if (!knownTools.has(t)) {

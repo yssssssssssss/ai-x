@@ -115,25 +115,26 @@ test('skill-runner: skill 不存在时抛错', async () => {
   await assert.rejects(() => runner.run(step, makeCtx()), /ghost/);
 });
 
-test('skill-runner: 无 output_schema 时不做校验、artifact.kind=skill_output', async () => {
+test('skill-runner:使用 effective output schema 校验统一 Skill 输出', async () => {
+  const outputSchema = { type: 'object', required: ['version'] };
   const skillLoader = {
-    getSkill: (id: string) => (id === 's1' ? { id: 's1', name: 'S1' /* 无 output_schema */ } : null),
+    getSkill: (id: string) => (id === 's1' ? { id: 's1', name: 'S1', output_schema: 'envelope.json' } : null),
     loadSkillBody: () => ({ body: 'BODY', hash: 'skill-hash-1', path: 'skills/s1/SKILL.md' }),
-    loadSkillSchemas: () => ({ output: undefined }),
+    loadSkillSchemas: () => ({ output: outputSchema }),
   } as unknown as SkillLoader;
 
   const llm = {
     generateStructured: async () => ({
-      data: { finding: 'x' },
+      data: { version: 'skill-output-v2' },
       tokens: { prompt: 10, completion: 20, total: 30 },
     }),
     generateText: async () => ({ text: '', tokens: { prompt: 0, completion: 0, total: 0 } }),
   } as unknown as LLMClient;
 
-  let validated = false;
+  let validated: unknown;
   const validator = {
-    validateFileOrThrow: () => {
-      validated = true;
+    validateSchemaOrThrow: (schema: object) => {
+      validated = schema;
     },
   } as unknown as SchemaValidator;
 
@@ -141,11 +142,11 @@ test('skill-runner: 无 output_schema 时不做校验、artifact.kind=skill_outp
   const step: PlanStep = { step_no: 2, step_name: 's', actor_type: 'skill', actor_id: 's1' };
   const artifact = await runner.run(step, makeCtx());
 
-  assert.equal(validated, false, '无 output_schema 时不应触发 validator');
+  assert.equal(validated, outputSchema);
   assert.equal(artifact.kind, 'skill_output');
   if (artifact.kind === 'skill_output') {
     assert.equal(artifact.manifestHash, 'skill-hash-1');
-    assert.deepEqual(artifact.output, { finding: 'x' });
+    assert.deepEqual(artifact.output, { version: 'skill-output-v2' });
     assert.equal(artifact.tokens?.total, 30);
   }
 });

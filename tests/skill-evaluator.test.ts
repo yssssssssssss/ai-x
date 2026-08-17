@@ -176,6 +176,10 @@ class FakeValidator {
       throw new Error(`invalid schema: ${path}`);
     }
   }
+
+  validateSchemaOrThrow(_schema: object, data: unknown, label: string): void {
+    this.validateFileOrThrow(label, data);
+  }
 }
 
 function fakeSkillLoader(entry: SkillRegistryEntry = nativeSkill): SkillLoader {
@@ -274,7 +278,7 @@ test('generates from the full Skill and case, validates output, then scores inde
     expectedModel: llm.identity.requestedModel,
   });
 
-  const outputSchemaPath = join(getConfigRoot(), nativeSkill.output_schema!);
+  const outputSchemaPath = `skill:${nativeSkill.id}`;
   const outputValidations = validator.calls.filter(
     ({ path }) => path === outputSchemaPath,
   );
@@ -287,12 +291,12 @@ test('generates from the full Skill and case, validates output, then scores inde
   assert.equal(record.scorecard?.total_score, 100);
 });
 
-test('skips output validation for a KB Skill without output_schema', async () => {
+test('validates a KB Skill through the same effective output contract', async () => {
   const kbSkill = {
     ...nativeSkill,
     id: 'kb-skill',
     name: 'KB Skill',
-    output_schema: undefined,
+    output_schema: 'schemas/skill-result-envelope.schema.json',
     path: 'skills/kb',
     entry: 'skills/kb/SKILL.md',
   };
@@ -307,7 +311,7 @@ test('skips output validation for a KB Skill without output_schema', async () =>
   assert.equal(record.status, 'succeeded');
   assert.deepEqual(
     validator.calls.map(({ path }) => path),
-    [scorecardSchemaPath],
+    [`skill:${kbSkill.id}`, scorecardSchemaPath],
   );
 });
 
@@ -741,7 +745,7 @@ test('returns a generation failure and never scores when generation throws', asy
 });
 
 test('returns a schema failure and never scores when generated output is invalid', async () => {
-  const outputSchemaPath = join(getConfigRoot(), nativeSkill.output_schema!);
+  const outputSchemaPath = `skill:${nativeSkill.id}`;
   const invalidOutput = { answer: 'invalid output' };
   const llm = new FakeLLM([invalidOutput]);
   const validator = new FakeValidator({
