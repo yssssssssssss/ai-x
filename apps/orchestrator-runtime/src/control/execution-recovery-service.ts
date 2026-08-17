@@ -42,7 +42,9 @@ export class ExecutionRecoveryService {
     if (!Number.isFinite(nowMs)) throw new Error('recovery timestamp is invalid');
     const paused: RecoveryExecution[] = [];
     for (const execution of await this.dependencies.store.listExecutions()) {
-      if (execution.taskState !== 'executing' || execution.attemptState !== 'active' || asTime(execution.leaseExpiresAt) > nowMs) continue;
+      if (!['executing', 'reviewing', 'composing_report'].includes(execution.taskState)
+        || execution.attemptState !== 'active'
+        || asTime(execution.leaseExpiresAt) > nowMs) continue;
       await this.dependencies.store.pauseExecution({ taskId: execution.taskId, attemptId: execution.attemptId, reason: 'worker_lost' });
       paused.push(execution);
     }
@@ -82,16 +84,25 @@ export class ControlPlaneExecutionRecoveryStore implements ExecutionRecoveryStor
 }
 
 export class ExecutionRecoveryController {
-  private timer: ReturnType<typeof setInterval> | undefined;
+  private timer: NodeJS.Timeout | undefined;
   private running: Promise<void> | undefined;
-  constructor(private readonly service: ExecutionRecoveryService, private readonly intervalMs = 30_000, private readonly now = () => new Date()) {}
+  constructor(
+    private readonly service: ExecutionRecoveryService,
+    private readonly intervalMs = 30_000,
+    private readonly now = () => new Date(),
+    private readonly onError: (error: unknown) => void = (error) => console.error('execution recovery failed:', error),
+  ) {}
+  private runCycle(): void {
+    if (this.running !== undefined) return;
+    this.running = this.service.recover(this.now())
+      .catch((error) => { this.onError(error); })
+      .finally(() => { this.running = undefined; });
+  }
   async start(): Promise<void> {
     if (this.timer !== undefined) return;
-    await this.service.recover(this.now());
-    this.timer = setInterval(() => {
-      if (this.running !== undefined) return;
-      this.running = this.service.recover(this.now()).finally(() => { this.running = undefined; });
-    }, this.intervalMs);
+    this.runCycle();
+    this.timer = setInterval(() => this.runCycle(), this.intervalMs);
+    await this.running;
   }
   async stop(): Promise<void> {
     clearInterval(this.timer);

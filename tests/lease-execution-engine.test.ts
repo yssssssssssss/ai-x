@@ -2243,6 +2243,7 @@ test('does not skip an optional tool when lease is lost during artifact seal', a
       step_no: 2,
       step_name: '可选内部资料检索',
       actor_id: 'ai-spider-search',
+      depends_on: [1],
     },
     planSteps[2],
     planSteps[3],
@@ -2708,6 +2709,13 @@ test('preserves all Tool attempt receipts when a transient failure is followed b
   assert.equal(provenanceReceipts[0]?.status, 'failed');
   assert.equal(provenanceReceipts[0]?.failure?.kind, 'network');
   assert.equal(provenanceReceipts[1]?.status, 'succeeded');
+  const attemptIds = provenanceReceipts.map((entry) => entry.attemptId);
+  assert.equal(attemptIds.every((attemptId) => typeof attemptId === 'string' && attemptId.length > 0), true);
+  assert.equal(new Set(attemptIds).size, attemptIds.length);
+  const providerReceipts = provenanceReceipts.map((entry) => entry.receipt);
+  assert.equal(providerReceipts.every((receipt) => typeof receipt?.attemptId === 'string' && receipt.attemptId.length > 0), true);
+  assert.equal(new Set(providerReceipts.map((receipt) => receipt?.attemptId)).size, providerReceipts.length);
+  assert.equal(providerReceipts.every((receipt) => receipt?.retryOf === undefined), true);
 });
 test('persists the real Tool receipt when output schema validation fails', async () => {
   const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), [planSteps[0]]);

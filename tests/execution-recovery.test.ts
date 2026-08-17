@@ -1,12 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ExecutionRecoveryService } from '../apps/orchestrator-runtime/src/control/execution-recovery-service.ts';
+import { ExecutionRecoveryController, ExecutionRecoveryService } from '../apps/orchestrator-runtime/src/control/execution-recovery-service.ts';
 
 type RecoveryExecution = {
   taskId: string;
   planVersionId: string;
   attemptId: string;
-  taskState: 'executing' | 'paused' | 'completed' | 'failed' | 'cancelled';
+  taskState: 'executing' | 'reviewing' | 'composing_report' | 'paused' | 'completed' | 'failed' | 'cancelled';
   attemptState: 'active' | 'paused' | 'completed' | 'failed' | 'cancelled';
   leaseExpiresAt: Date;
   failureKind?: string;
@@ -124,6 +124,61 @@ test('recover pauses an expired lease as worker_lost without touching an active 
   assert.equal(live?.taskState, 'executing');
   assert.equal(live?.attemptState, 'active');
   assert.equal(store.calls.pause.some((call) => call.taskId === 'live-task'), false);
+});
+test('recover also pauses expired reviewing and composing attempts', async () => {
+  const { service, store } = recoveryFixture();
+  store.executions.push(
+    {
+      planVersionId: 'review-plan',
+      taskId: 'review-task',
+      attemptId: 'review-attempt',
+      taskState: 'reviewing',
+      attemptState: 'active',
+      leaseExpiresAt: new Date('2026-08-17T00:00:00.000Z'),
+    },
+    {
+      planVersionId: 'compose-plan',
+      taskId: 'compose-task',
+      attemptId: 'compose-attempt',
+      taskState: 'composing_report',
+      attemptState: 'active',
+      leaseExpiresAt: new Date('2026-08-17T00:00:00.000Z'),
+    },
+  );
+
+  await service.recover(new Date('2026-08-17T00:00:01.000Z'));
+
+  assert.deepEqual(
+    store.calls.pause.filter((call) => call.taskId.endsWith('-task')).map((call) => call.attemptId),
+    ['expired-attempt', 'review-attempt', 'compose-attempt'],
+  );
+});
+
+test('recovery controller logs a failed cycle and continues with the next cycle', async () => {
+  let calls = 0;
+  const errors: unknown[] = [];
+  const service = new ExecutionRecoveryService({
+    store: {
+      async listExecutions() {
+        calls += 1;
+        if (calls === 1) throw new Error('transient recovery failure');
+        return [];
+      },
+      async pauseExecution() {},
+      async listArtifactsForAttempt() { return []; },
+      async quarantineArtifact() {},
+      async failArtifact() {},
+      async invalidateArtifact() {},
+    },
+  });
+  const controller = new ExecutionRecoveryController(service, 5, () => new Date(), (error) => errors.push(error));
+  await controller.start();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await controller.stop();
+
+  assert.equal(calls >= 2, true);
+  assert.equal(errors.length, 1);
+  assert.match(String(errors[0]), /transient recovery failure/);
 });
 
 test('recover quarantines STAGING artifacts before failing their registry records', async () => {

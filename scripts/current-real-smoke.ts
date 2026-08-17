@@ -217,6 +217,37 @@ function record(value: unknown, field: string): Record<string, unknown> {
   }
   return value as Record<string, unknown>;
 }
+export interface PersistedIndependentReview {
+  reviewerId: string;
+  authenticated: boolean;
+  independent: boolean;
+  verdict: 'usable' | 'needs_revision' | 'unusable';
+}
+
+export function verifyPersistedIndependentReview(value: unknown): PersistedIndependentReview {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('independent review evidence is missing or invalid');
+  }
+  const candidate = value as Record<string, unknown>;
+  const reviewerId = candidate.reviewerId;
+  const verdict = candidate.verdict;
+  if (
+    typeof reviewerId !== 'string'
+    || reviewerId.trim() === ''
+    || candidate.authenticated !== true
+    || candidate.independent !== true
+    || (verdict !== 'usable' && verdict !== 'needs_revision' && verdict !== 'unusable')
+  ) {
+    throw new Error('independent review evidence is missing or invalid');
+  }
+  return {
+    reviewerId,
+    authenticated: true,
+    independent: true,
+    verdict,
+  };
+}
+
 function array(value: unknown, field: string): unknown[] {
   if (!Array.isArray(value)) throw new Error(`${field} is missing or invalid`);
   return value;
@@ -496,6 +527,11 @@ async function executeRealSmoke(scenario: SemanticGoldScenario): Promise<SmokeRe
   if (nonBlankString(review.verdict, 'reportReview.verdict') !== 'pass') {
     throw new Error('real smoke requires an independently passed report review');
   }
+  const persistedReview = await runtime.repository.findPersistedIndependentReview(attemptId);
+  const independentReview = verifyPersistedIndependentReview(persistedReview);
+  if (independentReview.verdict !== 'usable') {
+    throw new Error('real smoke requires an independently usable persisted review');
+  }
   const visualAssetCount = 'visualAssetManifests' in delivered && Array.isArray(delivered.visualAssetManifests)
     ? delivered.visualAssetManifests.length
     : 0;
@@ -513,12 +549,7 @@ async function executeRealSmoke(scenario: SemanticGoldScenario): Promise<SmokeRe
     actualModel: expectedActualModel,
     coreTool: 'tavily-web-search',
     packageSealed: true,
-    review: {
-      reviewerId: 'report-review-service',
-      authenticated: true,
-      independent: true,
-      verdict: 'usable',
-    },
+    review: independentReview,
     deliverableArtifactId,
     evidenceManifestArtifactId,
     evidenceArtifactIds,

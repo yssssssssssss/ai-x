@@ -2,6 +2,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
+import { resolveCapabilities } from '../apps/orchestrator-runtime/src/planners/capability-resolver.ts';
+import {
+  resolveEvidenceRequirements,
+  resolvePlanningDeliverableSelection,
+} from '../apps/orchestrator-runtime/src/planners/research-planning-service.ts';
+import { ExecutionScheduler } from '../apps/orchestrator-runtime/src/control/execution-scheduler.ts';
+import { resolveExecutionDeliverableContract } from '../apps/orchestrator-runtime/src/report/deliverable-registry.ts';
 import {
   GoldBatchPolicyError,
   GoldBatchService,
@@ -128,6 +136,74 @@ test('every semantic Gold scenario carries profile contracts and exactly five PI
     assert.ok(scenario.minVisualAssets >= 0);
     assert.doesNotMatch(JSON.stringify(scenario), /Bearer |api[_-]?key|password|secret|base64|data:image/i);
   }
+});
+test('every semantic Gold scenario exercises requirement, planning, capability, deliverable, section, Evidence, and scheduling seams', async () => {
+  const professionalId = /^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)*$/u;
+  const calls: string[] = [];
+  for (const scenario of fixture.scenarios) {
+    for (const id of [scenario.id, scenario.profile, scenario.taskType, scenario.expectedDeliverableType, ...scenario.reportSections, ...scenario.forbiddenCapabilities]) {
+      assert.match(id, professionalId, `${scenario.id} contains a non-canonical id`);
+    }
+    const task: ResearchTaskV2 = {
+      version: 'research-task-v2',
+      task_type: scenario.taskType as ResearchTaskV2['task_type'],
+      business_domain: scenario.businessDomain,
+      research_goal: scenario.researchGoal,
+      target_audience: ['Gold reviewer'],
+      scope: [scenario.businessDomain],
+      constraints: [],
+      success_criteria: [{ id: `${scenario.id}-success`, statement: scenario.researchGoal }],
+      expected_deliverables: [...scenario.expectedDeliverableIds],
+      assumptions: [],
+      ambiguities: [],
+      clarification_questions: [],
+      blocking_issues: [],
+      sensitivity: scenario.sensitivity,
+      pii_detected: scenario.piiDetected,
+    };
+    const deliverableIdByTask: Record<ResearchTaskV2['task_type'], string> = {
+      competitive_research: 'competitive_analysis_report',
+      user_research_planning: 'research_plan',
+      voc_diagnosis: 'voc_diagnosis_report',
+      design_audit: 'design_audit_report',
+      a11y_audit: 'accessibility_audit_report',
+    };
+    const executionDeliverableId = deliverableIdByTask[task.task_type];
+    const planned = resolvePlanningDeliverableSelection({ ...task, expected_deliverables: [executionDeliverableId] });
+    assert.equal(planned.deliverableId, executionDeliverableId);
+    const execution = resolveExecutionDeliverableContract(
+      task.task_type,
+      [executionDeliverableId],
+      executionDeliverableId,
+    );
+    assert.equal(execution.entry.id, executionDeliverableId);
+    assert.ok(execution.reportTemplate.sections.some((section) => section.id === 'findings'));
+    assert.ok(resolveEvidenceRequirements(task.task_type, executionDeliverableId as never).length > 0);
+    const capability = resolveCapabilities({
+      task,
+      available_input_roles: [],
+      skills: [{
+        id: `${scenario.profile}-skill`, name: 'Gold capability', path: 'gold', status: 'active',
+        task_types: [task.task_type], inputs: [], outputs: [], required_tools: [scenario.requiredCoreTool], risk_level: 'low',
+      } as never],
+      tools: [{
+        id: scenario.requiredCoreTool, name: 'Gold core tool', path: 'gold', adapter_type: 'tavily',
+        auth_required: true, risk_level: 'low', status: 'active', tier: 'core',
+      }],
+      tool_states: [{ tool_id: scenario.requiredCoreTool, health: 'healthy', real_adapter_qualified: true }],
+      tool_manifests: [{
+        id: scenario.requiredCoreTool, name: 'Gold core tool', adapter_type: 'tavily', auth_required: true,
+        risk_level: 'low', input_schema: 'gold', output_schema: 'gold',
+      }],
+      approval_capabilities: [],
+    });
+    assert.equal(capability.eligible.length, 1);
+    const scheduled = await new ExecutionScheduler({
+      execute: async (step) => { calls.push(`${scenario.id}:${step.key}`); return step.key; },
+    }).schedule({ steps: [{ key: scenario.id, dependsOn: [] }] }, {});
+    assert.equal(scheduled.statuses[scenario.id], 'succeeded');
+  }
+  assert.equal(calls.length, fixture.scenarios.length);
 });
 
 test('GoldBatchService rejects a non-real gateway, model drift, or non-core tool pin', async () => {

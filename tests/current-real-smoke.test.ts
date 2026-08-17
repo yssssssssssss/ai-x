@@ -149,3 +149,26 @@ test('environment documentation and CI expose an explicit current real smoke gat
   assert.match(envExample, /TAVILY_API_KEY=/);
   assert.match(ci, /smoke:current:real/);
 });
+test('real smoke rejects missing or non-independent persisted review evidence', async () => {
+  const smoke = await import('../scripts/current-real-smoke.ts') as {
+    verifyPersistedIndependentReview: (value: unknown) => SmokeReceipt['review'];
+  };
+  assert.throws(() => smoke.verifyPersistedIndependentReview(null), /independent review evidence/);
+  assert.throws(() => smoke.verifyPersistedIndependentReview({
+    reviewerId: 'reviewer-1',
+    authenticated: true,
+    independent: false,
+    verdict: 'usable',
+  }), /independent review evidence/);
+  assert.deepEqual(smoke.verifyPersistedIndependentReview({
+    reviewerId: 'reviewer-1',
+    authenticated: true,
+    independent: true,
+    verdict: 'usable',
+  }), {
+    reviewerId: 'reviewer-1',
+    authenticated: true,
+    independent: true,
+    verdict: 'usable',
+  });
+});

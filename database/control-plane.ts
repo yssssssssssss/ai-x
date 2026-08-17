@@ -319,6 +319,13 @@ function artifactFromRow(row: Record<string, unknown>): ControlArtifact {
 }
 
 export interface ControlTaskDetail extends ControlTask { conversationId: string; originalInput: string; ownerUserId: string; conversationOwnerUserId: string; structuredTask: unknown; activeRequirementVersionId: string | null; }
+export interface PersistedIndependentReview {
+  reviewerId: string;
+  authenticated: boolean;
+  independent: boolean;
+  verdict: string;
+}
+
 
 function requirementVersionFromRow(row: Record<string, unknown>): ControlRequirementVersion {
   return {
@@ -2651,6 +2658,36 @@ export class ControlPlaneRepository {
         status: asString(row.status, 'status'),
         failure: asRecord(row.failure_json),
       }));
+    } finally {
+      connection.release();
+    }
+  }
+  async findPersistedIndependentReview(attemptId: string): Promise<PersistedIndependentReview | null> {
+    const connection = await this.database.connect();
+    try {
+      const result = await connection.query(
+        `SELECT review.reviewer_user_id, reviewer.status AS reviewer_status,
+                review.independence_json, review.verdict
+         FROM gold_reviews AS review
+         JOIN users AS reviewer ON reviewer.id = review.reviewer_user_id
+         WHERE review.attempt_id = $1
+         ORDER BY review.created_at DESC
+         LIMIT 1`,
+        [attemptId],
+      );
+      const row = result.rows[0];
+      if (!row) return null;
+      const independence = asRecord(row.independence_json);
+      const independent = independence !== null
+        && independence.capabilityOwner === false
+        && independence.operator === false
+        && independence.artifactEditor === false;
+      return {
+        reviewerId: asString(row.reviewer_user_id, 'reviewer_user_id'),
+        authenticated: row.reviewer_status === 'active',
+        independent,
+        verdict: asString(row.verdict, 'verdict'),
+      };
     } finally {
       connection.release();
     }

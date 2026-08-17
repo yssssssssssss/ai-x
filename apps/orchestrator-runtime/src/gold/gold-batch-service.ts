@@ -24,7 +24,13 @@ export interface GoldBatchStore {
   getSlots(batchId: string): Promise<Array<{ slotNo: number; attemptId: string | null; state: string; infraRetries: number }>>;
   updateSlot(batchId: string, slotNo: number, patch: Partial<{ attemptId: string | null; state: string; infraRetries: number }>): Promise<void>;
   updateBatch(batchId: string, patch: Partial<{ state: string; decision: string | null }>): Promise<void>;
-  appendReview(batchId: string, review: { attemptId: string; reviewerId: string; verdict: string }): Promise<void>;
+  appendReview(batchId: string, review: {
+    attemptId: string;
+    reviewerId: string;
+    authenticated: boolean;
+    independence: { capabilityOwner: boolean; operator: boolean; artifactEditor: boolean };
+    verdict: string;
+  }): Promise<void>;
   getReviews(batchId: string): Promise<Array<{ attemptId: string; reviewerId: string; verdict: string }>>;
 }
 
@@ -134,7 +140,13 @@ export class GoldBatchService {
     if (!slots.some((slot) => slot.attemptId === input.attemptId)) throw new GoldBatchPolicyError('attempt is not in this batch');
     const reviews = await this.store.getReviews(input.batchId);
     if (reviews.some((review) => review.attemptId === input.attemptId)) throw new GoldBatchPolicyError('attempt already has a review');
-    await this.store.appendReview(input.batchId, input);
+    await this.store.appendReview(input.batchId, {
+      attemptId: input.attemptId,
+      reviewerId: input.reviewerId,
+      authenticated: true,
+      independence: input.independence,
+      verdict: input.verdict,
+    });
   }
 
   async decide(input: { batchId: string }): Promise<GoldDecision> {
