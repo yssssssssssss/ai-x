@@ -695,6 +695,7 @@ test('Current planning assembles Task8 graph and Task9 real-adapter capability s
   assert.ok(llm.calls.some((call) => call.schemaName === 'problem-graph'));
   const candidateCall = llm.calls.find((call) => call.schemaName === 'current-plan-candidates');
   assert.ok(candidateCall);
+  assert.match(candidateCall.prompt, /fallback_actor_ids 必须为空数组/);
   const candidateContext = candidateCall.context as {
     problem_graph: ProblemGraph;
     capability_resolution: CapabilityResolution;

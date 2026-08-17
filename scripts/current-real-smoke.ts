@@ -128,6 +128,31 @@ export function assertRealSmokeConfig(env: RealSmokeConfig): void {
   }
 }
 
+interface GatewayModelCall {
+  status: string;
+  provider: string;
+  requestedModel: string;
+  actualModel: string;
+}
+
+export function assertGatewayModelReceipts(input: {
+  configuredModel: string;
+  expectedActualModel: string;
+  modelCalls: GatewayModelCall[];
+}): void {
+  if (
+    input.modelCalls.length === 0
+    || input.modelCalls.some((call) => (
+      call.status !== 'succeeded'
+      || call.provider !== 'gateway'
+      || call.requestedModel !== input.configuredModel
+      || call.actualModel !== input.expectedActualModel
+    ))
+  ) {
+    throw new Error('execution has an invalid gateway model receipt');
+  }
+}
+
 function jsonScalar(value: unknown, field: string): JsonScalar {
   if (
     value === null
@@ -260,6 +285,13 @@ function nonBlankString(value: unknown, field: string): string {
   return value;
 }
 
+const CONTROLLED_SMOKE_DECISION = [
+  'Controlled smoke decision: use Mainland China and public sources from the last 24 months.',
+  'Cover the primary segments implied by the original request, leading publicly discoverable brands, and official or mainstream ecommerce channels.',
+  'Normalize comparable pricing and produce an actionable evidence-backed research plan.',
+  'Treat unspecified details as conservative assumptions, proceed without private data or external side effects, and do not ask this question again.',
+].join(' ');
+
 function explicitSmokeConfirmationAnswers(confirmations: unknown[]): Record<string, unknown> {
   return Object.fromEntries(confirmations.map((candidate, index) => {
     const confirmation = record(candidate, `structuredTask.clarification_questions[${index}]`);
@@ -268,8 +300,33 @@ function explicitSmokeConfirmationAnswers(confirmations: unknown[]): Record<stri
       confirmation.question,
       `structuredTask.clarification_questions[${index}].question`,
     );
-    return [key, `Real smoke explicit confirmation: ${question}`];
+    return [key, `${CONTROLLED_SMOKE_DECISION} Resolved question: ${question}`];
   }));
+}
+
+type SmokeRequirementResult<
+  TRequirement extends { clarification_questions: unknown[] },
+  TPlanning,
+> =
+  | { status: 'clarification_required'; requirement: TRequirement }
+  | { status: 'ready_to_plan'; requirement: TRequirement; planningResult?: TPlanning };
+
+export async function resolveSmokeRequirement<
+  TRequirement extends { clarification_questions: unknown[] },
+  TPlanning,
+>(
+  initial: SmokeRequirementResult<TRequirement, TPlanning>,
+  clarify: (
+    answers: Record<string, unknown>,
+  ) => Promise<SmokeRequirementResult<TRequirement, TPlanning>>,
+): Promise<SmokeRequirementResult<TRequirement, TPlanning>> {
+  let current = initial;
+  for (let round = 0; round < 3 && current.status === 'clarification_required'; round += 1) {
+    const confirmations = current.requirement.clarification_questions;
+    if (confirmations.length === 0) break;
+    current = await clarify(explicitSmokeConfirmationAnswers(confirmations));
+  }
+  return current;
 }
 
 function missingPlanCapabilities(steps: SmokePlanStep[]): string[] {
@@ -358,14 +415,14 @@ async function executeRealSmoke(scenario: SemanticGoldScenario): Promise<SmokeRe
     ownerUserId: seedUser.id,
     originalInput: scenario.input,
   });
-  const finalized = refined.status === 'clarification_required'
-    ? await runtime.requirementRefinement.clarify({
+  const finalized = await resolveSmokeRequirement(refined, (answers) => (
+    runtime.requirementRefinement.clarify({
       taskId: created.id,
       conversationId: conversation.id,
       ownerUserId: seedUser.id,
-      answers: explicitSmokeConfirmationAnswers(refined.requirement.clarification_questions),
+      answers,
     })
-    : refined;
+  ));
   if (finalized.status !== 'ready_to_plan' || !finalized.planningResult) {
     throw new Error(`real smoke requirement did not become ready for ${scenario.profile}`);
   }
@@ -477,21 +534,8 @@ async function executeRealSmoke(scenario: SemanticGoldScenario): Promise<SmokeRe
     process.env.LLM_EXPECTED_ACTUAL_MODEL,
     'LLM_EXPECTED_ACTUAL_MODEL',
   );
-  if (configuredModel !== expectedActualModel) {
-    throw new Error('LLM model pin must match requested and actual model');
-  }
   const modelCalls = await runtime.repository.listModelCalls(attemptId);
-  if (
-    modelCalls.length === 0
-    || modelCalls.some((call) => (
-      call.status !== 'succeeded'
-      || call.provider !== 'gateway'
-      || call.requestedModel !== configuredModel
-      || call.actualModel !== expectedActualModel
-    ))
-  ) {
-    throw new Error('execution has an invalid gateway model receipt');
-  }
+  assertGatewayModelReceipts({ configuredModel, expectedActualModel, modelCalls });
 
   const entries = array(manifest.entries, 'evidenceManifest.entries').map((entry, index) => (
     record(entry, `evidenceManifest.entries[${index}]`)

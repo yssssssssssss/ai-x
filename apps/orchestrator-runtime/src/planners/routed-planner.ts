@@ -655,6 +655,7 @@ export class RoutedPlanner implements PlanStrategy {
       prompt:
         `基于 finalized ResearchTaskV2、ProblemGraph、Evidence Policy 和 eligible capability shortlist 生成 depth/speed 两份 Current 候选。` +
         `每个 step 必须精确包含 step_no、step_name、actor_type、actor_id、question_ids、depends_on、input、input_bindings、expected_outputs、acceptance_criteria、requires_approval、fallback_actor_ids。` +
+        `fallback_actor_ids 必须为空数组，当前执行器不支持 fallback 调度。` +
         `Skill 的 required_tools 必须作为更早的 Tool step；所有引用必须真实存在；不得使用 capability_resolution.rejected 中的 actor。`,
       schema: currentPlanProposalSchema,
       schemaName: 'current-plan-candidates',
