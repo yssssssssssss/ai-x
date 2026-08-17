@@ -103,12 +103,14 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
           <div className={`chat-column${deliverable?.presentationMode === 'multimodal' ? ' chat-column-report' : ''}`} aria-live="polite">
             {phase === 'idle' && <Welcome onPick={flow.submitInput} />}
             {clarification && phase === 'clarifying' && (
-              <CurrentStage1Clarify
-                response={clarification}
-                onSubmit={submitClarification}
-                disabled={clarificationSubmitting}
-                error={error}
-              />
+              <>
+                {error && <ErrorCard msg={error} />}
+                <CurrentStage1Clarify
+                  response={clarification}
+                  onSubmit={submitClarification}
+                  disabled={clarificationSubmitting}
+                />
+              </>
             )}
 
             {originalInput && phase !== 'idle' && <UserBubble text={originalInput} />}
