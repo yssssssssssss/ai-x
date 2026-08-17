@@ -13,6 +13,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { FsSafeError, type FsSafeErrorCode } from '@openclaw/fs-safe';
 import type { SkillRegistryEntry } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 import { AgentRuntime } from '../apps/orchestrator-runtime/src/runtime/agent-runtime.ts';
 import { CheckpointStore } from '../apps/orchestrator-runtime/src/runtime/checkpoint-store.ts';
@@ -168,6 +169,10 @@ function evaluationCaseHash(casesDir: string, skillId: string): string {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function fsSafeFailure(...codes: FsSafeErrorCode[]) {
+  return (error: unknown): boolean => error instanceof FsSafeError && codes.includes(error.code);
 }
 
 function kbMapping(skillId: string): SkillKnowledgeMapping {
@@ -1824,7 +1829,7 @@ test('rejects a symlink Skill directory without writing through to its target', 
         evaluator: { evaluate: async (loadedCase) => successRecord(loadedCase) },
       },
     ),
-    /symbolic link|symlink/i,
+    fsSafeFailure('symlink', 'path-alias'),
   );
   assert.deepEqual(readdirSync(externalTarget), []);
 });
@@ -1857,7 +1862,7 @@ test('rejects a Skill directory swapped to an external symlink while awaiting ev
         },
       },
     ),
-    /symbolic link|symlink|escapes/i,
+    fsSafeFailure('symlink', 'path-alias'),
   );
 
   assert.equal(existsSync(join(displacedDirectory, 'input.json')), true);
@@ -1891,7 +1896,7 @@ test('rejects a run directory swapped to an external symlink while awaiting eval
         },
       },
     ),
-    /symbolic link|symlink|path mismatch|escapes/i,
+    fsSafeFailure('symlink', 'path-alias', 'path-mismatch'),
   );
 
   assert.equal(
@@ -2191,7 +2196,7 @@ test('stale recovery old release does not delete a replacement lock owner', asyn
 test('keeps manifest running when summary publication fails', async () => {
   const setup = fixture(['alpha']);
   const runDir = join(setup.outputRoot, 'summary-failure');
-  mkdirSync(join(runDir, `summary.md.tmp-${process.pid}`), { recursive: true });
+  mkdirSync(join(runDir, 'summary.md'), { recursive: true });
 
   await assert.rejects(
     runEvaluationBatch(
@@ -2207,7 +2212,7 @@ test('keeps manifest running when summary publication fails', async () => {
         evaluator: { evaluate: async (loadedCase) => successRecord(loadedCase) },
       },
     ),
-    /EISDIR/,
+    fsSafeFailure('not-file'),
   );
 
   const manifest = readJson<EvaluationManifest>(join(runDir, 'manifest.json'));
