@@ -16,6 +16,7 @@ import {
   beginClarificationSubmission,
   buildConfirmationAnswers,
   createClarificationSubmissionState,
+  createRequestId,
   executionStepsToExecLog,
   hydrateCurrentTask,
   settleClarificationSubmission,
@@ -251,7 +252,7 @@ export function useTaskFlow() {
     const started = beginClarificationSubmission(
       clarificationSubmission.current,
       { taskId: clarification.task.id, ...input },
-      () => ({ requestId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID() }),
+      () => ({ requestId: createRequestId(), idempotencyKey: createRequestId() }),
     );
     clarificationSubmission.current = started.state;
     if (!started.request) return;
@@ -306,7 +307,7 @@ export function useTaskFlow() {
       const selected = await api.selectControlPlan(candidatesResp.task.id, {
         expectedVersion: stateVersion,
         planVersionId,
-        idempotencyKey: crypto.randomUUID(),
+        idempotencyKey: createRequestId(),
       });
       setStateVersion(selected.stateVersion);
       setPlan(planView(candidatesResp, candidate));
@@ -350,7 +351,7 @@ export function useTaskFlow() {
     const result = await api.executeControlPlan(candidatesResp.task.id, {
       expectedVersion: version,
       planVersionId: selectedCandidate.planVersionId,
-      idempotencyKey: crypto.randomUUID(),
+      idempotencyKey: createRequestId(),
     });
     await finishExecution(result);
   }
@@ -387,7 +388,7 @@ export function useTaskFlow() {
         planVersionId: selectedCandidate.planVersionId,
         confirmationAnswers: answers,
         inputValues,
-        idempotencyKey: crypto.randomUUID(),
+        idempotencyKey: createRequestId(),
       });
       setStateVersion(confirmed.stateVersion);
       if (confirmed.state === 'ready') {
@@ -413,7 +414,7 @@ export function useTaskFlow() {
         expectedVersion: stateVersion,
         action,
         failedStepNo: exec?.failedStepNo,
-        idempotencyKey: crypto.randomUUID(),
+        idempotencyKey: createRequestId(),
       });
       setStateVersion(resumed.stateVersion);
       try {

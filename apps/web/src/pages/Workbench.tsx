@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, type User, type TaskSummary, type TaskDetail, type PlanStep, type PlanProgress, ApiError } from '../api/client.ts';
+import { api, type User, type TaskDetail, type PlanStep, type PlanProgress, ApiError } from '../api/client.ts';
+import { mergeTaskHistory, type HistoryTaskSummary } from '../current-flow-state.ts';
 import { useTaskFlow } from '../hooks/useTaskFlow.ts';
 import { Sidebar } from '../components/Sidebar.tsx';
 import { Composer } from '../components/Composer.tsx';
@@ -16,17 +17,22 @@ type View = 'task' | 'labs' | 'history';
 
 export function Workbench({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [view, setView] = useState<View>('task');
-  const [history, setHistory] = useState<TaskSummary[]>([]);
+  const [history, setHistory] = useState<HistoryTaskSummary[]>([]);
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState(''); // 历史打开失败(与任务流 error 分离)
 
   const refreshHistory = useCallback(() => {
-    api.listTasks().then((r) => setHistory(r.tasks)).catch(() => {});
+    void Promise.allSettled([api.listTasks(), api.listControlTasks()]).then(([legacy, current]) => {
+      setHistory(mergeTaskHistory(
+        legacy.status === 'fulfilled' ? legacy.value.tasks : [],
+        current.status === 'fulfilled' ? current.value.tasks : [],
+      ));
+    });
   }, []);
   useEffect(refreshHistory, [refreshHistory]);
 
-  // 新任务走 Current 同页主链；侧栏历史仍仅刷新 Legacy 只读任务。
+  // 新任务和 Current 历史走同一恢复主链；Legacy 历史保持只读。
   const flow = useTaskFlow();
   const {
     phase,
@@ -58,6 +64,12 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
   }
 
   async function openTask(id: string) {
+    const task = history.find((item) => item.id === id);
+    if (task?.kind === 'current') {
+      localStorage.setItem('ur_current_task_id', task.id);
+      window.location.reload();
+      return;
+    }
     setView('history'); setDetail(null); setDetailLoading(true); setDetailError('');
     try {
       setDetail(await api.taskDetail(id));
@@ -91,7 +103,12 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
           <div className={`chat-column${deliverable?.presentationMode === 'multimodal' ? ' chat-column-report' : ''}`} aria-live="polite">
             {phase === 'idle' && <Welcome onPick={flow.submitInput} />}
             {clarification && phase === 'clarifying' && (
-              <CurrentStage1Clarify response={clarification} onSubmit={submitClarification} disabled={clarificationSubmitting} />
+              <CurrentStage1Clarify
+                response={clarification}
+                onSubmit={submitClarification}
+                disabled={clarificationSubmitting}
+                error={error}
+              />
             )}
 
             {originalInput && phase !== 'idle' && <UserBubble text={originalInput} />}
@@ -352,7 +369,7 @@ function AwaitingApprovalNotice() {
 function CurrentHistoryNotice() {
   return (
     <aside style={{ color: 'var(--text-faint)', fontSize: 12, padding: '4px 2px 18px' }}>
-      Current 终态可在本浏览器刷新恢复；侧栏历史仍是 Legacy 只读记录，不提供 Current 历史列表。
+      Current 任务会保留在侧栏历史中；点击即可恢复最近状态和报告。
     </aside>
   );
 }

@@ -209,6 +209,16 @@ export const api = {
     headers: { 'Idempotency-Key': body.idempotencyKey },
   }),
   listTasks: () => req<{ tasks: TaskSummary[] }>('/tasks'),
+  listControlTasks: () => req<{
+    kind: 'current';
+    tasks: Array<{
+      id: string;
+      originalInput: string;
+      taskType: string | null;
+      state: string;
+      createdAt: string;
+    }>;
+  }>('/control-tasks'),
   taskDetail: (id: string) =>
     req<TaskDetail>(`/tasks/${id}`),
   feedback: (id: string, b: { rating?: number; adopted?: boolean; comment?: string }) =>

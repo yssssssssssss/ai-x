@@ -13,6 +13,7 @@ import {
   createControlTasksRouter,
   type ControlTasksRuntime,
 } from '../apps/agent-api/src/routes/control-tasks.ts';
+import { TaskWorkflowService } from '../apps/orchestrator-runtime/src/control/task-workflow.ts';
 import type { CurrentPlanningResponse } from '../apps/agent-api/src/routes/control-planning.ts';
 import { ControlArtifactStore } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
 import type {
@@ -127,6 +128,7 @@ class ScopedIntegrationDatabase implements MigrationDatabase {
 
 class OfflineRealTavilyAdapter implements ToolAdapter {
   readonly adapterType = 'tavily' as const;
+
   readonly implementationId = 'offline-real-tavily-fixture-v1';
   readonly executionMode = 'real' as const;
   calls = 0;
@@ -1015,6 +1017,69 @@ after(async () => {
   restoreEnvironment('JWT_SECRET', originalJwtSecret);
   restoreEnvironment('PGOPTIONS', originalPgOptions);
   if (errors.length) throw new AggregateError(errors, 'control API integration cleanup failed');
+});
+
+test('GET /api/control-tasks lists only tasks owned by the authenticated user', async () => {
+  const ownerTask = await repository.createTask({
+    conversationId,
+    ownerUserId,
+    originalInput: `owner-history-${randomUUID()}`,
+    taskType: 'competitive_research',
+    structuredTask: { task_type: 'competitive_research' },
+    state: 'completed',
+  });
+  const connection = await scopedDatabase.connect();
+  let foreignConversationId = '';
+  try {
+    const result = await connection.query(
+      `INSERT INTO conversations (owner_user_id, title) VALUES ($1, 'foreign history') RETURNING id`,
+      [foreignUserId],
+    );
+    foreignConversationId = String(result.rows[0]?.id);
+  } finally {
+    connection.release();
+  }
+  const foreignTask = await repository.createTask({
+    conversationId: foreignConversationId,
+    ownerUserId: foreignUserId,
+    originalInput: `foreign-history-${randomUUID()}`,
+    taskType: 'design_audit',
+    structuredTask: { task_type: 'design_audit' },
+    state: 'completed',
+  });
+  const app = controlTasksApp({
+    repository,
+    workflow: new TaskWorkflowService(repository),
+    getDeliverable: async () => null,
+  });
+  const local = await listenLocalApp(app);
+  try {
+    const unauthorized = await fetch(`${local.baseUrl}/api/control-tasks`);
+    assert.equal(unauthorized.status, 401);
+
+    const ownerResponse = await fetch(`${local.baseUrl}/api/control-tasks`, {
+      headers: { authorization: `Bearer ${signToken({ userId: ownerUserId, email: 'owner@test.local' })}` },
+    });
+    assert.equal(ownerResponse.status, 200, await ownerResponse.clone().text());
+    const ownerBody = await ownerResponse.json() as {
+      kind: string;
+      tasks: Array<{ id: string; originalInput: string; taskType: string | null; state: string; createdAt: string }>;
+    };
+    assert.equal(ownerBody.kind, 'current');
+    assert.ok(ownerBody.tasks.some((task) => task.id === ownerTask.id));
+    assert.equal(ownerBody.tasks.some((task) => task.id === foreignTask.id), false);
+    assert.ok(ownerBody.tasks.every((task) => task.originalInput && task.state && task.createdAt));
+
+    const foreignResponse = await fetch(`${local.baseUrl}/api/control-tasks`, {
+      headers: { authorization: `Bearer ${signToken({ userId: foreignUserId, email: 'foreign@test.local' })}` },
+    });
+    assert.equal(foreignResponse.status, 200, await foreignResponse.clone().text());
+    const foreignBody = await foreignResponse.json() as { tasks: Array<{ id: string }> };
+    assert.ok(foreignBody.tasks.some((task) => task.id === foreignTask.id));
+    assert.equal(foreignBody.tasks.some((task) => task.id === ownerTask.id), false);
+  } finally {
+    await closeLocalServer(local.server);
+  }
 });
 
 test('production control runtime returns the revised final deliverable ID for pass and pause review outcomes', async () => {

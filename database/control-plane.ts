@@ -319,6 +319,13 @@ function artifactFromRow(row: Record<string, unknown>): ControlArtifact {
 }
 
 export interface ControlTaskDetail extends ControlTask { conversationId: string; originalInput: string; ownerUserId: string; conversationOwnerUserId: string; structuredTask: unknown; activeRequirementVersionId: string | null; }
+export interface ControlTaskSummary {
+  id: string;
+  originalInput: string;
+  taskType: string | null;
+  state: ControlTaskState;
+  createdAt: Date;
+}
 export interface PersistedIndependentReview {
   reviewerId: string;
   authenticated: boolean;
@@ -353,6 +360,16 @@ function controlTaskDetailFromRow(row: Record<string, unknown>): ControlTaskDeta
     activePlanVersionId: typeof row.active_plan_version_id === 'string' ? row.active_plan_version_id : null,
     currentAttemptId: typeof row.current_attempt_id === 'string' ? row.current_attempt_id : null,
     activeRequirementVersionId: typeof row.active_requirement_version_id === 'string' ? row.active_requirement_version_id : null,
+  };
+}
+
+function controlTaskSummaryFromRow(row: Record<string, unknown>): ControlTaskSummary {
+  return {
+    id: asString(row.id, 'id'),
+    originalInput: asString(row.original_input, 'original_input'),
+    taskType: typeof row.task_type === 'string' ? row.task_type : null,
+    state: asString(row.state, 'state') as ControlTaskState,
+    createdAt: asDate(row.created_at, 'created_at'),
   };
 }
 
@@ -1941,6 +1958,29 @@ export class ControlPlaneRepository {
       connection.release();
     }
   }
+  async listTasksForOwner(input: {
+    ownerUserId: string;
+    limit?: number;
+  }): Promise<ControlTaskSummary[]> {
+    const connection = await this.database.connect();
+    try {
+      const limit = Math.min(Math.max(input.limit ?? 50, 1), 100);
+      const result = await connection.query(
+        `SELECT task.id, task.original_input, task.task_type, task.state, task.created_at
+         FROM control_tasks AS task
+         JOIN conversations AS conversation ON conversation.id = task.conversation_id
+         WHERE task.owner_user_id = $1
+           AND conversation.owner_user_id = $1
+         ORDER BY task.created_at DESC, task.id DESC
+         LIMIT $2`,
+        [input.ownerUserId, limit],
+      );
+      return result.rows.map(controlTaskSummaryFromRow);
+    } finally {
+      connection.release();
+    }
+  }
+
   async getTaskDetail(taskId: string): Promise<ControlTaskDetail | null> {
     const connection = await this.database.connect();
     try {

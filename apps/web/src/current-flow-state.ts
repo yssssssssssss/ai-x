@@ -3,7 +3,7 @@ import type {
   ControlPlanCandidatesResponse,
   CurrentPlanCandidate,
 } from '../../../packages/api-contract/control-workflow.ts';
-import type { ExecLogRow } from '../../../packages/api-contract/http.ts';
+import type { ExecLogRow, TaskSummary } from '../../../packages/api-contract/http.ts';
 
 export interface ConfirmationRequirement {
   key: string;
@@ -12,6 +12,54 @@ export interface ConfirmationRequirement {
 }
 
 export type ReportState = 'idle' | 'loading' | 'ready' | 'report-loading-error';
+export interface CurrentHistoryTaskSummary {
+  id: string;
+  originalInput: string;
+  taskType: string | null;
+  state: string;
+  createdAt: string;
+}
+
+export interface HistoryTaskSummary extends TaskSummary {
+  kind: 'legacy' | 'current';
+}
+
+export function mergeTaskHistory(
+  legacyTasks: TaskSummary[],
+  currentTasks: CurrentHistoryTaskSummary[],
+): HistoryTaskSummary[] {
+  const history: HistoryTaskSummary[] = [
+    ...legacyTasks.map((task) => ({ ...task, kind: 'legacy' as const })),
+    ...currentTasks.map((task) => ({
+      kind: 'current' as const,
+      id: task.id,
+      original_input: task.originalInput,
+      task_type: task.taskType,
+      status: task.state,
+      created_at: task.createdAt,
+    })),
+  ];
+  return history.sort((left, right) => {
+    const leftTime = Date.parse(left.created_at ?? '');
+    const rightTime = Date.parse(right.created_at ?? '');
+    return (Number.isNaN(rightTime) ? 0 : rightTime) - (Number.isNaN(leftTime) ? 0 : leftTime);
+  });
+}
+export interface RequestIdCrypto {
+  randomUUID?: () => string;
+  getRandomValues(values: Uint8Array): Uint8Array;
+}
+
+export function createRequestId(source: RequestIdCrypto = globalThis.crypto): string {
+  if (typeof source.randomUUID === 'function') return source.randomUUID();
+  const bytes = source.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+
 
 export interface CompletedExecution {
   attemptId: string;

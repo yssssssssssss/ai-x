@@ -57,6 +57,26 @@ interface ClarificationSubmissionRequest {
   idempotencyKey: string;
 }
 
+interface LegacyHistoryTask {
+  id: string;
+  original_input: string;
+  task_type: string | null;
+  status: string;
+  created_at?: string;
+}
+
+interface CurrentHistoryTask {
+  id: string;
+  originalInput: string;
+  taskType: string | null;
+  state: string;
+  createdAt: string;
+}
+
+interface HistoryTask extends LegacyHistoryTask {
+  kind: 'legacy' | 'current';
+}
+
 interface CurrentFlowStateModule {
   buildConfirmationAnswers(
     requirements: ConfirmationRequirement[],
@@ -82,6 +102,14 @@ interface CurrentFlowStateModule {
     requestId: string,
     outcome: 'success' | 'failure',
   ): { state: ClarificationSubmissionState; accepted: boolean };
+  mergeTaskHistory(
+    legacyTasks: LegacyHistoryTask[],
+    currentTasks: CurrentHistoryTask[],
+  ): HistoryTask[];
+  createRequestId(source: {
+    randomUUID?: () => string;
+    getRandomValues(values: Uint8Array): Uint8Array;
+  }): string;
 }
 interface ClarificationQuestion {
   key: string;
@@ -122,11 +150,71 @@ async function loadCurrentFlowStateModule(): Promise<CurrentFlowStateModule> {
     'retryDeliverable',
     'buildClarificationSubmission',
     'missingBlockingAnswers',
+    'mergeTaskHistory',
+    'createRequestId',
   ]) {
     assert.equal(typeof moduleExports[exportName], 'function', `${exportName} must be exported`);
   }
   return moduleExports as unknown as CurrentFlowStateModule;
 }
+test('merges Legacy and Current history by newest creation time while preserving source kind', async () => {
+  const { mergeTaskHistory } = await loadCurrentFlowStateModule();
+  const history = mergeTaskHistory(
+    [{
+      id: 'legacy-task',
+      original_input: 'Legacy history',
+      task_type: 'legacy_research',
+      status: 'completed',
+      created_at: '2026-08-16T09:00:00.000Z',
+    }],
+    [{
+      id: 'current-task',
+      originalInput: 'Current history',
+      taskType: 'design_audit',
+      state: 'completed',
+      createdAt: '2026-08-17T09:00:00.000Z',
+    }],
+  );
+
+  assert.deepEqual(history, [
+    {
+      kind: 'current',
+      id: 'current-task',
+      original_input: 'Current history',
+      task_type: 'design_audit',
+      status: 'completed',
+      created_at: '2026-08-17T09:00:00.000Z',
+    },
+    {
+      kind: 'legacy',
+      id: 'legacy-task',
+      original_input: 'Legacy history',
+      task_type: 'legacy_research',
+      status: 'completed',
+      created_at: '2026-08-16T09:00:00.000Z',
+    },
+  ]);
+});
+test('creates request IDs with native randomUUID when available', async () => {
+  const { createRequestId } = await loadCurrentFlowStateModule();
+  assert.equal(createRequestId({
+    randomUUID: () => 'native-request-id',
+    getRandomValues: (values) => values,
+  }), 'native-request-id');
+});
+
+test('creates RFC 4122 request IDs from getRandomValues when randomUUID is unavailable', async () => {
+  const { createRequestId } = await loadCurrentFlowStateModule();
+  const requestId = createRequestId({
+    getRandomValues(values) {
+      values.set(Array.from({ length: 16 }, (_, index) => index));
+      return values;
+    },
+  });
+  assert.equal(requestId, '00010203-0405-4607-8809-0a0b0c0d0e0f');
+});
+
+
 test('hydrates an awaiting clarification task with its questions and raw input', async () => {
   const { hydrateCurrentTask } = await loadCurrentFlowStateModule() as CurrentFlowStateModule;
   const structuredTask = {

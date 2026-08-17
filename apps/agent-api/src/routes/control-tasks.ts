@@ -11,6 +11,7 @@ import {
   type WorkflowActor,
 } from '../../../orchestrator-runtime/src/control/task-workflow.ts';
 import { assertVisualAssetManifestSchema } from '../../../orchestrator-runtime/src/report/visual-asset-service.ts';
+import { LLMInvocationError } from '../../../orchestrator-runtime/src/runtime/llm-client.ts';
 import type { CurrentPlanningResponse } from './control-planning.ts';
 import { requireAuth } from '../middleware.ts';
 
@@ -101,6 +102,14 @@ function responseError(res: Response, error: unknown): void {
     res.status(403).json({ error: error.message });
     return;
   }
+  if (error instanceof LLMInvocationError && error.providerStatus === 429) {
+    res.status(429).json({
+      error: error.sanitizedMessage,
+      kind: error.kind,
+      retryable: error.retryable,
+    });
+    return;
+  }
   if (error instanceof ControlPlaneConflictError) {
     res.status(409).json({ error: error.message });
     return;
@@ -134,6 +143,17 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
   const router = Router();
   router.use(requireAuth);
   const { repository, workflow } = runtime;
+  router.get('/', async (req, res) => {
+    const actor = await authenticatedActor(req, res);
+    if (!actor) return;
+    try {
+      const tasks = await repository.listTasksForOwner({ ownerUserId: actor.userId });
+      res.json({ kind: 'current', tasks });
+    } catch (error) {
+      responseError(res, error);
+    }
+  });
+
   router.post('/:id/clarify', async (req, res) => {
     const body = record(req.body);
     const actor = await authenticatedActor(req, res);
