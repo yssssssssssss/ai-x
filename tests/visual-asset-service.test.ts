@@ -92,6 +92,8 @@ class FakeArtifactStore {
   readonly artifacts = new Map<string, FakeArtifact>();
   readonly binaryValues = new Map<string, Buffer>();
   readonly jsonValues = new Map<string, unknown>();
+  readonly invalidations: Array<{ artifactId: string; reason: string }> = [];
+  failJsonKind: string | undefined;
   private nextId = 1;
 
   seedJson(artifact: FakeArtifact, value: unknown): void {
@@ -117,6 +119,7 @@ class FakeArtifactStore {
 
   async writeJson(input: JsonWrite): Promise<FakeArtifact> {
     this.jsonWrites.push(structuredClone(input));
+    if (input.kind === this.failJsonKind) throw new Error(`${input.kind} write failed`);
     const bytes = Buffer.from(JSON.stringify(input.value, null, 2));
     const artifact = this.artifact(input, {
       kind: input.kind,
@@ -128,6 +131,15 @@ class FakeArtifactStore {
     this.artifacts.set(artifact.id, artifact);
     this.jsonValues.set(artifact.id, structuredClone(input.value));
     return artifact;
+  }
+
+  async invalidateArtifactPublication(artifactId: string, reason: string): Promise<void> {
+    this.invalidations.push({ artifactId, reason });
+    const artifact = this.artifacts.get(artifactId);
+    if (artifact) {
+      artifact.state = 'FAILED';
+      artifact.failureReason = reason;
+    }
   }
 
   async readVerifiedBinary(artifactId: string): Promise<{
@@ -533,6 +545,21 @@ test('fences an ingested visual Asset and its Manifest with the active execution
 
   assert.deepEqual(fixture.artifacts.binaryWrites[0]?.activeLease, activeLease);
   assert.deepEqual(fixture.artifacts.jsonWrites[0]?.activeLease, activeLease);
+});
+
+test('invalidates the sealed visual Asset when its Manifest publication fails', async () => {
+  const fixture = harness();
+  fixture.artifacts.failJsonKind = 'visual_asset_manifest';
+
+  await assert.rejects(() => fixture.service.ingest({
+    ...binding,
+    source: { kind: 'user_upload', fileName: 'partial.png', bytes: PNG },
+    exportPolicy: 'allow',
+  }), /manifest.*write failed/i);
+
+  const asset = [...fixture.artifacts.artifacts.values()].find(({ kind }) => kind === 'visual_asset');
+  assert.equal(asset?.state, 'FAILED');
+  assert.deepEqual(fixture.artifacts.invalidations.map(({ artifactId }) => artifactId), [asset?.id]);
 });
 
 for (const kind of ['annotation', 'heatmap'] as const) {

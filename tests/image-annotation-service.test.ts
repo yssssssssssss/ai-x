@@ -117,6 +117,7 @@ class RecordingVisualAssets {
 
 class RecordingJsonArtifacts {
   readonly writes: Array<Record<string, unknown>> = [];
+  readonly invalidations: Array<{ artifactId: string; reason: string }> = [];
 
   async writeJson(input: Record<string, unknown>) {
     this.writes.push(structuredClone(input));
@@ -130,6 +131,10 @@ class RecordingJsonArtifacts {
       contentSha256: digest(JSON.stringify(input.value)),
       schemaVersion: 'image-annotation-v1',
     };
+  }
+
+  async invalidateArtifactPublication(artifactId: string, reason: string): Promise<void> {
+    this.invalidations.push({ artifactId, reason });
   }
 }
 
@@ -232,6 +237,20 @@ test('fences the annotation overlay and derived visual Asset with the active exe
 
   assert.deepEqual(fixture.artifacts.writes[0]?.activeLease, activeLease);
   assert.deepEqual(fixture.assets.derives[0]?.activeLease, activeLease);
+});
+
+test('invalidates the sealed overlay when derived visual publication fails', async () => {
+  const fixture = harness();
+  fixture.assets.derive = async () => {
+    throw new Error('derived visual write failed');
+  };
+
+  await assert.rejects(() => annotate(fixture.service), /derived visual write failed/i);
+
+  assert.deepEqual(fixture.artifacts.invalidations, [{
+    artifactId: 'artifact-overlay-1',
+    reason: 'image annotation publication did not complete',
+  }]);
 });
 
 test('rejects unsupported annotation shapes before persistence or rendering', async () => {

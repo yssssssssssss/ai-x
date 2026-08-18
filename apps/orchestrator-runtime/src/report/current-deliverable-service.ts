@@ -20,6 +20,7 @@ import {
   resolveDeliverableContractById,
   resolveExecutionDeliverableContract,
 } from './deliverable-registry.ts';
+import type { VerifiedVisualAnnotationBinding } from './report-composition-service.ts';
 import type { VerifiedVisualAsset } from './visual-asset-service.ts';
 function createDeliverableDraftSchema(payloadSchema: object, strictContract: boolean) {
   return {
@@ -256,6 +257,7 @@ export interface CurrentDeliverableGenerateInput {
   revisionRound?: 0 | 1;
   activeLease?: ControlExecutionLease;
   visualAssets?: readonly VerifiedVisualAsset[];
+  visualAnnotationBindings?: readonly VerifiedVisualAnnotationBinding[];
 }
 
 export interface CurrentDeliverableGenerateResult {
@@ -337,6 +339,7 @@ interface VerifiedVisualInventory {
   assets: readonly VerifiedVisualAsset[];
   ids: readonly string[];
   roles: ReadonlyMap<string, VisualAssetRole>;
+  annotationBindings: ReadonlyMap<string, VerifiedVisualAnnotationBinding>;
 }
 
 function sameVisualReference(
@@ -369,6 +372,21 @@ function classifyVisualAsset(asset: VerifiedVisualAsset): VisualAssetRole {
 function verifiedVisualInventory(input: CurrentDeliverableGenerateInput): VerifiedVisualInventory | undefined {
   if (input.visualAssets === undefined) return undefined;
   const roles = new Map<string, VisualAssetRole>();
+  const annotationBindings = new Map<string, VerifiedVisualAnnotationBinding>();
+  for (const binding of input.visualAnnotationBindings ?? []) {
+    if (
+      !binding.assetId.trim()
+      || !binding.originalAssetId.trim()
+      || !binding.overlayArtifactId.trim()
+      || binding.findingIds.length === 0
+      || binding.findingIds.some((findingId) => !findingId.trim())
+      || new Set(binding.findingIds).size !== binding.findingIds.length
+      || annotationBindings.has(binding.assetId)
+    ) {
+      throw new Error('verified visual annotation binding is malformed or duplicated');
+    }
+    annotationBindings.set(binding.assetId, structuredClone(binding));
+  }
   for (const asset of input.visualAssets) {
     const bindingMatches = asset.artifact.taskId === input.task.id
       && asset.artifact.planVersionId === input.plan.id
@@ -401,14 +419,25 @@ function verifiedVisualInventory(input: CurrentDeliverableGenerateInput): Verifi
   const assets = [...input.visualAssets];
   const originals = assets.filter((asset) => roles.get(asset.artifact.id) === 'original');
   for (const annotation of assets.filter((asset) => roles.get(asset.artifact.id) === 'annotation')) {
-    if (!originals.some((original) => sameVisualReference(annotation.manifest.derivedFrom, original))) {
+    const original = originals.find((candidate) => sameVisualReference(annotation.manifest.derivedFrom, candidate));
+    const binding = annotationBindings.get(annotation.artifact.id);
+    if (!original) {
       throw new Error(`visual Asset ${annotation.artifact.id} annotation lineage does not reference an exact verified original`);
+    }
+    if (binding && binding.originalAssetId !== original.artifact.id) {
+      throw new Error(`visual Asset ${annotation.artifact.id} finding binding references a foreign original`);
+    }
+  }
+  for (const binding of annotationBindings.values()) {
+    if (roles.get(binding.assetId) !== 'annotation') {
+      throw new Error(`visual annotation binding ${binding.assetId} does not reference an annotation Asset`);
     }
   }
   return {
     assets,
     ids: assets.map((asset) => asset.artifact.id).sort((left, right) => left.localeCompare(right)),
     roles,
+    annotationBindings,
   };
 }
 
@@ -428,6 +457,12 @@ function assertVisualPreflight(
   ));
   if (!hasPair) {
     throw new Error(`${deliverableId} requires a verified original and annotation lineage pair`);
+  }
+  if (
+    deliverableId === 'design_audit_report'
+    && !annotations.some((annotation) => inventory.annotationBindings.has(annotation.artifact.id))
+  ) {
+    throw new Error('design_audit_report requires a verified finding-bound annotation');
   }
 }
 
@@ -476,20 +511,32 @@ function assertPayloadVisualReferences(
   if (!inventory) throw new Error(`${deliverableId} requires a verified visual inventory`);
   const byId = new Map(inventory.assets.map((asset) => [asset.artifact.id, asset]));
   const screenshots = value.annotatedScreenshots;
+  const issues = Array.isArray(value.issues) ? value.issues : [];
+  const issueIds = new Set(issues.flatMap((candidate) => {
+    const issue = unknownRecord(candidate);
+    return typeof issue?.id === 'string' ? [issue.id] : [];
+  }));
   if (!Array.isArray(screenshots) || screenshots.length === 0) {
     throw new Error('design annotatedScreenshots require a verified annotation');
   }
   for (const candidate of screenshots) {
     const screenshot = unknownRecord(candidate);
     const annotationId = screenshot?.assetId;
+    const issueId = screenshot?.issueId;
     const annotation = typeof annotationId === 'string' ? byId.get(annotationId) : undefined;
+    const findingBinding = typeof annotationId === 'string'
+      ? inventory.annotationBindings.get(annotationId)
+      : undefined;
     if (
       !annotation
       || inventory.roles.get(annotation.artifact.id) !== 'annotation'
       || !inventory.assets.some((original) => inventory.roles.get(original.artifact.id) === 'original'
         && sameVisualReference(annotation.manifest.derivedFrom, original))
+      || typeof issueId !== 'string'
+      || !issueIds.has(issueId)
+      || !findingBinding?.findingIds.includes(issueId)
     ) {
-      throw new Error('design annotatedScreenshot does not reference an exact annotation lineage');
+      throw new Error('design annotatedScreenshot does not reference an exact finding-bound annotation lineage');
     }
   }
 }
@@ -636,6 +683,9 @@ export class CurrentDeliverableService {
       assetId: asset.artifact.id,
       role: visualInventory?.roles.get(asset.artifact.id),
       ...(asset.manifest.derivedFrom === null ? {} : { derivedFromAssetId: asset.manifest.derivedFrom?.assetId }),
+      ...(visualInventory?.annotationBindings.get(asset.artifact.id)
+        ? { findingIds: visualInventory.annotationBindings.get(asset.artifact.id)!.findingIds }
+        : {}),
     }));
     const context = {
       researchGoal: redactString(input.researchGoal),
@@ -674,7 +724,10 @@ export class CurrentDeliverableService {
             ? '\nNo verified visual Asset inventory exists. Return an empty screenshotComparisons array and never invent an Asset id.'
             : visualInventory === undefined
               ? ''
-              : '\nVerified visual Asset inventory: reference only typed Asset ids in context.verifiedVisualAssetIds; never invent or reuse any other Asset id.')
+              : '\nVerified visual Asset inventory: reference only typed Asset ids in context.verifiedVisualAssetIds; never invent or reuse any other Asset id.'
+                + (contract.entry.id === 'design_audit_report'
+                  ? ' For each annotatedScreenshots entry, use one annotation assetId and one issueId from that same annotation item\'s findingIds in context.verifiedVisualInventory; payload.issues must contain the same issueId.'
+                  : ''))
           + (input.revisionInstruction ? '\nAddress the review issues in the revision instruction.' : '')
           + (validationFeedback.length > 0
             ? `\nThe previous draft failed schema validation. Correct every issue: ${validationFeedback.join('; ')}`

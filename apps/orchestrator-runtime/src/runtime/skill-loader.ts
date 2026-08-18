@@ -76,6 +76,7 @@ export class SkillLoader {
       const taskTypes = skill.task_types ?? [];
       const inputs = skill.inputs ?? [];
       const visualInputs = skill.visual_inputs ?? [];
+      const multipleVisualInputs = skill.multiple_visual_inputs ?? [];
       const outputs = skill.outputs ?? [];
       const requiredTools = skill.required_tools ?? [];
       if (skill.status !== 'active') {
@@ -85,6 +86,7 @@ export class SkillLoader {
           task_types: Array.isArray(taskTypes) ? taskTypes : [],
           inputs: Array.isArray(inputs) ? inputs : [],
           visual_inputs: Array.isArray(visualInputs) ? visualInputs : [],
+          multiple_visual_inputs: Array.isArray(multipleVisualInputs) ? multipleVisualInputs : [],
           outputs: Array.isArray(outputs) ? outputs : [],
           required_tools: Array.isArray(requiredTools) ? requiredTools : [],
         };
@@ -112,6 +114,7 @@ export class SkillLoader {
         task_types: taskTypes,
         inputs,
         visual_inputs: visualInputs,
+        multiple_visual_inputs: multipleVisualInputs,
         outputs,
         required_tools: requiredTools,
       };

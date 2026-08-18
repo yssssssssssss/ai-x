@@ -16,6 +16,8 @@ domain: general
 title: Generate Research Plan — 研究需求 →（对齐）研究 brief →（展开）可执行研究方案
 task_types:
   - user_research_planning
+required_tools:
+  - tavily-web-search
 inputs: []
 outputs: []
 status: approved

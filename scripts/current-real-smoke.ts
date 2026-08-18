@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { extname, isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
@@ -8,6 +9,7 @@ import {
   parseModelRoutes,
   type GatewayModelRoute,
 } from '../apps/orchestrator-runtime/src/runtime/gateway-llm-client.ts';
+import { ReportPackageArtifactService } from '../apps/orchestrator-runtime/src/report/report-package-artifact.ts';
 
 export interface RealSmokeConfig {
   ALLOW_REAL_PROVIDER?: string;
@@ -49,10 +51,9 @@ export interface SmokeReceiptInput {
   coreTool: string;
   packageSealed: boolean;
   review: {
-    reviewerId: string;
-    authenticated: boolean;
-    independent: boolean;
-    verdict: 'usable' | 'needs_revision' | 'unusable';
+    artifactId: string;
+    automated: true;
+    verdict: 'pass';
   };
 }
 export interface SmokeReceipt extends SmokeReceiptInput {
@@ -80,6 +81,7 @@ interface SemanticGoldFixture {
 interface SmokeRunInput {
   fixturePath: string;
   profiles: string[];
+  designImagePath?: string;
 }
 
 const REQUIRED_NON_BLANK_FIELDS = [
@@ -118,7 +120,13 @@ const REQUIRED_CAPABILITY_DESCRIPTION = [
   ...REQUIRED_ACTOR_TYPES,
 ].join(', ');
 
-export const CURRENT_REAL_SMOKE_PROFILES = ['competitive_research'] as const;
+export const CURRENT_REAL_SMOKE_PROFILES = [
+  'competitive_research',
+  'user_research_planning',
+  'voc_diagnosis',
+  'design_audit',
+  'a11y_audit',
+] as const;
 
 export function assertRealSmokeConfig(env: RealSmokeConfig): void {
   if (env.ALLOW_REAL_PROVIDER !== '1') {
@@ -253,7 +261,7 @@ export function formatSmokeReceipt(input: SmokeReceiptInput): SmokeReceipt {
     actualModel: input.actualModel,
     coreTool: input.coreTool,
     packageSealed: input.packageSealed,
-    review: input.review,
+    review: verifyAutomatedReviewArtifactReceipt(input.review),
     deliverableArtifactId: input.deliverableArtifactId,
     evidenceManifestArtifactId: input.evidenceManifestArtifactId,
     evidenceArtifactIds: [...input.evidenceArtifactIds],
@@ -288,35 +296,49 @@ function record(value: unknown, field: string): Record<string, unknown> {
   }
   return value as Record<string, unknown>;
 }
-export interface PersistedIndependentReview {
-  reviewerId: string;
-  authenticated: boolean;
-  independent: boolean;
-  verdict: 'usable' | 'needs_revision' | 'unusable';
+export interface AutomatedReviewArtifactReceipt {
+  artifactId: string;
+  automated: true;
+  verdict: 'pass';
 }
 
-export function verifyPersistedIndependentReview(value: unknown): PersistedIndependentReview {
+export function verifyAutomatedReviewArtifactReceipt(value: unknown): AutomatedReviewArtifactReceipt {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('independent review evidence is missing or invalid');
+    throw new Error('automated Review Artifact receipt is missing or invalid');
   }
   const candidate = value as Record<string, unknown>;
-  const reviewerId = candidate.reviewerId;
-  const verdict = candidate.verdict;
   if (
-    typeof reviewerId !== 'string'
-    || reviewerId.trim() === ''
-    || candidate.authenticated !== true
-    || candidate.independent !== true
-    || (verdict !== 'usable' && verdict !== 'needs_revision' && verdict !== 'unusable')
+    typeof candidate.artifactId !== 'string'
+    || candidate.artifactId.trim() === ''
+    || candidate.automated !== true
+    || candidate.verdict !== 'pass'
   ) {
-    throw new Error('independent review evidence is missing or invalid');
+    throw new Error('automated Review Artifact receipt is missing or invalid');
   }
   return {
-    reviewerId,
-    authenticated: true,
-    independent: true,
-    verdict,
+    artifactId: candidate.artifactId,
+    automated: true,
+    verdict: 'pass',
   };
+}
+
+export function designSmokeInputValue(filePath: string | undefined): { dataUrl: string } {
+  const path = nonBlankString(filePath, 'CURRENT_DESIGN_SMOKE_IMAGE_PATH');
+  if (!isAbsolute(path)) {
+    throw new Error('CURRENT_DESIGN_SMOKE_IMAGE_PATH must be an absolute local path');
+  }
+  const contentType = ({
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.webp': 'image/webp',
+  } as const)[extname(path).toLowerCase() as '.jpg' | '.jpeg' | '.png' | '.webp'];
+  if (!contentType) {
+    throw new Error('CURRENT_DESIGN_SMOKE_IMAGE_PATH must reference JPEG, PNG, or WebP');
+  }
+  const bytes = readFileSync(path);
+  if (bytes.byteLength === 0) throw new Error('CURRENT_DESIGN_SMOKE_IMAGE_PATH is empty');
+  return { dataUrl: `data:${contentType};base64,${bytes.toString('base64')}` };
 }
 
 function array(value: unknown, field: string): unknown[] {
@@ -425,7 +447,10 @@ export function selectSmokeCandidate<
 }
 
 type SeedUser = { id: string; status: string };
-async function executeRealSmoke(scenario: SemanticGoldScenario): Promise<SmokeReceipt> {
+async function executeRealSmoke(
+  scenario: SemanticGoldScenario,
+  designImagePath?: string,
+): Promise<SmokeReceipt> {
   const [repositoryModule, seedModule, runtimeModule] = await Promise.all([
     import('../database/repository.ts'),
     import('../database/development-seed.ts'),
@@ -506,7 +531,9 @@ async function executeRealSmoke(scenario: SemanticGoldScenario): Promise<SmokeRe
     idempotencyKey: `current-real-smoke:confirm:${scenario.profile}:${taskId}`,
     actor,
     confirmationAnswers: explicitSmokeConfirmationAnswers(structuredTask.clarification_questions),
-    inputValues: {},
+    inputValues: scenario.profile === 'design_audit'
+      ? { designImage: designSmokeInputValue(designImagePath) }
+      : {},
   });
   if (confirmed.state !== 'ready') {
     throw new Error(`confirmed task must be ready, received ${confirmed.state}`);
@@ -528,10 +555,31 @@ async function executeRealSmoke(scenario: SemanticGoldScenario): Promise<SmokeRe
 
   const attemptId = nonBlankString(execution.attemptId, 'attemptId');
   const deliverableArtifactId = nonBlankString(execution.deliverableArtifactId, 'deliverableArtifactId');
+  const reportPackageArtifactId = nonBlankString(
+    execution.reportPackageArtifactId,
+    'reportPackageArtifactId',
+  );
   const evidenceManifestArtifactId = nonBlankString(
     execution.evidenceManifestArtifactId,
     'evidenceManifestArtifactId',
   );
+  const reportReviewArtifactId = nonBlankString(
+    execution.reportReviewArtifactId,
+    'reportReviewArtifactId',
+  );
+  const verifiedReportPackage = await new ReportPackageArtifactService(runtime.artifacts).verify({
+    artifactId: reportPackageArtifactId,
+    attemptId,
+  });
+  if (
+    verifiedReportPackage.value.taskId !== taskId
+    || verifiedReportPackage.value.planVersionId !== selected.planVersionId
+    || verifiedReportPackage.value.deliverableArtifactId !== deliverableArtifactId
+    || verifiedReportPackage.value.evidenceManifestArtifactId !== evidenceManifestArtifactId
+    || verifiedReportPackage.value.reportReviewArtifactId !== reportReviewArtifactId
+  ) {
+    throw new Error('Report Package does not match the executed task components');
+  }
   const delivered = record(
     await runtime.getDeliverable(taskId, seedUser.id),
     'deliverable response',
@@ -620,6 +668,7 @@ async function executeRealSmoke(scenario: SemanticGoldScenario): Promise<SmokeRe
   await Promise.all([
     runtime.artifacts.verifySealed(deliverableArtifactId),
     runtime.artifacts.verifySealed(evidenceManifestArtifactId),
+    runtime.artifacts.verifySealed(reportReviewArtifactId),
     ...evidenceArtifactIds.map((artifactId) => runtime.artifacts.verifySealed(artifactId)),
   ]);
 
@@ -628,13 +677,13 @@ async function executeRealSmoke(scenario: SemanticGoldScenario): Promise<SmokeRe
   const recommendations = array(deliverable.recommendations, 'deliverable.recommendations');
   const review = record(delivered.reportReview, 'reportReview');
   if (nonBlankString(review.verdict, 'reportReview.verdict') !== 'pass') {
-    throw new Error('real smoke requires an independently passed report review');
+    throw new Error('real smoke requires a passed automated Review Artifact');
   }
-  const persistedReview = await runtime.repository.findPersistedIndependentReview(attemptId);
-  const independentReview = verifyPersistedIndependentReview(persistedReview);
-  if (independentReview.verdict !== 'usable') {
-    throw new Error('real smoke requires an independently usable persisted review');
-  }
+  const automatedReview = verifyAutomatedReviewArtifactReceipt({
+    artifactId: reportReviewArtifactId,
+    automated: true,
+    verdict: review.verdict,
+  });
   const visualAssetCount = 'visualAssetManifests' in delivered && Array.isArray(delivered.visualAssetManifests)
     ? delivered.visualAssetManifests.length
     : 0;
@@ -646,14 +695,14 @@ async function executeRealSmoke(scenario: SemanticGoldScenario): Promise<SmokeRe
     taskId,
     planVersionId: selected.planVersionId,
     attemptId,
-    reportPackageId: deliverableArtifactId,
+    reportPackageId: reportPackageArtifactId,
     visualAssetCount,
     provider: 'gateway',
     requestedModel: representativeModelCall.requestedModel,
     actualModel: representativeModelCall.actualModel,
     coreTool: 'tavily-web-search',
-    packageSealed: true,
-    review: independentReview,
+    packageSealed: verifiedReportPackage.artifact.state === 'SEALED',
+    review: automatedReview,
     deliverableArtifactId,
     evidenceManifestArtifactId,
     evidenceArtifactIds,
@@ -699,7 +748,10 @@ export async function runCurrentRealSmoke(input: SmokeRunInput): Promise<SmokeRe
       const scenario = candidates.find((candidate) => candidate.variant === 'clear' && candidate.piiDetected === false);
       if (!scenario) throw new Error(`fixture has no safe clear scenario for profile ${profile}`);
       if (scenario.piiDetected) throw new Error(`PII scenario ${profile} cannot enter real smoke`);
-      const receipt = await executeRealSmoke(scenario);
+      const receipt = await executeRealSmoke(
+        scenario,
+        input.designImagePath ?? process.env.CURRENT_DESIGN_SMOKE_IMAGE_PATH,
+      );
       assertSmokeReceiptMinimums(receipt, scenario);
       receipts.push(receipt);
     }

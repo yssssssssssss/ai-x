@@ -53,6 +53,7 @@ import {
 } from '../apps/orchestrator-runtime/src/report/chart-renderer.ts';
 import { chartSpecHash } from '../apps/orchestrator-runtime/src/report/chart-spec-validator.ts';
 import { CurrentReportPackageReader } from '../apps/orchestrator-runtime/src/report/current-report-package-reader.ts';
+import { ReportPackageArtifactService } from '../apps/orchestrator-runtime/src/report/report-package-artifact.ts';
 import { ReportCompositionService } from '../apps/orchestrator-runtime/src/report/report-composition-service.ts';
 import {
   LLMInvocationError,
@@ -356,6 +357,8 @@ class CapturingRestAdapter implements ToolAdapter {
   calls = 0;
   readonly inputs: object[] = [];
 
+  constructor(private readonly output: object = { status: 'available' }) {}
+
   endpointHost(): string {
     return 'design-tool.test';
   }
@@ -364,7 +367,7 @@ class CapturingRestAdapter implements ToolAdapter {
     this.calls += 1;
     this.inputs.push(structuredClone(options.input));
     return {
-      output: { status: 'available' },
+      output: structuredClone(this.output),
       latencyMs: 1,
       receipt: {
         declaredAdapterType: options.manifest.adapter_type,
@@ -1130,10 +1133,24 @@ test('uses the same verified visual bytes for materialization and Tool dataUrl h
   assert.deepEqual(Buffer.from(dataUrl!.split(',')[1]!, 'base64'), png);
 });
 
-test('forwards design-audit intent to an injected materializer', async () => {
+test('defers design annotation until verified attention findings are available', async () => {
+  const attentionStep: CurrentPlanStep = {
+    step_no: 2,
+    step_name: 'attention analysis',
+    actor_type: 'tool',
+    actor_id: 'attention-analysis-lab',
+    question_ids: ['question-1'],
+    depends_on: [1],
+    input: { image: {} },
+    input_bindings: [],
+    expected_outputs: [{ pointer: '/hotspots', description: 'verified attention hotspots' }],
+    acceptance_criteria: ['returns finding-bound normalized hotspots'],
+    requires_approval: false,
+    fallback_actor_ids: [],
+  };
   const { repository, lease } = await claimedExecution(
     new Date(Date.now() + 60_000),
-    planSteps,
+    [planSteps[0]!, attentionStep],
     {
       deliverable_type: 'design_audit_report',
       evidence_requirements: [{
@@ -1144,11 +1161,29 @@ test('forwards design-audit intent to an injected materializer', async () => {
       }],
     },
   );
-  let annotationPurpose: 'input_provenance' | 'design_audit' | undefined;
+  const materializedOriginal = {
+    gateKey: 'designImage',
+    imageIndex: 1,
+    original: { assetId: 'design-original', manifestArtifactId: 'design-original-manifest' },
+  };
+  let annotationPurpose: 'input_provenance' | undefined;
+  let annotatedFindings: Array<{
+    findingId: string;
+    label: string;
+    severity: 'low' | 'medium' | 'high' | 'critical';
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }> = [];
+  const designTool = new CapturingRestAdapter({
+    status: 'available',
+    hotspots: [{ x: 0.1, y: 0.2, width: 0.3, height: 0.4, score: 0.85, reason: 'Primary CTA dominates' }],
+  });
   const engine = new DeliverableAwareLeaseExecutionEngine({
     repository,
     artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
-    tools: new ToolRouter().register(new CountingRealTavilyAdapter()),
+    tools: new ToolRouter().register(new CountingRealTavilyAdapter()).register(designTool),
     llm: new CountingRealLLM(),
     deliverables: new RecordingDeliverablesFake(),
     skillLoader: new SkillLoader(),
@@ -1157,6 +1192,11 @@ test('forwards design-audit intent to an injected materializer', async () => {
     visualInputMaterializer: {
       async materialize(input) {
         annotationPurpose = input.annotationPurpose;
+        return [materializedOriginal];
+      },
+      async annotateDesignFindings(input) {
+        assert.deepEqual(input.original, materializedOriginal);
+        annotatedFindings = structuredClone(input.findings);
       },
     },
   });
@@ -1164,10 +1204,20 @@ test('forwards design-audit intent to an injected materializer', async () => {
   const result = await engine.execute({ lease, expectedModel: 'pinned-model' });
 
   assert.equal(result.status, 'completed');
-  assert.equal(annotationPurpose, 'design_audit');
+  assert.equal(annotationPurpose, undefined);
+  assert.equal(designTool.calls, 1);
+  assert.deepEqual(annotatedFindings, [{
+    findingId: 'design-attention-2-1',
+    label: 'Primary CTA dominates',
+    severity: 'high',
+    x: 0.1,
+    y: 0.2,
+    width: 0.3,
+    height: 0.4,
+  }]);
 });
 
-test('production design audit fails closed before actors until finding-bound annotation exists', async () => {
+test('production design audit fails closed before actors without exactly one original', async () => {
   const { repository, lease } = await claimedExecution(
     new Date(Date.now() + 60_000),
     [planSteps[0]!],
@@ -1202,7 +1252,7 @@ test('production design audit fails closed before actors until finding-bound ann
 
   await assert.rejects(
     () => engine.execute({ lease, expectedModel: 'pinned-model' }),
-    /verified finding-bound analysis|pre-analysis annotation synthesis/u,
+    /exactly one materialized original and a finding-bound annotation producer/u,
   );
 
   assert.equal(adapter.calls, 0);
@@ -1210,7 +1260,10 @@ test('production design audit fails closed before actors until finding-bound ann
   const [step] = await repository.listExecutionSteps(lease.attemptId);
   assert.equal(step?.stepName, 'execution preflight');
   assert.equal(step?.state, 'failed');
-  assert.match(String(step?.failure?.message), /verified finding-bound analysis/u);
+  assert.match(
+    String(step?.failure?.message),
+    /exactly one materialized original and a finding-bound annotation producer/u,
+  );
   assert.equal((await repository.getTaskDetail(lease.taskId))?.state, 'paused');
 });
 
@@ -2530,7 +2583,7 @@ test('pass Review composes and lease-seals a verified image and Chart ReportDocu
     assetId: original.assetArtifact.id,
     manifestArtifactId: original.manifestArtifact.id,
   });
-  const annotation = await visualAssets.derive({
+  const annotation = await new ImageAnnotationService({ assets: visualAssets, artifacts: store }).annotate({
     taskId: lease.taskId,
     planVersionId: lease.planVersionId,
     attemptId: lease.attemptId,
@@ -2539,16 +2592,22 @@ test('pass Review composes and lease-seals a verified image and Chart ReportDocu
       assetId: verifiedImage.artifact.id,
       manifestArtifactId: verifiedImage.manifestArtifact.id,
     },
-    derivation: { kind: 'annotation', overlayArtifactId: 'overlay-production-wiring' },
-    bytes: Buffer.from(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-      'base64',
-    ),
+    findingIds: ['F1'],
+    annotations: [{
+      shape: 'rectangle',
+      x: 0,
+      y: 0,
+      width: 1,
+      height: 1,
+      findingId: 'F1',
+      label: 'Verified production wiring',
+      severity: 'low',
+    }],
     exportPolicy: 'allow',
   });
   const verifiedAnnotation = await visualAssets.readVerified({
-    assetId: annotation.assetArtifact.id,
-    manifestArtifactId: annotation.manifestArtifact.id,
+    assetId: annotation.derived.assetArtifact.id,
+    manifestArtifactId: annotation.derived.manifestArtifact.id,
   });
   assert.deepEqual(verifiedAnnotation.manifest.derivedFrom, {
     assetId: verifiedImage.artifact.id,
@@ -2558,7 +2617,7 @@ test('pass Review composes and lease-seals a verified image and Chart ReportDocu
   });
   assert.deepEqual(verifiedAnnotation.manifest.derivation, {
     kind: 'annotation',
-    overlayArtifactId: 'overlay-production-wiring',
+    overlayArtifactId: annotation.overlayArtifact.id,
   });
   const spec: ChartSpec = {
     version: 'chart-spec-v1',
@@ -2776,6 +2835,15 @@ test('pass Review composes and lease-seals a verified image and Chart ReportDocu
   assert.ok(reportDocumentArtifact);
   assert.equal(reportDocumentArtifact.state, 'SEALED');
   assert.equal(reportDocumentArtifact.schemaVersion, 'report-document-v1');
+  assert.ok(result.reportPackageArtifactId);
+  const sealedReportPackage = await new ReportPackageArtifactService(store).verify({
+    artifactId: result.reportPackageArtifactId,
+    attemptId: lease.attemptId,
+  });
+  assert.equal(sealedReportPackage.value.deliverableArtifactId, result.deliverableArtifactId);
+  assert.equal(sealedReportPackage.value.evidenceManifestArtifactId, result.evidenceManifestArtifactId);
+  assert.equal(sealedReportPackage.value.reportReviewArtifactId, result.reportReviewArtifactId);
+  assert.equal(sealedReportPackage.value.reportDocumentArtifactId, reportDocumentArtifact.id);
   const storedDocument = await store.readVerifiedJson<ReportDocument>(reportDocumentArtifact.id);
   const documentBlocks = storedDocument.value.sections.flatMap(({ blocks }) => blocks);
   const imageComparison = documentBlocks.find((block) => (

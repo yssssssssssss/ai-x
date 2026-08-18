@@ -199,14 +199,14 @@ type FakeArtifact = {
   planVersionId: string;
   attemptId: string;
   kind: string;
-  state: 'STAGING' | 'SEALED';
+  state: 'STAGING' | 'SEALED' | 'FAILED';
   storageUri: string;
   contentSha256: string;
   byteSize: number;
   schemaVersion: string;
   sensitivity: string;
   redactionPolicyVersion: string;
-  failureReason: null;
+  failureReason: string | null;
   mediaType: string | null;
   metadata: Record<string, unknown> | null;
 };
@@ -231,6 +231,7 @@ function digest(value: Uint8Array | string): string {
 class SvgAwareArtifactStore {
   readonly binaryWrites: BinaryWrite[] = [];
   readonly jsonWrites: JsonWrite[] = [];
+  readonly invalidations: Array<{ artifactId: string; reason: string }> = [];
   private readonly artifacts = new Map<string, FakeArtifact>();
   private readonly binaryValues = new Map<string, Buffer>();
   private readonly jsonValues = new Map<string, unknown>();
@@ -265,6 +266,15 @@ class SvgAwareArtifactStore {
     this.artifacts.set(artifact.id, artifact);
     this.jsonValues.set(artifact.id, structuredClone(input.value));
     return artifact;
+  }
+
+  async invalidateArtifactPublication(artifactId: string, reason: string): Promise<void> {
+    this.invalidations.push({ artifactId, reason });
+    const artifact = this.artifacts.get(artifactId);
+    if (artifact) {
+      artifact.state = 'FAILED';
+      artifact.failureReason = reason;
+    }
   }
 
   async readVerifiedBinary(artifactId: string) {
@@ -525,4 +535,6 @@ test('fails closed when the verified Chart JSON Artifact does not seal', async (
   const chartSpecWrite = artifacts.jsonWrites.find((write) => write.kind === 'chart_spec');
   assert.ok(chartSpecWrite);
   assert.deepEqual(chartSpecWrite.activeLease, activeLease);
+  assert.equal(artifacts.invalidations.length, 3);
+  assert.ok(artifacts.invalidations.every(({ reason }) => reason === 'Chart publication did not complete'));
 });

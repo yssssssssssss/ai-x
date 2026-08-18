@@ -178,6 +178,25 @@ test('keeps a skill eligible when missing inputs can become PendingInput records
   assert.deepEqual(reasonCodes(resolution.eligible[0]!), ['pending_input_required', 'eligible']);
 });
 
+test('preserves explicitly plural visual input cardinality', () => {
+  const resolution = resolveCapabilities(input({
+    available_input_roles: ['research_goal'],
+    skills: [skill({
+      inputs: ['research_goal', 'competitor_screenshots'],
+      visual_inputs: ['competitor_screenshots'],
+      multiple_visual_inputs: ['competitor_screenshots'],
+    })],
+  }));
+
+  assert.deepEqual(resolution.eligible[0]?.pending_inputs, [{
+    kind: 'visual',
+    role: 'competitor_screenshots',
+    label: 'competitor_screenshots',
+    multiple: true,
+    capability_id: 'competitive-web-research',
+  }]);
+});
+
 test('rejects high-risk skills when no matching approval capability exists', () => {
   const denied = resolveCapabilities(input({
     skills: [skill({ risk_level: 'high' })],
@@ -276,6 +295,7 @@ test('active capability loader preserves native declarations and normalizes KB a
   assert.deepEqual(nativeSkill?.outputs, ['competitive_analysis']);
   assert.deepEqual(nativeSkill?.required_tools, ['tavily-web-search']);
   assert.deepEqual(appScreenshotSkill?.inputs, ['research_goal', 'competitor_screenshots']);
+  assert.deepEqual(appScreenshotSkill?.multiple_visual_inputs, ['competitor_screenshots']);
   assert.deepEqual(appScreenshotSkill?.required_tools, [
     'tavily-web-search',
     'ai-spider-search',
@@ -299,14 +319,17 @@ test('production capability registry preserves the valid M1 secondary task route
   for (const [skillId, taskType] of expectedRoutes) {
     const productionSkill = skills.find((entry) => entry.id === skillId);
     assert.ok(productionSkill, `${skillId} must exist in the production registry`);
+    const requiredTools = productionSkill.required_tools.map((toolId) => tool({ id: toolId }));
+    const requiredToolStates = productionSkill.required_tools.map((toolId) => toolState({ tool_id: toolId }));
+    const requiredToolManifests = productionSkill.required_tools.map(() => toolManifest());
 
     const resolution = resolveCapabilities(input({
       task: { ...task, task_type: taskType },
       available_input_roles: [],
       skills: [productionSkill],
-      tools: [],
-      tool_states: [],
-      tool_manifests: [],
+      tools: requiredTools,
+      tool_states: requiredToolStates,
+      tool_manifests: requiredToolManifests,
     }));
 
     assert.deepEqual(resolution.rejected, [], `${skillId} must accept ${taskType}`);

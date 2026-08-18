@@ -10,6 +10,7 @@ import type {
 } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
 import {
   VisualInputGateStore,
+  valueForPendingInputTarget,
 } from '../apps/orchestrator-runtime/src/control/visual-input-gate-store.ts';
 
 const JPEG = Buffer.from(
@@ -20,6 +21,20 @@ const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
   'base64',
 );
+
+test('plural pending input preserves every image for plural targets and projects the first to singular targets', () => {
+  const value = [{ artifactId: 'first' }, { artifactId: 'second' }];
+  assert.deepEqual(valueForPendingInputTarget({
+    value,
+    pendingMultiple: true,
+    targetMultiple: true,
+  }), value);
+  assert.deepEqual(valueForPendingInputTarget({
+    value,
+    pendingMultiple: true,
+    targetMultiple: false,
+  }), value[0]);
+});
 
 function sha256(bytes: Uint8Array): string {
   return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;

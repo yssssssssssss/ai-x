@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import {
   assertGatewayModelReceipts,
   assertSmokeReceiptMinimums,
   CURRENT_REAL_SMOKE_PROFILES,
+  designSmokeInputValue,
   resolveSmokeRequirement,
   safeSmokeErrorMessage,
   selectSmokeCandidate,
@@ -22,6 +24,7 @@ const REQUIRED_REAL_PROVIDER_ENV = [
   'LLM_MODEL_NAME',
   'LLM_EXPECTED_ACTUAL_MODEL',
   'TAVILY_API_KEY',
+  'CURRENT_DESIGN_SMOKE_IMAGE_PATH',
 ] as const;
 const realProviderConfigured = REQUIRED_REAL_PROVIDER_ENV.every((key) => {
   const value = process.env[key];
@@ -46,13 +49,39 @@ type SmokeReceipt = {
   coreTool: string;
   packageSealed: boolean;
   review: {
-    reviewerId: string;
-    authenticated: boolean;
-    independent: boolean;
-    verdict: 'usable' | 'needs_revision' | 'unusable';
+    artifactId: string;
+    automated: true;
+    verdict: 'pass';
   };
   machineEvidence?: unknown;
 };
+
+test('current real smoke covers all five Current profiles', () => {
+  assert.deepEqual(realProfiles, [
+    'competitive_research',
+    'user_research_planning',
+    'voc_diagnosis',
+    'design_audit',
+    'a11y_audit',
+  ]);
+});
+
+test('design smoke accepts one explicit absolute local image path', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'current-design-smoke-'));
+  try {
+    const path = join(dir, 'design.png');
+    writeFileSync(path, Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64',
+    ));
+    const value = designSmokeInputValue(path);
+    assert.match(value.dataUrl, /^data:image\/png;base64,/u);
+    assert.doesNotMatch(value.dataUrl, new RegExp(path, 'u'));
+    assert.throws(() => designSmokeInputValue('relative.png'), /absolute local path/u);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 
 test('gateway model receipts support a routing alias with a distinct canonical actual model', () => {
@@ -266,7 +295,7 @@ test('current real smoke reports visual and evidence counts for every profile', 
   }
 });
 
-test('current real smoke is full-real, model-pinned, core-tool-backed, sealed, and independently auth-reviewed', realSmokeOptions, async () => {
+test('current real smoke is full-real, model-pinned, core-tool-backed, sealed, and automatically reviewed', realSmokeOptions, async () => {
   const smoke = await import('../scripts/current-real-smoke.ts') as {
     runCurrentRealSmoke: (input: { fixturePath: string; profiles: string[] }) => Promise<SmokeReceipt[]>;
   };
@@ -284,10 +313,9 @@ test('current real smoke is full-real, model-pinned, core-tool-backed, sealed, a
     assert.equal(receipt.actualModel, expectedByRequested.get(receipt.requestedModel));
     assert.equal(receipt.coreTool, 'tavily-web-search');
     assert.equal(receipt.packageSealed, true);
-    assert.ok(receipt.review.reviewerId);
-    assert.equal(receipt.review.authenticated, true);
-    assert.equal(receipt.review.independent, true);
-    assert.equal(receipt.review.verdict, 'usable');
+    assert.ok(receipt.review.artifactId);
+    assert.equal(receipt.review.automated, true);
+    assert.equal(receipt.review.verdict, 'pass');
   }
 });
 
@@ -316,28 +344,39 @@ test('environment documentation and CI expose an explicit current real smoke gat
   assert.match(envExample, /TOOL_ADAPTER=real/);
   assert.match(envExample, /LLM_MODEL_NAME=/);
   assert.match(envExample, /TAVILY_API_KEY=/);
+  assert.match(envExample, /^CURRENT_DESIGN_SMOKE_IMAGE_PATH=$/m);
+  assert.match(envExample, /^GOLD_BUILD_ID=$/m);
+  assert.match(envExample, /^GOLD_REVIEWER_JWT=$/m);
+  assert.match(envExample, /gold:run collect <batch_id>/);
+  assert.match(envExample, /gold:run review <batch_id> <attempt_id>/);
+  assert.match(envExample, /gold:run decide <batch_id>/);
+  assert.match(envExample, /trusted_gold_enabled=false/);
   assert.match(ci, /smoke:current:real/);
+  assert.match(ci, /if: github\.event_name != 'pull_request'/);
+  assert.match(ci, /steps\.secret_gate\.outputs\.enabled == 'true'/);
+  assert.match(ci, /pnpm db:migrate/);
+  assert.match(ci, /pnpm db:seed/);
+  assert.match(ci, /knowledge-base\/assets\/playbooks\/images\/jingxi-img-01\.png/);
+  for (const profile of realProfiles) assert.match(ci, new RegExp(profile));
+  for (const port of ['8801', '8802', '8805']) assert.match(ci, new RegExp(port));
 });
-test('real smoke rejects missing or non-independent persisted review evidence', async () => {
+test('real smoke rejects missing or non-passing automated Review Artifact receipts', async () => {
   const smoke = await import('../scripts/current-real-smoke.ts') as {
-    verifyPersistedIndependentReview: (value: unknown) => SmokeReceipt['review'];
+    verifyAutomatedReviewArtifactReceipt: (value: unknown) => SmokeReceipt['review'];
   };
-  assert.throws(() => smoke.verifyPersistedIndependentReview(null), /independent review evidence/);
-  assert.throws(() => smoke.verifyPersistedIndependentReview({
-    reviewerId: 'reviewer-1',
-    authenticated: true,
-    independent: false,
-    verdict: 'usable',
-  }), /independent review evidence/);
-  assert.deepEqual(smoke.verifyPersistedIndependentReview({
-    reviewerId: 'reviewer-1',
-    authenticated: true,
-    independent: true,
-    verdict: 'usable',
+  assert.throws(() => smoke.verifyAutomatedReviewArtifactReceipt(null), /automated Review Artifact/);
+  assert.throws(() => smoke.verifyAutomatedReviewArtifactReceipt({
+    artifactId: 'review-1',
+    automated: true,
+    verdict: 'revise',
+  }), /automated Review Artifact/);
+  assert.deepEqual(smoke.verifyAutomatedReviewArtifactReceipt({
+    artifactId: 'review-1',
+    automated: true,
+    verdict: 'pass',
   }), {
-    reviewerId: 'reviewer-1',
-    authenticated: true,
-    independent: true,
-    verdict: 'usable',
+    artifactId: 'review-1',
+    automated: true,
+    verdict: 'pass',
   });
 });

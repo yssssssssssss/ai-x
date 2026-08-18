@@ -187,6 +187,11 @@
           "items": { "type": "string", "minLength": 1 },
           "uniqueItems": true
         },
+        "multiple_visual_inputs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
         "outputs": { "type": "array", "items": { "type": "string" } },
         "input_schema": { "type": "string" },
         "output_schema": { "type": "string" },

@@ -16,6 +16,7 @@ import {
 import { TaskWorkflowService } from '../apps/orchestrator-runtime/src/control/task-workflow.ts';
 import type { CurrentPlanningResponse } from '../apps/agent-api/src/routes/control-planning.ts';
 import { ControlArtifactStore } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
+import { ReportPackageArtifactService } from '../apps/orchestrator-runtime/src/report/report-package-artifact.ts';
 import type {
   CurrentResearchPlanningResult,
   ResearchPlanningInput,
@@ -103,6 +104,7 @@ type ExecutionResponse = ControlExecutionResult & {
   deliverableArtifactId: string;
   evidenceManifestArtifactId: string;
   reportReviewArtifactId: string;
+  reportPackageArtifactId: string;
 };
 
 class ScopedIntegrationDatabase implements MigrationDatabase {
@@ -1265,6 +1267,7 @@ test('production control runtime returns the revised final deliverable ID for pa
   assert.match(execution.deliverableArtifactId, /^[0-9a-f-]{36}$/);
   assert.match(execution.evidenceManifestArtifactId, /^[0-9a-f-]{36}$/);
   assert.match(execution.reportReviewArtifactId, /^[0-9a-f-]{36}$/);
+  assert.match(execution.reportPackageArtifactId, /^[0-9a-f-]{36}$/);
 
   const completedResumeResponse = await postJson(
     baseUrl,
@@ -1428,7 +1431,7 @@ test('production control runtime returns the revised final deliverable ID for pa
       `SELECT id, kind, state, storage_uri, schema_version, created_at
        FROM control_artifacts
        WHERE attempt_id = $1 AND kind IN (
-         'deliverable', 'evidence_manifest', 'report_document', 'report_review', 'execution_summary'
+         'deliverable', 'evidence_manifest', 'report_document', 'report_review', 'report_package', 'execution_summary'
        )
        ORDER BY kind, created_at, id`,
       [execution.attemptId],
@@ -1440,6 +1443,7 @@ test('production control runtime returns the revised final deliverable ID for pa
         { kind: 'deliverable', state: 'SEALED' },
         { kind: 'evidence_manifest', state: 'SEALED' },
         { kind: 'report_document', state: 'SEALED' },
+        { kind: 'report_package', state: 'SEALED' },
         { kind: 'report_review', state: 'SEALED' },
       ],
     );
@@ -1470,6 +1474,27 @@ test('production control runtime returns the revised final deliverable ID for pa
     assert.match(String(reportDocumentArtifact.storage_uri), /\/reports\/report-document\.json$/u);
     const verifiedReportDocument = await artifacts.readVerifiedJson<unknown>(reportDocumentArtifact.id);
     assert.deepEqual(verifiedReportDocument.value, ownerDeliverableBody.reportDocument);
+    const verifiedReportPackage = await new ReportPackageArtifactService(artifacts).verify({
+      artifactId: execution.reportPackageArtifactId,
+      attemptId: execution.attemptId,
+    });
+    assert.equal(verifiedReportPackage.value.taskId, planned.task.id);
+    assert.equal(verifiedReportPackage.value.planVersionId, speed.planVersionId);
+    assert.equal(verifiedReportPackage.value.deliverableArtifactId, execution.deliverableArtifactId);
+    assert.equal(verifiedReportPackage.value.evidenceManifestArtifactId, execution.evidenceManifestArtifactId);
+    assert.equal(verifiedReportPackage.value.reportReviewArtifactId, execution.reportReviewArtifactId);
+    assert.equal(verifiedReportPackage.value.reportDocumentArtifactId, reportDocumentArtifact.id);
+    const reportPackageStorageUri = verifiedReportPackage.artifact.storageUri;
+    const originalReportPackageContent = readFileSync(reportPackageStorageUri, 'utf8');
+    try {
+      writeFileSync(reportPackageStorageUri, '{}');
+      await assert.rejects(() => new ReportPackageArtifactService(artifacts).verify({
+        artifactId: execution.reportPackageArtifactId,
+        attemptId: execution.attemptId,
+      }), /Report Package|artifact|size|checksum|integrity/i);
+    } finally {
+      writeFileSync(reportPackageStorageUri, originalReportPackageContent);
+    }
 
     const referencedArtifacts = await connection.query(
       `SELECT id, kind, storage_uri, content_sha256

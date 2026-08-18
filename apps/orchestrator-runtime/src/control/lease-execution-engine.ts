@@ -68,7 +68,12 @@ import {
   type DeliverableContractResources,
 } from '../report/deliverable-registry.ts';
 import { ReportCompositionService, type ReportCompositionPort } from '../report/report-composition-service.ts';
+import { ReportPackageArtifactService } from '../report/report-package-artifact.ts';
 import { VisualAssetService } from '../report/visual-asset-service.ts';
+import type {
+  FindingBoundVisualAnnotation,
+  MaterializedVisualOriginal,
+} from '../report/visual-input-materializer.ts';
 import {
   readVerifiedStepArtifact,
   resolveStepInput,
@@ -160,6 +165,7 @@ export interface LeaseExecutionResult {
   deliverableArtifactId?: string;
   evidenceManifestArtifactId?: string;
   reportReviewArtifactId?: string;
+  reportPackageArtifactId?: string;
   reviewStatus?: ReportReviewResult['status'];
   gapCount?: number;
   failedStepNo?: number;
@@ -209,6 +215,54 @@ class SkillOutputSchemaError extends LLMInvocationError {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function designAnnotationFindings(
+  outputs: readonly EngineSealedStepOutput[],
+): FindingBoundVisualAnnotation[] {
+  const analysis = outputs.find((output) => (
+    output.actorType === 'tool'
+    && output.actorId === 'attention-analysis-lab'
+    && output.kind === 'tool_output'
+  ));
+  const value = isRecord(analysis?.output) ? analysis.output : null;
+  if (!analysis || value?.status !== 'available' || !Array.isArray(value.hotspots)) {
+    throw new ExecutionAuthenticityError(
+      'design audit requires a successful attention analysis before annotation synthesis',
+    );
+  }
+  const findings = value.hotspots.flatMap((candidate, index): FindingBoundVisualAnnotation[] => {
+    if (!isRecord(candidate)) return [];
+    const { x, y, width, height, score } = candidate;
+    if (
+      typeof x !== 'number' || !Number.isFinite(x) || x < 0 || x > 1
+      || typeof y !== 'number' || !Number.isFinite(y) || y < 0 || y > 1
+      || typeof width !== 'number' || !Number.isFinite(width) || width <= 0 || x + width > 1
+      || typeof height !== 'number' || !Number.isFinite(height) || height <= 0 || y + height > 1
+    ) return [];
+    const label = typeof candidate.reason === 'string' && candidate.reason.trim()
+      ? candidate.reason.trim()
+      : typeof candidate.label === 'string' && candidate.label.trim()
+        ? candidate.label.trim()
+        : '';
+    if (!label) return [];
+    const normalizedScore = typeof score === 'number' && Number.isFinite(score) ? score : 0;
+    return [{
+      findingId: `design-attention-${analysis.stepNo}-${index + 1}`,
+      label,
+      severity: normalizedScore >= 0.8 ? 'high' : normalizedScore >= 0.5 ? 'medium' : 'low',
+      x,
+      y,
+      width,
+      height,
+    }];
+  });
+  if (findings.length === 0) {
+    throw new ExecutionAuthenticityError(
+      'design audit attention analysis has no valid finding-bound hotspot',
+    );
+  }
+  return findings;
 }
 
 function stableValue(value: unknown): unknown {
@@ -752,7 +806,12 @@ export class LeaseExecutionEngine {
       materialize(input: {
         lease: ControlExecutionLease;
         visuals: ResolvedVisualInput[];
-        annotationPurpose?: 'input_provenance' | 'design_audit';
+        annotationPurpose?: 'input_provenance';
+      }): Promise<MaterializedVisualOriginal[] | void>;
+      annotateDesignFindings?(input: {
+        lease: ControlExecutionLease;
+        original: MaterializedVisualOriginal;
+        findings: FindingBoundVisualAnnotation[];
       }): Promise<void>;
     };
     visualInputGates?: Pick<VisualInputGateStore, 'resolve'>;
@@ -775,6 +834,7 @@ export class LeaseExecutionEngine {
     let plan: EnginePlan;
     let reviewCoverage: ReviewCoverageIds | null = null;
     let deliverableId: string;
+    let materializedVisualOriginals: MaterializedVisualOriginal[] = [];
     try {
       const gates = await this.dependencies.repository.listGateRecords(
         input.lease.taskId,
@@ -793,15 +853,25 @@ export class LeaseExecutionEngine {
       plan = overlayPendingInputs(parsedPlan, pendingInputs, resolvedInputs.gates, task.ownerUserId);
       if (this.dependencies.visualInputMaterializer) {
         const materializer = this.dependencies.visualInputMaterializer;
-        await this.withLeaseHeartbeat(input.lease, () => materializer.materialize({
+        const materialized = await this.withLeaseHeartbeat(input.lease, () => materializer.materialize({
           lease: input.lease,
           visuals: resolvedInputs.visuals,
           ...(deliverableId === 'competitive_analysis_report'
             ? { annotationPurpose: 'input_provenance' as const }
-            : deliverableId === 'design_audit_report'
-              ? { annotationPurpose: 'design_audit' as const }
-              : {}),
+            : {}),
         }));
+        materializedVisualOriginals = materialized ?? [];
+      }
+      if (
+        deliverableId === 'design_audit_report'
+        && (
+          !this.dependencies.visualInputMaterializer?.annotateDesignFindings
+          || materializedVisualOriginals.length !== 1
+        )
+      ) {
+        throw new ExecutionAuthenticityError(
+          'design audit requires exactly one materialized original and a finding-bound annotation producer',
+        );
       }
       if (this.dependencies.reportReview) {
         reviewCoverage = parseReviewCoverageIds(task.structuredTask, planVersion.plan);
@@ -1342,6 +1412,14 @@ export class LeaseExecutionEngine {
     }
 
     try {
+      if (deliverableId === 'design_audit_report') {
+        const materializer = this.dependencies.visualInputMaterializer!;
+        await this.withLeaseHeartbeat(input.lease, () => materializer.annotateDesignFindings!({
+          lease: input.lease,
+          original: materializedVisualOriginals[0]!,
+          findings: designAnnotationFindings(outputs),
+        }));
+      }
       active = await this.refreshLease(input.lease);
       const materialDiscovery = this.dependencies.reportComposition?.discoverAttemptMaterials
         ? this.dependencies.reportComposition
@@ -1390,10 +1468,12 @@ export class LeaseExecutionEngine {
         stepNo: plan.steps.length + 1,
         activeLease: input.lease,
         visualAssets: reportMaterials.visualAssets,
+        visualAnnotationBindings: reportMaterials.visualAnnotationBindings ?? [],
       };
       const deliverable = await this.withLeaseHeartbeat(input.lease, () => this.dependencies.deliverables.generate(deliverableInput));
       let deliverableArtifactId = deliverable.deliverableArtifactId;
       let reportReviewArtifactId: string | undefined;
+      let reportDocumentArtifactId: string | undefined;
       let reviewStatus: ReportReviewResult['status'] | undefined;
       if (this.dependencies.reportReview) {
         const reviewingTask = await this.dependencies.repository.transitionTask({
@@ -1510,8 +1590,24 @@ export class LeaseExecutionEngine {
           ) {
             throw new ExecutionAuthenticityError('ReportDocument composition did not return a sealed bound Artifact');
           }
+          reportDocumentArtifactId = composition.artifact.id;
         }
       }
+      await this.dependencies.repository.requireActiveLease(input.lease);
+      if (reportDocumentArtifactId !== undefined && reportReviewArtifactId === undefined) {
+        throw new ExecutionAuthenticityError('Report Package cannot bind a document without its Review Artifact');
+      }
+      const finalReviewArtifactId = reportReviewArtifactId;
+      const reportPackage = reportDocumentArtifactId === undefined
+        ? undefined
+        : await new ReportPackageArtifactService(this.dependencies.artifacts).seal({
+            activeLease: input.lease,
+            presentationMode: 'multimodal',
+            deliverableArtifactId,
+            evidenceManifestArtifactId: sealedEvidenceManifest.artifact.id,
+            reportReviewArtifactId: finalReviewArtifactId,
+            reportDocumentArtifactId,
+          });
       await this.dependencies.repository.requireActiveLease(input.lease);
       const status = gaps.length > 0 ? 'completed_with_gaps' : 'completed';
       await this.dependencies.repository.completeExecution(input.lease, { status });
@@ -1521,6 +1617,7 @@ export class LeaseExecutionEngine {
         deliverableArtifactId,
         evidenceManifestArtifactId: sealedEvidenceManifest.artifact.id,
         ...(reportReviewArtifactId === undefined ? {} : { reportReviewArtifactId }),
+        ...(reportPackage === undefined ? {} : { reportPackageArtifactId: reportPackage.id }),
         ...(reviewStatus === undefined ? {} : { reviewStatus }),
         gapCount: gaps.length,
       };

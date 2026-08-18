@@ -66,6 +66,8 @@ skills:
       - competitor_screenshots
     visual_inputs:
       - competitor_screenshots
+    multiple_visual_inputs:
+      - competitor_screenshots
     outputs:
       - competitive_analysis
     intent_tags:
@@ -107,6 +109,7 @@ skills:
     output_schema: schemas/skill-result-envelope.schema.json
     payload_schema: skills/design-review/output.schema.json
     required_tools:
+      - tavily-web-search
       - aesthetic-quant-lab
       - attention-analysis-lab
       - vision-brand-lab
@@ -136,6 +139,8 @@ skills:
     task_types:
       - a11y_audit
       - design_audit
+    required_tools:
+      - tavily-web-search
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
   - id: analyze-satisfaction
@@ -203,6 +208,8 @@ skills:
     risk_level: low
     task_types:
       - voc_diagnosis
+    required_tools:
+      - tavily-web-search
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
   - id: competitive-analysis
@@ -323,6 +330,8 @@ skills:
     risk_level: low
     task_types:
       - user_research_planning
+    required_tools:
+      - tavily-web-search
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
   - id: generate-survey

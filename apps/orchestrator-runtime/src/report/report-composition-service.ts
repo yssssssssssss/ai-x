@@ -30,6 +30,7 @@ import type {
   VerifiedVisualAsset,
   VisualAssetService,
 } from './visual-asset-service.ts';
+import type { ImageAnnotationOverlay } from './image-annotation-service.ts';
 
 interface VerifiedArtifactValue<T> {
   artifact: ControlArtifact;
@@ -57,6 +58,14 @@ export interface ReportMaterialDiscoveryInput extends ReportBinding {
 export interface ReportAttemptMaterials {
   visualAssets: VerifiedVisualAsset[];
   charts: VerifiedChart[];
+  visualAnnotationBindings?: VerifiedVisualAnnotationBinding[];
+}
+
+export interface VerifiedVisualAnnotationBinding {
+  assetId: string;
+  originalAssetId: string;
+  overlayArtifactId: string;
+  findingIds: string[];
 }
 
 export interface ReportCompositionInput extends ReportBinding {
@@ -148,12 +157,34 @@ export class ReportCompositionService implements ReportCompositionPort {
     const binding: ReportBinding = input;
     const artifacts = await this.dependencies.repository.listArtifactsForAttempt({
       ...binding,
-      kinds: ['visual_asset_manifest', 'chart_spec'],
+      kinds: ['visual_asset_manifest', 'image_annotation', 'chart_spec'],
     });
     const liveArtifacts = artifacts.filter((artifact) => artifact.state !== 'FAILED');
     const manifestArtifacts = liveArtifacts.filter((artifact) => artifact.kind === 'visual_asset_manifest');
+    const annotationArtifacts = liveArtifacts.filter((artifact) => artifact.kind === 'image_annotation');
     const chartInputArtifacts = liveArtifacts.filter((artifact) => artifact.kind === 'chart_spec');
     const verifiedAssets: VerifiedVisualAsset[] = [];
+    const annotationsByArtifactId = new Map<string, ImageAnnotationOverlay>();
+
+    for (const annotationArtifact of annotationArtifacts) {
+      assertMaterialArtifact(annotationArtifact, binding);
+      if (annotationArtifact.schemaVersion !== 'image-annotation-v1') {
+        throw new Error(`image annotation ${annotationArtifact.id} schemaVersion is invalid`);
+      }
+      const stored = await this.dependencies.artifacts.readVerifiedJson<ImageAnnotationOverlay>(
+        annotationArtifact.id,
+      );
+      if (
+        stored.artifact.id !== annotationArtifact.id
+        || stored.value.version !== 'image-annotation-v1'
+        || !stored.value.original
+        || !Array.isArray(stored.value.annotations)
+        || stored.value.annotations.length === 0
+      ) {
+        throw new Error(`image annotation ${annotationArtifact.id} is malformed`);
+      }
+      annotationsByArtifactId.set(annotationArtifact.id, stored.value);
+    }
 
     for (const manifestArtifact of manifestArtifacts) {
       assertMaterialArtifact(manifestArtifact, binding);
@@ -182,6 +213,37 @@ export class ReportCompositionService implements ReportCompositionPort {
     const lineageVisualAssets = verifiedAssets.filter(({ manifest }) => manifest.derivation?.kind !== 'chart_svg');
     const visualAssets = lineageVisualAssets.filter(({ manifest }) =>
       manifest.exportPolicy === 'allow' || manifest.exportPolicy === 'mask');
+    const visualAnnotationBindings: VerifiedVisualAnnotationBinding[] = [];
+    const usedAnnotationArtifacts = new Set<string>();
+    for (const asset of lineageVisualAssets) {
+      const derivation = asset.manifest.derivation;
+      if (derivation?.kind !== 'annotation') continue;
+      const lineage = asset.manifest.derivedFrom;
+      const overlay = annotationsByArtifactId.get(derivation.overlayArtifactId);
+      if (
+        !lineage
+        || !overlay
+        || overlay.original.assetId !== lineage.assetId
+        || overlay.original.manifestArtifactId !== lineage.manifestArtifactId
+        || usedAnnotationArtifacts.has(derivation.overlayArtifactId)
+      ) {
+        throw new Error(`visual annotation ${asset.artifact.id} has invalid or duplicate overlay lineage`);
+      }
+      const findingIds = [...new Set(overlay.annotations.map(({ findingId }) => findingId))];
+      if (findingIds.length === 0 || findingIds.some((findingId) => !findingId.trim())) {
+        throw new Error(`visual annotation ${asset.artifact.id} has no finding bindings`);
+      }
+      usedAnnotationArtifacts.add(derivation.overlayArtifactId);
+      visualAnnotationBindings.push({
+        assetId: asset.artifact.id,
+        originalAssetId: lineage.assetId,
+        overlayArtifactId: derivation.overlayArtifactId,
+        findingIds,
+      });
+    }
+    if (usedAnnotationArtifacts.size !== annotationsByArtifactId.size) {
+      throw new Error('every sealed image annotation must have one exact derived visual Asset');
+    }
     const chartAssets = new Map(
       verifiedAssets
         .filter(({ manifest }) => manifest.derivation?.kind === 'chart_svg')
@@ -244,7 +306,7 @@ export class ReportCompositionService implements ReportCompositionPort {
     if (usedChartAssets.size !== chartAssets.size) {
       throw new Error('every sealed chart_svg Asset must have one exact sealed Chart input');
     }
-    return { visualAssets, charts };
+    return { visualAssets, charts, visualAnnotationBindings };
   }
 
   async composeAndStore(input: ReportCompositionInput): Promise<ReportCompositionResult> {

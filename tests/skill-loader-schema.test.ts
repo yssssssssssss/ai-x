@@ -41,6 +41,7 @@ const capabilitySkill: SkillRegistryEntry = {
   task_types: ['design_audit'],
   inputs: ['designImage'],
   visual_inputs: ['designImage'],
+  multiple_visual_inputs: ['designImage'],
   outputs: ['design_review'],
   output_schema: 'schemas/skill-result-envelope.schema.json',
   required_tools: ['vision-tool'],
@@ -73,6 +74,7 @@ test('loadSkillSchemas:原生 Skill 保留 input 与领域 payload schema', () =
 test('listCapabilitySkills preserves valid visual input metadata', () => {
   withSkillRegistry(capabilitySkill, () => {
     assert.deepEqual(new SkillLoader().listCapabilitySkills()[0]?.visual_inputs, ['designImage']);
+    assert.deepEqual(new SkillLoader().listCapabilitySkills()[0]?.multiple_visual_inputs, ['designImage']);
   });
 });
 
@@ -82,6 +84,8 @@ test('listCapabilitySkills rejects malformed or misspelled visual input metadata
     { ...capabilitySkill, visual_inputs: [' '] },
     { ...capabilitySkill, visual_inputs: ['designImage', 'designImage'] },
     { ...capabilitySkill, visual_inputs: ['competitorImage'] },
+    { ...capabilitySkill, multiple_visual_inputs: 'designImage' },
+    { ...capabilitySkill, multiple_visual_inputs: ['competitorImage'] },
     { ...capabilitySkill, visual_input: ['designImage'] },
   ];
   for (const skill of malformed) {

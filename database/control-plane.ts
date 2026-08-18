@@ -2085,7 +2085,10 @@ export class ControlPlaneRepository {
          WHERE task_id = $1
            AND plan_version_id = $2
            AND attempt_id = $3
-           AND kind IN ('evidence_manifest', 'deliverable', 'report_document', 'report_review')
+           AND kind IN (
+             'evidence_manifest', 'deliverable', 'report_document', 'report_review', 'report_package',
+             'visual_asset', 'visual_asset_manifest', 'image_annotation', 'chart_spec'
+           )
            AND state IN ('STAGING', 'SEALED')`,
         [input.taskId, input.planVersionId, input.attemptId, input.reason],
       );

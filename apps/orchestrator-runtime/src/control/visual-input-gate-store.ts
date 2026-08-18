@@ -191,7 +191,7 @@ function assertPlanBoundArtifact(input: {
 function targetValue(value: unknown, sourceMultiple: boolean, targetMultiple: boolean): unknown {
   if (sourceMultiple === targetMultiple) return structuredClone(value);
   if (!sourceMultiple && targetMultiple) return [structuredClone(value)];
-  if (!Array.isArray(value) || value.length !== 1) {
+  if (!Array.isArray(value) || value.length === 0) {
     throw new VisualInputGateError('multiple input cannot populate a singular target');
   }
   return structuredClone(value[0]);

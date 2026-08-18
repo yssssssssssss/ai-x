@@ -33,8 +33,20 @@ export interface ExecutionRecoveryStore {
   invalidateArtifact(input: { artifactId: string; reason: string }): Promise<void>;
 }
 
-const TERMINAL_ARTIFACT_KINDS = new Set(['evidence_manifest', 'deliverable', 'report_review', 'report_document']);
+const TERMINAL_ARTIFACT_KINDS = new Set([
+  'evidence_manifest',
+  'deliverable',
+  'report_review',
+  'report_document',
+  'report_package',
+]);
 const STEP_OUTPUT_ARTIFACT_KINDS = new Set(['tool_output', 'skill_output', 'llm_output', 'review_output']);
+const VISUAL_COMPOSITE_ARTIFACT_KINDS = new Set([
+  'visual_asset',
+  'visual_asset_manifest',
+  'image_annotation',
+  'chart_spec',
+]);
 
 function asTime(value: Date | string): number {
   return value instanceof Date ? value.getTime() : new Date(value).getTime();
@@ -117,6 +129,14 @@ export class ExecutionRecoveryService {
             await this.dependencies.store.quarantineArtifact({ artifactId: artifact.id });
           } else if (artifact.state === 'SEALED' && TERMINAL_ARTIFACT_KINDS.has(artifact.kind)) {
             await this.dependencies.store.invalidateArtifact({ artifactId: artifact.id, reason: 'terminal artifact invalidated during execution recovery' });
+          } else if (
+            artifact.state === 'SEALED'
+            && VISUAL_COMPOSITE_ARTIFACT_KINDS.has(artifact.kind)
+          ) {
+            await this.dependencies.store.invalidateArtifact({
+              artifactId: artifact.id,
+              reason: 'visual composite Artifact invalidated during execution recovery',
+            });
           } else if (
             artifact.state === 'SEALED'
             && STEP_OUTPUT_ARTIFACT_KINDS.has(artifact.kind)

@@ -30,7 +30,8 @@ const PROTOTYPE_KEYS: ReadonlySet<string> = new Set(['__proto__', 'constructor',
 
 type ArtifactStorePort = Pick<
   ControlArtifactStore,
-  'writeBinary' | 'writeJson' | 'readVerifiedBinary' | 'readVerifiedJson'
+  | 'writeBinary' | 'writeJson' | 'readVerifiedBinary' | 'readVerifiedJson'
+  | 'invalidateArtifactPublication'
 >;
 
 type ResolveHost = (hostname: string) => Promise<string[]>;
@@ -579,6 +580,13 @@ export class VisualAssetService {
     };
   }
 
+  async invalidate(result: VisualAssetResult, reason: string): Promise<void> {
+    await Promise.allSettled([
+      this.artifacts.invalidateArtifactPublication(result.assetArtifact.id, reason),
+      this.artifacts.invalidateArtifactPublication(result.manifestArtifact.id, reason),
+    ]);
+  }
+
   private async persist(input: AssetBinding & {
     bytes: Uint8Array;
     source: VisualAssetSource;
@@ -589,42 +597,56 @@ export class VisualAssetService {
   }): Promise<VisualAssetResult> {
     assertPersistenceManifestInput(input);
     const token = randomUUID();
-    const assetArtifact = await this.artifacts.writeBinary({
-      taskId: input.taskId,
-      planVersionId: input.planVersionId,
-      attemptId: input.attemptId,
-      kind: 'visual_asset',
-      relativePath: `visual-assets/${token}.image`,
-      bytes: Buffer.from(input.bytes),
-      schemaVersion: 'visual-asset-v1',
-      sensitivity: 'internal',
-      redactionPolicyVersion: 'v1',
-      ...(input.activeLease ? { activeLease: input.activeLease } : {}),
-      ...(input.derivation?.kind === 'chart_svg'
-        ? { trustedMediaType: 'image/svg+xml' as const }
-        : {}),
-    });
-    assertBinding(assetArtifact, input, 'visual Asset');
-    const metadata = metadataFromArtifact(assetArtifact);
-    const draft = manifestDraft({ ...input, artifact: assetArtifact, metadata });
-    const manifest: VisualAssetManifest = { ...draft, manifestHash: hash(draft) };
-    assertVisualAssetManifestSchema(manifest);
-    const manifestArtifact = await this.artifacts.writeJson({
-      taskId: input.taskId,
-      planVersionId: input.planVersionId,
-      attemptId: input.attemptId,
-      kind: 'visual_asset_manifest',
-      relativePath: `visual-assets/${token}.manifest.json`,
-      value: manifest,
-      schemaVersion: 'visual-asset-manifest-v1',
-      sensitivity: 'internal',
-      redactionPolicyVersion: 'v1',
-      ...(input.activeLease ? { activeLease: input.activeLease } : {}),
-    });
-    assertBinding(manifestArtifact, input, 'visual Asset manifest');
-    if (manifestArtifact.schemaVersion !== 'visual-asset-manifest-v1') {
-      throw new Error('visual Asset manifest Artifact schemaVersion is invalid');
+    let assetArtifact: ControlArtifact | undefined;
+    let manifestArtifact: ControlArtifact | undefined;
+    try {
+      assetArtifact = await this.artifacts.writeBinary({
+        taskId: input.taskId,
+        planVersionId: input.planVersionId,
+        attemptId: input.attemptId,
+        kind: 'visual_asset',
+        relativePath: `visual-assets/${token}.image`,
+        bytes: Buffer.from(input.bytes),
+        schemaVersion: 'visual-asset-v1',
+        sensitivity: 'internal',
+        redactionPolicyVersion: 'v1',
+        ...(input.activeLease ? { activeLease: input.activeLease } : {}),
+        ...(input.derivation?.kind === 'chart_svg'
+          ? { trustedMediaType: 'image/svg+xml' as const }
+          : {}),
+      });
+      assertBinding(assetArtifact, input, 'visual Asset');
+      const metadata = metadataFromArtifact(assetArtifact);
+      const draft = manifestDraft({ ...input, artifact: assetArtifact, metadata });
+      const manifest: VisualAssetManifest = { ...draft, manifestHash: hash(draft) };
+      assertVisualAssetManifestSchema(manifest);
+      manifestArtifact = await this.artifacts.writeJson({
+        taskId: input.taskId,
+        planVersionId: input.planVersionId,
+        attemptId: input.attemptId,
+        kind: 'visual_asset_manifest',
+        relativePath: `visual-assets/${token}.manifest.json`,
+        value: manifest,
+        schemaVersion: 'visual-asset-manifest-v1',
+        sensitivity: 'internal',
+        redactionPolicyVersion: 'v1',
+        ...(input.activeLease ? { activeLease: input.activeLease } : {}),
+      });
+      assertBinding(manifestArtifact, input, 'visual Asset manifest');
+      if (manifestArtifact.schemaVersion !== 'visual-asset-manifest-v1') {
+        throw new Error('visual Asset manifest Artifact schemaVersion is invalid');
+      }
+      return { assetArtifact, manifestArtifact, manifest };
+    } catch (error) {
+      await Promise.allSettled(
+        [assetArtifact?.id, manifestArtifact?.id]
+          .filter((artifactId): artifactId is string => artifactId !== undefined)
+          .map((artifactId) => this.artifacts.invalidateArtifactPublication(
+            artifactId,
+            'visual Asset publication did not complete',
+          )),
+      );
+      throw error;
     }
-    return { assetArtifact, manifestArtifact, manifest };
   }
 }

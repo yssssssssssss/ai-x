@@ -1,5 +1,9 @@
 import type { MigrationDatabase } from './migration-runner.ts';
-import type { GoldBatchStore, GoldPins } from '../apps/orchestrator-runtime/src/gold/gold-batch-service.ts';
+import type {
+  GoldBatchStore,
+  GoldPins,
+  GoldReviewerAuthority,
+} from '../apps/orchestrator-runtime/src/gold/gold-batch-service.ts';
 
 interface QueryConnection {
   query(sql: string, values?: readonly unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
@@ -70,13 +74,18 @@ export class PostgresGoldBatchStore implements GoldBatchStore {
     }
   }
 
-  async getSlots(batchKey: string): Promise<Array<{ slotNo: number; attemptId: string | null; state: string; infraRetries: number }>> {
+  async getSlots(batchKey: string): Promise<Array<{
+    slotNo: number;
+    attemptId: string | null;
+    reportPackageId: string | null;
+    state: string;
+    infraRetries: number;
+  }>> {
     const connection = await this.database.connect();
     try {
       const result = await connection.query(
-        `SELECT slot.slot_no, slot.capability_attempt_id, slot.state,
-                COALESCE((SELECT COUNT(*) FROM control_execution_attempts attempt
-                  WHERE attempt.batch_id = batch.id AND attempt.slot_no = slot.slot_no AND attempt.state = 'paused'), 0) AS infra_retries
+        `SELECT slot.slot_no, slot.capability_attempt_id, slot.report_package_artifact_id,
+                slot.state, slot.infra_retries
          FROM gold_batch_slots AS slot
          JOIN gold_batches AS batch ON batch.id = slot.batch_id
          WHERE batch.batch_key = $1 ORDER BY slot.slot_no`,
@@ -85,6 +94,9 @@ export class PostgresGoldBatchStore implements GoldBatchStore {
       return result.rows.map((row) => ({
         slotNo: asNumber(row.slot_no, 'slot_no'),
         attemptId: typeof row.capability_attempt_id === 'string' ? row.capability_attempt_id : null,
+        reportPackageId: typeof row.report_package_artifact_id === 'string'
+          ? row.report_package_artifact_id
+          : null,
         state: asString(row.state, 'state'),
         infraRetries: asNumber(row.infra_retries, 'infra_retries'),
       }));
@@ -93,17 +105,30 @@ export class PostgresGoldBatchStore implements GoldBatchStore {
     }
   }
 
-  async updateSlot(batchKey: string, slotNo: number, patch: Partial<{ attemptId: string | null; state: string; infraRetries: number }>): Promise<void> {
-    void patch.infraRetries;
+  async updateSlot(batchKey: string, slotNo: number, patch: Partial<{
+    attemptId: string | null;
+    reportPackageId: string | null;
+    state: string;
+    infraRetries: number;
+  }>): Promise<void> {
     const connection = await this.database.connect();
     try {
       await connection.query(
         `UPDATE gold_batch_slots AS slot
          SET capability_attempt_id = COALESCE($3, slot.capability_attempt_id),
-             state = COALESCE($4, slot.state)
+             report_package_artifact_id = COALESCE($4, slot.report_package_artifact_id),
+             state = COALESCE($5, slot.state),
+             infra_retries = COALESCE($6, slot.infra_retries)
          FROM gold_batches AS batch
          WHERE slot.batch_id = batch.id AND batch.batch_key = $1 AND slot.slot_no = $2`,
-        [batchKey, slotNo, patch.attemptId ?? null, patch.state ?? null],
+        [
+          batchKey,
+          slotNo,
+          patch.attemptId ?? null,
+          patch.reportPackageId ?? null,
+          patch.state ?? null,
+          patch.infraRetries ?? null,
+        ],
       );
     } finally {
       connection.release();
@@ -157,6 +182,56 @@ export class PostgresGoldBatchStore implements GoldBatchStore {
         reviewerId: asString(row.reviewer_user_id, 'reviewer_user_id'),
         verdict: asString(row.verdict, 'verdict'),
       }));
+    } finally {
+      connection.release();
+    }
+  }
+}
+
+export class PostgresGoldReviewerAuthority implements GoldReviewerAuthority {
+  constructor(private readonly database: MigrationDatabase) {}
+
+  async verifyReviewer(input: { reviewerId: string; attemptId: string }): Promise<{
+    authenticated: boolean;
+    independence: { capabilityOwner: boolean; operator: boolean; artifactEditor: boolean };
+  }> {
+    const connection = await this.database.connect();
+    try {
+      const result = await connection.query(
+        `SELECT reviewer.status AS reviewer_status,
+                task.owner_user_id = reviewer.id AS capability_owner,
+                (
+                  EXISTS (
+                    SELECT 1 FROM control_commands AS command
+                    WHERE command.task_id = task.id AND command.actor_user_id = reviewer.id
+                  )
+                  OR EXISTS (
+                    SELECT 1 FROM control_gate_records AS gate
+                    WHERE gate.task_id = task.id AND gate.actor_user_id = reviewer.id
+                  )
+                ) AS operated_attempt
+         FROM users AS reviewer
+         JOIN control_execution_attempts AS attempt ON attempt.id = $2
+         JOIN control_tasks AS task ON task.id = attempt.task_id
+         WHERE reviewer.id = $1`,
+        [input.reviewerId, input.attemptId],
+      );
+      const row = result.rows[0];
+      if (!row) {
+        return {
+          authenticated: false,
+          independence: { capabilityOwner: true, operator: true, artifactEditor: true },
+        };
+      }
+      const operated = row.operated_attempt === true;
+      return {
+        authenticated: row.reviewer_status === 'active',
+        independence: {
+          capabilityOwner: row.capability_owner === true,
+          operator: operated,
+          artifactEditor: operated,
+        },
+      };
     } finally {
       connection.release();
     }

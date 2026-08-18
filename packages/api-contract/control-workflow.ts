@@ -159,6 +159,7 @@ export interface ControlExecutionResult {
   deliverableArtifactId?: string;
   evidenceManifestArtifactId?: string;
   reportReviewArtifactId?: string;
+  reportPackageArtifactId?: string;
   reviewStatus?: 'completed' | 'paused';
   gapCount?: number;
   failedStepNo?: number;

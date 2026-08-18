@@ -20,6 +20,8 @@ domain: general
 title: Code Open Feedback — 海量短反馈 → 编码标签库 + 主题频次/情感 + Top 痛点（编排 wiki 正典）
 task_types:
   - voc_diagnosis
+required_tools:
+  - tavily-web-search
 inputs: []
 outputs: []
 status: approved

@@ -235,7 +235,7 @@ export function resolveCapabilities(input: CapabilityResolveInput): CapabilityRe
         kind: skill.visual_inputs?.includes(role) === true ? 'visual' : 'value',
         role,
         label: role,
-        multiple: false,
+        multiple: skill.multiple_visual_inputs?.includes(role) === true,
         capability_id: skill.id,
       }));
     if (reasons.length > 0) {

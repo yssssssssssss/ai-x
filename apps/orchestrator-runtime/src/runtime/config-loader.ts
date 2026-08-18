@@ -282,6 +282,7 @@ export interface SkillRegistryEntry {
   intent_tags?: string[];
   inputs?: string[];
   visual_inputs?: string[];
+  multiple_visual_inputs?: string[];
   outputs?: string[];
   input_schema?: string; // KB skill 为 markdown 过程式, 无 JSON schema
   output_schema?: string;
@@ -303,6 +304,7 @@ const SKILL_REGISTRY_ENTRY_KEYS = new Set<keyof SkillRegistryEntry>([
   'intent_tags',
   'inputs',
   'visual_inputs',
+  'multiple_visual_inputs',
   'outputs',
   'input_schema',
   'output_schema',
@@ -320,7 +322,12 @@ export function unknownSkillRegistryFields(skill: SkillRegistryEntry): string[] 
 export function skillVisualInputIssue(skill: SkillRegistryEntry): string | null {
   const record = skill as unknown as Record<string, unknown>;
   const visualInputs = record.visual_inputs;
-  if (visualInputs === undefined) return null;
+  const multipleVisualInputs = record.multiple_visual_inputs;
+  if (visualInputs === undefined) {
+    return multipleVisualInputs === undefined
+      ? null
+      : 'multiple_visual_inputs requires a visual_inputs array';
+  }
   if (
     !Array.isArray(visualInputs)
     || visualInputs.some((role) => (
@@ -335,9 +342,23 @@ export function skillVisualInputIssue(skill: SkillRegistryEntry): string | null 
   const inputs = record.inputs;
   if (!Array.isArray(inputs)) return 'visual_inputs requires an inputs array';
   const missingRole = visualInputs.find((role) => !inputs.includes(role));
-  return missingRole === undefined
+  if (missingRole !== undefined) return `visual_inputs references an undeclared input: ${missingRole}`;
+  if (multipleVisualInputs === undefined) return null;
+  if (
+    !Array.isArray(multipleVisualInputs)
+    || multipleVisualInputs.some((role) => (
+      typeof role !== 'string'
+      || role.trim().length === 0
+      || role.trim() !== role
+    ))
+    || new Set(multipleVisualInputs).size !== multipleVisualInputs.length
+  ) {
+    return 'multiple_visual_inputs must be a unique array of canonical non-empty strings';
+  }
+  const nonVisualRole = multipleVisualInputs.find((role) => !visualInputs.includes(role));
+  return nonVisualRole === undefined
     ? null
-    : `visual_inputs references an undeclared input: ${missingRole}`;
+    : `multiple_visual_inputs references a non-visual input: ${nonVisualRole}`;
 }
 
 export interface ToolRegistryEntry {

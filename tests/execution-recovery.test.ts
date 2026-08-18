@@ -36,6 +36,7 @@ const ATTEMPT_ARTIFACT_KINDS = [
   'deliverable',
   'report_review',
   'report_document',
+  'report_package',
   'visual_asset',
   'visual_asset_manifest',
   'image_annotation',
@@ -76,6 +77,11 @@ class MemoryRecoveryStore {
     { id: 'sealed-deliverable', attemptId: 'expired-attempt', kind: 'deliverable', state: 'SEALED', storageUri: '/runs/deliverable.json' },
     { id: 'sealed-review', attemptId: 'expired-attempt', kind: 'report_review', state: 'SEALED', storageUri: '/runs/review.json' },
     { id: 'sealed-document', attemptId: 'expired-attempt', kind: 'report_document', state: 'SEALED', storageUri: '/runs/document.json' },
+    { id: 'sealed-package', attemptId: 'expired-attempt', kind: 'report_package', state: 'SEALED', storageUri: '/runs/package.json' },
+    { id: 'sealed-visual', attemptId: 'expired-attempt', kind: 'visual_asset', state: 'SEALED', storageUri: '/runs/visual.image' },
+    { id: 'sealed-visual-manifest', attemptId: 'expired-attempt', kind: 'visual_asset_manifest', state: 'SEALED', storageUri: '/runs/visual.json' },
+    { id: 'sealed-annotation', attemptId: 'expired-attempt', kind: 'image_annotation', state: 'SEALED', storageUri: '/runs/annotation.json' },
+    { id: 'sealed-chart', attemptId: 'expired-attempt', kind: 'chart_spec', state: 'SEALED', storageUri: '/runs/chart.json' },
     { id: 'sealed-published-step', attemptId: 'expired-attempt', kind: 'tool_output', state: 'SEALED', storageUri: '/runs/published-step.json' },
     { id: 'sealed-orphan-step', attemptId: 'expired-attempt', kind: 'skill_output', state: 'SEALED', storageUri: '/runs/orphan-step.json' },
     { id: 'live-staging', attemptId: 'live-attempt', kind: 'other', state: 'STAGING', storageUri: '/runs/live.json' },
@@ -251,7 +257,17 @@ test('recover invalidates sealed terminal and unpublished step Artifacts but pre
 
   await service.recover(new Date('2026-08-17T00:00:01.000Z'));
 
-  for (const id of ['sealed-evidence', 'sealed-deliverable', 'sealed-review', 'sealed-document']) {
+  for (const id of [
+    'sealed-evidence',
+    'sealed-deliverable',
+    'sealed-review',
+    'sealed-document',
+    'sealed-package',
+    'sealed-visual',
+    'sealed-visual-manifest',
+    'sealed-annotation',
+    'sealed-chart',
+  ]) {
     assert.equal(store.artifacts.find((artifact) => artifact.id === id)?.state, 'INVALIDATED');
   }
   assert.equal(store.artifacts.find((artifact) => artifact.id === 'sealed-orphan-step')?.state, 'INVALIDATED');
@@ -262,6 +278,11 @@ test('recover invalidates sealed terminal and unpublished step Artifacts but pre
     'sealed-deliverable',
     'sealed-review',
     'sealed-document',
+    'sealed-package',
+    'sealed-visual',
+    'sealed-visual-manifest',
+    'sealed-annotation',
+    'sealed-chart',
     'sealed-orphan-step',
   ]);
 });

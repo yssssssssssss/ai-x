@@ -564,13 +564,13 @@ for (const contract of PROFESSIONAL_CONTRACTS) {
     const llm = new ContractGenerationLLM(contract.payload);
     let writes = 0;
     const service = generationServiceFor(contract, llm, () => { writes += 1; });
-    const visualAssets = contract.deliverableId === 'competitive_analysis_report'
-      ? verifiedVisualPair(contract, 'asset-screenshot-original', 'asset-screenshot-a')
+    const visualInput = contract.deliverableId === 'competitive_analysis_report'
+      ? verifiedVisualInput(contract, 'asset-screenshot-original', 'asset-screenshot-a')
       : contract.deliverableId === 'design_audit_report'
-        ? verifiedVisualPair(contract, 'asset-checkout-original', 'asset-checkout-annotation')
-        : [];
+        ? verifiedVisualInput(contract, 'asset-checkout-original', 'asset-checkout-annotation')
+        : { visualAssets: [] };
 
-    const result = await service.generate(Object.assign(generationInput(contract), { visualAssets }));
+    const result = await service.generate(Object.assign(generationInput(contract), visualInput));
 
     assert.equal(result.deliverable.deliverableType, contract.deliverableId);
     assert.deepEqual(result.deliverable.payload, contract.payload);
@@ -818,6 +818,31 @@ function verifiedVisualPair(
   return [original, verifiedAnnotationAsset(contract, annotationAssetId, original)];
 }
 
+function verifiedVisualInput(
+  contract: DeliverableContractFixture,
+  originalAssetId: string,
+  annotationAssetId: string,
+  bindingOverrides: Partial<{ taskId: string; planVersionId: string; attemptId: string }> = {},
+) {
+  const visualAssets = verifiedVisualPair(
+    contract,
+    originalAssetId,
+    annotationAssetId,
+    bindingOverrides,
+  );
+  return contract.deliverableId === 'design_audit_report'
+    ? {
+        visualAssets,
+        visualAnnotationBindings: [{
+          assetId: annotationAssetId,
+          originalAssetId,
+          overlayArtifactId: `overlay-${annotationAssetId}`,
+          findingIds: ['issue-1'],
+        }],
+      }
+    : { visualAssets };
+}
+
 
 const VISUAL_PAYLOAD_CASES = [{
   deliverableId: 'competitive_analysis_report',
@@ -846,9 +871,10 @@ for (const visualCase of VISUAL_PAYLOAD_CASES) {
       } as unknown as EvidenceService,
       artifacts: { async writeJson() { writes += 1; return { id: 'must-not-write' }; } },
     });
-    const input = Object.assign(generationInput(contract), {
-      visualAssets: verifiedVisualPair(contract, 'asset-unrelated-original', 'asset-unrelated-annotation'),
-    });
+    const input = Object.assign(
+      generationInput(contract),
+      verifiedVisualInput(contract, 'asset-unrelated-original', 'asset-unrelated-annotation'),
+    );
 
     await assert.rejects(() => service.generate(input), /lineage|verified visual|asset.*inventory|unverified asset/i);
     assert.equal(writes, 0);
@@ -868,9 +894,10 @@ for (const visualCase of VISUAL_PAYLOAD_CASES) {
       } as unknown as EvidenceService,
       artifacts: { async writeJson() { return { id: `artifact-${contract.deliverableId}` }; } },
     });
-    const input = Object.assign(generationInput(contract), {
-      visualAssets: verifiedVisualPair(contract, visualCase.originalAssetId, visualCase.assetId),
-    });
+    const input = Object.assign(
+      generationInput(contract),
+      verifiedVisualInput(contract, visualCase.originalAssetId, visualCase.assetId),
+    );
 
     await service.generate(input);
 
@@ -904,14 +931,15 @@ for (const visualCase of VISUAL_PAYLOAD_CASES) {
         } as unknown as EvidenceService,
         artifacts: { async writeJson() { return { id: 'must-not-write' }; } },
       });
-      const input = Object.assign(generationInput(contract), {
-        visualAssets: verifiedVisualPair(
+      const input = Object.assign(
+        generationInput(contract),
+        verifiedVisualInput(
           contract,
           visualCase.originalAssetId,
           visualCase.assetId,
           mismatch.override,
         ),
-      });
+      );
 
       await assert.rejects(() => service.generate(input), /visual asset.*(task|plan|attempt)|binding|foreign/i);
       assert.equal(llm.calls.length, 0);
@@ -1109,6 +1137,12 @@ test('design annotatedScreenshots require an annotation whose derivedFrom is the
   await assert.rejects(
     () => invalidService.generate(Object.assign(generationInput(contract), {
       visualAssets: [original, annotation],
+      visualAnnotationBindings: [{
+        assetId: annotation.artifact.id,
+        originalAssetId: original.artifact.id,
+        overlayArtifactId: `overlay-${annotation.artifact.id}`,
+        findingIds: ['issue-1'],
+      }],
     })),
     /annotation|derivedFrom|lineage|original/i,
   );
@@ -1123,6 +1157,12 @@ test('design annotatedScreenshots require an annotation whose derivedFrom is the
   const validService = generationServiceFor(contract, validLlm, () => { validWrites += 1; });
   await validService.generate(Object.assign(generationInput(contract), {
     visualAssets: [original, annotation],
+    visualAnnotationBindings: [{
+      assetId: annotation.artifact.id,
+      originalAssetId: original.artifact.id,
+      overlayArtifactId: `overlay-${annotation.artifact.id}`,
+      findingIds: ['issue-1'],
+    }],
   }));
   assert.equal(validLlm.calls.length, 1);
   assert.equal(validWrites, 1);

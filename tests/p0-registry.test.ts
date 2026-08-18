@@ -30,3 +30,20 @@ test('active competitive public-search skills require Tavily and never draft O2'
     assert.ok(!skill.required_tools?.includes('o2-web-search'), `${skill.id} must not require draft O2`);
   }
 });
+
+test('every current real-smoke capability declares core Tavily through the Registry', () => {
+  const skills = loadSkillRegistry().skills;
+  const smokeSkillIds = [
+    'generate-research-plan',
+    'competitive-web-research',
+    'code-open-feedback',
+    'design-experience-review',
+    'accessibility-review',
+  ];
+
+  for (const skillId of smokeSkillIds) {
+    const skill = skills.find((candidate) => candidate.id === skillId);
+    assert.ok(skill, `${skillId} must exist`);
+    assert.ok(skill.required_tools?.includes('tavily-web-search'), `${skillId} must require Tavily`);
+  }
+});

@@ -1072,6 +1072,7 @@ test('direct screenshot Skill exposes missing screenshot roles as pending inputs
     ));
     assert.deepEqual(compiled.pending_inputs.map((input) => input.role), ['competitor_screenshots']);
     assert.deepEqual(compiled.pending_inputs.map((input) => input.kind), ['visual']);
+    assert.deepEqual(compiled.pending_inputs.map((input) => input.multiple), [true]);
   }
 });
 
@@ -1083,13 +1084,15 @@ test('fans one sealed design input out to every declared visual Tool field', asy
     expected_deliverables: ['design audit report'],
   };
   const tools = new ToolRouter();
-  tools.register({
-    adapterType: 'rest_json',
-    implementationId: 'qualified-real-rest-json',
-    executionMode: 'real',
-    endpointHost: () => 'design.fixture.test',
-    async invoke() { throw new Error('not used during planning'); },
-  });
+  for (const adapterType of ['tavily', 'rest_json'] as const) {
+    tools.register({
+      adapterType,
+      implementationId: `qualified-real-${adapterType}`,
+      executionMode: 'real',
+      endpointHost: () => `${adapterType}.fixture.test`,
+      async invoke() { throw new Error('not used during planning'); },
+    });
+  }
   const planning = new ResearchPlanningService({
     llm: new CurrentPlanningLLM(),
     validator: new SchemaValidator(),

@@ -19,6 +19,7 @@ const skillMd = [
   '---', 'name: generate-research-plan', 'description: 生成完整调研方案',
   'type: skill', 'domain: general', 'tags: [method, output]',
   'task_types: [user_research_planning]', 'inputs: [research_goal]', 'outputs: [research_plan]',
+  'required_tools: [tavily-web-search]',
   'content_hash: sha256:y', 'status: approved', '---', '', '# 生成研究方案',
 ].join('\n');
 
@@ -42,5 +43,6 @@ test('知识条目进 knowledge 索引,skill 进 skills,asset 被排除', () => 
   assert.equal(skills[0].when_to_use, '生成完整调研方案', 'when_to_use ← description');
   assert.equal(skills[0].entry, 'knowledge-base/skills/generate-research-plan/SKILL.md');
   assert.deepEqual(skills[0].task_types, ['user_research_planning']);
+  assert.deepEqual(skills[0].required_tools, ['tavily-web-search']);
   assert.equal(skills[0].status, 'active', 'approved → active');
 });

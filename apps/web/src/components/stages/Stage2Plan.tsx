@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { PlanResponse, PlanStep, PendingUpload, Upload } from '../../api/client.ts';
+import { pendingImageUploads } from '../../pending-upload-values.ts';
 import { Header } from './Stage1Understand.tsx';
 
 // 段2 · 待执行计划(HITL 硬闸门):步骤列表 + 假设可就地编辑 + 待传图片 + 确认按钮。
@@ -17,23 +18,30 @@ export function Stage2Plan({
   const [assumptions, setAssumptions] = useState(plan.task.assumptions);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [confirmed, setConfirmed] = useState(false);
-  const [images, setImages] = useState<Record<string, string>>({}); // role → dataUrl
+  const [images, setImages] = useState<Record<string, string[]>>({});
 
   function edit(key: string, value: string) {
     setAssumptions((prev) => prev.map((a) => (a.key === key ? { ...a, value } : a)));
   }
 
-  function pickImage(pu: PendingUpload, file: File) {
-    const reader = new FileReader();
-    reader.onload = () => setImages((prev) => ({ ...prev, [pu.role]: String(reader.result) }));
-    reader.readAsDataURL(file);
+  function readImage(file: File): Promise<string> {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+      reader.onerror = () => resolve('');
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function pickImages(pu: PendingUpload, files: File[]): Promise<void> {
+    const selected = pu.multiple ? files : files.slice(0, 1);
+    const dataUrls = (await Promise.all(selected.map(readImage))).filter(Boolean);
+    setImages((previous) => ({ ...previous, [pu.role]: dataUrls }));
   }
 
   function confirm() {
     if (missingAnswers.length > 0) return;
-    const uploads: Upload[] = pending
-      .map((pu) => ({ role: pu.role, dataUrl: images[pu.role] }))
-      .filter((u): u is Upload => !!u.dataUrl);
+    const uploads: Upload[] = pendingImageUploads(pending, images);
     setConfirmed(true);
     onConfirm(answers, uploads);
   }
@@ -105,13 +113,16 @@ export function Stage2Plan({
                 {pu.label}
                 <span style={{ color: 'var(--text-faint)', fontSize: 11 }}> · 用于步骤 {pu.targets.map((t) => t.step_no).join('/')}</span>
               </span>
-              {images[pu.role] ? (
-                <img src={images[pu.role]} alt="" style={{ height: 34, borderRadius: 4, border: '1px solid var(--border)' }} />
-              ) : null}
+              {(images[pu.role] ?? []).map((dataUrl, index) => (
+                <img key={`${pu.role}-${index}`} src={dataUrl} alt="" style={{ height: 34, borderRadius: 4, border: '1px solid var(--border)' }} />
+              ))}
               <input
                 type="file"
                 accept="image/*"
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) pickImage(pu, f); }}
+                multiple={pu.multiple}
+                onChange={(event) => {
+                  void pickImages(pu, Array.from(event.currentTarget.files ?? []));
+                }}
                 style={{ fontSize: 12, color: 'var(--text-dim)' }}
               />
             </div>

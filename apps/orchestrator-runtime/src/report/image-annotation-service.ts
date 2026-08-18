@@ -79,7 +79,7 @@ interface VerifiedOriginal {
 }
 
 type VisualAssetPort = Pick<VisualAssetService, 'readVerified' | 'derive'>;
-type JsonArtifactPort = Pick<ControlArtifactStore, 'writeJson'>;
+type JsonArtifactPort = Pick<ControlArtifactStore, 'writeJson' | 'invalidateArtifactPublication'>;
 type RenderSvg = (input: {
   originalBytes: Buffer;
   overlay: ImageAnnotationOverlay;
@@ -308,41 +308,54 @@ export class ImageAnnotationService {
       original: structuredClone(input.original),
       annotations,
     };
-    const overlayArtifact = await this.dependencies.artifacts.writeJson({
-      taskId: input.taskId,
-      planVersionId: input.planVersionId,
-      attemptId: input.attemptId,
-      kind: 'image_annotation',
-      relativePath: `visual-assets/${randomUUID()}.annotation.json`,
-      value: overlay,
-      schemaVersion: 'image-annotation-v1',
-      sensitivity: 'internal',
-      redactionPolicyVersion: 'v1',
-      ...(input.activeLease ? { activeLease: input.activeLease } : {}),
-    });
-    if (
-      overlayArtifact.taskId !== input.taskId
-      || overlayArtifact.planVersionId !== input.planVersionId
-      || overlayArtifact.attemptId !== input.attemptId
-      || overlayArtifact.kind !== 'image_annotation'
-      || overlayArtifact.state !== 'SEALED'
-    ) {
-      throw new Error('sealed image annotation Artifact binding does not match');
+    let overlayArtifact: ControlArtifact | undefined;
+    try {
+      overlayArtifact = await this.dependencies.artifacts.writeJson({
+        taskId: input.taskId,
+        planVersionId: input.planVersionId,
+        attemptId: input.attemptId,
+        kind: 'image_annotation',
+        relativePath: `visual-assets/${randomUUID()}.annotation.json`,
+        value: overlay,
+        schemaVersion: 'image-annotation-v1',
+        sensitivity: 'internal',
+        redactionPolicyVersion: 'v1',
+        ...(input.activeLease ? { activeLease: input.activeLease } : {}),
+      });
+      if (
+        overlayArtifact.taskId !== input.taskId
+        || overlayArtifact.planVersionId !== input.planVersionId
+        || overlayArtifact.attemptId !== input.attemptId
+        || overlayArtifact.kind !== 'image_annotation'
+        || overlayArtifact.state !== 'SEALED'
+      ) {
+        throw new Error('sealed image annotation Artifact binding does not match');
+      }
+      const renderedBytes = await this.renderSvg({
+        originalBytes: Buffer.from(original.bytes),
+        overlay: structuredClone(overlay),
+      });
+      const derived = await this.dependencies.assets.derive({
+        taskId: input.taskId,
+        planVersionId: input.planVersionId,
+        attemptId: input.attemptId,
+        original: structuredClone(input.original),
+        derivation: { kind: 'annotation', overlayArtifactId: overlayArtifact.id },
+        bytes: Buffer.from(renderedBytes),
+        exportPolicy: input.exportPolicy,
+        ...(input.activeLease ? { activeLease: input.activeLease } : {}),
+      });
+      return { overlayArtifact, derived };
+    } catch (error) {
+      if (overlayArtifact) {
+        await Promise.allSettled([
+          this.dependencies.artifacts.invalidateArtifactPublication(
+            overlayArtifact.id,
+            'image annotation publication did not complete',
+          ),
+        ]);
+      }
+      throw error;
     }
-    const renderedBytes = await this.renderSvg({
-      originalBytes: Buffer.from(original.bytes),
-      overlay: structuredClone(overlay),
-    });
-    const derived = await this.dependencies.assets.derive({
-      taskId: input.taskId,
-      planVersionId: input.planVersionId,
-      attemptId: input.attemptId,
-      original: structuredClone(input.original),
-      derivation: { kind: 'annotation', overlayArtifactId: overlayArtifact.id },
-      bytes: Buffer.from(renderedBytes),
-      exportPolicy: input.exportPolicy,
-      ...(input.activeLease ? { activeLease: input.activeLease } : {}),
-    });
-    return { overlayArtifact, derived };
   }
 }

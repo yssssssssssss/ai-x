@@ -89,6 +89,8 @@ test('active skill rejects malformed, undeclared, and misspelled visual input me
         { ...base, id: 'blank', visual_inputs: [' '] },
         { ...base, id: 'duplicate', visual_inputs: ['designImage', 'designImage'] },
         { ...base, id: 'undeclared', visual_inputs: ['competitorImage'] },
+        { ...base, id: 'plural-scalar', visual_inputs: ['designImage'], multiple_visual_inputs: 'designImage' },
+        { ...base, id: 'plural-nonvisual', visual_inputs: ['designImage'], multiple_visual_inputs: ['competitorImage'] },
         { ...base, id: 'misspelled', visual_inputs: ['designImage'], visual_input: ['designImage'] },
       ],
     }),
@@ -104,6 +106,12 @@ test('active skill rejects malformed, undeclared, and misspelled visual input me
   }
   assert.ok(issues.some((issue) => (
     issue.target === 'skill:undeclared' && issue.message.includes('undeclared input')
+  )));
+  assert.ok(issues.some((issue) => (
+    issue.target === 'skill:plural-scalar' && issue.message.includes('multiple_visual_inputs must be a unique array')
+  )));
+  assert.ok(issues.some((issue) => (
+    issue.target === 'skill:plural-nonvisual' && issue.message.includes('non-visual input')
   )));
   assert.ok(issues.some((issue) => (
     issue.target === 'skill:misspelled' && issue.message.includes('未知字段: visual_input')

@@ -221,7 +221,7 @@ test('ingests non-competitive visual inputs without inventing issue annotations'
   assert.equal(annotationCount, 0);
 });
 
-test('rejects design-audit pre-analysis annotation synthesis without creating visual evidence', async () => {
+test('ingests design-audit originals without creating pre-analysis annotations', async () => {
   const { VisualInputMaterializer } = await import(modulePath);
   let ingestCount = 0;
   const annotations: Array<Record<string, unknown>> = [];
@@ -243,27 +243,104 @@ test('rejects design-audit pre-analysis annotation synthesis without creating vi
     },
   });
 
-  await assert.rejects(
-    () => materializer.materialize({
-      lease: {
-        taskId: 'task-1',
-        planVersionId: 'plan-1',
-        attemptId: 'attempt-1',
-        leaseOwner: 'worker',
-        leaseToken: 'token',
-      },
-      visuals: [{
-        gateKey: 'designImage',
-        multiple: false,
-        images: [resolvedImage('input-png', PNG_BYTES, 'image/png')],
-      }],
-      annotationPurpose: 'design_audit',
-    }),
-    /verified finding-bound analysis|pre-analysis annotation synthesis/u,
-  );
+  const originals = await materializer.materialize({
+    lease: {
+      taskId: 'task-1',
+      planVersionId: 'plan-1',
+      attemptId: 'attempt-1',
+      leaseOwner: 'worker',
+      leaseToken: 'token',
+    },
+    visuals: [{
+      gateKey: 'designImage',
+      multiple: false,
+      images: [resolvedImage('input-png', PNG_BYTES, 'image/png')],
+    }],
+  });
 
-  assert.equal(ingestCount, 0);
+  assert.equal(ingestCount, 1);
   assert.equal(annotations.length, 0);
+  assert.deepEqual(originals, [{
+    gateKey: 'designImage',
+    imageIndex: 1,
+    original: { assetId: 'asset-original', manifestArtifactId: 'manifest-original' },
+  }]);
+});
+
+test('creates design annotations only from explicit finding-bound analysis', async () => {
+  const { VisualInputMaterializer } = await import(modulePath);
+  const annotations: Array<Record<string, unknown>> = [];
+  const materializer = new VisualInputMaterializer({
+    visualAssets: {
+      async ingest() {
+        throw new Error('ingest is not part of the annotation phase');
+      },
+    },
+    imageAnnotations: {
+      async annotate(input: Record<string, unknown>) {
+        annotations.push(input);
+        return {};
+      },
+    },
+  });
+  const lease = {
+    taskId: 'task-1',
+    planVersionId: 'plan-1',
+    attemptId: 'attempt-1',
+    leaseOwner: 'worker',
+    leaseToken: 'token',
+  };
+
+  await materializer.annotateDesignFindings({
+    lease,
+    original: {
+      gateKey: 'designImage',
+      imageIndex: 1,
+      original: { assetId: 'asset-original', manifestArtifactId: 'manifest-original' },
+    },
+    findings: [{
+      findingId: 'design-attention-2-1',
+      label: '主行动入口与促销信息竞争注意力',
+      severity: 'high',
+      x: 0.2,
+      y: 0.3,
+      width: 0.4,
+      height: 0.2,
+    }],
+  });
+
+  assert.equal(annotations.length, 1);
+  assert.deepEqual(annotations[0], {
+    taskId: 'task-1',
+    planVersionId: 'plan-1',
+    attemptId: 'attempt-1',
+    activeLease: lease,
+    original: { assetId: 'asset-original', manifestArtifactId: 'manifest-original' },
+    findingIds: ['design-attention-2-1'],
+    annotations: [{
+      shape: 'rectangle',
+      x: 0.2,
+      y: 0.3,
+      width: 0.4,
+      height: 0.2,
+      findingId: 'design-attention-2-1',
+      label: '主行动入口与促销信息竞争注意力',
+      severity: 'high',
+    }],
+    exportPolicy: 'allow',
+  });
+  await assert.rejects(
+    () => materializer.annotateDesignFindings({
+      lease,
+      original: {
+        gateKey: 'designImage',
+        imageIndex: 1,
+        original: { assetId: 'asset-original', manifestArtifactId: 'manifest-original' },
+      },
+      findings: [],
+    }),
+    /at least one verified analysis finding/u,
+  );
 });
 
 test('does not create visual assets when there are no resolved visual inputs', async () => {

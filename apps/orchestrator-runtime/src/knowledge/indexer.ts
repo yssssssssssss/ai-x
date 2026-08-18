@@ -35,6 +35,9 @@ export function buildIndex(entries: Array<{ relPath: string; md: string }>): {
     const { frontmatter: fm } = parseFrontmatter(md);
     if (fm.type === 'skill') {
       const folder = relPath.replace(/\/SKILL\.md$/i, '');
+      const requiredTools = Array.isArray(fm.required_tools)
+        ? fm.required_tools.map(String)
+        : undefined;
       skills.push({
         id: fm.name as string,
         name: fm.name as string,
@@ -45,6 +48,7 @@ export function buildIndex(entries: Array<{ relPath: string; md: string }>): {
         risk_level: (fm.risk_level as SkillRegistryEntry['risk_level']) ?? 'low',
         task_types: (fm.task_types as string[]) ?? [],
         output_schema: SKILL_RESULT_ENVELOPE_SCHEMA,
+        ...(requiredTools === undefined ? {} : { required_tools: requiredTools }),
         status: toRegistryStatus(fm.status),
       });
     } else if (fm.id && fm.type !== 'asset') {
