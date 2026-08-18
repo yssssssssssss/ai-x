@@ -1,13 +1,7 @@
 import type { ControlExecutionLease } from '../../../../database/control-plane.ts';
+import type { ResolvedVisualInput } from '../control/visual-input-gate-store.ts';
 import type { ImageAnnotationService } from './image-annotation-service.ts';
 import type { VisualAssetService } from './visual-asset-service.ts';
-import { parseVisualInputDataUrls } from './visual-input-data-url.ts';
-
-interface InputGate {
-  gateType: string;
-  gateKey: string;
-  value: unknown;
-}
 
 export class VisualInputMaterializer {
   constructor(private readonly dependencies: {
@@ -17,53 +11,58 @@ export class VisualInputMaterializer {
 
   async materialize(input: {
     lease: ControlExecutionLease;
-    gates: InputGate[];
+    visuals: ResolvedVisualInput[];
+    annotationPurpose?: 'input_provenance' | 'design_audit';
   }): Promise<void> {
-    const visualInputs: Array<{
-      gateKey: string;
-      image: Awaited<ReturnType<typeof parseVisualInputDataUrls>>[number];
-    }> = [];
-    for (const gate of input.gates) {
-      if (gate.gateType !== 'input') continue;
-      const images = await parseVisualInputDataUrls(gate.value);
-      visualInputs.push(...images.map((image) => ({ gateKey: gate.gateKey, image })));
+    if (input.annotationPurpose === 'design_audit') {
+      throw new Error(
+        'design audit annotations require verified finding-bound analysis; pre-analysis annotation synthesis is forbidden',
+      );
     }
     let imageIndex = 0;
-    for (const { gateKey, image } of visualInputs) {
-      imageIndex += 1;
-      const findingId = `visual-input-${imageIndex}`;
-      const original = await this.dependencies.visualAssets.ingest({
-        taskId: input.lease.taskId,
-        planVersionId: input.lease.planVersionId,
-        attemptId: input.lease.attemptId,
-        source: {
-          kind: 'user_upload',
-          fileName: `${gateKey}-${imageIndex}.${image.extension}`,
-          bytes: image.bytes,
-        },
-        exportPolicy: 'allow',
-      });
-      await this.dependencies.imageAnnotations.annotate({
-        taskId: input.lease.taskId,
-        planVersionId: input.lease.planVersionId,
-        attemptId: input.lease.attemptId,
-        original: {
-          assetId: original.assetArtifact.id,
-          manifestArtifactId: original.manifestArtifact.id,
-        },
-        findingIds: [findingId],
-        annotations: [{
-          shape: 'rectangle',
-          x: 0.04,
-          y: 0.14,
-          width: 0.92,
-          height: 0.76,
-          findingId,
-          label: `${gateKey} 真实界面重点区域`,
-          severity: 'medium',
-        }],
-        exportPolicy: 'allow',
-      });
+    for (const visual of input.visuals) {
+      for (const image of visual.images) {
+        imageIndex += 1;
+        const extension = image.metadata.contentType === 'image/jpeg'
+          ? 'jpg'
+          : image.metadata.contentType === 'image/png' ? 'png' : 'webp';
+        const original = await this.dependencies.visualAssets.ingest({
+          taskId: input.lease.taskId,
+          planVersionId: input.lease.planVersionId,
+          attemptId: input.lease.attemptId,
+          activeLease: input.lease,
+          source: {
+            kind: 'user_upload',
+            fileName: `${visual.gateKey}-${imageIndex}.${extension}`,
+            bytes: image.bytes,
+          },
+          exportPolicy: 'allow',
+        });
+        if (!input.annotationPurpose) continue;
+        const findingId = `input-provenance-${imageIndex}`;
+        await this.dependencies.imageAnnotations.annotate({
+          taskId: input.lease.taskId,
+          planVersionId: input.lease.planVersionId,
+          attemptId: input.lease.attemptId,
+          activeLease: input.lease,
+          original: {
+            assetId: original.assetArtifact.id,
+            manifestArtifactId: original.manifestArtifact.id,
+          },
+          findingIds: [findingId],
+          annotations: [{
+            shape: 'rectangle',
+            x: 0.01,
+            y: 0.01,
+            width: 0.98,
+            height: 0.98,
+            findingId,
+            label: `${visual.gateKey} 用户输入图像边界（仅用于来源溯源，不代表研究发现）`,
+            severity: 'low',
+          }],
+          exportPolicy: 'allow',
+        });
+      }
     }
   }
 }

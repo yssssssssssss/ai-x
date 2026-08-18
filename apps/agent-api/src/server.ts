@@ -158,13 +158,16 @@ export function createAgentApiApp(deps: AgentApiDependencies = {}) {
 }
 if (import.meta.url === `file://${process.argv[1]}`) {
   const PORT = Number(process.env.API_PORT ?? 3001);
+  const controlRuntime = buildControlRuntime();
   const recovery = new ExecutionRecoveryController(
     new ExecutionRecoveryService({
-      store: new ControlPlaneExecutionRecoveryStore(new ControlPlaneRepository(pool)),
+      store: new ControlPlaneExecutionRecoveryStore(
+        controlRuntime.repository,
+        controlRuntime.artifacts,
+      ),
     }),
   );
   await recovery.start();
-  const controlRuntime = buildControlRuntime();
   const server = createAgentApiApp({ controlRuntime }).listen(PORT, () => {
     console.log(`agent-api listening on http://localhost:${PORT}`);
   });

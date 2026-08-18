@@ -51,6 +51,7 @@ interface DeliverableContractFixture {
   rubricPath: string;
   templateId: string;
   criticalArrays: readonly string[];
+  emptyAllowedArrays?: readonly string[];
   payload: Record<string, unknown>;
 }
 
@@ -134,6 +135,7 @@ const CONTRACTS: readonly DeliverableContractFixture[] = [{
     'actionRecommendations',
     'screenshotComparisons',
   ],
+  emptyAllowedArrays: ['screenshotComparisons'],
   payload: {
     competitorSamples: [{
       id: 'sample-a',
@@ -354,11 +356,16 @@ for (const contract of CONTRACTS) {
     assert.ok(Array.isArray(schema.required), `${contract.deliverableId} required must be an array`);
     assert.ok(schema.properties, `${contract.deliverableId} properties must be declared`);
     for (const dimension of contract.criticalArrays) {
+      const emptyAllowed = contract.emptyAllowedArrays?.includes(dimension) ?? false;
       assert.ok(schema.required.includes(dimension), `${dimension} must be required`);
       const property: JsonSchema | undefined = schema.properties[dimension];
       assert.ok(property, `${dimension} must have a schema`);
       assert.equal(property.type, 'array', `${dimension} must be an array`);
-      assert.equal((property as { minItems?: unknown }).minItems, 1, `${dimension} must be non-empty`);
+      assert.equal(
+        (property as { minItems?: unknown }).minItems,
+        emptyAllowed ? undefined : 1,
+        emptyAllowed ? `${dimension} may be empty` : `${dimension} must be non-empty`,
+      );
     }
 
     const validator = new SchemaValidator();
@@ -368,9 +375,11 @@ for (const contract of CONTRACTS) {
       `${contract.deliverableId} must reject an undeclared root property`,
     );
     for (const dimension of contract.criticalArrays) {
-      assert.ok(
-        validator.validateFile(schemaPath, { ...contract.payload, [dimension]: [] }).length > 0,
-        `${contract.deliverableId} must reject an empty ${dimension}`,
+      const emptyAllowed = contract.emptyAllowedArrays?.includes(dimension) ?? false;
+      assert.equal(
+        validator.validateFile(schemaPath, { ...contract.payload, [dimension]: [] }).length === 0,
+        emptyAllowed,
+        `${contract.deliverableId} empty ${dimension} contract drifted`,
       );
     }
 
@@ -439,6 +448,45 @@ for (const contract of CONTRACTS) {
     assert.deepEqual(plannedEvidence, expectedEvidence);
   });
 }
+
+test('competitive synthesis and review contracts permit an evidence-backed report without visual inputs', () => {
+  const contract = CONTRACTS.find(({ deliverableId }) => deliverableId === 'competitive_analysis_report');
+  assert.ok(contract);
+  const prompt = readFileSync(join(ROOT, contract.promptPath), 'utf8');
+  assert.match(prompt, /without verified visual assets.*empty screenshotComparisons/iu);
+  assert.match(prompt, /exactly two unique assetIds.*original.*annotation.*exact original/iu);
+  assert.match(prompt, /input-provenance boundary.*does not locate, prove, or substantiate.*research finding/iu);
+
+  const rubric = asRecord(
+    parseYaml(readFileSync(join(ROOT, contract.rubricPath), 'utf8')),
+    'competitive review rubric',
+  );
+  assert.ok(Array.isArray(rubric.dimensions));
+  const visualQuality = rubric.dimensions
+    .map((dimension) => asRecord(dimension, 'competitive review dimension'))
+    .find((dimension) => dimension.id === 'visual_quality');
+  assert.ok(visualQuality);
+  assert.match(String(visualQuality.criterion), /without verified visual assets.*empty screenshotComparisons/iu);
+  assert.match(String(visualQuality.criterion), /exactly two unique Asset ids.*original-to-annotation.*exact lineage/iu);
+  assert.match(String(visualQuality.criterion), /input-provenance boundary.*does not locate or substantiate.*research finding/iu);
+
+  const schemaPath = join(ROOT, contract.schemaPath);
+  const validator = new SchemaValidator();
+  for (const assetIds of [
+    ['asset-original'],
+    ['asset-original', 'asset-original'],
+    ['asset-original', 'asset-annotation', 'asset-extra'],
+  ]) {
+    const payload = structuredClone(contract.payload);
+    const comparison = (payload.screenshotComparisons as Array<Record<string, unknown>>)[0];
+    assert.ok(comparison);
+    comparison.assetIds = assetIds;
+    assert.ok(
+      validator.validateFile(schemaPath, payload).length > 0,
+      `competitive assetIds must reject ${JSON.stringify(assetIds)}`,
+    );
+  }
+});
 
 test('Registry linter accepts the complete five-task deliverable contract set', () => {
   assert.deepEqual(lintRegistries(), []);
@@ -962,7 +1010,26 @@ function verifiedRawSourceAsset(
   return rehashVisualManifest(raw);
 }
 
-test('visual-required competitive generation fails before LLM or sealing without a visual inventory', async () => {
+test('competitive generation permits an empty screenshot section when no visual inventory exists', async () => {
+  const contract = PROFESSIONAL_CONTRACTS.find(({ deliverableId }) => deliverableId === 'competitive_analysis_report');
+  assert.ok(contract);
+  const payload = structuredClone(contract.payload);
+  payload.screenshotComparisons = [];
+  const llm = new ContractGenerationLLM(payload);
+  let writes = 0;
+  const service = generationServiceFor(contract, llm, () => { writes += 1; });
+
+  const result = await service.generate(Object.assign(generationInput(contract), { visualAssets: [] }));
+
+  assert.deepEqual(
+    (result.deliverable.payload as Record<string, unknown>).screenshotComparisons,
+    [],
+  );
+  assert.equal(llm.calls.length, 1);
+  assert.equal(writes, 1);
+});
+
+test('competitive generation rejects screenshot references when no visual inventory exists', async () => {
   const contract = PROFESSIONAL_CONTRACTS.find(({ deliverableId }) => deliverableId === 'competitive_analysis_report');
   assert.ok(contract);
   const llm = new ContractGenerationLLM(contract.payload);
@@ -973,7 +1040,6 @@ test('visual-required competitive generation fails before LLM or sealing without
     () => service.generate(Object.assign(generationInput(contract), { visualAssets: [] })),
     /visual.*(?:required|inventory)|screenshot.*(?:required|inventory)/iu,
   );
-  assert.equal(llm.calls.length, 0);
   assert.equal(writes, 0);
 });
 

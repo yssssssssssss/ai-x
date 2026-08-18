@@ -232,6 +232,7 @@ export function resolveCapabilities(input: CapabilityResolveInput): CapabilityRe
     const pendingInputs = skill.inputs
       .filter((role) => !availableInputs.has(role))
       .map((role): CapabilityPendingInput => ({
+        kind: skill.visual_inputs?.includes(role) === true ? 'visual' : 'value',
         role,
         label: role,
         multiple: false,

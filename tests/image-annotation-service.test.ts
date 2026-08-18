@@ -18,6 +18,11 @@ const originalRef = {
   assetId: 'artifact-original-1',
   manifestArtifactId: 'artifact-original-manifest-1',
 };
+const activeLease = {
+  ...binding,
+  leaseOwner: 'annotation-worker',
+  leaseToken: 'annotation-token',
+};
 
 function digest(bytes: Uint8Array | string): string {
   return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
@@ -211,6 +216,22 @@ test('persists a structured overlay containing only rectangle, dot, arrow, and n
   assert.equal(result.overlayArtifact.id, 'artifact-overlay-1');
   assert.equal(fixture.renders.length, 1);
   assert.deepEqual(fixture.renders[0]?.overlay, overlay);
+});
+
+test('fences the annotation overlay and derived visual Asset with the active execution lease', async () => {
+  const fixture = harness();
+
+  await fixture.service.annotate({
+    ...binding,
+    activeLease,
+    original: originalRef,
+    findingIds: ['F1', 'F2'],
+    annotations: validAnnotations,
+    exportPolicy: 'allow',
+  });
+
+  assert.deepEqual(fixture.artifacts.writes[0]?.activeLease, activeLease);
+  assert.deepEqual(fixture.assets.derives[0]?.activeLease, activeLease);
 });
 
 test('rejects unsupported annotation shapes before persistence or rendering', async () => {

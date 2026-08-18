@@ -21,6 +21,7 @@ import {
 } from '../control/step-input-resolver.ts';
 import {
   getConfigRoot,
+  loadToolManifest,
   loadToolRegistry,
   type ToolRegistryEntry,
 } from '../runtime/config-loader.ts';
@@ -66,6 +67,7 @@ export type PlanCompilerValidationKind =
   | 'unknown_binding_target'
   | 'invalid_binding_target'
   | 'invalid_skill_output_pointer'
+  | 'invalid_actor_output_pointer'
   | 'optional_binding_source'
   | 'missing_core_evidence'
   | 'rejected_capability'
@@ -401,6 +403,19 @@ export function validateResolverCompatibleTargetPointers(
       fail('invalid_binding_target', binding.target_pointer, String(step.step_no));
     }
     if (status === 'missing') {
+      const inputRelativePointer = binding.target_pointer.startsWith('/input/')
+        ? binding.target_pointer.slice('/input'.length)
+        : null;
+      if (inputRelativePointer) {
+        fail(
+          'unknown_binding_target',
+          binding.target_pointer,
+          String(step.step_no),
+          'target_pointer is relative to step.input',
+          `declare ${inputRelativePointer} in step.input before binding`,
+          `use ${inputRelativePointer} instead of ${binding.target_pointer}`,
+        );
+      }
       fail('unknown_binding_target', binding.target_pointer, String(step.step_no));
     }
   }
@@ -450,6 +465,26 @@ function validateSkillOutputPointers(steps: CurrentPlanStep[]): void {
   }
 }
 
+function validateFixedActorOutputPointers(steps: CurrentPlanStep[]): void {
+  for (const step of steps) {
+    const expectedPointer = step.actor_type === 'llm'
+      ? '/text'
+      : step.actor_type === 'reviewer'
+        ? '/review'
+        : null;
+    if (expectedPointer === null) continue;
+    if (step.expected_outputs.length !== 1 || step.expected_outputs[0]?.pointer !== expectedPointer) {
+      fail(
+        'invalid_actor_output_pointer',
+        String(step.step_no),
+        step.actor_type,
+        ...step.expected_outputs.map((output) => output.pointer),
+        expectedPointer,
+      );
+    }
+  }
+}
+
 function validatePendingInputSchemas(
   eligibleSkills: ReadonlyMap<string, CapabilityResolution['eligible'][number]>,
 ): void {
@@ -481,8 +516,10 @@ function validatePendingInputSchemas(
 function derivePendingInputs(
   steps: CurrentPlanStep[],
   eligibleSkills: ReadonlyMap<string, CapabilityResolution['eligible'][number]>,
+  toolsById: ReadonlyMap<string, ToolRegistryEntry>,
 ): PendingInput[] {
   const pendingByRole = new Map<string, PendingInput>();
+  const targetKeysByRole = new Map<string, Set<string>>();
   for (const step of steps) {
     if (step.actor_type !== 'skill') continue;
     const decision = eligibleSkills.get(step.actor_id)!;
@@ -493,19 +530,65 @@ function derivePendingInputs(
       let item = pendingByRole.get(pending.role);
       if (!item) {
         item = {
+          kind: pending.kind,
           role: pending.role,
           label: pending.label,
           multiple: pending.multiple,
           targets: [],
         };
         pendingByRole.set(pending.role, item);
+        targetKeysByRole.set(pending.role, new Set());
+      } else if (item.multiple !== pending.multiple || item.kind !== pending.kind) {
+        fail('pending_input_schema_invalid', pending.role, 'multiple-or-kind');
       }
-      item.targets.push({
-        step_no: step.step_no,
-        tool_id: step.actor_id,
-        field: pending.role,
-        multiple: pending.multiple,
-      });
+      const addTarget = (target: PendingInput['targets'][number]): void => {
+        const targetKey = `${target.step_no}\u0000${target.field}`;
+        const targetKeys = targetKeysByRole.get(pending.role)!;
+        if (targetKeys.has(targetKey)) return;
+        targetKeys.add(targetKey);
+        item!.targets.push(target);
+      };
+      addTarget({
+          step_no: step.step_no,
+          tool_id: step.actor_id,
+          field: pending.role,
+          multiple: pending.multiple,
+        });
+
+      for (const toolStep of steps) {
+        if (
+          toolStep.actor_type !== 'tool'
+          || toolStep.step_no >= step.step_no
+          || !decision.skill.required_tools.includes(toolStep.actor_id)
+        ) continue;
+        const tool = toolsById.get(toolStep.actor_id);
+        if (!tool) fail('pending_input_schema_invalid', toolStep.actor_id, pending.role);
+        let manifest;
+        try {
+          manifest = loadToolManifest(tool.path);
+        } catch {
+          fail('pending_input_schema_invalid', toolStep.actor_id, pending.role);
+        }
+        const visualPendingCount = decision.pending_inputs.filter(({ kind }) => kind === 'visual').length;
+        for (const imageField of manifest.image_input_fields ?? []) {
+          if (
+            pending.kind !== 'visual'
+            || (
+              visualPendingCount !== 1
+              && (imageField.role ?? imageField.field) !== pending.role
+            )
+          ) continue;
+          if (!Object.hasOwn(toolStep.input, imageField.field)) {
+            fail('pending_input_schema_invalid', toolStep.actor_id, imageField.field, String(toolStep.step_no));
+          }
+          addTarget({
+            step_no: toolStep.step_no,
+            tool_id: toolStep.actor_id,
+            field: imageField.field,
+            multiple: imageField.multiple === true,
+          });
+        }
+      }
     }
   }
   return [...pendingByRole.values()];
@@ -558,6 +641,7 @@ export class PlanCompiler {
     validateRequiredTools(steps, eligibleSkills);
     validatePendingInputSchemas(eligibleSkills);
     validateSkillOutputPointers(steps);
+    validateFixedActorOutputPointers(steps);
     const toolsById = new Map(loadToolRegistry().tools.map((tool) => [tool.id, tool]));
     validateBindings(steps, toolsById);
 
@@ -578,7 +662,7 @@ export class PlanCompiler {
       activated_nodes: [...input.activated_nodes],
     };
     this.validator.validateOrThrow('current-execution-plan', plan);
-    return { plan, pending_inputs: derivePendingInputs(steps, eligibleSkills) };
+    return { plan, pending_inputs: derivePendingInputs(steps, eligibleSkills, toolsById) };
   }
 }
 export function validateCurrentPlanRevision(input: {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -75,6 +75,7 @@ const evidenceRequirements = [{
   required: true,
 }];
 const pendingInputs = [{
+  kind: 'value' as const,
   role: 'brief',
   label: '研究简报',
   multiple: false,
@@ -359,6 +360,8 @@ async function buildRuntime(planning: { plan(input: ResearchPlanningInput): Prom
     conversations: {
       async create() { return { id: conversationId }; },
       async requireOwned() { return { id: conversationId }; },
+      async listMessages() { return []; },
+      async appendMessage() {},
     },
     planning,
     tools: new ToolRouter(),
@@ -544,7 +547,7 @@ test('production runtime replans from research goal and instruction while preser
   assert.equal('extra_client_field' in (steps[0] ?? {}), false);
   assert.equal(persisted.planHash, canonicalPlanHash(persisted.plan));
 });
-test('production runtime rejects malformed frozen revision fields before repository persistence', async () => {
+test('production runtime replaces legacy value and visual pending-input plans with wholly new revisions', async () => {
   let plannerCalls = 0;
   const runtime = await buildRuntime({
     async plan(input) {
@@ -552,38 +555,158 @@ test('production runtime rejects malformed frozen revision fields before reposit
       return planningResult(input.originalInput);
     },
   });
-  const malformedCases = [
-    { suffix: 'malformed-frozen-evidence', evidenceRequirements: [null], pending: pendingInputs },
-    { suffix: 'malformed-frozen-pending', evidenceRequirements, pending: [{ role: 'brief' }] },
+  const legacyCases = [
+    {
+      suffix: 'legacy-value-pending-kind',
+      role: 'brief',
+      suppliedValue: '只研究公开资料',
+      pendingInput: {
+        role: 'brief',
+        label: '研究简报',
+        multiple: false,
+        targets: [{ step_no: 1, tool_id: 'tavily-web-search', field: 'query', multiple: false }],
+      },
+    },
+    {
+      suffix: 'legacy-visual-pending-kind',
+      role: 'designImage',
+      suppliedValue: { dataUrl: 'data:image/png;base64,legacy' },
+      pendingInput: {
+        role: 'designImage',
+        label: '设计稿',
+        multiple: false,
+        targets: [{ step_no: 1, tool_id: 'tavily-web-search', field: 'query', multiple: false }],
+      },
+    },
   ];
 
-  for (const malformed of malformedCases) {
-    const seeded = await createSelectedTask({ suffix: malformed.suffix });
+  for (const legacy of legacyCases) {
+    const seeded = await createSelectedTask({ suffix: legacy.suffix });
     const activePlan = await repository.getPlanVersionDetail(seeded.selected.planVersionId);
     assert.ok(activePlan);
+    const legacyDecision = planningResult(legacy.suffix).capabilityResolution.eligible[0]!;
     await overwriteActivePlan({
       planVersionId: activePlan.id,
       plan: {
         ...(activePlan.plan as Record<string, unknown>),
-        evidence_requirements: malformed.evidenceRequirements,
-        steps: candidateSteps('speed'),
+        capability_decisions: {
+          eligible: [{
+            ...legacyDecision,
+            pending_inputs: [{
+              role: legacy.role,
+              label: legacy.pendingInput.label,
+              multiple: false,
+              capability_id: legacyDecision.skill.id,
+            }],
+          }],
+          rejected: [],
+        },
       },
-      pendingInputs: malformed.pending,
+      pendingInputs: [legacy.pendingInput],
     });
 
+    await assert.rejects(() => runtime.workflow.confirm({
+      taskId: seeded.created.task.id,
+      planVersionId: activePlan.id,
+      expectedVersion: seeded.selected.stateVersion,
+      idempotencyKey: `${legacy.suffix}-confirm`,
+      actor: { userId: ownerId, role: 'owner' },
+      confirmationAnswers: {},
+      inputValues: { [legacy.role]: legacy.suppliedValue },
+    }));
+
+    const revised = await runtime.workflow.revise({
+      taskId: seeded.created.task.id,
+      expectedVersion: seeded.selected.stateVersion,
+      revisionInstruction: '按当前合同重新生成完整计划',
+      idempotencyKey: `${legacy.suffix}-revise`,
+      actor: { userId: ownerId, role: 'owner' },
+    });
+    const persisted = await repository.getPlanVersionDetail(revised.planVersionId);
+    assert.ok(persisted);
+    new SchemaValidator().validateOrThrow('current-execution-plan', persisted.plan);
+    assert.deepEqual(persisted.pendingInputs, []);
+    assert.equal(persisted.candidateId, activePlan.candidateId);
+    assert.notEqual(persisted.id, activePlan.id);
+    const preservedLegacy = await repository.getPlanVersionDetail(activePlan.id);
+    assert.ok(Array.isArray(preservedLegacy?.pendingInputs));
+    assert.equal(Object.hasOwn(preservedLegacy.pendingInputs[0] ?? {}, 'kind'), false);
+  }
+  assert.equal(plannerCalls, legacyCases.length);
+});
+
+test('revision driver rejects non-exact legacy and unrelated corruption before planner invocation', async () => {
+  let plannerCalls = 0;
+  const runtime = await buildRuntime({
+    async plan(input) {
+      plannerCalls += 1;
+      return planningResult(input.originalInput);
+    },
+  });
+  const cases = [
+    {
+      suffix: 'legacy-extra-field',
+      mutate(plan: Record<string, unknown>) { return plan; },
+      pendingInputs: [{
+        role: 'brief',
+        label: '研究简报',
+        multiple: false,
+        targets: [{ step_no: 1, tool_id: 'tavily-web-search', field: 'query', multiple: false }],
+        unexpected: true,
+      }],
+    },
+    {
+      suffix: 'legacy-unrelated-corruption',
+      mutate(plan: Record<string, unknown>) {
+        return { ...plan, evidence_requirements: [null] };
+      },
+      pendingInputs: [{
+        role: 'brief',
+        label: '研究简报',
+        multiple: false,
+        targets: [{ step_no: 1, tool_id: 'tavily-web-search', field: 'query', multiple: false }],
+      }],
+    },
+  ];
+
+  for (const malformed of cases) {
+    const seeded = await createSelectedTask({ suffix: malformed.suffix });
+    const activePlan = await repository.getPlanVersionDetail(seeded.selected.planVersionId);
+    assert.ok(activePlan);
+    const legacyDecision = planningResult(malformed.suffix).capabilityResolution.eligible[0]!;
+    await overwriteActivePlan({
+      planVersionId: activePlan.id,
+      plan: malformed.mutate({
+        ...(activePlan.plan as Record<string, unknown>),
+        capability_decisions: {
+          eligible: [{
+            ...legacyDecision,
+            pending_inputs: [{
+              role: 'brief',
+              label: '研究简报',
+              multiple: false,
+              capability_id: legacyDecision.skill.id,
+            }],
+          }],
+          rejected: [],
+        },
+      }),
+      pendingInputs: malformed.pendingInputs,
+    });
     const nextVersion = await repository.nextPlanVersion(seeded.created.task.id);
     await assert.rejects(() => runtime.workflow.revise({
       taskId: seeded.created.task.id,
       expectedVersion: seeded.selected.stateVersion,
-      revisionInstruction: '拒绝畸形冻结字段',
-      idempotencyKey: malformed.suffix,
+      revisionInstruction: '不得容忍损坏的旧合同',
+      idempotencyKey: `${malformed.suffix}-revise`,
       actor: { userId: ownerId, role: 'owner' },
     }));
     assert.equal(await repository.nextPlanVersion(seeded.created.task.id), nextVersion);
   }
   assert.equal(plannerCalls, 0);
 });
-test('production runtime rejects malformed frozen step shape before repository persistence', async () => {
+
+test('revision driver rejects a schema-valid Deliverable Registry mismatch before planning', async () => {
   let plannerCalls = 0;
   const runtime = await buildRuntime({
     async plan(input) {
@@ -591,77 +714,748 @@ test('production runtime rejects malformed frozen step shape before repository p
       return planningResult(input.originalInput);
     },
   });
-  const malformedSteps = [
-    { suffix: 'malformed-step-null-input', step: { ...candidateSteps('speed')[0], input: null } },
-    { suffix: 'malformed-step-array-input', step: { ...candidateSteps('speed')[0], input: [] } },
-    { suffix: 'malformed-step-approval', step: { ...candidateSteps('speed')[0], requires_approval: 'yes' } },
-    { suffix: 'malformed-step-purpose', step: { ...candidateSteps('speed')[0], purpose: 123 } },
-    { suffix: 'malformed-step-extra-key', step: { ...candidateSteps('speed')[0], extra_client_field: 'reject-me' } },
-  ];
-
-
-  for (const malformed of malformedSteps) {
-    const seeded = await createSelectedTask({ suffix: malformed.suffix });
-    const activePlan = await repository.getPlanVersionDetail(seeded.selected.planVersionId);
-    assert.ok(activePlan);
-    await overwriteActivePlan({
-      planVersionId: activePlan.id,
-      plan: {
-        ...(activePlan.plan as Record<string, unknown>),
-        steps: [malformed.step],
-      },
-      pendingInputs: activePlan.pendingInputs,
-    });
-
-    const nextVersion = await repository.nextPlanVersion(seeded.created.task.id);
-    await assert.rejects(() => runtime.workflow.revise({
-      taskId: seeded.created.task.id,
-      expectedVersion: seeded.selected.stateVersion,
-      revisionInstruction: '拒绝畸形冻结步骤',
-      idempotencyKey: malformed.suffix,
-      actor: { userId: ownerId, role: 'owner' },
-    }));
-    assert.equal(await repository.nextPlanVersion(seeded.created.task.id), nextVersion);
-  }
-  assert.equal(plannerCalls, 0);
-});
-
-test('production runtime rejects a legacy purpose-only frozen step before persistence', async () => {
-  let plannerCalls = 0;
-  const runtime = await buildRuntime({
-    async plan(input) {
-      plannerCalls += 1;
-      return planningResult(input.originalInput);
-    },
-  });
-  const seeded = await createSelectedTask({ suffix: 'legacy-step-purpose-only', pendingInputs: [] });
+  const seeded = await createSelectedTask({ suffix: 'deliverable-contract-mismatch' });
   const activePlan = await repository.getPlanVersionDetail(seeded.selected.planVersionId);
   assert.ok(activePlan);
   await overwriteActivePlan({
     planVersionId: activePlan.id,
     plan: {
       ...(activePlan.plan as Record<string, unknown>),
-      steps: [{
-        step_no: 1,
-        step_name: '公开资料检索',
-        actor_type: 'tool',
-        actor_id: 'tavily-web-search',
-        purpose: '采集公开信息',
-      }],
+      deliverable_type: 'different-deliverable',
     },
-    pendingInputs: [],
+    pendingInputs: activePlan.pendingInputs,
   });
   const nextVersion = await repository.nextPlanVersion(seeded.created.task.id);
-
   await assert.rejects(() => runtime.workflow.revise({
     taskId: seeded.created.task.id,
     expectedVersion: seeded.selected.stateVersion,
-    revisionInstruction: '拒绝 Legacy 步骤',
-    idempotencyKey: 'legacy-step-purpose-only',
+    revisionInstruction: '不得跨越交付物合同',
+    idempotencyKey: 'deliverable-contract-mismatch-revise',
     actor: { userId: ownerId, role: 'owner' },
-  }), /current-execution-plan/);
-  assert.equal(await repository.nextPlanVersion(seeded.created.task.id), nextVersion);
+  }), /Deliverable Registry contract/u);
   assert.equal(plannerCalls, 0);
+  assert.equal(await repository.nextPlanVersion(seeded.created.task.id), nextVersion);
+});
+
+test('migration 009 quarantines a legacy active plan and leaves it reachable through a new revision', async () => {
+  const runtime = await buildRuntime({
+    async plan(input) {
+      return planningResult(input.originalInput);
+    },
+  });
+  const seeded = await createSelectedTask({ suffix: 'migration-009-legacy-active' });
+  const activePlan = await repository.getPlanVersionDetail(seeded.selected.planVersionId);
+  assert.ok(activePlan);
+  const legacyDecision = planningResult('migration-009').capabilityResolution.eligible[0]!;
+  const legacyPendingInput = {
+    role: 'brief',
+    label: '研究简报',
+    multiple: false,
+    targets: [{ step_no: 1, tool_id: 'tavily-web-search', field: 'query', multiple: false }],
+  };
+  await overwriteActivePlan({
+    planVersionId: activePlan.id,
+    plan: {
+      ...(activePlan.plan as Record<string, unknown>),
+      capability_decisions: {
+        eligible: [{
+          ...legacyDecision,
+          pending_inputs: [{
+            role: 'brief',
+            label: '研究简报',
+            multiple: false,
+            capability_id: legacyDecision.skill.id,
+          }],
+        }],
+        rejected: [],
+      },
+    },
+    pendingInputs: [legacyPendingInput],
+  });
+  const connection = await scopedDatabase.connect();
+  try {
+    await connection.query(
+      `UPDATE control_tasks
+       SET state = 'paused', state_version = state_version + 1
+       WHERE id = $1`,
+      [seeded.created.task.id],
+    );
+    const migration = readFileSync(
+      join(process.cwd(), 'database', 'migrations', '009_quarantine_legacy_pending_input_plans.sql'),
+      'utf8',
+    );
+    await connection.query(migration);
+    const migrated = await repository.getTaskDetail(seeded.created.task.id);
+    assert.equal(migrated?.state, 'awaiting_confirmation');
+    assert.equal(migrated?.activePlanVersionId, activePlan.id);
+    assert.ok(migrated);
+
+    const revised = await runtime.workflow.revise({
+      taskId: seeded.created.task.id,
+      expectedVersion: migrated.stateVersion,
+      revisionInstruction: '升级为当前 PendingInput 合同',
+      idempotencyKey: 'migration-009-revise',
+      actor: { userId: ownerId, role: 'owner' },
+    });
+    const currentPlan = await repository.getPlanVersionDetail(revised.planVersionId);
+    assert.ok(currentPlan);
+    new SchemaValidator().validateOrThrow('current-execution-plan', currentPlan.plan);
+    assert.deepEqual(currentPlan.pendingInputs, []);
+    assert.notEqual(currentPlan.id, activePlan.id);
+
+    const versionAfterRevision = (await repository.getTaskDetail(seeded.created.task.id))!.stateVersion;
+    await connection.query(migration);
+    assert.equal(
+      (await repository.getTaskDetail(seeded.created.task.id))?.stateVersion,
+      versionAfterRevision,
+    );
+    assert.ok(await repository.getPlanVersionDetail(activePlan.id));
+  } finally {
+    connection.release();
+  }
+});
+
+test('migration 009 reconciles every recoverable legacy state and is replay-idempotent', async () => {
+  const migration = readFileSync(
+    join(process.cwd(), 'database', 'migrations', '009_quarantine_legacy_pending_input_plans.sql'),
+    'utf8',
+  );
+  const legacyPendingInput = {
+    role: 'brief',
+    label: '研究简报',
+    multiple: false,
+    targets: [{ step_no: 1, tool_id: 'tavily-web-search', field: 'query', multiple: false }],
+  };
+  const selectionSuffix = `migration-009-awaiting-selection-${randomUUID()}`;
+  const selection = await createSelectedTask({ suffix: selectionSuffix });
+  await overwriteActivePlan({
+    planVersionId: selection.selectedPlan.id,
+    plan: selection.selectedPlan.plan,
+    pendingInputs: [legacyPendingInput],
+  });
+
+  const recoverableStates = ['paused', 'executing', 'reviewing', 'composing_report'] as const;
+  const fixtures = await Promise.all(recoverableStates.map(async (state) => {
+    const seeded = await createSelectedTask({ suffix: `migration-009-${state}-${randomUUID()}` });
+    await overwriteActivePlan({
+      planVersionId: seeded.selectedPlan.id,
+      plan: seeded.selectedPlan.plan,
+      pendingInputs: [legacyPendingInput],
+    });
+    return { state, seeded };
+  }));
+  const passiveStates = ['awaiting_confirmation', 'awaiting_approval', 'ready'] as const;
+  const passiveFixtures = await Promise.all(passiveStates.map(async (state) => {
+    const seeded = await createSelectedTask({ suffix: `migration-009-${state}-${randomUUID()}` });
+    await overwriteActivePlan({
+      planVersionId: seeded.selectedPlan.id,
+      plan: seeded.selectedPlan.plan,
+      pendingInputs: [legacyPendingInput],
+    });
+    return { state, seeded };
+  }));
+  const foreignAttemptOwner = await createSelectedTask({
+    suffix: `migration-009-foreign-attempt-owner-${randomUUID()}`,
+  });
+
+  const connection = await scopedDatabase.connect();
+  try {
+    const selectionBefore = await connection.query(
+      `UPDATE control_tasks
+       SET state = 'awaiting_selection',
+           active_plan_version_id = NULL,
+           current_attempt_id = NULL,
+           state_version = state_version + 1
+       WHERE id = $1
+       RETURNING state_version, active_requirement_version_id`,
+      [selection.created.task.id],
+    );
+    const selectionVersion = Number(selectionBefore.rows[0]?.state_version);
+    assert.equal(selectionBefore.rows[0]?.active_requirement_version_id, null);
+
+    const seededFixtures: Array<{
+      state: typeof recoverableStates[number];
+      taskId: string;
+      planVersionId: string;
+      attemptId: string;
+      historicalAttemptId: string;
+      existingFailureKind: string | null;
+      commandId: string;
+      stateVersion: number;
+    }> = [];
+    for (const { state, seeded } of fixtures) {
+      const activeAttempt = state !== 'paused';
+      const historicalAttempt = await connection.query(
+        `INSERT INTO control_execution_attempts
+           (task_id, plan_version_id, attempt_no, state, failure_kind, finished_at)
+         VALUES ($1, $2, 1, 'cancelled', 'historical_failure', now() - interval '1 hour')
+         RETURNING id`,
+        [seeded.created.task.id, seeded.selectedPlan.id],
+      );
+      const historicalAttemptId = String(historicalAttempt.rows[0]?.id);
+      const existingFailureKind = state === 'paused' ? 'preexisting_pause_failure' : null;
+      const attempt = await connection.query(
+        `INSERT INTO control_execution_attempts
+           (task_id, plan_version_id, attempt_no, state, failure_kind,
+            lease_owner, lease_token_hash, lease_expires_at, lease_heartbeat_at)
+         VALUES ($1, $2, 2, $3, $4, $5, $6, $7, $8)
+         RETURNING id`,
+        [
+          seeded.created.task.id,
+          seeded.selectedPlan.id,
+          activeAttempt ? 'active' : 'paused',
+          existingFailureKind,
+          activeAttempt ? `migration-worker-${state}` : null,
+          activeAttempt ? `sha256:migration-lease-${state}` : null,
+          activeAttempt ? new Date(Date.now() + 60_000) : null,
+          activeAttempt ? new Date() : null,
+        ],
+      );
+      const attemptId = String(attempt.rows[0]?.id);
+      const updatedTask = await connection.query(
+        `UPDATE control_tasks
+         SET state = $2, current_attempt_id = $3, state_version = state_version + 1
+         WHERE id = $1
+         RETURNING state_version`,
+        [seeded.created.task.id, state, attemptId],
+      );
+      const stateVersion = Number(updatedTask.rows[0]?.state_version);
+      await connection.query(
+        `INSERT INTO control_execution_steps
+           (attempt_id, step_no, step_name, actor_type, actor_id, state, started_at, finished_at)
+         VALUES
+           ($1, 1, 'pending migration step', 'tool', 'fixture', 'pending', NULL, NULL),
+           ($1, 2, 'running migration step', 'tool', 'fixture', 'running', now(), NULL),
+           ($1, 3, 'finished migration step', 'tool', 'fixture', 'succeeded', now(), now())`,
+        [attemptId],
+      );
+      await connection.query(
+        `INSERT INTO control_artifacts
+           (task_id, plan_version_id, attempt_id, kind, contract_version, schema_version,
+            state, storage_uri, content_sha256, byte_size, sensitivity,
+            redaction_policy_version, redaction_status, sealed_at)
+         VALUES
+           ($1, $2, $3, 'migration-staging', 'trusted-p0-v1', 'fixture-v1',
+            'STAGING', $4, NULL, NULL, 'internal', 'fixture-v1', 'pending', NULL),
+           ($1, $2, $3, 'migration-sealed', 'trusted-p0-v1', 'fixture-v1',
+            'SEALED', $5, 'sha256:sealed', 6, 'internal', 'fixture-v1', 'passed', now())`,
+        [
+          seeded.created.task.id,
+          seeded.selectedPlan.id,
+          attemptId,
+          `fixture://migration/${state}/staging`,
+          `fixture://migration/${state}/sealed`,
+        ],
+      );
+      const command = await connection.query(
+        `INSERT INTO control_commands
+           (task_id, command_type, idempotency_key, request_hash, expected_version,
+            state_before, state_after, response_json, actor_user_id, command_status,
+            reservation_token, reservation_expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $6, NULL, $7, 'pending', $8, now() + interval '1 hour')
+         RETURNING id`,
+        [
+          seeded.created.task.id,
+          `migration-${state}`,
+          `migration-${state}-${randomUUID()}`,
+          `sha256:migration-${state}`,
+          stateVersion,
+          state,
+          ownerId,
+          randomUUID(),
+        ],
+      );
+      seededFixtures.push({
+        state,
+        taskId: seeded.created.task.id,
+        planVersionId: seeded.selectedPlan.id,
+        attemptId,
+        historicalAttemptId,
+        existingFailureKind,
+        commandId: String(command.rows[0]?.id),
+        stateVersion,
+      });
+    }
+    const seededPassiveFixtures: Array<{
+      state: typeof passiveStates[number];
+      taskId: string;
+      attemptId: string;
+      ownsAttempt: boolean;
+      stateVersion: number;
+    }> = [];
+    for (const { state, seeded } of passiveFixtures) {
+      const ownsAttempt = state !== 'awaiting_confirmation';
+      const priorPlan = ownsAttempt
+        ? seeded.created.candidates.find((candidate) => candidate.id !== seeded.selectedPlan.id)
+        : foreignAttemptOwner.selectedPlan;
+      assert.ok(priorPlan);
+      const attempt = await connection.query(
+        `INSERT INTO control_execution_attempts
+           (task_id, plan_version_id, attempt_no, state, failure_kind, finished_at)
+         VALUES ($1, $2, 1, 'paused', 'preexisting_pause_failure', now())
+         RETURNING id`,
+        [ownsAttempt ? seeded.created.task.id : foreignAttemptOwner.created.task.id, priorPlan.id],
+      );
+      const attemptId = String(attempt.rows[0]?.id);
+      const updated = await connection.query(
+        `UPDATE control_tasks
+         SET state = $2, current_attempt_id = $3, state_version = state_version + 1
+         WHERE id = $1
+         RETURNING state_version`,
+        [seeded.created.task.id, state, attemptId],
+      );
+      seededPassiveFixtures.push({
+        state,
+        taskId: seeded.created.task.id,
+        attemptId,
+        ownsAttempt,
+        stateVersion: Number(updated.rows[0]?.state_version),
+      });
+    }
+
+    await connection.query(migration);
+
+    const migratedSelection = await connection.query(
+      `SELECT task.state, task.state_version, task.active_plan_version_id,
+              task.current_attempt_id, task.active_requirement_version_id,
+              requirement.version AS requirement_version,
+              requirement.raw_input_hash,
+              requirement.clarification_json,
+              requirement.structured_task_json
+       FROM control_tasks AS task
+       LEFT JOIN control_requirement_versions AS requirement
+         ON requirement.id = task.active_requirement_version_id
+       WHERE task.id = $1`,
+      [selection.created.task.id],
+    );
+    const selectionRow = migratedSelection.rows[0];
+    assert.equal(selectionRow?.state, 'awaiting_clarification');
+    assert.equal(Number(selectionRow?.state_version), selectionVersion + 1);
+    assert.equal(selectionRow?.active_plan_version_id, null);
+    assert.equal(selectionRow?.current_attempt_id, null);
+    assert.ok(selectionRow?.active_requirement_version_id);
+    assert.equal(Number(selectionRow?.requirement_version), 1);
+    assert.equal(
+      selectionRow?.raw_input_hash,
+      `sha256:${createHash('sha256').update(`original ${selectionSuffix}`).digest('hex')}`,
+    );
+    assert.deepEqual(selectionRow?.clarification_json, {});
+    assert.deepEqual(selectionRow?.structured_task_json, finalizedTask());
+
+    const runtime = await buildRuntime({
+      async plan() {
+        return planningResult(finalizedTask().research_goal);
+      },
+    });
+    const clarificationCommand = {
+      taskId: selection.created.task.id,
+      commandType: 'clarification' as const,
+      idempotencyKey: `migration-009-clarify-${randomUUID()}`,
+      requestHash: `sha256:${createHash('sha256').update(selectionSuffix).digest('hex')}`,
+      expectedVersion: Number(selectionRow?.state_version),
+      actorUserId: ownerId,
+    };
+    const reservation = await repository.reserveCommand(clarificationCommand);
+    assert.equal(reservation.status, 'reserved');
+    assert.ok(reservation.reservationToken);
+    const refinement = await runtime.requirementRefinement.clarify({
+      taskId: selection.created.task.id,
+      conversationId,
+      ownerUserId: ownerId,
+      answers: {},
+      expectedVersion: clarificationCommand.expectedVersion,
+    });
+    assert.equal(refinement.status, 'ready_to_plan');
+    assert.ok(refinement.planningResult);
+    const recoveredCandidates = await runtime.controlPlanning.planExistingTask({
+      taskId: selection.created.task.id,
+      conversationId,
+      ownerUserId: ownerId,
+      expectedStateVersion: clarificationCommand.expectedVersion,
+      originalInput: `original ${selectionSuffix}`,
+      commandReservation: {
+        ...clarificationCommand,
+        reservationToken: reservation.reservationToken!,
+      },
+      clarificationRecovery: refinement.clarificationRecovery,
+    }, refinement.planningResult!);
+    assert.equal(recoveredCandidates.task.state, 'awaiting_selection');
+    const recoveredVersions = await Promise.all(recoveredCandidates.candidates.map(async (candidate) => (
+      (await repository.getPlanVersionDetail(candidate.planVersionId))?.version
+    )));
+    assert.deepEqual(recoveredVersions, [3, 4]);
+    const recoveredForOwner = await repository.listCandidatePlanVersionsForOwner({
+      taskId: selection.created.task.id,
+      ownerUserId: ownerId,
+    });
+    assert.deepEqual(
+      recoveredForOwner?.candidates.map(({ planVersionId, candidateId }) => ({ planVersionId, candidateId })),
+      recoveredCandidates.candidates.map(({ planVersionId, candidateId }) => ({ planVersionId, candidateId })),
+    );
+    await assert.rejects(() => runtime.workflow.select({
+      taskId: selection.created.task.id,
+      expectedVersion: recoveredCandidates.task.stateVersion,
+      planVersionId: selection.selectedPlan.id,
+      idempotencyKey: `migration-009-stale-select-${randomUUID()}`,
+      actor: { userId: ownerId, role: 'owner' },
+    }), /latest consecutive|not a candidate/u);
+    assert.equal(
+      (await repository.getTaskDetail(selection.created.task.id))?.state,
+      'awaiting_selection',
+    );
+
+    for (const fixture of seededPassiveFixtures) {
+      const task = await connection.query(
+        `SELECT state, state_version, current_attempt_id
+         FROM control_tasks WHERE id = $1`,
+        [fixture.taskId],
+      );
+      assert.equal(task.rows[0]?.state, 'awaiting_confirmation');
+      assert.equal(Number(task.rows[0]?.state_version), fixture.stateVersion + 1);
+      assert.equal(task.rows[0]?.current_attempt_id, null);
+      const attempt = await connection.query(
+        `SELECT state, failure_kind, finished_at
+         FROM control_execution_attempts WHERE id = $1`,
+        [fixture.attemptId],
+      );
+      assert.equal(attempt.rows[0]?.state, fixture.ownsAttempt ? 'cancelled' : 'paused');
+      assert.equal(attempt.rows[0]?.failure_kind, 'preexisting_pause_failure');
+      assert.ok(attempt.rows[0]?.finished_at);
+    }
+
+    for (const fixture of seededFixtures) {
+      const task = await connection.query(
+        `SELECT state, state_version, active_plan_version_id, current_attempt_id
+         FROM control_tasks WHERE id = $1`,
+        [fixture.taskId],
+      );
+      assert.equal(task.rows[0]?.state, 'awaiting_confirmation');
+      assert.equal(Number(task.rows[0]?.state_version), fixture.stateVersion + 1);
+      assert.equal(task.rows[0]?.active_plan_version_id, fixture.planVersionId);
+      assert.equal(task.rows[0]?.current_attempt_id, null);
+
+      const attempt = await connection.query(
+        `SELECT state, failure_kind, lease_owner, lease_token_hash, lease_expires_at,
+                lease_heartbeat_at, finished_at
+         FROM control_execution_attempts WHERE id = $1`,
+        [fixture.attemptId],
+      );
+      assert.equal(attempt.rows[0]?.state, 'cancelled');
+      assert.equal(
+        attempt.rows[0]?.failure_kind,
+        fixture.existingFailureKind ?? 'legacy_plan_quarantine',
+      );
+      assert.equal(attempt.rows[0]?.lease_owner, null);
+      assert.equal(attempt.rows[0]?.lease_token_hash, null);
+      assert.equal(attempt.rows[0]?.lease_expires_at, null);
+      assert.equal(attempt.rows[0]?.lease_heartbeat_at, null);
+      assert.ok(attempt.rows[0]?.finished_at);
+
+      const historicalAttempt = await connection.query(
+        `SELECT state, failure_kind, finished_at
+         FROM control_execution_attempts WHERE id = $1`,
+        [fixture.historicalAttemptId],
+      );
+      assert.equal(historicalAttempt.rows[0]?.state, 'cancelled');
+      assert.equal(historicalAttempt.rows[0]?.failure_kind, 'historical_failure');
+      assert.ok(historicalAttempt.rows[0]?.finished_at);
+
+      const steps = await connection.query(
+        `SELECT step_no, state, failure_json, finished_at
+         FROM control_execution_steps WHERE attempt_id = $1 ORDER BY step_no`,
+        [fixture.attemptId],
+      );
+      assert.deepEqual(steps.rows.map((row) => [Number(row.step_no), row.state]), [
+        [1, 'skipped'],
+        [2, 'failed'],
+        [3, 'succeeded'],
+      ]);
+      assert.equal(steps.rows[0]?.failure_json, null);
+      assert.deepEqual(steps.rows[1]?.failure_json, {
+        kind: 'legacy_plan_quarantine',
+        retryable: false,
+      });
+      assert.ok(steps.rows.every((row) => row.finished_at));
+
+      const artifacts = await connection.query(
+        `SELECT kind, state, failure_reason, redaction_status
+         FROM control_artifacts WHERE attempt_id = $1 ORDER BY kind`,
+        [fixture.attemptId],
+      );
+      assert.deepEqual(artifacts.rows, [
+        {
+          kind: 'migration-sealed',
+          state: 'SEALED',
+          failure_reason: null,
+          redaction_status: 'passed',
+        },
+        {
+          kind: 'migration-staging',
+          state: 'FAILED',
+          failure_reason: 'legacy plan quarantined before recovery',
+          redaction_status: 'failed',
+        },
+      ]);
+      const command = await connection.query(
+        `SELECT command_status, reservation_token,
+                reservation_expires_at <= now() AS expired
+         FROM control_commands WHERE id = $1`,
+        [fixture.commandId],
+      );
+      assert.equal(command.rows[0]?.command_status, 'pending');
+      assert.ok(command.rows[0]?.reservation_token);
+      assert.equal(command.rows[0]?.expired, true);
+    }
+
+    const snapshot = await connection.query(
+      `SELECT task.id, task.state_version, command.reservation_expires_at
+       FROM control_tasks AS task
+       LEFT JOIN control_commands AS command
+         ON command.task_id = task.id AND command.command_status = 'pending'
+       WHERE task.id = ANY($1::uuid[])
+       ORDER BY task.id`,
+      [[
+        selection.created.task.id,
+        ...seededFixtures.map((fixture) => fixture.taskId),
+        ...seededPassiveFixtures.map((fixture) => fixture.taskId),
+      ]],
+    );
+    await connection.query(migration);
+    const replayedSnapshot = await connection.query(
+      `SELECT task.id, task.state_version, command.reservation_expires_at
+       FROM control_tasks AS task
+       LEFT JOIN control_commands AS command
+         ON command.task_id = task.id AND command.command_status = 'pending'
+       WHERE task.id = ANY($1::uuid[])
+       ORDER BY task.id`,
+      [[
+        selection.created.task.id,
+        ...seededFixtures.map((fixture) => fixture.taskId),
+        ...seededPassiveFixtures.map((fixture) => fixture.taskId),
+      ]],
+    );
+    assert.deepEqual(replayedSnapshot.rows, snapshot.rows);
+    const requirementCount = await connection.query(
+      `SELECT COUNT(*)::int AS count FROM control_requirement_versions WHERE task_id = $1`,
+      [selection.created.task.id],
+    );
+    assert.equal(Number(requirementCount.rows[0]?.count), 1);
+  } finally {
+    connection.release();
+  }
+});
+
+test('migration 009 makes every malformed PendingInput quarantine recoverable through a full revision', async () => {
+  const migration = readFileSync(
+    join(process.cwd(), 'database', 'migrations', '009_quarantine_legacy_pending_input_plans.sql'),
+    'utf8',
+  );
+  const planningInputs: ResearchPlanningInput[] = [];
+  const runtime = await buildRuntime({
+    async plan(input) {
+      planningInputs.push(structuredClone(input));
+      return planningResult(input.originalInput);
+    },
+  });
+  const validPending = {
+    kind: 'value' as const,
+    role: 'brief',
+    label: '研究简报',
+    multiple: false,
+    targets: [{ step_no: 1, tool_id: 'tavily-web-search', field: 'query', multiple: false }],
+  };
+  const malformedCases: Array<{
+    suffix: string;
+    pendingInputs: unknown[];
+    nestedExtra?: boolean;
+    unrelatedPlanCorruption?: boolean;
+  }> = [
+    {
+      suffix: 'extra-field',
+      pendingInputs: [{ ...validPending, unexpected: true }],
+      unrelatedPlanCorruption: true,
+    },
+    { suffix: 'wrong-multiple-type', pendingInputs: [{ ...validPending, multiple: 'false' }] },
+    { suffix: 'empty-targets', pendingInputs: [{ ...validPending, targets: [] }] },
+    {
+      suffix: 'duplicate-role',
+      pendingInputs: [
+        validPending,
+        {
+          ...validPending,
+          targets: [{ step_no: 1, tool_id: 'tavily-web-search', field: 'other', multiple: false }],
+        },
+      ],
+    },
+    {
+      suffix: 'duplicate-target',
+      pendingInputs: [validPending, { ...validPending, role: 'other', label: '其他输入' }],
+    },
+    { suffix: 'nested-extra-field', pendingInputs: [validPending], nestedExtra: true },
+  ];
+  const fixtures = [] as Array<{
+    taskId: string;
+    stateVersion: number;
+    planVersionId: string;
+    suffix: string;
+  }>;
+  for (const malformed of malformedCases) {
+    const seeded = await createSelectedTask({ suffix: `migration-009-strict-${malformed.suffix}` });
+    const plan = await repository.getPlanVersionDetail(seeded.selectedPlan.id);
+    assert.ok(plan);
+    const decision = planningResult(malformed.suffix).capabilityResolution.eligible[0]!;
+    let untrustedPlan = plan.plan;
+    if (malformed.nestedExtra) {
+      untrustedPlan = {
+        ...(plan.plan as Record<string, unknown>),
+        capability_decisions: {
+          eligible: [{
+            ...decision,
+            pending_inputs: [{
+              kind: 'value',
+              role: 'brief',
+              label: '研究简报',
+              multiple: false,
+              capability_id: decision.skill.id,
+              unexpected: true,
+            }],
+          }],
+          rejected: [],
+        },
+      };
+    }
+    if (malformed.unrelatedPlanCorruption) {
+      untrustedPlan = {
+        ...(untrustedPlan as Record<string, unknown>),
+        deliverable_type: 'untrusted-legacy-deliverable',
+        evidence_requirements: [null],
+      };
+    }
+    await overwriteActivePlan({
+      planVersionId: plan.id,
+      plan: untrustedPlan,
+      pendingInputs: malformed.pendingInputs,
+    });
+    const connection = await scopedDatabase.connect();
+    try {
+      const ready = await connection.query(
+        `UPDATE control_tasks
+         SET state = 'ready', state_version = state_version + 1
+         WHERE id = $1
+         RETURNING state_version`,
+        [seeded.created.task.id],
+      );
+      fixtures.push({
+        taskId: seeded.created.task.id,
+        stateVersion: Number(ready.rows[0]?.state_version),
+        planVersionId: plan.id,
+        suffix: malformed.suffix,
+      });
+    } finally {
+      connection.release();
+    }
+  }
+  const valid = await createSelectedTask({ suffix: 'migration-009-strict-valid-control' });
+  const validConnection = await scopedDatabase.connect();
+  let validVersion = 0;
+  try {
+    const ready = await validConnection.query(
+      `UPDATE control_tasks
+       SET state = 'ready', state_version = state_version + 1
+       WHERE id = $1
+       RETURNING state_version`,
+      [valid.created.task.id],
+    );
+    validVersion = Number(ready.rows[0]?.state_version);
+    await validConnection.query(migration);
+  } finally {
+    validConnection.release();
+  }
+
+  for (const fixture of fixtures) {
+    const task = await repository.getTaskDetail(fixture.taskId);
+    assert.equal(task?.state, 'awaiting_confirmation');
+    assert.equal(task?.stateVersion, fixture.stateVersion + 1);
+    assert.equal(
+      await repository.isPlanPendingInputQuarantined(fixture.planVersionId),
+      true,
+    );
+    assert.ok(task);
+
+    const revised = await runtime.workflow.revise({
+      taskId: fixture.taskId,
+      expectedVersion: task.stateVersion,
+      revisionInstruction: '完全重新生成当前合同计划',
+      idempotencyKey: `migration-009-strict-${fixture.suffix}-revise`,
+      actor: { userId: ownerId, role: 'owner' },
+    });
+    const currentPlan = await repository.getPlanVersionDetail(revised.planVersionId);
+    assert.ok(currentPlan);
+    new SchemaValidator().validateOrThrow('current-execution-plan', currentPlan.plan);
+    assert.deepEqual(currentPlan.pendingInputs, []);
+    assert.equal(await repository.isPlanPendingInputQuarantined(currentPlan.id), false);
+    assert.equal(
+      await repository.isPlanPendingInputQuarantined(fixture.planVersionId),
+      true,
+    );
+  }
+  assert.equal(planningInputs.length, malformedCases.length);
+  for (const [index, planningInput] of planningInputs.entries()) {
+    assert.deepEqual(planningInput.requirement, finalizedTask());
+    assert.doesNotMatch(planningInput.originalInput, new RegExp(malformedCases[index]!.suffix, 'u'));
+  }
+  const validTask = await repository.getTaskDetail(valid.created.task.id);
+  assert.equal(validTask?.state, 'ready');
+  assert.equal(validTask?.stateVersion, validVersion);
+});
+
+test('plan history uses version identity and permits repeated content', async () => {
+  const seeded = await createSelectedTask({ suffix: 'same-plan-corrected-pending-input' });
+  const plan = await repository.getPlanVersionDetail(seeded.selectedPlan.id);
+  assert.ok(plan);
+  const legacyPending = pendingInputs.map(({ kind: _kind, ...pending }) => pending);
+  await overwriteActivePlan({
+    planVersionId: plan.id,
+    plan: plan.plan,
+    pendingInputs: legacyPending,
+  });
+  const connection = await scopedDatabase.connect();
+  try {
+    const corrected = await connection.query(
+      `INSERT INTO control_plan_versions
+         (task_id, version, candidate_id, plan_json, plan_hash, pending_inputs)
+       VALUES ($1, 3, $2, $3, $4, $5)
+       RETURNING version, plan_hash, pending_inputs`,
+      [
+        seeded.created.task.id,
+        plan.candidateId,
+        JSON.stringify(plan.plan),
+        plan.planHash,
+        JSON.stringify(pendingInputs),
+      ],
+    );
+    assert.equal(Number(corrected.rows[0]?.version), 3);
+    assert.equal(corrected.rows[0]?.plan_hash, plan.planHash);
+    assert.deepEqual(corrected.rows[0]?.pending_inputs, pendingInputs);
+    const repeated = await connection.query(
+      `INSERT INTO control_plan_versions
+         (task_id, version, candidate_id, plan_json, plan_hash, pending_inputs)
+       VALUES ($1, 4, $2, $3, $4, $5)
+       RETURNING version, plan_hash, pending_inputs`,
+      [
+        seeded.created.task.id,
+        plan.candidateId,
+        JSON.stringify(plan.plan),
+        plan.planHash,
+        JSON.stringify(pendingInputs),
+      ],
+    );
+    assert.equal(Number(repeated.rows[0]?.version), 4);
+    assert.equal(repeated.rows[0]?.plan_hash, plan.planHash);
+    assert.deepEqual(repeated.rows[0]?.pending_inputs, pendingInputs);
+  } finally {
+    connection.release();
+  }
 });
 
 test('production runtime fails closed when regenerated steps leave pending input target dangling', async () => {

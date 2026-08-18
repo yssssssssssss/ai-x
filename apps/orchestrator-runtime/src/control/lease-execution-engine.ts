@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { ControlPlaneConflictError } from '../../../../database/control-plane.ts';
 import type {
   ActiveExecutionLease,
@@ -76,6 +77,15 @@ import {
   type SealedStepOutput as BindingSealedStepOutput,
 } from './step-input-resolver.ts';
 import { ExecutionScheduler } from './execution-scheduler.ts';
+import {
+  VisualInputGateStore,
+  valueForPendingInputTarget,
+  type ResolvedVisualInput,
+} from './visual-input-gate-store.ts';
+import {
+  parsePendingInputContracts,
+  PendingInputContractError,
+} from './pending-input-contract.ts';
 
 type EngineStep = CurrentPlanStep & { purpose?: string };
 
@@ -173,6 +183,16 @@ class ExecutionSafetyError extends Error {
   }
 }
 
+class ExecutionStepPersistenceError extends Error {
+  constructor(
+    readonly leaseLost: boolean,
+    options: { cause: unknown },
+  ) {
+    super('execution step succeeded state could not be confirmed', options);
+    this.name = 'ExecutionStepPersistenceError';
+  }
+}
+
 class SkillOutputSchemaError extends LLMInvocationError {
   constructor(
     readonly outputHash: string,
@@ -201,6 +221,16 @@ function stableValue(value: unknown): unknown {
   );
 }
 
+function sameOptionalDate(actual: Date | null, expected: Date | undefined): boolean {
+  return actual === null
+    ? expected === undefined
+    : expected !== undefined && actual.getTime() === expected.getTime();
+}
+
+function persistedJsonValue(value: unknown): unknown {
+  if (value === undefined) return null;
+  return JSON.parse(JSON.stringify(value)) as unknown;
+}
 
 function hashJson(value: unknown): string {
   return `sha256:${createHash('sha256').update(JSON.stringify(stableValue(value))).digest('hex')}`;
@@ -440,50 +470,15 @@ function parseReviewCoverageIds(structuredTask: unknown, plan: unknown): ReviewC
 
 
 function parsePendingInputs(value: unknown): PendingInput[] {
-  if (!Array.isArray(value)) {
-    throw new ExecutionAuthenticityError('active plan pending inputs are malformed');
+  try {
+    return parsePendingInputContracts(value);
+  } catch (error) {
+    throw new ExecutionAuthenticityError(
+      error instanceof PendingInputContractError
+        ? error.message
+        : 'active plan pending inputs are malformed',
+    );
   }
-  return value.map((item, index) => {
-    if (
-      !isRecord(item)
-      || typeof item.role !== 'string'
-      || item.role.trim().length === 0
-      || typeof item.label !== 'string'
-      || item.label.trim().length === 0
-      || typeof item.multiple !== 'boolean'
-      || !Array.isArray(item.targets)
-      || item.targets.length === 0
-    ) {
-      throw new ExecutionAuthenticityError(`pending input ${index + 1} is malformed`);
-    }
-    const targets = item.targets.map((target) => {
-      if (
-        !isRecord(target)
-        || typeof target.step_no !== 'number'
-        || !Number.isInteger(target.step_no)
-        || target.step_no < 1
-        || typeof target.tool_id !== 'string'
-        || target.tool_id.trim().length === 0
-        || typeof target.field !== 'string'
-        || target.field.trim().length === 0
-        || typeof target.multiple !== 'boolean'
-      ) {
-        throw new ExecutionAuthenticityError(`pending input ${index + 1} target is malformed`);
-      }
-      return {
-        step_no: target.step_no,
-        tool_id: target.tool_id,
-        field: target.field,
-        multiple: target.multiple,
-      };
-    });
-    return {
-      role: item.role,
-      label: item.label,
-      multiple: item.multiple,
-      targets,
-    };
-  });
 }
 
 function overlayPendingInputs(
@@ -540,7 +535,11 @@ function overlayPendingInputs(
           `pending input target ${target.step_no}/${target.field} does not match the active plan`,
         );
       }
-      step.input[target.field] = structuredClone(gate.value);
+      step.input[target.field] = valueForPendingInputTarget({
+        value: gate.value,
+        pendingMultiple: pendingInput.multiple,
+        targetMultiple: target.multiple,
+      });
     }
   }
   return plan;
@@ -579,8 +578,9 @@ function verifiedPriorOutputs(
         ...step.input_bindings.map((binding) => binding.source_step_no),
       ])
     : null;
-  return outputs
+  return [...outputs]
     .filter(({ stepNo }) => allowed === null || allowed.has(stepNo))
+    .sort((left, right) => left.stepNo - right.stepNo)
     .map(({ stepNo, actorId, kind, output, artifact }) => ({
       stepNo,
       actorId,
@@ -669,6 +669,9 @@ function failureFrom(error: unknown): Record<string, unknown> {
   if (error instanceof ExecutionSafetyError) {
     return { kind: 'safety', retryable: false, message: error.message };
   }
+  if (error instanceof ExecutionStepPersistenceError && error.leaseLost) {
+    return { kind: 'lease_lost', retryable: true, message: error.message };
+  }
   if (error instanceof ControlPlaneConflictError) {
     return { kind: 'lease_lost', retryable: true, message: error.message, ...detailsFrom(error) };
   }
@@ -720,6 +723,7 @@ function deliverableFailureFrom(error: unknown): Record<string, unknown> {
 
 export class LeaseExecutionEngine {
   private readonly llm: ReceiptLLMClient;
+  private readonly visualInputGates: Pick<VisualInputGateStore, 'resolve'>;
 
   constructor(private readonly dependencies: {
     repository: ControlPlaneRepository;
@@ -747,11 +751,15 @@ export class LeaseExecutionEngine {
     visualInputMaterializer?: {
       materialize(input: {
         lease: ControlExecutionLease;
-        gates: ControlGateRecord[];
+        visuals: ResolvedVisualInput[];
+        annotationPurpose?: 'input_provenance' | 'design_audit';
       }): Promise<void>;
     };
+    visualInputGates?: Pick<VisualInputGateStore, 'resolve'>;
   }) {
     this.llm = new ReceiptLLMClient(dependencies.llm, dependencies.repository);
+    this.visualInputGates = dependencies.visualInputGates
+      ?? new VisualInputGateStore(dependencies.artifacts);
   }
 
   async execute(input: {
@@ -772,41 +780,56 @@ export class LeaseExecutionEngine {
         input.lease.taskId,
         input.lease.planVersionId,
       );
-      await this.dependencies.visualInputMaterializer?.materialize({
-        lease: input.lease,
-        gates,
-      });
       const deliverableContract = resolvePlanDeliverableContract(task.structuredTask, planVersion.plan);
       deliverableId = deliverableContract.entry.id;
       const parsedPlan = parsePlan(task.id, planVersion.plan, deliverableContract);
       const pendingInputs = parsePendingInputs(planVersion.pendingInputs);
-      plan = overlayPendingInputs(parsedPlan, pendingInputs, gates, task.ownerUserId);
+      const resolvedInputs = await this.visualInputGates.resolve({
+        taskId: input.lease.taskId,
+        planVersionId: input.lease.planVersionId,
+        gates,
+        pendingInputs,
+      });
+      plan = overlayPendingInputs(parsedPlan, pendingInputs, resolvedInputs.gates, task.ownerUserId);
+      if (this.dependencies.visualInputMaterializer) {
+        const materializer = this.dependencies.visualInputMaterializer;
+        await this.withLeaseHeartbeat(input.lease, () => materializer.materialize({
+          lease: input.lease,
+          visuals: resolvedInputs.visuals,
+          ...(deliverableId === 'competitive_analysis_report'
+            ? { annotationPurpose: 'input_provenance' as const }
+            : deliverableId === 'design_audit_report'
+              ? { annotationPurpose: 'design_audit' as const }
+              : {}),
+        }));
+      }
       if (this.dependencies.reportReview) {
         reviewCoverage = parseReviewCoverageIds(task.structuredTask, planVersion.plan);
       }
     } catch (error) {
-      await this.dependencies.repository.recordExecutionStep({
-        attemptId: input.lease.attemptId,
+      const failure = failureFrom(error);
+      failure.allowedActions = failure.retryable === true ? ['retry', 'abort'] : ['abort'];
+      await this.recordFailedExecutionStep({
+        ...input.lease,
         stepNo: 1,
         stepName: 'execution preflight',
         actorType: 'system',
         actorId: 'preflight',
         state: 'failed',
-        failure: {
-          kind: 'authenticity',
-          retryable: false,
-          allowedActions: ['abort'],
-          message: error instanceof Error ? error.message : String(error),
-        },
+        failure,
         startedAt: new Date(),
         finishedAt: new Date(),
       });
-      await this.dependencies.repository.pauseExecution({
-        taskId: input.lease.taskId,
-        attemptId: input.lease.attemptId,
-        expectedVersion: active.stateVersion,
-        reason: 'authenticity',
-      });
+      try {
+        await this.dependencies.repository.pauseExecution({
+          taskId: input.lease.taskId,
+          attemptId: input.lease.attemptId,
+          expectedVersion: active.stateVersion,
+          reason: String(failure.kind ?? 'authenticity'),
+        });
+      } catch (pauseError) {
+        if (!(pauseError instanceof ControlPlaneConflictError)) throw pauseError;
+      }
       throw error;
     }
     const researchGoal = isRecord(task.structuredTask) && typeof task.structuredTask.research_goal === 'string'
@@ -817,7 +840,7 @@ export class LeaseExecutionEngine {
       const failure = failureFrom(preflightError);
       failure.allowedActions = ['abort'];
       await this.dependencies.repository.recordExecutionStep({
-        attemptId: input.lease.attemptId,
+        ...input.lease,
         stepNo: 1,
         stepName: 'execution preflight',
         actorType: 'system',
@@ -838,9 +861,10 @@ export class LeaseExecutionEngine {
     const reusable = await this.loadReusableExecutions(input.lease, plan, planVersion.planHash, researchGoal);
     const outputs: EngineSealedStepOutput[] = [];
     const resolvedArtifacts = new Map<string, ResolvedEvidenceArtifact>();
-    const gaps: string[] = [];
+    const gaps: Array<{ stepNo: number; message: string }> = [];
     const stepByKey = new Map(plan.steps.map((step) => [String(step.step_no), step]));
     let wavePaused: LeaseExecutionResult | undefined;
+    let cleanupRecoveryRequired = false;
     const scheduler = this.dependencies.scheduler ?? new ExecutionScheduler({
       execute: async (scheduledStep) => {
         const step = stepByKey.get(scheduledStep.key);
@@ -857,271 +881,338 @@ export class LeaseExecutionEngine {
     }, {});
 
     for (const wave of schedule.waves) {
-      await Promise.all(wave.map(async (stepKey) => {
+      const waveResults = await Promise.allSettled(wave.map(async (stepKey) => {
         const step = stepByKey.get(stepKey);
         if (!step) throw new ExecutionAuthenticityError(`scheduler returned unknown step ${stepKey}`);
-      const checkpoint = reusable.get(step.step_no);
-      if (checkpoint) {
-        active = await this.refreshLease(input.lease);
-        const priorArtifact = await this.dependencies.repository.getArtifact(checkpoint.outputArtifactId);
-        if (!priorArtifact || priorArtifact.state !== 'SEALED' || !priorArtifact.contentSha256) {
-          throw new ExecutionAuthenticityError(`reusable step Artifact ${checkpoint.outputArtifactId} is unavailable`);
-        }
-        const resealed = await this.dependencies.artifacts.writeJson({
-          taskId: input.lease.taskId,
-          planVersionId: input.lease.planVersionId,
-          attemptId: input.lease.attemptId,
-          kind: checkpoint.kind,
-          relativePath: `steps/${step.step_no}-${checkpoint.kind}.json`,
-          value: checkpoint.artifactValue,
-          schemaVersion: checkpoint.schemaVersion,
-          activeLease: input.lease,
-        });
-        if (resealed.state !== 'SEALED' || !resealed.contentSha256) {
-          throw new ExecutionAuthenticityError(`reusable step Artifact ${resealed.id} was not sealed`);
-        }
-        const sealedOutput: EngineSealedStepOutput = {
-          stepNo: step.step_no,
-          actorType: step.actor_type,
-          questionIds: [...step.question_ids],
-          actorId: step.actor_id,
-          kind: checkpoint.kind,
-          state: 'succeeded',
-          taskId: input.lease.taskId,
-          planVersionId: input.lease.planVersionId,
-          attemptId: input.lease.attemptId,
-          artifact: { id: resealed.id, contentSha256: resealed.contentSha256, state: 'SEALED' },
-        };
-        const verified = await readVerifiedStepArtifact(sealedOutput, this.dependencies.artifacts);
-        outputs.push({ ...sealedOutput, output: verified.output });
-        if (step.actor_type === 'tool') {
-          resolvedArtifacts.set(resealed.id, {
-            artifact: { id: resealed.id, contentSha256: resealed.contentSha256 },
-            value: verified.value,
-          });
-        }
-        await this.dependencies.repository.recordExecutionStep({
-          attemptId: input.lease.attemptId,
-          stepNo: step.step_no,
-          stepName: step.step_name,
-          actorType: step.actor_type,
-          actorId: step.actor_id,
-          state: 'succeeded',
-          outputArtifactId: resealed.id,
-          toolProvenance: { ...checkpoint.provenance, outputArtifactId: resealed.id, sourceArtifactId: priorArtifact.id },
-        });
-        return;
-      }
-      const startedAt = new Date();
-      active = await this.refreshLease(input.lease);
-      await this.dependencies.repository.recordExecutionStep({
-        attemptId: input.lease.attemptId,
-        stepNo: step.step_no,
-        stepName: step.step_name,
-        actorType: step.actor_type,
-        actorId: step.actor_id,
-        state: 'running',
-        startedAt,
-      });
-      let resolvedInput = structuredClone(step.input);
-      let producedSkillOutputHash: string | undefined;
-      let toolAttemptReceipts: ToolRetryAttemptReceipt[] | undefined;
-      let actorResult: StepResult | undefined;
-      try {
+        const startedAt = new Date();
+        let resolvedInput = structuredClone(step.input);
+        let producedSkillOutputHash: string | undefined;
+        let toolAttemptReceipts: ToolRetryAttemptReceipt[] | undefined;
+        let actorResult: StepResult | undefined;
+        let unpublishedArtifactId: string | undefined;
         try {
-          resolvedInput = await resolveStepInput(step, outputs, this.dependencies.artifacts);
-        } catch (error) {
-          if (error instanceof StepInputResolutionError) {
-            throw new ExecutionAuthenticityError(error.message, {
-              kind: 'input_binding',
-              code: error.code,
-            });
-          }
-          throw error;
-        }
-        actorResult = await this.withLeaseHeartbeat(input.lease, () => this.runStep({
-          step,
-          lease: input.lease,
-          researchGoal,
-          resolvedInput,
-          outputs,
-          expectedModel: input.expectedModel,
-        }));
-        const actorOutputHash = actorResult.skillProvenance?.outputHash;
-        if (typeof actorOutputHash === 'string') producedSkillOutputHash = actorOutputHash;
-        toolAttemptReceipts = actorResult.toolAttemptReceipts;
-        const result = sanitizeStepResult(actorResult);
-        await this.dependencies.repository.requireActiveLease(input.lease);
-        const artifactValue = result.artifactValue ?? result.output;
-        const artifact = await this.dependencies.artifacts.writeJson({
-          taskId: input.lease.taskId,
-          planVersionId: input.lease.planVersionId,
-          attemptId: input.lease.attemptId,
-          kind: result.kind,
-          relativePath: `steps/${step.step_no}-${result.kind}.json`,
-          value: artifactValue,
-          schemaVersion: STEP_ARTIFACT_SCHEMA_VERSIONS[result.kind],
-          activeLease: input.lease,
-        });
-        if (artifact.state !== 'SEALED' || !artifact.contentSha256) {
-          throw new ExecutionAuthenticityError(`step Artifact ${artifact.id} was not sealed`);
-        }
-        const sealedOutput: EngineSealedStepOutput = {
-          stepNo: step.step_no,
-          actorType: step.actor_type,
-          questionIds: [...step.question_ids],
-          actorId: step.actor_id,
-          kind: result.kind,
-          state: 'succeeded',
-          taskId: input.lease.taskId,
-          planVersionId: input.lease.planVersionId,
-          attemptId: input.lease.attemptId,
-          artifact: {
-            id: artifact.id,
-            contentSha256: artifact.contentSha256,
-            state: 'SEALED',
-          },
-        };
-        const verified = await readVerifiedStepArtifact(sealedOutput, this.dependencies.artifacts);
-        if (step.actor_type === 'tool') {
-          resolvedArtifacts.set(verified.artifact.id, {
-            artifact: {
-              id: verified.artifact.id,
-              contentSha256: verified.artifact.contentSha256!,
-            },
-            value: verified.value,
-          });
-        }
-        outputs.push({ ...sealedOutput, output: verified.output });
-        await this.dependencies.repository.recordExecutionStep({
-          attemptId: input.lease.attemptId,
-          stepNo: step.step_no,
-          stepName: step.step_name,
-          actorType: step.actor_type,
-          actorId: step.actor_id,
-          state: 'succeeded',
-          outputArtifactId: artifact.id,
-          toolProvenance: result.toolReceipt && result.toolResolution
-            ? {
-                planHash: planVersion.planHash,
-                stepHash: hashJson(step),
-                registryHash: hashFile(CONFIG_PATHS.toolRegistry),
-                manifestHash: result.manifestHash,
-                inputSchemaHash: result.inputSchemaHash,
-                outputSchemaHash: result.outputSchemaHash,
-                inputHash: result.inputHash,
-                outputHash: result.outputHash,
-                redactedOutputHash: result.redactedOutputHash,
-                configHash: result.configHash,
-                declaredAdapterType: result.toolReceipt.declaredAdapterType,
-                resolvedAdapterType: result.toolReceipt.resolvedAdapterType,
-                implementationId: result.toolReceipt.implementationId,
-                executionMode: result.toolReceipt.executionMode,
-                endpointHost: result.toolReceipt.endpointHost,
-                sourceRefs: result.sourceRefs,
-                attemptReceipts: result.toolAttemptReceipts,
-                toolTier: result.toolTier,
-                outputArtifactId: artifact.id,
-                status: 'succeeded',
-              }
-            : undefined,
-          skillProvenance: result.skillProvenance
-            ? { ...result.skillProvenance, outputArtifactId: artifact.id, status: 'succeeded' }
-            : undefined,
-          latencyMs: result.toolReceipt?.latencyMs,
-          startedAt,
-          finishedAt: new Date(),
-        });
-      } catch (error) {
-        const attemptReceipts = attemptReceiptsFrom(error) ?? toolAttemptReceipts;
-        const failure = failureFrom(error);
-        attachAttemptReceipts(failure, attemptReceipts);
-        let failedToolProvenance: Record<string, unknown> | undefined;
-        let failedSkillProvenance: Record<string, unknown> | undefined;
-        let toolTier: 'core' | 'optional' = 'optional';
-        if (step.actor_type === 'tool') {
-          try {
-            toolTier = this.dependencies.skillLoader.getTool(step.actor_id)?.tier ?? 'optional';
-          } catch {
-            // Registry default is optional; missing config remains non-blocking for enhanced tools.
-          }
-          failure.toolTier = toolTier;
-          const toolProvenance = await this.failedToolProvenance(
-            step,
-            researchGoal,
-            resolvedInput,
-            error,
-            attemptReceipts,
-          );
-          toolProvenance.toolTier = toolTier;
-          failedToolProvenance = toolProvenance;
-          if (toolTier === 'optional' && failure.kind !== 'safety' && failure.kind !== 'lease_lost' && !isIntegrityFailure(error)) {
-            failure.allowedActions ??= [];
-            await this.dependencies.repository.recordExecutionStep({
+          const checkpoint = reusable.get(step.step_no);
+          if (checkpoint) {
+            active = await this.refreshLease(input.lease);
+            const priorArtifact = await this.dependencies.repository.getArtifact(checkpoint.outputArtifactId);
+            if (!priorArtifact || priorArtifact.state !== 'SEALED' || !priorArtifact.contentSha256) {
+              throw new ExecutionAuthenticityError(`reusable step Artifact ${checkpoint.outputArtifactId} is unavailable`);
+            }
+            const resealed = await this.dependencies.artifacts.writeJson({
+              taskId: input.lease.taskId,
+              planVersionId: input.lease.planVersionId,
               attemptId: input.lease.attemptId,
+              kind: checkpoint.kind,
+              relativePath: `steps/${step.step_no}-${checkpoint.kind}.json`,
+              value: checkpoint.artifactValue,
+              schemaVersion: checkpoint.schemaVersion,
+              activeLease: input.lease,
+            });
+            if (resealed.state !== 'SEALED' || !resealed.contentSha256) {
+              throw new ExecutionAuthenticityError(`reusable step Artifact ${resealed.id} was not sealed`);
+            }
+            const sealedOutput: EngineSealedStepOutput = {
+              stepNo: step.step_no,
+              actorType: step.actor_type,
+              questionIds: [...step.question_ids],
+              actorId: step.actor_id,
+              kind: checkpoint.kind,
+              state: 'succeeded',
+              taskId: input.lease.taskId,
+              planVersionId: input.lease.planVersionId,
+              attemptId: input.lease.attemptId,
+              artifact: { id: resealed.id, contentSha256: resealed.contentSha256, state: 'SEALED' },
+            };
+            unpublishedArtifactId = resealed.id;
+            const verified = await readVerifiedStepArtifact(sealedOutput, this.dependencies.artifacts);
+            await this.recordSucceededExecutionStep({
+              ...input.lease,
               stepNo: step.step_no,
               stepName: step.step_name,
               actorType: step.actor_type,
               actorId: step.actor_id,
-              state: 'skipped',
-              failure,
-              toolProvenance: failedToolProvenance,
-              startedAt,
-              finishedAt: new Date(),
+              state: 'succeeded',
+              outputArtifactId: resealed.id,
+              toolProvenance: { ...checkpoint.provenance, outputArtifactId: resealed.id, sourceArtifactId: priorArtifact.id },
             });
-            const message = typeof failure.message === 'string'
-              ? failure.message
-              : 'optional tool failed';
-            gaps.push(redactString(`Step ${step.step_no} (${step.actor_id}): ${message}`));
+            unpublishedArtifactId = undefined;
+            outputs.push({ ...sealedOutput, output: verified.output });
+            if (step.actor_type === 'tool') {
+              resolvedArtifacts.set(resealed.id, {
+                artifact: { id: resealed.id, contentSha256: resealed.contentSha256 },
+                value: verified.value,
+              });
+            }
             return;
           }
-          failure.allowedActions = failure.kind === 'safety' ? ['abort'] : ['retry', 'abort'];
-        } else {
-          failure.allowedActions = failure.retryable === true ? ['retry', 'abort'] : ['abort'];
-        }
-        if (step.actor_type === 'skill') {
-          failedSkillProvenance = await this.failedSkillProvenance({
+          active = await this.refreshLease(input.lease);
+          await this.dependencies.repository.recordExecutionStep({
+            ...input.lease,
+            stepNo: step.step_no,
+            stepName: step.step_name,
+            actorType: step.actor_type,
+            actorId: step.actor_id,
+            state: 'running',
+            startedAt,
+          });
+          try {
+            resolvedInput = await resolveStepInput(step, outputs, this.dependencies.artifacts);
+          } catch (error) {
+            if (error instanceof StepInputResolutionError) {
+              throw new ExecutionAuthenticityError(error.message, {
+                kind: 'input_binding',
+                code: error.code,
+              });
+            }
+            throw error;
+          }
+          actorResult = await this.withLeaseHeartbeat(input.lease, () => this.runStep({
             step,
             lease: input.lease,
             researchGoal,
             resolvedInput,
-            priorOutputs: outputs,
-            producedOutputHash: error instanceof SkillOutputSchemaError
-              ? error.outputHash
-              : producedSkillOutputHash,
-            schemaHashes: error instanceof SkillOutputSchemaError
-              ? error.schemaHashes
-              : undefined,
+            outputs,
+            expectedModel: input.expectedModel,
+          }));
+          const actorOutputHash = actorResult.skillProvenance?.outputHash;
+          if (typeof actorOutputHash === 'string') producedSkillOutputHash = actorOutputHash;
+          toolAttemptReceipts = actorResult.toolAttemptReceipts;
+          const result = sanitizeStepResult(actorResult);
+          await this.dependencies.repository.requireActiveLease(input.lease);
+          const artifactValue = result.artifactValue ?? result.output;
+          const artifact = await this.dependencies.artifacts.writeJson({
+            taskId: input.lease.taskId,
+            planVersionId: input.lease.planVersionId,
+            attemptId: input.lease.attemptId,
+            kind: result.kind,
+            relativePath: `steps/${step.step_no}-${result.kind}.json`,
+            value: artifactValue,
+            schemaVersion: STEP_ARTIFACT_SCHEMA_VERSIONS[result.kind],
+            activeLease: input.lease,
           });
+          if (artifact.state !== 'SEALED' || !artifact.contentSha256) {
+            throw new ExecutionAuthenticityError(`step Artifact ${artifact.id} was not sealed`);
+          }
+          const sealedOutput: EngineSealedStepOutput = {
+            stepNo: step.step_no,
+            actorType: step.actor_type,
+            questionIds: [...step.question_ids],
+            actorId: step.actor_id,
+            kind: result.kind,
+            state: 'succeeded',
+            taskId: input.lease.taskId,
+            planVersionId: input.lease.planVersionId,
+            attemptId: input.lease.attemptId,
+            artifact: {
+              id: artifact.id,
+              contentSha256: artifact.contentSha256,
+              state: 'SEALED',
+            },
+          };
+          unpublishedArtifactId = artifact.id;
+          const verified = await readVerifiedStepArtifact(sealedOutput, this.dependencies.artifacts);
+          await this.recordSucceededExecutionStep({
+            ...input.lease,
+            stepNo: step.step_no,
+            stepName: step.step_name,
+            actorType: step.actor_type,
+            actorId: step.actor_id,
+            state: 'succeeded',
+            outputArtifactId: artifact.id,
+            toolProvenance: result.toolReceipt && result.toolResolution
+              ? {
+                  planHash: planVersion.planHash,
+                  stepHash: hashJson(step),
+                  registryHash: hashFile(CONFIG_PATHS.toolRegistry),
+                  manifestHash: result.manifestHash,
+                  inputSchemaHash: result.inputSchemaHash,
+                  outputSchemaHash: result.outputSchemaHash,
+                  inputHash: result.inputHash,
+                  outputHash: result.outputHash,
+                  redactedOutputHash: result.redactedOutputHash,
+                  configHash: result.configHash,
+                  declaredAdapterType: result.toolReceipt.declaredAdapterType,
+                  resolvedAdapterType: result.toolReceipt.resolvedAdapterType,
+                  implementationId: result.toolReceipt.implementationId,
+                  executionMode: result.toolReceipt.executionMode,
+                  endpointHost: result.toolReceipt.endpointHost,
+                  sourceRefs: result.sourceRefs,
+                  attemptReceipts: result.toolAttemptReceipts,
+                  toolTier: result.toolTier,
+                  outputArtifactId: artifact.id,
+                  status: 'succeeded',
+                }
+              : undefined,
+            skillProvenance: result.skillProvenance
+              ? { ...result.skillProvenance, outputArtifactId: artifact.id, status: 'succeeded' }
+              : undefined,
+            latencyMs: result.toolReceipt?.latencyMs,
+            startedAt,
+            finishedAt: new Date(),
+          });
+          unpublishedArtifactId = undefined;
+          if (step.actor_type === 'tool') {
+            resolvedArtifacts.set(verified.artifact.id, {
+              artifact: {
+                id: verified.artifact.id,
+                contentSha256: verified.artifact.contentSha256!,
+              },
+              value: verified.value,
+            });
+          }
+          outputs.push({ ...sealedOutput, output: verified.output });
+        } catch (error) {
+          let artifactCleanupFailed = false;
+          const artifactCleanupDeferred = Boolean(
+            unpublishedArtifactId
+            && error instanceof ExecutionStepPersistenceError,
+          );
+          if (
+            unpublishedArtifactId
+            && !artifactCleanupDeferred
+          ) {
+            try {
+              await this.dependencies.artifacts.invalidateArtifactPublication(
+                unpublishedArtifactId,
+                'unpublished step Artifact invalidated after execution-step persistence failure',
+              );
+            } catch {
+              artifactCleanupFailed = true;
+              cleanupRecoveryRequired = true;
+            }
+          }
+          const attemptReceipts = attemptReceiptsFrom(error) ?? toolAttemptReceipts;
+          const failure = failureFrom(error);
+          if (artifactCleanupFailed) {
+            failure.kind = 'artifact_invalidation';
+            failure.retryable = false;
+            failure.message = 'unpublished step Artifact could not be invalidated';
+          }
+          attachAttemptReceipts(failure, attemptReceipts);
+          let failedToolProvenance: Record<string, unknown> | undefined;
+          let failedSkillProvenance: Record<string, unknown> | undefined;
+          let toolTier: 'core' | 'optional' = 'optional';
+          if (step.actor_type === 'tool') {
+            try {
+              toolTier = this.dependencies.skillLoader.getTool(step.actor_id)?.tier ?? 'optional';
+            } catch {
+              // Registry default is optional; missing config remains non-blocking for enhanced tools.
+            }
+            failure.toolTier = toolTier;
+            const toolProvenance = await this.failedToolProvenance(
+              step,
+              researchGoal,
+              resolvedInput,
+              error,
+              attemptReceipts,
+            );
+            toolProvenance.toolTier = toolTier;
+            failedToolProvenance = toolProvenance;
+            if (
+              toolTier === 'optional'
+              && error instanceof ToolInvocationError
+              && failure.kind !== 'safety'
+              && failure.kind !== 'lease_lost'
+              && !artifactCleanupFailed
+              && !isIntegrityFailure(error)
+            ) {
+              failure.allowedActions ??= [];
+              await this.dependencies.repository.recordExecutionStep({
+                ...input.lease,
+                stepNo: step.step_no,
+                stepName: step.step_name,
+                actorType: step.actor_type,
+                actorId: step.actor_id,
+                state: 'skipped',
+                failure,
+                toolProvenance: failedToolProvenance,
+                startedAt,
+                finishedAt: new Date(),
+              });
+              const message = typeof failure.message === 'string'
+                ? failure.message
+                : 'optional tool failed';
+              gaps.push({
+                stepNo: step.step_no,
+                message: redactString(`Step ${step.step_no} (${step.actor_id}): ${message}`),
+              });
+              return;
+            }
+            failure.allowedActions = failure.kind === 'safety' ? ['abort'] : ['retry', 'abort'];
+          } else {
+            failure.allowedActions = failure.retryable === true ? ['retry', 'abort'] : ['abort'];
+          }
+          if (step.actor_type === 'skill') {
+            failedSkillProvenance = await this.failedSkillProvenance({
+              step,
+              lease: input.lease,
+              researchGoal,
+              resolvedInput,
+              priorOutputs: outputs,
+              producedOutputHash: error instanceof SkillOutputSchemaError
+                ? error.outputHash
+                : producedSkillOutputHash,
+              schemaHashes: error instanceof SkillOutputSchemaError
+                ? error.schemaHashes
+                : undefined,
+            });
+          }
+          await this.recordFailedExecutionStep({
+            ...input.lease,
+            stepNo: step.step_no,
+            stepName: step.step_name,
+            actorType: step.actor_type,
+            actorId: step.actor_id,
+            state: 'failed',
+            failure,
+            toolProvenance: failedToolProvenance,
+            skillProvenance: failedSkillProvenance,
+            startedAt,
+            finishedAt: new Date(),
+          });
+          if (artifactCleanupDeferred && unpublishedArtifactId) {
+            try {
+              await this.dependencies.artifacts.invalidateArtifactPublication(
+                unpublishedArtifactId,
+                'unpublished step Artifact invalidated after failed-step persistence resolved commit ambiguity',
+              );
+            } catch {
+              artifactCleanupFailed = true;
+              cleanupRecoveryRequired = true;
+              failure.kind = 'artifact_invalidation';
+              failure.retryable = false;
+              failure.message = 'unpublished step Artifact could not be invalidated';
+            }
+          }
+          const paused = {
+            status: 'paused' as const,
+            attemptId: input.lease.attemptId,
+            failedStepNo: step.step_no,
+            failure,
+          };
+          if (!wavePaused || step.step_no < (wavePaused.failedStepNo ?? Number.POSITIVE_INFINITY)) {
+            wavePaused = paused;
+          }
+          if (isIntegrityFailure(error)) throw error;
+          return;
         }
-        await this.dependencies.repository.recordExecutionStep({
-          attemptId: input.lease.attemptId,
-          stepNo: step.step_no,
-          stepName: step.step_name,
-          actorType: step.actor_type,
-          actorId: step.actor_id,
-          state: 'failed',
-          failure,
-          toolProvenance: failedToolProvenance,
-          skillProvenance: failedSkillProvenance,
-          startedAt,
-          finishedAt: new Date(),
-        });
+      }));
+      const rejected = waveResults.find((result) => result.status === 'rejected');
+      if (wavePaused) {
         try {
           await this.dependencies.repository.pauseExecution({
             taskId: input.lease.taskId,
             attemptId: input.lease.attemptId,
             expectedVersion: active.stateVersion,
-            reason: String(failure.kind ?? 'execution_failure'),
+            reason: cleanupRecoveryRequired
+              ? 'artifact_invalidation'
+              : String(wavePaused.failure?.kind ?? 'execution_failure'),
           });
         } catch (pauseError) {
           if (!(pauseError instanceof ControlPlaneConflictError)) throw pauseError;
         }
-        if (isIntegrityFailure(error)) throw error;
-        wavePaused = { status: 'paused', attemptId: input.lease.attemptId, failedStepNo: step.step_no, failure };
-        return;
       }
-      }));
+      if (rejected?.status === 'rejected') throw rejected.reason;
       if (wavePaused) return wavePaused;
     }
     let sealedEvidenceManifest!: CurrentDeliverableGenerateInput['evidenceManifest'];
@@ -1220,8 +1311,8 @@ export class LeaseExecutionEngine {
     } catch (error) {
       const failure = failureFrom(error);
       failure.allowedActions = ['abort'];
-      await this.dependencies.repository.recordExecutionStep({
-        attemptId: input.lease.attemptId,
+      await this.recordFailedExecutionStep({
+        ...input.lease,
         stepNo: plan.steps.length + 1,
         stepName: 'evidence manifest',
         actorType: 'system',
@@ -1291,8 +1382,10 @@ export class LeaseExecutionEngine {
         problemGraph: (planVersion.plan as Record<string, unknown>).problem_graph,
         evidenceManifest: sealedEvidenceManifest,
         evidenceResolver,
-        outputs,
-        gaps,
+        outputs: [...outputs].sort((left, right) => left.stepNo - right.stepNo),
+        gaps: [...gaps]
+          .sort((left, right) => left.stepNo - right.stepNo)
+          .map(({ message }) => message),
         expectedModel: input.expectedModel,
         stepNo: plan.steps.length + 1,
         activeLease: input.lease,
@@ -1344,7 +1437,7 @@ export class LeaseExecutionEngine {
           };
           const failedStepNo = plan.steps.length + 2;
           await this.dependencies.repository.recordExecutionStep({
-            attemptId: input.lease.attemptId,
+            ...input.lease,
             stepNo: failedStepNo,
             stepName: 'report review',
             actorType: 'reviewer',
@@ -1442,8 +1535,8 @@ export class LeaseExecutionEngine {
       }
       const failure = deliverableFailureFrom(error);
       failure.allowedActions = failure.retryable === true ? ['retry', 'abort'] : ['abort'];
-      await this.dependencies.repository.recordExecutionStep({
-        attemptId: input.lease.attemptId,
+      await this.recordFailedExecutionStep({
+        ...input.lease,
         stepNo: plan.steps.length + 1,
         stepName: 'deliverable generation or review',
         actorType: 'llm',
@@ -1470,6 +1563,73 @@ export class LeaseExecutionEngine {
         failedStepNo: plan.steps.length + 1,
         failure,
       };
+    }
+  }
+
+  private async recordFailedExecutionStep(
+    input: Parameters<ControlPlaneRepository['recordExecutionStep']>[0] & {
+      state: 'failed';
+      failure: Record<string, unknown>;
+    },
+  ): Promise<void> {
+    try {
+      await this.dependencies.repository.recordExecutionStep(input);
+    } catch (error) {
+      if (
+        !(error instanceof ControlPlaneConflictError)
+        || input.failure.kind !== 'lease_lost'
+      ) throw error;
+      const finalized = await this.dependencies.repository.recordLeaseLostExecutionStep(input);
+      if (!finalized) throw error;
+    }
+  }
+
+  private async recordSucceededExecutionStep(
+    input: Parameters<ControlPlaneRepository['recordExecutionStep']>[0] & {
+      state: 'succeeded';
+      outputArtifactId: string;
+    },
+  ): Promise<void> {
+    let persistenceError: unknown;
+    let persistenceConflict: ControlPlaneConflictError | undefined;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        await this.dependencies.repository.recordExecutionStep(input);
+        return;
+      } catch (error) {
+        if (error instanceof ControlPlaneConflictError) {
+          if (persistenceError === undefined) throw error;
+          persistenceConflict = error;
+          break;
+        }
+        persistenceError = error;
+      }
+    }
+
+    try {
+      const persisted = (await this.dependencies.repository.listExecutionSteps(input.attemptId))
+        .find(({ stepNo }) => stepNo === input.stepNo);
+      if (
+        persisted?.state === 'succeeded'
+        && persisted.stepName === input.stepName
+        && persisted.actorType === input.actorType
+        && persisted.actorId === input.actorId
+        && persisted.outputArtifactId === input.outputArtifactId
+        && isDeepStrictEqual(persisted.toolProvenance, persistedJsonValue(input.toolProvenance))
+        && isDeepStrictEqual(persisted.skillProvenance, persistedJsonValue(input.skillProvenance))
+        && isDeepStrictEqual(persisted.failure, persistedJsonValue(input.failure))
+        && persisted.latencyMs === (input.latencyMs ?? null)
+        && sameOptionalDate(persisted.startedAt, input.startedAt)
+        && sameOptionalDate(persisted.finishedAt, input.finishedAt)
+      ) return;
+      throw new ExecutionStepPersistenceError(Boolean(persistenceConflict), {
+        cause: persistenceConflict ?? persistenceError,
+      });
+    } catch (error) {
+      if (error instanceof ExecutionStepPersistenceError) throw error;
+      throw new ExecutionStepPersistenceError(Boolean(persistenceConflict), {
+        cause: persistenceConflict ?? persistenceError ?? error,
+      });
     }
   }
 

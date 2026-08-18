@@ -5,6 +5,8 @@ import {
   loadToolManifest,
   fileExists,
   SKILL_RESULT_ENVELOPE_SCHEMA,
+  skillVisualInputIssue,
+  unknownSkillRegistryFields,
   type SkillRegistryEntry,
   type ToolRegistryEntry,
   type DecisionNode,
@@ -49,6 +51,10 @@ function lintCapabilityArrays(skill: SkillRegistryEntry, target: string, issues:
       issues.push({ level: 'error', target, message: 'active skill 的 task_types 不得为空数组' });
     }
   }
+  const visualInputIssue = skillVisualInputIssue(skill);
+  if (visualInputIssue) {
+    issues.push({ level: 'error', target, message: `active skill 的 ${visualInputIssue}` });
+  }
 }
 
 function lintSkills(issues: LintIssue[]): void {
@@ -58,6 +64,15 @@ function lintSkills(issues: LintIssue[]): void {
   for (const s of skills) {
     const tgt = `skill:${s.id ?? '(no-id)'}`;
     if (s.status !== 'active') continue; // draft/deprecated 不参与自动路由,放宽校验
+
+    const unknownFields = unknownSkillRegistryFields(s);
+    if (unknownFields.length > 0) {
+      issues.push({
+        level: 'error',
+        target: tgt,
+        message: `active skill 含未知字段: ${unknownFields.join(', ')}`,
+      });
+    }
 
     for (const f of SKILL_ACTIVE_REQUIRED) {
       if (s[f] === undefined || s[f] === null || s[f] === '') {

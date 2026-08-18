@@ -39,12 +39,16 @@ class RateLimitError extends LLMInvocationError {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-function parseModelRoutes(raw: string | undefined, fallbackModel: string | undefined): GatewayModelRoute[] {
+export function parseModelRoutes(
+  raw: string | undefined,
+  fallbackModel: string | undefined,
+  fallbackExpectedActualModel = process.env.LLM_EXPECTED_ACTUAL_MODEL,
+): GatewayModelRoute[] {
   if (!raw?.trim()) {
     if (!fallbackModel) throw new Error('GatewayLLMClient: 缺少 LLM_MODEL_NAME');
     return [{
       requestedModel: fallbackModel,
-      expectedActualModel: process.env.LLM_EXPECTED_ACTUAL_MODEL?.trim() || fallbackModel,
+      expectedActualModel: fallbackExpectedActualModel?.trim() || fallbackModel,
     }];
   }
   const routes = raw.split(',').map((entry) => {
@@ -70,7 +74,11 @@ function readConfig(): GatewayConfig {
   return {
     baseUrl,
     apiKey,
-    modelRoutes: parseModelRoutes(process.env.LLM_MODEL_ROUTES, process.env.LLM_MODEL_NAME),
+    modelRoutes: parseModelRoutes(
+      process.env.LLM_MODEL_ROUTES,
+      process.env.LLM_MODEL_NAME,
+      process.env.LLM_EXPECTED_ACTUAL_MODEL,
+    ),
     timeoutMs: Number(process.env.LLM_GATEWAY_TIMEOUT_MS ?? 30000),
   };
 }

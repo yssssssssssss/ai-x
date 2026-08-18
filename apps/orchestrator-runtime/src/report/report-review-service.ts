@@ -294,19 +294,21 @@ export class ReportReviewService {
         ? deterministicById.get(candidate.id as ReportReviewDimensionId)
         : undefined;
       const providedIssues = Array.isArray(candidate.issues) ? candidate.issues.map(issueText) : null;
-      const passed = typeof candidate.passed === 'boolean'
+      const proposedPassed = typeof candidate.passed === 'boolean'
         ? candidate.passed
-        : providedIssues && providedIssues.length > 0
-          ? false
+        : providedIssues
+          ? providedIssues.length === 0
           : baseline?.passed ?? false;
       const issues = providedIssues
         ?? baseline?.issues
-        ?? (passed ? [] : ['semantic review did not provide dimension issues']);
+        ?? (proposedPassed ? [] : ['semantic review did not provide dimension issues']);
+      const passed = proposedPassed && issues.length === 0;
       return { id: candidate.id, passed, issues };
     });
-    const normalizedVerdict = value.verdict !== 'pass'
-      && projectedDimensions.every((dimension) => record(dimension)?.passed === true)
-      ? 'pass'
+    const allDimensionsPass = projectedDimensions.length === REPORT_REVIEW_DIMENSION_IDS.length
+      && projectedDimensions.every((dimension) => dimension.passed && dimension.issues.length === 0);
+    const normalizedVerdict = value.verdict === 'pass' && !allDimensionsPass
+      ? 'revise'
       : value.verdict;
     const artifact: ReportReviewArtifact = {
       version: 'report-review-v1', taskId: input.task.id, planVersionId: input.plan.id,

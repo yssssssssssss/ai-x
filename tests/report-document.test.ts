@@ -276,6 +276,7 @@ function visualManifest(input: {
   bytes: Uint8Array;
   width: number;
   height: number;
+  source?: VisualAssetManifest['source'];
   derivedFrom: VisualAssetManifest['derivedFrom'];
   derivation: VisualAssetManifest['derivation'];
 }): VisualAssetManifest {
@@ -289,25 +290,33 @@ function visualManifest(input: {
     width: input.width,
     height: input.height,
     exportPolicy: 'allow',
-    source: input.derivedFrom ? { kind: 'derived' } : { kind: 'user_upload', fileName: 'verified.png' },
+    source: input.source
+      ?? (input.derivedFrom ? { kind: 'derived' } : { kind: 'user_upload', fileName: 'verified.png' }),
     derivedFrom: input.derivedFrom,
     derivation: input.derivation,
   };
   return { ...draft, manifestHash: canonicalHash(draft) };
 }
 
-function verifiedImage(): VerifiedVisualAsset {
+function verifiedImage(input: {
+  assetId?: string;
+  manifestArtifactId?: string;
+  source?: VisualAssetManifest['source'];
+} = {}): VerifiedVisualAsset {
+  const assetId = input.assetId ?? imageAssetId;
+  const manifestArtifactId = input.manifestArtifactId ?? imageManifestArtifactId;
   const manifest = visualManifest({
-    assetId: imageAssetId,
+    assetId,
     mediaType: 'image/png',
     bytes: PNG,
     width: 1,
     height: 1,
+    source: input.source,
     derivedFrom: null,
     derivation: null,
   });
   return {
-    artifact: artifact(imageAssetId, 'visual_asset', 'binary-v1', {
+    artifact: artifact(assetId, 'visual_asset', 'binary-v1', {
       contentSha256: manifest.contentSha256,
       byteSize: manifest.byteSize,
       mediaType: manifest.mediaType,
@@ -322,7 +331,7 @@ function verifiedImage(): VerifiedVisualAsset {
     },
     manifest,
     manifestArtifact: sealedJsonArtifact(
-      imageManifestArtifactId,
+      manifestArtifactId,
       'visual_asset_manifest',
       'visual-asset-manifest-v1',
       manifest,
@@ -330,9 +339,14 @@ function verifiedImage(): VerifiedVisualAsset {
   };
 }
 
-function verifiedAnnotation(original: VerifiedVisualAsset): VerifiedVisualAsset {
+function verifiedAnnotation(
+  original: VerifiedVisualAsset,
+  input: { assetId?: string; manifestArtifactId?: string } = {},
+): VerifiedVisualAsset {
+  const assetId = input.assetId ?? annotationAssetId;
+  const manifestArtifactId = input.manifestArtifactId ?? annotationManifestArtifactId;
   const manifest = visualManifest({
-    assetId: annotationAssetId,
+    assetId,
     mediaType: 'image/png',
     bytes: PNG,
     width: 1,
@@ -343,10 +357,10 @@ function verifiedAnnotation(original: VerifiedVisualAsset): VerifiedVisualAsset 
       contentSha256: original.manifest.contentSha256,
       manifestHash: original.manifest.manifestHash,
     },
-    derivation: { kind: 'annotation', overlayArtifactId: 'overlay-report-document-1' },
+    derivation: { kind: 'annotation', overlayArtifactId: `overlay-${assetId}` },
   });
   return {
-    artifact: artifact(annotationAssetId, 'visual_asset', 'binary-v1', {
+    artifact: artifact(assetId, 'visual_asset', 'binary-v1', {
       contentSha256: manifest.contentSha256,
       byteSize: manifest.byteSize,
       mediaType: manifest.mediaType,
@@ -361,7 +375,7 @@ function verifiedAnnotation(original: VerifiedVisualAsset): VerifiedVisualAsset 
     },
     manifest,
     manifestArtifact: sealedJsonArtifact(
-      annotationManifestArtifactId,
+      manifestArtifactId,
       'visual_asset_manifest',
       'visual-asset-manifest-v1',
       manifest,
@@ -1164,19 +1178,31 @@ function reportSectionText(document: ReportDocument, sectionId: string): string 
   return JSON.stringify(section.blocks);
 }
 
+function competitivePayload(screenshotComparisons: unknown[]): Record<string, unknown> {
+  return {
+    competitorSamples: [{ id: 'sample-a', name: 'Phase6 Product A', rationale: 'Primary comparator', evidenceIds: ['evidence-1'] }],
+    dimensionMatrix: [{ dimension: 'onboarding', values: [{ sampleId: 'sample-a', value: 'Phase6 guided matrix value', evidenceIds: ['evidence-1'] }] }],
+    differences: [{ id: 'difference-1', dimension: 'onboarding', statement: 'Phase6 competitor difference', evidenceIds: ['evidence-1'] }],
+    impacts: [{ differenceId: 'difference-1', audience: 'New users', statement: 'Phase6 novice impact' }],
+    actionRecommendations: [{ id: 'action-1', differenceIds: ['difference-1'], priority: 'P1', statement: 'Phase6 prioritized action' }],
+    screenshotComparisons,
+  };
+}
+
 test('competitive ReportDocument projects matrix, actions, impact, and screenshot comparison into selected sections', () => {
   const document = composeReportDocument(professionalComposeInput({
     templateId: 'competitive-analysis-report',
     deliverableId: 'competitive_analysis_report',
-    visuals: 'source',
-    payload: {
-      competitorSamples: [{ id: 'sample-a', name: 'Phase6 Product A', rationale: 'Primary comparator', evidenceIds: ['evidence-1'] }],
-      dimensionMatrix: [{ dimension: 'onboarding', values: [{ sampleId: 'sample-a', value: 'Phase6 guided matrix value', evidenceIds: ['evidence-1'] }] }],
-      differences: [{ id: 'difference-1', dimension: 'onboarding', statement: 'Phase6 competitor difference', evidenceIds: ['evidence-1'] }],
-      impacts: [{ differenceId: 'difference-1', audience: 'New users', statement: 'Phase6 novice impact' }],
-      actionRecommendations: [{ id: 'action-1', differenceIds: ['difference-1'], priority: 'P1', statement: 'Phase6 prioritized action' }],
-      screenshotComparisons: [{ id: 'screenshot-1', dimension: 'onboarding', sampleIds: ['sample-a'], assetIds: [imageAssetId], caption: 'Phase6 screenshot comparison' }],
-    },
+    visuals: 'annotation',
+    payload: competitivePayload([
+      {
+        id: 'screenshot-1',
+        dimension: 'onboarding',
+        sampleIds: ['sample-a'],
+        assetIds: [imageAssetId, annotationAssetId],
+        caption: 'Phase6 screenshot comparison',
+      },
+    ]),
   }));
 
   assert.match(reportSectionText(document, 'findings'), /Phase6 guided matrix value/);
@@ -1188,11 +1214,170 @@ test('competitive ReportDocument projects matrix, actions, impact, and screensho
   const screenshot = document.sections
     .find(({ id }) => id === 'visual-evidence')
     ?.blocks.find((block) => (
-      block.type === 'image'
-      && block.assetRef.assetId === imageAssetId
+      block.type === 'image-comparison'
+      && block.beforeAssetRef.assetId === imageAssetId
+      && block.afterAssetRef.assetId === annotationAssetId
       && block.caption.includes('Phase6 screenshot comparison')
     ));
-  assert.ok(screenshot?.type === 'image');
+  assert.ok(screenshot?.type === 'image-comparison');
+  assert.match(screenshot.caption, /输入边界仅用于来源溯源，不定位或证明任何研究发现/u);
+  assert.match(screenshot.altText, /input-provenance boundary.*does not locate or substantiate a research finding/iu);
+});
+
+test('competitive ReportDocument accepts an empty screenshot section only without visual inventory', () => {
+  const textOnly = professionalComposeInput({
+    templateId: 'competitive-analysis-report',
+    deliverableId: 'competitive_analysis_report',
+    visuals: 'none',
+    payload: competitivePayload([]),
+  });
+  const document = composeReportDocument(textOnly);
+  assert.deepEqual(document.sections.find(({ id }) => id === 'visual-evidence')?.blocks, []);
+
+  const unusedVisuals = professionalComposeInput({
+    templateId: 'competitive-analysis-report',
+    deliverableId: 'competitive_analysis_report',
+    visuals: 'annotation',
+    payload: competitivePayload([]),
+  });
+  assert.throws(() => composeReportDocument(unusedVisuals), /screenshot|visual|inventory/i);
+});
+
+for (const invalid of [{
+  name: 'a single image',
+  visuals: 'source' as const,
+  assetIds: [imageAssetId],
+}, {
+  name: 'a duplicate image',
+  visuals: 'source' as const,
+  assetIds: [imageAssetId, imageAssetId],
+}, {
+  name: 'a reversed annotation pair',
+  visuals: 'annotation' as const,
+  assetIds: [annotationAssetId, imageAssetId],
+}, {
+  name: 'three images',
+  visuals: 'annotation' as const,
+  assetIds: [imageAssetId, annotationAssetId, 'asset-extra'],
+}]) {
+  test(`competitive ReportDocument rejects ${invalid.name}`, () => {
+    const input = professionalComposeInput({
+      templateId: 'competitive-analysis-report',
+      deliverableId: 'competitive_analysis_report',
+      visuals: invalid.visuals,
+      payload: competitivePayload([{
+        id: 'screenshot-1',
+        dimension: 'onboarding',
+        sampleIds: ['sample-a'],
+        assetIds: invalid.assetIds,
+        caption: 'Invalid screenshot comparison',
+      }]),
+    });
+    assert.throws(() => composeReportDocument(input), /screenshot|visual|original|annotation|pair|unique|items/i);
+  });
+}
+
+test('competitive ReportDocument rejects two originals and mismatched annotation lineage', () => {
+  const originalA = verifiedImage();
+  const originalB = verifiedImage({
+    assetId: 'asset-image-report-document-2',
+    manifestArtifactId: 'manifest-image-report-document-2',
+  });
+
+  const twoOriginals = professionalComposeInput({
+    templateId: 'competitive-analysis-report',
+    deliverableId: 'competitive_analysis_report',
+    visuals: 'source',
+    payload: competitivePayload([{
+      id: 'screenshot-1',
+      dimension: 'onboarding',
+      sampleIds: ['sample-a'],
+      assetIds: [originalA.artifact.id, originalB.artifact.id],
+      caption: 'Invalid two-original comparison',
+    }]),
+  });
+  twoOriginals.visualAssets = [originalA, originalB];
+  assert.throws(() => composeReportDocument(twoOriginals), /original|annotation|lineage|pair/i);
+
+  const annotationB = verifiedAnnotation(originalB);
+  const wrongLineage = professionalComposeInput({
+    templateId: 'competitive-analysis-report',
+    deliverableId: 'competitive_analysis_report',
+    visuals: 'annotation',
+    payload: competitivePayload([{
+      id: 'screenshot-1',
+      dimension: 'onboarding',
+      sampleIds: ['sample-a'],
+      assetIds: [originalA.artifact.id, annotationB.artifact.id],
+      caption: 'Invalid cross-original comparison',
+    }]),
+  });
+  wrongLineage.visualAssets = [originalA, originalB, annotationB];
+  assert.throws(() => composeReportDocument(wrongLineage), /original|annotation|lineage|pair/i);
+});
+
+test('competitive ReportDocument rejects duplicate Asset ids and unsupported unused visual roles', () => {
+  const original = verifiedImage();
+  const annotation = verifiedAnnotation(original);
+  const payload = competitivePayload([{
+    id: 'screenshot-1',
+    dimension: 'onboarding',
+    sampleIds: ['sample-a'],
+    assetIds: [original.artifact.id, annotation.artifact.id],
+    caption: 'Exact screenshot comparison',
+  }]);
+
+  const duplicateId = professionalComposeInput({
+    templateId: 'competitive-analysis-report',
+    deliverableId: 'competitive_analysis_report',
+    visuals: 'annotation',
+    payload,
+  });
+  duplicateId.visualAssets = [
+    original,
+    verifiedImage({ manifestArtifactId: 'manifest-image-report-document-duplicate' }),
+    annotation,
+  ];
+  assert.throws(() => composeReportDocument(duplicateId), /Asset id.*unique/i);
+
+  const unsupported = professionalComposeInput({
+    templateId: 'competitive-analysis-report',
+    deliverableId: 'competitive_analysis_report',
+    visuals: 'annotation',
+    payload,
+  });
+  unsupported.visualAssets = [
+    original,
+    annotation,
+    verifiedImage({
+      assetId: 'asset-tool-report-document-1',
+      manifestArtifactId: 'manifest-tool-report-document-1',
+      source: {
+        kind: 'tool_artifact',
+        artifactId: 'tool-output-report-document-1',
+        artifactContentSha256: sha('f'),
+        jsonPointer: '/image',
+        url: 'https://example.test/verified.png',
+      },
+    }),
+  ];
+  assert.throws(() => composeReportDocument(unsupported), /unsupported source or role/i);
+
+  const annotationChain = professionalComposeInput({
+    templateId: 'competitive-analysis-report',
+    deliverableId: 'competitive_analysis_report',
+    visuals: 'annotation',
+    payload,
+  });
+  annotationChain.visualAssets = [
+    original,
+    annotation,
+    verifiedAnnotation(annotation, {
+      assetId: 'asset-nested-annotation-report-document-1',
+      manifestArtifactId: 'manifest-nested-annotation-report-document-1',
+    }),
+  ];
+  assert.throws(() => composeReportDocument(annotationChain), /exact verified original/i);
 });
 
 test('VOC ReportDocument projects themes, quotes, severity, and priority into diagnosis sections', () => {

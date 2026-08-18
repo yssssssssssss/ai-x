@@ -12,10 +12,11 @@ import {
 import { imageSize } from 'image-size';
 import sharp from 'sharp';
 import { inflateSync } from 'node:zlib';
-import type {
-  ControlArtifact,
-  ControlExecutionLease,
-  ControlPlaneRepository,
+import {
+  ARTIFACT_QUARANTINE_PENDING_MARKER,
+  type ControlArtifact,
+  type ControlExecutionLease,
+  type ControlPlaneRepository,
 } from '../../../../database/control-plane.ts';
 
 configureFsSafeNative({ mode: 'require' });
@@ -45,6 +46,7 @@ interface ArtifactWriteBase {
   taskId: string;
   planVersionId: string;
   attemptId?: string;
+  publicationId?: string;
   kind: string;
   relativePath: string;
   schemaVersion?: string;
@@ -304,9 +306,50 @@ export class ControlArtifactStore {
         | 'createStagingArtifact' | 'sealArtifact' | 'failArtifact' | 'getArtifact'
         | 'listArtifactsByStorageUri' | 'listStagingArtifacts'
         | 'requireSealedArtifact' | 'requireSealedArtifactBinding' | 'invalidateArtifactPublication'
+        | 'quarantineStagingArtifact'
       >;
     },
   ) {}
+
+  async invalidateArtifactPublication(artifactId: string, reason: string): Promise<void> {
+    await this.options.registry.invalidateArtifactPublication(artifactId, reason);
+  }
+
+  async quarantineStagingArtifact(
+    artifactId: string,
+    reason = 'orphaned staging artifact after worker loss',
+  ): Promise<ControlArtifact | null> {
+    const artifact = await this.options.registry.getArtifact(artifactId);
+    if (!artifact) return null;
+    const quarantineSuffix = `.${artifact.id}.orphan`;
+    if (
+      artifact.state === 'FAILED'
+      && artifact.storageUri.endsWith(quarantineSuffix)
+      && artifact.failureReason?.includes(ARTIFACT_QUARANTINE_PENDING_MARKER)
+    ) {
+      const quarantinePath = this.assertVerifiedPath(artifact);
+      const sourceUri = artifact.storageUri.slice(0, -quarantineSuffix.length);
+      const sourcePath = this.logicalPath(sourceUri);
+      const root = await this.openRoot();
+      return this.options.registry.quarantineStagingArtifact({
+        artifactId: artifact.id,
+        expectedStorageUri: sourceUri,
+        quarantineUri: artifact.storageUri,
+        reason,
+      }, () => this.moveQuarantinePath(root, artifact.id, sourcePath, quarantinePath));
+    }
+    if (artifact.state !== 'STAGING') return null;
+    const sourcePath = this.assertVerifiedPath(artifact);
+    const quarantineUri = `${artifact.storageUri}${quarantineSuffix}`;
+    const quarantinePath = this.logicalPath(quarantineUri);
+    const root = await this.openRoot();
+    return this.options.registry.quarantineStagingArtifact({
+      artifactId: artifact.id,
+      expectedStorageUri: artifact.storageUri,
+      quarantineUri,
+      reason,
+    }, () => this.moveQuarantinePath(root, artifact.id, sourcePath, quarantinePath));
+  }
 
   private async openRoot(): Promise<Root> {
     await mkdir(this.options.root, { recursive: true });
@@ -318,6 +361,45 @@ export class ControlArtifactStore {
       nonBlockingRead: true,
       symlinks: 'reject',
     });
+  }
+
+  private async moveQuarantinePath(
+    root: Root,
+    artifactId: string,
+    sourcePath: string,
+    quarantinePath: string,
+  ): Promise<'moved' | 'already_moved' | 'absent'> {
+    const requireRegularFile = async (path: string): Promise<void> => {
+      const opened = await root.open(path, {
+        hardlinks: 'allow',
+        nonBlockingRead: true,
+        symlinks: 'reject',
+      });
+      await opened[Symbol.asyncDispose]();
+    };
+    const sourceExists = await root.exists(sourcePath);
+    const quarantineExists = await root.exists(quarantinePath);
+    if (sourceExists && quarantineExists) {
+      throw new ArtifactIntegrityError(artifactId, 'has both live and quarantine paths');
+    }
+    if (!sourceExists) {
+      if (quarantineExists) {
+        await requireRegularFile(quarantinePath);
+        return 'already_moved';
+      }
+      return 'absent';
+    }
+    await requireRegularFile(sourcePath);
+    try {
+      await root.move(sourcePath, quarantinePath, { overwrite: false });
+      return 'moved';
+    } catch (error) {
+      if (!await root.exists(sourcePath) && await root.exists(quarantinePath)) {
+        await requireRegularFile(quarantinePath);
+        return 'already_moved';
+      }
+      throw error;
+    }
   }
 
   private directoryFor(input: Pick<ArtifactWriteBase, 'taskId' | 'planVersionId' | 'attemptId'>): string {
@@ -416,11 +498,13 @@ export class ControlArtifactStore {
     let artifact: ControlArtifact | null = null;
     let opened: OpenResult | null = null;
     let root: Root | null = null;
+    let createdCurrentPath = false;
     try {
       artifact = await this.options.registry.createStagingArtifact({
         taskId: input.taskId,
         planVersionId: input.planVersionId,
         attemptId: input.attemptId,
+        publicationId: input.publicationId,
         kind: input.kind,
         storageUri,
         schemaVersion: input.schemaVersion ?? 'v1',
@@ -451,6 +535,7 @@ export class ControlArtifactStore {
       }
       if (!opened) {
         await root.create(logicalPath, bytes, { mkdir: true, mode: 0o600 });
+        createdCurrentPath = true;
         root = await this.openRoot();
         const created = await this.openExact(root, logicalPath, bytes.byteLength);
         opened = created.opened;
@@ -495,6 +580,31 @@ export class ControlArtifactStore {
           artifact.id,
           error instanceof Error ? error.message : String(error),
         );
+      }
+      if (
+        artifact
+        && persisted?.state === 'FAILED'
+        && createdCurrentPath
+        && root
+        && persisted.storageUri === `${storageUri}.${artifact.id}.orphan`
+        && persisted.failureReason?.includes(ARTIFACT_QUARANTINE_PENDING_MARKER)
+      ) {
+        if (opened) {
+          await opened[Symbol.asyncDispose]();
+          opened = null;
+        }
+        const disposition = await this.moveQuarantinePath(
+          root,
+          artifact.id,
+          logicalPath,
+          this.logicalPath(persisted.storageUri),
+        );
+        await this.options.registry.quarantineStagingArtifact({
+          artifactId: artifact.id,
+          expectedStorageUri: storageUri,
+          quarantineUri: persisted.storageUri,
+          reason: 'orphaned staging artifact after worker loss',
+        }, async () => disposition === 'absent' ? 'absent' : 'already_moved');
       }
       if (artifact) await this.options.registry.failArtifact(artifact.id, error instanceof Error ? error.message : String(error));
       throw error;
@@ -563,6 +673,11 @@ export class ControlArtifactStore {
 
   async readVerifiedJson<T>(artifactId: string): Promise<{ artifact: ControlArtifact; value: T }> {
     const { artifact, bytes } = await this.readVerifiedBytes(artifactId);
+    return { artifact, value: JSON.parse(bytes.toString('utf8')) as T };
+  }
+
+  async readVerifiedBoundJson<T>(artifactId: string): Promise<{ artifact: ControlArtifact; value: T }> {
+    const { artifact, bytes } = await this.readVerifiedBytes(artifactId, true);
     return { artifact, value: JSON.parse(bytes.toString('utf8')) as T };
   }
 

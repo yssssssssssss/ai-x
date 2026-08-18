@@ -17,7 +17,10 @@ import {
   type PlanCompileInput,
 } from '../apps/orchestrator-runtime/src/planners/plan-compiler.ts';
 import { ControlPlanningService } from '../apps/orchestrator-runtime/src/control/control-planning-service.ts';
-import { ResearchPlanningService } from '../apps/orchestrator-runtime/src/planners/research-planning-service.ts';
+import {
+  ResearchPlanningService,
+  resolvePlanningDeliverableSelection,
+} from '../apps/orchestrator-runtime/src/planners/research-planning-service.ts';
 import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 import { ToolRouter, type ToolAdapter } from '../apps/orchestrator-runtime/src/runtime/tool-adapter.ts';
@@ -103,6 +106,7 @@ const eligibleSkill = {
   status: 'active' as const,
   task_types: ['competitive_research'],
   inputs: ['research_goal', 'competitor_screenshots'],
+  visual_inputs: ['competitor_screenshots'],
   outputs: ['competitive_analysis'],
   required_tools: ['tavily-web-search'],
   risk_level: 'low' as const,
@@ -118,6 +122,7 @@ function capabilityResolution(): CapabilityResolution {
         { code: 'eligible', message: 'skill passed all capability filters' },
       ],
       pending_inputs: [{
+        kind: 'visual',
         role: 'competitor_screenshots',
         label: '竞品截图',
         multiple: true,
@@ -294,6 +299,41 @@ test('rejects Skill output pointers outside the unified payload root', () => {
   );
 });
 
+test('rejects output pointers that the LLM and reviewer runtimes cannot produce', () => {
+  for (const [actorType, actorId, pointer] of [
+    ['llm', 'research-planner-llm', '/boundary_definition'],
+    ['reviewer', 'research-quality-reviewer', '/coverage_checklist'],
+  ] as const) {
+    expectCompileError((value) => {
+      value.candidate.steps[1] = {
+        ...value.candidate.steps[1]!,
+        actor_type: actorType,
+        actor_id: actorId,
+        expected_outputs: [{ pointer, description: 'invented runtime output' }],
+      };
+    }, 'invalid_actor_output_pointer', pointer);
+  }
+});
+
+test('requires exactly one fixed runtime output for LLM and reviewer steps', () => {
+  for (const [actorType, actorId, runtimePointer] of [
+    ['llm', 'research-planner-llm', '/text'],
+    ['reviewer', 'research-quality-reviewer', '/review'],
+  ] as const) {
+    expectCompileError((value) => {
+      value.candidate.steps[1] = {
+        ...value.candidate.steps[1]!,
+        actor_type: actorType,
+        actor_id: actorId,
+        expected_outputs: [
+          { pointer: runtimePointer, description: 'real runtime output' },
+          { pointer: '/invented-extra', description: 'invented runtime output' },
+        ],
+      };
+    }, 'invalid_actor_output_pointer', '/invented-extra');
+  }
+});
+
 test('rejects unknown question references', () => {
   expectCompileError((value) => {
     value.candidate.steps[0]!.question_ids = ['question-missing'];
@@ -424,6 +464,7 @@ test('compiles exact depth and speed candidates, rebuilds numbering, freezes gra
     assert.deepEqual(compiled.plan.evidence_requirements, evidencePolicy);
     assert.deepEqual(compiled.plan.activated_nodes, ['D5_competitive']);
     assert.deepEqual(compiled.pending_inputs, [{
+      kind: 'visual',
       role: 'competitor_screenshots',
       label: '竞品截图',
       multiple: true,
@@ -635,6 +676,8 @@ test('malformed LLM Current candidate never reaches the repository', async () =>
 type CurrentCandidateFixtureMode =
   | 'missing-tool'
   | 'unknown-binding'
+  | 'input-prefixed-binding'
+  | 'invalid-actor-output'
   | 'object-assumptions'
   | 'string-assumptions'
   | 'over-limit-once'
@@ -663,11 +706,28 @@ class CurrentPlanningLLM implements LLMClient {
     } else if (options.schemaName === 'decision-states') {
       data = [];
     } else if (options.schemaName === 'current-plan-candidates') {
+      const validationFeedback = JSON.stringify(options.context);
+      const inputPrefixedBindingNeedsRepair = this.candidateFixtureMode === 'input-prefixed-binding'
+        && (
+          this.candidateCalls === 0
+          || !/target_pointer is relative to step\.input.*use \/sources instead of \/input\/sources/u
+            .test(validationFeedback)
+        );
+      const invalidActorOutputNeedsRepair = this.candidateFixtureMode === 'invalid-actor-output'
+        && (
+          this.candidateCalls === 0
+          || !/invalid_actor_output_pointer.*llm.*\/boundary_definition.*\/text/u
+            .test(validationFeedback)
+        );
       const defect = this.candidateFixtureMode === 'over-limit-always'
         ? 'over-limit'
-        : this.candidateCalls === 0
-          ? this.candidateFixtureMode
-          : null;
+        : inputPrefixedBindingNeedsRepair
+          ? 'input-prefixed-binding'
+          : invalidActorOutputNeedsRepair
+            ? 'invalid-actor-output'
+            : this.candidateCalls === 0
+              ? this.candidateFixtureMode
+              : null;
       this.candidateCalls += 1;
       const proposal = (id: 'depth' | 'speed') => {
         const { activated_nodes: _nodes, ...candidate } = validCandidate(id);
@@ -685,6 +745,36 @@ class CurrentPlanningLLM implements LLMClient {
             steps: candidate.steps.map((step) => step.actor_type === 'skill'
               ? { ...step, input_bindings: [{ ...step.input_bindings[0]!, target_pointer: '/missing' }] }
               : step),
+          };
+        }
+        if (defect === 'input-prefixed-binding') {
+          return {
+            ...candidate,
+            steps: candidate.steps.map((step) => step.actor_type === 'skill'
+              ? {
+                ...step,
+                input_bindings: [{
+                  ...step.input_bindings[0]!,
+                  target_pointer: `/input${step.input_bindings[0]!.target_pointer}`,
+                }],
+              }
+              : step),
+          };
+        }
+        if (defect === 'invalid-actor-output') {
+          return {
+            ...candidate,
+            steps: candidate.steps.map((candidateStep) => candidateStep.actor_type === 'skill'
+              ? {
+                ...candidateStep,
+                actor_type: 'llm' as const,
+                actor_id: 'current-planning-model',
+                expected_outputs: [{
+                  pointer: '/boundary_definition',
+                  description: 'invented structured LLM output',
+                }],
+              }
+              : candidateStep),
           };
         }
         if (defect === 'object-assumptions' || defect === 'string-assumptions') {
@@ -711,7 +801,7 @@ class CurrentPlanningLLM implements LLMClient {
               depends_on: [stepNo - 1],
               input: {},
               input_bindings: [],
-              expected_outputs: [{ pointer: `/analysis-${stepNo}`, description: '补充分析' }],
+              expected_outputs: [{ pointer: '/text', description: '补充分析' }],
               acceptance_criteria: ['形成补充分析'],
             }));
           }
@@ -791,6 +881,8 @@ test('Current planning assembles Task8 graph and Task9 real-adapter capability s
   assert.ok(candidateCall);
   assert.match(candidateCall.prompt, /fallback_actor_ids 必须为空数组/);
   assert.match(candidateCall.prompt, /统一输出根 \/payload/);
+  assert.match(candidateCall.prompt, /目标槽必须预先存在于 step\.input/);
+  assert.match(candidateCall.prompt, /LLM step 的唯一运行时输出指针是 \/text.*reviewer step.*\/review/);
   assert.match(candidateCall.prompt, /depth 总步数不得超过 8，speed 总步数不得超过 4/);
   const candidateContext = candidateCall.context as {
     problem_graph: ProblemGraph;
@@ -814,6 +906,14 @@ test('Current planning retries once with complete Compiler feedback before retur
   for (const scenario of [
     { defect: 'missing-tool' as const, expectedFeedback: /(required_tool_missing|requires earlier tool).*tavily-web-search/ },
     { defect: 'unknown-binding' as const, expectedFeedback: /unknown_binding_target.*missing/ },
+    {
+      defect: 'input-prefixed-binding' as const,
+      expectedFeedback: /target_pointer is relative to step\.input.*use \/sources instead of \/input\/sources/,
+    },
+    {
+      defect: 'invalid-actor-output' as const,
+      expectedFeedback: /invalid_actor_output_pointer.*llm.*\/boundary_definition.*\/text/,
+    },
   ]) {
     const llm = new CurrentPlanningLLM(scenario.defect);
     const tools = new ToolRouter();
@@ -971,6 +1071,61 @@ test('direct screenshot Skill exposes missing screenshot roles as pending inputs
       'competitor_screenshots',
     ));
     assert.deepEqual(compiled.pending_inputs.map((input) => input.role), ['competitor_screenshots']);
+    assert.deepEqual(compiled.pending_inputs.map((input) => input.kind), ['visual']);
+  }
+});
+
+test('fans one sealed design input out to every declared visual Tool field', async () => {
+  const designTask: ResearchTaskV2 = {
+    ...structuredClone(task),
+    task_type: 'design_audit',
+    research_goal: '走查商品详情页设计稿的视觉层级、注意力与品牌一致性',
+    expected_deliverables: ['design audit report'],
+  };
+  const tools = new ToolRouter();
+  tools.register({
+    adapterType: 'rest_json',
+    implementationId: 'qualified-real-rest-json',
+    executionMode: 'real',
+    endpointHost: () => 'design.fixture.test',
+    async invoke() { throw new Error('not used during planning'); },
+  });
+  const planning = new ResearchPlanningService({
+    llm: new CurrentPlanningLLM(),
+    validator: new SchemaValidator(),
+    skillLoader: new SkillLoader(),
+    tools,
+    approvalAuthorities: ['owner'],
+  });
+  const result = await planning.planCurrentFromRequirement(
+    designTask,
+    `$design-experience-review ${designTask.research_goal}`,
+  );
+  const selection = resolvePlanningDeliverableSelection(designTask);
+  result.problemGraph.questions[0]!.evidence_requirements = structuredClone(selection.evidenceRequirements);
+  for (const candidate of result.candidates) {
+    const compiled = new PlanCompiler().compile({
+      candidate,
+      task: designTask,
+      deliverable_selection: selection,
+      problem_graph: result.problemGraph,
+      problem_graph_provenance: result.problemGraphProvenance,
+      capability_resolution: result.capabilityResolution,
+      evidence_requirements: selection.evidenceRequirements,
+      activated_nodes: result.activatedNodes,
+    });
+    const input = compiled.pending_inputs.find(({ role }) => role === 'designImage');
+    assert.ok(input);
+    assert.equal(input.kind, 'visual');
+    assert.deepEqual(
+      input.targets.map(({ tool_id, field, multiple }) => ({ tool_id, field, multiple })),
+      [
+        { tool_id: 'design-experience-review', field: 'designImage', multiple: false },
+        { tool_id: 'aesthetic-quant-lab', field: 'designImage', multiple: false },
+        { tool_id: 'attention-analysis-lab', field: 'image', multiple: false },
+        { tool_id: 'vision-brand-lab', field: 'designImages', multiple: true },
+      ],
+    );
   }
 });
 

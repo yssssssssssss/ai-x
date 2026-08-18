@@ -1,8 +1,13 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import { closePool, loadEnv } from '../database/db.ts';
+import {
+  parseModelRoutes,
+  type GatewayModelRoute,
+} from '../apps/orchestrator-runtime/src/runtime/gateway-llm-client.ts';
 
 export interface RealSmokeConfig {
   ALLOW_REAL_PROVIDER?: string;
@@ -22,6 +27,7 @@ type JsonScalar = string | number | boolean | null;
 export interface SmokeReceiptInput {
   profile: string;
   taskType: string;
+  deliverableType: string;
   taskId: string;
   planVersionId: string;
   attemptId: string;
@@ -58,6 +64,9 @@ interface SemanticGoldScenario {
   taskType: ResearchTaskV2['task_type'];
   businessDomain: string;
   input: string;
+  expectedDeliverableType: string;
+  minPublicSources: number;
+  minVisualAssets: number;
   sensitivity: ResearchTaskV2['sensitivity'];
   piiDetected: boolean;
   variant?: 'clear' | 'ambiguous' | 'missing_input' | 'constraint_conflict' | 'pii';
@@ -102,14 +111,14 @@ interface SmokePlanStep {
 
 const REQUIRED_EXACT_CAPABILITIES: SmokePlanStep[] = [
   { actor_type: 'tool', actor_id: 'tavily-web-search' },
-  { actor_type: 'skill', actor_id: 'competitive-web-research' },
-  { actor_type: 'skill', actor_id: 'generate-research-plan' },
 ];
-const REQUIRED_ACTOR_TYPES = ['llm', 'reviewer'] as const;
+const REQUIRED_ACTOR_TYPES = ['skill', 'llm', 'reviewer'] as const;
 const REQUIRED_CAPABILITY_DESCRIPTION = [
   ...REQUIRED_EXACT_CAPABILITIES.map(({ actor_id }) => actor_id),
   ...REQUIRED_ACTOR_TYPES,
 ].join(', ');
+
+export const CURRENT_REAL_SMOKE_PROFILES = ['competitive_research'] as const;
 
 export function assertRealSmokeConfig(env: RealSmokeConfig): void {
   if (env.ALLOW_REAL_PROVIDER !== '1') {
@@ -136,17 +145,19 @@ interface GatewayModelCall {
 }
 
 export function assertGatewayModelReceipts(input: {
-  configuredModel: string;
-  expectedActualModel: string;
+  modelRoutes: readonly GatewayModelRoute[];
   modelCalls: GatewayModelCall[];
 }): void {
+  const expectedByRequested = new Map(
+    input.modelRoutes.map(({ requestedModel, expectedActualModel }) => [requestedModel, expectedActualModel]),
+  );
   if (
-    input.modelCalls.length === 0
+    expectedByRequested.size === 0
+    || input.modelCalls.length === 0
     || input.modelCalls.some((call) => (
       call.status !== 'succeeded'
       || call.provider !== 'gateway'
-      || call.requestedModel !== input.configuredModel
-      || call.actualModel !== input.expectedActualModel
+      || expectedByRequested.get(call.requestedModel) !== call.actualModel
     ))
   ) {
     throw new Error('execution has an invalid gateway model receipt');
@@ -182,13 +193,32 @@ function finiteNumber(value: unknown, field: string): number {
   return value;
 }
 
-function isHttpsUrl(value: string): boolean {
+function canonicalHttpsUrl(value: string): string | null {
   try {
-    return new URL(value).protocol === 'https:';
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.username || url.password) return null;
+    const hostname = url.hostname.replace(/\.+$/u, '');
+    if (!hostname || /%(?![0-9a-f]{2})/iu.test(url.pathname)) return null;
+    url.hostname = hostname;
+    url.pathname = url.pathname.replace(/%([0-9a-f]{2})/giu, (_match, hex: string) => {
+      const character = String.fromCharCode(Number.parseInt(hex, 16));
+      return /^[a-z0-9._~-]$/iu.test(character) ? character : `%${hex.toUpperCase()}`;
+    });
+    url.hash = '';
+    url.searchParams.sort();
+    return url.href;
   } catch {
-    return false;
+    return null;
   }
 }
+
+function uniqueHttpsUrls(values: readonly string[]): string[] {
+  return [...new Set(values.flatMap((value) => {
+    const canonical = canonicalHttpsUrl(value);
+    return canonical === null ? [] : [canonical];
+  }))];
+}
+
 export function formatSmokeReceipt(input: SmokeReceiptInput): SmokeReceipt {
 
   if (
@@ -211,6 +241,7 @@ export function formatSmokeReceipt(input: SmokeReceiptInput): SmokeReceipt {
   return {
     profile: input.profile,
     taskType: input.taskType,
+    deliverableType: nonBlankString(input.deliverableType, 'deliverableType'),
     taskId: input.taskId,
     planVersionId: input.planVersionId,
     attemptId: input.attemptId,
@@ -232,8 +263,23 @@ export function formatSmokeReceipt(input: SmokeReceiptInput): SmokeReceipt {
       findings: positiveCount(input.counts.findings, 'counts.findings'),
       recommendations: positiveCount(input.counts.recommendations, 'counts.recommendations'),
     },
-    sources: input.sources.filter(isHttpsUrl),
+    sources: uniqueHttpsUrls(input.sources),
   };
+}
+
+export function assertSmokeReceiptMinimums(
+  receipt: Pick<SmokeReceipt, 'evidenceCount' | 'visualAssetCount' | 'sources'>,
+  scenario: Pick<SemanticGoldScenario, 'minPublicSources' | 'minVisualAssets'>,
+): void {
+  const minPublicSources = finiteCount(scenario.minPublicSources, 'scenario.minPublicSources');
+  const minVisualAssets = finiteCount(scenario.minVisualAssets, 'scenario.minVisualAssets');
+  const uniqueSources = uniqueHttpsUrls(receipt.sources);
+  if (receipt.evidenceCount < minPublicSources || uniqueSources.length < minPublicSources) {
+    throw new Error('real smoke evidence is below the semantic Gold minimum');
+  }
+  if (receipt.visualAssetCount < minVisualAssets) {
+    throw new Error('real smoke visual inventory is below the semantic Gold minimum');
+  }
 }
 
 function record(value: unknown, field: string): Record<string, unknown> {
@@ -288,7 +334,7 @@ function nonBlankString(value: unknown, field: string): string {
 const CONTROLLED_SMOKE_DECISION = [
   'Controlled smoke decision: use Mainland China and public sources from the last 24 months.',
   'Cover the primary segments implied by the original request, leading publicly discoverable brands, and official or mainstream ecommerce channels.',
-  'Normalize comparable pricing and produce an actionable evidence-backed research plan.',
+  'Normalize comparable pricing and produce an actionable evidence-backed competitive analysis report.',
   'Treat unspecified details as conservative assumptions, proceed without private data or external side effects, and do not ask this question again.',
 ].join(' ');
 
@@ -439,6 +485,9 @@ async function executeRealSmoke(scenario: SemanticGoldScenario): Promise<SmokeRe
     originalInput: scenario.input,
   }, finalized.planningResult);
   const selectedCandidate = selectSmokeCandidate(planned.candidates);
+  if (selectedCandidate.plan.deliverable_type !== scenario.expectedDeliverableType) {
+    throw new Error(`real smoke plan deliverable drifted for ${scenario.profile}`);
+  }
 
   const actor = { userId: seedUser.id, role: 'owner' as const };
   const taskId = nonBlankString(planned.task.id, 'taskId');
@@ -489,6 +538,10 @@ async function executeRealSmoke(scenario: SemanticGoldScenario): Promise<SmokeRe
   );
   const deliverable = record(delivered.deliverable, 'deliverable');
   const manifest = record(delivered.evidenceManifest, 'evidenceManifest');
+  const deliverableType = nonBlankString(deliverable.deliverableType, 'deliverable.deliverableType');
+  if (deliverableType !== scenario.expectedDeliverableType) {
+    throw new Error(`real smoke delivered the wrong report type for ${scenario.profile}`);
+  }
   for (const [field, expected] of [
     ['taskId', taskId],
     ['planVersionId', selected.planVersionId],
@@ -534,8 +587,14 @@ async function executeRealSmoke(scenario: SemanticGoldScenario): Promise<SmokeRe
     process.env.LLM_EXPECTED_ACTUAL_MODEL,
     'LLM_EXPECTED_ACTUAL_MODEL',
   );
+  const modelRoutes = parseModelRoutes(
+    process.env.LLM_MODEL_ROUTES,
+    configuredModel,
+    expectedActualModel,
+  );
   const modelCalls = await runtime.repository.listModelCalls(attemptId);
-  assertGatewayModelReceipts({ configuredModel, expectedActualModel, modelCalls });
+  assertGatewayModelReceipts({ modelRoutes, modelCalls });
+  const representativeModelCall = modelCalls[0]!;
 
   const entries = array(manifest.entries, 'evidenceManifest.entries').map((entry, index) => (
     record(entry, `evidenceManifest.entries[${index}]`)
@@ -553,10 +612,10 @@ async function executeRealSmoke(scenario: SemanticGoldScenario): Promise<SmokeRe
   const evidenceArtifactIds = [...new Set(realEvidenceEntries.map((entry, index) => (
     nonBlankString(entry.artifactId, `evidenceManifest.entries[${index}].artifactId`)
   )))];
-  const sources = realEvidenceEntries.map((entry, index) => (
+  const sources = uniqueHttpsUrls(realEvidenceEntries.map((entry, index) => (
     nonBlankString(entry.sourceUrl, `evidenceManifest.entries[${index}].sourceUrl`)
-  ));
-  if (!sources.some(isHttpsUrl)) throw new Error('evidence manifest has no HTTPS source');
+  )));
+  if (sources.length === 0) throw new Error('evidence manifest has no HTTPS source');
 
   await Promise.all([
     runtime.artifacts.verifySealed(deliverableArtifactId),
@@ -583,14 +642,15 @@ async function executeRealSmoke(scenario: SemanticGoldScenario): Promise<SmokeRe
   return formatSmokeReceipt({
     profile: scenario.profile,
     taskType: finalized.requirement.task_type,
+    deliverableType,
     taskId,
     planVersionId: selected.planVersionId,
     attemptId,
     reportPackageId: deliverableArtifactId,
     visualAssetCount,
     provider: 'gateway',
-    requestedModel: configuredModel,
-    actualModel: expectedActualModel,
+    requestedModel: representativeModelCall.requestedModel,
+    actualModel: representativeModelCall.actualModel,
     coreTool: 'tavily-web-search',
     packageSealed: true,
     review: independentReview,
@@ -608,7 +668,7 @@ async function executeRealSmoke(scenario: SemanticGoldScenario): Promise<SmokeRe
       latencyMs: realToolStep.latencyMs,
     },
     counts: {
-      evidence: realEvidenceEntries.length,
+      evidence: sources.length,
       findings: findings.length,
       recommendations: recommendations.length,
     },
@@ -631,12 +691,17 @@ export async function runCurrentRealSmoke(input: SmokeRunInput): Promise<SmokeRe
     const fixture = readFixture(input.fixturePath);
     const receipts: SmokeReceipt[] = [];
     for (const profile of input.profiles) {
+      if (!(CURRENT_REAL_SMOKE_PROFILES as readonly string[]).includes(profile)) {
+        throw new Error(`real smoke profile ${profile} has no supported full-real contract`);
+      }
       if (!fixture.profiles.includes(profile)) throw new Error(`fixture has no profile ${profile}`);
       const candidates = fixture.scenarios.filter((candidate) => candidate.profile === profile);
       const scenario = candidates.find((candidate) => candidate.variant === 'clear' && candidate.piiDetected === false);
       if (!scenario) throw new Error(`fixture has no safe clear scenario for profile ${profile}`);
       if (scenario.piiDetected) throw new Error(`PII scenario ${profile} cannot enter real smoke`);
-      receipts.push(await executeRealSmoke(scenario));
+      const receipt = await executeRealSmoke(scenario);
+      assertSmokeReceiptMinimums(receipt, scenario);
+      receipts.push(receipt);
     }
     return receipts;
   } finally {
@@ -644,18 +709,20 @@ export async function runCurrentRealSmoke(input: SmokeRunInput): Promise<SmokeRe
   }
 }
 
-function safeErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'Current real smoke failed';
+export function safeSmokeErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const messageHash = createHash('sha256').update(message).digest('hex').slice(0, 16);
+  return `Current real smoke failed message_hash=${messageHash}`;
 }
 
 async function main(): Promise<void> {
   try {
     const fixturePath = process.env.CURRENT_REAL_SMOKE_FIXTURE
       ?? 'tests/fixtures/current-semantic-gold.json';
-    const profile = process.env.CURRENT_SMOKE_PROFILE ?? 'competitive_research';
+    const profile = process.env.CURRENT_SMOKE_PROFILE ?? CURRENT_REAL_SMOKE_PROFILES[0];
     console.log(JSON.stringify(await runCurrentRealSmoke({ fixturePath, profiles: [profile] })));
   } catch (error) {
-    console.error(safeErrorMessage(error));
+    console.error(safeSmokeErrorMessage(error));
     process.exitCode = 1;
   }
 }

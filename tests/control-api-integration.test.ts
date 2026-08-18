@@ -410,7 +410,10 @@ class PlanningModelFixtureLLM implements LLMClient {
         depends_on: dependsOn,
         input: {},
         input_bindings: [],
-        expected_outputs: [{ pointer: '/result', description: `${actorId} result` }],
+        expected_outputs: [{
+          pointer: actorType === 'llm' ? '/text' : '/review',
+          description: `${actorId} result`,
+        }],
         acceptance_criteria: ['研究计划可执行'],
         requires_approval: false,
         fallback_actor_ids: [],
@@ -667,6 +670,7 @@ function planningResult(
         : [{ code: 'eligible' as const, message: 'eligible' }],
       pending_inputs: requireBusinessDomainInput
         ? [{
+            kind: 'value' as const,
             role: 'business_domain',
             label: '研究业务领域',
             multiple: false,
@@ -1383,18 +1387,25 @@ test('production control runtime returns the revised final deliverable ID for pa
     outputArtifactId: null,
     status: 'failed',
   };
-  await repository.recordExecutionStep({
-    attemptId: execution.attemptId,
-    stepNo: 99,
-    stepName: 'failed skill provenance exposure',
-    actorType: 'skill',
-    actorId: 'competitive-web-research',
-    state: 'failed',
-    skillProvenance: failedSkillProvenance,
-    failure: { kind: 'fixture_failure', retryable: false },
-    startedAt: new Date('2026-08-14T00:00:00Z'),
-    finishedAt: new Date('2026-08-14T00:00:01Z'),
-  });
+  const failedStepConnection = await scopedDatabase.connect();
+  try {
+    await failedStepConnection.query(
+      `INSERT INTO control_execution_steps
+         (attempt_id, step_no, step_name, actor_type, actor_id, state,
+          skill_provenance, failure_json, started_at, finished_at)
+       VALUES ($1, 99, 'failed skill provenance exposure', 'skill',
+               'competitive-web-research', 'failed', $2, $3, $4, $5)`,
+      [
+        execution.attemptId,
+        JSON.stringify(failedSkillProvenance),
+        JSON.stringify({ kind: 'fixture_failure', retryable: false }),
+        new Date('2026-08-14T00:00:00Z'),
+        new Date('2026-08-14T00:00:01Z'),
+      ],
+    );
+  } finally {
+    failedStepConnection.release();
+  }
 
   const executionRefreshResponse = await fetch(`${baseUrl}/api/control-tasks/${planned.task.id}`, {
     headers: { authorization: `Bearer ${ownerToken}` },

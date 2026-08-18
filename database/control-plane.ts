@@ -31,6 +31,7 @@ export type ControlTaskState =
   | 'rejected';
 
 export type ControlArtifactState = 'STAGING' | 'SEALED' | 'FAILED';
+export const ARTIFACT_QUARANTINE_PENDING_MARKER = '; source file was absent at ';
 
 export interface ControlTask {
   id: string;
@@ -82,6 +83,8 @@ export interface ControlExecutionStep {
   skillProvenance: Record<string, unknown> | null;
   failure: Record<string, unknown> | null;
   latencyMs: number | null;
+  startedAt: Date | null;
+  finishedAt: Date | null;
 }
 
 export interface ControlModelCall {
@@ -115,6 +118,7 @@ export interface ControlArtifact {
   sensitivity: string;
   redactionPolicyVersion: string;
   failureReason: string | null;
+  publicationId?: string | null;
   mediaType?: string | null;
   metadata?: Record<string, unknown> | null;
 }
@@ -186,6 +190,14 @@ function stableValue(value: unknown): unknown {
 
 function sameStoredValue(left: unknown, right: unknown): boolean {
   return JSON.stringify(stableValue(left)) === JSON.stringify(stableValue(right));
+}
+
+function serializedGateValue(value: unknown): string | null {
+  const serialized = value === undefined ? null : JSON.stringify(value);
+  if (serialized && /data:image\/[a-z0-9.+-]+;base64,/iu.test(serialized)) {
+    throw new Error('inline image data is forbidden in control gate values');
+  }
+  return serialized;
 }
 
 function isFinalizedRequirement(value: unknown): boolean {
@@ -273,6 +285,30 @@ function candidateActivatedNodes(plan: Record<string, unknown>): string[] {
   return activatedNodes;
 }
 
+function latestCandidatePair(
+  rows: Array<Record<string, unknown>>,
+): [Record<string, unknown>, Record<string, unknown>] {
+  const byCandidate = [...rows].sort((left, right) => {
+    const order = { depth: 0, speed: 1 } as const;
+    return (order[left.candidate_id as keyof typeof order] ?? 2)
+      - (order[right.candidate_id as keyof typeof order] ?? 2);
+  });
+  const versions = byCandidate
+    .map((row) => asNumber(row.version, 'version'))
+    .sort((left, right) => left - right);
+  if (
+    byCandidate.length !== 2
+    || byCandidate[0]?.candidate_id !== 'depth'
+    || byCandidate[1]?.candidate_id !== 'speed'
+    || versions[1] !== versions[0]! + 1
+  ) {
+    throw new ControlPlaneConflictError(
+      'awaiting_selection task requires exactly depth and speed as the latest consecutive candidates',
+    );
+  }
+  return [byCandidate[0], byCandidate[1]];
+}
+
 export interface SelectionResponse {
   planVersionId: string;
   state: ControlTaskState;
@@ -313,6 +349,7 @@ function artifactFromRow(row: Record<string, unknown>): ControlArtifact {
     sensitivity: asString(row.sensitivity, 'sensitivity'),
     redactionPolicyVersion: asString(row.redaction_policy_version, 'redaction_policy_version'),
     failureReason: typeof row.failure_reason === 'string' ? row.failure_reason : null,
+    publicationId: typeof row.publication_id === 'string' ? row.publication_id : null,
     mediaType: typeof row.media_type === 'string' ? row.media_type : null,
     metadata: asRecord(row.metadata_json),
   };
@@ -394,6 +431,7 @@ export interface ControlGateRecord {
   requiredAuthority: string;
   decision: string;
   value: unknown;
+  evidenceRef: string | null;
   actorUserId: string | null;
   actorRole: string | null;
   idempotencyKey: string;
@@ -475,26 +513,38 @@ export class ControlPlaneRepository {
     },
   ): Promise<ControlTask | null> {
     const leaseTokenHash = input.leaseToken === undefined ? null : hashLeaseToken(input.leaseToken);
+    const lockedTask = await connection.query(
+      `SELECT state, current_attempt_id, active_plan_version_id
+       FROM control_tasks
+       WHERE id = $1
+       FOR UPDATE`,
+      [input.taskId],
+    );
+    const taskRow = lockedTask.rows[0];
+    const taskState = taskRow ? asString(taskRow.state, 'state') : null;
+    if (
+      !taskRow
+      || !taskState
+      || !['executing', 'reviewing', 'composing_report'].includes(taskState)
+      || taskRow.current_attempt_id !== input.attemptId
+    ) return null;
     const locked = await connection.query(
-      `SELECT attempt.plan_version_id
-       FROM control_execution_attempts AS attempt
-       JOIN control_tasks AS task ON task.id = attempt.task_id
-       WHERE attempt.id = $1
-         AND attempt.task_id = $2
-         AND ($3::uuid IS NULL OR attempt.plan_version_id = $3::uuid)
-         AND ($4::text IS NULL OR attempt.lease_owner = $4)
-         AND ($5::text IS NULL OR attempt.lease_token_hash = $5)
-         AND attempt.state = 'active'
-         AND attempt.lease_expires_at <= now()
-         AND task.state IN ('executing', 'reviewing', 'composing_report')
-         AND task.current_attempt_id = attempt.id
-         AND task.active_plan_version_id = attempt.plan_version_id
-       FOR UPDATE OF attempt, task`,
+      `SELECT plan_version_id
+       FROM control_execution_attempts
+       WHERE id = $1
+         AND task_id = $2
+         AND ($3::uuid IS NULL OR plan_version_id = $3::uuid)
+         AND ($4::text IS NULL OR lease_owner = $4)
+         AND ($5::text IS NULL OR lease_token_hash = $5)
+         AND state = 'active'
+         AND lease_expires_at <= now()
+       FOR UPDATE`,
       [input.attemptId, input.taskId, input.planVersionId ?? null, input.leaseOwner ?? null, leaseTokenHash],
     );
     const lockedRow = locked.rows[0];
     if (!lockedRow) return null;
     const planVersionId = asString(lockedRow.plan_version_id, 'plan_version_id');
+    if (taskRow.active_plan_version_id !== planVersionId) return null;
 
     const attempt = await connection.query(
       `UPDATE control_execution_attempts
@@ -512,6 +562,23 @@ export class ControlPlaneRepository {
     if (!attempt.rows[0]) {
       throw new ControlPlaneConflictError(`execution lease ${input.attemptId} changed during expiry recovery`);
     }
+    await connection.query(
+      `UPDATE control_execution_steps
+       SET state = 'failed',
+           failure_json = COALESCE(failure_json, $2::jsonb),
+           started_at = COALESCE(started_at, now()),
+           finished_at = COALESCE(finished_at, now())
+       WHERE attempt_id = $1
+         AND state IN ('pending', 'running')`,
+      [
+        input.attemptId,
+        JSON.stringify({
+          kind: 'worker_loss',
+          retryable: true,
+          allowedActions: ['retry', 'abort'],
+        }),
+      ],
+    );
 
     const task = await connection.query(
       `UPDATE control_tasks
@@ -837,7 +904,6 @@ export class ControlPlaneRepository {
         }
         planHashes.add(persistedPlan.hash);
       }
-
       const candidates: ControlCandidatePlanVersionDetail[] = [];
       for (const [index, { candidate, persistedPlan }] of preparedCandidates.entries()) {
         const planResult = await connection.query(
@@ -939,6 +1005,13 @@ export class ControlPlaneRepository {
         }
         planHashes.add(persistedPlan.hash);
       }
+      const versionResult = await connection.query(
+        `SELECT COALESCE(MAX(version), 0) + 1 AS version
+         FROM control_plan_versions
+         WHERE task_id = $1`,
+        [input.taskId],
+      );
+      const firstVersion = asNumber(versionResult.rows[0]?.version, 'version');
 
       const candidates: ControlCandidatePlanVersionDetail[] = [];
       for (const [index, { candidate, persistedPlan }] of preparedCandidates.entries()) {
@@ -949,7 +1022,7 @@ export class ControlPlaneRepository {
            RETURNING id, task_id, version, candidate_id, plan_json, plan_hash, pending_inputs`,
           [
             input.taskId,
-            index + 1,
+            firstVersion + index,
             candidate.candidateId,
             persistedPlan.json,
             persistedPlan.hash,
@@ -1116,6 +1189,13 @@ export class ControlPlaneRepository {
       if (preparedCandidates[0]!.persistedPlan.hash === preparedCandidates[1]!.persistedPlan.hash) {
         throw new ControlPlaneConflictError('clarification candidate plan hashes are duplicated');
       }
+      const versionResult = await connection.query(
+        `SELECT COALESCE(MAX(version), 0) + 1 AS version
+         FROM control_plan_versions
+         WHERE task_id = $1`,
+        [input.taskId],
+      );
+      const firstVersion = asNumber(versionResult.rows[0]?.version, 'version');
 
       const persistedCandidates: Array<{
         candidate: PersistClarificationCandidatesInput['candidates'][number];
@@ -1129,7 +1209,7 @@ export class ControlPlaneRepository {
            RETURNING id, task_id, version, candidate_id, plan_json, plan_hash, pending_inputs`,
           [
             input.taskId,
-            index + 1,
+            firstVersion + index,
             prepared.candidate.candidateId,
             prepared.persistedPlan.json,
             prepared.persistedPlan.hash,
@@ -1272,13 +1352,17 @@ export class ControlPlaneRepository {
       }
 
       const planResult = await connection.query(
-        `SELECT task_id, candidate_id, plan_json, plan_hash
+        `SELECT id, task_id, version, candidate_id, plan_json, plan_hash
          FROM control_plan_versions
-         WHERE id = $1
+         WHERE task_id = $1
+         ORDER BY version DESC
+         LIMIT 2
          FOR UPDATE`,
-        [input.planVersionId],
+        [input.taskId],
       );
-      const plan = planResult.rows[0];
+      const plan = latestCandidatePair(planResult.rows).find((candidate) => (
+        candidate.id === input.planVersionId
+      ));
       if (!plan || plan.task_id !== input.taskId || typeof plan.candidate_id !== 'string') {
         throw new ControlPlaneConflictError(`plan version ${input.planVersionId} is not a candidate for task ${input.taskId}`);
       }
@@ -1338,6 +1422,13 @@ export class ControlPlaneRepository {
     pendingInputs?: unknown;
   }): Promise<ControlPlanVersion> {
     return this.transaction(async (connection) => {
+      const taskResult = await connection.query(
+        `SELECT 1 FROM control_tasks WHERE id = $1 FOR UPDATE`,
+        [input.taskId],
+      );
+      if (!taskResult.rows[0]) {
+        throw new ControlPlaneConflictError(`task ${input.taskId} does not exist`);
+      }
       const planResult = await connection.query(
         `INSERT INTO control_plan_versions
            (task_id, version, candidate_id, plan_json, plan_hash, pending_inputs)
@@ -1578,9 +1669,46 @@ export class ControlPlaneRepository {
                 attempt.failure_kind
          FROM control_execution_attempts AS attempt
          JOIN control_tasks AS task ON task.id = attempt.task_id
-         WHERE task.state IN ('executing', 'reviewing', 'composing_report')
+         WHERE (
+           task.current_attempt_id = attempt.id
+           AND task.active_plan_version_id = attempt.plan_version_id
+           AND task.state IN ('executing', 'reviewing', 'composing_report')
            AND attempt.state = 'active'
+         ) OR (
+           attempt.failure_kind IN ('worker_loss', 'artifact_invalidation')
+           AND attempt.state IN ('paused', 'cancelled')
+           AND EXISTS (
+             SELECT 1
+             FROM control_artifacts AS artifact
+             WHERE artifact.attempt_id = attempt.id
+               AND (
+                 artifact.state = 'STAGING'
+                 OR (
+                   artifact.state = 'FAILED'
+                   AND artifact.failure_reason LIKE '%' || $1 || '%'
+                 )
+                 OR (
+                   artifact.state = 'SEALED'
+                   AND artifact.kind IN (
+                     'evidence_manifest', 'deliverable', 'report_review', 'report_document'
+                   )
+                 )
+                 OR (
+                   artifact.state = 'SEALED'
+                   AND artifact.kind IN ('tool_output', 'skill_output', 'llm_output', 'review_output')
+                   AND NOT EXISTS (
+                     SELECT 1
+                     FROM control_execution_steps AS step
+                     WHERE step.attempt_id = attempt.id
+                       AND step.state = 'succeeded'
+                       AND step.output_artifact_id = artifact.id
+                   )
+                 )
+               )
+           )
+         )
          ORDER BY attempt.attempt_no`,
+        [ARTIFACT_QUARANTINE_PENDING_MARKER],
       );
       return result.rows.map((row) => ({
         taskId: asString(row.task_id, 'task_id'),
@@ -1596,12 +1724,99 @@ export class ControlPlaneRepository {
     }
   }
 
-  async quarantineArtifact(input: { artifactId: string; quarantineUri: string }): Promise<void> {
-    await this.transaction(async (connection) => {
-      await connection.query(
-        `UPDATE control_artifacts SET storage_uri = $2 WHERE id = $1 AND state = 'STAGING'`,
-        [input.artifactId, input.quarantineUri],
+  async quarantineStagingArtifact(
+    input: {
+      artifactId: string;
+      expectedStorageUri: string;
+      quarantineUri: string;
+      reason: string;
+    },
+    prepare: () => Promise<'moved' | 'already_moved' | 'absent'>,
+  ): Promise<ControlArtifact | null> {
+    return this.transaction(async (connection) => {
+      const paths = [...new Set([input.expectedStorageUri, input.quarantineUri])].sort();
+      for (const path of paths) {
+        await connection.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [path]);
+      }
+      const locked = await connection.query(
+        `SELECT *
+         FROM control_artifacts
+         WHERE id = $1
+         FOR UPDATE`,
+        [input.artifactId],
       );
+      const row = locked.rows[0];
+      if (!row) return null;
+      const pendingPhysicalMove = row.state === 'FAILED'
+        && row.storage_uri === input.quarantineUri
+        && typeof row.failure_reason === 'string'
+        && row.failure_reason.includes(ARTIFACT_QUARANTINE_PENDING_MARKER);
+      if (!pendingPhysicalMove && (
+        row.state !== 'STAGING'
+        || row.storage_uri !== input.expectedStorageUri
+      )) return null;
+
+      if (pendingPhysicalMove) {
+        const liveOwner = await connection.query(
+          `SELECT id
+           FROM control_artifacts
+           WHERE storage_uri = $1
+             AND id <> $2
+             AND state IN ('STAGING', 'SEALED')
+           ORDER BY created_at, id
+           LIMIT 1`,
+          [input.expectedStorageUri, input.artifactId],
+        );
+        if (liveOwner.rows[0]) {
+          const ownerId = asString(liveOwner.rows[0].id, 'artifact_id');
+          const reused = await connection.query(
+            `UPDATE control_artifacts
+             SET failure_reason = $2
+             WHERE id = $1
+               AND state = 'FAILED'
+               AND storage_uri = $3
+             RETURNING *`,
+            [
+              input.artifactId,
+              `${input.reason}; source path reused by live artifact ${ownerId}`,
+              input.quarantineUri,
+            ],
+          );
+          return reused.rows[0] ? artifactFromRow(reused.rows[0]) : null;
+        }
+      }
+
+      const disposition = await prepare();
+      const storageUri = input.quarantineUri;
+      const failureReason = disposition === 'absent'
+        ? `${input.reason}${ARTIFACT_QUARANTINE_PENDING_MARKER}${input.expectedStorageUri}`
+        : `${input.reason}; file quarantined at ${input.quarantineUri}`;
+      if (pendingPhysicalMove) {
+        if (disposition === 'absent') return artifactFromRow(row);
+        const completed = await connection.query(
+          `UPDATE control_artifacts
+           SET failure_reason = $2
+           WHERE id = $1
+             AND state = 'FAILED'
+             AND storage_uri = $3
+           RETURNING *`,
+          [input.artifactId, failureReason, input.quarantineUri],
+        );
+        return completed.rows[0] ? artifactFromRow(completed.rows[0]) : null;
+      }
+      const updated = await connection.query(
+        `UPDATE control_artifacts
+         SET storage_uri = $2,
+             state = 'FAILED',
+             failure_reason = $3,
+             redaction_status = 'failed'
+         WHERE id = $1
+           AND state = 'STAGING'
+           AND storage_uri = $4
+         RETURNING *`,
+        [input.artifactId, storageUri, failureReason, input.expectedStorageUri],
+      );
+      return updated.rows[0] ? artifactFromRow(updated.rows[0]) : null;
     });
   }
 
@@ -1610,6 +1825,7 @@ export class ControlPlaneRepository {
     taskId: string;
     planVersionId?: string;
     attemptId?: string;
+    publicationId?: string;
     kind: string;
     storageUri: string;
     schemaVersion: string;
@@ -1649,16 +1865,34 @@ export class ControlPlaneRepository {
           throw new ControlPlaneConflictError(`attempt ${input.attemptId} does not belong to artifact task and plan`);
         }
       }
+      if (input.publicationId) {
+        if (!input.planVersionId || input.attemptId) {
+          throw new ControlPlaneConflictError('publication artifact requires a plan version and no execution attempt');
+        }
+        if (input.kind !== 'visual_input_image' && input.kind !== 'visual_input_gate') {
+          throw new ControlPlaneConflictError('visual publication contains an unsupported Artifact kind');
+        }
+        const publication = await connection.query(
+          `SELECT 1 FROM control_visual_publications
+           WHERE id = $1 AND task_id = $2 AND plan_version_id = $3 AND state = 'PUBLISHING'
+           FOR UPDATE`,
+          [input.publicationId, input.taskId, input.planVersionId],
+        );
+        if (!publication.rows[0]) {
+          throw new ControlPlaneConflictError(`visual publication ${input.publicationId} is not publishing for artifact task and plan`);
+        }
+      }
       const result = await connection.query(
         `INSERT INTO control_artifacts
-           (task_id, plan_version_id, attempt_id, kind, contract_version, schema_version, state,
+           (task_id, plan_version_id, attempt_id, publication_id, kind, contract_version, schema_version, state,
             storage_uri, sensitivity, redaction_policy_version, media_type, metadata_json)
-         VALUES ($1, $2, $3, $4, 'trusted-p0-v1', $5, 'STAGING', $6, $7, $8, $9, $10)
+         VALUES ($1, $2, $3, $4, $5, 'trusted-p0-v1', $6, 'STAGING', $7, $8, $9, $10, $11)
          RETURNING *`,
         [
           input.taskId,
           input.planVersionId ?? null,
           input.attemptId ?? null,
+          input.publicationId ?? null,
           input.kind,
           input.schemaVersion,
           input.storageUri,
@@ -1687,7 +1921,8 @@ export class ControlPlaneRepository {
     const leaseBound = leaseFieldCount === 5;
     const outcome = await this.transaction(async (connection) => {
       const bindingResult = await connection.query(
-        `SELECT artifact.task_id, artifact.plan_version_id, artifact.attempt_id, artifact.storage_uri,
+        `SELECT artifact.task_id, artifact.plan_version_id, artifact.attempt_id,
+                artifact.publication_id, artifact.storage_uri,
                 plan.task_id AS plan_task_id,
                 attempt.task_id AS attempt_task_id,
                 attempt.plan_version_id AS attempt_plan_version_id
@@ -1710,6 +1945,26 @@ export class ControlPlaneRepository {
         [storageUri, input.artifactId],
       );
       if (competingPath.rows[0]) return null;
+      const publicationId = typeof binding.publication_id === 'string' ? binding.publication_id : null;
+      if (publicationId) {
+        const publication = await connection.query(
+          `SELECT state FROM control_visual_publications
+           WHERE id = $1
+           FOR UPDATE`,
+          [publicationId],
+        );
+        if (publication.rows[0]?.state !== 'PUBLISHING') {
+          await connection.query(
+            `UPDATE control_artifacts
+             SET state = 'FAILED',
+                 failure_reason = 'visual publication is no longer publishing',
+                 redaction_status = 'failed'
+             WHERE id = $1 AND state = 'STAGING'`,
+            [input.artifactId],
+          );
+          return null;
+        }
+      }
       const taskId = asString(binding.task_id, 'task_id');
       const planVersionId = typeof binding.plan_version_id === 'string' ? binding.plan_version_id : null;
       const attemptId = typeof binding.attempt_id === 'string' ? binding.attempt_id : null;
@@ -1759,13 +2014,21 @@ export class ControlPlaneRepository {
           )
         : leaseFieldCount === 0
           ? await connection.query(
-              `UPDATE control_artifacts
+              `UPDATE control_artifacts AS artifact
                SET state = 'SEALED',
                    content_sha256 = $2,
                    byte_size = $3,
                    sealed_at = now(),
                    redaction_status = 'sealed'
                WHERE id = $1 AND state = 'STAGING'
+                 AND (
+                   artifact.publication_id IS NULL
+                   OR EXISTS (
+                     SELECT 1 FROM control_visual_publications AS publication
+                     WHERE publication.id = artifact.publication_id
+                       AND publication.state = 'PUBLISHING'
+                   )
+                 )
                RETURNING *`,
               [input.artifactId, input.contentSha256, input.byteSize],
             )
@@ -1874,9 +2137,9 @@ export class ControlPlaneRepository {
     taskId: string;
     planVersionId: string;
     attemptId: string;
-    kinds: string[];
+    kinds?: string[];
   }): Promise<ControlArtifact[]> {
-    if (input.kinds.length === 0) return [];
+    if (input.kinds?.length === 0) return [];
     const connection = await this.database.connect();
     try {
       const result = await connection.query(
@@ -1885,9 +2148,9 @@ export class ControlPlaneRepository {
          WHERE task_id = $1
            AND plan_version_id = $2
            AND attempt_id = $3
-           AND kind = ANY($4::text[])
+           AND ($4::text[] IS NULL OR kind = ANY($4::text[]))
          ORDER BY created_at, id`,
-        [input.taskId, input.planVersionId, input.attemptId, input.kinds],
+        [input.taskId, input.planVersionId, input.attemptId, input.kinds ?? null],
       );
       return result.rows.map(artifactFromRow);
     } finally {
@@ -2031,19 +2294,14 @@ export class ControlPlaneRepository {
         `SELECT id, task_id, version, candidate_id, plan_json, plan_hash, pending_inputs
          FROM control_plan_versions
          WHERE task_id = $1
-         ORDER BY version`,
+         ORDER BY version DESC
+         LIMIT 2`,
         [input.taskId],
       );
-      if (
-        result.rows.length !== 2
-        || result.rows[0]?.candidate_id !== 'depth'
-        || result.rows[1]?.candidate_id !== 'speed'
-      ) {
-        throw new ControlPlaneConflictError('awaiting_selection task requires exactly depth and speed candidates');
-      }
+      const rows = latestCandidatePair(result.rows);
 
       let activatedNodes: string[] | null = null;
-      const candidates = result.rows.map((row): CurrentPlanCandidate => {
+      const candidates = rows.map((row): CurrentPlanCandidate => {
         const plan = asRecord(row.plan_json);
         if (!plan || plan.task_id !== input.taskId) {
           throw new ControlPlaneConflictError('candidate plan task binding is malformed');
@@ -2094,6 +2352,20 @@ export class ControlPlaneRepository {
         planHash: asString(row.plan_hash, 'plan_hash'),
         pendingInputs: row.pending_inputs,
       };
+    } finally {
+      connection.release();
+    }
+  }
+
+  async isPlanPendingInputQuarantined(planVersionId: string): Promise<boolean> {
+    const connection = await this.database.connect();
+    try {
+      const result = await connection.query(
+        `SELECT pending_input_quarantined
+         FROM control_plan_versions WHERE id = $1`,
+        [planVersionId],
+      );
+      return result.rows[0]?.pending_input_quarantined === true;
     } finally {
       connection.release();
     }
@@ -2260,6 +2532,449 @@ export class ControlPlaneRepository {
     });
   }
 
+  async reserveConfirmationCommand(input: {
+    taskId: string;
+    planVersionId: string;
+    idempotencyKey: string;
+    requestHash: string;
+    expectedVersion: number;
+    actorUserId: string;
+  }): Promise<ControlCommandReservation> {
+    return this.transaction(async (connection) => {
+      const taskResult = await connection.query(
+        `SELECT task.state, task.state_version, task.active_plan_version_id,
+                task.owner_user_id,
+                (SELECT owner_user_id FROM conversations
+                 WHERE id = task.conversation_id) AS conversation_owner_user_id
+         FROM control_tasks AS task
+         WHERE task.id = $1
+         FOR UPDATE`,
+        [input.taskId],
+      );
+      const task = taskResult.rows[0];
+      if (!task) throw new ControlPlaneConflictError(`task ${input.taskId} does not exist`);
+      if (
+        task.owner_user_id !== input.actorUserId
+        || task.conversation_owner_user_id !== input.actorUserId
+      ) {
+        throw new ControlPlaneAuthorizationError(`actor cannot control task ${input.taskId}`);
+      }
+
+      const existingResult = await connection.query(
+        `SELECT request_hash, command_status, response_json, reservation_expires_at
+         FROM control_commands
+         WHERE task_id = $1 AND command_type = 'confirmation' AND idempotency_key = $2
+         FOR UPDATE`,
+        [input.taskId, input.idempotencyKey],
+      );
+      const existing = existingResult.rows[0];
+      if (existing) {
+        if (existing.request_hash !== input.requestHash) return { status: 'conflict' };
+        if (existing.command_status === 'completed') {
+          return { status: 'replay', response: existing.response_json };
+        }
+        const expiresAt = asDate(existing.reservation_expires_at, 'reservation_expires_at');
+        if (expiresAt.getTime() > Date.now()) return { status: 'pending' };
+      }
+
+      if (
+        task.state !== 'awaiting_confirmation'
+        || asNumber(task.state_version, 'state_version') !== input.expectedVersion
+        || task.active_plan_version_id !== input.planVersionId
+      ) {
+        throw new ControlPlaneConflictError(
+          `task ${input.taskId} is not awaiting_confirmation at version ${input.expectedVersion}`,
+        );
+      }
+      const competing = await connection.query(
+        `SELECT 1
+         FROM control_commands
+         WHERE task_id = $1 AND command_type = 'confirmation'
+           AND command_status = 'pending' AND idempotency_key <> $2
+           AND reservation_expires_at > now()
+         LIMIT 1`,
+        [input.taskId, input.idempotencyKey],
+      );
+      if (competing.rows[0]) return { status: 'conflict' };
+      await connection.query(
+        `DELETE FROM control_commands
+         WHERE task_id = $1 AND command_type = 'confirmation'
+           AND command_status = 'pending' AND idempotency_key <> $2
+           AND reservation_expires_at <= now()`,
+        [input.taskId, input.idempotencyKey],
+      );
+
+      const reservationToken = randomUUID();
+      const reservationExpiresAt = new Date(Date.now() + 5 * 60_000);
+      if (existing) {
+        await connection.query(
+          `UPDATE control_commands
+           SET expected_version = $3,
+               state_before = 'awaiting_confirmation',
+               state_after = 'awaiting_confirmation',
+               actor_user_id = $4,
+               reservation_token = $5,
+               reservation_expires_at = $6
+           WHERE task_id = $1 AND command_type = 'confirmation' AND idempotency_key = $2
+             AND command_status = 'pending'`,
+          [
+            input.taskId,
+            input.idempotencyKey,
+            input.expectedVersion,
+            input.actorUserId,
+            reservationToken,
+            reservationExpiresAt,
+          ],
+        );
+      } else {
+        await connection.query(
+          `INSERT INTO control_commands
+             (task_id, command_type, idempotency_key, request_hash, expected_version,
+              state_before, state_after, response_json, actor_user_id, command_status,
+              reservation_token, reservation_expires_at)
+           VALUES ($1, 'confirmation', $2, $3, $4, 'awaiting_confirmation',
+                   'awaiting_confirmation', NULL, $5, 'pending', $6, $7)`,
+          [
+            input.taskId,
+            input.idempotencyKey,
+            input.requestHash,
+            input.expectedVersion,
+            input.actorUserId,
+            reservationToken,
+            reservationExpiresAt,
+          ],
+        );
+      }
+      return { status: 'reserved', reservationToken };
+    });
+  }
+
+  async beginVisualPublication(input: {
+    taskId: string;
+    planVersionId: string;
+    idempotencyKey: string;
+    requestHash: string;
+    expectedVersion: number;
+    reservationToken: string;
+  }): Promise<string> {
+    return this.transaction(async (connection) => {
+      const taskResult = await connection.query(
+        `SELECT state, state_version, active_plan_version_id
+         FROM control_tasks
+         WHERE id = $1
+         FOR UPDATE`,
+        [input.taskId],
+      );
+      const task = taskResult.rows[0];
+      if (
+        !task
+        || task.state !== 'awaiting_confirmation'
+        || asNumber(task.state_version, 'state_version') !== input.expectedVersion
+        || task.active_plan_version_id !== input.planVersionId
+      ) {
+        throw new ControlPlaneConflictError('confirmation task cannot begin a visual publication');
+      }
+      const command = await connection.query(
+        `SELECT id
+         FROM control_commands
+         WHERE task_id = $1
+           AND command_type = 'confirmation'
+           AND idempotency_key = $2
+           AND request_hash = $3
+           AND expected_version = $4
+           AND command_status = 'pending'
+           AND reservation_token = $5
+           AND reservation_expires_at > now()
+         FOR UPDATE`,
+        [
+          input.taskId,
+          input.idempotencyKey,
+          input.requestHash,
+          input.expectedVersion,
+          input.reservationToken,
+        ],
+      );
+      const commandId = command.rows[0]?.id;
+      if (typeof commandId !== 'string') {
+        throw new ControlPlaneConflictError('confirmation command cannot begin a visual publication');
+      }
+      const reservationTokenHash = hashLeaseToken(input.reservationToken);
+      const inserted = await connection.query(
+        `INSERT INTO control_visual_publications
+           (task_id, plan_version_id, command_id, request_hash, expected_version,
+            reservation_token_hash, state)
+         VALUES ($1, $2, $3, $4, $5, $6, 'PUBLISHING')
+         ON CONFLICT (command_id, reservation_token_hash) DO NOTHING
+         RETURNING id`,
+        [
+          input.taskId,
+          input.planVersionId,
+          commandId,
+          input.requestHash,
+          input.expectedVersion,
+          reservationTokenHash,
+        ],
+      );
+      if (typeof inserted.rows[0]?.id === 'string') return inserted.rows[0].id;
+      const existing = await connection.query(
+        `SELECT id, state FROM control_visual_publications
+         WHERE command_id = $1 AND reservation_token_hash = $2
+         FOR UPDATE`,
+        [commandId, reservationTokenHash],
+      );
+      if (existing.rows[0]?.state !== 'PUBLISHING' || typeof existing.rows[0]?.id !== 'string') {
+        throw new ControlPlaneConflictError('confirmation visual publication is already terminal');
+      }
+      return existing.rows[0].id;
+    });
+  }
+
+  async completeConfirmationCommand(input: {
+    taskId: string;
+    planVersionId: string;
+    planHash: string;
+    idempotencyKey: string;
+    requestHash: string;
+    expectedVersion: number;
+    reservationToken: string;
+    publicationId?: string;
+    actorUserId: string;
+    actorService?: string;
+    actorRole: string;
+    nextState: 'awaiting_approval' | 'ready';
+    gates: Array<{
+      gateType: 'confirmation' | 'input';
+      gateKey: string;
+      requiredAuthority: string;
+      decision: string;
+      value?: unknown;
+      evidenceRef?: string | null;
+      idempotencyKey: string;
+    }>;
+  }): Promise<ControlTask> {
+    const seenGates = new Set<string>();
+    const gates = input.gates.map((gate) => {
+      const key = `${gate.gateType}\u0000${gate.gateKey}`;
+      if (seenGates.has(key)) throw new ControlPlaneConflictError(`duplicate confirmation gate ${gate.gateKey}`);
+      seenGates.add(key);
+      if (gate.evidenceRef && gate.value !== undefined && gate.value !== null) {
+        throw new ControlPlaneConflictError(`gate ${gate.gateKey} has both a value and evidence reference`);
+      }
+      return { ...gate, serializedValue: serializedGateValue(gate.value) };
+    });
+    const evidenceRefs = gates
+      .map((gate) => gate.evidenceRef)
+      .filter((reference): reference is string => typeof reference === 'string');
+    if (new Set(evidenceRefs).size !== evidenceRefs.length) {
+      throw new ControlPlaneConflictError('confirmation evidence references must be unique');
+    }
+    if ((evidenceRefs.length > 0) !== (input.publicationId !== undefined)) {
+      throw new ControlPlaneConflictError('confirmation visual evidence requires exactly one publication');
+    }
+
+    return this.transaction(async (connection) => {
+      const taskResult = await connection.query(
+        `SELECT task.state, task.state_version, task.active_plan_version_id,
+                task.owner_user_id,
+                (SELECT owner_user_id FROM conversations
+                 WHERE id = task.conversation_id) AS conversation_owner_user_id
+         FROM control_tasks AS task
+         WHERE task.id = $1
+         FOR UPDATE`,
+        [input.taskId],
+      );
+      const task = taskResult.rows[0];
+      if (
+        !task
+        || task.state !== 'awaiting_confirmation'
+        || asNumber(task.state_version, 'state_version') !== input.expectedVersion
+        || task.active_plan_version_id !== input.planVersionId
+      ) {
+        throw new ControlPlaneConflictError(
+          `task ${input.taskId} lost confirmation fence at version ${input.expectedVersion}`,
+        );
+      }
+      if (
+        task.owner_user_id !== input.actorUserId
+        || task.conversation_owner_user_id !== input.actorUserId
+      ) {
+        throw new ControlPlaneAuthorizationError(`actor cannot control task ${input.taskId}`);
+      }
+      const planResult = await connection.query(
+        `SELECT 1 FROM control_plan_versions
+         WHERE id = $1 AND task_id = $2 AND plan_hash = $3`,
+        [input.planVersionId, input.taskId, input.planHash],
+      );
+      if (!planResult.rows[0]) throw new ControlPlaneConflictError('active confirmation plan hash does not match');
+      const commandResult = await connection.query(
+        `SELECT id FROM control_commands
+         WHERE task_id = $1 AND command_type = 'confirmation' AND idempotency_key = $2
+           AND request_hash = $3 AND expected_version = $4
+           AND command_status = 'pending' AND reservation_token = $5
+           AND reservation_expires_at > now()
+         FOR UPDATE`,
+        [
+          input.taskId,
+          input.idempotencyKey,
+          input.requestHash,
+          input.expectedVersion,
+          input.reservationToken,
+        ],
+      );
+      if (!commandResult.rows[0]) throw new ControlPlaneConflictError('confirmation command reservation fence was lost');
+
+      if (input.publicationId) {
+        const publication = await connection.query(
+          `SELECT 1 FROM control_visual_publications
+           WHERE id = $1
+             AND task_id = $2
+             AND plan_version_id = $3
+             AND command_id = $7
+             AND request_hash = $4
+             AND expected_version = $5
+             AND reservation_token_hash = $6
+             AND state = 'PUBLISHING'
+           FOR UPDATE`,
+          [
+            input.publicationId,
+            input.taskId,
+            input.planVersionId,
+            input.requestHash,
+            input.expectedVersion,
+            hashLeaseToken(input.reservationToken),
+            commandResult.rows[0].id,
+          ],
+        );
+        if (!publication.rows[0]) {
+          throw new ControlPlaneConflictError('confirmation visual publication fence was lost');
+        }
+        const members = await connection.query(
+          `SELECT id, kind, state FROM control_artifacts
+           WHERE publication_id = $1
+           FOR UPDATE`,
+          [input.publicationId],
+        );
+        if (members.rows.length === 0 || members.rows.some((artifact) => artifact.state !== 'SEALED')) {
+          throw new ControlPlaneConflictError('confirmation visual publication has an unsealed Artifact');
+        }
+        const gateArtifactIds = members.rows
+          .filter((artifact) => artifact.kind === 'visual_input_gate')
+          .map((artifact) => asString(artifact.id, 'id'))
+          .sort();
+        const sortedEvidenceRefs = [...evidenceRefs].sort();
+        if (
+          gateArtifactIds.length !== sortedEvidenceRefs.length
+          || gateArtifactIds.some((artifactId, index) => artifactId !== sortedEvidenceRefs[index])
+        ) {
+          throw new ControlPlaneConflictError('confirmation evidence references do not exactly match its visual publication');
+        }
+      }
+
+      const existingGates = await connection.query(
+        `SELECT 1 FROM control_gate_records
+         WHERE task_id = $1 AND plan_version_id = $2
+         LIMIT 1`,
+        [input.taskId, input.planVersionId],
+      );
+      if (existingGates.rows[0]) {
+        throw new ControlPlaneConflictError('active confirmation plan already has a gate record');
+      }
+
+      for (const gate of gates) {
+        if (gate.evidenceRef) {
+          const artifact = await connection.query(
+            `SELECT 1 FROM control_artifacts
+             WHERE id = $1 AND task_id = $2 AND plan_version_id = $3
+               AND attempt_id IS NULL AND state = 'SEALED'
+               AND kind = 'visual_input_gate' AND schema_version = 'visual-input-gate-v1'`,
+            [gate.evidenceRef, input.taskId, input.planVersionId],
+          );
+          if (!artifact.rows[0]) {
+            throw new ControlPlaneConflictError(`gate ${gate.gateKey} evidence reference is not sealed and plan-bound`);
+          }
+        }
+        await connection.query(
+          `INSERT INTO control_gate_records
+             (task_id, plan_version_id, plan_hash, gate_type, gate_key, required_authority,
+              decision, value_json, evidence_ref, actor_user_id, actor_service, actor_role,
+              policy_version, idempotency_key)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'trusted-p0-v1', $13)`,
+          [
+            input.taskId,
+            input.planVersionId,
+            input.planHash,
+            gate.gateType,
+            gate.gateKey,
+            gate.requiredAuthority,
+            gate.decision,
+            gate.serializedValue,
+            gate.evidenceRef ?? null,
+            input.actorUserId,
+            input.actorService ?? null,
+            input.actorRole,
+            gate.idempotencyKey,
+          ],
+        );
+      }
+
+      const updated = await connection.query(
+        `UPDATE control_tasks
+         SET state = $3, state_version = state_version + 1, updated_at = now()
+         WHERE id = $1 AND state_version = $2 AND state = 'awaiting_confirmation'
+           AND active_plan_version_id = $4
+         RETURNING id, state, state_version, active_plan_version_id, current_attempt_id`,
+        [input.taskId, input.expectedVersion, input.nextState, input.planVersionId],
+      );
+      const row = updated.rows[0];
+      if (!row) throw new ControlPlaneConflictError(`task ${input.taskId} lost confirmation CAS`);
+      if (input.publicationId) {
+        const committedPublication = await connection.query(
+          `UPDATE control_visual_publications
+           SET state = 'COMMITTED', evidence_refs = $2, committed_at = now()
+           WHERE id = $1 AND state = 'PUBLISHING'
+           RETURNING id`,
+          [input.publicationId, JSON.stringify(evidenceRefs)],
+        );
+        if (!committedPublication.rows[0]) {
+          throw new ControlPlaneConflictError('confirmation visual publication commit fence was lost');
+        }
+      }
+      const response = {
+        state: asString(row.state, 'state') as ControlTaskState,
+        stateVersion: asNumber(row.state_version, 'state_version'),
+      };
+      const completed = await connection.query(
+        `UPDATE control_commands
+         SET state_after = $6,
+             response_json = $7,
+             command_status = 'completed',
+             reservation_token = NULL,
+             reservation_expires_at = NULL
+         WHERE task_id = $1 AND command_type = 'confirmation' AND idempotency_key = $2
+           AND request_hash = $3 AND expected_version = $4
+           AND command_status = 'pending' AND reservation_token = $5
+         RETURNING id`,
+        [
+          input.taskId,
+          input.idempotencyKey,
+          input.requestHash,
+          input.expectedVersion,
+          input.reservationToken,
+          response.state,
+          JSON.stringify(response),
+        ],
+      );
+      if (!completed.rows[0]) throw new ControlPlaneConflictError('confirmation command completion fence was lost');
+      return {
+        id: asString(row.id, 'id'),
+        state: response.state,
+        stateVersion: response.stateVersion,
+        activePlanVersionId: typeof row.active_plan_version_id === 'string' ? row.active_plan_version_id : null,
+        currentAttemptId: typeof row.current_attempt_id === 'string' ? row.current_attempt_id : null,
+      };
+    });
+  }
+
   async completeCommand(input: {
     taskId: string;
     commandType: string;
@@ -2306,13 +3021,14 @@ export class ControlPlaneRepository {
     requestHash: string;
     expectedVersion: number;
     reservationToken: string;
-  }): Promise<void> {
-    await this.transaction(async (connection) => {
-      await connection.query(
+  }): Promise<boolean> {
+    return this.transaction(async (connection) => {
+      const released = await connection.query(
         `DELETE FROM control_commands
          WHERE task_id = $1 AND command_type = $2 AND idempotency_key = $3
            AND request_hash = $4 AND expected_version = $5
-           AND command_status = 'pending' AND reservation_token = $6`,
+           AND command_status = 'pending' AND reservation_token = $6
+         RETURNING id`,
         [
           input.taskId,
           input.commandType,
@@ -2322,6 +3038,176 @@ export class ControlPlaneRepository {
           input.reservationToken,
         ],
       );
+      return Boolean(released.rows[0]);
+    });
+  }
+
+  async settleVisualPublicationAfterFailure(input: {
+    publicationId: string;
+    taskId: string;
+    planVersionId: string;
+    idempotencyKey: string;
+    requestHash: string;
+    expectedVersion: number;
+    reservationToken: string;
+    releaseReservation: boolean;
+    reason: string;
+  }): Promise<'live' | 'committed' | 'abandoned'> {
+    return this.transaction(async (connection) => {
+      const taskResult = await connection.query(
+        `SELECT state, state_version, active_plan_version_id
+         FROM control_tasks
+         WHERE id = $1
+         FOR UPDATE`,
+        [input.taskId],
+      );
+      const task = taskResult.rows[0];
+      if (!task) throw new ControlPlaneConflictError(`task ${input.taskId} does not exist`);
+      const fence = await connection.query(
+        `SELECT id, command_status, request_hash, expected_version,
+                reservation_token, reservation_expires_at
+         FROM control_commands
+         WHERE task_id = $1
+           AND command_type = 'confirmation'
+           AND idempotency_key = $2
+         FOR UPDATE`,
+        [input.taskId, input.idempotencyKey],
+      );
+      const command = fence.rows[0];
+      const publicationResult = await connection.query(
+        `SELECT publication.state, publication.command_id
+         FROM control_visual_publications AS publication
+         WHERE publication.id = $1
+           AND publication.task_id = $2
+           AND publication.plan_version_id = $3
+           AND publication.request_hash = $4
+           AND publication.expected_version = $5
+           AND publication.reservation_token_hash = $6
+         FOR UPDATE`,
+        [
+          input.publicationId,
+          input.taskId,
+          input.planVersionId,
+          input.requestHash,
+          input.expectedVersion,
+          hashLeaseToken(input.reservationToken),
+        ],
+      );
+      const publication = publicationResult.rows[0];
+      if (!publication) throw new ControlPlaneConflictError('visual publication does not match its confirmation reservation');
+      if (publication.state === 'COMMITTED') return 'committed';
+      if (publication.state === 'ABANDONED') return 'abandoned';
+      const exactReservation = Boolean(command)
+        && command.id === publication.command_id
+        && command.command_status === 'pending'
+        && command.request_hash === input.requestHash
+        && asNumber(command.expected_version, 'expected_version') === input.expectedVersion
+        && command.reservation_token === input.reservationToken;
+      const canCommit = exactReservation
+        && asDate(command.reservation_expires_at, 'reservation_expires_at').getTime() > Date.now()
+        && task.state === 'awaiting_confirmation'
+        && asNumber(task.state_version, 'state_version') === input.expectedVersion
+        && task.active_plan_version_id === input.planVersionId;
+      if (canCommit && !input.releaseReservation) return 'live';
+
+      if (input.releaseReservation && exactReservation) {
+        await connection.query(
+          `DELETE FROM control_commands
+           WHERE id = $1 AND command_status = 'pending' AND reservation_token = $2`,
+          [publication.command_id, input.reservationToken],
+        );
+      }
+      await connection.query(
+        `UPDATE control_artifacts
+         SET state = 'FAILED', failure_reason = $2, redaction_status = 'failed'
+         WHERE publication_id = $1 AND state IN ('STAGING', 'SEALED')`,
+        [input.publicationId, input.reason],
+      );
+      const abandoned = await connection.query(
+        `UPDATE control_visual_publications
+         SET state = 'ABANDONED', failure_reason = $2, abandoned_at = now()
+         WHERE id = $1 AND state = 'PUBLISHING'
+         RETURNING id`,
+        [input.publicationId, input.reason],
+      );
+      if (!abandoned.rows[0]) throw new ControlPlaneConflictError('visual publication abandonment fence was lost');
+      return 'abandoned';
+    });
+  }
+
+  async recoverVisualPublications(): Promise<number> {
+    return this.transaction(async (connection) => {
+      const snapshot = await connection.query(
+        `SELECT id, task_id, command_id
+         FROM control_visual_publications
+         WHERE state = 'PUBLISHING'`,
+      );
+      if (snapshot.rows.length === 0) return 0;
+      const taskIds = [...new Set(snapshot.rows.map((row) => asString(row.task_id, 'task_id')))].sort();
+      const commandIds = [...new Set(snapshot.rows.map((row) => asString(row.command_id, 'command_id')))].sort();
+      const publicationIds = snapshot.rows.map((row) => asString(row.id, 'id')).sort();
+      await connection.query(
+        `SELECT id FROM control_tasks
+         WHERE id = ANY($1::uuid[])
+         ORDER BY id
+         FOR UPDATE`,
+        [taskIds],
+      );
+      await connection.query(
+        `SELECT id FROM control_commands
+         WHERE id = ANY($1::uuid[])
+         ORDER BY id
+         FOR UPDATE`,
+        [commandIds],
+      );
+      const locked = await connection.query(
+        `SELECT id FROM control_visual_publications
+         WHERE id = ANY($1::uuid[]) AND state = 'PUBLISHING'
+         ORDER BY id
+         FOR UPDATE`,
+        [publicationIds],
+      );
+      const lockedPublicationIds = locked.rows.map((row) => asString(row.id, 'id'));
+      if (lockedPublicationIds.length === 0) return 0;
+      const recoverable = await connection.query(
+        `SELECT publication.id
+         FROM control_visual_publications AS publication
+         LEFT JOIN control_commands AS command ON command.id = publication.command_id
+         LEFT JOIN control_tasks AS task ON task.id = publication.task_id
+         WHERE publication.id = ANY($1::uuid[])
+           AND publication.state = 'PUBLISHING'
+           AND NOT COALESCE((
+             command.command_status = 'pending'
+             AND command.request_hash = publication.request_hash
+             AND command.expected_version = publication.expected_version
+             AND publication.reservation_token_hash =
+                 'sha256:' || encode(digest(command.reservation_token::text, 'sha256'), 'hex')
+             AND command.reservation_expires_at > now()
+             AND task.state = 'awaiting_confirmation'
+             AND task.state_version = publication.expected_version
+             AND task.active_plan_version_id = publication.plan_version_id
+           ), false)`,
+        [lockedPublicationIds],
+      );
+      const recoverablePublicationIds = recoverable.rows
+        .map((row) => row.id)
+        .filter((id): id is string => typeof id === 'string');
+      if (recoverablePublicationIds.length === 0) return 0;
+      const reason = 'confirmation reservation can no longer commit';
+      await connection.query(
+        `UPDATE control_artifacts
+         SET state = 'FAILED', failure_reason = $2, redaction_status = 'failed'
+         WHERE publication_id = ANY($1::uuid[]) AND state IN ('STAGING', 'SEALED')`,
+        [recoverablePublicationIds, reason],
+      );
+      const abandoned = await connection.query(
+        `UPDATE control_visual_publications
+         SET state = 'ABANDONED', failure_reason = $2, abandoned_at = now()
+         WHERE id = ANY($1::uuid[]) AND state = 'PUBLISHING'
+         RETURNING id`,
+        [recoverablePublicationIds, reason],
+      );
+      return abandoned.rows.length;
     });
   }
 
@@ -2442,20 +3328,24 @@ export class ControlPlaneRepository {
     requiredAuthority: string;
     decision: string;
     value?: unknown;
+    evidenceRef?: string | null;
     actorUserId?: string;
     actorService?: string;
     actorRole?: string;
     idempotencyKey: string;
   }): Promise<void> {
+    const serializedValue = serializedGateValue(input.value);
     await this.transaction(async (connection) => {
       await connection.query(
         `INSERT INTO control_gate_records
          (task_id, plan_version_id, plan_hash, gate_type, gate_key, required_authority,
-          decision, value_json, actor_user_id, actor_service, actor_role, policy_version, idempotency_key)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'trusted-p0-v1', $12)`,
+          decision, value_json, evidence_ref, actor_user_id, actor_service, actor_role,
+          policy_version, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'trusted-p0-v1', $13)`,
         [
           input.taskId, input.planVersionId, input.planHash, input.gateType, input.gateKey,
-          input.requiredAuthority, input.decision, input.value === undefined ? null : JSON.stringify(input.value),
+          input.requiredAuthority, input.decision, serializedValue,
+          input.evidenceRef ?? null,
           input.actorUserId ?? null, input.actorService ?? null, input.actorRole ?? null,
           input.idempotencyKey,
         ],
@@ -2467,7 +3357,7 @@ export class ControlPlaneRepository {
     const connection = await this.database.connect();
     try {
       const result = await connection.query(
-        `SELECT gate_type, gate_key, required_authority, decision, value_json,
+        `SELECT gate_type, gate_key, required_authority, decision, value_json, evidence_ref,
                 actor_user_id, actor_role, idempotency_key
          FROM control_gate_records
          WHERE task_id = $1 AND plan_version_id = $2 ORDER BY created_at`,
@@ -2479,6 +3369,7 @@ export class ControlPlaneRepository {
         requiredAuthority: asString(row.required_authority, 'required_authority'),
         decision: asString(row.decision, 'decision'),
         value: row.value_json,
+        evidenceRef: row.evidence_ref == null ? null : asString(row.evidence_ref, 'evidence_ref'),
         actorUserId: row.actor_user_id == null ? null : asString(row.actor_user_id, 'actor_user_id'),
         actorRole: row.actor_role == null ? null : asString(row.actor_role, 'actor_role'),
         idempotencyKey: asString(row.idempotency_key, 'idempotency_key'),
@@ -2565,8 +3456,7 @@ export class ControlPlaneRepository {
     return outcome;
   }
 
-  async recordExecutionStep(input: {
-    attemptId: string;
+  async recordExecutionStep(input: ControlExecutionLease & {
     stepNo: number;
     stepName: string;
     actorType: string;
@@ -2580,24 +3470,141 @@ export class ControlPlaneRepository {
     startedAt?: Date;
     finishedAt?: Date;
   }): Promise<void> {
-    await this.transaction(async (connection) => {
-      await connection.query(
+    if (
+      (input.state === 'pending' || input.state === 'running')
+      && (
+        input.outputArtifactId !== undefined
+        || input.toolProvenance !== undefined
+        || input.skillProvenance !== undefined
+        || input.failure !== undefined
+        || input.latencyMs !== undefined
+        || input.finishedAt !== undefined
+      )
+    ) {
+      throw new ControlPlaneConflictError(
+        `execution step ${input.attemptId}/${input.stepNo} cannot attach terminal evidence while ${input.state}`,
+      );
+    }
+    const accepted = await this.transaction(async (connection): Promise<boolean> => {
+      const taskResult = await connection.query(
+        `SELECT state, current_attempt_id, active_plan_version_id
+         FROM control_tasks
+         WHERE id = $1
+         FOR UPDATE`,
+        [input.taskId],
+      );
+      const task = taskResult.rows[0];
+      if (
+        !task
+        || !['executing', 'reviewing', 'composing_report'].includes(asString(task.state, 'state'))
+        || task.current_attempt_id !== input.attemptId
+        || task.active_plan_version_id !== input.planVersionId
+      ) {
+        return false;
+      }
+      const attemptResult = await connection.query(
+        `SELECT 1
+         FROM control_execution_attempts
+         WHERE id = $1
+           AND task_id = $2
+           AND plan_version_id = $3
+           AND lease_owner = $4
+           AND lease_token_hash = $5
+           AND state = 'active'
+           AND lease_expires_at > now()
+         FOR UPDATE`,
+        [input.attemptId, input.taskId, input.planVersionId, input.leaseOwner, hashLeaseToken(input.leaseToken)],
+      );
+      if (!attemptResult.rows[0]) {
+        await this.pauseExpiredExecutionLease(connection, input);
+        return false;
+      }
+      const recorded = await connection.query(
         `INSERT INTO control_execution_steps
            (attempt_id, step_no, step_name, actor_type, actor_id, state,
             output_artifact_id, tool_provenance, skill_provenance, failure_json, latency_ms, started_at, finished_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
          ON CONFLICT (attempt_id, step_no) DO UPDATE
-         SET step_name = EXCLUDED.step_name,
-             actor_type = EXCLUDED.actor_type,
-             actor_id = EXCLUDED.actor_id,
+         SET step_name = control_execution_steps.step_name,
+             actor_type = control_execution_steps.actor_type,
+             actor_id = control_execution_steps.actor_id,
              state = EXCLUDED.state,
-             output_artifact_id = COALESCE(EXCLUDED.output_artifact_id, control_execution_steps.output_artifact_id),
-             tool_provenance = COALESCE(EXCLUDED.tool_provenance, control_execution_steps.tool_provenance),
-             skill_provenance = COALESCE(EXCLUDED.skill_provenance, control_execution_steps.skill_provenance),
-             failure_json = COALESCE(EXCLUDED.failure_json, control_execution_steps.failure_json),
-             latency_ms = COALESCE(EXCLUDED.latency_ms, control_execution_steps.latency_ms),
-             started_at = COALESCE(control_execution_steps.started_at, EXCLUDED.started_at),
-             finished_at = EXCLUDED.finished_at`,
+             output_artifact_id = CASE
+               WHEN control_execution_steps.state IN ('succeeded', 'failed', 'skipped')
+                 THEN control_execution_steps.output_artifact_id
+               WHEN EXCLUDED.state IN ('succeeded', 'failed', 'skipped')
+                 THEN EXCLUDED.output_artifact_id
+               ELSE control_execution_steps.output_artifact_id
+             END,
+             tool_provenance = CASE
+               WHEN control_execution_steps.state IN ('succeeded', 'failed', 'skipped')
+                 THEN control_execution_steps.tool_provenance
+               WHEN EXCLUDED.state IN ('succeeded', 'failed', 'skipped')
+                 THEN EXCLUDED.tool_provenance
+               ELSE control_execution_steps.tool_provenance
+             END,
+             skill_provenance = CASE
+               WHEN control_execution_steps.state IN ('succeeded', 'failed', 'skipped')
+                 THEN control_execution_steps.skill_provenance
+               WHEN EXCLUDED.state IN ('succeeded', 'failed', 'skipped')
+                 THEN EXCLUDED.skill_provenance
+               ELSE control_execution_steps.skill_provenance
+             END,
+             failure_json = CASE
+               WHEN control_execution_steps.state IN ('succeeded', 'failed', 'skipped')
+                 THEN control_execution_steps.failure_json
+               WHEN EXCLUDED.state IN ('succeeded', 'failed', 'skipped')
+                 THEN EXCLUDED.failure_json
+               ELSE control_execution_steps.failure_json
+             END,
+             latency_ms = CASE
+               WHEN control_execution_steps.state IN ('succeeded', 'failed', 'skipped')
+                 THEN control_execution_steps.latency_ms
+               WHEN EXCLUDED.state IN ('succeeded', 'failed', 'skipped')
+                 THEN EXCLUDED.latency_ms
+               ELSE control_execution_steps.latency_ms
+             END,
+             started_at = CASE
+               WHEN control_execution_steps.state IN ('succeeded', 'failed', 'skipped')
+                 THEN control_execution_steps.started_at
+               ELSE COALESCE(control_execution_steps.started_at, EXCLUDED.started_at)
+             END,
+             finished_at = CASE
+               WHEN control_execution_steps.state IN ('succeeded', 'failed', 'skipped')
+                 THEN control_execution_steps.finished_at
+               WHEN EXCLUDED.state IN ('succeeded', 'failed', 'skipped')
+                 THEN EXCLUDED.finished_at
+               ELSE control_execution_steps.finished_at
+             END
+         WHERE (
+            control_execution_steps.state IN ('succeeded', 'failed', 'skipped')
+              AND control_execution_steps.state = EXCLUDED.state
+              AND control_execution_steps.step_name = EXCLUDED.step_name
+              AND control_execution_steps.actor_type = EXCLUDED.actor_type
+              AND control_execution_steps.actor_id = EXCLUDED.actor_id
+              AND control_execution_steps.output_artifact_id IS NOT DISTINCT FROM EXCLUDED.output_artifact_id
+              AND control_execution_steps.tool_provenance IS NOT DISTINCT FROM EXCLUDED.tool_provenance
+              AND control_execution_steps.skill_provenance IS NOT DISTINCT FROM EXCLUDED.skill_provenance
+              AND control_execution_steps.failure_json IS NOT DISTINCT FROM EXCLUDED.failure_json
+              AND control_execution_steps.latency_ms IS NOT DISTINCT FROM EXCLUDED.latency_ms
+              AND control_execution_steps.started_at IS NOT DISTINCT FROM EXCLUDED.started_at
+              AND control_execution_steps.finished_at IS NOT DISTINCT FROM EXCLUDED.finished_at
+            )
+            OR (
+              control_execution_steps.state = 'pending'
+              AND EXCLUDED.state IN ('pending', 'running', 'succeeded', 'failed', 'skipped')
+              AND control_execution_steps.step_name = EXCLUDED.step_name
+              AND control_execution_steps.actor_type = EXCLUDED.actor_type
+              AND control_execution_steps.actor_id = EXCLUDED.actor_id
+            )
+            OR (
+              control_execution_steps.state = 'running'
+              AND EXCLUDED.state IN ('succeeded', 'failed', 'skipped')
+              AND control_execution_steps.step_name = EXCLUDED.step_name
+              AND control_execution_steps.actor_type = EXCLUDED.actor_type
+              AND control_execution_steps.actor_id = EXCLUDED.actor_id
+            )
+         RETURNING attempt_id`,
         [
           input.attemptId, input.stepNo, input.stepName, input.actorType, input.actorId, input.state,
           input.outputArtifactId ?? null,
@@ -2607,6 +3614,157 @@ export class ControlPlaneRepository {
           input.latencyMs ?? null, input.startedAt ?? null, input.finishedAt ?? null,
         ],
       );
+      if (!recorded.rows[0]) {
+        throw new ControlPlaneConflictError(
+          `execution step ${input.attemptId}/${input.stepNo} cannot transition to ${input.state}`,
+        );
+      }
+      return true;
+    });
+    if (!accepted) {
+      throw new ControlPlaneConflictError(`execution lease ${input.attemptId} cannot record step ${input.stepNo}`);
+    }
+  }
+
+  async recordLeaseLostExecutionStep(input: ControlExecutionLease & {
+    stepNo: number;
+    stepName: string;
+    actorType: string;
+    actorId: string;
+    failure: Record<string, unknown>;
+    toolProvenance?: Record<string, unknown>;
+    skillProvenance?: Record<string, unknown>;
+    startedAt?: Date;
+    finishedAt?: Date;
+  }): Promise<boolean> {
+    if (input.failure.kind !== 'lease_lost') return false;
+    return this.transaction(async (connection) => {
+      const task = await connection.query(
+        `SELECT 1 FROM control_tasks
+         WHERE id = $1
+           AND state = 'paused'
+           AND current_attempt_id = $2
+           AND active_plan_version_id = $3
+         FOR UPDATE`,
+        [input.taskId, input.attemptId, input.planVersionId],
+      );
+      if (!task.rows[0]) return false;
+      const attempt = await connection.query(
+        `SELECT 1 FROM control_execution_attempts
+         WHERE id = $1
+           AND task_id = $2
+           AND plan_version_id = $3
+           AND lease_owner = $4
+           AND lease_token_hash = $5
+           AND state = 'paused'
+           AND failure_kind = 'worker_loss'
+         FOR UPDATE`,
+        [input.attemptId, input.taskId, input.planVersionId, input.leaseOwner, hashLeaseToken(input.leaseToken)],
+      );
+      if (!attempt.rows[0]) return false;
+      const updated = await connection.query(
+        `UPDATE control_execution_steps
+         SET step_name = $7,
+             actor_type = $8,
+             actor_id = $9,
+             state = 'failed',
+             tool_provenance = $3,
+             skill_provenance = $4,
+             failure_json = $5,
+             started_at = CASE
+               WHEN state = 'failed'
+                 AND step_name = 'worker lease expired'
+                 AND actor_type = 'system'
+                 AND actor_id = 'worker-loss'
+                 AND failure_json->>'kind' = 'worker_loss'
+                 THEN $10
+               ELSE COALESCE(started_at, $10)
+             END,
+             finished_at = $6
+         WHERE attempt_id = $1
+           AND step_no = $2
+           AND (
+             (
+               step_name = $7
+               AND actor_type = $8
+               AND actor_id = $9
+               AND (
+                 state = 'running'
+                 OR (
+                   state = 'failed'
+                   AND failure_json->>'kind' = 'worker_loss'
+                 )
+               )
+             )
+             OR (
+               state = 'failed'
+               AND step_name = 'worker lease expired'
+               AND actor_type = 'system'
+               AND actor_id = 'worker-loss'
+               AND failure_json->>'kind' = 'worker_loss'
+             )
+           )
+         RETURNING attempt_id`,
+        [
+          input.attemptId,
+          input.stepNo,
+          input.toolProvenance == null ? null : JSON.stringify(input.toolProvenance),
+          input.skillProvenance == null ? null : JSON.stringify(input.skillProvenance),
+          JSON.stringify(input.failure),
+          input.finishedAt ?? new Date(),
+          input.stepName,
+          input.actorType,
+          input.actorId,
+          input.startedAt ?? new Date(),
+        ],
+      );
+      if (updated.rows[0]) return true;
+      const alreadyRecorded = await connection.query(
+        `SELECT 1
+         FROM control_execution_steps
+         WHERE attempt_id = $1
+           AND step_no = $2
+           AND step_name = $3
+           AND actor_type = $4
+           AND actor_id = $5
+           AND state = 'failed'
+           AND failure_json->>'kind' = 'lease_lost'
+           AND tool_provenance IS NOT DISTINCT FROM $6::jsonb
+           AND skill_provenance IS NOT DISTINCT FROM $7::jsonb
+           AND failure_json IS NOT DISTINCT FROM $8::jsonb`,
+        [
+          input.attemptId,
+          input.stepNo,
+          input.stepName,
+          input.actorType,
+          input.actorId,
+          input.toolProvenance == null ? null : JSON.stringify(input.toolProvenance),
+          input.skillProvenance == null ? null : JSON.stringify(input.skillProvenance),
+          JSON.stringify(input.failure),
+        ],
+      );
+      if (alreadyRecorded.rows[0]) return true;
+      const inserted = await connection.query(
+        `INSERT INTO control_execution_steps
+           (attempt_id, step_no, step_name, actor_type, actor_id, state,
+            tool_provenance, skill_provenance, failure_json, started_at, finished_at)
+         VALUES ($1, $2, $3, $4, $5, 'failed', $6, $7, $8, $9, $10)
+         ON CONFLICT (attempt_id, step_no) DO NOTHING
+         RETURNING attempt_id`,
+        [
+          input.attemptId,
+          input.stepNo,
+          input.stepName,
+          input.actorType,
+          input.actorId,
+          input.toolProvenance == null ? null : JSON.stringify(input.toolProvenance),
+          input.skillProvenance == null ? null : JSON.stringify(input.skillProvenance),
+          JSON.stringify(input.failure),
+          input.startedAt ?? new Date(),
+          input.finishedAt ?? new Date(),
+        ],
+      );
+      return Boolean(inserted.rows[0]);
     });
   }
 
@@ -2615,7 +3773,8 @@ export class ControlPlaneRepository {
     try {
       const result = await connection.query(
         `SELECT step_no, step_name, actor_type, actor_id, state, output_artifact_id,
-                tool_provenance, skill_provenance, failure_json, latency_ms
+                tool_provenance, skill_provenance, failure_json, latency_ms,
+                started_at, finished_at
          FROM control_execution_steps WHERE attempt_id = $1 ORDER BY step_no`,
         [attemptId],
       );
@@ -2630,6 +3789,8 @@ export class ControlPlaneRepository {
         skillProvenance: asRecord(row.skill_provenance),
         failure: asRecord(row.failure_json),
         latencyMs: row.latency_ms == null ? null : asNumber(row.latency_ms, 'latency_ms'),
+        startedAt: row.started_at == null ? null : asDate(row.started_at, 'started_at'),
+        finishedAt: row.finished_at == null ? null : asDate(row.finished_at, 'finished_at'),
       }));
     } finally {
       connection.release();
@@ -2738,6 +3899,18 @@ export class ControlPlaneRepository {
     options: { status: 'completed' | 'completed_with_gaps' } = { status: 'completed' },
   ): Promise<ControlTask> {
     const outcome = await this.transaction(async (connection): Promise<ControlTask | null> => {
+      const lockedTask = await connection.query(
+        `SELECT 1 FROM control_tasks
+         WHERE id = $1
+           AND state IN ('executing', 'reviewing', 'composing_report')
+           AND current_attempt_id = $2
+           AND active_plan_version_id = $3
+         FOR UPDATE`,
+        [input.taskId, input.attemptId, input.planVersionId],
+      );
+      if (!lockedTask.rows[0]) {
+        throw new ControlPlaneConflictError(`task ${input.taskId} is not executing attempt ${input.attemptId}`);
+      }
       const attempt = await connection.query(
         `UPDATE control_execution_attempts
          SET state = 'completed', finished_at = now()
@@ -2754,6 +3927,19 @@ export class ControlPlaneRepository {
       if (!attempt.rows[0]) {
         await this.pauseExpiredExecutionLease(connection, input);
         return null;
+      }
+      const unfinishedStep = await connection.query(
+        `SELECT step_no, state
+         FROM control_execution_steps
+         WHERE attempt_id = $1 AND state IN ('pending', 'running')
+         ORDER BY step_no
+         LIMIT 1`,
+        [input.attemptId],
+      );
+      if (unfinishedStep.rows[0]) {
+        throw new ControlPlaneConflictError(
+          `execution ${input.attemptId} cannot complete with ${asString(unfinishedStep.rows[0].state, 'state')} step ${asNumber(unfinishedStep.rows[0].step_no, 'step_no')}`,
+        );
       }
       const task = await connection.query(
         `UPDATE control_tasks
@@ -2785,15 +3971,22 @@ export class ControlPlaneRepository {
       if (!task) {
         throw new ControlPlaneConflictError(`execution lease ${input.attemptId} is not expired and active`);
       }
-      const stepNo = await connection.query(
-        `SELECT COALESCE(MAX(step_no), 0) + 1 AS step_no FROM control_execution_steps WHERE attempt_id = $1`,
-        [input.attemptId],
-      );
       await connection.query(
         `INSERT INTO control_execution_steps
-           (attempt_id, step_no, step_name, actor_type, actor_id, state, failure_json, started_at, finished_at)
-         VALUES ($1, $2, 'worker lease expired', 'system', 'worker-loss', 'failed', $3, now(), now())`,
-        [input.attemptId, asNumber(stepNo.rows[0]?.step_no, 'step_no'), JSON.stringify({ kind: 'worker_loss', retryable: true, allowedActions: ['retry', 'abort'] })],
+           (attempt_id, step_no, step_name, actor_type, actor_id, state,
+            failure_json, started_at, finished_at)
+         SELECT $1, COALESCE(MAX(step_no), 0) + 1,
+                'worker lease expired', 'system', 'worker-loss', 'failed', $2, now(), now()
+         FROM control_execution_steps
+         WHERE attempt_id = $1`,
+        [
+          input.attemptId,
+          JSON.stringify({
+            kind: 'worker_loss',
+            retryable: true,
+            allowedActions: ['retry', 'abort'],
+          }),
+        ],
       );
       return task;
     });
@@ -2805,6 +3998,15 @@ export class ControlPlaneRepository {
     expectedVersion: number;
   }): Promise<ControlTask> {
     return this.transaction(async (connection) => {
+      const lockedTask = await connection.query(
+        `SELECT 1 FROM control_tasks
+         WHERE id = $1 AND state = 'paused' AND state_version = $2 AND current_attempt_id = $3
+         FOR UPDATE`,
+        [input.taskId, input.expectedVersion, input.attemptId],
+      );
+      if (!lockedTask.rows[0]) {
+        throw new ControlPlaneConflictError(`task ${input.taskId} cannot cancel attempt ${input.attemptId}`);
+      }
       const attempt = await connection.query(
         `UPDATE control_execution_attempts
          SET state = 'cancelled', finished_at = COALESCE(finished_at, now())
@@ -2834,6 +4036,17 @@ export class ControlPlaneRepository {
 
   async pauseExecution(input: { taskId: string; attemptId: string; expectedVersion: number; reason: string }): Promise<ControlTask> {
     return this.transaction(async (connection) => {
+      const lockedTask = await connection.query(
+        `SELECT 1 FROM control_tasks
+         WHERE id = $1 AND state_version = $2
+           AND state IN ('executing', 'reviewing', 'composing_report')
+           AND current_attempt_id = $3
+         FOR UPDATE`,
+        [input.taskId, input.expectedVersion, input.attemptId],
+      );
+      if (!lockedTask.rows[0]) {
+        throw new ControlPlaneConflictError(`task ${input.taskId} is no longer executing at version ${input.expectedVersion}`);
+      }
       const attempt = await connection.query(
         `UPDATE control_execution_attempts SET state = 'paused', failure_kind = $3, finished_at = now()
          WHERE id = $1 AND task_id = $2 AND state = 'active' RETURNING id`,
@@ -2844,8 +4057,9 @@ export class ControlPlaneRepository {
         `UPDATE control_tasks SET state = 'paused', state_version = state_version + 1, updated_at = now()
          WHERE id = $1 AND state_version = $2
            AND state IN ('executing', 'reviewing', 'composing_report')
+           AND current_attempt_id = $3
          RETURNING id, state, state_version, active_plan_version_id, current_attempt_id`,
-        [input.taskId, input.expectedVersion],
+        [input.taskId, input.expectedVersion, input.attemptId],
       );
       const row = task.rows[0];
       if (!row) throw new ControlPlaneConflictError(`task ${input.taskId} is no longer executing at version ${input.expectedVersion}`);

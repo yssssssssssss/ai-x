@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { test } from 'node:test';
+import type { ResolvedVisualInputImage } from '../apps/orchestrator-runtime/src/control/visual-input-gate-store.ts';
 
 const modulePath = '../apps/orchestrator-runtime/src/report/visual-input-materializer.ts';
 const moduleFile = new URL(modulePath, import.meta.url);
@@ -14,9 +15,34 @@ const PNG_BYTES = Buffer.from(
   'base64',
 );
 const WEBP_BYTES = Buffer.from('UklGRhoAAABXRUJQVlA4TA4AAAAvAAAAAAcQEf0PRET/Aw==', 'base64');
-const JPEG_DATA_URL = `data:image/jpeg;base64,${JPEG_BYTES.toString('base64')}`;
-const PNG_DATA_URL = `data:image/png;base64,${PNG_BYTES.toString('base64')}`;
-const WEBP_DATA_URL = `data:image/webp;base64,${WEBP_BYTES.toString('base64')}`;
+function resolvedImage(
+  id: string,
+  bytes: Buffer,
+  contentType: 'image/jpeg' | 'image/png' | 'image/webp',
+): ResolvedVisualInputImage {
+  return {
+    artifact: {
+      id,
+      taskId: 'task-1',
+      planVersionId: 'plan-1',
+      attemptId: null,
+      kind: 'visual_input_image',
+      state: 'SEALED',
+      storageUri: `/trusted/${id}`,
+      contentSha256: `sha256:${id}`,
+      byteSize: bytes.byteLength,
+      schemaVersion: 'visual-input-image-v1',
+      sensitivity: 'internal',
+      redactionPolicyVersion: 'v1',
+      failureReason: null,
+      mediaType: contentType,
+      metadata: { width: 1, height: 1 },
+    },
+    bytes,
+    metadata: { contentType, byteSize: bytes.byteLength, width: 1, height: 1 },
+    dataUrl: `data:${contentType};base64,${bytes.toString('base64')}`,
+  };
+}
 
 test('materializes image input gates as sealed originals with derived annotations', async () => {
   assert.equal(existsSync(moduleFile), true, 'VisualInputMaterializer module must exist');
@@ -51,17 +77,18 @@ test('materializes image input gates as sealed originals with derived annotation
       leaseOwner: 'worker',
       leaseToken: 'token',
     },
-    gates: [
+    visuals: [
       {
-        gateType: 'input',
         gateKey: 'competitor_screenshots',
-        value: [
-          { dataUrl: JPEG_DATA_URL },
-          { nested: [{ dataUrl: PNG_DATA_URL }, { dataUrl: WEBP_DATA_URL }] },
+        multiple: true,
+        images: [
+          resolvedImage('input-jpeg', JPEG_BYTES, 'image/jpeg'),
+          resolvedImage('input-png', PNG_BYTES, 'image/png'),
+          resolvedImage('input-webp', WEBP_BYTES, 'image/webp'),
         ],
       },
-      { gateType: 'confirmation', gateKey: 'scope', value: 'public' },
     ],
+    annotationPurpose: 'input_provenance',
   });
 
   assert.equal(ingests.length, 3);
@@ -70,6 +97,7 @@ test('materializes image input gates as sealed originals with derived annotation
     planVersionId: input.planVersionId,
     attemptId: input.attemptId,
     exportPolicy: input.exportPolicy,
+    activeLease: input.activeLease,
     source: input.source,
   })), [
     {
@@ -77,6 +105,13 @@ test('materializes image input gates as sealed originals with derived annotation
       planVersionId: 'plan-1',
       attemptId: 'attempt-1',
       exportPolicy: 'allow',
+      activeLease: {
+        taskId: 'task-1',
+        planVersionId: 'plan-1',
+        attemptId: 'attempt-1',
+        leaseOwner: 'worker',
+        leaseToken: 'token',
+      },
       source: {
         kind: 'user_upload',
         fileName: 'competitor_screenshots-1.jpg',
@@ -88,6 +123,13 @@ test('materializes image input gates as sealed originals with derived annotation
       planVersionId: 'plan-1',
       attemptId: 'attempt-1',
       exportPolicy: 'allow',
+      activeLease: {
+        taskId: 'task-1',
+        planVersionId: 'plan-1',
+        attemptId: 'attempt-1',
+        leaseOwner: 'worker',
+        leaseToken: 'token',
+      },
       source: {
         kind: 'user_upload',
         fileName: 'competitor_screenshots-2.png',
@@ -99,6 +141,13 @@ test('materializes image input gates as sealed originals with derived annotation
       planVersionId: 'plan-1',
       attemptId: 'attempt-1',
       exportPolicy: 'allow',
+      activeLease: {
+        taskId: 'task-1',
+        planVersionId: 'plan-1',
+        attemptId: 'attempt-1',
+        leaseOwner: 'worker',
+        leaseToken: 'token',
+      },
       source: {
         kind: 'user_upload',
         fileName: 'competitor_screenshots-3.webp',
@@ -113,9 +162,111 @@ test('materializes image input gates as sealed originals with derived annotation
     { assetId: 'asset-3', manifestArtifactId: 'manifest-3' },
   ]);
   assert.ok(annotations.every((input) => Array.isArray(input.annotations)));
+  assert.ok(annotations.every((input) => (
+    (input.activeLease as Record<string, unknown>)?.leaseToken === 'token'
+  )));
+  assert.deepEqual(
+    annotations.map((input) => input.findingIds),
+    [['input-provenance-1'], ['input-provenance-2'], ['input-provenance-3']],
+  );
+  assert.ok(annotations.every((input) => {
+    const annotation = (input.annotations as Array<Record<string, unknown>>)[0];
+    return annotation?.severity === 'low'
+      && annotation.x === 0.01
+      && annotation.y === 0.01
+      && annotation.width === 0.98
+      && annotation.height === 0.98
+      && String(annotation.label).includes('仅用于来源溯源，不代表研究发现');
+  }));
 });
 
-test('rejects invalid visual input instead of silently skipping it', async () => {
+test('ingests non-competitive visual inputs without inventing issue annotations', async () => {
+  let ingestCount = 0;
+  let annotationCount = 0;
+  const { VisualInputMaterializer } = await import(modulePath);
+  const materializer = new VisualInputMaterializer({
+    visualAssets: {
+      async ingest() {
+        ingestCount += 1;
+        return {
+          assetArtifact: { id: 'asset-original' },
+          manifestArtifact: { id: 'manifest-original' },
+        };
+      },
+    },
+    imageAnnotations: {
+      async annotate() {
+        annotationCount += 1;
+        return {};
+      },
+    },
+  });
+
+  await materializer.materialize({
+    lease: {
+      taskId: 'task-1',
+      planVersionId: 'plan-1',
+      attemptId: 'attempt-1',
+      leaseOwner: 'worker',
+      leaseToken: 'token',
+    },
+    visuals: [{
+      gateKey: 'designImage',
+      multiple: false,
+      images: [resolvedImage('input-png', PNG_BYTES, 'image/png')],
+    }],
+  });
+
+  assert.equal(ingestCount, 1);
+  assert.equal(annotationCount, 0);
+});
+
+test('rejects design-audit pre-analysis annotation synthesis without creating visual evidence', async () => {
+  const { VisualInputMaterializer } = await import(modulePath);
+  let ingestCount = 0;
+  const annotations: Array<Record<string, unknown>> = [];
+  const materializer = new VisualInputMaterializer({
+    visualAssets: {
+      async ingest() {
+        ingestCount += 1;
+        return {
+          assetArtifact: { id: 'asset-original' },
+          manifestArtifact: { id: 'manifest-original' },
+        };
+      },
+    },
+    imageAnnotations: {
+      async annotate(input: Record<string, unknown>) {
+        annotations.push(input);
+        return {};
+      },
+    },
+  });
+
+  await assert.rejects(
+    () => materializer.materialize({
+      lease: {
+        taskId: 'task-1',
+        planVersionId: 'plan-1',
+        attemptId: 'attempt-1',
+        leaseOwner: 'worker',
+        leaseToken: 'token',
+      },
+      visuals: [{
+        gateKey: 'designImage',
+        multiple: false,
+        images: [resolvedImage('input-png', PNG_BYTES, 'image/png')],
+      }],
+      annotationPurpose: 'design_audit',
+    }),
+    /verified finding-bound analysis|pre-analysis annotation synthesis/u,
+  );
+
+  assert.equal(ingestCount, 0);
+  assert.equal(annotations.length, 0);
+});
+
+test('does not create visual assets when there are no resolved visual inputs', async () => {
   let ingestCount = 0;
   const { VisualInputMaterializer } = await import(modulePath);
   const materializer = new VisualInputMaterializer({
@@ -136,30 +287,16 @@ test('rejects invalid visual input instead of silently skipping it', async () =>
     },
   });
 
-  await assert.rejects(
-    () => materializer.materialize({
-      lease: {
-        taskId: 'task-1',
-        planVersionId: 'plan-1',
-        attemptId: 'attempt-1',
-        leaseOwner: 'worker',
-        leaseToken: 'token',
-      },
-      gates: [
-        {
-          gateType: 'input',
-          gateKey: 'valid_first',
-          value: { dataUrl: JPEG_DATA_URL },
-        },
-        {
-          gateType: 'input',
-          gateKey: 'competitor_screenshots',
-          value: { nested: [{ dataUrl: 'data:image/png;base64,iVBORw0KGgo=' }] },
-        },
-      ],
-    }),
-    /visual input dataUrl/u,
-  );
+  await materializer.materialize({
+    lease: {
+      taskId: 'task-1',
+      planVersionId: 'plan-1',
+      attemptId: 'attempt-1',
+      leaseOwner: 'worker',
+      leaseToken: 'token',
+    },
+    visuals: [],
+  });
   assert.equal(ingestCount, 0);
 });
 

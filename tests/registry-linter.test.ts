@@ -65,6 +65,51 @@ test('active native skill requires non-empty task/input/output arrays and a requ
   }
 });
 
+test('active skill rejects malformed, undeclared, and misspelled visual input metadata', () => {
+  const base = {
+    name: 'n',
+    path: 'skills/x/SKILL.md',
+    when_to_use: 'w',
+    owner: 'o',
+    status: 'active',
+    task_types: ['competitive_research'],
+    inputs: ['designImage'],
+    outputs: ['analysis'],
+    required_tools: [],
+    output_schema: 'schemas/skill-result-envelope.schema.json',
+    risk_level: 'low',
+  };
+  const dir = fixtureRoot({
+    decisionGraph: goodGraph,
+    toolRegistry: emptyTools,
+    skillRegistry: JSON.stringify({
+      version: 1,
+      skills: [
+        { ...base, id: 'scalar', visual_inputs: 'designImage' },
+        { ...base, id: 'blank', visual_inputs: [' '] },
+        { ...base, id: 'duplicate', visual_inputs: ['designImage', 'designImage'] },
+        { ...base, id: 'undeclared', visual_inputs: ['competitorImage'] },
+        { ...base, id: 'misspelled', visual_inputs: ['designImage'], visual_input: ['designImage'] },
+      ],
+    }),
+  });
+  setConfigRoot(dir);
+  const issues = lintRegistries();
+  rmSync(dir, { recursive: true, force: true });
+
+  for (const id of ['scalar', 'blank', 'duplicate']) {
+    assert.ok(issues.some((issue) => (
+      issue.target === `skill:${id}` && issue.message.includes('unique array')
+    )), `应拒绝 ${id} visual_inputs`);
+  }
+  assert.ok(issues.some((issue) => (
+    issue.target === 'skill:undeclared' && issue.message.includes('undeclared input')
+  )));
+  assert.ok(issues.some((issue) => (
+    issue.target === 'skill:misspelled' && issue.message.includes('未知字段: visual_input')
+  )));
+});
+
 test('draft skill 缺字段不拦(不参与自动路由)', () => {
   const dir = fixtureRoot({
     decisionGraph: goodGraph,

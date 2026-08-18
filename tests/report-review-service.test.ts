@@ -209,7 +209,7 @@ test('drops undeclared semantic review dimension fields before strict validation
     rationale: 'extra model explanation',
   }));
   const llm = new RecordingLlm([
-    semantic('revise', 0, { dimensions: dimensions as unknown as ReportReviewArtifact['dimensions'] }),
+    semantic('pass', 0, { dimensions: dimensions as unknown as ReportReviewArtifact['dimensions'] }),
   ]);
   const artifacts = new RecordingArtifacts();
 
@@ -219,6 +219,20 @@ test('drops undeclared semantic review dimension fields before strict validation
   assert.equal(result.verdict, 'pass');
   assert.equal(result.status, 'completed');
 });
+
+for (const verdict of ['revise', 'block'] as const) {
+  test(`does not upgrade a provider ${verdict} verdict when every dimension passes`, async () => {
+    const llm = new RecordingLlm([
+      semantic(verdict, 0, { dimensions: passingReviewDimensions() }),
+    ]);
+    const artifacts = new RecordingArtifacts();
+
+    const result = await service(llm, artifacts).review(input());
+
+    assert.equal(result.verdict, verdict);
+    assert.equal(result.status, 'paused');
+  });
+}
 
 test('derives failed dimensions when semantic review supplies issues without passed flags', async () => {
   const dimensions = passingReviewDimensions().map(({ id }) => ({
@@ -241,7 +255,7 @@ test('derives failed dimensions when semantic review supplies issues without pas
   );
 });
 
-for (const invalid of INVALID_PASS_DIMENSION_CASES) {
+for (const invalid of INVALID_PASS_DIMENSION_CASES.slice(0, 3)) {
   test(`review service rejects pass with ${invalid.name}`, async () => {
     const llm = new RecordingLlm([
       semantic('pass', 0, { dimensions: invalid.dimensions() }),
@@ -252,6 +266,22 @@ for (const invalid of INVALID_PASS_DIMENSION_CASES) {
       SchemaValidationError,
     );
     assert.equal(artifacts.writes.length, 0);
+  });
+}
+
+for (const invalid of INVALID_PASS_DIMENSION_CASES.slice(3)) {
+  test(`review service conservatively revises a provider pass with ${invalid.name}`, async () => {
+    const llm = new RecordingLlm([
+      semantic('pass', 0, { dimensions: invalid.dimensions() }),
+    ]);
+    const artifacts = new RecordingArtifacts();
+
+    const result = await service(llm, artifacts).review(input());
+
+    assert.equal(result.verdict, 'revise');
+    assert.equal(result.status, 'paused');
+    assert.equal(result.dimensions[0]?.passed, false);
+    assert.equal(artifacts.writes.length, 1);
   });
 }
 

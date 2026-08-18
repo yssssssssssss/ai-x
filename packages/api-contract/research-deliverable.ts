@@ -80,6 +80,7 @@ export interface CurrentCapabilitySkill {
   task_types: string[];
   intent_tags?: string[];
   inputs: string[];
+  visual_inputs?: string[];
   outputs: string[];
   input_schema?: string;
   output_schema?: string;
@@ -109,6 +110,7 @@ export interface CurrentCapabilityDecisionReason {
 }
 
 export interface CurrentCapabilityPendingInput {
+  kind: 'value' | 'visual';
   role: string;
   label: string;
   multiple: boolean;
@@ -150,6 +152,7 @@ export interface CurrentExecutionPlan {
 }
 
 export interface PendingInput {
+  kind: 'value' | 'visual';
   role: string;
   label: string;
   multiple: boolean;

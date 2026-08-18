@@ -187,6 +187,36 @@ test('unwraps the persisted Tool output envelope before resolving source pointer
   assert.deepEqual(resolved.source, { title: 'verified result' });
 });
 
+test('resolves the fixed LLM and reviewer output pointers from sealed artifacts', async () => {
+  const llmOutput = sealedOutput(1, { kind: 'llm_output' });
+  const reviewerOutput = sealedOutput(2, { kind: 'review_output' });
+  const artifacts = new MemoryArtifactReader(new Map([
+    ['artifact-1', {
+      artifact: artifact('artifact-1', { kind: 'llm_output', schemaVersion: 'llm-output-v1' }),
+      value: { text: 'verified synthesis' },
+    }],
+    ['artifact-2', {
+      artifact: artifact('artifact-2', { kind: 'review_output', schemaVersion: 'review-output-v1' }),
+      value: { review: 'verified review' },
+    }],
+  ]));
+
+  const resolved = await resolveStepInput(step({
+    step_no: 3,
+    depends_on: [1, 2],
+    input: { synthesis: null, review: null },
+    input_bindings: [
+      { target_pointer: '/synthesis', source_step_no: 1, source_pointer: '/text' },
+      { target_pointer: '/review', source_step_no: 2, source_pointer: '/review' },
+    ],
+  }), [llmOutput, reviewerOutput], artifacts);
+
+  assert.deepEqual(resolved, {
+    synthesis: 'verified synthesis',
+    review: 'verified review',
+  });
+});
+
 test('rejects unknown, future, duplicate, and non-succeeded source steps', async () => {
   const artifacts = reader({ result: 'sealed' });
   await expectCode(() => resolveStepInput(step(), [], artifacts), 'unknown_source');
@@ -317,6 +347,10 @@ class MemoryArtifactRegistry {
 
   async invalidateArtifactPublication(artifactId: string, failureReason: string): Promise<void> {
     await this.failArtifact(artifactId, failureReason);
+  }
+
+  async quarantineStagingArtifact(): Promise<ControlArtifact | null> {
+    return null;
   }
 
   async getArtifact(artifactId: string): Promise<ControlArtifact | null> {

@@ -82,7 +82,7 @@ test('tool-runner: 空占位清洗 + 图像 dataUrl 回填', async () => {
       extraObj: {},
     },
   };
-  const ctx = makeCtx({ uploads: [{ role: 'design', dataUrl: 'data:image/png;base64,AAAA' }] });
+  const ctx = makeCtx({ uploads: [{ role: 'designImage', dataUrl: 'data:image/png;base64,AAAA' }] });
 
   const artifact = await runner.run(step, ctx);
 

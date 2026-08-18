@@ -52,6 +52,8 @@ import { ReceiptLLMClient } from '../../orchestrator-runtime/src/runtime/receipt
 import { SchemaValidator } from '../../orchestrator-runtime/src/schema/validator.ts';
 import { SkillLoader } from '../../orchestrator-runtime/src/runtime/skill-loader.ts';
 import { ToolRouter } from '../../orchestrator-runtime/src/runtime/tool-adapter.ts';
+import { VisualInputGateStore } from '../../orchestrator-runtime/src/control/visual-input-gate-store.ts';
+import { parsePendingInputContracts } from '../../orchestrator-runtime/src/control/pending-input-contract.ts';
 
 
 const REVISION_ACTOR_TYPES: Record<string, true> = {
@@ -96,33 +98,6 @@ function revisionEvidenceRequirements(value: unknown): value is EvidenceRequirem
         && record.minimumCount >= 0
         && typeof record.required === 'boolean';
     });
-}
-
-function revisionPendingInputs(value: unknown): value is PendingInput[] {
-  return Array.isArray(value) && value.every((item) => {
-    const record = revisionRecord(item);
-    if (
-      !record
-      || typeof record.role !== 'string'
-      || record.role.trim().length === 0
-      || typeof record.label !== 'string'
-      || record.label.trim().length === 0
-      || typeof record.multiple !== 'boolean'
-      || !Array.isArray(record.targets)
-    ) return false;
-    return record.targets.every((target) => {
-      const targetRecord = revisionRecord(target);
-      return targetRecord !== null
-        && typeof targetRecord.step_no === 'number'
-        && Number.isInteger(targetRecord.step_no)
-        && targetRecord.step_no >= 1
-        && typeof targetRecord.tool_id === 'string'
-        && targetRecord.tool_id.trim().length > 0
-        && typeof targetRecord.field === 'string'
-        && targetRecord.field.trim().length > 0
-        && typeof targetRecord.multiple === 'boolean';
-    });
-  });
 }
 
 const REVISION_REQUIRED_STEP_KEYS = ['actor_id', 'actor_type', 'step_name', 'step_no'] as const;
@@ -171,6 +146,94 @@ function revisionPendingInputsResolve(pendingInputs: PendingInput[], steps: unkn
         && Object.hasOwn(stepInput, target.field);
     })
   )));
+}
+
+const LEGACY_PENDING_INPUT_KEYS = ['label', 'multiple', 'role', 'targets'] as const;
+const LEGACY_PENDING_TARGET_KEYS = ['field', 'multiple', 'step_no', 'tool_id'] as const;
+const LEGACY_CAPABILITY_PENDING_INPUT_KEYS = ['capability_id', 'label', 'multiple', 'role'] as const;
+
+function revisionExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const actual = Object.keys(value).sort();
+  const sortedExpected = [...expected].sort();
+  return actual.length === sortedExpected.length
+    && actual.every((key, index) => key === sortedExpected[index]);
+}
+
+function normalizeLegacyRevisionSource(input: {
+  plan: unknown;
+  pendingInputs: unknown;
+}): { plan: Record<string, unknown>; pendingInputs: unknown[] } | null {
+  if (!Array.isArray(input.pendingInputs)) return null;
+  const pendingInputs = structuredClone(input.pendingInputs);
+  let missingKindCount = 0;
+  for (const pending of pendingInputs) {
+    const record = revisionRecord(pending);
+    if (!record || !revisionExactKeys(record, LEGACY_PENDING_INPUT_KEYS)) return null;
+    if (
+      !Array.isArray(record.targets)
+      || record.targets.length === 0
+      || !record.targets.every((target) => {
+        const targetRecord = revisionRecord(target);
+        return targetRecord !== null
+          && revisionExactKeys(targetRecord, LEGACY_PENDING_TARGET_KEYS);
+      })
+    ) return null;
+    record.kind = 'value';
+    missingKindCount += 1;
+  }
+
+  const plan = revisionRecord(structuredClone(input.plan));
+  const decisions = revisionRecord(plan?.capability_decisions);
+  if (!plan || !decisions) return null;
+  for (const bucket of ['eligible', 'rejected'] as const) {
+    const values = decisions[bucket];
+    if (!Array.isArray(values)) return null;
+    for (const value of values) {
+      const decision = revisionRecord(value);
+      if (!decision || !Array.isArray(decision.pending_inputs)) return null;
+      for (const pending of decision.pending_inputs) {
+        const record = revisionRecord(pending);
+        if (!record || !revisionExactKeys(record, LEGACY_CAPABILITY_PENDING_INPUT_KEYS)) return null;
+        record.kind = 'value';
+        missingKindCount += 1;
+      }
+    }
+  }
+  return missingKindCount > 0 ? { plan, pendingInputs } : null;
+}
+
+function assertRevisionSourceContract(input: {
+  activePlan: { id: string; plan: unknown; pendingInputs: unknown };
+  deliverableSelection: { deliverableId: string; evidenceRequirements: EvidenceRequirement[] };
+  validator: SchemaValidator;
+}): void {
+  let plan = input.activePlan.plan;
+  try {
+    input.validator.validateOrThrow('current-execution-plan', plan);
+    parsePendingInputContracts(input.activePlan.pendingInputs);
+  } catch (currentError) {
+    const legacy = normalizeLegacyRevisionSource({
+      plan,
+      pendingInputs: input.activePlan.pendingInputs,
+    });
+    if (!legacy) throw currentError;
+    input.validator.validateOrThrow('current-execution-plan', legacy.plan);
+    parsePendingInputContracts(legacy.pendingInputs);
+    plan = legacy.plan;
+  }
+
+  const planShape = plan as CurrentExecutionPlan;
+  if (
+    planShape.deliverable_type !== input.deliverableSelection.deliverableId
+    || !isDeepStrictEqual(
+      planShape.evidence_requirements,
+      input.deliverableSelection.evidenceRequirements,
+    )
+  ) {
+    throw new Error(
+      `active plan ${input.activePlan.id} does not match the current Deliverable Registry contract`,
+    );
+  }
 }
 
 
@@ -391,6 +454,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     llm: new ReceiptLLMClient(llm, repository),
     artifacts,
   });
+  const visualInputGates = new VisualInputGateStore(artifacts);
   const engine = new LeaseExecutionEngine({
     repository,
     artifacts,
@@ -403,6 +467,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     reportReview,
     reportComposition,
     visualInputMaterializer: new VisualInputMaterializer({ visualAssets, imageAnnotations }),
+    visualInputGates,
   });
   const planRevisionDriver: WorkflowPlanRevisionDriver = {
     async revise(input) {
@@ -422,20 +487,9 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       if (activePlan.candidateId !== 'depth' && activePlan.candidateId !== 'speed') {
         throw new Error(`active plan ${activePlan.id} has no depth/speed candidate`);
       }
-      validator.validateOrThrow('current-execution-plan', activePlan.plan);
-      if (!revisionPendingInputs(activePlan.pendingInputs)) {
-        throw new Error(`active plan ${activePlan.id} has malformed pending inputs`);
-      }
-      const activePlanShape = activePlan.plan as CurrentExecutionPlan;
       const deliverableSelection = resolvePlanningDeliverableSelection(structuredTask);
-      if (
-        activePlanShape.deliverable_type !== deliverableSelection.deliverableId
-        || !isDeepStrictEqual(
-          activePlanShape.evidence_requirements,
-          deliverableSelection.evidenceRequirements,
-        )
-      ) {
-        throw new Error(`active plan ${activePlan.id} does not match the current Deliverable Registry contract`);
+      if (!await repository.isPlanPendingInputQuarantined(activePlan.id)) {
+        assertRevisionSourceContract({ activePlan, deliverableSelection, validator });
       }
 
       const planningResult = await planning.plan({
@@ -467,7 +521,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       lease,
       expectedModel: expectedActualModel,
     }),
-  }, planRevisionDriver, artifacts);
+  }, planRevisionDriver, artifacts, visualInputGates);
 
   return {
     controlPlanning,

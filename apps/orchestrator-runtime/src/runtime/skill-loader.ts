@@ -5,6 +5,8 @@ import {
   loadToolRegistry,
   getConfigRoot,
   hashFile,
+  skillVisualInputIssue,
+  unknownSkillRegistryFields,
   type SkillRegistryEntry,
   type ToolRegistryEntry,
 } from './config-loader.ts';
@@ -73,6 +75,7 @@ export class SkillLoader {
     return loadSkillRegistry().skills.map((skill): CapabilitySkillRegistryEntry => {
       const taskTypes = skill.task_types ?? [];
       const inputs = skill.inputs ?? [];
+      const visualInputs = skill.visual_inputs ?? [];
       const outputs = skill.outputs ?? [];
       const requiredTools = skill.required_tools ?? [];
       if (skill.status !== 'active') {
@@ -81,19 +84,25 @@ export class SkillLoader {
           status: skill.status,
           task_types: Array.isArray(taskTypes) ? taskTypes : [],
           inputs: Array.isArray(inputs) ? inputs : [],
+          visual_inputs: Array.isArray(visualInputs) ? visualInputs : [],
           outputs: Array.isArray(outputs) ? outputs : [],
           required_tools: Array.isArray(requiredTools) ? requiredTools : [],
         };
       }
 
       const knowledgeBaseSkill = skill.entry !== undefined || skill.path?.startsWith('knowledge-base/') === true;
+      const visualInputIssue = skillVisualInputIssue(skill);
       if (
-        !Array.isArray(taskTypes)
+        unknownSkillRegistryFields(skill).length > 0
+        || visualInputIssue !== null
+        || !Array.isArray(taskTypes)
         || !Array.isArray(inputs)
+        || !Array.isArray(visualInputs)
         || !Array.isArray(outputs)
         || !Array.isArray(requiredTools)
         || taskTypes.length === 0
         || (!knowledgeBaseSkill && (inputs.length === 0 || outputs.length === 0 || requiredTools.length === 0))
+        || visualInputs.some((role) => !inputs.includes(role))
       ) {
         throw new Error(`active skill capability metadata invalid: ${skill.id}`);
       }
@@ -102,6 +111,7 @@ export class SkillLoader {
         status: 'active',
         task_types: taskTypes,
         inputs,
+        visual_inputs: visualInputs,
         outputs,
         required_tools: requiredTools,
       };

@@ -362,6 +362,10 @@ class MemoryArtifactRegistry {
     await this.failArtifact(artifactId, failureReason);
   }
 
+  async quarantineStagingArtifact(): Promise<ControlArtifact | null> {
+    return null;
+  }
+
   async getArtifact(artifactId: string): Promise<ControlArtifact | null> {
     return this.artifacts.get(artifactId) ?? null;
   }

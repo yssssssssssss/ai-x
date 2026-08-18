@@ -281,6 +281,7 @@ export interface SkillRegistryEntry {
   task_types?: string[];
   intent_tags?: string[];
   inputs?: string[];
+  visual_inputs?: string[];
   outputs?: string[];
   input_schema?: string; // KB skill 为 markdown 过程式, 无 JSON schema
   output_schema?: string;
@@ -289,6 +290,54 @@ export interface SkillRegistryEntry {
   required_tools?: string[];
   cost_level?: string;
   risk_level: 'low' | 'medium' | 'high';
+}
+
+const SKILL_REGISTRY_ENTRY_KEYS = new Set<keyof SkillRegistryEntry>([
+  'id',
+  'name',
+  'path',
+  'when_to_use',
+  'owner',
+  'status',
+  'task_types',
+  'intent_tags',
+  'inputs',
+  'visual_inputs',
+  'outputs',
+  'input_schema',
+  'output_schema',
+  'payload_schema',
+  'entry',
+  'required_tools',
+  'cost_level',
+  'risk_level',
+]);
+
+export function unknownSkillRegistryFields(skill: SkillRegistryEntry): string[] {
+  return Object.keys(skill).filter((key) => !SKILL_REGISTRY_ENTRY_KEYS.has(key as keyof SkillRegistryEntry));
+}
+
+export function skillVisualInputIssue(skill: SkillRegistryEntry): string | null {
+  const record = skill as unknown as Record<string, unknown>;
+  const visualInputs = record.visual_inputs;
+  if (visualInputs === undefined) return null;
+  if (
+    !Array.isArray(visualInputs)
+    || visualInputs.some((role) => (
+      typeof role !== 'string'
+      || role.trim().length === 0
+      || role.trim() !== role
+    ))
+    || new Set(visualInputs).size !== visualInputs.length
+  ) {
+    return 'visual_inputs must be a unique array of canonical non-empty strings';
+  }
+  const inputs = record.inputs;
+  if (!Array.isArray(inputs)) return 'visual_inputs requires an inputs array';
+  const missingRole = visualInputs.find((role) => !inputs.includes(role));
+  return missingRole === undefined
+    ? null
+    : `visual_inputs references an undeclared input: ${missingRole}`;
 }
 
 export interface ToolRegistryEntry {

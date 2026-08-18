@@ -16,9 +16,15 @@ import type {
 } from '../../../../packages/api-contract/control-workflow.ts';
 import { assertValidReportReviewArtifact } from '../report/report-review-service.ts';
 import {
-  parseVisualInputDataUrls,
   VisualInputDataUrlError,
 } from '../report/visual-input-data-url.ts';
+import {
+  VisualInputGateError,
+  type PreparedVisualInputGate,
+  type PublishedVisualInputGate,
+  type VisualInputGateStore,
+} from './visual-input-gate-store.ts';
+import { parsePendingInputContracts } from './pending-input-contract.ts';
 export { TaskWorkflowAuthorizationError };
 
 export type WorkflowRole = 'owner' | 'legal' | 'security' | 'gold';
@@ -112,6 +118,12 @@ function requestHash(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(stableValue(value))).digest('hex');
 }
 
+function containsInlineImageData(value: unknown): boolean {
+  const serialized = JSON.stringify(value);
+  return typeof serialized === 'string'
+    && /data:image\/[a-z0-9.+-]+;base64,/iu.test(serialized);
+}
+
 function leaseTokenHash(token: string): string {
   return `sha256:${createHash('sha256').update(token).digest('hex')}`;
 }
@@ -167,16 +179,14 @@ function planShape(plan: ControlPlanVersionDetail): WorkflowPlanShape {
   };
 }
 
-function pendingInputKeys(plan: ControlPlanVersionDetail): string[] {
-  if (!Array.isArray(plan.pendingInputs)) throw new TaskWorkflowGateError(['pending_inputs']);
-  return plan.pendingInputs.map((input) => {
-    if (typeof input === 'string' && input) return input;
-    if (isRecord(input)) {
-      if (typeof input.role === 'string' && input.role) return input.role;
-      if (typeof input.key === 'string' && input.key) return input.key;
-    }
+function pendingInputRequirements(
+  plan: ControlPlanVersionDetail,
+): Array<{ kind: 'value' | 'visual'; role: string; multiple: boolean }> {
+  try {
+    return parsePendingInputContracts(plan.pendingInputs);
+  } catch {
     throw new TaskWorkflowGateError(['pending_inputs']);
-  });
+  }
 }
 
 function revisedPlanWithoutStep(plan: unknown, failedStepNo: number): {
@@ -305,6 +315,10 @@ export class TaskWorkflowService {
     private readonly executionDriver?: WorkflowExecutionDriver,
     private readonly planRevisionDriver?: WorkflowPlanRevisionDriver,
     private readonly terminalArtifacts?: WorkflowArtifactReader,
+    private readonly visualInputGates?: Pick<
+      VisualInputGateStore,
+      'prepare' | 'publishPrepared' | 'invalidate'
+    >,
   ) {}
 
   private async requireTask(taskId: string): Promise<ControlTaskDetail> {
@@ -470,12 +484,20 @@ export class TaskWorkflowService {
     this.requireOwner(task, input.actor);
     const plan = await this.requirePlan(task, input.planVersionId);
     if (task.state !== 'awaiting_confirmation' || task.stateVersion !== input.expectedVersion) {
+      const completed = await this.replay<CommandResult>(
+        input.taskId,
+        'confirmation',
+        input.idempotencyKey,
+        hash,
+      );
+      if (completed) return completed;
       throw new ControlPlaneConflictError(`task ${task.id} is not awaiting confirmation at version ${input.expectedVersion}`);
     }
     const missingAnswers = (taskShape(task).clarification_questions ?? [])
       .map((requirement) => requirement.key)
       .filter((key) => !(key in input.confirmationAnswers));
-    const requiredInputRoles = new Set(pendingInputKeys(plan));
+    const pendingInputs = pendingInputRequirements(plan);
+    const requiredInputRoles = new Set(pendingInputs.map(({ role }) => role));
     const extraInputs = Object.keys(input.inputValues).filter((key) => !requiredInputRoles.has(key));
     const missingInputs = [...requiredInputRoles].filter((key) => (
       !Object.prototype.hasOwnProperty.call(input.inputValues, key)
@@ -484,67 +506,188 @@ export class TaskWorkflowService {
     if (missingAnswers.length || missingInputs.length || extraInputs.length) {
       throw new TaskWorkflowGateError([...missingAnswers, ...missingInputs, ...extraInputs]);
     }
+    if (containsInlineImageData(input.confirmationAnswers)) {
+      throw new TaskWorkflowGateError(['confirmation_answers.dataUrl']);
+    }
+    if (pendingInputs.some(({ kind }) => kind === 'visual') && !this.visualInputGates) {
+      throw new TaskWorkflowGateError(['input_values.dataUrl']);
+    }
+
+    const preparedInputs = new Map<string, PreparedVisualInputGate>();
+    const plainInputs = new Map<string, PublishedVisualInputGate>();
     try {
-      await parseVisualInputDataUrls(input.inputValues);
+      for (const pending of pendingInputs) {
+        const value = input.inputValues[pending.role];
+        if (!this.visualInputGates) {
+          if (containsInlineImageData(value)) throw new VisualInputGateError('input contains a dataUrl');
+          plainInputs.set(pending.role, { value, artifactIds: [] });
+          continue;
+        }
+        preparedInputs.set(pending.role, await this.visualInputGates.prepare({
+          taskId: task.id,
+          planVersionId: plan.id,
+          gateKey: pending.role,
+          multiple: pending.multiple,
+          requiredVisual: pending.kind === 'visual',
+          value,
+        }));
+      }
     } catch (error) {
-      if (error instanceof VisualInputDataUrlError) {
+      if (error instanceof VisualInputGateError || error instanceof VisualInputDataUrlError) {
         throw new TaskWorkflowGateError(['input_values.dataUrl']);
       }
       throw error;
     }
 
-    for (const [key, value] of Object.entries(input.confirmationAnswers)) {
-      await this.repository.recordGate({
+    let reservationToken: string | null = null;
+    while (!reservationToken) {
+      const reservation = await this.repository.reserveConfirmationCommand({
+        taskId: task.id,
+        planVersionId: plan.id,
+        idempotencyKey: input.idempotencyKey,
+        requestHash: hash,
+        expectedVersion: input.expectedVersion,
+        actorUserId: input.actor.userId,
+      });
+      if (reservation.status === 'conflict') {
+        throw new ControlPlaneConflictError('another confirmation is already in progress or conflicts');
+      }
+      if (reservation.status === 'replay') return reservation.response as CommandResult;
+      if (reservation.status === 'pending') {
+        const waited = await this.repository.waitForCommand({
+          taskId: task.id,
+          commandType: 'confirmation',
+          idempotencyKey: input.idempotencyKey,
+          requestHash: hash,
+        });
+        if (waited.status === 'conflict') {
+          throw new ControlPlaneConflictError('confirmation idempotency key conflicts');
+        }
+        if (waited.status === 'replay') return waited.response as CommandResult;
+        continue;
+      }
+      reservationToken = reservation.reservationToken;
+    }
+
+    const publishedInputs = new Map(plainInputs);
+    let publicationId: string | undefined;
+    try {
+      if ([...preparedInputs.values()].some((prepared) => prepared.requiredVisual)) {
+        publicationId = await this.repository.beginVisualPublication({
+          taskId: task.id,
+          planVersionId: plan.id,
+          idempotencyKey: input.idempotencyKey,
+          requestHash: hash,
+          expectedVersion: input.expectedVersion,
+          reservationToken,
+        });
+      }
+      for (const [role, prepared] of preparedInputs) {
+        publishedInputs.set(role, await this.visualInputGates!.publishPrepared(prepared, publicationId));
+      }
+      const gates = [
+        ...Object.entries(input.confirmationAnswers).map(([key, value]) => ({
+          gateType: 'confirmation' as const,
+          gateKey: key,
+          requiredAuthority: 'owner',
+          decision: 'confirmed',
+          value,
+          idempotencyKey: `${input.idempotencyKey}:confirmation:${key}`,
+        })),
+        ...Object.keys(input.inputValues).map((role) => {
+          const published = publishedInputs.get(role);
+          if (!published) throw new TaskWorkflowGateError([role]);
+          return {
+            gateType: 'input' as const,
+            gateKey: role,
+            requiredAuthority: 'owner',
+            decision: 'provided',
+            ...(published.value === undefined ? {} : { value: published.value }),
+            ...(published.evidenceRef === undefined ? {} : { evidenceRef: published.evidenceRef }),
+            idempotencyKey: `${input.idempotencyKey}:input:${role}`,
+          };
+        }),
+      ];
+      const nextState = requiredApprovals(task, plan).length ? 'awaiting_approval' as const : 'ready' as const;
+      const transitioned = await this.repository.completeConfirmationCommand({
         taskId: task.id,
         planVersionId: plan.id,
         planHash: plan.planHash,
-        gateType: 'confirmation',
-        gateKey: key,
-        requiredAuthority: 'owner',
-        decision: 'confirmed',
-        value,
+        idempotencyKey: input.idempotencyKey,
+        requestHash: hash,
+        expectedVersion: input.expectedVersion,
+        reservationToken,
+        ...(publicationId === undefined ? {} : { publicationId }),
         actorUserId: input.actor.userId,
         actorService: input.actor.service,
         actorRole: input.actor.role,
-        idempotencyKey: `${input.idempotencyKey}:confirmation:${key}`,
+        nextState,
+        gates,
       });
-    }
-    for (const [role, value] of Object.entries(input.inputValues)) {
-      await this.repository.recordGate({
+      return { state: transitioned.state, stateVersion: transitioned.stateVersion };
+    } catch (error) {
+      if (publicationId) {
+        await this.repository.settleVisualPublicationAfterFailure({
+          publicationId,
+          taskId: task.id,
+          planVersionId: plan.id,
+          idempotencyKey: input.idempotencyKey,
+          requestHash: hash,
+          expectedVersion: input.expectedVersion,
+          reservationToken,
+          releaseReservation: true,
+          reason: 'confirmation did not commit',
+        });
+      }
+      const released = await this.repository.releaseCommand({
         taskId: task.id,
-        planVersionId: plan.id,
-        planHash: plan.planHash,
-        gateType: 'input',
-        gateKey: role,
-        requiredAuthority: 'owner',
-        decision: 'provided',
-        value,
-        actorUserId: input.actor.userId,
-        actorService: input.actor.service,
-        actorRole: input.actor.role,
-        idempotencyKey: `${input.idempotencyKey}:input:${role}`,
+        commandType: 'confirmation',
+        idempotencyKey: input.idempotencyKey,
+        requestHash: hash,
+        expectedVersion: input.expectedVersion,
+        reservationToken,
       });
+      if (!released) {
+        const command = await this.repository.getCommand(
+          task.id,
+          'confirmation',
+          input.idempotencyKey,
+        );
+        if (command?.requestHash === hash && isRecord(command.response)) {
+          const state = command.response.state;
+          const stateVersion = command.response.stateVersion;
+          if (typeof state === 'string' && typeof stateVersion === 'number') {
+            const committedEvidenceRefs = new Set(
+              (await this.repository.listGateRecords(task.id, plan.id))
+                .map((gate) => gate.evidenceRef)
+                .filter((reference): reference is string => typeof reference === 'string'),
+            );
+            await Promise.allSettled(
+              [...publishedInputs.values()]
+                .filter((publication) => (
+                  publication.evidenceRef !== undefined
+                  && !committedEvidenceRefs.has(publication.evidenceRef)
+                ))
+                .map((publication) => (
+                  this.visualInputGates?.invalidate(publication, 'confirmation lost its reservation')
+                    ?? Promise.resolve()
+                )),
+            );
+            return { state: state as ControlTaskState, stateVersion };
+          }
+        }
+        await Promise.allSettled([...publishedInputs.values()].map((publication) => (
+          this.visualInputGates?.invalidate(publication, 'confirmation lost its reservation')
+            ?? Promise.resolve()
+        )));
+        throw error;
+      }
+      await Promise.allSettled([...publishedInputs.values()].map((publication) => (
+        this.visualInputGates?.invalidate(publication, 'confirmation did not commit')
+          ?? Promise.resolve()
+      )));
+      throw error;
     }
-    const nextState: ControlTaskState = requiredApprovals(task, plan).length ? 'awaiting_approval' : 'ready';
-    const transitioned = await this.repository.transitionTask({
-      taskId: task.id,
-      expectedVersion: input.expectedVersion,
-      from: 'awaiting_confirmation',
-      to: nextState,
-    });
-    const result = { state: transitioned.state, stateVersion: transitioned.stateVersion };
-    await this.repository.recordCommand({
-      taskId: task.id,
-      commandType: 'confirmation',
-      idempotencyKey: input.idempotencyKey,
-      requestHash: hash,
-      expectedVersion: input.expectedVersion,
-      stateBefore: task.state,
-      stateAfter: transitioned.state,
-      response: result,
-      actorUserId: input.actor.userId,
-    });
-    return result;
   }
 
   async approve(input: {

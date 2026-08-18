@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
-import type { ControlArtifact } from '../../../../database/control-plane.ts';
+import type { ControlArtifact, ControlExecutionLease } from '../../../../database/control-plane.ts';
 import type {
   VisualAssetExportPolicy,
   VisualAssetManifest,
@@ -60,6 +60,7 @@ export interface ImageAnnotationInput {
   taskId: string;
   planVersionId: string;
   attemptId: string;
+  activeLease?: ControlExecutionLease;
   original: VisualAssetReference;
   findingIds: string[];
   annotations: unknown;
@@ -317,6 +318,7 @@ export class ImageAnnotationService {
       schemaVersion: 'image-annotation-v1',
       sensitivity: 'internal',
       redactionPolicyVersion: 'v1',
+      ...(input.activeLease ? { activeLease: input.activeLease } : {}),
     });
     if (
       overlayArtifact.taskId !== input.taskId
@@ -339,6 +341,7 @@ export class ImageAnnotationService {
       derivation: { kind: 'annotation', overlayArtifactId: overlayArtifact.id },
       bytes: Buffer.from(renderedBytes),
       exportPolicy: input.exportPolicy,
+      ...(input.activeLease ? { activeLease: input.activeLease } : {}),
     });
     return { overlayArtifact, derived };
   }

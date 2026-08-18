@@ -2,7 +2,15 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { assertGatewayModelReceipts, resolveSmokeRequirement } from '../scripts/current-real-smoke.ts';
+import {
+  assertGatewayModelReceipts,
+  assertSmokeReceiptMinimums,
+  CURRENT_REAL_SMOKE_PROFILES,
+  resolveSmokeRequirement,
+  safeSmokeErrorMessage,
+  selectSmokeCandidate,
+} from '../scripts/current-real-smoke.ts';
+import { parseModelRoutes } from '../apps/orchestrator-runtime/src/runtime/gateway-llm-client.ts';
 const REQUIRED_REAL_PROVIDER_ENV = [
   'ALLOW_REAL_PROVIDER',
   'LLM_PROVIDER',
@@ -20,10 +28,12 @@ const realProviderConfigured = REQUIRED_REAL_PROVIDER_ENV.every((key) => {
   return typeof value === 'string' && value.trim() !== '';
 });
 const realSmokeOptions = { skip: !realProviderConfigured };
+const realProfiles = [...CURRENT_REAL_SMOKE_PROFILES];
 
 type SmokeReceipt = {
   profile: string;
   taskType: string;
+  deliverableType: string;
   taskId: string;
   planVersionId: string;
   attemptId: string;
@@ -47,8 +57,7 @@ type SmokeReceipt = {
 
 test('gateway model receipts support a routing alias with a distinct canonical actual model', () => {
   assert.doesNotThrow(() => assertGatewayModelReceipts({
-    configuredModel: 'gateway-routing-alias',
-    expectedActualModel: 'canonical-model-id',
+    modelRoutes: [{ requestedModel: 'gateway-routing-alias', expectedActualModel: 'canonical-model-id' }],
     modelCalls: [{
       status: 'succeeded',
       provider: 'gateway',
@@ -60,8 +69,7 @@ test('gateway model receipts support a routing alias with a distinct canonical a
 
 test('gateway model receipts still reject actual model drift', () => {
   assert.throws(() => assertGatewayModelReceipts({
-    configuredModel: 'gateway-routing-alias',
-    expectedActualModel: 'canonical-model-id',
+    modelRoutes: [{ requestedModel: 'gateway-routing-alias', expectedActualModel: 'canonical-model-id' }],
     modelCalls: [{
       status: 'succeeded',
       provider: 'gateway',
@@ -69,6 +77,96 @@ test('gateway model receipts still reject actual model drift', () => {
       actualModel: 'unexpected-model-id',
     }],
   }), /invalid gateway model receipt/);
+});
+
+test('gateway model receipts validate every configured route independently', () => {
+  assert.doesNotThrow(() => assertGatewayModelReceipts({
+    modelRoutes: [
+      { requestedModel: 'route-a', expectedActualModel: 'model-a' },
+      { requestedModel: 'route-b', expectedActualModel: 'model-b' },
+    ],
+    modelCalls: [
+      { status: 'succeeded', provider: 'gateway', requestedModel: 'route-a', actualModel: 'model-a' },
+      { status: 'succeeded', provider: 'gateway', requestedModel: 'route-b', actualModel: 'model-b' },
+    ],
+  }));
+  assert.throws(() => assertGatewayModelReceipts({
+    modelRoutes: [
+      { requestedModel: 'route-a', expectedActualModel: 'model-a' },
+      { requestedModel: 'route-b', expectedActualModel: 'model-b' },
+    ],
+    modelCalls: [
+      { status: 'succeeded', provider: 'gateway', requestedModel: 'route-b', actualModel: 'model-a' },
+    ],
+  }), /invalid gateway model receipt/);
+});
+
+test('real smoke CLI failures expose only a stable message hash', () => {
+  const credential = 'postgres://operator:secret-value@localhost:5432/smoke';
+  const message = safeSmokeErrorMessage(new Error(`connection failed: ${credential}`));
+  assert.match(message, /^Current real smoke failed message_hash=[a-f0-9]{16}$/u);
+  assert.doesNotMatch(message, /operator|secret-value|postgres:/u);
+  assert.equal(message, safeSmokeErrorMessage(new Error(`connection failed: ${credential}`)));
+});
+
+test('real smoke enforces semantic Gold evidence and visual minimums in the CLI path', () => {
+  assert.doesNotThrow(() => assertSmokeReceiptMinimums({
+    evidenceCount: 3,
+    visualAssetCount: 0,
+    sources: ['https://one.test', 'https://two.test', 'https://three.test'],
+  }, { minPublicSources: 3, minVisualAssets: 0 }));
+  assert.throws(() => assertSmokeReceiptMinimums({
+    evidenceCount: 2,
+    visualAssetCount: 0,
+    sources: ['https://one.test', 'https://two.test'],
+  }, { minPublicSources: 3, minVisualAssets: 0 }), /evidence.*minimum/i);
+  assert.throws(() => assertSmokeReceiptMinimums({
+    evidenceCount: 3,
+    visualAssetCount: 0,
+    sources: ['https://one.test', 'https://ONE.test/', 'https://one.test/#same-source'],
+  }, { minPublicSources: 3, minVisualAssets: 0 }), /evidence.*minimum/i);
+  assert.throws(() => assertSmokeReceiptMinimums({
+    evidenceCount: 3,
+    visualAssetCount: 0,
+    sources: [
+      'https://example.test/path',
+      'https://example.test./%70ath',
+      'https://EXAMPLE.test/pa%74h#same-source',
+    ],
+  }, { minPublicSources: 3, minVisualAssets: 0 }), /evidence.*minimum/i);
+  assert.throws(() => assertSmokeReceiptMinimums({
+    evidenceCount: 3,
+    visualAssetCount: 1,
+    sources: ['https://one.test', 'https://two.test', 'https://three.test'],
+  }, { minPublicSources: 3, minVisualAssets: 2 }), /visual.*minimum/i);
+});
+
+test('real smoke accepts a profile-specific Skill instead of one global Skill pair', () => {
+  const selected = selectSmokeCandidate([
+    {
+      candidateId: 'depth',
+      plan: {
+        steps: [
+          { actor_type: 'tool', actor_id: 'tavily-web-search' },
+          { actor_type: 'skill', actor_id: 'competitive-web-research' },
+          { actor_type: 'llm', actor_id: 'current-llm' },
+          { actor_type: 'reviewer', actor_id: 'research-lead-reviewer' },
+        ],
+      },
+    },
+    {
+      candidateId: 'speed',
+      plan: {
+        steps: [
+          { actor_type: 'tool', actor_id: 'tavily-web-search' },
+          { actor_type: 'skill', actor_id: 'competitive-web-research' },
+          { actor_type: 'llm', actor_id: 'current-llm' },
+        ],
+      },
+    },
+  ]);
+
+  assert.equal(selected.candidateId, 'depth');
 });
 
 test('real smoke continues clarification until the requirement becomes ready', async () => {
@@ -113,26 +211,17 @@ test('real smoke bounds clarification to three rounds', async () => {
   assert.equal(rounds, 3);
 });
 
-test('current real smoke produces one receipt for each semantic Gold profile', realSmokeOptions, async () => {
+test('current real smoke produces one receipt for each supported full-real profile', realSmokeOptions, async () => {
   const smoke = await import('../scripts/current-real-smoke.ts') as {
     runCurrentRealSmoke: (input: { fixturePath: string; profiles: string[] }) => Promise<SmokeReceipt[]>;
   };
   const receipts = await smoke.runCurrentRealSmoke({
     fixturePath: join(process.cwd(), 'tests/fixtures/current-semantic-gold.json'),
-    profiles: [
-      'competitive_research',
-      'user_research_planning',
-      'voc_diagnosis',
-      'design_audit',
-      'a11y_audit',
-    ],
+    profiles: realProfiles,
   });
 
-  assert.equal(receipts.length, 5);
-  assert.deepEqual(
-    receipts.map((receipt) => receipt.profile).sort(),
-    ['a11y_audit', 'competitive_research', 'design_audit', 'user_research_planning', 'voc_diagnosis'],
-  );
+  assert.equal(receipts.length, realProfiles.length);
+  assert.deepEqual(receipts.map((receipt) => receipt.profile), realProfiles);
 });
 
 test('current real smoke receipts preserve task, plan, attempt, and Report Package identity', realSmokeOptions, async () => {
@@ -141,7 +230,7 @@ test('current real smoke receipts preserve task, plan, attempt, and Report Packa
   };
   const receipts = await smoke.runCurrentRealSmoke({
     fixturePath: join(process.cwd(), 'tests/fixtures/current-semantic-gold.json'),
-    profiles: ['competitive_research', 'user_research_planning', 'voc_diagnosis', 'design_audit', 'a11y_audit'],
+    profiles: realProfiles,
   });
 
   for (const key of ['taskId', 'planVersionId', 'attemptId', 'reportPackageId'] as const) {
@@ -157,15 +246,21 @@ test('current real smoke reports visual and evidence counts for every profile', 
   };
   const receipts = await smoke.runCurrentRealSmoke({
     fixturePath: join(process.cwd(), 'tests/fixtures/current-semantic-gold.json'),
-    profiles: ['competitive_research', 'user_research_planning', 'voc_diagnosis', 'design_audit', 'a11y_audit'],
+    profiles: realProfiles,
   });
   const fixture = JSON.parse(readFileSync(join(process.cwd(), 'tests/fixtures/current-semantic-gold.json'), 'utf8')) as {
-    scenarios: Array<{ profile: string; minPublicSources: number; minVisualAssets: number }>;
+    scenarios: Array<{
+      profile: string;
+      expectedDeliverableType: string;
+      minPublicSources: number;
+      minVisualAssets: number;
+    }>;
   };
 
   for (const receipt of receipts) {
     const expected = fixture.scenarios.find((scenario) => scenario.profile === receipt.profile);
     assert.ok(expected, `missing fixture profile ${receipt.profile}`);
+    assert.equal(receipt.deliverableType, expected.expectedDeliverableType);
     assert.ok(receipt.evidenceCount >= expected.minPublicSources, `${receipt.profile} evidence is insufficient`);
     assert.ok(receipt.visualAssetCount >= expected.minVisualAssets, `${receipt.profile} visual count is insufficient`);
   }
@@ -177,13 +272,16 @@ test('current real smoke is full-real, model-pinned, core-tool-backed, sealed, a
   };
   const receipts = await smoke.runCurrentRealSmoke({
     fixturePath: join(process.cwd(), 'tests/fixtures/current-semantic-gold.json'),
-    profiles: ['competitive_research', 'user_research_planning', 'voc_diagnosis', 'design_audit', 'a11y_audit'],
+    profiles: realProfiles,
   });
 
   for (const receipt of receipts) {
     assert.equal(receipt.provider, 'gateway');
-    assert.equal(receipt.requestedModel, process.env.LLM_MODEL_NAME);
-    assert.equal(receipt.actualModel, process.env.LLM_EXPECTED_ACTUAL_MODEL);
+    const expectedByRequested = new Map(
+      parseModelRoutes(process.env.LLM_MODEL_ROUTES, process.env.LLM_MODEL_NAME)
+        .map(({ requestedModel, expectedActualModel }) => [requestedModel, expectedActualModel]),
+    );
+    assert.equal(receipt.actualModel, expectedByRequested.get(receipt.requestedModel));
     assert.equal(receipt.coreTool, 'tavily-web-search');
     assert.equal(receipt.packageSealed, true);
     assert.ok(receipt.review.reviewerId);
@@ -199,7 +297,7 @@ test('current real smoke receipts and machine evidence never expose secrets or r
   };
   const receipts = await smoke.runCurrentRealSmoke({
     fixturePath: join(process.cwd(), 'tests/fixtures/current-semantic-gold.json'),
-    profiles: ['competitive_research', 'user_research_planning', 'voc_diagnosis', 'design_audit', 'a11y_audit'],
+    profiles: realProfiles,
   });
 
   for (const receipt of receipts) {

@@ -64,6 +64,8 @@ skills:
     inputs:
       - research_goal
       - competitor_screenshots
+    visual_inputs:
+      - competitor_screenshots
     outputs:
       - competitive_analysis
     intent_tags:
@@ -90,6 +92,8 @@ skills:
       - design_audit
       - user_research_planning
     inputs:
+      - designImage
+    visual_inputs:
       - designImage
     outputs:
       - design_review

@@ -64,6 +64,7 @@ export type VisualAssetIngestSource =
   | { kind: 'user_upload'; fileName: string; bytes: Uint8Array };
 
 export interface VisualAssetIngestInput extends AssetBinding {
+  activeLease?: ControlExecutionLease;
   source: VisualAssetIngestSource;
   exportPolicy: VisualAssetExportPolicy;
 }

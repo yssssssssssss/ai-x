@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
@@ -22,6 +22,7 @@ import {
   TaskWorkflowService,
 } from '../apps/orchestrator-runtime/src/control/task-workflow.ts';
 import { ControlArtifactStore } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
+import { VisualInputGateStore } from '../apps/orchestrator-runtime/src/control/visual-input-gate-store.ts';
 import { REPORT_REVIEW_DIMENSION_IDS } from '../packages/api-contract/control-workflow.ts';
 import {
   runMigrations,
@@ -79,6 +80,149 @@ class SelectionCommandFailingDatabase implements MigrationDatabase {
           throw new Error('simulated command persistence failure');
         }
         return connection.query(sql, values);
+      },
+      release() {
+        connection.release();
+      },
+    };
+  }
+}
+
+class ConfirmationReplayRaceRepository extends ControlPlaneRepository {
+  private commandReadSeen = false;
+  private taskReadReleased = false;
+  private announceCommandRead!: () => void;
+  private releaseTaskRead!: () => void;
+  readonly initialCommandRead = new Promise<void>((resolve) => {
+    this.announceCommandRead = resolve;
+  });
+  private readonly taskReadBarrier = new Promise<void>((resolve) => {
+    this.releaseTaskRead = resolve;
+  });
+
+  release(): void {
+    this.taskReadReleased = true;
+    this.releaseTaskRead();
+  }
+
+  override async getCommand(taskId: string, commandType: string, idempotencyKey: string) {
+    const command = await super.getCommand(taskId, commandType, idempotencyKey);
+    if (!this.commandReadSeen) {
+      this.commandReadSeen = true;
+      this.announceCommandRead();
+    }
+    return command;
+  }
+
+  override async getTaskDetail(taskId: string) {
+    if (this.commandReadSeen && !this.taskReadReleased) await this.taskReadBarrier;
+    return super.getTaskDetail(taskId);
+  }
+}
+
+class ConfirmationCommitFailingDatabase implements MigrationDatabase {
+  constructor(private readonly database: MigrationDatabase) {}
+
+  async connect(): Promise<MigrationConnection> {
+    const connection = await this.database.connect();
+    return {
+      async query(sql, values = []) {
+        if (
+          /UPDATE\s+control_tasks\s+SET\s+state\s*=\s*\$3,\s*state_version\s*=\s*state_version\s*\+\s*1/iu.test(sql)
+          && (values[2] === 'ready' || values[2] === 'awaiting_approval')
+        ) {
+          throw new Error('simulated confirmation commit failure');
+        }
+        return connection.query(sql, values);
+      },
+      release() {
+        connection.release();
+      },
+    };
+  }
+}
+
+class ReclaimingConfirmationRepository extends ControlPlaneRepository {
+  replacement: Awaited<ReturnType<VisualInputGateStore['publishPrepared']>> | undefined;
+
+  constructor(
+    database: MigrationDatabase,
+    private readonly administrativeDatabase: MigrationDatabase,
+    private readonly visualGates: VisualInputGateStore,
+    private readonly replacementValue: { dataUrl: string },
+  ) {
+    super(database);
+  }
+
+  override async completeConfirmationCommand(
+    input: Parameters<ControlPlaneRepository['completeConfirmationCommand']>[0],
+  ): Promise<Awaited<ReturnType<ControlPlaneRepository['completeConfirmationCommand']>>> {
+    const connection = await this.administrativeDatabase.connect();
+    try {
+      await connection.query(
+        `UPDATE control_commands SET reservation_expires_at = now() - interval '1 second'
+         WHERE task_id = $1 AND command_type = 'confirmation' AND idempotency_key = $2`,
+        [input.taskId, input.idempotencyKey],
+      );
+    } finally {
+      connection.release();
+    }
+    const reclaimed = await super.reserveConfirmationCommand({
+      taskId: input.taskId,
+      planVersionId: input.planVersionId,
+      idempotencyKey: input.idempotencyKey,
+      requestHash: input.requestHash,
+      expectedVersion: input.expectedVersion,
+      actorUserId: input.actorUserId,
+    });
+    if (reclaimed.status !== 'reserved') throw new Error('test could not reclaim confirmation');
+    const publicationId = await super.beginVisualPublication({
+      taskId: input.taskId,
+      planVersionId: input.planVersionId,
+      idempotencyKey: input.idempotencyKey,
+      requestHash: input.requestHash,
+      expectedVersion: input.expectedVersion,
+      reservationToken: reclaimed.reservationToken,
+    });
+    this.replacement = await this.visualGates.publishPrepared(await this.visualGates.prepare({
+      taskId: input.taskId,
+      planVersionId: input.planVersionId,
+      gateKey: 'designImage',
+      multiple: false,
+      requiredVisual: true,
+      value: this.replacementValue,
+    }), publicationId);
+    await super.completeConfirmationCommand({
+      ...input,
+      reservationToken: reclaimed.reservationToken,
+      publicationId,
+      gates: input.gates.map((gate) => gate.gateType === 'input'
+        ? { ...gate, value: undefined, evidenceRef: this.replacement!.evidenceRef }
+        : gate),
+    });
+    throw new Error('stale confirmation owner resumed after replacement committed');
+  }
+}
+
+class ConfirmationCommitAckFailingDatabase implements MigrationDatabase {
+  private confirmationCommitted = false;
+  private failed = false;
+
+  constructor(private readonly database: MigrationDatabase) {}
+
+  async connect(): Promise<MigrationConnection> {
+    const connection = await this.database.connect();
+    return {
+      query: async (sql, values = []) => {
+        const result = await connection.query(sql, values);
+        if (/UPDATE\s+control_visual_publications\s+SET\s+state\s*=\s*'COMMITTED'/iu.test(sql)) {
+          this.confirmationCommitted = true;
+        }
+        if (/^\s*COMMIT\s*$/iu.test(sql) && this.confirmationCommitted && !this.failed) {
+          this.failed = true;
+          throw new Error('simulated confirmation commit acknowledgement loss');
+        }
+        return result;
       },
       release() {
         connection.release();
@@ -194,7 +338,7 @@ function currentStep(overrides: Partial<CurrentPlanStep> = {}): CurrentPlanStep 
     depends_on: [],
     input: {},
     input_bindings: [],
-    expected_outputs: [{ pointer: '/result', description: 'workflow result' }],
+    expected_outputs: [{ pointer: '/text', description: 'workflow result' }],
     acceptance_criteria: ['workflow completes'],
     requires_approval: false,
     fallback_actor_ids: [],
@@ -435,6 +579,124 @@ test('malformed persisted workflow gate fails closed during confirmation', async
   );
 });
 
+test('rejects legacy pending inputs without an explicit kind before writing gates', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const workflow = new TaskWorkflowService(repository);
+  const created = await createCandidateTask(repository, 'legacy-pending-kind', {
+    candidateId: 'speed',
+    plan: currentPlan('', 'legacy-pending-kind', [currentStep({ input: { brief: null } })]),
+    pendingInputs: [{
+      role: 'brief',
+      label: '研究简报',
+      multiple: false,
+      targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'brief', multiple: false }],
+    }],
+  });
+  const selection = await workflow.select({
+    taskId: created.task.id,
+    expectedVersion: created.task.stateVersion,
+    idempotencyKey: 'legacy-pending-kind-select',
+    actor: { userId: ownerId, role: 'owner' },
+    planVersionId: created.candidates.find((candidate) => candidate.candidateId === 'speed')!.id,
+  });
+
+  await assert.rejects(() => workflow.confirm({
+    taskId: created.task.id,
+    planVersionId: selection.planVersionId,
+    expectedVersion: selection.stateVersion,
+    idempotencyKey: 'legacy-pending-kind-confirm',
+    actor: { userId: ownerId, role: 'owner' },
+    confirmationAnswers: {},
+    inputValues: { brief: '已提供' },
+  }), TaskWorkflowGateError);
+  const persisted = await repository.getTaskDetail(created.task.id);
+  assert.equal(persisted?.state, 'awaiting_confirmation');
+  assert.deepEqual(await repository.listGateRecords(created.task.id, selection.planVersionId), []);
+});
+
+test('rejects malformed or ambiguous pending input contracts before writing gates', async () => {
+  const malformedInputs: unknown[][] = [
+    [{
+      kind: 'value',
+      role: 'brief',
+      label: '研究简报',
+      targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'brief', multiple: false }],
+    }],
+    [{
+      kind: 'value',
+      key: 'brief',
+      label: '研究简报',
+      multiple: false,
+      targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'brief', multiple: false }],
+    }],
+    [{
+      kind: 'value',
+      role: 'brief',
+      label: '研究简报',
+      multiple: false,
+      targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'brief', multiple: false }],
+    }, {
+      kind: 'visual',
+      role: 'brief',
+      label: '重复角色',
+      multiple: false,
+      targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'image', multiple: false }],
+    }],
+    [{
+      kind: 'value',
+      role: 'brief',
+      label: '研究简报',
+      multiple: false,
+      unexpected: true,
+      targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'brief', multiple: false }],
+    }],
+    [{
+      kind: 'value',
+      role: 'brief',
+      label: '研究简报',
+      multiple: false,
+      targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'shared', multiple: false }],
+    }, {
+      kind: 'value',
+      role: 'note',
+      label: '备注',
+      multiple: false,
+      targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'shared', multiple: false }],
+    }],
+  ];
+
+  for (const [index, pendingInputs] of malformedInputs.entries()) {
+    const repository = new ControlPlaneRepository(scopedDatabase);
+    const workflow = new TaskWorkflowService(repository);
+    const created = await createCandidateTask(repository, `malformed-pending-${index}`, {
+      candidateId: 'speed',
+      plan: currentPlan('', `malformed-pending-${index}`, [currentStep({
+        input: { brief: null, note: null, image: null, shared: null },
+      })]),
+      pendingInputs,
+    });
+    const selection = await workflow.select({
+      taskId: created.task.id,
+      expectedVersion: created.task.stateVersion,
+      idempotencyKey: `malformed-pending-select-${index}`,
+      actor: { userId: ownerId, role: 'owner' },
+      planVersionId: created.candidates.find((candidate) => candidate.candidateId === 'speed')!.id,
+    });
+
+    await assert.rejects(() => workflow.confirm({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      expectedVersion: selection.stateVersion,
+      idempotencyKey: `malformed-pending-confirm-${index}`,
+      actor: { userId: ownerId, role: 'owner' },
+      confirmationAnswers: {},
+      inputValues: { brief: 'brief', note: 'note' },
+    }), TaskWorkflowGateError);
+    assert.equal((await repository.getTaskDetail(created.task.id))?.state, 'awaiting_confirmation');
+    assert.deepEqual(await repository.listGateRecords(created.task.id, selection.planVersionId), []);
+  }
+});
+
 test('rejects extra input roles before writing gates or transitioning state', async () => {
   const repository = new ControlPlaneRepository(scopedDatabase);
   const workflow = new TaskWorkflowService(repository);
@@ -442,6 +704,7 @@ test('rejects extra input roles before writing gates or transitioning state', as
     candidateId: 'speed',
     plan: currentPlan('', 'extra-input', [currentStep({ input: { brief: null } })]),
     pendingInputs: [{
+      kind: 'value',
       role: 'brief',
       label: '研究简报',
       multiple: false,
@@ -473,58 +736,894 @@ test('rejects extra input roles before writing gates or transitioning state', as
 });
 
 test('rejects invalid nested visual inputs before writing gates or transitioning state', async () => {
+  const artifactRoot = mkdtempSync(join(tmpdir(), 'task-workflow-invalid-visual-'));
+  try {
+    const repository = new ControlPlaneRepository(scopedDatabase);
+    const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+    const workflow = new TaskWorkflowService(
+      repository,
+      undefined,
+      undefined,
+      undefined,
+      new VisualInputGateStore(artifacts),
+    );
+    const created = await createCandidateTask(repository, 'invalid-visual-input', {
+      candidateId: 'speed',
+      plan: currentPlan('', 'invalid-visual-input', [currentStep({ input: { screenshots: null } })]),
+      pendingInputs: [{
+        kind: 'visual',
+        role: 'screenshots',
+        label: '竞品截图',
+        multiple: true,
+        targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'screenshots', multiple: true }],
+      }],
+    });
+    const selection = await workflow.select({
+      taskId: created.task.id,
+      expectedVersion: created.task.stateVersion,
+      idempotencyKey: 'invalid-visual-input-select',
+      actor: { userId: ownerId, role: 'owner' },
+      planVersionId: created.candidates.find((candidate) => candidate.candidateId === 'speed')!.id,
+    });
+    const invalidDataUrls: unknown[] = [
+      'data:image/gif;base64,AAAA',
+      'data:image/png;base64,',
+      'data:image/jpeg;base64,%%%',
+      'data:image/webp;base64,Y Q==',
+      'data:image/jpeg;base64,YQ==\n',
+      'data:image/png;base64,AB==',
+      'data:image/png;base64,YQ==',
+      'data:image/png;base64,iVBORw0KGgo=',
+      'data:image/jpeg;base64,/9j/',
+      'data:image/webp;base64,UklGRgAAAABXRUJQ',
+      null,
+    ];
+
+    for (const [index, dataUrl] of invalidDataUrls.entries()) {
+      await assert.rejects(
+        () => workflow.confirm({
+          taskId: created.task.id,
+          planVersionId: selection.planVersionId,
+          expectedVersion: selection.stateVersion,
+          idempotencyKey: `invalid-visual-input-confirm-${index}`,
+          actor: { userId: ownerId, role: 'owner' },
+          confirmationAnswers: {},
+          inputValues: { screenshots: [{ dataUrl }] },
+        }),
+        TaskWorkflowGateError,
+      );
+    }
+
+    const persisted = await repository.getTaskDetail(created.task.id);
+    assert.equal(persisted?.state, 'awaiting_confirmation');
+    assert.equal(persisted?.stateVersion, selection.stateVersion);
+    assert.deepEqual(await repository.listGateRecords(created.task.id, selection.planVersionId), []);
+    const connection = await scopedDatabase.connect();
+    try {
+      const result = await connection.query(
+        `SELECT count(*)::int AS count FROM control_artifacts WHERE task_id = $1 AND plan_version_id = $2`,
+        [created.task.id, selection.planVersionId],
+      );
+      assert.equal(result.rows[0]?.count, 0);
+      const commands = await connection.query(
+        `SELECT count(*)::int AS count FROM control_commands
+         WHERE task_id = $1 AND command_type = 'confirmation'`,
+        [created.task.id],
+      );
+      assert.equal(commands.rows[0]?.count, 0);
+    } finally {
+      connection.release();
+    }
+  } finally {
+    rmSync(artifactRoot, { recursive: true, force: true });
+  }
+});
+
+test('validates every pending input before sealing any visual Artifact', async () => {
+  const artifactRoot = mkdtempSync(join(tmpdir(), 'task-workflow-visual-preflight-'));
+  try {
+    const repository = new ControlPlaneRepository(scopedDatabase);
+    const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+    const workflow = new TaskWorkflowService(
+      repository,
+      undefined,
+      undefined,
+      undefined,
+      new VisualInputGateStore(artifacts),
+    );
+    const created = await createCandidateTask(repository, 'visual-preflight', {
+      candidateId: 'speed',
+      plan: currentPlan('', 'visual-preflight', [currentStep({
+        input: { designImage: null, competitorImage: null },
+      })]),
+      pendingInputs: [
+        {
+          kind: 'visual',
+          role: 'designImage',
+          label: '设计稿',
+          multiple: false,
+          targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'designImage', multiple: false }],
+        },
+        {
+          kind: 'visual',
+          role: 'competitorImage',
+          label: '竞品图',
+          multiple: false,
+          targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'competitorImage', multiple: false }],
+        },
+      ],
+    });
+    const selection = await workflow.select({
+      taskId: created.task.id,
+      expectedVersion: created.task.stateVersion,
+      idempotencyKey: 'visual-preflight-select',
+      actor: { userId: ownerId, role: 'owner' },
+      planVersionId: created.candidates.find((candidate) => candidate.candidateId === 'speed')!.id,
+    });
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64',
+    );
+
+    await assert.rejects(() => workflow.confirm({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      expectedVersion: selection.stateVersion,
+      idempotencyKey: 'visual-preflight-confirm',
+      actor: { userId: ownerId, role: 'owner' },
+      confirmationAnswers: {},
+      inputValues: {
+        designImage: { dataUrl: `data:image/png;base64,${png.toString('base64')}` },
+        competitorImage: { url: 'https://images.example.test/competitor.png' },
+      },
+    }), TaskWorkflowGateError);
+
+    const persisted = await repository.getTaskDetail(created.task.id);
+    assert.equal(persisted?.state, 'awaiting_confirmation');
+    assert.equal(persisted?.stateVersion, selection.stateVersion);
+    assert.deepEqual(await repository.listGateRecords(created.task.id, selection.planVersionId), []);
+    const connection = await scopedDatabase.connect();
+    try {
+      const result = await connection.query(
+        `SELECT count(*)::int AS count FROM control_artifacts WHERE task_id = $1 AND plan_version_id = $2`,
+        [created.task.id, selection.planVersionId],
+      );
+      assert.equal(result.rows[0]?.count, 0);
+      const commands = await connection.query(
+        `SELECT count(*)::int AS count FROM control_commands
+         WHERE task_id = $1 AND command_type = 'confirmation'`,
+        [created.task.id],
+      );
+      assert.equal(commands.rows[0]?.count, 0);
+    } finally {
+      connection.release();
+    }
+  } finally {
+    rmSync(artifactRoot, { recursive: true, force: true });
+  }
+});
+
+test('seals valid visual input and stores only its Artifact reference in the gate row', async () => {
+  const artifactRoot = mkdtempSync(join(tmpdir(), 'task-workflow-visual-input-'));
+  try {
+    const repository = new ControlPlaneRepository(scopedDatabase);
+    const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+    const workflow = new TaskWorkflowService(
+      repository,
+      undefined,
+      undefined,
+      undefined,
+      new VisualInputGateStore(artifacts),
+    );
+    const created = await createCandidateTask(repository, 'sealed-visual-input', {
+      candidateId: 'speed',
+      plan: currentPlan('', 'sealed-visual-input', [currentStep({ input: { designImage: null } })]),
+      pendingInputs: [{
+        kind: 'visual',
+        role: 'designImage',
+        label: '设计稿',
+        multiple: false,
+        targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'designImage', multiple: false }],
+      }],
+    });
+    const selection = await workflow.select({
+      taskId: created.task.id,
+      expectedVersion: created.task.stateVersion,
+      idempotencyKey: 'sealed-visual-input-select',
+      actor: { userId: ownerId, role: 'owner' },
+      planVersionId: created.candidates.find((candidate) => candidate.candidateId === 'speed')!.id,
+    });
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64',
+    );
+    const dataUrl = `data:image/png;base64,${png.toString('base64')}`;
+
+    await workflow.confirm({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      expectedVersion: selection.stateVersion,
+      idempotencyKey: 'sealed-visual-input-confirm',
+      actor: { userId: ownerId, role: 'owner' },
+      confirmationAnswers: {},
+      inputValues: { designImage: { dataUrl } },
+    });
+
+    const [gate] = await repository.listGateRecords(created.task.id, selection.planVersionId);
+    assert.equal(gate?.value, null);
+    assert.equal(typeof gate?.evidenceRef, 'string');
+    const connection = await scopedDatabase.connect();
+    try {
+      const persisted = await connection.query(
+        `SELECT value_json::text AS value_json, evidence_ref
+         FROM control_gate_records
+         WHERE task_id = $1 AND plan_version_id = $2 AND gate_type = 'input'`,
+        [created.task.id, selection.planVersionId],
+      );
+      assert.equal(persisted.rows[0]?.value_json, null);
+      assert.equal(persisted.rows[0]?.evidence_ref, gate?.evidenceRef);
+      const publication = await connection.query(
+        `SELECT publication.id, publication.state, publication.evidence_refs,
+                count(artifact.id)::int AS artifact_count,
+                count(DISTINCT artifact.publication_id)::int AS publication_count
+         FROM control_visual_publications AS publication
+         JOIN control_artifacts AS artifact ON artifact.publication_id = publication.id
+         WHERE publication.task_id = $1 AND publication.plan_version_id = $2
+         GROUP BY publication.id, publication.state, publication.evidence_refs`,
+        [created.task.id, selection.planVersionId],
+      );
+      assert.equal(publication.rows[0]?.state, 'COMMITTED');
+      assert.deepEqual(publication.rows[0]?.evidence_refs, [gate?.evidenceRef]);
+      assert.equal(publication.rows[0]?.artifact_count, 2);
+      assert.equal(publication.rows[0]?.publication_count, 1);
+    } finally {
+      connection.release();
+    }
+    const manifest = await artifacts.readVerifiedBoundJson<unknown>(gate!.evidenceRef!);
+    assert.doesNotMatch(JSON.stringify(manifest.value), /data:image|base64/u);
+  } finally {
+    rmSync(artifactRoot, { recursive: true, force: true });
+  }
+});
+
+test('rolls back every gate, releases the reservation, and fails published visuals when confirmation commit fails', async () => {
+  const artifactRoot = mkdtempSync(join(tmpdir(), 'task-workflow-confirmation-rollback-'));
+  try {
+    const repository = new ControlPlaneRepository(scopedDatabase);
+    const created = await createCandidateTask(repository, 'confirmation-rollback', {
+      candidateId: 'speed',
+      plan: currentPlan('', 'confirmation-rollback', [currentStep({ input: { designImage: null } })]),
+      pendingInputs: [{
+        kind: 'visual',
+        role: 'designImage',
+        label: '设计稿',
+        multiple: false,
+        targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'designImage', multiple: false }],
+      }],
+    });
+    const selection = await new TaskWorkflowService(repository).select({
+      taskId: created.task.id,
+      expectedVersion: created.task.stateVersion,
+      idempotencyKey: 'confirmation-rollback-select',
+      actor: { userId: ownerId, role: 'owner' },
+      planVersionId: created.candidates.find((candidate) => candidate.candidateId === 'speed')!.id,
+    });
+    const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+    const failingRepository = new ControlPlaneRepository(
+      new ConfirmationCommitFailingDatabase(scopedDatabase),
+    );
+    const workflow = new TaskWorkflowService(
+      failingRepository,
+      undefined,
+      undefined,
+      undefined,
+      new VisualInputGateStore(artifacts),
+    );
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64',
+    );
+
+    await assert.rejects(() => workflow.confirm({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      expectedVersion: selection.stateVersion,
+      idempotencyKey: 'confirmation-rollback-confirm',
+      actor: { userId: ownerId, role: 'owner' },
+      confirmationAnswers: {},
+      inputValues: { designImage: { dataUrl: `data:image/png;base64,${png.toString('base64')}` } },
+    }), /simulated confirmation commit failure/u);
+
+    const persisted = await repository.getTaskDetail(created.task.id);
+    assert.equal(persisted?.state, 'awaiting_confirmation');
+    assert.equal(persisted?.stateVersion, selection.stateVersion);
+    assert.deepEqual(await repository.listGateRecords(created.task.id, selection.planVersionId), []);
+    const connection = await scopedDatabase.connect();
+    try {
+      const commands = await connection.query(
+        `SELECT count(*)::int AS count FROM control_commands
+         WHERE task_id = $1 AND command_type = 'confirmation'`,
+        [created.task.id],
+      );
+      assert.equal(commands.rows[0]?.count, 0);
+      const published = await connection.query(
+        `SELECT state FROM control_artifacts
+         WHERE task_id = $1 AND plan_version_id = $2
+         ORDER BY created_at, id`,
+        [created.task.id, selection.planVersionId],
+      );
+      assert.equal(published.rows.length, 2);
+      assert.ok(published.rows.every(({ state }) => state === 'FAILED'));
+      const publication = await connection.query(
+        `SELECT state FROM control_visual_publications
+         WHERE task_id = $1 AND plan_version_id = $2`,
+        [created.task.id, selection.planVersionId],
+      );
+      assert.deepEqual(publication.rows, [{ state: 'ABANDONED' }]);
+    } finally {
+      connection.release();
+    }
+  } finally {
+    rmSync(artifactRoot, { recursive: true, force: true });
+  }
+});
+
+test('keeps committed confirmation Artifacts sealed when the commit acknowledgement is lost', async () => {
+  const artifactRoot = mkdtempSync(join(tmpdir(), 'task-workflow-confirmation-commit-ack-'));
+  try {
+    const repository = new ControlPlaneRepository(scopedDatabase);
+    const created = await createCandidateTask(repository, 'confirmation-commit-ack', {
+      candidateId: 'speed',
+      plan: currentPlan('', 'confirmation-commit-ack', [currentStep({ input: { designImage: null } })]),
+      pendingInputs: [{
+        kind: 'visual',
+        role: 'designImage',
+        label: '设计稿',
+        multiple: false,
+        targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'designImage', multiple: false }],
+      }],
+    });
+    const selection = await new TaskWorkflowService(repository).select({
+      taskId: created.task.id,
+      expectedVersion: created.task.stateVersion,
+      idempotencyKey: 'confirmation-commit-ack-select',
+      actor: { userId: ownerId, role: 'owner' },
+      planVersionId: created.candidates.find((candidate) => candidate.candidateId === 'speed')!.id,
+    });
+    const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+    const uncertainRepository = new ControlPlaneRepository(
+      new ConfirmationCommitAckFailingDatabase(scopedDatabase),
+    );
+    const workflow = new TaskWorkflowService(
+      uncertainRepository,
+      undefined,
+      undefined,
+      undefined,
+      new VisualInputGateStore(artifacts),
+    );
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64',
+    );
+
+    const confirmed = await workflow.confirm({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      expectedVersion: selection.stateVersion,
+      idempotencyKey: 'confirmation-commit-ack-confirm',
+      actor: { userId: ownerId, role: 'owner' },
+      confirmationAnswers: {},
+      inputValues: { designImage: { dataUrl: `data:image/png;base64,${png.toString('base64')}` } },
+    });
+
+    assert.equal(confirmed.state, 'ready');
+    assert.equal((await repository.listGateRecords(created.task.id, selection.planVersionId)).length, 1);
+    const connection = await scopedDatabase.connect();
+    try {
+      const published = await connection.query(
+        `SELECT state FROM control_artifacts
+         WHERE task_id = $1 AND plan_version_id = $2
+         ORDER BY created_at, id`,
+        [created.task.id, selection.planVersionId],
+      );
+      assert.equal(published.rows.length, 2);
+      assert.ok(published.rows.every(({ state }) => state === 'SEALED'));
+      const publication = await connection.query(
+        `SELECT state FROM control_visual_publications
+         WHERE task_id = $1 AND plan_version_id = $2`,
+        [created.task.id, selection.planVersionId],
+      );
+      assert.deepEqual(publication.rows, [{ state: 'COMMITTED' }]);
+    } finally {
+      connection.release();
+    }
+  } finally {
+    rmSync(artifactRoot, { recursive: true, force: true });
+  }
+});
+
+test('invalidates stale publications after an expired confirmation is reclaimed and committed', async () => {
+  const artifactRoot = mkdtempSync(join(tmpdir(), 'task-workflow-confirmation-reclaim-'));
+  try {
+    const repository = new ControlPlaneRepository(scopedDatabase);
+    const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+    const visualGates = new VisualInputGateStore(artifacts);
+    const created = await createCandidateTask(repository, 'confirmation-reclaim', {
+      candidateId: 'speed',
+      plan: currentPlan('', 'confirmation-reclaim', [currentStep({ input: { designImage: null } })]),
+      pendingInputs: [{
+        kind: 'visual',
+        role: 'designImage',
+        label: '设计稿',
+        multiple: false,
+        targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'designImage', multiple: false }],
+      }],
+    });
+    const selection = await new TaskWorkflowService(repository).select({
+      taskId: created.task.id,
+      expectedVersion: created.task.stateVersion,
+      idempotencyKey: 'confirmation-reclaim-select',
+      actor: { userId: ownerId, role: 'owner' },
+      planVersionId: created.candidates.find((candidate) => candidate.candidateId === 'speed')!.id,
+    });
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64',
+    );
+    const value = { dataUrl: `data:image/png;base64,${png.toString('base64')}` };
+    const reclaimingRepository = new ReclaimingConfirmationRepository(
+      scopedDatabase,
+      scopedDatabase,
+      visualGates,
+      value,
+    );
+    const workflow = new TaskWorkflowService(
+      reclaimingRepository,
+      undefined,
+      undefined,
+      undefined,
+      visualGates,
+    );
+
+    const result = await workflow.confirm({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      expectedVersion: selection.stateVersion,
+      idempotencyKey: 'confirmation-reclaim-confirm',
+      actor: { userId: ownerId, role: 'owner' },
+      confirmationAnswers: {},
+      inputValues: { designImage: value },
+    });
+
+    assert.equal(result.state, 'ready');
+    const replacement = reclaimingRepository.replacement!;
+    const [gate] = await repository.listGateRecords(created.task.id, selection.planVersionId);
+    assert.equal(gate?.evidenceRef, replacement.evidenceRef);
+    const connection = await scopedDatabase.connect();
+    try {
+      const published = await connection.query(
+        `SELECT id, state FROM control_artifacts
+         WHERE task_id = $1 AND plan_version_id = $2`,
+        [created.task.id, selection.planVersionId],
+      );
+      const states = new Map(published.rows.map(({ id, state }) => [String(id), String(state)]));
+      assert.ok(replacement.artifactIds.every((artifactId) => states.get(artifactId) === 'SEALED'));
+      assert.equal([...states.values()].filter((state) => state === 'SEALED').length, 2);
+      assert.equal([...states.values()].filter((state) => state === 'FAILED').length, 2);
+      const publications = await connection.query(
+        `SELECT state, count(*)::int AS count FROM control_visual_publications
+         WHERE task_id = $1 AND plan_version_id = $2
+         GROUP BY state ORDER BY state`,
+        [created.task.id, selection.planVersionId],
+      );
+      assert.deepEqual(publications.rows, [
+        { state: 'ABANDONED', count: 1 },
+        { state: 'COMMITTED', count: 1 },
+      ]);
+    } finally {
+      connection.release();
+    }
+  } finally {
+    rmSync(artifactRoot, { recursive: true, force: true });
+  }
+});
+
+test('recovers only expired visual publications and is idempotent', async () => {
+  const artifactRoot = mkdtempSync(join(tmpdir(), 'task-workflow-publication-recovery-'));
+  try {
+    const repository = new ControlPlaneRepository(scopedDatabase);
+    const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+    const visualGates = new VisualInputGateStore(artifacts);
+    const created = await createCandidateTask(repository, 'publication-recovery', {
+      candidateId: 'speed',
+      plan: currentPlan('', 'publication-recovery', [currentStep({ input: { designImage: null } })]),
+      pendingInputs: [{
+        kind: 'visual', role: 'designImage', label: '设计稿', multiple: false,
+        targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'designImage', multiple: false }],
+      }],
+    });
+    const selection = await new TaskWorkflowService(repository).select({
+      taskId: created.task.id,
+      expectedVersion: created.task.stateVersion,
+      idempotencyKey: 'publication-recovery-select',
+      actor: { userId: ownerId, role: 'owner' },
+      planVersionId: created.candidates.find((candidate) => candidate.candidateId === 'speed')!.id,
+    });
+    const requestHash = 'sha256:publication-recovery';
+    const reserved = await repository.reserveConfirmationCommand({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      idempotencyKey: 'publication-recovery-confirm',
+      requestHash,
+      expectedVersion: selection.stateVersion,
+      actorUserId: ownerId,
+    });
+    assert.equal(reserved.status, 'reserved');
+    if (reserved.status !== 'reserved') throw new Error('fixture confirmation was not reserved');
+    const publicationId = await repository.beginVisualPublication({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      idempotencyKey: 'publication-recovery-confirm',
+      requestHash,
+      expectedVersion: selection.stateVersion,
+      reservationToken: reserved.reservationToken,
+    });
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64',
+    );
+    const publication = await visualGates.publishPrepared(await visualGates.prepare({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      gateKey: 'designImage',
+      multiple: false,
+      requiredVisual: true,
+      value: { dataUrl: `data:image/png;base64,${png.toString('base64')}` },
+    }), publicationId);
+    const staging = await repository.createStagingArtifact({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      publicationId,
+      kind: 'visual_input_image',
+      storageUri: join(artifactRoot, 'unsealed-race.png'),
+      schemaVersion: 'visual-input-image-v1',
+      sensitivity: 'internal',
+      redactionPolicyVersion: 'v1',
+    });
+
+    assert.equal(await repository.recoverVisualPublications(), 0, 'live reservation must not be reclaimed');
+    assert.ok((await Promise.all(publication.artifactIds.map((id) => repository.getArtifact(id))))
+      .every((artifact) => artifact?.state === 'SEALED'));
+    const connection = await scopedDatabase.connect();
+    try {
+      await connection.query(
+        `UPDATE control_commands SET reservation_expires_at = now() - interval '1 second'
+         WHERE task_id = $1 AND command_type = 'confirmation' AND idempotency_key = $2`,
+        [created.task.id, 'publication-recovery-confirm'],
+      );
+    } finally {
+      connection.release();
+    }
+    assert.equal(await repository.recoverVisualPublications(), 1);
+    assert.equal(await repository.recoverVisualPublications(), 0, 'terminal recovery must be idempotent');
+    assert.ok((await Promise.all(publication.artifactIds.map((id) => repository.getArtifact(id))))
+      .every((artifact) => artifact?.state === 'FAILED'));
+    assert.equal((await repository.getArtifact(staging.id))?.state, 'FAILED');
+    await assert.rejects(() => repository.sealArtifact({
+      artifactId: staging.id,
+      contentSha256: `sha256:${'a'.repeat(64)}`,
+      byteSize: 1,
+    }), /cannot be sealed/u);
+    await assert.rejects(() => repository.createStagingArtifact({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      publicationId,
+      kind: 'visual_input_image',
+      storageUri: join(artifactRoot, 'late-race.png'),
+      schemaVersion: 'visual-input-image-v1',
+      sensitivity: 'internal',
+      redactionPolicyVersion: 'v1',
+    }), /is not publishing/u);
+  } finally {
+    rmSync(artifactRoot, { recursive: true, force: true });
+  }
+});
+
+test('confirmation commit and failure settlement share a deadlock-free lock order', { timeout: 2_000 }, async () => {
+  const artifactRoot = mkdtempSync(join(tmpdir(), 'task-workflow-publication-lock-order-'));
+  try {
+    const repository = new ControlPlaneRepository(scopedDatabase);
+    const visualGates = new VisualInputGateStore(new ControlArtifactStore({ root: artifactRoot, registry: repository }));
+    const created = await createCandidateTask(repository, 'publication-lock-order', {
+      candidateId: 'speed',
+      plan: currentPlan('', 'publication-lock-order', [currentStep({ input: { designImage: null } })]),
+      pendingInputs: [{
+        kind: 'visual', role: 'designImage', label: '设计稿', multiple: false,
+        targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'designImage', multiple: false }],
+      }],
+    });
+    const selectedPlan = created.candidates.find((candidate) => candidate.candidateId === 'speed')!;
+    const selection = await new TaskWorkflowService(repository).select({
+      taskId: created.task.id,
+      expectedVersion: created.task.stateVersion,
+      idempotencyKey: 'publication-lock-order-select',
+      actor: { userId: ownerId, role: 'owner' },
+      planVersionId: selectedPlan.id,
+    });
+    const requestHash = 'sha256:publication-lock-order';
+    const idempotencyKey = 'publication-lock-order-confirm';
+    const reserved = await repository.reserveConfirmationCommand({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      idempotencyKey,
+      requestHash,
+      expectedVersion: selection.stateVersion,
+      actorUserId: ownerId,
+    });
+    if (reserved.status !== 'reserved') throw new Error('fixture confirmation was not reserved');
+    const publicationId = await repository.beginVisualPublication({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      idempotencyKey,
+      requestHash,
+      expectedVersion: selection.stateVersion,
+      reservationToken: reserved.reservationToken,
+    });
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64',
+    );
+    const published = await visualGates.publishPrepared(await visualGates.prepare({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      gateKey: 'designImage',
+      multiple: false,
+      requiredVisual: true,
+      value: { dataUrl: `data:image/png;base64,${png.toString('base64')}` },
+    }), publicationId);
+    const common = {
+      publicationId,
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      idempotencyKey,
+      requestHash,
+      expectedVersion: selection.stateVersion,
+      reservationToken: reserved.reservationToken,
+    };
+    const [committed, settled] = await Promise.all([
+      repository.completeConfirmationCommand({
+        ...common,
+        planHash: selectedPlan.planHash,
+        actorUserId: ownerId,
+        actorRole: 'owner',
+        nextState: 'ready',
+        gates: [{
+          gateType: 'input', gateKey: 'designImage', requiredAuthority: 'owner',
+          decision: 'provided', evidenceRef: published.evidenceRef,
+          idempotencyKey: `${idempotencyKey}:input:designImage`,
+        }],
+      }),
+      repository.settleVisualPublicationAfterFailure({
+        ...common,
+        releaseReservation: false,
+        reason: 'concurrent failure observer',
+      }),
+    ]);
+    assert.equal(committed.state, 'ready');
+    assert.ok(settled === 'live' || settled === 'committed');
+  } finally {
+    rmSync(artifactRoot, { recursive: true, force: true });
+  }
+});
+
+test('replays a concurrent confirmation after the first request commits between command and task reads', async () => {
   const repository = new ControlPlaneRepository(scopedDatabase);
-  const workflow = new TaskWorkflowService(repository);
-  const created = await createCandidateTask(repository, 'invalid-visual-input', {
+  const firstWorkflow = new TaskWorkflowService(repository);
+  const created = await createCandidateTask(repository, 'confirmation-replay-race', {
     candidateId: 'speed',
-    plan: currentPlan('', 'invalid-visual-input', [currentStep({ input: { screenshots: null } })]),
-    pendingInputs: [{
-      role: 'screenshots',
-      label: '竞品截图',
-      multiple: true,
-      targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'screenshots', multiple: true }],
-    }],
   });
-  const selection = await workflow.select({
+  const selection = await firstWorkflow.select({
     taskId: created.task.id,
     expectedVersion: created.task.stateVersion,
-    idempotencyKey: 'invalid-visual-input-select',
+    idempotencyKey: 'confirmation-replay-race-select',
     actor: { userId: ownerId, role: 'owner' },
     planVersionId: created.candidates.find((candidate) => candidate.candidateId === 'speed')!.id,
   });
-  const invalidDataUrls: unknown[] = [
-    'data:image/gif;base64,AAAA',
-    'data:image/png;base64,',
-    'data:image/jpeg;base64,%%%',
-    'data:image/webp;base64,Y Q==',
-    'data:image/jpeg;base64,YQ==\n',
-    'data:image/png;base64,AB==',
-    'data:image/png;base64,YQ==',
-    'data:image/png;base64,iVBORw0KGgo=',
-    'data:image/jpeg;base64,/9j/',
-    'data:image/webp;base64,UklGRgAAAABXRUJQ',
-    null,
-  ];
+  const confirmation = {
+    taskId: created.task.id,
+    planVersionId: selection.planVersionId,
+    expectedVersion: selection.stateVersion,
+    idempotencyKey: 'confirmation-replay-race-confirm',
+    actor: { userId: ownerId, role: 'owner' as const },
+    confirmationAnswers: {},
+    inputValues: {},
+  };
+  const racingRepository = new ConfirmationReplayRaceRepository(scopedDatabase);
+  const replayPromise = new TaskWorkflowService(racingRepository).confirm(confirmation);
+  await racingRepository.initialCommandRead;
 
-  for (const [index, dataUrl] of invalidDataUrls.entries()) {
-    await assert.rejects(
-      () => workflow.confirm({
-        taskId: created.task.id,
-        planVersionId: selection.planVersionId,
-        expectedVersion: selection.stateVersion,
-        idempotencyKey: `invalid-visual-input-confirm-${index}`,
-        actor: { userId: ownerId, role: 'owner' },
-        confirmationAnswers: {},
-        inputValues: { screenshots: { nested: [{ dataUrl }] } },
-      }),
-      TaskWorkflowGateError,
+  const committed = await firstWorkflow.confirm(confirmation);
+  racingRepository.release();
+  const replayed = await replayPromise;
+
+  assert.deepEqual(replayed, committed);
+  assert.equal((await repository.listGateRecords(created.task.id, selection.planVersionId)).length, 0);
+});
+
+test('allows only one concurrent confirmation to seal inputs and leaves the task executable', async () => {
+  const artifactRoot = mkdtempSync(join(tmpdir(), 'task-workflow-concurrent-confirmation-'));
+  try {
+    const repository = new ControlPlaneRepository(scopedDatabase);
+    const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+    const workflow = new TaskWorkflowService(
+      repository,
+      {
+        execute: async ({ lease }) => {
+          await repository.completeExecution(lease);
+          return { status: 'completed', attemptId: lease.attemptId };
+        },
+      },
+      undefined,
+      undefined,
+      new VisualInputGateStore(artifacts),
     );
-  }
+    const created = await createCandidateTask(repository, 'concurrent-confirmation', {
+      candidateId: 'speed',
+      plan: currentPlan('', 'concurrent-confirmation', [currentStep({ input: { designImage: null } })]),
+      pendingInputs: [{
+        kind: 'visual',
+        role: 'designImage',
+        label: '设计稿',
+        multiple: false,
+        targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'designImage', multiple: false }],
+      }],
+    });
+    const selection = await workflow.select({
+      taskId: created.task.id,
+      expectedVersion: created.task.stateVersion,
+      idempotencyKey: 'concurrent-confirmation-select',
+      actor: { userId: ownerId, role: 'owner' },
+      planVersionId: created.candidates.find((candidate) => candidate.candidateId === 'speed')!.id,
+    });
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64',
+    );
+    const base = {
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      expectedVersion: selection.stateVersion,
+      actor: { userId: ownerId, role: 'owner' as const },
+      confirmationAnswers: {},
+      inputValues: { designImage: { dataUrl: `data:image/png;base64,${png.toString('base64')}` } },
+    };
 
-  const persisted = await repository.getTaskDetail(created.task.id);
-  assert.equal(persisted?.state, 'awaiting_confirmation');
-  assert.equal(persisted?.stateVersion, selection.stateVersion);
-  assert.deepEqual(await repository.listGateRecords(created.task.id, selection.planVersionId), []);
+    const confirmations = await Promise.allSettled([
+      workflow.confirm({ ...base, idempotencyKey: 'concurrent-confirmation-a' }),
+      workflow.confirm({ ...base, idempotencyKey: 'concurrent-confirmation-b' }),
+    ]);
+    const fulfilled = confirmations.find((result) => result.status === 'fulfilled');
+    const rejected = confirmations.find((result) => result.status === 'rejected');
+    assert.ok(fulfilled?.status === 'fulfilled');
+    assert.ok(rejected?.status === 'rejected');
+    assert.ok(rejected.reason instanceof ControlPlaneConflictError);
+
+    const gates = await repository.listGateRecords(created.task.id, selection.planVersionId);
+    assert.equal(gates.length, 1);
+    assert.equal(gates[0]?.gateKey, 'designImage');
+    const connection = await scopedDatabase.connect();
+    try {
+      const result = await connection.query(
+        `SELECT state, count(*)::int AS count
+         FROM control_artifacts
+         WHERE task_id = $1 AND plan_version_id = $2
+         GROUP BY state ORDER BY state`,
+        [created.task.id, selection.planVersionId],
+      );
+      assert.deepEqual(result.rows, [{ state: 'SEALED', count: 2 }]);
+    } finally {
+      connection.release();
+    }
+
+    const execution = await workflow.execute({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      expectedVersion: fulfilled.value.stateVersion,
+      idempotencyKey: 'concurrent-confirmation-execute',
+      actor: { userId: ownerId, role: 'owner' },
+    });
+    assert.equal(execution.state, 'completed');
+  } finally {
+    rmSync(artifactRoot, { recursive: true, force: true });
+  }
+});
+
+test('rejects any pre-existing gate on the active plan and invalidates newly sealed inputs', async () => {
+  const artifactRoot = mkdtempSync(join(tmpdir(), 'task-workflow-orphan-gate-'));
+  try {
+    const repository = new ControlPlaneRepository(scopedDatabase);
+    const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+    const workflow = new TaskWorkflowService(
+      repository,
+      undefined,
+      undefined,
+      undefined,
+      new VisualInputGateStore(artifacts),
+    );
+    const created = await createCandidateTask(repository, 'orphan-gate', {
+      candidateId: 'speed',
+      plan: currentPlan('', 'orphan-gate', [currentStep({ input: { designImage: null } })]),
+      pendingInputs: [{
+        kind: 'visual',
+        role: 'designImage',
+        label: '设计稿',
+        multiple: false,
+        targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'designImage', multiple: false }],
+      }],
+    });
+    const selectedPlan = created.candidates.find((candidate) => candidate.candidateId === 'speed')!;
+    const selection = await workflow.select({
+      taskId: created.task.id,
+      expectedVersion: created.task.stateVersion,
+      idempotencyKey: 'orphan-gate-select',
+      actor: { userId: ownerId, role: 'owner' },
+      planVersionId: selectedPlan.id,
+    });
+    await repository.recordGate({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      planHash: selectedPlan.planHash,
+      gateType: 'input',
+      gateKey: 'legacy-orphan',
+      requiredAuthority: 'owner',
+      decision: 'provided',
+      value: 'orphan',
+      actorUserId: ownerId,
+      actorRole: 'owner',
+      idempotencyKey: 'legacy-orphan-gate',
+    });
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      'base64',
+    );
+
+    await assert.rejects(() => workflow.confirm({
+      taskId: created.task.id,
+      planVersionId: selection.planVersionId,
+      expectedVersion: selection.stateVersion,
+      idempotencyKey: 'orphan-gate-confirm',
+      actor: { userId: ownerId, role: 'owner' },
+      confirmationAnswers: {},
+      inputValues: {
+        designImage: { dataUrl: `data:image/png;base64,${png.toString('base64')}` },
+      },
+    }), /already has a gate record/u);
+
+    const persisted = await repository.getTaskDetail(created.task.id);
+    assert.equal(persisted?.state, 'awaiting_confirmation');
+    const gates = await repository.listGateRecords(created.task.id, selection.planVersionId);
+    assert.deepEqual(gates.map(({ gateKey }) => gateKey), ['legacy-orphan']);
+    const connection = await scopedDatabase.connect();
+    try {
+      const result = await connection.query(
+        `SELECT state, count(*)::int AS count
+         FROM control_artifacts
+         WHERE task_id = $1 AND plan_version_id = $2
+         GROUP BY state ORDER BY state`,
+        [created.task.id, selection.planVersionId],
+      );
+      assert.deepEqual(result.rows, [{ state: 'FAILED', count: 2 }]);
+    } finally {
+      connection.release();
+    }
+    assert.equal(await repository.getCommand(
+      created.task.id,
+      'confirmation',
+      'orphan-gate-confirm',
+    ), null);
+  } finally {
+    rmSync(artifactRoot, { recursive: true, force: true });
+  }
 });
 
 test('confirmation, required input, role matrix, and plan revision gate ready state', async () => {
@@ -551,6 +1650,7 @@ test('confirmation, required input, role matrix, and plan revision gate ready st
       approval_role: 'security',
     })]),
     pendingInputs: [{
+      kind: 'value',
       role: 'brief',
       label: '研究简报',
       multiple: false,
@@ -681,18 +1781,21 @@ test('confirmation persists own input values for execution without mutating the 
   });
   const pendingInputs = [
     {
+      kind: 'value',
       role: 'brief',
       label: '研究简报',
       multiple: false,
       targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'brief', multiple: false }],
     },
     {
+      kind: 'value',
       role: 'includeArchived',
       label: '包含历史资料',
       multiple: false,
       targets: [{ step_no: 1, tool_id: 'workflow-analysis', field: 'includeArchived', multiple: false }],
     },
     {
+      kind: 'value',
       role: 'reviewerNote',
       label: '审阅备注',
       multiple: false,
@@ -1158,7 +2261,7 @@ test('replays a sealed pass Review as completed when post-review failure leaves 
           reportReviewArtifactId: reportReview.id,
         };
         await repository.recordExecutionStep({
-          attemptId: lease.attemptId,
+          ...lease,
           stepNo: 99,
           stepName: 'post-review packaging',
           actorType: 'system',
@@ -1341,19 +2444,25 @@ async function createPausedTask(input: {
     planHash: `sha256:${input.suffix}-resume-plan`,
     pendingInputs: input.pendingInputs ?? [],
   });
+  const leaseOwner = 'resume-test';
+  const leaseToken = randomUUID();
   const claim = await input.repository.claimExecution({
     taskId: task.id,
     planVersionId: plan.id,
     expectedVersion: task.stateVersion,
     idempotencyKey: `${input.suffix}-claim`,
     requestHash: `sha256:${input.suffix}-claim`,
-    leaseOwner: 'resume-test',
-    leaseTokenHash: `sha256:${input.suffix}-lease`,
+    leaseOwner,
+    leaseTokenHash: `sha256:${createHash('sha256').update(leaseToken).digest('hex')}`,
   });
   const failedStep = input.steps.find((step) => step.step_no === input.failedStepNo);
   assert.ok(failedStep && failedStep.actor_type === 'tool');
   await input.repository.recordExecutionStep({
+    taskId: task.id,
+    planVersionId: plan.id,
     attemptId: claim.attemptId,
+    leaseOwner,
+    leaseToken,
     stepNo: failedStep.step_no,
     stepName: failedStep.step_name,
     actorType: failedStep.actor_type,
@@ -1426,6 +2535,152 @@ test('worker-loss retry without failedStepNo validates recovery before accepting
   );
 });
 
+test('worker-loss sentinel permits abort and exposes the failure on execution replay', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  let driverCalls = 0;
+  const workflow = new TaskWorkflowService(repository, {
+    execute: async ({ lease }) => {
+      driverCalls += 1;
+      const connection = await scopedDatabase.connect();
+      try {
+        await connection.query(
+          `UPDATE control_execution_attempts
+           SET lease_expires_at = now() - interval '1 second'
+           WHERE id = $1`,
+          [lease.attemptId],
+        );
+      } finally {
+        connection.release();
+      }
+      await repository.expireExecutionLease({ taskId: lease.taskId, attemptId: lease.attemptId });
+      throw new Error('simulated worker death after external lease recovery');
+    },
+  });
+  const created = await createCandidateTask(repository, 'worker-loss-sentinel', {
+    candidateId: 'depth',
+  });
+  const selection = await workflow.select({
+    taskId: created.task.id,
+    expectedVersion: created.task.stateVersion,
+    idempotencyKey: 'worker-loss-sentinel-select',
+    actor: { userId: ownerId, role: 'owner' },
+    planVersionId: created.candidates[0]!.id,
+  });
+  const ready = await workflow.confirm({
+    taskId: created.task.id,
+    planVersionId: selection.planVersionId,
+    expectedVersion: selection.stateVersion,
+    idempotencyKey: 'worker-loss-sentinel-confirm',
+    actor: { userId: ownerId, role: 'owner' },
+    confirmationAnswers: {},
+    inputValues: {},
+  });
+  const command = {
+    taskId: created.task.id,
+    planVersionId: selection.planVersionId,
+    expectedVersion: ready.stateVersion,
+    idempotencyKey: 'worker-loss-sentinel-execute',
+    actor: { userId: ownerId, role: 'owner' as const },
+  };
+
+  await assert.rejects(
+    () => workflow.execute(command),
+    /simulated worker death after external lease recovery/u,
+  );
+  const replay = await workflow.execute(command);
+  assert.equal(replay.executionDisabled, false);
+  assert.equal(replay.state, 'paused');
+  assert.equal('failedStepNo' in replay && replay.failedStepNo, 1);
+  assert.equal('failure' in replay && replay.failure?.kind, 'worker_loss');
+  assert.equal(driverCalls, 1);
+
+  const aborted = await workflow.resume({
+    taskId: created.task.id,
+    expectedVersion: replay.stateVersion,
+    idempotencyKey: 'worker-loss-sentinel-abort',
+    actor: { userId: ownerId, role: 'owner' },
+    action: 'abort',
+  });
+  assert.equal(aborted.state, 'cancelled');
+});
+
+test('worker-loss replay prefers the attempt sentinel over a higher peer failure', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const workflow = new TaskWorkflowService(repository, {
+    execute: async ({ lease }) => {
+      await repository.recordExecutionStep({
+        ...lease,
+        stepNo: 1,
+        stepName: 'slow parallel peer',
+        actorType: 'tool',
+        actorId: 'tavily-web-search',
+        state: 'running',
+      });
+      await repository.recordExecutionStep({
+        ...lease,
+        stepNo: 2,
+        stepName: 'failed parallel peer',
+        actorType: 'skill',
+        actorId: 'generate-competitive-analysis',
+        state: 'failed',
+        failure: { kind: 'schema', allowedActions: ['abort'] },
+      });
+      const connection = await scopedDatabase.connect();
+      try {
+        await connection.query(
+          `UPDATE control_execution_attempts
+           SET lease_expires_at = now() - interval '1 second'
+           WHERE id = $1`,
+          [lease.attemptId],
+        );
+      } finally {
+        connection.release();
+      }
+      await repository.expireExecutionLease({ taskId: lease.taskId, attemptId: lease.attemptId });
+      throw new Error('simulated mixed-wave worker death');
+    },
+  });
+  const created = await createCandidateTask(repository, 'worker-loss-mixed-wave', {
+    candidateId: 'depth',
+  });
+  const selection = await workflow.select({
+    taskId: created.task.id,
+    expectedVersion: created.task.stateVersion,
+    idempotencyKey: 'worker-loss-mixed-wave-select',
+    actor: { userId: ownerId, role: 'owner' },
+    planVersionId: created.candidates[0]!.id,
+  });
+  const ready = await workflow.confirm({
+    taskId: created.task.id,
+    planVersionId: selection.planVersionId,
+    expectedVersion: selection.stateVersion,
+    idempotencyKey: 'worker-loss-mixed-wave-confirm',
+    actor: { userId: ownerId, role: 'owner' },
+    confirmationAnswers: {},
+    inputValues: {},
+  });
+  const command = {
+    taskId: created.task.id,
+    planVersionId: selection.planVersionId,
+    expectedVersion: ready.stateVersion,
+    idempotencyKey: 'worker-loss-mixed-wave-execute',
+    actor: { userId: ownerId, role: 'owner' as const },
+  };
+
+  await assert.rejects(
+    () => workflow.execute(command),
+    /simulated mixed-wave worker death/u,
+  );
+  const replay = await workflow.execute(command);
+  assert.equal(replay.executionDisabled, false);
+  assert.equal(replay.state, 'paused');
+  assert.equal('failedStepNo' in replay && replay.failedStepNo, 3);
+  assert.deepEqual(
+    'failure' in replay && replay.failure,
+    { kind: 'worker_loss', retryable: true, allowedActions: ['retry', 'abort'] },
+  );
+});
+
 test('report review failure rejects retry and permits only abort recovery', async () => {
   const repository = new ControlPlaneRepository(scopedDatabase);
   const workflow = new TaskWorkflowService(repository);
@@ -1445,18 +2700,24 @@ test('report review failure rejects retry and permits only abort recovery', asyn
     plan: currentPlan(task.id, 'report-review-recovery', planSteps),
     planHash: `sha256:${randomUUID()}`,
   });
+  const leaseOwner = 'review-recovery-test';
+  const leaseToken = randomUUID();
   const claim = await repository.claimExecution({
     taskId: task.id,
     planVersionId: plan.id,
     expectedVersion: task.stateVersion,
     idempotencyKey: `review-claim-${randomUUID()}`,
     requestHash: `sha256:${randomUUID()}`,
-    leaseOwner: 'review-recovery-test',
-    leaseTokenHash: `sha256:${randomUUID()}`,
+    leaseOwner,
+    leaseTokenHash: `sha256:${createHash('sha256').update(leaseToken).digest('hex')}`,
   });
   const failedStepNo = planSteps.length + 2;
   await repository.recordExecutionStep({
+    taskId: task.id,
+    planVersionId: plan.id,
     attemptId: claim.attemptId,
+    leaseOwner,
+    leaseToken,
     stepNo: failedStepNo,
     stepName: 'report review',
     actorType: 'reviewer',
@@ -1597,7 +2858,7 @@ test('resume rejects core skip and safely renumbers a strict Current plan after 
       depends_on: [1],
       input: { sources: null },
       input_bindings: [{ target_pointer: '/sources', source_step_no: 1, source_pointer: '/results' }],
-      expected_outputs: [{ pointer: '/analysis', description: 'analysis result' }],
+      expected_outputs: [{ pointer: '/text', description: 'analysis result' }],
     }),
     currentStep({
       step_no: 4,
@@ -1606,7 +2867,7 @@ test('resume rejects core skip and safely renumbers a strict Current plan after 
       actor_id: 'reviewer',
       depends_on: [3],
       input: { analysis: null },
-      input_bindings: [{ target_pointer: '/analysis', source_step_no: 3, source_pointer: '/analysis' }],
+      input_bindings: [{ target_pointer: '/analysis', source_step_no: 3, source_pointer: '/text' }],
       expected_outputs: [{ pointer: '/review', description: 'review result' }],
     }),
   ];
@@ -1657,7 +2918,7 @@ test('resume rejects core skip and safely renumbers a strict Current plan after 
       ...originalOptionalSteps[3]!,
       step_no: 3,
       depends_on: [2],
-      input_bindings: [{ target_pointer: '/analysis', source_step_no: 2, source_pointer: '/analysis' }],
+      input_bindings: [{ target_pointer: '/analysis', source_step_no: 2, source_pointer: '/text' }],
     },
   ];
   assert.deepEqual(revisedPlan?.plan, {
@@ -1705,6 +2966,7 @@ test('resume skip remaps every remaining PendingInput target with the step map',
     }),
   ];
   const pendingInputs = [{
+    kind: 'value',
     role: 'brief',
     label: '研究简报',
     multiple: true,
@@ -1737,6 +2999,7 @@ test('resume skip remaps every remaining PendingInput target with the step map',
             { code: 'eligible', message: 'analysis skill is eligible' },
           ],
           pending_inputs: [{
+            kind: 'value',
             role: 'brief',
             label: '研究简报',
             multiple: true,
@@ -1758,6 +3021,7 @@ test('resume skip remaps every remaining PendingInput target with the step map',
             { code: 'eligible', message: 'review skill is eligible' },
           ],
           pending_inputs: [{
+            kind: 'value',
             role: 'brief',
             label: '研究简报',
             multiple: true,
@@ -1782,6 +3046,7 @@ test('resume skip remaps every remaining PendingInput target with the step map',
   const revisedTask = await repository.getTaskDetail(paused.task.id);
   const revisedPlan = await repository.getPlanVersionDetail(revisedTask?.activePlanVersionId ?? '');
   assert.deepEqual(revisedPlan?.pendingInputs, [{
+    kind: 'value',
     role: 'brief',
     label: '研究简报',
     multiple: true,
@@ -1811,6 +3076,7 @@ test('resume skip rejects a PendingInput target that points at the removed step'
     ],
     allowedActions: ['retry', 'skip', 'abort'],
     pendingInputs: [{
+      kind: 'value',
       role: 'brief',
       label: '研究简报',
       multiple: false,

@@ -18,7 +18,7 @@ dimensions:
     criterion: Actions are prioritized, specific, and rooted in identified differences.
   - id: visual_quality
     required: true
-    criterion: Screenshot comparisons are legible, relevant, and accurately captioned.
+    criterion: When verified visual assets are available, each screenshot comparison contains exactly two unique Asset ids in original-to-annotation order with exact lineage, is legible and relevant, and visibly states that the whole-image input-provenance boundary does not locate or substantiate a research finding; without verified visual assets, an empty screenshotComparisons array is valid and no Asset id is invented.
   - id: risk_disclosure
     required: true
     criterion: Sampling limits, evidence gaps, and uncertainty are explicit.

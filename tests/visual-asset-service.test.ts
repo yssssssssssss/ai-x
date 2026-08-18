@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { VisualAssetService } from '../apps/orchestrator-runtime/src/report/visual-asset-service.ts';
+import type { ControlExecutionLease } from '../database/control-plane.ts';
 
 const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
@@ -46,6 +47,7 @@ type BinaryWrite = {
   schemaVersion?: string;
   sensitivity?: string;
   redactionPolicyVersion?: string;
+  activeLease?: ControlExecutionLease;
 };
 
 type JsonWrite = Omit<BinaryWrite, 'bytes'> & { value: unknown };
@@ -512,6 +514,25 @@ test('ingests a user PNG without resolving or fetching a remote URL', async () =
   assert.equal(result.manifest.mediaType, 'image/png');
   assert.equal(result.manifest.exportPolicy, 'block');
   assert.equal(result.manifest.manifestHash, expectedManifestHash(result.manifest));
+});
+
+test('fences an ingested visual Asset and its Manifest with the active execution lease', async () => {
+  const fixture = harness();
+  const activeLease: ControlExecutionLease = {
+    ...binding,
+    leaseOwner: 'visual-worker',
+    leaseToken: 'visual-token',
+  };
+
+  await fixture.service.ingest({
+    ...binding,
+    activeLease,
+    source: { kind: 'user_upload', fileName: 'leased.png', bytes: PNG },
+    exportPolicy: 'allow',
+  });
+
+  assert.deepEqual(fixture.artifacts.binaryWrites[0]?.activeLease, activeLease);
+  assert.deepEqual(fixture.artifacts.jsonWrites[0]?.activeLease, activeLease);
 });
 
 for (const kind of ['annotation', 'heatmap'] as const) {

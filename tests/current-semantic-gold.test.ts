@@ -161,24 +161,16 @@ test('every semantic Gold scenario exercises requirement, planning, capability, 
       sensitivity: scenario.sensitivity,
       pii_detected: scenario.piiDetected,
     };
-    const deliverableIdByTask: Record<ResearchTaskV2['task_type'], string> = {
-      competitive_research: 'competitive_analysis_report',
-      user_research_planning: 'research_plan',
-      voc_diagnosis: 'voc_diagnosis_report',
-      design_audit: 'design_audit_report',
-      a11y_audit: 'accessibility_audit_report',
-    };
-    const executionDeliverableId = deliverableIdByTask[task.task_type];
-    const planned = resolvePlanningDeliverableSelection({ ...task, expected_deliverables: [executionDeliverableId] });
-    assert.equal(planned.deliverableId, executionDeliverableId);
+    const planned = resolvePlanningDeliverableSelection(task);
+    assert.equal(planned.deliverableId, scenario.expectedDeliverableType);
     const execution = resolveExecutionDeliverableContract(
       task.task_type,
-      [executionDeliverableId],
-      executionDeliverableId,
+      task.expected_deliverables,
+      scenario.expectedDeliverableType,
     );
-    assert.equal(execution.entry.id, executionDeliverableId);
+    assert.equal(execution.entry.id, scenario.expectedDeliverableType);
     assert.ok(execution.reportTemplate.sections.some((section) => section.id === 'findings'));
-    assert.ok(resolveEvidenceRequirements(task.task_type, executionDeliverableId as never).length > 0);
+    assert.ok(resolveEvidenceRequirements(task.task_type, scenario.expectedDeliverableType as never).length > 0);
     const capability = resolveCapabilities({
       task,
       available_input_roles: [],

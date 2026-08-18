@@ -1,6 +1,6 @@
 # 仓库整合 Disposition 记录
 
-> 状态：v4 执行中；门禁 0–10 已通过，门禁 11 待执行。
+> 状态：v4 执行中；门禁 0–10 已通过，门禁 11 `HOLD`，不得进入门禁 12。
 >
 > 对应开发文档：`docs/plans/2026-08-17-repository-consolidation-development.md`
 >
@@ -277,8 +277,25 @@ run-inputs/real-ai-shopping-case/taobao-ai-guide.jpg
 | Web build | `227d951`（Gate 10） | `pnpm --dir apps/web build` | PASS；647 modules transformed；既有 >500 kB chunk warning 非阻塞 | Vite build output |
 | Git/recovery integrity | `227d951`（Gate 10） | `git fsck --full`; bundle verify/SHA-256/list-heads；stash 14/25 path-set 比对；Markdown table audit；`git diff --check` | PASS；fsck 仅报告可接受 dangling objects；bundle SHA-256=`6de8573…6ed`；stash 路径差集 0；表格空字段/列数错误 0 | Git/Node audit output |
 | Gate 10 disposition | 本提交 | staged path-set、cached diff-check、commit 内容检查 | PASS；仅两份 consolidation 文档，无 `wiki/` | Git commit |
-| Current real Smoke | 未填写 | 未填写 | 未填写 | 未填写 |
+| Gate 11 offline hardening | `1126ecc` 基线上的未提交整合 diff | `pnpm exec tsx --test --test-concurrency=1 tests/execution-control.test.ts tests/task-workflow.test.ts tests/control-plane.test.ts tests/lease-execution-engine.test.ts tests/execution-recovery.test.ts`; `pnpm quality`; `pnpm --dir apps/web build`; 排除 `wiki/` 的 tracked/cached `git diff --check` | 相关测试 177 total、176 pass、1 skip、0 fail；quality 1190 total、1179 pass、11 skip、0 fail；Web build 647 modules PASS；diff-check PASS | root/Main TAP/typecheck/linter/Vite/Git output；`gate11_diff_review` 独立复核相关串行/视觉测试、typecheck 与 diff-check |
+| Current real Smoke | `HOLD`（未执行） | 必须执行的 `ALLOW_REAL_PROVIDER=1 LLM_PROVIDER=gateway TOOL_ADAPTER=real pnpm smoke:current:real` 尚无合格前置条件 | 0 个真实 task/plan/attempt/Report Package 标识；入口仅支持 1/5 profile；5 个 real-provider 测试 skip；不得用离线结果替代 | `gate11_diff_review` / `final_smoke_evidence` |
 | Integration PR CI | 未填写 | 未填写 | 未填写 | 未填写 |
+
+### Gate 11 HOLD（2026-08-18）
+
+独立只读复核人：`gate11_diff_review`。结论：0 P0、7 P1；lease-loss/sentinel 修复已闭合，但以下阻塞仍使 Gate 11 保持 `HOLD`：
+
+- 代码合同：plural visual PendingInput 被固定为 `multiple:false`，Web 端也只读取第一个文件，无法提交多截图比较输入。
+- 代码合同：attempt-scoped visual Asset/Manifest 与 overlay/derived 采用顺序封存且没有组合回滚，失败时可能留下 recovery 不处理的部分 SEALED Artifact。
+- 代码合同：real smoke 把 Deliverable Artifact ID 当作 Report Package ID 并硬编码 `packageSealed=true`；Gold 仅信任调用方 ID/布尔值，未查验 Artifact 与 reviewer 独立性。
+- 真实证据：real smoke 只支持 `competitive_research`，覆盖 1/5 必需 profile。
+- 真实证据：trusted Gold 被禁用；现有 runner 不执行真实 LLM/Tool，且没有已认证的独立人工评审闭环。
+- 真实证据：Semantic Gold 直接构造期望 Task/capability 并运行 no-op step，没有验证真实输入分类、refinement/planning、PII 变体或冲突语义。
+- 真实证据：CI 只保留注释中的 smoke 命令并以文本匹配测试它；缺少 provider 配置时真实路径测试全部 skip。
+
+P2 残余风险：Gold 不接受合法 requested→canonical model alias；PostgreSQL Gold store 忽略 `infraRetries` 更新；视觉写 API 仍允许省略 `activeLease` 并进入无租约 seal 分支。
+
+门禁边界：Gate 11 未通过；禁止进入 Gate 12，禁止推送或创建 integration PR，也不得把上述离线 PASS 写成真实 Smoke/Gold 证据。本节只记录本地 Gate 11 复核，不替代第 8 节要求的 PR 独立复核。
 
 Gate 8 残余风险：成功路径和 output-schema-failure 路径会在 provider 调用前冻结 input/envelope/payload schema hash；若 provider 在返回结果前直接抛出 server/network 错误，失败 provenance 仍可能因随后重读配置而只保留已落库 receipt 与 `captureFailure`。这不改变 Current 事实链或本门禁合同，后续可让 `SkillLoader` 从同一份字节同时返回 schema 与 hash 以彻底消除配置文件级 TOCTOU。
 

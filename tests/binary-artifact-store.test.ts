@@ -22,6 +22,7 @@ import {
   ControlArtifactStore,
 } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
 import {
+  ARTIFACT_QUARANTINE_PENDING_MARKER,
   ArtifactNotSealedError,
   ControlPlaneConflictError,
   type ControlArtifact,
@@ -76,7 +77,9 @@ class MemoryArtifactRegistry {
   } & Partial<ControlExecutionLease>> = [];
   leaseExpired = false;
   sealResponseLost = false;
+  quarantineCommitFailsOnce = false;
   beforeSealCommit?: (artifact: ControlArtifact) => void;
+  afterListArtifactsByStorageUri?: (storageUri: string) => Promise<void>;
 
   async createStagingArtifact(input: {
     taskId: string;
@@ -118,7 +121,9 @@ class MemoryArtifactRegistry {
   } & Partial<ControlExecutionLease>): Promise<ControlArtifact> {
     this.sealInputs.push(input);
     const artifact = this.artifacts.get(input.artifactId);
-    if (!artifact) throw new Error('missing staging artifact');
+    if (!artifact || artifact.state !== 'STAGING') {
+      throw new ControlPlaneConflictError('missing staging artifact');
+    }
     const leaseFields = [input.taskId, input.planVersionId, input.attemptId, input.leaseOwner, input.leaseToken];
     if (leaseFields.some((value) => value !== undefined)) {
       const matches = !this.leaseExpired
@@ -153,12 +158,67 @@ class MemoryArtifactRegistry {
     this.artifacts.set(artifactId, { ...artifact, state: 'FAILED', failureReason });
   }
 
+  async quarantineStagingArtifact(
+    input: {
+      artifactId: string;
+      expectedStorageUri: string;
+      quarantineUri: string;
+      reason: string;
+    },
+    prepare: () => Promise<'moved' | 'already_moved' | 'absent'>,
+  ): Promise<ControlArtifact | null> {
+    const artifact = this.artifacts.get(input.artifactId);
+    if (!artifact) return null;
+    const pendingPhysicalMove = artifact.state === 'FAILED'
+      && artifact.storageUri === input.quarantineUri
+      && artifact.failureReason?.includes(ARTIFACT_QUARANTINE_PENDING_MARKER);
+    if (!pendingPhysicalMove && (
+      artifact.state !== 'STAGING'
+      || artifact.storageUri !== input.expectedStorageUri
+    )) return null;
+    if (pendingPhysicalMove) {
+      const liveOwner = [...this.artifacts.values()].find((candidate) => (
+        candidate.id !== artifact.id
+        && candidate.storageUri === input.expectedStorageUri
+        && (candidate.state === 'STAGING' || candidate.state === 'SEALED')
+      ));
+      if (liveOwner) {
+        const reused = {
+          ...artifact,
+          failureReason: `${input.reason}; source path reused by live artifact ${liveOwner.id}`,
+        };
+        this.artifacts.set(artifact.id, reused);
+        return reused;
+      }
+    }
+    const disposition = await prepare();
+    if (this.quarantineCommitFailsOnce) {
+      this.quarantineCommitFailsOnce = false;
+      throw new Error('simulated quarantine transaction rollback');
+    }
+    const storageUri = input.quarantineUri;
+    const failureReason = disposition === 'absent'
+      ? `${input.reason}${ARTIFACT_QUARANTINE_PENDING_MARKER}${input.expectedStorageUri}`
+      : `${input.reason}; file quarantined at ${input.quarantineUri}`;
+    if (pendingPhysicalMove && disposition === 'absent') return artifact;
+    const failed: ControlArtifact = {
+      ...artifact,
+      state: 'FAILED',
+      storageUri,
+      failureReason,
+    };
+    this.artifacts.set(artifact.id, failed);
+    return failed;
+  }
+
   async getArtifact(artifactId: string): Promise<ControlArtifact | null> {
     return this.artifacts.get(artifactId) ?? null;
   }
 
   async listArtifactsByStorageUri(storageUri: string): Promise<ControlArtifact[]> {
-    return [...this.artifacts.values()].filter((artifact) => artifact.storageUri === storageUri);
+    const artifacts = [...this.artifacts.values()].filter((artifact) => artifact.storageUri === storageUri);
+    await this.afterListArtifactsByStorageUri?.(storageUri);
+    return artifacts;
   }
 
   async listStagingArtifacts(): Promise<ControlArtifact[]> {
@@ -667,6 +727,135 @@ test('reconcileStaging fails DB state but retains the original path for trusted 
   assert.equal(existsSync(`${storageUri}.${staged.id}.orphan`), false);
 });
 
+test('quarantines STAGING bytes and permits a different same-path retry', async () => {
+  const { root, registry, store } = setup();
+  const relativePath = 'visuals/recovered.png';
+  const storageUri = join(root, 'tasks', ACTIVE_LEASE.taskId, 'attempts', ACTIVE_LEASE.attemptId, relativePath);
+  mkdirSync(dirname(storageUri), { recursive: true });
+  writeFileSync(storageUri, PNG);
+  const staged = await registry.createStagingArtifact({
+    taskId: ACTIVE_LEASE.taskId,
+    planVersionId: ACTIVE_LEASE.planVersionId,
+    attemptId: ACTIVE_LEASE.attemptId,
+    kind: 'visual_asset',
+    storageUri,
+    schemaVersion: 'visual-asset-v1',
+    sensitivity: 'internal',
+    redactionPolicyVersion: 'v1',
+  });
+  const quarantineUri = `${storageUri}.${staged.id}.orphan`;
+
+  const failed = await store.quarantineStagingArtifact(staged.id);
+
+  assert.equal(failed?.state, 'FAILED');
+  assert.equal(failed?.storageUri, quarantineUri);
+  assert.equal(existsSync(storageUri), false);
+  assert.equal(existsSync(quarantineUri), true);
+  assert.deepEqual(readFileSync(quarantineUri), PNG);
+
+  const retried = await store.writeBinary(binaryInput(JPEG, relativePath));
+  assert.equal(retried.state, 'SEALED');
+  assert.deepEqual(readFileSync(storageUri), JPEG);
+  assert.deepEqual(readFileSync(quarantineUri), PNG);
+});
+
+test('finishes quarantine after a move succeeds but the registry transaction rolls back', async () => {
+  const { root, registry, store } = setup();
+  const relativePath = 'visuals/interrupted-quarantine.png';
+  const storageUri = join(root, 'tasks', ACTIVE_LEASE.taskId, 'attempts', ACTIVE_LEASE.attemptId, relativePath);
+  mkdirSync(dirname(storageUri), { recursive: true });
+  writeFileSync(storageUri, PNG);
+  const staged = await registry.createStagingArtifact({
+    taskId: ACTIVE_LEASE.taskId,
+    planVersionId: ACTIVE_LEASE.planVersionId,
+    attemptId: ACTIVE_LEASE.attemptId,
+    kind: 'visual_asset',
+    storageUri,
+    schemaVersion: 'visual-asset-v1',
+    sensitivity: 'internal',
+    redactionPolicyVersion: 'v1',
+  });
+  const quarantineUri = `${storageUri}.${staged.id}.orphan`;
+  registry.quarantineCommitFailsOnce = true;
+
+  await assert.rejects(
+    () => store.quarantineStagingArtifact(staged.id),
+    /transaction rollback/,
+  );
+  assert.equal((await registry.getArtifact(staged.id))?.state, 'STAGING');
+  assert.equal((await registry.getArtifact(staged.id))?.storageUri, storageUri);
+  assert.equal(existsSync(storageUri), false);
+  assert.deepEqual(readFileSync(quarantineUri), PNG);
+
+  const failed = await store.quarantineStagingArtifact(staged.id);
+  assert.equal(failed?.state, 'FAILED');
+  assert.equal(failed?.storageUri, quarantineUri);
+  assert.deepEqual(readFileSync(quarantineUri), PNG);
+});
+
+test('quarantines a stale writer that creates its file after recovery marks the row FAILED', async () => {
+  const { root, registry, store } = setup();
+  const relativePath = 'visuals/late-stale-writer.png';
+  const storageUri = join(root, 'tasks', ACTIVE_LEASE.taskId, 'attempts', ACTIVE_LEASE.attemptId, relativePath);
+  registry.afterListArtifactsByStorageUri = async () => {
+    registry.afterListArtifactsByStorageUri = undefined;
+    const staging = [...registry.artifacts.values()].find((artifact) => (
+      artifact.state === 'STAGING' && artifact.storageUri === storageUri
+    ));
+    assert.ok(staging);
+    const pending = await store.quarantineStagingArtifact(staging.id);
+    assert.equal(pending?.state, 'FAILED');
+    assert.match(pending?.failureReason ?? '', /source file was absent/);
+  };
+
+  await assert.rejects(
+    () => store.writeBinary(binaryInput(PNG, relativePath)),
+    ControlPlaneConflictError,
+  );
+
+  const failed = [...registry.artifacts.values()].find((artifact) => (
+    artifact.state === 'FAILED' && artifact.storageUri.startsWith(`${storageUri}.`)
+  ));
+  assert.ok(failed);
+  assert.match(failed.failureReason ?? '', /file quarantined/);
+  assert.equal(existsSync(storageUri), false);
+  assert.deepEqual(readFileSync(failed.storageUri), PNG);
+
+  const retried = await store.writeBinary(binaryInput(JPEG, relativePath));
+  assert.equal(retried.state, 'SEALED');
+  assert.deepEqual(readFileSync(storageUri), JPEG);
+  assert.deepEqual(readFileSync(failed.storageUri), PNG);
+});
+
+test('never moves a same-path retry owned by a new sealed Artifact', async () => {
+  const { root, registry, store } = setup();
+  const relativePath = 'visuals/reused-after-absent.png';
+  const storageUri = join(root, 'tasks', ACTIVE_LEASE.taskId, 'attempts', ACTIVE_LEASE.attemptId, relativePath);
+  const staged = await registry.createStagingArtifact({
+    taskId: ACTIVE_LEASE.taskId,
+    planVersionId: ACTIVE_LEASE.planVersionId,
+    attemptId: ACTIVE_LEASE.attemptId,
+    kind: 'visual_asset',
+    storageUri,
+    schemaVersion: 'visual-asset-v1',
+    sensitivity: 'internal',
+    redactionPolicyVersion: 'v1',
+  });
+  const pending = await store.quarantineStagingArtifact(staged.id);
+  assert.equal(pending?.state, 'FAILED');
+  assert.match(pending?.failureReason ?? '', /source file was absent/);
+
+  const retried = await store.writeBinary(binaryInput(JPEG, relativePath));
+  assert.equal(retried.state, 'SEALED');
+  assert.deepEqual((await store.readVerifiedBinary(retried.id)).bytes, JPEG);
+
+  const reconciled = await store.quarantineStagingArtifact(staged.id);
+  assert.match(reconciled?.failureReason ?? '', new RegExp(`reused by live artifact ${retried.id}`));
+  assert.equal(existsSync(storageUri), true);
+  assert.deepEqual((await store.readVerifiedBinary(retried.id)).bytes, JPEG);
+  assert.equal(existsSync(`${storageUri}.${staged.id}.orphan`), false);
+});
+
 test('requires native fs-safe on Node22 and creates and opens beneath a root capability', async () => {
   assert.ok(Number.parseInt(process.versions.node, 10) >= 22);
   assert.equal(getFsSafeNativeConfig().mode, 'require');
@@ -868,7 +1057,9 @@ test('preserves legacy JSON sealing and verified reads with null media metadata'
   });
   assert.equal(sealed.mediaType, null);
   assert.equal(sealed.metadata, null);
+  assert.deepEqual((await store.readVerifiedBoundJson<typeof value>(sealed.id)).value, value);
   registry.artifacts.set(sealed.id, { ...sealed, planVersionId: null });
   assert.deepEqual((await store.readVerifiedJson<typeof value>(sealed.id)).value, value);
+  await assert.rejects(() => store.readVerifiedBoundJson<typeof value>(sealed.id));
   assert.equal(registry.sealInputs.length, 1);
 });

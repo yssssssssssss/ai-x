@@ -1,6 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ExecutionRecoveryController, ExecutionRecoveryService } from '../apps/orchestrator-runtime/src/control/execution-recovery-service.ts';
+import {
+  ControlPlaneExecutionRecoveryStore,
+  ExecutionRecoveryController,
+  ExecutionRecoveryService,
+} from '../apps/orchestrator-runtime/src/control/execution-recovery-service.ts';
+import { ARTIFACT_QUARANTINE_PENDING_MARKER } from '../database/control-plane.ts';
 
 type RecoveryExecution = {
   taskId: string;
@@ -14,14 +19,32 @@ type RecoveryExecution = {
 
 type RecoveryArtifact = {
   id: string;
-  kind: 'evidence_manifest' | 'deliverable' | 'report_review' | 'report_document' | 'other';
+  attemptId: string;
+  kind: string;
   state: 'STAGING' | 'SEALED' | 'FAILED' | 'INVALIDATED';
   storageUri: string;
   quarantinedUri?: string;
   failureReason?: string;
 };
 
+const ATTEMPT_ARTIFACT_KINDS = [
+  'tool_output',
+  'skill_output',
+  'llm_output',
+  'review_output',
+  'evidence_manifest',
+  'deliverable',
+  'report_review',
+  'report_document',
+  'visual_asset',
+  'visual_asset_manifest',
+  'image_annotation',
+  'chart_spec',
+  'future_attempt_artifact',
+] as const;
+
 class MemoryRecoveryStore {
+  visualRecoveryRuns = 0;
   readonly executions: RecoveryExecution[] = [
     {
       planVersionId: 'expired-plan',
@@ -42,21 +65,33 @@ class MemoryRecoveryStore {
   ];
 
   readonly artifacts: RecoveryArtifact[] = [
-    { id: 'orphan-staging', kind: 'other', state: 'STAGING', storageUri: '/runs/orphan.json' },
-    { id: 'sealed-evidence', kind: 'evidence_manifest', state: 'SEALED', storageUri: '/runs/evidence.json' },
-    { id: 'sealed-deliverable', kind: 'deliverable', state: 'SEALED', storageUri: '/runs/deliverable.json' },
-    { id: 'sealed-review', kind: 'report_review', state: 'SEALED', storageUri: '/runs/review.json' },
-    { id: 'sealed-document', kind: 'report_document', state: 'SEALED', storageUri: '/runs/document.json' },
-    { id: 'live-staging', kind: 'other', state: 'STAGING', storageUri: '/runs/live.json' },
-    { id: 'sealed-other', kind: 'other', state: 'SEALED', storageUri: '/runs/other.json' },
+    ...ATTEMPT_ARTIFACT_KINDS.map((kind) => ({
+      id: `orphan-${kind}`,
+      attemptId: 'expired-attempt',
+      kind,
+      state: 'STAGING' as const,
+      storageUri: `/runs/${kind}.json`,
+    })),
+    { id: 'sealed-evidence', attemptId: 'expired-attempt', kind: 'evidence_manifest', state: 'SEALED', storageUri: '/runs/evidence.json' },
+    { id: 'sealed-deliverable', attemptId: 'expired-attempt', kind: 'deliverable', state: 'SEALED', storageUri: '/runs/deliverable.json' },
+    { id: 'sealed-review', attemptId: 'expired-attempt', kind: 'report_review', state: 'SEALED', storageUri: '/runs/review.json' },
+    { id: 'sealed-document', attemptId: 'expired-attempt', kind: 'report_document', state: 'SEALED', storageUri: '/runs/document.json' },
+    { id: 'sealed-published-step', attemptId: 'expired-attempt', kind: 'tool_output', state: 'SEALED', storageUri: '/runs/published-step.json' },
+    { id: 'sealed-orphan-step', attemptId: 'expired-attempt', kind: 'skill_output', state: 'SEALED', storageUri: '/runs/orphan-step.json' },
+    { id: 'live-staging', attemptId: 'live-attempt', kind: 'other', state: 'STAGING', storageUri: '/runs/live.json' },
+    { id: 'sealed-other', attemptId: 'expired-attempt', kind: 'other', state: 'SEALED', storageUri: '/runs/other.json' },
   ];
 
   readonly calls = {
     pause: [] as Array<{ taskId: string; attemptId: string; reason: string }>,
     invalidate: [] as Array<{ artifactId: string; reason: string }>,
     quarantine: [] as Array<{ artifactId: string; quarantineUri: string }>,
-    fail: [] as Array<{ artifactId: string; reason: string }>,
   };
+
+  async recoverVisualPublications() {
+    this.visualRecoveryRuns += 1;
+    return 0;
+  }
 
   async listExecutions() {
     return this.executions.map((execution) => ({ ...execution }));
@@ -72,23 +107,33 @@ class MemoryRecoveryStore {
   }
 
   async listArtifactsForAttempt(input: { taskId: string; planVersionId: string; attemptId: string }) {
-    if (input.attemptId !== 'expired-attempt' || input.taskId !== 'expired-task' || input.planVersionId !== 'expired-plan') return [];
-    return this.artifacts.filter((artifact) => artifact.id !== 'live-staging').map((artifact) => ({ ...artifact }));
+    return this.artifacts
+      .filter((artifact) => artifact.attemptId === input.attemptId)
+      .map((artifact) => ({ ...artifact }));
   }
 
-  async quarantineArtifact(input: { artifactId: string; quarantineUri: string }) {
-    const artifact = this.artifacts.find((entry) => entry.id === input.artifactId);
-    if (!artifact || artifact.state !== 'STAGING') return;
-    artifact.quarantinedUri = input.quarantineUri;
-    this.calls.quarantine.push(input);
+  async listSucceededStepArtifactIds(attemptId: string) {
+    return attemptId === 'expired-attempt' ? ['sealed-published-step'] : [];
   }
 
-  async failArtifact(input: { artifactId: string; reason: string }) {
+  async quarantineArtifact(input: { artifactId: string }) {
     const artifact = this.artifacts.find((entry) => entry.id === input.artifactId);
-    if (!artifact || artifact.state !== 'STAGING') return;
+    if (!artifact) return;
+    if (
+      artifact.state === 'FAILED'
+      && artifact.failureReason?.includes(ARTIFACT_QUARANTINE_PENDING_MARKER)
+    ) {
+      artifact.failureReason = `orphaned staging artifact after worker loss; file quarantined at ${artifact.storageUri}`;
+      this.calls.quarantine.push({ ...input, quarantineUri: artifact.storageUri });
+      return;
+    }
+    if (artifact.state !== 'STAGING') return;
+    const quarantineUri = `${artifact.storageUri}.${artifact.id}.orphan`;
+    artifact.quarantinedUri = quarantineUri;
+    artifact.storageUri = quarantineUri;
     artifact.state = 'FAILED';
-    artifact.failureReason = input.reason;
-    this.calls.fail.push(input);
+    artifact.failureReason = `orphaned staging artifact after worker loss; file quarantined at ${quarantineUri}`;
+    this.calls.quarantine.push({ ...input, quarantineUri });
   }
 
   async invalidateArtifact(input: { artifactId: string; reason: string }) {
@@ -110,6 +155,7 @@ test('recover pauses an expired lease as worker_lost without touching an active 
   const { service, store } = recoveryFixture();
 
   await service.recover(new Date('2026-08-17T00:00:01.000Z'));
+  assert.equal(store.visualRecoveryRuns, 1);
 
   const expired = store.executions.find((entry) => entry.taskId === 'expired-task');
   const live = store.executions.find((entry) => entry.taskId === 'live-task');
@@ -159,6 +205,7 @@ test('recovery controller logs a failed cycle and continues with the next cycle'
   const errors: unknown[] = [];
   const service = new ExecutionRecoveryService({
     store: {
+      async recoverVisualPublications() { return 0; },
       async listExecutions() {
         calls += 1;
         if (calls === 1) throw new Error('transient recovery failure');
@@ -166,8 +213,8 @@ test('recovery controller logs a failed cycle and continues with the next cycle'
       },
       async pauseExecution() {},
       async listArtifactsForAttempt() { return []; },
+      async listSucceededStepArtifactIds() { return []; },
       async quarantineArtifact() {},
-      async failArtifact() {},
       async invalidateArtifact() {},
     },
   });
@@ -186,18 +233,20 @@ test('recover quarantines STAGING artifacts before failing their registry record
 
   await service.recover(new Date('2026-08-17T00:00:01.000Z'));
 
-  const orphan = store.artifacts.find((artifact) => artifact.id === 'orphan-staging');
-  assert.equal(orphan?.state, 'FAILED');
-  assert.match(orphan?.quarantinedUri ?? '', /orphan-staging/);
+  for (const kind of ATTEMPT_ARTIFACT_KINDS) {
+    const orphan = store.artifacts.find((artifact) => artifact.id === `orphan-${kind}`);
+    assert.equal(orphan?.state, 'FAILED');
+    assert.match(orphan?.quarantinedUri ?? '', new RegExp(`orphan-${kind}`));
+  }
   assert.equal(store.artifacts.find((artifact) => artifact.id === 'live-staging')?.state, 'STAGING');
   assert.equal(store.calls.quarantine.some((call) => call.artifactId === 'live-staging'), false);
-  assert.equal(store.calls.quarantine.length, 1);
-  assert.equal(store.calls.fail.length, 1);
-  assert.equal(store.calls.quarantine[0]?.artifactId, 'orphan-staging');
-  assert.equal(store.calls.fail[0]?.artifactId, 'orphan-staging');
+  assert.deepEqual(
+    store.calls.quarantine.map(({ artifactId }) => artifactId),
+    ATTEMPT_ARTIFACT_KINDS.map((kind) => `orphan-${kind}`),
+  );
 });
 
-test('recover invalidates sealed trusted terminal artifacts but leaves unrelated sealed artifacts alone', async () => {
+test('recover invalidates sealed terminal and unpublished step Artifacts but preserves referenced outputs', async () => {
   const { service, store } = recoveryFixture();
 
   await service.recover(new Date('2026-08-17T00:00:01.000Z'));
@@ -205,13 +254,41 @@ test('recover invalidates sealed trusted terminal artifacts but leaves unrelated
   for (const id of ['sealed-evidence', 'sealed-deliverable', 'sealed-review', 'sealed-document']) {
     assert.equal(store.artifacts.find((artifact) => artifact.id === id)?.state, 'INVALIDATED');
   }
+  assert.equal(store.artifacts.find((artifact) => artifact.id === 'sealed-orphan-step')?.state, 'INVALIDATED');
+  assert.equal(store.artifacts.find((artifact) => artifact.id === 'sealed-published-step')?.state, 'SEALED');
   assert.equal(store.artifacts.find((artifact) => artifact.id === 'sealed-other')?.state, 'SEALED');
   assert.deepEqual(store.calls.invalidate.map((call) => call.artifactId), [
     'sealed-evidence',
     'sealed-deliverable',
     'sealed-review',
     'sealed-document',
+    'sealed-orphan-step',
   ]);
+});
+
+test('recover retries an unpublished sealed step Artifact after immediate invalidation failed', async () => {
+  const { service, store } = recoveryFixture();
+  store.executions.push({
+    planVersionId: 'ambiguous-plan',
+    taskId: 'ambiguous-task',
+    attemptId: 'ambiguous-attempt',
+    taskState: 'paused',
+    attemptState: 'paused',
+    leaseExpiresAt: new Date('2026-08-17T00:00:00.000Z'),
+    failureKind: 'artifact_invalidation',
+  });
+  store.artifacts.push({
+    id: 'ambiguous-orphan-step',
+    attemptId: 'ambiguous-attempt',
+    kind: 'llm_output',
+    state: 'SEALED',
+    storageUri: '/runs/ambiguous-orphan-step.json',
+  });
+
+  await service.recover(new Date('2026-08-17T00:00:01.000Z'));
+
+  assert.equal(store.artifacts.find(({ id }) => id === 'ambiguous-orphan-step')?.state, 'INVALIDATED');
+  assert.equal(store.calls.pause.some(({ attemptId }) => attemptId === 'ambiguous-attempt'), false);
 });
 
 test('recover is idempotent when invoked repeatedly for the same timestamp', async () => {
@@ -224,6 +301,127 @@ test('recover is idempotent when invoked repeatedly for the same timestamp', asy
 
   assert.deepEqual(store.calls, first);
   assert.equal(store.executions.find((entry) => entry.taskId === 'expired-task')?.failureKind, 'worker_lost');
-  assert.equal(store.artifacts.find((artifact) => artifact.id === 'orphan-staging')?.state, 'FAILED');
+  assert.equal(store.artifacts.find((artifact) => artifact.id === 'orphan-tool_output')?.state, 'FAILED');
   assert.equal(store.artifacts.find((artifact) => artifact.id === 'sealed-deliverable')?.state, 'INVALIDATED');
+});
+
+test('recover resumes artifact cleanup for an already-paused worker-loss attempt', async () => {
+  const { service, store } = recoveryFixture();
+  store.executions.push({
+    planVersionId: 'interrupted-plan',
+    taskId: 'interrupted-task',
+    attemptId: 'interrupted-attempt',
+    taskState: 'paused',
+    attemptState: 'paused',
+    leaseExpiresAt: new Date('2026-08-17T00:00:00.000Z'),
+    failureKind: 'worker_loss',
+  });
+  store.artifacts.push({
+    id: 'interrupted-staging',
+    attemptId: 'interrupted-attempt',
+    kind: 'tool_output',
+    state: 'STAGING',
+    storageUri: '/runs/interrupted.json',
+  });
+  store.artifacts.push({
+    id: 'interrupted-late-writer',
+    attemptId: 'interrupted-attempt',
+    kind: 'skill_output',
+    state: 'FAILED',
+    storageUri: '/runs/late-writer.json.interrupted-late-writer.orphan',
+    failureReason: `orphaned staging artifact after worker loss${ARTIFACT_QUARANTINE_PENDING_MARKER}/runs/late-writer.json`,
+  });
+
+  await service.recover(new Date('2026-08-17T00:00:01.000Z'));
+
+  assert.equal(store.calls.pause.some(({ attemptId }) => attemptId === 'interrupted-attempt'), false);
+  assert.equal(store.artifacts.find(({ id }) => id === 'interrupted-staging')?.state, 'FAILED');
+  assert.match(
+    store.artifacts.find(({ id }) => id === 'interrupted-late-writer')?.failureReason ?? '',
+    /file quarantined/,
+  );
+});
+
+test('recover cleans a historical worker-loss attempt after a retry becomes current', async () => {
+  const { service, store } = recoveryFixture();
+  store.executions.push({
+    planVersionId: 'historical-plan',
+    taskId: 'retried-task',
+    attemptId: 'historical-attempt',
+    taskState: 'executing',
+    attemptState: 'paused',
+    leaseExpiresAt: new Date('2026-08-17T00:00:00.000Z'),
+    failureKind: 'worker_loss',
+  });
+  store.artifacts.push({
+    id: 'historical-staging',
+    attemptId: 'historical-attempt',
+    kind: 'tool_output',
+    state: 'STAGING',
+    storageUri: '/runs/historical.json',
+  });
+
+  await service.recover(new Date('2026-08-17T00:00:01.000Z'));
+
+  assert.equal(store.calls.pause.some(({ attemptId }) => attemptId === 'historical-attempt'), false);
+  assert.equal(store.artifacts.find(({ id }) => id === 'historical-staging')?.state, 'FAILED');
+});
+
+test('recover cleans a worker-loss attempt after the user aborts it', async () => {
+  const { service, store } = recoveryFixture();
+  store.executions.push({
+    planVersionId: 'aborted-plan',
+    taskId: 'aborted-task',
+    attemptId: 'aborted-attempt',
+    taskState: 'cancelled',
+    attemptState: 'cancelled',
+    leaseExpiresAt: new Date('2026-08-17T00:00:00.000Z'),
+    failureKind: 'worker_loss',
+  });
+  store.artifacts.push({
+    id: 'aborted-staging',
+    attemptId: 'aborted-attempt',
+    kind: 'tool_output',
+    state: 'STAGING',
+    storageUri: '/runs/aborted.json',
+  });
+
+  await service.recover(new Date('2026-08-17T00:00:01.000Z'));
+
+  assert.equal(store.artifacts.find(({ id }) => id === 'aborted-staging')?.state, 'FAILED');
+});
+
+test('recover continues after one Artifact fails and reports the aggregated cycle error', async () => {
+  const { service, store } = recoveryFixture();
+  const originalQuarantineArtifact = store.quarantineArtifact.bind(store);
+  store.quarantineArtifact = async (input) => {
+    if (input.artifactId === 'orphan-tool_output') throw new Error('permanent quarantine failure');
+    await originalQuarantineArtifact(input);
+  };
+
+  await assert.rejects(
+    () => service.recover(new Date('2026-08-17T00:00:01.000Z')),
+    (error: unknown) => error instanceof AggregateError
+      && error.errors.some((item) => String(item).includes('orphan-tool_output')),
+  );
+
+  assert.equal(store.artifacts.find(({ id }) => id === 'orphan-tool_output')?.state, 'STAGING');
+  assert.equal(store.artifacts.find(({ id }) => id === 'orphan-skill_output')?.state, 'FAILED');
+  assert.equal(store.artifacts.find(({ id }) => id === 'sealed-document')?.state, 'INVALIDATED');
+});
+
+test('production recovery store queries every attempt artifact without a kind allowlist', async () => {
+  const calls: unknown[] = [];
+  const store = new ControlPlaneExecutionRecoveryStore({
+    async listArtifactsForAttempt(input: unknown) {
+      calls.push(input);
+      return [];
+    },
+  } as never, {
+    async quarantineStagingArtifact() { return null; },
+  });
+  const input = { taskId: 'task', planVersionId: 'plan', attemptId: 'attempt' };
+
+  assert.deepEqual(await store.listArtifactsForAttempt(input), []);
+  assert.deepEqual(calls, [input]);
 });

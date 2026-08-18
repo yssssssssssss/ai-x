@@ -941,7 +941,7 @@ function competitiveAnalysisPayload(): Record<string, unknown> {
       id: 'screenshot-1',
       dimension: 'positioning',
       sampleIds: ['sample-1'],
-      assetIds: ['asset-registry-original'],
+      assetIds: ['asset-registry-original', 'asset-registry-annotation'],
       caption: 'Verified screenshot comparison',
     }],
   };

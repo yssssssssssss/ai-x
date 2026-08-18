@@ -316,22 +316,25 @@ export REPO_ROOT BACKUP_DIR RESTORE_DIR
 
 ## 13. 条件性真实 Smoke
 
-- [ ] 判断工作包 6 的 Real Multimodal WIP，以及工作包 9、10、11 是否修改真实 Gateway、Tavily、Tool receipt、Evidence 或 Current Report 路径。v4 冻结快照已包含 Gateway、Tool receipt 和 Current Report 改动，除非该工作包被明确撤回，否则真实 Smoke 必须触发。
-- [ ] 如果没有修改，记录“不触发真实 Smoke”及 diff 证据。
-- [ ] 如果有修改，确认受控 PostgreSQL 测试库可用。
+- [x] 判断工作包 6 的 Real Multimodal WIP，以及工作包 9、10、11 是否修改真实 Gateway、Tavily、Tool receipt、Evidence 或 Current Report 路径。结果：已修改上述生产路径，真实 Smoke 必须触发。
+- [x] 如果没有修改，记录“不触发真实 Smoke”及 diff 证据。结果：不适用；生产路径已修改，不能用“不触发”替代真实证据。
+- [ ] 如果有修改，确认受控 PostgreSQL 测试库可用。结果：仅验证了隔离测试库，未形成受控真实 Smoke 数据库收据。
 - [ ] 如果有修改，安全注入 `DATABASE_URL` 和 `JWT_SECRET`。
 - [ ] 如果有修改，安全注入 LLM Gateway 配置和密钥。
 - [ ] 如果有修改，安全注入 `TAVILY_API_KEY`。
 - [ ] 如果有修改，运行 `pnpm db:migrate`。
 - [ ] 如果有修改，运行 `pnpm db:seed`。
-- [ ] 如果有修改，运行 `ALLOW_REAL_PROVIDER=1 LLM_PROVIDER=gateway TOOL_ADAPTER=real pnpm smoke:current:real`。
-- [ ] 确认日志和 Artifact 不包含密钥、Bearer token 或完整 prompt。
-- [ ] 将 task、plan、attempt、deliverable 标识和结果写入 disposition 第 7 节。
-- [ ] 提交真实 Smoke 证据更新；未触发时提交不触发证据。
+- [ ] 如果有修改，运行 `ALLOW_REAL_PROVIDER=1 LLM_PROVIDER=gateway TOOL_ADAPTER=real pnpm smoke:current:real`。结果：`HOLD`，未运行；当前入口只支持 1/5 profile，不能制造不完整收据。
+- [ ] 确认日志和 Artifact 不包含密钥、Bearer token 或完整 prompt。结果：没有可供审计的真实运行日志或 Artifact。
+- [ ] 将 task、plan、attempt、deliverable 标识和结果写入 disposition 第 7 节。结果：0 个真实 task/plan/attempt/Report Package 标识。
+- [ ] 提交真实 Smoke 证据更新；未触发时提交不触发证据。结果：未满足；真实门禁已触发且没有有效收据。
+- [x] 完成 Gate 11 离线硬化与分层回归。结果：相关串行测试 177 total、176 pass、1 Tavily skip、0 fail；`pnpm quality` 1190 total、1179 pass、11 skip、0 fail；Web build 647 modules PASS；排除 `wiki/` 的 diff-check PASS。
+- [x] 完成独立只读复核。结果：`gate11_diff_review` 报告 0 P0、7 P1；lease-loss/sentinel 路径无剩余 P0/P1，但整体 Gate 11 必须保持 `HOLD`。
 
 ### 门禁 11
 
-- [ ] 条件性真实门禁已通过或有明确不触发证据。
+- [ ] 条件性真实门禁已通过或有明确不触发证据。结果：`HOLD`；真实门禁必须触发，但没有五 profile 真实收据、可信 Gold 或独立人工评审证据。
+- [x] 固定门禁边界。结果：不得进入门禁 12，不得推送、创建 PR 或把离线测试写成真实 Smoke 证据。
 
 ## 14. 第二次远端同步、PR 和独立复核
 

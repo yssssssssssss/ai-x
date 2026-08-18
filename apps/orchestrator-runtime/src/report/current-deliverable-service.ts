@@ -418,6 +418,7 @@ function assertVisualPreflight(
 ): void {
   if (deliverableId !== 'competitive_analysis_report' && deliverableId !== 'design_audit_report') return;
   if (!inventory || inventory.assets.length === 0) {
+    if (deliverableId === 'competitive_analysis_report') return;
     throw new Error(`${deliverableId} requires a non-empty verified visual inventory before synthesis`);
   }
   const originals = inventory.assets.filter((asset) => inventory.roles.get(asset.artifact.id) === 'original');
@@ -436,15 +437,23 @@ function assertPayloadVisualReferences(
   inventory: VerifiedVisualInventory | undefined,
 ): void {
   if (deliverableId !== 'competitive_analysis_report' && deliverableId !== 'design_audit_report') return;
-  if (!inventory) throw new Error(`${deliverableId} requires a verified visual inventory`);
-  const byId = new Map(inventory.assets.map((asset) => [asset.artifact.id, asset]));
   const value = unknownRecord(payload);
   if (!value) throw new Error('deliverable payload must be an object');
   if (deliverableId === 'competitive_analysis_report') {
     const comparisons = value.screenshotComparisons;
-    if (!Array.isArray(comparisons) || comparisons.length === 0) {
+    if (!Array.isArray(comparisons)) {
       throw new Error('competitive screenshot comparisons require a verified visual inventory');
     }
+    if (comparisons.length === 0) {
+      if (inventory && inventory.assets.length > 0) {
+        throw new Error('competitive screenshot comparisons are required for a verified visual inventory');
+      }
+      return;
+    }
+    if (!inventory || inventory.assets.length === 0) {
+      throw new Error('competitive screenshot comparisons require a verified visual inventory');
+    }
+    const byId = new Map(inventory.assets.map((asset) => [asset.artifact.id, asset]));
     for (const candidate of comparisons) {
       const comparison = unknownRecord(candidate);
       const ids = comparison?.assetIds;
@@ -464,6 +473,8 @@ function assertPayloadVisualReferences(
     }
     return;
   }
+  if (!inventory) throw new Error(`${deliverableId} requires a verified visual inventory`);
+  const byId = new Map(inventory.assets.map((asset) => [asset.artifact.id, asset]));
   const screenshots = value.annotatedScreenshots;
   if (!Array.isArray(screenshots) || screenshots.length === 0) {
     throw new Error('design annotatedScreenshots require a verified annotation');
@@ -658,9 +669,12 @@ export class CurrentDeliverableService {
       }>({
         prompt: contract.synthesisPrompt
           + '\nEvery evidenceIds entry must reference only context.verifiedEvidence[].evidenceId. Never place a Visual Asset id in evidenceIds; Visual Asset ids are allowed only in typed visual fields such as screenshotComparisons.assetIds.'
-          + (visualInventory === undefined
-            ? ''
-            : '\nVerified visual Asset inventory: reference only typed Asset ids in context.verifiedVisualAssetIds; never invent or reuse any other Asset id.')
+          + (contract.entry.id === 'competitive_analysis_report'
+            && (!visualInventory || visualInventory.assets.length === 0)
+            ? '\nNo verified visual Asset inventory exists. Return an empty screenshotComparisons array and never invent an Asset id.'
+            : visualInventory === undefined
+              ? ''
+              : '\nVerified visual Asset inventory: reference only typed Asset ids in context.verifiedVisualAssetIds; never invent or reuse any other Asset id.')
           + (input.revisionInstruction ? '\nAddress the review issues in the revision instruction.' : '')
           + (validationFeedback.length > 0
             ? `\nThe previous draft failed schema validation. Correct every issue: ${validationFeedback.join('; ')}`

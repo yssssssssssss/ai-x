@@ -13,6 +13,7 @@ const EXTENSIONS = {
 
 export interface VisualInputImage {
   bytes: Buffer;
+  contentType: keyof typeof EXTENSIONS;
   extension: 'jpg' | 'png' | 'webp';
 }
 
@@ -44,6 +45,7 @@ async function decodeVisualDataUrl(value: unknown): Promise<VisualInputImage> {
   }
   return {
     bytes,
+    contentType,
     extension: EXTENSIONS[contentType],
   };
 }

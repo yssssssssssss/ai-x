@@ -427,25 +427,49 @@ function assertCompositionInput(input: ComposeReportDocumentInput): {
   }
 
   const visualReferences = new Map<string, VerifiedVisualAsset>();
+  const visualAssetIds = new Set<string>();
+  const visualRoles = new Map<string, 'original' | 'annotation'>();
   for (const [index, asset] of input.visualAssets.entries()) {
     assertVerifiedVisualAsset(asset, binding, `Visual Asset ${index + 1}`);
     if (asset.manifest.mediaType === 'image/svg+xml') {
       fail(`Visual Asset ${asset.artifact.id} SVG must be supplied through a verified Chart`);
     }
+    if (visualAssetIds.has(asset.artifact.id)) {
+      fail(`Visual Asset id ${asset.artifact.id} must be unique`);
+    }
+    visualAssetIds.add(asset.artifact.id);
     const key = assetReferenceKey(assetReference(asset));
     if (visualReferences.has(key)) fail(`Visual Asset reference ${asset.artifact.id} must be unique`);
     visualReferences.set(key, asset);
+    if (
+      asset.manifest.source.kind === 'user_upload'
+      && asset.manifest.derivedFrom === null
+      && asset.manifest.derivation === null
+    ) {
+      visualRoles.set(key, 'original');
+    } else if (
+      asset.manifest.source.kind === 'derived'
+      && asset.manifest.derivedFrom !== null
+      && asset.manifest.derivation?.kind === 'annotation'
+    ) {
+      visualRoles.set(key, 'annotation');
+    } else {
+      fail(`Visual Asset ${asset.artifact.id} has an unsupported source or role`);
+    }
   }
   for (const asset of input.visualAssets) {
-    if (asset.manifest.derivation?.kind !== 'annotation') continue;
+    const assetKey = assetReferenceKey(assetReference(asset));
+    if (visualRoles.get(assetKey) !== 'annotation') continue;
     const lineage = asset.manifest.derivedFrom;
+    const lineageKey = lineage ? assetReferenceKey(lineage) : null;
     const original = lineage
       ? visualReferences.get(assetReferenceKey(lineage))
       : undefined;
     if (
-      asset.manifest.source.kind !== 'derived'
-      || !lineage
+      !lineage
       || !original
+      || !lineageKey
+      || visualRoles.get(lineageKey) !== 'original'
       || lineage.contentSha256 !== original.manifest.contentSha256
       || lineage.manifestHash !== original.manifest.manifestHash
     ) {
@@ -594,55 +618,77 @@ function professionalSectionBlocks(
       return [...matrix, ...differences];
     }
     if (sectionId === 'visual-evidence') {
+      const comparisons = payloadRecords(payload, 'screenshotComparisons');
       const assetsById = new Map(input.visualAssets.map((asset) => [asset.artifact.id, asset]));
-      return payloadRecords(payload, 'screenshotComparisons').flatMap((comparison, comparisonIndex) => {
-        const selected = payloadStrings(comparison, 'assetIds').map((assetId) =>
-          assetsById.get(assetId)
-            ?? fail(`Screenshot comparison references missing verified visual Asset ${assetId}`));
-        const selectedByReference = new Map(selected.map((asset) => [
-          assetReferenceKey(assetReference(asset)),
-          asset,
-        ]));
-        const pairedReferences = new Set<string>();
-        const blocks: ReportBlock[] = [];
-        let comparisonBlockIndex = 0;
-        for (const annotation of selected) {
-          if (annotation.manifest.derivation?.kind !== 'annotation') continue;
-          const lineage = annotation.manifest.derivedFrom;
-          if (!lineage) fail(`Screenshot annotation ${annotation.artifact.id} has no original lineage`);
-          const original = selectedByReference.get(assetReferenceKey(lineage));
-          if (
-            !original
-            || lineage.contentSha256 !== original.manifest.contentSha256
-            || lineage.manifestHash !== original.manifest.manifestHash
-          ) {
-            fail(`Screenshot annotation ${annotation.artifact.id} does not match its exact verified original lineage`);
-          }
-          pairedReferences.add(assetReferenceKey(assetReference(original)));
-          pairedReferences.add(assetReferenceKey(assetReference(annotation)));
-          comparisonBlockIndex += 1;
-          blocks.push({
-            id: `competitive-screenshot-comparison-${comparisonIndex + 1}-${comparisonBlockIndex}`,
-            type: 'image-comparison',
-            beforeAssetRef: assetReference(original),
-            afterAssetRef: assetReference(annotation),
-            caption: payloadString(comparison, 'caption'),
-            altText: `Verified ${payloadString(comparison, 'dimension')} screenshot annotation comparison.`,
-          });
+      const roles = new Map<string, 'original' | 'annotation'>();
+      for (const asset of input.visualAssets) {
+        if (
+          asset.manifest.source.kind === 'user_upload'
+          && asset.manifest.derivedFrom === null
+          && asset.manifest.derivation === null
+        ) {
+          roles.set(asset.artifact.id, 'original');
+          continue;
         }
-        let imageBlockIndex = 0;
-        for (const asset of selected) {
-          if (pairedReferences.has(assetReferenceKey(assetReference(asset)))) continue;
-          imageBlockIndex += 1;
-          blocks.push({
-            id: `competitive-screenshot-${comparisonIndex + 1}-${imageBlockIndex}`,
-            type: 'image',
-            assetRef: assetReference(asset),
-            caption: payloadString(comparison, 'caption'),
-            altText: `Verified ${payloadString(comparison, 'dimension')} screenshot comparison.`,
-          });
+        if (
+          asset.manifest.source.kind === 'derived'
+          && asset.manifest.derivedFrom !== null
+          && asset.manifest.derivation?.kind === 'annotation'
+        ) {
+          roles.set(asset.artifact.id, 'annotation');
+          continue;
         }
-        return blocks;
+        fail(`Competitive visual Asset ${asset.artifact.id} has an unsupported source or role`);
+      }
+      for (const asset of input.visualAssets) {
+        if (roles.get(asset.artifact.id) !== 'annotation') continue;
+        const lineage = asset.manifest.derivedFrom!;
+        const original = assetsById.get(lineage.assetId);
+        if (
+          !original
+          || roles.get(original.artifact.id) !== 'original'
+          || lineage.manifestArtifactId !== original.manifestArtifact.id
+          || lineage.contentSha256 !== original.manifest.contentSha256
+          || lineage.manifestHash !== original.manifest.manifestHash
+        ) {
+          fail(`Competitive annotation Asset ${asset.artifact.id} has invalid exact original lineage`);
+        }
+      }
+      if (comparisons.length === 0) {
+        if (input.visualAssets.length > 0) {
+          fail('Competitive screenshot comparisons are required for a non-empty verified visual inventory');
+        }
+        return [];
+      }
+      return comparisons.map((comparison, comparisonIndex) => {
+        const assetIds = payloadStrings(comparison, 'assetIds');
+        if (assetIds.length !== 2 || assetIds[0] === assetIds[1]) {
+          fail('Competitive screenshot comparison requires exactly one unique original/annotation pair');
+        }
+        const original = assetsById.get(assetIds[0]!)
+          ?? fail(`Screenshot comparison references missing verified original Asset ${assetIds[0]}`);
+        const annotation = assetsById.get(assetIds[1]!)
+          ?? fail(`Screenshot comparison references missing verified annotation Asset ${assetIds[1]}`);
+        const lineage = annotation.manifest.derivedFrom;
+        if (
+          roles.get(original.artifact.id) !== 'original'
+          || roles.get(annotation.artifact.id) !== 'annotation'
+          || lineage === null
+          || lineage.assetId !== original.artifact.id
+          || lineage.manifestArtifactId !== original.manifestArtifact.id
+          || lineage.contentSha256 !== original.manifest.contentSha256
+          || lineage.manifestHash !== original.manifest.manifestHash
+        ) {
+          fail('Competitive screenshot comparison has invalid exact original/annotation lineage');
+        }
+        return {
+          id: `competitive-screenshot-comparison-${comparisonIndex + 1}`,
+          type: 'image-comparison',
+          beforeAssetRef: assetReference(original),
+          afterAssetRef: assetReference(annotation),
+          caption: `${payloadString(comparison, 'caption')} 输入边界仅用于来源溯源，不定位或证明任何研究发现。`,
+          altText: `Original ${payloadString(comparison, 'dimension')} screenshot with an input-provenance boundary that does not locate or substantiate a research finding.`,
+        };
       });
     }
     if (sectionId === 'comparison') {

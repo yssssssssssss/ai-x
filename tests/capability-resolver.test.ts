@@ -169,6 +169,7 @@ test('keeps a skill eligible when missing inputs can become PendingInput records
   assert.equal(resolution.rejected.length, 0);
   assert.equal(resolution.eligible.length, 1);
   assert.deepEqual(resolution.eligible[0]?.pending_inputs, [{
+    kind: 'value',
     role: 'competitor_screenshots',
     label: 'competitor_screenshots',
     multiple: false,

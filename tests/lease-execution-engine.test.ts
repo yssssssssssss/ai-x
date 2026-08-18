@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Pool } from 'pg';
 import { ControlArtifactStore } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
+import { VisualInputGateStore } from '../apps/orchestrator-runtime/src/control/visual-input-gate-store.ts';
 import {
   ExecutionAuthenticityError,
   LeaseExecutionEngine,
@@ -43,6 +44,8 @@ import {
   VisualAssetService,
   type VerifiedVisualAsset,
 } from '../apps/orchestrator-runtime/src/report/visual-asset-service.ts';
+import { ImageAnnotationService } from '../apps/orchestrator-runtime/src/report/image-annotation-service.ts';
+import { VisualInputMaterializer } from '../apps/orchestrator-runtime/src/report/visual-input-materializer.ts';
 import {
   chartTableAlternative,
   renderAndSealChartSvg,
@@ -234,13 +237,7 @@ function minimalDeliverable(
         priority: 'P1',
         statement: 'Prototype a guided setup path',
       }],
-      screenshotComparisons: [{
-        id: 'screenshot-1',
-        dimension: 'onboarding',
-        sampleIds: ['sample-a'],
-        assetIds: ['asset-screenshot-a'],
-        caption: 'Guided setup entry point',
-      }],
+      screenshotComparisons: [],
     },
     recommendations: [{ id: 'R1', summaryIds: ['S1'], statement: 'Fixture recommendation' }],
     coverage: {
@@ -338,6 +335,36 @@ class CountingRealTavilyAdapter implements ToolAdapter {
           published_date: null,
         }],
       },
+      latencyMs: 1,
+      receipt: {
+        declaredAdapterType: options.manifest.adapter_type,
+        resolvedAdapterType: this.adapterType,
+        implementationId: this.implementationId,
+        executionMode: this.executionMode,
+        endpointHost: this.endpointHost(),
+        status: 'ok',
+        latencyMs: 1,
+      },
+    };
+  }
+}
+
+class CapturingRestAdapter implements ToolAdapter {
+  readonly adapterType = 'rest_json' as const;
+  readonly implementationId = 'test-rest-json-real-v1';
+  readonly executionMode = 'real' as const;
+  calls = 0;
+  readonly inputs: object[] = [];
+
+  endpointHost(): string {
+    return 'design-tool.test';
+  }
+
+  async invoke(options: { input: object; manifest: ToolManifest }): Promise<ToolInvokeResult> {
+    this.calls += 1;
+    this.inputs.push(structuredClone(options.input));
+    return {
+      output: { status: 'available' },
       latencyMs: 1,
       receipt: {
         declaredAdapterType: options.manifest.adapter_type,
@@ -563,6 +590,16 @@ class CountingRealLLM implements LLMClient {
   }
 }
 
+class ReverseCompletionLLM extends CountingRealLLM {
+  override async generateText(options: TextLLMCallOptions): Promise<TextLLMResult> {
+    const result = await super.generateText(options);
+    if (options.receipt.stepNo === 2) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    return result;
+  }
+}
+
 const echoedSecrets = {
   skill: 'skill-owner@example.test 13800138001 Authorization: Bearer skill-token api_key=skill-key',
   llm: 'llm-owner@example.test 13800138002 Authorization: Bearer llm-token api_key=llm-key',
@@ -768,6 +805,7 @@ async function claimedExecution(
   steps = planSteps,
   planExtras: Record<string, unknown> = {},
   structuredTask: Record<string, unknown> = { research_goal: 'compare digital human products' },
+  pendingInputs: unknown[] = [],
 ): Promise<{
   repository: ControlPlaneRepository;
   lease: ControlExecutionLease;
@@ -797,6 +835,7 @@ async function claimedExecution(
       steps,
     } as Record<string, unknown>,
     planHash: `sha256:${randomUUID()}`,
+    pendingInputs,
   });
   const leaseToken = randomUUID();
   const claim = await repository.claimExecution({
@@ -855,10 +894,7 @@ async function assertNoExecutionArtifacts(attemptId: string): Promise<void> {
   }
 }
 
-async function expireLease(
-  repository: ControlPlaneRepository,
-  lease: ControlExecutionLease,
-): Promise<void> {
+async function ageLeasePastExpiry(lease: ControlExecutionLease): Promise<void> {
   const connection = await scopedDatabase.connect();
   try {
     await connection.query(
@@ -868,6 +904,13 @@ async function expireLease(
   } finally {
     connection.release();
   }
+}
+
+async function expireLease(
+  repository: ControlPlaneRepository,
+  lease: ControlExecutionLease,
+): Promise<void> {
+  await ageLeasePastExpiry(lease);
   await repository.expireExecutionLease({ taskId: lease.taskId, attemptId: lease.attemptId });
 }
 
@@ -885,6 +928,332 @@ test('rejects an invalid lease before Tool or LLM side effects', async () => {
   );
   assert.equal(adapter.calls, 0);
   assert.equal(llm.calls, 0);
+});
+
+test('rejects legacy pending inputs without an explicit kind before Tool or LLM side effects', async () => {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    planSteps,
+    {},
+    { research_goal: 'compare digital human products' },
+    [{
+      role: 'query',
+      label: 'query',
+      multiple: false,
+      targets: [{ step_no: 1, tool_id: 'tavily-web-search', field: 'query', multiple: false }],
+    }],
+  );
+  const adapter = new CountingRealTavilyAdapter();
+  const llm = new CountingRealLLM();
+  const engine = buildEngine(repository, new ToolRouter().register(adapter), llm);
+
+  await assert.rejects(
+    () => engine.execute({ lease, expectedModel: 'pinned-model' }),
+    /pending input contract is invalid: item 1 is malformed/u,
+  );
+  assert.equal(adapter.calls, 0);
+  assert.equal(llm.calls, 0);
+});
+
+test('rejects a legacy raw visual gate before materialization or Tool side effects', async () => {
+  const visualSteps = structuredClone(planSteps);
+  visualSteps[0]!.input.designImage = null;
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    visualSteps,
+    {},
+    { research_goal: 'compare digital human products' },
+    [{
+      kind: 'visual',
+      role: 'designImage',
+      label: 'designImage',
+      multiple: false,
+      targets: [{ step_no: 1, tool_id: 'tavily-web-search', field: 'designImage', multiple: false }],
+    }],
+  );
+  const plan = await repository.getPlanVersionDetail(lease.planVersionId);
+  assert.ok(plan);
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64',
+  );
+  const legacyConnection = await scopedDatabase.connect();
+  try {
+    await legacyConnection.query(
+      `INSERT INTO control_gate_records
+       (task_id, plan_version_id, plan_hash, gate_type, gate_key, required_authority,
+        decision, value_json, actor_user_id, actor_role, policy_version, idempotency_key)
+       VALUES ($1, $2, $3, 'input', 'designImage', 'owner', 'provided', $4, $5, 'owner',
+               'legacy-test-only', $6)`,
+      [
+        lease.taskId,
+        lease.planVersionId,
+        plan.planHash,
+        JSON.stringify({ dataUrl: `data:image/png;base64,${png.toString('base64')}` }),
+        ownerId,
+        `legacy-visual-${randomUUID()}`,
+      ],
+    );
+  } finally {
+    legacyConnection.release();
+  }
+  const adapter = new CountingRealTavilyAdapter();
+  const llm = new CountingRealLLM();
+  let materializeCalls = 0;
+  const engine = new DeliverableAwareLeaseExecutionEngine({
+    repository,
+    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
+    tools: new ToolRouter().register(adapter),
+    llm,
+    deliverables: new RecordingDeliverablesFake(),
+    skillLoader: new SkillLoader(),
+    validator: new SchemaValidator(),
+    heartbeatMs: 60_000,
+    visualInputMaterializer: {
+      async materialize() { materializeCalls += 1; },
+    },
+  });
+
+  await assert.rejects(
+    () => engine.execute({ lease, expectedModel: 'pinned-model' }),
+    /unsealed dataUrl/u,
+  );
+  assert.equal(materializeCalls, 0);
+  assert.equal(adapter.calls, 0);
+  assert.equal(llm.calls, 0);
+});
+
+test('uses the same verified visual bytes for materialization and Tool dataUrl hydration', async () => {
+  const steps: CurrentPlanStep[] = [
+    {
+      step_no: 1,
+      step_name: 'design analysis',
+      actor_type: 'tool',
+      actor_id: 'aesthetic-quant-lab',
+      question_ids: ['question-1'],
+      depends_on: [],
+      input: { designImage: null },
+      input_bindings: [],
+      expected_outputs: [{ pointer: '/status', description: 'design status' }],
+      acceptance_criteria: ['analyzes the supplied image'],
+      requires_approval: false,
+      fallback_actor_ids: [],
+    },
+    { ...structuredClone(planSteps[0]!), step_no: 2 },
+    {
+      ...structuredClone(planSteps[1]!),
+      step_no: 3,
+      depends_on: [2],
+      input_bindings: [{
+        target_pointer: '/business_domain',
+        source_step_no: 2,
+        source_pointer: '/results/0/title',
+      }],
+    },
+    { ...structuredClone(planSteps[2]!), step_no: 4, depends_on: [3] },
+    { ...structuredClone(planSteps[3]!), step_no: 5, depends_on: [4] },
+  ];
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    steps,
+    {},
+    { research_goal: 'compare digital human products' },
+    [{
+      kind: 'visual',
+      role: 'designImage',
+      label: 'designImage',
+      multiple: false,
+      targets: [{ step_no: 1, tool_id: 'aesthetic-quant-lab', field: 'designImage', multiple: false }],
+    }],
+  );
+  const plan = await repository.getPlanVersionDetail(lease.planVersionId);
+  assert.ok(plan);
+  const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+  const visualInputGates = new VisualInputGateStore(artifacts);
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64',
+  );
+  const published = await visualInputGates.publish({
+    taskId: lease.taskId,
+    planVersionId: lease.planVersionId,
+    gateKey: 'designImage',
+    multiple: false,
+    requiredVisual: true,
+    value: { dataUrl: `data:image/png;base64,${png.toString('base64')}` },
+  });
+  await repository.recordGate({
+    taskId: lease.taskId,
+    planVersionId: lease.planVersionId,
+    planHash: plan.planHash,
+    gateType: 'input',
+    gateKey: 'designImage',
+    requiredAuthority: 'owner',
+    decision: 'provided',
+    evidenceRef: published.evidenceRef,
+    actorUserId: ownerId,
+    actorRole: 'owner',
+    idempotencyKey: `sealed-visual-${randomUUID()}`,
+  });
+  const tavily = new CountingRealTavilyAdapter();
+  const designTool = new CapturingRestAdapter();
+  const llm = new CountingRealLLM();
+  let materialized: Buffer | undefined;
+  let annotationPurpose: 'input_provenance' | 'design_audit' | undefined;
+  const engine = new DeliverableAwareLeaseExecutionEngine({
+    repository,
+    artifacts,
+    tools: new ToolRouter().register(tavily).register(designTool),
+    llm,
+    deliverables: new RecordingDeliverablesFake(),
+    skillLoader: new SkillLoader(),
+    validator: new SchemaValidator(),
+    heartbeatMs: 60_000,
+    visualInputGates,
+    visualInputMaterializer: {
+      async materialize(input) {
+        materialized = Buffer.from(input.visuals[0]!.images[0]!.bytes);
+        annotationPurpose = input.annotationPurpose;
+      },
+    },
+  });
+
+  const result = await engine.execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed');
+  assert.deepEqual(materialized, png);
+  assert.equal(annotationPurpose, 'input_provenance');
+  assert.equal(designTool.calls, 1);
+  const designInput = designTool.inputs[0] as { designImage?: { dataUrl?: string } };
+  const dataUrl = designInput.designImage?.dataUrl;
+  assert.equal(typeof dataUrl, 'string');
+  assert.deepEqual(Buffer.from(dataUrl!.split(',')[1]!, 'base64'), png);
+});
+
+test('forwards design-audit intent to an injected materializer', async () => {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    planSteps,
+    {
+      deliverable_type: 'design_audit_report',
+      evidence_requirements: [{
+        id: 'design-audit-report',
+        acceptedClasses: ['screenshot', 'user_input', 'public_source'],
+        minimumCount: 1,
+        required: true,
+      }],
+    },
+  );
+  let annotationPurpose: 'input_provenance' | 'design_audit' | undefined;
+  const engine = new DeliverableAwareLeaseExecutionEngine({
+    repository,
+    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
+    tools: new ToolRouter().register(new CountingRealTavilyAdapter()),
+    llm: new CountingRealLLM(),
+    deliverables: new RecordingDeliverablesFake(),
+    skillLoader: new SkillLoader(),
+    validator: new SchemaValidator(),
+    heartbeatMs: 60_000,
+    visualInputMaterializer: {
+      async materialize(input) {
+        annotationPurpose = input.annotationPurpose;
+      },
+    },
+  });
+
+  const result = await engine.execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed');
+  assert.equal(annotationPurpose, 'design_audit');
+});
+
+test('production design audit fails closed before actors until finding-bound annotation exists', async () => {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]!],
+    {
+      deliverable_type: 'design_audit_report',
+      evidence_requirements: [{
+        id: 'design-audit-report',
+        acceptedClasses: ['screenshot', 'user_input', 'public_source'],
+        minimumCount: 1,
+        required: true,
+      }],
+    },
+  );
+  const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+  const visualAssets = new VisualAssetService({ artifacts });
+  const adapter = new CountingRealTavilyAdapter();
+  const llm = new CountingRealLLM();
+  const engine = new DeliverableAwareLeaseExecutionEngine({
+    repository,
+    artifacts,
+    tools: new ToolRouter().register(adapter),
+    llm,
+    deliverables: new RecordingDeliverablesFake(),
+    skillLoader: new SkillLoader(),
+    validator: new SchemaValidator(),
+    heartbeatMs: 60_000,
+    visualInputMaterializer: new VisualInputMaterializer({
+      visualAssets,
+      imageAnnotations: new ImageAnnotationService({ assets: visualAssets, artifacts }),
+    }),
+  });
+
+  await assert.rejects(
+    () => engine.execute({ lease, expectedModel: 'pinned-model' }),
+    /verified finding-bound analysis|pre-analysis annotation synthesis/u,
+  );
+
+  assert.equal(adapter.calls, 0);
+  assert.equal(llm.calls, 0);
+  const [step] = await repository.listExecutionSteps(lease.attemptId);
+  assert.equal(step?.stepName, 'execution preflight');
+  assert.equal(step?.state, 'failed');
+  assert.match(String(step?.failure?.message), /verified finding-bound analysis/u);
+  assert.equal((await repository.getTaskDetail(lease.taskId))?.state, 'paused');
+});
+
+test('records lease loss when visual materialization outlives the active lease', async () => {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]!],
+  );
+  const adapter = new CountingRealTavilyAdapter();
+  const llm = new CountingRealLLM();
+  let materializeCalls = 0;
+  const engine = new DeliverableAwareLeaseExecutionEngine({
+    repository,
+    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
+    tools: new ToolRouter().register(adapter),
+    llm,
+    deliverables: new RecordingDeliverablesFake(),
+    skillLoader: new SkillLoader(),
+    validator: new SchemaValidator(),
+    heartbeatMs: 60_000,
+    visualInputMaterializer: {
+      async materialize() {
+        materializeCalls += 1;
+        await ageLeasePastExpiry(lease);
+      },
+    },
+  });
+
+  await assert.rejects(
+    () => engine.execute({ lease, expectedModel: 'pinned-model' }),
+    ControlPlaneConflictError,
+  );
+
+  assert.equal(materializeCalls, 1);
+  assert.equal(adapter.calls, 0);
+  assert.equal(llm.calls, 0);
+  const [step] = await repository.listExecutionSteps(lease.attemptId);
+  assert.equal(step?.stepName, 'execution preflight');
+  assert.equal(step?.actorId, 'preflight');
+  assert.equal(step?.state, 'failed');
+  assert.equal(step?.failure?.kind, 'lease_lost');
+  assert.equal((await repository.getTaskDetail(lease.taskId))?.state, 'paused');
+  assert.equal((await repository.listAttempts(lease.taskId))[0]?.state, 'paused');
 });
 
 test('rejects a plan without deliverable type before execution side effects', async () => {
@@ -1181,6 +1550,662 @@ test('rejects a dangling sealed source pointer before the target Skill side effe
   assert.equal(adapter.calls, 1);
   assert.equal(llm.calls, 0);
   assert.equal((await repository.listAttempts(lease.taskId))[0]?.state, 'paused');
+});
+
+test('settles every parallel wave step before pausing after an input binding failure', async () => {
+  const invalidParallelSteps: CurrentPlanStep[] = [
+    {
+      ...planSteps[0]!,
+      expected_outputs: [{ pointer: '/missing', description: 'declared but absent runtime output' }],
+    },
+    ...[2, 3].map((stepNo): CurrentPlanStep => ({
+      step_no: stepNo,
+      step_name: `并行分析 ${stepNo}`,
+      actor_type: 'llm',
+      actor_id: `parallel-summary-${stepNo}`,
+      question_ids: ['question-1'],
+      depends_on: [1],
+      input: { source: null },
+      input_bindings: [{
+        target_pointer: '/source',
+        source_step_no: 1,
+        source_pointer: '/missing',
+      }],
+      expected_outputs: [{ pointer: '/text', description: 'summary' }],
+      acceptance_criteria: ['summarizes evidence'],
+      requires_approval: false,
+      fallback_actor_ids: [],
+    })),
+  ];
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    invalidParallelSteps,
+  );
+  const adapter = new CountingRealTavilyAdapter();
+  const llm = new CountingRealLLM();
+
+  await assert.rejects(
+    () => buildEngine(
+      repository,
+      new ToolRouter().register(adapter),
+      llm,
+    ).execute({ lease, expectedModel: 'pinned-model' }),
+    ExecutionAuthenticityError,
+  );
+  assert.equal(adapter.calls, 1);
+  assert.equal(llm.calls, 0);
+  const branchSteps = (await repository.listExecutionSteps(lease.attemptId))
+    .filter((step) => step.stepNo === 2 || step.stepNo === 3)
+    .sort((left, right) => left.stepNo - right.stepNo);
+  assert.deepEqual(branchSteps.map((step) => step.state), ['failed', 'failed']);
+  assert.equal((await repository.listAttempts(lease.taskId))[0]?.state, 'paused');
+});
+
+test('prioritizes parallel Artifact invalidation failure as the attempt pause reason', async () => {
+  const steps: CurrentPlanStep[] = [
+    {
+      ...planSteps[2]!,
+      step_no: 1,
+      step_name: 'lower ordinary failure',
+      depends_on: [],
+    },
+    {
+      ...planSteps[0]!,
+      step_no: 2,
+      step_name: 'higher Artifact cleanup failure',
+      depends_on: [],
+    },
+  ];
+  const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), steps);
+  const llm = new CountingRealLLM();
+  const originalGenerateText = llm.generateText.bind(llm);
+  llm.generateText = async (options) => {
+    if (options.receipt.stepNo === 1) {
+      throw new LLMInvocationError('server', false, 503, 'lower parallel step failed');
+    }
+    return originalGenerateText(options);
+  };
+  const originalRecordExecutionStep = repository.recordExecutionStep.bind(repository);
+  const originalInvalidateArtifact = repository.invalidateArtifactPublication.bind(repository);
+  let succeededWriteAttempts = 0;
+  let cleanupAttempts = 0;
+  let unpublishedArtifactId: string | undefined;
+  repository.recordExecutionStep = async (candidate) => {
+    if (candidate.stepNo === 2 && candidate.state === 'succeeded') {
+      succeededWriteAttempts += 1;
+      unpublishedArtifactId = candidate.outputArtifactId;
+      throw new Error('injected succeeded-step persistence failure');
+    }
+    await originalRecordExecutionStep(candidate);
+  };
+  repository.invalidateArtifactPublication = async (artifactId, reason) => {
+    if (artifactId === unpublishedArtifactId) {
+      cleanupAttempts += 1;
+      throw new Error('injected Artifact invalidation failure');
+    }
+    await originalInvalidateArtifact(artifactId, reason);
+  };
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    llm,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'paused');
+  assert.equal(result.failedStepNo, 1);
+  assert.equal(result.failure?.kind, 'server');
+  assert.equal(succeededWriteAttempts, 2);
+  assert.equal(cleanupAttempts, 1);
+  const recoverable = (await repository.listRecoverableExecutions())
+    .find(({ attemptId }) => attemptId === lease.attemptId);
+  assert.equal(recoverable?.attemptState, 'paused');
+  assert.equal(recoverable?.failureKind, 'artifact_invalidation');
+});
+
+test('settles and pauses a parallel wave when a pre-run lease refresh rejects', async () => {
+  const parallelSteps: CurrentPlanStep[] = [planSteps[0]!, ...[2, 3].map((stepNo): CurrentPlanStep => ({
+    step_no: stepNo,
+    step_name: `并行摘要 ${stepNo}`,
+    actor_type: 'llm',
+    actor_id: `parallel-summary-${stepNo}`,
+    question_ids: ['question-1'],
+    depends_on: [1],
+    input: {},
+    input_bindings: [],
+    expected_outputs: [{ pointer: '/text', description: 'summary' }],
+    acceptance_criteria: ['summarizes evidence'],
+    requires_approval: false,
+    fallback_actor_ids: [],
+  }))];
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    parallelSteps,
+  );
+  const originalRecordExecutionStep = repository.recordExecutionStep.bind(repository);
+  let rejectNextPreRunRefresh = false;
+  repository.recordExecutionStep = async (candidate) => {
+    await originalRecordExecutionStep(candidate);
+    if (candidate.stepNo === 1 && candidate.state === 'succeeded') {
+      rejectNextPreRunRefresh = true;
+    }
+  };
+  const originalRequireActiveLease = repository.requireActiveLease.bind(repository);
+  repository.requireActiveLease = async (candidate) => {
+    if (rejectNextPreRunRefresh) {
+      rejectNextPreRunRefresh = false;
+      throw new ControlPlaneConflictError('injected pre-run lease refresh rejection');
+    }
+    return originalRequireActiveLease(candidate);
+  };
+  const adapter = new CountingRealTavilyAdapter();
+  const llm = new CountingRealLLM();
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(adapter),
+    llm,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'paused');
+  assert.equal(result.failure?.kind, 'lease_lost');
+  assert.equal(adapter.calls, 1);
+  assert.equal(llm.calls, 1);
+  assert.deepEqual(
+    (await repository.listExecutionSteps(lease.attemptId)).map(({ stepNo, state }) => ({ stepNo, state })),
+    [
+      { stepNo: 1, state: 'succeeded' },
+      { stepNo: 2, state: 'failed' },
+      { stepNo: 3, state: 'succeeded' },
+    ],
+  );
+  assert.equal((await repository.getTaskDetail(lease.taskId))?.state, 'paused');
+  assert.equal((await repository.listAttempts(lease.taskId))[0]?.state, 'paused');
+});
+
+test('inserts a failed step when the lease expires before the pre-run running row', async () => {
+  const steps: CurrentPlanStep[] = [
+    planSteps[0]!,
+    { ...planSteps[2]!, step_no: 2, depends_on: [1] },
+  ];
+  const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), steps);
+  const originalRecordExecutionStep = repository.recordExecutionStep.bind(repository);
+  const regularStepTwoStates: string[] = [];
+  let expired = false;
+  repository.recordExecutionStep = async (candidate) => {
+    if (candidate.stepNo === 2) regularStepTwoStates.push(candidate.state);
+    await originalRecordExecutionStep(candidate);
+    if (candidate.stepNo === 1 && candidate.state === 'succeeded' && !expired) {
+      expired = true;
+      await ageLeasePastExpiry(lease);
+    }
+  };
+  const adapter = new CountingRealTavilyAdapter();
+  const llm = new CountingRealLLM();
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(adapter),
+    llm,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'paused');
+  assert.equal(result.failure?.kind, 'lease_lost');
+  assert.equal(adapter.calls, 1);
+  assert.equal(llm.calls, 0);
+  assert.deepEqual(regularStepTwoStates, ['failed']);
+  const executionSteps = await repository.listExecutionSteps(lease.attemptId);
+  assert.deepEqual(
+    executionSteps.map(({ stepNo, state }) => ({ stepNo, state })),
+    [
+      { stepNo: 1, state: 'succeeded' },
+      { stepNo: 2, state: 'failed' },
+    ],
+  );
+  assert.equal(executionSteps[1]?.actorId, planSteps[2]!.actor_id);
+  assert.equal(executionSteps[1]?.failure?.kind, 'lease_lost');
+  assert.equal((await repository.getTaskDetail(lease.taskId))?.state, 'paused');
+  assert.equal((await repository.listAttempts(lease.taskId))[0]?.state, 'paused');
+});
+
+test('fails closed without publishing optional Tool output when succeeded-step persistence fails', async () => {
+  const steps: CurrentPlanStep[] = [
+    planSteps[0]!,
+    {
+      ...planSteps[0]!,
+      step_no: 2,
+      step_name: '可选内部资料检索',
+      actor_id: 'ai-spider-search',
+      depends_on: [1],
+    },
+    {
+      ...planSteps[2]!,
+      step_no: 3,
+      depends_on: [2],
+      input: { source: null },
+      input_bindings: [{
+        target_pointer: '/source',
+        source_step_no: 2,
+        source_pointer: '/results',
+      }],
+    },
+  ];
+  const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), steps);
+  const originalRecordExecutionStep = repository.recordExecutionStep.bind(repository);
+  repository.recordExecutionStep = async (candidate) => {
+    if (candidate.stepNo === 2 && candidate.state === 'succeeded') {
+      throw new Error('injected succeeded-step persistence failure');
+    }
+    await originalRecordExecutionStep(candidate);
+  };
+  const llm = new CountingRealLLM();
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter()
+      .register(new CountingRealTavilyAdapter())
+      .register(new SuccessfulInternalAdapter()),
+    llm,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'paused');
+  assert.equal(llm.calls, 0);
+  const executionSteps = await repository.listExecutionSteps(lease.attemptId);
+  assert.equal(executionSteps.find(({ stepNo }) => stepNo === 2)?.state, 'failed');
+  assert.equal(executionSteps.some(({ stepNo }) => stepNo === 3), false);
+  const optionalArtifact = (await repository.listArtifactsForAttempt(lease))
+    .find(({ storageUri }) => storageUri.includes('/steps/2-tool_output.json'));
+  assert.equal(optionalArtifact?.state, 'FAILED');
+});
+
+test('defers Artifact invalidation when succeeded-step writes and readback all fail', async () => {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]!],
+  );
+  const originalRecordExecutionStep = repository.recordExecutionStep.bind(repository);
+  const originalListExecutionSteps = repository.listExecutionSteps.bind(repository);
+  let succeededWriteAttempts = 0;
+  let readbackFailures = 0;
+  let artifactId: string | undefined;
+  let artifactStateBeforeFailedWrite: string | undefined;
+  repository.recordExecutionStep = async (candidate) => {
+    if (candidate.stepNo === 1 && candidate.state === 'succeeded') {
+      succeededWriteAttempts += 1;
+      artifactId = candidate.outputArtifactId;
+      throw new Error('injected succeeded-step persistence failure');
+    }
+    if (candidate.stepNo === 1 && candidate.state === 'failed' && artifactId) {
+      artifactStateBeforeFailedWrite = (await repository.getArtifact(artifactId))?.state;
+    }
+    await originalRecordExecutionStep(candidate);
+  };
+  repository.listExecutionSteps = async (attemptId) => {
+    if (
+      attemptId === lease.attemptId
+      && succeededWriteAttempts === 2
+      && readbackFailures === 0
+    ) {
+      readbackFailures += 1;
+      throw new Error('injected succeeded-step readback failure');
+    }
+    return originalListExecutionSteps(attemptId);
+  };
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new CountingRealLLM(),
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'paused');
+  assert.equal(succeededWriteAttempts, 2);
+  assert.equal(readbackFailures, 1);
+  assert.equal(artifactStateBeforeFailedWrite, 'SEALED');
+  const [step] = await repository.listExecutionSteps(lease.attemptId);
+  assert.equal(step?.state, 'failed');
+  assert.ok(artifactId);
+  assert.equal((await repository.getArtifact(artifactId))?.state, 'FAILED');
+});
+
+test('rejects a mutated succeeded readback without invalidating its referenced Artifact', async () => {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]!],
+  );
+  const originalRecordExecutionStep = repository.recordExecutionStep.bind(repository);
+  let succeededWriteAttempts = 0;
+  let artifactId: string | undefined;
+  repository.recordExecutionStep = async (candidate) => {
+    if (candidate.stepNo !== 1 || candidate.state !== 'succeeded') {
+      await originalRecordExecutionStep(candidate);
+      return;
+    }
+    succeededWriteAttempts += 1;
+    artifactId = candidate.outputArtifactId;
+    if (succeededWriteAttempts === 1) {
+      await originalRecordExecutionStep(candidate);
+      const connection = await scopedDatabase.connect();
+      try {
+        await connection.query(
+          `UPDATE control_execution_steps
+           SET actor_id = 'tampered-actor', tool_provenance = $3, latency_ms = 999
+           WHERE attempt_id = $1 AND step_no = $2`,
+          [
+            candidate.attemptId,
+            candidate.stepNo,
+            JSON.stringify({ ...candidate.toolProvenance, configHash: 'sha256:tampered' }),
+          ],
+        );
+      } finally {
+        connection.release();
+      }
+    }
+    throw new Error('injected succeeded-step response failure');
+  };
+
+  let executionError: unknown;
+  try {
+    await buildEngine(
+      repository,
+      new ToolRouter().register(new CountingRealTavilyAdapter()),
+      new CountingRealLLM(),
+    ).execute({ lease, expectedModel: 'pinned-model' });
+  } catch (error) {
+    executionError = error;
+  }
+
+  assert.ok(executionError instanceof ControlPlaneConflictError);
+  assert.equal(succeededWriteAttempts, 2);
+  const [step] = await repository.listExecutionSteps(lease.attemptId);
+  assert.equal(step?.state, 'succeeded');
+  assert.equal(step?.actorId, 'tampered-actor');
+  assert.equal(step?.latencyMs, 999);
+  assert.equal(step?.toolProvenance?.configHash, 'sha256:tampered');
+  assert.equal(step?.outputArtifactId, artifactId);
+  assert.ok(artifactId);
+  assert.equal((await repository.getArtifact(artifactId))?.state, 'SEALED');
+});
+
+test('keeps a succeeded step and Artifact when the commit response is lost', async () => {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]!],
+  );
+  const originalRecordExecutionStep = repository.recordExecutionStep.bind(repository);
+  let lostResponse = false;
+  repository.recordExecutionStep = async (candidate) => {
+    await originalRecordExecutionStep(candidate);
+    if (candidate.stepNo === 1 && candidate.state === 'succeeded' && !lostResponse) {
+      lostResponse = true;
+      throw new Error('simulated commit response loss');
+    }
+  };
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new CountingRealLLM(),
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed');
+  const [step] = await repository.listExecutionSteps(lease.attemptId);
+  assert.equal(step?.state, 'succeeded');
+  assert.ok(step?.outputArtifactId);
+  assert.equal((await repository.getArtifact(step.outputArtifactId))?.state, 'SEALED');
+});
+
+test('accepts an ambiguous succeeded readback using persisted JSON semantics', async () => {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]!],
+  );
+  const originalRecordExecutionStep = repository.recordExecutionStep.bind(repository);
+  let succeededWriteAttempts = 0;
+  repository.recordExecutionStep = async (candidate) => {
+    if (candidate.stepNo !== 1 || candidate.state !== 'succeeded') {
+      await originalRecordExecutionStep(candidate);
+      return;
+    }
+    succeededWriteAttempts += 1;
+    candidate.toolProvenance = {
+      ...candidate.toolProvenance,
+      transientReceipt: undefined,
+    };
+    if (succeededWriteAttempts === 1) await originalRecordExecutionStep(candidate);
+    throw new Error('simulated ambiguous succeeded response');
+  };
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new CountingRealLLM(),
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed');
+  assert.equal(succeededWriteAttempts, 2);
+  const [step] = await repository.listExecutionSteps(lease.attemptId);
+  assert.equal(step?.state, 'succeeded');
+  assert.equal(Object.hasOwn(step?.toolProvenance ?? {}, 'transientReceipt'), false);
+  assert.ok(step?.outputArtifactId);
+  assert.equal((await repository.getArtifact(step.outputArtifactId))?.state, 'SEALED');
+});
+
+test('keeps a committed succeeded Artifact when the retry loses the real lease', async () => {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]!],
+  );
+  const originalRecordExecutionStep = repository.recordExecutionStep.bind(repository);
+  let succeededWriteAttempts = 0;
+  let retryLostLease = false;
+  let artifactId: string | undefined;
+  repository.recordExecutionStep = async (candidate) => {
+    if (candidate.stepNo !== 1 || candidate.state !== 'succeeded') {
+      await originalRecordExecutionStep(candidate);
+      return;
+    }
+    succeededWriteAttempts += 1;
+    artifactId = candidate.outputArtifactId;
+    if (succeededWriteAttempts === 1) {
+      await originalRecordExecutionStep(candidate);
+      await ageLeasePastExpiry(lease);
+      throw new Error('simulated committed response loss');
+    }
+    try {
+      await originalRecordExecutionStep(candidate);
+    } catch (error) {
+      retryLostLease = error instanceof ControlPlaneConflictError;
+      throw error;
+    }
+  };
+
+  let executionError: unknown;
+  try {
+    await buildEngine(
+      repository,
+      new ToolRouter().register(new CountingRealTavilyAdapter()),
+      new CountingRealLLM(),
+    ).execute({ lease, expectedModel: 'pinned-model' });
+  } catch (error) {
+    executionError = error;
+  }
+
+  if (executionError !== undefined) assert.ok(executionError instanceof ControlPlaneConflictError);
+  assert.equal(succeededWriteAttempts, 2);
+  assert.equal(retryLostLease, true);
+  const [step] = await repository.listExecutionSteps(lease.attemptId);
+  assert.equal(step?.state, 'succeeded');
+  assert.equal(step?.outputArtifactId, artifactId);
+  assert.ok(artifactId);
+  assert.equal((await repository.getArtifact(artifactId))?.state, 'SEALED');
+});
+
+test('records lease loss when an uncommitted succeeded retry meets a real expiry', async () => {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]!],
+  );
+  const originalRecordExecutionStep = repository.recordExecutionStep.bind(repository);
+  let succeededWriteAttempts = 0;
+  let artifactId: string | undefined;
+  repository.recordExecutionStep = async (candidate) => {
+    if (candidate.stepNo !== 1 || candidate.state !== 'succeeded') {
+      await originalRecordExecutionStep(candidate);
+      return;
+    }
+    succeededWriteAttempts += 1;
+    artifactId = candidate.outputArtifactId;
+    if (succeededWriteAttempts === 1) {
+      await ageLeasePastExpiry(lease);
+      throw new Error('simulated uncommitted response failure');
+    }
+    await originalRecordExecutionStep(candidate);
+  };
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new CountingRealLLM(),
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'paused');
+  assert.equal(result.failure?.kind, 'lease_lost');
+  assert.equal(succeededWriteAttempts, 2);
+  const [step] = await repository.listExecutionSteps(lease.attemptId);
+  assert.equal(step?.state, 'failed');
+  assert.equal(step?.failure?.kind, 'lease_lost');
+  assert.ok(artifactId);
+  assert.equal((await repository.getArtifact(artifactId))?.state, 'FAILED');
+});
+
+test('inserts a failed step when the lease expires during checkpoint reseal before a running row', async () => {
+  const first = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]!],
+  );
+  const firstResult = await buildEngine(
+    first.repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new CountingRealLLM(),
+  ).execute({ lease: first.lease, expectedModel: 'pinned-model' });
+  assert.equal(firstResult.status, 'completed');
+
+  const completedTask = await first.repository.getTaskDetail(first.lease.taskId);
+  assert.ok(completedTask);
+  const readyTask = await first.repository.transitionTask({
+    taskId: first.lease.taskId,
+    expectedVersion: completedTask.stateVersion,
+    from: 'completed',
+    to: 'ready',
+  });
+  const retryToken = randomUUID();
+  const retryOwner = 'checkpoint-retry-worker';
+  const retryClaim = await first.repository.claimExecution({
+    taskId: first.lease.taskId,
+    planVersionId: first.lease.planVersionId,
+    expectedVersion: readyTask.stateVersion,
+    idempotencyKey: randomUUID(),
+    requestHash: `sha256:${randomUUID()}`,
+    leaseOwner: retryOwner,
+    leaseTokenHash: leaseHash(retryToken),
+    leaseExpiresAt: new Date(Date.now() + 60_000),
+    retryOf: first.lease.attemptId,
+  });
+  const retryLease: ControlExecutionLease = {
+    taskId: first.lease.taskId,
+    planVersionId: first.lease.planVersionId,
+    attemptId: retryClaim.attemptId,
+    leaseOwner: retryOwner,
+    leaseToken: retryToken,
+    retryOf: first.lease.attemptId,
+  };
+  const originalSealArtifact = first.repository.sealArtifact.bind(first.repository);
+  const originalRecordExecutionStep = first.repository.recordExecutionStep.bind(first.repository);
+  const regularRetryStates: string[] = [];
+  let expiredDuringReseal = false;
+  first.repository.recordExecutionStep = async (candidate) => {
+    if (candidate.attemptId === retryLease.attemptId && candidate.stepNo === 1) {
+      regularRetryStates.push(candidate.state);
+    }
+    await originalRecordExecutionStep(candidate);
+  };
+  first.repository.sealArtifact = async (candidate) => {
+    if (candidate.attemptId === retryLease.attemptId && !expiredDuringReseal) {
+      expiredDuringReseal = true;
+      await ageLeasePastExpiry(retryLease);
+    }
+    return originalSealArtifact(candidate);
+  };
+
+  const result = await buildEngine(
+    first.repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new CountingRealLLM(),
+  ).execute({ lease: retryLease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'paused');
+  assert.equal(result.failure?.kind, 'lease_lost');
+  assert.equal(expiredDuringReseal, true);
+  assert.deepEqual(regularRetryStates, ['failed']);
+  const [failedStep] = await first.repository.listExecutionSteps(retryLease.attemptId);
+  assert.equal(failedStep?.state, 'failed');
+  assert.equal(failedStep?.actorId, planSteps[0]!.actor_id);
+  assert.equal(failedStep?.failure?.kind, 'lease_lost');
+  const retryArtifacts = await first.repository.listArtifactsForAttempt(retryLease);
+  assert.deepEqual(retryArtifacts.map(({ kind, state }) => ({ kind, state })), [
+    { kind: 'tool_output', state: 'FAILED' },
+  ]);
+  assert.equal((await first.repository.getTaskDetail(retryLease.taskId))?.state, 'paused');
+  assert.equal(
+    (await first.repository.listAttempts(retryLease.taskId))
+      .find(({ id }) => id === retryLease.attemptId)?.state,
+    'paused',
+  );
+});
+
+test('orders parallel outputs by step number regardless of completion timing', async () => {
+  const steps: CurrentPlanStep[] = [
+    planSteps[0]!,
+    ...[2, 3].map((stepNo): CurrentPlanStep => ({
+      ...planSteps[2]!,
+      step_no: stepNo,
+      step_name: `并行摘要 ${stepNo}`,
+      depends_on: [1],
+    })),
+    {
+      ...planSteps[2]!,
+      step_no: 4,
+      step_name: '合并摘要',
+      depends_on: [2, 3],
+    },
+  ];
+  const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), steps);
+  const llm = new ReverseCompletionLLM();
+  const deliverables = new RecordingDeliverablesFake();
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    llm,
+    deliverables,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed');
+  const mergedContext = llm.contexts.find((context) => {
+    if (!context || typeof context !== 'object' || Array.isArray(context)) return false;
+    const priorOutputs = (context as Record<string, unknown>).prior_outputs;
+    return Array.isArray(priorOutputs) && priorOutputs.length === 2;
+  });
+  assertUnknownRecord(mergedContext);
+  assert.deepEqual(
+    (mergedContext.prior_outputs as Array<{ stepNo: number }>).map(({ stepNo }) => stepNo),
+    [2, 3],
+  );
+  assert.deepEqual(
+    (deliverables.calls[0]?.outputs as Array<{ stepNo: number }> | undefined)?.map(({ stepNo }) => stepNo),
+    [1, 2, 3, 4],
+  );
 });
 
 test('executes the current plan with real Tool provenance and complete model receipts', async () => {

@@ -527,6 +527,20 @@ export class RoutedPlanner implements PlanStrategy {
           ctx.requirement,
         );
         validator.validateFileOrThrow(join(getConfigRoot(), manifest.input_schema), input);
+        const visualPendingCount = directDecision.pending_inputs.filter(({ kind }) => kind === 'visual').length;
+        for (const pending of directDecision.pending_inputs) {
+          for (const imageField of manifest.image_input_fields ?? []) {
+            if (
+              pending.kind === 'visual'
+              && (
+                visualPendingCount === 1
+                || (imageField.role ?? imageField.field) === pending.role
+              )
+            ) {
+              input[imageField.field] = imageField.multiple ? [] : null;
+            }
+          }
+        }
         const approval = requiredApprovals.find((item) => (
           item.capability_type === 'tool' && item.capability_id === tool.id
         ));
@@ -691,6 +705,8 @@ export class RoutedPlanner implements PlanStrategy {
         `基于 finalized ResearchTaskV2、ProblemGraph、Evidence Policy 和 eligible capability shortlist 生成 depth/speed 两份 Current 候选。` +
         `depth 总步数不得超过 ${ROUTED_STEP_LIMITS.depth}，speed 总步数不得超过 ${ROUTED_STEP_LIMITS.speed}；只选择与 research_goal/when_to_use 最匹配的少数能力，不得堆叠整个 shortlist。` +
         `每个 step 必须精确包含 step_no、step_name、actor_type、actor_id、question_ids、depends_on、input、input_bindings、expected_outputs、acceptance_criteria、requires_approval、fallback_actor_ids。` +
+        `input_bindings[].target_pointer 是相对当前 step.input 的 JSON Pointer，目标槽必须预先存在于 step.input；例如 step.input.public_sources 必须写 /public_sources，禁止写 /input/public_sources。` +
+        `LLM step 的唯一运行时输出指针是 /text，reviewer step 的唯一运行时输出指针是 /review；后续绑定必须使用这两个真实指针，不得为它们虚构结构化输出字段。` +
         `fallback_actor_ids 必须为空数组，当前执行器不支持 fallback 调度。` +
         `Skill step 的 expected_outputs 及后续 binding source_pointer 必须位于统一输出根 /payload 下。` +
         `Skill 的 required_tools 必须作为更早的 Tool step；所有引用必须真实存在；不得使用 capability_resolution.rejected 中的 actor。` +

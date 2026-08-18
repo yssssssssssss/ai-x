@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Pool } from 'pg';
 import {
@@ -828,6 +828,82 @@ test('atomically fences a reclaimed clarification token and lets only the winner
   assert.equal(await repository.nextPlanVersion(created.id), 3);
 });
 
+test('fences confirmation reservations by task, request hash, expiry, and token', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const candidateRepository = repository as unknown as CandidatePersistenceRepository;
+  const created = await candidateRepository.createTaskWithCandidates({
+    conversationId,
+    ownerUserId: ownerId,
+    originalInput: 'confirmation reservation fencing',
+    taskType: 'competitive_research',
+    structuredTask: readyRequirement('confirmation reservation fencing'),
+    candidates: existingTaskCandidates('confirmation-reservation'),
+  });
+  const plan = created.candidates[0]!;
+  const selected = await repository.selectCandidate({
+    taskId: created.task.id,
+    planVersionId: plan.id,
+    expectedVersion: created.task.stateVersion,
+    idempotencyKey: `select-${randomUUID()}`,
+    requestHash: `sha256:${'d'.repeat(64)}`,
+    actor: { userId: ownerId, role: 'owner' },
+  });
+  const reservationInput = {
+    taskId: created.task.id,
+    planVersionId: plan.id,
+    idempotencyKey: `confirm-${randomUUID()}`,
+    requestHash: `sha256:${'e'.repeat(64)}`,
+    expectedVersion: selected.stateVersion,
+    actorUserId: ownerId,
+  };
+
+  const first = await repository.reserveConfirmationCommand(reservationInput);
+  assert.equal(first.status, 'reserved');
+  assert.deepEqual(await repository.reserveConfirmationCommand(reservationInput), { status: 'pending' });
+  assert.deepEqual(await repository.reserveConfirmationCommand({
+    ...reservationInput,
+    requestHash: `sha256:${'f'.repeat(64)}`,
+  }), { status: 'conflict' });
+  assert.deepEqual(await repository.reserveConfirmationCommand({
+    ...reservationInput,
+    idempotencyKey: `other-${randomUUID()}`,
+  }), { status: 'conflict' });
+
+  const connection = await scopedDatabase.connect();
+  try {
+    await connection.query(
+      `UPDATE control_commands SET reservation_expires_at = now() - interval '1 second'
+       WHERE task_id = $1 AND command_type = 'confirmation' AND idempotency_key = $2`,
+      [created.task.id, reservationInput.idempotencyKey],
+    );
+  } finally {
+    connection.release();
+  }
+  const reclaimed = await repository.reserveConfirmationCommand(reservationInput);
+  assert.equal(reclaimed.status, 'reserved');
+  assert.notEqual(reclaimed.reservationToken, first.reservationToken);
+  const completion = {
+    ...reservationInput,
+    planHash: plan.planHash,
+    actorRole: 'owner',
+    nextState: 'ready' as const,
+    gates: [],
+  };
+  await assert.rejects(() => repository.completeConfirmationCommand({
+    ...completion,
+    reservationToken: first.reservationToken!,
+  }), /reservation fence was lost/u);
+  const transitioned = await repository.completeConfirmationCommand({
+    ...completion,
+    reservationToken: reclaimed.reservationToken!,
+  });
+  assert.equal(transitioned.state, 'ready');
+  assert.deepEqual(
+    (await repository.getCommand(created.task.id, 'confirmation', reservationInput.idempotencyKey))?.response,
+    { state: 'ready', stateVersion: transitioned.stateVersion },
+  );
+});
+
 test('rolls back plans, task transition, and command completion when the atomic transaction fails', async () => {
   const repository = new ControlPlaneRepository(scopedDatabase);
   const created = await repository.createTask({
@@ -1120,6 +1196,201 @@ test('claims one execution attempt and replays the same idempotency key', async 
   );
 });
 
+test('rejects mismatched step identities before pending replay or terminal evidence mutation', async () => {
+  const { repository, lease } = await createLeaseStateFixture('executing', false);
+  const actorA = {
+    stepName: 'actor A step',
+    actorType: 'tool',
+    actorId: 'actor-a',
+  };
+  const actorB = {
+    stepName: 'actor B step',
+    actorType: 'skill',
+    actorId: 'actor-b',
+  };
+  await repository.recordExecutionStep({
+    ...lease,
+    stepNo: 1,
+    ...actorA,
+    state: 'pending',
+  });
+  await repository.recordExecutionStep({
+    ...lease,
+    stepNo: 2,
+    ...actorA,
+    state: 'running',
+  });
+  const actorBOutput = await repository.createStagingArtifact({
+    taskId: lease.taskId,
+    planVersionId: lease.planVersionId,
+    attemptId: lease.attemptId,
+    kind: 'skill_output',
+    storageUri: join(workspaceRoot, `${randomUUID()}-actor-b.json`),
+    schemaVersion: 'skill-output-v1',
+    sensitivity: 'internal',
+    redactionPolicyVersion: 'trusted-p0-v1',
+  });
+  const conflictOutcome = async (operation: () => Promise<void>): Promise<'accepted' | 'conflict'> => {
+    try {
+      await operation();
+      return 'accepted';
+    } catch (error) {
+      if (error instanceof ControlPlaneConflictError) return 'conflict';
+      throw error;
+    }
+  };
+
+  const pendingReplay = await conflictOutcome(() => repository.recordExecutionStep({
+    ...lease,
+    stepNo: 1,
+    ...actorB,
+    state: 'pending',
+  }));
+  const terminalUpdate = await conflictOutcome(() => repository.recordExecutionStep({
+    ...lease,
+    stepNo: 2,
+    ...actorB,
+    state: 'succeeded',
+    outputArtifactId: actorBOutput.id,
+    skillProvenance: { outputHash: 'sha256:actor-b' },
+  }));
+  const steps = await repository.listExecutionSteps(lease.attemptId);
+
+  assert.deepEqual({
+    pendingReplay,
+    terminalUpdate,
+    steps: steps.map((step) => ({
+      stepNo: step.stepNo,
+      stepName: step.stepName,
+      actorType: step.actorType,
+      actorId: step.actorId,
+      state: step.state,
+      outputArtifactId: step.outputArtifactId,
+      toolProvenance: step.toolProvenance,
+      skillProvenance: step.skillProvenance,
+    })),
+  }, {
+    pendingReplay: 'conflict',
+    terminalUpdate: 'conflict',
+    steps: [
+      {
+        stepNo: 1,
+        ...actorA,
+        state: 'pending',
+        outputArtifactId: null,
+        toolProvenance: null,
+        skillProvenance: null,
+      },
+      {
+        stepNo: 2,
+        ...actorA,
+        state: 'running',
+        outputArtifactId: null,
+        toolProvenance: null,
+        skillProvenance: null,
+      },
+    ],
+  });
+});
+
+test('rejects terminal evidence on nonterminal steps and adopts it only on success', async () => {
+  const { repository, lease } = await createLeaseStateFixture('executing', false);
+  const [preloadedOutput, succeededOutput] = await Promise.all([
+    repository.createStagingArtifact({
+      taskId: lease.taskId,
+      planVersionId: lease.planVersionId,
+      attemptId: lease.attemptId,
+      kind: 'tool_output',
+      storageUri: join(workspaceRoot, `${randomUUID()}-preloaded.json`),
+      schemaVersion: 'tool-output-v1',
+      sensitivity: 'internal',
+      redactionPolicyVersion: 'trusted-p0-v1',
+    }),
+    repository.createStagingArtifact({
+      taskId: lease.taskId,
+      planVersionId: lease.planVersionId,
+      attemptId: lease.attemptId,
+      kind: 'tool_output',
+      storageUri: join(workspaceRoot, `${randomUUID()}-succeeded.json`),
+      schemaVersion: 'tool-output-v1',
+      sensitivity: 'internal',
+      redactionPolicyVersion: 'trusted-p0-v1',
+    }),
+  ]);
+  const prohibitedEvidence = [
+    { name: 'outputArtifactId', input: { outputArtifactId: preloadedOutput.id } },
+    { name: 'toolProvenance', input: { toolProvenance: { outputHash: 'sha256:preloaded-tool' } } },
+    { name: 'skillProvenance', input: { skillProvenance: { outputHash: 'sha256:preloaded-skill' } } },
+    { name: 'failure', input: { failure: { kind: 'preloaded-failure' } } },
+    { name: 'latencyMs', input: { latencyMs: 1 } },
+    { name: 'finishedAt', input: { finishedAt: new Date('2026-08-18T00:00:01Z') } },
+  ];
+  let stepNo = 1;
+  for (const state of ['pending', 'running'] as const) {
+    for (const evidence of prohibitedEvidence) {
+      const candidateStepNo = stepNo++;
+      await assert.rejects(
+        () => repository.recordExecutionStep({
+          ...lease,
+          stepNo: candidateStepNo,
+          stepName: `${state} ${evidence.name}`,
+          actorType: 'tool',
+          actorId: 'terminal-evidence-fence',
+          state,
+          ...evidence.input,
+        }),
+        ControlPlaneConflictError,
+        `${state} must reject ${evidence.name}`,
+      );
+    }
+  }
+
+  const succeededStepNo = stepNo;
+  await repository.recordExecutionStep({
+    ...lease,
+    stepNo: succeededStepNo,
+    stepName: 'clean running step',
+    actorType: 'tool',
+    actorId: 'terminal-evidence-fence',
+    state: 'running',
+    startedAt: new Date('2026-08-18T00:00:00Z'),
+  });
+  const succeededProvenance = { outputHash: 'sha256:succeeded-tool' };
+  const succeededAt = new Date('2026-08-18T00:00:42Z');
+  await repository.recordExecutionStep({
+    ...lease,
+    stepNo: succeededStepNo,
+    stepName: 'clean running step',
+    actorType: 'tool',
+    actorId: 'terminal-evidence-fence',
+    state: 'succeeded',
+    outputArtifactId: succeededOutput.id,
+    toolProvenance: succeededProvenance,
+    latencyMs: 42,
+    finishedAt: succeededAt,
+  });
+
+  const steps = await repository.listExecutionSteps(lease.attemptId);
+  assert.equal(steps.length, 1);
+  assert.deepEqual({
+    state: steps[0]?.state,
+    outputArtifactId: steps[0]?.outputArtifactId,
+    toolProvenance: steps[0]?.toolProvenance,
+    skillProvenance: steps[0]?.skillProvenance,
+    failure: steps[0]?.failure,
+    latencyMs: steps[0]?.latencyMs,
+    finishedAt: steps[0]?.finishedAt?.toISOString(),
+  }, {
+    state: 'succeeded',
+    outputArtifactId: succeededOutput.id,
+    toolProvenance: succeededProvenance,
+    skillProvenance: null,
+    failure: null,
+    latencyMs: 42,
+    finishedAt: succeededAt.toISOString(),
+  });
+});
+
 test('round-trips the explicit pending-input value through gate records', async () => {
   const repository = new ControlPlaneRepository(scopedDatabase);
   const task = await repository.createTask({
@@ -1150,6 +1421,7 @@ test('round-trips the explicit pending-input value through gate records', async 
     requiredAuthority: 'owner',
     decision: 'provided',
     value: suppliedValue,
+    evidenceRef: null,
     actorUserId: ownerId,
     actorRole: 'owner',
     idempotencyKey: gateIdempotencyKey,
@@ -1161,10 +1433,52 @@ test('round-trips the explicit pending-input value through gate records', async 
     requiredAuthority: 'owner',
     decision: 'provided',
     value: suppliedValue,
+    evidenceRef: null,
     actorUserId: ownerId,
     actorRole: 'owner',
     idempotencyKey: gateIdempotencyKey,
   }]);
+});
+
+test('rejects inline image data at the control gate persistence boundary', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const task = await repository.createTask({
+    conversationId,
+    ownerUserId: ownerId,
+    originalInput: 'inline image gate rejection',
+    taskType: 'competitive_research',
+    structuredTask: { research_goal: '拒绝视觉 base64 落库' },
+    state: 'awaiting_confirmation',
+  });
+  const planHash = 'sha256:inline-image-gate-plan';
+  const plan = await repository.createPlanVersion({
+    taskId: task.id,
+    version: 1,
+    plan: { steps: [] },
+    planHash,
+    pendingInputs: [],
+  });
+
+  for (const value of [
+    'data:image/png;base64,AAAA',
+    { image: 'prefix DATA:IMAGE/PNG;BASE64,AAAA' },
+    { nested: [{ dataUrl: 'data:image/webp;base64,AAAA' }] },
+  ]) {
+    await assert.rejects(() => repository.recordGate({
+      taskId: task.id,
+      planVersionId: plan.id,
+      planHash,
+      gateType: 'confirmation',
+      gateKey: `inline-${randomUUID()}`,
+      requiredAuthority: 'owner',
+      decision: 'confirmed',
+      value,
+      actorUserId: ownerId,
+      actorRole: 'owner',
+      idempotencyKey: `inline-${randomUUID()}`,
+    }), /inline image data is forbidden/u);
+  }
+  assert.deepEqual(await repository.listGateRecords(task.id, plan.id), []);
 });
 
 test('rejects reuse of an idempotency key with a different request hash', async () => {
@@ -1437,6 +1751,99 @@ test('seals versioned attempt artifacts and rejects staged or tampered artifacts
     ArtifactIntegrityError,
   );
   await assert.rejects(() => store.verifySealed(sealed.id), ArtifactIntegrityError);
+});
+
+test('atomically records physical STAGING quarantine and frees the original path', async () => {
+  const fixture = await createLeaseStateFixture('executing', false);
+  const store = new ControlArtifactStore({ root: workspaceRoot, registry: fixture.repository });
+  const relativePath = 'recovery/retry.json';
+  const storageUri = join(
+    workspaceRoot,
+    'tasks',
+    fixture.task.id,
+    'attempts',
+    fixture.claim.attemptId,
+    relativePath,
+  );
+  mkdirSync(dirname(storageUri), { recursive: true });
+  writeFileSync(storageUri, '{"orphaned":true}');
+  const staged = await fixture.repository.createStagingArtifact({
+    taskId: fixture.task.id,
+    planVersionId: fixture.plan.id,
+    attemptId: fixture.claim.attemptId,
+    kind: 'tool_output',
+    storageUri,
+    schemaVersion: 'tool-output-v1',
+    sensitivity: 'internal',
+    redactionPolicyVersion: 'v1',
+  });
+  const quarantineUri = `${storageUri}.${staged.id}.orphan`;
+
+  const quarantined = await store.quarantineStagingArtifact(staged.id);
+
+  assert.equal(quarantined?.state, 'FAILED');
+  assert.equal(quarantined?.storageUri, quarantineUri);
+  assert.match(quarantined?.failureReason ?? '', /file quarantined/);
+  assert.equal(existsSync(storageUri), false);
+  assert.equal(readFileSync(quarantineUri, 'utf8'), '{"orphaned":true}');
+  assert.deepEqual(await store.quarantineStagingArtifact(staged.id), null);
+
+  const retried = await store.writeJson({
+    taskId: fixture.task.id,
+    planVersionId: fixture.plan.id,
+    attemptId: fixture.claim.attemptId,
+    kind: 'tool_output',
+    relativePath,
+    value: { retried: true },
+    schemaVersion: 'tool-output-v1',
+  });
+  assert.equal(retried.state, 'SEALED');
+  assert.match(readFileSync(storageUri, 'utf8'), /"retried": true/);
+  assert.equal(readFileSync(quarantineUri, 'utf8'), '{"orphaned":true}');
+});
+
+test('pending quarantine never takes a path reused by a new sealed Artifact', async () => {
+  const fixture = await createLeaseStateFixture('executing', false);
+  const store = new ControlArtifactStore({ root: workspaceRoot, registry: fixture.repository });
+  const relativePath = 'recovery/reused.json';
+  const storageUri = join(
+    workspaceRoot,
+    'tasks',
+    fixture.task.id,
+    'attempts',
+    fixture.claim.attemptId,
+    relativePath,
+  );
+  const staged = await fixture.repository.createStagingArtifact({
+    taskId: fixture.task.id,
+    planVersionId: fixture.plan.id,
+    attemptId: fixture.claim.attemptId,
+    kind: 'skill_output',
+    storageUri,
+    schemaVersion: 'skill-output-v2',
+    sensitivity: 'internal',
+    redactionPolicyVersion: 'v1',
+  });
+  const pending = await store.quarantineStagingArtifact(staged.id);
+  assert.equal(pending?.state, 'FAILED');
+  assert.match(pending?.failureReason ?? '', /source file was absent/);
+
+  const retried = await store.writeJson({
+    taskId: fixture.task.id,
+    planVersionId: fixture.plan.id,
+    attemptId: fixture.claim.attemptId,
+    kind: 'skill_output',
+    relativePath,
+    value: { owner: 'retry' },
+    schemaVersion: 'skill-output-v2',
+  });
+  assert.equal(retried.state, 'SEALED');
+
+  const reconciled = await store.quarantineStagingArtifact(staged.id);
+  assert.match(reconciled?.failureReason ?? '', new RegExp(`reused by live artifact ${retried.id}`));
+  assert.deepEqual((await store.readVerifiedJson<{ owner: string }>(retried.id)).value, { owner: 'retry' });
+  assert.equal(existsSync(storageUri), true);
+  assert.equal(existsSync(`${storageUri}.${staged.id}.orphan`), false);
 });
 
 test('rejects foreign Task Plan Attempt tuples on staging, unleased seal, and verified binary read', async () => {

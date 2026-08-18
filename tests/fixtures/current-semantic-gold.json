@@ -14,18 +14,18 @@
       "profile": "competitive_research",
       "taskType": "competitive_research",
       "businessDomain": "pet_food",
-      "input": "针对宠物辅食做一个竞品研究方案，比较主要品牌的配方、价格和购买体验",
+      "input": "针对宠物辅食做一份竞品分析报告，比较主要品牌的配方、价格和购买体验",
       "researchGoal": "识别宠物辅食市场的可验证竞争差异",
       "sensitivity": "public",
       "piiDetected": false,
       "requiredCoreTool": "tavily-web-search",
-      "expectedDeliverableType": "research_plan",
+      "expectedDeliverableType": "competitive_analysis_report",
       "minPublicSources": 3,
       "minVisualAssets": 0,
       "variant": "clear",
       "expectedTaskType": "competitive_research",
       "expectedDeliverableIds": [
-        "research_plan"
+        "competitive_analysis_report"
       ],
       "clarificationKeys": [],
       "clarificationThemes": [],
@@ -51,13 +51,13 @@
       "sensitivity": "public",
       "piiDetected": false,
       "requiredCoreTool": "tavily-web-search",
-      "expectedDeliverableType": "research_plan",
+      "expectedDeliverableType": "competitive_analysis_report",
       "minPublicSources": 3,
       "minVisualAssets": 0,
       "variant": "ambiguous",
       "expectedTaskType": "competitive_research",
       "expectedDeliverableIds": [
-        "research_plan"
+        "competitive_analysis_report"
       ],
       "clarificationKeys": [
         "scope",
@@ -89,13 +89,13 @@
       "sensitivity": "public",
       "piiDetected": false,
       "requiredCoreTool": "tavily-web-search",
-      "expectedDeliverableType": "research_plan",
+      "expectedDeliverableType": "competitive_analysis_report",
       "minPublicSources": 3,
       "minVisualAssets": 0,
       "variant": "missing_input",
       "expectedTaskType": "competitive_research",
       "expectedDeliverableIds": [
-        "research_plan"
+        "competitive_analysis_report"
       ],
       "clarificationKeys": [
         "scope",
@@ -127,13 +127,13 @@
       "sensitivity": "public",
       "piiDetected": false,
       "requiredCoreTool": "tavily-web-search",
-      "expectedDeliverableType": "research_plan",
+      "expectedDeliverableType": "competitive_analysis_report",
       "minPublicSources": 3,
       "minVisualAssets": 0,
       "variant": "constraint_conflict",
       "expectedTaskType": "competitive_research",
       "expectedDeliverableIds": [
-        "research_plan"
+        "competitive_analysis_report"
       ],
       "clarificationKeys": [],
       "clarificationThemes": [],
@@ -159,13 +159,13 @@
       "sensitivity": "confidential",
       "piiDetected": true,
       "requiredCoreTool": "tavily-web-search",
-      "expectedDeliverableType": "research_plan",
+      "expectedDeliverableType": "competitive_analysis_report",
       "minPublicSources": 3,
       "minVisualAssets": 0,
       "variant": "pii",
       "expectedTaskType": "competitive_research",
       "expectedDeliverableIds": [
-        "research_plan"
+        "competitive_analysis_report"
       ],
       "clarificationKeys": [],
       "clarificationThemes": [],
@@ -365,13 +365,13 @@
       "sensitivity": "internal",
       "piiDetected": false,
       "requiredCoreTool": "tavily-web-search",
-      "expectedDeliverableType": "research_plan",
+      "expectedDeliverableType": "voc_diagnosis_report",
       "minPublicSources": 1,
       "minVisualAssets": 0,
       "variant": "clear",
       "expectedTaskType": "voc_diagnosis",
       "expectedDeliverableIds": [
-        "research_plan"
+        "voc_diagnosis_report"
       ],
       "clarificationKeys": [],
       "clarificationThemes": [],
@@ -397,13 +397,13 @@
       "sensitivity": "internal",
       "piiDetected": false,
       "requiredCoreTool": "tavily-web-search",
-      "expectedDeliverableType": "research_plan",
+      "expectedDeliverableType": "voc_diagnosis_report",
       "minPublicSources": 1,
       "minVisualAssets": 0,
       "variant": "ambiguous",
       "expectedTaskType": "voc_diagnosis",
       "expectedDeliverableIds": [
-        "research_plan"
+        "voc_diagnosis_report"
       ],
       "clarificationKeys": [
         "scope",
@@ -435,13 +435,13 @@
       "sensitivity": "public",
       "piiDetected": false,
       "requiredCoreTool": "tavily-web-search",
-      "expectedDeliverableType": "research_plan",
+      "expectedDeliverableType": "voc_diagnosis_report",
       "minPublicSources": 3,
       "minVisualAssets": 0,
       "variant": "missing_input",
       "expectedTaskType": "voc_diagnosis",
       "expectedDeliverableIds": [
-        "research_plan"
+        "voc_diagnosis_report"
       ],
       "clarificationKeys": [
         "scope",
@@ -473,13 +473,13 @@
       "sensitivity": "internal",
       "piiDetected": false,
       "requiredCoreTool": "tavily-web-search",
-      "expectedDeliverableType": "research_plan",
+      "expectedDeliverableType": "voc_diagnosis_report",
       "minPublicSources": 1,
       "minVisualAssets": 0,
       "variant": "constraint_conflict",
       "expectedTaskType": "voc_diagnosis",
       "expectedDeliverableIds": [
-        "research_plan"
+        "voc_diagnosis_report"
       ],
       "clarificationKeys": [],
       "clarificationThemes": [],
@@ -505,13 +505,13 @@
       "sensitivity": "confidential",
       "piiDetected": true,
       "requiredCoreTool": "tavily-web-search",
-      "expectedDeliverableType": "research_plan",
+      "expectedDeliverableType": "voc_diagnosis_report",
       "minPublicSources": 1,
       "minVisualAssets": 0,
       "variant": "pii",
       "expectedTaskType": "voc_diagnosis",
       "expectedDeliverableIds": [
-        "research_plan"
+        "voc_diagnosis_report"
       ],
       "clarificationKeys": [],
       "clarificationThemes": [],
@@ -538,13 +538,13 @@
       "sensitivity": "internal",
       "piiDetected": false,
       "requiredCoreTool": "tavily-web-search",
-      "expectedDeliverableType": "research_plan",
+      "expectedDeliverableType": "design_audit_report",
       "minPublicSources": 1,
-      "minVisualAssets": 3,
+      "minVisualAssets": 2,
       "variant": "clear",
       "expectedTaskType": "design_audit",
       "expectedDeliverableIds": [
-        "research_plan"
+        "design_audit_report"
       ],
       "clarificationKeys": [],
       "clarificationThemes": [],
@@ -570,13 +570,13 @@
       "sensitivity": "internal",
       "piiDetected": false,
       "requiredCoreTool": "tavily-web-search",
-      "expectedDeliverableType": "research_plan",
+      "expectedDeliverableType": "design_audit_report",
       "minPublicSources": 1,
-      "minVisualAssets": 3,
+      "minVisualAssets": 2,
       "variant": "ambiguous",
       "expectedTaskType": "design_audit",
       "expectedDeliverableIds": [
-        "research_plan"
+        "design_audit_report"
       ],
       "clarificationKeys": [
         "scope",
@@ -608,13 +608,13 @@
       "sensitivity": "internal",
       "piiDetected": false,
       "requiredCoreTool": "tavily-web-search",
-      "expectedDeliverableType": "research_plan",
+      "expectedDeliverableType": "design_audit_report",
       "minPublicSources": 1,
-      "minVisualAssets": 3,
+      "minVisualAssets": 2,
       "variant": "missing_input",
       "expectedTaskType": "design_audit",
       "expectedDeliverableIds": [
-        "research_plan"
+        "design_audit_report"
       ],
       "clarificationKeys": [
         "scope",
@@ -646,13 +646,13 @@
       "sensitivity": "internal",
       "piiDetected": false,
       "requiredCoreTool": "tavily-web-search",
-      "expectedDeliverableType": "research_plan",
+      "expectedDeliverableType": "design_audit_report",
       "minPublicSources": 1,
-      "minVisualAssets": 3,
+      "minVisualAssets": 2,
       "variant": "constraint_conflict",
       "expectedTaskType": "design_audit",
       "expectedDeliverableIds": [
-        "research_plan"
+        "design_audit_report"
       ],
       "clarificationKeys": [],
       "clarificationThemes": [],
@@ -678,13 +678,13 @@
       "sensitivity": "confidential",
       "piiDetected": true,
       "requiredCoreTool": "tavily-web-search",
-      "expectedDeliverableType": "research_plan",
+      "expectedDeliverableType": "design_audit_report",
       "minPublicSources": 1,
-      "minVisualAssets": 3,
+      "minVisualAssets": 2,
       "variant": "pii",
       "expectedTaskType": "design_audit",
       "expectedDeliverableIds": [
-        "research_plan"
+        "design_audit_report"
       ],
       "clarificationKeys": [],
       "clarificationThemes": [],
@@ -711,13 +711,13 @@
       "sensitivity": "internal",
       "piiDetected": false,
       "requiredCoreTool": "tavily-web-search",
-      "expectedDeliverableType": "research_plan",
+      "expectedDeliverableType": "accessibility_audit_report",
       "minPublicSources": 1,
-      "minVisualAssets": 2,
+      "minVisualAssets": 0,
       "variant": "clear",
       "expectedTaskType": "a11y_audit",
       "expectedDeliverableIds": [
-        "research_plan"
+        "accessibility_audit_report"
       ],
       "clarificationKeys": [],
       "clarificationThemes": [],
@@ -743,13 +743,13 @@
       "sensitivity": "internal",
       "piiDetected": false,
       "requiredCoreTool": "tavily-web-search",
-      "expectedDeliverableType": "research_plan",
+      "expectedDeliverableType": "accessibility_audit_report",
       "minPublicSources": 1,
-      "minVisualAssets": 2,
+      "minVisualAssets": 0,
       "variant": "ambiguous",
       "expectedTaskType": "a11y_audit",
       "expectedDeliverableIds": [
-        "research_plan"
+        "accessibility_audit_report"
       ],
       "clarificationKeys": [
         "scope",
@@ -781,13 +781,13 @@
       "sensitivity": "internal",
       "piiDetected": false,
       "requiredCoreTool": "tavily-web-search",
-      "expectedDeliverableType": "research_plan",
+      "expectedDeliverableType": "accessibility_audit_report",
       "minPublicSources": 1,
-      "minVisualAssets": 2,
+      "minVisualAssets": 0,
       "variant": "missing_input",
       "expectedTaskType": "a11y_audit",
       "expectedDeliverableIds": [
-        "research_plan"
+        "accessibility_audit_report"
       ],
       "clarificationKeys": [
         "scope",
@@ -819,13 +819,13 @@
       "sensitivity": "internal",
       "piiDetected": false,
       "requiredCoreTool": "tavily-web-search",
-      "expectedDeliverableType": "research_plan",
+      "expectedDeliverableType": "accessibility_audit_report",
       "minPublicSources": 1,
-      "minVisualAssets": 2,
+      "minVisualAssets": 0,
       "variant": "constraint_conflict",
       "expectedTaskType": "a11y_audit",
       "expectedDeliverableIds": [
-        "research_plan"
+        "accessibility_audit_report"
       ],
       "clarificationKeys": [],
       "clarificationThemes": [],
@@ -851,13 +851,13 @@
       "sensitivity": "confidential",
       "piiDetected": true,
       "requiredCoreTool": "tavily-web-search",
-      "expectedDeliverableType": "research_plan",
+      "expectedDeliverableType": "accessibility_audit_report",
       "minPublicSources": 1,
-      "minVisualAssets": 2,
+      "minVisualAssets": 0,
       "variant": "pii",
       "expectedTaskType": "a11y_audit",
       "expectedDeliverableIds": [
-        "research_plan"
+        "accessibility_audit_report"
       ],
       "clarificationKeys": [],
       "clarificationThemes": [],
