@@ -143,11 +143,18 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
 
             {phase === 'planning' && <PlanProgressCard steps={progress} />}
             {phase === 'awaiting-approval' && <AwaitingApprovalNotice />}
-            {phase === 'executing' && <Loading text="执行中…报告合成较慢,请稍候" />}
+            {phase === 'executing' && (
+              <>
+                {executionPlanSteps.length > 0 && (
+                  <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase="executing" />
+                )}
+                <Loading text="执行中…报告合成较慢,请稍候" />
+              </>
+            )}
             {phase === 'paused' && exec && (
               <>
                 {executionPlanSteps.length > 0 && (
-                  <Stage3Execute steps={executionPlanSteps} log={executionSteps} />
+                  <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase="paused" />
                 )}
                 <FailureActionCard
                   stepNo={exec.failedStepNo}
@@ -161,7 +168,7 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
             {phase === 'done' && exec && (
               <>
                 {executionPlanSteps.length > 0 && (
-                  <Stage3Execute steps={executionPlanSteps} log={executionSteps} />
+                  <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase="done" />
                 )}
                 {error && <ErrorCard msg={error} />}
                 {exec.status === 'completed_with_gaps' && (

@@ -286,3 +286,206 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
   padding-top: 10px;
   border-top: 1px solid var(--border-soft);
 }
+
+/* ---- 当前任务运行流程:Control plan DAG + 执行状态 ---- */
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+.execution-flow-card {
+  overflow: hidden;
+}
+.execution-flow-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  min-height: 36px;
+  margin: -2px 0 12px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--bg-elev);
+  color: var(--text-faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.execution-flow-summary-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text);
+}
+.execution-flow-summary-spinner {
+  width: 12px;
+  height: 12px;
+}
+.execution-flow-mode {
+  margin-left: auto;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.execution-flow-viewport {
+  width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x pan-y;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--bg);
+  scrollbar-color: var(--border) transparent;
+}
+.execution-flow-canvas {
+  position: relative;
+  margin: 0 auto;
+}
+.execution-flow-edges {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.execution-flow-edge {
+  fill: none;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+.execution-flow-edge.status-pending { stroke: var(--border); }
+.execution-flow-edge.status-running { stroke: var(--primary-strong); stroke-width: 2; stroke-dasharray: 5 4; animation: execution-flow-dash 1.1s linear infinite; }
+.execution-flow-edge.status-succeeded { stroke: rgba(52, 211, 153, 0.55); }
+.execution-flow-edge.status-failed { stroke: rgba(248, 113, 113, 0.8); stroke-width: 2; }
+.execution-flow-edge.status-skipped { stroke: rgba(107, 116, 136, 0.7); stroke-dasharray: 4 4; }
+.execution-flow-arrow.status-pending { fill: var(--border); }
+.execution-flow-arrow.status-running { fill: var(--primary-strong); }
+.execution-flow-arrow.status-succeeded { fill: rgba(52, 211, 153, 0.75); }
+.execution-flow-arrow.status-failed { fill: var(--danger); }
+.execution-flow-arrow.status-skipped { fill: var(--muted); }
+@keyframes execution-flow-dash { to { stroke-dashoffset: -18; } }
+.execution-flow-node {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 11px 9px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card);
+  color: var(--text);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+}
+.execution-flow-node.status-running {
+  border-color: var(--primary-strong);
+  background: var(--bg-card-hi);
+  box-shadow: 0 0 0 2px var(--primary-tint), 0 6px 18px rgba(0, 0, 0, 0.24);
+}
+.execution-flow-node.status-succeeded { border-color: rgba(52, 211, 153, 0.42); }
+.execution-flow-node.status-failed { border-color: rgba(248, 113, 113, 0.72); }
+.execution-flow-node.status-skipped { border-style: dashed; opacity: 0.78; }
+.execution-flow-node.status-pending { color: var(--text-dim); }
+.execution-flow-node.actor-system { background: var(--bg-elev); }
+.execution-flow-node-head,
+.execution-flow-node-meta {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.execution-flow-node-head {
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-faint);
+  font-size: 10px;
+}
+.execution-flow-node-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.execution-flow-step-no {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.execution-flow-node-title {
+  display: -webkit-box;
+  min-height: 34px;
+  overflow: hidden;
+  color: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-wrap: pretty;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.execution-flow-node-meta {
+  gap: 6px;
+  margin-top: auto;
+}
+.execution-flow-node-meta code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 9.5px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.execution-flow-actor {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.035em;
+}
+.execution-flow-actor.actor-llm { background: rgba(167, 139, 250, 0.15); color: #c4b5fd; }
+.execution-flow-actor.actor-skill { background: var(--skill-bg); color: var(--skill-fg); }
+.execution-flow-actor.actor-tool { background: var(--tool-bg); color: var(--tool-fg); }
+.execution-flow-actor.actor-reviewer { background: rgba(148, 163, 184, 0.15); color: #cbd5e1; }
+.execution-flow-actor.actor-system { background: rgba(96, 165, 250, 0.14); color: #93c5fd; }
+.execution-flow-node-spinner {
+  width: 10px;
+  height: 10px;
+  border-width: 1.5px;
+}
+.execution-flow-status-mark {
+  display: inline-grid;
+  width: 12px;
+  height: 12px;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+.execution-flow-status-mark.status-succeeded { color: var(--ok); }
+.execution-flow-status-mark.status-failed { color: var(--danger); }
+.execution-flow-status-mark.status-skipped { color: var(--muted); }
+.execution-flow-status-mark.status-pending { color: var(--text-faint); }
+.execution-flow-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: 10px;
+  color: var(--text-faint);
+  font-size: 10px;
+}
+.execution-flow-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+@media (max-width: 720px) {
+  .execution-flow-card { padding-inline: 16px; }
+  .execution-flow-summary { align-items: flex-start; }
+  .execution-flow-mode { margin-left: 0; }
+}

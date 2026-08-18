@@ -1,44 +1,252 @@
-import type { PlanStep, ExecLogRow } from '../../api/client.ts';
+import { useMemo } from 'react';
+import type { ExecLogRow } from '../../api/client.ts';
+import {
+  buildExecutionFlowGraph,
+  type ExecutionFlowGraph,
+  type ExecutionFlowPhase,
+  type ExecutionFlowStatus,
+  type ExecutionFlowStepInput,
+} from '../../execution-flow-graph.ts';
 import { Header } from './Stage1Understand.tsx';
 
-// 段3 · 执行:每步一行状态机。running=转圈"调用中",done=按 execution_log 显示 ✓/✗。
+const NODE_WIDTH = 190;
+const NODE_HEIGHT = 90;
+const CANVAS_PADDING = 24;
+const LAYER_GAP = 56;
+const NODE_GAP = 18;
+const MIN_CANVAS_HEIGHT = 220;
+
+interface NodePosition {
+  x: number;
+  y: number;
+}
+
+interface GraphLayout {
+  width: number;
+  height: number;
+  positions: ReadonlyMap<string, NodePosition>;
+}
+
+const STATUS_LABELS: Record<ExecutionFlowStatus, string> = {
+  pending: '等待',
+  running: '运行中',
+  succeeded: '完成',
+  failed: '失败',
+  skipped: '已跳过',
+};
+
+const PHASE_LABELS: Record<ExecutionFlowPhase, string> = {
+  executing: '执行中',
+  paused: '执行已暂停',
+  reviewing: '质量复核中',
+  'composing-report': '报告生成中',
+  done: '运行完成',
+  failed: '运行失败',
+  cancelled: '运行已终止',
+};
+
+function createGraphLayout(graph: ExecutionFlowGraph): GraphLayout {
+  const widestLayer = Math.max(1, ...graph.layers.map((layer) => layer.length));
+  const width = (CANVAS_PADDING * 2)
+    + (graph.layers.length * NODE_WIDTH)
+    + (Math.max(0, graph.layers.length - 1) * LAYER_GAP);
+  const height = Math.max(
+    MIN_CANVAS_HEIGHT,
+    (CANVAS_PADDING * 2) + (widestLayer * NODE_HEIGHT) + ((widestLayer - 1) * NODE_GAP),
+  );
+  const positions = new Map<string, NodePosition>();
+
+  graph.layers.forEach((layer, layerIndex) => {
+    const layerHeight = (layer.length * NODE_HEIGHT) + (Math.max(0, layer.length - 1) * NODE_GAP);
+    const x = CANVAS_PADDING + layerIndex * (NODE_WIDTH + LAYER_GAP);
+    const startY = (height - layerHeight) / 2;
+    layer.forEach((node, nodeIndex) => {
+      positions.set(node.id, {
+        x,
+        y: startY + nodeIndex * (NODE_HEIGHT + NODE_GAP),
+      });
+    });
+  });
+
+  return { width, height, positions };
+}
+
+function actorTone(actorType: string): 'llm' | 'skill' | 'tool' | 'reviewer' | 'system' {
+  if (actorType === 'llm' || actorType === 'skill' || actorType === 'tool' || actorType === 'reviewer') {
+    return actorType;
+  }
+  return 'system';
+}
+
+function actorLabel(actorType: string): string {
+  switch (actorTone(actorType)) {
+    case 'llm': return 'MODEL';
+    case 'skill': return 'SKILL';
+    case 'tool': return 'TOOL';
+    case 'reviewer': return 'REVIEW';
+    case 'system': return 'SYSTEM';
+  }
+}
+
+function edgePath(source: NodePosition, target: NodePosition, routeIndex: number): string {
+  const sourceX = source.x + NODE_WIDTH;
+  const sourceY = source.y + NODE_HEIGHT / 2;
+  const targetX = target.x;
+  const targetY = target.y + NODE_HEIGHT / 2;
+  const horizontalDistance = targetX - sourceX;
+  if (horizontalDistance > LAYER_GAP * 1.5) {
+    const railY = Math.max(12, Math.min(source.y, target.y) - 14 - (routeIndex % 4) * 7);
+    return `M ${sourceX} ${sourceY} C ${sourceX + 18} ${sourceY}, ${sourceX + 18} ${railY}, ${sourceX + 36} ${railY} L ${targetX - 36} ${railY} C ${targetX - 18} ${railY}, ${targetX - 18} ${targetY}, ${targetX} ${targetY}`;
+  }
+  const bend = Math.max(22, horizontalDistance * 0.48);
+  return `M ${sourceX} ${sourceY} C ${sourceX + bend} ${sourceY}, ${targetX - bend} ${targetY}, ${targetX} ${targetY}`;
+}
+
 export function Stage3Execute({
-  steps, log, running,
+  steps,
+  log = [],
+  phase = 'done',
 }: {
-  steps: PlanStep[]; log?: ExecLogRow[]; running?: boolean;
+  steps: readonly ExecutionFlowStepInput[];
+  log?: readonly ExecLogRow[];
+  phase?: ExecutionFlowPhase;
 }) {
-  const statusOf = (stepNo: number): string => {
-    if (running) return 'running';
-    const row = log?.find((l) => l.step_no === stepNo);
-    return row?.status ?? 'pending';
-  };
+  const graph = useMemo(
+    () => buildExecutionFlowGraph({ steps, log, phase }),
+    [steps, log, phase],
+  );
+  const layout = useMemo(() => createGraphLayout(graph), [graph]);
+  const ended = graph.summary.completed + graph.summary.skipped;
+  const statusDetail = graph.summary.failed > 0
+    ? `${graph.summary.failed} 个节点失败`
+    : graph.summary.running > 0
+      ? `${graph.summary.running} 个节点正在运行`
+      : `${ended}/${graph.summary.total} 个执行节点已结束`;
 
   return (
-    <section className="stage-card">
-      <Header n="3" title="执行进度" />
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {steps.map((s) => {
-          const st = statusOf(s.step_no);
-          return (
-            <div key={s.step_no} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '7px 12px', background: 'var(--bg)', borderRadius: 8, fontSize: 13 }}>
-              <StatusIcon status={st} />
-              <span style={{ flex: 1 }}>{s.step_name}</span>
-              <span className={`badge badge-${s.actor_type === 'llm' ? 'llm' : s.actor_type === 'reviewer' ? 'reviewer' : s.actor_type}`}>
-                {s.actor_type.toUpperCase()}
-              </span>
-              <code style={{ fontSize: 11, color: 'var(--text-faint)' }}>{s.actor_id}</code>
-            </div>
-          );
-        })}
+    <section className="stage-card execution-flow-card">
+      <Header n="3" title="运行流程" note="实时状态来自 Control task" />
+
+      <div className={`execution-flow-summary status-${phase}`} aria-live="polite">
+        <span className="execution-flow-summary-state">
+          {phase === 'executing' || phase === 'reviewing' || phase === 'composing-report'
+            ? <span className="spinner execution-flow-summary-spinner" />
+            : <StatusMark status={phase === 'done' ? 'succeeded' : phase === 'cancelled' ? 'skipped' : 'failed'} />}
+          <strong>{PHASE_LABELS[phase]}</strong>
+        </span>
+        <span>{statusDetail}</span>
+        {graph.usedSequentialFallback ? <span className="execution-flow-mode">线性回放</span> : null}
+      </div>
+
+      <div
+        className="execution-flow-viewport"
+        role="img"
+        aria-label={`模型运行流程，当前${PHASE_LABELS[phase]}，${statusDetail}`}
+        tabIndex={0}
+      >
+        <div
+          className="execution-flow-canvas"
+          style={{ width: layout.width, height: layout.height }}
+        >
+          <svg
+            className="execution-flow-edges"
+            viewBox={`0 0 ${layout.width} ${layout.height}`}
+            width={layout.width}
+            height={layout.height}
+            aria-hidden="true"
+          >
+            <defs>
+              {(['pending', 'running', 'succeeded', 'failed', 'skipped'] as const).map((status) => (
+                <marker
+                  key={status}
+                  id={`execution-flow-arrow-${status}`}
+                  viewBox="0 0 8 8"
+                  refX="7"
+                  refY="4"
+                  markerWidth="6"
+                  markerHeight="6"
+                  orient="auto"
+                >
+                  <path className={`execution-flow-arrow status-${status}`} d="M 0 0 L 8 4 L 0 8 z" />
+                </marker>
+              ))}
+            </defs>
+            {graph.edges.map((edge, edgeIndex) => {
+              const source = layout.positions.get(edge.source);
+              const target = layout.positions.get(edge.target);
+              if (!source || !target) return null;
+              return (
+                <path
+                  key={edge.id}
+                  className={`execution-flow-edge status-${edge.status}`}
+                  d={edgePath(source, target, edgeIndex)}
+                  markerEnd={`url(#execution-flow-arrow-${edge.status})`}
+                />
+              );
+            })}
+          </svg>
+
+          {graph.nodes.map((node) => {
+            const position = layout.positions.get(node.id);
+            if (!position) return null;
+            return (
+              <div
+                key={node.id}
+                className={`execution-flow-node actor-${actorTone(node.actorType)} status-${node.status}`}
+                style={{
+                  left: position.x,
+                  top: position.y,
+                  width: NODE_WIDTH,
+                  height: NODE_HEIGHT,
+                }}
+                title={node.dependencies.length > 0
+                  ? `${node.label}，依赖步骤 ${node.dependencies.join('、')}`
+                  : node.label}
+              >
+                <div className="execution-flow-node-head">
+                  <span className="execution-flow-node-state">
+                    <StatusMark status={node.status} />
+                    {STATUS_LABELS[node.status]}
+                  </span>
+                  {node.stepNo !== undefined
+                    ? <span className="execution-flow-step-no">#{node.stepNo}</span>
+                    : null}
+                </div>
+                <strong className="execution-flow-node-title">{node.label}</strong>
+                <div className="execution-flow-node-meta">
+                  <span className={`execution-flow-actor actor-${actorTone(node.actorType)}`}>
+                    {actorLabel(node.actorType)}
+                  </span>
+                  <code>{node.actorId}</code>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <ol className="sr-only">
+        {graph.nodes.map((node) => (
+          <li key={node.id}>
+            {node.stepNo !== undefined ? `步骤 ${node.stepNo}，` : ''}
+            {node.label}，{actorLabel(node.actorType)} {node.actorId}，状态{STATUS_LABELS[node.status]}
+          </li>
+        ))}
+      </ol>
+
+      <div className="execution-flow-legend" aria-hidden="true">
+        {(['running', 'succeeded', 'failed', 'skipped', 'pending'] as const).map((status) => (
+          <span key={status}><StatusMark status={status} />{STATUS_LABELS[status]}</span>
+        ))}
       </div>
     </section>
   );
 }
 
-function StatusIcon({ status }: { status: string }) {
-  if (status === 'running') return <span className="spinner" />;
-  if (status === 'succeeded') return <span style={{ color: 'var(--ok)' }}>✓</span>;
-  if (status === 'failed') return <span style={{ color: 'var(--danger)' }}>✗</span>;
-  if (status === 'skipped') return <span style={{ color: 'var(--muted)' }}>⤼</span>;
-  return <span style={{ color: 'var(--text-faint)' }}>○</span>;
+function StatusMark({ status }: { status: ExecutionFlowStatus }) {
+  if (status === 'running') return <span className="spinner execution-flow-node-spinner" />;
+  if (status === 'succeeded') return <span className="execution-flow-status-mark status-succeeded">✓</span>;
+  if (status === 'failed') return <span className="execution-flow-status-mark status-failed">×</span>;
+  if (status === 'skipped') return <span className="execution-flow-status-mark status-skipped">↷</span>;
+  return <span className="execution-flow-status-mark status-pending">○</span>;
 }
