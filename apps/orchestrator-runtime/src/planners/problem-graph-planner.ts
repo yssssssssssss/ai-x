@@ -25,7 +25,8 @@ export type ProblemGraphValidationKind =
   | 'required_question_without_success_criterion'
   | 'unknown_success_criterion'
   | 'uncovered_success_criterion'
-  | 'required_question_without_required_evidence';
+  | 'required_question_without_required_evidence'
+  | 'missing_required_evidence';
 
 export class ProblemGraphValidationError extends Error {
   constructor(
@@ -122,6 +123,31 @@ function validateRequiredEvidence(graph: ProblemGraph): void {
   }
 }
 
+function evidenceMatches(actual: EvidenceRequirement, required: EvidenceRequirement): boolean {
+  if (
+    actual.id !== required.id
+    || !actual.required
+    || actual.minimumCount < required.minimumCount
+    || actual.acceptedClasses.length !== required.acceptedClasses.length
+  ) return false;
+  const actualClasses = new Set(actual.acceptedClasses);
+  return required.acceptedClasses.every((evidenceClass) => actualClasses.has(evidenceClass));
+}
+
+export function validateProblemGraphEvidenceCoverage(
+  graph: ProblemGraph,
+  evidenceRequirements: readonly EvidenceRequirement[],
+): void {
+  for (const requirement of evidenceRequirements) {
+    if (!requirement.required) continue;
+    const covered = graph.questions.some((question) => (
+      question.priority === 'required'
+      && question.evidence_requirements.some((actual) => evidenceMatches(actual, requirement))
+    ));
+    if (!covered) throwGraphError('missing_required_evidence', [requirement.id]);
+  }
+}
+
 export function validateProblemGraphCoverage(task: ResearchTaskV2, graph: ProblemGraph): void {
   const questionsById = validateQuestionIds(graph);
   validateDependencies(graph, questionsById);
@@ -141,10 +167,33 @@ const schemaText = loadSchemaText(resolveSchema('problem-graph'));
 if (!schemaText) throw new Error('problem-graph schema is not registered');
 const problemGraphSchema = JSON.parse(schemaText) as object;
 
-const PROBLEM_GRAPH_PROMPT = `Build a ProblemGraph for the finalized research task. Organize the work as questions, not tool calls. Every question must reference only supplied success criteria and dependencies. Required questions must include required evidence from the supplied Evidence Policy.`;
+const PROBLEM_GRAPH_PROMPT = `Build a ProblemGraph for the finalized research task. Organize the work as questions, not tool calls. Every question must reference only supplied success criteria and dependencies. Required questions must include required evidence from the supplied Evidence Policy. Every required Evidence Policy requirement id must appear on at least one required question with matching accepted classes and minimum count.`;
+const MAX_EVIDENCE_COVERAGE_REPAIRS = 2;
+const REPAIRABLE_EVIDENCE_ERRORS = new Set<ProblemGraphValidationKind>([
+  'required_question_without_required_evidence',
+  'missing_required_evidence',
+]);
+
+function isRepairableEvidenceError(error: unknown): error is ProblemGraphValidationError {
+  return error instanceof ProblemGraphValidationError
+    && REPAIRABLE_EVIDENCE_ERRORS.has(error.kind);
+}
 
 export class ProblemGraphPlanner {
   constructor(private readonly dependencies: ProblemGraphPlannerDependencies) {}
+
+  private validateGeneratedGraph(task: ResearchTaskV2, graph: ProblemGraph): void {
+    try {
+      validateProblemGraphCoverage(task, graph);
+    } catch (error) {
+      // A graph with no required evidence can still be repaired against the
+      // frozen policy. Preserve fail-closed behavior for every other structural
+      // error and let the policy check produce the repair feedback.
+      if (!isRepairableEvidenceError(error)) throw error;
+    }
+    validateProblemGraphEvidenceCoverage(graph, this.dependencies.evidenceRequirements);
+    validateProblemGraphCoverage(task, graph);
+  }
 
   async build(task: ResearchTaskV2): Promise<ProblemGraphResult> {
     const context = {
@@ -152,11 +201,15 @@ export class ProblemGraphPlanner {
       guidance: this.dependencies.guidance,
       evidencePolicy: this.dependencies.evidenceRequirements,
     };
-    const generated = await this.dependencies.llm.generateStructured<ProblemGraph>({
-      prompt: PROBLEM_GRAPH_PROMPT,
+    const generateGraph = (validationFeedback: string[] = []) => this.dependencies.llm.generateStructured<ProblemGraph>({
+      prompt: validationFeedback.length > 0
+        ? `${PROBLEM_GRAPH_PROMPT} 上一次问题图未满足 ProblemGraph 证据约束，必须逐项修复：${validationFeedback.join('；')}`
+        : PROBLEM_GRAPH_PROMPT,
       schema: problemGraphSchema,
       schemaName: 'problem-graph',
-      context,
+      context: validationFeedback.length > 0
+        ? { ...context, validation_feedback: validationFeedback }
+        : context,
       receipt: {
         stage: 'problem_graph',
         contextManifestHash: hashPrompt('', context),
@@ -164,6 +217,7 @@ export class ProblemGraphPlanner {
           ?? this.dependencies.llm.identity.requestedModel,
       },
     });
+    let generated = await generateGraph();
 
     if (!generated.receiptId) {
       throw new MissingModelReceiptError(
@@ -176,7 +230,28 @@ export class ProblemGraphPlanner {
       generated.data,
       'problem-graph',
     );
-    validateProblemGraphCoverage(task, generated.data);
+    for (let attempt = 0; attempt < MAX_EVIDENCE_COVERAGE_REPAIRS; attempt += 1) {
+      try {
+        this.validateGeneratedGraph(task, generated.data);
+        break;
+      } catch (error) {
+        if (
+          !isRepairableEvidenceError(error)
+          || attempt === MAX_EVIDENCE_COVERAGE_REPAIRS - 1
+        ) throw error;
+        generated = await generateGraph([error.message]);
+        if (!generated.receiptId) {
+          throw new MissingModelReceiptError(
+            new Error('problem graph repair succeeded without a persisted receipt'),
+          );
+        }
+        this.dependencies.validator.validateSchemaOrThrow(
+          problemGraphSchema,
+          generated.data,
+          'problem-graph',
+        );
+      }
+    }
 
     return {
       graph: generated.data,

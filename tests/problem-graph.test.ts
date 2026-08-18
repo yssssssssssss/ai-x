@@ -19,6 +19,7 @@ import {
   ProblemGraphPlanner,
   ProblemGraphValidationError,
   validateProblemGraphCoverage,
+  validateProblemGraphEvidenceCoverage,
   type ProblemGraph,
 } from '../apps/orchestrator-runtime/src/planners/problem-graph-planner.ts';
 
@@ -174,6 +175,17 @@ test('pure validator rejects a required question without required evidence', () 
   expectGraphError(graph, 'required_question_without_required_evidence', ['question-market']);
 });
 
+test('pure validator rejects a graph that omits a configured evidence requirement', () => {
+  const graph = validGraph();
+  for (const question of graph.questions) question.evidence_requirements = [];
+  assert.throws(
+    () => validateProblemGraphEvidenceCoverage(graph, evidencePolicy),
+    (error: unknown) => error instanceof ProblemGraphValidationError
+      && error.kind === 'missing_required_evidence'
+      && error.issueIds.includes('public-source'),
+  );
+});
+
 class MemoryRecorder {
   readonly calls: ModelCallRecordInput[] = [];
 
@@ -194,14 +206,17 @@ class GraphProvider implements LLMClient {
   };
 
   constructor(
-    private readonly fixture: unknown,
+    private readonly fixture: unknown | ((callNumber: number) => unknown),
     private readonly actualModel = 'problem-graph-model',
   ) {}
 
   async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
     this.calls.push(options);
+    const fixture = typeof this.fixture === 'function'
+      ? this.fixture(this.calls.length - 1)
+      : this.fixture;
     return {
-      data: structuredClone(this.fixture) as T,
+      data: structuredClone(fixture) as T,
       promptHash: hashPrompt(options.prompt, options.context, options.schemaName),
       modelName: this.actualModel,
       modelVersion: '2026-08-14',
@@ -279,4 +294,59 @@ test('planner never returns a structurally valid graph that fails coverage valid
       && error.kind === 'unknown_dependency'
       && error.issueIds.includes('question-missing'),
   );
+});
+
+test('planner repairs a graph that omits a configured evidence requirement', async () => {
+  const provider = new GraphProvider((callNumber: number) => {
+    if (callNumber === 0) {
+      const missingEvidence = validGraph();
+      for (const question of missingEvidence.questions) question.evidence_requirements = [];
+      return missingEvidence;
+    }
+    return validGraph();
+  });
+  const recorder = new MemoryRecorder();
+  const planner = new ProblemGraphPlanner({
+    llm: new ReceiptLLMClient(provider, recorder),
+    validator: new SchemaValidator(),
+    guidance,
+    evidenceRequirements: evidencePolicy,
+    expectedActualModel: 'problem-graph-model',
+  });
+
+  const result = await planner.build(task);
+  assert.deepEqual(result.graph, validGraph());
+  assert.equal(provider.calls.length, 2);
+  assert.deepEqual((provider.calls[1]?.context as Record<string, unknown>)?.validation_feedback, [
+    'problem graph missing_required_evidence: public-source',
+  ]);
+  assert.equal(recorder.calls.length, 2);
+});
+
+test('planner repairs one required question without required evidence when policy is covered elsewhere', async () => {
+  const provider = new GraphProvider((callNumber: number) => {
+    if (callNumber === 0) {
+      const partiallyCovered = validGraph();
+      partiallyCovered.questions[0].evidence_requirements = [];
+      return partiallyCovered;
+    }
+    return validGraph();
+  });
+  const recorder = new MemoryRecorder();
+  const planner = new ProblemGraphPlanner({
+    llm: new ReceiptLLMClient(provider, recorder),
+    validator: new SchemaValidator(),
+    guidance,
+    evidenceRequirements: evidencePolicy,
+    expectedActualModel: 'problem-graph-model',
+  });
+
+  const result = await planner.build(task);
+  assert.deepEqual(result.graph, validGraph());
+  assert.equal(provider.calls.length, 2);
+  assert.deepEqual((provider.calls[1]?.context as Record<string, unknown>)?.validation_feedback, [
+    'problem graph required_question_without_required_evidence: question-market',
+  ]);
+  assert.match(provider.calls[1]?.prompt ?? '', /ProblemGraph 证据约束/);
+  assert.equal(recorder.calls.length, 2);
 });
