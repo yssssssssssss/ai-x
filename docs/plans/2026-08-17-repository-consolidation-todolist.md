@@ -324,16 +324,19 @@ export REPO_ROOT BACKUP_DIR RESTORE_DIR
 - [ ] 如果有修改，安全注入 `TAVILY_API_KEY`。
 - [ ] 如果有修改，运行 `pnpm db:migrate`。
 - [ ] 如果有修改，运行 `pnpm db:seed`。
-- [ ] 如果有修改，运行 `ALLOW_REAL_PROVIDER=1 LLM_PROVIDER=gateway TOOL_ADAPTER=real pnpm smoke:current:real`。结果：`HOLD`，未运行；当前入口只支持 1/5 profile，不能制造不完整收据。
+- [ ] 如果有修改，运行 `ALLOW_REAL_PROVIDER=1 LLM_PROVIDER=gateway TOOL_ADAPTER=real pnpm smoke:current:real`。结果：`HOLD`，未运行；入口现已覆盖 5/5 profile，并有非 PR、secrets 齐全才执行的顺序 CI job，但本地和 CI 均没有真实收据。
 - [ ] 确认日志和 Artifact 不包含密钥、Bearer token 或完整 prompt。结果：没有可供审计的真实运行日志或 Artifact。
 - [ ] 将 task、plan、attempt、deliverable 标识和结果写入 disposition 第 7 节。结果：0 个真实 task/plan/attempt/Report Package 标识。
 - [ ] 提交真实 Smoke 证据更新；未触发时提交不触发证据。结果：未满足；真实门禁已触发且没有有效收据。
-- [x] 完成 Gate 11 离线硬化与分层回归。结果：相关串行测试 177 total、176 pass、1 Tavily skip、0 fail；`pnpm quality` 1190 total、1179 pass、11 skip、0 fail；Web build 647 modules PASS；排除 `wiki/` 的 diff-check PASS。
-- [x] 完成独立只读复核。结果：`gate11_diff_review` 报告 0 P0、7 P1；lease-loss/sentinel 路径无剩余 P0/P1，但整体 Gate 11 必须保持 `HOLD`。
+- [x] 将 Semantic Gold 的 25 个场景改为由 scenario-driven mock LLM 进入真实 `RequirementRefinementService`，需要澄清的场景实际执行 `understand → clarify`，再走真实 deliverable、Evidence、capability 与 scheduler seam。结果：6/6 PASS；不把 mock 结果记为真实 Gold。
+- [x] 完成五 profile Real Smoke 与 CI 代码门禁。结果：`competitive_research`、`user_research_planning`、`voc_diagnosis`、`design_audit`、`a11y_audit` 均有入口；Design 使用绝对本地 JPEG/PNG/WebP 路径；CI 缺任一必需 secret 即跳过，齐全时 migrate + seed、启动三个设计 lab 并顺序执行五 profile。
+- [x] 收紧 Gold runner 的 Report Package、reviewer 与 slot 合同。结果：collect/review/decide 分阶段；infra retry 不再伪造 attempt ID；最终决定重新验证 Package，并要求每个真实 slot 恰好一条 review；`trusted_gold_enabled` 仍为 `false`。
+- [x] 完成 Gate 11 离线硬化与分层回归。结果：Semantic/Smoke/Gold 定向回归通过；`pnpm quality` 1197 total、1186 pass、11 skip、0 fail；Web build 648 modules PASS；CI YAML parse 与排除 `wiki/` 的 diff-check PASS。全量回归首次发现 `plan-compiler` design fixture 未注册新增 Tavily 依赖，稳定红态后补齐 fixture，定向 1/1 与最终全量均通过。
+- [x] 完成独立只读复核。结果：`gate11_diff_review` 曾报告 0 P0、7 P1；本轮已逐项收紧相应代码合同，但最新整合提交 `29bd26e` 尚未再次独立复核，且整体 Gate 11 仍因真实证据缺失保持 `HOLD`。
 
 ### 门禁 11
 
-- [ ] 条件性真实门禁已通过或有明确不触发证据。结果：`HOLD`；真实门禁必须触发，但没有五 profile 真实收据、可信 Gold 或独立人工评审证据。
+- [ ] 条件性真实门禁已通过或有明确不触发证据。结果：`HOLD`；代码入口已覆盖五 profile，但仍没有五 profile 真实收据，可信 Gold policy 仍关闭，也没有三次真实 attempt 与独立人工评审证据。
 - [x] 固定门禁边界。结果：不得进入门禁 12，不得推送、创建 PR 或把离线测试写成真实 Smoke 证据。
 
 ## 14. 第二次远端同步、PR 和独立复核

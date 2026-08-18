@@ -277,23 +277,29 @@ run-inputs/real-ai-shopping-case/taobao-ai-guide.jpg
 | Web build | `227d951`（Gate 10） | `pnpm --dir apps/web build` | PASS；647 modules transformed；既有 >500 kB chunk warning 非阻塞 | Vite build output |
 | Git/recovery integrity | `227d951`（Gate 10） | `git fsck --full`; bundle verify/SHA-256/list-heads；stash 14/25 path-set 比对；Markdown table audit；`git diff --check` | PASS；fsck 仅报告可接受 dangling objects；bundle SHA-256=`6de8573…6ed`；stash 路径差集 0；表格空字段/列数错误 0 | Git/Node audit output |
 | Gate 10 disposition | 本提交 | staged path-set、cached diff-check、commit 内容检查 | PASS；仅两份 consolidation 文档，无 `wiki/` | Git commit |
-| Gate 11 offline hardening | `1126ecc` 基线上的未提交整合 diff | `pnpm exec tsx --test --test-concurrency=1 tests/execution-control.test.ts tests/task-workflow.test.ts tests/control-plane.test.ts tests/lease-execution-engine.test.ts tests/execution-recovery.test.ts`; `pnpm quality`; `pnpm --dir apps/web build`; 排除 `wiki/` 的 tracked/cached `git diff --check` | 相关测试 177 total、176 pass、1 skip、0 fail；quality 1190 total、1179 pass、11 skip、0 fail；Web build 647 modules PASS；diff-check PASS | root/Main TAP/typecheck/linter/Vite/Git output；`gate11_diff_review` 独立复核相关串行/视觉测试、typecheck 与 diff-check |
-| Current real Smoke | `HOLD`（未执行） | 必须执行的 `ALLOW_REAL_PROVIDER=1 LLM_PROVIDER=gateway TOOL_ADAPTER=real pnpm smoke:current:real` 尚无合格前置条件 | 0 个真实 task/plan/attempt/Report Package 标识；入口仅支持 1/5 profile；5 个 real-provider 测试 skip；不得用离线结果替代 | `gate11_diff_review` / `final_smoke_evidence` |
+| Gate 11 offline hardening | `29bd26e` | Semantic/Current Smoke/Gold 定向测试；`pnpm quality`；`pnpm --dir apps/web build`；CI YAML parse；排除 `wiki/` 的 `git diff --check` | Semantic Gold 6/6 PASS；Current Smoke + Gold 离线回归 PASS；quality 1197 total、1186 pass、11 skip、0 fail；Web build 648 modules PASS；YAML/diff-check PASS | 本地 TAP/typecheck/linter/Vite/Git output；`gate11_diff_review` 的旧发现已作为本轮修复输入，最新提交待再次独立复核 |
+| Current real Smoke | `HOLD`（未执行） | 入口现支持五 profile；`.github/workflows/ci.yml` 在非 PR 且六项 secrets 齐全时 migrate + seed、启动三个 design lab 并顺序执行五 profile | 0 个真实 task/plan/attempt/Report Package 标识；5 个 real-provider 测试仍按无凭据环境 skip；CI 配置与离线测试不得替代真实收据 | 本地 CI/YAML/契约测试；真实 Artifact 仍待 `final_smoke_evidence` |
 | Integration PR CI | 未填写 | 未填写 | 未填写 | 未填写 |
 
 ### Gate 11 HOLD（2026-08-18）
 
-独立只读复核人：`gate11_diff_review`。结论：0 P0、7 P1；lease-loss/sentinel 修复已闭合，但以下阻塞仍使 Gate 11 保持 `HOLD`：
+独立只读复核人：`gate11_diff_review`。旧结论为 0 P0、7 P1；本轮已关闭其代码合同缺口：
 
-- 代码合同：plural visual PendingInput 被固定为 `multiple:false`，Web 端也只读取第一个文件，无法提交多截图比较输入。
-- 代码合同：attempt-scoped visual Asset/Manifest 与 overlay/derived 采用顺序封存且没有组合回滚，失败时可能留下 recovery 不处理的部分 SEALED Artifact。
-- 代码合同：real smoke 把 Deliverable Artifact ID 当作 Report Package ID 并硬编码 `packageSealed=true`；Gold 仅信任调用方 ID/布尔值，未查验 Artifact 与 reviewer 独立性。
-- 真实证据：real smoke 只支持 `competitive_research`，覆盖 1/5 必需 profile。
-- 真实证据：trusted Gold 被禁用；现有 runner 不执行真实 LLM/Tool，且没有已认证的独立人工评审闭环。
-- 真实证据：Semantic Gold 直接构造期望 Task/capability 并运行 no-op step，没有验证真实输入分类、refinement/planning、PII 变体或冲突语义。
-- 真实证据：CI 只保留注释中的 smoke 命令并以文本匹配测试它；缺少 provider 配置时真实路径测试全部 skip。
+- plural visual PendingInput 保留 `multiple`，Web 会读取全部选中文件，并按 singular/plural target 投影。
+- visual gate、Asset/Manifest 与 overlay/derived 的分段写入增加失败补偿；更晚发布失败会失效此前 sealed Artifact，补偿失败不覆盖原始错误。
+- real smoke 使用真实 sealed Report Package Artifact，并验证 task/plan/attempt/component identity；Gold 不再信任调用方布尔值，改为重新验证 Package 与数据库推导的 reviewer 身份/独立性。
+- real smoke 入口覆盖五个 Current profile；Design 图像仅在 gate 边界从绝对本地路径转换为 data URL，路径和原文不进入 receipt。
+- Semantic Gold 不再在主循环构造“已经正确”的 Task；25 个场景经 scenario-driven mock LLM 进入真实 refinement，澄清场景走 `understand → clarify` 后才进入 planning/capability/deliverable/scheduler seam。
+- CI 不再只有注释：非 PR、六项 secrets 齐全时才执行 migrate + seed 和五 profile 顺序 Smoke；Design 所需三个 lab 在 job 内启动并检查 health。
+- Gold runner 使用真实 Current Smoke 收集 fixed slots，分离异步 review 与 decide；infra 不伪造 attempt ID，requested→canonical model alias 可固定，PostgreSQL 保存 Package 与 infra retry，最终裁决要求每个 slot 恰好一条 review。
 
-P2 残余风险：Gold 不接受合法 requested→canonical model alias；PostgreSQL Gold store 忽略 `infraRetries` 更新；视觉写 API 仍允许省略 `activeLease` 并进入无租约 seal 分支。
+Gate 11 仍有不可替代的真实证据阻塞：
+
+- 尚未在受控 PostgreSQL + Gateway + Tavily 环境执行五 profile，真实 task/plan/attempt/Report Package 标识仍为 0。
+- `trusted_gold_enabled` 仍为 `false`；没有同 pins 的三次真实 capability attempt，也没有经认证、与 owner/operator/editor 独立的人工评审。
+- 最新整合提交 `29bd26e` 尚未由非原执行者再次只读复核；现有 `gate11_diff_review` 只能证明旧 diff 的发现基线。
+
+P2 残余风险：视觉写 API 仍允许省略 `activeLease` 并进入无租约 seal 分支；生产 materializer/annotation 路径会传入 lease，但公共服务接口尚未整体收紧。
 
 门禁边界：Gate 11 未通过；禁止进入 Gate 12，禁止推送或创建 integration PR，也不得把上述离线 PASS 写成真实 Smoke/Gold 证据。本节只记录本地 Gate 11 复核，不替代第 8 节要求的 PR 独立复核。
 
