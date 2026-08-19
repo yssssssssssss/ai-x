@@ -26,26 +26,26 @@
 
 ## 1. 工作包 A：浏览器 Tool 与 sidecar 合同
 
-文件范围以开发文档第 14.1 节为准，验收语义以第 7.1、7.3、8、9、13 节为准。
+文件范围以开发文档工作包 A 和第 14 节对应条目为准，包括 14.1 以及 A 实际涉及的 14.2、14.3、14.5、14.6；验收语义以第 7.1、7.3、8、9、13 节为准。
 
-- [ ] 增加并锁定 Playwright 运行依赖和 Chromium 安装命令；运行时不得自动联网下载浏览器。
-- [ ] 实现 Worker 级共享 `BrowserExecutionGate`，所有生产 Runtime 复用同一实例；测试可注入隔离实例。
-- [ ] 固定并验证 2 个活跃 Browser、8 个排队调用、10 秒排队超时，所有退出路径均释放配额。
-- [ ] 将同一个 `AbortSignal` 和 90 秒总 deadline 贯穿排队、重试、浏览器执行和 Artifact 发布。
-- [ ] 保持 `lease_lost` 与 `deadline_exceeded` 两种终止原因可区分。
-- [ ] 实现 Playwright Adapter、URL/重定向网络策略、资源上限、确定性截图策略和最外层资源清理。
-- [ ] 强制非 root、`chromiumSandbox: true`、`serviceWorkers: 'block'`、WebSocket 阻断和下载禁用；不提供无沙箱回退。
-- [ ] Tool JSON 只保存元数据和失败信息；确认其中没有 Buffer、Base64、Cookie、HTML、临时路径或媒体字节。
-- [ ] Registry 保持 `draft`，Adapter 只在 `PLAYWRIGHT_CAPTURE_ENABLED=1` 时注册。
-- [ ] CI 使用真实 Chromium 打开 `about:blank` 并通过 `page.setContent()` 注入内存 fixture，不开放 loopback 或公网。
-- [ ] 运行 `pnpm exec tsx --test tests/browser-execution-gate.test.ts tests/playwright-page-capture-adapter.test.ts tests/tool-retry-policy.test.ts tests/schema.test.ts tests/registry-linter.test.ts`。
-- [ ] 运行 `pnpm typecheck` 和 `pnpm lint:registry`。
+- [x] 增加并锁定 Playwright 运行依赖和 Chromium 安装命令；运行时不得自动联网下载浏览器。结果：锁定 `playwright@1.60.0`，增加显式 `playwright:install:chromium` 部署命令，运行时无安装分支。
+- [x] 实现 Worker 级共享 `BrowserExecutionGate`，所有生产 Runtime 复用同一实例；测试可注入隔离实例。结果：生产装配复用进程单例，Adapter 构造和 Runtime override 均可注入 Gate。
+- [x] 固定并验证 2 个活跃 Browser、8 个排队调用、10 秒排队超时；确认 Browser 断连后释放配额，清理未确认时隔离槽位。结果：并发、capacity、取消、迟到断连和隔离槽位测试通过。
+- [x] 将同一个 `AbortSignal` 和 90 秒总 deadline 贯穿排队、重试、浏览器执行和 Artifact 发布。结果：同一 Tool Scope 覆盖 lease fence、退避、Gate、Browser、页面与 Tool JSON 封存；媒体 sidecar 原样交给工作包 B 的发布边界。
+- [x] 保持 `lease_lost` 与 `deadline_exceeded` 两种终止原因可区分。结果：租约丢失保持不可降级，deadline 稳定映射 timeout，永久 pending fence 测试通过。
+- [x] 实现 Playwright Adapter、URL/重定向网络策略、资源上限、确定性截图策略和最外层资源清理。结果：6 页、20 秒/页、256 请求/Context、10/40 MiB、20MP、DNS in-flight 合并和 5 秒故障清理上限均有测试。
+- [x] 强制非 root、`chromiumSandbox: true`、`serviceWorkers: 'block'`、WebSocket 阻断和下载禁用；不提供无沙箱回退。结果：启动与 Context 参数、root 拒绝、弹窗/下载/WebSocket 终态测试通过。
+- [x] Tool JSON 只保存元数据和失败信息；Receipt 使用字段白名单，不保存原始 input、完整 manifest、output 或媒体字节。结果：闭合 Output Schema 拒绝 `bytes`，Adapter 序列化回归与 Receipt 字段白名单测试通过；允许的长期字段仅为哈希、身份、状态、时延和重试治理元数据。
+- [x] Registry 保持 `draft`，Adapter 只在 `PLAYWRIGHT_CAPTURE_ENABLED=1` 时注册。结果：Registry 为 `draft/optional`，环境默认 `0`，精确值 `1` 注册测试通过。
+- [x] CI 使用真实 Chromium 打开 `about:blank` 并通过 `page.setContent()` 注入内存 fixture，不开放 loopback 或公网。结果：独立 CI job 已配置；Node 22 本机同一 contract 1 通过、0 失败。
+- [x] 运行工作包 A 定向测试（Gate、Adapter、retry、provenance、Schema、Registry、VisualAsset 与 Engine）。结果：172 通过、2 个环境 contract 跳过、0 失败；重定向 requested/final URL 分离修正后 Adapter 26 通过、1 contract 跳过、0 失败；另以 `PLAYWRIGHT_CONTRACT=1` 单独运行真实 Chromium contract，1 通过、0 失败。
+- [x] 运行 `pnpm typecheck` 和 `pnpm lint:registry`。结果：两项均通过；全量 `pnpm quality` 为 1248 通过、12 跳过、0 失败。
 - [ ] 检查工作包 A diff 并提交独立 commit，记录 SHA。
 
 ### 门禁 A
 
-- [ ] 并发、排队、取消、重试、超时和资源泄漏测试全部通过。
-- [ ] CI fixture 不访问网络，默认配置不会启动 Chromium。
+- [x] 并发、排队、取消、重试、超时和资源泄漏测试全部通过。结果：精确门禁、Engine/VisualAsset 回归和全量 quality 均为 0 失败。
+- [x] CI fixture 不访问网络，默认配置不会启动 Chromium。结果：contract 仅使用 `about:blank` + `setContent()`；Registry 为 `draft` 且默认功能开关为 `0`。
 - [ ] 工作包 A 可独立回滚且不改变现有文本研究路径。
 
 ## 2. 工作包 B：原子视觉资产发布
@@ -53,7 +53,7 @@
 文件范围以开发文档第 14.2、14.3、14.4 节相关条目为准，验收语义以第 7.4、7.7、10、11.1、13 节为准。
 
 - [ ] 保持 V1 类型和 Schema 不变，先实现并部署 V2 Reader，再开放任何 V2 Writer 路径。
-- [ ] 实现 `ArtifactPublicationGroup`，统一登记、提交、补偿和复核 Tool JSON、Binary、Manifest 与 Evidence。
+- [ ] 实现 `ArtifactPublicationGroup`，统一登记、提交、补偿和复核 Tool JSON、Binary 与 Manifest；仅在 group commit 后把截图 Evidence 加入内存 inventory，不把全局 Evidence Manifest 拉入步骤事务。
 - [ ] 实现 `browser_capture` V2 Writer，并校验 attachment ID、JSON pointer、媒体类型、尺寸和三处 SHA-256 一致。
 - [ ] Tool JSON、媒体或 Manifest 任一发布失败时，使同批已写 Artifact 全部失效，步骤不得成功。
 - [ ] 任一补偿失效失败必须冒泡为 `artifact_invalidation` 并暂停任务，不得吞掉错误。

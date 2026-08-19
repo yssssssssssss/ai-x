@@ -171,7 +171,7 @@ Tavily 发现公开来源 URL
 
 新增 `PlaywrightPageCaptureAdapter`，由现有 `ToolRouter` 按 `adapter_type: playwright` 分发。每次 Tool 调用启动一个 Chromium Browser，在同一 Browser 中创建隔离 Context，调用结束后在最外层 `finally` 中关闭。首版不维护跨任务 Browser 池，不复用 Cookie、localStorage 或登录状态。
 
-`agent-runtime.ts` 模块惰性持有一个进程级 `BrowserExecutionGate`，所有生产 `buildRuntime()/buildToolAdapter()` 调用复用它；测试可显式注入独立 Gate，禁止每个 Runtime 实例各建一套配额。固定上限为 2 个活跃 Browser、8 个排队调用和 10 秒排队等待；队列已满或等待超时抛出 `ToolInvocationError(kind='capacity', retryable=true)`。配额从排队开始计入 90 秒 Tool 总时限，并在启动失败、调用取消、租约丢失和正常结束时释放。
+`agent-runtime.ts` 模块惰性持有一个进程级 `BrowserExecutionGate`，所有生产 `buildRuntime()/buildToolAdapter()` 调用复用它；测试可显式注入独立 Gate，禁止每个 Runtime 实例各建一套配额。固定上限为 2 个活跃 Browser、8 个排队调用和 10 秒排队等待；队列已满或等待超时抛出 `ToolInvocationError(kind='capacity', retryable=true)`。配额从排队开始计入 90 秒 Tool 总时限；未启动 Browser 或已确认 Browser 断连时释放，断连无法确认时隔离槽位并要求 Worker 重启。
 
 Engine 在 Tool step 开始时创建一个非持久化的 `ToolExecutionScope`，其中只有 `signal`、`deadlineAt` 和清理回调。该 Scope 一直存活到 execution step 成功持久化且 Publication Group commit，或失败补偿结束；不能在 Adapter 返回时提前销毁。`ToolAdapter.invoke()`、`ToolRouter.invoke()`、`invokeWithRetry()`、`runTool()` 和后续媒体发布使用同一 Scope。`withLeaseHeartbeat()` 在心跳失败时以稳定 reason `lease_lost` 立即 abort，90 秒 timer 以 `deadline_exceeded` abort 同一信号；取消原因不得都压成 timeout，否则租约丢失会被错误降级。两次尝试、退避、排队、页面处理、JSON 封存和媒体封存共享该 deadline，不允许每次尝试重新计时。
 
@@ -266,6 +266,8 @@ export interface ToolInvokeResult {
 ```
 
 Tool JSON 只保存 `attachment_id`、`content_sha256`、获取元数据和页面失败列表。页面失败只有一个真相源：成功调用的 `output.failures`；不再另设内存 `gaps` 副本。`ToolAdapter.invoke` 接收 `ToolInvocationContext`；`invokeWithRetry`、`ToolRouter`、`StepResult` 必须原样保留最后一次成功调用的 `mediaAttachments`，不得 structured clone、JSON stringify 或遗漏该字段。失败尝试的附件引用必须在下一次尝试前释放。
+
+`ToolMediaAttachment.sourcePageUrl` 固定等于规范化的 `captures[].requested_url`，用于绑定 Tavily 原始来源；重定向后的 `captures[].final_url` 只从已封存 Tool JSON 读取。两者不得互换，否则发生重定向时截图将无法与原始 public source Evidence 对齐。
 
 部分页面成功时，Engine 只在 Publication Group commit 后把已封存 Tool JSON 的 `output.failures` 映射为任务 gaps。全部页面失败时 Adapter 抛出带脱敏 `details.page_failures` 的 `ToolInvocationError`，Engine 记录 optional step 为 `skipped` 并从该字段生成逐页 gaps。两条路径都不得在 Artifact 发布结果确定前修改任务 gap 集合。
 
@@ -428,6 +430,8 @@ JSON 输出不含页面 HTML、Cookie、请求头、浏览器日志、图片字�
 - 单次调用的媒体 sidecar 总量最大 40 MiB。
 - 整页高度最大 12,000 像素，总像素不超过 20,000,000。
 - 单个 Browser 内页面并发数为 2；整个 Worker 最多 2 个活跃 Browser、8 个排队调用。
+- 每个 Browser Context 最多处理 256 个 HTTP(S) 请求；超过预算的请求在再次解析 DNS 或访问网络前阻断。
+- 同一 host 只合并当前正在进行的 DNS 解析；解析完成或失败后立即移除合并项，后续请求必须重新解析，不能把首次结果当作 Context 级缓存。
 - 单页超时 20 秒；Tool 总时限为 90 秒，覆盖排队、最多 2 次尝试、退避、页面处理、JSON 封存和媒体封存，不按重试重新计时。
 - 排队超过 10 秒或队列已满返回 `capacity`；该错误可重试，但仍受同一 90 秒 deadline 约束。
 - 超限页面可以记录 `truncated: true`，不得静默缩减后仍声称完整整页。
@@ -445,7 +449,9 @@ JSON 输出不含页面 HTML、Cookie、请求头、浏览器日志、图片字�
 - 禁止弹窗接管主流程，新窗口立即关闭并记录 gap。
 - 不点击 Cookie 弹窗、登录按钮、购买按钮或页面内操作控件。
 - `browserContext.routeWebSocket('**/*', ...)` 在页面创建前注册并关闭全部 WebSocket；不能只依赖 HTTP route。
-- 调用完成、异常、deadline 到期或租约丢失时都必须关闭 Page、Context 和 Browser，并释放 `BrowserExecutionGate` 租约。
+- 调用完成、异常、deadline 到期或租约丢失时都必须尝试关闭 Page、Context 和 Browser；只有确认 Browser 已断连后才释放 `BrowserExecutionGate` 租约。
+- 正常清理顺序固定为 Page、Context、Browser。业务 deadline 或租约终止后允许最多 5 秒的故障清理窗口；该窗口只能关闭资源，不能继续导航、截图、重试或发布 Artifact。
+- Browser 未确认断连时不得释放 Gate 租约，槽位保持隔离；迟到的 `disconnected` 事件可以释放槽位。若 Browser 永不 settle，外部 Worker supervisor 必须重启进程，当前调用只返回 `recovery: restart_worker`，不能在进程内假装清理成功。
 
 ### 9.2 网络安全
 
@@ -620,12 +626,12 @@ Chart 任一步失败时，Chart Data、SVG、Manifest 和 Chart Spec 作为同�
 | sidecar 与 JSON 哈希不一致 | `failed` | `paused` | 作为完整性错误 fail closed |
 | 视觉资产封存失败 | `failed` | `paused` | 失效整批 Artifact，允许任务级 retry |
 | 任一 Artifact 补偿失效失败 | `failed` | `paused` | failure kind 固定为 `artifact_invalidation`，交 recovery |
-| 租约丢失或总 deadline 到期 | `failed` 或 optional `skipped` | `paused` 或 `completed_with_gaps` | AbortSignal 关闭浏览器；租约丢失不可降级，普通 timeout 可降级 |
+| 租约丢失或总 deadline 到期 | `failed` 或 optional `skipped` | `paused` 或 `completed_with_gaps` | AbortSignal 触发浏览器清理；断连未确认则隔离 Gate 并要求 Worker 重启；租约丢失不可降级，普通 timeout 可降级 |
 | 计划明确要求权重图但冻结权重缺失，或 Chart renderer 不可用 | system enhancement gap | `completed_with_gaps` | 不生成图表，文字报告继续；未要求图表时不制造 gap |
 | Tavily core Tool 失败 | `failed` | `paused` | 沿用 core 基础设施失败语义 |
 | 报告引用不存在的 Asset 或 Evidence | `failed` | `paused` | Deliverable 校验拒绝发布 |
 
-`invokeWithRetry` 只返回最后一次成功调用的媒体 sidecar，并共享 Tool step 级 deadline。失败尝试产生的 Page、Context、Browser、队列租约和字节引用必须在下一次尝试前释放。
+`invokeWithRetry` 只返回最后一次成功调用的媒体 sidecar，并共享 Tool step 级 deadline。失败尝试产生的 Page、Context、Browser、队列租约和字节引用必须在下一次尝试前释放；若 Browser 断连无法确认，则以 safety 失败终止重试并隔离 Gate 槽位。
 
 Engine 初始化任务 gap 集合时先加入冻结计划的 `capability_gaps`。部分成功 Tool 的 `output.failures` 只有在 Publication Group commit 后才加入；全部失败 Tool 的 `details.page_failures` 只有在 skipped execution step 持久化后才加入。发布失败的调用不得留下误报 gap。任务 gaps 按 `capability_id/code` 或 `stepNo/source_result_index/code` 去重，最终状态仍由统一的 `gaps.length > 0` 决定，因此“部分截图成功”必须稳定得到 `completed_with_gaps`。前端历史恢复用相同 key 合并计划 `capability_gaps` 和 execution `toolProvenance.gapSummary`，不得再以 skipped step 数近似 gapCount。
 
@@ -764,7 +770,7 @@ Recovery 的视觉复合 Artifact 集合增加 `chart_data`，并继续包含 V1
 验证：
 
 ```bash
-pnpm exec tsx --test tests/browser-execution-gate.test.ts tests/playwright-page-capture-adapter.test.ts tests/tool-retry-policy.test.ts tests/schema.test.ts tests/registry-linter.test.ts
+pnpm exec tsx --test tests/browser-execution-gate.test.ts tests/playwright-page-capture-adapter.test.ts tests/tool-retry-policy.test.ts tests/tool-provenance.test.ts tests/schema.test.ts tests/registry-linter.test.ts tests/visual-asset-service.test.ts tests/lease-execution-engine.test.ts
 pnpm typecheck
 pnpm lint:registry
 ```
@@ -836,6 +842,8 @@ PLAYWRIGHT_CAPTURE_ENABLED=1 CURRENT_SMOKE_PROFILE=competitive_research CURRENT_
 - `auto`、大图提取、元素截图、整页截图返回正确元数据。
 - 选择器为空、过长或不匹配时返回稳定失败码。
 - 页面超时、Browser crash、AbortSignal 和 Context close 均释放资源。
+- Context 的第 257 个请求在网络访问前被阻断；同 host 只合并并发 DNS，前一次解析 settle 后的请求会重新解析。
+- deadline 或租约终止后的故障清理最多使用 5 秒；Browser 未确认断连时 Gate 槽位保持隔离，迟到断连释放槽位，永久 pending 则返回 `recovery: restart_worker`。
 - `deadline_exceeded` 映射 timeout，`lease_lost` 保持不可降级的租约失败；两者不得因共用 signal 混淆。
 - 10 个并发调用时最多 2 个 Browser 活跃、8 个排队；第 11 个立即 capacity，等待超过 10 秒 capacity，取消后无配额泄漏。
 - 两次尝试、退避和排队共享 90 秒总 deadline，第二次尝试不能重置时钟。
@@ -997,7 +1005,8 @@ pnpm quality
 | 风险 | 控制 |
 |---|---|
 | 公开站点反爬、验证码或地区差异 | 不绕过，按页面记录 gap，文本路径继续 |
-| 浏览器内存和执行时间增长 | 2 active / 8 queued Gate、页面/字节/像素上限和包含重试的 90 秒总 deadline |
+| 浏览器内存和执行时间增长 | 2 active / 8 queued Gate、每 Context 256 请求、页面/字节/像素上限和包含重试的 90 秒总 deadline |
+| Chromium 清理永久 pending | 业务 deadline 后最多 5 秒故障清理；未确认断连时隔离 Gate 槽位并要求外部 Worker supervisor 重启 |
 | 恶意页面访问内网或 DNS rebinding | route 做纵深检查，Service Worker/WebSocket 阻断；生产最终依赖基础设施 egress policy，缺失时 Tool 不激活 |
 | sidecar 与 JSON 脱节 | attachment ID、指针、尺寸和三重 SHA-256 校验 |
 | 半发布 Artifact 或清理失败 | Publication Group、可观察补偿、`artifact_invalidation` 暂停和 recovery 失效 |
