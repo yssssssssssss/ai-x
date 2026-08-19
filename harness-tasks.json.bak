@@ -97,30 +97,37 @@
     {
       "id": "task-005",
       "title": "Implement work package A browser tool and sidecar contract",
-      "status": "in_progress",
+      "status": "completed",
       "priority": "P0",
       "depends_on": ["task-004"],
       "attempts": 0,
       "max_attempts": 3,
       "started_at_commit": "6b771b4",
       "validation": {
-        "command": "PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm exec tsx --test tests/browser-execution-gate.test.ts tests/playwright-page-capture-adapter.test.ts tests/tool-retry-policy.test.ts tests/schema.test.ts tests/registry-linter.test.ts && PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm typecheck && PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm lint:registry",
+        "command": "PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm exec tsx --test tests/browser-execution-gate.test.ts tests/playwright-page-capture-adapter.test.ts tests/tool-retry-policy.test.ts tests/tool-provenance.test.ts tests/schema.test.ts tests/registry-linter.test.ts tests/visual-asset-service.test.ts tests/lease-execution-engine.test.ts && PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm typecheck && PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm lint:registry",
         "timeout_seconds": 1200
       },
       "on_failure": { "cleanup": null },
       "error_log": [],
-      "checkpoints": [],
-      "completed_at": null
+      "checkpoints": [{
+        "step": 1,
+        "total": 1,
+        "description": "Work package A committed at 314411f; 172 targeted tests passed with 2 environment skips, real Chromium contract passed, full quality passed 1248/12/0, and both read-only audits reported no blockers",
+        "timestamp": "2026-08-19T12:21:15Z"
+      }],
+      "completed_at": "2026-08-19T12:21:15Z"
     },
     {
       "id": "task-006",
       "title": "Implement work package B atomic visual asset publication",
-      "status": "pending",
+      "status": "in_progress",
       "priority": "P0",
       "depends_on": ["task-005"],
       "attempts": 0,
       "max_attempts": 3,
-      "started_at_commit": null,
+      "started_at_commit": "c9a90e3",
+      "claimed_by": "root-session-2",
+      "lease_expires_at": "2026-08-19T14:24:35Z",
       "validation": {
         "command": "PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm exec tsx --test tests/artifact-publication-group.test.ts tests/visual-asset-service.test.ts tests/lease-execution-engine.test.ts tests/execution-recovery.test.ts tests/report-package.test.ts tests/report-bundle.test.ts tests/control-api-integration.test.ts tests/auth-isolation.test.ts && PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm typecheck && PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm --dir apps/web build",
         "timeout_seconds": 1800

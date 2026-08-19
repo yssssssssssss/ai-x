@@ -52,24 +52,24 @@
 
 文件范围以开发文档第 14.2、14.3、14.4 节相关条目为准，验收语义以第 7.4、7.7、10、11.1、13 节为准。
 
-- [ ] 保持 V1 类型和 Schema 不变，先实现并部署 V2 Reader，再开放任何 V2 Writer 路径。
-- [ ] 实现 `ArtifactPublicationGroup`，统一登记、提交、补偿和复核 Tool JSON、Binary 与 Manifest；仅在 group commit 后把截图 Evidence 加入内存 inventory，不把全局 Evidence Manifest 拉入步骤事务。
-- [ ] 实现 `browser_capture` V2 Writer，并校验 attachment ID、JSON pointer、媒体类型、尺寸和三处 SHA-256 一致。
-- [ ] Tool JSON、媒体或 Manifest 任一发布失败时，使同批已写 Artifact 全部失效，步骤不得成功。
-- [ ] 任一补偿失效失败必须冒泡为 `artifact_invalidation` 并暂停任务，不得吞掉错误。
-- [ ] deadline 或租约在不可中断写入期间到期时，写入返回后立即登记并补偿该 Artifact。
-- [ ] 生成并复核截图 Evidence，确保来源 URL、Tool Artifact、Visual Asset Manifest 和内部资产可反查。
-- [ ] 将 V2 读取加入 API、Report Package、恢复与终止失效路径；不得新增数据库迁移。
-- [ ] 使用注入的 Tool StepResult 与媒体 sidecar 完成 Engine 集成测试，Registry 继续保持 `draft`。
-- [ ] 运行 `pnpm exec tsx --test tests/artifact-publication-group.test.ts tests/visual-asset-service.test.ts tests/lease-execution-engine.test.ts tests/execution-recovery.test.ts tests/report-package.test.ts tests/report-bundle.test.ts tests/control-api-integration.test.ts tests/auth-isolation.test.ts`。
-- [ ] 运行 `pnpm typecheck` 和 `pnpm --dir apps/web build`。
-- [ ] 检查工作包 B diff 并提交独立 commit，记录 SHA。
+- [x] 保持 V1 类型和 Schema 不变，先实现并部署 V2 Reader，再开放任何 V2 Writer 路径。结果：V1 Schema 未修改，V1/V2 混合读取与 V2 `chart_render` 预读回归通过，代码见 `99c9ecd`。
+- [x] 实现 `ArtifactPublicationGroup`，统一登记、提交、补偿和复核 Tool JSON、Binary 与 Manifest；仅在 group commit 后把截图 Evidence 加入内存 inventory，不把全局 Evidence Manifest 拉入步骤事务。结果：组提交、逆序补偿、幂等补偿和 commit 后冻结测试通过，代码见 `99c9ecd`。
+- [x] 实现 `browser_capture` V2 Writer，并校验 attachment ID、JSON pointer、媒体类型、尺寸和三处 SHA-256 一致。结果：合法 V2 浏览器资产写入/重读及缺失、重复、额外、漂移 sidecar 拒绝测试通过，代码见 `99c9ecd`。
+- [x] Tool JSON、媒体或 Manifest 任一发布失败时，使同批已写 Artifact 全部失效，步骤不得成功。结果：第二个 Manifest、成功步骤持久化和后封存失败注入均 fail closed，代码见 `99c9ecd`。
+- [x] 任一补偿失效失败必须冒泡为 `artifact_invalidation` 并暂停任务，不得吞掉错误。结果：内外层、终态和图片标注补偿失败均保留全部 Artifact ID，只允许 abort，并可被恢复扫描，代码见 `99c9ecd`。
+- [x] deadline 或租约在不可中断写入期间到期时，写入返回后立即登记并补偿该 Artifact。结果：deadline、lease loss、late seal 与 promotion 时序测试通过，代码见 `99c9ecd`。
+- [x] 生成并复核截图 Evidence，确保来源 URL、Tool Artifact、Visual Asset Manifest 和内部资产可反查。结果：浏览器 Tool JSON、Binary、V2 Manifest 与 screenshot Evidence 原子发布集成测试通过，代码见 `99c9ecd`。
+- [x] 将 V2 读取加入 API、Report Package、恢复与终止失效路径；不得新增数据库迁移。结果：API/Web、混合 V1/V2 Report Package、恢复和终止清理回归通过；未新增迁移，代码见 `99c9ecd`。
+- [x] 使用注入的 Tool StepResult 与媒体 sidecar 完成 Engine 集成测试，Registry 继续保持 `draft`。结果：Engine fixture 覆盖成功、失败、租约与补偿路径；Registry 未激活，代码见 `99c9ecd`。
+- [x] 运行 `pnpm exec tsx --test tests/artifact-publication-group.test.ts tests/visual-asset-service.test.ts tests/lease-execution-engine.test.ts tests/execution-recovery.test.ts tests/report-package.test.ts tests/report-bundle.test.ts tests/control-api-integration.test.ts tests/auth-isolation.test.ts`。结果：Node 22 下 214 个测试，213 通过、1 个真实 Tavily 环境测试跳过、0 失败。
+- [x] 运行 `pnpm typecheck` 和 `pnpm --dir apps/web build`。结果：两项通过；Web 构建完成 653 个模块。
+- [x] 检查工作包 B diff 并提交独立 commit，记录 SHA。结果：32 个 B 文件独立提交为 `99c9ecd`；A follow-up、Harness 和用户迁移指南均未夹带。
 
 ### 门禁 B
 
-- [ ] V1 历史报告读取回归通过，混合 V1/V2 Report Package 可读取。
-- [ ] 发布失败、补偿失败、租约丢失和 deadline 到期均不存在半发布资产。
-- [ ] V2 Reader 已可独立保留，Writer 回滚不影响已生成历史报告。
+- [x] V1 历史报告读取回归通过，混合 V1/V2 Report Package 可读取。结果：V1 历史、V2 浏览器图片、V1 图表及 V2 图表预读测试通过。
+- [x] 发布失败、补偿失败、租约丢失和 deadline 到期均不存在半发布资产。结果：所有可补偿路径完成失效；失效本身失败时权威进入 `artifact_invalidation`，不得误报成功。
+- [x] V2 Reader 已可独立保留，Writer 回滚不影响已生成历史报告。结果：Reader 与 Writer 使用独立分支，V1/V2 marker crossing 均 fail closed；门禁 B 通过于 `99c9ecd`。
 
 ## 3. 工作包 C：optional Planning 与网页视觉报告
 
