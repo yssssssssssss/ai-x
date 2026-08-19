@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, type User, type TaskDetail, type PlanStep, type PlanProgress, ApiError } from '../api/client.ts';
+import { api, type User, type TaskDetail, type PlanProgress, type ExecLogRow, type ControlApprovalRequirement, ApiError } from '../api/client.ts';
 import { mergeTaskHistory, type HistoryTaskSummary } from '../current-flow-state.ts';
 import { useTaskFlow } from '../hooks/useTaskFlow.ts';
 import { Sidebar } from '../components/Sidebar.tsx';
@@ -23,17 +23,36 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
   const [detailError, setDetailError] = useState(''); // 历史打开失败(与任务流 error 分离)
 
   const refreshHistory = useCallback(() => {
-    void Promise.allSettled([api.listTasks(), api.listControlTasks()]).then(([legacy, current]) => {
+    void Promise.allSettled([
+      api.listTasks(),
+      api.listControlTasks(),
+      api.listApprovalTasks(),
+    ]).then(([legacy, current, approvals]) => {
+      const currentTasks = current.status === 'fulfilled' ? current.value.tasks : [];
+      const currentIds = new Set(currentTasks.map((task) => task.id));
+      const approvalTasks = approvals.status === 'fulfilled'
+        ? approvals.value.tasks
+          .filter((task) => !currentIds.has(task.id))
+          .map((task) => ({
+            id: task.id,
+            originalInput: task.originalInput,
+            taskType: task.taskType,
+            state: task.state,
+            // 审批列表只返回待处理项;没有创建时间时以更新时间排序即可。
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          }))
+        : [];
       setHistory(mergeTaskHistory(
         legacy.status === 'fulfilled' ? legacy.value.tasks : [],
-        current.status === 'fulfilled' ? current.value.tasks : [],
+        [...currentTasks, ...approvalTasks],
       ));
     });
   }, []);
   useEffect(refreshHistory, [refreshHistory]);
 
   // 新任务和 Current 历史走同一恢复主链；Legacy 历史保持只读。
-  const flow = useTaskFlow();
+  const flow = useTaskFlow(user.role);
   const {
     phase,
     clarification,
@@ -45,18 +64,22 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
     originalInput,
     exec,
     executionSteps,
+    executionPlanSteps,
     deliverable,
     reportState,
     deliverableError,
     error,
     progress,
+    currentTaskId,
+    stateVersion,
+    approvalRequirements,
+    approvalSubmitting,
+    planRecovery,
+    revisionSubmitting,
   } = flow;
-  const executionPlanSteps: PlanStep[] = plan?.plan.steps ?? executionSteps.map((step) => ({
-    step_no: step.step_no,
-    step_name: step.step_name,
-    actor_type: step.actor_type as PlanStep['actor_type'],
-    actor_id: step.actor_id,
-  }));
+  useEffect(() => {
+    if (stateVersion != null) refreshHistory();
+  }, [refreshHistory, stateVersion]);
 
   function newTask() {
     setView('task'); setDetail(null); setDetailError('');
@@ -66,8 +89,8 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
   async function openTask(id: string) {
     const task = history.find((item) => item.id === id);
     if (task?.kind === 'current') {
-      localStorage.setItem('ur_current_task_id', task.id);
-      window.location.reload();
+      setView('task'); setDetail(null); setDetailError('');
+      await flow.openTask(task.id);
       return;
     }
     setView('history'); setDetail(null); setDetailLoading(true); setDetailError('');
@@ -82,7 +105,15 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
 
   return (
     <div className="workbench" style={{ display: 'grid', gridTemplateColumns: '272px 1fr', height: '100%' }}>
-      <Sidebar user={user} history={history} onNewTask={newTask} onOpenLabs={() => setView('labs')} onOpenTask={openTask} onLogout={onLogout} />
+      <Sidebar
+        user={user}
+        history={history}
+        activeTaskId={currentTaskId}
+        onNewTask={newTask}
+        onOpenLabs={() => setView('labs')}
+        onOpenTask={(id) => { void openTask(id); }}
+        onLogout={onLogout}
+      />
       {view === 'labs' ? (
         <main style={{ height: '100%', overflow: 'hidden' }}>
           <Labs />
@@ -102,6 +133,7 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
         <div style={{ flex: 1, overflowY: 'auto', padding: '32px 0' }}>
           <div className={`chat-column${deliverable?.presentationMode === 'multimodal' ? ' chat-column-report' : ''}`} aria-live="polite">
             {phase === 'idle' && <Welcome onPick={flow.submitInput} />}
+            {phase === 'loading-task' && <Loading text="正在读取任务状态…" />}
             {clarification && phase === 'clarifying' && (
               <>
                 {error && <ErrorCard msg={error} />}
@@ -133,22 +165,35 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
               </>
             )}
 
-            {plan && phase !== 'picking' && phase !== 'selecting' && phase !== 'awaiting-approval' && phase !== 'error' && (
+            {planRecovery && (phase === 'planned' || phase === 'error') && (
+              <PlanRecoveryNotice submitting={revisionSubmitting} onRevise={flow.revisePlan} />
+            )}
+            {plan && !planRecovery && phase !== 'picking' && phase !== 'selecting' && phase !== 'error' && (
               <Stage2Plan
                 plan={plan}
                 locked={phase !== 'planned'}
-                onConfirm={flow.confirmAndExecute}
+                revising={revisionSubmitting}
+                onConfirm={flow.confirmPlan}
+                onRevise={flow.revisePlan}
               />
             )}
 
             {phase === 'planning' && <PlanProgressCard steps={progress} />}
-            {phase === 'awaiting-approval' && <AwaitingApprovalNotice />}
-            {phase === 'executing' && (
+            {phase === 'awaiting-approval' && (
+              <AwaitingApprovalNotice
+                requirements={approvalRequirements}
+                submitting={approvalSubmitting}
+                onApprove={flow.approveTask}
+              />
+            )}
+            {phase === 'ready' && <ReadyExecutionNotice onStart={flow.startExecution} />}
+            {(phase === 'executing' || phase === 'reviewing' || phase === 'composing-report') && (
               <>
                 {executionPlanSteps.length > 0 && (
-                  <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase="executing" />
+                  <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase={phase} />
                 )}
-                <Loading text="执行中…报告合成较慢,请稍候" />
+                <RunningTaskNotice phase={phase} />
+                {error && <ErrorCard msg={error} />}
               </>
             )}
             {phase === 'paused' && exec && (
@@ -181,12 +226,34 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
                 {deliverable && <CurrentStage4Report report={deliverable} />}
               </>
             )}
-            {phase === 'cancelled' && <AbortedNotice />}
+            {phase === 'failed' && (
+              <>
+                {executionPlanSteps.length > 0 && (
+                  <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase="failed" />
+                )}
+                <TerminalTaskNotice
+                  state="failed"
+                  failure={[...executionSteps].reverse().find((step) => step.status === 'failed')}
+                />
+              </>
+            )}
+            {phase === 'cancelled' && (
+              <>
+                {executionPlanSteps.length > 0 && (
+                  <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase="cancelled" />
+                )}
+                <AbortedNotice />
+              </>
+            )}
+            {phase === 'rejected' && <TerminalTaskNotice state="rejected" />}
             {phase === 'error' && <ErrorCard msg={error} />}
-            {(candidatesResp || exec || deliverable) && <CurrentHistoryNotice />}
+            {currentTaskId && <CurrentHistoryNotice />}
           </div>
         </div>
-        <Composer disabled={phase === 'planning' || phase === 'clarifying' || phase === 'selecting' || phase === 'executing' || phase === 'awaiting-approval'} onSubmit={flow.submitInput} />
+        <Composer
+          disabled={phase === 'loading-task' || phase === 'planning' || phase === 'clarifying' || phase === 'selecting' || phase === 'executing' || phase === 'reviewing' || phase === 'composing-report' || phase === 'awaiting-approval'}
+          onSubmit={flow.submitInput}
+        />
       </main>
       )}
     </div>
@@ -198,7 +265,7 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
 function HistoryDetail({ detail }: { detail: TaskDetail }) {
   const steps = detail.executionLog.map((l) => ({
     step_no: l.step_no, step_name: l.step_name,
-    actor_type: l.actor_type as PlanStep['actor_type'], actor_id: l.actor_id,
+    actor_type: l.actor_type, actor_id: l.actor_id,
   }));
   const activatedNodes = detail.decisionStates.map((d) => d.node_key);
   return (
@@ -364,13 +431,156 @@ function GapNotice({ count }: { count: number }) {
   );
 }
 
-function AwaitingApprovalNotice() {
+const APPROVAL_AUTHORITY_LABELS: Record<ControlApprovalRequirement['requiredAuthority'], string> = {
+  owner: '任务负责人',
+  legal: '法务',
+  security: '安全',
+  gold: '黄金账号',
+};
+
+const APPROVAL_GATE_LABELS: Record<string, string> = {
+  public_sources_only: '仅使用公开来源',
+  access_restrictions: '访问限制',
+  pii_and_account_data: '个人信息与账号数据',
+};
+
+function AwaitingApprovalNotice({
+  requirements,
+  submitting,
+  onApprove,
+}: {
+  requirements: ControlApprovalRequirement[];
+  submitting: boolean;
+  onApprove: (gateKey: string) => void;
+}) {
   return (
     <section className="stage-card">
       <h3 style={{ margin: '0 0 8px', fontSize: 15 }}>计划等待授权审批</h3>
       <p style={{ margin: 0, color: 'var(--text-dim)', fontSize: 13 }}>
         确认已记录，但计划包含需要对应角色处理的阻断项；状态达到 ready 前不会执行。
       </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16 }}>
+        {requirements.length === 0 && (
+          <div style={{ color: 'var(--text-faint)', fontSize: 12 }}>正在读取审批门禁…</div>
+        )}
+        {requirements.map((requirement) => {
+          const pending = requirement.decision === 'pending';
+          const decisionLabel = requirement.decision === 'approved'
+            ? '已批准'
+            : requirement.decision === 'rejected' ? '已拒绝' : '待审批';
+          return (
+            <div
+              key={requirement.gateKey}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '10px 12px',
+                borderRadius: 10,
+                background: 'var(--bg-card-hi)',
+                border: '1px solid var(--border-soft)',
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13 }}>{APPROVAL_GATE_LABELS[requirement.gateKey] ?? requirement.gateKey}</div>
+                <div style={{ color: 'var(--text-faint)', fontSize: 12, marginTop: 3 }}>
+                  {APPROVAL_AUTHORITY_LABELS[requirement.requiredAuthority]} · {decisionLabel}
+                </div>
+              </div>
+              {pending && requirement.canApprove && (
+                <button
+                  type="button"
+                  className="btn-primary"
+                  disabled={submitting}
+                  onClick={() => onApprove(requirement.gateKey)}
+                >
+                  {submitting ? '提交中…' : '批准'}
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function ReadyExecutionNotice({ onStart }: { onStart: () => void }) {
+  return (
+    <section className="stage-card">
+      <h3 style={{ margin: '0 0 8px', fontSize: 15 }}>计划已确认，等待执行</h3>
+      <p style={{ margin: '0 0 14px', color: 'var(--text-dim)', fontSize: 13 }}>
+        打开任务不会自动启动执行。确认当前计划后，再由你明确开始。
+      </p>
+      <button type="button" className="btn-primary" onClick={onStart}>开始执行</button>
+    </section>
+  );
+}
+
+function PlanRecoveryNotice({
+  submitting,
+  onRevise,
+}: {
+  submitting: boolean;
+  onRevise: () => void;
+}) {
+  return (
+    <section className="stage-card" role="status">
+      <h3 style={{ margin: '0 0 8px', fontSize: 15 }}>当前计划需要重新生成</h3>
+      <p style={{ margin: '0 0 14px', color: 'var(--text-dim)', fontSize: 13 }}>
+        这是旧版待输入计划，字段契约已经过期，不能直接确认。重新生成只会更新计划，不会开始执行任务。
+      </p>
+      <button type="button" className="btn-primary" onClick={onRevise} disabled={submitting}>
+        {submitting ? '正在重新生成…' : '重新生成计划'}
+      </button>
+    </section>
+  );
+}
+
+function RunningTaskNotice({ phase }: { phase: 'executing' | 'reviewing' | 'composing-report' }) {
+  const content = {
+    executing: ['任务执行中', '正在按计划调用能力并记录执行结果。'],
+    reviewing: ['质量复核中', '执行已完成，正在检查证据覆盖与报告质量。'],
+    'composing-report': ['报告生成中', '正在整理已验证的结果并生成最终报告。'],
+  }[phase];
+  return (
+    <section className="stage-card" aria-live="polite">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span className="spinner" />
+        <div>
+          <h3 style={{ margin: 0, fontSize: 15 }}>{content[0]}</h3>
+          <p style={{ margin: '3px 0 0', color: 'var(--text-dim)', fontSize: 13 }}>{content[1]}</p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function TerminalTaskNotice({
+  state,
+  failure,
+}: {
+  state: 'failed' | 'rejected';
+  failure?: ExecLogRow;
+}) {
+  const failed = state === 'failed';
+  return (
+    <section className="stage-card" role="status">
+      <h3 style={{ margin: '0 0 8px', color: 'var(--danger)', fontSize: 15 }}>
+        {failed ? '任务失败' : '任务已驳回'}
+      </h3>
+      <p style={{ margin: 0, color: 'var(--text-dim)', fontSize: 13 }}>
+        {failed
+          ? failure
+            ? `执行在第 ${failure.step_no} 步“${failure.step_name}”失败，当前任务不可直接恢复。`
+            : '任务在规划阶段失败，未生成可恢复计划。'
+          : '审批未通过，任务不会继续执行。该记录保留为只读历史。'}
+      </p>
+      {failure?.failure && (
+        <pre style={{ whiteSpace: 'pre-wrap', color: 'var(--text-faint)', fontSize: 12, margin: '10px 0 0' }}>
+          {JSON.stringify(failure.failure, null, 2)}
+        </pre>
+      )}
     </section>
   );
 }

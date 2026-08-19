@@ -105,6 +105,104 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ---- 任务记录:分组状态 + 可点击详情 ---- */
+.history-task-group { margin: 0 0 12px; }
+.history-task-group-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px 5px;
+  color: var(--text-faint);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+.history-task-count {
+  min-width: 18px;
+  text-align: right;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.history-task {
+  width: 100%;
+  min-height: 52px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  margin: 0 0 3px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-dim);
+  text-align: left;
+  transition-property: background-color, color, transform;
+  transition-duration: 120ms;
+  transition-timing-function: ease-out;
+  touch-action: manipulation;
+}
+.history-task.is-active {
+  background: var(--bg-card-hi);
+  color: var(--text);
+}
+.history-task:active { transform: scale(0.98); }
+@media (hover: hover) {
+  .history-task:hover { background: var(--bg); color: var(--text); }
+  .history-task.is-active:hover { background: var(--bg-card-hi); }
+}
+.history-task-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.history-task-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--text-faint);
+  font-size: 10px;
+  line-height: 1.4;
+}
+.history-task-meta > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-status-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.history-status-dot.tone-action { background: var(--primary-strong); }
+.history-status-dot.tone-running { background: var(--running); }
+.history-status-dot.tone-success { background: var(--ok); }
+.history-status-dot.tone-warning { background: var(--warn); }
+.history-status-dot.tone-danger { background: var(--danger); }
+.history-status-dot.tone-muted { background: var(--muted); }
+
+@media (max-width: 720px) {
+  .workbench {
+    display: flex !important;
+    flex-direction: column;
+  }
+  .workbench > aside {
+    height: min(300px, 42vh) !important;
+    min-height: 220px;
+    flex: 0 0 auto;
+  }
+  .workbench > main {
+    min-height: 0;
+    height: auto !important;
+    flex: 1 1 auto;
+  }
+}
+
 /* ---- 聊天流布局 ---- */
 .chat-column {
   max-width: 760px;
@@ -120,6 +218,26 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
   margin-bottom: 20px;
   box-shadow: var(--shadow-card);
 }
+.stage-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.stage-number {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+.stage-title { font-size: 15px; letter-spacing: -0.005em; }
+.stage-note { color: var(--text-faint); font-size: 12px; }
 
 /* ---- 用户气泡(claude.ai 风:右对齐、圆润、克制的强调色)---- */
 .user-row {
@@ -178,17 +296,45 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
   transform: translateY(-1px);
 }
 
-/* ---- 候选方案卡片(两卡横排,选中态) ---- */
-.candidate-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
+/* ---- 候选方案轮播:主卡聚焦 + 侧卡预览 ---- */
+.candidate-carousel {
   margin-top: 4px;
 }
-@media (max-width: 720px) {
-  .candidate-grid { grid-template-columns: 1fr; }
+.candidate-carousel-viewport {
+  overflow: hidden;
+  margin-inline: -12px;
+  padding: 12px 12px 16px;
+  cursor: grab;
+  touch-action: pan-y pinch-zoom;
+}
+.candidate-carousel-viewport:active { cursor: grabbing; }
+.candidate-carousel-track {
+  display: flex;
+  align-items: stretch;
+  margin-left: -14px;
+}
+.candidate-slide {
+  display: flex;
+  flex: 0 0 min(80%, 540px);
+  min-width: 0;
+  padding-left: 14px;
+  opacity: 0.46;
+  transform: scale(0.92);
+  transform-origin: center;
+  transition-property: transform, opacity;
+  transition-duration: 220ms;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+.candidate-slide.is-current {
+  opacity: 1;
+  transform: scale(1);
 }
 .candidate-card {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
   text-align: left;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -197,15 +343,20 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
   color: inherit;
   cursor: pointer;
   transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
 }
-.candidate-card:hover:not(:disabled) {
-  border-color: var(--primary);
-  background: var(--bg-card-hi);
-  transform: translateY(-1px);
+.candidate-slide.is-current .candidate-card {
+  border-color: rgba(158, 160, 255, 0.34);
+  background: var(--bg-elev);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.22);
 }
+@media (hover: hover) {
+  .candidate-card:hover:not(:disabled) {
+    border-color: var(--primary);
+    background: var(--bg-card-hi);
+    transform: translateY(-1px);
+  }
+}
+.candidate-card:active:not(:disabled) { transform: scale(0.985); }
 .candidate-card.is-active {
   border-color: var(--primary);
   background: var(--primary-tint);
@@ -215,19 +366,28 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 
 .candidate-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
 }
 .candidate-tag {
+  flex: 0 0 auto;
+  margin-top: 1px;
   font-size: 11px;
   font-weight: 700;
   padding: 3px 8px;
   border-radius: 999px;
   letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 .tag-depth { background: rgba(124, 124, 240, 0.16); color: var(--primary-strong); }
 .tag-speed { background: rgba(251, 191, 36, 0.15); color: #fcd34d; }
-.candidate-title { font-size: 15px; }
+.candidate-title {
+  min-width: 0;
+  font-size: 15px;
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+.candidate-spinner { flex: 0 0 auto; margin: 4px 0 0 auto; }
 .candidate-rationale {
   margin: 0;
   color: var(--text-dim);
@@ -274,17 +434,142 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
   white-space: nowrap;
 }
 .candidate-steps .step-id {
+  max-width: 44%;
+  overflow: hidden;
   font-family: var(--mono);
   font-size: 10.5px;
   color: var(--text-faint);
   flex-shrink: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .candidate-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   font-size: 11px;
   color: var(--text-faint);
-  margin-top: 4px;
+  margin-top: auto;
   padding-top: 10px;
   border-top: 1px solid var(--border-soft);
+}
+.candidate-card-action {
+  flex: 0 0 auto;
+  color: var(--primary-strong);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.candidate-carousel-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 48px;
+  margin-top: 2px;
+}
+.candidate-carousel-arrow {
+  display: inline-grid;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  color: var(--text-dim);
+  transition-property: transform, color, border-color, background-color;
+  transition-duration: 140ms;
+  transition-timing-function: ease-out;
+  touch-action: manipulation;
+}
+.candidate-carousel-arrow svg { width: 20px; height: 20px; }
+@media (hover: hover) {
+  .candidate-carousel-arrow:hover:not(:disabled) {
+    border-color: var(--primary-dim);
+    background: var(--bg-card-hi);
+    color: var(--text);
+  }
+}
+.candidate-carousel-arrow:active:not(:disabled) { transform: scale(0.96); }
+.candidate-carousel-arrow:disabled { cursor: default; opacity: 0.32; }
+.candidate-carousel-position {
+  display: flex;
+  min-width: 148px;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+.candidate-carousel-count {
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
+}
+.candidate-carousel-dots {
+  display: flex;
+  max-width: min(260px, 48vw);
+  overflow-x: auto;
+  align-items: center;
+  justify-content: flex-start;
+  scrollbar-width: none;
+}
+.candidate-carousel-dots::-webkit-scrollbar { display: none; }
+.candidate-carousel-dot {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  touch-action: manipulation;
+}
+.candidate-carousel-dot::before {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 18px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--border);
+  content: '';
+  opacity: 0.9;
+  transform: translate(-50%, -50%) scaleX(1);
+  transition-property: transform, opacity, background-color;
+  transition-duration: 180ms;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+.candidate-carousel-dot.is-current::before {
+  background: var(--primary-strong);
+  opacity: 1;
+  transform: translate(-50%, -50%) scaleX(1.35);
+}
+.candidate-carousel-dot:active::before { transform: translate(-50%, -50%) scaleX(0.9); }
+
+@media (max-width: 720px) {
+  .candidate-stage { margin-inline: -12px; padding-inline: 16px; }
+  .candidate-stage .stage-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .candidate-stage .stage-title {
+    flex: 1 1 calc(100% - 34px);
+    white-space: nowrap;
+  }
+  .candidate-stage .stage-note {
+    flex: 0 0 calc(100% - 34px);
+    margin: -8px 0 0 34px;
+    line-height: 1.45;
+  }
+  .candidate-carousel-viewport { margin-inline: -16px; padding-inline: 16px; }
+  .candidate-slide { flex-basis: 84%; }
+  .candidate-card { padding: 16px 14px 14px; }
+  .candidate-carousel-controls { gap: 10px; }
+  .candidate-carousel-position { min-width: 124px; }
+  .candidate-carousel-dots { max-width: 124px; }
 }
 
 /* ---- 当前任务运行流程:Control plan DAG + 执行状态 ---- */

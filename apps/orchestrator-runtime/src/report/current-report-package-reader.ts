@@ -18,6 +18,7 @@ import type { ControlArtifactStore } from '../control/artifact-store.ts';
 import {
   EvidenceService,
   type EvidenceArtifactResolver,
+  type EvidenceKind,
   type EvidenceManifest,
   type ResolvedEvidenceArtifact,
 } from '../evidence/evidence-service.ts';
@@ -74,6 +75,15 @@ function assertArtifactBinding(
   }
   if (artifact.attemptId !== binding.attemptId) {
     throw new Error(`${label} Artifact attemptId is invalid`);
+  }
+}
+
+function evidenceArtifactKind(kind: EvidenceKind): string {
+  switch (kind) {
+    case 'tool_output': return 'tool_output';
+    case 'knowledge_excerpt': return 'knowledge_excerpt';
+    case 'screenshot': return 'visual_asset_manifest';
+    case 'user_constraint': return 'chart_data';
   }
 }
 
@@ -239,7 +249,16 @@ export class CurrentReportPackageReader {
     const resolvedArtifacts = new Map<string, ResolvedEvidenceArtifact>();
     for (const candidate of manifestRecord.entries) {
       const entry = record(candidate);
-      if (!entry || typeof entry.artifactId !== 'string' || typeof entry.kind !== 'string') {
+      if (
+        !entry
+        || typeof entry.artifactId !== 'string'
+        || (
+          entry.kind !== 'tool_output'
+          && entry.kind !== 'knowledge_excerpt'
+          && entry.kind !== 'screenshot'
+          && entry.kind !== 'user_constraint'
+        )
+      ) {
         throw new Error('Evidence Manifest entry is invalid');
       }
       const verifiedEvidence = await this.dependencies.artifacts.readVerifiedJson<unknown>(
@@ -248,7 +267,7 @@ export class CurrentReportPackageReader {
       assertArtifactBinding(
         verifiedEvidence.artifact,
         entry.artifactId,
-        entry.kind,
+        evidenceArtifactKind(entry.kind),
         binding,
         'referenced Evidence',
       );

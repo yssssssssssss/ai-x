@@ -80,6 +80,9 @@ import type {
 
 export type {
   ApprovalControlPlanRequest,
+  ControlApprovalRequirement,
+  ControlApprovalTaskSummary,
+  ControlPlanRecovery,
   ConfirmControlPlanRequest,
   ControlCommandResponse,
   ControlExecutionResult,
@@ -91,6 +94,8 @@ export type {
   ExecutionControlPlanRequest,
   PlanControlTaskRequest,
   ResumeControlPlanRequest,
+  ReviseControlPlanRequest,
+  ReviseControlPlanResponse,
   SelectControlPlanRequest,
   SelectControlPlanResponse,
 } from '../../../../packages/api-contract/control-workflow.ts';
@@ -106,6 +111,7 @@ export type { ClarificationRequiredResponse, CurrentPlanningResponse } from '../
 
 import type {
   ApprovalControlPlanRequest,
+  ControlApprovalTaskSummary,
   ConfirmControlPlanRequest,
   ControlCommandResponse,
   ControlExecutionResult,
@@ -113,6 +119,8 @@ import type {
   ExecutionControlPlanRequest,
   PlanControlTaskRequest,
   ResumeControlPlanRequest,
+  ReviseControlPlanRequest,
+  ReviseControlPlanResponse,
   SelectControlPlanRequest,
   SelectControlPlanResponse,
 } from '../../../../packages/api-contract/control-workflow.ts';
@@ -217,8 +225,10 @@ export const api = {
       taskType: string | null;
       state: string;
       createdAt: string;
+      updatedAt: string;
     }>;
   }>('/control-tasks'),
+  listApprovalTasks: () => req<{ tasks: ControlApprovalTaskSummary[] }>('/control-tasks/approvals'),
   taskDetail: (id: string) =>
     req<TaskDetail>(`/tasks/${id}`),
   feedback: (id: string, b: { rating?: number; adopted?: boolean; comment?: string }) =>
@@ -232,6 +242,8 @@ export const api = {
     req<ControlCommandResponse>(`/control-tasks/${taskId}/confirm`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
   approveControlPlan: (taskId: string, body: ApprovalControlPlanRequest) =>
     req<ControlCommandResponse>(`/control-tasks/${taskId}/approve`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
+  reviseControlPlan: (taskId: string, body: ReviseControlPlanRequest) =>
+    req<ReviseControlPlanResponse>(`/control-tasks/${taskId}/revise`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
   resumeControlPlan: (taskId: string, body: ResumeControlPlanRequest) =>
     req<ControlCommandResponse>(`/control-tasks/${taskId}/resume`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
   executeControlPlan: (taskId: string, body: ExecutionControlPlanRequest) =>

@@ -7,7 +7,8 @@ import { analyzeAesthetic } from './services/aestheticService.js';
 import { saveUpload } from './services/uploadService.js';
 
 export const buildApp = async () => {
-  const app = Fastify({ logger: true });
+  // /api/analyze receives image data URLs; Fastify's 1 MiB default rejects normal screenshots.
+  const app = Fastify({ logger: true, bodyLimit: 24 * 1024 * 1024 });
 
   await app.register(cors, { origin: true });
   await app.register(multipart, {

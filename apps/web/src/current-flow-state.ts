@@ -1,6 +1,7 @@
 import type {
   ControlExecutionStepResponse,
   ControlPlanCandidatesResponse,
+  ControlWorkflowState,
   CurrentPlanCandidate,
 } from '../../../packages/api-contract/control-workflow.ts';
 import type { ExecLogRow, TaskSummary } from '../../../packages/api-contract/http.ts';
@@ -18,10 +19,46 @@ export interface CurrentHistoryTaskSummary {
   taskType: string | null;
   state: string;
   createdAt: string;
+  updatedAt: string;
 }
 
 export interface HistoryTaskSummary extends TaskSummary {
   kind: 'legacy' | 'current';
+}
+
+export type TaskHistoryGroup = 'action' | 'running' | 'finished';
+export type TaskStateTone = 'action' | 'running' | 'success' | 'warning' | 'danger' | 'muted';
+
+export interface TaskStatePresentation {
+  label: string;
+  group: TaskHistoryGroup;
+  tone: TaskStateTone;
+}
+
+const TASK_STATE_PRESENTATIONS: Record<ControlWorkflowState, TaskStatePresentation> = {
+  awaiting_clarification: { label: '待补充', group: 'action', tone: 'action' },
+  awaiting_selection: { label: '待选方案', group: 'action', tone: 'action' },
+  awaiting_confirmation: { label: '待确认', group: 'action', tone: 'action' },
+  awaiting_approval: { label: '审批中', group: 'running', tone: 'running' },
+  ready: { label: '待执行', group: 'action', tone: 'action' },
+  executing: { label: '执行中', group: 'running', tone: 'running' },
+  paused: { label: '已暂停', group: 'action', tone: 'warning' },
+  reviewing: { label: '质量复核中', group: 'running', tone: 'running' },
+  composing_report: { label: '报告生成中', group: 'running', tone: 'running' },
+  completed: { label: '已完成', group: 'finished', tone: 'success' },
+  completed_with_gaps: { label: '已完成·有缺口', group: 'finished', tone: 'warning' },
+  failed: { label: '失败', group: 'finished', tone: 'danger' },
+  cancelled: { label: '已取消', group: 'finished', tone: 'muted' },
+  rejected: { label: '已驳回', group: 'finished', tone: 'danger' },
+};
+
+function isControlWorkflowState(state: string): state is ControlWorkflowState {
+  return Object.prototype.hasOwnProperty.call(TASK_STATE_PRESENTATIONS, state);
+}
+
+export function taskStatePresentation(state: string): TaskStatePresentation {
+  if (!isControlWorkflowState(state)) throw new Error(`unsupported Current task state: ${state}`);
+  return TASK_STATE_PRESENTATIONS[state];
 }
 
 export function mergeTaskHistory(
@@ -37,6 +74,7 @@ export function mergeTaskHistory(
       task_type: task.taskType,
       status: task.state,
       created_at: task.createdAt,
+      ...(task.updatedAt ? { updated_at: task.updatedAt } : {}),
     })),
   ];
   return history.sort((left, right) => {
@@ -113,6 +151,40 @@ export function buildConfirmationAnswers(
   return answers;
 }
 
+export interface ExecutionPlanStepView {
+  step_no: number;
+  step_name: string;
+  actor_type: string;
+  actor_id: string;
+  depends_on?: readonly number[];
+}
+
+export function executionPlanStepsForTask(input: {
+  activePlan?: {
+    plan: {
+      steps: readonly ExecutionPlanStepView[];
+    };
+  } | null;
+  executionSteps: readonly ControlExecutionStepResponse[];
+}): ExecutionPlanStepView[] {
+  const activeSteps = input.activePlan?.plan.steps;
+  if (activeSteps && activeSteps.length > 0) {
+    return activeSteps.map((step) => ({
+      step_no: step.step_no,
+      step_name: step.step_name,
+      actor_type: step.actor_type,
+      actor_id: step.actor_id,
+      ...(Array.isArray(step.depends_on) ? { depends_on: [...step.depends_on] } : {}),
+    }));
+  }
+  return input.executionSteps.map((step) => ({
+    step_no: step.stepNo,
+    step_name: step.stepName,
+    actor_type: step.actorType,
+    actor_id: step.actorId,
+  }));
+}
+
 export function executionStepsToExecLog(steps: ControlExecutionStepResponse[]): ExecLogRow[] {
   return steps.map((step) => ({
     step_no: step.stepNo,
@@ -121,6 +193,7 @@ export function executionStepsToExecLog(steps: ControlExecutionStepResponse[]): 
     actor_id: step.actorId,
     status: step.state,
     skillProvenance: step.skillProvenance,
+    ...(step.failure ? { failure: step.failure } : {}),
   }));
 }
 
@@ -274,6 +347,33 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim() !== '';
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function isRestorableClarificationRequirement(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return value.version === 'research-task-v2'
+    && isNonEmptyString(value.task_type)
+    && isNonEmptyString(value.business_domain)
+    && isNonEmptyString(value.research_goal)
+    && Array.isArray(value.assumptions)
+    && value.assumptions.every((assumption) => isRecord(assumption)
+      && isNonEmptyString(assumption.key)
+      && typeof assumption.value === 'string'
+      && typeof assumption.editable === 'boolean')
+    && Array.isArray(value.ambiguities)
+    && value.ambiguities.every((ambiguity) => isRecord(ambiguity)
+      && isNonEmptyString(ambiguity.id)
+      && isNonEmptyString(ambiguity.statement)
+      && typeof ambiguity.blocking === 'boolean')
+    && Array.isArray(value.clarification_questions)
+    && value.clarification_questions.every((question) => isRecord(question)
+      && isNonEmptyString(question.key)
+      && isNonEmptyString(question.question)
+      && isNonEmptyString(question.rationale));
+}
+
 function isRestorableCandidate(value: unknown): value is CurrentPlanCandidate {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const candidate = value as Partial<CurrentPlanCandidate>;
@@ -300,16 +400,36 @@ export interface CurrentTaskHydrationInput {
   };
   candidates?: CurrentPlanCandidate[];
   activatedNodes?: string[];
+  activePlan?: CurrentPlanCandidate | null;
 }
 
+export type RestoredCurrentTaskPhase =
+  | 'clarifying'
+  | 'picking'
+  | 'planned'
+  | 'awaiting-approval'
+  | 'ready'
+  | 'executing'
+  | 'paused'
+  | 'reviewing'
+  | 'composing-report'
+  | 'done'
+  | 'failed'
+  | 'cancelled'
+  | 'rejected';
+
 export function hydrateCurrentTask(input: CurrentTaskHydrationInput): {
-  phase: 'clarifying' | 'picking' | 'idle';
+  phase: RestoredCurrentTaskPhase;
   stateVersion: number;
   originalInput: string;
   clarification: unknown | null;
   candidatesResp: ControlPlanCandidatesResponse | null;
+  selectedCandidate: CurrentPlanCandidate | null;
 } {
   const { task } = input;
+  if (!isControlWorkflowState(task.state)) {
+    throw new Error(`unsupported Current task state: ${task.state}`);
+  }
   if (task.state === 'awaiting_selection') {
     const candidates = input.candidates;
     const activatedNodes = input.activatedNodes;
@@ -329,6 +449,7 @@ export function hydrateCurrentTask(input: CurrentTaskHydrationInput): {
       stateVersion: task.stateVersion,
       originalInput: task.originalInput,
       clarification: null,
+      selectedCandidate: null,
       candidatesResp: {
         kind: 'current',
         conversationId: task.conversationId,
@@ -345,34 +466,110 @@ export function hydrateCurrentTask(input: CurrentTaskHydrationInput): {
       },
     };
   }
-  if (task.state !== 'awaiting_clarification') {
+  if (task.state === 'awaiting_clarification') {
+    if (!isRestorableClarificationRequirement(task.structuredTask)) {
+      throw new Error('awaiting_clarification task has no valid requirement recovery payload');
+    }
     return {
-      phase: 'idle',
+      phase: 'clarifying',
+      stateVersion: task.stateVersion,
+      originalInput: task.originalInput,
+      clarification: {
+        kind: 'current',
+        status: 'clarification_required',
+        conversationId: task.conversationId,
+        task: {
+          id: task.id,
+          state: task.state,
+          stateVersion: task.stateVersion,
+          activePlanVersionId: task.activePlanVersionId ?? null,
+          currentAttemptId: task.currentAttemptId ?? null,
+        },
+        structuredTask: task.structuredTask,
+        activatedNodes: [],
+        candidates: [],
+      },
+      candidatesResp: null,
+      selectedCandidate: null,
+    };
+  }
+
+  const activePlanPhases: Partial<Record<ControlWorkflowState, RestoredCurrentTaskPhase>> = {
+    awaiting_confirmation: 'planned',
+    awaiting_approval: 'awaiting-approval',
+    ready: 'ready',
+    executing: 'executing',
+    paused: 'paused',
+    reviewing: 'reviewing',
+    composing_report: 'composing-report',
+  };
+  const activePhase = activePlanPhases[task.state];
+  if (activePhase) {
+    const activePlan = input.activePlan;
+    const plan = activePlan && isRecord(activePlan.plan) ? activePlan.plan : null;
+    if (
+      !activePlan
+      || !isRestorableCandidate(activePlan)
+      || activePlan.planVersionId !== task.activePlanVersionId
+      || plan?.task_id !== task.id
+      || !Array.isArray(plan.activated_nodes)
+      || plan.activated_nodes.some((node) => typeof node !== 'string')
+    ) {
+      throw new Error(`${task.state} task has no valid active plan recovery payload`);
+    }
+    if (
+      (task.state === 'executing'
+        || task.state === 'paused'
+        || task.state === 'reviewing'
+        || task.state === 'composing_report')
+      && !isNonEmptyString(task.currentAttemptId)
+    ) {
+      throw new Error(`${task.state} task has no current execution attempt`);
+    }
+    return {
+      phase: activePhase,
       stateVersion: task.stateVersion,
       originalInput: task.originalInput,
       clarification: null,
-      candidatesResp: null,
+      selectedCandidate: activePlan,
+      candidatesResp: {
+        kind: 'current',
+        conversationId: task.conversationId,
+        task: {
+          id: task.id,
+          state: task.state,
+          stateVersion: task.stateVersion,
+          activePlanVersionId: task.activePlanVersionId ?? null,
+          currentAttemptId: task.currentAttemptId ?? null,
+        },
+        structuredTask: task.structuredTask as ControlPlanCandidatesResponse['structuredTask'],
+        activatedNodes: plan.activated_nodes as string[],
+        candidates: [activePlan],
+      },
     };
   }
+
+  if (
+    (task.state === 'completed' || task.state === 'completed_with_gaps')
+    && !isNonEmptyString(task.currentAttemptId)
+  ) {
+    throw new Error(`${task.state} task has no current execution attempt`);
+  }
+  const terminalPhases: Partial<Record<ControlWorkflowState, RestoredCurrentTaskPhase>> = {
+    completed: 'done',
+    completed_with_gaps: 'done',
+    failed: 'failed',
+    cancelled: 'cancelled',
+    rejected: 'rejected',
+  };
+  const terminalPhase = terminalPhases[task.state];
+  if (!terminalPhase) throw new Error(`unsupported Current task state: ${task.state}`);
   return {
-    phase: 'clarifying',
+    phase: terminalPhase,
     stateVersion: task.stateVersion,
     originalInput: task.originalInput,
-    clarification: {
-      kind: 'current',
-      status: 'clarification_required',
-      conversationId: task.conversationId,
-      task: {
-        id: task.id,
-        state: task.state,
-        stateVersion: task.stateVersion,
-        activePlanVersionId: task.activePlanVersionId ?? null,
-        currentAttemptId: task.currentAttemptId ?? null,
-      },
-      structuredTask: task.structuredTask,
-      activatedNodes: [],
-      candidates: [],
-    },
+    clarification: null,
     candidatesResp: null,
+    selectedCandidate: null,
   };
 }

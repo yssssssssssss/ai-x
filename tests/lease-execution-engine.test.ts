@@ -1060,7 +1060,12 @@ test('uses the same verified visual bytes for materialization and Tool dataUrl h
     new Date(Date.now() + 60_000),
     steps,
     {},
-    { research_goal: 'compare digital human products' },
+    {
+      research_goal: 'compare digital human products',
+      constraints: [{
+        statement: '六维度加权评分分别为：需求理解20%、推荐可解释性20%、商品信息组织20%、价格呈现15%、内容可信度15%、转化入口10%。',
+      }],
+    },
     [{
       kind: 'visual',
       role: 'designImage',
@@ -1103,6 +1108,11 @@ test('uses the same verified visual bytes for materialization and Tool dataUrl h
   const llm = new CountingRealLLM();
   let materialized: Buffer | undefined;
   let annotationPurpose: 'input_provenance' | 'design_audit' | undefined;
+  const visualAssets = new VisualAssetService({ artifacts });
+  const productionMaterializer = new VisualInputMaterializer({
+    visualAssets,
+    imageAnnotations: new ImageAnnotationService({ assets: visualAssets, artifacts }),
+  });
   const engine = new DeliverableAwareLeaseExecutionEngine({
     repository,
     artifacts,
@@ -1117,6 +1127,7 @@ test('uses the same verified visual bytes for materialization and Tool dataUrl h
       async materialize(input) {
         materialized = Buffer.from(input.visuals[0]!.images[0]!.bytes);
         annotationPurpose = input.annotationPurpose;
+        return productionMaterializer.materialize(input);
       },
     },
   });
@@ -1131,6 +1142,36 @@ test('uses the same verified visual bytes for materialization and Tool dataUrl h
   const dataUrl = designInput.designImage?.dataUrl;
   assert.equal(typeof dataUrl, 'string');
   assert.deepEqual(Buffer.from(dataUrl!.split(',')[1]!, 'base64'), png);
+  const chartDataArtifact = await repository.findSealedArtifact({
+    taskId: lease.taskId,
+    attemptId: lease.attemptId,
+    kind: 'chart_data',
+  });
+  const chartSpecArtifact = await repository.findSealedArtifact({
+    taskId: lease.taskId,
+    attemptId: lease.attemptId,
+    kind: 'chart_spec',
+  });
+  assert.ok(chartDataArtifact);
+  assert.ok(chartSpecArtifact);
+  const chartInput = await artifacts.readVerifiedJson<{
+    spec: ChartSpec;
+    table: ChartTableAlternative;
+  }>(chartSpecArtifact.id);
+  assert.deepEqual(chartInput.value.spec.categories, [
+    '需求理解',
+    '推荐可解释性',
+    '商品信息组织',
+    '价格呈现',
+    '内容可信度',
+    '转化入口',
+  ]);
+  assert.deepEqual(chartInput.value.spec.series[0]?.values, [20, 20, 20, 15, 15, 10]);
+  assert.deepEqual(chartInput.value.table.rows[0]?.cells, [20, 20, 20, 15, 15, 10]);
+  assert.ok(result.evidenceManifestArtifactId);
+  const manifest = await artifacts.readVerifiedJson<EvidenceManifest>(result.evidenceManifestArtifactId);
+  assert.equal(manifest.value.entries.filter(({ evidenceClass }) => evidenceClass === 'screenshot').length, 1);
+  assert.equal(manifest.value.entries.filter(({ evidenceClass }) => evidenceClass === 'user_input').length, 6);
 });
 
 test('defers design annotation until verified attention findings are available', async () => {
@@ -1161,11 +1202,13 @@ test('defers design annotation until verified attention findings are available',
       }],
     },
   );
-  const materializedOriginal = {
-    gateKey: 'designImage',
-    imageIndex: 1,
-    original: { assetId: 'design-original', manifestArtifactId: 'design-original-manifest' },
-  };
+  const artifacts = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+  const visualAssets = new VisualAssetService({ artifacts });
+  let materializedOriginal: {
+    gateKey: string;
+    imageIndex: number;
+    original: { assetId: string; manifestArtifactId: string };
+  } | undefined;
   let annotationPurpose: 'input_provenance' | undefined;
   let annotatedFindings: Array<{
     findingId: string;
@@ -1182,7 +1225,7 @@ test('defers design annotation until verified attention findings are available',
   });
   const engine = new DeliverableAwareLeaseExecutionEngine({
     repository,
-    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
+    artifacts,
     tools: new ToolRouter().register(new CountingRealTavilyAdapter()).register(designTool),
     llm: new CountingRealLLM(),
     deliverables: new RecordingDeliverablesFake(),
@@ -1192,9 +1235,33 @@ test('defers design annotation until verified attention findings are available',
     visualInputMaterializer: {
       async materialize(input) {
         annotationPurpose = input.annotationPurpose;
+        const original = await visualAssets.ingest({
+          taskId: input.lease.taskId,
+          planVersionId: input.lease.planVersionId,
+          attemptId: input.lease.attemptId,
+          activeLease: input.lease,
+          source: {
+            kind: 'user_upload',
+            fileName: 'design-original.png',
+            bytes: Buffer.from(
+              'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+              'base64',
+            ),
+          },
+          exportPolicy: 'allow',
+        });
+        materializedOriginal = {
+          gateKey: 'designImage',
+          imageIndex: 1,
+          original: {
+            assetId: original.assetArtifact.id,
+            manifestArtifactId: original.manifestArtifact.id,
+          },
+        };
         return [materializedOriginal];
       },
       async annotateDesignFindings(input) {
+        assert.ok(materializedOriginal);
         assert.deepEqual(input.original, materializedOriginal);
         annotatedFindings = structuredClone(input.findings);
       },

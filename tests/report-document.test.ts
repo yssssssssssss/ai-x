@@ -1181,10 +1181,24 @@ function reportSectionText(document: ReportDocument, sectionId: string): string 
 function competitivePayload(screenshotComparisons: unknown[]): Record<string, unknown> {
   return {
     competitorSamples: [{ id: 'sample-a', name: 'Phase6 Product A', rationale: 'Primary comparator', evidenceIds: ['evidence-1'] }],
-    dimensionMatrix: [{ dimension: 'onboarding', values: [{ sampleId: 'sample-a', value: 'Phase6 guided matrix value', evidenceIds: ['evidence-1'] }] }],
+    dimensionMatrix: [{
+      dimension: 'onboarding',
+      weight: 0.2,
+      values: [{ sampleId: 'sample-a', value: 'Phase6 guided matrix value', score: 4.5, evidenceIds: ['evidence-1'] }],
+    }],
     differences: [{ id: 'difference-1', dimension: 'onboarding', statement: 'Phase6 competitor difference', evidenceIds: ['evidence-1'] }],
     impacts: [{ differenceId: 'difference-1', audience: 'New users', statement: 'Phase6 novice impact' }],
     actionRecommendations: [{ id: 'action-1', differenceIds: ['difference-1'], priority: 'P1', statement: 'Phase6 prioritized action' }],
+    managementSummary: ['Phase6 management decision'],
+    scoringMethod: ['Phase6 1–5 anchor definition'],
+    roadmap: [{
+      priority: 'P0',
+      statement: 'Phase6 roadmap action',
+      metric: 'Phase6 completion rate',
+      validationMethod: 'Phase6 controlled experiment',
+    }],
+    instrumentationPlan: ['Phase6 instrumentation event and properties'],
+    userTestScript: ['Phase6 user task, probe, success criterion, and trust measure'],
     screenshotComparisons,
   };
 }
@@ -1205,11 +1219,46 @@ test('competitive ReportDocument projects matrix, actions, impact, and screensho
     ]),
   }));
 
+  assert.equal(document.title, '竞品分析报告 / Competitive Analysis Report');
+  assert.equal(
+    document.sections.find(({ id }) => id === 'findings')?.title,
+    '维度矩阵与核心差异 / Dimension Matrix and Key Differences',
+  );
+  assert.equal(document.sections.every(({ title }) => title.includes(' / ')), true);
+  assert.equal(
+    document.sections.reduce(
+      (count, section) => count + section.blocks.filter(({ id }) => id.startsWith('section-intro-')).length,
+      0,
+    ),
+    document.sections.length,
+  );
+  assert.match(reportSectionText(document, 'findings'), /本章用于/u);
   assert.match(reportSectionText(document, 'findings'), /Phase6 guided matrix value/);
   assert.match(reportSectionText(document, 'findings'), /Phase6 competitor difference/);
+  assert.match(reportSectionText(document, 'findings'), /Phase6 Product A/);
+  assert.equal(
+    document.sections
+      .find(({ id }) => id === 'findings')
+      ?.blocks.filter(({ type }) => type === 'fact').length,
+    1,
+  );
+  const matrixFact = document.sections
+    .find(({ id }) => id === 'findings')
+    ?.blocks.find(({ type }) => type === 'fact');
+  assert.ok(matrixFact?.type === 'fact');
+  assert.match(
+    matrixFact.text,
+    /【onboarding｜权重 20%】\nPhase6 Product A：评分 4.5\/5；Phase6 guided matrix value\n综合判断：/u,
+  );
+  assert.match(reportSectionText(document, 'executive-summary'), /Phase6 management decision/u);
+  assert.match(reportSectionText(document, 'key-metrics'), /Phase6 1–5 anchor definition/u);
+  assert.match(reportSectionText(document, 'key-metrics'), /"value":4.5/u);
   assert.match(reportSectionText(document, 'comparison'), /Phase6 novice impact/);
   assert.match(reportSectionText(document, 'recommendations'), /Phase6 prioritized action/);
+  assert.match(reportSectionText(document, 'recommendations'), /Phase6 roadmap action/u);
   assert.match(reportSectionText(document, 'visual-evidence'), /Phase6 screenshot comparison/);
+  assert.match(reportSectionText(document, 'appendix'), /Phase6 instrumentation event and properties/u);
+  assert.match(reportSectionText(document, 'appendix'), /Phase6 user task, probe, success criterion, and trust measure/u);
   assert.match(reportSectionText(document, 'recommendations'), /P1/);
   const screenshot = document.sections
     .find(({ id }) => id === 'visual-evidence')
@@ -1232,7 +1281,16 @@ test('competitive ReportDocument accepts an empty screenshot section only withou
     payload: competitivePayload([]),
   });
   const document = composeReportDocument(textOnly);
-  assert.deepEqual(document.sections.find(({ id }) => id === 'visual-evidence')?.blocks, []);
+  assert.match(
+    reportSectionText(document, 'visual-evidence'),
+    /本任务没有已验证的截图或图表/u,
+  );
+  assert.equal(
+    document.sections
+      .find(({ id }) => id === 'visual-evidence')
+      ?.blocks.filter(({ type }) => type === 'image' || type === 'image-comparison').length,
+    0,
+  );
 
   const unusedVisuals = professionalComposeInput({
     templateId: 'competitive-analysis-report',

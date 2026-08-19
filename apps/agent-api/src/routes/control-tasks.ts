@@ -7,13 +7,17 @@ import { getUserById } from '../../../../database/repository.ts';
 import {
   TaskWorkflowAuthorizationError,
   TaskWorkflowGateError,
+  requiredApprovals,
   type TaskWorkflowService,
   type WorkflowActor,
 } from '../../../orchestrator-runtime/src/control/task-workflow.ts';
 import { assertVisualAssetManifestSchema } from '../../../orchestrator-runtime/src/report/visual-asset-service.ts';
 import { LLMInvocationError } from '../../../orchestrator-runtime/src/runtime/llm-client.ts';
+import { SchemaValidator } from '../../../orchestrator-runtime/src/schema/validator.ts';
 import type { CurrentPlanningResponse } from './control-planning.ts';
 import { requireAuth } from '../middleware.ts';
+
+const currentRequirementValidator = new SchemaValidator();
 
 export interface ControlClarificationPort {
   clarify(input: {
@@ -93,6 +97,36 @@ function clarificationRequestHash(value: unknown): string {
   return `sha256:${createHash('sha256').update(JSON.stringify(stableValue(value))).digest('hex')}`;
 }
 
+async function readApprovalRequirements(
+  repository: ControlPlaneRepository,
+  task: Awaited<ReturnType<ControlPlaneRepository['getTaskDetail']>>,
+  actorRole: WorkflowActor['role'],
+): Promise<Array<{
+  gateKey: string;
+  requiredAuthority: WorkflowActor['role'];
+  decision: 'pending' | 'approved' | 'rejected';
+  canApprove: boolean;
+}>> {
+  if (!task?.activePlanVersionId) return [];
+  const plan = await repository.getPlanVersionDetail(task.activePlanVersionId);
+  if (!plan) return [];
+  const gates = await repository.listGateRecords(task.id, plan.id);
+  return requiredApprovals(task, plan).map(({ key, authority }) => {
+    const approval = gates.find((gate) => (
+      gate.gateType === 'approval' && gate.gateKey === key
+    ));
+    const decision = approval?.decision === 'approved' || approval?.decision === 'rejected'
+      ? approval.decision
+      : 'pending';
+    return {
+      gateKey: key,
+      requiredAuthority: authority,
+      decision,
+      canApprove: decision === 'pending' && actorRole === authority,
+    };
+  });
+}
+
 function responseError(res: Response, error: unknown): void {
   if (error instanceof TaskWorkflowGateError) {
     res.status(422).json({ error: error.message, unresolved: error.unresolved });
@@ -134,6 +168,35 @@ async function ensureOwnedTask(
   const task = await runtime.repository.getTaskDetail(taskId);
   if (!task || task.ownerUserId !== actor.userId || task.conversationOwnerUserId !== actor.userId) {
     res.status(404).json({ error: hiddenError });
+    return false;
+  }
+  return true;
+}
+
+async function ensureApprovalTaskAccess(
+  runtime: ControlTasksRuntime,
+  req: Request,
+  res: Response,
+  actor: WorkflowActor,
+  gateKey: string,
+): Promise<boolean> {
+  const taskId = typeof req.params.id === 'string' ? req.params.id : req.params.id[0] ?? '';
+  const task = await runtime.repository.getTaskDetail(taskId);
+  if (!task) {
+    res.status(404).json({ error: '任务不存在' });
+    return false;
+  }
+  const isOwner = task.ownerUserId === actor.userId
+    && task.conversationOwnerUserId === actor.userId;
+  if (isOwner) return true;
+  const requirements = await readApprovalRequirements(runtime.repository, task, actor.role);
+  const isMatchingApprover = task.state === 'awaiting_approval'
+    && requirements.some((requirement) => (
+      requirement.gateKey === gateKey
+      && requirement.requiredAuthority === actor.role
+    ));
+  if (!isMatchingApprover) {
+    res.status(404).json({ error: '任务不存在' });
     return false;
   }
   return true;
@@ -316,43 +379,104 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
     }
   });
 
+  router.get('/approvals', async (req, res) => {
+    const actor = await authenticatedActor(req, res);
+    if (!actor) return;
+    try {
+      const tasks = await repository.listTasksAwaitingApproval();
+      const summaries = [];
+      for (const task of tasks) {
+        const approvals = await readApprovalRequirements(repository, task, actor.role);
+        if (!approvals.some((approval) => approval.canApprove || approval.requiredAuthority === actor.role)) continue;
+        const structuredTask = task.structuredTask;
+        const taskType = record(structuredTask)?.task_type;
+        summaries.push({
+          id: task.id,
+          originalInput: task.originalInput,
+          taskType: typeof taskType === 'string' ? taskType : null,
+          state: task.state,
+          stateVersion: task.stateVersion,
+          activePlanVersionId: task.activePlanVersionId,
+        });
+      }
+      res.json({ tasks: summaries });
+    } catch (error) {
+      responseError(res, error);
+    }
+  });
+
 router.get('/:id', async (req, res) => {
   const actor = await authenticatedActor(req, res);
   if (!actor) return;
   const task = await repository.getTaskDetail(req.params.id);
-  if (
-    !task
-    || task.ownerUserId !== actor.userId
-    || task.conversationOwnerUserId !== actor.userId
-  ) {
+  if (!task) {
     res.status(404).json({ error: '任务不存在' });
     return;
   }
   try {
-    const recovered = task.state === 'awaiting_selection'
-      ? await repository.listCandidatePlanVersionsForOwner({
-          taskId: task.id,
-          ownerUserId: actor.userId,
-        })
-      : { candidates: [], activatedNodes: [] };
+    const isOwner = task.ownerUserId === actor.userId
+      && task.conversationOwnerUserId === actor.userId;
+    const approvalRequirements = await readApprovalRequirements(repository, task, actor.role);
+    const canReviewAsApprover = task.state === 'awaiting_approval'
+      && approvalRequirements.some((approval) => approval.requiredAuthority === actor.role);
+    if (!isOwner && !canReviewAsApprover) {
+      res.status(404).json({ error: '任务不存在' });
+      return;
+    }
+    if (task.state === 'awaiting_clarification') {
+      const errors = currentRequirementValidator.validate('research-task-v2', task.structuredTask);
+      if (errors.length > 0) {
+        throw new ControlPlaneConflictError(
+          `awaiting_clarification task ${task.id} has invalid research-task-v2`,
+        );
+      }
+    }
+    const [recovered, activePlan, executionSteps, pendingInputQuarantined] = await Promise.all([
+      task.state === 'awaiting_selection'
+        ? isOwner
+          ? repository.listCandidatePlanVersionsForOwner({
+            taskId: task.id,
+            ownerUserId: actor.userId,
+          })
+          : Promise.resolve({ candidates: [], activatedNodes: [] })
+        : Promise.resolve({ candidates: [], activatedNodes: [] }),
+      task.activePlanVersionId
+        ? isOwner
+          ? repository.getActivePlanForOwner({ taskId: task.id, ownerUserId: actor.userId })
+          : repository.getActivePlan(task.id)
+        : Promise.resolve(null),
+      task.currentAttemptId
+        ? repository.listExecutionSteps(task.currentAttemptId)
+        : Promise.resolve([]),
+      task.activePlanVersionId && isOwner
+        ? repository.isPlanPendingInputQuarantined(task.activePlanVersionId)
+        : Promise.resolve(false),
+    ]);
     if (!recovered) {
       res.status(404).json({ error: '任务不存在' });
       return;
     }
-    const executionSteps = task.currentAttemptId
-      ? (await repository.listExecutionSteps(task.currentAttemptId)).map((step) => ({
-          stepNo: step.stepNo,
-          stepName: step.stepName,
-          actorType: step.actorType,
-          actorId: step.actorId,
-          state: step.state,
-          toolProvenance: step.toolProvenance,
-          skillProvenance: step.skillProvenance,
-          failure: step.failure,
-          latencyMs: step.latencyMs,
-        }))
-      : [];
-    res.json({ kind: 'current', task, executionSteps, ...recovered });
+    res.json({
+      kind: 'current',
+      task,
+      activePlan,
+      executionSteps: executionSteps.map((step) => ({
+        stepNo: step.stepNo,
+        stepName: step.stepName,
+        actorType: step.actorType,
+        actorId: step.actorId,
+        state: step.state,
+        toolProvenance: step.toolProvenance,
+        skillProvenance: step.skillProvenance,
+        failure: step.failure,
+        latencyMs: step.latencyMs,
+      })),
+      approvalRequirements,
+      ...(pendingInputQuarantined
+        ? { planRecovery: { kind: 'plan_revision_required' as const, reason: 'legacy_pending_inputs' as const } }
+        : {}),
+      ...recovered,
+    });
   } catch (error) {
     responseError(res, error);
   }
@@ -436,7 +560,7 @@ router.post('/:id/approve', async (req, res) => {
   const gateKey = string(body?.gateKey);
   const decision = body?.decision === 'approved' || body?.decision === 'rejected' ? body.decision : null;
   if (!actor) return;
-  if (!await ensureOwnedTask(runtime, req, res, actor)) return;
+  if (!await ensureApprovalTaskAccess(runtime, req, res, actor, gateKey ?? '')) return;
   if (expectedVersion == null || !key || !planVersionId || !gateKey || !decision) {
     res.status(400).json({ error: 'expectedVersion、Idempotency-Key、planVersionId、gateKey、decision 必填' });
     return;

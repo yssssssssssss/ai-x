@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { buildExecutionFlowGraph } from '../apps/web/src/execution-flow-graph.ts';
+import { executionPlanStepsForTask } from '../apps/web/src/current-flow-state.ts';
 
 const steps = [
   {
@@ -82,6 +83,28 @@ test('execution flow graph preserves the current plan DAG and runtime states', (
     failed: 0,
     skipped: 0,
   });
+});
+
+test('terminal Current tasks keep the active plan dependency graph', () => {
+  const restored = executionPlanStepsForTask({
+    activePlan: { plan: { steps } },
+    executionSteps: [],
+  });
+  const graph = buildExecutionFlowGraph({ steps: restored, log: [], phase: 'done' });
+
+  assert.equal(graph.usedSequentialFallback, false);
+  assert.deepEqual(restored.map((step) => step.depends_on), [[], [1], [1], [2, 3]]);
+  assert.deepEqual(
+    graph.layers.map((layer) => layer.map((node) => node.id)),
+    [
+      ['system:plan'],
+      ['step:1'],
+      ['step:2', 'step:3'],
+      ['step:4'],
+      ['system:review'],
+      ['system:report'],
+    ],
+  );
 });
 
 test('execution flow graph maps review and report phases without inventing step completion', () => {

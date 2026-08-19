@@ -285,6 +285,36 @@ function candidateActivatedNodes(plan: Record<string, unknown>): string[] {
   return activatedNodes;
 }
 
+function currentPlanCandidateFromRow(
+  row: Record<string, unknown>,
+  taskId: string,
+): CurrentPlanCandidate {
+  const plan = asRecord(row.plan_json);
+  if (!plan || plan.task_id !== taskId) {
+    throw new ControlPlaneConflictError('candidate plan task binding is malformed');
+  }
+  const planHash = asString(row.plan_hash, 'plan_hash');
+  if (canonicalPlanHash(plan) !== planHash) {
+    throw new ControlPlaneConflictError('candidate plan canonical hash does not match stored hash');
+  }
+  const candidateId = asString(row.candidate_id, 'candidate_id');
+  if (candidateId !== 'depth' && candidateId !== 'speed') {
+    throw new ControlPlaneConflictError('candidate plan identity is malformed');
+  }
+  if (!Array.isArray(row.pending_inputs)) {
+    throw new ControlPlaneConflictError('candidate pending inputs are malformed');
+  }
+  candidateActivatedNodes(plan);
+  return {
+    planVersionId: asString(row.id, 'id'),
+    candidateId,
+    ...candidateMetadata(plan),
+    planHash,
+    plan: plan as unknown as CurrentExecutionPlan,
+    pendingInputs: row.pending_inputs as PendingInput[],
+  };
+}
+
 function latestCandidatePair(
   rows: Array<Record<string, unknown>>,
 ): [Record<string, unknown>, Record<string, unknown>] {
@@ -362,6 +392,7 @@ export interface ControlTaskSummary {
   taskType: string | null;
   state: ControlTaskState;
   createdAt: Date;
+  updatedAt: Date;
 }
 export interface PersistedIndependentReview {
   reviewerId: string;
@@ -407,6 +438,7 @@ function controlTaskSummaryFromRow(row: Record<string, unknown>): ControlTaskSum
     taskType: typeof row.task_type === 'string' ? row.task_type : null,
     state: asString(row.state, 'state') as ControlTaskState,
     createdAt: asDate(row.created_at, 'created_at'),
+    updatedAt: asDate(row.updated_at, 'updated_at'),
   };
 }
 
@@ -2232,7 +2264,8 @@ export class ControlPlaneRepository {
     try {
       const limit = Math.min(Math.max(input.limit ?? 50, 1), 100);
       const result = await connection.query(
-        `SELECT task.id, task.original_input, task.task_type, task.state, task.created_at
+        `SELECT task.id, task.original_input, task.task_type, task.state,
+                task.created_at, task.updated_at
          FROM control_tasks AS task
          JOIN conversations AS conversation ON conversation.id = task.conversation_id
          WHERE task.owner_user_id = $1
@@ -2242,6 +2275,28 @@ export class ControlPlaneRepository {
         [input.ownerUserId, limit],
       );
       return result.rows.map(controlTaskSummaryFromRow);
+    } finally {
+      connection.release();
+    }
+  }
+
+  async listTasksAwaitingApproval(limit = 100): Promise<ControlTaskDetail[]> {
+    const connection = await this.database.connect();
+    try {
+      const result = await connection.query(
+        `SELECT task.id, task.conversation_id, task.original_input, task.owner_user_id,
+                conversation.owner_user_id AS conversation_owner_user_id,
+                task.structured_task, task.state, task.state_version,
+                task.active_plan_version_id, task.current_attempt_id,
+                task.active_requirement_version_id
+         FROM control_tasks AS task
+         JOIN conversations AS conversation ON conversation.id = task.conversation_id
+         WHERE task.state = 'awaiting_approval'
+         ORDER BY task.updated_at DESC, task.id DESC
+         LIMIT $1`,
+        [Math.min(Math.max(limit, 1), 100)],
+      );
+      return result.rows.map(controlTaskDetailFromRow);
     } finally {
       connection.release();
     }
@@ -2305,35 +2360,58 @@ export class ControlPlaneRepository {
 
       let activatedNodes: string[] | null = null;
       const candidates = rows.map((row): CurrentPlanCandidate => {
-        const plan = asRecord(row.plan_json);
-        if (!plan || plan.task_id !== input.taskId) {
-          throw new ControlPlaneConflictError('candidate plan task binding is malformed');
-        }
-        const planHash = asString(row.plan_hash, 'plan_hash');
-        if (canonicalPlanHash(plan) !== planHash) {
-          throw new ControlPlaneConflictError('candidate plan canonical hash does not match stored hash');
-        }
-        const metadata = candidateMetadata(plan);
-        const candidateNodes = candidateActivatedNodes(plan);
+        const candidate = currentPlanCandidateFromRow(row, input.taskId);
+        const candidateNodes = candidate.plan.activated_nodes;
         if (activatedNodes === null) {
           activatedNodes = candidateNodes;
         } else if (JSON.stringify(activatedNodes) !== JSON.stringify(candidateNodes)) {
           throw new ControlPlaneConflictError('candidate activated_nodes do not match');
         }
-        if (!Array.isArray(row.pending_inputs)) {
-          throw new ControlPlaneConflictError('candidate pending inputs are malformed');
-        }
-        return {
-          planVersionId: asString(row.id, 'id'),
-          candidateId: asString(row.candidate_id, 'candidate_id') as 'depth' | 'speed',
-          ...metadata,
-          planHash,
-          plan: plan as unknown as CurrentExecutionPlan,
-          pendingInputs: row.pending_inputs as PendingInput[],
-        };
+        return candidate;
       });
       return { candidates, activatedNodes: activatedNodes ?? [] };
     });
+  }
+
+  async getActivePlanForOwner(input: {
+    taskId: string;
+    ownerUserId: string;
+  }): Promise<CurrentPlanCandidate | null> {
+    const connection = await this.database.connect();
+    try {
+      const result = await connection.query(
+        `SELECT plan.id, plan.task_id, plan.version, plan.candidate_id,
+                plan.plan_json, plan.plan_hash, plan.pending_inputs
+         FROM control_tasks AS task
+         JOIN conversations AS conversation ON conversation.id = task.conversation_id
+         JOIN control_plan_versions AS plan ON plan.id = task.active_plan_version_id
+         WHERE task.id = $1
+           AND task.owner_user_id = $2
+           AND conversation.owner_user_id = $2`,
+        [input.taskId, input.ownerUserId],
+      );
+      const row = result.rows[0];
+      return row ? currentPlanCandidateFromRow(row, input.taskId) : null;
+    } finally {
+      connection.release();
+    }
+  }
+
+  async getActivePlan(taskId: string): Promise<CurrentPlanCandidate | null> {
+    const connection = await this.database.connect();
+    try {
+      const result = await connection.query(
+        `SELECT id, task_id, version, candidate_id,
+                plan_json, plan_hash, pending_inputs
+         FROM control_plan_versions
+         WHERE id = (SELECT active_plan_version_id FROM control_tasks WHERE id = $1)`,
+        [taskId],
+      );
+      const row = result.rows[0];
+      return row ? currentPlanCandidateFromRow(row, taskId) : null;
+    } finally {
+      connection.release();
+    }
   }
 
   async getPlanVersionDetail(planVersionId: string): Promise<ControlPlanVersionDetail | null> {

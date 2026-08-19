@@ -7,6 +7,15 @@ import { requireAuth } from '../middleware.ts';
 
 export const authRouter = Router();
 
+function publicUser(user: { id: string; email: string; display_name: string; role: string }) {
+  return {
+    id: user.id,
+    email: user.email,
+    display_name: user.display_name,
+    role: user.role,
+  };
+}
+
 authRouter.post('/register', async (req, res) => {
   const { email, password, displayName } = req.body ?? {};
   if (!email || !password || !displayName) {
@@ -20,7 +29,7 @@ authRouter.post('/register', async (req, res) => {
   }
   const user = await createUser({ email, displayName, passwordHash: await hashPassword(password) });
   const token = signToken({ userId: user.id, email: user.email });
-  res.json({ token, user: { id: user.id, email: user.email, display_name: user.display_name } });
+  res.json({ token, user: publicUser(user) });
 });
 
 authRouter.post('/login', async (req, res) => {
@@ -35,7 +44,7 @@ authRouter.post('/login', async (req, res) => {
     return;
   }
   const token = signToken({ userId: user.id, email: user.email });
-  res.json({ token, user: { id: user.id, email: user.email, display_name: user.display_name } });
+  res.json({ token, user: publicUser(user) });
 });
 
 authRouter.get('/me', requireAuth, async (req, res) => {
@@ -44,5 +53,5 @@ authRouter.get('/me', requireAuth, async (req, res) => {
     res.status(404).json({ error: '用户不存在' });
     return;
   }
-  res.json({ user: { id: user.id, email: user.email, display_name: user.display_name, role: user.role } });
+  res.json({ user: publicUser(user) });
 });

@@ -62,6 +62,7 @@ export interface ExecLogRow {
   actor_id: string;
   status: string;
   skillProvenance: Record<string, unknown> | null;
+  failure?: Record<string, unknown>;
 }
 
 // 已 finalize 的计划:steps + 激活节点 + 假设(select/execute 前的形态)。
@@ -120,6 +121,7 @@ export interface TaskSummary {
   task_type: string | null;
   status: string;
   created_at?: string;
+  updated_at?: string;
 }
 
 export interface SkillItem {

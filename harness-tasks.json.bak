@@ -1,0 +1,85 @@
+{
+  "version": 2,
+  "created": "2026-08-18T16:58:22Z",
+  "session_config": {
+    "concurrency_mode": "exclusive",
+    "max_tasks_per_session": 4,
+    "max_sessions": 10
+  },
+  "tasks": [
+    {
+      "id": "task-001",
+      "title": "Make the selected task regenerate a direct visual plan",
+      "status": "completed",
+      "priority": "P0",
+      "depends_on": [],
+      "attempts": 0,
+      "max_attempts": 3,
+      "started_at_commit": "9e31abe",
+      "validation": {
+        "command": "pnpm exec tsx --test tests/plan-compiler.test.ts tests/current-revision-integrity.test.ts && pnpm typecheck",
+        "timeout_seconds": 900
+      },
+      "on_failure": { "cleanup": null },
+      "error_log": [],
+      "checkpoints": [],
+      "completed_at": "2026-08-18T17:21:06Z"
+    },
+    {
+      "id": "task-002",
+      "title": "Upload real screenshots, confirm, and start the target task",
+      "status": "in_progress",
+      "priority": "P0",
+      "depends_on": ["task-001"],
+      "attempts": 0,
+      "max_attempts": 3,
+      "started_at_commit": "9e31abe",
+      "validation": {
+        "command": "pnpm exec tsx scripts/verify-control-task.ts 91e7bed3-4725-41a7-ba28-742424f4911c running-or-later",
+        "timeout_seconds": 120
+      },
+      "on_failure": { "cleanup": null },
+      "error_log": [],
+      "checkpoints": [],
+      "completed_at": null
+    },
+    {
+      "id": "task-003",
+      "title": "Monitor and repair the real execution until report completion",
+      "status": "pending",
+      "priority": "P0",
+      "depends_on": ["task-002"],
+      "attempts": 0,
+      "max_attempts": 3,
+      "started_at_commit": null,
+      "validation": {
+        "command": "pnpm exec tsx scripts/verify-control-task.ts 91e7bed3-4725-41a7-ba28-742424f4911c completed",
+        "timeout_seconds": 1800
+      },
+      "on_failure": { "cleanup": null },
+      "error_log": [],
+      "checkpoints": [],
+      "completed_at": null
+    },
+    {
+      "id": "task-004",
+      "title": "Verify every required report dimension in the history UI",
+      "status": "pending",
+      "priority": "P0",
+      "depends_on": ["task-003"],
+      "attempts": 0,
+      "max_attempts": 3,
+      "started_at_commit": null,
+      "validation": {
+        "command": "pnpm exec tsx --test tests/report-document.test.ts tests/report-bundle.test.ts tests/competitive-weight-chart.test.ts",
+        "timeout_seconds": 600
+      },
+      "on_failure": { "cleanup": null },
+      "error_log": [],
+      "checkpoints": [],
+      "completed_at": null
+    }
+  ],
+  "session_count": 1,
+  "last_session": "2026-08-18T16:58:22Z"
+}

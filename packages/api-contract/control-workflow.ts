@@ -112,6 +112,12 @@ export interface ReviseControlPlanRequest {
   idempotencyKey: string;
 }
 
+export interface ReviseControlPlanResponse {
+  planVersionId: string;
+  state: ControlWorkflowState;
+  stateVersion: number;
+}
+
 export interface ConfirmControlPlanRequest {
   expectedVersion: number;
   planVersionId: string;
@@ -144,6 +150,29 @@ export interface ResumeControlPlanRequest {
 export interface ControlCommandResponse {
   state: ControlWorkflowState;
   stateVersion: number;
+}
+
+export type ControlApprovalDecision = 'pending' | 'approved' | 'rejected';
+
+export interface ControlApprovalRequirement {
+  gateKey: string;
+  requiredAuthority: ControlWorkflowRole;
+  decision: ControlApprovalDecision;
+  canApprove: boolean;
+}
+
+export interface ControlApprovalTaskSummary {
+  id: string;
+  originalInput: string;
+  taskType: string | null;
+  state: ControlWorkflowState;
+  stateVersion: number;
+  activePlanVersionId: string | null;
+}
+
+export interface ControlPlanRecovery {
+  kind: 'plan_revision_required';
+  reason: 'legacy_pending_inputs';
 }
 
 export interface DisabledExecutionResponse extends ControlCommandResponse {
@@ -251,4 +280,7 @@ export interface CurrentTaskReadResponse {
   executionSteps: ControlExecutionStepResponse[];
   activatedNodes: string[];
   candidates: CurrentPlanCandidate[];
+  activePlan: CurrentPlanCandidate | null;
+  approvalRequirements?: ControlApprovalRequirement[];
+  planRecovery?: ControlPlanRecovery;
 }

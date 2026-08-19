@@ -529,6 +529,7 @@ test('production runtime replans from research goal and instruction while preser
   const persisted = await repository.getPlanVersionDetail(revised.planVersionId);
   assert.ok(persisted);
   assert.equal(planningInputs.length, 1);
+  assert.ok(planningInputs[0]!.startsWith(instruction));
   assert.match(planningInputs[0]!, /研究国内宠物辅食品牌/);
   assert.match(planningInputs[0]!, /聚焦国内品牌并减少样本/);
   assert.equal(persisted.candidateId, 'speed');
@@ -772,10 +773,16 @@ test('migration 009 quarantines a legacy active plan and leaves it reachable thr
     },
     pendingInputs: [legacyPendingInput],
   });
-  const connection = await scopedDatabase.connect();
-  try {
-    await connection.query(
-      `UPDATE control_tasks
+    const connection = await scopedDatabase.connect();
+    try {
+      const legacyPlan = await repository.getPlanVersionDetail(activePlan.id);
+      assert.ok(legacyPlan);
+      await connection.query(
+        `UPDATE control_plan_versions SET plan_hash = $1 WHERE id = $2`,
+        [canonicalPlanHash(legacyPlan.plan), activePlan.id],
+      );
+      await connection.query(
+        `UPDATE control_tasks
        SET state = 'paused', state_version = state_version + 1
        WHERE id = $1`,
       [seeded.created.task.id],
@@ -789,6 +796,35 @@ test('migration 009 quarantines a legacy active plan and leaves it reachable thr
     assert.equal(migrated?.state, 'awaiting_confirmation');
     assert.equal(migrated?.activePlanVersionId, activePlan.id);
     assert.ok(migrated);
+
+    const { createControlTasksRouter } = await import('../apps/agent-api/src/routes/control-tasks.ts');
+    const { signToken } = await import('../apps/agent-api/src/auth.ts');
+    const app = express();
+    app.use(express.json());
+    app.use('/api/control-tasks', createControlTasksRouter({
+      repository,
+      workflow: runtime.workflow,
+      getDeliverable: async () => null,
+    }));
+    const httpServer = createServer(app);
+    httpServer.listen(0, '127.0.0.1');
+    await once(httpServer, 'listening');
+    try {
+      const address = httpServer.address();
+      assert.ok(address && typeof address !== 'string');
+      const response = await fetch(
+        `http://127.0.0.1:${address.port}/api/control-tasks/${seeded.created.task.id}`,
+        { headers: { authorization: `Bearer ${signToken({ userId: ownerId, email: 'revision-owner@test.local' })}` } },
+      );
+      assert.equal(response.status, 200, await response.clone().text());
+      const body = await response.json() as { planRecovery?: unknown };
+      assert.deepEqual(body.planRecovery, {
+        kind: 'plan_revision_required',
+        reason: 'legacy_pending_inputs',
+      });
+    } finally {
+      await new Promise<void>((resolve, reject) => httpServer.close((error) => error ? reject(error) : resolve()));
+    }
 
     const revised = await runtime.workflow.revise({
       taskId: seeded.created.task.id,

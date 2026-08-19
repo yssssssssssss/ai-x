@@ -1078,12 +1078,12 @@ test('GET /api/control-tasks lists only tasks owned by the authenticated user', 
     assert.equal(ownerResponse.status, 200, await ownerResponse.clone().text());
     const ownerBody = await ownerResponse.json() as {
       kind: string;
-      tasks: Array<{ id: string; originalInput: string; taskType: string | null; state: string; createdAt: string }>;
+      tasks: Array<{ id: string; originalInput: string; taskType: string | null; state: string; createdAt: string; updatedAt: string }>;
     };
     assert.equal(ownerBody.kind, 'current');
     assert.ok(ownerBody.tasks.some((task) => task.id === ownerTask.id));
     assert.equal(ownerBody.tasks.some((task) => task.id === foreignTask.id), false);
-    assert.ok(ownerBody.tasks.every((task) => task.originalInput && task.state && task.createdAt));
+    assert.ok(ownerBody.tasks.every((task) => task.originalInput && task.state && task.createdAt && task.updatedAt));
 
     const foreignResponse = await fetch(`${local.baseUrl}/api/control-tasks`, {
       headers: { authorization: `Bearer ${signToken({ userId: foreignUserId, email: 'foreign@test.local' })}` },
@@ -1094,6 +1094,34 @@ test('GET /api/control-tasks lists only tasks owned by the authenticated user', 
     assert.equal(foreignBody.tasks.some((task) => task.id === ownerTask.id), false);
   } finally {
     await closeLocalServer(local.server);
+  }
+});
+
+test('GET /api/control-tasks/:id rejects an invalid awaiting clarification payload', async () => {
+  const task = await repository.createTask({
+    conversationId,
+    ownerUserId,
+    originalInput: `invalid-clarification-history-${randomUUID()}`,
+    taskType: null,
+    structuredTask: {},
+    state: 'awaiting_clarification',
+  });
+  const app = await listenLocalApp(controlTasksApp({
+    repository,
+    workflow: new TaskWorkflowService(repository),
+    getDeliverable: async () => null,
+  }));
+  try {
+    const response = await fetch(`${app.baseUrl}/api/control-tasks/${task.id}`, {
+      headers: {
+        authorization: `Bearer ${signToken({ userId: ownerUserId, email: 'owner@test.local' })}`,
+      },
+    });
+    assert.equal(response.status, 409, await response.clone().text());
+    const body = await response.json() as { error: string };
+    assert.match(body.error, /awaiting_clarification.*research-task-v2/i);
+  } finally {
+    await closeLocalServer(app.server);
   }
 });
 
@@ -1194,6 +1222,14 @@ test('production control runtime returns the revised final deliverable ID for pa
   assert.equal(selectResponse.status, 200);
   const selected = await selectResponse.json() as { state: string; stateVersion: number };
   assert.equal(selected.state, 'awaiting_confirmation');
+
+  const selectedRefreshResponse = await fetch(`${baseUrl}/api/control-tasks/${planned.task.id}`, {
+    headers: { authorization: `Bearer ${ownerToken}` },
+  });
+  assert.equal(selectedRefreshResponse.status, 200, await selectedRefreshResponse.clone().text());
+  const selectedRefresh = await selectedRefreshResponse.json() as CurrentTaskReadResponse;
+  assert.equal(selectedRefresh.task.state, 'awaiting_confirmation');
+  assert.deepEqual(selectedRefresh.activePlan, speed);
 
   const legacyConfirmResponse = await postJson(
     baseUrl,
@@ -1757,6 +1793,7 @@ test('production Current planning rejects model drift before candidate persisten
     const persisted = await connection.query(
       `SELECT
          (SELECT count(*)::int FROM control_tasks WHERE original_input = $1) AS tasks,
+         (SELECT state FROM control_tasks WHERE original_input = $1) AS state,
          (SELECT count(*)::int
           FROM control_plan_versions AS plan
           JOIN control_tasks AS task ON task.id = plan.task_id
@@ -1771,7 +1808,7 @@ test('production Current planning rejects model drift before candidate persisten
       [existingReceipts.rows.map((row) => row.id)],
     );
 
-    assert.deepEqual(persisted.rows[0], { tasks: 1, candidates: 0 });
+    assert.deepEqual(persisted.rows[0], { tasks: 1, state: 'failed', candidates: 0 });
     assert.deepEqual(receipts.rows, [{
       stage: 'requirement_understanding',
       requested_model: requestedModel,
@@ -2077,6 +2114,58 @@ test('migration 006 adds nullable message idempotency without changing legacy ro
        VALUES ($1, 'assistant', 'text', '{}'), ($1, 'assistant', 'text', '{}')`,
       [conversation],
     );
+  } finally {
+    client.release();
+    await database.query(`DROP SCHEMA IF EXISTS "${compatibilitySchema}" CASCADE`);
+  }
+});
+
+test('migration 012 fails only incomplete clarification shells and is idempotent', async () => {
+  const compatibilitySchema = `incomplete_clarification_compat_${randomUUID().replaceAll('-', '')}`;
+  await database.query(`CREATE SCHEMA "${compatibilitySchema}"`);
+  const client = await database.connect();
+  try {
+    await client.query(`SET search_path TO "${compatibilitySchema}", public`);
+    await client.query(`
+      CREATE TABLE control_tasks (
+        id UUID PRIMARY KEY,
+        state TEXT NOT NULL,
+        state_version BIGINT NOT NULL,
+        structured_task JSONB NOT NULL,
+        active_requirement_version_id UUID,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+    const shellId = randomUUID();
+    const nonEmptyId = randomUUID();
+    const activatedId = randomUUID();
+    const completedId = randomUUID();
+    await client.query(
+      `INSERT INTO control_tasks
+         (id, state, state_version, structured_task, active_requirement_version_id)
+       VALUES
+         ($1, 'awaiting_clarification', 0, '{}'::jsonb, NULL),
+         ($2, 'awaiting_clarification', 3, '{"version":"research-task-v2"}'::jsonb, NULL),
+         ($3, 'awaiting_clarification', 4, '{}'::jsonb, $5),
+         ($4, 'completed', 5, '{}'::jsonb, NULL)`,
+      [shellId, nonEmptyId, activatedId, completedId, randomUUID()],
+    );
+    const migration = readFileSync(
+      join(process.cwd(), 'database', 'migrations', '012_fail_incomplete_clarification_tasks.sql'),
+      'utf8',
+    );
+    await client.query(migration);
+    await client.query(migration);
+    const rows = await client.query(
+      `SELECT id, state, state_version::int AS state_version
+       FROM control_tasks
+       ORDER BY id`,
+    );
+    const byId = new Map(rows.rows.map((row) => [String(row.id), row]));
+    assert.deepEqual(byId.get(shellId), { id: shellId, state: 'failed', state_version: 1 });
+    assert.deepEqual(byId.get(nonEmptyId), { id: nonEmptyId, state: 'awaiting_clarification', state_version: 3 });
+    assert.deepEqual(byId.get(activatedId), { id: activatedId, state: 'awaiting_clarification', state_version: 4 });
+    assert.deepEqual(byId.get(completedId), { id: completedId, state: 'completed', state_version: 5 });
   } finally {
     client.release();
     await database.query(`DROP SCHEMA IF EXISTS "${compatibilitySchema}" CASCADE`);

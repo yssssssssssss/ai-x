@@ -593,6 +593,15 @@ function professionalSectionBlocks(
   const deliverable = input.deliverable.value;
   const payload = deliverable.payload;
   if (deliverable.deliverableType === 'competitive_analysis_report') {
+    const payloadRoot = record(payload) ?? {};
+    if (sectionId === 'executive-summary') {
+      const items = payloadStrings(payloadRoot, 'managementSummary');
+      return items.length > 0 ? [{
+        id: 'competitive-management-summary',
+        type: 'list',
+        items,
+      }] : [];
+    }
     if (sectionId === 'scope-method') {
       return [{
         id: 'competitive-samples',
@@ -601,21 +610,89 @@ function professionalSectionBlocks(
           `${payloadString(sample, 'name')}: ${payloadString(sample, 'rationale')}`),
       }];
     }
+    if (sectionId === 'key-metrics') {
+      const samplesById = new Map(
+        payloadRecords(payload, 'competitorSamples').map((sample) => [
+          payloadString(sample, 'id'),
+          payloadString(sample, 'name'),
+        ]),
+      );
+      const metrics = payloadRecords(payload, 'dimensionMatrix').flatMap((row, rowIndex) => {
+        const dimension = payloadString(row, 'dimension');
+        const weight = typeof row.weight === 'number' ? row.weight : null;
+        const weightLabel = weight === null ? '' : ` · 权重 ${Math.round(weight * 1000) / 10}%`;
+        return payloadRecords(row, 'values').flatMap((value, valueIndex): ReportMetricBlock[] => {
+          if (typeof value.score !== 'number') return [];
+          const sampleId = payloadString(value, 'sampleId');
+          return [{
+            id: `competitive-score-${rowIndex + 1}-${valueIndex + 1}`,
+            type: 'metric',
+            label: `${dimension}${weightLabel} · ${samplesById.get(sampleId) || sampleId}（5分制）`,
+            value: value.score,
+            evidenceIds: payloadStrings(value, 'evidenceIds'),
+          }];
+        });
+      });
+      const scoringMethod = payloadStrings(payloadRoot, 'scoringMethod');
+      return [
+        ...metrics,
+        ...(scoringMethod.length > 0 ? [{
+          id: 'competitive-scoring-method',
+          type: 'list' as const,
+          items: scoringMethod,
+        }] : []),
+      ];
+    }
     if (sectionId === 'findings') {
-      const matrix = payloadRecords(payload, 'dimensionMatrix').flatMap((row, rowIndex) =>
-        payloadRecords(row, 'values').map((value, valueIndex) => ({
-          id: `competitive-matrix-${rowIndex + 1}-${valueIndex + 1}`,
-          type: 'fact' as const,
-          text: `${payloadString(row, 'dimension')} — ${payloadString(value, 'sampleId')}: ${payloadString(value, 'value')}`,
-          evidenceIds: payloadStrings(value, 'evidenceIds'),
-        })));
-      const differences = payloadRecords(payload, 'differences').map((difference, index) => ({
-        id: `competitive-difference-${index + 1}`,
-        type: 'fact' as const,
-        text: `${payloadString(difference, 'dimension')}: ${payloadString(difference, 'statement')}`,
-        evidenceIds: payloadStrings(difference, 'evidenceIds'),
-      }));
-      return [...matrix, ...differences];
+      const samplesById = new Map(
+        payloadRecords(payload, 'competitorSamples').map((sample) => [
+          payloadString(sample, 'id'),
+          payloadString(sample, 'name'),
+        ]),
+      );
+      const differences = payloadRecords(payload, 'differences');
+      const matrixRows = payloadRecords(payload, 'dimensionMatrix');
+      const matrixDimensions = new Set(matrixRows.map((row) => payloadString(row, 'dimension')));
+      const matrix = matrixRows.map((row, rowIndex): ReportFactBlock => {
+        const dimension = payloadString(row, 'dimension');
+        const values = payloadRecords(row, 'values');
+        const matchingDifferences = differences.filter(
+          (difference) => payloadString(difference, 'dimension') === dimension,
+        );
+        const evidenceIds = [...new Set([
+          ...values.flatMap((value) => payloadStrings(value, 'evidenceIds')),
+          ...matchingDifferences.flatMap((difference) => payloadStrings(difference, 'evidenceIds')),
+        ])];
+        const sampleSummary = values.map((value) => {
+          const sampleId = payloadString(value, 'sampleId');
+          const sampleName = samplesById.get(sampleId) || sampleId;
+          const score = typeof value.score === 'number' ? `评分 ${value.score}/5；` : '';
+          return `${sampleName}：${score}${payloadString(value, 'value')}`;
+        }).join('\n');
+        const differenceSummary = matchingDifferences
+          .map((difference) => payloadString(difference, 'statement'))
+          .join('；');
+        return {
+          id: `competitive-matrix-${rowIndex + 1}`,
+          type: 'fact',
+          text: `【${dimension}${typeof row.weight === 'number' ? `｜权重 ${Math.round(row.weight * 1000) / 10}%` : ''}】\n${sampleSummary}${differenceSummary ? `\n综合判断：${differenceSummary}` : ''}`,
+          evidenceIds,
+        };
+      });
+      const crossDimensionDifferences = differences.filter(
+        (difference) => !matrixDimensions.has(payloadString(difference, 'dimension')),
+      );
+      if (crossDimensionDifferences.length === 0) return matrix;
+      return [...matrix, {
+        id: 'competitive-cross-dimension-synthesis',
+        type: 'fact',
+        text: `【跨维度综合】\n${crossDimensionDifferences.map((difference) => (
+          `${payloadString(difference, 'dimension')}：${payloadString(difference, 'statement')}`
+        )).join('\n')}`,
+        evidenceIds: [...new Set(crossDimensionDifferences.flatMap(
+          (difference) => payloadStrings(difference, 'evidenceIds'),
+        ))],
+      }];
     }
     if (sectionId === 'visual-evidence') {
       const comparisons = payloadRecords(payload, 'screenshotComparisons');
@@ -700,12 +777,43 @@ function professionalSectionBlocks(
       }];
     }
     if (sectionId === 'recommendations') {
-      return [{
+      const blocks: ReportBlock[] = [{
         id: 'competitive-actions',
         type: 'list',
         items: payloadRecords(payload, 'actionRecommendations').map((action) =>
           `${payloadString(action, 'priority')}: ${payloadString(action, 'statement')}`),
       }];
+      const roadmap = payloadRecords(payload, 'roadmap');
+      if (roadmap.length > 0) {
+        blocks.push({
+          id: 'competitive-roadmap',
+          type: 'list',
+          items: roadmap.map((item) => (
+            `${payloadString(item, 'priority')}: ${payloadString(item, 'statement')}；指标：${payloadString(item, 'metric')}；验证：${payloadString(item, 'validationMethod')}`
+          )),
+        });
+      }
+      return blocks;
+    }
+    if (sectionId === 'appendix') {
+      const blocks: ReportBlock[] = [];
+      const instrumentation = payloadStrings(payloadRoot, 'instrumentationPlan');
+      const userTest = payloadStrings(payloadRoot, 'userTestScript');
+      if (instrumentation.length > 0) {
+        blocks.push({
+          id: 'competitive-instrumentation-plan',
+          type: 'list',
+          items: instrumentation,
+        });
+      }
+      if (userTest.length > 0) {
+        blocks.push({
+          id: 'competitive-user-test-script',
+          type: 'list',
+          items: userTest,
+        });
+      }
+      return blocks;
     }
   }
   if (deliverable.deliverableType === 'voc_diagnosis_report') {
@@ -911,6 +1019,9 @@ function deliverableLabel(deliverableType: string): string {
 }
 
 function reportTitle(deliverable: ResearchDeliverableEnvelope<unknown>): string {
+  if (deliverable.deliverableType === 'competitive_analysis_report') {
+    return '竞品分析报告 / Competitive Analysis Report';
+  }
   const title = record(deliverable.payload)?.title;
   return typeof title === 'string' && title.trim() ? title : deliverableLabel(deliverable.deliverableType);
 }
@@ -935,7 +1046,31 @@ function chartAltText(spec: ChartSpec): string {
   return values ? `${spec.title}. Values: ${values}.` : `${spec.title}. No numeric values reported.`;
 }
 
-function composeSectionBlocks(
+function competitiveSectionIntroduction(
+  sectionId: ReportTemplateSectionId,
+  input: ComposeReportDocumentInput,
+): string {
+  const introductions: Record<ReportTemplateSectionId, string> = {
+    cover: '本页用于识别报告主题、研究对象与交付范围。',
+    'executive-summary': '本章用于快速概括研究范围、核心判断与优先行动，帮助读者在阅读全文前建立决策框架。',
+    background: '本章说明市场背景、业务问题和研究目标，定义本次分析要回答的核心问题。',
+    'scope-method': '本章界定竞品样本、纳入与排除标准、证据时间范围和分析方法，用于说明结论在什么边界内成立。',
+    'key-metrics': '本章汇总可直接对比的量化指标与口径；公开证据不足时保留缺口，不为了排名而强行打分。',
+    findings: '本章用于按六个消费决策支持维度整合各平台表现，并在每个维度后给出跨平台核心差异，避免将同一问题拆成零散事实。',
+    'question-analysis': '本章将原始研究问题与证据化回答逐项对齐，用于检查问题是否已被完整覆盖。',
+    'visual-evidence': input.visualAssets.length === 0
+      ? '本章用于展示可验证的产品截图、标注图或图表。本任务没有已验证的截图或图表：Web Research 仅采集文本来源，且未提供用户截图，因此不展示未经验证的网络图片。'
+      : '本章集中展示已验证的产品截图、标注图与图表，用于帮助读者对照视觉证据与文字结论。',
+    comparison: '本章将竞品差异转换为对消费者、产品团队和业务结果的影响，用于判断哪些差异值得优先处理。',
+    conclusion: '本章收敛全文最重要的判断，明确行业竞争焦点、京东的优势与当前短板。',
+    recommendations: '本章将研究结论转化为可执行产品行动，并按 P0–P2 标注下一季度的优先级。',
+    risks: '本章披露证据缺口、研究边界和尚需实测的问题，避免将未验证推断当作确定结论。',
+    appendix: '本章列出证据编号、来源与追溯信息，用于复核报告中的关键事实与结论。',
+  };
+  return introductions[sectionId];
+}
+
+function composeSectionContentBlocks(
   sectionId: ReportTemplateSectionId,
   input: ComposeReportDocumentInput,
   executiveSummary: string,
@@ -955,7 +1090,7 @@ function composeSectionBlocks(
         ),
       ];
     case 'executive-summary':
-      return [paragraph('executive-summary-text', executiveSummary)];
+      return [paragraph('executive-summary-text', executiveSummary), ...professionalBlocks];
     case 'background':
       return [paragraph('background-goal', researchPlanPayload?.researchGoal ?? deliverable.methodSummary)];
     case 'scope-method':
@@ -997,6 +1132,9 @@ function composeSectionBlocks(
         : [];
     }
     case 'findings':
+      if (deliverable.deliverableType === 'competitive_analysis_report') {
+        return professionalBlocks;
+      }
       return [
         ...deliverable.findingGraph.findings.map((finding, index) => finding.kind === 'fact'
           ? {
@@ -1090,6 +1228,19 @@ function composeSectionBlocks(
       ];
     }
   }
+}
+
+function composeSectionBlocks(
+  sectionId: ReportTemplateSectionId,
+  input: ComposeReportDocumentInput,
+  executiveSummary: string,
+): ReportBlock[] {
+  const content = composeSectionContentBlocks(sectionId, input, executiveSummary);
+  if (input.deliverable.value.deliverableType !== 'competitive_analysis_report') return content;
+  return [
+    paragraph(`section-intro-${sectionId}`, competitiveSectionIntroduction(sectionId, input)),
+    ...content,
+  ];
 }
 
 export function assertValidReportDocument(

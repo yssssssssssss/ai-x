@@ -271,7 +271,7 @@ function reportMarkdown(
     '',
     document.subtitle,
     '',
-    '## Executive summary',
+    '## 执行摘要 / Executive Summary',
     '',
     document.executiveSummary,
     '',

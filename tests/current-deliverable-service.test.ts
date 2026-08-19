@@ -139,11 +139,14 @@ const planVersionId = 'plan-version-current-1';
 const attemptId = 'attempt-current-1';
 const evidenceManifestArtifactId = 'artifact-evidence-manifest-1';
 const evidenceArtifactId = 'artifact-tool-output-1';
+const weightArtifactId = 'artifact-scoring-weight-1';
 const deliverableArtifactId = 'artifact-deliverable-1';
 const evidenceArtifactContentSha256 = `sha256:${'1'.repeat(64)}`;
+const weightArtifactContentSha256 = `sha256:${'3'.repeat(64)}`;
 const evidenceManifestContentSha256 = `sha256:${'2'.repeat(64)}`;
 const resolvedEvidenceValue = { title: 'current source', url: 'https://example.test/products/current' };
 const evidenceArtifactOutput = { results: [resolvedEvidenceValue] };
+const weightArtifactValue = { weights: [{ percentage: 25 }] };
 const redactedOutputHash = `sha256:${createHash('sha256').update(JSON.stringify(evidenceArtifactOutput)).digest('hex')}`;
 const sourceUrl = resolvedEvidenceValue.url;
 const resolverWrapperRawFixture = 'RAW_RESOLVER_WRAPPER_MUST_NOT_REACH_LLM';
@@ -395,8 +398,8 @@ function sealedEvidence(): {
 } {
   const evidence = new EvidenceService();
   const evidenceResolver: EvidenceArtifactResolver = {
-    resolveArtifact: (candidateId) => candidateId === evidenceArtifactId
-      ? {
+    resolveArtifact: (candidateId) => {
+      if (candidateId === evidenceArtifactId) return {
           artifact: {
             id: evidenceArtifactId,
             contentSha256: evidenceArtifactContentSha256,
@@ -406,8 +409,16 @@ function sealedEvidence(): {
             redactedOutputHash,
             raw: resolverWrapperRawFixture,
           },
-        }
-      : null,
+        };
+      if (candidateId === weightArtifactId) return {
+        artifact: {
+          id: weightArtifactId,
+          contentSha256: weightArtifactContentSha256,
+        },
+        value: weightArtifactValue,
+      };
+      return null;
+    },
   };
   const value = evidence.createManifest({
     taskId,
@@ -430,6 +441,15 @@ function sealedEvidence(): {
       },
       sensitivity: 'public',
       redaction: 'masked',
+    }, {
+      id: 'W-1',
+      kind: 'user_constraint',
+      evidenceClass: 'user_input',
+      artifactId: weightArtifactId,
+      artifactContentSha256: weightArtifactContentSha256,
+      jsonPointer: '/weights/0/percentage',
+      sensitivity: 'internal',
+      redaction: 'none',
     }],
   }, evidenceResolver);
 
@@ -521,12 +541,22 @@ test('generates and seals a machine-owned research plan deliverable envelope', a
       requiredQuestionIds: string[];
       successCriterionIds: string[];
     };
-    verifiedEvidence?: Array<{ evidenceId: string; sourceUrl?: string; value: unknown }>;
+    verifiedEvidence?: Array<{
+      evidenceId: string;
+      evidenceClass: string;
+      sourceUrl?: string;
+      value: unknown;
+    }>;
   };
   assert.deepEqual(modelContext.verifiedEvidence, [{
     evidenceId: 'E1',
+    evidenceClass: 'public_source',
     sourceUrl,
     value: resolvedEvidenceValue,
+  }, {
+    evidenceId: 'W-1',
+    evidenceClass: 'user_input',
+    value: 25,
   }]);
   const verifiedEvidenceText = JSON.stringify(modelContext.verifiedEvidence);
   const fullModelContextText = JSON.stringify(modelContext);
@@ -545,6 +575,10 @@ test('generates and seals a machine-owned research plan deliverable envelope', a
   assert.match(
     llm.structuredCalls[0]?.prompt ?? '',
     /evidenceIds.*verifiedEvidence.*Visual Asset/is,
+  );
+  assert.match(
+    llm.structuredCalls[0]?.prompt ?? '',
+    /findingGraph.*fact.*public_source.*screenshot.*dataset.*user_input.*cannot/is,
   );
   assert.equal(validator.schemaCalls.length, 1);
   assert.equal(validator.schemaCalls[0]?.label, 'research-plan-deliverable-content');

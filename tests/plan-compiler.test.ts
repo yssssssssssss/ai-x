@@ -702,7 +702,14 @@ class CurrentPlanningLLM implements LLMClient {
     this.calls.push(options);
     let data: unknown;
     if (options.schemaName === 'problem-graph') {
-      data = currentPlanningResult().problemGraph;
+      const problemGraph = currentPlanningResult().problemGraph;
+      const evidencePolicy = (options.context as { evidencePolicy?: unknown } | undefined)?.evidencePolicy;
+      if (Array.isArray(evidencePolicy)) {
+        for (const question of problemGraph.questions) {
+          question.evidence_requirements = structuredClone(evidencePolicy) as EvidenceRequirement[];
+        }
+      }
+      data = problemGraph;
     } else if (options.schemaName === 'decision-states') {
       data = [];
     } else if (options.schemaName === 'current-plan-candidates') {

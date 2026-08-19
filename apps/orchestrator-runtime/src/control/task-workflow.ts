@@ -297,11 +297,13 @@ function allowedActions(failure: Record<string, unknown> | null): string[] {
     : [];
 }
 
-function requiredApprovals(task: ControlTaskDetail, plan: ControlPlanVersionDetail): Array<{ key: string; authority: WorkflowRole }> {
+export function requiredApprovals(task: ControlTaskDetail, plan: ControlPlanVersionDetail): Array<{ key: string; authority: WorkflowRole }> {
   const requirements = new Map<string, WorkflowRole>();
   for (const issue of taskShape(task).blocking_issues ?? []) {
     const authority = issue.required_authority
-      ?? (issue.kind === 'privacy_compliance' ? 'legal' : issue.kind === 'security' ? 'security' : 'owner');
+      ?? (issue.kind === 'privacy_compliance' || issue.kind === 'privacy' || issue.key === 'pii_and_account_data'
+        ? 'legal'
+        : issue.kind === 'security' ? 'security' : 'owner');
     requirements.set(issue.key, authority);
   }
   for (const [index, step] of (planShape(plan).steps ?? []).entries()) {

@@ -235,7 +235,7 @@ export function ReportDocumentView({
       </header>
       <div className="report-layout">
         <nav className="report-toc" data-print-role="toc" aria-label="报告章节">
-          <h2>目录</h2>
+          <h2>目录 / Contents</h2>
           <ol>{model.navigation.map((item) => <li key={item.id}><a href={`#${item.id}`}>{item.title}</a></li>)}</ol>
         </nav>
         <div className="report-body">

@@ -71,6 +71,7 @@ interface CurrentHistoryTask {
   taskType: string | null;
   state: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 interface HistoryTask extends LegacyHistoryTask {
@@ -87,10 +88,32 @@ interface CurrentFlowStateModule {
   failDeliverableRead(state: DeliverableReadState, error: string): FlowTransition;
   retryDeliverable(state: DeliverableReadState): FlowTransition;
   hydrateCurrentTask(input: {
-    task: { id: string; state: string; stateVersion: number; originalInput: string; conversationId: string; structuredTask: unknown };
+    task: {
+      id: string;
+      state: string;
+      stateVersion: number;
+      originalInput: string;
+      conversationId: string;
+      structuredTask: unknown;
+      activePlanVersionId?: string | null;
+      currentAttemptId?: string | null;
+    };
     candidates?: unknown[];
     activatedNodes?: string[];
-  }): { phase: string; stateVersion: number; originalInput: string; clarification: unknown | null; candidatesResp: unknown | null };
+    activePlan?: unknown;
+  }): {
+    phase: string;
+    stateVersion: number;
+    originalInput: string;
+    clarification: unknown | null;
+    candidatesResp: unknown | null;
+    selectedCandidate: unknown | null;
+  };
+  taskStatePresentation(state: string): {
+    label: string;
+    group: 'action' | 'running' | 'finished';
+    tone: 'action' | 'running' | 'success' | 'warning' | 'danger' | 'muted';
+  };
   createClarificationSubmissionState(): ClarificationSubmissionState;
   beginClarificationSubmission(
     state: ClarificationSubmissionState,
@@ -152,6 +175,7 @@ async function loadCurrentFlowStateModule(): Promise<CurrentFlowStateModule> {
     'missingBlockingAnswers',
     'mergeTaskHistory',
     'createRequestId',
+    'taskStatePresentation',
   ]) {
     assert.equal(typeof moduleExports[exportName], 'function', `${exportName} must be exported`);
   }
@@ -194,6 +218,35 @@ test('merges Legacy and Current history by newest creation time while preserving
       created_at: '2026-08-16T09:00:00.000Z',
     },
   ]);
+});
+
+test('every Current workflow state has an explicit history label and group', async () => {
+  const { taskStatePresentation } = await loadCurrentFlowStateModule();
+  const expected = [
+    ['awaiting_clarification', '待补充', 'action'],
+    ['awaiting_selection', '待选方案', 'action'],
+    ['awaiting_confirmation', '待确认', 'action'],
+    ['awaiting_approval', '审批中', 'running'],
+    ['ready', '待执行', 'action'],
+    ['executing', '执行中', 'running'],
+    ['paused', '已暂停', 'action'],
+    ['reviewing', '质量复核中', 'running'],
+    ['composing_report', '报告生成中', 'running'],
+    ['completed', '已完成', 'finished'],
+    ['completed_with_gaps', '已完成·有缺口', 'finished'],
+    ['failed', '失败', 'finished'],
+    ['cancelled', '已取消', 'finished'],
+    ['rejected', '已驳回', 'finished'],
+  ] as const;
+
+  assert.deepEqual(
+    expected.map(([state]) => {
+      const presentation = taskStatePresentation(state);
+      return [state, presentation.label, presentation.group];
+    }),
+    expected,
+  );
+  assert.throws(() => taskStatePresentation('unknown_state'), /unknown|unsupported|state/i);
 });
 test('creates request IDs with native randomUUID when available', async () => {
   const { createRequestId } = await loadCurrentFlowStateModule();
@@ -262,6 +315,20 @@ test('hydrates an awaiting clarification task with its questions and raw input',
     activatedNodes: [],
     candidates: [],
   });
+});
+
+test('fails closed when awaiting clarification refresh lacks a valid requirement', async () => {
+  const { hydrateCurrentTask } = await loadCurrentFlowStateModule();
+  assert.throws(() => hydrateCurrentTask({
+    task: {
+      id: 'task-malformed-clarification-refresh',
+      state: 'awaiting_clarification',
+      stateVersion: 0,
+      originalInput: 'cannot recover clarification',
+      conversationId: 'conversation-malformed-clarification-refresh',
+      structuredTask: {},
+    },
+  }), /clarification|澄清|requirement/i);
 });
 
 test('hydrates an awaiting selection task with the server-validated candidate payload', async () => {
@@ -348,6 +415,104 @@ test('fails closed when awaiting selection refresh lacks validated candidates', 
       structuredTask: {},
     },
   }), /candidate|候选|awaiting_selection/i);
+});
+
+test('hydrates every post-selection Current state without silently returning idle', async () => {
+  const { hydrateCurrentTask } = await loadCurrentFlowStateModule();
+  const taskId = 'task-history-state';
+  const structuredTask = {
+    version: 'research-task-v2',
+    task_type: 'competitive_research',
+    business_domain: '电商',
+    research_goal: '恢复历史任务',
+    target_audience: ['产品团队'],
+    scope: ['公开资料'],
+    constraints: [],
+    success_criteria: [],
+    expected_deliverables: ['研究报告'],
+    assumptions: [],
+    ambiguities: [],
+    clarification_questions: [],
+    blocking_issues: [],
+    sensitivity: 'internal',
+    pii_detected: false,
+  };
+  const activePlan = {
+    planVersionId: 'plan-history-state',
+    candidateId: 'depth',
+    title: '深度方案',
+    rationale: '完整恢复',
+    tradeoffs: '耗时较长',
+    planHash: `sha256:${'a'.repeat(64)}`,
+    plan: {
+      task_id: taskId,
+      deliverable_type: 'research_plan',
+      evidence_requirements: [],
+      activated_nodes: ['D5_competitive'],
+      steps: [],
+    },
+    pendingInputs: [],
+  };
+  const activeStates = [
+    ['awaiting_confirmation', 'planned'],
+    ['awaiting_approval', 'awaiting-approval'],
+    ['ready', 'ready'],
+    ['executing', 'executing'],
+    ['paused', 'paused'],
+    ['reviewing', 'reviewing'],
+    ['composing_report', 'composing-report'],
+  ] as const;
+  for (const [state, phase] of activeStates) {
+    const hydrated = hydrateCurrentTask({
+      task: {
+        id: taskId,
+        state,
+        stateVersion: 7,
+        originalInput: '恢复历史任务',
+        conversationId: 'conversation-history-state',
+        structuredTask,
+        activePlanVersionId: activePlan.planVersionId,
+        currentAttemptId: state === 'executing' || state === 'paused' || state === 'reviewing' || state === 'composing_report'
+          ? 'attempt-history-state'
+          : null,
+      },
+      activePlan,
+    });
+    assert.equal(hydrated.phase, phase, state);
+    assert.deepEqual(hydrated.selectedCandidate, activePlan, state);
+  }
+
+  for (const [state, phase] of [
+    ['completed', 'done'],
+    ['completed_with_gaps', 'done'],
+    ['failed', 'failed'],
+    ['cancelled', 'cancelled'],
+    ['rejected', 'rejected'],
+  ] as const) {
+    const hydrated = hydrateCurrentTask({
+      task: {
+        id: taskId,
+        state,
+        stateVersion: 8,
+        originalInput: '恢复终态任务',
+        conversationId: 'conversation-history-state',
+        structuredTask,
+        currentAttemptId: state.startsWith('completed') ? 'attempt-history-state' : null,
+      },
+    });
+    assert.equal(hydrated.phase, phase, state);
+  }
+
+  assert.throws(() => hydrateCurrentTask({
+    task: {
+      id: taskId,
+      state: 'unknown_state',
+      stateVersion: 9,
+      originalInput: '未知状态',
+      conversationId: 'conversation-history-state',
+      structuredTask,
+    },
+  }), /unknown|unsupported|state/i);
 });
 
 test('clarification submission contains only explicit answers and editable assumption changes', async () => {

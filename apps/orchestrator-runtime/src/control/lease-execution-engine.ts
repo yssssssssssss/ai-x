@@ -9,6 +9,7 @@ import type {
   ControlPlaneRepository,
 } from '../../../../database/control-plane.ts';
 import type {
+  ChartSpec,
   CurrentPlanStep,
   EvidenceClass,
   EvidenceManifest,
@@ -16,6 +17,7 @@ import type {
   PendingInput,
   ResearchDeliverableEnvelope,
   ResearchPlanPayload,
+  VisualAssetManifest,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { PassedReportReviewArtifact } from '../../../../packages/api-contract/control-workflow.ts';
 import { SchemaValidator } from '../schema/validator.ts';
@@ -70,6 +72,8 @@ import {
 import { ReportCompositionService, type ReportCompositionPort } from '../report/report-composition-service.ts';
 import { ReportPackageArtifactService } from '../report/report-package-artifact.ts';
 import { VisualAssetService } from '../report/visual-asset-service.ts';
+import { renderAndSealChartSvg } from '../report/chart-renderer.ts';
+import { extractCompetitiveScoringWeights } from '../report/competitive-weight-chart.ts';
 import type {
   FindingBoundVisualAnnotation,
   MaterializedVisualOriginal,
@@ -1329,6 +1333,124 @@ export class LeaseExecutionEngine {
             redaction: 'masked',
           }));
         });
+      const evidenceService = new EvidenceService();
+      for (const [index, visual] of materializedVisualOriginals.entries()) {
+        const stored = await this.dependencies.artifacts.readVerifiedJson<VisualAssetManifest>(
+          visual.original.manifestArtifactId,
+        );
+        if (
+          stored.artifact.state !== 'SEALED'
+          || stored.artifact.taskId !== input.lease.taskId
+          || stored.artifact.planVersionId !== input.lease.planVersionId
+          || stored.artifact.attemptId !== input.lease.attemptId
+          || stored.artifact.kind !== 'visual_asset_manifest'
+          || stored.artifact.schemaVersion !== 'visual-asset-manifest-v1'
+          || !stored.artifact.contentSha256
+          || stored.value.assetId !== visual.original.assetId
+        ) {
+          throw new ExecutionAuthenticityError('materialized screenshot Evidence binding is invalid');
+        }
+        resolvedArtifacts.set(stored.artifact.id, {
+          artifact: {
+            id: stored.artifact.id,
+            contentSha256: stored.artifact.contentSha256,
+          },
+          value: stored.value,
+        });
+        evidenceEntries.push({
+          id: `S1-${index + 1}`,
+          kind: 'screenshot',
+          evidenceClass: 'screenshot',
+          artifactId: stored.artifact.id,
+          artifactContentSha256: stored.artifact.contentSha256,
+          jsonPointer: '/assetId',
+          sensitivity: 'internal',
+          redaction: 'none',
+        });
+      }
+      const scoringWeights = deliverableId === 'competitive_analysis_report'
+        ? extractCompetitiveScoringWeights({
+            plan: planVersion.plan,
+            structuredTask: task.structuredTask,
+          })
+        : [];
+      if (scoringWeights.length > 0 && materializedVisualOriginals.length > 0) {
+        const chartData = {
+          version: 'competitive-weight-chart-data-v1',
+          taskId: input.lease.taskId,
+          planVersionId: input.lease.planVersionId,
+          attemptId: input.lease.attemptId,
+          unit: 'percent',
+          weights: scoringWeights,
+        } as const;
+        const chartDataArtifact = await this.dependencies.artifacts.writeJson({
+          taskId: input.lease.taskId,
+          planVersionId: input.lease.planVersionId,
+          attemptId: input.lease.attemptId,
+          kind: 'chart_data',
+          relativePath: 'charts/competitive-scoring-weights-data.json',
+          value: chartData,
+          schemaVersion: 'competitive-weight-chart-data-v1',
+          sensitivity: 'internal',
+          redactionPolicyVersion: 'v1',
+          activeLease: input.lease,
+        });
+        if (chartDataArtifact.state !== 'SEALED' || !chartDataArtifact.contentSha256) {
+          throw new ExecutionAuthenticityError('competitive scoring weight data was not sealed');
+        }
+        resolvedArtifacts.set(chartDataArtifact.id, {
+          artifact: {
+            id: chartDataArtifact.id,
+            contentSha256: chartDataArtifact.contentSha256,
+          },
+          value: chartData,
+        });
+        const weightEvidence = scoringWeights.map((_, index): EvidenceEntry => ({
+          id: `W-${index + 1}`,
+          kind: 'user_constraint',
+          evidenceClass: 'user_input',
+          artifactId: chartDataArtifact.id,
+          artifactContentSha256: chartDataArtifact.contentSha256!,
+          jsonPointer: `/weights/${index}/percentage`,
+          sensitivity: 'internal',
+          redaction: 'none',
+        }));
+        evidenceEntries.push(...weightEvidence);
+        const weightEvidenceById = new Map(weightEvidence.map((entry) => [entry.id, entry]));
+        const chartSpec: ChartSpec = {
+          version: 'chart-spec-v1',
+          chartId: 'competitive-scoring-weights',
+          type: 'comparison',
+          title: '六维度评分权重 / Six-dimension Scoring Weights (%)',
+          categories: scoringWeights.map(({ dimension }) => dimension),
+          series: [{
+            key: 'actor:user-defined-scoring-weight',
+            label: '用户确认权重 / Confirmed weight',
+            values: scoringWeights.map(({ percentage }) => percentage),
+            evidenceIds: weightEvidence.map(({ id }) => [id]),
+          }],
+          yAxis: { min: 0 },
+        };
+        const chartEvidenceResolver = (evidenceId: string): unknown | undefined => {
+          const entry = weightEvidenceById.get(evidenceId);
+          return entry ? evidenceService.resolveEvidenceValue(entry, evidenceResolver) : undefined;
+        };
+        const visualAssets = new VisualAssetService({ artifacts: this.dependencies.artifacts });
+        await this.withLeaseHeartbeat(input.lease, () => renderAndSealChartSvg({
+          taskId: input.lease.taskId,
+          planVersionId: input.lease.planVersionId,
+          attemptId: input.lease.attemptId,
+          spec: chartSpec,
+          evidenceResolver: chartEvidenceResolver,
+          original: materializedVisualOriginals[0]!.original,
+          assets: visualAssets,
+          artifacts: this.dependencies.artifacts,
+          activeLease: input.lease,
+          exportPolicy: 'allow',
+          width: 1200,
+          height: 640,
+        }));
+      }
       for (const requirement of plan.evidence_requirements) {
         let actual = 0;
         for (const entry of evidenceEntries) {
@@ -1350,7 +1472,7 @@ export class LeaseExecutionEngine {
       if (!evidenceEntries.some((entry) => entry.toolTier === 'core')) {
         throw new ExecutionAuthenticityError('execution has no valid core Tool evidence');
       }
-      const evidenceManifest = new EvidenceService().createManifest({
+      const evidenceManifest = evidenceService.createManifest({
         taskId: input.lease.taskId,
         planVersionId: input.lease.planVersionId,
         attemptId: input.lease.attemptId,

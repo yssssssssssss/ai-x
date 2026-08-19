@@ -50,6 +50,21 @@ function refinementResponse(
   };
 }
 
+async function failIncompletePlanningTask(runtime: ControlRuntime, taskId: string): Promise<void> {
+  try {
+    const task = await runtime.repository.getTaskDetail(taskId);
+    if (task?.state !== 'awaiting_clarification') return;
+    await runtime.repository.transitionTask({
+      taskId,
+      expectedVersion: task.stateVersion,
+      from: 'awaiting_clarification',
+      to: 'failed',
+    });
+  } catch {
+    // Preserve the planning error. A concurrent state change makes this cleanup unnecessary.
+  }
+}
+
 function refinementPlanningPort(runtime: ControlRuntime): ControlPlanningPort {
   return {
     async plan(input, onProgress, onConversation): Promise<CurrentPlanningResponse> {
@@ -71,26 +86,31 @@ function refinementPlanningPort(runtime: ControlRuntime): ControlPlanningPort {
         structuredTask: {},
         state: 'awaiting_clarification',
       });
-      const result = await runtime.requirementRefinement.understand({
-        taskId: created.id,
-        conversationId: conversation.id,
-        ownerUserId: input.ownerUserId,
-        originalInput: input.originalInput,
-        expectedVersion: created.stateVersion,
-      }, onProgress);
-      if (result.status === 'clarification_required') {
-        return refinementResponse(result, await runtime.repository.getTaskDetail(created.id));
+      try {
+        const result = await runtime.requirementRefinement.understand({
+          taskId: created.id,
+          conversationId: conversation.id,
+          ownerUserId: input.ownerUserId,
+          originalInput: input.originalInput,
+          expectedVersion: created.stateVersion,
+        }, onProgress);
+        if (result.status === 'clarification_required') {
+          return refinementResponse(result, await runtime.repository.getTaskDetail(created.id));
+        }
+        const readyTask = await runtime.repository.getTaskDetail(created.id);
+        if (!readyTask) throw new Error(`task ${created.id} disappeared after refinement`);
+        if (!result.planningResult) throw new Error('refinement ready result has no finalized planning result');
+        return await runtime.controlPlanning.planExistingTask({
+          taskId: readyTask.id,
+          conversationId: conversation.id,
+          ownerUserId: input.ownerUserId,
+          expectedStateVersion: readyTask.stateVersion,
+          originalInput: input.originalInput,
+        }, result.planningResult);
+      } catch (error) {
+        await failIncompletePlanningTask(runtime, created.id);
+        throw error;
       }
-      const readyTask = await runtime.repository.getTaskDetail(created.id);
-      if (!readyTask) throw new Error(`task ${created.id} disappeared after refinement`);
-      if (!result.planningResult) throw new Error('refinement ready result has no finalized planning result');
-      return runtime.controlPlanning.planExistingTask({
-        taskId: readyTask.id,
-        conversationId: conversation.id,
-        ownerUserId: input.ownerUserId,
-        expectedStateVersion: readyTask.stateVersion,
-        originalInput: input.originalInput,
-      }, result.planningResult);
     },
   };
 }

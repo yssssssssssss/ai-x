@@ -177,6 +177,10 @@
   line-height: 1.85;
 }
 
+.report-finding p {
+  white-space: pre-line;
+}
+
 .report-recommendation,
 .report-risk {
   padding: 16px 0 16px 20px;

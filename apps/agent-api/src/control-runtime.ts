@@ -492,8 +492,10 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
         assertRevisionSourceContract({ activePlan, deliverableSelection, validator });
       }
 
+      // The revision instruction comes first so an explicit `$skill` remains a
+      // valid direct invocation. The frozen ResearchTask still owns the goal.
       const planningResult = await planning.plan({
-        originalInput: `${researchGoal}\n\nRevision instruction: ${input.instruction}`,
+        originalInput: `${input.instruction.trim()}\n\nOriginal research goal: ${researchGoal}`,
         requirement: structuredTask,
       });
       const candidate = planningResult.candidates.find((item) => item.id === activePlan.candidateId);

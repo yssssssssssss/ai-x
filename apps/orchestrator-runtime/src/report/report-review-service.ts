@@ -82,11 +82,6 @@ interface ReviewDependencies {
   validator?: Pick<SchemaValidator, 'validateOrThrow'>;
 }
 
-const REVIEW_SCHEMA = {
-  type: 'object',
-  required: ['version', 'taskId', 'planVersionId', 'attemptId', 'deliverableArtifactId', 'verdict', 'dimensions', 'revisionRound'],
-};
-
 const REPORT_REVIEW_VALIDATOR = new SchemaValidator();
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -274,7 +269,8 @@ export class ReportReviewService {
   ): Promise<ReportReviewArtifact> {
     const generated = await this.dependencies.llm.generateStructured<Partial<ReportReviewArtifact>>({
       prompt: 'Review the current deliverable against the selected Registry review rubric. Return only a report-review-v1 artifact.',
-      schema: REVIEW_SCHEMA,
+      // An empty override makes the gateway load the canonical registry schema.
+      schema: {},
       schemaName: 'report-review',
       context: {
         taskId: input.task.id, planVersionId: input.plan.id, attemptId: input.attempt.id,

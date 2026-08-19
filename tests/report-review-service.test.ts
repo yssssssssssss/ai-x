@@ -195,6 +195,11 @@ test('passes a deliverable after deterministic gates and semantic review', async
   assert.equal(result.status, 'completed');
   assert.equal(llm.calls.length, 1);
   assert.equal(llm.calls[0]?.schemaName, 'report-review');
+  assert.deepEqual(
+    llm.calls[0]?.schema,
+    {},
+    'an empty override lets the gateway use the canonical report-review schema registry entry',
+  );
   assert.equal(llm.calls[0]?.receipt.stage, 'deliverable_review');
   assert.equal(artifacts.writes[0]?.activeLease, lease);
   assert.deepEqual(result.dimensions.map(({ id }) => id), [...REQUIRED_REVIEW_DIMENSIONS]);

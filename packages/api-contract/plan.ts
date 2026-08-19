@@ -77,6 +77,7 @@ export interface ResearchTaskV2 {
 }
 
 export interface PendingUpload {
+  kind?: 'value' | 'visual';
   role: string;
   label: string;
   multiple: boolean;

@@ -28,10 +28,10 @@ export function Stage1Understand({ task, activatedNodes }: { task: ResearchTaskD
 
 export function Header({ n, title, note }: { n: string; title: string; note?: string }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-      <span style={{ width: 24, height: 24, borderRadius: 8, background: 'var(--primary)', color: '#fff', display: 'grid', placeItems: 'center', fontSize: 12, fontWeight: 700 }}>{n}</span>
-      <b style={{ fontSize: 15, letterSpacing: '-0.005em' }}>{title}</b>
-      {note && <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>· {note}</span>}
+    <div className="stage-header">
+      <span className="stage-number">{n}</span>
+      <b className="stage-title">{title}</b>
+      {note && <span className="stage-note">· {note}</span>}
     </div>
   );
 }

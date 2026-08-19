@@ -470,6 +470,7 @@ test('Markdown uses deterministic relative image paths, sealed SVG references, a
   const bundle = await unzip(bytes);
   const markdown = bundle.text('report.md');
 
+  assert.match(markdown, /## 执行摘要 \/ Executive Summary/u);
   assert.match(markdown, /!\[Product comparison source captured from verified evidence\.\]\(assets\/asset-original\.png\)/u);
   assert.match(markdown, /assets\/asset-annotation\.png/u);
   assert.match(markdown, /!\[Competitor A has a verified score of 87\.\]\(assets\/asset-chart\.svg\)/u);

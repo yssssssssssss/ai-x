@@ -459,6 +459,85 @@ test('returns a verified review-gated current_text package and reads every JSON 
   ]);
 });
 
+test('reads screenshot and user-constraint Evidence from their concrete Artifact kinds', async () => {
+  const fixture = setup();
+  const screenshotArtifactId = 'screenshot-evidence-1';
+  const constraintArtifactId = 'constraint-evidence-1';
+  const screenshotHash = `sha256:${'2'.repeat(64)}`;
+  const constraintHash = `sha256:${'3'.repeat(64)}`;
+  const screenshotValue = { assetId: 'asset-source-1' };
+  const constraintValue = { weights: [{ percentage: 20 }] };
+  fixture.artifacts.add(
+    artifact(screenshotArtifactId, 'visual_asset_manifest', 'visual-asset-manifest-v1', {
+      contentSha256: screenshotHash,
+    }),
+    screenshotValue,
+  );
+  fixture.artifacts.add(
+    artifact(constraintArtifactId, 'chart_data', 'competitive-weight-chart-data-v1', {
+      contentSha256: constraintHash,
+    }),
+    constraintValue,
+  );
+  const storedManifest = fixture.artifacts.artifacts.get(manifestArtifactId);
+  assert.ok(storedManifest);
+  storedManifest.value = new EvidenceService().createManifest({
+    ...binding,
+    collectedAt: '2026-08-14T10:00:00.000Z',
+    entries: [
+      ...manifest().entries,
+      {
+        id: 'screenshot-entry-1',
+        kind: 'screenshot',
+        evidenceClass: 'screenshot',
+        artifactId: screenshotArtifactId,
+        artifactContentSha256: screenshotHash,
+        jsonPointer: '/assetId',
+        sensitivity: 'internal',
+        redaction: 'none',
+      },
+      {
+        id: 'constraint-entry-1',
+        kind: 'user_constraint',
+        evidenceClass: 'user_input',
+        artifactId: constraintArtifactId,
+        artifactContentSha256: constraintHash,
+        jsonPointer: '/weights/0/percentage',
+        sensitivity: 'internal',
+        redaction: 'none',
+      },
+    ],
+  }, {
+    resolveArtifact: (artifactId) => {
+      if (artifactId === evidenceArtifactId) {
+        return {
+          artifact: { id: evidenceArtifactId, contentSha256: evidenceContentSha256 },
+          value: evidenceValue(),
+        };
+      }
+      if (artifactId === screenshotArtifactId) {
+        return {
+          artifact: { id: screenshotArtifactId, contentSha256: screenshotHash },
+          value: screenshotValue,
+        };
+      }
+      if (artifactId === constraintArtifactId) {
+        return {
+          artifact: { id: constraintArtifactId, contentSha256: constraintHash },
+          value: constraintValue,
+        };
+      }
+      return null;
+    },
+  });
+
+  const result = await fixture.reader.read(binding);
+
+  assert.equal(result?.presentationMode, 'current_text');
+  assert.ok(fixture.artifacts.reads.includes(screenshotArtifactId));
+  assert.ok(fixture.artifacts.reads.includes(constraintArtifactId));
+});
+
 test('returns multimodal only from a sealed ReportDocument and its exact verified visual manifest set', async () => {
   const image = packageVerifiedVisualAsset(imageAssetId, imageManifestArtifactId, 'image/png');
   const chart = packageVerifiedVisualAsset(chartAssetId, chartManifestArtifactId, 'image/svg+xml');

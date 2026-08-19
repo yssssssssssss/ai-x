@@ -38,6 +38,15 @@
       "minItems": 1,
       "items": { "$ref": "#/$defs/actionRecommendation" }
     },
+    "managementSummary": { "$ref": "#/$defs/nonEmptyStringArray" },
+    "scoringMethod": { "$ref": "#/$defs/nonEmptyStringArray" },
+    "roadmap": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/roadmapItem" }
+    },
+    "instrumentationPlan": { "$ref": "#/$defs/nonEmptyStringArray" },
+    "userTestScript": { "$ref": "#/$defs/nonEmptyStringArray" },
     "screenshotComparisons": {
       "type": "array",
       "items": { "$ref": "#/$defs/screenshotComparison" }
@@ -68,6 +77,7 @@
       "properties": {
         "sampleId": { "$ref": "#/$defs/nonEmptyString" },
         "value": { "$ref": "#/$defs/nonEmptyString" },
+        "score": { "type": "number", "minimum": 1, "maximum": 5 },
         "evidenceIds": { "$ref": "#/$defs/nonEmptyStringArray" }
       }
     },
@@ -77,6 +87,7 @@
       "required": ["dimension", "values"],
       "properties": {
         "dimension": { "$ref": "#/$defs/nonEmptyString" },
+        "weight": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
         "values": {
           "type": "array",
           "minItems": 1,
@@ -114,6 +125,17 @@
         "differenceIds": { "$ref": "#/$defs/nonEmptyStringArray" },
         "priority": { "enum": ["P0", "P1", "P2", "P3"] },
         "statement": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "roadmapItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["priority", "statement", "metric", "validationMethod"],
+      "properties": {
+        "priority": { "enum": ["P0", "P1", "P2"] },
+        "statement": { "$ref": "#/$defs/nonEmptyString" },
+        "metric": { "$ref": "#/$defs/nonEmptyString" },
+        "validationMethod": { "$ref": "#/$defs/nonEmptyString" }
       }
     },
     "screenshotComparison": {

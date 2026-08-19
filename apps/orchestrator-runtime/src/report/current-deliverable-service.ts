@@ -671,6 +671,7 @@ export class CurrentDeliverableService {
       : [];
     const verifiedEvidence = evidenceManifest.entries.map((entry) => ({
       evidenceId: entry.id,
+      evidenceClass: entry.evidenceClass,
       ...(entry.sourceUrl ? { sourceUrl: entry.sourceUrl } : {}),
       value: redactSensitiveValue(
         this.dependencies.evidence.resolveEvidenceValue(entry, input.evidenceResolver),
@@ -719,6 +720,7 @@ export class CurrentDeliverableService {
       }>({
         prompt: contract.synthesisPrompt
           + '\nEvery evidenceIds entry must reference only context.verifiedEvidence[].evidenceId. Never place a Visual Asset id in evidenceIds; Visual Asset ids are allowed only in typed visual fields such as screenshotComparisons.assetIds.'
+          + '\nFor findingGraph findings with kind "fact", every evidenceIds entry must have evidenceClass public_source, screenshot, or dataset. user_input, knowledge, simulation, and derived evidence cannot root a fact.'
           + (contract.entry.id === 'competitive_analysis_report'
             && (!visualInventory || visualInventory.assets.length === 0)
             ? '\nNo verified visual Asset inventory exists. Return an empty screenshotComparisons array and never invent an Asset id.'

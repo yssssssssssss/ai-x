@@ -6,11 +6,17 @@ import { Header } from './Stage1Understand.tsx';
 // 段2 · 待执行计划(HITL 硬闸门):步骤列表 + 假设可就地编辑 + 待传图片 + 确认按钮。
 // locked=true 时(已进入执行)隐藏确认按钮、禁用编辑。
 export function Stage2Plan({
-  plan, locked, onConfirm,
+  plan, locked, revising, onConfirm, onRevise,
 }: {
   plan: PlanResponse;
   locked: boolean;
-  onConfirm: (confirmationAnswers: Record<string, unknown>, uploads: Upload[]) => void;
+  revising: boolean;
+  onConfirm: (
+    confirmationAnswers: Record<string, unknown>,
+    inputValues: Record<string, unknown>,
+    uploads: Upload[],
+  ) => void;
+  onRevise: (instruction: string) => void;
 }) {
   const confirmations = confirmationRequirements('confirmations' in plan.task
     ? plan.task.confirmations
@@ -19,6 +25,8 @@ export function Stage2Plan({
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [confirmed, setConfirmed] = useState(false);
   const [images, setImages] = useState<Record<string, string[]>>({});
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [revisionInstruction, setRevisionInstruction] = useState('');
 
   function edit(key: string, value: string) {
     setAssumptions((prev) => prev.map((a) => (a.key === key ? { ...a, value } : a)));
@@ -40,18 +48,39 @@ export function Stage2Plan({
   }
 
   function confirm() {
-    if (missingAnswers.length > 0) return;
-    const uploads: Upload[] = pendingImageUploads(pending, images);
+    if (missingAnswers.length > 0 || missingInputs.length > 0) return;
+    const inputValues: Record<string, unknown> = {};
+    for (const input of pending) {
+      if (input.kind !== 'value') continue;
+      const raw = values[input.role] ?? '';
+      inputValues[input.role] = input.multiple
+        ? raw.split('\n').map((item) => item.trim()).filter(Boolean)
+        : raw.trim();
+    }
+    const uploads: Upload[] = pendingImageUploads(
+      pending.filter((input) => input.kind === 'visual'),
+      images,
+    );
     setConfirmed(true);
-    onConfirm(answers, uploads);
+    onConfirm(answers, inputValues, uploads);
   }
 
   const pending = plan.pendingUploads ?? [];
   const missingAnswers = confirmations.filter(({ key }) => !answers[key]?.trim());
+  const missingInputs = pending.filter((input) => {
+    if (input.kind === 'visual') return (images[input.role] ?? []).length === 0;
+    if (input.kind === 'value') {
+      const raw = values[input.role] ?? '';
+      return input.multiple
+        ? raw.split('\n').every((item) => item.trim() === '')
+        : raw.trim() === '';
+    }
+    return true;
+  });
 
   return (
     <section className="stage-card">
-      <Header n="2" title="待执行计划" note="确认前不执行" />
+      <Header n="2" title="待执行计划" note={locked ? '计划内容已锁定' : '确认前不执行'} />
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {plan.plan.steps.map((s) => <StepRow key={s.step_no} step={s} />)}
@@ -104,10 +133,43 @@ export function Stage2Plan({
         </div>
       )}
 
-      {pending.length > 0 && !locked && (
+      {pending.some((input) => input.kind === 'value') && !locked && (
         <div style={{ marginTop: 16 }}>
-          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待上传图片(同一张图会自动用于所有需要它的步骤;不传将跳过该项)</div>
-          {pending.map((pu) => (
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待补充输入（必须填写）</div>
+          {pending.filter((input) => input.kind === 'value').map((input) => (
+            <label key={input.role} style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 10, fontSize: 13 }}>
+              <span>
+                {input.label}
+                <span style={{ color: 'var(--text-faint)', fontSize: 11 }}> · 用于步骤 {input.targets.map((target) => target.step_no).join('/')}</span>
+              </span>
+              {input.multiple ? (
+                <textarea
+                  disabled={locked || confirmed}
+                  value={values[input.role] ?? ''}
+                  onChange={(event) => setValues((previous) => ({ ...previous, [input.role]: event.target.value }))}
+                  placeholder="每行填写一个值"
+                  rows={3}
+                  style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', padding: '7px 9px', fontSize: 13, resize: 'vertical' }}
+                />
+              ) : (
+                <input
+                  required
+                  disabled={locked || confirmed}
+                  value={values[input.role] ?? ''}
+                  onChange={(event) => setValues((previous) => ({ ...previous, [input.role]: event.target.value }))}
+                  placeholder="请输入"
+                  style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', padding: '7px 9px', fontSize: 13 }}
+                />
+              )}
+            </label>
+          ))}
+        </div>
+      )}
+
+      {pending.some((input) => input.kind === 'visual') && !locked && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>待上传图片（必须上传；同一张图会自动用于所有需要它的步骤）</div>
+          {pending.filter((input) => input.kind === 'visual').map((pu) => (
             <div key={pu.role} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6, fontSize: 13 }}>
               <span style={{ color: 'var(--text-dim)', flex: 1 }}>
                 {pu.label}
@@ -132,18 +194,38 @@ export function Stage2Plan({
 
       {!locked && !confirmed && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8, marginTop: 18 }}>
-          <button className="btn-primary" onClick={confirm} disabled={missingAnswers.length > 0}>
-            ✓ 确认计划,开始执行
-          </button>
-          {missingAnswers.length > 0 && (
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn-primary" onClick={confirm} disabled={revising || missingAnswers.length > 0 || missingInputs.length > 0}>
+              ✓ 确认计划
+            </button>
+            <button
+              className="btn-ghost"
+              onClick={() => onRevise(revisionInstruction.trim())}
+              disabled={revising || revisionInstruction.trim() === ''}
+            >
+              {revising ? '正在重新生成…' : '重新生成计划'}
+            </button>
+          </div>
+          <textarea
+            value={revisionInstruction}
+            onChange={(event) => setRevisionInstruction(event.target.value)}
+            disabled={revising}
+            placeholder="填写调整要求；可用 $skill-name 指定技能"
+            rows={2}
+            aria-label="计划调整要求"
+            style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', padding: '7px 9px', fontSize: 13, resize: 'vertical' }}
+          />
+          {(missingAnswers.length > 0 || missingInputs.length > 0) && (
             <span role="alert" style={{ color: 'var(--warn)', fontSize: 12 }}>
-              请先回答全部确认项：{missingAnswers.map(({ question, key }) => question ?? key).join('、')}
+              {missingAnswers.length > 0 && `请先回答全部确认项：${missingAnswers.map(({ question, key }) => question ?? key).join('、')}`}
+              {missingAnswers.length > 0 && missingInputs.length > 0 ? '；' : ''}
+              {missingInputs.length > 0 && `请先补充全部输入：${missingInputs.map((input) => input.label).join('、')}`}
             </span>
           )}
         </div>
       )}
       {(locked || confirmed) && (
-        <div style={{ marginTop: 14, fontSize: 13, color: 'var(--ok)' }}>✓ 计划已确认,进入执行</div>
+        <div style={{ marginTop: 14, fontSize: 13, color: 'var(--ok)' }}>✓ 计划已确认，内容已锁定</div>
       )}
     </section>
   );
