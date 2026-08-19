@@ -100,21 +100,21 @@
 
 文件范围以开发文档第 14.2、14.3、14.4 节相关条目为准，验收语义以第 7.6、10、12、13、17 节为准。
 
-- [ ] 删除图表对第一张用户上传图片的依赖，使用已封存 Chart Data Artifact 作为唯一数据来源。
-- [ ] 实现 V2 `chart_render`，校验数据 Artifact 哈希、Chart Spec、表格数据、SVG 和 specHash 一致。
-- [ ] 只读取唯一冻结 `competitive-web-research` Skill step 的 `/input/scoring_weights`，删除递归权重发现。
-- [ ] 计划页直接只读展示同一字段；确认请求不得携带或改写第二份权重状态。
-- [ ] 没有冻结权重时不生成空图、竞品评分、趋势或市场份额图。
-- [ ] 图表发布纳入 Publication Group、恢复和终止失效范围。
-- [ ] 运行 `pnpm exec tsx --test tests/artifact-publication-group.test.ts tests/competitive-weight-chart.test.ts tests/chart-renderer.test.ts tests/lease-execution-engine.test.ts tests/execution-recovery.test.ts tests/control-plane.test.ts tests/report-document.test.ts tests/report-package.test.ts tests/candidate-layout.test.ts tests/plan-compiler.test.ts tests/stage2-plan.test.ts tests/requirement-refinement-service.test.ts tests/schema.test.ts tests/execution-control.test.ts tests/control-planning.test.ts tests/current-revision-integrity.test.ts`。
-- [ ] 运行 `pnpm typecheck` 和 `pnpm --dir apps/web build`。
-- [ ] 检查工作包 D diff 并提交独立 commit，记录 SHA。
+- [x] 删除图表对第一张用户上传图片的依赖，使用已封存 Chart Data Artifact 作为唯一数据来源。
+- [x] 实现 V2 `chart_render`，校验数据 Artifact 哈希、Chart Spec、表格数据、SVG 和 specHash 一致。
+- [x] 只读取唯一冻结 `competitive-web-research` Skill step 的 `/input/scoring_weights`，删除递归权重发现。
+- [x] 计划页直接只读展示同一字段；确认请求不得携带或改写第二份权重状态。
+- [x] 没有冻结权重时不生成空图、竞品评分、趋势或市场份额图。
+- [x] 图表发布纳入 Publication Group、恢复和终止失效范围。
+- [x] 运行 `pnpm exec tsx --test tests/artifact-publication-group.test.ts tests/competitive-weight-chart.test.ts tests/chart-renderer.test.ts tests/lease-execution-engine.test.ts tests/execution-recovery.test.ts tests/control-plane.test.ts tests/report-document.test.ts tests/report-package.test.ts tests/candidate-layout.test.ts tests/plan-compiler.test.ts tests/stage2-plan.test.ts tests/requirement-refinement-service.test.ts tests/schema.test.ts tests/execution-control.test.ts tests/control-planning.test.ts tests/current-revision-integrity.test.ts`。结果：401 通过、1 跳过、0 失败。
+- [x] 运行 `pnpm typecheck` 和 `pnpm --dir apps/web build`。结果：均通过；构建仅保留既有 chunk 体积警告。
+- [x] 检查工作包 D diff 并提交独立 commit，记录 SHA。结果：`e7c9cf7`。
 
 ### 门禁 D
 
-- [ ] 无用户上传图片时，已冻结权重仍能生成可追溯 SVG。
-- [ ] 图表数值、标签、数据 Artifact 和 Manifest 任一漂移均 fail closed。
-- [ ] 工作包 D 可独立回滚，V2 Reader 必须保留。
+- [x] 无用户上传图片时，已冻结权重仍能生成可追溯 SVG。
+- [x] 图表数值、标签、数据 Artifact 和 Manifest 任一漂移均 fail closed。
+- [x] 工作包 D 可独立回滚，V2 Reader 必须保留。
 
 ## 5. 合并前验证
 
