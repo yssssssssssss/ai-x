@@ -452,12 +452,15 @@ test('visual Asset route serves owner bytes and hides foreign, missing, and bloc
     'base64',
   );
   const allowedAssetId = randomUUID();
+  const allowedV2AssetId = randomUUID();
   const blockedAssetId = randomUUID();
   const missingAssetId = randomUUID();
   const missingPolicyAssetId = randomUUID();
   const malformedSourceAssetId = randomUUID();
   const malformedDerivationAssetId = randomUUID();
   const wrongSchemaVersionAssetId = randomUUID();
+  const v1BodyV2MarkerAssetId = randomUUID();
+  const v2BodyV1MarkerAssetId = randomUUID();
   const storageUri = `/private/tasks/${currentTaskId}/visuals/${allowedAssetId}.png`;
   const reads: Array<{ taskId: string; assetId: string; ownerUserId: string }> = [];
   const readVisualAsset = async (input: {
@@ -469,15 +472,19 @@ test('visual Asset route serves owner bytes and hides foreign, missing, and bloc
     if (input.taskId !== currentTaskId || input.ownerUserId !== ownerUserId) return null;
     const readableAssetIds: readonly string[] = [
       allowedAssetId,
+      allowedV2AssetId,
       blockedAssetId,
       missingPolicyAssetId,
       malformedSourceAssetId,
       malformedDerivationAssetId,
       wrongSchemaVersionAssetId,
+      v1BodyV2MarkerAssetId,
+      v2BodyV1MarkerAssetId,
     ];
     if (!readableAssetIds.includes(input.assetId)) return null;
+    const isV2 = input.assetId === allowedV2AssetId || input.assetId === v2BodyV1MarkerAssetId;
     const manifest: Record<string, unknown> = {
-      version: 'visual-asset-manifest-v1',
+      version: isV2 ? 'visual-asset-manifest-v2' : 'visual-asset-manifest-v1',
       taskId: currentTaskId,
       planVersionId: currentPlanVersionId,
       attemptId: 'attempt-route-fixture',
@@ -488,7 +495,19 @@ test('visual Asset route serves owner bytes and hides foreign, missing, and bloc
       width: 1,
       height: 1,
       exportPolicy: input.assetId === blockedAssetId ? 'block' : 'allow',
-      source: { kind: 'user_upload', fileName: 'route-fixture.png' },
+      source: isV2 ? {
+        kind: 'browser_capture',
+        artifactId: 'tool-output-route-fixture',
+        artifactContentSha256: `sha256:${'c'.repeat(64)}`,
+        jsonPointer: '/output/captures/0',
+        attachmentId: 'capture-1',
+        sourcePageUrl: 'https://shop.example.test/product',
+        finalUrl: 'https://shop.example.test/product?view=assistant',
+        pageTitle: 'Route fixture browser capture',
+        capturedAt: '2026-08-19T08:00:00.000Z',
+        captureMode: 'full_page_screenshot',
+        viewport: { width: 1440, height: 900 },
+      } : { kind: 'user_upload', fileName: 'route-fixture.png' },
       derivedFrom: null,
       derivation: null,
       manifestHash: `sha256:${'b'.repeat(64)}`,
@@ -509,7 +528,11 @@ test('visual Asset route serves owner bytes and hides foreign, missing, and bloc
         id: `${input.assetId}-manifest`,
         schemaVersion: input.assetId === wrongSchemaVersionAssetId
           ? 'visual-asset-manifest-v0'
-          : 'visual-asset-manifest-v1',
+          : input.assetId === v1BodyV2MarkerAssetId
+            ? 'visual-asset-manifest-v2'
+            : input.assetId === v2BodyV1MarkerAssetId
+              ? 'visual-asset-manifest-v1'
+              : manifest.version,
       },
       bytes: assetBytes,
       manifest,
@@ -540,6 +563,11 @@ test('visual Asset route serves owner bytes and hides foreign, missing, and bloc
     assert.deepEqual(Buffer.from(await ownerResponse.arrayBuffer()), assetBytes);
     assert.equal(ownerResponse.headers.get('x-storage-uri'), null);
 
+    const ownerV2Response = await request(allowedV2AssetId, ownerToken);
+    assert.equal(ownerV2Response.status, 200);
+    assert.equal(ownerV2Response.headers.get('content-type'), 'image/png');
+    assert.deepEqual(Buffer.from(await ownerV2Response.arrayBuffer()), assetBytes);
+
     const hiddenResponses = [
       await request(allowedAssetId, foreignToken),
       await request(missingAssetId, ownerToken),
@@ -548,6 +576,8 @@ test('visual Asset route serves owner bytes and hides foreign, missing, and bloc
       await request(malformedSourceAssetId, ownerToken),
       await request(malformedDerivationAssetId, ownerToken),
       await request(wrongSchemaVersionAssetId, ownerToken),
+      await request(v1BodyV2MarkerAssetId, ownerToken),
+      await request(v2BodyV1MarkerAssetId, ownerToken),
     ];
     const hiddenBodies: Array<Record<string, unknown>> = [];
     for (const response of hiddenResponses) {
@@ -558,12 +588,15 @@ test('visual Asset route serves owner bytes and hides foreign, missing, and bloc
       const serialized = JSON.stringify(body);
       for (const hiddenId of [
         allowedAssetId,
+        allowedV2AssetId,
         missingAssetId,
         blockedAssetId,
         missingPolicyAssetId,
         malformedSourceAssetId,
         malformedDerivationAssetId,
         wrongSchemaVersionAssetId,
+        v1BodyV2MarkerAssetId,
+        v2BodyV1MarkerAssetId,
       ]) {
         assert.equal(serialized.includes(hiddenId), false);
       }
@@ -572,12 +605,15 @@ test('visual Asset route serves owner bytes and hides foreign, missing, and bloc
     for (const body of hiddenBodies.slice(1)) assert.deepEqual(body, hiddenBodies[0]);
     assert.deepEqual(reads, [
       { taskId: currentTaskId, assetId: allowedAssetId, ownerUserId },
+      { taskId: currentTaskId, assetId: allowedV2AssetId, ownerUserId },
       { taskId: currentTaskId, assetId: missingAssetId, ownerUserId },
       { taskId: currentTaskId, assetId: blockedAssetId, ownerUserId },
       { taskId: currentTaskId, assetId: missingPolicyAssetId, ownerUserId },
       { taskId: currentTaskId, assetId: malformedSourceAssetId, ownerUserId },
       { taskId: currentTaskId, assetId: malformedDerivationAssetId, ownerUserId },
       { taskId: currentTaskId, assetId: wrongSchemaVersionAssetId, ownerUserId },
+      { taskId: currentTaskId, assetId: v1BodyV2MarkerAssetId, ownerUserId },
+      { taskId: currentTaskId, assetId: v2BodyV1MarkerAssetId, ownerUserId },
     ]);
   } finally {
     server.close();

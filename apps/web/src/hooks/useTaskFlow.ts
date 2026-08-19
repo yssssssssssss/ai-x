@@ -23,6 +23,7 @@ import {
   executionPlanStepsForTask,
   executionStepsToExecLog,
   hydrateCurrentTask,
+  selectAuthoritativeFailedStep,
   settleClarificationSubmission,
   type ConfirmationRequirement,
   type ExecutionPlanStepView,
@@ -169,7 +170,7 @@ export function useTaskFlow(actorRole?: string) {
 
     const { state, stateVersion: restoredStateVersion, currentAttemptId } = current.task;
     if (hydrated.phase === 'paused') {
-      const failedStep = [...current.executionSteps].reverse().find((step) => step.state === 'failed');
+      const failedStep = selectAuthoritativeFailedStep(current.executionSteps);
       setExec({
         attemptId: currentAttemptId!,
         state,

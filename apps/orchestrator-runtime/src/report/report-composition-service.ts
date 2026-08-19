@@ -188,7 +188,10 @@ export class ReportCompositionService implements ReportCompositionPort {
 
     for (const manifestArtifact of manifestArtifacts) {
       assertMaterialArtifact(manifestArtifact, binding);
-      if (manifestArtifact.schemaVersion !== 'visual-asset-manifest-v1') {
+      if (
+        manifestArtifact.schemaVersion !== 'visual-asset-manifest-v1'
+        && manifestArtifact.schemaVersion !== 'visual-asset-manifest-v2'
+      ) {
         throw new Error(`visual Asset Manifest ${manifestArtifact.id} schemaVersion is invalid`);
       }
       const manifestValue = await this.dependencies.artifacts.readVerifiedJson<unknown>(manifestArtifact.id);
@@ -199,8 +202,9 @@ export class ReportCompositionService implements ReportCompositionPort {
         || typeof manifest !== 'object'
         || Array.isArray(manifest)
         || typeof manifest.assetId !== 'string'
+        || manifest.version !== manifestArtifact.schemaVersion
       ) {
-        throw new Error(`visual Asset Manifest ${manifestArtifact.id} has no exact Asset reference`);
+        throw new Error(`visual Asset Manifest ${manifestArtifact.id} has no exact version or Asset reference`);
       }
       const verified = await this.dependencies.visualAssets.readVerified({
         assetId: manifest.assetId,

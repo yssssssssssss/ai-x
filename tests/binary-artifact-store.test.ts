@@ -21,6 +21,7 @@ import {
   ArtifactIntegrityError,
   ControlArtifactStore,
 } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
+import { ArtifactInvalidationError } from '../apps/orchestrator-runtime/src/control/artifact-publication-group.ts';
 import {
   ARTIFACT_QUARANTINE_PENDING_MARKER,
   ArtifactNotSealedError,
@@ -76,12 +77,17 @@ class MemoryArtifactRegistry {
     byteSize: number;
   } & Partial<ControlExecutionLease>> = [];
   leaseExpired = false;
+  createResponseLost = false;
   sealResponseLost = false;
+  invalidationFailsBeforeCommit = false;
+  invalidationResponseLost = false;
+  invalidationConfirmationReadFails = false;
   quarantineCommitFailsOnce = false;
   beforeSealCommit?: (artifact: ControlArtifact) => void;
   afterListArtifactsByStorageUri?: (storageUri: string) => Promise<void>;
 
   async createStagingArtifact(input: {
+    artifactId?: string;
     taskId: string;
     planVersionId?: string;
     attemptId?: string;
@@ -94,7 +100,7 @@ class MemoryArtifactRegistry {
     metadata?: Record<string, unknown>;
   }): Promise<ControlArtifact> {
     const artifact: ControlArtifact = {
-      id: randomUUID(),
+      id: input.artifactId ?? randomUUID(),
       taskId: input.taskId,
       planVersionId: input.planVersionId ?? null,
       attemptId: input.attemptId ?? null,
@@ -111,6 +117,7 @@ class MemoryArtifactRegistry {
       metadata: input.metadata ?? null,
     };
     this.artifacts.set(artifact.id, artifact);
+    if (this.createResponseLost) throw new Error('create response lost after commit');
     return artifact;
   }
 
@@ -153,9 +160,11 @@ class MemoryArtifactRegistry {
   }
 
   async invalidateArtifactPublication(artifactId: string, failureReason: string): Promise<void> {
+    if (this.invalidationFailsBeforeCommit) throw new Error('invalidation unavailable');
     const artifact = this.artifacts.get(artifactId);
     if (!artifact) return;
     this.artifacts.set(artifactId, { ...artifact, state: 'FAILED', failureReason });
+    if (this.invalidationResponseLost) throw new Error('invalidation response was lost after commit');
   }
 
   async quarantineStagingArtifact(
@@ -212,6 +221,10 @@ class MemoryArtifactRegistry {
   }
 
   async getArtifact(artifactId: string): Promise<ControlArtifact | null> {
+    if (this.invalidationConfirmationReadFails) {
+      this.invalidationConfirmationReadFails = false;
+      throw new Error('invalidation confirmation read failed');
+    }
     return this.artifacts.get(artifactId) ?? null;
   }
 
@@ -438,6 +451,26 @@ async function assertRoundTrip(
   assert.equal(verified.artifact.id, sealed.id);
 }
 
+test('accepts a lost invalidation response only after confirming FAILED state', async () => {
+  const { registry, store } = setup();
+  const artifact = await store.writeBinary(binaryInput(PNG, 'visuals/invalidation-ack.png'));
+  registry.invalidationResponseLost = true;
+
+  await store.invalidateArtifactPublication(artifact.id, 'cleanup after ambiguous publication');
+
+  assert.equal(registry.artifacts.get(artifact.id)?.state, 'FAILED');
+});
+
+test('trusts an acknowledged invalidation when its confirmation read fails', async () => {
+  const { registry, store } = setup();
+  const artifact = await store.writeBinary(binaryInput(PNG, 'visuals/invalidation-confirmation.png'));
+  registry.invalidationConfirmationReadFails = true;
+
+  await store.invalidateArtifactPublication(artifact.id, 'cleanup with unavailable confirmation read');
+
+  assert.equal(registry.artifacts.get(artifact.id)?.state, 'FAILED');
+});
+
 test('sniffs and round-trips PNG, JPEG, and WebP without trusting the path extension', async () => {
   await assertRoundTrip(PNG, 'image/png', 'jpeg');
   await assertRoundTrip(JPEG, 'image/jpeg', 'webp');
@@ -640,6 +673,32 @@ test('invalidates a seal when the pinned inode is overwritten while seal is pend
   );
 });
 
+test('reports the residual sealed Artifact when post-seal invalidation fails', async () => {
+  const { registry, store } = setup();
+  registry.beforeSealCommit = (artifact) => {
+    const original = readFileSync(artifact.storageUri, 'utf8');
+    writeFileSync(artifact.storageUri, original.replace('AAAA', 'BBBB'));
+  };
+  registry.invalidationFailsBeforeCommit = true;
+
+  await assert.rejects(
+    () => store.writeJson({
+      taskId: ACTIVE_LEASE.taskId,
+      planVersionId: ACTIVE_LEASE.planVersionId,
+      attemptId: ACTIVE_LEASE.attemptId,
+      kind: 'context_manifest',
+      relativePath: 'visuals/invalidation-failed.json',
+      value: { marker: 'AAAA' },
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof ArtifactInvalidationError);
+      assert.equal(error.failedArtifactIds.length, 1);
+      assert.equal(registry.artifacts.get(error.failedArtifactIds[0]!)?.state, 'SEALED');
+      return true;
+    },
+  );
+});
+
 
 test('invalidates a seal when bytes are appended to the pinned inode during seal', async () => {
   const { registry, store } = setup();
@@ -827,6 +886,37 @@ test('quarantines a stale writer that creates its file after recovery marks the 
   assert.deepEqual(readFileSync(failed.storageUri), PNG);
 });
 
+test('reports a stale writer when its completed quarantine cannot be persisted', async () => {
+  const { root, registry, store } = setup();
+  const relativePath = 'visuals/quarantine-commit-lost.png';
+  const storageUri = join(root, 'tasks', ACTIVE_LEASE.taskId, 'attempts', ACTIVE_LEASE.attemptId, relativePath);
+  registry.afterListArtifactsByStorageUri = async () => {
+    registry.afterListArtifactsByStorageUri = undefined;
+    const staging = [...registry.artifacts.values()].find((artifact) => (
+      artifact.state === 'STAGING' && artifact.storageUri === storageUri
+    ));
+    assert.ok(staging);
+    const pending = await store.quarantineStagingArtifact(staging.id);
+    assert.equal(pending?.state, 'FAILED');
+    registry.quarantineCommitFailsOnce = true;
+  };
+
+  await assert.rejects(
+    () => store.writeBinary(binaryInput(PNG, relativePath)),
+    (error: unknown) => {
+      assert.ok(error instanceof ArtifactInvalidationError);
+      assert.equal(error.failedArtifactIds.length, 1);
+      return true;
+    },
+  );
+
+  const failed = [...registry.artifacts.values()][0];
+  assert.equal(failed?.state, 'FAILED');
+  assert.match(failed?.failureReason ?? '', /source file was absent/);
+  assert.equal(existsSync(storageUri), false);
+  assert.equal(existsSync(failed?.storageUri ?? ''), true);
+});
+
 test('never moves a same-path retry owned by a new sealed Artifact', async () => {
   const { root, registry, store } = setup();
   const relativePath = 'visuals/reused-after-absent.png';
@@ -990,6 +1080,23 @@ test('rejects traversal and no-clobber collisions while preserving the first byt
   );
   assert.deepEqual(readFileSync(first.storageUri), PNG);
 });
+
+test('fails a recovered STAGING row when its create response is lost', async () => {
+  const { registry, store } = setup();
+  registry.createResponseLost = true;
+
+  await assert.rejects(
+    () => store.writeBinary(binaryInput(PNG, 'visuals/create-response-lost.png')),
+    /create response lost after commit/,
+  );
+
+  assert.equal(registry.artifacts.size, 1);
+  assert.deepEqual(
+    [...registry.artifacts.values()].map(({ state }) => state),
+    ['FAILED'],
+  );
+});
+
 test('keeps a committed sealed destination when the repository response is lost', async () => {
   const { registry, store } = setup();
   registry.sealResponseLost = true;

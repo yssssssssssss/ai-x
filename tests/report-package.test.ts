@@ -9,6 +9,7 @@ import type {
   ChartSpec,
   ResearchDeliverableEnvelope,
   VisualAssetManifest,
+  VisualAssetManifestV2,
 } from '../packages/api-contract/research-deliverable.ts';
 import type { ReportDocument } from '../apps/orchestrator-runtime/src/report/report-document-composer.ts';
 import { ArtifactIntegrityError } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
@@ -307,6 +308,74 @@ function packageVerifiedVisualAsset(
   };
 }
 
+function packageVerifiedBrowserAsset(
+  assetId: string,
+  manifestArtifactId: string,
+): FixtureVerifiedVisualAsset {
+  const visual = packageVerifiedVisualAsset(assetId, manifestArtifactId, 'image/png');
+  const manifest: VisualAssetManifestV2 = {
+    ...visual.manifest,
+    version: 'visual-asset-manifest-v2',
+    source: {
+      kind: 'browser_capture',
+      artifactId: 'tool-output-browser-1',
+      artifactContentSha256: `sha256:${'2'.repeat(64)}`,
+      jsonPointer: '/output/captures/0',
+      attachmentId: 'capture-1',
+      sourcePageUrl: 'https://shop.example.test/product',
+      finalUrl: 'https://shop.example.test/product?view=assistant',
+      pageTitle: 'AI shopping assistant',
+      capturedAt: '2026-08-19T08:00:00.000Z',
+      captureMode: 'full_page_screenshot',
+      viewport: { width: 1440, height: 900 },
+    },
+    derivedFrom: null,
+    derivation: null,
+  };
+  return {
+    ...visual,
+    manifestArtifact: {
+      ...visual.manifestArtifact,
+      schemaVersion: manifest.version,
+    },
+    manifest,
+  };
+}
+
+function packageVerifiedChartRender(
+  assetId: string,
+  manifestArtifactId: string,
+): FixtureVerifiedVisualAsset {
+  const visual = packageVerifiedVisualAsset(assetId, manifestArtifactId, 'image/svg+xml');
+  const manifest: VisualAssetManifestV2 = {
+    ...visual.manifest,
+    version: 'visual-asset-manifest-v2',
+    source: {
+      kind: 'chart_render',
+      dataArtifactId: 'chart-data-1',
+      dataArtifactContentSha256: `sha256:${'3'.repeat(64)}`,
+    },
+    derivedFrom: null,
+    derivation: {
+      kind: 'chart_svg',
+      chartId: packageChartSpec().chartId,
+      specHash: chartSpecHash(packageChartSpec()),
+    },
+  };
+  return {
+    ...visual,
+    artifact: {
+      ...visual.artifact,
+      schemaVersion: 'visual-asset-v1',
+    },
+    manifestArtifact: {
+      ...visual.manifestArtifact,
+      schemaVersion: manifest.version,
+    },
+    manifest,
+  };
+}
+
 function packageVerifiedAnnotation(
   original: FixtureVerifiedVisualAsset,
   lineageOverrides: Partial<NonNullable<VisualAssetManifest['derivedFrom']>> = {},
@@ -465,14 +534,15 @@ test('reads screenshot and user-constraint Evidence from their concrete Artifact
   const constraintArtifactId = 'constraint-evidence-1';
   const screenshotHash = `sha256:${'2'.repeat(64)}`;
   const constraintHash = `sha256:${'3'.repeat(64)}`;
-  const screenshotValue = { assetId: 'asset-source-1' };
-  const constraintValue = { weights: [{ percentage: 20 }] };
-  fixture.artifacts.add(
-    artifact(screenshotArtifactId, 'visual_asset_manifest', 'visual-asset-manifest-v1', {
-      contentSha256: screenshotHash,
-    }),
-    screenshotValue,
+  const screenshotVisual = packageVerifiedBrowserAsset(
+    'asset-source-1',
+    screenshotArtifactId,
   );
+  screenshotVisual.manifestArtifact.contentSha256 = screenshotHash;
+  const screenshotValue = screenshotVisual.manifest;
+  const constraintValue = { weights: [{ percentage: 20 }] };
+  fixture.visualAssets.add(screenshotVisual);
+  fixture.artifacts.add(screenshotVisual.manifestArtifact, screenshotValue);
   fixture.artifacts.add(
     artifact(constraintArtifactId, 'chart_data', 'competitive-weight-chart-data-v1', {
       contentSha256: constraintHash,
@@ -538,6 +608,64 @@ test('reads screenshot and user-constraint Evidence from their concrete Artifact
   assert.ok(fixture.artifacts.reads.includes(constraintArtifactId));
 });
 
+test('rejects screenshot Evidence backed only by an unverified Asset shell', async () => {
+  const fixture = setup();
+  const screenshotArtifactId = 'screenshot-shell-1';
+  const screenshotAssetId = 'asset-shell-1';
+  const screenshotHash = `sha256:${'4'.repeat(64)}`;
+  const screenshotValue = { assetId: screenshotAssetId };
+  fixture.artifacts.add(
+    artifact(screenshotArtifactId, 'visual_asset_manifest', 'visual-asset-manifest-v1', {
+      contentSha256: screenshotHash,
+    }),
+    screenshotValue,
+  );
+  const storedManifest = fixture.artifacts.artifacts.get(manifestArtifactId);
+  assert.ok(storedManifest);
+  storedManifest.value = new EvidenceService().createManifest({
+    ...binding,
+    collectedAt: '2026-08-14T10:00:00.000Z',
+    entries: [
+      ...manifest().entries,
+      {
+        id: 'screenshot-shell-entry-1',
+        kind: 'screenshot',
+        evidenceClass: 'screenshot',
+        artifactId: screenshotArtifactId,
+        artifactContentSha256: screenshotHash,
+        jsonPointer: '/assetId',
+        sensitivity: 'internal',
+        redaction: 'none',
+      },
+    ],
+  }, {
+    resolveArtifact: (artifactId) => {
+      if (artifactId === evidenceArtifactId) {
+        return {
+          artifact: { id: evidenceArtifactId, contentSha256: evidenceContentSha256 },
+          value: evidenceValue(),
+        };
+      }
+      if (artifactId === screenshotArtifactId) {
+        return {
+          artifact: { id: screenshotArtifactId, contentSha256: screenshotHash },
+          value: screenshotValue,
+        };
+      }
+      return null;
+    },
+  });
+
+  await assert.rejects(
+    fixture.reader.read(binding),
+    /verified visual asset|missing verified visual asset/i,
+  );
+  assert.deepEqual(fixture.visualAssets.reads, [{
+    assetId: screenshotAssetId,
+    manifestArtifactId: screenshotArtifactId,
+  }]);
+});
+
 test('returns multimodal only from a sealed ReportDocument and its exact verified visual manifest set', async () => {
   const image = packageVerifiedVisualAsset(imageAssetId, imageManifestArtifactId, 'image/png');
   const chart = packageVerifiedVisualAsset(chartAssetId, chartManifestArtifactId, 'image/svg+xml');
@@ -563,6 +691,68 @@ test('returns multimodal only from a sealed ReportDocument and its exact verifie
     chartId: 'chart-1',
   }]);
   assert.equal(fixture.visualAssets.reads.some(({ assetId }) => assetId === extra.artifact.id), false);
+});
+
+test('reads a mixed V2 browser image and V1 Chart package without rewriting either Manifest', async () => {
+  const image = packageVerifiedBrowserAsset(imageAssetId, imageManifestArtifactId);
+  const chart = packageVerifiedVisualAsset(chartAssetId, chartManifestArtifactId, 'image/svg+xml');
+  const fixture = setup({
+    reportDocument: packageReportDocument(),
+    visualAssets: [image, chart],
+  });
+
+  const result = await fixture.reader.read(binding);
+
+  assert.equal(result?.presentationMode, 'multimodal');
+  if (result?.presentationMode !== 'multimodal') assert.fail('expected a multimodal package');
+  assert.deepEqual(result.visualAssetManifests, [image.manifest, chart.manifest]);
+  assert.equal(result.visualAssetManifests[0]?.version, 'visual-asset-manifest-v2');
+  assert.equal(result.visualAssetManifests[1]?.version, 'visual-asset-manifest-v1');
+  assert.equal(parseControlDeliverableResponse(result).presentationMode, 'multimodal');
+});
+
+test('reads and Web-parses a V2 chart_render package before its Writer is enabled', async () => {
+  const image = packageVerifiedVisualAsset(imageAssetId, imageManifestArtifactId, 'image/png');
+  const chart = packageVerifiedChartRender(chartAssetId, chartManifestArtifactId);
+  const fixture = setup({
+    reportDocument: packageReportDocument(),
+    visualAssets: [image, chart],
+  });
+
+  const result = await fixture.reader.read(binding);
+
+  assert.equal(result?.presentationMode, 'multimodal');
+  if (result?.presentationMode !== 'multimodal') assert.fail('expected a multimodal package');
+  assert.deepEqual(result.visualAssetManifests, [image.manifest, chart.manifest]);
+  assert.equal(result.visualAssetManifests[1]?.version, 'visual-asset-manifest-v2');
+  assert.equal(result.visualAssetManifests[1]?.source.kind, 'chart_render');
+  assert.equal(parseControlDeliverableResponse(result).presentationMode, 'multimodal');
+});
+
+test('rejects both V1/V2 Manifest marker crossings before returning a report package', async () => {
+  const chart = packageVerifiedVisualAsset(chartAssetId, chartManifestArtifactId, 'image/svg+xml');
+  const mismatches = [
+    {
+      image: packageVerifiedBrowserAsset(imageAssetId, imageManifestArtifactId),
+      marker: 'visual-asset-manifest-v1',
+    },
+    {
+      image: packageVerifiedVisualAsset(imageAssetId, imageManifestArtifactId, 'image/png'),
+      marker: 'visual-asset-manifest-v2',
+    },
+  ];
+
+  for (const { image, marker } of mismatches) {
+    image.manifestArtifact.schemaVersion = marker;
+    const fixture = setup({
+      reportDocument: packageReportDocument(),
+      visualAssets: [image, chart],
+    });
+    await assert.rejects(
+      fixture.reader.read(binding),
+      /manifest.*schema version|schema version.*manifest/i,
+    );
+  }
 });
 
 test('revalidates ReportDocument Chart values, chart_svg specHash, and sealed table before multimodal return', async () => {
@@ -1015,6 +1205,25 @@ test('runtime package client validates text modes and fail-closes multimodal pac
     visualAssetManifests: [image, chart],
   };
   assert.equal(parseControlDeliverableResponse(multimodal).presentationMode, 'multimodal');
+  const browser = packageVerifiedBrowserAsset(imageAssetId, imageManifestArtifactId).manifest;
+  assert.equal(parseControlDeliverableResponse({
+    ...multimodal,
+    visualAssetManifests: [browser, chart],
+  }).presentationMode, 'multimodal');
+  assert.throws(
+    () => parseControlDeliverableResponse({
+      ...multimodal,
+      visualAssetManifests: [{ ...browser, version: 'visual-asset-manifest-v1' }, chart],
+    }),
+    /visual asset|manifest|source|schema/i,
+  );
+  assert.throws(
+    () => parseControlDeliverableResponse({
+      ...multimodal,
+      visualAssetManifests: [{ ...browser, version: 'visual-asset-manifest-v3' }, chart],
+    }),
+    /visual asset|manifest|version|schema/i,
+  );
   const { exportPolicy: _exportPolicy, ...imageWithoutExportPolicy } = image;
   const { mediaType: _mediaType, ...imageWithoutMediaType } = image;
   const wrongBindingManifests = (['taskId', 'planVersionId', 'attemptId'] as const).map((field) => ({
@@ -1062,4 +1271,39 @@ test('runtime package client validates text modes and fail-closes multimodal pac
     () => parseControlDeliverableResponse({ ...legacy, visualAssetManifests: [image] }),
     /legacy_text|multimodal|visual asset/i,
   );
+});
+
+test('runtime package client accepts only null-lineage V2 chart_render Manifests', () => {
+  const image = packageVisualManifest(imageAssetId, 'image/png');
+  const chart = packageVerifiedChartRender(chartAssetId, chartManifestArtifactId).manifest;
+  const multimodal = {
+    presentationMode: 'multimodal',
+    deliverable: deliverable(),
+    evidenceManifest: manifest(),
+    reportReview: review(),
+    reportDocument: packageReportDocument(),
+    visualAssetManifests: [image, chart],
+  };
+
+  assert.equal(parseControlDeliverableResponse(multimodal).presentationMode, 'multimodal');
+
+  const wrongLineage = {
+    ...chart,
+    derivedFrom: {
+      assetId: image.assetId,
+      manifestArtifactId: imageManifestArtifactId,
+      contentSha256: image.contentSha256,
+      manifestHash: image.manifestHash,
+    },
+  };
+  const wrongDerivation = { ...chart, derivation: null };
+  for (const invalid of [wrongLineage, wrongDerivation]) {
+    assert.throws(
+      () => parseControlDeliverableResponse({
+        ...multimodal,
+        visualAssetManifests: [image, invalid],
+      }),
+      /visual asset|manifest|chart_render|lineage|derivation/i,
+    );
+  }
 });

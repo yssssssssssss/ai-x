@@ -270,6 +270,44 @@ export interface ControlExecutionStepResponse {
   latencyMs: number | null;
 }
 
+type FailedExecutionStep = Pick<ControlExecutionStepResponse, 'stepNo' | 'state' | 'failure'>;
+
+function failureAuthority(failure: Record<string, unknown> | null | undefined): number {
+  if (failure?.kind === 'artifact_invalidation') return 2;
+  if (failure?.kind === 'worker_loss') return 1;
+  return 0;
+}
+
+export function executionFailureAllowsAction(
+  failure: Record<string, unknown> | null | undefined,
+  action: string,
+): boolean {
+  return Array.isArray(failure?.allowedActions) && failure.allowedActions.includes(action);
+}
+
+export function selectAuthoritativeFailedStep<T extends FailedExecutionStep>(
+  steps: readonly T[],
+): T | undefined {
+  let selected: T | undefined;
+  let selectedAuthority = -1;
+  for (const step of steps) {
+    if (step.state !== 'failed') continue;
+    const authority = failureAuthority(step.failure);
+    if (
+      !selected
+      || authority > selectedAuthority
+      || (
+        authority === selectedAuthority
+        && (authority === 2 ? step.stepNo < selected.stepNo : step.stepNo > selected.stepNo)
+      )
+    ) {
+      selected = step;
+      selectedAuthority = authority;
+    }
+  }
+  return selected;
+}
+
 export interface CurrentTaskReadResponse {
   kind: 'current';
   task: ControlTaskResponse & {

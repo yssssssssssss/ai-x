@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { ControlPlaneConflictError } from '../../../../database/control-plane.ts';
+import {
+  ARTIFACT_INVALIDATION_PROMOTION_VERSION,
+  ControlPlaneConflictError,
+} from '../../../../database/control-plane.ts';
 import type {
   ActiveExecutionLease,
   ControlGateRecord,
@@ -19,7 +22,10 @@ import type {
   ResearchPlanPayload,
   VisualAssetManifest,
 } from '../../../../packages/api-contract/research-deliverable.ts';
-import type { PassedReportReviewArtifact } from '../../../../packages/api-contract/control-workflow.ts';
+import {
+  selectAuthoritativeFailedStep,
+  type PassedReportReviewArtifact,
+} from '../../../../packages/api-contract/control-workflow.ts';
 import { SchemaValidator } from '../schema/validator.ts';
 import {
   CONFIG_PATHS,
@@ -60,6 +66,10 @@ import {
 import { compactLlmInput } from '../runtime/llm-input-compactor.ts';
 import { ArtifactIntegrityError, ControlArtifactStore } from './artifact-store.ts';
 import {
+  ArtifactInvalidationError,
+  ArtifactPublicationGroup,
+} from './artifact-publication-group.ts';
+import {
   EvidenceService,
   type EvidenceArtifactResolver,
   type EvidenceEntry,
@@ -75,7 +85,10 @@ import {
 } from '../report/deliverable-registry.ts';
 import { ReportCompositionService, type ReportCompositionPort } from '../report/report-composition-service.ts';
 import { ReportPackageArtifactService } from '../report/report-package-artifact.ts';
-import { VisualAssetService } from '../report/visual-asset-service.ts';
+import {
+  VisualAssetService,
+  type VisualAssetResult,
+} from '../report/visual-asset-service.ts';
 import { renderAndSealChartSvg } from '../report/chart-renderer.ts';
 import { extractCompetitiveScoringWeights } from '../report/competitive-weight-chart.ts';
 import type {
@@ -155,6 +168,9 @@ interface StepResult {
 }
 
 const TOOL_EXECUTION_DEADLINE_MS = 90_000;
+const MAX_BROWSER_CAPTURE_COUNT = 6;
+const MAX_BROWSER_CAPTURE_BYTES = 10 * 1024 * 1024;
+const MAX_BROWSER_SIDECAR_BYTES = 40 * 1024 * 1024;
 
 async function runWithinToolScope<T>(
   factory: () => Promise<T>,
@@ -247,6 +263,13 @@ interface ReusableExecution {
   kind: StepArtifactKind;
   schemaVersion: string;
   provenance: Record<string, unknown>;
+}
+
+interface CommittedBrowserCapture {
+  stepNo: number;
+  captureIndex: number;
+  toolId: string;
+  result: VisualAssetResult;
 }
 
 export interface LeaseExecutionResult {
@@ -399,6 +422,62 @@ function sanitizeStepResult(result: StepResult): StepResult {
       ? { skillProvenance: { ...result.skillProvenance, outputHash: hashJson(output) } }
       : {}),
   };
+}
+
+function browserCaptureAttachments(
+  toolId: string,
+  output: unknown,
+  attachments: ToolMediaAttachment[] | undefined,
+): Array<{ captureIndex: number; attachment: ToolMediaAttachment }> {
+  if (toolId !== 'playwright-page-capture') {
+    if (attachments && attachments.length > 0) {
+      throw new ExecutionAuthenticityError(`tool ${toolId} returned unsupported media attachments`);
+    }
+    return [];
+  }
+  if (!isRecord(output) || !Array.isArray(output.captures)) {
+    throw new ExecutionAuthenticityError('Playwright Tool output has no capture metadata');
+  }
+  if (!attachments || attachments.length !== output.captures.length || attachments.length === 0) {
+    throw new ExecutionAuthenticityError('Playwright Tool capture metadata and media sidecars do not match');
+  }
+  if (attachments.length > MAX_BROWSER_CAPTURE_COUNT) {
+    throw new ExecutionAuthenticityError('Playwright Tool returned too many media sidecars');
+  }
+  const byId = new Map<string, ToolMediaAttachment>();
+  let totalBytes = 0;
+  for (const attachment of attachments) {
+    if (
+      !(attachment.bytes instanceof Uint8Array)
+      || attachment.bytes.byteLength < 1
+      || attachment.bytes.byteLength > MAX_BROWSER_CAPTURE_BYTES
+    ) {
+      throw new ExecutionAuthenticityError('Playwright Tool media attachment size is invalid');
+    }
+    totalBytes += attachment.bytes.byteLength;
+    if (totalBytes > MAX_BROWSER_SIDECAR_BYTES) {
+      throw new ExecutionAuthenticityError('Playwright Tool media sidecar exceeds its total byte limit');
+    }
+    if (!attachment.attachmentId.trim() || byId.has(attachment.attachmentId)) {
+      throw new ExecutionAuthenticityError('Playwright Tool media attachment ids must be unique');
+    }
+    byId.set(attachment.attachmentId, attachment);
+  }
+  const used = new Set<string>();
+  const ordered = output.captures.map((candidate, captureIndex) => {
+    const metadata = isRecord(candidate) ? candidate : null;
+    const attachmentId = typeof metadata?.attachment_id === 'string' ? metadata.attachment_id : '';
+    const attachment = byId.get(attachmentId);
+    if (!attachment || used.has(attachmentId)) {
+      throw new ExecutionAuthenticityError('Playwright Tool capture metadata has a missing or duplicate sidecar');
+    }
+    used.add(attachmentId);
+    return { captureIndex, attachment };
+  });
+  if (used.size !== byId.size) {
+    throw new ExecutionAuthenticityError('Playwright Tool returned an unreferenced media sidecar');
+  }
+  return ordered;
 }
 
 function toolConfigHash(manifest: ToolManifest, resolution: ToolAdapterResolution | null): string {
@@ -793,6 +872,14 @@ function leaseLostWithRetry(
 }
 
 function failureFrom(error: unknown): Record<string, unknown> {
+  if (error instanceof ArtifactInvalidationError) {
+    return {
+      kind: 'artifact_invalidation',
+      retryable: false,
+      message: error.message,
+      failedArtifactIds: [...error.failedArtifactIds],
+    };
+  }
   if (error instanceof ToolInvocationError) {
     return {
       ...error.details,
@@ -842,6 +929,21 @@ function failureFrom(error: unknown): Record<string, unknown> {
   };
 }
 
+function failedArtifactIdsFrom(
+  failure: Record<string, unknown>,
+  cleanupFailure: unknown,
+  fallbackArtifactIds: string[],
+): string[] {
+  const current = Array.isArray(failure.failedArtifactIds)
+    ? failure.failedArtifactIds.filter((id): id is string => typeof id === 'string')
+    : [];
+  const cleanup = cleanupFailure instanceof ArtifactInvalidationError
+    ? cleanupFailure.failedArtifactIds
+    : [];
+  const merged = [...new Set([...current, ...cleanup])];
+  return merged.length > 0 ? merged : [...new Set(fallbackArtifactIds)];
+}
+
 function isIntegrityFailure(error: unknown): boolean {
   return error instanceof ExecutionAuthenticityError
     || error instanceof ArtifactIntegrityError
@@ -851,7 +953,8 @@ function isIntegrityFailure(error: unknown): boolean {
 
 function deliverableFailureFrom(error: unknown): Record<string, unknown> {
   if (
-    error instanceof LLMInvocationError
+    error instanceof ArtifactInvalidationError
+    || error instanceof LLMInvocationError
     || error instanceof ControlPlaneConflictError
     || isIntegrityFailure(error)
   ) {
@@ -1023,6 +1126,8 @@ export class LeaseExecutionEngine {
     const reusable = await this.loadReusableExecutions(input.lease, plan, planVersion.planHash, researchGoal);
     const outputs: EngineSealedStepOutput[] = [];
     const resolvedArtifacts = new Map<string, ResolvedEvidenceArtifact>();
+    const visualAssetService = new VisualAssetService({ artifacts: this.dependencies.artifacts });
+    const committedBrowserCaptures: CommittedBrowserCapture[] = [];
     const gaps: Array<{ stepNo: number; message: string }> = [];
     const stepByKey = new Map(plan.steps.map((step) => [String(step.step_no), step]));
     let wavePaused: LeaseExecutionResult | undefined;
@@ -1052,6 +1157,8 @@ export class LeaseExecutionEngine {
         let toolAttemptReceipts: ToolRetryAttemptReceipt[] | undefined;
         let actorResult: StepResult | undefined;
         let unpublishedArtifactId: string | undefined;
+        let publicationGroup: ArtifactPublicationGroup | undefined;
+        const pendingBrowserCaptures: CommittedBrowserCapture[] = [];
         let toolScope: ToolExecutionScope | undefined;
         let toolHeartbeat: LeaseHeartbeatHandle | undefined;
         try {
@@ -1162,6 +1269,12 @@ export class LeaseExecutionEngine {
           if (typeof actorOutputHash === 'string') producedSkillOutputHash = actorOutputHash;
           toolAttemptReceipts = actorResult.toolAttemptReceipts;
           const result = sanitizeStepResult(actorResult);
+          const captureAttachments = step.actor_type === 'tool'
+            ? browserCaptureAttachments(step.actor_id, result.output, result.mediaAttachments)
+            : [];
+          if (captureAttachments.length > 0) {
+            publicationGroup = new ArtifactPublicationGroup(this.dependencies.artifacts);
+          }
           if (toolScope) {
             await this.requireActiveToolLease(
               input.lease,
@@ -1185,7 +1298,8 @@ export class LeaseExecutionEngine {
             schemaVersion: STEP_ARTIFACT_SCHEMA_VERSIONS[result.kind],
             activeLease: input.lease,
           });
-          unpublishedArtifactId = artifact.id;
+          if (publicationGroup) publicationGroup.track(artifact.id);
+          else unpublishedArtifactId = artifact.id;
           toolScope?.assertActive(step.actor_id);
           toolHeartbeat?.assertHealthy();
           if (artifact.state !== 'SEALED' || !artifact.contentSha256) {
@@ -1210,6 +1324,38 @@ export class LeaseExecutionEngine {
           const verified = await readVerifiedStepArtifact(sealedOutput, this.dependencies.artifacts);
           toolScope?.assertActive(step.actor_id);
           toolHeartbeat?.assertHealthy();
+          for (const { captureIndex, attachment } of captureAttachments) {
+            if (!publicationGroup || !toolScope || !toolHeartbeat) {
+              throw new ExecutionAuthenticityError('browser capture publication scope is unavailable');
+            }
+            const visual = await visualAssetService.ingestBrowserCapture({
+              taskId: input.lease.taskId,
+              planVersionId: input.lease.planVersionId,
+              attemptId: input.lease.attemptId,
+              activeLease: input.lease,
+              toolArtifactId: artifact.id,
+              toolArtifactContentSha256: artifact.contentSha256,
+              captureIndex,
+              attachment,
+              exportPolicy: 'allow',
+              ensureActive: () => {
+                toolScope!.assertActive(step.actor_id);
+                toolHeartbeat!.assertHealthy();
+              },
+            });
+            publicationGroup.track(visual.assetArtifact.id).track(visual.manifestArtifact.id);
+            if (!visual.manifestArtifact.contentSha256) {
+              throw new ExecutionAuthenticityError('browser capture Manifest has no sealed hash');
+            }
+            toolScope.assertActive(step.actor_id);
+            toolHeartbeat.assertHealthy();
+            pendingBrowserCaptures.push({
+              stepNo: step.step_no,
+              captureIndex,
+              toolId: step.actor_id,
+              result: visual,
+            });
+          }
           await this.recordSucceededExecutionStep({
             ...input.lease,
             stepNo: step.step_no,
@@ -1249,7 +1395,9 @@ export class LeaseExecutionEngine {
             startedAt,
             finishedAt: new Date(),
           });
+          publicationGroup?.commit();
           unpublishedArtifactId = undefined;
+          committedBrowserCaptures.push(...pendingBrowserCaptures);
           if (step.actor_type === 'tool') {
             resolvedArtifacts.set(verified.artifact.id, {
               artifact: {
@@ -1259,34 +1407,63 @@ export class LeaseExecutionEngine {
               value: verified.value,
             });
           }
+          for (const capture of pendingBrowserCaptures) {
+            const manifestArtifact = capture.result.manifestArtifact;
+            resolvedArtifacts.set(manifestArtifact.id, {
+              artifact: {
+                id: manifestArtifact.id,
+                contentSha256: manifestArtifact.contentSha256!,
+              },
+              value: capture.result.manifest,
+            });
+          }
           outputs.push({ ...sealedOutput, output: verified.output });
         } catch (error) {
           attachToolAttemptReceipts(error, actorResult);
-          let artifactCleanupFailed = false;
+          let artifactCleanupFailed = error instanceof ArtifactInvalidationError;
+          let cleanupFailure: unknown;
+          if (artifactCleanupFailed) cleanupRecoveryRequired = true;
           const artifactCleanupDeferred = Boolean(
-            unpublishedArtifactId
+            (publicationGroup || unpublishedArtifactId)
             && error instanceof ExecutionStepPersistenceError,
           );
-          if (
-            unpublishedArtifactId
-            && !artifactCleanupDeferred
-          ) {
-            try {
+          const compensatePublication = async (reason: string): Promise<void> => {
+            if (publicationGroup) {
+              await publicationGroup.compensate(reason);
+              return;
+            }
+            if (unpublishedArtifactId) {
               await this.dependencies.artifacts.invalidateArtifactPublication(
                 unpublishedArtifactId,
+                reason,
+              );
+            }
+          };
+          if ((publicationGroup || unpublishedArtifactId) && !artifactCleanupDeferred) {
+            try {
+              await compensatePublication(
                 'unpublished step Artifact invalidated after execution-step persistence failure',
               );
-            } catch {
+            } catch (cleanupError) {
               artifactCleanupFailed = true;
+              cleanupFailure = cleanupError;
               cleanupRecoveryRequired = true;
             }
           }
           const attemptReceipts = attemptReceiptsFrom(error) ?? toolAttemptReceipts;
-          const failure = failureFrom(error);
+          let failure = failureFrom(error);
           if (artifactCleanupFailed) {
-            failure.kind = 'artifact_invalidation';
-            failure.retryable = false;
-            failure.message = 'unpublished step Artifact could not be invalidated';
+            failure = {
+              ...failure,
+              kind: 'artifact_invalidation',
+              retryable: false,
+              message: 'unpublished step Artifact could not be invalidated',
+              failedArtifactIds: failedArtifactIdsFrom(
+                failure,
+                cleanupFailure,
+                publicationGroup?.artifactIds ?? (unpublishedArtifactId ? [unpublishedArtifactId] : []),
+              ),
+            };
           }
           attachAttemptReceipts(failure, attemptReceipts);
           let failedToolProvenance: Record<string, unknown> | undefined;
@@ -1338,7 +1515,9 @@ export class LeaseExecutionEngine {
               });
               return;
             }
-            failure.allowedActions = failure.kind === 'safety' ? ['abort'] : ['retry', 'abort'];
+            failure.allowedActions = failure.kind === 'safety' || failure.kind === 'artifact_invalidation'
+              ? ['abort']
+              : ['retry', 'abort'];
           } else {
             failure.allowedActions = failure.retryable === true ? ['retry', 'abort'] : ['abort'];
           }
@@ -1357,7 +1536,15 @@ export class LeaseExecutionEngine {
                 : undefined,
             });
           }
-          await this.recordFailedExecutionStep({
+          if (artifactCleanupDeferred) {
+            failure.artifactInvalidationPromotion = {
+              version: ARTIFACT_INVALIDATION_PROMOTION_VERSION,
+              eligibleArtifactIds: [...new Set(
+                publicationGroup?.artifactIds ?? (unpublishedArtifactId ? [unpublishedArtifactId] : []),
+              )].sort(),
+            };
+          }
+          const failedStep = {
             ...input.lease,
             stepNo: step.step_no,
             stepName: step.step_name,
@@ -1369,19 +1556,53 @@ export class LeaseExecutionEngine {
             skillProvenance: failedSkillProvenance,
             startedAt,
             finishedAt: new Date(),
-          });
-          if (artifactCleanupDeferred && unpublishedArtifactId) {
+          } as const;
+          failure = await this.recordFailedExecutionStep(failedStep);
+          if (artifactCleanupDeferred) {
             try {
-              await this.dependencies.artifacts.invalidateArtifactPublication(
-                unpublishedArtifactId,
+              await compensatePublication(
                 'unpublished step Artifact invalidated after failed-step persistence resolved commit ambiguity',
               );
-            } catch {
+            } catch (cleanupError) {
               artifactCleanupFailed = true;
+              cleanupFailure = cleanupError;
               cleanupRecoveryRequired = true;
-              failure.kind = 'artifact_invalidation';
-              failure.retryable = false;
-              failure.message = 'unpublished step Artifact could not be invalidated';
+              const promotedFailure = await this.dependencies.repository.promoteExecutionStepArtifactInvalidation({
+                ...input.lease,
+                stepNo: step.step_no,
+                stepName: step.step_name,
+                actorType: step.actor_type,
+                actorId: step.actor_id,
+                expectedPreviousFailure: failure,
+                failedArtifactIds: failedArtifactIdsFrom(
+                  failure,
+                  cleanupFailure,
+                  publicationGroup?.artifactIds ?? (unpublishedArtifactId ? [unpublishedArtifactId] : []),
+                ),
+              });
+              if (!promotedFailure) {
+                throw new ControlPlaneConflictError(
+                  `execution step ${input.lease.attemptId}/${step.step_no} could not record Artifact invalidation`,
+                );
+              }
+              failure = promotedFailure;
+            }
+            if (!artifactCleanupFailed) {
+              const clearedFailure = await this.dependencies.repository
+                .clearExecutionStepArtifactInvalidationPromotion({
+                  ...input.lease,
+                  stepNo: step.step_no,
+                  stepName: step.step_name,
+                  actorType: step.actor_type,
+                  actorId: step.actor_id,
+                  expectedPreviousFailure: failure,
+                });
+              if (!clearedFailure) {
+                throw new ControlPlaneConflictError(
+                  `execution step ${input.lease.attemptId}/${step.step_no} could not clear Artifact invalidation marker`,
+                );
+              }
+              failure = clearedFailure;
             }
           }
           const paused = {
@@ -1390,12 +1611,24 @@ export class LeaseExecutionEngine {
             failedStepNo: step.step_no,
             failure,
           };
-          if (!wavePaused || step.step_no < (wavePaused.failedStepNo ?? Number.POSITIVE_INFINITY)) {
-            wavePaused = paused;
-          }
+          const authoritativeFailure = selectAuthoritativeFailedStep([
+            ...(wavePaused?.failedStepNo === undefined
+              ? []
+              : [{
+                  stepNo: wavePaused.failedStepNo,
+                  state: 'failed',
+                  failure: wavePaused.failure ?? null,
+                }]),
+            { stepNo: paused.failedStepNo, state: 'failed', failure: paused.failure },
+          ]);
+          if (authoritativeFailure?.stepNo === paused.failedStepNo) wavePaused = paused;
           if (isIntegrityFailure(error)) throw error;
           return;
         } finally {
+          if (actorResult?.mediaAttachments) {
+            actorResult.mediaAttachments.length = 0;
+            actorResult.mediaAttachments = undefined;
+          }
           toolHeartbeat?.stop();
           toolScope?.dispose();
         }
@@ -1463,6 +1696,42 @@ export class LeaseExecutionEngine {
           }));
         });
       const evidenceService = new EvidenceService();
+      for (const capture of [...committedBrowserCaptures]
+        .sort((left, right) => left.stepNo - right.stepNo || left.captureIndex - right.captureIndex)) {
+        const verified = await visualAssetService.readVerified({
+          assetId: capture.result.assetArtifact.id,
+          manifestArtifactId: capture.result.manifestArtifact.id,
+        });
+        const source = verified.manifest.source;
+        if (
+          verified.manifest.version !== 'visual-asset-manifest-v2'
+          || source.kind !== 'browser_capture'
+          || !verified.manifestArtifact.contentSha256
+        ) {
+          throw new ExecutionAuthenticityError('committed browser capture Evidence binding is invalid');
+        }
+        resolvedArtifacts.set(verified.manifestArtifact.id, {
+          artifact: {
+            id: verified.manifestArtifact.id,
+            contentSha256: verified.manifestArtifact.contentSha256,
+          },
+          value: verified.manifest,
+        });
+        evidenceEntries.push({
+          id: `BC${capture.stepNo}-${capture.captureIndex}`,
+          kind: 'screenshot',
+          evidenceClass: 'screenshot',
+          toolId: capture.toolId,
+          toolTier: 'optional',
+          artifactId: verified.manifestArtifact.id,
+          artifactContentSha256: verified.manifestArtifact.contentSha256,
+          jsonPointer: '/assetId',
+          sourceUrl: source.sourcePageUrl,
+          stepNo: capture.stepNo,
+          sensitivity: 'public',
+          redaction: 'none',
+        });
+      }
       for (const [index, visual] of materializedVisualOriginals.entries()) {
         const stored = await this.dependencies.artifacts.readVerifiedJson<VisualAssetManifest>(
           visual.original.manifestArtifactId,
@@ -1881,9 +2150,9 @@ export class LeaseExecutionEngine {
           reason: 'terminal artifacts invalidated after execution lease loss',
         });
       }
-      const failure = deliverableFailureFrom(error);
+      let failure = deliverableFailureFrom(error);
       failure.allowedActions = failure.retryable === true ? ['retry', 'abort'] : ['abort'];
-      await this.recordFailedExecutionStep({
+      failure = await this.recordFailedExecutionStep({
         ...input.lease,
         stepNo: plan.steps.length + 1,
         stepName: 'deliverable generation or review',
@@ -1919,16 +2188,35 @@ export class LeaseExecutionEngine {
       state: 'failed';
       failure: Record<string, unknown>;
     },
-  ): Promise<void> {
+  ): Promise<Record<string, unknown>> {
     try {
       await this.dependencies.repository.recordExecutionStep(input);
+      return input.failure;
     } catch (error) {
-      if (
-        !(error instanceof ControlPlaneConflictError)
-        || input.failure.kind !== 'lease_lost'
-      ) throw error;
-      const finalized = await this.dependencies.repository.recordLeaseLostExecutionStep(input);
-      if (!finalized) throw error;
+      if (!(error instanceof ControlPlaneConflictError)) throw error;
+      if (input.failure.kind === 'lease_lost') {
+        const finalized = await this.dependencies.repository.recordLeaseLostExecutionStep(input);
+        if (finalized) return input.failure;
+      }
+      if (input.failure.kind === 'artifact_invalidation') {
+        const failedArtifactIds = Array.isArray(input.failure.failedArtifactIds)
+          ? input.failure.failedArtifactIds.filter((id): id is string => typeof id === 'string')
+          : [];
+        const promotedFailure = await this.dependencies.repository.promoteExecutionStepArtifactInvalidation({
+          taskId: input.taskId,
+          planVersionId: input.planVersionId,
+          attemptId: input.attemptId,
+          leaseOwner: input.leaseOwner,
+          leaseToken: input.leaseToken,
+          stepNo: input.stepNo,
+          stepName: input.stepName,
+          actorType: input.actorType,
+          actorId: input.actorId,
+          failedArtifactIds,
+        });
+        if (promotedFailure) return promotedFailure;
+      }
+      throw error;
     }
   }
 

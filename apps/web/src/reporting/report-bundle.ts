@@ -10,6 +10,7 @@ import type {
   ReportDocument,
 } from '../../../orchestrator-runtime/src/report/report-document-composer.ts';
 import type { ChartTableAlternative } from '../../../orchestrator-runtime/src/report/chart-renderer.ts';
+import { assertVisualAssetManifest } from '../report-package-response.ts';
 
 interface BundleAssetReadResult {
   bytes: Uint8Array;
@@ -81,19 +82,9 @@ function assertCompleteMultimodalPackage(report: MultimodalReportPackage): void 
   const referenceAssets = new Set(references.map(({ assetId }) => assetId));
   const manifestAssets = new Set<string>();
   for (const manifest of report.visualAssetManifests) {
-    if (
-      !manifest
-      || manifest.version !== 'visual-asset-manifest-v1'
-      || manifestAssets.has(manifest.assetId)
-    ) {
+    assertVisualAssetManifest(manifest, binding);
+    if (manifestAssets.has(manifest.assetId)) {
       throw new Error('visual Asset Manifest set is invalid');
-    }
-    if (
-      manifest.taskId !== binding.taskId
-      || manifest.planVersionId !== binding.planVersionId
-      || manifest.attemptId !== binding.attemptId
-    ) {
-      throw new Error('visual Asset Manifest binding does not match the report package');
     }
     manifestAssets.add(manifest.assetId);
   }

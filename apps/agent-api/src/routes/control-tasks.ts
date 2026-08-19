@@ -354,7 +354,6 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
       if (
         !asset
         || asset.artifact.id !== req.params.assetId
-        || asset.manifestArtifact.schemaVersion !== 'visual-asset-manifest-v1'
       ) {
         hidden();
         return;
@@ -363,6 +362,7 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
       const manifest: VisualAssetManifest = asset.manifest;
       if (
         manifest.assetId !== req.params.assetId
+        || asset.manifestArtifact.schemaVersion !== manifest.version
         || (manifest.exportPolicy !== 'allow' && manifest.exportPolicy !== 'mask')
       ) {
         hidden();

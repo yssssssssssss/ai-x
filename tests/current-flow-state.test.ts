@@ -15,6 +15,7 @@ interface ServerExecutionStep {
   actorId: string;
   skillProvenance: Record<string, unknown> | null;
   state: 'running' | 'succeeded' | 'skipped' | 'failed';
+  failure?: Record<string, unknown> | null;
 }
 
 interface ExecLogRow {
@@ -84,6 +85,8 @@ interface CurrentFlowStateModule {
     userAnswers: Record<string, unknown>,
   ): Record<string, unknown>;
   executionStepsToExecLog(steps: ServerExecutionStep[]): ExecLogRow[];
+  selectAuthoritativeFailedStep(steps: readonly ServerExecutionStep[]): ServerExecutionStep | undefined;
+  executionFailureAllowsAction(failure: Record<string, unknown> | null | undefined, action: string): boolean;
   finishExecution(state: DeliverableReadState, execution: CompletedExecution): FlowTransition;
   failDeliverableRead(state: DeliverableReadState, error: string): FlowTransition;
   retryDeliverable(state: DeliverableReadState): FlowTransition;
@@ -168,6 +171,8 @@ async function loadCurrentFlowStateModule(): Promise<CurrentFlowStateModule> {
   for (const exportName of [
     'buildConfirmationAnswers',
     'executionStepsToExecLog',
+    'selectAuthoritativeFailedStep',
+    'executionFailureAllowsAction',
     'finishExecution',
     'failDeliverableRead',
     'retryDeliverable',
@@ -181,6 +186,44 @@ async function loadCurrentFlowStateModule(): Promise<CurrentFlowStateModule> {
   }
   return moduleExports as unknown as CurrentFlowStateModule;
 }
+
+test('selects one authoritative failed step independent of response order', async () => {
+  const {
+    executionFailureAllowsAction,
+    selectAuthoritativeFailedStep,
+  } = await loadCurrentFlowStateModule();
+  const step = (
+    stepNo: number,
+    kind: string,
+    state: ServerExecutionStep['state'] = 'failed',
+  ): ServerExecutionStep => ({
+    stepNo,
+    stepName: `step ${stepNo}`,
+    actorType: 'system',
+    actorId: kind,
+    skillProvenance: null,
+    state,
+    failure: { kind },
+  });
+
+  assert.equal(selectAuthoritativeFailedStep([
+    step(9, 'worker_loss'),
+    step(4, 'artifact_invalidation'),
+    step(10, 'schema'),
+    step(2, 'artifact_invalidation'),
+  ])?.stepNo, 2);
+  assert.equal(selectAuthoritativeFailedStep([
+    step(4, 'schema'),
+    step(3, 'worker_loss'),
+    step(8, 'artifact_invalidation', 'running'),
+  ])?.stepNo, 3);
+  assert.equal(selectAuthoritativeFailedStep([
+    step(1, 'network'),
+    step(5, 'safety'),
+  ])?.stepNo, 5);
+  assert.equal(executionFailureAllowsAction({ allowedActions: ['abort'] }, 'retry'), false);
+  assert.equal(executionFailureAllowsAction({ allowedActions: ['abort'] }, 'abort'), true);
+});
 test('merges Legacy and Current history by newest creation time while preserving source kind', async () => {
   const { mergeTaskHistory } = await loadCurrentFlowStateModule();
   const history = mergeTaskHistory(

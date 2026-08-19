@@ -82,6 +82,7 @@ class MemoryRecoveryStore {
     { id: 'sealed-visual-manifest', attemptId: 'expired-attempt', kind: 'visual_asset_manifest', state: 'SEALED', storageUri: '/runs/visual.json' },
     { id: 'sealed-annotation', attemptId: 'expired-attempt', kind: 'image_annotation', state: 'SEALED', storageUri: '/runs/annotation.json' },
     { id: 'sealed-chart', attemptId: 'expired-attempt', kind: 'chart_spec', state: 'SEALED', storageUri: '/runs/chart.json' },
+    { id: 'sealed-chart-data', attemptId: 'expired-attempt', kind: 'chart_data', state: 'SEALED', storageUri: '/runs/chart-data.json' },
     { id: 'sealed-published-step', attemptId: 'expired-attempt', kind: 'tool_output', state: 'SEALED', storageUri: '/runs/published-step.json' },
     { id: 'sealed-orphan-step', attemptId: 'expired-attempt', kind: 'skill_output', state: 'SEALED', storageUri: '/runs/orphan-step.json' },
     { id: 'live-staging', attemptId: 'live-attempt', kind: 'other', state: 'STAGING', storageUri: '/runs/live.json' },
@@ -272,6 +273,7 @@ test('recover invalidates sealed terminal and unpublished step Artifacts but pre
   }
   assert.equal(store.artifacts.find((artifact) => artifact.id === 'sealed-orphan-step')?.state, 'INVALIDATED');
   assert.equal(store.artifacts.find((artifact) => artifact.id === 'sealed-published-step')?.state, 'SEALED');
+  assert.equal(store.artifacts.find((artifact) => artifact.id === 'sealed-chart-data')?.state, 'SEALED');
   assert.equal(store.artifacts.find((artifact) => artifact.id === 'sealed-other')?.state, 'SEALED');
   assert.deepEqual(store.calls.invalidate.map((call) => call.artifactId), [
     'sealed-evidence',
@@ -305,10 +307,22 @@ test('recover retries an unpublished sealed step Artifact after immediate invali
     state: 'SEALED',
     storageUri: '/runs/ambiguous-orphan-step.json',
   });
+  store.artifacts.push({
+    id: 'ambiguous-chart-data',
+    attemptId: 'ambiguous-attempt',
+    kind: 'chart_data',
+    state: 'SEALED',
+    storageUri: '/runs/ambiguous-chart-data.json',
+  });
 
   await service.recover(new Date('2026-08-17T00:00:01.000Z'));
 
   assert.equal(store.artifacts.find(({ id }) => id === 'ambiguous-orphan-step')?.state, 'INVALIDATED');
+  assert.equal(store.artifacts.find(({ id }) => id === 'ambiguous-chart-data')?.state, 'SEALED');
+  assert.equal(
+    store.calls.invalidate.some(({ artifactId }) => artifactId === 'ambiguous-chart-data'),
+    false,
+  );
   assert.equal(store.calls.pause.some(({ attemptId }) => attemptId === 'ambiguous-attempt'), false);
 });
 

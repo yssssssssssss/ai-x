@@ -249,6 +249,29 @@ export type VisualAssetSource =
   | { kind: 'user_upload'; fileName: string }
   | { kind: 'derived' };
 
+export interface BrowserCaptureSource {
+  kind: 'browser_capture';
+  artifactId: string;
+  artifactContentSha256: string;
+  jsonPointer: string;
+  attachmentId: string;
+  sourcePageUrl: string;
+  finalUrl: string;
+  pageTitle: string;
+  capturedAt: string;
+  captureMode: 'extracted_image' | 'element_screenshot' | 'full_page_screenshot';
+  selector?: string;
+  viewport: { width: number; height: number };
+}
+
+export interface ChartRenderSource {
+  kind: 'chart_render';
+  dataArtifactId: string;
+  dataArtifactContentSha256: string;
+}
+
+export type VisualAssetSourceV2 = VisualAssetSource | BrowserCaptureSource | ChartRenderSource;
+
 export interface VisualAssetLineage {
   assetId: string;
   manifestArtifactId: string;
@@ -280,7 +303,7 @@ export type VisualAssetDerivation =
   | { kind: 'heatmap' }
   | { kind: 'chart_svg'; chartId: string; specHash: string };
 
-export interface VisualAssetManifest {
+export interface VisualAssetManifestV1 {
   version: 'visual-asset-manifest-v1';
   taskId: string;
   planVersionId: string;
@@ -297,6 +320,26 @@ export interface VisualAssetManifest {
   derivation: VisualAssetDerivation | null;
   manifestHash: string;
 }
+
+export interface VisualAssetManifestV2 {
+  version: 'visual-asset-manifest-v2';
+  taskId: string;
+  planVersionId: string;
+  attemptId: string;
+  assetId: string;
+  contentSha256: string;
+  mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/svg+xml';
+  byteSize: number;
+  width: number;
+  height: number;
+  exportPolicy: VisualAssetExportPolicy;
+  source: VisualAssetSourceV2;
+  derivedFrom: VisualAssetLineage | null;
+  derivation: VisualAssetDerivation | null;
+  manifestHash: string;
+}
+
+export type VisualAssetManifest = VisualAssetManifestV1 | VisualAssetManifestV2;
 
 export interface EvidenceEntry {
   id: string;

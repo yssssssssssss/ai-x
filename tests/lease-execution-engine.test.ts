@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Pool } from 'pg';
 import { ControlArtifactStore } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
+import { ArtifactInvalidationError } from '../apps/orchestrator-runtime/src/control/artifact-publication-group.ts';
 import { VisualInputGateStore } from '../apps/orchestrator-runtime/src/control/visual-input-gate-store.ts';
 import {
   ExecutionAuthenticityError,
@@ -17,6 +18,7 @@ import type {
   CurrentPlanStep,
   EvidenceRequirement,
   ResearchDeliverableEnvelope,
+  VisualAssetManifest,
 } from '../packages/api-contract/research-deliverable.ts';
 import type {
   CurrentDeliverableGenerateInput,
@@ -27,9 +29,10 @@ import type {
   ReportReviewInput,
   ReportReviewResult,
 } from '../apps/orchestrator-runtime/src/report/report-review-service.ts';
-import type {
-  ReportReviewArtifact,
-  ReportReviewDimension,
+import {
+  selectAuthoritativeFailedStep,
+  type ReportReviewArtifact,
+  type ReportReviewDimension,
 } from '../packages/api-contract/control-workflow.ts';
 import { CurrentReportValidationError } from '../apps/orchestrator-runtime/src/evidence/report-evidence-validator.ts';
 import type {
@@ -71,13 +74,16 @@ import {
   ToolRouter,
   type ToolAdapter,
   type ToolInvokeResult,
+  type ToolMediaAttachment,
 } from '../apps/orchestrator-runtime/src/runtime/tool-adapter.ts';
 import {
   getConfigRoot,
   hashFile,
   loadEvidencePolicy,
+  loadToolRegistry,
   setConfigRoot,
   type ToolManifest,
+  type ToolRegistryEntry,
 } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
@@ -347,6 +353,122 @@ class CountingRealTavilyAdapter implements ToolAdapter {
         latencyMs: 1,
       },
     };
+  }
+}
+
+const BROWSER_CAPTURE_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
+
+interface BrowserCaptureFixture {
+  metadata: Record<string, unknown>;
+  attachment: ToolMediaAttachment;
+}
+
+function browserCaptureFixture(index: number): BrowserCaptureFixture {
+  const attachmentId = `capture-${index + 1}`;
+  const sourcePageUrl = `https://source.test/product-${index + 1}`;
+  const capturedAt = `2026-08-19T08:00:0${index}.000Z`;
+  const contentSha256 = `sha256:${createHash('sha256').update(BROWSER_CAPTURE_PNG).digest('hex')}`;
+  return {
+    metadata: {
+      attachment_id: attachmentId,
+      source_result_index: index,
+      requested_url: sourcePageUrl,
+      final_url: `${sourcePageUrl}?view=final`,
+      page_title: `Product ${index + 1}`,
+      captured_at: capturedAt,
+      capture_mode: 'full_page_screenshot',
+      viewport: { width: 1440, height: 900 },
+      media_type: 'image/png',
+      width: 1,
+      height: 1,
+      byte_size: BROWSER_CAPTURE_PNG.byteLength,
+      content_sha256: contentSha256,
+      truncated: false,
+    },
+    attachment: {
+      attachmentId,
+      bytes: Buffer.from(BROWSER_CAPTURE_PNG),
+      mediaType: 'image/png',
+      contentSha256,
+      sourcePageUrl,
+      capturedAt,
+      captureMode: 'full_page_screenshot',
+      viewport: { width: 1440, height: 900 },
+      width: 1,
+      height: 1,
+    },
+  };
+}
+
+class BrowserCaptureAdapter implements ToolAdapter {
+  readonly adapterType = 'playwright' as const;
+  readonly implementationId = 'test-playwright-real-v1';
+  readonly executionMode = 'real' as const;
+  calls = 0;
+  deadlineAt = 0;
+  returnedAttachments: ToolMediaAttachment[] | undefined;
+
+  constructor(
+    private readonly fixtures: BrowserCaptureFixture[],
+    private readonly attachmentFactory: (
+      fixtures: BrowserCaptureFixture[],
+    ) => ToolMediaAttachment[] = (fixtures) => fixtures.map(({ attachment }) => ({
+      ...attachment,
+      bytes: Buffer.from(attachment.bytes),
+      viewport: { ...attachment.viewport },
+    })),
+  ) {}
+
+  endpointHost(): null {
+    return null;
+  }
+
+  async invoke(options: Parameters<ToolAdapter['invoke']>[0]): Promise<ToolInvokeResult> {
+    this.calls += 1;
+    this.deadlineAt = options.context.deadlineAt;
+    this.returnedAttachments = this.attachmentFactory(this.fixtures);
+    return {
+      output: {
+        captures: this.fixtures.map(({ metadata }) => structuredClone(metadata)),
+        failures: [],
+        security_profile: 'browser-controls-v1',
+      },
+      latencyMs: 1,
+      receipt: {
+        declaredAdapterType: options.manifest.adapter_type,
+        resolvedAdapterType: this.adapterType,
+        implementationId: this.implementationId,
+        executionMode: this.executionMode,
+        endpointHost: null,
+        status: 'ok',
+        latencyMs: 1,
+      },
+      mediaAttachments: this.returnedAttachments,
+    };
+  }
+}
+
+class TavilyWithUnsupportedSidecarAdapter extends CountingRealTavilyAdapter {
+  override async invoke(
+    options: Parameters<ToolAdapter['invoke']>[0],
+  ): Promise<ToolInvokeResult> {
+    const result = await super.invoke(options);
+    return {
+      ...result,
+      mediaAttachments: [browserCaptureFixture(0).attachment],
+    };
+  }
+}
+
+class TestOnlyPlaywrightSkillLoader extends SkillLoader {
+  override getTool(id: string): ToolRegistryEntry | null {
+    if (id === 'playwright-page-capture') {
+      return loadToolRegistry().tools.find((tool) => tool.id === id) ?? null;
+    }
+    return super.getTool(id);
   }
 }
 
@@ -806,6 +928,42 @@ const planSteps: CurrentPlanStep[] = [
     fallback_actor_ids: [],
   },
 ];
+
+function browserCaptureStep(): CurrentPlanStep {
+  return {
+    step_no: 2,
+    step_name: '网页视觉取证',
+    actor_type: 'tool',
+    actor_id: 'playwright-page-capture',
+    question_ids: ['question-1'],
+    depends_on: [1],
+    input: { pages: [{ url: 'https://source.test/product-1' }] },
+    input_bindings: [],
+    expected_outputs: [{ pointer: '/captures', description: 'verified browser captures' }],
+    acceptance_criteria: ['returns sealed screenshot evidence'],
+    requires_approval: false,
+    fallback_actor_ids: [],
+  };
+}
+
+async function claimedBrowserExecution(): Promise<{
+  repository: ControlPlaneRepository;
+  lease: ControlExecutionLease;
+}> {
+  return claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]!, browserCaptureStep()],
+    {
+      deliverable_type: 'competitive_analysis_report',
+      evidence_requirements: [{
+        id: 'browser-screenshot',
+        acceptedClasses: ['public_source', 'screenshot'],
+        minimumCount: 1,
+        required: true,
+      }],
+    },
+  );
+}
 
 async function claimedExecution(
   expiresAt = new Date(Date.now() + 60_000),
@@ -1779,14 +1937,74 @@ test('prioritizes parallel Artifact invalidation failure as the attempt pause re
   ).execute({ lease, expectedModel: 'pinned-model' });
 
   assert.equal(result.status, 'paused');
-  assert.equal(result.failedStepNo, 1);
-  assert.equal(result.failure?.kind, 'server');
+  assert.equal(result.failedStepNo, 2);
+  assert.equal(result.failure?.kind, 'artifact_invalidation');
   assert.equal(succeededWriteAttempts, 2);
   assert.equal(cleanupAttempts, 1);
+  const persistedFailure = (await repository.listExecutionSteps(lease.attemptId))
+    .find(({ stepNo }) => stepNo === 2)?.failure;
+  assert.equal(persistedFailure?.kind, 'artifact_invalidation');
   const recoverable = (await repository.listRecoverableExecutions())
     .find(({ attemptId }) => attemptId === lease.attemptId);
   assert.equal(recoverable?.attemptState, 'paused');
   assert.equal(recoverable?.failureKind, 'artifact_invalidation');
+});
+
+test('uses the shared authority order for parallel ordinary failures', async () => {
+  const steps: CurrentPlanStep[] = [
+    {
+      ...planSteps[2]!,
+      step_no: 1,
+      step_name: 'retryable parallel failure',
+      actor_id: 'retryable-parallel-llm',
+      depends_on: [],
+    },
+    {
+      ...planSteps[2]!,
+      step_no: 2,
+      step_name: 'terminal parallel failure',
+      actor_id: 'terminal-parallel-llm',
+      depends_on: [],
+    },
+    {
+      ...planSteps[0]!,
+      step_no: 3,
+      depends_on: [],
+    },
+  ];
+  const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), steps);
+  const llm = new CountingRealLLM();
+  llm.generateText = async (options) => {
+    if (options.receipt.stepNo === 1) {
+      throw new LLMInvocationError('server', true, 503, 'retryable parallel failure');
+    }
+    if (options.receipt.stepNo === 2) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      throw new LLMInvocationError('schema', false, null, 'terminal parallel failure');
+    }
+    throw new Error(`unexpected LLM step ${options.receipt.stepNo}`);
+  };
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    llm,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'paused');
+  assert.equal(result.failedStepNo, 2);
+  assert.equal(result.failure?.kind, 'schema');
+  assert.deepEqual(result.failure?.allowedActions, ['abort']);
+  const failedSteps = (await repository.listExecutionSteps(lease.attemptId))
+    .filter((step) => step.stepNo === 1 || step.stepNo === 2);
+  assert.deepEqual(
+    failedSteps.map(({ stepNo, state }) => ({ stepNo, state })),
+    [
+      { stepNo: 1, state: 'failed' },
+      { stepNo: 2, state: 'failed' },
+    ],
+  );
+  assert.equal(selectAuthoritativeFailedStep(failedSteps)?.stepNo, result.failedStepNo);
 });
 
 test('settles and pauses a parallel wave when a pre-run lease refresh rejects', async () => {
@@ -2334,6 +2552,607 @@ test('orders parallel outputs by step number regardless of completion timing', a
   );
 });
 
+test('atomically publishes browser Tool JSON, Binary, V2 Manifest, and screenshot Evidence', async () => {
+  const { repository, lease } = await claimedBrowserExecution();
+  const adapter = new BrowserCaptureAdapter([browserCaptureFixture(0)]);
+  const deliverables = new RecordingDeliverablesFake();
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()).register(adapter),
+    new CountingRealLLM(),
+    deliverables,
+    undefined,
+    new TestOnlyPlaywrightSkillLoader(),
+  ).execute({ lease, expectedModel: 'pinned-model' }) as DeliverableAwareExecutionResult;
+
+  assert.equal(result.status, 'completed');
+  assert.equal(adapter.calls, 1);
+  assert.equal(adapter.returnedAttachments?.length, 0, 'sealed sidecar bytes must be released');
+  assert.equal(deliverables.calls.length, 1);
+
+  const artifacts = await repository.listArtifactsForAttempt(lease);
+  const tool = artifacts.find(({ kind, storageUri }) => (
+    kind === 'tool_output' && storageUri.includes('/steps/2-tool_output.json')
+  ));
+  const binary = artifacts.find(({ kind }) => kind === 'visual_asset');
+  const manifestArtifact = artifacts.find(({ kind }) => kind === 'visual_asset_manifest');
+  const evidenceArtifact = artifacts.find(({ kind }) => kind === 'evidence_manifest');
+  assert.ok(tool && binary && manifestArtifact && evidenceArtifact);
+  assert.ok([tool, binary, manifestArtifact, evidenceArtifact]
+    .every(({ state }) => state === 'SEALED'));
+
+  const store = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+  const manifest = await store.readVerifiedJson<VisualAssetManifest>(manifestArtifact.id);
+  assert.equal(manifest.value.version, 'visual-asset-manifest-v2');
+  assert.equal(manifest.artifact.schemaVersion, 'visual-asset-manifest-v2');
+  assert.equal(manifest.value.assetId, binary.id);
+  assert.equal(manifest.value.source.kind, 'browser_capture');
+  if (manifest.value.source.kind !== 'browser_capture') assert.fail('expected browser capture source');
+  assert.equal(manifest.value.source.artifactId, tool.id);
+  assert.equal(manifest.value.source.sourcePageUrl, 'https://source.test/product-1');
+
+  const visualAssets = new VisualAssetService({ artifacts: store });
+  const discovered = await new ReportCompositionService({
+    artifacts: store,
+    visualAssets,
+    repository,
+  }).discoverAttemptMaterials({
+    taskId: lease.taskId,
+    planVersionId: lease.planVersionId,
+    attemptId: lease.attemptId,
+  });
+  assert.equal(discovered.visualAssets.length, 1);
+  assert.equal(discovered.visualAssets[0]?.manifest.version, 'visual-asset-manifest-v2');
+  assert.equal(discovered.visualAssets[0]?.manifest.source.kind, 'browser_capture');
+  assert.deepEqual(discovered.charts, []);
+
+  const evidence = await store.readVerifiedJson<EvidenceManifest>(evidenceArtifact.id);
+  const screenshot = evidence.value.entries.find(({ id }) => id === 'BC2-0');
+  assert.ok(screenshot);
+  assert.equal(screenshot.kind, 'screenshot');
+  assert.equal(screenshot.evidenceClass, 'screenshot');
+  assert.equal(screenshot.artifactId, manifestArtifact.id);
+  assert.equal(screenshot.artifactContentSha256, manifestArtifact.contentSha256);
+  assert.equal(screenshot.jsonPointer, '/assetId');
+  assert.equal(screenshot.sourceUrl, 'https://source.test/product-1');
+  const step = (await repository.listExecutionSteps(lease.attemptId))
+    .find(({ stepNo }) => stepNo === 2);
+  assert.equal(step?.state, 'succeeded');
+  assert.equal(step?.outputArtifactId, tool.id);
+});
+
+test('invalidates the complete browser publication when the second Manifest write fails', async () => {
+  const { repository, lease } = await claimedBrowserExecution();
+  const originalCreateStagingArtifact = repository.createStagingArtifact.bind(repository);
+  let manifestWrites = 0;
+  repository.createStagingArtifact = async (input) => {
+    if (input.kind === 'visual_asset_manifest' && ++manifestWrites === 2) {
+      throw new Error('injected second browser Manifest write failure');
+    }
+    return originalCreateStagingArtifact(input);
+  };
+  const deliverables = new RecordingDeliverablesFake();
+  const result = await buildEngine(
+    repository,
+    new ToolRouter()
+      .register(new CountingRealTavilyAdapter())
+      .register(new BrowserCaptureAdapter([
+        browserCaptureFixture(0),
+        browserCaptureFixture(1),
+      ])),
+    new CountingRealLLM(),
+    deliverables,
+    undefined,
+    new TestOnlyPlaywrightSkillLoader(),
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'paused');
+  assert.equal(deliverables.calls.length, 0);
+  const publications = (await repository.listArtifactsForAttempt(lease))
+    .filter(({ kind, storageUri }) => (
+      kind === 'visual_asset'
+      || kind === 'visual_asset_manifest'
+      || (kind === 'tool_output' && storageUri.includes('/steps/2-tool_output.json'))
+    ));
+  assert.equal(publications.length, 4);
+  assert.ok(publications.every(({ state }) => state === 'FAILED'));
+  assert.equal(publications.some(({ kind, state }) => kind === 'visual_asset' && state === 'SEALED'), false);
+  const step = (await repository.listExecutionSteps(lease.attemptId))
+    .find(({ stepNo }) => stepNo === 2);
+  assert.equal(step?.state, 'failed');
+});
+
+test('retains every failed Artifact id when nested and outer browser compensation both fail', async () => {
+  const { repository, lease } = await claimedBrowserExecution();
+  const originalCreateStagingArtifact = repository.createStagingArtifact.bind(repository);
+  const originalInvalidate = repository.invalidateArtifactPublication.bind(repository);
+  let manifestWrites = 0;
+  let innerFailedId: string | undefined;
+  let outerFailedId: string | undefined;
+  repository.createStagingArtifact = async (input) => {
+    if (input.kind === 'visual_asset_manifest' && ++manifestWrites === 2) {
+      throw new Error('injected second browser Manifest write failure');
+    }
+    return originalCreateStagingArtifact(input);
+  };
+  repository.invalidateArtifactPublication = async (artifactId, reason) => {
+    const artifact = await repository.getArtifact(artifactId);
+    if (artifact?.kind === 'visual_asset' && innerFailedId === undefined) {
+      innerFailedId = artifactId;
+      throw new Error('injected nested visual compensation failure');
+    }
+    if (
+      artifact?.kind === 'tool_output'
+      && artifact.storageUri.includes('/steps/2-tool_output.json')
+    ) {
+      outerFailedId = artifactId;
+      throw new Error('injected outer publication compensation failure');
+    }
+    await originalInvalidate(artifactId, reason);
+  };
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter()
+      .register(new CountingRealTavilyAdapter())
+      .register(new BrowserCaptureAdapter([
+        browserCaptureFixture(0),
+        browserCaptureFixture(1),
+      ])),
+    new CountingRealLLM(),
+    new RecordingDeliverablesFake(),
+    undefined,
+    new TestOnlyPlaywrightSkillLoader(),
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'paused');
+  assert.equal(result.failure?.kind, 'artifact_invalidation');
+  assert.deepEqual(result.failure?.allowedActions, ['abort']);
+  assert.ok(innerFailedId && outerFailedId);
+  assert.deepEqual(
+    new Set(result.failure?.failedArtifactIds as string[]),
+    new Set([innerFailedId, outerFailedId]),
+  );
+  const step = (await repository.listExecutionSteps(lease.attemptId))
+    .find(({ stepNo }) => stepNo === 2);
+  assert.equal(step?.failure?.kind, 'artifact_invalidation');
+  assert.deepEqual(step?.failure?.allowedActions, ['abort']);
+  assert.deepEqual(
+    new Set(step?.failure?.failedArtifactIds as string[]),
+    new Set([innerFailedId, outerFailedId]),
+  );
+  const recoverable = (await repository.listRecoverableExecutions())
+    .find(({ attemptId }) => attemptId === lease.attemptId);
+  assert.equal(recoverable?.failureKind, 'artifact_invalidation');
+});
+
+test('keeps the complete browser publication when the succeeded-step response is lost after commit', async () => {
+  const { repository, lease } = await claimedBrowserExecution();
+  const originalRecordExecutionStep = repository.recordExecutionStep.bind(repository);
+  let lostResponse = false;
+  repository.recordExecutionStep = async (input) => {
+    await originalRecordExecutionStep(input);
+    if (input.stepNo === 2 && input.state === 'succeeded' && !lostResponse) {
+      lostResponse = true;
+      throw new Error('simulated browser succeeded-step response loss');
+    }
+  };
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter()
+      .register(new CountingRealTavilyAdapter())
+      .register(new BrowserCaptureAdapter([browserCaptureFixture(0)])),
+    new CountingRealLLM(),
+    new RecordingDeliverablesFake(),
+    undefined,
+    new TestOnlyPlaywrightSkillLoader(),
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed');
+  assert.equal(lostResponse, true);
+  const publications = (await repository.listArtifactsForAttempt(lease))
+    .filter(({ kind, storageUri }) => (
+      kind === 'visual_asset'
+      || kind === 'visual_asset_manifest'
+      || (kind === 'tool_output' && storageUri.includes('/steps/2-tool_output.json'))
+    ));
+  assert.equal(publications.length, 3);
+  assert.ok(publications.every(({ state }) => state === 'SEALED'));
+});
+
+test('invalidates the complete browser publication when succeeded-step persistence is unconfirmed', async () => {
+  const { repository, lease } = await claimedBrowserExecution();
+  const originalRecordExecutionStep = repository.recordExecutionStep.bind(repository);
+  let succeededWrites = 0;
+  repository.recordExecutionStep = async (input) => {
+    if (input.stepNo === 2 && input.state === 'succeeded') {
+      succeededWrites += 1;
+      throw new Error('injected browser succeeded-step persistence failure');
+    }
+    await originalRecordExecutionStep(input);
+  };
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter()
+      .register(new CountingRealTavilyAdapter())
+      .register(new BrowserCaptureAdapter([browserCaptureFixture(0)])),
+    new CountingRealLLM(),
+    new RecordingDeliverablesFake(),
+    undefined,
+    new TestOnlyPlaywrightSkillLoader(),
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'paused');
+  assert.equal(succeededWrites, 2);
+  assert.equal(result.failure?.artifactInvalidationPromotion, undefined);
+  const publications = (await repository.listArtifactsForAttempt(lease))
+    .filter(({ kind, storageUri }) => (
+      kind === 'visual_asset'
+      || kind === 'visual_asset_manifest'
+      || (kind === 'tool_output' && storageUri.includes('/steps/2-tool_output.json'))
+    ));
+  assert.equal(publications.length, 3);
+  assert.ok(publications.every(({ state }) => state === 'FAILED'));
+  const step = (await repository.listExecutionSteps(lease.attemptId))
+    .find(({ stepNo }) => stepNo === 2);
+  assert.equal(step?.state, 'failed');
+  assert.equal(step?.failure?.artifactInvalidationPromotion, undefined);
+});
+
+test('persists Artifact invalidation when browser cleanup fails after the lease expires', async () => {
+  const { repository, lease } = await claimedBrowserExecution();
+  const originalRecordExecutionStep = repository.recordExecutionStep.bind(repository);
+  const originalInvalidate = repository.invalidateArtifactPublication.bind(repository);
+  let expired = false;
+  const failedArtifactIds: string[] = [];
+  repository.recordExecutionStep = async (input) => {
+    if (input.stepNo === 2 && input.state === 'succeeded' && !expired) {
+      expired = true;
+      await ageLeasePastExpiry(lease);
+    }
+    await originalRecordExecutionStep(input);
+  };
+  repository.invalidateArtifactPublication = async (artifactId, reason) => {
+    const artifact = await repository.getArtifact(artifactId);
+    if (
+      artifact?.attemptId === lease.attemptId
+      && (
+        artifact.kind === 'visual_asset'
+        || artifact.kind === 'visual_asset_manifest'
+        || (artifact.kind === 'tool_output' && artifact.storageUri.includes('/steps/2-tool_output.json'))
+      )
+    ) {
+      failedArtifactIds.push(artifactId);
+      throw new Error(`injected post-lease invalidation failure for ${artifactId}`);
+    }
+    await originalInvalidate(artifactId, reason);
+  };
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter()
+      .register(new CountingRealTavilyAdapter())
+      .register(new BrowserCaptureAdapter([browserCaptureFixture(0)])),
+    new CountingRealLLM(),
+    new RecordingDeliverablesFake(),
+    undefined,
+    new TestOnlyPlaywrightSkillLoader(),
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(expired, true);
+  assert.equal(result.status, 'paused');
+  assert.equal(result.failure?.kind, 'artifact_invalidation');
+  assert.deepEqual(result.failure?.allowedActions, ['abort']);
+  assert.equal(failedArtifactIds.length, 3);
+  assert.deepEqual(
+    new Set(result.failure?.failedArtifactIds as string[]),
+    new Set(failedArtifactIds),
+  );
+  const step = (await repository.listExecutionSteps(lease.attemptId))
+    .find(({ stepNo }) => stepNo === 2);
+  assert.equal(step?.failure?.kind, 'artifact_invalidation');
+  assert.deepEqual(step?.failure?.allowedActions, ['abort']);
+  assert.deepEqual(
+    new Set(step?.failure?.failedArtifactIds as string[]),
+    new Set(failedArtifactIds),
+  );
+  const recoverable = (await repository.listRecoverableExecutions())
+    .find(({ attemptId }) => attemptId === lease.attemptId);
+  assert.equal(recoverable?.failureKind, 'artifact_invalidation');
+});
+
+for (const recoveryMode of ['inside promotion', 'before promotion'] as const) {
+  test(`persists Artifact invalidation when the lease expires after failed-step persistence (${recoveryMode})`, async () => {
+    const { repository, lease } = await claimedBrowserExecution();
+    const originalRecordExecutionStep = repository.recordExecutionStep.bind(repository);
+    const originalInvalidate = repository.invalidateArtifactPublication.bind(repository);
+    let succeededWrites = 0;
+    let failedStepPersisted = false;
+    const failedArtifactIds: string[] = [];
+    repository.recordExecutionStep = async (input) => {
+      if (input.stepNo === 2 && input.state === 'succeeded') {
+        succeededWrites += 1;
+        throw new Error('injected browser succeeded-step persistence failure');
+      }
+      await originalRecordExecutionStep(input);
+      if (input.stepNo === 2 && input.state === 'failed' && !failedStepPersisted) {
+        failedStepPersisted = true;
+        await ageLeasePastExpiry(lease);
+        if (recoveryMode === 'before promotion') {
+          await repository.expireExecutionLease({
+            taskId: lease.taskId,
+            attemptId: lease.attemptId,
+          });
+        }
+      }
+    };
+    repository.invalidateArtifactPublication = async (artifactId, reason) => {
+      const artifact = await repository.getArtifact(artifactId);
+      if (
+        artifact?.attemptId === lease.attemptId
+        && (
+          artifact.kind === 'visual_asset'
+          || artifact.kind === 'visual_asset_manifest'
+          || (artifact.kind === 'tool_output' && artifact.storageUri.includes('/steps/2-tool_output.json'))
+        )
+      ) {
+        failedArtifactIds.push(artifactId);
+        throw new Error(`injected deferred invalidation failure for ${artifactId}`);
+      }
+      await originalInvalidate(artifactId, reason);
+    };
+
+    const result = await buildEngine(
+      repository,
+      new ToolRouter()
+        .register(new CountingRealTavilyAdapter())
+        .register(new BrowserCaptureAdapter([browserCaptureFixture(0)])),
+      new CountingRealLLM(),
+      new RecordingDeliverablesFake(),
+      undefined,
+      new TestOnlyPlaywrightSkillLoader(),
+    ).execute({ lease, expectedModel: 'pinned-model' });
+
+    assert.equal(succeededWrites, 2);
+    assert.equal(failedStepPersisted, true);
+    assert.equal(result.status, 'paused');
+    assert.equal(result.failure?.kind, 'artifact_invalidation');
+    assert.equal(result.failure?.artifactInvalidationPromotion, undefined);
+    assert.deepEqual(result.failure?.allowedActions, ['abort']);
+    assert.equal(failedArtifactIds.length, 3);
+    assert.deepEqual(
+      new Set(result.failure?.failedArtifactIds as string[]),
+      new Set(failedArtifactIds),
+    );
+    const step = (await repository.listExecutionSteps(lease.attemptId))
+      .find(({ stepNo }) => stepNo === 2);
+    assert.equal(step?.failure?.kind, 'artifact_invalidation');
+    assert.equal(step?.failure?.artifactInvalidationPromotion, undefined);
+    assert.deepEqual(step?.failure?.allowedActions, ['abort']);
+    const recoverable = (await repository.listRecoverableExecutions())
+      .find(({ attemptId }) => attemptId === lease.attemptId);
+    assert.equal(recoverable?.attemptState, 'paused');
+    assert.equal(recoverable?.failureKind, 'artifact_invalidation');
+  });
+}
+
+test('rejects missing, duplicate, and extra browser sidecars before browser Artifact publication', async () => {
+  const cases: Array<{
+    name: string;
+    fixtures: BrowserCaptureFixture[];
+    attachments: (fixtures: BrowserCaptureFixture[]) => ToolMediaAttachment[];
+  }> = [{
+    name: 'missing',
+    fixtures: [browserCaptureFixture(0)],
+    attachments: () => [],
+  }, {
+    name: 'duplicate',
+    fixtures: [browserCaptureFixture(0), browserCaptureFixture(1)],
+    attachments: (fixtures) => [
+      fixtures[0]!.attachment,
+      { ...fixtures[1]!.attachment, attachmentId: fixtures[0]!.attachment.attachmentId },
+    ],
+  }, {
+    name: 'extra',
+    fixtures: [browserCaptureFixture(0)],
+    attachments: (fixtures) => [fixtures[0]!.attachment, browserCaptureFixture(1).attachment],
+  }];
+
+  for (const candidate of cases) {
+    const { repository, lease } = await claimedBrowserExecution();
+    const deliverables = new RecordingDeliverablesFake();
+    await assert.rejects(
+      () => buildEngine(
+        repository,
+        new ToolRouter()
+          .register(new CountingRealTavilyAdapter())
+          .register(new BrowserCaptureAdapter(candidate.fixtures, candidate.attachments)),
+        new CountingRealLLM(),
+        deliverables,
+        undefined,
+        new TestOnlyPlaywrightSkillLoader(),
+      ).execute({ lease, expectedModel: 'pinned-model' }),
+      ExecutionAuthenticityError,
+      candidate.name,
+    );
+    assert.equal(deliverables.calls.length, 0, candidate.name);
+    const browserArtifacts = (await repository.listArtifactsForAttempt(lease))
+      .filter(({ kind, storageUri }) => (
+        kind === 'visual_asset'
+        || kind === 'visual_asset_manifest'
+        || (kind === 'tool_output' && storageUri.includes('/steps/2-tool_output.json'))
+      ));
+    assert.deepEqual(browserArtifacts, [], candidate.name);
+  }
+});
+
+test('rejects media sidecars from non-browser Tools before publishing their output', async () => {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]!],
+  );
+  await assert.rejects(
+    () => buildEngine(
+      repository,
+      new ToolRouter().register(new TavilyWithUnsupportedSidecarAdapter()),
+      new CountingRealLLM(),
+    ).execute({ lease, expectedModel: 'pinned-model' }),
+    ExecutionAuthenticityError,
+  );
+  assert.equal((await repository.listArtifactsForAttempt(lease))
+    .some(({ kind }) => kind === 'tool_output'), false);
+});
+
+test('compensates every browser Artifact when the deadline expires after an uninterruptible write returns', async () => {
+  for (const targetKind of ['tool_output', 'visual_asset', 'visual_asset_manifest'] as const) {
+    const { repository, lease } = await claimedBrowserExecution();
+    const adapter = new BrowserCaptureAdapter([browserCaptureFixture(0)]);
+    const originalSealArtifact = repository.sealArtifact.bind(repository);
+    let delayedTarget = false;
+    repository.sealArtifact = async (input) => {
+      const staging = await repository.getArtifact(input.artifactId);
+      const sealed = await originalSealArtifact(input);
+      const isBrowserTool = targetKind !== 'tool_output'
+        || staging?.storageUri.includes('/steps/2-tool_output.json') === true;
+      if (!delayedTarget && staging?.kind === targetKind && isBrowserTool && adapter.deadlineAt > 0) {
+        delayedTarget = true;
+        const waitMs = Math.max(1, adapter.deadlineAt - Date.now() + 20);
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+      }
+      return sealed;
+    };
+
+    const result = await buildEngine(
+      repository,
+      new ToolRouter()
+        .register(new CountingRealTavilyAdapter())
+        .register(adapter),
+      new CountingRealLLM(),
+      new RecordingDeliverablesFake(),
+      undefined,
+      new TestOnlyPlaywrightSkillLoader(),
+      500,
+    ).execute({ lease, expectedModel: 'pinned-model' });
+
+    assert.equal(delayedTarget, true, targetKind);
+    assert.equal(result.status, 'completed_with_gaps', targetKind);
+    const step = (await repository.listExecutionSteps(lease.attemptId))
+      .find(({ stepNo }) => stepNo === 2);
+    assert.equal(step?.state, 'skipped', targetKind);
+    const browserPublications = (await repository.listArtifactsForAttempt(lease))
+      .filter(({ kind, storageUri }) => (
+        kind === 'visual_asset'
+        || kind === 'visual_asset_manifest'
+        || (kind === 'tool_output' && storageUri.includes('/steps/2-tool_output.json'))
+      ));
+    assert.ok(browserPublications.length >= 1, targetKind);
+    assert.ok(browserPublications.every(({ state }) => state === 'FAILED'), targetKind);
+  }
+});
+
+test('compensates every browser Artifact when the lease is lost after an uninterruptible write returns', async () => {
+  for (const targetKind of ['tool_output', 'visual_asset', 'visual_asset_manifest'] as const) {
+    const { repository, lease } = await claimedBrowserExecution();
+    const originalSealArtifact = repository.sealArtifact.bind(repository);
+    let expiredTarget = false;
+    repository.sealArtifact = async (input) => {
+      const staging = await repository.getArtifact(input.artifactId);
+      const sealed = await originalSealArtifact(input);
+      const isBrowserTool = targetKind !== 'tool_output'
+        || staging?.storageUri.includes('/steps/2-tool_output.json') === true;
+      if (!expiredTarget && staging?.kind === targetKind && isBrowserTool) {
+        expiredTarget = true;
+        await expireLease(repository, lease);
+      }
+      return sealed;
+    };
+
+    const result = await buildEngine(
+      repository,
+      new ToolRouter()
+        .register(new CountingRealTavilyAdapter())
+        .register(new BrowserCaptureAdapter([browserCaptureFixture(0)])),
+      new CountingRealLLM(),
+      new RecordingDeliverablesFake(),
+      undefined,
+      new TestOnlyPlaywrightSkillLoader(),
+    ).execute({ lease, expectedModel: 'pinned-model' });
+
+    assert.equal(expiredTarget, true, targetKind);
+    assert.equal(result.status, 'paused', targetKind);
+    const browserPublications = (await repository.listArtifactsForAttempt(lease))
+      .filter(({ kind, storageUri }) => (
+        kind === 'visual_asset'
+        || kind === 'visual_asset_manifest'
+        || (kind === 'tool_output' && storageUri.includes('/steps/2-tool_output.json'))
+      ));
+    assert.ok(browserPublications.length >= 1, targetKind);
+    assert.ok(browserPublications.every(({ state }) => state === 'FAILED'), targetKind);
+    assert.equal((await repository.listExecutionSteps(lease.attemptId))
+      .some(({ stepNo, state }) => stepNo === 2 && state === 'succeeded'), false, targetKind);
+  }
+});
+
+test('reports every residual Artifact when inner and outer browser compensation both fail', async () => {
+  const { repository, lease } = await claimedBrowserExecution();
+  const adapter = new BrowserCaptureAdapter([browserCaptureFixture(0)]);
+  const originalSealArtifact = repository.sealArtifact.bind(repository);
+  let delayedBinary = false;
+  repository.sealArtifact = async (input) => {
+    const staging = await repository.getArtifact(input.artifactId);
+    const sealed = await originalSealArtifact(input);
+    if (!delayedBinary && staging?.kind === 'visual_asset' && adapter.deadlineAt > 0) {
+      delayedBinary = true;
+      const waitMs = Math.max(1, adapter.deadlineAt - Date.now() + 20);
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
+    return sealed;
+  };
+  const cleanupAttempts: string[] = [];
+  repository.invalidateArtifactPublication = async (artifactId) => {
+    cleanupAttempts.push(artifactId);
+    throw new Error(`injected invalidation failure for ${artifactId}`);
+  };
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter()
+      .register(new CountingRealTavilyAdapter())
+      .register(adapter),
+    new CountingRealLLM(),
+    new RecordingDeliverablesFake(),
+    undefined,
+    new TestOnlyPlaywrightSkillLoader(),
+    500,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'paused');
+  assert.equal(result.failure?.kind, 'artifact_invalidation');
+  const browserPublications = (await repository.listArtifactsForAttempt(lease))
+    .filter(({ kind, storageUri }) => (
+      kind === 'visual_asset'
+      || kind === 'visual_asset_manifest'
+      || (kind === 'tool_output' && storageUri.includes('/steps/2-tool_output.json'))
+    ));
+  assert.equal(browserPublications.length, 2);
+  assert.ok(browserPublications.every(({ state }) => state === 'SEALED'));
+  const expectedIds = browserPublications.map(({ id }) => id).sort();
+  assert.deepEqual([...cleanupAttempts].sort(), expectedIds);
+  assert.deepEqual(
+    [...(result.failure?.failedArtifactIds as string[])].sort(),
+    expectedIds,
+  );
+  const step = (await repository.listExecutionSteps(lease.attemptId))
+    .find(({ stepNo }) => stepNo === 2);
+  assert.equal(step?.failure?.kind, 'artifact_invalidation');
+  assert.deepEqual([...(step?.failure?.failedArtifactIds as string[])].sort(), expectedIds);
+  const recoverable = (await repository.listRecoverableExecutions())
+    .find(({ attemptId }) => attemptId === lease.attemptId);
+  assert.equal(recoverable?.failureKind, 'artifact_invalidation');
+});
+
 test('executes the current plan with real Tool provenance and complete model receipts', async () => {
   const { repository, lease } = await claimedExecution(
     new Date(Date.now() + 60_000),
@@ -2642,6 +3461,7 @@ test('pass Review composes and lease-seals a verified image and Chart ReportDocu
     taskId: lease.taskId,
     planVersionId: lease.planVersionId,
     attemptId: lease.attemptId,
+    activeLease: lease,
     source: {
       kind: 'user_upload',
       fileName: 'verified-source.png',
@@ -2960,6 +3780,7 @@ async function reportMaterialDiscoveryFixture(exportPolicy: 'allow' | 'mask' | '
     taskId: lease.taskId,
     planVersionId: lease.planVersionId,
     attemptId: lease.attemptId,
+    activeLease: lease,
     source: {
       kind: 'user_upload',
       fileName: 'discovery.png',
@@ -3032,6 +3853,70 @@ test('production report material discovery ignores an unrelated export-blocked s
   assert.deepEqual(discovered.visualAssets, []);
   assert.deepEqual(discovered.charts, []);
 });
+
+test('production report material discovery rejects an unknown visual Manifest version', async () => {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]!],
+  );
+  const store = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+  await store.writeJson({
+    taskId: lease.taskId,
+    planVersionId: lease.planVersionId,
+    attemptId: lease.attemptId,
+    kind: 'visual_asset_manifest',
+    relativePath: 'visual-assets/unknown-version.manifest.json',
+    value: { version: 'visual-asset-manifest-v3' },
+    schemaVersion: 'visual-asset-manifest-v3',
+    sensitivity: 'internal',
+    redactionPolicyVersion: 'v1',
+    activeLease: lease,
+  });
+  const visualAssets = new VisualAssetService({ artifacts: store });
+  const service = new ReportCompositionService({ artifacts: store, visualAssets, repository });
+
+  await assert.rejects(
+    service.discoverAttemptMaterials({
+      taskId: lease.taskId,
+      planVersionId: lease.planVersionId,
+      attemptId: lease.attemptId,
+    }),
+    /schemaVersion is invalid/i,
+  );
+});
+
+for (const bodyVersion of ['visual-asset-manifest-v1', 'visual-asset-manifest-v3'] as const) {
+  test(`production report material discovery rejects ${bodyVersion} body under a V2 Artifact marker`, async () => {
+    const { repository, lease } = await claimedExecution(
+      new Date(Date.now() + 60_000),
+      [planSteps[0]!],
+    );
+    const store = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+    await store.writeJson({
+      taskId: lease.taskId,
+      planVersionId: lease.planVersionId,
+      attemptId: lease.attemptId,
+      kind: 'visual_asset_manifest',
+      relativePath: `visual-assets/${bodyVersion}.manifest.json`,
+      value: { version: bodyVersion, assetId: 'unreachable-asset' },
+      schemaVersion: 'visual-asset-manifest-v2',
+      sensitivity: 'internal',
+      redactionPolicyVersion: 'v1',
+      activeLease: lease,
+    });
+    const visualAssets = new VisualAssetService({ artifacts: store });
+    const service = new ReportCompositionService({ artifacts: store, visualAssets, repository });
+
+    await assert.rejects(
+      service.discoverAttemptMaterials({
+        taskId: lease.taskId,
+        planVersionId: lease.planVersionId,
+        attemptId: lease.attemptId,
+      }),
+      /no exact version or Asset reference/i,
+    );
+  });
+}
 
 
 const pausedReviewCases = [
@@ -3256,6 +4141,54 @@ test('pauses execution when current deliverable validation fails', async () => {
   } finally {
     connection.release();
   }
+});
+
+test('keeps terminal publication invalidation failure authoritative and recoverable', async () => {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]],
+  );
+  const terminalStore = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+  let residualArtifactId = '';
+  const deliverables = new RecordingDeliverablesFake(async (input) => {
+    const residual = await terminalStore.writeJson({
+      taskId: input.task.id,
+      planVersionId: input.plan.id,
+      attemptId: input.attempt.id,
+      kind: 'image_annotation',
+      relativePath: 'visual-assets/residual-annotation.json',
+      schemaVersion: 'image-annotation-v1',
+      value: { version: 'image-annotation-v1', original: {}, annotations: [] },
+      activeLease: input.activeLease,
+    });
+    residualArtifactId = residual.id;
+    throw new ArtifactInvalidationError(
+      [residual.id],
+      'image annotation publication did not complete',
+      [new Error('overlay invalidation unavailable')],
+    );
+  });
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new CountingRealLLM(),
+    deliverables,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'paused');
+  assert.equal(result.failure?.kind, 'artifact_invalidation');
+  assert.equal(result.failure?.retryable, false);
+  assert.deepEqual(result.failure?.allowedActions, ['abort']);
+  assert.deepEqual(result.failure?.failedArtifactIds, [residualArtifactId]);
+  const failedStep = (await repository.listExecutionSteps(lease.attemptId))
+    .find((step) => step.state === 'failed');
+  assert.equal(failedStep?.failure?.kind, 'artifact_invalidation');
+  assert.deepEqual(failedStep?.failure?.failedArtifactIds, [residualArtifactId]);
+  const recoverable = (await repository.listRecoverableExecutions())
+    .find((execution) => execution.attemptId === lease.attemptId);
+  assert.equal(recoverable?.failureKind, 'artifact_invalidation');
+  assert.equal((await repository.getArtifact(residualArtifactId))?.state, 'SEALED');
 });
 
 test('rejects completion when a required evidence minimum is not met', async () => {

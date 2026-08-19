@@ -142,7 +142,7 @@ function assertVerifiedVisualReference(
     binding,
     'Visual Asset Manifest',
   );
-  if (asset.manifestArtifact.schemaVersion !== 'visual-asset-manifest-v1') {
+  if (asset.manifestArtifact.schemaVersion !== asset.manifest.version) {
     throw new Error('Visual Asset Manifest Artifact schema version is invalid');
   }
   if (asset.manifest.assetId !== reference.assetId) {
@@ -271,13 +271,39 @@ export class CurrentReportPackageReader {
         binding,
         'referenced Evidence',
       );
-      resolvedArtifacts.set(entry.artifactId, {
-        artifact: {
-          id: verifiedEvidence.artifact.id,
-          contentSha256: verifiedEvidence.artifact.contentSha256,
-        },
-        value: verifiedEvidence.value,
-      });
+      if (entry.kind === 'screenshot') {
+        if (!this.dependencies.visualAssets) {
+          throw new Error('screenshot Evidence requires a verified visual Asset reader');
+        }
+        const screenshotManifest = record(verifiedEvidence.value);
+        if (!screenshotManifest || typeof screenshotManifest.assetId !== 'string') {
+          throw new Error('screenshot Evidence Manifest has no exact Asset reference');
+        }
+        const visual = await this.dependencies.visualAssets.readVerified({
+          assetId: screenshotManifest.assetId,
+          manifestArtifactId: entry.artifactId,
+        });
+        const verifiedVisualManifest = assertVerifiedVisualReference(
+          visual,
+          { assetId: screenshotManifest.assetId, manifestArtifactId: entry.artifactId },
+          binding,
+        );
+        resolvedArtifacts.set(entry.artifactId, {
+          artifact: {
+            id: verifiedEvidence.artifact.id,
+            contentSha256: verifiedEvidence.artifact.contentSha256,
+          },
+          value: verifiedVisualManifest,
+        });
+      } else {
+        resolvedArtifacts.set(entry.artifactId, {
+          artifact: {
+            id: verifiedEvidence.artifact.id,
+            contentSha256: verifiedEvidence.artifact.contentSha256,
+          },
+          value: verifiedEvidence.value,
+        });
+      }
     }
     const resolver: EvidenceArtifactResolver = {
       resolveArtifact: (artifactId) => resolvedArtifacts.get(artifactId) ?? null,

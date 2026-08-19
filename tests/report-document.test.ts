@@ -11,6 +11,7 @@ import type {
   ResearchDeliverableEnvelope,
   ResearchPlanPayload,
   VisualAssetManifest,
+  VisualAssetManifestV1,
 } from '../packages/api-contract/research-deliverable.ts';
 import {
   EvidenceService,
@@ -276,11 +277,11 @@ function visualManifest(input: {
   bytes: Uint8Array;
   width: number;
   height: number;
-  source?: VisualAssetManifest['source'];
+  source?: VisualAssetManifestV1['source'];
   derivedFrom: VisualAssetManifest['derivedFrom'];
   derivation: VisualAssetManifest['derivation'];
 }): VisualAssetManifest {
-  const draft: Omit<VisualAssetManifest, 'manifestHash'> = {
+  const draft: Omit<VisualAssetManifestV1, 'manifestHash'> = {
     version: 'visual-asset-manifest-v1',
     ...binding,
     assetId: input.assetId,
@@ -301,7 +302,7 @@ function visualManifest(input: {
 function verifiedImage(input: {
   assetId?: string;
   manifestArtifactId?: string;
-  source?: VisualAssetManifest['source'];
+  source?: VisualAssetManifestV1['source'];
 } = {}): VerifiedVisualAsset {
   const assetId = input.assetId ?? imageAssetId;
   const manifestArtifactId = input.manifestArtifactId ?? imageManifestArtifactId;

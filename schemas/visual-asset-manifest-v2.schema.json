@@ -1,0 +1,234 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "visual-asset-manifest-v2",
+  "title": "Visual Asset Manifest V2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "taskId",
+    "planVersionId",
+    "attemptId",
+    "assetId",
+    "contentSha256",
+    "mediaType",
+    "byteSize",
+    "width",
+    "height",
+    "exportPolicy",
+    "source",
+    "derivedFrom",
+    "derivation",
+    "manifestHash"
+  ],
+  "properties": {
+    "version": { "const": "visual-asset-manifest-v2" },
+    "taskId": { "$ref": "#/definitions/nonEmptyString" },
+    "planVersionId": { "$ref": "#/definitions/nonEmptyString" },
+    "attemptId": { "$ref": "#/definitions/nonEmptyString" },
+    "assetId": { "$ref": "#/definitions/nonEmptyString" },
+    "contentSha256": { "$ref": "#/definitions/sha256" },
+    "mediaType": { "enum": ["image/png", "image/jpeg", "image/webp", "image/svg+xml"] },
+    "byteSize": { "type": "integer", "minimum": 1, "maximum": 10485760 },
+    "width": { "type": "integer", "minimum": 1 },
+    "height": { "type": "integer", "minimum": 1 },
+    "exportPolicy": { "enum": ["allow", "mask", "block"] },
+    "source": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "artifactId", "artifactContentSha256", "jsonPointer", "url"],
+          "properties": {
+            "kind": { "const": "tool_artifact" },
+            "artifactId": { "$ref": "#/definitions/nonEmptyString" },
+            "artifactContentSha256": { "$ref": "#/definitions/sha256" },
+            "jsonPointer": { "type": "string", "pattern": "^/" },
+            "url": { "type": "string", "pattern": "^https?://" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "fileName"],
+          "properties": {
+            "kind": { "const": "user_upload" },
+            "fileName": { "$ref": "#/definitions/nonEmptyString" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "const": "derived" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "artifactId",
+            "artifactContentSha256",
+            "jsonPointer",
+            "attachmentId",
+            "sourcePageUrl",
+            "finalUrl",
+            "pageTitle",
+            "capturedAt",
+            "captureMode",
+            "viewport"
+          ],
+          "properties": {
+            "kind": { "const": "browser_capture" },
+            "artifactId": { "$ref": "#/definitions/nonEmptyString" },
+            "artifactContentSha256": { "$ref": "#/definitions/sha256" },
+            "jsonPointer": { "type": "string", "pattern": "^/output/captures/[0-5]$" },
+            "attachmentId": { "type": "string", "pattern": "^capture-[1-9][0-9]*$" },
+            "sourcePageUrl": { "type": "string", "pattern": "^https://" },
+            "finalUrl": { "type": "string", "pattern": "^https://" },
+            "pageTitle": { "type": "string", "maxLength": 300 },
+            "capturedAt": { "type": "string", "format": "date-time" },
+            "captureMode": {
+              "enum": ["extracted_image", "element_screenshot", "full_page_screenshot"]
+            },
+            "selector": { "type": "string", "minLength": 1, "maxLength": 512 },
+            "viewport": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["width", "height"],
+              "properties": {
+                "width": { "type": "integer", "minimum": 1024, "maximum": 1920 },
+                "height": { "type": "integer", "minimum": 720, "maximum": 1200 }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "dataArtifactId", "dataArtifactContentSha256"],
+          "properties": {
+            "kind": { "const": "chart_render" },
+            "dataArtifactId": { "$ref": "#/definitions/nonEmptyString" },
+            "dataArtifactContentSha256": { "$ref": "#/definitions/sha256" }
+          }
+        }
+      ]
+    },
+    "derivedFrom": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/definitions/lineage" }
+      ]
+    },
+    "derivation": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/definitions/annotation" },
+        { "$ref": "#/definitions/heatmap" },
+        { "$ref": "#/definitions/chartSvg" }
+      ]
+    },
+    "manifestHash": { "$ref": "#/definitions/sha256" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "source": {
+            "type": "object",
+            "required": ["kind"],
+            "properties": { "kind": { "const": "derived" } }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "derivedFrom": { "$ref": "#/definitions/lineage" },
+          "derivation": {
+            "oneOf": [
+              { "$ref": "#/definitions/annotation" },
+              { "$ref": "#/definitions/heatmap" }
+            ]
+          }
+        }
+      },
+      "else": {
+        "if": {
+          "properties": {
+            "source": {
+              "type": "object",
+              "required": ["kind"],
+              "properties": { "kind": { "const": "chart_render" } }
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "derivedFrom": { "type": "null" },
+            "derivation": { "$ref": "#/definitions/chartSvg" }
+          }
+        },
+        "else": {
+          "properties": {
+            "derivedFrom": { "type": "null" },
+            "derivation": { "type": "null" }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "derivation": {
+            "type": "object",
+            "required": ["kind"],
+            "properties": { "kind": { "const": "chart_svg" } }
+          }
+        }
+      },
+      "then": { "properties": { "mediaType": { "const": "image/svg+xml" } } },
+      "else": { "properties": { "mediaType": { "not": { "const": "image/svg+xml" } } } }
+    }
+  ],
+  "definitions": {
+    "nonEmptyString": { "type": "string", "minLength": 1 },
+    "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "lineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assetId", "manifestArtifactId", "contentSha256", "manifestHash"],
+      "properties": {
+        "assetId": { "$ref": "#/definitions/nonEmptyString" },
+        "manifestArtifactId": { "$ref": "#/definitions/nonEmptyString" },
+        "contentSha256": { "$ref": "#/definitions/sha256" },
+        "manifestHash": { "$ref": "#/definitions/sha256" }
+      }
+    },
+    "annotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "overlayArtifactId"],
+      "properties": {
+        "kind": { "const": "annotation" },
+        "overlayArtifactId": { "$ref": "#/definitions/nonEmptyString" }
+      }
+    },
+    "heatmap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": { "kind": { "const": "heatmap" } }
+    },
+    "chartSvg": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "chartId", "specHash"],
+      "properties": {
+        "kind": { "const": "chart_svg" },
+        "chartId": { "$ref": "#/definitions/nonEmptyString" },
+        "specHash": { "$ref": "#/definitions/sha256" }
+      }
+    }
+  }
+}

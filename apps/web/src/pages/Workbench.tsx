@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, type User, type TaskDetail, type PlanProgress, type ExecLogRow, type ControlApprovalRequirement, ApiError } from '../api/client.ts';
-import { mergeTaskHistory, type HistoryTaskSummary } from '../current-flow-state.ts';
+import {
+  executionFailureAllowsAction,
+  mergeTaskHistory,
+  type HistoryTaskSummary,
+} from '../current-flow-state.ts';
 import { useTaskFlow } from '../hooks/useTaskFlow.ts';
 import { Sidebar } from '../components/Sidebar.tsx';
 import { Composer } from '../components/Composer.tsx';
@@ -402,6 +406,8 @@ function FailureActionCard({
   onRetry: () => void;
   onAbort: () => void;
 }) {
+  const canRetry = failure == null || executionFailureAllowsAction(failure, 'retry');
+  const canAbort = failure == null || executionFailureAllowsAction(failure, 'abort');
   return (
     <section style={{ background: 'rgba(251,191,36,.08)', border: '1px solid rgba(251,191,36,.3)', borderRadius: 16, padding: 18, marginTop: 16 }}>
       <div style={{ color: 'var(--warn)', fontWeight: 600 }}>
@@ -413,11 +419,13 @@ function FailureActionCard({
         </pre>
       )}
       <p style={{ color: 'var(--text-dim)', fontSize: 13, margin: '6px 0 12px' }}>
-        重试会通过 Current resume 将任务恢复到 ready，再以同一 planVersionId 重新执行；终止不会生成交付物。
+        {canRetry
+          ? '重试会通过 Current resume 将任务恢复到 ready，再以同一 planVersionId 重新执行；终止不会生成交付物。'
+          : '该失败不可重试；终止任务后不会生成交付物。'}
       </p>
       <div style={{ display: 'flex', gap: 10 }}>
-        <button type="button" className="btn-primary" onClick={onRetry}>重试失败执行</button>
-        <button type="button" className="btn-ghost" onClick={onAbort}>终止任务</button>
+        {canRetry && <button type="button" className="btn-primary" onClick={onRetry}>重试失败执行</button>}
+        {canAbort && <button type="button" className="btn-ghost" onClick={onAbort}>终止任务</button>}
       </div>
     </section>
   );

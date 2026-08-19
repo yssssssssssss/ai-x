@@ -6,6 +6,10 @@ import type {
   VisualAssetManifest,
   VisualAssetReference,
 } from '../../../../packages/api-contract/research-deliverable.ts';
+import {
+  ArtifactInvalidationError,
+  ArtifactPublicationGroup,
+} from '../control/artifact-publication-group.ts';
 import type { ControlArtifactStore } from '../control/artifact-store.ts';
 import type { VisualAssetResult, VisualAssetService } from './visual-asset-service.ts';
 
@@ -308,9 +312,9 @@ export class ImageAnnotationService {
       original: structuredClone(input.original),
       annotations,
     };
-    let overlayArtifact: ControlArtifact | undefined;
+    const publication = new ArtifactPublicationGroup(this.dependencies.artifacts);
     try {
-      overlayArtifact = await this.dependencies.artifacts.writeJson({
+      const overlayArtifact = await this.dependencies.artifacts.writeJson({
         taskId: input.taskId,
         planVersionId: input.planVersionId,
         attemptId: input.attemptId,
@@ -322,6 +326,7 @@ export class ImageAnnotationService {
         redactionPolicyVersion: 'v1',
         ...(input.activeLease ? { activeLease: input.activeLease } : {}),
       });
+      publication.track(overlayArtifact.id);
       if (
         overlayArtifact.taskId !== input.taskId
         || overlayArtifact.planVersionId !== input.planVersionId
@@ -345,15 +350,24 @@ export class ImageAnnotationService {
         exportPolicy: input.exportPolicy,
         ...(input.activeLease ? { activeLease: input.activeLease } : {}),
       });
+      publication.track(derived.assetArtifact.id).track(derived.manifestArtifact.id);
+      publication.commit();
       return { overlayArtifact, derived };
     } catch (error) {
-      if (overlayArtifact) {
-        await Promise.allSettled([
-          this.dependencies.artifacts.invalidateArtifactPublication(
-            overlayArtifact.id,
-            'image annotation publication did not complete',
-          ),
-        ]);
+      try {
+        await publication.compensate('image annotation publication did not complete');
+      } catch (invalidationError) {
+        if (
+          error instanceof ArtifactInvalidationError
+          && invalidationError instanceof ArtifactInvalidationError
+        ) {
+          throw new ArtifactInvalidationError(
+            [...new Set([...error.failedArtifactIds, ...invalidationError.failedArtifactIds])],
+            invalidationError.invalidationReason,
+            [...error.failures, ...invalidationError.failures],
+          );
+        }
+        throw invalidationError;
       }
       throw error;
     }

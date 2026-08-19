@@ -6,6 +6,8 @@ import type {
   ChartSpec,
   EvidenceManifest,
   VisualAssetManifest,
+  VisualAssetManifestV1,
+  VisualAssetManifestV2,
 } from '../packages/api-contract/research-deliverable.ts';
 import type { ChartTableAlternative } from '../apps/orchestrator-runtime/src/report/chart-renderer.ts';
 
@@ -260,7 +262,7 @@ function visualManifest(input: {
   assetId: string;
   mediaType: VisualAssetManifest['mediaType'];
   exportPolicy: VisualAssetManifest['exportPolicy'];
-  source?: VisualAssetManifest['source'];
+  source?: VisualAssetManifestV1['source'];
   derivedFrom?: VisualAssetManifest['derivedFrom'];
   derivation?: VisualAssetManifest['derivation'];
 }): VisualAssetManifest {
@@ -283,19 +285,35 @@ function visualManifest(input: {
   };
 }
 
-function visualAssetManifests(): VisualAssetManifest[] {
-  const original = visualManifest({
-    assetId: originalAssetId,
+function browserVisualManifest(assetId: string): VisualAssetManifestV2 {
+  const base = visualManifest({
+    assetId,
     mediaType: 'image/png',
     exportPolicy: 'allow',
-    source: {
-      kind: 'tool_artifact',
-      artifactId: 'private-tool-artifact',
-      artifactContentSha256: `sha256:${'1'.repeat(64)}`,
-      jsonPointer: '/output/private/path',
-      url: 'https://evidence.example.test/source?token=secret-token',
-    },
   });
+  return {
+    ...base,
+    version: 'visual-asset-manifest-v2',
+    source: {
+      kind: 'browser_capture',
+      artifactId: 'private-browser-tool-artifact',
+      artifactContentSha256: `sha256:${'1'.repeat(64)}`,
+      jsonPointer: '/output/captures/0',
+      attachmentId: 'capture-1',
+      sourcePageUrl: 'https://evidence.example.test/source',
+      finalUrl: 'https://evidence.example.test/source?view=assistant',
+      pageTitle: 'Private secret-token browser title',
+      capturedAt: '2026-08-19T08:00:00.000Z',
+      captureMode: 'full_page_screenshot',
+      viewport: { width: 1440, height: 900 },
+    },
+    derivedFrom: null,
+    derivation: null,
+  };
+}
+
+function visualAssetManifests(): VisualAssetManifest[] {
+  const original = browserVisualManifest(originalAssetId);
   const annotation = visualManifest({
     assetId: annotationAssetId,
     mediaType: 'image/png',
@@ -459,6 +477,15 @@ test('Markdown bundle contains the complete safe report package and only exporta
     'visual-assets.json',
   ]);
   assert.deepEqual(reads.sort(), [annotationAssetId, chartAssetId, originalAssetId]);
+  assert.deepEqual(
+    multimodalReport().visualAssetManifests.map(({ version }) => version),
+    [
+      'visual-asset-manifest-v1',
+      'visual-asset-manifest-v1',
+      'visual-asset-manifest-v2',
+      'visual-asset-manifest-v1',
+    ],
+  );
   assert.equal(blockedAssetId in bundle.entries, false);
   assert.equal(reads.includes(blockedAssetId), false, 'blocked assets must be rejected before owner route reads');
   assert.deepEqual(bundle.entries['assets/asset-chart.svg'], CHART_SVG, 'bundle must carry the sealed SVG bytes');
@@ -500,6 +527,7 @@ test('bundle JSON files are distribution-safe and do not leak storage URIs, hash
 
   assert.doesNotMatch(text, /storageUri|contentSha256|manifestHash|artifactContentSha256|redactedOutputHash|specHash/u);
   assert.doesNotMatch(text, /sha256:|\/private\/|secret-token|token=/u);
+  assert.doesNotMatch(text, /browser_capture|private-browser-tool-artifact|sourcePageUrl|finalUrl|pageTitle/u);
   assert.doesNotMatch(text, /asset-blocked|private-secret-token/u);
 
   const visualAssets = JSON.parse(bundle.text('visual-assets.json')) as Array<Record<string, unknown>>;
@@ -586,6 +614,19 @@ test('bundle rejects non-multimodal and incomplete visual packages before readin
     /chart|visual asset|manifest|reference/i,
   );
   assert.deepEqual(reads, []);
+
+  const malformedBrowser = multimodalReport();
+  const browser = malformedBrowser.visualAssetManifests.find(
+    ({ version }) => version === 'visual-asset-manifest-v2',
+  );
+  assert.ok(browser?.version === 'visual-asset-manifest-v2' && browser.source.kind === 'browser_capture');
+  browser.source.jsonPointer = '/output/captures/6';
+  const malformedReads: string[] = [];
+  await assert.rejects(
+    createReportBundle({ report: malformedBrowser, readAsset: assetReader(malformedReads) }),
+    /visual asset|manifest|source|schema/i,
+  );
+  assert.deepEqual(malformedReads, []);
 });
 
 test('ReportDocument view model maps navigation and every professional block without recomputing Chart data', async () => {

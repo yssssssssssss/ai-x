@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
+import { ArtifactInvalidationError } from '../apps/orchestrator-runtime/src/control/artifact-publication-group.ts';
 import { VisualAssetService } from '../apps/orchestrator-runtime/src/report/visual-asset-service.ts';
+import type { ToolMediaAttachment } from '../apps/orchestrator-runtime/src/runtime/tool-adapter.ts';
 import type { ControlExecutionLease } from '../database/control-plane.ts';
 
 const PNG = Buffer.from(
@@ -12,6 +14,7 @@ const JPEG = Buffer.from(
   '/9j/4AAQSkZJRgABAQAASABIAAD/wAALCAABAAEBAREA/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/9sAQwACAgICAgIDAgIDBQMDAwUGBQUFBQYIBgYGBgYICggICAgICAoKCgoKCgoKDAwMDAwMDg4ODg4PDw8PDw8PDw8P/90ABAAB/9oACAEBAAA/APwDr//Z',
   'base64',
 );
+const SVG = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450"><rect width="800" height="450"/></svg>');
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const binding = {
   taskId: 'task-visual-1',
@@ -83,6 +86,9 @@ function sniff(bytes: Buffer): { contentType: string; width: number; height: num
   if (bytes[0] === 0xff && bytes[1] === 0xd8) {
     return { contentType: 'image/jpeg', width: 1, height: 1 };
   }
+  if (bytes.toString('utf8').startsWith('<svg')) {
+    return { contentType: 'image/svg+xml', width: 800, height: 450 };
+  }
   throw new Error('unsupported image signature');
 }
 
@@ -94,6 +100,7 @@ class FakeArtifactStore {
   readonly jsonValues = new Map<string, unknown>();
   readonly invalidations: Array<{ artifactId: string; reason: string }> = [];
   failJsonKind: string | undefined;
+  failInvalidation = false;
   private nextId = 1;
 
   seedJson(artifact: FakeArtifact, value: unknown): void {
@@ -135,6 +142,7 @@ class FakeArtifactStore {
 
   async invalidateArtifactPublication(artifactId: string, reason: string): Promise<void> {
     this.invalidations.push({ artifactId, reason });
+    if (this.failInvalidation) throw new Error(`invalidation failed for ${artifactId}`);
     const artifact = this.artifacts.get(artifactId);
     if (artifact) {
       artifact.state = 'FAILED';
@@ -269,6 +277,75 @@ function ingestTool(service: VisualAssetService, artifact: FakeArtifact, jsonPoi
     ...binding,
     source: toolSource(artifact, jsonPointer),
     exportPolicy: 'allow',
+  });
+}
+
+const browserLease: ControlExecutionLease = {
+  ...binding,
+  leaseOwner: 'browser-worker',
+  leaseToken: 'browser-token',
+};
+
+function browserHarness(options: {
+  attachment?: Partial<ToolMediaAttachment>;
+  metadata?: Record<string, unknown>;
+  toolArtifactOverrides?: Partial<FakeArtifact>;
+} = {}) {
+  const artifacts = new FakeArtifactStore();
+  const artifact = toolArtifact(options.toolArtifactOverrides);
+  const attachment: ToolMediaAttachment = {
+    attachmentId: 'capture-1',
+    bytes: PNG,
+    mediaType: 'image/png',
+    contentSha256: digest(PNG),
+    sourcePageUrl: 'https://source.example.test/product',
+    capturedAt: '2026-08-19T08:00:00.000Z',
+    captureMode: 'full_page_screenshot',
+    viewport: { width: 1440, height: 900 },
+    width: 1,
+    height: 1,
+    ...options.attachment,
+  };
+  const metadata = {
+    attachment_id: 'capture-1',
+    source_result_index: 0,
+    requested_url: 'https://source.example.test/product',
+    final_url: 'https://source.example.test/product?view=final',
+    page_title: 'Product page',
+    captured_at: '2026-08-19T08:00:00.000Z',
+    capture_mode: 'full_page_screenshot',
+    viewport: { width: 1440, height: 900 },
+    media_type: 'image/png',
+    width: 1,
+    height: 1,
+    byte_size: PNG.byteLength,
+    content_sha256: digest(PNG),
+    truncated: false,
+    ...options.metadata,
+  };
+  artifacts.seedJson(artifact, { output: { captures: [metadata], failures: [] } });
+  return {
+    artifact,
+    artifacts,
+    attachment,
+    metadata,
+    service: new VisualAssetService({ artifacts: artifacts as never }),
+  };
+}
+
+function ingestBrowser(
+  fixture: ReturnType<typeof browserHarness>,
+  ensureActive: () => void = () => undefined,
+) {
+  return fixture.service.ingestBrowserCapture({
+    ...binding,
+    activeLease: browserLease,
+    toolArtifactId: fixture.artifact.id,
+    toolArtifactContentSha256: fixture.artifact.contentSha256!,
+    captureIndex: 0,
+    attachment: fixture.attachment,
+    exportPolicy: 'allow',
+    ensureActive,
   });
 }
 
@@ -528,6 +605,223 @@ test('ingests a user PNG without resolving or fetching a remote URL', async () =
   assert.equal(result.manifest.manifestHash, expectedManifestHash(result.manifest));
 });
 
+test('publishes and re-reads a browser capture as a strictly bound V2 visual Asset', async () => {
+  const fixture = browserHarness();
+  let activeChecks = 0;
+
+  const result = await ingestBrowser(fixture, () => { activeChecks += 1; });
+
+  assert.equal(activeChecks, 6);
+  assert.equal(result.manifest.version, 'visual-asset-manifest-v2');
+  assert.equal(result.manifestArtifact.schemaVersion, 'visual-asset-manifest-v2');
+  assert.deepEqual(result.manifest.source, {
+    kind: 'browser_capture',
+    artifactId: fixture.artifact.id,
+    artifactContentSha256: fixture.artifact.contentSha256,
+    jsonPointer: '/output/captures/0',
+    attachmentId: 'capture-1',
+    sourcePageUrl: 'https://source.example.test/product',
+    finalUrl: 'https://source.example.test/product?view=final',
+    pageTitle: 'Product page',
+    capturedAt: '2026-08-19T08:00:00.000Z',
+    captureMode: 'full_page_screenshot',
+    viewport: { width: 1440, height: 900 },
+  });
+  assert.equal(result.manifest.contentSha256, digest(PNG));
+  assert.equal(result.manifest.manifestHash, expectedManifestHash(result.manifest));
+  const verified = await fixture.service.readVerified({
+    assetId: result.assetArtifact.id,
+    manifestArtifactId: result.manifestArtifact.id,
+  });
+  assert.deepEqual(verified.bytes, PNG);
+});
+
+test('reads a V2 chart_render Manifest against its sealed chart data without adding a Chart writer', async () => {
+  const artifacts = new FakeArtifactStore();
+  const dataArtifact = await artifacts.writeJson({
+    ...binding,
+    kind: 'chart_data',
+    relativePath: 'charts/data.json',
+    value: { weights: [{ dimension: '需求理解', percentage: 20 }] },
+    schemaVersion: 'competitive-weight-chart-data-v1',
+  });
+  const assetArtifact = await artifacts.writeBinary({
+    ...binding,
+    kind: 'visual_asset',
+    relativePath: 'charts/render.svg',
+    bytes: SVG,
+    schemaVersion: 'visual-asset-v1',
+  });
+  const draft = {
+    version: 'visual-asset-manifest-v2' as const,
+    ...binding,
+    assetId: assetArtifact.id,
+    contentSha256: assetArtifact.contentSha256!,
+    mediaType: 'image/svg+xml' as const,
+    byteSize: SVG.byteLength,
+    width: 800,
+    height: 450,
+    exportPolicy: 'allow' as const,
+    source: {
+      kind: 'chart_render' as const,
+      dataArtifactId: dataArtifact.id,
+      dataArtifactContentSha256: dataArtifact.contentSha256!,
+    },
+    derivedFrom: null,
+    derivation: {
+      kind: 'chart_svg' as const,
+      chartId: 'comparison-weights',
+      specHash: `sha256:${'c'.repeat(64)}`,
+    },
+  };
+  const manifest = { ...draft, manifestHash: expectedManifestHash(draft) };
+  const manifestArtifact = await artifacts.writeJson({
+    ...binding,
+    kind: 'visual_asset_manifest',
+    relativePath: 'charts/render.manifest.json',
+    value: manifest,
+    schemaVersion: 'visual-asset-manifest-v2',
+  });
+  const service = new VisualAssetService({ artifacts: artifacts as never });
+
+  const verified = await service.readVerified({
+    assetId: assetArtifact.id,
+    manifestArtifactId: manifestArtifact.id,
+  });
+  assert.equal(verified.manifest.version, 'visual-asset-manifest-v2');
+  assert.equal(verified.manifest.source.kind, 'chart_render');
+  assert.deepEqual(verified.bytes, SVG);
+
+  const invalidManifests: Record<string, unknown>[] = [{
+    ...manifest,
+    derivedFrom: {
+      assetId: 'unrelated-asset',
+      manifestArtifactId: 'unrelated-manifest',
+      contentSha256: `sha256:${'d'.repeat(64)}`,
+      manifestHash: `sha256:${'e'.repeat(64)}`,
+    },
+  }, {
+    ...manifest,
+    derivation: null,
+  }];
+  for (const invalidManifest of invalidManifests) {
+    artifacts.jsonValues.set(manifestArtifact.id, rehashedManifest(invalidManifest));
+    await assert.rejects(
+      () => service.readVerified({
+        assetId: assetArtifact.id,
+        manifestArtifactId: manifestArtifact.id,
+      }),
+      /visual Asset manifest|schema|derivedFrom|derivation/i,
+    );
+  }
+  artifacts.jsonValues.set(manifestArtifact.id, manifest);
+
+  artifacts.artifacts.get(dataArtifact.id)!.contentSha256 = `sha256:${'d'.repeat(64)}`;
+  await assert.rejects(
+    () => service.readVerified({
+      assetId: assetArtifact.id,
+      manifestArtifactId: manifestArtifact.id,
+    }),
+    /chart render|data Artifact|provenance/i,
+  );
+});
+
+test('rejects browser sidecars that disagree with Tool metadata before publishing media', async () => {
+  const cases = [
+    browserHarness({ attachment: { sourcePageUrl: 'https://other.example.test/product' } }),
+    browserHarness({ attachment: { contentSha256: digest('forged') } }),
+    browserHarness({ attachment: { attachmentId: 'capture-2' } }),
+    browserHarness({ metadata: { media_type: 'image/jpeg' } }),
+    browserHarness({ metadata: { width: 2 } }),
+    browserHarness({ metadata: { height: 2 } }),
+    browserHarness({ metadata: { byte_size: PNG.byteLength + 1 } }),
+    browserHarness({ metadata: { captured_at: '2026-08-19T08:00:01.000Z' } }),
+    browserHarness({ metadata: { capture_mode: 'element_screenshot' } }),
+    browserHarness({ metadata: { selector: 'main' } }),
+    browserHarness({ metadata: { requested_url: 'http://source.example.test/product' } }),
+    browserHarness({ metadata: { final_url: 'http://source.example.test/product' } }),
+    browserHarness({ metadata: { viewport: { width: 800, height: 600 } } }),
+  ];
+
+  for (const fixture of cases) {
+    await assert.rejects(() => ingestBrowser(fixture), /browser capture|HTTPS|attachment|metadata/i);
+    assert.equal(fixture.artifacts.binaryWrites.length, 0);
+    assert.equal(fixture.artifacts.jsonWrites.length, 0);
+  }
+});
+
+test('checks Tool scope after each browser Artifact write and compensates before returning', async () => {
+  const fixture = browserHarness();
+  let activeChecks = 0;
+
+  await assert.rejects(
+    () => ingestBrowser(fixture, () => {
+      activeChecks += 1;
+      if (activeChecks === 5) throw new Error('deadline exceeded after Manifest write');
+    }),
+    /deadline exceeded/i,
+  );
+
+  assert.equal(fixture.artifacts.binaryWrites.length, 1);
+  assert.equal(fixture.artifacts.jsonWrites.length, 1);
+  assert.deepEqual(
+    fixture.artifacts.invalidations.map(({ artifactId }) => artifactId),
+    [...fixture.artifacts.artifacts.values()]
+      .filter(({ kind }) => kind === 'visual_asset' || kind === 'visual_asset_manifest')
+      .map(({ id }) => id),
+  );
+});
+
+test('surfaces browser capture compensation failures as ArtifactInvalidationError', async () => {
+  const fixture = browserHarness();
+  fixture.artifacts.failInvalidation = true;
+  let activeChecks = 0;
+
+  await assert.rejects(
+    () => ingestBrowser(fixture, () => {
+      activeChecks += 1;
+      if (activeChecks === 3) throw new Error('lease lost after Binary write');
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof ArtifactInvalidationError);
+      assert.equal(error.failedArtifactIds.length, 1);
+      return true;
+    },
+  );
+});
+
+test('rejects V2 marker mismatch and browser provenance drift during readback', async () => {
+  const markerFixture = browserHarness();
+  const markerResult = await ingestBrowser(markerFixture);
+  markerFixture.artifacts.artifacts.get(markerResult.manifestArtifact.id)!.schemaVersion = 'visual-asset-manifest-v1';
+  await assert.rejects(
+    () => markerFixture.service.readVerified({
+      assetId: markerResult.assetArtifact.id,
+      manifestArtifactId: markerResult.manifestArtifact.id,
+    }),
+    /schemaVersion|body version/i,
+  );
+
+  const provenanceFixture = browserHarness();
+  const provenanceResult = await ingestBrowser(provenanceFixture);
+  provenanceFixture.artifacts.jsonValues.set(provenanceFixture.artifact.id, {
+    output: {
+      captures: [{
+        ...provenanceFixture.metadata,
+        final_url: 'https://source.example.test/changed',
+      }],
+      failures: [],
+    },
+  });
+  await assert.rejects(
+    () => provenanceFixture.service.readVerified({
+      assetId: provenanceResult.assetArtifact.id,
+      manifestArtifactId: provenanceResult.manifestArtifact.id,
+    }),
+    /provenance|Tool metadata/i,
+  );
+});
+
 test('fences an ingested visual Asset and its Manifest with the active execution lease', async () => {
   const fixture = harness();
   const activeLease: ControlExecutionLease = {
@@ -560,6 +854,21 @@ test('invalidates the sealed visual Asset when its Manifest publication fails', 
   const asset = [...fixture.artifacts.artifacts.values()].find(({ kind }) => kind === 'visual_asset');
   assert.equal(asset?.state, 'FAILED');
   assert.deepEqual(fixture.artifacts.invalidations.map(({ artifactId }) => artifactId), [asset?.id]);
+});
+
+test('surfaces V1 visual Asset compensation failure instead of hiding it behind the write error', async () => {
+  const fixture = harness();
+  fixture.artifacts.failJsonKind = 'visual_asset_manifest';
+  fixture.artifacts.failInvalidation = true;
+
+  await assert.rejects(
+    () => fixture.service.ingest({
+      ...binding,
+      source: { kind: 'user_upload', fileName: 'partial.png', bytes: PNG },
+      exportPolicy: 'allow',
+    }),
+    ArtifactInvalidationError,
+  );
 });
 
 for (const kind of ['annotation', 'heatmap'] as const) {

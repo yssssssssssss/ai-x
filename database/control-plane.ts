@@ -1,10 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { MigrationConnection, MigrationDatabase } from './migration-runner.ts';
-import type {
-  ControlPlanCandidatesResponse,
-  CurrentPlanCandidate,
-  ControlRequirementVersion,
+import {
+  executionFailureAllowsAction,
+  selectAuthoritativeFailedStep,
+  type ControlPlanCandidatesResponse,
+  type CurrentPlanCandidate,
+  type ControlRequirementVersion,
 } from '../packages/api-contract/control-workflow.ts';
 import type {
   CurrentExecutionPlan,
@@ -32,6 +34,8 @@ export type ControlTaskState =
 
 export type ControlArtifactState = 'STAGING' | 'SEALED' | 'FAILED';
 export const ARTIFACT_QUARANTINE_PENDING_MARKER = '; source file was absent at ';
+export const ARTIFACT_INVALIDATION_PROMOTION_VERSION = 'artifact-invalidation-promotion-v1';
+const ARTIFACT_INVALIDATION_CLEAR_RECEIPT_VERSION = 'artifact-invalidation-clear-receipt-v1';
 
 export interface ControlTask {
   id: string;
@@ -170,6 +174,46 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+}
+
+function strippedExecutionFailure(value: unknown): Record<string, unknown> | null {
+  const failure = asRecord(value);
+  if (
+    !failure
+    || (
+      !Object.hasOwn(failure, 'artifactInvalidationPromotion')
+      && !Object.hasOwn(failure, 'artifactInvalidationClearReceipt')
+    )
+  ) return failure;
+  const publicFailure = { ...failure };
+  delete publicFailure.artifactInvalidationPromotion;
+  delete publicFailure.artifactInvalidationClearReceipt;
+  return publicFailure;
+}
+
+function artifactInvalidationPromotionArtifactIds(value: unknown): string[] | null {
+  const failure = asRecord(value);
+  const marker = asRecord(failure?.artifactInvalidationPromotion);
+  const artifactIds = marker?.eligibleArtifactIds;
+  if (
+    marker?.version !== ARTIFACT_INVALIDATION_PROMOTION_VERSION
+    || !Array.isArray(artifactIds)
+    || artifactIds.length === 0
+    || artifactIds.some((artifactId) => typeof artifactId !== 'string')
+    || new Set(artifactIds).size !== artifactIds.length
+  ) return null;
+  return artifactIds as string[];
+}
+
+function publicExecutionFailure(value: unknown): Record<string, unknown> | null {
+  const failure = strippedExecutionFailure(value);
+  if (!failure || artifactInvalidationPromotionArtifactIds(value) === null) return failure;
+  return {
+    ...failure,
+    kind: 'artifact_invalidation',
+    retryable: false,
+    allowedActions: ['abort'],
+  };
 }
 
 function hashLeaseToken(token: string): string {
@@ -580,7 +624,18 @@ export class ControlPlaneRepository {
 
     const attempt = await connection.query(
       `UPDATE control_execution_attempts
-       SET state = 'paused', failure_kind = 'worker_loss', finished_at = now()
+       SET state = 'paused',
+           failure_kind = CASE
+             WHEN EXISTS (
+               SELECT 1
+               FROM control_execution_steps
+               WHERE attempt_id = $1
+                 AND state = 'failed'
+                 AND failure_json->>'kind' = 'artifact_invalidation'
+             ) THEN 'artifact_invalidation'
+             ELSE 'worker_loss'
+           END,
+           finished_at = now()
        WHERE id = $1
          AND task_id = $2
          AND plan_version_id = $3
@@ -1722,7 +1777,9 @@ export class ControlPlaneRepository {
                  OR (
                    artifact.state = 'SEALED'
                    AND artifact.kind IN (
-                     'evidence_manifest', 'deliverable', 'report_review', 'report_document'
+                     'evidence_manifest', 'deliverable', 'report_review', 'report_document',
+                     'report_package', 'visual_asset', 'visual_asset_manifest',
+                     'image_annotation', 'chart_spec'
                    )
                  )
                  OR (
@@ -1854,10 +1911,12 @@ export class ControlPlaneRepository {
 
 
   async createStagingArtifact(input: {
+    artifactId?: string;
     taskId: string;
     planVersionId?: string;
     attemptId?: string;
     publicationId?: string;
+    activeLease?: ControlExecutionLease;
     kind: string;
     storageUri: string;
     schemaVersion: string;
@@ -1866,6 +1925,7 @@ export class ControlPlaneRepository {
     mediaType?: string;
     metadata?: Record<string, unknown>;
   }): Promise<ControlArtifact> {
+    const artifactId = input.artifactId ?? randomUUID();
     return this.transaction(async (connection) => {
       await connection.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [input.storageUri]);
       const livePath = await connection.query(
@@ -1888,14 +1948,50 @@ export class ControlPlaneRepository {
       }
       if (input.attemptId) {
         if (!input.planVersionId) throw new ControlPlaneConflictError('attempt-bound artifact requires a plan version');
+        const lease = input.activeLease;
+        if (
+          !lease
+          || lease.taskId !== input.taskId
+          || lease.planVersionId !== input.planVersionId
+          || lease.attemptId !== input.attemptId
+        ) {
+          throw new ControlPlaneConflictError('attempt-bound artifact requires its active execution lease');
+        }
+        const task = await connection.query(
+          `SELECT 1 FROM control_tasks
+           WHERE id = $1
+             AND state IN ('executing', 'reviewing', 'composing_report')
+             AND current_attempt_id = $2
+             AND active_plan_version_id = $3
+           FOR UPDATE`,
+          [input.taskId, input.attemptId, input.planVersionId],
+        );
+        if (!task.rows[0]) {
+          throw new ControlPlaneConflictError(`task ${input.taskId} is not executing artifact attempt ${input.attemptId}`);
+        }
         const attempt = await connection.query(
           `SELECT 1 FROM control_execution_attempts
-           WHERE id = $1 AND task_id = $2 AND plan_version_id = $3`,
-          [input.attemptId, input.taskId, input.planVersionId],
+           WHERE id = $1
+             AND task_id = $2
+             AND plan_version_id = $3
+             AND lease_owner = $4
+             AND lease_token_hash = $5
+             AND state = 'active'
+             AND lease_expires_at > now()
+           FOR UPDATE`,
+          [
+            input.attemptId,
+            input.taskId,
+            input.planVersionId,
+            lease.leaseOwner,
+            hashLeaseToken(lease.leaseToken),
+          ],
         );
         if (!attempt.rows[0]) {
-          throw new ControlPlaneConflictError(`attempt ${input.attemptId} does not belong to artifact task and plan`);
+          throw new ControlPlaneConflictError(`execution lease ${input.attemptId} cannot create a staging artifact`);
         }
+      } else if (input.activeLease) {
+        throw new ControlPlaneConflictError('unbound artifact cannot carry an execution lease');
       }
       if (input.publicationId) {
         if (!input.planVersionId || input.attemptId) {
@@ -1916,11 +2012,12 @@ export class ControlPlaneRepository {
       }
       const result = await connection.query(
         `INSERT INTO control_artifacts
-           (task_id, plan_version_id, attempt_id, publication_id, kind, contract_version, schema_version, state,
+           (id, task_id, plan_version_id, attempt_id, publication_id, kind, contract_version, schema_version, state,
             storage_uri, sensitivity, redaction_policy_version, media_type, metadata_json)
-         VALUES ($1, $2, $3, $4, $5, 'trusted-p0-v1', $6, 'STAGING', $7, $8, $9, $10, $11)
+         VALUES ($1, $2, $3, $4, $5, $6, 'trusted-p0-v1', $7, 'STAGING', $8, $9, $10, $11, $12)
          RETURNING *`,
         [
+          artifactId,
           input.taskId,
           input.planVersionId ?? null,
           input.attemptId ?? null,
@@ -1950,6 +2047,9 @@ export class ControlPlaneRepository {
       input.leaseOwner,
       input.leaseToken,
     ].filter((value) => value !== undefined).length;
+    if (leaseFieldCount !== 0 && leaseFieldCount !== 5) {
+      throw new ControlPlaneConflictError('artifact seal execution lease must be complete');
+    }
     const leaseBound = leaseFieldCount === 5;
     const outcome = await this.transaction(async (connection) => {
       const bindingResult = await connection.query(
@@ -1977,7 +2077,37 @@ export class ControlPlaneRepository {
         [storageUri, input.artifactId],
       );
       if (competingPath.rows[0]) return null;
+      const taskId = asString(binding.task_id, 'task_id');
+      const planVersionId = typeof binding.plan_version_id === 'string' ? binding.plan_version_id : null;
+      const attemptId = typeof binding.attempt_id === 'string' ? binding.attempt_id : null;
+      const validPlan = planVersionId === null || binding.plan_task_id === taskId;
+      const validAttempt = attemptId === null || (
+        planVersionId !== null
+        && binding.attempt_task_id === taskId
+        && binding.attempt_plan_version_id === planVersionId
+      );
+      if (!validPlan || !validAttempt) return null;
       const publicationId = typeof binding.publication_id === 'string' ? binding.publication_id : null;
+      if (leaseBound) {
+        if (
+          publicationId !== null
+          || planVersionId === null
+          || attemptId === null
+          || input.taskId !== taskId
+          || input.planVersionId !== planVersionId
+          || input.attemptId !== attemptId
+        ) return null;
+        await connection.query(
+          'SELECT 1 FROM control_tasks WHERE id = $1 FOR UPDATE',
+          [taskId],
+        );
+        await connection.query(
+          `SELECT 1 FROM control_execution_attempts
+           WHERE id = $1 AND task_id = $2 AND plan_version_id = $3
+           FOR UPDATE`,
+          [attemptId, taskId, planVersionId],
+        );
+      }
       if (publicationId) {
         const publication = await connection.query(
           `SELECT state FROM control_visual_publications
@@ -1997,16 +2127,6 @@ export class ControlPlaneRepository {
           return null;
         }
       }
-      const taskId = asString(binding.task_id, 'task_id');
-      const planVersionId = typeof binding.plan_version_id === 'string' ? binding.plan_version_id : null;
-      const attemptId = typeof binding.attempt_id === 'string' ? binding.attempt_id : null;
-      const validPlan = planVersionId === null || binding.plan_task_id === taskId;
-      const validAttempt = attemptId === null || (
-        planVersionId !== null
-        && binding.attempt_task_id === taskId
-        && binding.attempt_plan_version_id === planVersionId
-      );
-      if (!validPlan || !validAttempt) return null;
       const result = leaseBound
         ? await connection.query(
             `UPDATE control_artifacts AS artifact
@@ -2053,6 +2173,7 @@ export class ControlPlaneRepository {
                    sealed_at = now(),
                    redaction_status = 'sealed'
                WHERE id = $1 AND state = 'STAGING'
+                 AND artifact.attempt_id IS NULL
                  AND (
                    artifact.publication_id IS NULL
                    OR EXISTS (
@@ -2067,7 +2188,7 @@ export class ControlPlaneRepository {
           : { rows: [] };
       if (result.rows[0]) return artifactFromRow(result.rows[0]);
 
-      if (leaseFieldCount > 0) {
+      if (leaseBound) {
         await connection.query(
           `UPDATE control_artifacts
            SET state = 'FAILED',
@@ -2076,15 +2197,13 @@ export class ControlPlaneRepository {
            WHERE id = $1 AND state = 'STAGING'`,
           [input.artifactId],
         );
-        if (leaseBound) {
-          await this.pauseExpiredExecutionLease(connection, {
-            taskId: input.taskId!,
-            planVersionId: input.planVersionId!,
-            attemptId: input.attemptId!,
-            leaseOwner: input.leaseOwner!,
-            leaseToken: input.leaseToken!,
-          });
-        }
+        await this.pauseExpiredExecutionLease(connection, {
+          taskId: input.taskId!,
+          planVersionId: input.planVersionId!,
+          attemptId: input.attemptId!,
+          leaseOwner: input.leaseOwner!,
+          leaseToken: input.leaseToken!,
+        });
       }
       return null;
     });
@@ -3849,6 +3968,345 @@ export class ControlPlaneRepository {
     });
   }
 
+  async clearExecutionStepArtifactInvalidationPromotion(input: ControlExecutionLease & {
+    stepNo: number;
+    stepName: string;
+    actorType: string;
+    actorId: string;
+    expectedPreviousFailure: Record<string, unknown>;
+  }): Promise<Record<string, unknown> | null> {
+    const markerArtifactIds = artifactInvalidationPromotionArtifactIds(input.expectedPreviousFailure);
+    if (!markerArtifactIds) return null;
+    const publicFailure = strippedExecutionFailure(input.expectedPreviousFailure)!;
+    const expectedFailureHash = `sha256:${createHash('sha256')
+      .update(JSON.stringify(stableValue(input.expectedPreviousFailure)))
+      .digest('hex')}`;
+    const clearedFailure: Record<string, unknown> = {
+      ...publicFailure,
+      artifactInvalidationClearReceipt: {
+        version: ARTIFACT_INVALIDATION_CLEAR_RECEIPT_VERSION,
+        expectedFailureHash,
+      },
+    };
+    const serializedExpectedFailure = JSON.stringify(input.expectedPreviousFailure);
+    const serializedClearedFailure = JSON.stringify(clearedFailure);
+    return this.transaction(async (connection) => {
+      const task = await connection.query(
+        `SELECT state
+         FROM control_tasks
+         WHERE id = $1
+           AND state IN ('executing', 'reviewing', 'composing_report', 'paused')
+           AND current_attempt_id = $2
+           AND active_plan_version_id = $3
+         FOR UPDATE`,
+        [input.taskId, input.attemptId, input.planVersionId],
+      );
+      if (!task.rows[0]) return null;
+      const attempt = await connection.query(
+        `SELECT state, failure_kind, lease_expires_at > now() AS lease_current
+         FROM control_execution_attempts
+         WHERE id = $1
+           AND task_id = $2
+           AND plan_version_id = $3
+           AND lease_owner = $4
+           AND lease_token_hash = $5
+           AND state IN ('active', 'paused')
+         FOR UPDATE`,
+        [
+          input.attemptId,
+          input.taskId,
+          input.planVersionId,
+          input.leaseOwner,
+          hashLeaseToken(input.leaseToken),
+        ],
+      );
+      const taskState = asString(task.rows[0].state, 'state');
+      const attemptRow = attempt.rows[0];
+      const activeLease = attemptRow?.state === 'active'
+        && attemptRow.lease_current === true
+        && ['executing', 'reviewing', 'composing_report'].includes(taskState);
+      const currentPausedRecovery = attemptRow?.state === 'paused'
+        && (attemptRow.failure_kind === 'worker_loss' || attemptRow.failure_kind === 'artifact_invalidation')
+        && taskState === 'paused';
+      if (!activeLease && !currentPausedRecovery) return null;
+      const step = await connection.query(
+        `SELECT failure_json IS NOT DISTINCT FROM $6::jsonb AS matches_expected,
+                failure_json IS NOT DISTINCT FROM $7::jsonb AS already_cleared
+         FROM control_execution_steps
+         WHERE attempt_id = $1
+           AND step_no = $2
+           AND step_name = $3
+           AND actor_type = $4
+           AND actor_id = $5
+           AND state = 'failed'
+         FOR UPDATE`,
+        [
+          input.attemptId,
+          input.stepNo,
+          input.stepName,
+          input.actorType,
+          input.actorId,
+          serializedExpectedFailure,
+          serializedClearedFailure,
+        ],
+      );
+      const stepRow = step.rows[0];
+      if (!stepRow || (stepRow.matches_expected !== true && stepRow.already_cleared !== true)) return null;
+      const failedArtifacts = await connection.query(
+        `SELECT id
+         FROM control_artifacts
+         WHERE id::text = ANY($1::text[])
+           AND task_id = $2
+           AND plan_version_id = $3
+           AND attempt_id = $4
+           AND state = 'FAILED'
+         ORDER BY id`,
+        [markerArtifactIds, input.taskId, input.planVersionId, input.attemptId],
+      );
+      if (failedArtifacts.rows.length !== markerArtifactIds.length) return null;
+      if (stepRow.already_cleared === true) return publicFailure;
+      const updated = await connection.query(
+        `UPDATE control_execution_steps
+         SET failure_json = $6
+         WHERE attempt_id = $1
+           AND step_no = $2
+           AND step_name = $3
+           AND actor_type = $4
+           AND actor_id = $5
+           AND state = 'failed'
+           AND failure_json IS NOT DISTINCT FROM $7::jsonb
+         RETURNING attempt_id`,
+        [
+          input.attemptId,
+          input.stepNo,
+          input.stepName,
+          input.actorType,
+          input.actorId,
+          serializedClearedFailure,
+          serializedExpectedFailure,
+        ],
+      );
+      return updated.rows[0] ? publicFailure : null;
+    });
+  }
+
+  async promoteExecutionStepArtifactInvalidation(input: ControlExecutionLease & {
+    stepNo: number;
+    stepName: string;
+    actorType: string;
+    actorId: string;
+    failedArtifactIds: string[];
+    expectedPreviousFailure?: Record<string, unknown>;
+  }): Promise<Record<string, unknown> | null> {
+    const failedArtifactIds = [...input.failedArtifactIds].sort();
+    if (
+      failedArtifactIds.length === 0
+      || failedArtifactIds.some((artifactId) => typeof artifactId !== 'string')
+      || new Set(failedArtifactIds).size !== failedArtifactIds.length
+    ) return null;
+    return this.transaction(async (connection) => {
+      const task = await connection.query(
+        `SELECT state
+         FROM control_tasks
+         WHERE id = $1
+           AND state IN ('executing', 'reviewing', 'composing_report', 'paused')
+           AND current_attempt_id = $2
+           AND active_plan_version_id = $3
+         FOR UPDATE`,
+        [input.taskId, input.attemptId, input.planVersionId],
+      );
+      const taskRow = task.rows[0];
+      if (!taskRow) return null;
+      const attempt = await connection.query(
+        `SELECT state, failure_kind, lease_expires_at > now() AS lease_current
+         FROM control_execution_attempts
+         WHERE id = $1
+           AND task_id = $2
+           AND plan_version_id = $3
+           AND lease_owner = $4
+           AND lease_token_hash = $5
+           AND state IN ('active', 'paused')
+         FOR UPDATE`,
+        [
+          input.attemptId,
+          input.taskId,
+          input.planVersionId,
+          input.leaseOwner,
+          hashLeaseToken(input.leaseToken),
+        ],
+      );
+      let attemptRow = attempt.rows[0];
+      if (!attemptRow) return null;
+      let taskState = asString(taskRow.state, 'state');
+      if (attemptRow.state === 'active' && attemptRow.lease_current !== true) {
+        const recoveredTask = await this.pauseExpiredExecutionLease(connection, input);
+        if (!recoveredTask) return null;
+        const recoveredAttempt = await connection.query(
+          `SELECT state, failure_kind, false AS lease_current
+           FROM control_execution_attempts
+           WHERE id = $1
+             AND task_id = $2
+             AND plan_version_id = $3
+             AND lease_owner = $4
+             AND lease_token_hash = $5
+             AND state = 'paused'`,
+          [
+            input.attemptId,
+            input.taskId,
+            input.planVersionId,
+            input.leaseOwner,
+            hashLeaseToken(input.leaseToken),
+          ],
+        );
+        attemptRow = recoveredAttempt.rows[0];
+        if (!attemptRow) return null;
+        taskState = recoveredTask.state;
+      }
+      if (
+        (attemptRow.state === 'active'
+          && !['executing', 'reviewing', 'composing_report'].includes(taskState))
+        || (
+          attemptRow.state === 'paused'
+          && (
+            taskState !== 'paused'
+            || (
+              attemptRow.failure_kind !== 'worker_loss'
+              && attemptRow.failure_kind !== 'artifact_invalidation'
+            )
+          )
+        )
+      ) return null;
+      const workerLossFailure = {
+        kind: 'worker_loss',
+        retryable: true,
+        allowedActions: ['retry', 'abort'],
+      };
+      const step = await connection.query(
+        `SELECT failure_json,
+                failure_json IS NOT DISTINCT FROM $6::jsonb AS is_worker_loss,
+                ($7::jsonb IS NOT NULL AND failure_json IS NOT DISTINCT FROM $7::jsonb) AS matches_expected
+         FROM control_execution_steps
+         WHERE attempt_id = $1
+           AND step_no = $2
+           AND step_name = $3
+           AND actor_type = $4
+           AND actor_id = $5
+           AND state = 'failed'
+         FOR UPDATE`,
+        [
+          input.attemptId,
+          input.stepNo,
+          input.stepName,
+          input.actorType,
+          input.actorId,
+          JSON.stringify(workerLossFailure),
+          input.expectedPreviousFailure == null
+            ? null
+            : JSON.stringify(input.expectedPreviousFailure),
+        ],
+      );
+      const stepRow = step.rows[0];
+      const previousFailure = asRecord(stepRow?.failure_json);
+      if (!previousFailure) return null;
+      const markerArtifactIds = artifactInvalidationPromotionArtifactIds(previousFailure);
+      const markerAllowsPromotion = stepRow.matches_expected === true
+        && markerArtifactIds !== null
+        && failedArtifactIds.every((artifactId) => markerArtifactIds.includes(artifactId));
+      const nextFailure: Record<string, unknown> = {
+        ...previousFailure,
+        kind: 'artifact_invalidation',
+        retryable: false,
+        message: 'unpublished step Artifact could not be invalidated',
+        failedArtifactIds,
+        allowedActions: ['abort'],
+      };
+      delete nextFailure.artifactInvalidationPromotion;
+      const serializedNextFailure = JSON.stringify(nextFailure);
+      const alreadyRecorded = await connection.query(
+        `SELECT 1
+         FROM control_execution_steps
+         WHERE attempt_id = $1
+           AND step_no = $2
+           AND failure_json IS NOT DISTINCT FROM $3::jsonb`,
+        [input.attemptId, input.stepNo, serializedNextFailure],
+      );
+      if (alreadyRecorded.rows[0]) {
+        if (attemptRow.state === 'paused' && attemptRow.failure_kind === 'worker_loss') {
+          const promotedAttempt = await connection.query(
+            `UPDATE control_execution_attempts
+             SET failure_kind = 'artifact_invalidation'
+             WHERE id = $1 AND state = 'paused' AND failure_kind = 'worker_loss'
+             RETURNING id`,
+            [input.attemptId],
+          );
+          if (!promotedAttempt.rows[0]) {
+            throw new ControlPlaneConflictError(
+              `execution attempt ${input.attemptId} changed during Artifact invalidation promotion`,
+            );
+          }
+        }
+        return nextFailure;
+      }
+      if (previousFailure.kind === 'artifact_invalidation') return null;
+      if (attemptRow.state === 'paused' && attemptRow.failure_kind !== 'worker_loss') return null;
+      const promotable = attemptRow.state === 'active'
+        ? markerAllowsPromotion
+        : stepRow.is_worker_loss === true
+          || markerAllowsPromotion;
+      if (!promotable) return null;
+      const residualArtifacts = await connection.query(
+        `SELECT id
+         FROM control_artifacts
+         WHERE id::text = ANY($1::text[])
+           AND task_id = $2
+           AND plan_version_id = $3
+           AND attempt_id = $4
+           AND state IN ('STAGING', 'SEALED')
+         ORDER BY id
+         FOR UPDATE`,
+        [failedArtifactIds, input.taskId, input.planVersionId, input.attemptId],
+      );
+      if (residualArtifacts.rows.length !== failedArtifactIds.length) return null;
+      const updated = await connection.query(
+        `UPDATE control_execution_steps
+         SET failure_json = $6
+         WHERE attempt_id = $1
+           AND step_no = $2
+           AND step_name = $3
+           AND actor_type = $4
+           AND actor_id = $5
+           AND state = 'failed'
+           AND failure_json IS NOT DISTINCT FROM $7::jsonb
+         RETURNING attempt_id`,
+        [
+          input.attemptId,
+          input.stepNo,
+          input.stepName,
+          input.actorType,
+          input.actorId,
+          serializedNextFailure,
+          JSON.stringify(previousFailure),
+        ],
+      );
+      if (!updated.rows[0]) return null;
+      if (attemptRow.state === 'paused') {
+        const promotedAttempt = await connection.query(
+          `UPDATE control_execution_attempts
+           SET failure_kind = 'artifact_invalidation'
+           WHERE id = $1 AND state = 'paused' AND failure_kind = 'worker_loss'
+           RETURNING id`,
+          [input.attemptId],
+        );
+        if (!promotedAttempt.rows[0]) {
+          throw new ControlPlaneConflictError(
+            `execution attempt ${input.attemptId} changed during Artifact invalidation promotion`,
+          );
+        }
+      }
+      return nextFailure;
+    });
+  }
+
   async listExecutionSteps(attemptId: string): Promise<ControlExecutionStep[]> {
     const connection = await this.database.connect();
     try {
@@ -3868,7 +4326,7 @@ export class ControlPlaneRepository {
         outputArtifactId: typeof row.output_artifact_id === 'string' ? row.output_artifact_id : null,
         toolProvenance: asRecord(row.tool_provenance),
         skillProvenance: asRecord(row.skill_provenance),
-        failure: asRecord(row.failure_json),
+        failure: publicExecutionFailure(row.failure_json),
         latencyMs: row.latency_ms == null ? null : asNumber(row.latency_ms, 'latency_ms'),
         startedAt: row.started_at == null ? null : asDate(row.started_at, 'started_at'),
         finishedAt: row.finished_at == null ? null : asDate(row.finished_at, 'finished_at'),
@@ -4052,24 +4510,167 @@ export class ControlPlaneRepository {
       if (!task) {
         throw new ControlPlaneConflictError(`execution lease ${input.attemptId} is not expired and active`);
       }
-      await connection.query(
-        `INSERT INTO control_execution_steps
-           (attempt_id, step_no, step_name, actor_type, actor_id, state,
-            failure_json, started_at, finished_at)
-         SELECT $1, COALESCE(MAX(step_no), 0) + 1,
-                'worker lease expired', 'system', 'worker-loss', 'failed', $2, now(), now()
+      const failedSteps = await connection.query(
+        `SELECT failure_json
          FROM control_execution_steps
-         WHERE attempt_id = $1`,
-        [
-          input.attemptId,
-          JSON.stringify({
-            kind: 'worker_loss',
-            retryable: true,
-            allowedActions: ['retry', 'abort'],
-          }),
-        ],
+         WHERE attempt_id = $1 AND state = 'failed'`,
+        [input.attemptId],
       );
+      const represented = failedSteps.rows.some((row) => {
+        const failure = asRecord(row.failure_json);
+        return failure?.kind === 'worker_loss'
+          || failure?.kind === 'artifact_invalidation'
+          || artifactInvalidationPromotionArtifactIds(failure) !== null;
+      });
+      if (!represented) {
+        await connection.query(
+          `INSERT INTO control_execution_steps
+             (attempt_id, step_no, step_name, actor_type, actor_id, state,
+              failure_json, started_at, finished_at)
+           SELECT $1, COALESCE(MAX(step_no), 0) + 1,
+                  'worker lease expired', 'system', 'worker-loss', 'failed', $2, now(), now()
+           FROM control_execution_steps
+           WHERE attempt_id = $1`,
+          [
+            input.attemptId,
+            JSON.stringify({
+              kind: 'worker_loss',
+              retryable: true,
+              allowedActions: ['retry', 'abort'],
+            }),
+          ],
+        );
+      }
       return task;
+    });
+  }
+
+  async retryPausedExecution(input: {
+    taskId: string;
+    attemptId: string;
+    expectedVersion: number;
+    failedStepNo?: number;
+  }): Promise<ControlTask | null> {
+    return this.transaction(async (connection) => {
+      const task = await connection.query(
+        `SELECT active_plan_version_id
+         FROM control_tasks
+         WHERE id = $1
+           AND state = 'paused'
+           AND state_version = $2
+           AND current_attempt_id = $3
+         FOR UPDATE`,
+        [input.taskId, input.expectedVersion, input.attemptId],
+      );
+      const taskRow = task.rows[0];
+      if (!taskRow) {
+        throw new ControlPlaneConflictError(
+          `task ${input.taskId} cannot retry attempt ${input.attemptId}`,
+        );
+      }
+      const planVersionId = asString(taskRow.active_plan_version_id, 'active_plan_version_id');
+      const attempt = await connection.query(
+        `SELECT failure_kind
+         FROM control_execution_attempts
+         WHERE id = $1
+           AND task_id = $2
+           AND plan_version_id = $3
+           AND state = 'paused'
+         FOR UPDATE`,
+        [input.attemptId, input.taskId, planVersionId],
+      );
+      const attemptRow = attempt.rows[0];
+      if (!attemptRow) {
+        throw new ControlPlaneConflictError(`attempt ${input.attemptId} is not paused`);
+      }
+      const persistedSteps = await connection.query(
+        `SELECT step_no, state, failure_json
+         FROM control_execution_steps
+         WHERE attempt_id = $1
+         ORDER BY step_no
+         FOR UPDATE`,
+        [input.attemptId],
+      );
+      const authoritativeFailure = selectAuthoritativeFailedStep(
+        persistedSteps.rows.map((row) => ({
+          stepNo: asNumber(row.step_no, 'step_no'),
+          state: asString(row.state, 'state'),
+          failure: publicExecutionFailure(row.failure_json),
+        })),
+      );
+      if (
+        input.failedStepNo != null
+        && authoritativeFailure?.stepNo !== input.failedStepNo
+      ) return null;
+      if (
+        authoritativeFailure
+        && !executionFailureAllowsAction(authoritativeFailure.failure, 'retry')
+      ) return null;
+      if (attemptRow.failure_kind === 'worker_loss') {
+        // Keep this read lock-free: a late seal may already hold the Artifact row
+        // before it enters pauseExpiredExecutionLease. Old MVCC states are still
+        // conservative here (STAGING/SEALED/pending quarantine all block retry).
+        const residualArtifacts = await connection.query(
+          `SELECT 1
+           FROM control_artifacts AS artifact
+           WHERE artifact.task_id = $1
+             AND artifact.plan_version_id = $2
+             AND artifact.attempt_id = $3
+             AND (
+               artifact.state = 'STAGING'
+               OR (
+                 artifact.state = 'FAILED'
+                 AND POSITION($4 IN COALESCE(artifact.failure_reason, '')) > 0
+               )
+               OR (
+                 artifact.state = 'SEALED'
+                 AND (
+                   artifact.kind IN (
+                     'evidence_manifest', 'deliverable', 'report_review', 'report_document', 'report_package',
+                     'visual_asset', 'visual_asset_manifest', 'image_annotation', 'chart_spec'
+                   )
+                   OR (
+                     artifact.kind IN ('tool_output', 'skill_output', 'llm_output', 'review_output')
+                     AND NOT EXISTS (
+                       SELECT 1
+                       FROM control_execution_steps AS step
+                       WHERE step.attempt_id = artifact.attempt_id
+                         AND step.state = 'succeeded'
+                         AND step.output_artifact_id = artifact.id
+                     )
+                   )
+                 )
+               )
+             )
+           LIMIT 1`,
+          [input.taskId, planVersionId, input.attemptId, ARTIFACT_QUARANTINE_PENDING_MARKER],
+        );
+        if (residualArtifacts.rows[0]) return null;
+      }
+      const transitioned = await connection.query(
+        `UPDATE control_tasks
+         SET state = 'ready', state_version = state_version + 1, updated_at = now()
+         WHERE id = $1
+           AND state = 'paused'
+           AND state_version = $2
+           AND current_attempt_id = $3
+           AND active_plan_version_id = $4
+         RETURNING id, state, state_version, active_plan_version_id, current_attempt_id`,
+        [input.taskId, input.expectedVersion, input.attemptId, planVersionId],
+      );
+      const row = transitioned.rows[0];
+      if (!row) {
+        throw new ControlPlaneConflictError(
+          `task ${input.taskId} cannot retry attempt ${input.attemptId}`,
+        );
+      }
+      return {
+        id: asString(row.id, 'id'),
+        state: asString(row.state, 'state') as ControlTaskState,
+        stateVersion: asNumber(row.state_version, 'state_version'),
+        activePlanVersionId: typeof row.active_plan_version_id === 'string' ? row.active_plan_version_id : null,
+        currentAttemptId: typeof row.current_attempt_id === 'string' ? row.current_attempt_id : null,
+      };
     });
   }
 

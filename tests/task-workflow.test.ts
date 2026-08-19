@@ -2478,7 +2478,7 @@ async function createPausedTask(input: {
     taskId: task.id,
     attemptId: claim.attemptId,
     expectedVersion: claim.stateVersion,
-    reason: 'network',
+    reason: input.failureKind ?? 'network',
   });
   return { task, plan, paused };
 }
@@ -2604,7 +2604,7 @@ test('worker-loss sentinel permits abort and exposes the failure on execution re
   assert.equal(aborted.state, 'cancelled');
 });
 
-test('worker-loss replay prefers the attempt sentinel over a higher peer failure', async () => {
+test('worker-loss replay prefers the recovered running step over a higher peer failure', async () => {
   const repository = new ControlPlaneRepository(scopedDatabase);
   const workflow = new TaskWorkflowService(repository, {
     execute: async ({ lease }) => {
@@ -2674,11 +2674,128 @@ test('worker-loss replay prefers the attempt sentinel over a higher peer failure
   const replay = await workflow.execute(command);
   assert.equal(replay.executionDisabled, false);
   assert.equal(replay.state, 'paused');
-  assert.equal('failedStepNo' in replay && replay.failedStepNo, 3);
+  assert.equal('failedStepNo' in replay && replay.failedStepNo, 1);
   assert.deepEqual(
     'failure' in replay && replay.failure,
     { kind: 'worker_loss', retryable: true, allowedActions: ['retry', 'abort'] },
   );
+  assert.deepEqual(
+    (await repository.listExecutionSteps(replay.attemptId)).map((step) => ({
+      stepNo: step.stepNo,
+      kind: step.failure?.kind,
+    })),
+    [
+      { stepNo: 1, kind: 'worker_loss' },
+      { stepNo: 2, kind: 'schema' },
+    ],
+  );
+});
+
+test('artifact invalidation remains authoritative over a later worker-loss sentinel', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const workflow = new TaskWorkflowService(repository, {
+    execute: async ({ lease }) => {
+      await repository.recordExecutionStep({
+        ...lease,
+        stepNo: 1,
+        stepName: 'browser publication',
+        actorType: 'tool',
+        actorId: 'playwright-page-capture',
+        state: 'failed',
+        failure: {
+          kind: 'artifact_invalidation',
+          retryable: false,
+          allowedActions: ['abort'],
+        },
+      });
+      await repository.recordExecutionStep({
+        ...lease,
+        stepNo: 2,
+        stepName: 'worker lease expired',
+        actorType: 'system',
+        actorId: 'worker-loss',
+        state: 'failed',
+        failure: {
+          kind: 'worker_loss',
+          retryable: true,
+          allowedActions: ['retry', 'abort'],
+        },
+      });
+      await repository.pauseExecution({
+        taskId: lease.taskId,
+        attemptId: lease.attemptId,
+        expectedVersion: (await repository.requireActiveLease(lease)).stateVersion,
+        reason: 'worker_loss',
+      });
+      throw new Error('simulated response loss after conflicting terminal failures');
+    },
+  });
+  const created = await createCandidateTask(repository, 'artifact-invalidation-authority', {
+    candidateId: 'depth',
+  });
+  const selection = await workflow.select({
+    taskId: created.task.id,
+    expectedVersion: created.task.stateVersion,
+    idempotencyKey: 'artifact-invalidation-authority-select',
+    actor: { userId: ownerId, role: 'owner' },
+    planVersionId: created.candidates[0]!.id,
+  });
+  const ready = await workflow.confirm({
+    taskId: created.task.id,
+    planVersionId: selection.planVersionId,
+    expectedVersion: selection.stateVersion,
+    idempotencyKey: 'artifact-invalidation-authority-confirm',
+    actor: { userId: ownerId, role: 'owner' },
+    confirmationAnswers: {},
+    inputValues: {},
+  });
+  const command = {
+    taskId: created.task.id,
+    planVersionId: selection.planVersionId,
+    expectedVersion: ready.stateVersion,
+    idempotencyKey: 'artifact-invalidation-authority-execute',
+    actor: { userId: ownerId, role: 'owner' as const },
+  };
+
+  await assert.rejects(
+    () => workflow.execute(command),
+    /simulated response loss after conflicting terminal failures/u,
+  );
+  const replay = await workflow.execute(command);
+  assert.equal(replay.state, 'paused');
+  assert.equal('failedStepNo' in replay && replay.failedStepNo, 1);
+  assert.deepEqual(
+    'failure' in replay && replay.failure,
+    { kind: 'artifact_invalidation', retryable: false, allowedActions: ['abort'] },
+  );
+  await assert.rejects(
+    () => workflow.resume({
+      taskId: created.task.id,
+      expectedVersion: replay.stateVersion,
+      idempotencyKey: 'artifact-invalidation-authority-default-retry',
+      actor: { userId: ownerId, role: 'owner' },
+    }),
+    TaskWorkflowGateError,
+  );
+  await assert.rejects(
+    () => workflow.resume({
+      taskId: created.task.id,
+      expectedVersion: replay.stateVersion,
+      idempotencyKey: 'artifact-invalidation-authority-sentinel-retry',
+      actor: { userId: ownerId, role: 'owner' },
+      action: 'retry',
+      failedStepNo: 2,
+    }),
+    TaskWorkflowGateError,
+  );
+  const aborted = await workflow.resume({
+    taskId: created.task.id,
+    expectedVersion: replay.stateVersion,
+    idempotencyKey: 'artifact-invalidation-authority-abort',
+    actor: { userId: ownerId, role: 'owner' },
+    action: 'abort',
+  });
+  assert.equal(aborted.state, 'cancelled');
 });
 
 test('report review failure rejects retry and permits only abort recovery', async () => {

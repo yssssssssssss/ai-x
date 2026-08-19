@@ -10,9 +10,11 @@ import {
   type ControlExecutionLease,
   type ControlArtifact,
 } from '../../../../database/control-plane.ts';
-import type {
-  ControlExecutionResult,
-  DisabledExecutionResponse,
+import {
+  executionFailureAllowsAction,
+  selectAuthoritativeFailedStep,
+  type ControlExecutionResult,
+  type DisabledExecutionResponse,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import { assertValidReportReviewArtifact } from '../report/report-review-service.ts';
 import {
@@ -289,12 +291,6 @@ function remapPendingInputs(pendingInputs: unknown, remappedStepNo: ReadonlyMap<
       }),
     };
   });
-}
-
-function allowedActions(failure: Record<string, unknown> | null): string[] {
-  return Array.isArray(failure?.allowedActions)
-    ? failure.allowedActions.filter((action): action is string => typeof action === 'string')
-    : [];
 }
 
 export function requiredApprovals(task: ControlTaskDetail, plan: ControlPlanVersionDetail): Array<{ key: string; authority: WorkflowRole }> {
@@ -840,15 +836,28 @@ export class TaskWorkflowService {
     let failedStep = null;
     if (task.currentAttemptId) {
       const steps = await this.repository.listExecutionSteps(task.currentAttemptId);
-      failedStep = input.failedStepNo == null
-        ? [...steps].reverse().find((step) => step.state === 'failed') ?? null
-        : steps.find((step) => step.stepNo === input.failedStepNo && step.state === 'failed') ?? null;
+      const authoritativeFailure = selectAuthoritativeFailedStep(steps);
+      const requestedFailure = input.failedStepNo == null
+        ? undefined
+        : steps.find((step) => step.stepNo === input.failedStepNo && step.state === 'failed');
+      if (input.failedStepNo != null && !requestedFailure) {
+        throw new TaskWorkflowGateError([`step:${input.failedStepNo}`]);
+      }
+      if (
+        input.failedStepNo != null
+        && requestedFailure
+        && authoritativeFailure
+        && requestedFailure.stepNo !== authoritativeFailure.stepNo
+      ) {
+        throw new TaskWorkflowGateError([`step:${input.failedStepNo}:not_authoritative`]);
+      }
+      failedStep = requestedFailure ?? authoritativeFailure ?? null;
     }
     if (input.failedStepNo != null && !failedStep) {
       throw new TaskWorkflowGateError([`step:${input.failedStepNo}`]);
     }
     if (failedStep) {
-      if (!allowedActions(failedStep.failure).includes(action)) {
+      if (!executionFailureAllowsAction(failedStep.failure, action)) {
         throw new TaskWorkflowGateError([`action:${action}`]);
       }
     } else if (action !== 'retry') {
@@ -906,12 +915,14 @@ export class TaskWorkflowService {
         expectedVersion: input.expectedVersion,
       });
     } else {
-      transitioned = await this.repository.transitionTask({
+      if (!task.currentAttemptId) throw new TaskWorkflowGateError(['resume.attempt']);
+      transitioned = await this.repository.retryPausedExecution({
         taskId: task.id,
+        attemptId: task.currentAttemptId,
         expectedVersion: input.expectedVersion,
-        from: 'paused',
-        to: 'ready',
+        ...(failedStep ? { failedStepNo: failedStep.stepNo } : {}),
       });
+      if (!transitioned) throw new TaskWorkflowGateError([`action:${action}`]);
     }
     const result = { state: transitioned.state, stateVersion: transitioned.stateVersion };
     await this.repository.recordCommand({
@@ -966,7 +977,7 @@ export class TaskWorkflowService {
           const failedSteps = finalTask.state === 'paused'
             ? await this.repository.listExecutionSteps(claim.attemptId)
             : [];
-          const latestFailure = [...failedSteps].reverse().find((step) => step.state === 'failed');
+          const authoritativeFailure = selectAuthoritativeFailedStep(failedSteps);
           const terminalArtifacts = await this.recoverTerminalArtifacts({
             taskId: task.id,
             planVersionId: input.planVersionId,
@@ -979,8 +990,8 @@ export class TaskWorkflowService {
             stateVersion: finalTask.stateVersion,
             status: finalTask.state,
             executionDisabled: false,
-            failedStepNo: latestFailure?.stepNo,
-            failure: latestFailure?.failure ?? undefined,
+            failedStepNo: authoritativeFailure?.stepNo,
+            failure: authoritativeFailure?.failure ?? undefined,
             ...terminalArtifacts,
           };
           try {

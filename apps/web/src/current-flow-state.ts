@@ -4,6 +4,11 @@ import type {
   ControlWorkflowState,
   CurrentPlanCandidate,
 } from '../../../packages/api-contract/control-workflow.ts';
+export {
+  executionFailureAllowsAction,
+  selectAuthoritativeFailedStep,
+} from '../../../packages/api-contract/control-workflow.ts';
+
 import type { ExecLogRow, TaskSummary } from '../../../packages/api-contract/http.ts';
 
 export interface ConfirmationRequirement {

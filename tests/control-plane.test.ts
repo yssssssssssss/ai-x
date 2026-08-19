@@ -294,10 +294,15 @@ interface LeaseStateFixture {
   plan: { id: string };
   claim: { attemptId: string };
   lease: ControlExecutionLease;
+  stagedArtifactId?: string;
   stateVersion: number;
 }
 
-async function createLeaseStateFixture(taskState: LeaseTaskState, expired: boolean): Promise<LeaseStateFixture> {
+async function createLeaseStateFixture(
+  taskState: LeaseTaskState,
+  expired: boolean,
+  stageArtifactBeforeExpiry = false,
+): Promise<LeaseStateFixture> {
   const repository = new ControlPlaneRepository(scopedDatabase);
   const task = await repository.createTask({
     conversationId,
@@ -344,6 +349,26 @@ async function createLeaseStateFixture(taskState: LeaseTaskState, expired: boole
     });
     stateVersion = composing.stateVersion;
   }
+  const lease: ControlExecutionLease = {
+    taskId: task.id,
+    planVersionId: plan.id,
+    attemptId: claim.attemptId,
+    leaseOwner,
+    leaseToken,
+  };
+  const stagedArtifactId = stageArtifactBeforeExpiry
+    ? (await repository.createStagingArtifact({
+        taskId: task.id,
+        planVersionId: plan.id,
+        attemptId: claim.attemptId,
+        activeLease: lease,
+        kind: 'deliverable',
+        storageUri: join(workspaceRoot, `${claim.attemptId}-expired-terminal.json`),
+        schemaVersion: 'research-deliverable-v1',
+        sensitivity: 'internal',
+        redactionPolicyVersion: 'v1',
+      })).id
+    : undefined;
   if (expired) {
     const connection = await scopedDatabase.connect();
     try {
@@ -357,14 +382,15 @@ async function createLeaseStateFixture(taskState: LeaseTaskState, expired: boole
       connection.release();
     }
   }
-  const lease: ControlExecutionLease = {
-    taskId: task.id,
-    planVersionId: plan.id,
-    attemptId: claim.attemptId,
-    leaseOwner,
-    leaseToken,
+  return {
+    repository,
+    task,
+    plan,
+    claim,
+    lease,
+    stateVersion,
+    ...(stagedArtifactId ? { stagedArtifactId } : {}),
   };
-  return { repository, task, plan, claim, lease, stateVersion };
 }
 
 async function assertLeaseRecoveryPaused(
@@ -1224,6 +1250,7 @@ test('rejects mismatched step identities before pending replay or terminal evide
     taskId: lease.taskId,
     planVersionId: lease.planVersionId,
     attemptId: lease.attemptId,
+    activeLease: lease,
     kind: 'skill_output',
     storageUri: join(workspaceRoot, `${randomUUID()}-actor-b.json`),
     schemaVersion: 'skill-output-v1',
@@ -1300,6 +1327,7 @@ test('rejects terminal evidence on nonterminal steps and adopts it only on succe
       taskId: lease.taskId,
       planVersionId: lease.planVersionId,
       attemptId: lease.attemptId,
+      activeLease: lease,
       kind: 'tool_output',
       storageUri: join(workspaceRoot, `${randomUUID()}-preloaded.json`),
       schemaVersion: 'tool-output-v1',
@@ -1310,6 +1338,7 @@ test('rejects terminal evidence on nonterminal steps and adopts it only on succe
       taskId: lease.taskId,
       planVersionId: lease.planVersionId,
       attemptId: lease.attemptId,
+      activeLease: lease,
       kind: 'tool_output',
       storageUri: join(workspaceRoot, `${randomUUID()}-succeeded.json`),
       schemaVersion: 'tool-output-v1',
@@ -1660,15 +1689,24 @@ test('seals versioned attempt artifacts and rejects staged or tampered artifacts
     plan: { steps: [] },
     planHash: 'sha256:artifact-plan',
   });
+  const leaseOwner = 'test-worker';
+  const leaseToken = randomUUID();
   const claim = await repository.claimExecution({
     taskId: task.id,
     planVersionId: plan.id,
     expectedVersion: task.stateVersion,
     idempotencyKey: 'artifact-claim',
     requestHash: 'sha256:artifact-request',
-    leaseOwner: 'test-worker',
-    leaseTokenHash: 'sha256:artifact-lease',
+    leaseOwner,
+    leaseTokenHash: `sha256:${createHash('sha256').update(leaseToken).digest('hex')}`,
   });
+  const activeLease: ControlExecutionLease = {
+    taskId: task.id,
+    planVersionId: plan.id,
+    attemptId: claim.attemptId,
+    leaseOwner,
+    leaseToken,
+  };
   const store = new ControlArtifactStore({ root: workspaceRoot, registry: repository });
   const verifiedStore = store as unknown as {
     readVerifiedJson<T>(artifactId: string): Promise<{ artifact: { id: string }; value: T }>;
@@ -1679,6 +1717,7 @@ test('seals versioned attempt artifacts and rejects staged or tampered artifacts
     taskId: task.id,
     planVersionId: plan.id,
     attemptId: claim.attemptId,
+    activeLease,
     kind: 'context_manifest',
     relativePath: 'context/context-manifest.json',
     value: contextValue,
@@ -1709,6 +1748,7 @@ test('seals versioned attempt artifacts and rejects staged or tampered artifacts
     taskId: task.id,
     planVersionId: plan.id,
     attemptId: claim.attemptId,
+    activeLease,
     kind: 'visual_asset',
     relativePath: 'visuals/tiny.png',
     bytes: pngBytes,
@@ -1727,6 +1767,7 @@ test('seals versioned attempt artifacts and rejects staged or tampered artifacts
     taskId: task.id,
     planVersionId: plan.id,
     attemptId: claim.attemptId,
+    activeLease,
     kind: 'report',
     storageUri: join(workspaceRoot, 'missing.json'),
     schemaVersion: 'v1',
@@ -1771,6 +1812,7 @@ test('atomically records physical STAGING quarantine and frees the original path
     taskId: fixture.task.id,
     planVersionId: fixture.plan.id,
     attemptId: fixture.claim.attemptId,
+    activeLease: fixture.lease,
     kind: 'tool_output',
     storageUri,
     schemaVersion: 'tool-output-v1',
@@ -1792,6 +1834,7 @@ test('atomically records physical STAGING quarantine and frees the original path
     taskId: fixture.task.id,
     planVersionId: fixture.plan.id,
     attemptId: fixture.claim.attemptId,
+    activeLease: fixture.lease,
     kind: 'tool_output',
     relativePath,
     value: { retried: true },
@@ -1818,6 +1861,7 @@ test('pending quarantine never takes a path reused by a new sealed Artifact', as
     taskId: fixture.task.id,
     planVersionId: fixture.plan.id,
     attemptId: fixture.claim.attemptId,
+    activeLease: fixture.lease,
     kind: 'skill_output',
     storageUri,
     schemaVersion: 'skill-output-v2',
@@ -1832,6 +1876,7 @@ test('pending quarantine never takes a path reused by a new sealed Artifact', as
     taskId: fixture.task.id,
     planVersionId: fixture.plan.id,
     attemptId: fixture.claim.attemptId,
+    activeLease: fixture.lease,
     kind: 'skill_output',
     relativePath,
     value: { owner: 'retry' },
@@ -1866,6 +1911,7 @@ test('rejects foreign Task Plan Attempt tuples on staging, unleased seal, and ve
       taskId: first.task.id,
       planVersionId: first.plan.id,
       attemptId: second.claim.attemptId,
+      activeLease: first.lease,
     }),
     ControlPlaneConflictError,
   );
@@ -1875,6 +1921,7 @@ test('rejects foreign Task Plan Attempt tuples on staging, unleased seal, and ve
     taskId: first.task.id,
     planVersionId: first.plan.id,
     attemptId: first.claim.attemptId,
+    activeLease: first.lease,
   });
   const connection = await scopedDatabase.connect();
   try {
@@ -1895,6 +1942,7 @@ test('rejects foreign Task Plan Attempt tuples on staging, unleased seal, and ve
     taskId: first.task.id,
     planVersionId: first.plan.id,
     attemptId: first.claim.attemptId,
+    activeLease: first.lease,
     kind: 'visual_asset',
     relativePath: `visuals/${randomUUID()}.png`,
     bytes: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'),
@@ -1915,6 +1963,7 @@ test('serializes concurrent artifact claims and permits only one SEALED owner pe
     taskId: fixture.task.id,
     planVersionId: fixture.plan.id,
     attemptId: fixture.claim.attemptId,
+    activeLease: fixture.lease,
     kind: 'visual_asset',
     storageUri,
     schemaVersion: 'visual-asset-v1',
@@ -1935,6 +1984,7 @@ test('serializes concurrent artifact claims and permits only one SEALED owner pe
   assert.ok(rejected[0]!.reason instanceof ControlPlaneConflictError);
 
   await fixture.repository.sealArtifact({
+    ...fixture.lease,
     artifactId: fulfilled[0]!.value.id,
     contentSha256: `sha256:${'b'.repeat(64)}`,
     byteSize: 1,
@@ -1983,18 +2033,37 @@ test('atomically refuses to seal a terminal artifact after its execution lease e
     requestHash: `sha256:${randomUUID()}`,
     leaseOwner,
     leaseTokenHash: `sha256:${createHash('sha256').update(leaseToken).digest('hex')}`,
-    leaseExpiresAt: new Date(Date.now() - 1_000),
+    leaseExpiresAt: new Date(Date.now() + 60_000),
   });
+  const activeLease: ControlExecutionLease = {
+    taskId: task.id,
+    planVersionId: plan.id,
+    attemptId: claim.attemptId,
+    leaseOwner,
+    leaseToken,
+  };
   const staged = await repository.createStagingArtifact({
     taskId: task.id,
     planVersionId: plan.id,
     attemptId: claim.attemptId,
+    activeLease,
     kind: 'deliverable',
     storageUri: join(workspaceRoot, `${claim.attemptId}-terminal.json`),
     schemaVersion: 'research-deliverable-v1',
     sensitivity: 'internal',
     redactionPolicyVersion: 'v1',
   });
+  const connection = await scopedDatabase.connect();
+  try {
+    await connection.query(
+      `UPDATE control_execution_attempts
+       SET lease_expires_at = now() - interval '1 second'
+       WHERE id = $1`,
+      [claim.attemptId],
+    );
+  } finally {
+    connection.release();
+  }
   await repository.expireExecutionLease({ taskId: task.id, attemptId: claim.attemptId });
 
   const leaseBound = repository as LeaseBoundArtifactRepository;
@@ -2003,11 +2072,7 @@ test('atomically refuses to seal a terminal artifact after its execution lease e
       artifactId: staged.id,
       contentSha256: `sha256:${'a'.repeat(64)}`,
       byteSize: 2,
-      taskId: task.id,
-      planVersionId: plan.id,
-      attemptId: claim.attemptId,
-      leaseOwner,
-      leaseToken,
+      ...activeLease,
     }),
     ControlPlaneConflictError,
   );
@@ -2054,18 +2119,9 @@ const expiredLeaseBranches = [
   {
     name: 'sealArtifact',
     invoke: async (fixture: LeaseStateFixture) => {
-      const staged = await fixture.repository.createStagingArtifact({
-        taskId: fixture.task.id,
-        planVersionId: fixture.plan.id,
-        attemptId: fixture.claim.attemptId,
-        kind: 'deliverable',
-        storageUri: join(workspaceRoot, `${fixture.claim.attemptId}-expired-terminal.json`),
-        schemaVersion: 'research-deliverable-v1',
-        sensitivity: 'internal',
-        redactionPolicyVersion: 'v1',
-      });
+      assert.ok(fixture.stagedArtifactId);
       await fixture.repository.sealArtifact({
-        artifactId: staged.id,
+        artifactId: fixture.stagedArtifactId,
         contentSha256: `sha256:${'a'.repeat(64)}`,
         byteSize: 2,
         ...fixture.lease,
@@ -2077,7 +2133,7 @@ const expiredLeaseBranches = [
 for (const taskState of ['executing', 'reviewing', 'composing_report'] as const) {
   for (const branch of expiredLeaseBranches) {
     test(`${branch.name} recovers an expired ${taskState} lease to the same paused task and attempt state`, async () => {
-      const fixture = await createLeaseStateFixture(taskState, true);
+      const fixture = await createLeaseStateFixture(taskState, true, branch.name === 'sealArtifact');
 
       await assert.rejects(() => branch.invoke(fixture), ControlPlaneConflictError);
 
@@ -2086,39 +2142,39 @@ for (const taskState of ['executing', 'reviewing', 'composing_report'] as const)
   }
 }
 
-test('terminal CAS recovery invalidates every sealed trusted review artifact without leaving an orphan review', async () => {
+test('terminal CAS recovery invalidates sealed terminal and visual Artifacts but leaves chart data to work package D', async () => {
   const fixture = await createLeaseStateFixture('reviewing', false);
   const store = new ControlArtifactStore({ root: workspaceRoot, registry: fixture.repository });
-  const artifacts = await Promise.all([
-    store.writeJson({
-      taskId: fixture.task.id,
-      planVersionId: fixture.plan.id,
-      attemptId: fixture.claim.attemptId,
-      kind: 'evidence_manifest',
-      relativePath: 'evidence/manifest.json',
-      value: { version: 'evidence-v1', entries: [] },
-      activeLease: fixture.lease,
-    }),
-    store.writeJson({
-      taskId: fixture.task.id,
-      planVersionId: fixture.plan.id,
-      attemptId: fixture.claim.attemptId,
-      kind: 'deliverable',
-      relativePath: 'deliverables/final-r0.json',
-      value: { version: 'research-deliverable-v1', taskId: fixture.task.id },
-      activeLease: fixture.lease,
-    }),
-    store.writeJson({
-      taskId: fixture.task.id,
-      planVersionId: fixture.plan.id,
-      attemptId: fixture.claim.attemptId,
-      kind: 'report_review',
-      relativePath: 'reviews/review-r0.json',
-      value: { version: 'report-review-v1', verdict: 'pass' },
-      activeLease: fixture.lease,
-    }),
-  ]);
-  assert.ok(artifacts.every((artifact) => artifact.state === 'SEALED'));
+  const invalidatedKinds = [
+    'evidence_manifest',
+    'deliverable',
+    'report_review',
+    'report_document',
+    'report_package',
+    'visual_asset',
+    'visual_asset_manifest',
+    'image_annotation',
+    'chart_spec',
+  ] as const;
+  const invalidated = await Promise.all(invalidatedKinds.map((kind) => store.writeJson({
+    taskId: fixture.task.id,
+    planVersionId: fixture.plan.id,
+    attemptId: fixture.claim.attemptId,
+    kind,
+    relativePath: `terminal/${kind}.json`,
+    value: { kind },
+    activeLease: fixture.lease,
+  })));
+  const chartData = await store.writeJson({
+    taskId: fixture.task.id,
+    planVersionId: fixture.plan.id,
+    attemptId: fixture.claim.attemptId,
+    kind: 'chart_data',
+    relativePath: 'terminal/chart_data.json',
+    value: { kind: 'chart_data' },
+    activeLease: fixture.lease,
+  });
+  assert.ok([...invalidated, chartData].every((artifact) => artifact.state === 'SEALED'));
 
   await fixture.repository.invalidateTerminalArtifacts({
     taskId: fixture.task.id,
@@ -2128,11 +2184,14 @@ test('terminal CAS recovery invalidates every sealed trusted review artifact wit
   });
 
   assert.deepEqual(
-    await Promise.all(artifacts.map(async (artifact) => (await fixture.repository.getArtifact(artifact.id))?.state)),
-    ['FAILED', 'FAILED', 'FAILED'],
+    await Promise.all(invalidated.map(async (artifact) => (
+      await fixture.repository.getArtifact(artifact.id)
+    )?.state)),
+    invalidatedKinds.map(() => 'FAILED'),
   );
+  assert.equal((await fixture.repository.getArtifact(chartData.id))?.state, 'SEALED');
   await assert.rejects(
-    () => fixture.repository.requireSealedArtifact(artifacts[2]!.id),
+    () => fixture.repository.requireSealedArtifact(invalidated[2]!.id),
     ArtifactNotSealedError,
   );
 });
@@ -2153,20 +2212,30 @@ test('refuses to overwrite an already sealed artifact path', async () => {
     plan: { steps: [] },
     planHash: 'sha256:overwrite-plan',
   });
+  const leaseOwner = 'test-worker';
+  const leaseToken = randomUUID();
   const claim = await repository.claimExecution({
     taskId: task.id,
     planVersionId: plan.id,
     expectedVersion: task.stateVersion,
     idempotencyKey: 'overwrite-claim',
     requestHash: 'sha256:overwrite-request',
-    leaseOwner: 'test-worker',
-    leaseTokenHash: 'sha256:overwrite-lease',
+    leaseOwner,
+    leaseTokenHash: `sha256:${createHash('sha256').update(leaseToken).digest('hex')}`,
   });
+  const activeLease: ControlExecutionLease = {
+    taskId: task.id,
+    planVersionId: plan.id,
+    attemptId: claim.attemptId,
+    leaseOwner,
+    leaseToken,
+  };
   const store = new ControlArtifactStore({ root: workspaceRoot, registry: repository });
   const first = await store.writeJson({
     taskId: task.id,
     planVersionId: plan.id,
     attemptId: claim.attemptId,
+    activeLease,
     kind: 'step_output',
     relativePath: 'steps/1/output.json',
     value: { original: true },
@@ -2177,6 +2246,7 @@ test('refuses to overwrite an already sealed artifact path', async () => {
       taskId: task.id,
       planVersionId: plan.id,
       attemptId: claim.attemptId,
+      activeLease,
       kind: 'step_output',
       relativePath: 'steps/1/output.json',
       value: { overwritten: true },

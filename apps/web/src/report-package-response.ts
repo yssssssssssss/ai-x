@@ -81,14 +81,38 @@ function assertManifestLineage(value: unknown): void {
   if (
     !isNonEmptyString(value.assetId)
     || !isNonEmptyString(value.manifestArtifactId)
-    || !isNonEmptyString(value.contentSha256)
-    || !isNonEmptyString(value.manifestHash)
+    || !isSha256(value.contentSha256)
+    || !isSha256(value.manifestHash)
   ) {
     throw new Error('visual Asset Manifest lineage identity is invalid');
   }
 }
 
-function assertManifestSource(value: unknown): 'derived' | 'original' {
+function isCanonicalHttpsUrl(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  try {
+    const url = new URL(value);
+    if (
+      url.protocol !== 'https:'
+      || Boolean(url.username || url.password)
+      || Boolean(url.port && url.port !== '443')
+      || Boolean(url.hash)
+    ) return false;
+    for (const key of url.searchParams.keys()) {
+      if (/(^|[_-])(token|key|signature|authorization|password|session|credential)([_-]|$)/iu.test(key)) {
+        return false;
+      }
+    }
+    return url.toString() === value;
+  } catch {
+    return false;
+  }
+}
+
+function assertManifestSource(
+  value: unknown,
+  version: 'visual-asset-manifest-v1' | 'visual-asset-manifest-v2',
+): 'browser_capture' | 'chart_render' | 'derived' | 'original' {
   if (!isRecord(value) || typeof value.kind !== 'string') {
     throw new Error('visual Asset Manifest source is invalid');
   }
@@ -108,6 +132,46 @@ function assertManifestSource(value: unknown): 'derived' | 'original' {
     && typeof value.url === 'string'
     && /^https?:\/\//u.test(value.url)
   ) return 'original';
+  if (
+    version === 'visual-asset-manifest-v2'
+    && value.kind === 'browser_capture'
+    && hasExactKeys(value, [
+      'kind', 'artifactId', 'artifactContentSha256', 'jsonPointer', 'attachmentId',
+      'sourcePageUrl', 'finalUrl', 'pageTitle', 'capturedAt', 'captureMode', 'viewport',
+      ...(hasOwn(value, 'selector') ? ['selector'] : []),
+    ])
+    && isNonEmptyString(value.artifactId)
+    && isSha256(value.artifactContentSha256)
+    && typeof value.jsonPointer === 'string'
+    && /^\/output\/captures\/[0-5]$/u.test(value.jsonPointer)
+    && typeof value.attachmentId === 'string'
+    && /^capture-[1-9][0-9]*$/u.test(value.attachmentId)
+    && isCanonicalHttpsUrl(value.sourcePageUrl)
+    && isCanonicalHttpsUrl(value.finalUrl)
+    && typeof value.pageTitle === 'string'
+    && value.pageTitle.length <= 300
+    && typeof value.capturedAt === 'string'
+    && Number.isFinite(Date.parse(value.capturedAt))
+    && ['extracted_image', 'element_screenshot', 'full_page_screenshot'].includes(String(value.captureMode))
+    && (!hasOwn(value, 'selector') || (
+      typeof value.selector === 'string' && value.selector.length >= 1 && value.selector.length <= 512
+    ))
+    && isRecord(value.viewport)
+    && hasExactKeys(value.viewport, ['width', 'height'])
+    && Number.isSafeInteger(value.viewport.width)
+    && Number(value.viewport.width) >= 1024
+    && Number(value.viewport.width) <= 1920
+    && Number.isSafeInteger(value.viewport.height)
+    && Number(value.viewport.height) >= 720
+    && Number(value.viewport.height) <= 1200
+  ) return 'browser_capture';
+  if (
+    version === 'visual-asset-manifest-v2'
+    && value.kind === 'chart_render'
+    && hasExactKeys(value, ['kind', 'dataArtifactId', 'dataArtifactContentSha256'])
+    && isNonEmptyString(value.dataArtifactId)
+    && isSha256(value.dataArtifactContentSha256)
+  ) return 'chart_render';
   throw new Error('visual Asset Manifest source does not match its schema');
 }
 
@@ -131,12 +195,15 @@ function assertManifestDerivation(value: unknown): 'chart_svg' | 'derived' | 'no
   throw new Error('visual Asset Manifest derivation does not match its schema');
 }
 
-function assertVisualAssetManifest(value: unknown, binding: PackageBinding): asserts value is VisualAssetManifest {
+export function assertVisualAssetManifest(
+  value: unknown,
+  binding: PackageBinding,
+): asserts value is VisualAssetManifest {
   if (!isRecord(value) || !hasExactKeys(value, MANIFEST_KEYS)) {
     throw new Error('visual Asset Manifest must contain exactly the schema fields');
   }
   if (
-    value.version !== 'visual-asset-manifest-v1'
+    (value.version !== 'visual-asset-manifest-v1' && value.version !== 'visual-asset-manifest-v2')
     || !isNonEmptyString(value.taskId)
     || !isNonEmptyString(value.planVersionId)
     || !isNonEmptyString(value.attemptId)
@@ -165,11 +232,18 @@ function assertVisualAssetManifest(value: unknown, binding: PackageBinding): ass
   ) {
     throw new Error('visual Asset Manifest Task, Plan, and Attempt binding does not match the package');
   }
-  const source = assertManifestSource(value.source);
+  const source = assertManifestSource(value.source, value.version);
   const derivation = assertManifestDerivation(value.derivation);
   if (source === 'derived') {
     assertManifestLineage(value.derivedFrom);
     if (derivation === 'none') throw new Error('derived visual Asset Manifest requires derivation lineage');
+    if (value.version === 'visual-asset-manifest-v2' && derivation === 'chart_svg') {
+      throw new Error('V2 derived visual Asset Manifest cannot contain chart_svg derivation');
+    }
+  } else if (source === 'chart_render') {
+    if (value.derivedFrom !== null || derivation !== 'chart_svg') {
+      throw new Error('chart_render visual Asset Manifest requires null lineage and chart_svg derivation');
+    }
   } else if (value.derivedFrom !== null || derivation !== 'none') {
     throw new Error('original visual Asset Manifest cannot contain derived lineage');
   }

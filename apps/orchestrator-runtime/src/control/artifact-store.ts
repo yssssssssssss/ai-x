@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { FileHandle } from 'node:fs/promises';
 import { mkdir } from 'node:fs/promises';
 import { isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
@@ -18,6 +18,7 @@ import {
   type ControlExecutionLease,
   type ControlPlaneRepository,
 } from '../../../../database/control-plane.ts';
+import { ArtifactInvalidationError } from './artifact-publication-group.ts';
 
 configureFsSafeNative({ mode: 'require' });
 
@@ -312,7 +313,22 @@ export class ControlArtifactStore {
   ) {}
 
   async invalidateArtifactPublication(artifactId: string, reason: string): Promise<void> {
-    await this.options.registry.invalidateArtifactPublication(artifactId, reason);
+    let invalidationError: unknown;
+    try {
+      await this.options.registry.invalidateArtifactPublication(artifactId, reason);
+    } catch (error) {
+      invalidationError = error;
+    }
+    let artifact: ControlArtifact | null;
+    try {
+      artifact = await this.options.registry.getArtifact(artifactId);
+    } catch {
+      if (invalidationError !== undefined) throw invalidationError;
+      return;
+    }
+    if (artifact?.state === 'FAILED') return;
+    if (invalidationError !== undefined) throw invalidationError;
+    throw new ArtifactIntegrityError(artifactId, 'publication invalidation was not confirmed');
   }
 
   async quarantineStagingArtifact(
@@ -495,12 +511,14 @@ export class ControlArtifactStore {
     const storageUri = this.resolveArtifactPath(directory, input.relativePath);
     const logicalPath = this.logicalPath(storageUri);
     const callerContentSha256 = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+    const stagingArtifactId = randomUUID();
     let artifact: ControlArtifact | null = null;
     let opened: OpenResult | null = null;
     let root: Root | null = null;
     let createdCurrentPath = false;
     try {
       artifact = await this.options.registry.createStagingArtifact({
+        artifactId: stagingArtifactId,
         taskId: input.taskId,
         planVersionId: input.planVersionId,
         attemptId: input.attemptId,
@@ -510,6 +528,7 @@ export class ControlArtifactStore {
         schemaVersion: input.schemaVersion ?? 'v1',
         sensitivity: input.sensitivity ?? 'internal',
         redactionPolicyVersion: input.redactionPolicyVersion ?? 'v1',
+        ...(input.activeLease ? { activeLease: input.activeLease } : {}),
         ...(metadata
           ? { mediaType: metadata.contentType, metadata: { width: metadata.width, height: metadata.height } }
           : {}),
@@ -550,22 +569,39 @@ export class ControlArtifactStore {
         byteSize: bytes.byteLength,
         ...(input.activeLease ?? {}),
       });
-      try {
-        await this.assertLogicalPathStillOpened(root, logicalPath, opened);
-        const afterSeal = await readHandleExact(opened.handle, bytes.byteLength);
-        if (afterSeal.contentSha256 !== callerContentSha256) {
-          throw new ArtifactIntegrityError(artifact.id, 'publication changed while seal was pending');
-        }
-      } catch (error) {
-        await this.options.registry.invalidateArtifactPublication(
-          artifact.id,
-          error instanceof Error ? error.message : String(error),
-        );
-        throw error;
+      await this.assertLogicalPathStillOpened(root, logicalPath, opened);
+      const afterSeal = await readHandleExact(opened.handle, bytes.byteLength);
+      if (afterSeal.contentSha256 !== callerContentSha256) {
+        throw new ArtifactIntegrityError(artifact.id, 'publication changed while seal was pending');
       }
       return sealed;
     } catch (error) {
-      const persisted = artifact ? await this.options.registry.getArtifact(artifact.id) : null;
+      let persisted: ControlArtifact | null;
+      try {
+        persisted = await this.options.registry.getArtifact(artifact?.id ?? stagingArtifactId);
+      } catch (lookupError) {
+        throw new ArtifactInvalidationError(
+          [artifact?.id ?? stagingArtifactId],
+          'Artifact publication state could not be reconciled',
+          [error, lookupError],
+        );
+      }
+      if (!artifact && persisted) {
+        const recoveredCreate = persisted.id === stagingArtifactId
+          && persisted.taskId === input.taskId
+          && persisted.planVersionId === input.planVersionId
+          && persisted.attemptId === (input.attemptId ?? null)
+          && persisted.kind === input.kind
+          && persisted.storageUri === storageUri
+          && persisted.schemaVersion === (input.schemaVersion ?? 'v1')
+          && persisted.sensitivity === (input.sensitivity ?? 'internal')
+          && persisted.redactionPolicyVersion === (input.redactionPolicyVersion ?? 'v1')
+          && persisted.state === 'STAGING';
+        if (!recoveredCreate) {
+          throw new ArtifactIntegrityError(stagingArtifactId, 'ambiguous staging creation does not match its request');
+        }
+        artifact = persisted;
+      }
       if (artifact && persisted?.state === 'SEALED' && opened && root) {
         try {
           await this.assertLogicalPathStillOpened(root, logicalPath, opened);
@@ -576,10 +612,6 @@ export class ControlArtifactStore {
         } catch {
           // The committed row is invalidated below; never recover through a changed logical path.
         }
-        await this.options.registry.invalidateArtifactPublication(
-          artifact.id,
-          error instanceof Error ? error.message : String(error),
-        );
       }
       if (
         artifact
@@ -589,24 +621,39 @@ export class ControlArtifactStore {
         && persisted.storageUri === `${storageUri}.${artifact.id}.orphan`
         && persisted.failureReason?.includes(ARTIFACT_QUARANTINE_PENDING_MARKER)
       ) {
-        if (opened) {
-          await opened[Symbol.asyncDispose]();
-          opened = null;
+        try {
+          if (opened) {
+            await opened[Symbol.asyncDispose]();
+            opened = null;
+          }
+          const disposition = await this.moveQuarantinePath(
+            root,
+            artifact.id,
+            logicalPath,
+            this.logicalPath(persisted.storageUri),
+          );
+          await this.options.registry.quarantineStagingArtifact({
+            artifactId: artifact.id,
+            expectedStorageUri: storageUri,
+            quarantineUri: persisted.storageUri,
+            reason: 'orphaned staging artifact after worker loss',
+          }, async () => disposition === 'absent' ? 'absent' : 'already_moved');
+        } catch (quarantineError) {
+          throw new ArtifactInvalidationError(
+            [artifact.id],
+            'orphaned staging artifact could not be quarantined',
+            [error, quarantineError],
+          );
         }
-        const disposition = await this.moveQuarantinePath(
-          root,
-          artifact.id,
-          logicalPath,
-          this.logicalPath(persisted.storageUri),
-        );
-        await this.options.registry.quarantineStagingArtifact({
-          artifactId: artifact.id,
-          expectedStorageUri: storageUri,
-          quarantineUri: persisted.storageUri,
-          reason: 'orphaned staging artifact after worker loss',
-        }, async () => disposition === 'absent' ? 'absent' : 'already_moved');
       }
-      if (artifact) await this.options.registry.failArtifact(artifact.id, error instanceof Error ? error.message : String(error));
+      if (artifact && persisted?.state !== 'FAILED') {
+        const reason = error instanceof Error ? error.message : String(error);
+        try {
+          await this.invalidateArtifactPublication(artifact.id, reason);
+        } catch (invalidationError) {
+          throw new ArtifactInvalidationError([artifact.id], reason, [invalidationError]);
+        }
+      }
       throw error;
     } finally {
       if (opened) await opened[Symbol.asyncDispose]();

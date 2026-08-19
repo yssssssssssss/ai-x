@@ -7,22 +7,30 @@ import { isIP, type LookupFunction } from 'node:net';
 import { Readable } from 'node:stream';
 import type { ControlArtifact, ControlExecutionLease } from '../../../../database/control-plane.ts';
 import type {
+  BrowserCaptureSource,
   VisualAssetDerivation,
   VisualAssetExportPolicy,
   VisualAssetManifest,
+  VisualAssetManifestV1,
+  VisualAssetManifestV2,
   VisualAssetReference,
   VisualAssetSource,
 } from '../../../../packages/api-contract/research-deliverable.ts';
+import type { ToolMediaAttachment } from '../runtime/tool-adapter.ts';
 import type {
   ControlArtifactStore,
   TrustedBinaryMetadata,
 } from '../control/artifact-store.ts';
+import {
+  ArtifactPublicationGroup,
+} from '../control/artifact-publication-group.ts';
 import { resolveJsonPointer } from '../evidence/evidence-service.ts';
 import { SchemaValidator } from '../schema/validator.ts';
 import { sniffSupportedImageContentType } from './image-content-type.ts';
 import {
   defaultResolveHost,
   normalizedHostname,
+  parseBrowserUrl,
   parseHttpUrl,
   resolvePublicTarget,
   type ResolveHost,
@@ -83,6 +91,16 @@ export interface VisualAssetDeriveInput extends AssetBinding {
   exportPolicy: VisualAssetExportPolicy;
 }
 
+export interface BrowserCaptureIngestInput extends AssetBinding {
+  activeLease: ControlExecutionLease;
+  toolArtifactId: string;
+  toolArtifactContentSha256: string;
+  captureIndex: number;
+  attachment: ToolMediaAttachment;
+  exportPolicy: VisualAssetExportPolicy;
+  ensureActive: () => void;
+}
+
 export interface VerifiedVisualAsset {
   artifact: ControlArtifact;
   bytes: Buffer;
@@ -109,6 +127,14 @@ function canonical(value: unknown): unknown {
 
 function hash(value: unknown): string {
   return `sha256:${createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex')}`;
+}
+
+function contentHash(bytes: Uint8Array): string {
+  return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function requireNonEmpty(value: string, label: string): void {
@@ -304,9 +330,9 @@ function manifestDraft(input: AssetBinding & {
   metadata: TrustedBinaryMetadata;
   source: VisualAssetSource;
   exportPolicy: VisualAssetExportPolicy;
-  derivedFrom: VisualAssetManifest['derivedFrom'];
+  derivedFrom: VisualAssetManifestV1['derivedFrom'];
   derivation: VisualAssetDerivation | null;
-}): Omit<VisualAssetManifest, 'manifestHash'> {
+}): Omit<VisualAssetManifestV1, 'manifestHash'> {
   if (!input.artifact.contentSha256) throw new Error('visual Asset is not SEALED with a content hash');
   return {
     version: 'visual-asset-manifest-v1',
@@ -329,7 +355,16 @@ function manifestDraft(input: AssetBinding & {
 const MANIFEST_VALIDATOR = new SchemaValidator();
 
 export function assertVisualAssetManifestSchema(value: unknown): asserts value is VisualAssetManifest {
-  MANIFEST_VALIDATOR.validateOrThrow('visual-asset-manifest', value);
+  if (!isRecord(value)) throw new Error('visual Asset manifest must be an object');
+  if (value.version === 'visual-asset-manifest-v1') {
+    MANIFEST_VALIDATOR.validateOrThrow('visual-asset-manifest', value);
+    return;
+  }
+  if (value.version === 'visual-asset-manifest-v2') {
+    MANIFEST_VALIDATOR.validateOrThrow('visual-asset-manifest-v2', value);
+    return;
+  }
+  throw new Error('visual Asset manifest version is unsupported');
 }
 
 function assertManifest(manifest: unknown): asserts manifest is VisualAssetManifest {
@@ -341,10 +376,10 @@ function assertManifest(manifest: unknown): asserts manifest is VisualAssetManif
 function assertPersistenceManifestInput(input: AssetBinding & {
   source: VisualAssetSource;
   exportPolicy: VisualAssetExportPolicy;
-  derivedFrom: VisualAssetManifest['derivedFrom'];
+  derivedFrom: VisualAssetManifestV1['derivedFrom'];
   derivation: VisualAssetDerivation | null;
 }): void {
-  const draft: Omit<VisualAssetManifest, 'manifestHash'> = {
+  const draft: Omit<VisualAssetManifestV1, 'manifestHash'> = {
     version: 'visual-asset-manifest-v1',
     taskId: input.taskId,
     planVersionId: input.planVersionId,
@@ -361,6 +396,123 @@ function assertPersistenceManifestInput(input: AssetBinding & {
     derivation: input.derivation,
   };
   assertVisualAssetManifestSchema({ ...draft, manifestHash: hash(draft) });
+}
+
+function requireHttpsUrl(value: unknown, label: string): string {
+  if (typeof value !== 'string') throw new Error(`${label} must be an HTTPS URL`);
+  const parsed = parseBrowserUrl(value, label);
+  if (parsed.toString() !== value) throw new Error(`${label} must use its canonical HTTPS form`);
+  return value;
+}
+
+function requireSafeInteger(value: unknown, label: string): number {
+  if (!Number.isSafeInteger(value) || Number(value) < 1) {
+    throw new Error(`${label} must be a positive safe integer`);
+  }
+  return Number(value);
+}
+
+function browserCaptureSource(
+  metadata: unknown,
+  input: BrowserCaptureIngestInput,
+  artifact: ControlArtifact,
+): BrowserCaptureSource {
+  if (!isRecord(metadata)) throw new Error('browser capture JSON pointer does not resolve to capture metadata');
+  const attachment = input.attachment;
+  const jsonPointer = `/output/captures/${input.captureIndex}`;
+  const attachmentId = metadata.attachment_id;
+  const requestedUrl = requireHttpsUrl(metadata.requested_url, 'browser capture requested_url');
+  const finalUrl = requireHttpsUrl(metadata.final_url, 'browser capture final_url');
+  const pageTitle = metadata.page_title;
+  const capturedAt = metadata.captured_at;
+  const captureMode = metadata.capture_mode;
+  const selector = metadata.selector;
+  const viewport = metadata.viewport;
+  const width = requireSafeInteger(metadata.width, 'browser capture width');
+  const height = requireSafeInteger(metadata.height, 'browser capture height');
+  const byteSize = requireSafeInteger(metadata.byte_size, 'browser capture byte_size');
+  const computedHash = contentHash(attachment.bytes);
+  if (
+    typeof attachmentId !== 'string'
+    || attachmentId !== attachment.attachmentId
+    || metadata.media_type !== 'image/png'
+    || attachment.mediaType !== 'image/png'
+    || metadata.media_type !== attachment.mediaType
+    || metadata.content_sha256 !== attachment.contentSha256
+    || attachment.contentSha256 !== computedHash
+    || requestedUrl !== attachment.sourcePageUrl
+    || capturedAt !== attachment.capturedAt
+    || captureMode !== attachment.captureMode
+    || width !== attachment.width
+    || height !== attachment.height
+    || byteSize !== attachment.bytes.byteLength
+  ) {
+    throw new Error('browser capture attachment does not match sealed Tool metadata');
+  }
+  if (
+    typeof pageTitle !== 'string'
+    || pageTitle.length > 300
+    || typeof capturedAt !== 'string'
+    || !Number.isFinite(Date.parse(capturedAt))
+    || !['extracted_image', 'element_screenshot', 'full_page_screenshot'].includes(String(captureMode))
+    || (selector !== undefined && (typeof selector !== 'string' || !selector || selector.length > 512))
+    || selector !== attachment.selector
+    || !isRecord(viewport)
+    || viewport.width !== attachment.viewport.width
+    || viewport.height !== attachment.viewport.height
+    || !Number.isSafeInteger(viewport.width)
+    || !Number.isSafeInteger(viewport.height)
+    || Number(viewport.width) < 1024
+    || Number(viewport.width) > 1920
+    || Number(viewport.height) < 720
+    || Number(viewport.height) > 1200
+    || metadata.truncated !== false && metadata.truncated !== true
+  ) {
+    throw new Error('browser capture metadata is malformed or disagrees with its attachment');
+  }
+  if (!artifact.contentSha256) throw new Error('browser capture Tool Artifact has no sealed hash');
+  return {
+    kind: 'browser_capture',
+    artifactId: artifact.id,
+    artifactContentSha256: artifact.contentSha256,
+    jsonPointer,
+    attachmentId,
+    sourcePageUrl: requestedUrl,
+    finalUrl,
+    pageTitle,
+    capturedAt,
+    captureMode: captureMode as BrowserCaptureSource['captureMode'],
+    ...(typeof selector === 'string' ? { selector } : {}),
+    viewport: {
+      width: Number(viewport.width),
+      height: Number(viewport.height),
+    },
+  };
+}
+
+function browserManifestDraft(input: AssetBinding & {
+  artifact: ControlArtifact;
+  metadata: TrustedBinaryMetadata;
+  source: BrowserCaptureSource;
+  exportPolicy: VisualAssetExportPolicy;
+}): Omit<VisualAssetManifestV2, 'manifestHash'> {
+  if (!input.artifact.contentSha256) throw new Error('visual Asset is not SEALED with a content hash');
+  return {
+    version: 'visual-asset-manifest-v2',
+    taskId: input.taskId,
+    planVersionId: input.planVersionId,
+    attemptId: input.attemptId,
+    assetId: input.artifact.id,
+    contentSha256: input.artifact.contentSha256,
+    mediaType: input.metadata.contentType,
+    byteSize: input.metadata.byteSize,
+    width: input.metadata.width,
+    height: input.metadata.height,
+    exportPolicy: input.exportPolicy,
+    source: input.source,
+    derivedFrom: null,
+    derivation: null,
+  };
 }
 
 export class VisualAssetService {
@@ -420,6 +572,35 @@ export class VisualAssetService {
     return this.persist({ ...input, bytes, source, derivedFrom: null, derivation: null });
   }
 
+  async ingestBrowserCapture(input: BrowserCaptureIngestInput): Promise<VisualAssetResult> {
+    requireNonEmpty(input.taskId, 'taskId');
+    requireNonEmpty(input.planVersionId, 'planVersionId');
+    requireNonEmpty(input.attemptId, 'attemptId');
+    requireNonEmpty(input.toolArtifactId, 'browser capture Tool Artifact id');
+    if (!Number.isSafeInteger(input.captureIndex) || input.captureIndex < 0 || input.captureIndex > 5) {
+      throw new Error('browser capture index must be an integer from 0 through 5');
+    }
+    input.ensureActive();
+    const tool = await this.artifacts.readVerifiedJson<unknown>(input.toolArtifactId);
+    input.ensureActive();
+    if (
+      tool.artifact.kind !== 'tool_output'
+      || tool.artifact.state !== 'SEALED'
+      || tool.artifact.schemaVersion !== 'tool-output-v1'
+      || tool.artifact.contentSha256 !== input.toolArtifactContentSha256
+    ) {
+      throw new Error('browser capture Tool Artifact kind, state, schema, or content hash does not match');
+    }
+    assertBinding(tool.artifact, input, 'browser capture Tool Artifact');
+    const jsonPointer = `/output/captures/${input.captureIndex}`;
+    const source = browserCaptureSource(
+      resolveJsonPointer(tool.value, jsonPointer),
+      input,
+      tool.artifact,
+    );
+    return this.persistBrowserCapture({ ...input, source });
+  }
+
   async derive(input: VisualAssetDeriveInput): Promise<VisualAssetResult> {
     const original = await this.readVerified(input.original);
     assertBinding(original.artifact, input, 'original visual Asset');
@@ -443,10 +624,10 @@ export class VisualAssetService {
       this.artifacts.readVerifiedJson<unknown>(reference.manifestArtifactId),
     ]);
     const manifest = manifestResult.value;
-    if (manifestResult.artifact.schemaVersion !== 'visual-asset-manifest-v1') {
-      throw new Error('visual Asset manifest Artifact schemaVersion is invalid');
-    }
     assertManifest(manifest);
+    if (manifestResult.artifact.schemaVersion !== manifest.version) {
+      throw new Error('visual Asset manifest Artifact schemaVersion does not match its body version');
+    }
     if (
       binary.artifact.id !== reference.assetId
       || manifestResult.artifact.id !== reference.manifestArtifactId
@@ -468,6 +649,9 @@ export class VisualAssetService {
     };
     assertBinding(binary.artifact, binding, 'visual Asset');
     assertBinding(manifestResult.artifact, binding, 'visual Asset manifest');
+    if (manifest.version === 'visual-asset-manifest-v2') {
+      await this.assertV2Provenance(manifest, binary.artifact);
+    }
     return {
       artifact: binary.artifact,
       bytes: Buffer.from(binary.bytes),
@@ -477,27 +661,160 @@ export class VisualAssetService {
     };
   }
 
+  private async assertV2Provenance(
+    manifest: VisualAssetManifestV2,
+    binaryArtifact: ControlArtifact,
+  ): Promise<void> {
+    if (binaryArtifact.schemaVersion !== 'visual-asset-v1') {
+      throw new Error('V2 visual Asset Binary Artifact schemaVersion is invalid');
+    }
+    const source = manifest.source;
+    if (source.kind === 'browser_capture') {
+      const tool = await this.artifacts.readVerifiedJson<unknown>(source.artifactId);
+      if (
+        tool.artifact.id !== source.artifactId
+        || tool.artifact.kind !== 'tool_output'
+        || tool.artifact.state !== 'SEALED'
+        || tool.artifact.schemaVersion !== 'tool-output-v1'
+        || tool.artifact.contentSha256 !== source.artifactContentSha256
+      ) {
+        throw new Error('browser capture Manifest Tool Artifact provenance is invalid');
+      }
+      assertBinding(tool.artifact, manifest, 'browser capture Manifest Tool Artifact');
+      const metadata = resolveJsonPointer(tool.value, source.jsonPointer);
+      if (!isRecord(metadata) || !isRecord(metadata.viewport)) {
+        throw new Error('browser capture Manifest pointer does not resolve to capture metadata');
+      }
+      const requestedUrl = requireHttpsUrl(metadata.requested_url, 'browser capture requested_url');
+      const finalUrl = requireHttpsUrl(metadata.final_url, 'browser capture final_url');
+      if (
+        metadata.attachment_id !== source.attachmentId
+        || requestedUrl !== source.sourcePageUrl
+        || finalUrl !== source.finalUrl
+        || metadata.page_title !== source.pageTitle
+        || metadata.captured_at !== source.capturedAt
+        || metadata.capture_mode !== source.captureMode
+        || metadata.selector !== source.selector
+        || metadata.viewport.width !== source.viewport.width
+        || metadata.viewport.height !== source.viewport.height
+        || metadata.media_type !== manifest.mediaType
+        || metadata.width !== manifest.width
+        || metadata.height !== manifest.height
+        || metadata.byte_size !== manifest.byteSize
+        || metadata.content_sha256 !== manifest.contentSha256
+      ) {
+        throw new Error('browser capture Manifest provenance does not match its Tool metadata');
+      }
+      return;
+    }
+    if (source.kind === 'chart_render') {
+      const data = await this.artifacts.readVerifiedJson<unknown>(source.dataArtifactId);
+      if (
+        data.artifact.id !== source.dataArtifactId
+        || data.artifact.kind !== 'chart_data'
+        || data.artifact.state !== 'SEALED'
+        || data.artifact.contentSha256 !== source.dataArtifactContentSha256
+      ) {
+        throw new Error('chart render Manifest data Artifact provenance is invalid');
+      }
+      assertBinding(data.artifact, manifest, 'chart render Manifest data Artifact');
+    }
+  }
+
   async invalidate(result: VisualAssetResult, reason: string): Promise<void> {
-    await Promise.allSettled([
-      this.artifacts.invalidateArtifactPublication(result.assetArtifact.id, reason),
-      this.artifacts.invalidateArtifactPublication(result.manifestArtifact.id, reason),
-    ]);
+    const group = new ArtifactPublicationGroup(this.artifacts);
+    group.track(result.assetArtifact.id).track(result.manifestArtifact.id);
+    await group.compensate(reason);
+  }
+
+  private async persistBrowserCapture(
+    input: BrowserCaptureIngestInput & { source: BrowserCaptureSource },
+  ): Promise<VisualAssetResult> {
+    const token = randomUUID();
+    const group = new ArtifactPublicationGroup(this.artifacts);
+    try {
+      const assetArtifact = await this.artifacts.writeBinary({
+        taskId: input.taskId,
+        planVersionId: input.planVersionId,
+        attemptId: input.attemptId,
+        kind: 'visual_asset',
+        relativePath: `visual-assets/${token}.image`,
+        bytes: Buffer.from(input.attachment.bytes),
+        schemaVersion: 'visual-asset-v1',
+        sensitivity: 'internal',
+        redactionPolicyVersion: 'v1',
+        activeLease: input.activeLease,
+      });
+      group.track(assetArtifact.id);
+      input.ensureActive();
+      assertBinding(assetArtifact, input, 'browser capture visual Asset');
+      const binary = await this.artifacts.readVerifiedBinary(assetArtifact.id);
+      input.ensureActive();
+      assertBinding(binary.artifact, input, 'verified browser capture visual Asset');
+      const metadata = metadataFromArtifact(binary.artifact);
+      if (
+        binary.artifact.id !== assetArtifact.id
+        || binary.artifact.contentSha256 !== input.attachment.contentSha256
+        || contentHash(binary.bytes) !== input.attachment.contentSha256
+        || metadata.contentType !== input.attachment.mediaType
+        || metadata.byteSize !== input.attachment.bytes.byteLength
+        || metadata.width !== input.attachment.width
+        || metadata.height !== input.attachment.height
+      ) {
+        throw new Error('sealed browser capture Binary Artifact does not match its attachment');
+      }
+      const draft = browserManifestDraft({ ...input, artifact: binary.artifact, metadata });
+      const manifest: VisualAssetManifestV2 = { ...draft, manifestHash: hash(draft) };
+      assertVisualAssetManifestSchema(manifest);
+      const manifestArtifact = await this.artifacts.writeJson({
+        taskId: input.taskId,
+        planVersionId: input.planVersionId,
+        attemptId: input.attemptId,
+        kind: 'visual_asset_manifest',
+        relativePath: `visual-assets/${token}.manifest.json`,
+        value: manifest,
+        schemaVersion: manifest.version,
+        sensitivity: 'internal',
+        redactionPolicyVersion: 'v1',
+        activeLease: input.activeLease,
+      });
+      group.track(manifestArtifact.id);
+      input.ensureActive();
+      assertBinding(manifestArtifact, input, 'browser capture visual Asset manifest');
+      const verified = await this.readVerified({
+        assetId: assetArtifact.id,
+        manifestArtifactId: manifestArtifact.id,
+      });
+      input.ensureActive();
+      group.commit();
+      return {
+        assetArtifact: verified.artifact,
+        manifestArtifact: verified.manifestArtifact,
+        manifest: verified.manifest,
+      };
+    } catch (error) {
+      try {
+        await group.compensate('browser capture visual Asset publication did not complete');
+      } catch (invalidationError) {
+        throw invalidationError;
+      }
+      throw error;
+    }
   }
 
   private async persist(input: AssetBinding & {
     bytes: Uint8Array;
     source: VisualAssetSource;
     exportPolicy: VisualAssetExportPolicy;
-    derivedFrom: VisualAssetManifest['derivedFrom'];
+    derivedFrom: VisualAssetManifestV1['derivedFrom'];
     derivation: VisualAssetDerivation | null;
     activeLease?: ControlExecutionLease;
   }): Promise<VisualAssetResult> {
     assertPersistenceManifestInput(input);
     const token = randomUUID();
-    let assetArtifact: ControlArtifact | undefined;
-    let manifestArtifact: ControlArtifact | undefined;
+    const group = new ArtifactPublicationGroup(this.artifacts);
     try {
-      assetArtifact = await this.artifacts.writeBinary({
+      const assetArtifact = await this.artifacts.writeBinary({
         taskId: input.taskId,
         planVersionId: input.planVersionId,
         attemptId: input.attemptId,
@@ -512,12 +829,13 @@ export class VisualAssetService {
           ? { trustedMediaType: 'image/svg+xml' as const }
           : {}),
       });
+      group.track(assetArtifact.id);
       assertBinding(assetArtifact, input, 'visual Asset');
       const metadata = metadataFromArtifact(assetArtifact);
       const draft = manifestDraft({ ...input, artifact: assetArtifact, metadata });
-      const manifest: VisualAssetManifest = { ...draft, manifestHash: hash(draft) };
+      const manifest: VisualAssetManifestV1 = { ...draft, manifestHash: hash(draft) };
       assertVisualAssetManifestSchema(manifest);
-      manifestArtifact = await this.artifacts.writeJson({
+      const manifestArtifact = await this.artifacts.writeJson({
         taskId: input.taskId,
         planVersionId: input.planVersionId,
         attemptId: input.attemptId,
@@ -529,20 +847,19 @@ export class VisualAssetService {
         redactionPolicyVersion: 'v1',
         ...(input.activeLease ? { activeLease: input.activeLease } : {}),
       });
+      group.track(manifestArtifact.id);
       assertBinding(manifestArtifact, input, 'visual Asset manifest');
       if (manifestArtifact.schemaVersion !== 'visual-asset-manifest-v1') {
         throw new Error('visual Asset manifest Artifact schemaVersion is invalid');
       }
+      group.commit();
       return { assetArtifact, manifestArtifact, manifest };
     } catch (error) {
-      await Promise.allSettled(
-        [assetArtifact?.id, manifestArtifact?.id]
-          .filter((artifactId): artifactId is string => artifactId !== undefined)
-          .map((artifactId) => this.artifacts.invalidateArtifactPublication(
-            artifactId,
-            'visual Asset publication did not complete',
-          )),
-      );
+      try {
+        await group.compensate('visual Asset publication did not complete');
+      } catch (invalidationError) {
+        throw invalidationError;
+      }
       throw error;
     }
   }

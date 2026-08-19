@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { Pool } from 'pg';
 import {
+  ARTIFACT_QUARANTINE_PENDING_MARKER,
+  ARTIFACT_INVALIDATION_PROMOTION_VERSION,
   ControlPlaneConflictError,
   ControlPlaneRepository,
   type ControlExecutionLease,
@@ -55,6 +57,79 @@ class AnnouncedStepWriteDatabase implements MigrationDatabase {
         ) {
           this.announced = true;
           this.announce();
+        }
+        return connection.query(sql, values);
+      },
+      release() {
+        connection.release();
+      },
+    };
+  }
+}
+
+class BlockedArtifactInsertDatabase implements MigrationDatabase {
+  private announced = false;
+  private announce!: () => void;
+  private unblock!: () => void;
+  readonly insertStarted = new Promise<void>((resolve) => {
+    this.announce = resolve;
+  });
+  private readonly insertReleased = new Promise<void>((resolve) => {
+    this.unblock = resolve;
+  });
+
+  constructor(private readonly database: MigrationDatabase) {}
+
+  releaseInsert(): void {
+    this.unblock();
+  }
+
+  async connect(): Promise<MigrationConnection> {
+    const connection = await this.database.connect();
+    return {
+      query: async (sql, values = []) => {
+        if (!this.announced && /INSERT\s+INTO\s+control_artifacts/iu.test(sql)) {
+          this.announced = true;
+          this.announce();
+          await this.insertReleased;
+        }
+        return connection.query(sql, values);
+      },
+      release() {
+        connection.release();
+      },
+    };
+  }
+}
+
+class BlockedLeaseSealUpdateDatabase implements MigrationDatabase {
+  private announced = false;
+  private announce!: () => void;
+  private unblock!: () => void;
+  readonly updateStarted = new Promise<void>((resolve) => {
+    this.announce = resolve;
+  });
+  private readonly updateReleased = new Promise<void>((resolve) => {
+    this.unblock = resolve;
+  });
+
+  constructor(private readonly database: MigrationDatabase) {}
+
+  releaseUpdate(): void {
+    this.unblock();
+  }
+
+  async connect(): Promise<MigrationConnection> {
+    const connection = await this.database.connect();
+    return {
+      query: async (sql, values = []) => {
+        if (
+          !this.announced
+          && /UPDATE\s+control_artifacts\s+AS\s+artifact[\s\S]+FROM\s+control_execution_attempts\s+AS\s+attempt/iu.test(sql)
+        ) {
+          this.announced = true;
+          this.announce();
+          await this.updateReleased;
         }
         return connection.query(sql, values);
       },
@@ -150,6 +225,23 @@ async function claimedLease(options: { expiresAt?: Date } = {}): Promise<{
       leaseToken: token,
     },
   };
+}
+
+async function createResidualArtifact(
+  repository: ControlPlaneRepository,
+  lease: ControlExecutionLease,
+) {
+  return repository.createStagingArtifact({
+    taskId: lease.taskId,
+    planVersionId: lease.planVersionId,
+    attemptId: lease.attemptId,
+    activeLease: lease,
+    kind: 'visual_asset',
+    storageUri: `/tmp/${randomUUID()}.png`,
+    schemaVersion: 'visual-asset-v1',
+    sensitivity: 'internal',
+    redactionPolicyVersion: 'trusted-p0-v1',
+  });
 }
 
 test('accepts only the current unexpired execution lease and heartbeats it', async () => {
@@ -262,6 +354,1094 @@ test('classifies an expired lease as worker loss without scheduling empty cleanu
     () => repository.expireExecutionLease({ taskId: lease.taskId, attemptId: lease.attemptId }),
     ControlPlaneConflictError,
   );
+});
+
+test('keeps an artifact-invalidation attempt recoverable when only a sealed visual Manifest remains', async () => {
+  const { repository, lease } = await claimedLease();
+  const manifest = await repository.createStagingArtifact({
+    taskId: lease.taskId,
+    planVersionId: lease.planVersionId,
+    attemptId: lease.attemptId,
+    activeLease: lease,
+    kind: 'visual_asset_manifest',
+    storageUri: `/tmp/${randomUUID()}.json`,
+    schemaVersion: 'visual-asset-manifest-v2',
+    sensitivity: 'internal',
+    redactionPolicyVersion: 'v1',
+  });
+  await repository.sealArtifact({
+    ...lease,
+    artifactId: manifest.id,
+    contentSha256: `sha256:${'1'.repeat(64)}`,
+    byteSize: 1,
+  });
+  const active = await repository.requireActiveLease(lease);
+  await repository.pauseExecution({
+    taskId: lease.taskId,
+    attemptId: lease.attemptId,
+    expectedVersion: active.stateVersion,
+    reason: 'artifact_invalidation',
+  });
+
+  const recoverable = (await repository.listRecoverableExecutions())
+    .find(({ attemptId }) => attemptId === lease.attemptId);
+  assert.equal(recoverable?.attemptState, 'paused');
+  assert.equal(recoverable?.failureKind, 'artifact_invalidation');
+});
+
+test('artifact-invalidation promotion is fenced and preserves the first terminal payload', async () => {
+  const { repository, lease } = await claimedLease();
+  const firstArtifact = await createResidualArtifact(repository, lease);
+  const secondArtifact = await createResidualArtifact(repository, lease);
+  const identity = {
+    stepNo: 1,
+    stepName: 'browser publication',
+    actorType: 'tool',
+    actorId: 'playwright-page-capture',
+  };
+  const toolProvenance = { outputHash: 'sha256:browser-output' };
+  const previousFailure = {
+    kind: 'persistence',
+    retryable: false,
+    artifactInvalidationPromotion: {
+      version: ARTIFACT_INVALIDATION_PROMOTION_VERSION,
+      eligibleArtifactIds: [firstArtifact.id],
+    },
+  };
+  await repository.recordExecutionStep({
+    ...lease,
+    ...identity,
+    state: 'failed',
+    failure: previousFailure,
+    toolProvenance,
+    startedAt: new Date('2026-08-19T00:00:00.000Z'),
+    finishedAt: new Date('2026-08-19T00:00:01.000Z'),
+  });
+
+  const firstFailure = {
+    kind: 'artifact_invalidation',
+    retryable: false,
+    message: 'unpublished step Artifact could not be invalidated',
+    failedArtifactIds: [firstArtifact.id],
+    allowedActions: ['abort'],
+  };
+  const firstPromotion = {
+    ...lease,
+    ...identity,
+    failedArtifactIds: [firstArtifact.id],
+    expectedPreviousFailure: previousFailure,
+  };
+  assert.equal(await repository.promoteExecutionStepArtifactInvalidation({
+    ...firstPromotion,
+    leaseToken: 'wrong-token',
+  }), null);
+  assert.deepEqual(
+    await repository.promoteExecutionStepArtifactInvalidation(firstPromotion),
+    firstFailure,
+  );
+  assert.deepEqual(
+    await repository.promoteExecutionStepArtifactInvalidation(firstPromotion),
+    firstFailure,
+  );
+  assert.equal(await repository.promoteExecutionStepArtifactInvalidation({
+    ...firstPromotion,
+    failedArtifactIds: [secondArtifact.id],
+  }), null);
+
+  await repository.recordExecutionStep({
+    ...lease,
+    stepNo: 2,
+    stepName: 'completed browser publication',
+    actorType: 'tool',
+    actorId: 'playwright-page-capture',
+    state: 'succeeded',
+    startedAt: new Date('2026-08-19T00:00:04.000Z'),
+    finishedAt: new Date('2026-08-19T00:00:05.000Z'),
+  });
+  assert.equal(await repository.promoteExecutionStepArtifactInvalidation({
+    ...lease,
+    stepNo: 2,
+    stepName: 'completed browser publication',
+    actorType: 'tool',
+    actorId: 'playwright-page-capture',
+    failedArtifactIds: [firstArtifact.id],
+    expectedPreviousFailure: previousFailure,
+  }), null);
+
+  const steps = await repository.listExecutionSteps(lease.attemptId);
+  assert.deepEqual(steps.find(({ stepNo }) => stepNo === 1)?.failure, firstFailure);
+  assert.equal(
+    steps.find(({ stepNo }) => stepNo === 1)?.finishedAt?.toISOString(),
+    '2026-08-19T00:00:01.000Z',
+  );
+  assert.equal(steps.find(({ stepNo }) => stepNo === 2)?.state, 'succeeded');
+});
+
+test('artifact-invalidation promotion rejects an expired active lease', async () => {
+  const { repository, lease } = await claimedLease();
+  const artifact = await createResidualArtifact(repository, lease);
+  await repository.recordExecutionStep({
+    ...lease,
+    stepNo: 1,
+    stepName: 'browser publication',
+    actorType: 'tool',
+    actorId: 'playwright-page-capture',
+    state: 'failed',
+    failure: { kind: 'persistence', retryable: false, allowedActions: ['abort'] },
+    finishedAt: new Date('2026-08-19T00:00:01.000Z'),
+  });
+  const connection = await scopedDatabase.connect();
+  try {
+    await connection.query(
+      `UPDATE control_execution_attempts
+       SET lease_expires_at = now() - interval '1 second'
+       WHERE id = $1`,
+      [lease.attemptId],
+    );
+  } finally {
+    connection.release();
+  }
+
+  assert.equal(await repository.promoteExecutionStepArtifactInvalidation({
+    ...lease,
+    stepNo: 1,
+    stepName: 'browser publication',
+    actorType: 'tool',
+    actorId: 'playwright-page-capture',
+    failedArtifactIds: [artifact.id],
+    expectedPreviousFailure: {
+      kind: 'persistence',
+      retryable: false,
+      allowedActions: ['abort'],
+    },
+  }), null);
+  const [step] = await repository.listExecutionSteps(lease.attemptId);
+  assert.equal(step?.failure?.kind, 'persistence');
+  assert.equal(step?.finishedAt?.toISOString(), '2026-08-19T00:00:01.000Z');
+  const recoverable = (await repository.listRecoverableExecutions())
+    .find(({ attemptId }) => attemptId === lease.attemptId);
+  assert.equal(recoverable?.attemptState, 'paused');
+  assert.equal(recoverable?.failureKind, 'worker_loss');
+});
+
+test('artifact-invalidation promotion consumes a bound deferred-cleanup marker after lease recovery', async () => {
+  const { repository, lease } = await claimedLease();
+  const artifact = await createResidualArtifact(repository, lease);
+  const unrelatedArtifact = await createResidualArtifact(repository, lease);
+  const identity = {
+    stepNo: 1,
+    stepName: 'browser publication',
+    actorType: 'tool',
+    actorId: 'playwright-page-capture',
+  };
+  const previousFailure = {
+    kind: 'capability',
+    retryable: false,
+    allowedActions: ['abort'],
+    artifactInvalidationPromotion: {
+      version: ARTIFACT_INVALIDATION_PROMOTION_VERSION,
+      eligibleArtifactIds: [artifact.id],
+    },
+  };
+  const toolProvenance = { outputHash: 'sha256:deferred-browser-output' };
+  const finishedAt = new Date('2026-08-19T00:00:01.000Z');
+  await repository.recordExecutionStep({
+    ...lease,
+    ...identity,
+    state: 'failed',
+    failure: previousFailure,
+    toolProvenance,
+    finishedAt,
+  });
+  const connection = await scopedDatabase.connect();
+  try {
+    await connection.query(
+      `UPDATE control_execution_attempts
+       SET lease_expires_at = now() - interval '1 second'
+       WHERE id = $1`,
+      [lease.attemptId],
+    );
+  } finally {
+    connection.release();
+  }
+
+  await repository.expireExecutionLease({ taskId: lease.taskId, attemptId: lease.attemptId });
+  assert.equal((await repository.listExecutionSteps(lease.attemptId)).length, 1);
+
+  assert.equal(await repository.promoteExecutionStepArtifactInvalidation({
+    ...lease,
+    ...identity,
+    expectedPreviousFailure: previousFailure,
+    failedArtifactIds: [unrelatedArtifact.id],
+  }), null);
+  const promoted = await repository.promoteExecutionStepArtifactInvalidation({
+    ...lease,
+    ...identity,
+    expectedPreviousFailure: previousFailure,
+    failedArtifactIds: [artifact.id],
+  });
+  assert.ok(promoted);
+  assert.equal(promoted.kind, 'artifact_invalidation');
+  assert.equal(promoted.artifactInvalidationPromotion, undefined);
+  assert.deepEqual(promoted.failedArtifactIds, [artifact.id]);
+  assert.deepEqual(promoted.allowedActions, ['abort']);
+  const [step] = await repository.listExecutionSteps(lease.attemptId);
+  assert.deepEqual(step?.failure, promoted);
+  assert.deepEqual(step?.toolProvenance, toolProvenance);
+  assert.equal(step?.finishedAt?.getTime(), finishedAt.getTime());
+  const recoverable = (await repository.listRecoverableExecutions())
+    .find(({ attemptId }) => attemptId === lease.attemptId);
+  assert.equal(recoverable?.failureKind, 'artifact_invalidation');
+});
+
+test('lease expiry cannot downgrade a promoted artifact-invalidation failure', async () => {
+  const { repository, lease } = await claimedLease();
+  const artifact = await createResidualArtifact(repository, lease);
+  const identity = {
+    stepNo: 1,
+    stepName: 'browser publication',
+    actorType: 'tool',
+    actorId: 'playwright-page-capture',
+  };
+  const previousFailure = {
+    kind: 'persistence',
+    retryable: false,
+    allowedActions: ['abort'],
+    artifactInvalidationPromotion: {
+      version: ARTIFACT_INVALIDATION_PROMOTION_VERSION,
+      eligibleArtifactIds: [artifact.id],
+    },
+  };
+  await repository.recordExecutionStep({
+    ...lease,
+    ...identity,
+    state: 'failed',
+    failure: previousFailure,
+  });
+  const promoted = await repository.promoteExecutionStepArtifactInvalidation({
+    ...lease,
+    ...identity,
+    failedArtifactIds: [artifact.id],
+    expectedPreviousFailure: previousFailure,
+  });
+  assert.equal(promoted?.kind, 'artifact_invalidation');
+  const connection = await scopedDatabase.connect();
+  try {
+    await connection.query(
+      `UPDATE control_execution_attempts
+       SET lease_expires_at = now() - interval '1 second'
+       WHERE id = $1`,
+      [lease.attemptId],
+    );
+  } finally {
+    connection.release();
+  }
+
+  await repository.expireExecutionLease({ taskId: lease.taskId, attemptId: lease.attemptId });
+
+  const recoverable = (await repository.listRecoverableExecutions())
+    .find(({ attemptId }) => attemptId === lease.attemptId);
+  assert.equal(recoverable?.failureKind, 'artifact_invalidation');
+  const steps = await repository.listExecutionSteps(lease.attemptId);
+  assert.equal(steps.length, 1);
+  assert.deepEqual(steps[0]?.failure, promoted);
+});
+
+test('deferred-cleanup marker stays internal and is consumed only after every bound Artifact is FAILED', async () => {
+  const { repository, lease } = await claimedLease();
+  const artifact = await createResidualArtifact(repository, lease);
+  const unrelatedArtifact = await createResidualArtifact(repository, lease);
+  const identity = {
+    stepNo: 1,
+    stepName: 'browser publication',
+    actorType: 'tool',
+    actorId: 'playwright-page-capture',
+  };
+  const publicFailure = { kind: 'persistence', retryable: false, allowedActions: ['abort'] };
+  const pendingCleanupFailure = {
+    kind: 'artifact_invalidation',
+    retryable: false,
+    allowedActions: ['abort'],
+  };
+  const persistedFailure = {
+    ...publicFailure,
+    artifactInvalidationPromotion: {
+      version: ARTIFACT_INVALIDATION_PROMOTION_VERSION,
+      eligibleArtifactIds: [artifact.id],
+    },
+  };
+  const toolProvenance = { outputHash: 'sha256:deferred-browser-output' };
+  const finishedAt = new Date('2026-08-19T00:00:01.000Z');
+  await repository.recordExecutionStep({
+    ...lease,
+    ...identity,
+    state: 'failed',
+    failure: persistedFailure,
+    toolProvenance,
+    finishedAt,
+  });
+
+  assert.deepEqual(
+    (await repository.listExecutionSteps(lease.attemptId))[0]?.failure,
+    pendingCleanupFailure,
+  );
+  assert.equal(await repository.clearExecutionStepArtifactInvalidationPromotion({
+    ...lease,
+    ...identity,
+    expectedPreviousFailure: persistedFailure,
+  }), null);
+
+  await repository.invalidateArtifactPublication(artifact.id, 'deferred cleanup completed');
+  await repository.invalidateArtifactPublication(unrelatedArtifact.id, 'unrelated cleanup completed');
+  assert.equal(await repository.clearExecutionStepArtifactInvalidationPromotion({
+    ...lease,
+    ...identity,
+    leaseToken: 'wrong-token',
+    expectedPreviousFailure: persistedFailure,
+  }), null);
+  assert.deepEqual(await repository.clearExecutionStepArtifactInvalidationPromotion({
+    ...lease,
+    ...identity,
+    expectedPreviousFailure: persistedFailure,
+  }), publicFailure);
+  assert.deepEqual(await repository.clearExecutionStepArtifactInvalidationPromotion({
+    ...lease,
+    ...identity,
+    expectedPreviousFailure: persistedFailure,
+  }), publicFailure);
+  assert.deepEqual(
+    (await repository.listExecutionSteps(lease.attemptId))[0]?.failure,
+    publicFailure,
+  );
+  assert.equal(await repository.clearExecutionStepArtifactInvalidationPromotion({
+    ...lease,
+    ...identity,
+    expectedPreviousFailure: {
+      ...publicFailure,
+      artifactInvalidationPromotion: {
+        version: ARTIFACT_INVALIDATION_PROMOTION_VERSION,
+        eligibleArtifactIds: [unrelatedArtifact.id],
+      },
+    },
+  }), null);
+
+  const connection = await scopedDatabase.connect();
+  try {
+    const raw = await connection.query(
+      `SELECT failure_json, tool_provenance, finished_at
+       FROM control_execution_steps
+       WHERE attempt_id = $1 AND step_no = $2`,
+      [lease.attemptId, identity.stepNo],
+    );
+    const rawFailure = raw.rows[0]?.failure_json as Record<string, unknown> | undefined;
+    assert.ok(rawFailure);
+    assert.equal(rawFailure.artifactInvalidationPromotion, undefined);
+    const clearReceipt = rawFailure.artifactInvalidationClearReceipt as Record<string, unknown>;
+    assert.equal(clearReceipt.version, 'artifact-invalidation-clear-receipt-v1');
+    assert.match(
+      String(clearReceipt.expectedFailureHash),
+      /^sha256:[a-f0-9]{64}$/,
+    );
+    const rawPublicFailure = { ...rawFailure };
+    delete rawPublicFailure.artifactInvalidationClearReceipt;
+    assert.deepEqual(rawPublicFailure, publicFailure);
+    assert.deepEqual(raw.rows[0]?.tool_provenance, toolProvenance);
+    assert.equal(new Date(String(raw.rows[0]?.finished_at)).getTime(), finishedAt.getTime());
+  } finally {
+    connection.release();
+  }
+});
+
+test('deferred-cleanup marker requires either an active lease or its current worker-loss recovery', async () => {
+  const { repository, lease } = await claimedLease();
+  const artifact = await createResidualArtifact(repository, lease);
+  const identity = {
+    stepNo: 1,
+    stepName: 'browser publication',
+    actorType: 'tool',
+    actorId: 'playwright-page-capture',
+  };
+  const persistedFailure = {
+    kind: 'persistence',
+    retryable: false,
+    allowedActions: ['retry', 'abort'],
+    artifactInvalidationPromotion: {
+      version: ARTIFACT_INVALIDATION_PROMOTION_VERSION,
+      eligibleArtifactIds: [artifact.id],
+    },
+  };
+  await repository.recordExecutionStep({
+    ...lease,
+    ...identity,
+    state: 'failed',
+    failure: persistedFailure,
+  });
+  await repository.invalidateArtifactPublication(artifact.id, 'deferred cleanup completed');
+  const connection = await scopedDatabase.connect();
+  try {
+    await connection.query(
+      `UPDATE control_execution_attempts
+       SET lease_expires_at = now() - interval '1 second'
+       WHERE id = $1`,
+      [lease.attemptId],
+    );
+  } finally {
+    connection.release();
+  }
+
+  assert.equal(await repository.clearExecutionStepArtifactInvalidationPromotion({
+    ...lease,
+    ...identity,
+    expectedPreviousFailure: persistedFailure,
+  }), null);
+  await repository.expireExecutionLease({ taskId: lease.taskId, attemptId: lease.attemptId });
+  const paused = await repository.getTaskDetail(lease.taskId);
+  assert.ok(paused);
+  assert.equal(await repository.retryPausedExecution({
+    taskId: lease.taskId,
+    attemptId: lease.attemptId,
+    expectedVersion: paused.stateVersion,
+    failedStepNo: 1,
+  }), null);
+  assert.deepEqual(await repository.clearExecutionStepArtifactInvalidationPromotion({
+    ...lease,
+    ...identity,
+    expectedPreviousFailure: persistedFailure,
+  }), { kind: 'persistence', retryable: false, allowedActions: ['retry', 'abort'] });
+  assert.equal((await repository.retryPausedExecution({
+    taskId: lease.taskId,
+    attemptId: lease.attemptId,
+    expectedVersion: paused.stateVersion,
+    failedStepNo: 1,
+  }))?.state, 'ready');
+  assert.equal((await repository.listExecutionSteps(lease.attemptId)).length, 1);
+  assert.equal(
+    (await repository.listExecutionSteps(lease.attemptId))[0]?.failure
+      ?.artifactInvalidationPromotion,
+    undefined,
+  );
+});
+
+test('current artifact-invalidation recovery can clear a compensated sibling marker without downgrading', async () => {
+  const { repository, lease } = await claimedLease();
+  const compensatedArtifact = await createResidualArtifact(repository, lease);
+  const failedArtifact = await createResidualArtifact(repository, lease);
+  const compensatedFailure = {
+    kind: 'persistence',
+    retryable: false,
+    artifactInvalidationPromotion: {
+      version: ARTIFACT_INVALIDATION_PROMOTION_VERSION,
+      eligibleArtifactIds: [compensatedArtifact.id],
+    },
+  };
+  const failedFailure = {
+    kind: 'persistence',
+    retryable: false,
+    artifactInvalidationPromotion: {
+      version: ARTIFACT_INVALIDATION_PROMOTION_VERSION,
+      eligibleArtifactIds: [failedArtifact.id],
+    },
+  };
+  await repository.recordExecutionStep({
+    ...lease,
+    stepNo: 1,
+    stepName: 'compensated publication',
+    actorType: 'tool',
+    actorId: 'playwright-page-capture',
+    state: 'failed',
+    failure: compensatedFailure,
+  });
+  await repository.recordExecutionStep({
+    ...lease,
+    stepNo: 2,
+    stepName: 'failed publication',
+    actorType: 'tool',
+    actorId: 'playwright-page-capture',
+    state: 'failed',
+    failure: failedFailure,
+  });
+  await repository.invalidateArtifactPublication(compensatedArtifact.id, 'compensation completed');
+  assert.equal((await repository.promoteExecutionStepArtifactInvalidation({
+    ...lease,
+    stepNo: 2,
+    stepName: 'failed publication',
+    actorType: 'tool',
+    actorId: 'playwright-page-capture',
+    failedArtifactIds: [failedArtifact.id],
+    expectedPreviousFailure: failedFailure,
+  }))?.kind, 'artifact_invalidation');
+  const connection = await scopedDatabase.connect();
+  try {
+    await connection.query(
+      `UPDATE control_execution_attempts
+       SET lease_expires_at = now() - interval '1 second'
+       WHERE id = $1`,
+      [lease.attemptId],
+    );
+  } finally {
+    connection.release();
+  }
+  await repository.expireExecutionLease({ taskId: lease.taskId, attemptId: lease.attemptId });
+
+  assert.deepEqual(await repository.clearExecutionStepArtifactInvalidationPromotion({
+    ...lease,
+    stepNo: 1,
+    stepName: 'compensated publication',
+    actorType: 'tool',
+    actorId: 'playwright-page-capture',
+    expectedPreviousFailure: compensatedFailure,
+  }), { kind: 'persistence', retryable: false });
+  const recoverable = (await repository.listRecoverableExecutions())
+    .find(({ attemptId }) => attemptId === lease.attemptId);
+  assert.equal(recoverable?.failureKind, 'artifact_invalidation');
+  assert.equal((await repository.listExecutionSteps(lease.attemptId)).length, 2);
+});
+
+test('artifact-invalidation promotion only advances the worker-loss step monotonically', async () => {
+  const { repository, lease } = await claimedLease();
+  const artifact = await createResidualArtifact(repository, lease);
+  const conflictingArtifact = await createResidualArtifact(repository, lease);
+  await repository.recordExecutionStep({
+    ...lease,
+    stepNo: 1,
+    stepName: 'existing safety failure',
+    actorType: 'tool',
+    actorId: 'safety-tool',
+    state: 'failed',
+    failure: { kind: 'safety', retryable: false, allowedActions: ['abort'] },
+  });
+  await repository.recordExecutionStep({
+    ...lease,
+    stepNo: 2,
+    stepName: 'browser publication',
+    actorType: 'tool',
+    actorId: 'playwright-page-capture',
+    state: 'running',
+  });
+  const connection = await scopedDatabase.connect();
+  try {
+    await connection.query(
+      `UPDATE control_execution_attempts
+       SET lease_expires_at = now() - interval '1 second'
+       WHERE id = $1`,
+      [lease.attemptId],
+    );
+  } finally {
+    connection.release();
+  }
+  await repository.expireExecutionLease({ taskId: lease.taskId, attemptId: lease.attemptId });
+  const beforePromotion = await repository.listExecutionSteps(lease.attemptId);
+  const workerLossStep = beforePromotion.find(({ stepNo }) => stepNo === 2);
+  assert.equal(workerLossStep?.failure?.kind, 'worker_loss');
+
+  const failure = {
+    kind: 'artifact_invalidation',
+    retryable: false,
+    message: 'unpublished step Artifact could not be invalidated',
+    failedArtifactIds: [artifact.id],
+    allowedActions: ['abort'],
+  };
+  assert.equal(await repository.promoteExecutionStepArtifactInvalidation({
+    ...lease,
+    stepNo: 1,
+    stepName: 'existing safety failure',
+    actorType: 'tool',
+    actorId: 'safety-tool',
+    failedArtifactIds: [artifact.id],
+    expectedPreviousFailure: {
+      kind: 'safety',
+      retryable: false,
+      allowedActions: ['abort'],
+    },
+  }), null);
+  assert.equal(await repository.promoteExecutionStepArtifactInvalidation({
+    ...lease,
+    stepNo: 2,
+    stepName: 'browser publication',
+    actorType: 'tool',
+    actorId: 'playwright-page-capture',
+    failedArtifactIds: ['not-an-artifact'],
+  }), null);
+  assert.deepEqual(await repository.promoteExecutionStepArtifactInvalidation({
+    ...lease,
+    stepNo: 2,
+    stepName: 'browser publication',
+    actorType: 'tool',
+    actorId: 'playwright-page-capture',
+    failedArtifactIds: [artifact.id],
+  }), failure);
+  assert.deepEqual(await repository.promoteExecutionStepArtifactInvalidation({
+    ...lease,
+    stepNo: 2,
+    stepName: 'browser publication',
+    actorType: 'tool',
+    actorId: 'playwright-page-capture',
+    failedArtifactIds: [artifact.id],
+  }), failure);
+  assert.equal(await repository.promoteExecutionStepArtifactInvalidation({
+    ...lease,
+    stepNo: 2,
+    stepName: 'browser publication',
+    actorType: 'tool',
+    actorId: 'playwright-page-capture',
+    failedArtifactIds: [conflictingArtifact.id],
+  }), null);
+
+  const [safetyStep, browserStep] = await repository.listExecutionSteps(lease.attemptId);
+  assert.equal((await repository.listExecutionSteps(lease.attemptId)).length, 2);
+  assert.equal(safetyStep?.failure?.kind, 'safety');
+  assert.deepEqual(browserStep?.failure, failure);
+  assert.equal(browserStep?.toolProvenance, null);
+  assert.equal(browserStep?.finishedAt?.getTime(), workerLossStep?.finishedAt?.getTime());
+  const recoverable = (await repository.listRecoverableExecutions())
+    .find(({ attemptId }) => attemptId === lease.attemptId);
+  assert.equal(recoverable?.failureKind, 'artifact_invalidation');
+});
+
+test('worker-loss retry cannot outrun artifact-invalidation promotion', async () => {
+  const { repository, lease } = await claimedLease();
+  const artifact = await createResidualArtifact(repository, lease);
+  await repository.recordExecutionStep({
+    ...lease,
+    stepNo: 1,
+    stepName: 'browser publication',
+    actorType: 'tool',
+    actorId: 'playwright-page-capture',
+    state: 'running',
+  });
+  const connection = await scopedDatabase.connect();
+  try {
+    await connection.query(
+      `UPDATE control_execution_attempts
+       SET lease_expires_at = now() - interval '1 second'
+       WHERE id = $1`,
+      [lease.attemptId],
+    );
+  } finally {
+    connection.release();
+  }
+  const paused = await repository.expireExecutionLease({
+    taskId: lease.taskId,
+    attemptId: lease.attemptId,
+  });
+
+  const [retried, promoted] = await Promise.all([
+    repository.retryPausedExecution({
+      taskId: lease.taskId,
+      attemptId: lease.attemptId,
+      expectedVersion: paused.stateVersion,
+      failedStepNo: 1,
+    }),
+    repository.promoteExecutionStepArtifactInvalidation({
+      ...lease,
+      stepNo: 1,
+      stepName: 'browser publication',
+      actorType: 'tool',
+      actorId: 'playwright-page-capture',
+      failedArtifactIds: [artifact.id],
+    }),
+  ]);
+
+  assert.equal(retried, null);
+  assert.equal(promoted?.kind, 'artifact_invalidation');
+  assert.equal((await repository.getTaskDetail(lease.taskId))?.state, 'paused');
+  const recoverable = (await repository.listRecoverableExecutions())
+    .find(({ attemptId }) => attemptId === lease.attemptId);
+  assert.equal(recoverable?.failureKind, 'artifact_invalidation');
+});
+
+test('worker-loss retry ignores sealed Artifact kinds that recovery preserves', async () => {
+  const { repository, lease } = await claimedLease();
+  const chartData = await repository.createStagingArtifact({
+    taskId: lease.taskId,
+    planVersionId: lease.planVersionId,
+    attemptId: lease.attemptId,
+    activeLease: lease,
+    kind: 'chart_data',
+    storageUri: `/tmp/${randomUUID()}.json`,
+    schemaVersion: 'chart-data-v1',
+    sensitivity: 'internal',
+    redactionPolicyVersion: 'trusted-p0-v1',
+  });
+  await repository.sealArtifact({
+    ...lease,
+    artifactId: chartData.id,
+    contentSha256: `sha256:${'4'.repeat(64)}`,
+    byteSize: 1,
+  });
+  await repository.recordExecutionStep({
+    ...lease,
+    stepNo: 1,
+    stepName: 'interrupted step',
+    actorType: 'tool',
+    actorId: 'tavily-web-search',
+    state: 'running',
+  });
+  const connection = await scopedDatabase.connect();
+  try {
+    await connection.query(
+      `UPDATE control_execution_attempts
+       SET lease_expires_at = now() - interval '1 second'
+       WHERE id = $1`,
+      [lease.attemptId],
+    );
+  } finally {
+    connection.release();
+  }
+  const paused = await repository.expireExecutionLease({ taskId: lease.taskId, attemptId: lease.attemptId });
+
+  assert.equal((await repository.retryPausedExecution({
+    taskId: lease.taskId,
+    attemptId: lease.attemptId,
+    expectedVersion: paused.stateVersion,
+    failedStepNo: 1,
+  }))?.state, 'ready');
+});
+
+test('worker-loss retry waits for pending physical Artifact quarantine', async () => {
+  const { repository, lease } = await claimedLease();
+  const artifact = await createResidualArtifact(repository, lease);
+  await repository.recordExecutionStep({
+    ...lease,
+    stepNo: 1,
+    stepName: 'interrupted step',
+    actorType: 'tool',
+    actorId: 'tavily-web-search',
+    state: 'running',
+  });
+  const connection = await scopedDatabase.connect();
+  try {
+    await connection.query(
+      `UPDATE control_artifacts
+       SET state = 'FAILED', failure_reason = $2
+       WHERE id = $1`,
+      [artifact.id, `quarantine pending${ARTIFACT_QUARANTINE_PENDING_MARKER}2026-08-19T00:00:00.000Z`],
+    );
+    await connection.query(
+      `UPDATE control_execution_attempts
+       SET lease_expires_at = now() - interval '1 second'
+       WHERE id = $1`,
+      [lease.attemptId],
+    );
+  } finally {
+    connection.release();
+  }
+  const paused = await repository.expireExecutionLease({ taskId: lease.taskId, attemptId: lease.attemptId });
+
+  assert.equal(await repository.retryPausedExecution({
+    taskId: lease.taskId,
+    attemptId: lease.attemptId,
+    expectedVersion: paused.stateVersion,
+    failedStepNo: 1,
+  }), null);
+});
+
+test('attempt-bound staging holds the task fence until its registry row is inserted', { timeout: 5_000 }, async () => {
+  const { lease } = await claimedLease();
+  const blockedDatabase = new BlockedArtifactInsertDatabase(scopedDatabase);
+  const repository = new ControlPlaneRepository(blockedDatabase);
+  const creation = repository.createStagingArtifact({
+    taskId: lease.taskId,
+    planVersionId: lease.planVersionId,
+    attemptId: lease.attemptId,
+    activeLease: lease,
+    kind: 'tool_output',
+    storageUri: `/tmp/${randomUUID()}.json`,
+    schemaVersion: 'tool-output-v1',
+    sensitivity: 'internal',
+    redactionPolicyVersion: 'trusted-p0-v1',
+  });
+  await blockedDatabase.insertStarted;
+
+  const competing = await scopedDatabase.connect();
+  try {
+    await competing.query("SET lock_timeout TO '100ms'");
+    await assert.rejects(
+      () => competing.query(
+        `UPDATE control_tasks
+         SET updated_at = updated_at
+         WHERE id = $1`,
+        [lease.taskId],
+      ),
+      /lock timeout/u,
+    );
+  } finally {
+    competing.release();
+    blockedDatabase.releaseInsert();
+  }
+
+  const artifact = await creation;
+  assert.equal(artifact.state, 'STAGING');
+  const connection = await scopedDatabase.connect();
+  try {
+    await connection.query(
+      `UPDATE control_execution_attempts
+       SET lease_expires_at = now() - interval '1 second'
+       WHERE id = $1`,
+      [lease.attemptId],
+    );
+  } finally {
+    connection.release();
+  }
+  const baseRepository = new ControlPlaneRepository(scopedDatabase);
+  const paused = await baseRepository.expireExecutionLease({
+    taskId: lease.taskId,
+    attemptId: lease.attemptId,
+  });
+  assert.equal(await baseRepository.retryPausedExecution({
+    taskId: lease.taskId,
+    attemptId: lease.attemptId,
+    expectedVersion: paused.stateVersion,
+  }), null);
+  assert.equal((await baseRepository.getTaskDetail(lease.taskId))?.state, 'paused');
+});
+
+test('attempt-bound staging rejects a stale lease after worker-loss retry', async () => {
+  const { repository, lease } = await claimedLease();
+  await repository.recordExecutionStep({
+    ...lease,
+    stepNo: 1,
+    stepName: 'interrupted step',
+    actorType: 'tool',
+    actorId: 'tavily-web-search',
+    state: 'failed',
+    failure: { kind: 'worker_loss', retryable: true, allowedActions: ['retry', 'abort'] },
+  });
+  const executing = await repository.getTaskDetail(lease.taskId);
+  assert.ok(executing);
+  const paused = await repository.pauseExecution({
+    taskId: lease.taskId,
+    attemptId: lease.attemptId,
+    expectedVersion: executing.stateVersion,
+    reason: 'worker_loss',
+  });
+  assert.equal((await repository.retryPausedExecution({
+    taskId: lease.taskId,
+    attemptId: lease.attemptId,
+    expectedVersion: paused.stateVersion,
+  }))?.state, 'ready');
+
+  await assert.rejects(
+    () => repository.createStagingArtifact({
+      taskId: lease.taskId,
+      planVersionId: lease.planVersionId,
+      attemptId: lease.attemptId,
+      activeLease: lease,
+      kind: 'tool_output',
+      storageUri: `/tmp/${randomUUID()}.json`,
+      schemaVersion: 'tool-output-v1',
+      sensitivity: 'internal',
+      redactionPolicyVersion: 'trusted-p0-v1',
+    }),
+    ControlPlaneConflictError,
+  );
+  assert.deepEqual(await repository.listArtifactsForAttempt(lease), []);
+});
+
+test('attempt-bound seal requires a complete lease without mutating caller-shape failures', async () => {
+  const { repository, lease } = await claimedLease();
+  const artifact = await createResidualArtifact(repository, lease);
+  const seal = {
+    artifactId: artifact.id,
+    contentSha256: `sha256:${'5'.repeat(64)}`,
+    byteSize: 1,
+  };
+
+  await assert.rejects(
+    () => repository.sealArtifact({ ...seal, taskId: lease.taskId }),
+    ControlPlaneConflictError,
+  );
+  assert.equal((await repository.getArtifact(artifact.id))?.state, 'STAGING');
+  await assert.rejects(
+    () => repository.sealArtifact(seal),
+    ControlPlaneConflictError,
+  );
+  assert.equal((await repository.getArtifact(artifact.id))?.state, 'STAGING');
+  assert.equal((await repository.sealArtifact({ ...seal, ...lease })).state, 'SEALED');
+});
+
+test('lease-bound seal holds task and attempt fences before touching its Artifact', { timeout: 5_000 }, async () => {
+  const { repository, lease } = await claimedLease();
+  const artifact = await createResidualArtifact(repository, lease);
+  const connection = await scopedDatabase.connect();
+  try {
+    await connection.query(
+      `UPDATE control_execution_attempts
+       SET lease_expires_at = now() - interval '1 second'
+       WHERE id = $1`,
+      [lease.attemptId],
+    );
+  } finally {
+    connection.release();
+  }
+
+  const blockedDatabase = new BlockedLeaseSealUpdateDatabase(scopedDatabase);
+  const blockedRepository = new ControlPlaneRepository(blockedDatabase);
+  const sealing = blockedRepository.sealArtifact({
+    ...lease,
+    artifactId: artifact.id,
+    contentSha256: `sha256:${'6'.repeat(64)}`,
+    byteSize: 1,
+  }).then(
+    () => null,
+    (error: unknown) => error,
+  );
+  await blockedDatabase.updateStarted;
+
+  const competing = await scopedDatabase.connect();
+  try {
+    await competing.query("SET lock_timeout TO '100ms'");
+    await assert.rejects(
+      () => competing.query(
+        'UPDATE control_tasks SET updated_at = updated_at WHERE id = $1',
+        [lease.taskId],
+      ),
+      /lock timeout/u,
+    );
+    await assert.rejects(
+      () => competing.query(
+        `UPDATE control_execution_attempts
+         SET lease_expires_at = lease_expires_at
+         WHERE id = $1`,
+        [lease.attemptId],
+      ),
+      /lock timeout/u,
+    );
+  } finally {
+    competing.release();
+    blockedDatabase.releaseUpdate();
+  }
+
+  const error = await sealing;
+  assert.ok(error instanceof ControlPlaneConflictError);
+  assert.equal((await repository.getArtifact(artifact.id))?.state, 'FAILED');
+  assert.equal((await repository.getTaskDetail(lease.taskId))?.state, 'paused');
+});
+
+test('artifact-invalidation promotion rejects unbound or non-residual Artifact ids atomically', async () => {
+  const { repository, lease } = await claimedLease();
+  const validArtifact = await createResidualArtifact(repository, lease);
+  const failedArtifact = await createResidualArtifact(repository, lease);
+  await repository.invalidateArtifactPublication(failedArtifact.id, 'already cleaned');
+  const foreign = await claimedLease();
+  const foreignArtifact = await createResidualArtifact(foreign.repository, foreign.lease);
+  const publicPreviousFailure = { kind: 'persistence', retryable: false, allowedActions: ['abort'] };
+  const pendingCleanupFailure = {
+    ...publicPreviousFailure,
+    kind: 'artifact_invalidation',
+  };
+  const previousFailure = {
+    ...publicPreviousFailure,
+    artifactInvalidationPromotion: {
+      version: ARTIFACT_INVALIDATION_PROMOTION_VERSION,
+      eligibleArtifactIds: [validArtifact.id, failedArtifact.id],
+    },
+  };
+  const identity = {
+    stepNo: 1,
+    stepName: 'browser publication',
+    actorType: 'tool',
+    actorId: 'playwright-page-capture',
+  };
+  await repository.recordExecutionStep({
+    ...lease,
+    ...identity,
+    state: 'failed',
+    failure: previousFailure,
+  });
+
+  for (const failedArtifactIds of [
+    [],
+    [validArtifact.id, validArtifact.id],
+    ['missing-artifact'],
+    [failedArtifact.id],
+    [foreignArtifact.id],
+    [validArtifact.id, foreignArtifact.id],
+  ]) {
+    assert.equal(await repository.promoteExecutionStepArtifactInvalidation({
+      ...lease,
+      ...identity,
+      expectedPreviousFailure: previousFailure,
+      failedArtifactIds,
+    }), null, failedArtifactIds.join(','));
+    assert.deepEqual(
+      (await repository.listExecutionSteps(lease.attemptId))[0]?.failure,
+      pendingCleanupFailure,
+      failedArtifactIds.join(','),
+    );
+  }
+
+  const promoted = await repository.promoteExecutionStepArtifactInvalidation({
+    ...lease,
+    ...identity,
+    expectedPreviousFailure: previousFailure,
+    failedArtifactIds: [validArtifact.id],
+  });
+  assert.deepEqual(promoted?.failedArtifactIds, [validArtifact.id]);
+  assert.deepEqual(promoted?.allowedActions, ['abort']);
+});
+
+test('artifact-invalidation promotion serializes conflicting writers and keeps exact retries idempotent', async () => {
+  const { repository, lease } = await claimedLease();
+  const firstArtifact = await createResidualArtifact(repository, lease);
+  const secondArtifact = await createResidualArtifact(repository, lease);
+  const previousFailure = {
+    kind: 'persistence',
+    retryable: false,
+    artifactInvalidationPromotion: {
+      version: ARTIFACT_INVALIDATION_PROMOTION_VERSION,
+      eligibleArtifactIds: [firstArtifact.id, secondArtifact.id],
+    },
+  };
+  const identity = {
+    stepNo: 1,
+    stepName: 'browser publication',
+    actorType: 'tool',
+    actorId: 'playwright-page-capture',
+  };
+  const finishedAt = new Date('2026-08-19T00:00:01.000Z');
+  await repository.recordExecutionStep({
+    ...lease,
+    ...identity,
+    state: 'failed',
+    failure: previousFailure,
+    finishedAt,
+  });
+
+  const competing = await Promise.all([
+    repository.promoteExecutionStepArtifactInvalidation({
+      ...lease,
+      ...identity,
+      expectedPreviousFailure: previousFailure,
+      failedArtifactIds: [firstArtifact.id],
+    }),
+    repository.promoteExecutionStepArtifactInvalidation({
+      ...lease,
+      ...identity,
+      expectedPreviousFailure: previousFailure,
+      failedArtifactIds: [secondArtifact.id],
+    }),
+  ]);
+  const winner = competing.find((failure) => failure !== null);
+  assert.ok(winner);
+  assert.equal(competing.filter((failure) => failure !== null).length, 1);
+  const winnerIds = winner.failedArtifactIds as string[];
+  const exactRetries = await Promise.all([
+    repository.promoteExecutionStepArtifactInvalidation({
+      ...lease,
+      ...identity,
+      failedArtifactIds: winnerIds,
+    }),
+    repository.promoteExecutionStepArtifactInvalidation({
+      ...lease,
+      ...identity,
+      failedArtifactIds: winnerIds,
+    }),
+  ]);
+  assert.ok(exactRetries.every((failure) => failure !== null));
+  const [step] = await repository.listExecutionSteps(lease.attemptId);
+  assert.deepEqual(step?.failure, winner);
+  assert.equal(step?.finishedAt?.getTime(), finishedAt.getTime());
 });
 
 test('lets the fenced worker record the real failed step after external lease recovery', async () => {
@@ -456,6 +1636,7 @@ test('rejects terminal execution step replay mutations and preserves the origina
     taskId: lease.taskId,
     planVersionId: lease.planVersionId,
     attemptId: lease.attemptId,
+    activeLease: lease,
     kind: 'tool_output',
     storageUri: `/tmp/${randomUUID()}.json`,
     schemaVersion: 'tool-output-v1',
@@ -466,6 +1647,7 @@ test('rejects terminal execution step replay mutations and preserves the origina
     taskId: lease.taskId,
     planVersionId: lease.planVersionId,
     attemptId: lease.attemptId,
+    activeLease: lease,
     kind: 'tool_output',
     storageUri: `/tmp/${randomUUID()}.json`,
     schemaVersion: 'tool-output-v1',
@@ -594,11 +1776,9 @@ test('authenticates the original lease before finalizing a running step after wo
     failure: { kind: 'lease_lost', retryable: true },
   }), true);
   const finalized = await repository.listExecutionSteps(lease.attemptId);
-  assert.equal(finalized.length, 2);
+  assert.equal(finalized.length, 1);
   assert.equal(finalized[0]?.state, 'failed');
   assert.equal(finalized[0]?.failure?.kind, 'lease_lost');
-  assert.equal(finalized[1]?.stepName, 'worker lease expired');
-  assert.equal(finalized[1]?.failure?.kind, 'worker_loss');
   assert.equal(
     finalized.some(({ state }) => state === 'pending' || state === 'running'),
     false,
@@ -611,6 +1791,7 @@ test('keeps an interrupted historical attempt recoverable after a retry becomes 
     taskId: lease.taskId,
     planVersionId: lease.planVersionId,
     attemptId: lease.attemptId,
+    activeLease: lease,
     kind: 'tool_output',
     storageUri: `/tmp/${randomUUID()}.json`,
     schemaVersion: 'tool-output-v1',
@@ -663,6 +1844,7 @@ test('stops recovering a historical worker-loss attempt when only referenced suc
     taskId: lease.taskId,
     planVersionId: lease.planVersionId,
     attemptId: lease.attemptId,
+    activeLease: lease,
     kind: 'tool_output',
     storageUri: `/tmp/${randomUUID()}.json`,
     schemaVersion: 'tool-output-v1',
@@ -727,6 +1909,7 @@ test('keeps worker-loss Artifact cleanup recoverable after the user aborts', asy
     taskId: lease.taskId,
     planVersionId: lease.planVersionId,
     attemptId: lease.attemptId,
+    activeLease: lease,
     kind: 'tool_output',
     storageUri: `/tmp/${randomUUID()}.json`,
     schemaVersion: 'tool-output-v1',

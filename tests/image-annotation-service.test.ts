@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import sharp from 'sharp';
+import { ArtifactInvalidationError } from '../apps/orchestrator-runtime/src/control/artifact-publication-group.ts';
 import { ImageAnnotationService } from '../apps/orchestrator-runtime/src/report/image-annotation-service.ts';
 
 const ORIGINAL_PNG = Buffer.from(
@@ -251,6 +252,31 @@ test('invalidates the sealed overlay when derived visual publication fails', asy
     artifactId: 'artifact-overlay-1',
     reason: 'image annotation publication did not complete',
   }]);
+});
+
+test('retains every failed Artifact id when derived and overlay invalidation both fail', async () => {
+  const fixture = harness();
+  fixture.assets.derive = async () => {
+    throw new ArtifactInvalidationError(
+      ['artifact-derived-1'],
+      'visual Asset publication did not complete',
+      [new Error('derived invalidation unavailable')],
+    );
+  };
+  fixture.artifacts.invalidateArtifactPublication = async (artifactId, reason) => {
+    fixture.artifacts.invalidations.push({ artifactId, reason });
+    throw new Error('overlay invalidation unavailable');
+  };
+
+  await assert.rejects(
+    () => annotate(fixture.service),
+    (error: unknown) => {
+      assert.ok(error instanceof ArtifactInvalidationError);
+      assert.deepEqual(error.failedArtifactIds, ['artifact-derived-1', 'artifact-overlay-1']);
+      assert.equal(error.failures.length, 2);
+      return true;
+    },
+  );
 });
 
 test('rejects unsupported annotation shapes before persistence or rendering', async () => {
