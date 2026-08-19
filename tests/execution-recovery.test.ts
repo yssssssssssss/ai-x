@@ -41,6 +41,7 @@ const ATTEMPT_ARTIFACT_KINDS = [
   'visual_asset_manifest',
   'image_annotation',
   'chart_spec',
+  'chart_data',
   'future_attempt_artifact',
 ] as const;
 
@@ -268,12 +269,12 @@ test('recover invalidates sealed terminal and unpublished step Artifacts but pre
     'sealed-visual-manifest',
     'sealed-annotation',
     'sealed-chart',
+    'sealed-chart-data',
   ]) {
     assert.equal(store.artifacts.find((artifact) => artifact.id === id)?.state, 'INVALIDATED');
   }
   assert.equal(store.artifacts.find((artifact) => artifact.id === 'sealed-orphan-step')?.state, 'INVALIDATED');
   assert.equal(store.artifacts.find((artifact) => artifact.id === 'sealed-published-step')?.state, 'SEALED');
-  assert.equal(store.artifacts.find((artifact) => artifact.id === 'sealed-chart-data')?.state, 'SEALED');
   assert.equal(store.artifacts.find((artifact) => artifact.id === 'sealed-other')?.state, 'SEALED');
   assert.deepEqual(store.calls.invalidate.map((call) => call.artifactId), [
     'sealed-evidence',
@@ -285,11 +286,12 @@ test('recover invalidates sealed terminal and unpublished step Artifacts but pre
     'sealed-visual-manifest',
     'sealed-annotation',
     'sealed-chart',
+    'sealed-chart-data',
     'sealed-orphan-step',
   ]);
 });
 
-test('recover retries an unpublished sealed step Artifact after immediate invalidation failed', async () => {
+test('recover retries unpublished sealed step and chart data Artifacts after immediate invalidation failed', async () => {
   const { service, store } = recoveryFixture();
   store.executions.push({
     planVersionId: 'ambiguous-plan',
@@ -318,11 +320,8 @@ test('recover retries an unpublished sealed step Artifact after immediate invali
   await service.recover(new Date('2026-08-17T00:00:01.000Z'));
 
   assert.equal(store.artifacts.find(({ id }) => id === 'ambiguous-orphan-step')?.state, 'INVALIDATED');
-  assert.equal(store.artifacts.find(({ id }) => id === 'ambiguous-chart-data')?.state, 'SEALED');
-  assert.equal(
-    store.calls.invalidate.some(({ artifactId }) => artifactId === 'ambiguous-chart-data'),
-    false,
-  );
+  assert.equal(store.artifacts.find(({ id }) => id === 'ambiguous-chart-data')?.state, 'INVALIDATED');
+  assert.equal(store.calls.invalidate.some(({ artifactId }) => artifactId === 'ambiguous-chart-data'), true);
   assert.equal(store.calls.pause.some(({ attemptId }) => attemptId === 'ambiguous-attempt'), false);
 });
 

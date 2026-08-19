@@ -63,6 +63,7 @@ export interface ResearchTaskV2 {
   task_type: 'competitive_research' | 'user_research_planning' | 'voc_diagnosis' | 'design_audit' | 'a11y_audit';
   business_domain: string;
   research_goal: string;
+  comparison_dimensions?: string[];
   target_audience: string[];
   scope: string[];
   constraints: ResearchTaskV2Constraint[];

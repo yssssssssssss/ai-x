@@ -26,6 +26,7 @@ import {
   type ToolRegistryEntry,
 } from '../runtime/config-loader.ts';
 import { SchemaValidator } from '../schema/validator.ts';
+import { resolveCompetitiveScoringWeights } from '../report/competitive-weight-chart.ts';
 
 export interface CurrentPlanCandidateProposal extends Omit<PlanCandidate, 'steps'> {
   steps: CurrentPlanStep[];
@@ -45,6 +46,7 @@ export interface PlanCompileInput {
   capability_resolution: CapabilityResolution;
   evidence_requirements: EvidenceRequirement[];
   activated_nodes: string[];
+  requireCompetitiveWeightContract?: boolean;
 }
 
 export interface CompiledPlan {
@@ -76,7 +78,8 @@ export type PlanCompilerValidationKind =
   | 'approval_required'
   | 'approval_role_mismatch'
   | 'pending_input_schema_invalid'
-  | 'capability_decisions_invalid';
+  | 'capability_decisions_invalid'
+  | 'competitive_weight_contract_invalid';
 
 export class PlanCompilerValidationError extends Error {
   constructor(
@@ -357,6 +360,51 @@ function validateRequiredTools(
         fail('required_tool_late', step.actor_id, toolId);
       }
     }
+  }
+}
+
+function validateCompetitiveWeightContract(
+  steps: CurrentPlanStep[],
+  task: ResearchTaskV2,
+): void {
+  const matchingSteps = steps.filter((step) => (
+    step.actor_type === 'skill' && step.actor_id === 'competitive-web-research'
+  ));
+  if (matchingSteps.length === 0) return;
+  const step = matchingSteps[0]!;
+  const stepDimensions = step.input.dimensions;
+  const expectedDimensions = task.comparison_dimensions;
+  if (
+    expectedDimensions === undefined
+    && !Object.hasOwn(step.input, 'dimensions')
+    && !Object.hasOwn(step.input, 'scoring_weights')
+  ) return;
+  const resolution = resolveCompetitiveScoringWeights({ steps });
+  if (resolution.status === 'unavailable') {
+    fail('competitive_weight_contract_invalid', resolution.code);
+  }
+  if (expectedDimensions) {
+    if (!isDeepStrictEqual(stepDimensions, expectedDimensions)) {
+      fail('competitive_weight_contract_invalid', 'dimensions_mismatch');
+    }
+    if (!isDeepStrictEqual(Object.keys(step.input.scoring_weights as object), expectedDimensions)) {
+      fail('competitive_weight_contract_invalid', 'scoring_weight_keys_mismatch');
+    }
+    return;
+  }
+  if (stepDimensions === undefined) {
+    fail('competitive_weight_contract_invalid', 'dimensions_mismatch');
+  }
+  if (
+    !Array.isArray(stepDimensions)
+    || stepDimensions.length < 2
+    || stepDimensions.some((dimension) => (
+      typeof dimension !== 'string' || !dimension.trim() || dimension !== dimension.trim()
+    ))
+    || new Set(stepDimensions).size !== stepDimensions.length
+    || !isDeepStrictEqual(Object.keys(step.input.scoring_weights as object), stepDimensions)
+  ) {
+    fail('competitive_weight_contract_invalid', 'dimensions_mismatch');
   }
 }
 
@@ -644,6 +692,7 @@ export class PlanCompiler {
     validateFixedActorOutputPointers(steps);
     const toolsById = new Map(loadToolRegistry().tools.map((tool) => [tool.id, tool]));
     validateBindings(steps, toolsById);
+    if (input.requireCompetitiveWeightContract) validateCompetitiveWeightContract(steps, input.task);
 
     const plan: CompiledPlan['plan'] = {
       task_id: '',

@@ -141,6 +141,7 @@ export class ControlPlanningService {
         capability_resolution: planningResult.capabilityResolution,
         evidence_requirements: deliverableSelection.evidenceRequirements,
         activated_nodes: planningResult.activatedNodes,
+        requireCompetitiveWeightContract: true,
       });
       return {
         candidateId: candidate.id,

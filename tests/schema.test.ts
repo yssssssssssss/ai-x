@@ -124,6 +124,7 @@ test('ResearchTaskV2 要求成功标准、歧义和澄清问题', () => {
     task_type: 'competitive_research',
     business_domain: '宠物消费',
     research_goal: '分析宠物辅食竞品',
+    comparison_dimensions: ['成分透明度', '适口性', '价格与规格'],
   });
   assert.ok(errors.length > 0);
   assert.ok(errors.some((error) => error.includes('success_criteria')));
@@ -148,6 +149,38 @@ test('ResearchTaskV2 合法 fixture 通过校验并保持 snake_case 字段', ()
     pii_detected: false,
   };
   assert.deepEqual(v.validate('research-task-v2', valid), []);
+});
+
+test('ResearchTaskV2 对比维度可选，但存在时必须至少两项、非空且唯一', () => {
+  const valid = {
+    version: 'research-task-v2',
+    task_type: 'competitive_research',
+    business_domain: '电商',
+    research_goal: '比较 AI 购物助手',
+    target_audience: ['消费者'],
+    scope: ['公开资料'],
+    constraints: [],
+    success_criteria: [{ id: 'sc1', statement: '完成对比' }],
+    expected_deliverables: ['competitive_analysis_report'],
+    assumptions: [],
+    ambiguities: [],
+    clarification_questions: [],
+    blocking_issues: [],
+    sensitivity: 'public',
+    pii_detected: false,
+  } as const;
+  assert.deepEqual(v.validate('research-task-v2', valid), []);
+  assert.deepEqual(v.validate('research-task-v2', {
+    ...valid,
+    comparison_dimensions: ['需求理解', '内容可信度'],
+  }), []);
+  for (const comparison_dimensions of [
+    ['需求理解'],
+    ['需求理解', '需求理解'],
+    ['需求理解', '   '],
+  ]) {
+    assert.ok(v.validate('research-task-v2', { ...valid, comparison_dimensions }).length > 0);
+  }
 });
 
 test('ResearchTaskV2 拒绝旧版或 camelCase 字段', () => {

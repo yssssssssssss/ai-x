@@ -30,6 +30,12 @@
     },
     "business_domain": { "type": "string", "minLength": 1 },
     "research_goal": { "type": "string", "minLength": 1 },
+    "comparison_dimensions": {
+      "type": "array",
+      "minItems": 2,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "\\S" }
+    },
     "target_audience": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 }

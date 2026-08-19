@@ -4,6 +4,7 @@ import type { ReportReviewArtifact } from '../../../../packages/api-contract/con
 import type {
   ChartSpec,
   ResearchDeliverableEnvelope,
+  VisualAssetManifest,
   VisualAssetReference,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import {
@@ -23,6 +24,11 @@ import {
   validateChartSpec,
   type ChartEvidenceResolver,
 } from './chart-spec-validator.ts';
+import {
+  assertCompetitiveWeightChartBinding,
+  parseCompetitiveWeightChartData,
+  type CompetitiveWeightChartData,
+} from './competitive-weight-chart.ts';
 import { assertValidReportReviewArtifact } from './report-review-service.ts';
 import {
   resolveDeliverableContractById,
@@ -127,11 +133,18 @@ interface ArtifactValue<T> {
   value: T;
 }
 
+export interface ChartDataArtifactReference {
+  artifactId: string;
+  contentSha256: string;
+}
+
 export interface VerifiedChart {
   spec: ChartSpec;
   specHash: string;
   table: ChartTableAlternative;
   asset: VerifiedVisualAsset;
+  dataArtifactRef?: ChartDataArtifactReference;
+  data?: CompetitiveWeightChartData;
 }
 
 export interface ComposeReportDocumentInput {
@@ -262,6 +275,7 @@ function assertVerifiedVisualAsset(
   asset: VerifiedVisualAsset,
   binding: ArtifactBinding,
   label: string,
+  manifestSchemaVersions: readonly VisualAssetManifest['version'][] = ['visual-asset-manifest-v1'],
 ): void {
   assertSealedArtifact(
     asset.artifact,
@@ -275,9 +289,18 @@ function assertVerifiedVisualAsset(
     binding,
     `${label} Manifest`,
     'visual_asset_manifest',
-    ['visual-asset-manifest-v1'],
+    manifestSchemaVersions,
   );
   assertVisualAssetManifestSchema(asset.manifest);
+  if (asset.manifestArtifact.schemaVersion !== asset.manifest.version) {
+    fail(`${label} Manifest Artifact schemaVersion does not match its body version`);
+  }
+  if (
+    asset.manifest.version === 'visual-asset-manifest-v2'
+    && asset.artifact.schemaVersion !== 'visual-asset-v1'
+  ) {
+    fail(`${label} V2 Visual Asset Artifact schemaVersion must be visual-asset-v1`);
+  }
   assertValueBinding(asset.manifest, binding, `${label} Manifest`);
   assertSealedJsonValue(asset.manifestArtifact, asset.manifest, `${label} Manifest`);
   const { manifestHash, ...manifestDraft } = asset.manifest;
@@ -479,9 +502,13 @@ function assertCompositionInput(input: ComposeReportDocumentInput): {
 
   const chartIds = new Set<string>();
   const chartAssetReferences = new Set<string>();
+  const chartAssetIds = new Set<string>();
   for (const [index, chart] of input.charts.entries()) {
     const label = `Chart ${chart.spec.chartId || index + 1}`;
-    assertVerifiedVisualAsset(chart.asset, binding, label);
+    assertVerifiedVisualAsset(chart.asset, binding, label, [
+      'visual-asset-manifest-v1',
+      'visual-asset-manifest-v2',
+    ]);
     const validatedSpec = validateChartSpec(chart.spec, verifiedChartEvidenceResolver);
     const validatedSpecHash = chartSpecHash(validatedSpec);
     if (chart.specHash !== validatedSpecHash) {
@@ -490,27 +517,58 @@ function assertCompositionInput(input: ComposeReportDocumentInput): {
     assertChartTable(validatedSpec, chart.table, label);
     if (chartIds.has(chart.spec.chartId)) fail(`Chart id ${chart.spec.chartId} must be unique`);
     chartIds.add(chart.spec.chartId);
+    if (chartAssetIds.has(chart.asset.artifact.id)) {
+      fail(`Chart Asset id ${chart.asset.artifact.id} must be unique`);
+    }
+    chartAssetIds.add(chart.asset.artifact.id);
     const chartAssetKey = assetReferenceKey(assetReference(chart.asset));
     if (chartAssetReferences.has(chartAssetKey)) fail(`Chart Asset ${chart.asset.artifact.id} must be unique`);
     chartAssetReferences.add(chartAssetKey);
     if (
       chart.asset.manifest.mediaType !== 'image/svg+xml'
-      || chart.asset.manifest.source.kind !== 'derived'
       || chart.asset.manifest.derivation?.kind !== 'chart_svg'
       || chart.asset.manifest.derivation.chartId !== validatedSpec.chartId
       || chart.asset.manifest.derivation.specHash !== validatedSpecHash
-      || !chart.asset.manifest.derivedFrom
     ) {
       const actualChartId = chart.asset.manifest.derivation?.kind === 'chart_svg'
         ? chart.asset.manifest.derivation.chartId
         : 'missing';
       fail(`${label} SVG derivation binding ${actualChartId} does not match Chart ${validatedSpec.chartId} and spec digest ${validatedSpecHash}`);
     }
-    const origin = visualReferences.get(assetReferenceKey(chart.asset.manifest.derivedFrom));
+    if (chart.asset.manifest.version === 'visual-asset-manifest-v2') {
+      const source = chart.asset.manifest.source;
+      if (
+        source.kind !== 'chart_render'
+        || chart.asset.manifest.derivedFrom !== null
+        || !chart.dataArtifactRef
+        || chart.dataArtifactRef.artifactId !== source.dataArtifactId
+        || chart.dataArtifactRef.contentSha256 !== source.dataArtifactContentSha256
+      ) {
+        fail(`${label} data Artifact provenance does not match its verified chart_render Manifest`);
+      }
+      if (!chart.data) fail(`${label} has no verified competitive weight Chart Data`);
+      try {
+        const data = parseCompetitiveWeightChartData(chart.data, binding);
+        assertCompetitiveWeightChartBinding({
+          data,
+          spec: validatedSpec,
+          dataArtifactRef: chart.dataArtifactRef,
+          evidenceEntries: input.evidenceManifest.value.entries,
+        });
+      } catch (error) {
+        fail(error instanceof Error ? error.message : String(error));
+      }
+      continue;
+    }
+    const lineage = chart.asset.manifest.derivedFrom;
+    if (chart.asset.manifest.source.kind !== 'derived' || !lineage) {
+      fail(`${label} SVG lineage does not reference a verified sealed Visual Asset`);
+    }
+    const origin = visualReferences.get(assetReferenceKey(lineage));
     if (
       !origin
-      || origin.manifest.contentSha256 !== chart.asset.manifest.derivedFrom.contentSha256
-      || origin.manifest.manifestHash !== chart.asset.manifest.derivedFrom.manifestHash
+      || origin.manifest.contentSha256 !== lineage.contentSha256
+      || origin.manifest.manifestHash !== lineage.manifestHash
     ) {
       fail(`${label} SVG lineage does not reference a verified sealed Visual Asset`);
     }
@@ -1049,18 +1107,22 @@ function chartAltText(spec: ChartSpec): string {
 function competitiveSectionIntroduction(
   sectionId: ReportTemplateSectionId,
   input: ComposeReportDocumentInput,
+  comparisonSectionTitle: string,
 ): string {
+  const visualEvidenceIntroduction = input.visualAssets.length > 0
+    ? '本章集中展示已验证的产品截图与标注图，用于帮助读者对照视觉证据与文字结论。'
+    : input.charts.length > 0
+      ? `本章没有已验证的产品截图；已验证图表位于“${comparisonSectionTitle}”章节，用于对照数据与文字结论。`
+      : '本章用于展示可验证的产品截图、标注图或图表。本任务没有已验证的截图或图表：Web Research 仅采集文本来源，且未提供用户截图，因此不展示未经验证的网络图片。';
   const introductions: Record<ReportTemplateSectionId, string> = {
     cover: '本页用于识别报告主题、研究对象与交付范围。',
     'executive-summary': '本章用于快速概括研究范围、核心判断与优先行动，帮助读者在阅读全文前建立决策框架。',
     background: '本章说明市场背景、业务问题和研究目标，定义本次分析要回答的核心问题。',
     'scope-method': '本章界定竞品样本、纳入与排除标准、证据时间范围和分析方法，用于说明结论在什么边界内成立。',
     'key-metrics': '本章汇总可直接对比的量化指标与口径；公开证据不足时保留缺口，不为了排名而强行打分。',
-    findings: '本章用于按六个消费决策支持维度整合各平台表现，并在每个维度后给出跨平台核心差异，避免将同一问题拆成零散事实。',
+    findings: '本章用于按消费决策支持维度整合各平台表现，并在每个维度后给出跨平台核心差异，避免将同一问题拆成零散事实。',
     'question-analysis': '本章将原始研究问题与证据化回答逐项对齐，用于检查问题是否已被完整覆盖。',
-    'visual-evidence': input.visualAssets.length === 0
-      ? '本章用于展示可验证的产品截图、标注图或图表。本任务没有已验证的截图或图表：Web Research 仅采集文本来源，且未提供用户截图，因此不展示未经验证的网络图片。'
-      : '本章集中展示已验证的产品截图、标注图与图表，用于帮助读者对照视觉证据与文字结论。',
+    'visual-evidence': visualEvidenceIntroduction,
     comparison: '本章将竞品差异转换为对消费者、产品团队和业务结果的影响，用于判断哪些差异值得优先处理。',
     conclusion: '本章收敛全文最重要的判断，明确行业竞争焦点、京东的优势与当前短板。',
     recommendations: '本章将研究结论转化为可执行产品行动，并按 P0–P2 标注下一季度的优先级。',
@@ -1234,11 +1296,17 @@ function composeSectionBlocks(
   sectionId: ReportTemplateSectionId,
   input: ComposeReportDocumentInput,
   executiveSummary: string,
+  comparisonSectionTitle?: string,
 ): ReportBlock[] {
   const content = composeSectionContentBlocks(sectionId, input, executiveSummary);
   if (input.deliverable.value.deliverableType !== 'competitive_analysis_report') return content;
+  const comparisonTitle = comparisonSectionTitle
+    ?? fail('competitive report template is missing its comparison section');
   return [
-    paragraph(`section-intro-${sectionId}`, competitiveSectionIntroduction(sectionId, input)),
+    paragraph(
+      `section-intro-${sectionId}`,
+      competitiveSectionIntroduction(sectionId, input, comparisonTitle),
+    ),
     ...content,
   ];
 }
@@ -1303,6 +1371,7 @@ export function composeReportDocument(input: ComposeReportDocumentInput): Report
   const { contract } = assertCompositionInput(input);
   const template = contract.reportTemplate;
   const executiveSummary = composeExecutiveSummary(input.deliverable.value);
+  const comparisonSectionTitle = template.sections.find(({ id }) => id === 'comparison')?.title;
   const document: ReportDocument = {
     version: 'report-document-v1',
     title: reportTitle(input.deliverable.value),
@@ -1312,7 +1381,12 @@ export function composeReportDocument(input: ComposeReportDocumentInput): Report
       id: section.id,
       title: section.title,
       questionIds: section.id === 'question-analysis' ? [...input.requiredQuestionIds] : [],
-      blocks: composeSectionBlocks(section.id, input, executiveSummary),
+      blocks: composeSectionBlocks(
+        section.id,
+        input,
+        executiveSummary,
+        comparisonSectionTitle,
+      ),
     })),
   };
   assertValidReportDocument(document, {

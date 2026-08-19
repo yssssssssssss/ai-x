@@ -12,9 +12,11 @@ import type {
   VisualAssetManifestV2,
 } from '../packages/api-contract/research-deliverable.ts';
 import type { ReportDocument } from '../apps/orchestrator-runtime/src/report/report-document-composer.ts';
+import { ReportCompositionService } from '../apps/orchestrator-runtime/src/report/report-composition-service.ts';
 import { ArtifactIntegrityError } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
 import {
   EvidenceService,
+  type EvidenceArtifactResolver,
   type EvidenceManifest,
   type ResolvedEvidenceArtifact,
 } from '../apps/orchestrator-runtime/src/evidence/evidence-service.ts';
@@ -25,6 +27,13 @@ import {
 import { parseControlDeliverableResponse } from '../apps/web/src/report-package-response.ts';
 import { chartTableAlternative } from '../apps/orchestrator-runtime/src/report/chart-renderer.ts';
 import { chartSpecHash } from '../apps/orchestrator-runtime/src/report/chart-spec-validator.ts';
+import {
+  COMPETITIVE_WEIGHT_CHART_DATA_VERSION,
+  COMPETITIVE_WEIGHT_CHART_ID,
+  COMPETITIVE_WEIGHT_SERIES_KEY,
+  COMPETITIVE_WEIGHT_SERIES_LABEL,
+  COMPETITIVE_WEIGHT_TITLE,
+} from '../apps/orchestrator-runtime/src/report/competitive-weight-chart.ts';
 
 const binding = {
   taskId: 'task-1',
@@ -194,6 +203,23 @@ function packageChartSpec(): ChartSpec {
   };
 }
 
+function packageCompetitiveWeightChartSpec(): ChartSpec {
+  return {
+    version: 'chart-spec-v1',
+    chartId: COMPETITIVE_WEIGHT_CHART_ID,
+    type: 'comparison',
+    title: COMPETITIVE_WEIGHT_TITLE,
+    categories: ['需求理解', '内容可信度'],
+    series: [{
+      key: COMPETITIVE_WEIGHT_SERIES_KEY,
+      label: COMPETITIVE_WEIGHT_SERIES_LABEL,
+      values: [60, 40],
+      evidenceIds: [['W-1'], ['W-2']],
+    }],
+    yAxis: { min: 0 },
+  };
+}
+
 function packageReportDocument(): ReportDocument {
   const spec = packageChartSpec();
   return {
@@ -227,6 +253,29 @@ function packageReportDocument(): ReportDocument {
       }],
     }],
   };
+}
+
+function packageV2ChartReportDocument(): ReportDocument {
+  const document = packageReportDocument();
+  const spec = packageCompetitiveWeightChartSpec();
+  const blocks = document.sections[0]!.blocks;
+  const chartIndex = blocks.findIndex(({ type }) => type === 'chart');
+  assert.notEqual(chartIndex, -1);
+  blocks[chartIndex] = {
+    id: COMPETITIVE_WEIGHT_CHART_ID,
+    type: 'chart',
+    chartRef: {
+      chartId: spec.chartId,
+      assetId: chartAssetId,
+      manifestArtifactId: chartManifestArtifactId,
+    },
+    specHash: chartSpecHash(spec),
+    spec,
+    table: chartTableAlternative(spec),
+    caption: spec.title,
+    altText: '需求理解权重 60%，内容可信度权重 40%。',
+  };
+  return document;
 }
 
 function packageImageComparisonDocument(): ReportDocument {
@@ -358,8 +407,8 @@ function packageVerifiedChartRender(
     derivedFrom: null,
     derivation: {
       kind: 'chart_svg',
-      chartId: packageChartSpec().chartId,
-      specHash: chartSpecHash(packageChartSpec()),
+      chartId: packageCompetitiveWeightChartSpec().chartId,
+      specHash: chartSpecHash(packageCompetitiveWeightChartSpec()),
     },
   };
   return {
@@ -501,6 +550,67 @@ function setup(options: {
     repository,
     visualAssets,
   };
+}
+
+function competitiveWeightChartData() {
+  return {
+    version: COMPETITIVE_WEIGHT_CHART_DATA_VERSION,
+    ...binding,
+    unit: 'percent' as const,
+    weights: [
+      { dimension: '需求理解', percentage: 60 },
+      { dimension: '内容可信度', percentage: 40 },
+    ],
+  };
+}
+
+function installV2ChartEvidence(
+  fixture: ReturnType<typeof setup>,
+  chart: FixtureVerifiedVisualAsset,
+): EvidenceManifest {
+  const source = chart.manifest.source;
+  assert.equal(source.kind, 'chart_render');
+  if (source.kind !== 'chart_render') assert.fail('expected chart_render fixture');
+  const data = competitiveWeightChartData();
+  const dataArtifact = artifact(
+    source.dataArtifactId,
+    'chart_data',
+    COMPETITIVE_WEIGHT_CHART_DATA_VERSION,
+    { contentSha256: source.dataArtifactContentSha256 },
+  );
+  fixture.artifacts.add(dataArtifact, data);
+  const resolvedData: ResolvedEvidenceArtifact = {
+    artifact: { id: dataArtifact.id, contentSha256: dataArtifact.contentSha256! },
+    value: data,
+  };
+  const evidenceManifest = new EvidenceService().createManifest({
+    ...binding,
+    collectedAt: '2026-08-14T10:00:00.000Z',
+    entries: [
+      ...manifest().entries,
+      ...data.weights.map((_, index) => ({
+        id: `W-${index + 1}`,
+        kind: 'user_constraint' as const,
+        evidenceClass: 'user_input' as const,
+        artifactId: dataArtifact.id,
+        artifactContentSha256: dataArtifact.contentSha256!,
+        jsonPointer: `/weights/${index}/percentage`,
+        sensitivity: 'internal' as const,
+        redaction: 'none' as const,
+      })),
+    ],
+  }, {
+    resolveArtifact: (artifactId) => artifactId === dataArtifact.id
+      ? resolvedData
+      : artifactId === evidenceArtifactId
+        ? {
+            artifact: { id: evidenceArtifactId, contentSha256: evidenceContentSha256 },
+            value: evidenceValue(),
+          }
+        : null,
+  });
+  fixture.artifacts.artifacts.get(manifestArtifactId)!.value = evidenceManifest;
+  return evidenceManifest;
 }
 
 test('returns a verified review-gated current_text package and reads every JSON Artifact', async () => {
@@ -715,9 +825,10 @@ test('reads and Web-parses a V2 chart_render package before its Writer is enable
   const image = packageVerifiedVisualAsset(imageAssetId, imageManifestArtifactId, 'image/png');
   const chart = packageVerifiedChartRender(chartAssetId, chartManifestArtifactId);
   const fixture = setup({
-    reportDocument: packageReportDocument(),
+    reportDocument: packageV2ChartReportDocument(),
     visualAssets: [image, chart],
   });
+  installV2ChartEvidence(fixture, chart);
 
   const result = await fixture.reader.read(binding);
 
@@ -727,6 +838,347 @@ test('reads and Web-parses a V2 chart_render package before its Writer is enable
   assert.equal(result.visualAssetManifests[1]?.version, 'visual-asset-manifest-v2');
   assert.equal(result.visualAssetManifests[1]?.source.kind, 'chart_render');
   assert.equal(parseControlDeliverableResponse(result).presentationMode, 'multimodal');
+});
+
+test('report composition discovers V2 chart_render only with exact verified chart data provenance', async () => {
+  const chart = packageVerifiedChartRender(chartAssetId, chartManifestArtifactId);
+  const chartInputArtifact = artifact('chart-input-1', 'chart_spec', 'verified-chart-v1');
+  const artifacts = new FixtureArtifacts();
+  const visualAssets = new FixtureVisualAssets();
+  visualAssets.add(chart);
+  artifacts.add(chart.manifestArtifact, chart.manifest);
+  const attemptArtifacts = [chart.manifestArtifact, chartInputArtifact];
+  const repository = {
+    async listArtifactsForAttempt() {
+      return attemptArtifacts;
+    },
+  };
+  const service = new ReportCompositionService({
+    artifacts: artifacts as never,
+    visualAssets: visualAssets as never,
+    repository: repository as never,
+  });
+  const spec = packageCompetitiveWeightChartSpec();
+  const source = chart.manifest.source;
+  assert.equal(source.kind, 'chart_render');
+  if (source.kind !== 'chart_render') assert.fail('expected chart_render fixture');
+  const chartDataArtifact = artifact(
+    source.dataArtifactId,
+    'chart_data',
+    'competitive-weight-chart-data-v1',
+    { contentSha256: source.dataArtifactContentSha256 },
+  );
+  const chartData = competitiveWeightChartData();
+  artifacts.add(chartDataArtifact, chartData);
+  const chartEvidenceArtifactResolver: EvidenceArtifactResolver = {
+    resolveArtifact: (artifactId) => artifactId === chartDataArtifact.id
+      ? {
+          artifact: { id: chartDataArtifact.id, contentSha256: chartDataArtifact.contentSha256! },
+          value: chartData,
+        }
+      : null,
+  };
+  const chartEvidenceManifest = new EvidenceService().createManifest({
+    ...binding,
+    collectedAt: '2026-08-19T00:00:00.000Z',
+    entries: chartData.weights.map((_, index) => ({
+      id: `W-${index + 1}`,
+      kind: 'user_constraint',
+      evidenceClass: 'user_input',
+      artifactId: chartDataArtifact.id,
+      artifactContentSha256: chartDataArtifact.contentSha256!,
+      jsonPointer: `/weights/${index}/percentage`,
+      sensitivity: 'internal',
+      redaction: 'none',
+    })),
+  }, chartEvidenceArtifactResolver);
+  const verifiedChart = {
+    version: 'verified-chart-v1',
+    ...binding,
+    spec,
+    specHash: chartSpecHash(spec),
+    table: chartTableAlternative(spec),
+    assetRef: {
+      assetId: chart.artifact.id,
+      manifestArtifactId: chart.manifestArtifact.id,
+    },
+    dataArtifactRef: {
+      artifactId: source.dataArtifactId,
+      contentSha256: source.dataArtifactContentSha256,
+    },
+  };
+  artifacts.add(chartInputArtifact, verifiedChart);
+
+  const discovered = await service.discoverAttemptMaterials({
+    ...binding,
+    evidenceManifest: chartEvidenceManifest,
+    evidenceResolver: (evidenceId) => {
+      const index = Number(evidenceId.replace('W-', '')) - 1;
+      return chartData.weights[index]?.percentage;
+    },
+  });
+
+  assert.deepEqual(discovered.visualAssets, []);
+  assert.deepEqual(discovered.charts, [{
+    spec,
+    specHash: verifiedChart.specHash,
+    table: verifiedChart.table,
+    asset: chart,
+    dataArtifactRef: verifiedChart.dataArtifactRef,
+    data: chartData,
+    chartSpecArtifactRef: {
+      artifactId: chartInputArtifact.id,
+      contentSha256: chartInputArtifact.contentSha256,
+    },
+  }]);
+
+  for (const bodyDrift of [{
+    label: 'dimension labels',
+    value: {
+      ...chartData,
+      weights: [
+        { dimension: '推荐可解释性', percentage: 60 },
+        chartData.weights[1]!,
+      ],
+    },
+  }, {
+    label: 'weight values',
+    value: {
+      ...chartData,
+      weights: [
+        { ...chartData.weights[0]!, percentage: 55 },
+        { ...chartData.weights[1]!, percentage: 45 },
+      ],
+    },
+  }]) {
+    artifacts.artifacts.set(source.dataArtifactId, {
+      artifact: chartDataArtifact,
+      value: bodyDrift.value,
+    });
+    await assert.rejects(
+      service.discoverAttemptMaterials({
+        ...binding,
+        evidenceManifest: chartEvidenceManifest,
+        evidenceResolver: (evidenceId) => {
+          const index = Number(evidenceId.replace('W-', '')) - 1;
+          return chartData.weights[index]?.percentage;
+        },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof ArtifactIntegrityError);
+        assert.match(
+          error.message,
+          /chart.*(?:labels|values|data|evidence)|(?:labels|values|data|evidence).*chart/i,
+        );
+        return true;
+      },
+      bodyDrift.label,
+    );
+  }
+
+  artifacts.add(chartDataArtifact, chartData);
+  for (const evidenceDrift of [{
+    label: 'Evidence pointer',
+    mutate(entry: EvidenceManifest['entries'][number]) {
+      entry.jsonPointer = '/weights/1/percentage';
+    },
+  }, {
+    label: 'Evidence Artifact hash',
+    mutate(entry: EvidenceManifest['entries'][number]) {
+      entry.artifactContentSha256 = `sha256:${'7'.repeat(64)}`;
+    },
+  }]) {
+    const driftedManifest = structuredClone(chartEvidenceManifest);
+    const firstEvidence = driftedManifest.entries[0];
+    assert.ok(firstEvidence);
+    evidenceDrift.mutate(firstEvidence);
+    await assert.rejects(
+      service.discoverAttemptMaterials({
+        ...binding,
+        evidenceManifest: driftedManifest,
+        evidenceResolver: (evidenceId) => {
+          const index = Number(evidenceId.replace('W-', '')) - 1;
+          return chartData.weights[index]?.percentage;
+        },
+      }),
+      /chart.*(?:evidence|lineage|data)|(?:evidence|lineage|data).*chart/i,
+      evidenceDrift.label,
+    );
+  }
+
+  for (const dataArtifactRef of [
+    undefined,
+    { ...verifiedChart.dataArtifactRef, artifactId: 'other-chart-data' },
+    { ...verifiedChart.dataArtifactRef, contentSha256: `sha256:${'4'.repeat(64)}` },
+  ]) {
+    const candidate: Record<string, unknown> = { ...verifiedChart, dataArtifactRef };
+    if (dataArtifactRef === undefined) delete candidate.dataArtifactRef;
+    artifacts.add(chartInputArtifact, candidate);
+    await assert.rejects(
+      service.discoverAttemptMaterials({
+        ...binding,
+        evidenceManifest: chartEvidenceManifest,
+        evidenceResolver: (evidenceId) => {
+          const index = Number(evidenceId.replace('W-', '')) - 1;
+          return chartData.weights[index]?.percentage;
+        },
+      }),
+      /chart.*data artifact|data artifact.*chart/i,
+    );
+  }
+
+  artifacts.add(chartInputArtifact, verifiedChart);
+  const invalidChartData = [
+    {
+      label: 'identity',
+      artifact: { ...chartDataArtifact, id: 'other-chart-data' },
+      value: chartData,
+    },
+    {
+      label: 'state',
+      artifact: { ...chartDataArtifact, state: 'STAGING' as const },
+      value: chartData,
+    },
+    {
+      label: 'kind',
+      artifact: { ...chartDataArtifact, kind: 'tool_output' },
+      value: chartData,
+    },
+    {
+      label: 'hash',
+      artifact: { ...chartDataArtifact, contentSha256: `sha256:${'5'.repeat(64)}` },
+      value: chartData,
+    },
+    {
+      label: 'binding',
+      artifact: { ...chartDataArtifact, attemptId: 'other-attempt' },
+      value: chartData,
+    },
+    {
+      label: 'schema',
+      artifact: { ...chartDataArtifact, schemaVersion: 'other-chart-data-v1' },
+      value: chartData,
+    },
+  ];
+  for (const candidate of invalidChartData) {
+    artifacts.artifacts.set(source.dataArtifactId, {
+      artifact: candidate.artifact,
+      value: candidate.value,
+    });
+    await assert.rejects(
+      service.discoverAttemptMaterials({
+        ...binding,
+        evidenceManifest: chartEvidenceManifest,
+        evidenceResolver: (evidenceId) => {
+          const index = Number(evidenceId.replace('W-', '')) - 1;
+          return chartData.weights[index]?.percentage;
+        },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof ArtifactIntegrityError);
+        assert.match(error.message, /chart.*data artifact|data artifact.*chart/i);
+        return true;
+      },
+      candidate.label,
+    );
+  }
+
+  artifacts.add(chartDataArtifact, chartData);
+  for (const specDrift of [{
+    label: 'FAILED Chart Spec Artifact',
+    artifact: {
+      ...chartInputArtifact,
+      state: 'FAILED' as const,
+      failureReason: 'fixture Chart Spec invalidation',
+    },
+    value: verifiedChart,
+  }, {
+    label: 'resealed Chart Spec content',
+    artifact: {
+      ...chartInputArtifact,
+      contentSha256: `sha256:${'8'.repeat(64)}`,
+    },
+    value: {
+      ...verifiedChart,
+      spec: { ...verifiedChart.spec, title: 'Changed after discovery' },
+    },
+  }]) {
+    artifacts.artifacts.set(chartInputArtifact.id, {
+      artifact: specDrift.artifact,
+      value: specDrift.value,
+    });
+    await assert.rejects(
+      service.composeAndStore({
+        ...binding,
+        activeLease: binding,
+        charts: discovered.charts,
+        evidenceManifest: {
+          artifact: artifact('chart-evidence-manifest-1', 'evidence_manifest', 'evidence-v1'),
+          value: chartEvidenceManifest,
+        },
+        evidenceArtifactResolver: chartEvidenceArtifactResolver,
+      } as never),
+      /chart.*(?:sealed|identity|hash|binding|changed)|(?:sealed|identity|hash|binding|changed).*chart/i,
+      specDrift.label,
+    );
+  }
+
+  artifacts.add(chartInputArtifact, verifiedChart);
+  artifacts.artifacts.set(source.dataArtifactId, {
+    artifact: { ...chartDataArtifact, contentSha256: `sha256:${'6'.repeat(64)}` },
+    value: chartData,
+  });
+  await assert.rejects(
+    service.composeAndStore({
+      ...binding,
+      activeLease: binding,
+      charts: discovered.charts,
+      evidenceManifest: {
+        artifact: artifact('chart-evidence-manifest-1', 'evidence_manifest', 'evidence-v1'),
+        value: chartEvidenceManifest,
+      },
+      evidenceArtifactResolver: chartEvidenceArtifactResolver,
+    } as never),
+    (error: unknown) => {
+      assert.ok(error instanceof ArtifactIntegrityError);
+      assert.match(error.message, /chart.*data artifact|data artifact.*chart/i);
+      return true;
+    },
+    'composition-time drift',
+  );
+
+  artifacts.add(chartDataArtifact, chartData);
+  const duplicateChart = packageVerifiedChartRender(chartAssetId, 'manifest-chart-duplicate');
+  const duplicateChartInputArtifact = artifact(
+    'chart-input-duplicate',
+    'chart_spec',
+    'verified-chart-v1',
+  );
+  visualAssets.add(duplicateChart);
+  artifacts.add(duplicateChart.manifestArtifact, duplicateChart.manifest);
+  artifacts.add(duplicateChartInputArtifact, {
+    ...verifiedChart,
+    assetRef: {
+      assetId: duplicateChart.artifact.id,
+      manifestArtifactId: duplicateChart.manifestArtifact.id,
+    },
+  });
+  attemptArtifacts.push(duplicateChart.manifestArtifact, duplicateChartInputArtifact);
+  await assert.rejects(
+    service.discoverAttemptMaterials({
+      ...binding,
+      evidenceManifest: chartEvidenceManifest,
+      evidenceResolver: (evidenceId) => {
+        const index = Number(evidenceId.replace('W-', '')) - 1;
+        return chartData.weights[index]?.percentage;
+      },
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof ArtifactIntegrityError);
+      assert.match(error.message, /Chart Asset id.*unique/i);
+      return true;
+    },
+  );
 });
 
 test('rejects both V1/V2 Manifest marker crossings before returning a report package', async () => {

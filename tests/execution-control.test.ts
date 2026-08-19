@@ -1050,7 +1050,7 @@ test('worker-loss retry cannot outrun artifact-invalidation promotion', async ()
   assert.equal(recoverable?.failureKind, 'artifact_invalidation');
 });
 
-test('worker-loss retry ignores sealed Artifact kinds that recovery preserves', async () => {
+test('worker-loss retry waits for sealed chart data cleanup', async () => {
   const { repository, lease } = await claimedLease();
   const chartData = await repository.createStagingArtifact({
     taskId: lease.taskId,
@@ -1089,6 +1089,15 @@ test('worker-loss retry ignores sealed Artifact kinds that recovery preserves', 
     connection.release();
   }
   const paused = await repository.expireExecutionLease({ taskId: lease.taskId, attemptId: lease.attemptId });
+
+  assert.equal(await repository.retryPausedExecution({
+    taskId: lease.taskId,
+    attemptId: lease.attemptId,
+    expectedVersion: paused.stateVersion,
+    failedStepNo: 1,
+  }), null);
+
+  await repository.invalidateArtifactPublication(chartData.id, 'worker-loss chart data cleanup');
 
   assert.equal((await repository.retryPausedExecution({
     taskId: lease.taskId,

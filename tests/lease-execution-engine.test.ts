@@ -5,8 +5,15 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Pool } from 'pg';
-import { ControlArtifactStore } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
-import { ArtifactInvalidationError } from '../apps/orchestrator-runtime/src/control/artifact-publication-group.ts';
+import {
+  ArtifactIntegrityError,
+  BinaryArtifactValidationError,
+  ControlArtifactStore,
+} from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
+import {
+  ArtifactInvalidationError,
+  ArtifactPublicationGroup,
+} from '../apps/orchestrator-runtime/src/control/artifact-publication-group.ts';
 import { VisualInputGateStore } from '../apps/orchestrator-runtime/src/control/visual-input-gate-store.ts';
 import {
   ExecutionAuthenticityError,
@@ -41,7 +48,6 @@ import type {
 } from '../apps/orchestrator-runtime/src/evidence/evidence-service.ts';
 import type {
   ReportDocument,
-  VerifiedChart,
 } from '../apps/orchestrator-runtime/src/report/report-document-composer.ts';
 import {
   VisualAssetService,
@@ -50,14 +56,21 @@ import {
 import { ImageAnnotationService } from '../apps/orchestrator-runtime/src/report/image-annotation-service.ts';
 import { VisualInputMaterializer } from '../apps/orchestrator-runtime/src/report/visual-input-materializer.ts';
 import {
+  ChartRendererUnavailableError,
   chartTableAlternative,
+  renderChartSvg,
   renderAndSealChartSvg,
   type ChartTableAlternative,
 } from '../apps/orchestrator-runtime/src/report/chart-renderer.ts';
 import { chartSpecHash } from '../apps/orchestrator-runtime/src/report/chart-spec-validator.ts';
 import { CurrentReportPackageReader } from '../apps/orchestrator-runtime/src/report/current-report-package-reader.ts';
 import { ReportPackageArtifactService } from '../apps/orchestrator-runtime/src/report/report-package-artifact.ts';
-import { ReportCompositionService } from '../apps/orchestrator-runtime/src/report/report-composition-service.ts';
+import {
+  ReportCompositionService,
+  type CompositionVerifiedChart,
+  type ReportCompositionInput,
+  type ReportCompositionResult,
+} from '../apps/orchestrator-runtime/src/report/report-composition-service.ts';
 import {
   LLMInvocationError,
   type LLMClient,
@@ -132,27 +145,8 @@ interface TestReportReview {
   review(input: ReportReviewInput, composer?: DeliverableComposer): Promise<ReportReviewResult>;
 }
 
-interface TestReportCompositionInput {
-  taskId: string;
-  planVersionId: string;
-  attemptId: string;
-  requiredQuestionIds: string[];
-  deliverable: {
-    artifact: ControlArtifact;
-    value: ResearchDeliverableEnvelope<Record<string, unknown>>;
-  };
-  evidenceManifest: { artifact: ControlArtifact; value: EvidenceManifest };
-  evidenceArtifactResolver: EvidenceArtifactResolver;
-  review: { artifact: ControlArtifact; value: ReportReviewArtifact & { verdict: 'pass' } };
-  visualAssets: VerifiedVisualAsset[];
-  charts: VerifiedChart[];
-  activeLease: ControlExecutionLease;
-}
-
-interface TestReportCompositionResult {
-  artifact: ControlArtifact;
-  document: ReportDocument;
-}
+type TestReportCompositionInput = ReportCompositionInput;
+type TestReportCompositionResult = ReportCompositionResult;
 
 interface TestReportComposition {
   composeAndStore(input: TestReportCompositionInput): Promise<TestReportCompositionResult>;
@@ -163,7 +157,7 @@ interface DiscoverableReportComposition {
     taskId: string;
     planVersionId: string;
     attemptId: string;
-  }): Promise<{ visualAssets: VerifiedVisualAsset[]; charts: VerifiedChart[] }>;
+  }): Promise<{ visualAssets: VerifiedVisualAsset[]; charts: CompositionVerifiedChart[] }>;
 }
 
 function passingReviewDimensions(): ReportReviewDimension[] {
@@ -1316,26 +1310,12 @@ test('uses the same verified visual bytes for materialization and Tool dataUrl h
     attemptId: lease.attemptId,
     kind: 'chart_spec',
   });
-  assert.ok(chartDataArtifact);
-  assert.ok(chartSpecArtifact);
-  const chartInput = await artifacts.readVerifiedJson<{
-    spec: ChartSpec;
-    table: ChartTableAlternative;
-  }>(chartSpecArtifact.id);
-  assert.deepEqual(chartInput.value.spec.categories, [
-    '需求理解',
-    '推荐可解释性',
-    '商品信息组织',
-    '价格呈现',
-    '内容可信度',
-    '转化入口',
-  ]);
-  assert.deepEqual(chartInput.value.spec.series[0]?.values, [20, 20, 20, 15, 15, 10]);
-  assert.deepEqual(chartInput.value.table.rows[0]?.cells, [20, 20, 20, 15, 15, 10]);
+  assert.equal(chartDataArtifact, null);
+  assert.equal(chartSpecArtifact, null);
   assert.ok(result.evidenceManifestArtifactId);
   const manifest = await artifacts.readVerifiedJson<EvidenceManifest>(result.evidenceManifestArtifactId);
   assert.equal(manifest.value.entries.filter(({ evidenceClass }) => evidenceClass === 'screenshot').length, 1);
-  assert.equal(manifest.value.entries.filter(({ evidenceClass }) => evidenceClass === 'user_input').length, 6);
+  assert.equal(manifest.value.entries.filter(({ evidenceClass }) => evidenceClass === 'user_input').length, 0);
 });
 
 test('defers design annotation until verified attention findings are available', async () => {
@@ -3448,6 +3428,581 @@ const reviewProblemGraphFixture = {
   }],
 };
 
+const competitiveScoringWeights = {
+  需求理解: 0.6,
+  内容可信度: 0.4,
+};
+
+function competitiveWeightStep(): CurrentPlanStep {
+  return {
+    step_no: 2,
+    step_name: '公开竞品研究',
+    actor_type: 'skill',
+    actor_id: 'competitive-web-research',
+    question_ids: ['question-review'],
+    depends_on: [1],
+    input: {
+      research_goal: 'compare digital human products',
+      scoring_weights: competitiveScoringWeights,
+    },
+    input_bindings: [],
+    expected_outputs: [{ pointer: '/payload', description: 'competitive analysis' }],
+    acceptance_criteria: ['uses public evidence'],
+    requires_approval: false,
+    fallback_actor_ids: [],
+  };
+}
+
+test('records a chart gap without creating Artifacts when Review and ReportComposition are unavailable', async () => {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]!, competitiveWeightStep()],
+  );
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new CountingRealLLM(),
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed_with_gaps');
+  const chartKinds = new Set(['chart_data', 'chart_spec', 'visual_asset', 'visual_asset_manifest']);
+  const chartArtifacts = (await repository.listArtifactsForAttempt(lease))
+    .filter(({ kind }) => chartKinds.has(kind));
+  assert.deepEqual(chartArtifacts, []);
+});
+
+async function competitiveWeightChartExecutionFixture(options: {
+  review: 'pass' | 'pause' | 'throw';
+  composition: 'pass' | 'throw';
+  steps?: CurrentPlanStep[];
+  chartRenderer?: typeof renderAndSealChartSvg;
+}): Promise<{
+  repository: ControlPlaneRepository;
+  lease: ControlExecutionLease;
+  store: ControlArtifactStore;
+  visualAssets: VisualAssetService;
+  engine: LeaseExecutionEngine;
+  deliverables: RecordingDeliverablesFake;
+  compositionInputs: TestReportCompositionInput[];
+}> {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    options.steps ?? [planSteps[0]!, competitiveWeightStep()],
+    { problem_graph: reviewProblemGraphFixture },
+    reviewStructuredTaskFixture,
+  );
+  const store = new ControlArtifactStore({ root: artifactRoot, registry: repository });
+  const visualAssets = new VisualAssetService({ artifacts: store });
+  const deliverables = new RecordingDeliverablesFake(async (input) => {
+    const value = minimalDeliverable(input);
+    const evidenceId = input.evidenceManifest.value.entries.find(
+      ({ evidenceClass }) => evidenceClass === 'public_source',
+    )?.id;
+    assert.ok(evidenceId);
+    const payload = value.payload as {
+      competitorSamples: Array<{ evidenceIds: string[] }>;
+      dimensionMatrix: Array<{ values: Array<{ evidenceIds: string[] }> }>;
+      differences: Array<{ evidenceIds: string[] }>;
+    };
+    payload.competitorSamples[0]!.evidenceIds = [evidenceId];
+    payload.dimensionMatrix[0]!.values[0]!.evidenceIds = [evidenceId];
+    payload.differences[0]!.evidenceIds = [evidenceId];
+    const fact = value.findingGraph.findings[0];
+    assert.ok(fact?.kind === 'fact');
+    fact.evidenceIds = [evidenceId];
+    value.coverage = {
+      questionBindings: [{ questionId: 'question-review', summaryIds: ['S1'] }],
+      successCriterionBindings: [{
+        successCriterionId: 'criterion-review',
+        conclusionIds: ['C1'],
+        recommendationIds: ['R1'],
+      }],
+    };
+    const artifact = await store.writeJson({
+      taskId: input.task.id,
+      planVersionId: input.plan.id,
+      attemptId: input.attempt.id,
+      kind: 'deliverable',
+      relativePath: 'deliverables/competitive-weight-chart.json',
+      value,
+      schemaVersion: 'research-deliverable-v1-review-gated',
+      activeLease: input.activeLease,
+    });
+    return { deliverable: value, deliverableArtifactId: artifact.id };
+  });
+  const reportReview = new RecordingReportReviewFake(async (input) => {
+    if (options.review === 'throw') throw new Error('fixture report review failed');
+    const paused = options.review === 'pause';
+    const dimensions = passingReviewDimensions();
+    if (paused) {
+      dimensions[0] = { ...dimensions[0]!, passed: false, issues: ['fixture review block'] };
+    }
+    const value: ReportReviewArtifact = {
+      version: 'report-review-v1',
+      taskId: input.task.id,
+      planVersionId: input.plan.id,
+      attemptId: input.attempt.id,
+      deliverableArtifactId: input.deliverableArtifactId,
+      verdict: paused ? 'block' : 'pass',
+      dimensions,
+      revisionRound: 0,
+    };
+    const artifact = await store.writeJson({
+      taskId: input.task.id,
+      planVersionId: input.plan.id,
+      attemptId: input.attempt.id,
+      kind: 'report_review',
+      relativePath: 'reports/competitive-weight-chart-review.json',
+      value,
+      schemaVersion: 'report-review-v1',
+      activeLease: input.activeLease,
+    });
+    return {
+      ...value,
+      status: paused ? 'paused' : 'completed',
+      artifactId: artifact.id,
+    };
+  });
+  const productionComposition = new ReportCompositionService({ artifacts: store, visualAssets, repository });
+  const compositionInputs: TestReportCompositionInput[] = [];
+  const reportComposition: TestReportComposition = {
+    async composeAndStore(input) {
+      compositionInputs.push(input);
+      if (options.composition === 'throw') throw new Error('fixture report composition failed');
+      return productionComposition.composeAndStore(input);
+    },
+  };
+  const engine = new ReportCompositionAwareLeaseExecutionEngine({
+    repository,
+    artifacts: store,
+    tools: new ToolRouter().register(new CountingRealTavilyAdapter()),
+    llm: new CountingRealLLM(),
+    deliverables,
+    reportReview,
+    reportComposition,
+    chartRenderer: options.chartRenderer,
+    skillLoader: new SkillLoader(),
+    validator: new SchemaValidator(),
+    heartbeatMs: 60_000,
+  });
+  return { repository, lease, store, visualAssets, engine, deliverables, compositionInputs };
+}
+
+for (const chartGapCase of [{
+  name: 'invalid scoring weights',
+  message: '评分权重图未生成：冻结计划中的 scoring_weights 格式或总和无效。',
+  steps: (): CurrentPlanStep[] => {
+    const step = competitiveWeightStep();
+    return [planSteps[0]!, {
+      ...step,
+      input: {
+        ...step.input,
+        scoring_weights: { 需求理解: 0.7, 内容可信度: 0.7 },
+      },
+    }];
+  },
+}, {
+  name: 'duplicate competitive research steps',
+  message: '评分权重图未生成：冻结计划包含多个 competitive-web-research Skill 步骤。',
+  steps: (): CurrentPlanStep[] => [
+    planSteps[0]!,
+    competitiveWeightStep(),
+    {
+      ...competitiveWeightStep(),
+      step_no: 3,
+      depends_on: [2],
+    },
+  ],
+}] as const) {
+  test(`completes with one chart gap and no chart lineage for ${chartGapCase.name}`, async () => {
+    const fixture = await competitiveWeightChartExecutionFixture({
+      review: 'pass',
+      composition: 'pass',
+      steps: chartGapCase.steps(),
+    });
+
+    const result = await fixture.engine.execute({
+      lease: fixture.lease,
+      expectedModel: 'pinned-model',
+    }) as DeliverableAwareExecutionResult;
+
+    assert.equal(result.status, 'completed_with_gaps', JSON.stringify(result));
+    assert.deepEqual(fixture.deliverables.calls[0]?.gaps, [chartGapCase.message]);
+    assert.deepEqual(fixture.compositionInputs[0]?.charts, []);
+    const chartKinds = new Set(['chart_data', 'chart_spec', 'visual_asset', 'visual_asset_manifest']);
+    assert.deepEqual(
+      (await fixture.repository.listArtifactsForAttempt(fixture.lease))
+        .filter(({ kind }) => chartKinds.has(kind)),
+      [],
+    );
+    assert.ok(result.evidenceManifestArtifactId);
+    const evidenceManifest = await fixture.store.readVerifiedJson<EvidenceManifest>(
+      result.evidenceManifestArtifactId,
+    );
+    assert.equal(evidenceManifest.value.entries.some(({ id }) => id.startsWith('W-')), false);
+  });
+}
+
+test('does not create a Chart gap when the frozen plan does not request a weight Chart', async () => {
+  const step = competitiveWeightStep();
+  const fixture = await competitiveWeightChartExecutionFixture({
+    review: 'pass',
+    composition: 'pass',
+    steps: [planSteps[0]!, {
+      ...step,
+      input: {
+        research_goal: 'compare digital human products',
+        dimensions: ['需求理解', '内容可信度'],
+      },
+    }],
+  });
+
+  const result = await fixture.engine.execute({
+    lease: fixture.lease,
+    expectedModel: 'pinned-model',
+  }) as DeliverableAwareExecutionResult;
+
+  assert.equal(result.status, 'completed', JSON.stringify(result));
+  assert.deepEqual(fixture.deliverables.calls[0]?.gaps, []);
+  assert.deepEqual(fixture.compositionInputs[0]?.charts, []);
+  const chartKinds = new Set(['chart_data', 'chart_spec', 'visual_asset', 'visual_asset_manifest']);
+  assert.deepEqual(
+    (await fixture.repository.listArtifactsForAttempt(fixture.lease))
+      .filter(({ kind }) => chartKinds.has(kind)),
+    [],
+  );
+  assert.ok(result.evidenceManifestArtifactId);
+  const evidenceManifest = await fixture.store.readVerifiedJson<EvidenceManifest>(
+    result.evidenceManifestArtifactId,
+  );
+  assert.equal(evidenceManifest.value.entries.some(({ id }) => id.startsWith('W-')), false);
+});
+
+test('compensates a renderer-unavailable chart and continues without dangling weight Evidence', async () => {
+  const fixture = await competitiveWeightChartExecutionFixture({
+    review: 'pass',
+    composition: 'pass',
+    chartRenderer: async () => {
+      throw new ChartRendererUnavailableError(new Error('fixture renderer unavailable'));
+    },
+  });
+
+  const result = await fixture.engine.execute({
+    lease: fixture.lease,
+    expectedModel: 'pinned-model',
+  }) as DeliverableAwareExecutionResult;
+
+  assert.equal(result.status, 'completed_with_gaps', JSON.stringify(result));
+  assert.deepEqual(fixture.deliverables.calls[0]?.gaps, [
+    '评分权重图未生成：服务端图表渲染器不可用。',
+  ]);
+  assert.deepEqual(fixture.compositionInputs[0]?.charts, []);
+  const chartArtifacts = (await fixture.repository.listArtifactsForAttempt(fixture.lease))
+    .filter(({ kind }) => kind === 'chart_data' || kind === 'chart_spec');
+  assert.deepEqual(chartArtifacts.map(({ kind, state }) => ({ kind, state })), [
+    { kind: 'chart_data', state: 'FAILED' },
+  ]);
+  assert.ok(result.evidenceManifestArtifactId);
+  const evidenceManifest = await fixture.store.readVerifiedJson<EvidenceManifest>(
+    result.evidenceManifestArtifactId,
+  );
+  assert.equal(evidenceManifest.value.entries.some(({ id }) => id.startsWith('W-')), false);
+});
+
+test('keeps chart compensation failure authoritative when the renderer is unavailable', async () => {
+  const fixture = await competitiveWeightChartExecutionFixture({
+    review: 'pass',
+    composition: 'pass',
+    chartRenderer: async () => {
+      throw new ChartRendererUnavailableError(new Error('fixture renderer unavailable'));
+    },
+  });
+  fixture.store.invalidateArtifactPublication = async () => {
+    throw new Error('fixture chart invalidation failed');
+  };
+
+  const result = await fixture.engine.execute({
+    lease: fixture.lease,
+    expectedModel: 'pinned-model',
+  });
+
+  assert.equal(result.status, 'paused');
+  assert.equal(result.failure?.kind, 'artifact_invalidation');
+  assert.equal(fixture.deliverables.calls.length, 0);
+  const chartData = (await fixture.repository.listArtifactsForAttempt(fixture.lease))
+    .filter(({ kind }) => kind === 'chart_data');
+  assert.equal(chartData.length, 1);
+  assert.equal(chartData[0]?.state, 'SEALED');
+  assert.deepEqual(result.failure?.failedArtifactIds, [chartData[0]?.id]);
+});
+
+test('generates and commits the complete competitive weight Chart publication without user images', async () => {
+  const fixture = await competitiveWeightChartExecutionFixture({ review: 'pass', composition: 'pass' });
+
+  const result = await fixture.engine.execute({ lease: fixture.lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed', JSON.stringify(result));
+  assert.equal(fixture.compositionInputs.length, 1);
+  assert.deepEqual(fixture.compositionInputs[0]!.visualAssets, []);
+  assert.equal(fixture.compositionInputs[0]!.charts.length, 1);
+  const [chart] = fixture.compositionInputs[0]!.charts;
+  assert.ok(chart);
+  assert.equal(chart.spec.title, '对比维度评分权重 / Comparison-dimension Weights (%)');
+  assert.deepEqual(chart.spec.categories, ['需求理解', '内容可信度']);
+  assert.deepEqual(chart.spec.series[0]?.values, [60, 40]);
+
+  const publicationKinds = new Set([
+    'chart_data',
+    'chart_spec',
+    'evidence_manifest',
+    'visual_asset',
+    'visual_asset_manifest',
+  ]);
+  const publicationArtifacts = (await fixture.repository.listArtifactsForAttempt(fixture.lease))
+    .filter(({ kind }) => publicationKinds.has(kind));
+  assert.deepEqual(
+    publicationArtifacts.map(({ kind }) => kind).sort(),
+    ['chart_data', 'chart_spec', 'evidence_manifest', 'visual_asset', 'visual_asset_manifest'],
+  );
+  assert.ok(publicationArtifacts.every(({ state }) => state === 'SEALED'));
+  const dataArtifact = publicationArtifacts.find(({ kind }) => kind === 'chart_data');
+  const specArtifact = publicationArtifacts.find(({ kind }) => kind === 'chart_spec');
+  assert.ok(dataArtifact?.contentSha256);
+  assert.ok(specArtifact);
+  const storedSpec = await fixture.store.readVerifiedJson<{
+    version: 'verified-chart-v1';
+    spec: ChartSpec;
+    dataArtifactRef: { artifactId: string; contentSha256: string };
+    assetRef: { assetId: string; manifestArtifactId: string };
+  }>(specArtifact.id);
+  assert.deepEqual(storedSpec.value.dataArtifactRef, {
+    artifactId: dataArtifact.id,
+    contentSha256: dataArtifact.contentSha256,
+  });
+  assert.deepEqual(chart.dataArtifactRef, storedSpec.value.dataArtifactRef);
+  assert.equal(storedSpec.value.spec.title, '对比维度评分权重 / Comparison-dimension Weights (%)');
+  const verifiedChart = await fixture.visualAssets.readVerified(storedSpec.value.assetRef);
+  assert.equal(verifiedChart.manifest.version, 'visual-asset-manifest-v2');
+  assert.equal(verifiedChart.manifest.mediaType, 'image/svg+xml');
+  assert.equal(verifiedChart.manifest.source.kind, 'chart_render');
+  assert.equal(verifiedChart.manifest.derivedFrom, null);
+});
+
+for (const failureCase of [
+  { name: 'paused Review', review: 'pause', composition: 'pass', compositionCalls: 0 },
+  { name: 'Review exception', review: 'throw', composition: 'pass', compositionCalls: 0 },
+  { name: 'ReportComposition exception', review: 'pass', composition: 'throw', compositionCalls: 1 },
+] as const) {
+  test(`keeps the verified competitive weight Chart publication after ${failureCase.name}`, async () => {
+    const fixture = await competitiveWeightChartExecutionFixture(failureCase);
+
+    const result = await fixture.engine.execute({ lease: fixture.lease, expectedModel: 'pinned-model' });
+
+    assert.equal(result.status, 'paused');
+    assert.equal(fixture.compositionInputs.length, failureCase.compositionCalls);
+    const publicationKinds = new Set(['chart_data', 'chart_spec', 'visual_asset', 'visual_asset_manifest']);
+    const publicationArtifacts = (await fixture.repository.listArtifactsForAttempt(fixture.lease))
+      .filter(({ kind }) => publicationKinds.has(kind));
+    assert.deepEqual(
+      publicationArtifacts.map(({ kind }) => kind).sort(),
+      ['chart_data', 'chart_spec', 'visual_asset', 'visual_asset_manifest'],
+    );
+    assert.ok(publicationArtifacts.every(({ state }) => state === 'SEALED'));
+  });
+}
+
+test('compensates the complete competitive weight Chart publication when report material discovery fails', async () => {
+  const fixture = await competitiveWeightChartExecutionFixture({ review: 'pass', composition: 'pass' });
+  const originalListArtifacts = fixture.repository.listArtifactsForAttempt.bind(fixture.repository);
+  let rejectedDiscovery = false;
+  fixture.repository.listArtifactsForAttempt = async (input) => {
+    const artifacts = await originalListArtifacts(input);
+    if (!rejectedDiscovery && artifacts.some(({ kind }) => kind === 'chart_spec')) {
+      rejectedDiscovery = true;
+      throw new Error('fixture report material discovery failed');
+    }
+    return artifacts;
+  };
+
+  const result = await fixture.engine.execute({ lease: fixture.lease, expectedModel: 'pinned-model' });
+  fixture.repository.listArtifactsForAttempt = originalListArtifacts;
+
+  assert.equal(rejectedDiscovery, true);
+  assert.equal(result.status, 'paused');
+  assert.equal(fixture.compositionInputs.length, 0);
+  const publicationKinds = new Set([
+    'chart_data',
+    'chart_spec',
+    'evidence_manifest',
+    'visual_asset',
+    'visual_asset_manifest',
+  ]);
+  const publicationArtifacts = (await fixture.repository.listArtifactsForAttempt(fixture.lease))
+    .filter(({ kind }) => publicationKinds.has(kind));
+  assert.deepEqual(
+    publicationArtifacts.map(({ kind }) => kind).sort(),
+    ['chart_data', 'chart_spec', 'evidence_manifest', 'visual_asset', 'visual_asset_manifest'],
+  );
+  assert.ok(publicationArtifacts.every(({ state }) => state === 'FAILED'));
+});
+
+test('records competitive weight Chart integrity drift as an authenticity failure', async () => {
+  const fixture = await competitiveWeightChartExecutionFixture({ review: 'pass', composition: 'pass' });
+  const originalListArtifacts = fixture.repository.listArtifactsForAttempt.bind(fixture.repository);
+  let rejectedDiscovery = false;
+  fixture.repository.listArtifactsForAttempt = async (input) => {
+    const artifacts = await originalListArtifacts(input);
+    const chartSpec = artifacts.find(({ kind }) => kind === 'chart_spec');
+    if (!rejectedDiscovery && chartSpec) {
+      rejectedDiscovery = true;
+      throw new ArtifactIntegrityError(chartSpec.id, 'fixture Chart Manifest binding drift');
+    }
+    return artifacts;
+  };
+
+  try {
+    await assert.rejects(
+      () => fixture.engine.execute({ lease: fixture.lease, expectedModel: 'pinned-model' }),
+      ArtifactIntegrityError,
+    );
+  } finally {
+    fixture.repository.listArtifactsForAttempt = originalListArtifacts;
+  }
+
+  assert.equal(rejectedDiscovery, true);
+  const steps = await fixture.repository.listExecutionSteps(fixture.lease.attemptId);
+  const terminalFailure = steps.find(({ actorId }) => actorId === 'deliverable')?.failure;
+  assert.equal(terminalFailure?.kind, 'authenticity');
+  assert.equal(terminalFailure?.retryable, false);
+  assert.equal((await fixture.repository.listAttempts(fixture.lease.taskId))[0]?.state, 'paused');
+  assert.equal((await fixture.repository.getTaskDetail(fixture.lease.taskId))?.state, 'paused');
+});
+
+test('records chart SVG binary validation as an authenticity failure', async () => {
+  const fixture = await competitiveWeightChartExecutionFixture({ review: 'pass', composition: 'pass' });
+  const originalWriteBinary = fixture.store.writeBinary.bind(fixture.store);
+  fixture.store.writeBinary = async (input) => {
+    if (input.kind === 'visual_asset') {
+      throw new BinaryArtifactValidationError('fixture rejected unsafe chart SVG');
+    }
+    return originalWriteBinary(input);
+  };
+
+  try {
+    await assert.rejects(
+      () => fixture.engine.execute({ lease: fixture.lease, expectedModel: 'pinned-model' }),
+      ArtifactIntegrityError,
+    );
+  } finally {
+    fixture.store.writeBinary = originalWriteBinary;
+  }
+
+  const steps = await fixture.repository.listExecutionSteps(fixture.lease.attemptId);
+  const terminalFailure = steps.find(({ actorId }) => actorId === 'evidence')?.failure;
+  assert.equal(terminalFailure?.kind, 'authenticity');
+  assert.equal(terminalFailure?.retryable, false);
+  assert.equal((await fixture.repository.listAttempts(fixture.lease.taskId))[0]?.state, 'paused');
+  assert.equal((await fixture.repository.getTaskDetail(fixture.lease.taskId))?.state, 'paused');
+});
+
+test('preserves untracked SVG and chart publication ids across nested compensation failures', async () => {
+  const fixture = await competitiveWeightChartExecutionFixture({ review: 'pass', composition: 'pass' });
+  const originalWriteBinary = fixture.store.writeBinary.bind(fixture.store);
+  const originalInvalidate = fixture.store.invalidateArtifactPublication.bind(fixture.store);
+  let untrackedSvgId = '';
+  fixture.store.writeBinary = async (input) => {
+    const artifact = await originalWriteBinary(input);
+    if (input.kind === 'visual_asset') {
+      untrackedSvgId = artifact.id;
+      throw new ArtifactInvalidationError(
+        [artifact.id],
+        'fixture SVG publication cleanup failed',
+        [new Error('fixture SVG invalidation unavailable')],
+      );
+    }
+    return artifact;
+  };
+  fixture.store.invalidateArtifactPublication = async (artifactId, reason) => {
+    const artifact = await fixture.repository.getArtifact(artifactId);
+    if (artifact?.kind === 'chart_data') {
+      throw new Error('fixture Chart Data invalidation unavailable');
+    }
+    return originalInvalidate(artifactId, reason);
+  };
+
+  let result: LeaseExecutionResult;
+  try {
+    result = await fixture.engine.execute({ lease: fixture.lease, expectedModel: 'pinned-model' });
+  } finally {
+    fixture.store.writeBinary = originalWriteBinary;
+    fixture.store.invalidateArtifactPublication = originalInvalidate;
+  }
+
+  assert.ok(untrackedSvgId);
+  assert.equal(result.status, 'paused');
+  assert.equal(result.failure?.kind, 'artifact_invalidation');
+  const chartData = (await fixture.repository.listArtifactsForAttempt(fixture.lease))
+    .find(({ kind }) => kind === 'chart_data');
+  assert.ok(chartData);
+  assert.deepEqual(
+    new Set(result.failure?.failedArtifactIds as string[]),
+    new Set([untrackedSvgId, chartData.id]),
+  );
+  const failedStep = (await fixture.repository.listExecutionSteps(fixture.lease.attemptId))
+    .find(({ actorId }) => actorId === 'evidence');
+  assert.deepEqual(
+    new Set(failedStep?.failure?.failedArtifactIds as string[]),
+    new Set([untrackedSvgId, chartData.id]),
+  );
+});
+
+for (const failureCase of [
+  { name: 'Chart Data', writtenKinds: ['chart_data'] },
+  { name: 'SVG', writtenKinds: ['chart_data', 'visual_asset'] },
+  { name: 'Manifest', writtenKinds: ['chart_data', 'visual_asset', 'visual_asset_manifest'] },
+  {
+    name: 'Chart Spec',
+    writtenKinds: ['chart_data', 'chart_spec', 'visual_asset', 'visual_asset_manifest'],
+  },
+] as const) {
+  test(`compensates every tracked Chart Artifact when the lease is lost after ${failureCase.name} write`, async () => {
+    const fixture = await competitiveWeightChartExecutionFixture({ review: 'pass', composition: 'pass' });
+    const originalRequireActiveLease = fixture.repository.requireActiveLease.bind(fixture.repository);
+    let rejectedPostCheck = false;
+    fixture.repository.requireActiveLease = async (lease) => {
+      const publicationKinds = new Set(['chart_data', 'chart_spec', 'visual_asset', 'visual_asset_manifest']);
+      const writtenKinds = (await fixture.repository.listArtifactsForAttempt(fixture.lease))
+        .filter(({ kind, state }) => publicationKinds.has(kind) && state === 'SEALED')
+        .map(({ kind }) => kind)
+        .sort();
+      if (
+        !rejectedPostCheck
+        && writtenKinds.length === failureCase.writtenKinds.length
+        && writtenKinds.every((kind, index) => kind === [...failureCase.writtenKinds].sort()[index])
+      ) {
+        rejectedPostCheck = true;
+        throw new ControlPlaneConflictError(`fixture lost the lease after ${failureCase.name} write`);
+      }
+      return originalRequireActiveLease(lease);
+    };
+
+    const result = await fixture.engine.execute({ lease: fixture.lease, expectedModel: 'pinned-model' });
+
+    assert.equal(rejectedPostCheck, true);
+    assert.equal(result.status, 'paused');
+    assert.equal(fixture.compositionInputs.length, 0);
+    const publicationKinds = new Set(['chart_data', 'chart_spec', 'visual_asset', 'visual_asset_manifest']);
+    const publicationArtifacts = (await fixture.repository.listArtifactsForAttempt(fixture.lease))
+      .filter(({ kind }) => publicationKinds.has(kind));
+    assert.deepEqual(
+      publicationArtifacts.map(({ kind }) => kind).sort(),
+      [...failureCase.writtenKinds].sort(),
+    );
+    assert.ok(publicationArtifacts.every(({ state }) => state === 'FAILED'));
+  });
+}
+
 test('pass Review composes and lease-seals a verified image and Chart ReportDocument for package dispatch', async () => {
   const { repository, lease } = await claimedExecution(
     new Date(Date.now() + 60_000),
@@ -3526,26 +4081,49 @@ test('pass Review composes and lease-seals a verified image and Chart ReportDocu
     }],
     yAxis: { min: 0 },
   };
-  const sealedChart = await renderAndSealChartSvg({
+  const renderedChart = renderChartSvg(spec, { width: 800, height: 450 });
+  const sealedChart = await visualAssets.derive({
     taskId: lease.taskId,
     planVersionId: lease.planVersionId,
     attemptId: lease.attemptId,
-    spec,
-    evidenceResolver: () => undefined,
-    original: {
-      assetId: original.assetArtifact.id,
-      manifestArtifactId: original.manifestArtifact.id,
-    },
-    assets: visualAssets,
-    artifacts: store,
     activeLease: lease,
+    original: {
+      assetId: verifiedImage.artifact.id,
+      manifestArtifactId: verifiedImage.manifestArtifact.id,
+    },
+    derivation: {
+      kind: 'chart_svg',
+      chartId: spec.chartId,
+      specHash: chartSpecHash(spec),
+    },
+    bytes: Buffer.from(renderedChart.svg, 'utf8'),
     exportPolicy: 'allow',
-    width: 800,
-    height: 450,
   });
   const verifiedChart = await visualAssets.readVerified({
-    assetId: sealedChart.derived.assetArtifact.id,
-    manifestArtifactId: sealedChart.derived.manifestArtifact.id,
+    assetId: sealedChart.assetArtifact.id,
+    manifestArtifactId: sealedChart.manifestArtifact.id,
+  });
+  const chartSpecArtifact = await store.writeJson({
+    taskId: lease.taskId,
+    planVersionId: lease.planVersionId,
+    attemptId: lease.attemptId,
+    kind: 'chart_spec',
+    relativePath: 'charts/chart-production-wiring.json',
+    value: {
+      version: 'verified-chart-v1',
+      taskId: lease.taskId,
+      planVersionId: lease.planVersionId,
+      attemptId: lease.attemptId,
+      spec,
+      specHash: chartSpecHash(spec),
+      table: renderedChart.table,
+      assetRef: {
+        assetId: verifiedChart.artifact.id,
+        manifestArtifactId: verifiedChart.manifestArtifact.id,
+      },
+    },
+    schemaVersion: 'verified-chart-v1',
+    activeLease: lease,
   });
   const persistedChartInput = await store.readVerifiedJson<{
     version: 'verified-chart-v1';
@@ -3556,7 +4134,7 @@ test('pass Review composes and lease-seals a verified image and Chart ReportDocu
     specHash: string;
     table: ChartTableAlternative;
     assetRef: { assetId: string; manifestArtifactId: string };
-  }>(sealedChart.chartSpecArtifactId);
+  }>(chartSpecArtifact.id);
   const verifiedChartInput = persistedChartInput.value;
   assert.equal(persistedChartInput.artifact.kind, 'chart_spec');
   assert.equal(persistedChartInput.artifact.state, 'SEALED');
@@ -3671,6 +4249,10 @@ test('pass Review composes and lease-seals a verified image and Chart ReportDocu
     specHash: verifiedChartInput.specHash,
     table: verifiedChartInput.table,
     asset: verifiedChart,
+    chartSpecArtifactRef: {
+      artifactId: chartSpecArtifact.id,
+      contentSha256: chartSpecArtifact.contentSha256,
+    },
   });
   const reportComposition: TestReportComposition = {
     async composeAndStore(input) {
@@ -3687,18 +4269,20 @@ test('pass Review composes and lease-seals a verified image and Chart ReportDocu
           { assetId: verifiedAnnotation.artifact.id, manifestArtifactId: verifiedAnnotation.manifestArtifact.id },
         ],
       );
-      assert.deepEqual(input.charts.map(({ spec: chartSpec, specHash, table, asset }) => ({
+      assert.deepEqual(input.charts.map(({ spec: chartSpec, specHash, table, asset, dataArtifactRef }) => ({
         spec: chartSpec,
         specHash,
         table,
         assetId: asset.artifact.id,
         manifestArtifactId: asset.manifestArtifact.id,
+        dataArtifactRef,
       })), [{
         spec,
         specHash: verifiedChartInput.specHash,
         table: verifiedChartInput.table,
         assetId: verifiedChart.artifact.id,
         manifestArtifactId: verifiedChart.manifestArtifact.id,
+        dataArtifactRef: undefined,
       }]);
       return productionComposition.composeAndStore(input);
     },

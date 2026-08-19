@@ -2142,7 +2142,7 @@ for (const taskState of ['executing', 'reviewing', 'composing_report'] as const)
   }
 }
 
-test('terminal CAS recovery invalidates sealed terminal and visual Artifacts but leaves chart data to work package D', async () => {
+test('terminal CAS recovery invalidates sealed terminal, visual, and chart data Artifacts', async () => {
   const fixture = await createLeaseStateFixture('reviewing', false);
   const store = new ControlArtifactStore({ root: workspaceRoot, registry: fixture.repository });
   const invalidatedKinds = [
@@ -2155,6 +2155,7 @@ test('terminal CAS recovery invalidates sealed terminal and visual Artifacts but
     'visual_asset_manifest',
     'image_annotation',
     'chart_spec',
+    'chart_data',
   ] as const;
   const invalidated = await Promise.all(invalidatedKinds.map((kind) => store.writeJson({
     taskId: fixture.task.id,
@@ -2165,16 +2166,7 @@ test('terminal CAS recovery invalidates sealed terminal and visual Artifacts but
     value: { kind },
     activeLease: fixture.lease,
   })));
-  const chartData = await store.writeJson({
-    taskId: fixture.task.id,
-    planVersionId: fixture.plan.id,
-    attemptId: fixture.claim.attemptId,
-    kind: 'chart_data',
-    relativePath: 'terminal/chart_data.json',
-    value: { kind: 'chart_data' },
-    activeLease: fixture.lease,
-  });
-  assert.ok([...invalidated, chartData].every((artifact) => artifact.state === 'SEALED'));
+  assert.ok(invalidated.every((artifact) => artifact.state === 'SEALED'));
 
   await fixture.repository.invalidateTerminalArtifacts({
     taskId: fixture.task.id,
@@ -2189,7 +2181,6 @@ test('terminal CAS recovery invalidates sealed terminal and visual Artifacts but
     )?.state)),
     invalidatedKinds.map(() => 'FAILED'),
   );
-  assert.equal((await fixture.repository.getArtifact(chartData.id))?.state, 'SEALED');
   await assert.rejects(
     () => fixture.repository.requireSealedArtifact(invalidated[2]!.id),
     ArtifactNotSealedError,

@@ -180,6 +180,7 @@ export class ResearchPlanningService {
     const artifacts = await this.routedPlanner.planCurrent({
       task,
       direct,
+      originalInput,
       requirement: canonicalRequirement,
       taskProvenance,
       emit,

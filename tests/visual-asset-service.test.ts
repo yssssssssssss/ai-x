@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
-import { ArtifactInvalidationError } from '../apps/orchestrator-runtime/src/control/artifact-publication-group.ts';
+import {
+  ArtifactInvalidationError,
+  ArtifactPublicationGroup,
+} from '../apps/orchestrator-runtime/src/control/artifact-publication-group.ts';
+import { ArtifactIntegrityError } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
 import { VisualAssetService } from '../apps/orchestrator-runtime/src/report/visual-asset-service.ts';
 import type { ToolMediaAttachment } from '../apps/orchestrator-runtime/src/runtime/tool-adapter.ts';
 import type { ControlExecutionLease } from '../database/control-plane.ts';
@@ -51,6 +55,7 @@ type BinaryWrite = {
   sensitivity?: string;
   redactionPolicyVersion?: string;
   activeLease?: ControlExecutionLease;
+  trustedMediaType?: 'image/svg+xml';
 };
 
 type JsonWrite = Omit<BinaryWrite, 'bytes'> & { value: unknown };
@@ -210,6 +215,56 @@ class FakeArtifactStore {
   }
 }
 
+class WrongIdentityChartDataStore extends FakeArtifactStore {
+  override async readVerifiedJson<T>(artifactId: string): Promise<{ artifact: FakeArtifact; value: T }> {
+    const result = await super.readVerifiedJson<T>(artifactId);
+    if (result.artifact.kind !== 'chart_data') return result;
+    return { ...result, artifact: { ...result.artifact, id: 'different-chart-data-artifact' } };
+  }
+}
+
+class CorruptChartBinaryReadStore extends FakeArtifactStore {
+  constructor(private readonly corruption: 'hash' | 'mediaType' | 'dimensions') {
+    super();
+  }
+
+  override async readVerifiedBinary(artifactId: string) {
+    const result = await super.readVerifiedBinary(artifactId);
+    if (this.corruption === 'hash') {
+      return { ...result, bytes: Buffer.concat([result.bytes, Buffer.from('tampered')]) };
+    }
+    if (this.corruption === 'mediaType') {
+      return { ...result, metadata: { ...result.metadata, contentType: 'image/png' } };
+    }
+    return { ...result, metadata: { ...result.metadata, width: result.metadata.width + 1 } };
+  }
+}
+
+class CorruptChartManifestReadStore extends FakeArtifactStore {
+  override async readVerifiedJson<T>(artifactId: string): Promise<{ artifact: FakeArtifact; value: T }> {
+    const result = await super.readVerifiedJson<T>(artifactId);
+    if (result.artifact.kind !== 'visual_asset_manifest') return result;
+    return {
+      ...result,
+      value: {
+        ...(result.value as Record<string, unknown>),
+        manifestHash: `sha256:${'f'.repeat(64)}`,
+      } as T,
+    };
+  }
+}
+
+class UntrackedChartInvalidationFailureStore extends FakeArtifactStore {
+  override async writeBinary(input: BinaryWrite): Promise<FakeArtifact> {
+    const artifact = await super.writeBinary(input);
+    throw new ArtifactInvalidationError(
+      [artifact.id],
+      'fixture inner chart invalidation failed',
+      [new Error('fixture inner invalidation failure')],
+    );
+  }
+}
+
 function toolArtifact(overrides: Partial<FakeArtifact> = {}): FakeArtifact {
   return {
     id: 'artifact-tool-output-1',
@@ -346,6 +401,37 @@ function ingestBrowser(
     attachment: fixture.attachment,
     exportPolicy: 'allow',
     ensureActive,
+  });
+}
+
+const chartLease: ControlExecutionLease = {
+  ...binding,
+  leaseOwner: 'chart-worker',
+  leaseToken: 'chart-token',
+};
+
+function sealChart(
+  service: VisualAssetService,
+  dataArtifact: FakeArtifact,
+  artifacts: FakeArtifactStore,
+  overrides: Partial<Parameters<VisualAssetService['sealChartRender']>[0]> = {},
+) {
+  const publication = overrides.publication ?? new ArtifactPublicationGroup(artifacts as never);
+  if (!publication.artifactIds.includes(dataArtifact.id)) publication.track(dataArtifact.id);
+  return service.sealChartRender({
+    ...binding,
+    activeLease: chartLease,
+    dataArtifactId: dataArtifact.id,
+    dataArtifactContentSha256: dataArtifact.contentSha256!,
+    chartId: 'comparison-weights',
+    specHash: `sha256:${'c'.repeat(64)}`,
+    bytes: SVG,
+    width: 800,
+    height: 450,
+    exportPolicy: 'allow',
+    ...overrides,
+    publication,
+    ensureActive: overrides.ensureActive ?? (async () => undefined),
   });
 }
 
@@ -723,6 +809,291 @@ test('reads a V2 chart_render Manifest against its sealed chart data without add
       manifestArtifactId: manifestArtifact.id,
     }),
     /chart render|data Artifact|provenance/i,
+  );
+});
+
+test('seals a verified chart data render as an exact V2 SVG publication', async () => {
+  const artifacts = new FakeArtifactStore();
+  const dataArtifact = await artifacts.writeJson({
+    ...binding,
+    kind: 'chart_data',
+    relativePath: 'charts/data.json',
+    value: { weights: [{ dimension: '需求理解', percentage: 20 }] },
+    schemaVersion: 'competitive-weight-chart-data-v1',
+  });
+  const service = new VisualAssetService({ artifacts: artifacts as never });
+
+  const result = await sealChart(service, dataArtifact, artifacts);
+
+  assert.equal(result.manifest.version, 'visual-asset-manifest-v2');
+  assert.equal(result.manifestArtifact.schemaVersion, 'visual-asset-manifest-v2');
+  assert.deepEqual(result.manifest.source, {
+    kind: 'chart_render',
+    dataArtifactId: dataArtifact.id,
+    dataArtifactContentSha256: dataArtifact.contentSha256,
+  });
+  assert.equal(result.manifest.derivedFrom, null);
+  assert.deepEqual(result.manifest.derivation, {
+    kind: 'chart_svg',
+    chartId: 'comparison-weights',
+    specHash: `sha256:${'c'.repeat(64)}`,
+  });
+  assert.equal(result.manifest.contentSha256, digest(SVG));
+  assert.equal(result.manifest.mediaType, 'image/svg+xml');
+  assert.equal(result.manifest.width, 800);
+  assert.equal(result.manifest.height, 450);
+  assert.equal(result.manifest.manifestHash, expectedManifestHash(result.manifest));
+  assert.deepEqual(artifacts.binaryWrites.at(-1)?.activeLease, chartLease);
+  assert.equal(artifacts.binaryWrites.at(-1)?.trustedMediaType, 'image/svg+xml');
+  assert.deepEqual(artifacts.jsonWrites.at(-1)?.activeLease, chartLease);
+  const verified = await service.readVerified({
+    assetId: result.assetArtifact.id,
+    manifestArtifactId: result.manifestArtifact.id,
+  });
+  assert.deepEqual(verified.bytes, SVG);
+});
+
+test('does not write chart Artifacts after its publication Group is committed', async () => {
+  const artifacts = new FakeArtifactStore();
+  const dataArtifact = await artifacts.writeJson({
+    ...binding,
+    kind: 'chart_data',
+    relativePath: 'charts/data.json',
+    value: { weights: [{ dimension: '需求理解', percentage: 20 }] },
+    schemaVersion: 'competitive-weight-chart-data-v1',
+  });
+  const publication = new ArtifactPublicationGroup(artifacts as never);
+  publication.track(dataArtifact.id);
+  publication.commit();
+  const service = new VisualAssetService({ artifacts: artifacts as never });
+  const jsonWriteCount = artifacts.jsonWrites.length;
+
+  await assert.rejects(
+    () => sealChart(service, dataArtifact, artifacts, { publication }),
+    /publication group.*committed/i,
+  );
+
+  assert.equal(artifacts.binaryWrites.length, 0);
+  assert.equal(artifacts.jsonWrites.length, jsonWriteCount);
+  assert.deepEqual(artifacts.invalidations, []);
+});
+
+for (const failurePoint of [
+  {
+    name: 'SVG',
+    hasBeenWritten: (artifacts: FakeArtifactStore) => artifacts.binaryWrites.length === 1,
+    expectedKinds: ['chart_data', 'visual_asset'],
+    expectedManifestWrites: 0,
+  },
+  {
+    name: 'Manifest',
+    hasBeenWritten: (artifacts: FakeArtifactStore) => (
+      artifacts.jsonWrites.some(({ kind }) => kind === 'visual_asset_manifest')
+    ),
+    expectedKinds: ['chart_data', 'visual_asset', 'visual_asset_manifest'],
+    expectedManifestWrites: 1,
+  },
+] as const) {
+  test(`compensates the chart publication when the lease is lost after the ${failurePoint.name} write`, async () => {
+    const artifacts = new FakeArtifactStore();
+    const dataArtifact = await artifacts.writeJson({
+      ...binding,
+      kind: 'chart_data',
+      relativePath: 'charts/data.json',
+      value: { weights: [{ dimension: '需求理解', percentage: 20 }] },
+      schemaVersion: 'competitive-weight-chart-data-v1',
+    });
+    const service = new VisualAssetService({ artifacts: artifacts as never });
+    let leaseRejected = false;
+
+    await assert.rejects(
+      () => sealChart(service, dataArtifact, artifacts, {
+        ensureActive: async () => {
+          if (leaseRejected || !failurePoint.hasBeenWritten(artifacts)) return;
+          leaseRejected = true;
+          throw new Error(`lease lost after ${failurePoint.name} write`);
+        },
+      }),
+      new RegExp(`lease lost after ${failurePoint.name} write`, 'i'),
+    );
+
+    assert.equal(leaseRejected, true);
+    assert.equal(artifacts.binaryWrites.length, 1);
+    assert.equal(
+      artifacts.jsonWrites.filter(({ kind }) => kind === 'visual_asset_manifest').length,
+      failurePoint.expectedManifestWrites,
+    );
+    assert.deepEqual(
+      artifacts.invalidations.map(({ artifactId }) => artifacts.artifacts.get(artifactId)?.kind),
+      failurePoint.expectedKinds,
+    );
+    assert.ok(artifacts.invalidations.every(({ artifactId }) => (
+      artifacts.artifacts.get(artifactId)?.state === 'FAILED'
+    )));
+  });
+}
+
+test('rejects chart data identity drift before publishing an SVG', async () => {
+  const artifacts = new WrongIdentityChartDataStore();
+  const dataArtifact = await artifacts.writeJson({
+    ...binding,
+    kind: 'chart_data',
+    relativePath: 'charts/data.json',
+    value: { weights: [{ dimension: '需求理解', percentage: 20 }] },
+    schemaVersion: 'competitive-weight-chart-data-v1',
+  });
+  const service = new VisualAssetService({ artifacts: artifacts as never });
+
+  await assert.rejects(
+    () => sealChart(service, dataArtifact, artifacts),
+    (error: unknown) => {
+      assert.ok(error instanceof ArtifactIntegrityError);
+      assert.match(error.message, /chart render|data Artifact|identity|provenance/i);
+      return true;
+    },
+  );
+  assert.equal(artifacts.binaryWrites.length, 0);
+});
+
+test('requires sealed chart_data with an exact hash and Task, Plan, Attempt binding', async () => {
+  const cases: Array<{
+    label: string;
+    artifactOverrides?: Partial<FakeArtifact>;
+    inputOverrides?: Partial<Parameters<VisualAssetService['sealChartRender']>[0]>;
+  }> = [
+    { label: 'kind', artifactOverrides: { kind: 'tool_output' } },
+    { label: 'state', artifactOverrides: { state: 'STAGING' } },
+    { label: 'task', artifactOverrides: { taskId: 'other-task' } },
+    { label: 'plan', artifactOverrides: { planVersionId: 'other-plan' } },
+    { label: 'attempt', artifactOverrides: { attemptId: 'other-attempt' } },
+    {
+      label: 'hash',
+      inputOverrides: { dataArtifactContentSha256: digest('different chart data') },
+    },
+  ];
+
+  for (const current of cases) {
+    const artifacts = new FakeArtifactStore();
+    const dataArtifact = await artifacts.writeJson({
+      ...binding,
+      kind: 'chart_data',
+      relativePath: 'charts/data.json',
+      value: { weights: [{ dimension: '需求理解', percentage: 20 }] },
+      schemaVersion: 'competitive-weight-chart-data-v1',
+    });
+    Object.assign(dataArtifact, current.artifactOverrides);
+    const service = new VisualAssetService({ artifacts: artifacts as never });
+
+    await assert.rejects(
+      () => sealChart(service, dataArtifact, artifacts, current.inputOverrides),
+      (error: unknown) => {
+        assert.ok(error instanceof ArtifactIntegrityError);
+        assert.match(error.message, /Artifact|sealed|binding|Task|Plan|Attempt|hash/i);
+        return true;
+      },
+      current.label,
+    );
+    assert.equal(artifacts.binaryWrites.length, 0, current.label);
+  }
+});
+
+test('rejects sealed SVG hash, media type, or dimensions that differ from the render input', async () => {
+  for (const corruption of ['hash', 'mediaType', 'dimensions'] as const) {
+    const artifacts = new CorruptChartBinaryReadStore(corruption);
+    const dataArtifact = await artifacts.writeJson({
+      ...binding,
+      kind: 'chart_data',
+      relativePath: 'charts/data.json',
+      value: { weights: [{ dimension: '需求理解', percentage: 20 }] },
+      schemaVersion: 'competitive-weight-chart-data-v1',
+    });
+    const service = new VisualAssetService({ artifacts: artifacts as never });
+
+    await assert.rejects(
+      () => sealChart(service, dataArtifact, artifacts),
+      /Binary Artifact|SVG input/i,
+      corruption,
+    );
+    assert.equal(artifacts.binaryWrites.length, 1, corruption);
+    assert.equal(
+      artifacts.jsonWrites.filter(({ kind }) => kind === 'visual_asset_manifest').length,
+      0,
+      corruption,
+    );
+    assert.equal(artifacts.invalidations.length, 2, corruption);
+    assert.deepEqual(
+      artifacts.invalidations.map(({ artifactId }) => artifacts.artifacts.get(artifactId)?.kind),
+      ['chart_data', 'visual_asset'],
+      corruption,
+    );
+  }
+});
+
+test('compensates the chart SVG and V2 Manifest together when readback fails', async () => {
+  const artifacts = new CorruptChartManifestReadStore();
+  const dataArtifact = await artifacts.writeJson({
+    ...binding,
+    kind: 'chart_data',
+    relativePath: 'charts/data.json',
+    value: { weights: [{ dimension: '需求理解', percentage: 20 }] },
+    schemaVersion: 'competitive-weight-chart-data-v1',
+  });
+  const service = new VisualAssetService({ artifacts: artifacts as never });
+
+  await assert.rejects(() => sealChart(service, dataArtifact, artifacts), /manifest hash|integrity/i);
+  assert.deepEqual(
+    artifacts.invalidations.map(({ artifactId }) => artifacts.artifacts.get(artifactId)?.kind),
+    ['chart_data', 'visual_asset', 'visual_asset_manifest'],
+  );
+});
+
+test('surfaces chart render compensation failures as ArtifactInvalidationError', async () => {
+  const artifacts = new CorruptChartManifestReadStore();
+  const dataArtifact = await artifacts.writeJson({
+    ...binding,
+    kind: 'chart_data',
+    relativePath: 'charts/data.json',
+    value: { weights: [{ dimension: '需求理解', percentage: 20 }] },
+    schemaVersion: 'competitive-weight-chart-data-v1',
+  });
+  artifacts.failInvalidation = true;
+  const service = new VisualAssetService({ artifacts: artifacts as never });
+
+  await assert.rejects(
+    () => sealChart(service, dataArtifact, artifacts),
+    (error: unknown) => {
+      assert.ok(error instanceof ArtifactInvalidationError);
+      assert.equal(error.failedArtifactIds.length, 3);
+      return true;
+    },
+  );
+});
+
+test('preserves untracked inner and outer chart invalidation failures', async () => {
+  const artifacts = new UntrackedChartInvalidationFailureStore();
+  const dataArtifact = await artifacts.writeJson({
+    ...binding,
+    kind: 'chart_data',
+    relativePath: 'charts/data.json',
+    value: { weights: [{ dimension: '需求理解', percentage: 20 }] },
+    schemaVersion: 'competitive-weight-chart-data-v1',
+  });
+  artifacts.failInvalidation = true;
+  const service = new VisualAssetService({ artifacts: artifacts as never });
+
+  await assert.rejects(
+    () => sealChart(service, dataArtifact, artifacts),
+    (error: unknown) => {
+      assert.ok(error instanceof ArtifactInvalidationError);
+      const assetArtifact = [...artifacts.artifacts.values()].find(({ kind }) => kind === 'visual_asset');
+      assert.ok(assetArtifact);
+      assert.deepEqual(
+        new Set(error.failedArtifactIds),
+        new Set([assetArtifact.id, dataArtifact.id]),
+      );
+      assert.equal(error.failures.length, 2);
+      return true;
+    },
   );
 });
 

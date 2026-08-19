@@ -511,6 +511,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
         capability_resolution: planningResult.capabilityResolution,
         evidence_requirements: deliverableSelection.evidenceRequirements,
         activated_nodes: planningResult.activatedNodes,
+        requireCompetitiveWeightContract: true,
       });
       return {
         plan: { ...compiled.plan, task_id: task.id },

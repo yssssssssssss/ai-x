@@ -17,12 +17,16 @@ import type {
   VisualAssetSource,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { ToolMediaAttachment } from '../runtime/tool-adapter.ts';
-import type {
-  ControlArtifactStore,
-  TrustedBinaryMetadata,
+import {
+  ArtifactIntegrityError,
+  BinaryArtifactValidationError,
+  type ControlArtifactStore,
+  type TrustedBinaryMetadata,
 } from '../control/artifact-store.ts';
 import {
+  ArtifactInvalidationError,
   ArtifactPublicationGroup,
+  mergeArtifactInvalidationErrors,
 } from '../control/artifact-publication-group.ts';
 import { resolveJsonPointer } from '../evidence/evidence-service.ts';
 import { SchemaValidator } from '../schema/validator.ts';
@@ -101,6 +105,20 @@ export interface BrowserCaptureIngestInput extends AssetBinding {
   ensureActive: () => void;
 }
 
+export interface ChartRenderSealInput extends AssetBinding {
+  activeLease: ControlExecutionLease;
+  dataArtifactId: string;
+  dataArtifactContentSha256: string;
+  chartId: string;
+  specHash: string;
+  bytes: Uint8Array;
+  width: number;
+  height: number;
+  exportPolicy: VisualAssetExportPolicy;
+  publication: ArtifactPublicationGroup;
+  ensureActive: () => Promise<void>;
+}
+
 export interface VerifiedVisualAsset {
   artifact: ControlArtifact;
   bytes: Buffer;
@@ -149,6 +167,16 @@ function assertBinding(artifact: ControlArtifact, binding: AssetBinding, label: 
   ) {
     throw new Error(`${label} binding does not match Task, Plan, and Attempt`);
   }
+}
+
+function artifactIntegrityError(
+  artifactId: string,
+  context: string,
+  error?: unknown,
+): ArtifactIntegrityError {
+  if (error instanceof ArtifactIntegrityError) return error;
+  const detail = error instanceof Error ? `: ${error.message}` : '';
+  return new ArtifactIntegrityError(artifactId, `${context}${detail}`);
 }
 
 function responseHeaders(response: IncomingMessage): Headers {
@@ -515,6 +543,37 @@ function browserManifestDraft(input: AssetBinding & {
   };
 }
 
+function chartManifestDraft(input: ChartRenderSealInput & {
+  artifact: ControlArtifact;
+  metadata: TrustedBinaryMetadata;
+}): Omit<VisualAssetManifestV2, 'manifestHash'> {
+  if (!input.artifact.contentSha256) throw new Error('visual Asset is not SEALED with a content hash');
+  return {
+    version: 'visual-asset-manifest-v2',
+    taskId: input.taskId,
+    planVersionId: input.planVersionId,
+    attemptId: input.attemptId,
+    assetId: input.artifact.id,
+    contentSha256: input.artifact.contentSha256,
+    mediaType: input.metadata.contentType,
+    byteSize: input.metadata.byteSize,
+    width: input.metadata.width,
+    height: input.metadata.height,
+    exportPolicy: input.exportPolicy,
+    source: {
+      kind: 'chart_render',
+      dataArtifactId: input.dataArtifactId,
+      dataArtifactContentSha256: input.dataArtifactContentSha256,
+    },
+    derivedFrom: null,
+    derivation: {
+      kind: 'chart_svg',
+      chartId: input.chartId,
+      specHash: input.specHash,
+    },
+  };
+}
+
 export class VisualAssetService {
   private readonly artifacts: ArtifactStorePort;
   private readonly resolveHost: ResolveHost;
@@ -599,6 +658,69 @@ export class VisualAssetService {
       tool.artifact,
     );
     return this.persistBrowserCapture({ ...input, source });
+  }
+
+  async sealChartRender(input: ChartRenderSealInput): Promise<VisualAssetResult> {
+    requireNonEmpty(input.taskId, 'taskId');
+    requireNonEmpty(input.planVersionId, 'planVersionId');
+    requireNonEmpty(input.attemptId, 'attemptId');
+    requireNonEmpty(input.dataArtifactId, 'chart data Artifact id');
+    if (!input.publication.artifactIds.includes(input.dataArtifactId)) {
+      throw new Error('Caller publication must already own the chart data Artifact');
+    }
+    input.publication.track(input.dataArtifactId);
+    try {
+      await input.ensureActive();
+      let data: { artifact: ControlArtifact; value: unknown };
+      try {
+        data = await this.artifacts.readVerifiedJson<unknown>(input.dataArtifactId);
+      } catch (error) {
+        throw artifactIntegrityError(
+          input.dataArtifactId,
+          'chart render data Artifact readback failed integrity verification',
+          error,
+        );
+      }
+      await input.ensureActive();
+      if (
+        data.artifact.id !== input.dataArtifactId
+        || data.artifact.kind !== 'chart_data'
+        || data.artifact.state !== 'SEALED'
+        || data.artifact.contentSha256 !== input.dataArtifactContentSha256
+      ) {
+        throw new ArtifactIntegrityError(
+          input.dataArtifactId,
+          'chart render data Artifact kind, state, or content hash does not match',
+        );
+      }
+      try {
+        assertBinding(data.artifact, input, 'chart render data Artifact');
+      } catch (error) {
+        throw artifactIntegrityError(data.artifact.id, 'chart render data Artifact binding is invalid', error);
+      }
+      return await this.persistChartRender(input);
+    } catch (error) {
+      try {
+        await input.publication.compensate('Chart publication did not complete');
+      } catch (invalidationError) {
+        if (invalidationError === error) throw error;
+        if (
+          error instanceof ArtifactInvalidationError
+          && invalidationError instanceof ArtifactInvalidationError
+        ) {
+          throw mergeArtifactInvalidationErrors(error, invalidationError);
+        }
+        throw invalidationError;
+      }
+      if (error instanceof BinaryArtifactValidationError) {
+        throw artifactIntegrityError(
+          input.dataArtifactId,
+          'chart render SVG failed binary integrity validation',
+          error,
+        );
+      }
+      throw error;
+    }
   }
 
   async derive(input: VisualAssetDeriveInput): Promise<VisualAssetResult> {
@@ -800,6 +922,103 @@ export class VisualAssetService {
       }
       throw error;
     }
+  }
+
+  private async persistChartRender(input: ChartRenderSealInput): Promise<VisualAssetResult> {
+    const token = randomUUID();
+    const expectedContentSha256 = contentHash(input.bytes);
+    const publication = input.publication;
+    const assetArtifact = await this.artifacts.writeBinary({
+      taskId: input.taskId,
+      planVersionId: input.planVersionId,
+      attemptId: input.attemptId,
+      kind: 'visual_asset',
+      relativePath: `visual-assets/${token}.svg`,
+      bytes: Buffer.from(input.bytes),
+      schemaVersion: 'visual-asset-v1',
+      sensitivity: 'internal',
+      redactionPolicyVersion: 'v1',
+      activeLease: input.activeLease,
+      trustedMediaType: 'image/svg+xml',
+    });
+    publication.track(assetArtifact.id);
+    await input.ensureActive();
+    try {
+      assertBinding(assetArtifact, input, 'chart render visual Asset');
+    } catch (error) {
+      throw artifactIntegrityError(assetArtifact.id, 'chart render visual Asset binding is invalid', error);
+    }
+    const binary = await this.artifacts.readVerifiedBinary(assetArtifact.id);
+    await input.ensureActive();
+    try {
+      assertBinding(binary.artifact, input, 'verified chart render visual Asset');
+    } catch (error) {
+      throw artifactIntegrityError(binary.artifact.id, 'verified chart render visual Asset binding is invalid', error);
+    }
+    const metadata = metadataFromArtifact(binary.artifact);
+    if (
+      binary.artifact.id !== assetArtifact.id
+      || binary.artifact.contentSha256 !== expectedContentSha256
+      || contentHash(binary.bytes) !== expectedContentSha256
+      || metadata.contentType !== 'image/svg+xml'
+      || metadata.contentType !== binary.metadata.contentType
+      || metadata.byteSize !== input.bytes.byteLength
+      || metadata.byteSize !== binary.metadata.byteSize
+      || metadata.width !== input.width
+      || metadata.width !== binary.metadata.width
+      || metadata.height !== input.height
+      || metadata.height !== binary.metadata.height
+    ) {
+      throw new ArtifactIntegrityError(
+        assetArtifact.id,
+        'sealed chart render Binary Artifact does not match its SVG input',
+      );
+    }
+    const draft = chartManifestDraft({ ...input, artifact: binary.artifact, metadata });
+    const manifest: VisualAssetManifestV2 = { ...draft, manifestHash: hash(draft) };
+    assertVisualAssetManifestSchema(manifest);
+    const manifestArtifact = await this.artifacts.writeJson({
+      taskId: input.taskId,
+      planVersionId: input.planVersionId,
+      attemptId: input.attemptId,
+      kind: 'visual_asset_manifest',
+      relativePath: `visual-assets/${token}.manifest.json`,
+      value: manifest,
+      schemaVersion: manifest.version,
+      sensitivity: 'internal',
+      redactionPolicyVersion: 'v1',
+      activeLease: input.activeLease,
+    });
+    publication.track(manifestArtifact.id);
+    await input.ensureActive();
+    try {
+      assertBinding(manifestArtifact, input, 'chart render visual Asset manifest');
+    } catch (error) {
+      throw artifactIntegrityError(
+        manifestArtifact.id,
+        'chart render visual Asset manifest binding is invalid',
+        error,
+      );
+    }
+    let verified: VerifiedVisualAsset;
+    try {
+      verified = await this.readVerified({
+        assetId: assetArtifact.id,
+        manifestArtifactId: manifestArtifact.id,
+      });
+    } catch (error) {
+      throw artifactIntegrityError(
+        manifestArtifact.id,
+        'chart render visual Asset readback failed integrity verification',
+        error,
+      );
+    }
+    await input.ensureActive();
+    return {
+      assetArtifact: verified.artifact,
+      manifestArtifact: verified.manifestArtifact,
+      manifest: verified.manifest,
+    };
   }
 
   private async persist(input: AssetBinding & {

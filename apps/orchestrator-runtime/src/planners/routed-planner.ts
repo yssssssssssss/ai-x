@@ -193,6 +193,69 @@ export interface CurrentPlanArtifacts {
 
 const ROUTED_STEP_LIMITS = { depth: 8, speed: 4 } as const;
 
+function scoringDimensions(
+  input: Record<string, unknown>,
+  fallback: readonly string[] | undefined,
+): string[] | null {
+  if (!Object.hasOwn(input, 'dimensions')) return fallback ? [...fallback] : null;
+  if (!Array.isArray(input.dimensions)) return null;
+  const dimensions = input.dimensions.map((value) => (
+    typeof value === 'string' ? value.trim() : ''
+  ));
+  if (
+    dimensions.length < 2
+    || dimensions.some((dimension) => !dimension)
+    || new Set(dimensions).size !== dimensions.length
+  ) return null;
+  return dimensions;
+}
+
+function freezeCompetitiveScoringWeights(
+  candidate: Omit<CurrentPlanCandidateProposal, 'activated_nodes'>,
+  fallbackDimensions?: readonly string[],
+): Omit<CurrentPlanCandidateProposal, 'activated_nodes'> {
+  return {
+    ...candidate,
+    steps: candidate.steps.map((step) => {
+      if (
+        step.actor_type !== 'skill'
+        || step.actor_id !== 'competitive-web-research'
+      ) return step;
+      const dimensions = scoringDimensions(step.input, fallbackDimensions);
+      if (!dimensions) return step;
+      const input = fallbackDimensions
+        ? { ...step.input, dimensions }
+        : step.input;
+      if (Object.hasOwn(input, 'scoring_weights')) {
+        return input === step.input ? step : { ...step, input };
+      }
+      const weight = 1 / dimensions.length;
+      return {
+        ...step,
+        input: {
+          ...input,
+          scoring_weights: Object.fromEntries(
+            dimensions.map((dimension) => [dimension, weight]),
+          ),
+        },
+      };
+    }),
+  };
+}
+
+function freezeCompetitiveScoringWeightEnvelope(input: {
+  candidates: Array<Omit<CurrentPlanCandidateProposal, 'activated_nodes'>>;
+  fallbackDimensions?: readonly string[];
+}): {
+  candidates: Array<Omit<CurrentPlanCandidateProposal, 'activated_nodes'>>;
+} {
+  return {
+    candidates: input.candidates.map((candidate) => (
+      freezeCompetitiveScoringWeights(candidate, input.fallbackDimensions)
+    )),
+  };
+}
+
 function routedCandidateValidationFeedback(input: {
   candidates: Array<Omit<CurrentPlanCandidateProposal, 'activated_nodes'>>;
   task: ResearchTaskV2;
@@ -220,6 +283,7 @@ function routedCandidateValidationFeedback(input: {
         capability_resolution: input.capabilityResolution,
         evidence_requirements: input.evidenceRequirements,
         activated_nodes: input.activatedNodes,
+        requireCompetitiveWeightContract: true,
       });
     } catch (error) {
       if (!(error instanceof PlanCompilerValidationError)) throw error;
@@ -618,7 +682,7 @@ export class RoutedPlanner implements PlanStrategy {
         fallback_actor_ids: [],
       };
       const directSteps = [...toolSteps, skillStep];
-      const candidates: CurrentPlanCandidateProposal[] = [
+      const directCandidates: CurrentPlanCandidateProposal[] = [
         {
           id: 'depth',
           title: `直呼 ${directDecision.skill.name ?? ctx.direct.skillName}（含复核）`,
@@ -638,6 +702,13 @@ export class RoutedPlanner implements PlanStrategy {
           activated_nodes: [],
         },
       ];
+      const candidates = directCandidates.map((candidate): CurrentPlanCandidateProposal => {
+        const { activated_nodes, ...proposal } = candidate;
+        return {
+          ...freezeCompetitiveScoringWeights(proposal, ctx.requirement.comparison_dimensions),
+          activated_nodes,
+        };
+      });
       const proposalEnvelope = {
         candidates: candidates.map(({ activated_nodes: _activatedNodes, ...candidate }) => candidate),
       };
@@ -681,6 +752,7 @@ export class RoutedPlanner implements PlanStrategy {
     const candidateContext = {
       task: ctx.task,
       requirement: ctx.requirement,
+      planning_input: ctx.originalInput ?? ctx.requirement.research_goal,
       problem_graph: problemGraphResult.graph,
       capability_resolution: capabilityResolution,
       skills: capabilityResolution.eligible.map((decision) => ({
@@ -700,8 +772,12 @@ export class RoutedPlanner implements PlanStrategy {
     type CandidateEnvelope = {
       candidates: Array<Omit<CurrentPlanCandidateProposal, 'activated_nodes'>>;
     };
-    const generateCandidates = (validationFeedback: string[] = []) => llm.generateStructured<CandidateEnvelope>({
-      prompt:
+    const generateCandidates = (validationFeedback: string[] = []) => {
+      const context = validationFeedback.length > 0
+        ? { ...candidateContext, validation_feedback: validationFeedback }
+        : candidateContext;
+      return llm.generateStructured<CandidateEnvelope>({
+        prompt:
         `基于 finalized ResearchTaskV2、ProblemGraph、Evidence Policy 和 eligible capability shortlist 生成 depth/speed 两份 Current 候选。` +
         `depth 总步数不得超过 ${ROUTED_STEP_LIMITS.depth}，speed 总步数不得超过 ${ROUTED_STEP_LIMITS.speed}；只选择与 research_goal/when_to_use 最匹配的少数能力，不得堆叠整个 shortlist。` +
         `每个 step 必须精确包含 step_no、step_name、actor_type、actor_id、question_ids、depends_on、input、input_bindings、expected_outputs、acceptance_criteria、requires_approval、fallback_actor_ids。` +
@@ -710,20 +786,20 @@ export class RoutedPlanner implements PlanStrategy {
         `fallback_actor_ids 必须为空数组，当前执行器不支持 fallback 调度。` +
         `Skill step 的 expected_outputs 及后续 binding source_pointer 必须位于统一输出根 /payload 下。` +
         `Skill 的 required_tools 必须作为更早的 Tool step；所有引用必须真实存在；不得使用 capability_resolution.rejected 中的 actor。` +
+        `requirement.comparison_dimensions 存在时，competitive-web-research Skill step 必须在 input.dimensions 中逐项保序，并写入同 key 顺序的 scoring_weights；用户未指定权重时各维等权且总和为 1。comparison_dimensions 不存在时不得自行补造维度或权重。` +
         (validationFeedback.length > 0
           ? `上一次候选未通过候选校验，必须逐项修复：${validationFeedback.join('；')}。`
           : ''),
-      schema: currentPlanProposalSchema,
-      schemaName: 'current-plan-candidates',
-      context: validationFeedback.length > 0
-        ? { ...candidateContext, validation_feedback: validationFeedback }
-        : candidateContext,
-      receipt: {
-        stage: 'planning',
-        contextManifestHash: hashPrompt('', candidateContext),
-        expectedModel: this.deps.expectedActualModel ?? llm.identity.requestedModel,
-      },
-    });
+        schema: currentPlanProposalSchema,
+        schemaName: 'current-plan-candidates',
+        context,
+        receipt: {
+          stage: 'planning',
+          contextManifestHash: hashPrompt('', candidateContext),
+          expectedModel: this.deps.expectedActualModel ?? llm.identity.requestedModel,
+        },
+      });
+    };
     const candidateValidationFeedback = (envelope: CandidateEnvelope) => routedCandidateValidationFeedback({
       candidates: envelope.candidates,
       task: ctx.requirement,
@@ -735,16 +811,26 @@ export class RoutedPlanner implements PlanStrategy {
     });
     let planGen = await generateCandidates();
     validator.validateSchemaOrThrow(currentPlanProposalSchema, planGen.data, 'current-plan-candidates');
-    let validationFeedback = candidateValidationFeedback(planGen.data);
+    let candidateEnvelope = freezeCompetitiveScoringWeightEnvelope({
+      ...planGen.data,
+      fallbackDimensions: ctx.requirement.comparison_dimensions,
+    });
+    validator.validateSchemaOrThrow(currentPlanProposalSchema, candidateEnvelope, 'current-plan-candidates');
+    let validationFeedback = candidateValidationFeedback(candidateEnvelope);
     if (validationFeedback.length > 0) {
       planGen = await generateCandidates(validationFeedback);
       validator.validateSchemaOrThrow(currentPlanProposalSchema, planGen.data, 'current-plan-candidates');
-      validationFeedback = candidateValidationFeedback(planGen.data);
+      candidateEnvelope = freezeCompetitiveScoringWeightEnvelope({
+        ...planGen.data,
+        fallbackDimensions: ctx.requirement.comparison_dimensions,
+      });
+      validator.validateSchemaOrThrow(currentPlanProposalSchema, candidateEnvelope, 'current-plan-candidates');
+      validationFeedback = candidateValidationFeedback(candidateEnvelope);
       if (validationFeedback.length > 0) {
         throw new Error(`Current plan candidates failed candidate validation repair: ${validationFeedback.join('; ')}`);
       }
     }
-    const candidates: CurrentPlanCandidateProposal[] = planGen.data.candidates.map((candidate) => ({
+    const candidates: CurrentPlanCandidateProposal[] = candidateEnvelope.candidates.map((candidate) => ({
       ...candidate,
       activated_nodes: activatedNodeKeys,
     }));

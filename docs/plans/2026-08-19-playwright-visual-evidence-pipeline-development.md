@@ -670,14 +670,18 @@ Recovery 的视觉复合 Artifact 集合增加 `chart_data`，并继续包含 V1
 | `schemas/skill-manifest.schema.json` | 增加可选且去重的 `optional_tools` 字段 |
 | `schemas/current-execution-plan.schema.json` | 增加向后兼容的 optional Tool decisions 与 `capability_gaps`；旧计划缺失字段仍合法 |
 | `packages/api-contract/research-deliverable.ts` | 增加可选的 Current capability decision/gap 类型；保留 V1 类型并新增 V2 视觉判别联合与报告视觉引用 |
+| `packages/api-contract/plan.ts`、`schemas/research-task-v2.schema.json` | 增加可选且保序的 `comparison_dimensions`，未明确维度时保持缺失，不创建默认值 |
+| `apps/orchestrator-runtime/src/control/requirement-refinement-service.ts` | 要求 Requirement Refinement 忠实提取明确比较维度，禁止自行补造 |
 | `apps/orchestrator-runtime/src/runtime/skill-loader.ts` | 加载并规范化 `optional_tools`；增加不参与路由的 `getRegisteredTool()` 供冻结计划回滚校验 |
 | `harness/linters/registry-linter.ts` | 校验 optional 引用存在、tier 必须为 optional、不得和 required 重复 |
 | `apps/orchestrator-runtime/src/planners/capability-resolver.ts` | optional Tool 不否决 Skill，输出 available/unavailable 原因 |
 | `skills/competitive-analysis/web-research/SKILL.md` | 明确文本来源、截图来源、单图证据和 gap 规则 |
 | `orchestrator/prompts/router.md` | 说明 required 与 optional Tool 的计划语义 |
 | `orchestrator/prompts/planner.md` | 约束 optional 截图步骤及 capability gap，不允许伪造 URL |
+| `apps/orchestrator-runtime/src/planners/plan-strategy.ts`、`apps/orchestrator-runtime/src/planners/research-planning-service.ts` | 将当前用户修订指令送入 Current 候选上下文，避免重新生成时退回旧研究目标 |
 | `apps/orchestrator-runtime/src/planners/routed-planner.ts` | 生成 Tavily 到 Playwright 的显式绑定、冻结评分权重；修复 Direct Skill 的 Tool 顺序 |
 | `apps/orchestrator-runtime/src/planners/plan-compiler.ts` | 校验截图步骤来源/依赖/顺序、optional decisions 和可见权重合同 |
+| `apps/orchestrator-runtime/src/control/control-planning-service.ts`、`apps/agent-api/src/control-runtime.ts` | 对 Current 候选启用同一冻结权重编译门禁 |
 | `apps/orchestrator-runtime/src/control/tool-retry-policy.ts` | 传播统一 deadline/AbortSignal，只保留最后成功 sidecar，并重试 capacity |
 | `apps/orchestrator-runtime/src/control/artifact-publication-group.ts` | 新增可跟踪、提交、补偿并冒泡失效错误的发布组 |
 | `apps/orchestrator-runtime/src/control/lease-execution-engine.ts` | 实现取消传播、媒体发布组、截图 Evidence、capability/tool gap 汇总、gapSummary 索引与整批失效 |
@@ -709,6 +713,7 @@ Recovery 的视觉复合 Artifact 集合增加 `chart_data`，并继续包含 V1
 | `apps/web/src/reporting/ReportDocumentView.tsx` | 在图片和对比图下展示证据开关 |
 | `apps/web/src/reporting/report-bundle.ts` | 安全导出图片 evidenceIds 和本地资产路径 |
 | `apps/web/src/components/stages/Stage2Plan.tsx` | 从冻结 Skill step input 只读展示评分权重，禁止维护会漂移的第二份表单值 |
+| `apps/web/src/components/stages/stage2-plan-confirmation.ts` | 集中生成确认 payload，只提交已声明 PendingInput，禁止回传第二份权重副本 |
 | `apps/web/src/current-flow-state.ts` | 增加历史 gapCount 纯函数：capability gaps 与 toolProvenance gapSummary 去重，旧 skipped step 仅作兼容回退 |
 | `apps/web/src/hooks/useTaskFlow.ts` | 历史任务恢复时使用统一 gapCount，不再只数 skipped steps |
 | `apps/agent-api/src/routes/control-tasks.ts` | 资产读取路由接受精确匹配的 V1/V2 Artifact schemaVersion |
@@ -730,6 +735,7 @@ Recovery 的视觉复合 Artifact 集合增加 `chart_data`，并继续包含 V1
 - `tests/browser-execution-gate.test.ts`
 - `tests/playwright-page-capture-adapter.test.ts`
 - `tests/artifact-publication-group.test.ts`
+- `tests/stage2-plan.test.ts`
 
 并扩展：
 
@@ -755,7 +761,10 @@ Recovery 的视觉复合 Artifact 集合增加 `chart_data`，并继续包含 V1
 - `tests/candidate-layout.test.ts`
 - `tests/current-flow-state.test.ts`
 - `tests/control-planning.test.ts`
+- `tests/current-revision-integrity.test.ts`
+- `tests/execution-control.test.ts`
 - `tests/execution-recovery.test.ts`
+- `tests/requirement-refinement-service.test.ts`
 - `tests/control-api-integration.test.ts`
 - `tests/auth-isolation.test.ts`
 
@@ -807,7 +816,7 @@ pnpm --dir apps/web build
 验证：
 
 ```bash
-pnpm exec tsx --test tests/artifact-publication-group.test.ts tests/competitive-weight-chart.test.ts tests/chart-renderer.test.ts tests/lease-execution-engine.test.ts tests/execution-recovery.test.ts tests/control-plane.test.ts tests/report-document.test.ts tests/report-package.test.ts tests/candidate-layout.test.ts
+pnpm exec tsx --test tests/artifact-publication-group.test.ts tests/competitive-weight-chart.test.ts tests/chart-renderer.test.ts tests/lease-execution-engine.test.ts tests/execution-recovery.test.ts tests/control-plane.test.ts tests/report-document.test.ts tests/report-package.test.ts tests/candidate-layout.test.ts tests/plan-compiler.test.ts tests/stage2-plan.test.ts tests/requirement-refinement-service.test.ts tests/schema.test.ts tests/execution-control.test.ts tests/control-planning.test.ts tests/current-revision-integrity.test.ts
 pnpm typecheck
 pnpm --dir apps/web build
 ```

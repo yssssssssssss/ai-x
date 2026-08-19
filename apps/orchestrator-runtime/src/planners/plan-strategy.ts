@@ -57,6 +57,7 @@ export interface PlannerDeps {
 export interface PlanContext {
   task: ResearchTaskData;
   direct: DirectInvoke | null;
+  originalInput?: string;
   requirement?: ResearchTaskV2;
   // 段1 taskGen 的溯源,direct 支路无路由 LLM,用它兜底 planProvenance。
   taskProvenance: PlanProvenance;

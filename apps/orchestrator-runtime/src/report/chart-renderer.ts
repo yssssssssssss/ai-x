@@ -5,9 +5,16 @@ import type {
   ChartSeries,
   ChartSpec,
   VisualAssetExportPolicy,
-  VisualAssetReference,
 } from '../../../../packages/api-contract/research-deliverable.ts';
-import type { ControlArtifactStore } from '../control/artifact-store.ts';
+import {
+  ArtifactInvalidationError,
+  mergeArtifactInvalidationErrors,
+  type ArtifactPublicationGroup,
+} from '../control/artifact-publication-group.ts';
+import {
+  ArtifactIntegrityError,
+  type ControlArtifactStore,
+} from '../control/artifact-store.ts';
 import type { VisualAssetService, VisualAssetResult } from './visual-asset-service.ts';
 import {
   chartSpecHash,
@@ -29,6 +36,13 @@ export interface ChartTableAlternative {
 export interface RenderedChartSvg {
   svg: string;
   table: ChartTableAlternative;
+}
+
+export class ChartRendererUnavailableError extends Error {
+  constructor(readonly rendererCause: unknown) {
+    super('Chart renderer is unavailable');
+    this.name = 'ChartRendererUnavailableError';
+  }
 }
 
 interface ChartDimensions {
@@ -230,21 +244,27 @@ function assertDimensions({ width, height }: ChartDimensions): void {
 
 export function renderChartSvg(spec: ChartSpec, dimensions: ChartDimensions): RenderedChartSvg {
   assertDimensions(dimensions);
-  const chart = echarts.init(null, undefined, {
-    renderer: 'svg',
-    ssr: true,
-    width: dimensions.width,
-    height: dimensions.height,
-  });
+  let renderedSvg: string;
   try {
-    chart.setOption(chartOption(spec), { notMerge: true, lazyUpdate: false, silent: true });
-    return {
-      svg: sanitizeSvg(chart.renderToSVGString({ useViewBox: true })),
-      table: chartTableAlternative(spec),
-    };
-  } finally {
-    chart.dispose();
+    const chart = echarts.init(null, undefined, {
+      renderer: 'svg',
+      ssr: true,
+      width: dimensions.width,
+      height: dimensions.height,
+    });
+    try {
+      chart.setOption(chartOption(spec), { notMerge: true, lazyUpdate: false, silent: true });
+      renderedSvg = chart.renderToSVGString({ useViewBox: true });
+    } finally {
+      chart.dispose();
+    }
+  } catch (error) {
+    throw new ChartRendererUnavailableError(error);
   }
+  return {
+    svg: sanitizeSvg(renderedSvg),
+    table: chartTableAlternative(spec),
+  };
 }
 
 export interface RenderAndSealChartSvgInput extends ChartDimensions {
@@ -253,47 +273,97 @@ export interface RenderAndSealChartSvgInput extends ChartDimensions {
   attemptId: string;
   spec: ChartSpec;
   evidenceResolver: ChartEvidenceResolver;
-  artifacts: Pick<ControlArtifactStore, 'writeJson' | 'invalidateArtifactPublication'>;
+  artifacts: Pick<ControlArtifactStore, 'writeJson'>;
   activeLease: ControlExecutionLease;
-  original: VisualAssetReference;
-  assets: VisualAssetService;
+  chartDataArtifact: ControlArtifact;
+  publication: ArtifactPublicationGroup;
+  assets: Pick<VisualAssetService, 'sealChartRender'>;
   exportPolicy: VisualAssetExportPolicy;
+  ensureActive: () => Promise<void>;
 }
 
 export interface SealedChartSvg extends RenderedChartSvg {
-  derived: VisualAssetResult;
+  visualAsset: VisualAssetResult;
   chartSpecArtifactId: string;
 }
 
 export async function renderAndSealChartSvg(input: RenderAndSealChartSvgInput): Promise<SealedChartSvg> {
-  if (
-    input.activeLease.taskId !== input.taskId
-    || input.activeLease.planVersionId !== input.planVersionId
-    || input.activeLease.attemptId !== input.attemptId
-  ) {
-    throw new Error('Chart active lease binding does not match Task, Plan, and Attempt');
+  const chartDataArtifact = input.chartDataArtifact;
+  const publication = input.publication;
+  if (!publication.artifactIds.includes(chartDataArtifact.id)) {
+    throw new Error('Caller publication must already own the Chart Data Artifact');
   }
-  const validatedSpec = validateChartSpec(input.spec, input.evidenceResolver);
-  const specHash = chartSpecHash(validatedSpec);
-  const rendered = renderChartSvg(validatedSpec, input);
-  let derived: VisualAssetResult | undefined;
-  let chartSpecArtifact: ControlArtifact | undefined;
+  publication.track(chartDataArtifact.id);
   try {
-    derived = await input.assets.derive({
+    if (
+      input.activeLease.taskId !== input.taskId
+      || input.activeLease.planVersionId !== input.planVersionId
+      || input.activeLease.attemptId !== input.attemptId
+    ) {
+      throw new ArtifactIntegrityError(
+        chartDataArtifact.id,
+        'Chart active lease binding does not match Task, Plan, and Attempt',
+      );
+    }
+    if (
+      chartDataArtifact.state !== 'SEALED'
+      || chartDataArtifact.kind !== 'chart_data'
+      || !chartDataArtifact.contentSha256
+      || chartDataArtifact.taskId !== input.taskId
+      || chartDataArtifact.planVersionId !== input.planVersionId
+      || chartDataArtifact.attemptId !== input.attemptId
+    ) {
+      throw new ArtifactIntegrityError(
+        chartDataArtifact.id,
+        'Chart Data Artifact must be sealed and bound to the active Task, Plan, and Attempt',
+      );
+    }
+    const validatedSpec = validateChartSpec(input.spec, input.evidenceResolver);
+    const specHash = chartSpecHash(validatedSpec);
+    let rendered: RenderedChartSvg;
+    try {
+      rendered = renderChartSvg(validatedSpec, input);
+    } catch (error) {
+      if (error instanceof ChartRendererUnavailableError) throw error;
+      const detail = error instanceof Error ? `: ${error.message}` : '';
+      throw new ArtifactIntegrityError(
+        chartDataArtifact.id,
+        `Chart SVG failed integrity validation${detail}`,
+      );
+    }
+    const visualAsset = await input.assets.sealChartRender({
       taskId: input.taskId,
       planVersionId: input.planVersionId,
       attemptId: input.attemptId,
       activeLease: input.activeLease,
-      original: input.original,
-      derivation: {
-        kind: 'chart_svg',
-        chartId: validatedSpec.chartId,
-        specHash,
-      },
+      dataArtifactId: chartDataArtifact.id,
+      dataArtifactContentSha256: chartDataArtifact.contentSha256,
+      chartId: validatedSpec.chartId,
+      specHash,
       bytes: Buffer.from(rendered.svg, 'utf8'),
+      width: input.width,
+      height: input.height,
       exportPolicy: input.exportPolicy,
+      publication,
+      ensureActive: input.ensureActive,
     });
-    chartSpecArtifact = await input.artifacts.writeJson({
+    publication.track(visualAsset.assetArtifact.id).track(visualAsset.manifestArtifact.id);
+    if (
+      visualAsset.manifest.version !== 'visual-asset-manifest-v2'
+      || visualAsset.manifest.source.kind !== 'chart_render'
+      || visualAsset.manifest.source.dataArtifactId !== chartDataArtifact.id
+      || visualAsset.manifest.source.dataArtifactContentSha256 !== chartDataArtifact.contentSha256
+      || visualAsset.manifest.derivedFrom !== null
+      || visualAsset.manifest.derivation?.kind !== 'chart_svg'
+      || visualAsset.manifest.derivation.chartId !== validatedSpec.chartId
+      || visualAsset.manifest.derivation.specHash !== specHash
+    ) {
+      throw new ArtifactIntegrityError(
+        visualAsset.manifestArtifact.id,
+        'sealed chart render does not match its Chart Data and Chart Spec provenance',
+      );
+    }
+    const chartSpecArtifact = await input.artifacts.writeJson({
       taskId: input.taskId,
       planVersionId: input.planVersionId,
       attemptId: input.attemptId,
@@ -307,9 +377,13 @@ export async function renderAndSealChartSvg(input: RenderAndSealChartSvgInput): 
         spec: validatedSpec,
         specHash,
         table: rendered.table,
+        dataArtifactRef: {
+          artifactId: chartDataArtifact.id,
+          contentSha256: chartDataArtifact.contentSha256,
+        },
         assetRef: {
-          assetId: derived.assetArtifact.id,
-          manifestArtifactId: derived.manifestArtifact.id,
+          assetId: visualAsset.assetArtifact.id,
+          manifestArtifactId: visualAsset.manifestArtifact.id,
         },
       },
       schemaVersion: 'verified-chart-v1',
@@ -317,29 +391,40 @@ export async function renderAndSealChartSvg(input: RenderAndSealChartSvgInput): 
       redactionPolicyVersion: 'v1',
       activeLease: input.activeLease,
     });
+    publication.track(chartSpecArtifact.id);
+    await input.ensureActive();
     if (
       chartSpecArtifact.state !== 'SEALED'
+      || !chartSpecArtifact.contentSha256
       || chartSpecArtifact.kind !== 'chart_spec'
       || chartSpecArtifact.schemaVersion !== 'verified-chart-v1'
       || chartSpecArtifact.taskId !== input.taskId
       || chartSpecArtifact.planVersionId !== input.planVersionId
       || chartSpecArtifact.attemptId !== input.attemptId
     ) {
-      throw new Error('Chart Spec Artifact did not seal with the required binding and schema');
+      throw new ArtifactIntegrityError(
+        chartSpecArtifact.id,
+        'Chart Spec Artifact did not seal with the required binding and schema',
+      );
     }
-    return { ...rendered, derived, chartSpecArtifactId: chartSpecArtifact.id };
+    return {
+      ...rendered,
+      visualAsset,
+      chartSpecArtifactId: chartSpecArtifact.id,
+    };
   } catch (error) {
-    await Promise.allSettled([
-      ...(derived === undefined
-        ? []
-        : [input.assets.invalidate(derived, 'Chart publication did not complete')]),
-      ...(chartSpecArtifact === undefined
-        ? []
-        : [input.artifacts.invalidateArtifactPublication(
-            chartSpecArtifact.id,
-            'Chart publication did not complete',
-          )]),
-    ]);
+    try {
+      await publication.compensate('Chart publication did not complete');
+    } catch (invalidationError) {
+      if (invalidationError === error) throw error;
+      if (
+        error instanceof ArtifactInvalidationError
+        && invalidationError instanceof ArtifactInvalidationError
+      ) {
+        throw mergeArtifactInvalidationErrors(error, invalidationError);
+      }
+      throw invalidationError;
+    }
     throw error;
   }
 }

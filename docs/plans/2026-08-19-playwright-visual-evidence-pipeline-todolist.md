@@ -106,7 +106,7 @@
 - [ ] 计划页直接只读展示同一字段；确认请求不得携带或改写第二份权重状态。
 - [ ] 没有冻结权重时不生成空图、竞品评分、趋势或市场份额图。
 - [ ] 图表发布纳入 Publication Group、恢复和终止失效范围。
-- [ ] 运行 `pnpm exec tsx --test tests/artifact-publication-group.test.ts tests/competitive-weight-chart.test.ts tests/chart-renderer.test.ts tests/lease-execution-engine.test.ts tests/execution-recovery.test.ts tests/control-plane.test.ts tests/report-document.test.ts tests/report-package.test.ts tests/candidate-layout.test.ts`。
+- [ ] 运行 `pnpm exec tsx --test tests/artifact-publication-group.test.ts tests/competitive-weight-chart.test.ts tests/chart-renderer.test.ts tests/lease-execution-engine.test.ts tests/execution-recovery.test.ts tests/control-plane.test.ts tests/report-document.test.ts tests/report-package.test.ts tests/candidate-layout.test.ts tests/plan-compiler.test.ts tests/stage2-plan.test.ts tests/requirement-refinement-service.test.ts tests/schema.test.ts tests/execution-control.test.ts tests/control-planning.test.ts tests/current-revision-integrity.test.ts`。
 - [ ] 运行 `pnpm typecheck` 和 `pnpm --dir apps/web build`。
 - [ ] 检查工作包 D diff 并提交独立 commit，记录 SHA。
 

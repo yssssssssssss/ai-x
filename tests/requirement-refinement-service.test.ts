@@ -55,7 +55,7 @@ const ambiguousRequirement = requirement({
 });
 
 class FixtureLLM implements LLMClient {
-  readonly calls: Array<{ context?: object; schemaName: string }> = [];
+  readonly calls: Array<{ context?: object; schemaName: string; prompt: string }> = [];
   constructor(
     private readonly fixtures: ResearchTaskV2[],
     private readonly modelName = 'pinned-model',
@@ -67,7 +67,7 @@ class FixtureLLM implements LLMClient {
     };
   }
   async generateStructured<T>(opts: { context?: object; schemaName: string; prompt: string; schema: object; receipt: { expectedModel?: string } }): Promise<LLMResult<T>> {
-    this.calls.push({ context: opts.context, schemaName: opts.schemaName });
+    this.calls.push({ context: opts.context, schemaName: opts.schemaName, prompt: opts.prompt });
     const data = this.fixtures.shift();
     if (!data) throw new Error('fixture exhausted');
     return {
@@ -199,7 +199,10 @@ async function loadModule(): Promise<RefinementModule> {
 
 test('explicit requirements return ready_to_plan and invoke planner with finalized requirement', async () => {
   const { RequirementRefinementService } = await loadModule();
-  const llm = new FixtureLLM([requirement()]);
+  const finalized = requirement({
+    comparison_dimensions: ['需求理解', '推荐可解释性', '内容可信度'],
+  });
+  const llm = new FixtureLLM([finalized]);
   const repository = makeRepository();
   const conversations = makeConversations();
   let planned: { originalInput: string; requirement: ResearchTaskV2 } | null = null;
@@ -229,8 +232,9 @@ test('explicit requirements return ready_to_plan and invoke planner with finaliz
   }, (event) => progress.push(event));
 
   assert.equal(result.status, 'ready_to_plan');
-  assert.deepEqual(result.requirement, requirement());
-  assert.deepEqual(planned, { originalInput: 'compare live-commerce competitors', requirement: requirement() });
+  assert.deepEqual(result.requirement, finalized);
+  assert.deepEqual(planned, { originalInput: 'compare live-commerce competitors', requirement: finalized });
+  assert.match(llm.calls[0]?.prompt ?? '', /原顺序.*comparison_dimensions/u);
   assert.deepEqual(progress, [planningProgress]);
   assert.deepEqual(repository.events, ['persist_activate']);
 });

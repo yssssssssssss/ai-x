@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import {
   ArtifactInvalidationError,
   ArtifactPublicationGroup,
+  mergeArtifactInvalidationErrors,
 } from '../apps/orchestrator-runtime/src/control/artifact-publication-group.ts';
 
 test('tracks Artifact ids once and compensates every publication in order', async () => {
@@ -72,6 +73,28 @@ test('rethrows the same compensation failure without repeating invalidations', a
     (error: unknown) => error === first,
   );
   assert.deepEqual(attempts, ['artifact-a']);
+});
+
+test('merges nested invalidation failures without losing ids or repeating cached causes', () => {
+  const sharedCause = new Error('cached compensation failure');
+  const innerCause = new Error('untracked publication failure');
+  const error = new ArtifactInvalidationError(
+    ['asset-1'],
+    'inner invalidation failed',
+    [innerCause, sharedCause],
+  );
+  const compensationError = new ArtifactInvalidationError(
+    ['chart-data-1', 'asset-1'],
+    'publication compensation failed',
+    [sharedCause],
+  );
+
+  const merged = mergeArtifactInvalidationErrors(error, compensationError);
+
+  assert.deepEqual(merged.failedArtifactIds, ['asset-1', 'chart-data-1']);
+  assert.equal(merged.invalidationReason, 'publication compensation failed');
+  assert.deepEqual(merged.failures, [innerCause, sharedCause]);
+  assert.equal(mergeArtifactInvalidationErrors(compensationError, compensationError), compensationError);
 });
 
 test('committed publication groups cannot be compensated or extended', async () => {

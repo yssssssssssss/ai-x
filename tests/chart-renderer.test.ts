@@ -8,6 +8,11 @@ import {
   type EvidenceEntry,
 } from '../apps/orchestrator-runtime/src/evidence/evidence-service.ts';
 import {
+  ArtifactInvalidationError,
+  ArtifactPublicationGroup,
+} from '../apps/orchestrator-runtime/src/control/artifact-publication-group.ts';
+import { ArtifactIntegrityError } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
+import {
   chartSpecHash,
   type ChartEvidenceResolver,
   type ChartSpec,
@@ -19,10 +24,6 @@ import {
 } from '../apps/orchestrator-runtime/src/report/chart-renderer.ts';
 import { VisualAssetService } from '../apps/orchestrator-runtime/src/report/visual-asset-service.ts';
 
-const PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-  'base64',
-);
 const binding = {
   taskId: 'task-chart-render-1',
   planVersionId: 'plan-chart-render-1',
@@ -33,6 +34,7 @@ const activeLease: ControlExecutionLease = {
   leaseOwner: 'task17-chart-renderer-test',
   leaseToken: 'task17-chart-renderer-lease-token',
 };
+const keepChartLeaseActive = async (): Promise<void> => undefined;
 
 const RENDER_EVIDENCE_ARTIFACT_ID = 'artifact-chart-render-evidence-1';
 const RENDER_EVIDENCE_ARTIFACT_HASH = `sha256:${'e'.repeat(64)}`;
@@ -343,28 +345,40 @@ class UnsealedChartSpecArtifactStore extends SvgAwareArtifactStore {
   }
 }
 
-async function createSealHarness(artifacts = new SvgAwareArtifactStore()) {
-  const assets = new VisualAssetService({ artifacts: artifacts as never });
-  const original = await assets.ingest({
-    ...binding,
-    source: { kind: 'user_upload', fileName: 'chart-source.png', bytes: PNG },
-    exportPolicy: 'allow',
-  });
-  return { artifacts, assets, original };
-}
-
-class RecordingVisualAssets {
-  deriveCalls = 0;
-
-  constructor(private readonly service: VisualAssetService) {}
-
-  async derive(input: Parameters<VisualAssetService['derive']>[0]) {
-    this.deriveCalls += 1;
-    return this.service.derive(input);
+class FailingChartInvalidationStore extends SvgAwareArtifactStore {
+  override async invalidateArtifactPublication(artifactId: string, reason: string): Promise<void> {
+    this.invalidations.push({ artifactId, reason });
+    throw new Error(`fixture invalidation failed for ${artifactId}`);
   }
 }
 
-test('rejects an Evidence-value mismatch before calling VisualAssetService.derive', async () => {
+async function createSealHarness(artifacts = new SvgAwareArtifactStore()) {
+  const assets = new VisualAssetService({ artifacts: artifacts as never });
+  const chartDataArtifact = await artifacts.writeJson({
+    ...binding,
+    kind: 'chart_data',
+    relativePath: 'charts/chart-comparison-1.data.json',
+    value: { version: 'chart-data-v1', values: renderEvidenceValue.metrics },
+    schemaVersion: 'chart-data-v1',
+    activeLease,
+  });
+  const publication = new ArtifactPublicationGroup(artifacts);
+  publication.track(chartDataArtifact.id);
+  return { artifacts, assets, chartDataArtifact, publication };
+}
+
+class RecordingVisualAssets {
+  sealChartRenderCalls = 0;
+
+  constructor(private readonly service: VisualAssetService) {}
+
+  async sealChartRender(input: Parameters<VisualAssetService['sealChartRender']>[0]) {
+    this.sealChartRenderCalls += 1;
+    return this.service.sealChartRender(input);
+  }
+}
+
+test('rejects an Evidence-value mismatch before sealing a chart render', async () => {
   const fixture = await createSealHarness();
   const assets = new RecordingVisualAssets(fixture.assets);
   const spec = comparisonSpec();
@@ -375,23 +389,26 @@ test('rejects an Evidence-value mismatch before calling VisualAssetService.deriv
       ...binding,
       spec,
       evidenceResolver: renderEvidenceResolver,
-      original: {
-        assetId: fixture.original.assetArtifact.id,
-        manifestArtifactId: fixture.original.manifestArtifact.id,
-      },
+      chartDataArtifact: fixture.chartDataArtifact,
+      publication: fixture.publication,
       assets: assets as never,
       artifacts: fixture.artifacts,
       activeLease,
+      ensureActive: keepChartLeaseActive,
       exportPolicy: 'allow',
       width: 800,
       height: 480,
     }),
     /value|Evidence|match/i,
   );
-  assert.equal(assets.deriveCalls, 0);
+  assert.equal(assets.sealChartRenderCalls, 0);
+  assert.deepEqual(fixture.artifacts.invalidations, [{
+    artifactId: fixture.chartDataArtifact.id,
+    reason: 'Chart publication did not complete',
+  }]);
 });
 
-test('rejects dangling Evidence before calling VisualAssetService.derive', async () => {
+test('rejects dangling Evidence before sealing a chart render', async () => {
   const fixture = await createSealHarness();
   const assets = new RecordingVisualAssets(fixture.assets);
   const spec = comparisonSpec();
@@ -402,61 +419,320 @@ test('rejects dangling Evidence before calling VisualAssetService.derive', async
       ...binding,
       spec,
       evidenceResolver: renderEvidenceResolver,
-      original: {
-        assetId: fixture.original.assetArtifact.id,
-        manifestArtifactId: fixture.original.manifestArtifact.id,
-      },
+      chartDataArtifact: fixture.chartDataArtifact,
+      publication: fixture.publication,
       assets: assets as never,
       artifacts: fixture.artifacts,
       activeLease,
+      ensureActive: keepChartLeaseActive,
       exportPolicy: 'allow',
       width: 800,
       height: 480,
     }),
     /E-does-not-exist|dangling|resolve/i,
   );
-  assert.equal(assets.deriveCalls, 0);
+  assert.equal(assets.sealChartRenderCalls, 0);
+  assert.deepEqual(fixture.artifacts.invalidations, [{
+    artifactId: fixture.chartDataArtifact.id,
+    reason: 'Chart publication did not complete',
+  }]);
 });
 
-test('seals server SVG through VisualAssetService with chart_svg lineage', async () => {
-  const artifacts = new SvgAwareArtifactStore();
-  const assets = new VisualAssetService({ artifacts: artifacts as never });
-  const original = await assets.ingest({
-    ...binding,
-    source: { kind: 'user_upload', fileName: 'chart-source.png', bytes: PNG },
-    exportPolicy: 'allow',
-  });
+test('classifies malformed rendered SVG output as an Artifact integrity failure', async () => {
+  const fixture = await createSealHarness();
+  const assets = new RecordingVisualAssets(fixture.assets);
 
+  await assert.rejects(
+    () => renderAndSealChartSvg({
+      ...binding,
+      spec: comparisonSpec(),
+      evidenceResolver: renderEvidenceResolver,
+      chartDataArtifact: fixture.chartDataArtifact,
+      publication: fixture.publication,
+      assets: assets as never,
+      artifacts: fixture.artifacts,
+      activeLease,
+      ensureActive: keepChartLeaseActive,
+      exportPolicy: 'allow',
+      width: 0,
+      height: 480,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof ArtifactIntegrityError);
+      assert.match(error.message, /SVG.*integrity.*width|width.*positive/i);
+      return true;
+    },
+  );
+  assert.equal(assets.sealChartRenderCalls, 0);
+  assert.deepEqual(fixture.artifacts.invalidations, [{
+    artifactId: fixture.chartDataArtifact.id,
+    reason: 'Chart publication did not complete',
+  }]);
+});
+
+test('fails closed when the caller publication does not own the Chart Data Artifact', async () => {
+  const fixture = await createSealHarness();
+  const publication = new ArtifactPublicationGroup(fixture.artifacts);
+  const assets = new RecordingVisualAssets(fixture.assets);
+
+  await assert.rejects(
+    () => renderAndSealChartSvg({
+      ...binding,
+      spec: comparisonSpec(),
+      evidenceResolver: renderEvidenceResolver,
+      chartDataArtifact: fixture.chartDataArtifact,
+      publication,
+      assets: assets as never,
+      artifacts: fixture.artifacts,
+      activeLease,
+      ensureActive: keepChartLeaseActive,
+      exportPolicy: 'allow',
+      width: 800,
+      height: 480,
+    }),
+    /publication.*Chart Data|Chart Data.*publication/i,
+  );
+
+  assert.equal(assets.sealChartRenderCalls, 0);
+  assert.deepEqual(publication.artifactIds, []);
+  assert.deepEqual(fixture.artifacts.invalidations, []);
+});
+
+test('does not write chart Artifacts after the caller publication Group is committed', async () => {
+  const fixture = await createSealHarness();
+  fixture.publication.commit();
+  const jsonWriteCount = fixture.artifacts.jsonWrites.length;
+
+  await assert.rejects(
+    () => renderAndSealChartSvg({
+      ...binding,
+      spec: comparisonSpec(),
+      evidenceResolver: renderEvidenceResolver,
+      chartDataArtifact: fixture.chartDataArtifact,
+      publication: fixture.publication,
+      assets: fixture.assets,
+      artifacts: fixture.artifacts,
+      activeLease,
+      ensureActive: keepChartLeaseActive,
+      exportPolicy: 'allow',
+      width: 800,
+      height: 480,
+    }),
+    /publication group.*committed/i,
+  );
+
+  assert.equal(fixture.artifacts.binaryWrites.length, 0);
+  assert.equal(fixture.artifacts.jsonWrites.length, jsonWriteCount);
+  assert.deepEqual(fixture.artifacts.invalidations, []);
+});
+
+for (const failurePoint of [
+  {
+    name: 'Chart Data',
+    hasBeenWritten: (artifacts: SvgAwareArtifactStore) => (
+      artifacts.binaryWrites.length === 0
+      && artifacts.jsonWrites.length === 1
+      && artifacts.jsonWrites[0]?.kind === 'chart_data'
+    ),
+    expectedArtifactCount: 1,
+    expectedBinaryWrites: 0,
+    expectedManifestWrites: 0,
+    expectedSpecWrites: 0,
+  },
+  {
+    name: 'Chart Spec',
+    hasBeenWritten: (artifacts: SvgAwareArtifactStore) => (
+      artifacts.jsonWrites.some(({ kind }) => kind === 'chart_spec')
+    ),
+    expectedArtifactCount: 4,
+    expectedBinaryWrites: 1,
+    expectedManifestWrites: 1,
+    expectedSpecWrites: 1,
+  },
+] as const) {
+  test(`compensates the complete chart publication when the lease is lost after the ${failurePoint.name} write`, async () => {
+    const fixture = await createSealHarness();
+    let leaseRejected = false;
+
+    await assert.rejects(
+      () => renderAndSealChartSvg({
+        ...binding,
+        spec: comparisonSpec(),
+        evidenceResolver: renderEvidenceResolver,
+        chartDataArtifact: fixture.chartDataArtifact,
+        publication: fixture.publication,
+        assets: fixture.assets,
+        artifacts: fixture.artifacts,
+        activeLease,
+        ensureActive: async () => {
+          if (leaseRejected || !failurePoint.hasBeenWritten(fixture.artifacts)) return;
+          leaseRejected = true;
+          throw new Error(`lease lost after ${failurePoint.name} write`);
+        },
+        exportPolicy: 'allow',
+        width: 800,
+        height: 480,
+      }),
+      new RegExp(`lease lost after ${failurePoint.name} write`, 'i'),
+    );
+
+    assert.equal(leaseRejected, true);
+    assert.equal(fixture.artifacts.binaryWrites.length, failurePoint.expectedBinaryWrites);
+    assert.equal(
+      fixture.artifacts.jsonWrites.filter(({ kind }) => kind === 'visual_asset_manifest').length,
+      failurePoint.expectedManifestWrites,
+    );
+    assert.equal(
+      fixture.artifacts.jsonWrites.filter(({ kind }) => kind === 'chart_spec').length,
+      failurePoint.expectedSpecWrites,
+    );
+    assert.equal(fixture.publication.artifactIds.length, failurePoint.expectedArtifactCount);
+    assert.deepEqual(
+      fixture.artifacts.invalidations.map(({ artifactId }) => artifactId),
+      fixture.publication.artifactIds,
+    );
+  });
+}
+
+test('compensates the caller publication when the active lease binding is invalid', async () => {
+  const fixture = await createSealHarness();
+  const assets = new RecordingVisualAssets(fixture.assets);
+
+  await assert.rejects(
+    () => renderAndSealChartSvg({
+      ...binding,
+      spec: comparisonSpec(),
+      evidenceResolver: renderEvidenceResolver,
+      chartDataArtifact: fixture.chartDataArtifact,
+      publication: fixture.publication,
+      assets: assets as never,
+      artifacts: fixture.artifacts,
+      activeLease: { ...activeLease, attemptId: 'attempt-chart-render-other' },
+      ensureActive: keepChartLeaseActive,
+      exportPolicy: 'allow',
+      width: 800,
+      height: 480,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof ArtifactIntegrityError);
+      assert.match(error.message, /active lease binding/i);
+      return true;
+    },
+  );
+
+  assert.equal(assets.sealChartRenderCalls, 0);
+  await fixture.publication.compensate('Chart publication did not complete');
+  assert.deepEqual(fixture.artifacts.invalidations, [{
+    artifactId: fixture.chartDataArtifact.id,
+    reason: 'Chart publication did not complete',
+  }]);
+});
+
+test('compensates the caller publication when the Chart Data binding is invalid', async () => {
+  const fixture = await createSealHarness();
+  const assets = new RecordingVisualAssets(fixture.assets);
+
+  await assert.rejects(
+    () => renderAndSealChartSvg({
+      ...binding,
+      spec: comparisonSpec(),
+      evidenceResolver: renderEvidenceResolver,
+      chartDataArtifact: {
+        ...fixture.chartDataArtifact,
+        attemptId: 'attempt-chart-render-other',
+      },
+      publication: fixture.publication,
+      assets: assets as never,
+      artifacts: fixture.artifacts,
+      activeLease,
+      ensureActive: keepChartLeaseActive,
+      exportPolicy: 'allow',
+      width: 800,
+      height: 480,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof ArtifactIntegrityError);
+      assert.match(error.message, /Chart Data Artifact must be sealed and bound/i);
+      return true;
+    },
+  );
+
+  assert.equal(assets.sealChartRenderCalls, 0);
+  assert.deepEqual(fixture.artifacts.invalidations, [{
+    artifactId: fixture.chartDataArtifact.id,
+    reason: 'Chart publication did not complete',
+  }]);
+});
+
+test('does not duplicate cached compensation failures across nested chart publication layers', async () => {
+  const fixture = await createSealHarness(new FailingChartInvalidationStore());
+  let rejectedAfterSvgWrite = false;
+
+  await assert.rejects(
+    () => renderAndSealChartSvg({
+      ...binding,
+      spec: comparisonSpec(),
+      evidenceResolver: renderEvidenceResolver,
+      chartDataArtifact: fixture.chartDataArtifact,
+      publication: fixture.publication,
+      assets: fixture.assets,
+      artifacts: fixture.artifacts,
+      activeLease,
+      ensureActive: async () => {
+        if (rejectedAfterSvgWrite || fixture.artifacts.binaryWrites.length === 0) return;
+        rejectedAfterSvgWrite = true;
+        throw new Error('fixture lease lost after SVG write');
+      },
+      exportPolicy: 'allow',
+      width: 800,
+      height: 480,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof ArtifactInvalidationError);
+      assert.equal(error.failedArtifactIds.length, 2);
+      assert.equal(error.failures.length, 2);
+      assert.deepEqual(error.failedArtifactIds, fixture.publication.artifactIds);
+      return true;
+    },
+  );
+
+  assert.equal(rejectedAfterSvgWrite, true);
+  assert.equal(fixture.artifacts.invalidations.length, 2);
+});
+
+test('seals server SVG through V2 chart_render provenance without image lineage', async () => {
+  const fixture = await createSealHarness();
+  const { artifacts, assets, chartDataArtifact, publication } = fixture;
   const spec = comparisonSpec();
 
   const result = await renderAndSealChartSvg({
     ...binding,
     spec,
     evidenceResolver: renderEvidenceResolver,
-    original: {
-      assetId: original.assetArtifact.id,
-      manifestArtifactId: original.manifestArtifact.id,
-    },
+    chartDataArtifact,
+    publication,
     assets,
     artifacts,
     activeLease,
+    ensureActive: keepChartLeaseActive,
     exportPolicy: 'allow',
     width: 800,
     height: 480,
   });
 
   assertSafeSvg(result.svg);
-  assert.equal(result.derived.assetArtifact.state, 'SEALED');
-  assert.equal(result.derived.assetArtifact.kind, 'visual_asset');
-  assert.equal(result.derived.assetArtifact.mediaType, 'image/svg+xml');
-  assert.equal(result.derived.manifest.mediaType, 'image/svg+xml');
-  assert.deepEqual(result.derived.manifest.derivedFrom, {
-    assetId: original.assetArtifact.id,
-    manifestArtifactId: original.manifestArtifact.id,
-    contentSha256: original.assetArtifact.contentSha256,
-    manifestHash: original.manifest.manifestHash,
+  assert.equal(result.visualAsset.assetArtifact.state, 'SEALED');
+  assert.equal(result.visualAsset.assetArtifact.kind, 'visual_asset');
+  assert.equal(result.visualAsset.assetArtifact.mediaType, 'image/svg+xml');
+  assert.equal(result.visualAsset.manifest.version, 'visual-asset-manifest-v2');
+  assert.equal(result.visualAsset.manifest.mediaType, 'image/svg+xml');
+  assert.deepEqual(result.visualAsset.manifest.source, {
+    kind: 'chart_render',
+    dataArtifactId: chartDataArtifact.id,
+    dataArtifactContentSha256: chartDataArtifact.contentSha256,
   });
-  assert.deepEqual(result.derived.manifest.derivation, {
+  assert.equal(result.visualAsset.manifest.derivedFrom, null);
+  assert.deepEqual(result.visualAsset.manifest.derivation, {
     kind: 'chart_svg',
     chartId: 'chart-comparison-1',
     specHash: chartSpecHash(spec),
@@ -495,9 +771,13 @@ test('seals server SVG through VisualAssetService with chart_svg lineage', async
     spec,
     specHash: chartSpecHash(spec),
     table: result.table,
+    dataArtifactRef: {
+      artifactId: chartDataArtifact.id,
+      contentSha256: chartDataArtifact.contentSha256,
+    },
     assetRef: {
-      assetId: result.derived.assetArtifact.id,
-      manifestArtifactId: result.derived.manifestArtifact.id,
+      assetId: result.visualAsset.assetArtifact.id,
+      manifestArtifactId: result.visualAsset.manifestArtifact.id,
     },
   });
   const persistedChart = await artifacts.readVerifiedJson(result.chartSpecArtifactId);
@@ -506,6 +786,14 @@ test('seals server SVG through VisualAssetService with chart_svg lineage', async
   assert.equal(persistedChart.artifact.kind, 'chart_spec');
   assert.equal(persistedChart.artifact.schemaVersion, 'verified-chart-v1');
   assert.deepEqual(persistedChart.value, chartSpecWrite.value);
+  assert.deepEqual(publication.artifactIds, [
+    chartDataArtifact.id,
+    result.visualAsset.assetArtifact.id,
+    result.visualAsset.manifestArtifact.id,
+    result.chartSpecArtifactId,
+  ]);
+  assert.equal('publication' in result, false);
+  publication.commit();
 });
 
 test('fails closed when the verified Chart JSON Artifact does not seal', async () => {
@@ -518,13 +806,12 @@ test('fails closed when the verified Chart JSON Artifact does not seal', async (
       ...binding,
       spec,
       evidenceResolver: renderEvidenceResolver,
-      original: {
-        assetId: fixture.original.assetArtifact.id,
-        manifestArtifactId: fixture.original.manifestArtifact.id,
-      },
+      chartDataArtifact: fixture.chartDataArtifact,
+      publication: fixture.publication,
       assets: fixture.assets,
       artifacts,
       activeLease,
+      ensureActive: keepChartLeaseActive,
       exportPolicy: 'allow',
       width: 800,
       height: 480,
@@ -535,6 +822,7 @@ test('fails closed when the verified Chart JSON Artifact does not seal', async (
   const chartSpecWrite = artifacts.jsonWrites.find((write) => write.kind === 'chart_spec');
   assert.ok(chartSpecWrite);
   assert.deepEqual(chartSpecWrite.activeLease, activeLease);
-  assert.equal(artifacts.invalidations.length, 3);
+  assert.equal(artifacts.invalidations.length, 4);
+  assert.equal(artifacts.invalidations[0]?.artifactId, fixture.chartDataArtifact.id);
   assert.ok(artifacts.invalidations.every(({ reason }) => reason === 'Chart publication did not complete'));
 });

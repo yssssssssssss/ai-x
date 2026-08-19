@@ -1,7 +1,11 @@
 import { useState } from 'react';
+import {
+  COMPETITIVE_WEIGHT_TITLE,
+  extractCompetitiveScoringWeights,
+} from '../../../../orchestrator-runtime/src/report/competitive-weight-chart.ts';
 import type { PlanResponse, PlanStep, PendingUpload, Upload } from '../../api/client.ts';
-import { pendingImageUploads } from '../../pending-upload-values.ts';
 import { Header } from './Stage1Understand.tsx';
+import { buildPlanConfirmationPayload } from './stage2-plan-confirmation.ts';
 
 // 段2 · 待执行计划(HITL 硬闸门):步骤列表 + 假设可就地编辑 + 待传图片 + 确认按钮。
 // locked=true 时(已进入执行)隐藏确认按钮、禁用编辑。
@@ -21,6 +25,7 @@ export function Stage2Plan({
   const confirmations = confirmationRequirements('confirmations' in plan.task
     ? plan.task.confirmations
     : plan.task.clarification_questions);
+  const scoringWeights = extractCompetitiveScoringWeights(plan.plan);
   const [assumptions, setAssumptions] = useState(plan.task.assumptions);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [confirmed, setConfirmed] = useState(false);
@@ -49,20 +54,14 @@ export function Stage2Plan({
 
   function confirm() {
     if (missingAnswers.length > 0 || missingInputs.length > 0) return;
-    const inputValues: Record<string, unknown> = {};
-    for (const input of pending) {
-      if (input.kind !== 'value') continue;
-      const raw = values[input.role] ?? '';
-      inputValues[input.role] = input.multiple
-        ? raw.split('\n').map((item) => item.trim()).filter(Boolean)
-        : raw.trim();
-    }
-    const uploads: Upload[] = pendingImageUploads(
-      pending.filter((input) => input.kind === 'visual'),
+    const payload = buildPlanConfirmationPayload({
+      confirmationAnswers: answers,
+      pending,
+      values,
       images,
-    );
+    });
     setConfirmed(true);
-    onConfirm(answers, inputValues, uploads);
+    onConfirm(payload.confirmationAnswers, payload.inputValues, payload.uploads);
   }
 
   const pending = plan.pendingUploads ?? [];
@@ -85,6 +84,25 @@ export function Stage2Plan({
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {plan.plan.steps.map((s) => <StepRow key={s.step_no} step={s} />)}
       </div>
+
+      {scoringWeights.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ marginBottom: 6, color: 'var(--text-faint)', fontSize: 12 }}>
+            {COMPETITIVE_WEIGHT_TITLE}
+          </div>
+          <dl style={{ margin: 0, borderTop: '1px solid var(--border-soft)' }}>
+            {scoringWeights.map(({ dimension, percentage }) => (
+              <div
+                key={dimension}
+                style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 16, padding: '7px 0', borderBottom: '1px solid var(--border-soft)', fontSize: 13 }}
+              >
+                <dt style={{ minWidth: 0, color: 'var(--text-dim)' }}>{dimension}</dt>
+                <dd style={{ margin: 0, fontFamily: 'var(--mono)', fontVariantNumeric: 'tabular-nums' }}>{percentage}%</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      )}
 
       <div style={{ marginTop: 16 }}>
         <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>系统假设(可点击编辑)</div>

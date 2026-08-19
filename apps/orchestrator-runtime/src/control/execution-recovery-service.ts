@@ -46,6 +46,7 @@ const VISUAL_COMPOSITE_ARTIFACT_KINDS = new Set([
   'visual_asset_manifest',
   'image_annotation',
   'chart_spec',
+  'chart_data',
 ]);
 
 function asTime(value: Date | string): number {

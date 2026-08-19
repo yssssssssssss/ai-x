@@ -68,6 +68,7 @@ import { ArtifactIntegrityError, ControlArtifactStore } from './artifact-store.t
 import {
   ArtifactInvalidationError,
   ArtifactPublicationGroup,
+  mergeArtifactInvalidationErrors,
 } from './artifact-publication-group.ts';
 import {
   EvidenceService,
@@ -89,8 +90,19 @@ import {
   VisualAssetService,
   type VisualAssetResult,
 } from '../report/visual-asset-service.ts';
-import { renderAndSealChartSvg } from '../report/chart-renderer.ts';
-import { extractCompetitiveScoringWeights } from '../report/competitive-weight-chart.ts';
+import {
+  ChartRendererUnavailableError,
+  renderAndSealChartSvg,
+} from '../report/chart-renderer.ts';
+import {
+  COMPETITIVE_WEIGHT_CHART_ID,
+  COMPETITIVE_WEIGHT_CHART_DATA_VERSION,
+  COMPETITIVE_WEIGHT_SERIES_KEY,
+  COMPETITIVE_WEIGHT_SERIES_LABEL,
+  COMPETITIVE_WEIGHT_TITLE,
+  resolveCompetitiveScoringWeights,
+} from '../report/competitive-weight-chart.ts';
+import { ChartSpecValidationError } from '../report/chart-spec-validator.ts';
 import type {
   FindingBoundVisualAnnotation,
   MaterializedVisualOriginal,
@@ -910,6 +922,9 @@ function failureFrom(error: unknown): Record<string, unknown> {
   if (error instanceof ExecutionAuthenticityError) {
     return { kind: 'authenticity', retryable: false, message: error.message, ...error.details };
   }
+  if (error instanceof ArtifactIntegrityError || error instanceof ChartSpecValidationError) {
+    return { kind: 'authenticity', retryable: false, message: error.message };
+  }
   if (error instanceof ModelDriftError) {
     return {
       kind: 'model_drift',
@@ -947,6 +962,7 @@ function failedArtifactIdsFrom(
 function isIntegrityFailure(error: unknown): boolean {
   return error instanceof ExecutionAuthenticityError
     || error instanceof ArtifactIntegrityError
+    || error instanceof ChartSpecValidationError
     || error instanceof ModelDriftError
     || error instanceof MissingModelReceiptError;
 }
@@ -996,6 +1012,7 @@ export class LeaseExecutionEngine {
       review(input: ReportReviewInput, composer?: DeliverableComposer): Promise<ReportReviewResult>;
     };
     reportComposition?: ReportCompositionPort;
+    chartRenderer?: typeof renderAndSealChartSvg;
     scheduler?: ExecutionScheduler;
     visualInputMaterializer?: {
       materialize(input: {
@@ -1653,6 +1670,13 @@ export class LeaseExecutionEngine {
     }
     let sealedEvidenceManifest!: CurrentDeliverableGenerateInput['evidenceManifest'];
     let evidenceResolver!: EvidenceArtifactResolver;
+    let chartPublication: ArtifactPublicationGroup | undefined;
+    const compensateChartPublication = async (reason: string): Promise<void> => {
+      if (!chartPublication) return;
+      const publication = chartPublication;
+      await publication.compensate(reason);
+      chartPublication = undefined;
+    };
     try {
       evidenceResolver = {
         resolveArtifact: (artifactId) => resolvedArtifacts.get(artifactId) ?? null,
@@ -1766,88 +1790,130 @@ export class LeaseExecutionEngine {
           redaction: 'none',
         });
       }
-      const scoringWeights = deliverableId === 'competitive_analysis_report'
-        ? extractCompetitiveScoringWeights({
-            plan: planVersion.plan,
-            structuredTask: task.structuredTask,
-          })
-        : [];
-      if (scoringWeights.length > 0 && materializedVisualOriginals.length > 0) {
-        const chartData = {
-          version: 'competitive-weight-chart-data-v1',
-          taskId: input.lease.taskId,
-          planVersionId: input.lease.planVersionId,
-          attemptId: input.lease.attemptId,
-          unit: 'percent',
-          weights: scoringWeights,
-        } as const;
-        const chartDataArtifact = await this.dependencies.artifacts.writeJson({
-          taskId: input.lease.taskId,
-          planVersionId: input.lease.planVersionId,
-          attemptId: input.lease.attemptId,
-          kind: 'chart_data',
-          relativePath: 'charts/competitive-scoring-weights-data.json',
-          value: chartData,
-          schemaVersion: 'competitive-weight-chart-data-v1',
-          sensitivity: 'internal',
-          redactionPolicyVersion: 'v1',
-          activeLease: input.lease,
-        });
-        if (chartDataArtifact.state !== 'SEALED' || !chartDataArtifact.contentSha256) {
-          throw new ExecutionAuthenticityError('competitive scoring weight data was not sealed');
+      const requestsCompetitiveWeightChart = deliverableId === 'competitive_analysis_report'
+        && plan.steps.some((step) => (
+          step.actor_type === 'skill'
+          && step.actor_id === 'competitive-web-research'
+          && Object.hasOwn(step.input, 'scoring_weights')
+        ));
+      if (requestsCompetitiveWeightChart) {
+        const weightResolution = resolveCompetitiveScoringWeights(planVersion.plan);
+        const chartGapStepNo = plan.steps.length + 1;
+        if (weightResolution.status === 'unavailable') {
+          gaps.push({ stepNo: chartGapStepNo, message: weightResolution.message });
+        } else if (!this.dependencies.reportReview || !this.dependencies.reportComposition) {
+          gaps.push({
+            stepNo: chartGapStepNo,
+            message: '评分权重图未生成：报告审阅或组合链路不可用。',
+          });
+        } else {
+          const scoringWeights = weightResolution.weights;
+          const publication = new ArtifactPublicationGroup(this.dependencies.artifacts);
+          chartPublication = publication;
+          try {
+            const chartEvidence = await this.withLeaseHeartbeat(input.lease, async ({ ensureActive }) => {
+              const chartData = {
+                version: COMPETITIVE_WEIGHT_CHART_DATA_VERSION,
+                taskId: input.lease.taskId,
+                planVersionId: input.lease.planVersionId,
+                attemptId: input.lease.attemptId,
+                unit: 'percent',
+                weights: scoringWeights,
+              } as const;
+              const chartDataArtifact = await this.dependencies.artifacts.writeJson({
+                taskId: input.lease.taskId,
+                planVersionId: input.lease.planVersionId,
+                attemptId: input.lease.attemptId,
+                kind: 'chart_data',
+                relativePath: 'charts/competitive-scoring-weights-data.json',
+                value: chartData,
+                schemaVersion: COMPETITIVE_WEIGHT_CHART_DATA_VERSION,
+                sensitivity: 'internal',
+                redactionPolicyVersion: 'v1',
+                activeLease: input.lease,
+              });
+              publication.track(chartDataArtifact.id);
+              await ensureActive();
+              if (
+                chartDataArtifact.state !== 'SEALED'
+                || !chartDataArtifact.contentSha256
+                || chartDataArtifact.kind !== 'chart_data'
+                || chartDataArtifact.schemaVersion !== COMPETITIVE_WEIGHT_CHART_DATA_VERSION
+              ) {
+                throw new ExecutionAuthenticityError('competitive scoring weight data was not sealed');
+              }
+              const resolvedChartData: ResolvedEvidenceArtifact = {
+                artifact: {
+                  id: chartDataArtifact.id,
+                  contentSha256: chartDataArtifact.contentSha256,
+                },
+                value: chartData,
+              };
+              const weightEvidence = scoringWeights.map((_, index): EvidenceEntry => ({
+                id: `W-${index + 1}`,
+                kind: 'user_constraint',
+                evidenceClass: 'user_input',
+                artifactId: chartDataArtifact.id,
+                artifactContentSha256: chartDataArtifact.contentSha256!,
+                jsonPointer: `/weights/${index}/percentage`,
+                sensitivity: 'internal',
+                redaction: 'none',
+              }));
+              const weightEvidenceById = new Map(weightEvidence.map((entry) => [entry.id, entry]));
+              const chartSpec: ChartSpec = {
+                version: 'chart-spec-v1',
+                chartId: COMPETITIVE_WEIGHT_CHART_ID,
+                type: 'comparison',
+                title: COMPETITIVE_WEIGHT_TITLE,
+                categories: scoringWeights.map(({ dimension }) => dimension),
+                series: [{
+                  key: COMPETITIVE_WEIGHT_SERIES_KEY,
+                  label: COMPETITIVE_WEIGHT_SERIES_LABEL,
+                  values: scoringWeights.map(({ percentage }) => percentage),
+                  evidenceIds: weightEvidence.map(({ id }) => [id]),
+                }],
+                yAxis: { min: 0 },
+              };
+              const localEvidenceResolver: EvidenceArtifactResolver = {
+                resolveArtifact: (artifactId) => artifactId === chartDataArtifact.id
+                  ? resolvedChartData
+                  : evidenceResolver.resolveArtifact(artifactId),
+              };
+              const chartEvidenceResolver = (evidenceId: string): unknown | undefined => {
+                const entry = weightEvidenceById.get(evidenceId);
+                return entry
+                  ? evidenceService.resolveEvidenceValue(entry, localEvidenceResolver)
+                  : undefined;
+              };
+              await (this.dependencies.chartRenderer ?? renderAndSealChartSvg)({
+                taskId: input.lease.taskId,
+                planVersionId: input.lease.planVersionId,
+                attemptId: input.lease.attemptId,
+                spec: chartSpec,
+                evidenceResolver: chartEvidenceResolver,
+                chartDataArtifact,
+                publication,
+                assets: visualAssetService,
+                artifacts: this.dependencies.artifacts,
+                activeLease: input.lease,
+                exportPolicy: 'allow',
+                width: 1200,
+                height: 640,
+                ensureActive,
+              });
+              return { chartDataArtifact, resolvedChartData, weightEvidence };
+            });
+            resolvedArtifacts.set(chartEvidence.chartDataArtifact.id, chartEvidence.resolvedChartData);
+            evidenceEntries.push(...chartEvidence.weightEvidence);
+          } catch (error) {
+            if (!(error instanceof ChartRendererUnavailableError)) throw error;
+            await compensateChartPublication('Competitive weight Chart renderer was unavailable');
+            gaps.push({
+              stepNo: chartGapStepNo,
+              message: '评分权重图未生成：服务端图表渲染器不可用。',
+            });
+          }
         }
-        resolvedArtifacts.set(chartDataArtifact.id, {
-          artifact: {
-            id: chartDataArtifact.id,
-            contentSha256: chartDataArtifact.contentSha256,
-          },
-          value: chartData,
-        });
-        const weightEvidence = scoringWeights.map((_, index): EvidenceEntry => ({
-          id: `W-${index + 1}`,
-          kind: 'user_constraint',
-          evidenceClass: 'user_input',
-          artifactId: chartDataArtifact.id,
-          artifactContentSha256: chartDataArtifact.contentSha256!,
-          jsonPointer: `/weights/${index}/percentage`,
-          sensitivity: 'internal',
-          redaction: 'none',
-        }));
-        evidenceEntries.push(...weightEvidence);
-        const weightEvidenceById = new Map(weightEvidence.map((entry) => [entry.id, entry]));
-        const chartSpec: ChartSpec = {
-          version: 'chart-spec-v1',
-          chartId: 'competitive-scoring-weights',
-          type: 'comparison',
-          title: '六维度评分权重 / Six-dimension Scoring Weights (%)',
-          categories: scoringWeights.map(({ dimension }) => dimension),
-          series: [{
-            key: 'actor:user-defined-scoring-weight',
-            label: '用户确认权重 / Confirmed weight',
-            values: scoringWeights.map(({ percentage }) => percentage),
-            evidenceIds: weightEvidence.map(({ id }) => [id]),
-          }],
-          yAxis: { min: 0 },
-        };
-        const chartEvidenceResolver = (evidenceId: string): unknown | undefined => {
-          const entry = weightEvidenceById.get(evidenceId);
-          return entry ? evidenceService.resolveEvidenceValue(entry, evidenceResolver) : undefined;
-        };
-        const visualAssets = new VisualAssetService({ artifacts: this.dependencies.artifacts });
-        await this.withLeaseHeartbeat(input.lease, () => renderAndSealChartSvg({
-          taskId: input.lease.taskId,
-          planVersionId: input.lease.planVersionId,
-          attemptId: input.lease.attemptId,
-          spec: chartSpec,
-          evidenceResolver: chartEvidenceResolver,
-          original: materializedVisualOriginals[0]!.original,
-          assets: visualAssets,
-          artifacts: this.dependencies.artifacts,
-          activeLease: input.lease,
-          exportPolicy: 'allow',
-          width: 1200,
-          height: 640,
-        }));
       }
       for (const requirement of plan.evidence_requirements) {
         let actual = 0;
@@ -1877,16 +1943,24 @@ export class LeaseExecutionEngine {
         collectedAt: new Date().toISOString(),
         entries: evidenceEntries,
       }, evidenceResolver);
-      const evidenceManifestArtifact = await this.dependencies.artifacts.writeJson({
-        taskId: input.lease.taskId,
-        planVersionId: input.lease.planVersionId,
-        attemptId: input.lease.attemptId,
-        kind: 'evidence_manifest',
-        relativePath: 'evidence/manifest.json',
-        value: evidenceManifest,
-        schemaVersion: 'evidence-v1',
-        activeLease: input.lease,
-      });
+      const evidenceManifestArtifact = await this.withLeaseHeartbeat(
+        input.lease,
+        async ({ ensureActive }) => {
+          const artifact = await this.dependencies.artifacts.writeJson({
+            taskId: input.lease.taskId,
+            planVersionId: input.lease.planVersionId,
+            attemptId: input.lease.attemptId,
+            kind: 'evidence_manifest',
+            relativePath: 'evidence/manifest.json',
+            value: evidenceManifest,
+            schemaVersion: 'evidence-v1',
+            activeLease: input.lease,
+          });
+          chartPublication?.track(artifact.id);
+          await ensureActive();
+          return artifact;
+        },
+      );
       if (evidenceManifestArtifact.state !== 'SEALED' || !evidenceManifestArtifact.contentSha256) {
         throw new ExecutionAuthenticityError('Evidence Manifest Artifact was not sealed');
       }
@@ -1899,7 +1973,16 @@ export class LeaseExecutionEngine {
         value: evidenceManifest,
       };
     } catch (error) {
-      const failure = failureFrom(error);
+      let effectiveError = error;
+      try {
+        await compensateChartPublication('Competitive weight Chart publication did not pass report material discovery');
+      } catch (compensationError) {
+        effectiveError = effectiveError instanceof ArtifactInvalidationError
+          && compensationError instanceof ArtifactInvalidationError
+          ? mergeArtifactInvalidationErrors(effectiveError, compensationError)
+          : compensationError;
+      }
+      const failure = failureFrom(effectiveError);
       failure.allowedActions = ['abort'];
       await this.recordFailedExecutionStep({
         ...input.lease,
@@ -1922,7 +2005,7 @@ export class LeaseExecutionEngine {
       } catch (pauseError) {
         if (!(pauseError instanceof ControlPlaneConflictError)) throw pauseError;
       }
-      if (isIntegrityFailure(error)) throw error;
+      if (isIntegrityFailure(effectiveError)) throw effectiveError;
       return {
         status: 'paused',
         attemptId: input.lease.attemptId,
@@ -1957,6 +2040,7 @@ export class LeaseExecutionEngine {
           taskId: input.lease.taskId,
           planVersionId: input.lease.planVersionId,
           attemptId: input.lease.attemptId,
+          evidenceManifest: sealedEvidenceManifest.value,
           evidenceResolver: (evidenceId) => {
             const entry = evidenceById.get(evidenceId);
             return entry
@@ -1964,6 +2048,8 @@ export class LeaseExecutionEngine {
               : undefined;
           },
         }));
+      chartPublication?.commit();
+      chartPublication = undefined;
       const deliverableInput: CurrentDeliverableGenerateInput = {
         task: { id: task.id },
         plan: {
@@ -2150,7 +2236,16 @@ export class LeaseExecutionEngine {
           reason: 'terminal artifacts invalidated after execution lease loss',
         });
       }
-      let failure = deliverableFailureFrom(error);
+      let effectiveError = error;
+      try {
+        await compensateChartPublication('Competitive weight Chart publication did not pass report material discovery');
+      } catch (compensationError) {
+        effectiveError = effectiveError instanceof ArtifactInvalidationError
+          && compensationError instanceof ArtifactInvalidationError
+          ? mergeArtifactInvalidationErrors(effectiveError, compensationError)
+          : compensationError;
+      }
+      let failure = deliverableFailureFrom(effectiveError);
       failure.allowedActions = failure.retryable === true ? ['retry', 'abort'] : ['abort'];
       failure = await this.recordFailedExecutionStep({
         ...input.lease,
@@ -2173,7 +2268,7 @@ export class LeaseExecutionEngine {
       } catch (pauseError) {
         if (!(pauseError instanceof ControlPlaneConflictError)) throw pauseError;
       }
-      if (isIntegrityFailure(error)) throw error;
+      if (isIntegrityFailure(effectiveError)) throw effectiveError;
       return {
         status: 'paused',
         attemptId: input.lease.attemptId,
@@ -2473,15 +2568,22 @@ export class LeaseExecutionEngine {
     }
   }
 
-  private async withLeaseHeartbeat<T>(lease: ControlExecutionLease, operation: () => Promise<T>): Promise<T> {
+  private async withLeaseHeartbeat<T>(
+    lease: ControlExecutionLease,
+    operation: (guard: { ensureActive: () => Promise<void> }) => Promise<T>,
+  ): Promise<T> {
     const heartbeat = this.startLeaseHeartbeat(lease);
+    const ensureActive = async (): Promise<void> => {
+      heartbeat.assertHealthy();
+      await this.dependencies.repository.requireActiveLease(lease);
+      heartbeat.assertHealthy();
+    };
     let operationSucceeded = false;
     let operationResult: T | undefined;
     try {
-      operationResult = await operation();
+      operationResult = await operation({ ensureActive });
       operationSucceeded = true;
-      heartbeat.assertHealthy();
-      await this.dependencies.repository.requireActiveLease(lease);
+      await ensureActive();
       return operationResult as T;
     } catch (error) {
       if (operationSucceeded) attachToolAttemptReceipts(error, operationResult);

@@ -14,6 +14,18 @@ export class ArtifactInvalidationError extends Error {
   }
 }
 
+export function mergeArtifactInvalidationErrors(
+  error: ArtifactInvalidationError,
+  compensationError: ArtifactInvalidationError,
+): ArtifactInvalidationError {
+  if (error === compensationError) return error;
+  return new ArtifactInvalidationError(
+    [...new Set([...error.failedArtifactIds, ...compensationError.failedArtifactIds])],
+    compensationError.invalidationReason,
+    [...new Set([...error.failures, ...compensationError.failures])],
+  );
+}
+
 export class ArtifactPublicationGroup {
   private readonly tracked = new Set<string>();
   private state: PublicationState = 'open';

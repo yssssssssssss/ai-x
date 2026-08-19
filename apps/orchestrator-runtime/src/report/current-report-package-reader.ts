@@ -32,6 +32,11 @@ import {
   type ReportDocument,
 } from './report-document-composer.ts';
 import type { VerifiedVisualAsset, VisualAssetService } from './visual-asset-service.ts';
+import {
+  assertCompetitiveWeightChartBinding,
+  COMPETITIVE_WEIGHT_CHART_DATA_VERSION,
+  parseCompetitiveWeightChartData,
+} from './competitive-weight-chart.ts';
 
 export const REVIEW_GATED_DELIVERABLE_SCHEMA_VERSION = 'research-deliverable-v1-review-gated';
 const LEGACY_DELIVERABLE_SCHEMA_VERSION = 'research-deliverable-v1';
@@ -410,6 +415,38 @@ export class CurrentReportPackageReader {
         }
         if (!isDeepStrictEqual(block.table, chartTableAlternative(validatedSpec))) {
           throw new Error(`Chart ${block.chartRef.chartId} sealed table does not match its Chart Spec`);
+        }
+        if (asset.manifest.version === 'visual-asset-manifest-v2') {
+          const source = asset.manifest.source;
+          if (source.kind !== 'chart_render' || asset.manifest.derivedFrom !== null) {
+            throw new Error(`Chart ${block.chartRef.chartId} has invalid V2 chart_render provenance`);
+          }
+          const verifiedData = await this.dependencies.artifacts.readVerifiedJson<unknown>(
+            source.dataArtifactId,
+          );
+          assertArtifactBinding(
+            verifiedData.artifact,
+            source.dataArtifactId,
+            'chart_data',
+            binding,
+            'competitive weight Chart Data',
+          );
+          if (
+            verifiedData.artifact.schemaVersion !== COMPETITIVE_WEIGHT_CHART_DATA_VERSION
+            || verifiedData.artifact.contentSha256 !== source.dataArtifactContentSha256
+          ) {
+            throw new Error(`Chart ${block.chartRef.chartId} data Artifact schema or hash is invalid`);
+          }
+          const data = parseCompetitiveWeightChartData(verifiedData.value, binding);
+          assertCompetitiveWeightChartBinding({
+            data,
+            spec: validatedSpec,
+            dataArtifactRef: {
+              artifactId: source.dataArtifactId,
+              contentSha256: source.dataArtifactContentSha256,
+            },
+            evidenceEntries: evidenceManifest.entries,
+          });
         }
         chartReferences.push({ ...block.chartRef, specHash: derivation.specHash });
       }

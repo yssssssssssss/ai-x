@@ -1779,7 +1779,7 @@ export class ControlPlaneRepository {
                    AND artifact.kind IN (
                      'evidence_manifest', 'deliverable', 'report_review', 'report_document',
                      'report_package', 'visual_asset', 'visual_asset_manifest',
-                     'image_annotation', 'chart_spec'
+                     'image_annotation', 'chart_spec', 'chart_data'
                    )
                  )
                  OR (
@@ -2238,7 +2238,7 @@ export class ControlPlaneRepository {
            AND attempt_id = $3
            AND kind IN (
              'evidence_manifest', 'deliverable', 'report_document', 'report_review', 'report_package',
-             'visual_asset', 'visual_asset_manifest', 'image_annotation', 'chart_spec'
+             'visual_asset', 'visual_asset_manifest', 'image_annotation', 'chart_spec', 'chart_data'
            )
            AND state IN ('STAGING', 'SEALED')`,
         [input.taskId, input.planVersionId, input.attemptId, input.reason],
@@ -4627,7 +4627,7 @@ export class ControlPlaneRepository {
                  AND (
                    artifact.kind IN (
                      'evidence_manifest', 'deliverable', 'report_review', 'report_document', 'report_package',
-                     'visual_asset', 'visual_asset_manifest', 'image_annotation', 'chart_spec'
+                     'visual_asset', 'visual_asset_manifest', 'image_annotation', 'chart_spec', 'chart_data'
                    )
                    OR (
                      artifact.kind IN ('tool_output', 'skill_output', 'llm_output', 'review_output')

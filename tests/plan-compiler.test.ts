@@ -33,11 +33,20 @@ import type {
   TextLLMResult,
 } from '../apps/orchestrator-runtime/src/runtime/llm-client.ts';
 
+const comparisonDimensions = [
+  '需求理解',
+  '推荐可解释性',
+  '商品参数与价格对比',
+  '内容可信度',
+  '购买转化闭环',
+] as const;
+
 const task: ResearchTaskV2 = {
   version: 'research-task-v2',
   task_type: 'competitive_research',
   business_domain: 'live_commerce',
   research_goal: '比较直播数字人方案并形成可执行建议',
+  comparison_dimensions: [...comparisonDimensions],
   target_audience: ['产品团队'],
   scope: ['公开资料'],
   constraints: [{ id: 'public-only', statement: '仅使用公开资料', source: 'user' }],
@@ -172,7 +181,15 @@ function validCandidate(id: 'depth' | 'speed' = 'depth'): CurrentPlanCandidatePr
         actor_id: eligibleSkill.id,
         question_ids: ['question-source', 'question-action'],
         depends_on: [1],
-        input: { research_goal: task.research_goal, sources: null, competitor_screenshots: [] },
+        input: {
+          research_goal: task.research_goal,
+          dimensions: [...comparisonDimensions],
+          scoring_weights: Object.fromEntries(
+            comparisonDimensions.map((dimension) => [dimension, 0.2]),
+          ),
+          sources: null,
+          competitor_screenshots: [],
+        },
         input_bindings: [{
           target_pointer: '/sources',
           source_step_no: 1,
@@ -194,6 +211,7 @@ function input(candidate: CurrentPlanCandidateProposal = validCandidate()): Plan
     capability_resolution: capabilityResolution(),
     evidence_requirements: structuredClone(evidencePolicy),
     activated_nodes: ['D5_competitive'],
+    requireCompetitiveWeightContract: true,
   };
 }
 
@@ -451,6 +469,42 @@ test('preserves exact approval roles when every frozen authority is satisfied', 
   ]);
 });
 
+test('requires one visible, ordered scoring-weight contract for competitive Web research', () => {
+  const compiled = new PlanCompiler().compile(input());
+  const skillInput = compiled.plan.steps.find(
+    (item) => item.actor_type === 'skill' && item.actor_id === eligibleSkill.id,
+  )?.input;
+  assert.deepEqual(skillInput?.dimensions, comparisonDimensions);
+  assert.deepEqual(skillInput?.scoring_weights, Object.fromEntries(
+    comparisonDimensions.map((dimension) => [dimension, 0.2]),
+  ));
+
+  expectCompileError((value) => {
+    delete value.candidate.steps[1]!.input.scoring_weights;
+  }, 'competitive_weight_contract_invalid', 'chart_weights_missing');
+  expectCompileError((value) => {
+    value.candidate.steps[1]!.input.scoring_weights = {
+      ...value.candidate.steps[1]!.input.scoring_weights as Record<string, number>,
+      [comparisonDimensions[0]]: 0.4,
+    };
+  }, 'competitive_weight_contract_invalid', 'chart_weights_invalid');
+  expectCompileError((value) => {
+    value.candidate.steps[1]!.input.dimensions = [...comparisonDimensions].reverse();
+  }, 'competitive_weight_contract_invalid', 'dimensions_mismatch');
+  expectCompileError((value) => {
+    const weights = value.candidate.steps[1]!.input.scoring_weights as Record<string, number>;
+    value.candidate.steps[1]!.input.scoring_weights = Object.fromEntries(
+      Object.entries(weights).reverse(),
+    );
+  }, 'competitive_weight_contract_invalid', 'scoring_weight_keys_mismatch');
+  expectCompileError((value) => {
+    value.candidate.steps.push({
+      ...structuredClone(value.candidate.steps[1]!),
+      step_no: 3,
+    });
+  }, 'competitive_weight_contract_invalid', 'chart_weights_step_ambiguous');
+});
+
 test('compiles exact depth and speed candidates, rebuilds numbering, freezes graph and decisions, and derives pending inputs', () => {
   const compiler = new PlanCompiler();
   const depth = compiler.compile(input(validCandidate('depth')));
@@ -463,6 +517,10 @@ test('compiles exact depth and speed candidates, rebuilds numbering, freezes gra
     assert.deepEqual(compiled.plan.problem_graph_provenance, problemGraphProvenance);
     assert.deepEqual(compiled.plan.evidence_requirements, evidencePolicy);
     assert.deepEqual(compiled.plan.activated_nodes, ['D5_competitive']);
+    assert.deepEqual(
+      compiled.plan.steps[1]?.input.scoring_weights,
+      Object.fromEntries(comparisonDimensions.map((dimension) => [dimension, 0.2])),
+    );
     assert.deepEqual(compiled.pending_inputs, [{
       kind: 'visual',
       role: 'competitor_screenshots',
@@ -674,6 +732,7 @@ test('malformed LLM Current candidate never reaches the repository', async () =>
 });
 
 type CurrentCandidateFixtureMode =
+  | 'missing-weights'
   | 'missing-tool'
   | 'unknown-binding'
   | 'input-prefixed-binding'
@@ -738,6 +797,12 @@ class CurrentPlanningLLM implements LLMClient {
       this.candidateCalls += 1;
       const proposal = (id: 'depth' | 'speed') => {
         const { activated_nodes: _nodes, ...candidate } = validCandidate(id);
+        if (defect === 'missing-weights') {
+          delete candidate.steps.find((candidateStep) => (
+            candidateStep.actor_type === 'skill'
+            && candidateStep.actor_id === eligibleSkill.id
+          ))?.input.scoring_weights;
+        }
         if (defect === 'missing-tool') {
           return {
             ...candidate,
@@ -891,13 +956,16 @@ test('Current planning assembles Task8 graph and Task9 real-adapter capability s
   assert.match(candidateCall.prompt, /目标槽必须预先存在于 step\.input/);
   assert.match(candidateCall.prompt, /LLM step 的唯一运行时输出指针是 \/text.*reviewer step.*\/review/);
   assert.match(candidateCall.prompt, /depth 总步数不得超过 8，speed 总步数不得超过 4/);
+  assert.match(candidateCall.prompt, /competitive-web-research.*scoring_weights/);
   const candidateContext = candidateCall.context as {
     problem_graph: ProblemGraph;
     capability_resolution: CapabilityResolution;
     skills: Array<{ id: string; output_root: string }>;
+    planning_input: string;
   };
   assert.deepEqual(candidateContext.problem_graph, result.problemGraph);
   assert.deepEqual(candidateContext.capability_resolution, result.capabilityResolution);
+  assert.equal(candidateContext.planning_input, task.research_goal);
   assert.ok(candidateContext.skills.some((skill) => skill.id === eligibleSkill.id));
   assert.ok(candidateContext.skills.every((skill) => skill.output_root === '/payload'));
   assert.ok(result.capabilityResolution.eligible.some((decision) => decision.skill.id === eligibleSkill.id));
@@ -907,6 +975,44 @@ test('Current planning assembles Task8 graph and Task9 real-adapter capability s
     )
   ));
   assert.deepEqual(result.candidates.map((candidate) => candidate.id), ['depth', 'speed']);
+  for (const candidate of result.candidates) {
+    assert.deepEqual(
+      candidate.steps.find((candidateStep) => candidateStep.actor_id === eligibleSkill.id)
+        ?.input.scoring_weights,
+      Object.fromEntries(comparisonDimensions.map((dimension) => [dimension, 0.2])),
+    );
+  }
+});
+
+test('Current routed planning freezes equal weights from explicit dimensions before validation', async () => {
+  const { llm, planning } = routedPlanningHarness('missing-weights');
+
+  const result = await planning.planCurrentFromRequirement(task, task.research_goal);
+
+  assert.equal(llm.calls.filter((call) => call.schemaName === 'current-plan-candidates').length, 1);
+  for (const candidate of result.candidates) {
+    const skillInput = candidate.steps.find((candidateStep) => (
+      candidateStep.actor_type === 'skill' && candidateStep.actor_id === eligibleSkill.id
+    ))?.input;
+    assert.deepEqual(skillInput?.dimensions, comparisonDimensions);
+    assert.deepEqual(
+      skillInput?.scoring_weights,
+      Object.fromEntries(comparisonDimensions.map((dimension) => [dimension, 0.2])),
+    );
+  }
+});
+
+test('Current routed planning exposes the revision instruction to candidate generation', async () => {
+  const { llm, planning } = routedPlanningHarness(null);
+  const revisionInstruction = '将内容可信度权重提高到 30%，其余维度重新等比例分配';
+
+  await planning.planCurrentFromRequirement(task, revisionInstruction);
+
+  const candidateCall = llm.calls.find((call) => call.schemaName === 'current-plan-candidates');
+  assert.equal(
+    (candidateCall?.context as { planning_input?: unknown } | undefined)?.planning_input,
+    revisionInstruction,
+  );
 });
 
 test('Current planning retries once with complete Compiler feedback before returning candidates', async () => {
@@ -953,6 +1059,7 @@ test('Current planning retries once with complete Compiler feedback before retur
         capability_resolution: result.capabilityResolution,
         evidence_requirements: currentPlanningResult().problemGraph.questions[0]!.evidence_requirements,
         activated_nodes: result.activatedNodes,
+        requireCompetitiveWeightContract: true,
       }));
     }
   }
@@ -1002,6 +1109,13 @@ test('Current routed planning accepts candidates exactly at the depth/speed step
 test('finalized Current direct skill builds deterministic strict depth/speed proposals without candidate LLM routing', async () => {
   const llm = new CurrentPlanningLLM();
   const tools = new ToolRouter();
+  tools.register({
+    adapterType: 'tavily',
+    implementationId: 'qualified-real-tavily',
+    executionMode: 'real',
+    endpointHost: () => 'tavily.fixture.test',
+    async invoke() { throw new Error('not used during planning'); },
+  });
   const planning = new ResearchPlanningService({
     llm,
     validator: new SchemaValidator(),
@@ -1012,18 +1126,26 @@ test('finalized Current direct skill builds deterministic strict depth/speed pro
 
   const result = await planning.planCurrentFromRequirement(
     task,
-    `$competitive-analysis ${task.research_goal}`,
+    `$competitive-web-research ${task.research_goal}`,
   );
 
   assert.equal(llm.calls.some((call) => call.schemaName === 'current-plan-candidates'), false);
   assert.deepEqual(
     result.candidates.find((candidate) => candidate.id === 'speed')?.steps.map((item) => item.actor_type),
-    ['skill'],
+    ['tool', 'skill'],
   );
   assert.deepEqual(
     result.candidates.find((candidate) => candidate.id === 'depth')?.steps.map((item) => item.actor_type),
-    ['skill', 'reviewer'],
+    ['tool', 'skill', 'reviewer'],
   );
+  for (const candidate of result.candidates) {
+    const skillInput = candidate.steps.find((item) => item.actor_id === eligibleSkill.id)?.input;
+    assert.deepEqual(skillInput?.dimensions, comparisonDimensions);
+    assert.deepEqual(
+      skillInput?.scoring_weights,
+      Object.fromEntries(comparisonDimensions.map((dimension) => [dimension, 0.2])),
+    );
+  }
   const compiler = new PlanCompiler();
   for (const candidate of result.candidates) {
     assert.doesNotThrow(() => compiler.compile({
@@ -1034,6 +1156,49 @@ test('finalized Current direct skill builds deterministic strict depth/speed pro
       capability_resolution: result.capabilityResolution,
       evidence_requirements: currentPlanningResult().problemGraph.questions[0]!.evidence_requirements,
       activated_nodes: result.activatedNodes,
+      requireCompetitiveWeightContract: true,
+    }));
+  }
+});
+
+test('Current direct competitive Web research stays plannable when no comparison dimensions were explicit', async () => {
+  const llm = new CurrentPlanningLLM();
+  const tools = new ToolRouter();
+  tools.register({
+    adapterType: 'tavily',
+    implementationId: 'qualified-real-tavily',
+    executionMode: 'real',
+    endpointHost: () => 'tavily.fixture.test',
+    async invoke() { throw new Error('not used during planning'); },
+  });
+  const planning = new ResearchPlanningService({
+    llm,
+    validator: new SchemaValidator(),
+    skillLoader: new SkillLoader(),
+    tools,
+    approvalAuthorities: ['owner'],
+  });
+  const requirement = structuredClone(task);
+  delete requirement.comparison_dimensions;
+
+  const result = await planning.planCurrentFromRequirement(
+    requirement,
+    `$competitive-web-research ${requirement.research_goal}`,
+  );
+
+  for (const candidate of result.candidates) {
+    const skillInput = candidate.steps.find((item) => item.actor_id === eligibleSkill.id)?.input;
+    assert.equal(Object.hasOwn(skillInput ?? {}, 'dimensions'), false);
+    assert.equal(Object.hasOwn(skillInput ?? {}, 'scoring_weights'), false);
+    assert.doesNotThrow(() => new PlanCompiler().compile({
+      candidate,
+      task: requirement,
+      problem_graph: result.problemGraph,
+      problem_graph_provenance: result.problemGraphProvenance,
+      capability_resolution: result.capabilityResolution,
+      evidence_requirements: currentPlanningResult().problemGraph.questions[0]!.evidence_requirements,
+      activated_nodes: result.activatedNodes,
+      requireCompetitiveWeightContract: true,
     }));
   }
 });

@@ -12,6 +12,7 @@ import type {
   ResearchPlanPayload,
   VisualAssetManifest,
   VisualAssetManifestV1,
+  VisualAssetManifestV2,
 } from '../packages/api-contract/research-deliverable.ts';
 import {
   EvidenceService,
@@ -35,6 +36,14 @@ import {
   SchemaValidator,
 } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 import { createReportDocumentViewModel } from '../apps/web/src/reporting/report-document-view-model.ts';
+import {
+  COMPETITIVE_WEIGHT_CHART_DATA_VERSION,
+  COMPETITIVE_WEIGHT_CHART_ID,
+  COMPETITIVE_WEIGHT_SERIES_KEY,
+  COMPETITIVE_WEIGHT_SERIES_LABEL,
+  COMPETITIVE_WEIGHT_TITLE,
+  type CompetitiveWeightChartData,
+} from '../apps/orchestrator-runtime/src/report/competitive-weight-chart.ts';
 
 const binding = {
   taskId: 'task-report-document-1',
@@ -419,6 +428,8 @@ interface VerifiedChartFixture {
   specHash: string;
   table: ChartTableAlternative;
   asset: VerifiedVisualAsset;
+  dataArtifactRef?: { artifactId: string; contentSha256: string };
+  data?: CompetitiveWeightChartData;
 }
 
 function verifiedChart(): VerifiedChartFixture {
@@ -470,6 +481,112 @@ function verifiedChart(): VerifiedChartFixture {
       ),
     },
   };
+}
+
+function verifiedChartRender(): VerifiedChartFixture {
+  const chart = verifiedChart();
+  chart.spec = {
+    version: 'chart-spec-v1',
+    chartId: COMPETITIVE_WEIGHT_CHART_ID,
+    type: 'comparison',
+    title: COMPETITIVE_WEIGHT_TITLE,
+    categories: ['需求理解', '内容可信度'],
+    series: [{
+      key: COMPETITIVE_WEIGHT_SERIES_KEY,
+      label: COMPETITIVE_WEIGHT_SERIES_LABEL,
+      values: [60, 40],
+      evidenceIds: [['W-1'], ['W-2']],
+    }],
+    yAxis: { min: 0 },
+  };
+  chart.specHash = canonicalHash(chart.spec);
+  chart.table = chartTable(chart.spec);
+  const { manifestHash: _manifestHash, ...manifestDraft } = chart.asset.manifest;
+  const dataArtifactRef = {
+    artifactId: 'chart-data-report-document-1',
+    contentSha256: sha('d'),
+  };
+  const v2Draft: Omit<VisualAssetManifestV2, 'manifestHash'> = {
+    ...manifestDraft,
+    version: 'visual-asset-manifest-v2',
+    source: {
+      kind: 'chart_render',
+      dataArtifactId: dataArtifactRef.artifactId,
+      dataArtifactContentSha256: dataArtifactRef.contentSha256,
+    },
+    derivedFrom: null,
+    derivation: {
+      kind: 'chart_svg',
+      chartId: chart.spec.chartId,
+      specHash: chart.specHash,
+    },
+  };
+  chart.asset.artifact.schemaVersion = 'visual-asset-v1';
+  chart.asset.manifest = {
+    ...v2Draft,
+    manifestHash: canonicalHash(v2Draft),
+  };
+  chart.asset.manifestArtifact = sealedJsonArtifact(
+    chart.asset.manifestArtifact.id,
+    'visual_asset_manifest',
+    'visual-asset-manifest-v2',
+    chart.asset.manifest,
+  );
+  chart.dataArtifactRef = dataArtifactRef;
+  chart.data = {
+    version: COMPETITIVE_WEIGHT_CHART_DATA_VERSION,
+    ...binding,
+    unit: 'percent',
+    weights: [
+      { dimension: '需求理解', percentage: 60 },
+      { dimension: '内容可信度', percentage: 40 },
+    ],
+  };
+  return chart;
+}
+
+function attachVerifiedChartRender(
+  input: ReturnType<typeof composeInput>,
+  chart = verifiedChartRender(),
+): VerifiedChartFixture {
+  const dataArtifactRef = chart.dataArtifactRef!;
+  const data = chart.data!;
+  const resolvedData: ResolvedEvidenceArtifact = {
+    artifact: {
+      id: dataArtifactRef.artifactId,
+      contentSha256: dataArtifactRef.contentSha256,
+    },
+    value: data,
+  };
+  const resolver: EvidenceArtifactResolver = {
+    resolveArtifact: (artifactId) => artifactId === dataArtifactRef.artifactId
+      ? resolvedData
+      : evidenceArtifactResolver.resolveArtifact(artifactId),
+  };
+  const weightEntries = data.weights.map((_, index) => ({
+    id: `W-${index + 1}`,
+    kind: 'user_constraint' as const,
+    evidenceClass: 'user_input' as const,
+    artifactId: dataArtifactRef.artifactId,
+    artifactContentSha256: dataArtifactRef.contentSha256,
+    jsonPointer: `/weights/${index}/percentage`,
+    sensitivity: 'internal' as const,
+    redaction: 'none' as const,
+  }));
+  input.evidenceManifest.value = new EvidenceService().createManifest({
+    ...binding,
+    collectedAt: '2026-08-16T00:00:00.000Z',
+    entries: [...evidenceManifest().entries, ...weightEntries],
+  }, resolver);
+  input.evidenceManifest.artifact = sealedJsonArtifact(
+    evidenceManifestArtifactId,
+    'evidence_manifest',
+    'evidence-v1',
+    input.evidenceManifest.value,
+  );
+  input.evidenceArtifactResolver = resolver;
+  input.charts = [chart];
+  return chart;
 }
 
 function composeInput() {
@@ -775,6 +892,59 @@ test('composer rejects a Chart whose sealed visual derivation is bound to anothe
   assert.throws(
     () => composeReportDocument(input),
     /chart|derivation|binding|another-chart/i,
+  );
+});
+
+test('composer accepts a V2 chart_render Chart with null visual lineage', () => {
+  const input = composeInput();
+  const chart = attachVerifiedChartRender(input);
+
+  const document = composeReportDocument(input);
+  const block = document.sections
+    .flatMap(({ blocks }) => blocks)
+    .find((candidate) => candidate.type === 'chart');
+
+  assert.ok(block?.type === 'chart');
+  assert.equal(block.chartRef.assetId, chart.asset.artifact.id);
+  assert.equal(block.specHash, chart.specHash);
+  assert.deepEqual(block.table, chart.table);
+
+  const mismatched = composeInput();
+  const mismatchedChart = attachVerifiedChartRender(mismatched);
+  mismatchedChart.dataArtifactRef = {
+    ...mismatchedChart.dataArtifactRef!,
+    contentSha256: sha('e'),
+  };
+  assert.throws(
+    () => composeReportDocument(mismatched),
+    /chart.*data artifact|data artifact.*chart/i,
+  );
+});
+
+test('composer keeps V1 Chart visual lineage exact', () => {
+  const input = composeInput();
+  const chart = input.charts[0]!;
+  const lineage = chart.asset.manifest.derivedFrom;
+  assert.ok(lineage);
+  const { manifestHash: _manifestHash, ...manifestDraft } = chart.asset.manifest;
+  const changedDraft = {
+    ...manifestDraft,
+    derivedFrom: { ...lineage, assetId: 'another-visual-asset' },
+  };
+  chart.asset.manifest = {
+    ...changedDraft,
+    manifestHash: canonicalHash(changedDraft),
+  } as VisualAssetManifest;
+  chart.asset.manifestArtifact = sealedJsonArtifact(
+    chart.asset.manifestArtifact.id,
+    'visual_asset_manifest',
+    'visual-asset-manifest-v1',
+    chart.asset.manifest,
+  );
+
+  assert.throws(
+    () => composeReportDocument(input),
+    /chart|svg|lineage|visual asset/i,
   );
 });
 
@@ -1233,7 +1403,8 @@ test('competitive ReportDocument projects matrix, actions, impact, and screensho
     ),
     document.sections.length,
   );
-  assert.match(reportSectionText(document, 'findings'), /本章用于/u);
+  assert.match(reportSectionText(document, 'findings'), /本章用于按消费决策支持维度/u);
+  assert.doesNotMatch(reportSectionText(document, 'findings'), /六个消费决策支持维度/u);
   assert.match(reportSectionText(document, 'findings'), /Phase6 guided matrix value/);
   assert.match(reportSectionText(document, 'findings'), /Phase6 competitor difference/);
   assert.match(reportSectionText(document, 'findings'), /Phase6 Product A/);
@@ -1300,6 +1471,34 @@ test('competitive ReportDocument accepts an empty screenshot section only withou
     payload: competitivePayload([]),
   });
   assert.throws(() => composeReportDocument(unusedVisuals), /screenshot|visual|inventory/i);
+});
+
+test('competitive chart-only report sends readers from Visual Evidence to the actual Comparison chart', () => {
+  const input = professionalComposeInput({
+    templateId: 'competitive-analysis-report',
+    deliverableId: 'competitive_analysis_report',
+    visuals: 'none',
+    payload: competitivePayload([]),
+  });
+  attachVerifiedChartRender(input as ReturnType<typeof composeInput>);
+
+  const document = composeReportDocument(input);
+  const visualSection = document.sections.find(({ id }) => id === 'visual-evidence');
+  const comparisonSection = document.sections.find(({ id }) => id === 'comparison');
+  assert.ok(visualSection);
+  assert.ok(comparisonSection);
+  const visualIntroduction = visualSection.blocks[0];
+  assert.ok(visualIntroduction?.type === 'paragraph');
+  assert.equal(
+    visualIntroduction.text,
+    `本章没有已验证的产品截图；已验证图表位于“${comparisonSection.title}”章节，用于对照数据与文字结论。`,
+  );
+  assert.equal(comparisonSection.title, '竞争影响分析 / Competitive Impact Analysis');
+  assert.equal(
+    visualSection.blocks.some(({ type }) => type === 'image' || type === 'image-comparison' || type === 'chart'),
+    false,
+  );
+  assert.equal(comparisonSection.blocks.some(({ type }) => type === 'chart'), true);
 });
 
 for (const invalid of [{
