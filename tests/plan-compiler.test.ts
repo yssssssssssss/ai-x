@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { test } from 'node:test';
 import { join } from 'node:path';
 import type { PlanCandidate, ResearchTaskData, ResearchTaskV2 } from '../packages/api-contract/plan.ts';
@@ -24,7 +26,11 @@ import {
 import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 import { ToolRouter, type ToolAdapter } from '../apps/orchestrator-runtime/src/runtime/tool-adapter.ts';
-import { getConfigRoot, loadToolManifest } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import {
+  getConfigRoot,
+  loadToolManifest,
+  setConfigRoot,
+} from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 import type {
   LLMClient,
   LLMResult,
@@ -118,6 +124,7 @@ const eligibleSkill = {
   visual_inputs: ['competitor_screenshots'],
   outputs: ['competitive_analysis'],
   required_tools: ['tavily-web-search'],
+  optional_tools: [],
   risk_level: 'low' as const,
 };
 
@@ -137,14 +144,34 @@ function capabilityResolution(): CapabilityResolution {
         multiple: true,
         capability_id: eligibleSkill.id,
       }],
+      optional_tool_decisions: [],
     }],
     rejected: [{
       skill: { ...structuredClone(eligibleSkill), id: 'rejected-skill', status: 'draft' as const },
       required_approvals: [],
       reasons: [{ code: 'skill_inactive', message: 'skill is not active' }],
       pending_inputs: [],
+      optional_tool_decisions: [],
     }],
   };
+}
+
+const playwrightToolId = 'playwright-page-capture';
+
+function optionalCapabilityResolution(
+  status: 'available' | 'unavailable',
+): CapabilityResolution {
+  const resolution = capabilityResolution();
+  resolution.eligible[0]!.skill.optional_tools = [playwrightToolId];
+  resolution.eligible[0]!.optional_tool_decisions = status === 'available'
+    ? [{ tool_id: playwrightToolId, status }]
+    : [{
+        tool_id: playwrightToolId,
+        status,
+        reason_code: 'optional_tool_real_adapter_unavailable',
+        message: 'optional tool has no qualified real adapter',
+      }];
+  return resolution;
 }
 
 function step(overrides: Record<string, unknown> = {}): CurrentPlanCandidateProposal['steps'][number] {
@@ -200,6 +227,25 @@ function validCandidate(id: 'depth' | 'speed' = 'depth'): CurrentPlanCandidatePr
       }),
     ],
   };
+}
+
+function candidateWithBrowserCapture(id: 'depth' | 'speed' = 'depth'): CurrentPlanCandidateProposal {
+  const candidate = validCandidate(id);
+  candidate.steps.splice(1, 0, step({
+    step_name: '采集网页视觉证据',
+    actor_type: 'tool',
+    actor_id: playwrightToolId,
+    depends_on: [1],
+    input: { pages: [], capture: { mode: 'auto', max_pages: 6 } },
+    input_bindings: [{
+      target_pointer: '/pages',
+      source_step_no: 1,
+      source_pointer: '/results',
+    }],
+    expected_outputs: [{ pointer: '/captures', description: '网页截图元数据' }],
+  }));
+  candidate.steps[2]!.depends_on = [1, 2];
+  return candidate;
 }
 
 function input(candidate: CurrentPlanCandidateProposal = validCandidate()): PlanCompileInput {
@@ -288,6 +334,73 @@ test('rejects a selected skill when its required tool runs after the skill', () 
       step(),
     ];
   }, 'required_tool_late', 'tavily-web-search');
+});
+
+test('freezes available optional Playwright with the exact Tavily results binding', () => {
+  const value = input(candidateWithBrowserCapture());
+  value.capability_resolution = optionalCapabilityResolution('available');
+  const compiled = new PlanCompiler().compile(value);
+
+  assert.deepEqual(compiled.plan.steps.map(({ actor_id }) => actor_id), [
+    'tavily-web-search',
+    playwrightToolId,
+    eligibleSkill.id,
+  ]);
+  assert.deepEqual(compiled.plan.steps[1]?.input_bindings, [{
+    target_pointer: '/pages',
+    source_step_no: 1,
+    source_pointer: '/results',
+  }]);
+  assert.deepEqual(compiled.plan.capability_gaps, []);
+  assert.deepEqual(
+    compiled.plan.capability_decisions.eligible[0]?.optional_tool_decisions,
+    [{ tool_id: playwrightToolId, status: 'available' }],
+  );
+});
+
+test('turns unavailable optional Playwright into one frozen capability gap without a step', () => {
+  const value = input();
+  value.capability_resolution = optionalCapabilityResolution('unavailable');
+  const compiled = new PlanCompiler().compile(value);
+
+  assert.deepEqual(compiled.plan.steps.map(({ actor_id }) => actor_id), [
+    'tavily-web-search',
+    eligibleSkill.id,
+  ]);
+  assert.deepEqual(compiled.plan.capability_gaps, [{
+    capability_type: 'tool',
+    capability_id: playwrightToolId,
+    code: 'optional_tool_real_adapter_unavailable',
+    message: 'optional tool has no qualified real adapter',
+  }]);
+});
+
+test('rejects missing, late, handwritten, or wrongly bound available Playwright steps', () => {
+  expectCompileError((value) => {
+    value.capability_resolution = optionalCapabilityResolution('available');
+  }, 'optional_tool_missing', playwrightToolId);
+
+  for (const mutate of [
+    (value: PlanCompileInput) => { value.candidate.steps[1]!.input.pages = [{ url: 'https://example.test' }]; },
+    (value: PlanCompileInput) => { value.candidate.steps[1]!.input_bindings[0]!.target_pointer = '/capture'; },
+    (value: PlanCompileInput) => { value.candidate.steps[1]!.input_bindings[0]!.source_pointer = '/answer'; },
+    (value: PlanCompileInput) => { value.candidate.steps[1]!.depends_on = []; },
+  ]) {
+    const value = input(candidateWithBrowserCapture());
+    value.capability_resolution = optionalCapabilityResolution('available');
+    mutate(value);
+    assert.throws(
+      () => new PlanCompiler().compile(value),
+      (error: unknown) => {
+        assert.ok(error instanceof PlanCompilerValidationError);
+        assert.ok(
+          error.kind === 'optional_tool_binding_invalid'
+          || error.kind === 'optional_tool_late',
+        );
+        return true;
+      },
+    );
+  }
 });
 
 test('rejects input bindings that point to a future step', () => {
@@ -517,6 +630,7 @@ test('compiles exact depth and speed candidates, rebuilds numbering, freezes gra
     assert.deepEqual(compiled.plan.problem_graph_provenance, problemGraphProvenance);
     assert.deepEqual(compiled.plan.evidence_requirements, evidencePolicy);
     assert.deepEqual(compiled.plan.activated_nodes, ['D5_competitive']);
+    assert.deepEqual(compiled.plan.capability_gaps, []);
     assert.deepEqual(
       compiled.plan.steps[1]?.input.scoring_weights,
       Object.fromEntries(comparisonDimensions.map((dimension) => [dimension, 0.2])),
@@ -556,6 +670,40 @@ test('revision recompilation preserves ProblemGraph receipt provenance in frozen
     candidate_id: 'depth',
   });
   assert.deepEqual(validated, plan);
+});
+
+test('revision normalization upgrades historical plans missing optional fields to empty arrays', () => {
+  const compiled = new PlanCompiler().compile(input());
+  const historicalPlan: CurrentExecutionPlan = {
+    ...structuredClone(compiled.plan),
+    task_id: 'task-legacy',
+  };
+  delete historicalPlan.capability_gaps;
+  for (const bucket of [
+    historicalPlan.capability_decisions.eligible,
+    historicalPlan.capability_decisions.rejected,
+  ]) {
+    for (const decision of bucket) {
+      delete decision.skill.optional_tools;
+      delete decision.optional_tool_decisions;
+    }
+  }
+
+  const normalized = validateCurrentPlanRevision({
+    plan: historicalPlan,
+    task,
+    pending_inputs: compiled.pending_inputs,
+    task_id: 'task-legacy',
+    candidate_id: 'depth',
+  });
+  assert.deepEqual(normalized.capability_gaps, []);
+  for (const decision of [
+    ...normalized.capability_decisions.eligible,
+    ...normalized.capability_decisions.rejected,
+  ]) {
+    assert.deepEqual(decision.skill.optional_tools, []);
+    assert.deepEqual(decision.optional_tool_decisions, []);
+  }
 });
 
 test('keeps Legacy PlanStep unchanged while Current steps use the strict independent contract', () => {
@@ -773,6 +921,13 @@ class CurrentPlanningLLM implements LLMClient {
       data = [];
     } else if (options.schemaName === 'current-plan-candidates') {
       const validationFeedback = JSON.stringify(options.context);
+      const resolution = (options.context as { capability_resolution?: CapabilityResolution } | undefined)
+        ?.capability_resolution;
+      const hasAvailablePlaywright = resolution?.eligible.some((decision) => (
+        decision.optional_tool_decisions.some((optionalTool) => (
+          optionalTool.tool_id === playwrightToolId && optionalTool.status === 'available'
+        ))
+      )) ?? false;
       const inputPrefixedBindingNeedsRepair = this.candidateFixtureMode === 'input-prefixed-binding'
         && (
           this.candidateCalls === 0
@@ -796,7 +951,9 @@ class CurrentPlanningLLM implements LLMClient {
               : null;
       this.candidateCalls += 1;
       const proposal = (id: 'depth' | 'speed') => {
-        const { activated_nodes: _nodes, ...candidate } = validCandidate(id);
+        const { activated_nodes: _nodes, ...candidate } = hasAvailablePlaywright
+          ? candidateWithBrowserCapture(id)
+          : validCandidate(id);
         if (defect === 'missing-weights') {
           delete candidate.steps.find((candidateStep) => (
             candidateStep.actor_type === 'skill'
@@ -1158,6 +1315,79 @@ test('finalized Current direct skill builds deterministic strict depth/speed pro
       activated_nodes: result.activatedNodes,
       requireCompetitiveWeightContract: true,
     }));
+  }
+});
+
+test('active qualified Playwright is planned as Tavily then capture then Skill in routed and direct Current plans', async () => {
+  const realRoot = getConfigRoot();
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 'active-playwright-planning-'));
+  cpSync(join(realRoot, 'orchestrator'), join(fixtureRoot, 'orchestrator'), { recursive: true });
+  cpSync(join(realRoot, 'schemas'), join(fixtureRoot, 'schemas'), { recursive: true });
+  cpSync(join(realRoot, 'tools'), join(fixtureRoot, 'tools'), { recursive: true });
+  const registryPath = join(fixtureRoot, 'orchestrator', 'tool-registry.yaml');
+  const draftRegistry = readFileSync(registryPath, 'utf8');
+  const activeRegistry = draftRegistry.replace(
+    /(  - id: playwright-page-capture[\s\S]*?\n    status:) draft(\n    tier: optional)/u,
+    '$1 active$2',
+  );
+  assert.notEqual(activeRegistry, draftRegistry, 'fixture must activate only Playwright');
+  writeFileSync(registryPath, activeRegistry, 'utf8');
+
+  try {
+    setConfigRoot(fixtureRoot);
+    const llm = new CurrentPlanningLLM();
+    const tools = new ToolRouter();
+    for (const adapterType of ['tavily', 'playwright'] as const) {
+      tools.register({
+        adapterType,
+        implementationId: `qualified-real-${adapterType}`,
+        executionMode: 'real',
+        endpointHost: () => `${adapterType}.fixture.test`,
+        async invoke() { throw new Error('not used during planning'); },
+      });
+    }
+    const planning = new ResearchPlanningService({
+      llm,
+      validator: new SchemaValidator(),
+      skillLoader: new SkillLoader(),
+      tools,
+      approvalAuthorities: ['owner'],
+    });
+
+    const routed = await planning.planCurrentFromRequirement(task, task.research_goal);
+    const direct = await planning.planCurrentFromRequirement(
+      task,
+      `$competitive-web-research ${task.research_goal}`,
+    );
+
+    for (const result of [routed, direct]) {
+      const decision = result.capabilityResolution.eligible.find(({ skill }) => (
+        skill.id === eligibleSkill.id
+      ));
+      assert.deepEqual(decision?.optional_tool_decisions, [{
+        tool_id: playwrightToolId,
+        status: 'available',
+      }]);
+      for (const candidate of result.candidates) {
+        const actorIds = candidate.steps.map(({ actor_id }) => actor_id);
+        const tavilyIndex = actorIds.indexOf('tavily-web-search');
+        const captureIndex = actorIds.indexOf(playwrightToolId);
+        const skillIndex = actorIds.indexOf(eligibleSkill.id);
+        assert.ok(tavilyIndex >= 0 && tavilyIndex < captureIndex && captureIndex < skillIndex);
+        assert.deepEqual(candidate.steps[captureIndex]?.input.pages, []);
+        assert.deepEqual(candidate.steps[captureIndex]?.input_bindings, [{
+          target_pointer: '/pages',
+          source_step_no: tavilyIndex + 1,
+          source_pointer: '/results',
+        }]);
+      }
+    }
+
+    const routedCall = llm.calls.find((call) => call.schemaName === 'current-plan-candidates');
+    assert.match(routedCall?.prompt ?? '', /playwright-page-capture.*禁止手写 URL/u);
+  } finally {
+    setConfigRoot(realRoot);
+    rmSync(fixtureRoot, { recursive: true, force: true });
   }
 });
 

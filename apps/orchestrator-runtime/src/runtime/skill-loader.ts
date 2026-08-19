@@ -5,6 +5,7 @@ import {
   loadToolRegistry,
   getConfigRoot,
   hashFile,
+  skillOptionalToolIssue,
   skillVisualInputIssue,
   unknownSkillRegistryFields,
   type SkillRegistryEntry,
@@ -27,6 +28,7 @@ type CapabilityArrays = {
   inputs: string[];
   outputs: string[];
   required_tools: string[];
+  optional_tools: string[];
 };
 
 type ActiveCapabilitySkillRegistryEntry = Omit<
@@ -79,6 +81,7 @@ export class SkillLoader {
       const multipleVisualInputs = skill.multiple_visual_inputs ?? [];
       const outputs = skill.outputs ?? [];
       const requiredTools = skill.required_tools ?? [];
+      const optionalTools = skill.optional_tools ?? [];
       if (skill.status !== 'active') {
         return {
           ...skill,
@@ -89,19 +92,23 @@ export class SkillLoader {
           multiple_visual_inputs: Array.isArray(multipleVisualInputs) ? multipleVisualInputs : [],
           outputs: Array.isArray(outputs) ? outputs : [],
           required_tools: Array.isArray(requiredTools) ? requiredTools : [],
+          optional_tools: Array.isArray(optionalTools) ? optionalTools : [],
         };
       }
 
       const knowledgeBaseSkill = skill.entry !== undefined || skill.path?.startsWith('knowledge-base/') === true;
       const visualInputIssue = skillVisualInputIssue(skill);
+      const optionalToolIssue = skillOptionalToolIssue(skill);
       if (
         unknownSkillRegistryFields(skill).length > 0
         || visualInputIssue !== null
+        || optionalToolIssue !== null
         || !Array.isArray(taskTypes)
         || !Array.isArray(inputs)
         || !Array.isArray(visualInputs)
         || !Array.isArray(outputs)
         || !Array.isArray(requiredTools)
+        || !Array.isArray(optionalTools)
         || taskTypes.length === 0
         || (!knowledgeBaseSkill && (inputs.length === 0 || outputs.length === 0 || requiredTools.length === 0))
         || visualInputs.some((role) => !inputs.includes(role))
@@ -117,6 +124,7 @@ export class SkillLoader {
         multiple_visual_inputs: multipleVisualInputs,
         outputs,
         required_tools: requiredTools,
+        optional_tools: optionalTools,
       };
     });
   }
@@ -131,6 +139,10 @@ export class SkillLoader {
 
   getTool(id: string): ToolRegistryEntry | null {
     return this.listActiveTools().find((t) => t.id === id) ?? null;
+  }
+
+  getRegisteredTool(id: string): ToolRegistryEntry | null {
+    return loadToolRegistry().tools.find((tool) => tool.id === id) ?? null;
   }
 
   // 第二层:读命中的 SKILL.md 全文。

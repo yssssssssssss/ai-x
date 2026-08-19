@@ -302,11 +302,13 @@ function planningResult(originalInput: string): CurrentResearchPlanningResult {
         inputs: ['research_goal'],
         outputs: ['competitive_analysis'],
         required_tools: ['tavily-web-search'],
+        optional_tools: [],
         risk_level: 'low' as const,
       },
       reasons: [{ code: 'eligible' as const, message: 'eligible' }],
       pending_inputs: [],
       required_approvals: [],
+      optional_tool_decisions: [],
     }],
     rejected: [],
   };
@@ -488,7 +490,7 @@ test('workflow requires a revision driver and repository persists a canonical ha
   );
 });
 
-test('repository computes the revision hash instead of accepting one from its caller', async () => {
+test('repository hashes the validated revision rather than the caller shape', async () => {
   const seeded = await createSelectedTask({ suffix: 'repository-canonical' });
   const plan = compiledRevisionPlan(seeded.created.task.id, 'speed canonical revision');
   const revision = await repository.createPlanRevision({
@@ -502,7 +504,8 @@ test('repository computes the revision hash instead of accepting one from its ca
   });
   const persisted = await repository.getPlanVersionDetail(revision.plan.id);
   assert.ok(persisted);
-  assert.equal(persisted.planHash, canonicalPlanHash(plan));
+  assert.equal(persisted.planHash, canonicalPlanHash(persisted.plan));
+  assert.notEqual(persisted.planHash, canonicalPlanHash(plan));
 });
 
 test('production runtime replans from research goal and instruction while preserving frozen plan fields', async () => {

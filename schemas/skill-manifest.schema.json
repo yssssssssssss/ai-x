@@ -44,6 +44,12 @@
       "description": "该 skill 需要的 tool id 列表。",
       "items": { "type": "string" }
     },
+    "optional_tools": {
+      "type": "array",
+      "description": "增强型 tool id 列表；不可用时不得拒绝 skill。",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
     "cost_level": { "type": "string", "enum": ["low", "medium", "high"] },
     "risk_level": { "type": "string", "enum": ["low", "medium", "high"] }
   }

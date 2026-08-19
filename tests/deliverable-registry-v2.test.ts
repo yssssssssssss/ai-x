@@ -372,6 +372,7 @@ class RegistryIntegrationLLM {
           overallConclusions: [{ id: 'C1', summaryIds: ['S1'], statement: 'conclusion' }],
         },
         payload: {
+          visualEvidence: [],
           screenshotComparisons: [{
             id: 'comparison-1',
             dimension: 'registry',

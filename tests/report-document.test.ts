@@ -349,6 +349,66 @@ function verifiedImage(input: {
   };
 }
 
+function verifiedBrowserImage(
+  assetId: string,
+  manifestArtifactId: string,
+  sourcePageUrl: string,
+): VerifiedVisualAsset {
+  const draft: Omit<VisualAssetManifestV2, 'manifestHash'> = {
+    version: 'visual-asset-manifest-v2',
+    ...binding,
+    assetId,
+    contentSha256: digest(PNG),
+    mediaType: 'image/png',
+    byteSize: PNG.byteLength,
+    width: 1,
+    height: 1,
+    exportPolicy: 'allow',
+    source: {
+      kind: 'browser_capture',
+      artifactId: 'artifact-browser-tool-report-document-1',
+      artifactContentSha256: sha('b'),
+      jsonPointer: '/output/captures/0',
+      attachmentId: 'capture-1',
+      sourcePageUrl,
+      finalUrl: sourcePageUrl,
+      pageTitle: 'Verified AI shopping assistant',
+      capturedAt: '2026-08-20T02:00:00.000Z',
+      captureMode: 'element_screenshot',
+      selector: '#shopping-assistant',
+      viewport: { width: 1440, height: 900 },
+    },
+    derivedFrom: null,
+    derivation: null,
+  };
+  const manifest: VisualAssetManifestV2 = {
+    ...draft,
+    manifestHash: canonicalHash(draft),
+  };
+  return {
+    artifact: artifact(assetId, 'visual_asset', 'visual-asset-v1', {
+      contentSha256: manifest.contentSha256,
+      byteSize: manifest.byteSize,
+      mediaType: manifest.mediaType,
+      metadata: { width: manifest.width, height: manifest.height },
+    }),
+    bytes: Buffer.from(PNG),
+    metadata: {
+      contentType: manifest.mediaType,
+      byteSize: manifest.byteSize,
+      width: manifest.width,
+      height: manifest.height,
+    },
+    manifest,
+    manifestArtifact: sealedJsonArtifact(
+      manifestArtifactId,
+      'visual_asset_manifest',
+      'visual-asset-manifest-v2',
+      manifest,
+    ),
+  };
+}
+
 function verifiedAnnotation(
   original: VerifiedVisualAsset,
   input: { assetId?: string; manifestArtifactId?: string } = {},
@@ -749,7 +809,7 @@ test('report-document schema rejects a Fact block without Evidence', () => {
   );
 });
 
-test('ReportDocument validation rejects dangling visual Asset and Chart references', () => {
+test('ReportDocument validation rejects dangling visual Asset, image Evidence, and Chart references', () => {
   const danglingAsset = reportDocument();
   const image = danglingAsset.sections
     .flatMap(({ blocks }) => blocks)
@@ -759,6 +819,17 @@ test('ReportDocument validation rejects dangling visual Asset and Chart referenc
   assert.throws(
     () => assertValidReportDocument(danglingAsset, referenceContext()),
     /asset|dangling|missing/i,
+  );
+
+  const danglingImageEvidence = reportDocument();
+  const evidencedImage = danglingImageEvidence.sections
+    .flatMap(({ blocks }) => blocks)
+    .find(({ type }) => type === 'image');
+  assert.ok(evidencedImage && evidencedImage.type === 'image');
+  evidencedImage.evidenceIds = ['missing-evidence'];
+  assert.throws(
+    () => assertValidReportDocument(danglingImageEvidence, referenceContext()),
+    /image.*evidence|dangling.*evidence/i,
   );
 
   const danglingChart = reportDocument();
@@ -1370,6 +1441,7 @@ function competitivePayload(screenshotComparisons: unknown[]): Record<string, un
     }],
     instrumentationPlan: ['Phase6 instrumentation event and properties'],
     userTestScript: ['Phase6 user task, probe, success criterion, and trust measure'],
+    visualEvidence: [],
     screenshotComparisons,
   };
 }
@@ -1412,7 +1484,7 @@ test('competitive ReportDocument projects matrix, actions, impact, and screensho
     document.sections
       .find(({ id }) => id === 'findings')
       ?.blocks.filter(({ type }) => type === 'fact').length,
-    1,
+    2,
   );
   const matrixFact = document.sections
     .find(({ id }) => id === 'findings')
@@ -1422,6 +1494,7 @@ test('competitive ReportDocument projects matrix, actions, impact, and screensho
     matrixFact.text,
     /【onboarding｜权重 20%】\nPhase6 Product A：评分 4.5\/5；Phase6 guided matrix value\n综合判断：/u,
   );
+  assert.match(reportSectionText(document, 'findings'), /【跨维度综合】/u);
   assert.match(reportSectionText(document, 'executive-summary'), /Phase6 management decision/u);
   assert.match(reportSectionText(document, 'key-metrics'), /Phase6 1–5 anchor definition/u);
   assert.match(reportSectionText(document, 'key-metrics'), /"value":4.5/u);
@@ -1445,7 +1518,133 @@ test('competitive ReportDocument projects matrix, actions, impact, and screensho
   assert.match(screenshot.altText, /input-provenance boundary.*does not locate or substantiate a research finding/iu);
 });
 
-test('competitive ReportDocument accepts an empty screenshot section only without visual inventory', () => {
+test('competitive ReportDocument rejects duplicate dimensionMatrix dimensions', () => {
+  const payload = competitivePayload([]);
+  payload.dimensionMatrix = [
+    ...(payload.dimensionMatrix as unknown[]),
+    structuredClone((payload.dimensionMatrix as unknown[])[0]),
+  ];
+  const input = professionalComposeInput({
+    templateId: 'competitive-analysis-report',
+    deliverableId: 'competitive_analysis_report',
+    visuals: 'none',
+    payload,
+  });
+
+  assert.throws(
+    () => composeReportDocument(input),
+    /dimensionMatrix.*unique|duplicate.*dimension/i,
+  );
+});
+
+test('competitive ReportDocument renders a browser single image with exact dual Evidence and source metadata', () => {
+  const browserAssetId = 'asset-browser-report-document-1';
+  const browserManifestArtifactId = 'manifest-browser-report-document-1';
+  const publicArtifactId = 'artifact-public-source-report-document-1';
+  const publicArtifactContentSha256 = sha('c');
+  const sourcePageUrl = 'https://example.test/ai-shopping-assistant';
+  const publicSourceUrl = 'https://EXAMPLE.TEST:443/ai-shopping-assistant#overview';
+  const browser = verifiedBrowserImage(
+    browserAssetId,
+    browserManifestArtifactId,
+    sourcePageUrl,
+  );
+  const payload = competitivePayload([]);
+  payload.visualEvidence = [{
+    id: 'visual-evidence-1',
+    sampleIds: ['sample-a'],
+    dimension: 'onboarding',
+    assetId: browserAssetId,
+    evidenceIds: ['E-screenshot', 'E-public'],
+    caption: 'Verified AI shopping-assistant entry point',
+  }];
+  const input = professionalComposeInput({
+    templateId: 'competitive-analysis-report',
+    deliverableId: 'competitive_analysis_report',
+    visuals: 'none',
+    payload,
+  });
+  input.visualAssets = [browser];
+  const publicOutput = {
+    results: [{ title: 'Verified public source', url: publicSourceUrl }],
+  };
+  const redactedOutputHash = canonicalHash(publicOutput);
+  const resolver: EvidenceArtifactResolver = {
+    resolveArtifact: (artifactId) => {
+      if (artifactId === publicArtifactId) {
+        return {
+          artifact: { id: publicArtifactId, contentSha256: publicArtifactContentSha256 },
+          value: { output: publicOutput, redactedOutputHash },
+        };
+      }
+      if (artifactId === browserManifestArtifactId) {
+        return {
+          artifact: {
+            id: browserManifestArtifactId,
+            contentSha256: browser.manifestArtifact.contentSha256!,
+          },
+          value: browser.manifest,
+        };
+      }
+      return evidenceArtifactResolver.resolveArtifact(artifactId);
+    },
+  };
+  input.evidenceManifest.value = new EvidenceService().createManifest({
+    ...binding,
+    collectedAt: '2026-08-20T02:01:00.000Z',
+    entries: [...evidenceManifest().entries, {
+      id: 'E-public',
+      kind: 'tool_output',
+      evidenceClass: 'public_source',
+      toolId: 'tavily-web-search',
+      toolTier: 'core',
+      artifactId: publicArtifactId,
+      artifactContentSha256: publicArtifactContentSha256,
+      jsonPointer: '/output/results/0',
+      sourceUrl: publicSourceUrl,
+      toolProof: {
+        implementationId: 'tavily',
+        executionMode: 'real',
+        redactedOutputHash,
+      },
+      sensitivity: 'public',
+      redaction: 'masked',
+    }, {
+      id: 'E-screenshot',
+      kind: 'screenshot',
+      evidenceClass: 'screenshot',
+      toolId: 'playwright-page-capture',
+      toolTier: 'optional',
+      artifactId: browserManifestArtifactId,
+      artifactContentSha256: browser.manifestArtifact.contentSha256!,
+      jsonPointer: '/assetId',
+      sourceUrl: sourcePageUrl,
+      sensitivity: 'public',
+      redaction: 'none',
+    }],
+  }, resolver);
+  input.evidenceManifest.artifact = sealedJsonArtifact(
+    evidenceManifestArtifactId,
+    'evidence_manifest',
+    'evidence-v1',
+    input.evidenceManifest.value,
+  );
+  input.evidenceArtifactResolver = resolver;
+
+  const document = composeReportDocument(input);
+  const visualBlocks = document.sections.find(({ id }) => id === 'visual-evidence')?.blocks ?? [];
+  const image = visualBlocks.find((block) => block.type === 'image');
+  assert.ok(image?.type === 'image');
+  assert.deepEqual(image.assetRef, {
+    assetId: browserAssetId,
+    manifestArtifactId: browserManifestArtifactId,
+  });
+  assert.deepEqual(image.evidenceIds, ['E-screenshot', 'E-public']);
+  assert.match(image.caption, /Verified AI shopping-assistant entry point.*example\.test.*2026-08-20T02:00:00\.000Z/u);
+  assert.equal(visualBlocks.filter(({ type }) => type === 'image').length, 1);
+});
+
+test('competitive ReportDocument keeps unselected input-provenance visuals out of an empty visual section', () => {
   const textOnly = professionalComposeInput({
     templateId: 'competitive-analysis-report',
     deliverableId: 'competitive_analysis_report',
@@ -1455,7 +1654,7 @@ test('competitive ReportDocument accepts an empty screenshot section only withou
   const document = composeReportDocument(textOnly);
   assert.match(
     reportSectionText(document, 'visual-evidence'),
-    /本任务没有已验证的截图或图表/u,
+    /没有满足来源与证据绑定要求的图片或图表/u,
   );
   assert.equal(
     document.sections
@@ -1470,10 +1669,16 @@ test('competitive ReportDocument accepts an empty screenshot section only withou
     visuals: 'annotation',
     payload: competitivePayload([]),
   });
-  assert.throws(() => composeReportDocument(unusedVisuals), /screenshot|visual|inventory/i);
+  const unusedDocument = composeReportDocument(unusedVisuals);
+  assert.equal(
+    unusedDocument.sections
+      .find(({ id }) => id === 'visual-evidence')
+      ?.blocks.some(({ type }) => type === 'image' || type === 'image-comparison'),
+    false,
+  );
 });
 
-test('competitive chart-only report sends readers from Visual Evidence to the actual Comparison chart', () => {
+test('competitive chart-only report places the chart at the end of Visual Evidence', () => {
   const input = professionalComposeInput({
     templateId: 'competitive-analysis-report',
     deliverableId: 'competitive_analysis_report',
@@ -1491,14 +1696,15 @@ test('competitive chart-only report sends readers from Visual Evidence to the ac
   assert.ok(visualIntroduction?.type === 'paragraph');
   assert.equal(
     visualIntroduction.text,
-    `本章没有已验证的产品截图；已验证图表位于“${comparisonSection.title}”章节，用于对照数据与文字结论。`,
+    '本章按单图证据、原图与标注图对比、图表及数据表的顺序集中展示已验证视觉材料，用于帮助读者对照视觉证据与文字结论。',
   );
   assert.equal(comparisonSection.title, '竞争影响分析 / Competitive Impact Analysis');
   assert.equal(
     visualSection.blocks.some(({ type }) => type === 'image' || type === 'image-comparison' || type === 'chart'),
-    false,
+    true,
   );
-  assert.equal(comparisonSection.blocks.some(({ type }) => type === 'chart'), true);
+  assert.equal(visualSection.blocks.at(-1)?.type, 'chart');
+  assert.equal(comparisonSection.blocks.some(({ type }) => type === 'chart'), false);
 });
 
 for (const invalid of [{
@@ -1574,7 +1780,7 @@ test('competitive ReportDocument rejects two originals and mismatched annotation
   assert.throws(() => composeReportDocument(wrongLineage), /original|annotation|lineage|pair/i);
 });
 
-test('competitive ReportDocument rejects duplicate Asset ids and unsupported unused visual roles', () => {
+test('competitive ReportDocument rejects duplicate Asset ids and nested annotation lineage', () => {
   const original = verifiedImage();
   const annotation = verifiedAnnotation(original);
   const payload = competitivePayload([{
@@ -1598,13 +1804,13 @@ test('competitive ReportDocument rejects duplicate Asset ids and unsupported unu
   ];
   assert.throws(() => composeReportDocument(duplicateId), /Asset id.*unique/i);
 
-  const unsupported = professionalComposeInput({
+  const unselectedToolSource = professionalComposeInput({
     templateId: 'competitive-analysis-report',
     deliverableId: 'competitive_analysis_report',
     visuals: 'annotation',
     payload,
   });
-  unsupported.visualAssets = [
+  unselectedToolSource.visualAssets = [
     original,
     annotation,
     verifiedImage({
@@ -1619,7 +1825,7 @@ test('competitive ReportDocument rejects duplicate Asset ids and unsupported unu
       },
     }),
   ];
-  assert.throws(() => composeReportDocument(unsupported), /unsupported source or role/i);
+  assert.doesNotThrow(() => composeReportDocument(unselectedToolSource));
 
   const annotationChain = professionalComposeInput({
     templateId: 'competitive-analysis-report',

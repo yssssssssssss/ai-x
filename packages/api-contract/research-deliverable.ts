@@ -87,6 +87,7 @@ export interface CurrentCapabilitySkill {
   payload_schema?: string;
   entry?: string;
   required_tools: string[];
+  optional_tools?: string[];
   cost_level?: string;
   risk_level?: 'low' | 'medium' | 'high';
 }
@@ -123,11 +124,31 @@ export interface CurrentCapabilityApproval {
   authority: 'owner' | 'legal' | 'security';
 }
 
+export type CurrentOptionalToolReasonCode =
+  | 'optional_tool_health_unknown'
+  | 'optional_tool_unhealthy'
+  | 'optional_tool_real_adapter_unavailable';
+
+export interface CurrentOptionalToolDecision {
+  tool_id: string;
+  status: 'available' | 'unavailable';
+  reason_code?: CurrentOptionalToolReasonCode;
+  message?: string;
+}
+
+export interface CurrentCapabilityGap {
+  capability_type: 'tool';
+  capability_id: string;
+  code: CurrentOptionalToolReasonCode;
+  message: string;
+}
+
 export interface CurrentCapabilityDecision {
   skill: CurrentCapabilitySkill;
   required_approvals: CurrentCapabilityApproval[];
   reasons: CurrentCapabilityDecisionReason[];
   pending_inputs: CurrentCapabilityPendingInput[];
+  optional_tool_decisions?: CurrentOptionalToolDecision[];
 }
 
 export interface CurrentCapabilityDecisions {
@@ -142,6 +163,7 @@ export interface CurrentExecutionPlan {
   problem_graph: ProblemGraph;
   problem_graph_provenance: ProblemGraphProvenance;
   capability_decisions: CurrentCapabilityDecisions;
+  capability_gaps?: CurrentCapabilityGap[];
   steps: CurrentPlanStep[];
   candidate_metadata: {
     title: string;

@@ -5,6 +5,7 @@ import {
   loadToolManifest,
   fileExists,
   SKILL_RESULT_ENVELOPE_SCHEMA,
+  skillOptionalToolIssue,
   skillVisualInputIssue,
   unknownSkillRegistryFields,
   type SkillRegistryEntry,
@@ -59,7 +60,7 @@ function lintCapabilityArrays(skill: SkillRegistryEntry, target: string, issues:
 
 function lintSkills(issues: LintIssue[]): void {
   const { skills } = loadSkillRegistry();
-  const knownTools = new Set(loadToolRegistry().tools.map((t) => t.id));
+  const toolsById = new Map(loadToolRegistry().tools.map((tool) => [tool.id, tool]));
 
   for (const s of skills) {
     const tgt = `skill:${s.id ?? '(no-id)'}`;
@@ -80,6 +81,10 @@ function lintSkills(issues: LintIssue[]): void {
       }
     }
     lintCapabilityArrays(s, tgt, issues);
+    const optionalToolIssue = skillOptionalToolIssue(s);
+    if (optionalToolIssue) {
+      issues.push({ level: 'error', target: tgt, message: `active skill 的 ${optionalToolIssue}` });
+    }
     const skillPath = s.path ?? s.entry;
     if (skillPath && !fileExists(skillPath)) {
       issues.push({ level: 'error', target: tgt, message: `path/entry 不存在: ${skillPath}` });
@@ -97,8 +102,18 @@ function lintSkills(issues: LintIssue[]): void {
       issues.push({ level: 'error', target: tgt, message: `payload_schema 不存在: ${s.payload_schema}` });
     }
     for (const t of s.required_tools ?? []) {
-      if (!knownTools.has(t)) {
+      if (!toolsById.has(t)) {
         issues.push({ level: 'error', target: tgt, message: `required_tools 引用了未登记的 tool: ${t}` });
+      }
+    }
+    if (Array.isArray(s.optional_tools)) {
+      for (const toolId of s.optional_tools) {
+        const tool = toolsById.get(toolId);
+        if (!tool) {
+          issues.push({ level: 'error', target: tgt, message: `optional_tools 引用了未登记的 tool: ${toolId}` });
+        } else if (tool.tier !== 'optional') {
+          issues.push({ level: 'error', target: tgt, message: `optional_tools 只能引用 optional tier tool: ${toolId}` });
+        }
       }
     }
   }

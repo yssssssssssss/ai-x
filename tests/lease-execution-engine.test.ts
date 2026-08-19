@@ -414,6 +414,7 @@ class BrowserCaptureAdapter implements ToolAdapter {
       bytes: Buffer.from(attachment.bytes),
       viewport: { ...attachment.viewport },
     })),
+    private readonly failures: Record<string, unknown>[] = [],
   ) {}
 
   endpointHost(): null {
@@ -427,7 +428,7 @@ class BrowserCaptureAdapter implements ToolAdapter {
     return {
       output: {
         captures: this.fixtures.map(({ metadata }) => structuredClone(metadata)),
-        failures: [],
+        failures: structuredClone(this.failures),
         security_profile: 'browser-controls-v1',
       },
       latencyMs: 1,
@@ -463,6 +464,13 @@ class TestOnlyPlaywrightSkillLoader extends SkillLoader {
       return loadToolRegistry().tools.find((tool) => tool.id === id) ?? null;
     }
     return super.getTool(id);
+  }
+
+  override getRegisteredTool(id: string): ToolRegistryEntry | null {
+    const tool = super.getRegisteredTool(id);
+    return id === 'playwright-page-capture' && tool
+      ? { ...tool, status: 'active' }
+      : tool;
   }
 }
 
@@ -548,6 +556,13 @@ class SuccessfulInternalAdapter implements ToolAdapter {
         latencyMs: 1,
       },
     };
+  }
+}
+
+class InvalidInternalSchemaAdapter extends SuccessfulInternalAdapter {
+  override async invoke(options: { manifest: ToolManifest }): Promise<ToolInvokeResult> {
+    const result = await super.invoke(options);
+    return { ...result, output: { results: 'invalid' } };
   }
 }
 
@@ -940,13 +955,70 @@ function browserCaptureStep(): CurrentPlanStep {
   };
 }
 
+function optionalToolOwnerStep(stepNo = 3, toolStepNo = 2): CurrentPlanStep {
+  return {
+    ...planSteps[1]!,
+    step_no: stepNo,
+    depends_on: [...new Set([...planSteps[1]!.depends_on, toolStepNo])],
+  };
+}
+
+function frozenOptionalToolPlan(
+  toolId: string,
+  skillId = 'digital-human-competitive-analysis',
+): Record<string, unknown> {
+  return {
+    capability_decisions: {
+      eligible: [{
+        skill: {
+          id: skillId,
+          required_tools: [],
+          optional_tools: [toolId],
+        },
+        optional_tool_decisions: [{ tool_id: toolId, status: 'available' }],
+      }],
+      rejected: [],
+    },
+    capability_gaps: [],
+  };
+}
+
+function unavailableOptionalToolPlan(toolId: string): Record<string, unknown> {
+  const code = 'optional_tool_real_adapter_unavailable';
+  const message = 'optional tool has no qualified real adapter';
+  return {
+    capability_decisions: {
+      eligible: [{
+        skill: {
+          id: 'optional-tool-owner',
+          required_tools: [],
+          optional_tools: [toolId],
+        },
+        optional_tool_decisions: [{
+          tool_id: toolId,
+          status: 'unavailable',
+          reason_code: code,
+          message,
+        }],
+      }],
+      rejected: [],
+    },
+    capability_gaps: [{
+      capability_type: 'tool',
+      capability_id: toolId,
+      code,
+      message,
+    }],
+  };
+}
+
 async function claimedBrowserExecution(): Promise<{
   repository: ControlPlaneRepository;
   lease: ControlExecutionLease;
 }> {
   return claimedExecution(
     new Date(Date.now() + 60_000),
-    [planSteps[0]!, browserCaptureStep()],
+    [planSteps[0]!, browserCaptureStep(), optionalToolOwnerStep()],
     {
       deliverable_type: 'competitive_analysis_report',
       evidence_requirements: [{
@@ -955,6 +1027,7 @@ async function claimedBrowserExecution(): Promise<{
         minimumCount: 1,
         required: true,
       }],
+      ...frozenOptionalToolPlan('playwright-page-capture'),
     },
   );
 }
@@ -1598,11 +1671,13 @@ test('engine preflight preserves a schema-valid empty Tool input without injecti
       taskId: string;
       evidence_requirements: EvidenceRequirement[];
       steps: CurrentPlanStep[];
+      optionalToolStepNos: Set<number>;
     }, researchGoal: string): Promise<Error | null>;
   };
   const error = await engine.preflight({
     taskId: 'task-empty-tool-input',
     evidence_requirements: [],
+    optionalToolStepNos: new Set<number>(),
     steps: [{
       ...planSteps[0]!,
       actor_id: 'aesthetic-quant-lab',
@@ -4914,6 +4989,285 @@ test('keeps a failing core Tool paused with retry and abort actions', async () =
   assert.equal(coreSteps[0]?.toolProvenance?.status, 'failed');
 });
 
+test('starts execution with frozen capability gaps and completes the text path with gaps', async () => {
+  const deliverables = new RecordingDeliverablesFake();
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]!],
+    unavailableOptionalToolPlan('playwright-page-capture'),
+  );
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new CountingRealLLM(),
+    deliverables,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed_with_gaps');
+  assert.equal(result.gapCount, 1);
+  assert.match(deliverables.calls[0]?.gaps[0] ?? '', /playwright-page-capture/);
+  assert.deepEqual(deliverables.calls[0]?.gapRefs, [{
+    key: 'capability:playwright-page-capture:optional_tool_real_adapter_unavailable',
+    stepNo: 0,
+  }]);
+  assert.equal((await repository.listExecutionSteps(lease.attemptId)).length, 1);
+});
+
+test('skips a frozen optional Playwright step as configuration drift after Registry rollback', async () => {
+  const { repository, lease } = await claimedBrowserExecution();
+  const browser = new BrowserCaptureAdapter([browserCaptureFixture(0)]);
+  const deliverables = new RecordingDeliverablesFake();
+  const result = await buildEngine(
+    repository,
+    new ToolRouter()
+      .register(new CountingRealTavilyAdapter())
+      .register(browser),
+    new CountingRealLLM(),
+    deliverables,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed_with_gaps');
+  assert.equal(result.gapCount, 1);
+  assert.equal(browser.calls, 0);
+  const browserStep = (await repository.listExecutionSteps(lease.attemptId))
+    .find(({ stepNo }) => stepNo === 2);
+  assert.equal(browserStep?.state, 'skipped');
+  assert.equal(browserStep?.failure?.kind, 'configuration');
+  assert.equal(browserStep?.failure?.toolTier, 'optional');
+  assert.deepEqual(browserStep?.toolProvenance?.gapSummary, {
+    count: 1,
+    keys: ['step:configuration'],
+    failuresHash: canonicalJsonHash(browserStep?.failure),
+  });
+  assert.deepEqual(deliverables.calls[0]?.gapRefs, [{
+    key: 'step:2:step:configuration',
+    stepNo: 2,
+  }]);
+});
+
+test('pauses a frozen optional Tool when its resolved input violates the Tool schema', async () => {
+  const optionalStep: CurrentPlanStep = {
+    ...planSteps[0]!,
+    step_no: 2,
+    step_name: '可选内部资料检索',
+    actor_id: 'ai-spider-search',
+    depends_on: [1],
+    input: { query: 'placeholder' },
+    input_bindings: [{
+      target_pointer: '/query',
+      source_step_no: 1,
+      source_pointer: '/results',
+    }],
+  };
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]!, optionalStep, optionalToolOwnerStep()],
+    frozenOptionalToolPlan('ai-spider-search'),
+  );
+  const adapter = new SuccessfulInternalAdapter();
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()).register(adapter),
+    new CountingRealLLM(),
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'paused');
+  assert.equal(result.failedStepNo, 2);
+  assert.equal(result.failure?.kind, 'schema');
+  assert.equal(result.failure?.toolTier, 'optional');
+  assert.equal(adapter.calls, 0);
+  const optionalExecution = (await repository.listExecutionSteps(lease.attemptId))
+    .find(({ stepNo }) => stepNo === 2);
+  assert.equal(optionalExecution?.state, 'failed');
+  assert.equal(optionalExecution?.toolProvenance?.gapSummary, undefined);
+});
+
+test('pauses a frozen optional Tool when its output violates the Tool schema', async () => {
+  const optionalStep: CurrentPlanStep = {
+    ...planSteps[0]!,
+    step_no: 2,
+    step_name: '可选内部资料检索',
+    actor_id: 'ai-spider-search',
+    depends_on: [1],
+    input: { query: 'competitor screenshots' },
+    input_bindings: [],
+  };
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]!, optionalStep, optionalToolOwnerStep()],
+    frozenOptionalToolPlan('ai-spider-search'),
+  );
+  const adapter = new InvalidInternalSchemaAdapter();
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()).register(adapter),
+    new CountingRealLLM(),
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'paused');
+  assert.equal(result.failedStepNo, 2);
+  assert.equal(result.failure?.kind, 'schema');
+  assert.equal(result.failure?.toolTier, 'optional');
+  assert.equal(adapter.calls, 1);
+  const optionalExecution = (await repository.listExecutionSteps(lease.attemptId))
+    .find(({ stepNo }) => stepNo === 2);
+  assert.equal(optionalExecution?.state, 'failed');
+  assert.equal(optionalExecution?.toolProvenance?.gapSummary, undefined);
+});
+
+test('keeps a shared Tool core when one actual Skill requires it and another treats it as optional', async () => {
+  const sharedToolStep: CurrentPlanStep = {
+    ...planSteps[0]!,
+    step_no: 2,
+    step_name: '共享内部资料检索',
+    actor_id: 'ai-spider-search',
+    depends_on: [1],
+    input: { query: 'competitor screenshots' },
+    input_bindings: [],
+  };
+  const requiredOwner = optionalToolOwnerStep();
+  const optionalOwner: CurrentPlanStep = {
+    ...optionalToolOwnerStep(4),
+    actor_id: 'competitive-web-research',
+  };
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]!, sharedToolStep, requiredOwner, optionalOwner],
+    {
+      capability_decisions: {
+        eligible: [
+          {
+            skill: {
+              id: requiredOwner.actor_id,
+              required_tools: ['ai-spider-search'],
+              optional_tools: [],
+            },
+            optional_tool_decisions: [],
+          },
+          {
+            skill: {
+              id: optionalOwner.actor_id,
+              required_tools: [],
+              optional_tools: ['ai-spider-search'],
+            },
+            optional_tool_decisions: [{ tool_id: 'ai-spider-search', status: 'available' }],
+          },
+        ],
+        rejected: [],
+      },
+      capability_gaps: [],
+    },
+  );
+  const result = await buildEngine(
+    repository,
+    new ToolRouter()
+      .register(new CountingRealTavilyAdapter())
+      .register(new FailingRealAdapter('internal_api')),
+    new CountingRealLLM(),
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'paused');
+  assert.equal(result.failedStepNo, 2);
+  assert.equal(result.failure?.toolTier, 'core');
+  const sharedExecution = (await repository.listExecutionSteps(lease.attemptId))
+    .find(({ stepNo }) => stepNo === 2);
+  assert.equal(sharedExecution?.state, 'failed');
+  assert.equal(sharedExecution?.toolProvenance?.gapSummary, undefined);
+});
+
+test('rejects an unrecognized optional page failure code instead of publishing a gap summary', async () => {
+  const optionalStep: CurrentPlanStep = {
+    ...planSteps[0]!,
+    step_no: 2,
+    step_name: '可选内部资料检索',
+    actor_id: 'ai-spider-search',
+    depends_on: [1],
+    input: { query: 'competitor screenshots' },
+    input_bindings: [],
+  };
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]!, optionalStep, optionalToolOwnerStep()],
+    frozenOptionalToolPlan('ai-spider-search'),
+  );
+  await assert.rejects(() => buildEngine(
+    repository,
+    new ToolRouter()
+      .register(new CountingRealTavilyAdapter())
+      .register(new FailingRealAdapter('internal_api', {
+        page_failures: [{
+          source_result_index: 0,
+          code: 'https://secret.example/failure',
+          sanitized_message: 'must not become a key',
+        }],
+      })),
+    new CountingRealLLM(),
+  ).execute({ lease, expectedModel: 'pinned-model' }), ExecutionAuthenticityError);
+
+  const optionalExecution = (await repository.listExecutionSteps(lease.attemptId))
+    .find(({ stepNo }) => stepNo === 2);
+  assert.equal(optionalExecution?.state, 'failed');
+  assert.equal(optionalExecution?.failure?.kind, 'authenticity');
+  assert.equal(optionalExecution?.toolProvenance?.gapSummary, undefined);
+  assert.equal((await repository.listAttempts(lease.taskId))[0]?.state, 'paused');
+});
+
+test('fails closed when a Playwright step has no frozen optional authorization', async () => {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]!, browserCaptureStep()],
+  );
+  const browser = new BrowserCaptureAdapter([browserCaptureFixture(0)]);
+  await assert.rejects(() => buildEngine(
+    repository,
+    new ToolRouter()
+      .register(new CountingRealTavilyAdapter())
+      .register(browser),
+    new CountingRealLLM(),
+  ).execute({ lease, expectedModel: 'pinned-model' }), ExecutionAuthenticityError);
+
+  assert.equal(browser.calls, 0);
+  assert.equal((await repository.listAttempts(lease.taskId))[0]?.state, 'paused');
+});
+
+test('adds partial Playwright page failures only after the visual publication commits', async () => {
+  const { repository, lease } = await claimedBrowserExecution();
+  const pageFailures = [{
+    source_result_index: 1,
+    requested_url: 'https://source.test/product-2',
+    code: 'login_required',
+    sanitized_message: 'page requires authentication',
+  }];
+  const result = await buildEngine(
+    repository,
+    new ToolRouter()
+      .register(new CountingRealTavilyAdapter())
+      .register(new BrowserCaptureAdapter(
+        [browserCaptureFixture(0)],
+        undefined,
+        pageFailures,
+      )),
+    new CountingRealLLM(),
+    new RecordingDeliverablesFake(),
+    undefined,
+    new TestOnlyPlaywrightSkillLoader(),
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed_with_gaps');
+  assert.equal(result.gapCount, 1);
+  const browserStep = (await repository.listExecutionSteps(lease.attemptId))
+    .find(({ stepNo }) => stepNo === 2);
+  assert.equal(browserStep?.state, 'succeeded');
+  assert.deepEqual(browserStep?.toolProvenance?.gapSummary, {
+    count: 1,
+    keys: ['1:login_required'],
+    failuresHash: canonicalJsonHash(pageFailures),
+  });
+  assert.doesNotMatch(JSON.stringify(browserStep?.toolProvenance?.gapSummary), /source\.test|authentication/);
+  const browserArtifacts = await repository.listArtifactsForAttempt(lease);
+  assert.ok(browserArtifacts.some(({ kind, state }) => kind === 'visual_asset' && state === 'SEALED'));
+});
+
 test('continues after an optional Tool failure and completes with a sanitized gap', async () => {
   const optionalSteps = [
     planSteps[0],
@@ -4923,8 +5277,9 @@ test('continues after an optional Tool failure and completes with a sanitized ga
       step_name: '可选内部资料检索',
       actor_id: 'ai-spider-search',
     },
-    planSteps[2],
-    planSteps[3],
+    optionalToolOwnerStep(),
+    { ...planSteps[2]!, step_no: 4, depends_on: [3] },
+    { ...planSteps[3]!, step_no: 5, depends_on: [4] },
   ];
   const { repository, lease } = await claimedExecution(
     new Date(Date.now() + 60_000),
@@ -4937,6 +5292,7 @@ test('continues after an optional Tool failure and completes with a sanitized ga
         minimumCount: 1,
         required: true,
       }],
+      ...frozenOptionalToolPlan('ai-spider-search'),
     },
     {
       task_type: 'user_research_planning',
@@ -4966,7 +5322,7 @@ test('continues after an optional Tool failure and completes with a sanitized ga
   assert.equal(result.gapCount, 1);
   assert.equal(result.deliverableArtifactId, 'deliverable-1');
   assert.equal(optionalAdapter.calls, 2);
-  assert.equal(llm.calls, 2);
+  assert.equal(llm.calls, 3);
   assert.equal(deliverables.calls.length, 1);
   const deliverableInput = deliverables.calls[0];
   if (!deliverableInput) assert.fail('current deliverable generation input must be recorded');
@@ -4975,7 +5331,7 @@ test('continues after an optional Tool failure and completes with a sanitized ga
   assert.ok(gap);
   assert.match(gap, /step\s*2|步骤\s*2/i);
   assert.match(gap, /ai-spider-search/);
-  assert.match(gap, /dependency unavailable/);
+  assert.match(gap, /page requires authentication/);
   assert.doesNotMatch(gap, /ToolInvocationError|\bat\s+LeaseExecutionEngine/);
 
   const steps = await repository.listExecutionSteps(lease.attemptId);
@@ -4985,11 +5341,24 @@ test('continues after an optional Tool failure and completes with a sanitized ga
   assert.equal(steps[1]?.failure?.toolTier, 'optional');
   assert.equal(steps[1]?.failure?.kind, 'network');
   assert.deepEqual(steps[1]?.failure?.page_failures, pageFailures);
+  assert.deepEqual(
+    (steps[1]?.toolProvenance?.gapSummary as { count: number; keys: string[] }).count,
+    1,
+  );
+  assert.deepEqual(
+    (steps[1]?.toolProvenance?.gapSummary as { count: number; keys: string[] }).keys,
+    ['0:login_required'],
+  );
+  assert.match(
+    String((steps[1]?.toolProvenance?.gapSummary as { failuresHash: string }).failuresHash),
+    /^sha256:[a-f0-9]{64}$/,
+  );
+  assert.doesNotMatch(JSON.stringify(steps[1]?.toolProvenance?.gapSummary), /example\.com|authentication/);
   assert.equal(steps[2]?.state, 'succeeded');
   assert.equal(steps[3]?.state, 'succeeded');
   assert.deepEqual(
     (await repository.listModelCalls(lease.attemptId)).map((call) => call.stage),
-    ['llm', 'reviewer'],
+    ['skill', 'llm', 'reviewer'],
   );
   assert.equal((await repository.getTaskDetail(lease.taskId))?.state, 'completed_with_gaps');
   assert.equal((await repository.listAttempts(lease.taskId))[0]?.state, 'completed');
@@ -5004,10 +5373,15 @@ test('does not skip an optional tool when lease is lost during artifact seal', a
       actor_id: 'ai-spider-search',
       depends_on: [1],
     },
-    planSteps[2],
-    planSteps[3],
+    optionalToolOwnerStep(),
+    { ...planSteps[2]!, step_no: 4, depends_on: [3] },
+    { ...planSteps[3]!, step_no: 5, depends_on: [4] },
   ];
-  const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), optionalSteps);
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    optionalSteps,
+    frozenOptionalToolPlan('ai-spider-search'),
+  );
   const originalSealArtifact = repository.sealArtifact.bind(repository);
   let sealCalls = 0;
   repository.sealArtifact = async (input) => {

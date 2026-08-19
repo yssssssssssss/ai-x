@@ -49,6 +49,7 @@ function skill(overrides: Partial<CapabilitySkillRegistryEntry> = {}): Capabilit
     inputs: ['research_goal'],
     outputs: ['competitive_analysis'],
     required_tools: ['tavily-web-search'],
+    optional_tools: [],
     risk_level: 'low',
     ...overrides,
   };
@@ -158,6 +159,71 @@ test('rejects unhealthy required tools and core tools without a qualified real a
 
   assert.deepEqual(reasonCodes(resolution.rejected[0]!), ['required_tool_unhealthy']);
   assert.deepEqual(reasonCodes(resolution.rejected[1]!), ['core_tool_real_adapter_unavailable']);
+});
+
+test('ignores draft optional tools and freezes active optional availability without rejecting the skill', () => {
+  const optionalTool = tool({
+    id: 'playwright-page-capture',
+    status: 'draft',
+    tier: 'optional',
+  });
+  const draft = resolveCapabilities(input({
+    skills: [skill({ optional_tools: [optionalTool.id] })],
+    tools: [tool(), optionalTool],
+  }));
+  assert.equal(draft.rejected.length, 0);
+  assert.deepEqual(draft.eligible[0]?.optional_tool_decisions, []);
+
+  const activeTool = { ...optionalTool, status: 'active' as const };
+  const available = resolveCapabilities(input({
+    skills: [skill({ optional_tools: [activeTool.id] })],
+    tools: [tool(), activeTool],
+    tool_states: [toolState(), toolState({
+      tool_id: activeTool.id,
+      real_adapter_qualified: true,
+    })],
+  }));
+  assert.equal(available.rejected.length, 0);
+  assert.deepEqual(available.eligible[0]?.optional_tool_decisions, [{
+    tool_id: activeTool.id,
+    status: 'available',
+  }]);
+});
+
+test('records one sanitized unavailable decision for each active optional tool failure mode', () => {
+  const optionalTool = tool({
+    id: 'playwright-page-capture',
+    status: 'active',
+    tier: 'optional',
+  });
+  const cases = [
+    {
+      states: [toolState()],
+      code: 'optional_tool_health_unknown',
+    },
+    {
+      states: [toolState(), toolState({ tool_id: optionalTool.id, health: 'unhealthy' })],
+      code: 'optional_tool_unhealthy',
+    },
+    {
+      states: [toolState(), toolState({ tool_id: optionalTool.id, real_adapter_qualified: false })],
+      code: 'optional_tool_real_adapter_unavailable',
+    },
+  ] as const;
+
+  for (const failureCase of cases) {
+    const resolution = resolveCapabilities(input({
+      skills: [skill({ optional_tools: [optionalTool.id] })],
+      tools: [tool(), optionalTool],
+      tool_states: failureCase.states,
+    }));
+    assert.equal(resolution.rejected.length, 0);
+    const [decision] = resolution.eligible[0]?.optional_tool_decisions ?? [];
+    assert.equal(decision?.tool_id, optionalTool.id);
+    assert.equal(decision?.status, 'unavailable');
+    assert.equal(decision?.reason_code, failureCase.code);
+    assert.ok(decision?.message);
+  }
 });
 
 test('keeps a skill eligible when missing inputs can become PendingInput records', () => {
@@ -294,6 +360,7 @@ test('active capability loader preserves native declarations and normalizes KB a
   assert.deepEqual(nativeSkill?.inputs, ['research_goal']);
   assert.deepEqual(nativeSkill?.outputs, ['competitive_analysis']);
   assert.deepEqual(nativeSkill?.required_tools, ['tavily-web-search']);
+  assert.deepEqual(nativeSkill?.optional_tools, ['playwright-page-capture']);
   assert.deepEqual(appScreenshotSkill?.inputs, ['research_goal', 'competitor_screenshots']);
   assert.deepEqual(appScreenshotSkill?.multiple_visual_inputs, ['competitor_screenshots']);
   assert.deepEqual(appScreenshotSkill?.required_tools, [
@@ -306,6 +373,7 @@ test('active capability loader preserves native declarations and normalizes KB a
   assert.deepEqual(knowledgeBaseSkill?.inputs, []);
   assert.deepEqual(knowledgeBaseSkill?.outputs, []);
   assert.deepEqual(knowledgeBaseSkill?.required_tools, []);
+  assert.deepEqual(knowledgeBaseSkill?.optional_tools, []);
 });
 
 test('production capability registry preserves the valid M1 secondary task routes', () => {
@@ -364,6 +432,7 @@ test('capability loader preserves inactive skills for explicit resolver rejectio
       tool_states: [],
     }));
     assert.deepEqual(skills[0]?.inputs, []);
+    assert.deepEqual(skills[0]?.optional_tools, []);
     assert.deepEqual(reasonCodes(resolution.rejected[0]!), ['skill_inactive']);
   } finally {
     setConfigRoot(realRoot);

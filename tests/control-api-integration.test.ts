@@ -662,6 +662,7 @@ function planningResult(
         inputs: ['business_domain'],
         outputs: ['competitive_analysis'],
         required_tools: ['tavily-web-search'],
+        optional_tools: [],
         risk_level: 'low' as const,
       },
       reasons: requireBusinessDomainInput
@@ -680,6 +681,7 @@ function planningResult(
           }]
         : [],
       required_approvals: [],
+      optional_tool_decisions: [],
     }],
     rejected: [],
   };

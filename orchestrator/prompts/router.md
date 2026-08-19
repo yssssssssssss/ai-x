@@ -9,5 +9,6 @@
 规则:
 - 优先靠 `when_to_use` 语义匹配,不靠字段硬匹配。
 - MVP skill 仅数十个,一次读全部摘要直接选,不做向量召回。
-- tool 不在此选;tool 由 skill 的 `required_tools` 声明,并经 tool-registry 权限/风险预筛。
+- tool 不在此选;tool 由 skill 的 `required_tools` / `optional_tools` 声明,并经 tool-registry 权限/风险预筛。required 不可用会否决 skill;optional 不参与 skill 资格否决。
+- draft/deprecated optional tool 不进入决策且不制造 gap;active optional tool 的 available/unavailable 结论由 Capability Resolution 决定,router 不得猜测。
 - 只返回 active 能力;draft/deprecated 不参与。

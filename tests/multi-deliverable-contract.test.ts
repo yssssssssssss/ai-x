@@ -164,6 +164,7 @@ const CONTRACTS: readonly DeliverableContractFixture[] = [{
       priority: 'P1',
       statement: 'Prototype a guided setup path',
     }],
+    visualEvidence: [],
     screenshotComparisons: [{
       id: 'screenshot-1',
       dimension: 'onboarding',
@@ -453,8 +454,9 @@ test('competitive synthesis and review contracts permit an evidence-backed repor
   const contract = CONTRACTS.find(({ deliverableId }) => deliverableId === 'competitive_analysis_report');
   assert.ok(contract);
   const prompt = readFileSync(join(ROOT, contract.promptPath), 'utf8');
-  assert.match(prompt, /without verified visual assets.*empty screenshotComparisons/iu);
-  assert.match(prompt, /exactly two unique assetIds.*original.*annotation.*exact original/iu);
+  assert.match(prompt, /visualEvidence.*screenshot.*public_source/iu);
+  assert.match(prompt, /screenshotComparisons.*only.*original.*annotation.*exact original/iu);
+  assert.match(prompt, /without.*displayable.*empty visualEvidence.*screenshotComparisons/iu);
   assert.match(prompt, /input-provenance boundary.*does not locate, prove, or substantiate.*research finding/iu);
 
   const rubric = asRecord(
@@ -466,12 +468,20 @@ test('competitive synthesis and review contracts permit an evidence-backed repor
     .map((dimension) => asRecord(dimension, 'competitive review dimension'))
     .find((dimension) => dimension.id === 'visual_quality');
   assert.ok(visualQuality);
-  assert.match(String(visualQuality.criterion), /without verified visual assets.*empty screenshotComparisons/iu);
-  assert.match(String(visualQuality.criterion), /exactly two unique Asset ids.*original-to-annotation.*exact lineage/iu);
+  assert.match(String(visualQuality.criterion), /visualEvidence.*screenshot.*public_source/iu);
+  assert.match(String(visualQuality.criterion), /screenshot comparison.*original-to-annotation.*exact lineage/iu);
+  assert.match(String(visualQuality.criterion), /without.*displayable.*empty visualEvidence.*screenshotComparisons/iu);
   assert.match(String(visualQuality.criterion), /input-provenance boundary.*does not locate or substantiate.*research finding/iu);
 
   const schemaPath = join(ROOT, contract.schemaPath);
   const validator = new SchemaValidator();
+  const historicalPayload = structuredClone(contract.payload);
+  delete historicalPayload.visualEvidence;
+  assert.deepEqual(
+    validator.validateFile(schemaPath, historicalPayload),
+    [],
+    'visualEvidence must remain optional for historical Deliverables',
+  );
   for (const assetIds of [
     ['asset-original'],
     ['asset-original', 'asset-original'],
@@ -557,6 +567,35 @@ function generationInput(contract: DeliverableContractFixture): CurrentDeliverab
     gaps: [],
     expectedModel: 'fixture-model',
   };
+}
+
+function freezePlaywrightDecision(
+  input: CurrentDeliverableGenerateInput,
+  status: 'available' | 'unavailable',
+): void {
+  const reasonCode = 'optional_tool_real_adapter_unavailable';
+  input.plan.plan.capability_decisions = {
+    eligible: [{
+      skill: { optional_tools: ['playwright-page-capture'] },
+      optional_tool_decisions: [{
+        tool_id: 'playwright-page-capture',
+        status,
+        ...(status === 'unavailable' ? { reason_code: reasonCode } : {}),
+      }],
+    }],
+    rejected: [],
+  };
+  input.plan.plan.capability_gaps = status === 'unavailable'
+    ? [{
+        capability_type: 'tool',
+        capability_id: 'playwright-page-capture',
+        code: reasonCode,
+        message: 'optional browser capture is unavailable',
+      }]
+    : [];
+  input.plan.plan.steps = status === 'available'
+    ? [{ step_no: 2, actor_id: 'playwright-page-capture' }]
+    : [];
 }
 
 for (const contract of PROFESSIONAL_CONTRACTS) {
@@ -1038,7 +1077,164 @@ function verifiedRawSourceAsset(
   return rehashVisualManifest(raw);
 }
 
-test('competitive generation permits an empty screenshot section when no visual inventory exists', async () => {
+function verifiedBrowserCaptureAsset(
+  contract: DeliverableContractFixture,
+  assetId: string,
+  sourcePageUrl: string,
+): VerifiedVisualAsset {
+  const base = verifiedInventoryAsset(contract, assetId);
+  const manifestDraft = {
+    ...base.manifest,
+    version: 'visual-asset-manifest-v2' as const,
+    source: {
+      kind: 'browser_capture' as const,
+      artifactId: 'artifact-browser-tool-output',
+      artifactContentSha256: `sha256:${'d'.repeat(64)}`,
+      jsonPointer: '/output/captures/0',
+      attachmentId: 'capture-1',
+      sourcePageUrl,
+      finalUrl: sourcePageUrl,
+      pageTitle: 'Verified AI shopping assistant page',
+      capturedAt: '2026-08-20T02:00:00.000Z',
+      captureMode: 'element_screenshot' as const,
+      selector: '#shopping-assistant',
+      viewport: { width: 1440, height: 900 },
+    },
+  };
+  const { manifestHash: _manifestHash, ...manifestWithoutHash } = manifestDraft;
+  const manifest = {
+    ...manifestDraft,
+    manifestHash: canonicalFixtureHash(manifestWithoutHash),
+  };
+  const manifestBytes = Buffer.from(JSON.stringify(manifest, null, 2));
+  return {
+    ...base,
+    artifact: { ...base.artifact, schemaVersion: 'visual-asset-v1' },
+    manifest,
+    manifestArtifact: {
+      ...base.manifestArtifact,
+      schemaVersion: 'visual-asset-manifest-v2',
+      contentSha256: `sha256:${createHash('sha256').update(manifestBytes).digest('hex')}`,
+      byteSize: manifestBytes.byteLength,
+    },
+  } as VerifiedVisualAsset;
+}
+
+function visualEvidenceEntries(asset: VerifiedVisualAsset, sourcePageUrl: string): EvidenceManifest['entries'] {
+  return [{
+    id: 'E-public',
+    kind: 'tool_output',
+    evidenceClass: 'public_source',
+    toolId: 'tavily-web-search',
+    toolTier: 'core',
+    artifactId: 'artifact-public-source',
+    artifactContentSha256: `sha256:${'e'.repeat(64)}`,
+    jsonPointer: '/output/results/0',
+    sourceUrl: sourcePageUrl,
+    stepNo: 1,
+    toolProof: {
+      implementationId: 'tavily',
+      executionMode: 'real',
+      redactedOutputHash: `sha256:${'f'.repeat(64)}`,
+    },
+    sensitivity: 'public',
+    redaction: 'masked',
+  }, {
+    id: 'E-screenshot',
+    kind: 'screenshot',
+    evidenceClass: 'screenshot',
+    toolId: 'playwright-page-capture',
+    toolTier: 'optional',
+    artifactId: asset.manifestArtifact.id,
+    artifactContentSha256: asset.manifestArtifact.contentSha256!,
+    jsonPointer: '/assetId',
+    sourceUrl: sourcePageUrl,
+    stepNo: 2,
+    sensitivity: 'public',
+    redaction: 'none',
+  }];
+}
+
+test('competitive generation accepts screenshot and public-source Evidence for the same canonical URL', async () => {
+  const contract = PROFESSIONAL_CONTRACTS.find(({ deliverableId }) => deliverableId === 'competitive_analysis_report');
+  assert.ok(contract);
+  const sourcePageUrl = 'https://source.test/ai-shopping-assistant';
+  const publicSourceUrl = 'https://SOURCE.TEST:443/ai-shopping-assistant#overview';
+  const browserAsset = verifiedBrowserCaptureAsset(contract, 'asset-browser-capture', sourcePageUrl);
+  const payload = structuredClone(contract.payload);
+  payload.screenshotComparisons = [];
+  payload.visualEvidence = [{
+    id: 'visual-evidence-1',
+    sampleIds: ['sample-a'],
+    dimension: 'onboarding',
+    assetId: browserAsset.artifact.id,
+    evidenceIds: ['E-screenshot', 'E-public'],
+    caption: 'Verified shopping-assistant entry point',
+  }];
+  const llm = new ContractGenerationLLM(payload);
+  let writes = 0;
+  const service = generationServiceFor(contract, llm, () => { writes += 1; });
+  const input = generationInput(contract);
+  input.evidenceManifest.value.entries = visualEvidenceEntries(browserAsset, sourcePageUrl)
+    .map((entry) => entry.evidenceClass === 'public_source'
+      ? { ...entry, sourceUrl: publicSourceUrl }
+      : entry);
+
+  const result = await service.generate(Object.assign(input, { visualAssets: [browserAsset] }));
+
+  const context = asRecord(llm.calls[0]?.context, 'synthesis context');
+  assert.deepEqual(context.displayableVisualInventory, [{
+    assetId: browserAsset.artifact.id,
+    sourceType: 'browser_capture',
+    sourcePageUrl,
+    finalUrl: sourcePageUrl,
+    pageTitle: 'Verified AI shopping assistant page',
+    capturedAt: '2026-08-20T02:00:00.000Z',
+    captureMode: 'element_screenshot',
+    width: 1,
+    height: 1,
+    screenshotEvidenceIds: ['E-screenshot'],
+    publicSourceEvidenceIds: ['E-public'],
+  }]);
+  assert.deepEqual((result.deliverable.payload as Record<string, unknown>).visualEvidence, payload.visualEvidence);
+  assert.equal(JSON.stringify(context).includes('iVBOR'), false);
+  assert.equal(llm.calls.length, 1);
+  assert.equal(writes, 1);
+});
+
+test('competitive generation rejects browser visualEvidence when the public-source URL does not match', async () => {
+  const contract = PROFESSIONAL_CONTRACTS.find(({ deliverableId }) => deliverableId === 'competitive_analysis_report');
+  assert.ok(contract);
+  const sourcePageUrl = 'https://source.test/ai-shopping-assistant';
+  const browserAsset = verifiedBrowserCaptureAsset(contract, 'asset-browser-capture-mismatch', sourcePageUrl);
+  const payload = structuredClone(contract.payload);
+  payload.screenshotComparisons = [];
+  payload.visualEvidence = [{
+    id: 'visual-evidence-1',
+    sampleIds: ['sample-a'],
+    dimension: 'onboarding',
+    assetId: browserAsset.artifact.id,
+    evidenceIds: ['E-screenshot', 'E-public'],
+    caption: 'Must not survive a source mismatch',
+  }];
+  const llm = new ContractGenerationLLM(payload);
+  let writes = 0;
+  const service = generationServiceFor(contract, llm, () => { writes += 1; });
+  const input = generationInput(contract);
+  input.evidenceManifest.value.entries = visualEvidenceEntries(
+    browserAsset,
+    'https://source.test/different-page',
+  );
+
+  await assert.rejects(
+    () => service.generate(Object.assign(input, { visualAssets: [browserAsset] })),
+    /browser.*Asset.*screenshot.*public-source|dual Evidence/i,
+  );
+  assert.equal(llm.calls.length, 0);
+  assert.equal(writes, 0);
+});
+
+test('competitive generation keeps the draft or legacy text path when no Playwright decision exists', async () => {
   const contract = PROFESSIONAL_CONTRACTS.find(({ deliverableId }) => deliverableId === 'competitive_analysis_report');
   assert.ok(contract);
   const payload = structuredClone(contract.payload);
@@ -1055,6 +1251,151 @@ test('competitive generation permits an empty screenshot section when no visual 
   );
   assert.equal(llm.calls.length, 1);
   assert.equal(writes, 1);
+});
+
+test('competitive generation rejects an empty visual inventory when frozen Playwright has no matching gap', async () => {
+  const contract = PROFESSIONAL_CONTRACTS.find(({ deliverableId }) => deliverableId === 'competitive_analysis_report');
+  assert.ok(contract);
+  const payload = structuredClone(contract.payload);
+  payload.visualEvidence = [];
+  payload.screenshotComparisons = [];
+  const llm = new ContractGenerationLLM(payload);
+  let writes = 0;
+  const service = generationServiceFor(contract, llm, () => { writes += 1; });
+  const input = generationInput(contract);
+  freezePlaywrightDecision(input, 'available');
+  input.gapRefs = [{ key: 'system:chart:renderer_unavailable', stepNo: 2 }];
+
+  await assert.rejects(
+    () => service.generate(Object.assign(input, { visualAssets: [] })),
+    /playwright.*visual gap|visual gap.*playwright/i,
+  );
+  assert.equal(llm.calls.length, 0);
+  assert.equal(writes, 0);
+});
+
+test('competitive generation accepts empty visuals only with a gap bound to frozen Playwright', async () => {
+  const contract = PROFESSIONAL_CONTRACTS.find(({ deliverableId }) => deliverableId === 'competitive_analysis_report');
+  assert.ok(contract);
+  const payload = structuredClone(contract.payload);
+  payload.visualEvidence = [];
+  payload.screenshotComparisons = [];
+  const llm = new ContractGenerationLLM(payload);
+  const service = generationServiceFor(contract, llm, () => {});
+  const input = generationInput(contract);
+  freezePlaywrightDecision(input, 'available');
+  input.gaps = ['page requires authentication'];
+  input.gapRefs = [{ key: 'step:2:0:login_required', stepNo: 2 }];
+
+  const result = await service.generate(Object.assign(input, { visualAssets: [] }));
+
+  assert.deepEqual((result.deliverable.payload as Record<string, unknown>).visualEvidence, []);
+  assert.equal(llm.calls.length, 1);
+});
+
+test('competitive generation does not let another page gap mask a browser Asset missing dual Evidence', async () => {
+  const contract = PROFESSIONAL_CONTRACTS.find(({ deliverableId }) => deliverableId === 'competitive_analysis_report');
+  assert.ok(contract);
+  const sourcePageUrl = 'https://source.test/ai-shopping-assistant';
+  const browserAsset = verifiedBrowserCaptureAsset(
+    contract,
+    'asset-browser-capture-missing-public-source',
+    sourcePageUrl,
+  );
+  const payload = structuredClone(contract.payload);
+  payload.visualEvidence = [];
+  payload.screenshotComparisons = [];
+  const llm = new ContractGenerationLLM(payload);
+  let writes = 0;
+  const service = generationServiceFor(contract, llm, () => { writes += 1; });
+  const input = generationInput(contract);
+  freezePlaywrightDecision(input, 'available');
+  input.evidenceManifest.value.entries = visualEvidenceEntries(browserAsset, sourcePageUrl)
+    .filter(({ evidenceClass }) => evidenceClass === 'screenshot');
+  input.gaps = ['second page requires authentication'];
+  input.gapRefs = [{ key: 'step:2:1:login_required', stepNo: 2 }];
+
+  await assert.rejects(
+    () => service.generate(Object.assign(input, { visualAssets: [browserAsset] })),
+    /browser.*Asset.*screenshot.*public-source|dual Evidence/i,
+  );
+  assert.equal(llm.calls.length, 0);
+  assert.equal(writes, 0);
+});
+
+for (const invalidGapRef of [{
+  label: 'forged page failure code',
+  key: 'step:2:0:not_a_page_failure',
+  stepNo: 2,
+}, {
+  label: 'mismatched structured step number',
+  key: 'step:2:0:login_required',
+  stepNo: 3,
+}]) {
+  test(`competitive generation rejects ${invalidGapRef.label} as a Playwright visual gap`, async () => {
+    const contract = PROFESSIONAL_CONTRACTS.find(({ deliverableId }) => deliverableId === 'competitive_analysis_report');
+    assert.ok(contract);
+    const payload = structuredClone(contract.payload);
+    payload.visualEvidence = [];
+    payload.screenshotComparisons = [];
+    const llm = new ContractGenerationLLM(payload);
+    let writes = 0;
+    const service = generationServiceFor(contract, llm, () => { writes += 1; });
+    const input = generationInput(contract);
+    freezePlaywrightDecision(input, 'available');
+    input.gapRefs = [{ key: invalidGapRef.key, stepNo: invalidGapRef.stepNo }];
+
+    await assert.rejects(
+      () => service.generate(Object.assign(input, { visualAssets: [] })),
+      /playwright.*visual gap|visual gap.*playwright/i,
+    );
+    assert.equal(llm.calls.length, 0);
+    assert.equal(writes, 0);
+  });
+}
+
+test('competitive generation accepts the exact frozen unavailable Playwright capability gap', async () => {
+  const contract = PROFESSIONAL_CONTRACTS.find(({ deliverableId }) => deliverableId === 'competitive_analysis_report');
+  assert.ok(contract);
+  const payload = structuredClone(contract.payload);
+  payload.visualEvidence = [];
+  payload.screenshotComparisons = [];
+  const llm = new ContractGenerationLLM(payload);
+  const service = generationServiceFor(contract, llm, () => {});
+  const input = generationInput(contract);
+  freezePlaywrightDecision(input, 'unavailable');
+  input.gaps = ['optional browser capture is unavailable'];
+  input.gapRefs = [{
+    key: 'capability:playwright-page-capture:optional_tool_real_adapter_unavailable',
+    stepNo: 0,
+  }];
+
+  const result = await service.generate(Object.assign(input, { visualAssets: [] }));
+
+  assert.deepEqual((result.deliverable.payload as Record<string, unknown>).visualEvidence, []);
+  assert.equal(llm.calls.length, 1);
+});
+
+test('competitive generation rejects duplicate dimensionMatrix dimensions', async () => {
+  const contract = PROFESSIONAL_CONTRACTS.find(({ deliverableId }) => deliverableId === 'competitive_analysis_report');
+  assert.ok(contract);
+  const payload = structuredClone(contract.payload);
+  payload.visualEvidence = [];
+  payload.screenshotComparisons = [];
+  payload.dimensionMatrix = [
+    ...(payload.dimensionMatrix as unknown[]),
+    structuredClone((payload.dimensionMatrix as unknown[])[0]),
+  ];
+  const llm = new ContractGenerationLLM(payload);
+  let writes = 0;
+  const service = generationServiceFor(contract, llm, () => { writes += 1; });
+
+  await assert.rejects(
+    () => service.generate(Object.assign(generationInput(contract), { visualAssets: [] })),
+    /dimensionMatrix.*unique|duplicate.*dimension/i,
+  );
+  assert.equal(llm.calls.length, 3);
+  assert.equal(writes, 0);
 });
 
 test('competitive generation rejects screenshot references when no visual inventory exists', async () => {
@@ -1168,18 +1509,23 @@ test('design annotatedScreenshots require an annotation whose derivedFrom is the
   assert.equal(validWrites, 1);
 });
 
-test('raw source visual inventory items fail before deliverable LLM invocation or sealing', async () => {
+test('tool-artifact originals remain valid inventory but cannot become visualEvidence without dual Evidence', async () => {
   const contract = PROFESSIONAL_CONTRACTS.find(({ deliverableId }) => deliverableId === 'competitive_analysis_report');
   assert.ok(contract);
   const rawSource = verifiedRawSourceAsset(contract, 'asset-raw-source');
-  const llm = new ContractGenerationLLM(contract.payload);
+  const payload = structuredClone(contract.payload);
+  payload.visualEvidence = [];
+  payload.screenshotComparisons = [];
+  const llm = new ContractGenerationLLM(payload);
   let writes = 0;
   const service = generationServiceFor(contract, llm, () => { writes += 1; });
 
-  await assert.rejects(
-    () => service.generate(Object.assign(generationInput(contract), { visualAssets: [rawSource] })),
-    /raw|source|visual.*role|inventory/i,
-  );
-  assert.equal(llm.calls.length, 0);
-  assert.equal(writes, 0);
+  const result = await service.generate(Object.assign(
+    generationInput(contract),
+    { visualAssets: [rawSource] },
+  ));
+
+  assert.deepEqual((result.deliverable.payload as Record<string, unknown>).visualEvidence, []);
+  assert.equal(llm.calls.length, 1);
+  assert.equal(writes, 1);
 });

@@ -14,6 +14,7 @@ import {
 } from '../evidence/evidence-service.ts';
 import { ReportEvidenceValidator } from '../evidence/report-evidence-validator.ts';
 import type { ReportTemplateSectionId } from '../runtime/config-loader.ts';
+import { sameBrowserSourceUrl } from '../runtime/public-web-access-policy.ts';
 import { SchemaValidator } from '../schema/validator.ts';
 import {
   chartTableAlternative,
@@ -82,6 +83,7 @@ export interface ReportImageBlock {
   assetRef: ReportAssetReference;
   caption: string;
   altText: string;
+  evidenceIds?: string[];
 }
 
 export interface ReportImageComparisonBlock {
@@ -91,6 +93,7 @@ export interface ReportImageComparisonBlock {
   afterAssetRef: ReportAssetReference;
   caption: string;
   altText: string;
+  evidenceIds?: string[];
 }
 
 export interface ReportChartBlock {
@@ -453,7 +456,10 @@ function assertCompositionInput(input: ComposeReportDocumentInput): {
   const visualAssetIds = new Set<string>();
   const visualRoles = new Map<string, 'original' | 'annotation'>();
   for (const [index, asset] of input.visualAssets.entries()) {
-    assertVerifiedVisualAsset(asset, binding, `Visual Asset ${index + 1}`);
+    assertVerifiedVisualAsset(asset, binding, `Visual Asset ${index + 1}`, [
+      'visual-asset-manifest-v1',
+      'visual-asset-manifest-v2',
+    ]);
     if (asset.manifest.mediaType === 'image/svg+xml') {
       fail(`Visual Asset ${asset.artifact.id} SVG must be supplied through a verified Chart`);
     }
@@ -465,7 +471,11 @@ function assertCompositionInput(input: ComposeReportDocumentInput): {
     if (visualReferences.has(key)) fail(`Visual Asset reference ${asset.artifact.id} must be unique`);
     visualReferences.set(key, asset);
     if (
-      asset.manifest.source.kind === 'user_upload'
+      (
+        asset.manifest.source.kind === 'user_upload'
+        || asset.manifest.source.kind === 'tool_artifact'
+        || asset.manifest.source.kind === 'browser_capture'
+      )
       && asset.manifest.derivedFrom === null
       && asset.manifest.derivation === null
     ) {
@@ -710,7 +720,10 @@ function professionalSectionBlocks(
       );
       const differences = payloadRecords(payload, 'differences');
       const matrixRows = payloadRecords(payload, 'dimensionMatrix');
-      const matrixDimensions = new Set(matrixRows.map((row) => payloadString(row, 'dimension')));
+      assertUnique(
+        matrixRows.map((row) => payloadString(row, 'dimension')),
+        'competitive dimensionMatrix dimension',
+      );
       const matrix = matrixRows.map((row, rowIndex): ReportFactBlock => {
         const dimension = payloadString(row, 'dimension');
         const values = payloadRecords(row, 'values');
@@ -737,28 +750,29 @@ function professionalSectionBlocks(
           evidenceIds,
         };
       });
-      const crossDimensionDifferences = differences.filter(
-        (difference) => !matrixDimensions.has(payloadString(difference, 'dimension')),
-      );
-      if (crossDimensionDifferences.length === 0) return matrix;
       return [...matrix, {
         id: 'competitive-cross-dimension-synthesis',
         type: 'fact',
-        text: `【跨维度综合】\n${crossDimensionDifferences.map((difference) => (
+        text: `【跨维度综合】\n${differences.map((difference) => (
           `${payloadString(difference, 'dimension')}：${payloadString(difference, 'statement')}`
         )).join('\n')}`,
-        evidenceIds: [...new Set(crossDimensionDifferences.flatMap(
+        evidenceIds: [...new Set(differences.flatMap(
           (difference) => payloadStrings(difference, 'evidenceIds'),
         ))],
       }];
     }
     if (sectionId === 'visual-evidence') {
+      const visualEvidence = payloadRecords(payload, 'visualEvidence');
       const comparisons = payloadRecords(payload, 'screenshotComparisons');
       const assetsById = new Map(input.visualAssets.map((asset) => [asset.artifact.id, asset]));
       const roles = new Map<string, 'original' | 'annotation'>();
       for (const asset of input.visualAssets) {
         if (
-          asset.manifest.source.kind === 'user_upload'
+          (
+            asset.manifest.source.kind === 'user_upload'
+            || asset.manifest.source.kind === 'tool_artifact'
+            || asset.manifest.source.kind === 'browser_capture'
+          )
           && asset.manifest.derivedFrom === null
           && asset.manifest.derivation === null
         ) {
@@ -789,13 +803,80 @@ function professionalSectionBlocks(
           fail(`Competitive annotation Asset ${asset.artifact.id} has invalid exact original lineage`);
         }
       }
-      if (comparisons.length === 0) {
-        if (input.visualAssets.length > 0) {
-          fail('Competitive screenshot comparisons are required for a non-empty verified visual inventory');
-        }
-        return [];
+      const evidenceEntries = new Map(
+        input.evidenceManifest.value.entries.map((entry) => [entry.id, entry]),
+      );
+      const displayableById = new Map(input.visualAssets.flatMap((asset) => {
+        const source = asset.manifest.source;
+        if (roles.get(asset.artifact.id) !== 'original' || source.kind !== 'browser_capture') return [];
+        const screenshotEvidenceIds = input.evidenceManifest.value.entries.flatMap((entry) => (
+          entry.kind === 'screenshot'
+          && entry.evidenceClass === 'screenshot'
+          && entry.artifactId === asset.manifestArtifact.id
+          && entry.artifactContentSha256 === asset.manifestArtifact.contentSha256
+          && entry.jsonPointer === '/assetId'
+          && entry.sourceUrl === source.sourcePageUrl
+            ? [entry.id]
+            : []
+        ));
+        const publicSourceEvidenceIds = input.evidenceManifest.value.entries.flatMap((entry) => (
+          entry.evidenceClass === 'public_source'
+          && typeof entry.sourceUrl === 'string'
+          && sameBrowserSourceUrl(entry.sourceUrl, source.sourcePageUrl)
+            ? [entry.id]
+            : []
+        ));
+        return screenshotEvidenceIds.length > 0 && publicSourceEvidenceIds.length > 0
+          ? [[asset.artifact.id, { asset, screenshotEvidenceIds, publicSourceEvidenceIds }] as const]
+          : [];
+      }));
+      if (displayableById.size > 0 && visualEvidence.length === 0) {
+        fail('Competitive visualEvidence must select at least one displayable browser capture');
       }
-      return comparisons.map((comparison, comparisonIndex) => {
+      const sampleIds = new Set(
+        payloadRecords(payload, 'competitorSamples').map((sample) => payloadString(sample, 'id')),
+      );
+      const dimensions = new Set(
+        payloadRecords(payload, 'dimensionMatrix').map((row) => payloadString(row, 'dimension')),
+      );
+      const usedVisualAssetIds = new Set<string>();
+      const imageBlocks = visualEvidence.map((item, index): ReportImageBlock => {
+        const assetId = payloadString(item, 'assetId');
+        const evidenceIds = payloadStrings(item, 'evidenceIds');
+        const itemSampleIds = payloadStrings(item, 'sampleIds');
+        const dimension = payloadString(item, 'dimension');
+        const displayable = displayableById.get(assetId);
+        const allowedEvidenceIds = new Set([
+          ...(displayable?.screenshotEvidenceIds ?? []),
+          ...(displayable?.publicSourceEvidenceIds ?? []),
+        ]);
+        if (
+          !displayable
+          || usedVisualAssetIds.has(assetId)
+          || itemSampleIds.length === 0
+          || itemSampleIds.some((sampleId) => !sampleIds.has(sampleId))
+          || !dimensions.has(dimension)
+          || !displayable.screenshotEvidenceIds.some((evidenceId) => evidenceIds.includes(evidenceId))
+          || !displayable.publicSourceEvidenceIds.some((evidenceId) => evidenceIds.includes(evidenceId))
+          || evidenceIds.some((evidenceId) => !evidenceEntries.has(evidenceId))
+          || evidenceIds.some((evidenceId) => !allowedEvidenceIds.has(evidenceId))
+        ) {
+          fail('Competitive visualEvidence has an invalid Asset, sample, dimension, or dual-Evidence binding');
+        }
+        usedVisualAssetIds.add(assetId);
+        const source = displayable.asset.manifest.source;
+        if (source.kind !== 'browser_capture') fail('Competitive visualEvidence source drifted');
+        const sourceDomain = new URL(source.sourcePageUrl).hostname;
+        return {
+          id: `competitive-visual-evidence-${index + 1}`,
+          type: 'image',
+          assetRef: assetReference(displayable.asset),
+          caption: `${payloadString(item, 'caption')} · ${sourceDomain} · ${source.capturedAt}`,
+          altText: `${dimension} visual evidence captured from ${sourceDomain}.`,
+          evidenceIds,
+        };
+      });
+      const comparisonBlocks = comparisons.map((comparison, comparisonIndex): ReportImageComparisonBlock => {
         const assetIds = payloadStrings(comparison, 'assetIds');
         if (assetIds.length !== 2 || assetIds[0] === assetIds[1]) {
           fail('Competitive screenshot comparison requires exactly one unique original/annotation pair');
@@ -825,6 +906,17 @@ function professionalSectionBlocks(
           altText: `Original ${payloadString(comparison, 'dimension')} screenshot with an input-provenance boundary that does not locate or substantiate a research finding.`,
         };
       });
+      const chartBlocks = input.charts.map(({ spec, specHash, table, asset }, index): ReportChartBlock => ({
+        id: `chart-${index + 1}`,
+        type: 'chart',
+        chartRef: { chartId: spec.chartId, ...assetReference(asset) },
+        specHash,
+        spec: structuredClone(spec),
+        table: structuredClone(table),
+        caption: spec.title,
+        altText: chartAltText(spec),
+      }));
+      return [...imageBlocks, ...comparisonBlocks, ...chartBlocks];
     }
     if (sectionId === 'comparison') {
       return [{
@@ -1094,6 +1186,7 @@ function composeExecutiveSummary(deliverable: ResearchDeliverableEnvelope<unknow
 function sourceCaption(asset: VerifiedVisualAsset, index: number): string {
   if (asset.manifest.source.kind === 'user_upload') return asset.manifest.source.fileName;
   if (asset.manifest.source.kind === 'tool_artifact') return `Verified source visual ${index + 1}`;
+  if (asset.manifest.source.kind === 'browser_capture') return asset.manifest.source.pageTitle;
   return `Verified derived visual ${index + 1}`;
 }
 
@@ -1107,13 +1200,16 @@ function chartAltText(spec: ChartSpec): string {
 function competitiveSectionIntroduction(
   sectionId: ReportTemplateSectionId,
   input: ComposeReportDocumentInput,
-  comparisonSectionTitle: string,
 ): string {
-  const visualEvidenceIntroduction = input.visualAssets.length > 0
-    ? '本章集中展示已验证的产品截图与标注图，用于帮助读者对照视觉证据与文字结论。'
-    : input.charts.length > 0
-      ? `本章没有已验证的产品截图；已验证图表位于“${comparisonSectionTitle}”章节，用于对照数据与文字结论。`
-      : '本章用于展示可验证的产品截图、标注图或图表。本任务没有已验证的截图或图表：Web Research 仅采集文本来源，且未提供用户截图，因此不展示未经验证的网络图片。';
+  const hasDisplayableVisualContent = payloadRecords(
+    input.deliverable.value.payload,
+    'visualEvidence',
+  ).length > 0
+    || payloadRecords(input.deliverable.value.payload, 'screenshotComparisons').length > 0
+    || input.charts.length > 0;
+  const visualEvidenceIntroduction = hasDisplayableVisualContent
+    ? '本章按单图证据、原图与标注图对比、图表及数据表的顺序集中展示已验证视觉材料，用于帮助读者对照视觉证据与文字结论。'
+    : '本章用于展示可验证的产品截图、标注图或图表。本任务没有满足来源与证据绑定要求的图片或图表，因此不展示占位图、未经验证的网络图片或 AI 生成图。';
   const introductions: Record<ReportTemplateSectionId, string> = {
     cover: '本页用于识别报告主题、研究对象与交付范围。',
     'executive-summary': '本章用于快速概括研究范围、核心判断与优先行动，帮助读者在阅读全文前建立决策框架。',
@@ -1220,6 +1316,7 @@ function composeSectionContentBlocks(
           )));
     }
     case 'visual-evidence': {
+      if (deliverable.deliverableType === 'competitive_analysis_report') return professionalBlocks;
       if (professionalBlocks.length > 0) return professionalBlocks;
       const annotationsByOriginal = new Map<string, VerifiedVisualAsset[]>();
       for (const asset of input.visualAssets) {
@@ -1257,6 +1354,7 @@ function composeSectionContentBlocks(
       return blocks;
     }
     case 'comparison':
+      if (deliverable.deliverableType === 'competitive_analysis_report') return professionalBlocks;
       return [
         ...input.charts.map(({ spec, specHash, table, asset }, index): ReportChartBlock => ({
           id: `chart-${index + 1}`,
@@ -1296,16 +1394,13 @@ function composeSectionBlocks(
   sectionId: ReportTemplateSectionId,
   input: ComposeReportDocumentInput,
   executiveSummary: string,
-  comparisonSectionTitle?: string,
 ): ReportBlock[] {
   const content = composeSectionContentBlocks(sectionId, input, executiveSummary);
   if (input.deliverable.value.deliverableType !== 'competitive_analysis_report') return content;
-  const comparisonTitle = comparisonSectionTitle
-    ?? fail('competitive report template is missing its comparison section');
   return [
     paragraph(
       `section-intro-${sectionId}`,
-      competitiveSectionIntroduction(sectionId, input, comparisonTitle),
+      competitiveSectionIntroduction(sectionId, input),
     ),
     ...content,
   ];
@@ -1338,12 +1433,22 @@ export function assertValidReportDocument(
         if (!visualReferences.has(assetReferenceKey(block.assetRef))) {
           fail(`image block ${block.id} references a dangling or missing Asset`);
         }
+        for (const evidenceId of block.evidenceIds ?? []) {
+          if (!evidenceIds.has(evidenceId)) {
+            fail(`image block ${block.id} references dangling Evidence ${evidenceId}`);
+          }
+        }
       } else if (block.type === 'image-comparison') {
         if (
           !visualReferences.has(assetReferenceKey(block.beforeAssetRef))
           || !visualReferences.has(assetReferenceKey(block.afterAssetRef))
         ) {
           fail(`image comparison block ${block.id} references a dangling or missing Asset`);
+        }
+        for (const evidenceId of block.evidenceIds ?? []) {
+          if (!evidenceIds.has(evidenceId)) {
+            fail(`image comparison block ${block.id} references dangling Evidence ${evidenceId}`);
+          }
         }
       } else if (block.type === 'chart') {
         if (!chartReferences.has(chartReferenceKey({ ...block.chartRef, specHash: block.specHash }))) {
@@ -1371,7 +1476,6 @@ export function composeReportDocument(input: ComposeReportDocumentInput): Report
   const { contract } = assertCompositionInput(input);
   const template = contract.reportTemplate;
   const executiveSummary = composeExecutiveSummary(input.deliverable.value);
-  const comparisonSectionTitle = template.sections.find(({ id }) => id === 'comparison')?.title;
   const document: ReportDocument = {
     version: 'report-document-v1',
     title: reportTitle(input.deliverable.value),
@@ -1385,7 +1489,6 @@ export function composeReportDocument(input: ComposeReportDocumentInput): Report
         section.id,
         input,
         executiveSummary,
-        comparisonSectionTitle,
       ),
     })),
   };

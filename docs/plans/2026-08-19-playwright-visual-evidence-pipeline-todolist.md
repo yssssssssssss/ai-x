@@ -75,26 +75,26 @@
 
 文件范围以开发文档第 14.2、14.3、14.4、14.5 节相关条目为准，验收语义以第 7.2、7.5、11、13、17 节为准。
 
-- [ ] 为 Skill Registry、Loader、Linter、Capability Resolution 和 Current Plan 增加向后兼容的 `optional_tools` 合同。
-- [ ] required Tavily 不可用时继续拒绝；draft/deprecated Playwright 不产生 gap；active unavailable Playwright 只产生可降级 capability gap。
-- [ ] 旧 Current Plan 缺少新增 optional 字段时规范化为空数组，新计划显式写出这些字段。
-- [ ] 生成 Tavily `/results` 到 Playwright `/pages` 的精确绑定，并强制执行顺序为 Tavily、Playwright、Skill。
-- [ ] Registry 回滚后，新计划不产生 Playwright step/gap；已冻结的 optional step 按 configuration gap 跳过。
-- [ ] 只从 Tool JSON `failures` 或全失败 execution details 生成页面失败；`gapSummary` 只保存脱敏计数索引。
-- [ ] 增加并严格校验 `visualEvidence`，同时绑定 screenshot Evidence 与相同 URL 的 public source Evidence。
-- [ ] ReportDocument、Web、Markdown 和打印导出支持单图证据、证据编号和内部资产地址，不使用外部热链或 Base64。
-- [ ] 报告大标题中英文并列，每章首 Block 解释模块目的，Dimension Matrix 每个维度只有一个整合 Block 并包含跨维度总结。
-- [ ] 历史任务刷新后复用同一 Report Package，图片、证据编号和 gapCount 不漂移。
-- [ ] Smoke 使用 `competitive-ai-shopping-assistant` 精确场景，不再隐式选择 profile 第一条场景。
-- [ ] 运行 `pnpm exec tsx --test tests/capability-resolver.test.ts tests/skill-loader-schema.test.ts tests/registry-linter.test.ts tests/plan-compiler.test.ts tests/current-plan-candidate-schema.test.ts tests/direct-invoke-plan.test.ts tests/current-step-bindings.test.ts tests/checkpoint-resume.test.ts tests/control-planning.test.ts tests/current-deliverable-service.test.ts tests/report-document.test.ts tests/report-bundle.test.ts tests/current-flow-state.test.ts tests/current-real-smoke.test.ts`。
-- [ ] 运行 `pnpm typecheck`、`pnpm lint:registry` 和 `pnpm --dir apps/web build`。
-- [ ] 检查工作包 C diff 并提交独立 commit，记录 SHA。
+- [x] 为 Skill Registry、Loader、Linter、Capability Resolution 和 Current Plan 增加向后兼容的 `optional_tools` 合同。结果：Registry、Schema、Loader、Linter、Resolver 与计划合同已贯通，旧字段缺失兼容测试通过。
+- [x] required Tavily 不可用时继续拒绝；draft/deprecated Playwright 不产生 gap；active unavailable Playwright 只产生可降级 capability gap。结果：required 路径保持 fail closed，非 active Tool 不进入计划，active unavailable 仅生成可降级 gap。
+- [x] 旧 Current Plan 缺少新增 optional 字段时规范化为空数组，新计划显式写出这些字段。结果：旧计划规范化为空数组，新计划显式封存 capability decisions 与 gaps，兼容和 Hash 回归通过。
+- [x] 生成 Tavily `/results` 到 Playwright `/pages` 的精确绑定，并强制执行顺序为 Tavily、Playwright、Skill。结果：精确 JSON Pointer、依赖关系和三步顺序均由 Compiler 回归锁定。
+- [x] Registry 回滚后，新计划不产生 Playwright step/gap；已冻结的 optional step 按 configuration gap 跳过。结果：draft 回滚的新计划无截图 step/gap，冻结计划的 unavailable optional step 可降级跳过。
+- [x] 只从 Tool JSON `failures` 或全失败 execution details 生成页面失败；`gapSummary` 只保存脱敏计数索引。结果：页面失败来源已收紧；畸形 `gapSummary` 不再触发旧 skipped fallback，持久化内容仅含脱敏计数索引。
+- [x] 增加并严格校验 `visualEvidence`，同时绑定 screenshot Evidence 与相同 URL 的 public source Evidence。结果：任一浏览器 Asset 缺 screenshot 或同源 public-source Evidence 均 fail closed，URL 身份统一规范化且保留原始 Evidence URL。
+- [x] ReportDocument、Web、Markdown 和打印导出支持单图证据、证据编号和内部资产地址，不使用外部热链或 Base64。结果：图片与对比图支持证据展开，折叠打印保留编号，JSON/Markdown 安全导出 `evidenceIds` 并只引用本地 `assets/*`。
+- [x] 报告大标题中英文并列，每章首 Block 解释模块目的，Dimension Matrix 每个维度只有一个整合 Block 并包含跨维度总结。结果：Composer、Rubric、Prompt 与回归测试共同锁定双语标题、模块目的、单一维度 Block 和跨维度总结。
+- [x] 历史任务刷新后复用同一 Report Package，图片、证据编号和 gapCount 不漂移。结果：历史恢复统一读取 Report Package，视觉证据与 gapCount 去重/兼容逻辑有前后端回归覆盖。
+- [x] Smoke 使用 `competitive-ai-shopping-assistant` 精确场景，不再隐式选择 profile 第一条场景。结果：Smoke 必须精确匹配 profile/scenario，缺失或错配直接拒绝。
+- [x] 运行 `pnpm exec tsx --test tests/capability-resolver.test.ts tests/skill-loader-schema.test.ts tests/registry-linter.test.ts tests/plan-compiler.test.ts tests/current-plan-candidate-schema.test.ts tests/direct-invoke-plan.test.ts tests/current-step-bindings.test.ts tests/checkpoint-resume.test.ts tests/control-planning.test.ts tests/current-deliverable-service.test.ts tests/report-document.test.ts tests/report-bundle.test.ts tests/current-flow-state.test.ts tests/current-real-smoke.test.ts`。结果：Node `v22.22.1` 下 240 通过、5 跳过、0 失败。
+- [x] 运行 `pnpm typecheck`、`pnpm lint:registry` 和 `pnpm --dir apps/web build`。结果：均通过；Web production build 完成 655 个模块，仅保留既有 chunk 体积警告；全量 `pnpm quality` 为 1410 通过、12 跳过、0 失败。
+- [x] 检查工作包 C diff 并提交独立 commit，记录 SHA。结果：静态边界与暂存区审计通过；工作包 C 代码、测试和本清单由本提交独立承载。
 
 ### 门禁 C
 
-- [ ] Playwright 失败只使任务进入 `completed_with_gaps`，Tavily required evidence 失败仍不得完成。
-- [ ] 报告单图、双 Evidence、双语标题、模块目的、整合矩阵和历史重读测试全部通过。
-- [ ] Registry 仍为 `draft` 时，旧任务和文本任务行为不变。
+- [x] Playwright 失败只使任务进入 `completed_with_gaps`，Tavily required evidence 失败仍不得完成。结果：optional 配置/执行 gap 可降级，required Tavily Evidence 缺失继续 fail closed，Engine 回归通过。
+- [x] 报告单图、双 Evidence、双语标题、模块目的、整合矩阵和历史重读测试全部通过。结果：定向 240 通过、5 跳过、0 失败；视觉缺口不得跨页面掩盖。
+- [x] Registry 仍为 `draft` 时，旧任务和文本任务行为不变。结果：Registry 保持 `draft/optional`，当前环境未设置 `PLAYWRIGHT_CAPTURE_ENABLED`；全量 quality 0 失败。
 
 ## 4. 工作包 D：数据驱动图表 lineage
 

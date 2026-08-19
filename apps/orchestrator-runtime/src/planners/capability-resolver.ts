@@ -1,5 +1,6 @@
 import type {
   CurrentCapabilityApproval,
+  CurrentOptionalToolDecision,
   PendingInput,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
@@ -43,6 +44,7 @@ export interface CapabilityDecision {
   required_approvals: CapabilityApproval[];
   reasons: CapabilityDecisionReason[];
   pending_inputs: CapabilityPendingInput[];
+  optional_tool_decisions: CurrentOptionalToolDecision[];
 }
 
 export interface CapabilityResolveInput {
@@ -164,6 +166,46 @@ function requiredToolRejections(
   return reasons;
 }
 
+function optionalToolDecisions(
+  skill: CapabilitySkillRegistryEntry,
+  toolsById: ReadonlyMap<string, ToolRegistryEntry>,
+  statesById: ReadonlyMap<string, CapabilityToolState>,
+): CurrentOptionalToolDecision[] {
+  return skill.optional_tools.flatMap((toolId): CurrentOptionalToolDecision[] => {
+    const tool = toolsById.get(toolId);
+    if (!tool || tool.status !== 'active') return [];
+    if (tool.tier !== 'optional') {
+      throw new Error(`optional tool ${toolId} must use the optional tier`);
+    }
+    const state = statesById.get(toolId);
+    if (!state) {
+      return [{
+        tool_id: toolId,
+        status: 'unavailable',
+        reason_code: 'optional_tool_health_unknown',
+        message: `optional tool ${toolId} has no health qualification`,
+      }];
+    }
+    if (state.health !== 'healthy') {
+      return [{
+        tool_id: toolId,
+        status: 'unavailable',
+        reason_code: 'optional_tool_unhealthy',
+        message: `optional tool ${toolId} is unhealthy`,
+      }];
+    }
+    if (!state.real_adapter_qualified) {
+      return [{
+        tool_id: toolId,
+        status: 'unavailable',
+        reason_code: 'optional_tool_real_adapter_unavailable',
+        message: `optional tool ${toolId} has no qualified real adapter`,
+      }];
+    }
+    return [{ tool_id: toolId, status: 'available' }];
+  });
+}
+
 export function resolveCapabilities(input: CapabilityResolveInput): CapabilityResolution {
   const toolsById = new Map(input.tools.map((tool) => [tool.id, tool]));
   const manifestsById = new Map(input.tool_manifests.map((manifest) => [manifest.id, manifest]));
@@ -183,6 +225,7 @@ export function resolveCapabilities(input: CapabilityResolveInput): CapabilityRe
           message: `skill ${skillId} is ${skill.status}, not active`,
         }],
         pending_inputs: [],
+        optional_tool_decisions: [],
       });
       continue;
     }
@@ -239,7 +282,13 @@ export function resolveCapabilities(input: CapabilityResolveInput): CapabilityRe
         capability_id: skill.id,
       }));
     if (reasons.length > 0) {
-      rejected.push({ skill, required_approvals: requiredApprovals, reasons, pending_inputs: pendingInputs });
+      rejected.push({
+        skill,
+        required_approvals: requiredApprovals,
+        reasons,
+        pending_inputs: pendingInputs,
+        optional_tool_decisions: [],
+      });
       continue;
     }
     if (pendingInputs.length > 0) {
@@ -249,7 +298,13 @@ export function resolveCapabilities(input: CapabilityResolveInput): CapabilityRe
       });
     }
     reasons.push({ code: 'eligible', message: `skill ${skill.id} passed all capability filters` });
-    eligible.push({ skill, required_approvals: requiredApprovals, reasons, pending_inputs: pendingInputs });
+    eligible.push({
+      skill,
+      required_approvals: requiredApprovals,
+      reasons,
+      pending_inputs: pendingInputs,
+      optional_tool_decisions: optionalToolDecisions(skill, toolsById, statesById),
+    });
   }
 
   return { eligible, rejected };

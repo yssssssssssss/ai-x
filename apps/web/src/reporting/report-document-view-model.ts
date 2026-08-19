@@ -152,6 +152,7 @@ export function createReportDocumentViewModel({
             assetSrc: presentationUrl(block.assetRef.assetId),
             caption: block.caption,
             altText: block.altText,
+            ...(block.evidenceIds ? { evidenceIds: block.evidenceIds } : {}),
           });
         } else if (block.type === 'image-comparison') {
           blocks.push({
@@ -163,6 +164,7 @@ export function createReportDocumentViewModel({
             annotationSrc: presentationUrl(block.afterAssetRef.assetId),
             caption: block.caption,
             altText: block.altText,
+            ...(block.evidenceIds ? { evidenceIds: block.evidenceIds } : {}),
           });
         } else if (block.type === 'chart') {
           blocks.push({

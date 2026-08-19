@@ -20,6 +20,7 @@ import {
   resolveDeliverableContractById,
   resolveExecutionDeliverableContract,
 } from './deliverable-registry.ts';
+import { sameBrowserSourceUrl } from '../runtime/public-web-access-policy.ts';
 import type { VerifiedVisualAnnotationBinding } from './report-composition-service.ts';
 import type { VerifiedVisualAsset } from './visual-asset-service.ts';
 function createDeliverableDraftSchema(payloadSchema: object, strictContract: boolean) {
@@ -241,7 +242,11 @@ export interface CurrentDeliverableGenerateInput {
   task: { id: string };
   plan: {
     id: string;
-    plan: Pick<CurrentExecutionPlan, 'deliverable_type'> & { steps?: unknown[] };
+    plan: Pick<CurrentExecutionPlan, 'deliverable_type'> & {
+      steps?: unknown[];
+      capability_decisions?: unknown;
+      capability_gaps?: unknown;
+    };
   };
   attempt: { id: string };
   researchGoal: string;
@@ -251,6 +256,7 @@ export interface CurrentDeliverableGenerateInput {
   evidenceResolver: EvidenceArtifactResolver;
   outputs: unknown[];
   gaps: string[];
+  gapRefs?: ReadonlyArray<{ key: string; stepNo: number }>;
   expectedModel: string;
   stepNo?: number;
   revisionInstruction?: string;
@@ -272,6 +278,146 @@ function unknownRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+}
+
+const PLAYWRIGHT_CAPTURE_TOOL_ID = 'playwright-page-capture';
+const PLAYWRIGHT_PAGE_FAILURE_CODES = new Set([
+  'login_required',
+  'captcha_required',
+  'paywall',
+  'robots_or_terms_blocked',
+  'navigation_timeout',
+  'no_capture_target',
+  'unsupported_content',
+]);
+const OPTIONAL_TOOL_GAP_FAILURE_KINDS = new Set([
+  'capacity',
+  'rate_limit',
+  'server',
+  'timeout',
+  'network',
+  'quota',
+  'authentication',
+  'configuration',
+  'capability',
+  'unknown',
+]);
+
+interface FrozenPlaywrightDecision {
+  status: 'available' | 'unavailable';
+  reasonCode?: string;
+}
+
+function isPlaywrightExecutionGapKey(key: unknown, stepNo: number): boolean {
+  if (typeof key !== 'string') return false;
+  const [scope, encodedStepNo, target, code, ...extra] = key.split(':');
+  if (
+    extra.length > 0
+    || scope !== 'step'
+    || encodedStepNo !== String(stepNo)
+    || typeof code !== 'string'
+  ) return false;
+  if (target === 'step') return OPTIONAL_TOOL_GAP_FAILURE_KINDS.has(code);
+  const sourceResultIndex = Number(target);
+  return Number.isSafeInteger(sourceResultIndex)
+    && sourceResultIndex >= 0
+    && target === String(sourceResultIndex)
+    && PLAYWRIGHT_PAGE_FAILURE_CODES.has(code);
+}
+
+function frozenPlaywrightDecision(
+  plan: CurrentDeliverableGenerateInput['plan']['plan'],
+): FrozenPlaywrightDecision | undefined {
+  const decisions = unknownRecord(plan.capability_decisions);
+  if (!decisions) return undefined;
+  if (!Array.isArray(decisions.eligible)) {
+    throw new Error('frozen capability decisions are malformed');
+  }
+  const matches: FrozenPlaywrightDecision[] = [];
+  for (const candidate of decisions.eligible) {
+    const decision = unknownRecord(candidate);
+    if (!decision) throw new Error('frozen capability decision is malformed');
+    const optionalDecisions = decision.optional_tool_decisions;
+    if (optionalDecisions === undefined) continue;
+    if (!Array.isArray(optionalDecisions)) {
+      throw new Error('frozen optional Tool decisions are malformed');
+    }
+    for (const optionalCandidate of optionalDecisions) {
+      const optionalDecision = unknownRecord(optionalCandidate);
+      if (optionalDecision?.tool_id !== PLAYWRIGHT_CAPTURE_TOOL_ID) continue;
+      if (optionalDecision.status !== 'available' && optionalDecision.status !== 'unavailable') {
+        throw new Error('frozen Playwright decision has an invalid status');
+      }
+      const reasonCode = optionalDecision.reason_code;
+      if (
+        optionalDecision.status === 'unavailable'
+        && (typeof reasonCode !== 'string' || !reasonCode.trim())
+      ) {
+        throw new Error('frozen unavailable Playwright decision has no reason code');
+      }
+      matches.push({
+        status: optionalDecision.status,
+        ...(typeof reasonCode === 'string' ? { reasonCode } : {}),
+      });
+    }
+  }
+  if (matches.length > 1) throw new Error('frozen Playwright decision is duplicated');
+  return matches[0];
+}
+
+function hasFrozenPlaywrightGap(
+  plan: CurrentDeliverableGenerateInput['plan']['plan'],
+  gapRefs: CurrentDeliverableGenerateInput['gapRefs'],
+  decision: FrozenPlaywrightDecision,
+): boolean {
+  const refs = gapRefs ?? [];
+  if (decision.status === 'unavailable') {
+    return refs.some(({ key, stepNo }) => (
+      stepNo === 0
+      && key === `capability:${PLAYWRIGHT_CAPTURE_TOOL_ID}:${decision.reasonCode}`
+    ));
+  }
+  const playwrightStepNos = new Set((plan.steps ?? []).flatMap((candidate) => {
+    const step = unknownRecord(candidate);
+    return step?.actor_id === PLAYWRIGHT_CAPTURE_TOOL_ID
+      && typeof step.step_no === 'number'
+      && Number.isInteger(step.step_no)
+      ? [step.step_no]
+      : [];
+  }));
+  return refs.some(({ key, stepNo }) => (
+    playwrightStepNos.has(stepNo)
+    && isPlaywrightExecutionGapKey(key, stepNo)
+  ));
+}
+
+function assertCompetitiveVisualAvailability(
+  deliverableId: string,
+  plan: CurrentDeliverableGenerateInput['plan']['plan'],
+  gapRefs: CurrentDeliverableGenerateInput['gapRefs'],
+  inventory: VerifiedVisualInventory | undefined,
+  displayableInventory: readonly DisplayableVisualInventoryItem[],
+): void {
+  if (deliverableId !== 'competitive_analysis_report') return;
+  const displayableAssetIds = new Set(
+    displayableInventory.map(({ asset }) => asset.artifact.id),
+  );
+  const unboundBrowserAsset = inventory?.assets.find((asset) => (
+    inventory.roles.get(asset.artifact.id) === 'original'
+    && asset.manifest.source.kind === 'browser_capture'
+    && !displayableAssetIds.has(asset.artifact.id)
+  ));
+  if (unboundBrowserAsset) {
+    throw new Error(
+      `competitive browser Asset ${unboundBrowserAsset.artifact.id} requires screenshot and matching public-source Evidence`,
+    );
+  }
+  if (displayableInventory.length > 0) return;
+  const decision = frozenPlaywrightDecision(plan);
+  if (!decision) return;
+  if (!hasFrozenPlaywrightGap(plan, gapRefs, decision)) {
+    throw new Error('frozen Playwright execution produced no displayable visual and no structured visual gap');
+  }
 }
 
 function projectPayloadToSchema(payload: unknown, schema: object): unknown {
@@ -342,6 +488,12 @@ interface VerifiedVisualInventory {
   annotationBindings: ReadonlyMap<string, VerifiedVisualAnnotationBinding>;
 }
 
+interface DisplayableVisualInventoryItem {
+  asset: VerifiedVisualAsset;
+  screenshotEvidenceIds: readonly string[];
+  publicSourceEvidenceIds: readonly string[];
+}
+
 function sameVisualReference(
   reference: VerifiedVisualAsset['manifest']['derivedFrom'],
   original: VerifiedVisualAsset,
@@ -359,7 +511,11 @@ function classifyVisualAsset(asset: VerifiedVisualAsset): VisualAssetRole {
   if (
     manifest.derivedFrom === null
     && manifest.derivation === null
-    && manifest.source.kind === 'user_upload'
+    && (
+      manifest.source.kind === 'user_upload'
+      || manifest.source.kind === 'tool_artifact'
+      || manifest.source.kind === 'browser_capture'
+    )
   ) return 'original';
   if (
     manifest.source.kind === 'derived'
@@ -405,7 +561,11 @@ function verifiedVisualInventory(input: CurrentDeliverableGenerateInput): Verifi
       || asset.manifestArtifact.state !== 'SEALED'
       || asset.artifact.kind !== 'visual_asset'
       || asset.manifestArtifact.kind !== 'visual_asset_manifest'
-      || asset.manifestArtifact.schemaVersion !== 'visual-asset-manifest-v1'
+      || (
+        asset.manifestArtifact.schemaVersion !== 'visual-asset-manifest-v1'
+        && asset.manifestArtifact.schemaVersion !== 'visual-asset-manifest-v2'
+      )
+      || asset.manifestArtifact.schemaVersion !== asset.manifest.version
       || asset.artifact.id !== asset.manifest.assetId
       || (asset.manifest.exportPolicy !== 'allow' && asset.manifest.exportPolicy !== 'mask')
     ) {
@@ -441,6 +601,40 @@ function verifiedVisualInventory(input: CurrentDeliverableGenerateInput): Verifi
   };
 }
 
+function displayableVisualInventory(
+  inventory: VerifiedVisualInventory | undefined,
+  evidenceEntries: readonly EvidenceEntry[],
+): DisplayableVisualInventoryItem[] {
+  if (!inventory) return [];
+  return inventory.assets.flatMap((asset) => {
+    const source = asset.manifest.source;
+    if (
+      inventory.roles.get(asset.artifact.id) !== 'original'
+      || source.kind !== 'browser_capture'
+    ) return [];
+    const screenshotEvidenceIds = evidenceEntries.flatMap((entry) => (
+      entry.kind === 'screenshot'
+      && entry.evidenceClass === 'screenshot'
+      && entry.artifactId === asset.manifestArtifact.id
+      && entry.artifactContentSha256 === asset.manifestArtifact.contentSha256
+      && entry.jsonPointer === '/assetId'
+      && entry.sourceUrl === source.sourcePageUrl
+        ? [entry.id]
+        : []
+    ));
+    const publicSourceEvidenceIds = evidenceEntries.flatMap((entry) => (
+      entry.evidenceClass === 'public_source'
+      && typeof entry.sourceUrl === 'string'
+      && sameBrowserSourceUrl(entry.sourceUrl, source.sourcePageUrl)
+        ? [entry.id]
+        : []
+    ));
+    return screenshotEvidenceIds.length > 0 && publicSourceEvidenceIds.length > 0
+      ? [{ asset, screenshotEvidenceIds, publicSourceEvidenceIds }]
+      : [];
+  });
+}
+
 function assertVisualPreflight(
   deliverableId: string,
   inventory: VerifiedVisualInventory | undefined,
@@ -450,6 +644,7 @@ function assertVisualPreflight(
     if (deliverableId === 'competitive_analysis_report') return;
     throw new Error(`${deliverableId} requires a non-empty verified visual inventory before synthesis`);
   }
+  if (deliverableId === 'competitive_analysis_report') return;
   const originals = inventory.assets.filter((asset) => inventory.roles.get(asset.artifact.id) === 'original');
   const annotations = inventory.assets.filter((asset) => inventory.roles.get(asset.artifact.id) === 'annotation');
   const hasPair = annotations.some((annotation) => originals.some(
@@ -470,19 +665,87 @@ function assertPayloadVisualReferences(
   deliverableId: string,
   payload: unknown,
   inventory: VerifiedVisualInventory | undefined,
+  displayableInventory: readonly DisplayableVisualInventoryItem[],
 ): void {
   if (deliverableId !== 'competitive_analysis_report' && deliverableId !== 'design_audit_report') return;
   const value = unknownRecord(payload);
   if (!value) throw new Error('deliverable payload must be an object');
   if (deliverableId === 'competitive_analysis_report') {
+    const samples = Array.isArray(value.competitorSamples) ? value.competitorSamples : [];
+    const sampleIds = new Set(samples.flatMap((candidate) => {
+      const sample = unknownRecord(candidate);
+      return typeof sample?.id === 'string' ? [sample.id] : [];
+    }));
+    const matrix = Array.isArray(value.dimensionMatrix) ? value.dimensionMatrix : [];
+    const dimensionNames = matrix.flatMap((candidate) => {
+      const row = unknownRecord(candidate);
+      return typeof row?.dimension === 'string' ? [row.dimension] : [];
+    });
+    if (dimensionNames.length !== matrix.length || new Set(dimensionNames).size !== dimensionNames.length) {
+      throw new Error('competitive dimensionMatrix dimensions must be unique');
+    }
+    const dimensions = new Set(dimensionNames);
+    const visualEvidence = value.visualEvidence;
+    if (!Array.isArray(visualEvidence)) {
+      throw new Error('competitive visualEvidence must be an explicit array for a newly generated report');
+    }
+    if (displayableInventory.length > 0 && visualEvidence.length === 0) {
+      throw new Error('competitive visualEvidence must select at least one displayable browser capture');
+    }
+    if (displayableInventory.length === 0 && visualEvidence.length > 0) {
+      throw new Error('competitive visualEvidence requires screenshot and matching public-source Evidence');
+    }
+    const displayableById = new Map(
+      displayableInventory.map((item) => [item.asset.artifact.id, item]),
+    );
+    const usedAssetIds = new Set<string>();
+    const usedVisualEvidenceIds = new Set<string>();
+    for (const candidate of visualEvidence) {
+      const item = unknownRecord(candidate);
+      const id = item?.id;
+      const assetId = item?.assetId;
+      const referencedSampleIds = item?.sampleIds;
+      const dimension = item?.dimension;
+      const evidenceIds = item?.evidenceIds;
+      if (
+        typeof id !== 'string'
+        || !id.trim()
+        || usedVisualEvidenceIds.has(id)
+        || typeof assetId !== 'string'
+        || !Array.isArray(referencedSampleIds)
+        || referencedSampleIds.length === 0
+        || referencedSampleIds.some((sampleId) => typeof sampleId !== 'string' || !sampleIds.has(sampleId))
+        || new Set(referencedSampleIds).size !== referencedSampleIds.length
+        || typeof dimension !== 'string'
+        || !dimensions.has(dimension)
+        || !Array.isArray(evidenceIds)
+        || evidenceIds.some((evidenceId) => typeof evidenceId !== 'string')
+        || new Set(evidenceIds).size !== evidenceIds.length
+      ) {
+        throw new Error('competitive visualEvidence has an invalid sample, dimension, Asset, or Evidence reference');
+      }
+      const displayable = displayableById.get(assetId);
+      const allowedEvidenceIds = new Set([
+        ...(displayable?.screenshotEvidenceIds ?? []),
+        ...(displayable?.publicSourceEvidenceIds ?? []),
+      ]);
+      if (
+        !displayable
+        || usedAssetIds.has(assetId)
+        || !displayable.screenshotEvidenceIds.some((evidenceId) => evidenceIds.includes(evidenceId))
+        || !displayable.publicSourceEvidenceIds.some((evidenceId) => evidenceIds.includes(evidenceId))
+        || evidenceIds.some((evidenceId) => !allowedEvidenceIds.has(evidenceId))
+      ) {
+        throw new Error('competitive visualEvidence must bind each Asset once to its screenshot and matching public-source Evidence');
+      }
+      usedVisualEvidenceIds.add(id);
+      usedAssetIds.add(assetId);
+    }
     const comparisons = value.screenshotComparisons;
     if (!Array.isArray(comparisons)) {
       throw new Error('competitive screenshot comparisons require a verified visual inventory');
     }
     if (comparisons.length === 0) {
-      if (inventory && inventory.assets.length > 0) {
-        throw new Error('competitive screenshot comparisons are required for a verified visual inventory');
-      }
       return;
     }
     if (!inventory || inventory.assets.length === 0) {
@@ -658,6 +921,18 @@ export class CurrentDeliverableService {
     if (strictV2) assertVisualPreflight(contract.entry.id, visualInventory);
     const evidenceManifest = input.evidenceManifest.value;
     this.dependencies.evidence.validateManifest(evidenceManifest, input.evidenceResolver);
+    const displayableInventory = strictV2
+      ? displayableVisualInventory(visualInventory, evidenceManifest.entries)
+      : [];
+    if (strictV2) {
+      assertCompetitiveVisualAvailability(
+        contract.entry.id,
+        input.plan.plan,
+        input.gapRefs,
+        visualInventory,
+        displayableInventory,
+      );
+    }
     const sanitizedGaps = [...new Set(input.gaps.map((gap) => redactString(gap)))];
     const outputData = sealedOutputData(input.outputs);
     const synthesisMaterials = this.dependencies.materializer
@@ -688,6 +963,23 @@ export class CurrentDeliverableService {
         ? { findingIds: visualInventory.annotationBindings.get(asset.artifact.id)!.findingIds }
         : {}),
     }));
+    const producerDisplayableVisualInventory = displayableInventory.map(({ asset, screenshotEvidenceIds, publicSourceEvidenceIds }) => {
+      const source = asset.manifest.source;
+      if (source.kind !== 'browser_capture') throw new Error('displayable visual inventory source drifted');
+      return {
+        assetId: asset.artifact.id,
+        sourceType: source.kind,
+        sourcePageUrl: source.sourcePageUrl,
+        finalUrl: source.finalUrl,
+        pageTitle: source.pageTitle,
+        capturedAt: source.capturedAt,
+        captureMode: source.captureMode,
+        width: asset.manifest.width,
+        height: asset.manifest.height,
+        screenshotEvidenceIds: [...screenshotEvidenceIds],
+        publicSourceEvidenceIds: [...publicSourceEvidenceIds],
+      };
+    });
     const context = {
       researchGoal: redactString(input.researchGoal),
       finalizedRequirement: redactSensitiveValue(input.finalizedRequirement),
@@ -697,6 +989,7 @@ export class CurrentDeliverableService {
       ...(visualInventory === undefined ? {} : {
         verifiedVisualAssetIds: visualInventory.ids,
         verifiedVisualInventory: producerVisualInventory,
+        displayableVisualInventory: producerDisplayableVisualInventory,
       }),
       deliverableContract: {
         id: contract.entry.id,
@@ -723,13 +1016,16 @@ export class CurrentDeliverableService {
           + '\nFor findingGraph findings with kind "fact", every evidenceIds entry must have evidenceClass public_source, screenshot, or dataset. user_input, knowledge, simulation, and derived evidence cannot root a fact.'
           + (contract.entry.id === 'competitive_analysis_report'
             && (!visualInventory || visualInventory.assets.length === 0)
-            ? '\nNo verified visual Asset inventory exists. Return an empty screenshotComparisons array and never invent an Asset id.'
+            ? '\nNo verified visual Asset inventory exists. Return empty visualEvidence and screenshotComparisons arrays and never invent an Asset id.'
             : visualInventory === undefined
               ? ''
               : '\nVerified visual Asset inventory: reference only typed Asset ids in context.verifiedVisualAssetIds; never invent or reuse any other Asset id.'
                 + (contract.entry.id === 'design_audit_report'
                   ? ' For each annotatedScreenshots entry, use one annotation assetId and one issueId from that same annotation item\'s findingIds in context.verifiedVisualInventory; payload.issues must contain the same issueId.'
-                  : ''))
+                  : ' screenshotComparisons is optional and may contain only an exact original-to-annotation lineage pair.'
+                    + (displayableInventory.length > 0
+                      ? ' Select at least one visualEvidence item from context.displayableVisualInventory. Each item must use existing competitor sample ids, an exact dimensionMatrix dimension, and include both one listed screenshotEvidenceId and one listed publicSourceEvidenceId for that Asset.'
+                      : ' No Asset has both exact screenshot and matching public-source Evidence, so return an empty visualEvidence array.')))
           + (input.revisionInstruction ? '\nAddress the review issues in the revision instruction.' : '')
           + (validationFeedback.length > 0
             ? `\nThe previous draft failed schema validation. Correct every issue: ${validationFeedback.join('; ')}`
@@ -764,7 +1060,14 @@ export class CurrentDeliverableService {
       try {
         this.dependencies.validator.validateSchemaOrThrow(draftSchema, contentDraft, schemaName);
         const draft = contentDraft as DeliverableDraft;
-        if (strictV2) assertPayloadVisualReferences(contract.entry.id, draft.payload, visualInventory);
+        if (strictV2) {
+          assertPayloadVisualReferences(
+            contract.entry.id,
+            draft.payload,
+            visualInventory,
+            displayableInventory,
+          );
+        }
         const risksAndOpenIssues = [...(draft.risksAndOpenIssues ?? [])];
         const observedRisks = new Set(risksAndOpenIssues);
         for (const gap of sanitizedGaps) {

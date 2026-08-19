@@ -366,11 +366,20 @@ function service(): GoldBatchService {
   return new GoldBatchService(new MemoryGoldStore(), dependencies);
 }
 
-test('semantic Gold fixture contains exactly 25 scenarios and five profiles', () => {
+test('semantic Gold fixture contains exactly 26 scenarios and the fixed AI shopping assistant task', () => {
   assert.equal(fixture.version, 1);
   assert.deepEqual(fixture.profiles, [...TASK_TYPES]);
-  assert.equal(fixture.scenarios.length, 25);
-  assert.equal(new Set(fixture.scenarios.map((scenario) => scenario.id)).size, 25);
+  assert.equal(fixture.scenarios.length, 26);
+  assert.equal(new Set(fixture.scenarios.map((scenario) => scenario.id)).size, 26);
+  const scenario = fixture.scenarios.find(({ id }) => id === 'competitive-ai-shopping-assistant');
+  assert.ok(scenario);
+  assert.equal(scenario.profile, 'competitive_research');
+  assert.equal(scenario.variant, 'clear');
+  assert.equal(scenario.minVisualAssets, 0, 'draft Registry smoke must retain text fallback');
+  assert.equal(
+    scenario.input,
+    '请对比中国主流电商平台的 AI 购物助手在消费者决策支持体验上的差异，重点比较需求理解、推荐可解释性、商品参数与价格对比、内容可信度、购买转化闭环，并给出京东下一季度产品优先级建议。仅使用 2025—2026 年公开可访问资料，所有关键结论必须附可追溯来源。',
+  );
 });
 test('every semantic Gold scenario carries profile contracts and exactly five PII variants', () => {
   const variants = new Set(['clear', 'ambiguous', 'missing_input', 'constraint_conflict', 'pii']);
@@ -438,7 +447,8 @@ test('every semantic Gold scenario exercises requirement, planning, capability, 
       available_input_roles: [],
       skills: [{
         id: `${scenario.profile}-skill`, name: 'Gold capability', path: 'gold', status: 'active',
-        task_types: [task.task_type], inputs: [], outputs: [], required_tools: [scenario.requiredCoreTool], risk_level: 'low',
+        task_types: [task.task_type], inputs: [], outputs: [], required_tools: [scenario.requiredCoreTool],
+        optional_tools: [], risk_level: 'low',
       } as never],
       tools: [{
         id: scenario.requiredCoreTool, name: 'Gold core tool', path: 'gold', adapter_type: 'tavily',

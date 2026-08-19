@@ -42,6 +42,38 @@
       ]
     },
     {
+      "id": "competitive-ai-shopping-assistant",
+      "profile": "competitive_research",
+      "taskType": "competitive_research",
+      "businessDomain": "ecommerce_ai_shopping",
+      "input": "请对比中国主流电商平台的 AI 购物助手在消费者决策支持体验上的差异，重点比较需求理解、推荐可解释性、商品参数与价格对比、内容可信度、购买转化闭环，并给出京东下一季度产品优先级建议。仅使用 2025—2026 年公开可访问资料，所有关键结论必须附可追溯来源。",
+      "researchGoal": "形成中国主流电商 AI 购物助手消费者决策支持体验差异与京东下一季度产品优先级建议",
+      "sensitivity": "public",
+      "piiDetected": false,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "competitive_analysis_report",
+      "minPublicSources": 3,
+      "minVisualAssets": 0,
+      "variant": "clear",
+      "expectedTaskType": "competitive_research",
+      "expectedDeliverableIds": [
+        "competitive_analysis_report"
+      ],
+      "clarificationKeys": [],
+      "clarificationThemes": [],
+      "forbiddenCapabilities": [
+        "private_data_access",
+        "external_side_effects"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    },
+    {
       "id": "competitive-digital-human",
       "profile": "competitive_research",
       "taskType": "competitive_research",

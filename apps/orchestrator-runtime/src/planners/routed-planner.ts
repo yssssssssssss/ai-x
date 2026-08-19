@@ -581,7 +581,18 @@ export class RoutedPlanner implements PlanStrategy {
       if (requiredTools.length !== requiredToolIds.size) {
         throw new Error(`Current direct skill ${ctx.direct.skillName} has unresolved required tools`);
       }
-      const toolSteps: CurrentPlanStep[] = requiredTools.map((tool, index) => {
+      const availableOptionalToolIds = new Set(
+        directDecision.optional_tool_decisions
+          .filter(({ status }) => status === 'available')
+          .map(({ tool_id }) => tool_id),
+      );
+      const optionalTools = registeredTools.filter((tool) => availableOptionalToolIds.has(tool.id));
+      if (optionalTools.length !== availableOptionalToolIds.size) {
+        throw new Error(`Current direct skill ${ctx.direct.skillName} has unresolved optional tools`);
+      }
+      const plannedTools = [...requiredTools, ...optionalTools];
+      const tavilyStepNo = plannedTools.findIndex(({ id }) => id === 'tavily-web-search') + 1;
+      const toolSteps: CurrentPlanStep[] = plannedTools.map((tool, index) => {
         const manifest = manifestById.get(tool.id);
         if (!manifest) throw new Error(`Current direct tool ${tool.id} has no manifest`);
         const inputSchema = loadToolInputSchema(manifest.input_schema);
@@ -590,7 +601,15 @@ export class RoutedPlanner implements PlanStrategy {
           inputSchema as InputSchema,
           ctx.requirement,
         );
-        validator.validateFileOrThrow(join(getConfigRoot(), manifest.input_schema), input);
+        const isBrowserCapture = tool.id === 'playwright-page-capture';
+        if (isBrowserCapture) {
+          if (tavilyStepNo < 1 || tavilyStepNo >= index + 1) {
+            throw new Error('Playwright capture requires an earlier Tavily step');
+          }
+          input.pages = [];
+        } else {
+          validator.validateFileOrThrow(join(getConfigRoot(), manifest.input_schema), input);
+        }
         const visualPendingCount = directDecision.pending_inputs.filter(({ kind }) => kind === 'visual').length;
         for (const pending of directDecision.pending_inputs) {
           for (const imageField of manifest.image_input_fields ?? []) {
@@ -614,10 +633,19 @@ export class RoutedPlanner implements PlanStrategy {
           actor_type: 'tool',
           actor_id: tool.id,
           question_ids: questionIds,
-          depends_on: [],
+          depends_on: isBrowserCapture ? [tavilyStepNo] : [],
           input,
-          input_bindings: [],
-          expected_outputs: [{ pointer: '/result', description: `${tool.name} result` }],
+          input_bindings: isBrowserCapture ? [{
+            target_pointer: '/pages',
+            source_step_no: tavilyStepNo,
+            source_pointer: '/results',
+          }] : [],
+          expected_outputs: [{
+            pointer: tool.id === 'tavily-web-search'
+              ? '/results'
+              : isBrowserCapture ? '/captures' : '/result',
+            description: `${tool.name} result`,
+          }],
           acceptance_criteria: acceptanceCriteria,
           requires_approval: Boolean(approval),
           ...(approval ? { approval_role: approval.authority } : {}),
@@ -735,9 +763,12 @@ export class RoutedPlanner implements PlanStrategy {
       };
     }
 
-    const eligibleToolIds = new Set(
-      capabilityResolution.eligible.flatMap((decision) => decision.skill.required_tools),
-    );
+    const eligibleToolIds = new Set(capabilityResolution.eligible.flatMap((decision) => [
+      ...decision.skill.required_tools,
+      ...decision.optional_tool_decisions
+        .filter(({ status }) => status === 'available')
+        .map(({ tool_id }) => tool_id),
+    ]));
     const candidateTools = registeredTools
       .filter((tool) => eligibleToolIds.has(tool.id))
       .map((tool) => {
@@ -762,6 +793,7 @@ export class RoutedPlanner implements PlanStrategy {
         outputs: decision.skill.outputs,
         output_root: '/payload',
         required_tools: decision.skill.required_tools,
+        optional_tools: decision.optional_tool_decisions,
         pending_inputs: decision.pending_inputs,
       })),
       tools: candidateTools,
@@ -786,6 +818,7 @@ export class RoutedPlanner implements PlanStrategy {
         `fallback_actor_ids 必须为空数组，当前执行器不支持 fallback 调度。` +
         `Skill step 的 expected_outputs 及后续 binding source_pointer 必须位于统一输出根 /payload 下。` +
         `Skill 的 required_tools 必须作为更早的 Tool step；所有引用必须真实存在；不得使用 capability_resolution.rejected 中的 actor。` +
+        `available optional Tool 也必须作为更早步骤；playwright-page-capture 必须晚于 tavily-web-search、早于对应 Skill，step.input.pages 预置为空数组，只能通过 {target_pointer:"/pages",source_step_no:<Tavily step>,source_pointer:"/results"} 绑定来源，禁止手写 URL。` +
         `requirement.comparison_dimensions 存在时，competitive-web-research Skill step 必须在 input.dimensions 中逐项保序，并写入同 key 顺序的 scoring_weights；用户未指定权重时各维等权且总和为 1。comparison_dimensions 不存在时不得自行补造维度或权重。` +
         (validationFeedback.length > 0
           ? `上一次候选未通过候选校验，必须逐项修复：${validationFeedback.join('；')}。`

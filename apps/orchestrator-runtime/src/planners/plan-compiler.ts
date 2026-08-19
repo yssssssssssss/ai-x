@@ -4,6 +4,7 @@ import { isDeepStrictEqual } from 'node:util';
 import type {
   CurrentCapabilityApproval,
   CurrentCapabilityDecisions,
+  CurrentCapabilityGap,
   CurrentExecutionPlan,
   CurrentPlanStep,
   DeliverableType,
@@ -63,6 +64,9 @@ export type PlanCompilerValidationKind =
   | 'unknown_question'
   | 'required_tool_missing'
   | 'required_tool_late'
+  | 'optional_tool_missing'
+  | 'optional_tool_late'
+  | 'optional_tool_binding_invalid'
   | 'future_binding_source'
   | 'unknown_binding_source'
   | 'unknown_binding_pointer'
@@ -240,14 +244,102 @@ function validateEvidencePolicy(
   }
 }
 
+function freezeCapabilityDecisions(
+  resolution: CapabilityResolution | CurrentCapabilityDecisions,
+): CurrentCapabilityDecisions {
+  const freezeDecision = (
+    decision: CapabilityResolution['eligible'][number] | CurrentCapabilityDecisions['eligible'][number],
+  ) => ({
+    ...structuredClone(decision),
+    skill: {
+      ...structuredClone(decision.skill),
+      optional_tools: [...(decision.skill.optional_tools ?? [])],
+    },
+    optional_tool_decisions: structuredClone(decision.optional_tool_decisions ?? []),
+  });
+  return {
+    eligible: resolution.eligible.map(freezeDecision),
+    rejected: resolution.rejected.map(freezeDecision),
+  };
+}
+
+export function normalizeCurrentExecutionPlanOptionalFields(
+  plan: CurrentExecutionPlan,
+): CurrentExecutionPlan {
+  return {
+    ...structuredClone(plan),
+    capability_decisions: freezeCapabilityDecisions(plan.capability_decisions),
+    capability_gaps: structuredClone(plan.capability_gaps ?? []),
+  };
+}
+
+function capabilityGaps(
+  resolution: CapabilityResolution,
+  toolsById: ReadonlyMap<string, ToolRegistryEntry>,
+): CurrentCapabilityGap[] {
+  const gaps: CurrentCapabilityGap[] = [];
+  const seenTools = new Set<string>();
+  for (const [bucket, decisions] of [
+    ['eligible', resolution.eligible],
+    ['rejected', resolution.rejected],
+  ] as const) {
+    for (const decision of decisions) {
+      const optionalTools = decision.skill.optional_tools ?? [];
+      if (
+        new Set(optionalTools).size !== optionalTools.length
+        || optionalTools.some((toolId) => decision.skill.required_tools.includes(toolId))
+      ) {
+        fail('capability_decisions_invalid', decision.skill.id ?? '(no-id)', 'optional_tools');
+      }
+      if (bucket === 'rejected' && decision.optional_tool_decisions.length > 0) {
+        fail('capability_decisions_invalid', decision.skill.id ?? '(no-id)', 'rejected_optional_tool');
+      }
+      const localTools = new Set<string>();
+      for (const optionalDecision of decision.optional_tool_decisions) {
+        const toolId = optionalDecision.tool_id;
+        const tool = toolsById.get(toolId);
+        if (
+          localTools.has(toolId)
+          || seenTools.has(toolId)
+          || !optionalTools.includes(toolId)
+          || !tool
+          || tool.tier !== 'optional'
+        ) {
+          fail('capability_decisions_invalid', decision.skill.id ?? '(no-id)', toolId);
+        }
+        localTools.add(toolId);
+        seenTools.add(toolId);
+        if (optionalDecision.status === 'available') {
+          if (optionalDecision.reason_code !== undefined || optionalDecision.message !== undefined) {
+            fail('capability_decisions_invalid', toolId, 'available_reason');
+          }
+          continue;
+        }
+        if (!optionalDecision.reason_code || !optionalDecision.message?.trim()) {
+          fail('capability_decisions_invalid', toolId, 'unavailable_reason');
+        }
+        gaps.push({
+          capability_type: 'tool',
+          capability_id: toolId,
+          code: optionalDecision.reason_code,
+          message: optionalDecision.message,
+        });
+      }
+    }
+  }
+  return gaps;
+}
+
 function capabilityIds(resolution: CapabilityResolution): {
   eligibleSkills: Map<string, CapabilityResolution['eligible'][number]>;
   rejectedIds: Set<string>;
   eligibleTools: Set<string>;
+  availableOptionalTools: Set<string>;
 } {
   const eligibleSkills = new Map<string, CapabilityResolution['eligible'][number]>();
   const rejectedIds = new Set<string>();
   const eligibleTools = new Set<string>();
+  const availableOptionalTools = new Set<string>();
 
   for (const decision of resolution.eligible) {
     const skillId = decision.skill.id;
@@ -256,6 +348,11 @@ function capabilityIds(resolution: CapabilityResolution): {
     }
     eligibleSkills.set(skillId, decision);
     for (const toolId of decision.skill.required_tools) eligibleTools.add(toolId);
+    for (const optionalDecision of decision.optional_tool_decisions) {
+      if (optionalDecision.status !== 'available') continue;
+      eligibleTools.add(optionalDecision.tool_id);
+      availableOptionalTools.add(optionalDecision.tool_id);
+    }
   }
   for (const decision of resolution.rejected) {
     const skillId = decision.skill.id;
@@ -272,7 +369,7 @@ function capabilityIds(resolution: CapabilityResolution): {
       }
     }
   }
-  return { eligibleSkills, rejectedIds, eligibleTools };
+  return { eligibleSkills, rejectedIds, eligibleTools, availableOptionalTools };
 }
 
 function validateActors(
@@ -294,6 +391,78 @@ function validateActors(
     }
   }
   return eligibleSkills;
+}
+
+function validateOptionalTools(
+  steps: CurrentPlanStep[],
+  eligibleSkills: ReadonlyMap<string, CapabilityResolution['eligible'][number]>,
+): void {
+  const toolSteps = new Map<string, CurrentPlanStep[]>();
+  const ownersByTool = new Map<string, string[]>();
+  for (const [skillId, decision] of eligibleSkills) {
+    for (const optionalDecision of decision.optional_tool_decisions) {
+      if (optionalDecision.status !== 'available') continue;
+      const owners = ownersByTool.get(optionalDecision.tool_id) ?? [];
+      owners.push(skillId);
+      ownersByTool.set(optionalDecision.tool_id, owners);
+    }
+  }
+  for (const step of steps) {
+    if (step.actor_type !== 'tool') continue;
+    const matches = toolSteps.get(step.actor_id) ?? [];
+    matches.push(step);
+    toolSteps.set(step.actor_id, matches);
+  }
+
+  for (const [toolId, matches] of toolSteps) {
+    const owners = ownersByTool.get(toolId);
+    if (!owners) continue;
+    const hasOwningSkill = matches.every((toolStep) => steps.some((skillStep) => (
+      skillStep.actor_type === 'skill'
+      && owners.includes(skillStep.actor_id)
+      && toolStep.step_no < skillStep.step_no
+      && skillStep.depends_on.includes(toolStep.step_no)
+    )));
+    if (!hasOwningSkill) fail('optional_tool_late', toolId, 'owning_skill');
+  }
+
+  for (const skillStep of steps) {
+    if (skillStep.actor_type !== 'skill') continue;
+    const decision = eligibleSkills.get(skillStep.actor_id)!;
+    for (const optionalDecision of decision.optional_tool_decisions) {
+      if (optionalDecision.status !== 'available') continue;
+      const matches = toolSteps.get(optionalDecision.tool_id) ?? [];
+      if (matches.length === 0) {
+        fail('optional_tool_missing', skillStep.actor_id, optionalDecision.tool_id);
+      }
+      const earlier = matches.filter((step) => step.step_no < skillStep.step_no);
+      if (earlier.length === 0) {
+        fail('optional_tool_late', skillStep.actor_id, optionalDecision.tool_id);
+      }
+      if (!earlier.some((step) => skillStep.depends_on.includes(step.step_no))) {
+        fail('optional_tool_late', skillStep.actor_id, optionalDecision.tool_id, 'dependency');
+      }
+    }
+  }
+
+  for (const captureStep of toolSteps.get('playwright-page-capture') ?? []) {
+    const binding = captureStep.input_bindings[0];
+    const source = binding ? steps[binding.source_step_no - 1] : undefined;
+    if (
+      captureStep.input_bindings.length !== 1
+      || !binding
+      || binding.target_pointer !== '/pages'
+      || binding.source_pointer !== '/results'
+      || !source
+      || source.actor_type !== 'tool'
+      || source.actor_id !== 'tavily-web-search'
+      || !captureStep.depends_on.includes(source.step_no)
+      || !Array.isArray(captureStep.input.pages)
+      || captureStep.input.pages.length !== 0
+    ) {
+      fail('optional_tool_binding_invalid', String(captureStep.step_no), captureStep.actor_id);
+    }
+  }
 }
 
 function frozenApprovalAuthorities(
@@ -663,13 +832,18 @@ export class PlanCompiler {
         `Evidence requirements do not match frozen deliverable selection ${deliverableSelection.deliverableId}`,
       );
     }
+    const toolsById = new Map(loadToolRegistry().tools.map((tool) => [tool.id, tool]));
+    const frozenCapabilityDecisions = freezeCapabilityDecisions(input.capability_resolution);
+    const capabilityResolution = frozenCapabilityDecisions as CapabilityResolution;
+    const frozenCapabilityGaps = capabilityGaps(capabilityResolution, toolsById);
     validateProposalShape(input.candidate);
     this.validator.validateOrThrow('current-execution-plan', {
       task_id: '',
       deliverable_type: deliverableSelection.deliverableId,
       evidence_requirements: deliverableSelection.evidenceRequirements,
       problem_graph: input.problem_graph,
-      capability_decisions: input.capability_resolution,
+      capability_decisions: frozenCapabilityDecisions,
+      capability_gaps: frozenCapabilityGaps,
       steps: input.candidate.steps,
       candidate_metadata: {
         title: input.candidate.title,
@@ -684,13 +858,13 @@ export class PlanCompiler {
     validateStepDependencies(steps);
     validateQuestions(steps, input.problem_graph);
     validateEvidencePolicy(input.problem_graph, deliverableSelection.evidenceRequirements);
-    const eligibleSkills = validateActors(steps, input.capability_resolution);
-    validateApprovals(steps, input.capability_resolution);
+    const eligibleSkills = validateActors(steps, capabilityResolution);
+    validateApprovals(steps, capabilityResolution);
     validateRequiredTools(steps, eligibleSkills);
+    validateOptionalTools(steps, eligibleSkills);
     validatePendingInputSchemas(eligibleSkills);
     validateSkillOutputPointers(steps);
     validateFixedActorOutputPointers(steps);
-    const toolsById = new Map(loadToolRegistry().tools.map((tool) => [tool.id, tool]));
     validateBindings(steps, toolsById);
     if (input.requireCompetitiveWeightContract) validateCompetitiveWeightContract(steps, input.task);
 
@@ -700,7 +874,8 @@ export class PlanCompiler {
       evidence_requirements: structuredClone(deliverableSelection.evidenceRequirements),
       problem_graph: structuredClone(input.problem_graph),
       problem_graph_provenance: structuredClone(input.problem_graph_provenance),
-      capability_decisions: structuredClone(input.capability_resolution) as CurrentCapabilityDecisions,
+      capability_decisions: frozenCapabilityDecisions,
+      capability_gaps: frozenCapabilityGaps,
       steps,
       candidate_metadata: {
         title: input.candidate.title,
@@ -724,7 +899,8 @@ export function validateCurrentPlanRevision(input: {
   validator.validateOrThrow('research-task-v2', input.task);
   validator.validateOrThrow('current-execution-plan', input.plan);
   const task = input.task as ResearchTaskV2;
-  const plan = input.plan as CurrentExecutionPlan;
+  const plan = normalizeCurrentExecutionPlanOptionalFields(input.plan as CurrentExecutionPlan);
+  validator.validateOrThrow('current-execution-plan', plan);
   if (plan.task_id !== input.task_id) {
     fail('candidate_schema_invalid', 'task_id', plan.task_id, input.task_id);
   }

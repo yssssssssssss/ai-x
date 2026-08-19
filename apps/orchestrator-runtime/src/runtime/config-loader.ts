@@ -289,6 +289,7 @@ export interface SkillRegistryEntry {
   payload_schema?: string;
   entry?: string; // SKILL.md 文件夹路径(KB 派生)
   required_tools?: string[];
+  optional_tools?: string[];
   cost_level?: string;
   risk_level: 'low' | 'medium' | 'high';
 }
@@ -311,12 +312,36 @@ const SKILL_REGISTRY_ENTRY_KEYS = new Set<keyof SkillRegistryEntry>([
   'payload_schema',
   'entry',
   'required_tools',
+  'optional_tools',
   'cost_level',
   'risk_level',
 ]);
 
 export function unknownSkillRegistryFields(skill: SkillRegistryEntry): string[] {
   return Object.keys(skill).filter((key) => !SKILL_REGISTRY_ENTRY_KEYS.has(key as keyof SkillRegistryEntry));
+}
+
+export function skillOptionalToolIssue(skill: SkillRegistryEntry): string | null {
+  const record = skill as unknown as Record<string, unknown>;
+  const optionalTools = record.optional_tools;
+  if (optionalTools === undefined) return null;
+  if (
+    !Array.isArray(optionalTools)
+    || optionalTools.some((toolId) => (
+      typeof toolId !== 'string'
+      || toolId.trim().length === 0
+      || toolId.trim() !== toolId
+    ))
+    || new Set(optionalTools).size !== optionalTools.length
+  ) {
+    return 'optional_tools must be a unique array of canonical non-empty tool ids';
+  }
+  const requiredTools = record.required_tools;
+  if (!Array.isArray(requiredTools)) return 'optional_tools requires a required_tools array';
+  const overlap = optionalTools.find((toolId) => requiredTools.includes(toolId));
+  return overlap === undefined
+    ? null
+    : `optional_tools overlaps required_tools: ${overlap}`;
 }
 
 export function skillVisualInputIssue(skill: SkillRegistryEntry): string | null {

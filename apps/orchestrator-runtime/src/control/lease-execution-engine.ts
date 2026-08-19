@@ -131,7 +131,42 @@ interface EnginePlan {
   taskId: string;
   evidence_requirements: EvidenceRequirement[];
   steps: EngineStep[];
+  optionalToolStepNos: Set<number>;
+  capabilityGaps: ExecutionGap[];
 }
+
+interface FrozenSkillToolRoles {
+  requiredToolIds: Set<string>;
+  availableOptionalToolIds: Set<string>;
+}
+
+interface ExecutionGap {
+  key: string;
+  stepNo: number;
+  message: string;
+}
+
+interface PageFailureGap {
+  sourceResultIndex: number;
+  code: string;
+  message: string;
+}
+
+interface ToolGapSummary {
+  count: number;
+  keys: string[];
+  failuresHash: string;
+}
+
+const PAGE_FAILURE_CODES = new Set([
+  'login_required',
+  'captcha_required',
+  'paywall',
+  'robots_or_terms_blocked',
+  'navigation_timeout',
+  'no_capture_target',
+  'unsupported_content',
+]);
 
 const SUPPORTED_EVIDENCE_CLASSES: Record<EvidenceClass, true> = {
   public_source: true,
@@ -415,6 +450,56 @@ function hashJson(value: unknown): string {
   return `sha256:${createHash('sha256').update(JSON.stringify(stableValue(value))).digest('hex')}`;
 }
 
+function pageFailureGaps(value: unknown): PageFailureGap[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw new ExecutionAuthenticityError('optional tool page failures are malformed');
+  }
+  const seen = new Set<string>();
+  return value.map((candidate, index): PageFailureGap => {
+    if (
+      !isRecord(candidate)
+      || typeof candidate.source_result_index !== 'number'
+      || !Number.isInteger(candidate.source_result_index)
+      || candidate.source_result_index < 0
+      || typeof candidate.code !== 'string'
+      || !PAGE_FAILURE_CODES.has(candidate.code)
+    ) {
+      throw new ExecutionAuthenticityError(`optional tool page failure ${index + 1} is malformed`);
+    }
+    const key = `${candidate.source_result_index}:${candidate.code}`;
+    if (seen.has(key)) {
+      throw new ExecutionAuthenticityError(`optional tool page failure ${key} is duplicated`);
+    }
+    seen.add(key);
+    return {
+      sourceResultIndex: candidate.source_result_index,
+      code: candidate.code,
+      message: typeof candidate.sanitized_message === 'string' && candidate.sanitized_message.trim()
+        ? redactString(candidate.sanitized_message)
+        : candidate.code,
+    };
+  });
+}
+
+function pageGapSummary(rawFailures: unknown): ToolGapSummary | undefined {
+  const failures = pageFailureGaps(rawFailures);
+  if (failures.length === 0) return undefined;
+  return {
+    count: failures.length,
+    keys: failures.map(({ sourceResultIndex, code }) => `${sourceResultIndex}:${code}`),
+    failuresHash: hashJson(rawFailures),
+  };
+}
+
+function stepGapSummary(failure: Record<string, unknown>, kind: ToolFailureKind): ToolGapSummary {
+  return {
+    count: 1,
+    keys: [`step:${kind}`],
+    failuresHash: hashJson(failure),
+  };
+}
+
 function sanitizeStepResult(result: StepResult): StepResult {
   if (
     containsBlockedSensitiveData(result.output)
@@ -655,7 +740,119 @@ function parsePlan(taskId: string, value: unknown, contract: DeliverableContract
   if (!evidenceRequirements.some((requirement) => requirement.required)) {
     throw new ExecutionAuthenticityError('plan must include required evidence');
   }
-  return { taskId, evidence_requirements: evidenceRequirements, steps };
+  const frozenSkillToolRoles = new Map<string, FrozenSkillToolRoles>();
+  const seenOptionalDecisionIds = new Set<string>();
+  const unavailableOptionalKeys = new Set<string>();
+  const decisions = isRecord(value.capability_decisions)
+    ? value.capability_decisions.eligible
+    : [];
+  if (!Array.isArray(decisions)) {
+    throw new ExecutionAuthenticityError('plan capability decisions are malformed');
+  }
+  for (const [decisionIndex, candidate] of decisions.entries()) {
+    if (!isRecord(candidate) || !isRecord(candidate.skill)) {
+      throw new ExecutionAuthenticityError(`plan capability decision ${decisionIndex + 1} is malformed`);
+    }
+    const skillId = candidate.skill.id;
+    const requiredTools = candidate.skill.required_tools ?? [];
+    const declaredOptionalTools = candidate.skill.optional_tools ?? [];
+    const optionalDecisions = candidate.optional_tool_decisions ?? [];
+    if (
+      typeof skillId !== 'string'
+      || !skillId.trim()
+      || frozenSkillToolRoles.has(skillId)
+      || !Array.isArray(requiredTools)
+      || !requiredTools.every((toolId): toolId is string => typeof toolId === 'string' && toolId.length > 0)
+      || !Array.isArray(declaredOptionalTools)
+      || !declaredOptionalTools.every((toolId): toolId is string => typeof toolId === 'string' && toolId.length > 0)
+      || !Array.isArray(optionalDecisions)
+    ) {
+      throw new ExecutionAuthenticityError(`plan capability decision ${decisionIndex + 1} is malformed`);
+    }
+    const roles: FrozenSkillToolRoles = {
+      requiredToolIds: new Set(requiredTools),
+      availableOptionalToolIds: new Set<string>(),
+    };
+    frozenSkillToolRoles.set(skillId, roles);
+    for (const optionalDecision of optionalDecisions) {
+      if (
+        !isRecord(optionalDecision)
+        || typeof optionalDecision.tool_id !== 'string'
+        || !declaredOptionalTools.includes(optionalDecision.tool_id)
+        || (optionalDecision.status !== 'available' && optionalDecision.status !== 'unavailable')
+      ) {
+        throw new ExecutionAuthenticityError(`plan optional tool decision ${decisionIndex + 1} is malformed`);
+      }
+      if (seenOptionalDecisionIds.has(optionalDecision.tool_id)) {
+        throw new ExecutionAuthenticityError(`plan optional tool ${optionalDecision.tool_id} is duplicated`);
+      }
+      seenOptionalDecisionIds.add(optionalDecision.tool_id);
+      if (optionalDecision.status === 'available') {
+        roles.availableOptionalToolIds.add(optionalDecision.tool_id);
+        continue;
+      }
+      if (typeof optionalDecision.reason_code !== 'string') {
+        throw new ExecutionAuthenticityError(`plan optional tool ${optionalDecision.tool_id} has no reason`);
+      }
+      unavailableOptionalKeys.add(`${optionalDecision.tool_id}\u0000${optionalDecision.reason_code}`);
+    }
+  }
+  const optionalToolStepNos = new Set<number>();
+  for (const toolStep of steps) {
+    if (toolStep.actor_type !== 'tool') continue;
+    let requiredByActualSkill = false;
+    const optionalOwnerStepNos = new Set<number>();
+    for (const skillStep of steps) {
+      if (skillStep.actor_type !== 'skill' || skillStep.step_no <= toolStep.step_no) continue;
+      const roles = frozenSkillToolRoles.get(skillStep.actor_id);
+      if (!roles) continue;
+      if (roles.requiredToolIds.has(toolStep.actor_id)) requiredByActualSkill = true;
+      if (
+        roles.availableOptionalToolIds.has(toolStep.actor_id)
+        && skillStep.depends_on.includes(toolStep.step_no)
+      ) {
+        optionalOwnerStepNos.add(skillStep.step_no);
+      }
+    }
+    if (!requiredByActualSkill && optionalOwnerStepNos.size === 1) {
+      optionalToolStepNos.add(toolStep.step_no);
+    }
+  }
+  const rawCapabilityGaps = value.capability_gaps ?? [];
+  if (!Array.isArray(rawCapabilityGaps)) {
+    throw new ExecutionAuthenticityError('plan capability gaps are malformed');
+  }
+  const capabilityGaps = rawCapabilityGaps.map((candidate, index): ExecutionGap => {
+    if (
+      !isRecord(candidate)
+      || candidate.capability_type !== 'tool'
+      || typeof candidate.capability_id !== 'string'
+      || typeof candidate.code !== 'string'
+      || typeof candidate.message !== 'string'
+      || !candidate.message.trim()
+    ) {
+      throw new ExecutionAuthenticityError(`plan capability gap ${index + 1} is malformed`);
+    }
+    const decisionKey = `${candidate.capability_id}\u0000${candidate.code}`;
+    if (!unavailableOptionalKeys.delete(decisionKey)) {
+      throw new ExecutionAuthenticityError(`plan capability gap ${candidate.capability_id} has no decision`);
+    }
+    return {
+      key: `capability:${candidate.capability_id}:${candidate.code}`,
+      stepNo: 0,
+      message: redactString(`Optional capability ${candidate.capability_id}: ${candidate.message}`),
+    };
+  });
+  if (unavailableOptionalKeys.size > 0) {
+    throw new ExecutionAuthenticityError('plan optional tool decision has no capability gap');
+  }
+  return {
+    taskId,
+    evidence_requirements: evidenceRequirements,
+    steps,
+    optionalToolStepNos,
+    capabilityGaps,
+  };
 }
 interface ReviewCoverageIds {
   successCriterionIds: string[];
@@ -1145,7 +1342,12 @@ export class LeaseExecutionEngine {
     const resolvedArtifacts = new Map<string, ResolvedEvidenceArtifact>();
     const visualAssetService = new VisualAssetService({ artifacts: this.dependencies.artifacts });
     const committedBrowserCaptures: CommittedBrowserCapture[] = [];
-    const gaps: Array<{ stepNo: number; message: string }> = [];
+    const gaps = new Map<string, ExecutionGap>(
+      plan.capabilityGaps.map((gap) => [gap.key, gap]),
+    );
+    const addGap = (gap: ExecutionGap): void => {
+      if (!gaps.has(gap.key)) gaps.set(gap.key, gap);
+    };
     const stepByKey = new Map(plan.steps.map((step) => [String(step.step_no), step]));
     let wavePaused: LeaseExecutionResult | undefined;
     let cleanupRecoveryRequired = false;
@@ -1160,7 +1362,9 @@ export class LeaseExecutionEngine {
       steps: plan.steps.map((step) => ({
         key: String(step.step_no),
         dependsOn: step.depends_on.map(String),
-        tier: step.actor_type === 'tool' ? this.dependencies.skillLoader.getTool(step.actor_id)?.tier ?? 'core' : 'core',
+        tier: step.actor_type === 'tool' && plan.optionalToolStepNos.has(step.step_no)
+          ? 'optional'
+          : 'core',
       })),
     }, {});
 
@@ -1267,6 +1471,7 @@ export class LeaseExecutionEngine {
               resolvedInput,
               outputs,
               expectedModel: input.expectedModel,
+              optionalTool: plan.optionalToolStepNos.has(step.step_no),
               toolContext: toolScope.context,
               onToolLeaseLost: () => toolScope?.abort('lease_lost'),
             });
@@ -1280,12 +1485,19 @@ export class LeaseExecutionEngine {
               resolvedInput,
               outputs,
               expectedModel: input.expectedModel,
+              optionalTool: false,
             }));
           }
           const actorOutputHash = actorResult.skillProvenance?.outputHash;
           if (typeof actorOutputHash === 'string') producedSkillOutputHash = actorOutputHash;
           toolAttemptReceipts = actorResult.toolAttemptReceipts;
           const result = sanitizeStepResult(actorResult);
+          const successfulPageFailures = step.actor_id === 'playwright-page-capture'
+            ? pageFailureGaps(isRecord(result.output) ? result.output.failures : undefined)
+            : [];
+          const successfulGapSummary = step.actor_id === 'playwright-page-capture'
+            ? pageGapSummary(isRecord(result.output) ? result.output.failures : undefined)
+            : undefined;
           const captureAttachments = step.actor_type === 'tool'
             ? browserCaptureAttachments(step.actor_id, result.output, result.mediaAttachments)
             : [];
@@ -1401,6 +1613,7 @@ export class LeaseExecutionEngine {
                   sourceRefs: result.sourceRefs,
                   attemptReceipts: result.toolAttemptReceipts,
                   toolTier: result.toolTier,
+                  ...(successfulGapSummary ? { gapSummary: successfulGapSummary } : {}),
                   outputArtifactId: artifact.id,
                   status: 'succeeded',
                 }
@@ -1415,6 +1628,15 @@ export class LeaseExecutionEngine {
           publicationGroup?.commit();
           unpublishedArtifactId = undefined;
           committedBrowserCaptures.push(...pendingBrowserCaptures);
+          for (const pageFailure of successfulPageFailures) {
+            addGap({
+              key: `step:${step.step_no}:${pageFailure.sourceResultIndex}:${pageFailure.code}`,
+              stepNo: step.step_no,
+              message: redactString(
+                `Step ${step.step_no} (${step.actor_id}) page ${pageFailure.sourceResultIndex}: ${pageFailure.message}`,
+              ),
+            });
+          }
           if (step.actor_type === 'tool') {
             resolvedArtifacts.set(verified.artifact.id, {
               artifact: {
@@ -1485,13 +1707,10 @@ export class LeaseExecutionEngine {
           attachAttemptReceipts(failure, attemptReceipts);
           let failedToolProvenance: Record<string, unknown> | undefined;
           let failedSkillProvenance: Record<string, unknown> | undefined;
-          let toolTier: 'core' | 'optional' = 'optional';
+          let toolTier: 'core' | 'optional' = 'core';
+          let effectiveError = error;
           if (step.actor_type === 'tool') {
-            try {
-              toolTier = this.dependencies.skillLoader.getTool(step.actor_id)?.tier ?? 'optional';
-            } catch {
-              // Registry default is optional; missing config remains non-blocking for enhanced tools.
-            }
+            toolTier = plan.optionalToolStepNos.has(step.step_no) ? 'optional' : 'core';
             failure.toolTier = toolTier;
             const toolProvenance = await this.failedToolProvenance(
               step,
@@ -1499,18 +1718,37 @@ export class LeaseExecutionEngine {
               resolvedInput,
               error,
               attemptReceipts,
+              toolTier === 'optional',
             );
             toolProvenance.toolTier = toolTier;
+            let failedPageFailures: PageFailureGap[] = [];
+            let failedGapSummary: ToolGapSummary | undefined;
+            if (toolTier === 'optional' && !artifactCleanupFailed) {
+              try {
+                failedPageFailures = pageFailureGaps(failure.page_failures);
+                failedGapSummary = pageGapSummary(failure.page_failures);
+              } catch (gapError) {
+                effectiveError = gapError;
+                failure = failureFrom(gapError);
+                failure.toolTier = toolTier;
+              }
+            }
+            if (failedGapSummary) toolProvenance.gapSummary = failedGapSummary;
             failedToolProvenance = toolProvenance;
             if (
               toolTier === 'optional'
               && error instanceof ToolInvocationError
-              && failure.kind !== 'safety'
-              && failure.kind !== 'lease_lost'
+              && error.kind !== 'schema'
+              && error.kind !== 'safety'
+              && error.kind !== 'lease_lost'
               && !artifactCleanupFailed
-              && !isIntegrityFailure(error)
+              && !isIntegrityFailure(effectiveError)
             ) {
               failure.allowedActions ??= [];
+              if (!failedGapSummary) {
+                failedGapSummary = stepGapSummary(failure, error.kind);
+                toolProvenance.gapSummary = failedGapSummary;
+              }
               await this.dependencies.repository.recordExecutionStep({
                 ...input.lease,
                 stepNo: step.step_no,
@@ -1523,13 +1761,26 @@ export class LeaseExecutionEngine {
                 startedAt,
                 finishedAt: new Date(),
               });
-              const message = typeof failure.message === 'string'
-                ? failure.message
-                : 'optional tool failed';
-              gaps.push({
-                stepNo: step.step_no,
-                message: redactString(`Step ${step.step_no} (${step.actor_id}): ${message}`),
-              });
+              if (failedPageFailures.length > 0) {
+                for (const pageFailure of failedPageFailures) {
+                  addGap({
+                    key: `step:${step.step_no}:${pageFailure.sourceResultIndex}:${pageFailure.code}`,
+                    stepNo: step.step_no,
+                    message: redactString(
+                      `Step ${step.step_no} (${step.actor_id}) page ${pageFailure.sourceResultIndex}: ${pageFailure.message}`,
+                    ),
+                  });
+                }
+              } else {
+                const message = typeof failure.message === 'string'
+                  ? failure.message
+                  : 'optional tool failed';
+                addGap({
+                  key: `step:${step.step_no}:${failedGapSummary.keys[0]}`,
+                  stepNo: step.step_no,
+                  message: redactString(`Step ${step.step_no} (${step.actor_id}): ${message}`),
+                });
+              }
               return;
             }
             failure.allowedActions = failure.kind === 'safety' || failure.kind === 'artifact_invalidation'
@@ -1639,7 +1890,7 @@ export class LeaseExecutionEngine {
             { stepNo: paused.failedStepNo, state: 'failed', failure: paused.failure },
           ]);
           if (authoritativeFailure?.stepNo === paused.failedStepNo) wavePaused = paused;
-          if (isIntegrityFailure(error)) throw error;
+          if (isIntegrityFailure(effectiveError)) throw effectiveError;
           return;
         } finally {
           if (actorResult?.mediaAttachments) {
@@ -1800,9 +2051,14 @@ export class LeaseExecutionEngine {
         const weightResolution = resolveCompetitiveScoringWeights(planVersion.plan);
         const chartGapStepNo = plan.steps.length + 1;
         if (weightResolution.status === 'unavailable') {
-          gaps.push({ stepNo: chartGapStepNo, message: weightResolution.message });
+          addGap({
+            key: `system:chart:${weightResolution.code}`,
+            stepNo: chartGapStepNo,
+            message: weightResolution.message,
+          });
         } else if (!this.dependencies.reportReview || !this.dependencies.reportComposition) {
-          gaps.push({
+          addGap({
+            key: 'system:chart:composition_unavailable',
             stepNo: chartGapStepNo,
             message: '评分权重图未生成：报告审阅或组合链路不可用。',
           });
@@ -1908,7 +2164,8 @@ export class LeaseExecutionEngine {
           } catch (error) {
             if (!(error instanceof ChartRendererUnavailableError)) throw error;
             await compensateChartPublication('Competitive weight Chart renderer was unavailable');
-            gaps.push({
+            addGap({
+              key: 'system:chart:renderer_unavailable',
               stepNo: chartGapStepNo,
               message: '评分权重图未生成：服务端图表渲染器不可用。',
             });
@@ -2050,6 +2307,8 @@ export class LeaseExecutionEngine {
         }));
       chartPublication?.commit();
       chartPublication = undefined;
+      const orderedGaps = [...gaps.values()]
+        .sort((left, right) => left.stepNo - right.stepNo);
       const deliverableInput: CurrentDeliverableGenerateInput = {
         task: { id: task.id },
         plan: {
@@ -2067,9 +2326,8 @@ export class LeaseExecutionEngine {
         evidenceManifest: sealedEvidenceManifest,
         evidenceResolver,
         outputs: [...outputs].sort((left, right) => left.stepNo - right.stepNo),
-        gaps: [...gaps]
-          .sort((left, right) => left.stepNo - right.stepNo)
-          .map(({ message }) => message),
+        gaps: orderedGaps.map(({ message }) => message),
+        gapRefs: orderedGaps.map(({ key, stepNo }) => ({ key, stepNo })),
         expectedModel: input.expectedModel,
         stepNo: plan.steps.length + 1,
         activeLease: input.lease,
@@ -2215,7 +2473,7 @@ export class LeaseExecutionEngine {
             reportDocumentArtifactId,
           });
       await this.dependencies.repository.requireActiveLease(input.lease);
-      const status = gaps.length > 0 ? 'completed_with_gaps' : 'completed';
+      const status = gaps.size > 0 ? 'completed_with_gaps' : 'completed';
       await this.dependencies.repository.completeExecution(input.lease, { status });
       return {
         status,
@@ -2225,7 +2483,7 @@ export class LeaseExecutionEngine {
         ...(reportReviewArtifactId === undefined ? {} : { reportReviewArtifactId }),
         ...(reportPackage === undefined ? {} : { reportPackageArtifactId: reportPackage.id }),
         ...(reviewStatus === undefined ? {} : { reviewStatus }),
-        gapCount: gaps.length,
+        gapCount: gaps.size,
       };
     } catch (error) {
       if (error instanceof ControlPlaneConflictError) {
@@ -2439,6 +2697,7 @@ export class LeaseExecutionEngine {
   }
 
   private async preflight(plan: EnginePlan, researchGoal: string): Promise<ExecutionAuthenticityError | null> {
+    const optionalToolStepNos = plan.optionalToolStepNos;
     const requiresPublicSource = plan.evidence_requirements.some((requirement) => (
       requirement.required && requirement.acceptedClasses.includes('public_source')
     ));
@@ -2446,8 +2705,9 @@ export class LeaseExecutionEngine {
     if (requiresPublicSource) {
       publicEvidencePolicyFailure = !plan.steps.some((step) => {
         if (step.actor_type !== 'tool') return false;
+        if (optionalToolStepNos.has(step.step_no)) return false;
         const registryEntry = this.dependencies.skillLoader.getTool(step.actor_id);
-        if (!registryEntry || registryEntry.tier !== 'core') return false;
+        if (!registryEntry) return false;
         try {
           const manifest = loadToolManifest(registryEntry.path);
           const resolution = this.dependencies.tools.resolve(manifest);
@@ -2477,9 +2737,22 @@ export class LeaseExecutionEngine {
           continue;
         }
         if (step.actor_type !== 'tool') continue;
-        const tool = this.dependencies.skillLoader.getTool(step.actor_id);
-        if (!tool) return new ExecutionAuthenticityError(`tool ${step.actor_id} is not active`);
-        const manifest = loadToolManifest(tool.path);
+        const frozenOptional = optionalToolStepNos.has(step.step_no);
+        const tool = frozenOptional
+          ? this.dependencies.skillLoader.getRegisteredTool(step.actor_id)
+          : this.dependencies.skillLoader.getTool(step.actor_id);
+        if (!tool) {
+          if (frozenOptional) continue;
+          return new ExecutionAuthenticityError(`tool ${step.actor_id} is not active`);
+        }
+        if (frozenOptional && tool.status !== 'active') continue;
+        let manifest: ToolManifest;
+        try {
+          manifest = loadToolManifest(tool.path);
+        } catch (error) {
+          if (frozenOptional) continue;
+          throw error;
+        }
         const resolution = this.dependencies.tools.resolve(manifest);
         const toolInput = step.input;
         if (step.input_bindings.length === 0) {
@@ -2491,6 +2764,7 @@ export class LeaseExecutionEngine {
           || resolution.declaredAdapterType !== resolution.resolvedAdapterType
           || resolution.implementationId === 'unknown'
         ) {
+          if (frozenOptional) continue;
           return new ExecutionAuthenticityError(`tool ${step.actor_id} has no qualifying real adapter`, {
             declaredAdapterType: manifest.adapter_type,
             resolvedAdapterType: resolution?.resolvedAdapterType ?? 'unknown',
@@ -2608,6 +2882,7 @@ export class LeaseExecutionEngine {
     resolvedInput: Record<string, unknown>;
     outputs: EngineSealedStepOutput[];
     expectedModel: string;
+    optionalTool: boolean;
     toolContext?: ToolInvocationContext;
     onToolLeaseLost?: () => void;
   }): Promise<StepResult> {
@@ -2626,6 +2901,7 @@ export class LeaseExecutionEngine {
         input.lease,
         input.toolContext,
         input.onToolLeaseLost,
+        input.optionalTool,
       );
     }
     await this.dependencies.repository.requireActiveLease(input.lease);
@@ -2645,6 +2921,7 @@ export class LeaseExecutionEngine {
     resolvedInput: Record<string, unknown>,
     error: unknown,
     fallbackAttemptReceipts?: ToolRetryAttemptReceipt[],
+    frozenOptional = false,
   ): Promise<Record<string, unknown>> {
     const receipt = error instanceof ToolInvocationError ? error.receipt : null;
     const details = detailsFrom(error);
@@ -2671,7 +2948,9 @@ export class LeaseExecutionEngine {
       captureFailure: captureFailure instanceof Error ? captureFailure.message : String(captureFailure),
     });
     try {
-      const tool = this.dependencies.skillLoader.getTool(step.actor_id);
+      const tool = frozenOptional
+        ? this.dependencies.skillLoader.getRegisteredTool(step.actor_id)
+        : this.dependencies.skillLoader.getTool(step.actor_id);
       if (!tool) return fallback(new Error(`tool ${step.actor_id} unavailable during provenance capture`));
       const manifest = loadToolManifest(tool.path);
       const resolution = this.dependencies.tools.resolve(manifest);
@@ -2769,10 +3048,42 @@ export class LeaseExecutionEngine {
     lease: ControlExecutionLease,
     context: ToolInvocationContext,
     onLeaseLost?: () => void,
+    frozenOptional = false,
   ): Promise<StepResult> {
-    const tool = this.dependencies.skillLoader.getTool(step.actor_id);
-    if (!tool) throw new ExecutionAuthenticityError(`tool ${step.actor_id} is not active`);
-    const manifest = loadToolManifest(tool.path);
+    const tool = frozenOptional
+      ? this.dependencies.skillLoader.getRegisteredTool(step.actor_id)
+      : this.dependencies.skillLoader.getTool(step.actor_id);
+    if (!tool) {
+      if (frozenOptional) {
+        throw new ToolInvocationError(step.actor_id, {
+          kind: 'configuration',
+          retryable: false,
+          providerStatus: null,
+          sanitizedMessage: 'optional tool is no longer registered',
+        });
+      }
+      throw new ExecutionAuthenticityError(`tool ${step.actor_id} is not active`);
+    }
+    if (frozenOptional && tool.status !== 'active') {
+      throw new ToolInvocationError(step.actor_id, {
+        kind: 'configuration',
+        retryable: false,
+        providerStatus: null,
+        sanitizedMessage: 'optional tool is no longer active',
+      });
+    }
+    let manifest: ToolManifest;
+    try {
+      manifest = loadToolManifest(tool.path);
+    } catch (error) {
+      if (!frozenOptional) throw error;
+      throw new ToolInvocationError(step.actor_id, {
+        kind: 'configuration',
+        retryable: false,
+        providerStatus: null,
+        sanitizedMessage: 'optional tool manifest is unavailable',
+      });
+    }
     const resolution = this.dependencies.tools.resolve(manifest);
     if (
       !resolution
@@ -2780,15 +3091,25 @@ export class LeaseExecutionEngine {
       || resolution.declaredAdapterType !== resolution.resolvedAdapterType
       || resolution.implementationId === 'unknown'
     ) {
-      throw new ExecutionAuthenticityError(
-        `tool ${step.actor_id} has no qualifying real adapter`,
-        {
+      const resolutionDetails = {
           declaredAdapterType: manifest.adapter_type,
           resolvedAdapterType: resolution?.resolvedAdapterType ?? 'unknown',
           implementationId: resolution?.implementationId ?? 'unknown',
           executionMode: resolution?.executionMode ?? 'unknown',
           endpointHost: resolution?.endpointHost ?? null,
-        },
+      };
+      if (frozenOptional) {
+        throw new ToolInvocationError(step.actor_id, {
+          kind: 'configuration',
+          retryable: false,
+          providerStatus: null,
+          sanitizedMessage: 'optional tool has no qualifying real adapter',
+          details: resolutionDetails,
+        });
+      }
+      throw new ExecutionAuthenticityError(
+        `tool ${step.actor_id} has no qualifying real adapter`,
+        resolutionDetails,
       );
     }
     const toolInput = resolvedInput;
@@ -2951,7 +3272,7 @@ export class LeaseExecutionEngine {
       toolReceipt: result.receipt,
       toolAttemptReceipts: retryResult.attemptReceipts,
       mediaAttachments: result.mediaAttachments,
-      toolTier: tool.tier ?? 'optional',
+      toolTier: frozenOptional ? 'optional' : 'core',
       toolResolution: resolution,
       manifestHash: hashFile(tool.path),
       inputSchemaHash: hashFile(manifest.input_schema),

@@ -14,6 +14,7 @@ interface ServerExecutionStep {
   actorType: string;
   actorId: string;
   skillProvenance: Record<string, unknown> | null;
+  toolProvenance?: Record<string, unknown> | null;
   state: 'running' | 'succeeded' | 'skipped' | 'failed';
   failure?: Record<string, unknown> | null;
 }
@@ -85,6 +86,10 @@ interface CurrentFlowStateModule {
     userAnswers: Record<string, unknown>,
   ): Record<string, unknown>;
   executionStepsToExecLog(steps: ServerExecutionStep[]): ExecLogRow[];
+  currentExecutionGapCount(input: {
+    plan: unknown;
+    executionSteps: readonly ServerExecutionStep[];
+  }): number;
   selectAuthoritativeFailedStep(steps: readonly ServerExecutionStep[]): ServerExecutionStep | undefined;
   executionFailureAllowsAction(failure: Record<string, unknown> | null | undefined, action: string): boolean;
   finishExecution(state: DeliverableReadState, execution: CompletedExecution): FlowTransition;
@@ -171,6 +176,7 @@ async function loadCurrentFlowStateModule(): Promise<CurrentFlowStateModule> {
   for (const exportName of [
     'buildConfirmationAnswers',
     'executionStepsToExecLog',
+    'currentExecutionGapCount',
     'selectAuthoritativeFailedStep',
     'executionFailureAllowsAction',
     'finishExecution',
@@ -722,6 +728,98 @@ test('executionStepsToExecLog preserves server state and Skill provenance withou
     { step_no: 3, step_name: '可选增强', actor_type: 'tool', actor_id: 'optional-lab', status: 'skipped', skillProvenance: null },
     { step_no: 4, step_name: '质量复核', actor_type: 'skill', actor_id: 'research-plan-reviewer', status: 'failed', skillProvenance: failedProvenance },
   ]);
+});
+
+test('currentExecutionGapCount counts every page in a valid multi-page gap summary', async () => {
+  const { currentExecutionGapCount } = await loadCurrentFlowStateModule();
+  const pageSummary = {
+    count: 3,
+    keys: ['0:login_required', '1:captcha_required', '2:network'],
+    failuresHash: `sha256:${'a'.repeat(64)}`,
+  };
+  const stepSummary = {
+    count: 1,
+    keys: ['step:configuration'],
+    failuresHash: `sha256:${'b'.repeat(64)}`,
+  };
+  const count = currentExecutionGapCount({
+    plan: {
+      capability_gaps: [
+        {
+          capability_type: 'tool',
+          capability_id: 'playwright-page-capture',
+          code: 'optional_tool_real_adapter_unavailable',
+        },
+        {
+          capability_type: 'tool',
+          capability_id: 'playwright-page-capture',
+          code: 'optional_tool_real_adapter_unavailable',
+        },
+      ],
+    },
+    executionSteps: [
+      {
+        stepNo: 2,
+        state: 'succeeded',
+        toolProvenance: { gapSummary: pageSummary },
+      },
+      {
+        stepNo: 3,
+        state: 'skipped',
+        toolProvenance: { gapSummary: stepSummary },
+      },
+    ] as never,
+  });
+  assert.equal(count, 5);
+});
+
+test('currentExecutionGapCount does not reinterpret a present malformed gapSummary as a legacy skipped gap', async () => {
+  const { currentExecutionGapCount } = await loadCurrentFlowStateModule();
+  const pageSummary = {
+    count: 2,
+    keys: ['0:login_required', '1:captcha_required'],
+    failuresHash: `sha256:${'a'.repeat(64)}`,
+  };
+  const stepSummary = {
+    count: 1,
+    keys: ['step:configuration'],
+    failuresHash: `sha256:${'b'.repeat(64)}`,
+  };
+
+  for (const gapSummary of [
+    { ...pageSummary, count: 99 },
+    { ...stepSummary, message: 'must not cross the boundary' },
+    { ...pageSummary, keys: ['0:login_required', 'step:configuration'] },
+    { ...stepSummary, count: 2, keys: ['step:configuration', 'step:capacity'] },
+    { ...stepSummary, count: 0, keys: [] },
+    { ...pageSummary, count: 1, keys: ['01:login_required'] },
+    { ...pageSummary, count: 1, keys: ['https://secret.test'] },
+    null,
+    undefined,
+  ]) {
+    assert.equal(currentExecutionGapCount({
+      plan: {},
+      executionSteps: [{
+        stepNo: 9,
+        state: 'skipped',
+        toolProvenance: { gapSummary },
+      }] as never,
+    }), 0, 'a present gapSummary field disables the legacy fallback even when malformed');
+  }
+});
+
+test('currentExecutionGapCount uses the legacy skipped fallback only when gapSummary is absent', async () => {
+  const { currentExecutionGapCount } = await loadCurrentFlowStateModule();
+
+  assert.equal(currentExecutionGapCount({
+    plan: {},
+    executionSteps: [
+      { stepNo: 1, state: 'skipped' },
+      { stepNo: 2, state: 'skipped', toolProvenance: null },
+      { stepNo: 3, state: 'skipped', toolProvenance: {} },
+      { stepNo: 4, state: 'succeeded', toolProvenance: {} },
+    ] as never,
+  }), 3);
 });
 
 test('deliverable read failure preserves completed execution and retry requests only the deliverable', async () => {

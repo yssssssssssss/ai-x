@@ -105,7 +105,8 @@
         "type": { "const": "image" },
         "assetRef": { "$ref": "#/definitions/assetRef" },
         "caption": { "$ref": "#/definitions/nonEmptyString" },
-        "altText": { "$ref": "#/definitions/nonEmptyString" }
+        "altText": { "$ref": "#/definitions/nonEmptyString" },
+        "evidenceIds": { "$ref": "#/definitions/evidenceList" }
       }
     },
     "imageComparisonBlock": {
@@ -118,7 +119,8 @@
         "beforeAssetRef": { "$ref": "#/definitions/assetRef" },
         "afterAssetRef": { "$ref": "#/definitions/assetRef" },
         "caption": { "$ref": "#/definitions/nonEmptyString" },
-        "altText": { "$ref": "#/definitions/nonEmptyString" }
+        "altText": { "$ref": "#/definitions/nonEmptyString" },
+        "evidenceIds": { "$ref": "#/definitions/evidenceList" }
       }
     },
     "chartSpec": {

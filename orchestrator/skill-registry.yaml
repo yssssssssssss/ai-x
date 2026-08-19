@@ -48,6 +48,8 @@ skills:
     output_schema: schemas/skill-result-envelope.schema.json
     required_tools:
       - tavily-web-search
+    optional_tools:
+      - playwright-page-capture
     cost_level: low
     risk_level: low
   - id: competitive-app-analysis

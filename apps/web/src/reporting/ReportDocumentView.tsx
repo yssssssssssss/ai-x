@@ -73,17 +73,37 @@ function EvidenceBlock({
   onToggle(): void;
 }) {
   if (block.items) return <ul className="report-list">{block.items.map((item) => <li key={item}>{item}</li>)}</ul>;
-  const ids = block.evidenceIds ?? [];
   return (
     <section className="report-finding" data-block-id={block.id}>
       <p>{block.text}</p>
-      {ids.length > 0 ? (
-        <button type="button" className="report-evidence-toggle" aria-expanded={expanded} onClick={onToggle}>
-          {expanded ? '收起证据' : `查看证据（${ids.length}）`}
-        </button>
-      ) : null}
-      {expanded ? <ul className="report-evidence-list">{ids.map((id) => <li key={id}><code>{id}</code></li>)}</ul> : null}
+      <EvidenceDisclosure evidenceIds={block.evidenceIds} expanded={expanded} onToggle={onToggle} />
     </section>
+  );
+}
+
+function EvidenceDisclosure({
+  evidenceIds,
+  expanded,
+  onToggle,
+}: {
+  evidenceIds?: string[];
+  expanded: boolean;
+  onToggle(): void;
+}) {
+  const ids = evidenceIds ?? [];
+  if (ids.length === 0) return null;
+  return (
+    <div className="report-evidence-disclosure">
+      <button type="button" className="report-evidence-toggle" aria-expanded={expanded} onClick={onToggle}>
+        {expanded ? '收起证据' : `查看证据（${ids.length}）`}
+      </button>
+      <ul
+        className={`report-evidence-list${expanded ? '' : ' report-chart-print'}`}
+        aria-label="证据编号"
+      >
+        {ids.map((id) => <li key={id}><code>{id}</code></li>)}
+      </ul>
+    </div>
   );
 }
 
@@ -146,16 +166,23 @@ function ReportBlockView({
   if (block.kind === 'list') return <ul className="report-list">{block.items?.map((item) => <li key={item}>{item}</li>)}</ul>;
   if (block.kind === 'image' && block.assetId && block.altText && block.caption) {
     return (
-      <ImageBlock
-        id={block.id}
-        assetId={block.assetId}
-        src={block.assetSrc}
-        altText={block.altText}
-        caption={block.caption}
-        zoom={interaction.imageZoom[block.id] ?? 1}
-        onZoom={(zoom) => dispatch({ type: 'set-image-zoom', blockId: block.id, zoom })}
-        loadAsset={block.assetSrc ? loadAsset : undefined}
-      />
+      <div className="report-visual-evidence">
+        <ImageBlock
+          id={block.id}
+          assetId={block.assetId}
+          src={block.assetSrc}
+          altText={block.altText}
+          caption={block.caption}
+          zoom={interaction.imageZoom[block.id] ?? 1}
+          onZoom={(zoom) => dispatch({ type: 'set-image-zoom', blockId: block.id, zoom })}
+          loadAsset={block.assetSrc ? loadAsset : undefined}
+        />
+        <EvidenceDisclosure
+          evidenceIds={block.evidenceIds}
+          expanded={interaction.expandedEvidence.has(block.id)}
+          onToggle={() => dispatch({ type: 'toggle-evidence', blockId: block.id })}
+        />
+      </div>
     );
   }
   if (
@@ -168,20 +195,27 @@ function ReportBlockView({
     && block.annotationSrc
   ) {
     return (
-      <ImageComparisonBlock
-        id={block.id}
-        originalAssetId={block.originalAssetId}
-        annotationAssetId={block.annotationAssetId}
-        originalSrc={block.originalSrc}
-        annotationSrc={block.annotationSrc}
-        altText={block.altText}
-        caption={block.caption}
-        variant={interaction.imageVariants[block.id] ?? 'annotation'}
-        zoom={interaction.imageZoom[block.id] ?? 1}
-        onVariantChange={(variant) => dispatch({ type: 'select-image-variant', blockId: block.id, variant })}
-        onZoom={(zoom) => dispatch({ type: 'set-image-zoom', blockId: block.id, zoom })}
-        loadAsset={block.originalSrc && block.annotationSrc ? loadAsset : undefined}
-      />
+      <div className="report-visual-evidence">
+        <ImageComparisonBlock
+          id={block.id}
+          originalAssetId={block.originalAssetId}
+          annotationAssetId={block.annotationAssetId}
+          originalSrc={block.originalSrc}
+          annotationSrc={block.annotationSrc}
+          altText={block.altText}
+          caption={block.caption}
+          variant={interaction.imageVariants[block.id] ?? 'annotation'}
+          zoom={interaction.imageZoom[block.id] ?? 1}
+          onVariantChange={(variant) => dispatch({ type: 'select-image-variant', blockId: block.id, variant })}
+          onZoom={(zoom) => dispatch({ type: 'set-image-zoom', blockId: block.id, zoom })}
+          loadAsset={block.originalSrc && block.annotationSrc ? loadAsset : undefined}
+        />
+        <EvidenceDisclosure
+          evidenceIds={block.evidenceIds}
+          expanded={interaction.expandedEvidence.has(block.id)}
+          onToggle={() => dispatch({ type: 'toggle-evidence', blockId: block.id })}
+        />
+      </div>
     );
   }
   if (block.kind === 'chart' && block.spec && block.table && block.assetId && block.altText) {

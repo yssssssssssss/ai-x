@@ -29,6 +29,11 @@
     "problem_graph": { "$ref": "#/$defs/problemGraph" },
     "problem_graph_provenance": { "$ref": "#/$defs/problemGraphProvenance" },
     "capability_decisions": { "$ref": "#/$defs/capabilityDecisions" },
+    "capability_gaps": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/capabilityGap" }
+    },
     "steps": {
       "type": "array",
       "minItems": 1,
@@ -198,6 +203,11 @@
         "payload_schema": { "type": "string" },
         "entry": { "type": "string" },
         "required_tools": { "type": "array", "items": { "type": "string" } },
+        "optional_tools": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
         "cost_level": { "type": "string" },
         "risk_level": { "enum": ["low", "medium", "high"] }
       }
@@ -220,7 +230,60 @@
         "skill": { "$ref": "#/$defs/capabilitySkill" },
         "required_approvals": { "type": "array", "items": { "$ref": "#/$defs/capabilityApproval" } },
         "reasons": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/capabilityReason" } },
-        "pending_inputs": { "type": "array", "items": { "$ref": "#/$defs/capabilityPendingInput" } }
+        "pending_inputs": { "type": "array", "items": { "$ref": "#/$defs/capabilityPendingInput" } },
+        "optional_tool_decisions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/optionalToolDecision" }
+        }
+      }
+    },
+    "optionalToolDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool_id", "status"],
+      "properties": {
+        "tool_id": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["available", "unavailable"] },
+        "reason_code": {
+          "enum": [
+            "optional_tool_health_unknown",
+            "optional_tool_unhealthy",
+            "optional_tool_real_adapter_unavailable"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1, "maxLength": 300 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "available" } }, "required": ["status"] },
+          "then": {
+            "not": {
+              "anyOf": [
+                { "required": ["reason_code"] },
+                { "required": ["message"] }
+              ]
+            }
+          },
+          "else": { "required": ["reason_code", "message"] }
+        }
+      ]
+    },
+    "capabilityGap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability_type", "capability_id", "code", "message"],
+      "properties": {
+        "capability_type": { "const": "tool" },
+        "capability_id": { "type": "string", "minLength": 1 },
+        "code": {
+          "enum": [
+            "optional_tool_health_unknown",
+            "optional_tool_unhealthy",
+            "optional_tool_real_adapter_unavailable"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1, "maxLength": 300 }
       }
     },
     "capabilityDecisions": {

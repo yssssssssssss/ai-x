@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,9 +9,15 @@ import {
   assertSmokeReceiptMinimums,
   CURRENT_REAL_SMOKE_PROFILES,
   designSmokeInputValue,
+  formatSmokeReceipt,
   resolveSmokeRequirement,
+  runCurrentRealSmoke,
   safeSmokeErrorMessage,
+  selectSmokeScenario,
   selectSmokeCandidate,
+  summarizeSmokeEvidence,
+  verifySmokeGapSummaryHashes,
+  verifySmokeHistoryReread,
 } from '../scripts/current-real-smoke.ts';
 import { parseModelRoutes } from '../apps/orchestrator-runtime/src/runtime/gateway-llm-client.ts';
 const REQUIRED_REAL_PROVIDER_ENV = [
@@ -31,9 +38,17 @@ const realProviderConfigured = REQUIRED_REAL_PROVIDER_ENV.every((key) => {
   return typeof value === 'string' && value.trim() !== '';
 });
 const realSmokeOptions = { skip: !realProviderConfigured };
-const realProfiles = [...CURRENT_REAL_SMOKE_PROFILES];
+const realSmokeScenarios = [
+  { profile: 'competitive_research', scenarioId: 'competitive-ai-shopping-assistant' },
+  { profile: 'user_research_planning', scenarioId: 'planning-checkout-abandonment' },
+  { profile: 'voc_diagnosis', scenarioId: 'voc-checkout' },
+  { profile: 'design_audit', scenarioId: 'design-product-detail' },
+  { profile: 'a11y_audit', scenarioId: 'a11y-mobile-checkout' },
+] as const;
+const realProfiles = realSmokeScenarios.map(({ profile }) => profile);
 
 type SmokeReceipt = {
+  scenarioId: string;
   profile: string;
   taskType: string;
   deliverableType: string;
@@ -42,6 +57,19 @@ type SmokeReceipt = {
   attemptId: string;
   reportPackageId: string;
   visualAssetCount: number;
+  gapCount: number;
+  toolArtifactIds: string[];
+  visualAssetIds: string[];
+  visualAssetManifestIds: string[];
+  browserCaptureCount: number;
+  browserCaptureIds: string[];
+  browserCaptureHosts: string[];
+  screenshotEvidenceCount: number;
+  screenshotEvidenceIds: string[];
+  chartRenderCount: number;
+  chartRenderIds: string[];
+  browserToolVerified: boolean;
+  historyRereadVerified: true;
   evidenceCount: number;
   provider: string;
   requestedModel: string;
@@ -56,6 +84,85 @@ type SmokeReceipt = {
   machineEvidence?: unknown;
 };
 
+type RealSmokeRunner = (input: {
+  fixturePath: string;
+  profiles: string[];
+  scenarioId: string;
+}) => Promise<SmokeReceipt[]>;
+
+async function runConfiguredRealSmokes(run: RealSmokeRunner): Promise<SmokeReceipt[]> {
+  const receipts: SmokeReceipt[] = [];
+  for (const { profile, scenarioId } of realSmokeScenarios) {
+    receipts.push(...await run({
+      fixturePath: join(process.cwd(), 'tests/fixtures/current-semantic-gold.json'),
+      profiles: [profile],
+      scenarioId,
+    }));
+  }
+  return receipts;
+}
+
+function visualSmokeSnapshot() {
+  return {
+    plan: { capability_gaps: [] },
+    steps: [
+      {
+        stepNo: 1,
+        actorType: 'tool',
+        actorId: 'tavily-web-search',
+        state: 'succeeded',
+        outputArtifactId: 'tool-tavily',
+        toolProvenance: { executionMode: 'real', implementationId: 'tavily-rest-v1' },
+      },
+      {
+        stepNo: 2,
+        actorType: 'tool',
+        actorId: 'playwright-page-capture',
+        state: 'succeeded',
+        outputArtifactId: 'tool-browser',
+        toolProvenance: {
+          executionMode: 'real',
+          implementationId: 'playwright-page-capture-v1',
+          gapSummary: {
+            count: 1,
+            keys: ['3:access_blocked'],
+            failuresHash: `sha256:${'a'.repeat(64)}`,
+          },
+        },
+      },
+    ],
+    delivered: {
+      evidenceManifest: {
+        entries: [
+          { id: 'E1', kind: 'tool_output', artifactId: 'tool-tavily' },
+          { id: 'BC2-0', kind: 'screenshot', artifactId: 'manifest-jd' },
+          { id: 'BC2-1', kind: 'screenshot', artifactId: 'manifest-tmall' },
+          { id: 'BC2-2', kind: 'screenshot', artifactId: 'manifest-douyin' },
+        ],
+      },
+      visualAssetManifests: [
+        { assetId: 'asset-jd', source: { kind: 'browser_capture', sourcePageUrl: 'https://jd.com/ai' } },
+        { assetId: 'asset-tmall', source: { kind: 'browser_capture', sourcePageUrl: 'https://tmall.com/ai' } },
+        { assetId: 'asset-douyin', source: { kind: 'browser_capture', sourcePageUrl: 'https://douyin.com/ai' } },
+        { assetId: 'asset-chart', source: { kind: 'chart_render' } },
+      ],
+      reportDocument: {
+        sections: [{
+          blocks: [
+            { type: 'image', assetRef: { assetId: 'asset-jd', manifestArtifactId: 'manifest-jd' } },
+            { type: 'image', assetRef: { assetId: 'asset-tmall', manifestArtifactId: 'manifest-tmall' } },
+            { type: 'image', assetRef: { assetId: 'asset-douyin', manifestArtifactId: 'manifest-douyin' } },
+            {
+              type: 'chart',
+              chartRef: { assetId: 'asset-chart', manifestArtifactId: 'manifest-chart', chartId: 'weights' },
+            },
+          ],
+        }],
+      },
+    },
+  };
+}
+
 test('current real smoke covers all five Current profiles', () => {
   assert.deepEqual(realProfiles, [
     'competitive_research',
@@ -64,6 +171,351 @@ test('current real smoke covers all five Current profiles', () => {
     'design_audit',
     'a11y_audit',
   ]);
+});
+
+test('real smoke selects one exact scenario and rejects missing or mismatched ids', () => {
+  const fixture = {
+    profiles: ['competitive_research', 'voc_diagnosis'],
+    scenarios: [
+      {
+        id: 'competitive-ai-shopping-assistant',
+        profile: 'competitive_research',
+        taskType: 'competitive_research',
+        businessDomain: 'ecommerce_ai_shopping',
+        input: 'fixed competitive input',
+        expectedDeliverableType: 'competitive_analysis_report',
+        minPublicSources: 3,
+        minVisualAssets: 0,
+        sensitivity: 'public',
+        piiDetected: false,
+        variant: 'clear',
+      },
+    ],
+  } as const;
+
+  assert.equal(
+    selectSmokeScenario(fixture, 'competitive_research', 'competitive-ai-shopping-assistant').id,
+    'competitive-ai-shopping-assistant',
+  );
+  assert.throws(
+    () => selectSmokeScenario(fixture, 'competitive_research', ''),
+    /scenarioId.*required/u,
+  );
+  assert.throws(
+    () => selectSmokeScenario(fixture, 'competitive_research', 'missing-scenario'),
+    /missing-scenario.*not found/u,
+  );
+  assert.throws(
+    () => selectSmokeScenario(fixture, 'voc_diagnosis', 'competitive-ai-shopping-assistant'),
+    /does not match profile voc_diagnosis/u,
+  );
+});
+
+test('runCurrentRealSmoke fails closed on a missing, unknown, or profile-mismatched scenarioId', async () => {
+  const fixturePath = join(process.cwd(), 'tests/fixtures/current-semantic-gold.json');
+  await assert.rejects(
+    () => runCurrentRealSmoke({ fixturePath, profiles: ['competitive_research'] } as never),
+    /scenarioId.*required/u,
+  );
+  await assert.rejects(
+    () => runCurrentRealSmoke({
+      fixturePath,
+      profiles: ['competitive_research'],
+      scenarioId: 'missing-scenario',
+    }),
+    /missing-scenario.*not found/u,
+  );
+  await assert.rejects(
+    () => runCurrentRealSmoke({
+      fixturePath,
+      profiles: ['voc_diagnosis'],
+      scenarioId: 'competitive-ai-shopping-assistant',
+    }),
+    /does not match profile voc_diagnosis/u,
+  );
+});
+
+test('protected browser evidence cannot be required while Playwright capture is disabled', async () => {
+  const priorRequired = process.env.CURRENT_REQUIRE_BROWSER_EVIDENCE;
+  const priorCapture = process.env.PLAYWRIGHT_CAPTURE_ENABLED;
+  process.env.CURRENT_REQUIRE_BROWSER_EVIDENCE = '1';
+  process.env.PLAYWRIGHT_CAPTURE_ENABLED = '0';
+  try {
+    await assert.rejects(() => runCurrentRealSmoke({
+      fixturePath: join(process.cwd(), 'tests/fixtures/current-semantic-gold.json'),
+      profiles: ['competitive_research'],
+      scenarioId: 'competitive-ai-shopping-assistant',
+    }), /required browser evidence needs PLAYWRIGHT_CAPTURE_ENABLED=1/u);
+  } finally {
+    if (priorRequired === undefined) delete process.env.CURRENT_REQUIRE_BROWSER_EVIDENCE;
+    else process.env.CURRENT_REQUIRE_BROWSER_EVIDENCE = priorRequired;
+    if (priorCapture === undefined) delete process.env.PLAYWRIGHT_CAPTURE_ENABLED;
+    else process.env.PLAYWRIGHT_CAPTURE_ENABLED = priorCapture;
+  }
+});
+
+test('visual smoke receipt preserves evidence ids and verifies the historical reread', () => {
+  const initial = summarizeSmokeEvidence(visualSmokeSnapshot());
+  const verified = verifySmokeHistoryReread({
+    executionGapCount: 1,
+    initial,
+    reread: summarizeSmokeEvidence(visualSmokeSnapshot()),
+    requireBrowserEvidence: true,
+  });
+
+  assert.deepEqual(verified, {
+    gapCount: 1,
+    toolArtifactIds: ['tool-browser', 'tool-tavily'],
+    visualAssetIds: ['asset-chart', 'asset-douyin', 'asset-jd', 'asset-tmall'],
+    visualAssetManifestIds: ['manifest-chart', 'manifest-douyin', 'manifest-jd', 'manifest-tmall'],
+    browserCaptureCount: 3,
+    browserCaptureIds: ['asset-douyin', 'asset-jd', 'asset-tmall'],
+    browserCaptureHosts: ['douyin.com', 'jd.com', 'tmall.com'],
+    screenshotEvidenceCount: 3,
+    screenshotEvidenceIds: ['BC2-0', 'BC2-1', 'BC2-2'],
+    chartRenderCount: 1,
+    chartRenderIds: ['asset-chart'],
+    browserToolVerified: true,
+    historyRereadVerified: true,
+  });
+});
+
+test('formatted smoke receipt exposes the scenario and all audited visual counters', () => {
+  const summary = summarizeSmokeEvidence(visualSmokeSnapshot());
+  const evidence = verifySmokeHistoryReread({
+    executionGapCount: 1,
+    initial: summary,
+    reread: summary,
+    requireBrowserEvidence: true,
+  });
+  const receipt = formatSmokeReceipt({
+    ...evidence,
+    scenarioId: 'competitive-ai-shopping-assistant',
+    profile: 'competitive_research',
+    taskType: 'competitive_research',
+    deliverableType: 'competitive_analysis_report',
+    taskId: 'task-1',
+    planVersionId: 'plan-1',
+    attemptId: 'attempt-1',
+    reportPackageId: 'package-1',
+    visualAssetCount: 4,
+    deliverableArtifactId: 'deliverable-1',
+    evidenceManifestArtifactId: 'evidence-manifest-1',
+    evidenceArtifactIds: ['evidence-1'],
+    toolReceipt: {
+      actorId: 'tavily-web-search',
+      declaredAdapterType: 'tavily',
+      resolvedAdapterType: 'tavily',
+      implementationId: 'tavily-rest-v1',
+      executionMode: 'real',
+      endpointHost: 'api.tavily.com',
+      status: 'ok',
+      latencyMs: 1,
+    },
+    counts: { evidence: 3, findings: 1, recommendations: 1 },
+    sources: ['https://example.test/one', 'https://example.test/two', 'https://example.test/three'],
+    provider: 'gateway',
+    requestedModel: 'route-a',
+    actualModel: 'model-a',
+    coreTool: 'tavily-web-search',
+    packageSealed: true,
+    review: { artifactId: 'review-1', automated: true, verdict: 'pass' },
+  });
+
+  assert.equal(receipt.scenarioId, 'competitive-ai-shopping-assistant');
+  assert.equal(receipt.gapCount, 1);
+  assert.equal(receipt.browserCaptureCount, 3);
+  assert.equal(receipt.screenshotEvidenceCount, 3);
+  assert.equal(receipt.chartRenderCount, 1);
+  assert.equal(receipt.historyRereadVerified, true);
+  assert.throws(
+    () => formatSmokeReceipt({ ...receipt, browserCaptureCount: 2 }),
+    /evidence counts or historical verification are invalid/u,
+  );
+});
+
+test('browser evidence is optional by default and mandatory only for the protected visual smoke', () => {
+  const textOnly = summarizeSmokeEvidence({
+    plan: { capability_gaps: [] },
+    steps: [{
+      stepNo: 1,
+      actorType: 'tool',
+      actorId: 'tavily-web-search',
+      state: 'succeeded',
+      outputArtifactId: 'tool-tavily',
+      toolProvenance: { executionMode: 'real', implementationId: 'tavily-rest-v1' },
+    }],
+    delivered: { evidenceManifest: { entries: [] } },
+  });
+
+  assert.equal(verifySmokeHistoryReread({
+    executionGapCount: 0,
+    initial: textOnly,
+    reread: textOnly,
+    requireBrowserEvidence: false,
+  }).browserCaptureCount, 0);
+  assert.throws(() => verifySmokeHistoryReread({
+    executionGapCount: 0,
+    initial: textOnly,
+    reread: textOnly,
+    requireBrowserEvidence: true,
+  }), /required browser or chart evidence is missing/u);
+});
+
+test('visual smoke keeps the legacy skipped-Tool gap fallback', () => {
+  const evidence = summarizeSmokeEvidence({
+    plan: { capability_gaps: [] },
+    steps: [
+      {
+        stepNo: 1,
+        actorType: 'tool',
+        actorId: 'tavily-web-search',
+        state: 'succeeded',
+        outputArtifactId: 'tool-tavily',
+        toolProvenance: { executionMode: 'real', implementationId: 'tavily-rest-v1' },
+      },
+      {
+        stepNo: 2,
+        actorType: 'tool',
+        actorId: 'legacy-optional-tool',
+        state: 'skipped',
+        toolProvenance: null,
+      },
+    ],
+    delivered: { evidenceManifest: { entries: [] } },
+  });
+
+  assert.equal(evidence.gapCount, 1);
+});
+
+test('visual smoke rejects historical count or id drift', () => {
+  const initial = summarizeSmokeEvidence(visualSmokeSnapshot());
+  assert.throws(() => verifySmokeHistoryReread({
+    executionGapCount: 1,
+    initial,
+    reread: { ...initial, screenshotEvidenceIds: ['drifted-evidence-id'] },
+    requireBrowserEvidence: true,
+  }), /historical reread counts or ids drifted/u);
+  assert.throws(() => verifySmokeHistoryReread({
+    executionGapCount: 2,
+    initial,
+    reread: initial,
+    requireBrowserEvidence: true,
+  }), /gapCount.*execution receipt/u);
+});
+
+test('visual smoke rejects gapSummary URL or message leakage', () => {
+  for (const leaked of [
+    { requestedUrl: 'https://private.example/path' },
+    { message: 'upstream body must not be copied' },
+  ]) {
+    const snapshot = visualSmokeSnapshot();
+    Object.assign(snapshot.steps[1]!.toolProvenance!.gapSummary!, leaked);
+    assert.throws(
+      () => summarizeSmokeEvidence(snapshot),
+      /gapSummary.*(?:only|leaks)/u,
+    );
+  }
+});
+
+test('visual smoke rejects mixed or malformed gapSummary keys', () => {
+  const baseSummary = visualSmokeSnapshot().steps[1]!.toolProvenance!.gapSummary!;
+  for (const gapSummary of [
+    { ...baseSummary, count: 2, keys: ['3:access_blocked', 'step:configuration'] },
+    { ...baseSummary, count: 2, keys: ['step:configuration', 'step:capacity'] },
+    { ...baseSummary, count: 0, keys: [] },
+    { ...baseSummary, keys: ['03:access_blocked'] },
+    { ...baseSummary, keys: ['3:AccessBlocked'] },
+    { ...baseSummary, keys: ['https://private.example/path'] },
+  ]) {
+    const snapshot = visualSmokeSnapshot();
+    snapshot.steps[1]!.toolProvenance!.gapSummary = gapSummary;
+    assert.throws(
+      () => summarizeSmokeEvidence(snapshot),
+      /gapSummary.*(?:count|malformed|mix)/u,
+    );
+  }
+});
+
+test('visual smoke verifies gapSummary against the sealed failure truth source', () => {
+  const failures = [{
+    source_result_index: 3,
+    requested_url: 'https://public.example/product',
+    code: 'access_blocked',
+    sanitized_message: 'page blocked access',
+  }];
+  const stableFailures = [{
+    code: 'access_blocked',
+    requested_url: 'https://public.example/product',
+    sanitized_message: 'page blocked access',
+    source_result_index: 3,
+  }];
+  const expectedHash = `sha256:${createHash('sha256')
+    .update(JSON.stringify(stableFailures))
+    .digest('hex')}`;
+  const snapshot = visualSmokeSnapshot();
+  snapshot.steps[1]!.toolProvenance!.gapSummary!.failuresHash = expectedHash;
+
+  assert.doesNotThrow(() => verifySmokeGapSummaryHashes({
+    steps: snapshot.steps,
+    toolOutputsByArtifactId: { 'tool-browser': { output: { failures } } },
+  }));
+  const skippedStep = {
+    ...snapshot.steps[1]!,
+    state: 'skipped',
+    outputArtifactId: null,
+    failure: { page_failures: failures },
+  };
+  assert.doesNotThrow(() => verifySmokeGapSummaryHashes({
+    steps: [skippedStep],
+    toolOutputsByArtifactId: {},
+  }));
+
+  const persistedFailure = {
+    allowedActions: [],
+    kind: 'configuration',
+    message: 'browser capture is disabled',
+    retryable: false,
+    toolTier: 'optional',
+  };
+  const expectedStepHash = `sha256:${createHash('sha256')
+    .update(JSON.stringify(persistedFailure))
+    .digest('hex')}`;
+  const skippedConfigurationStep = {
+    ...snapshot.steps[1]!,
+    state: 'skipped',
+    outputArtifactId: null,
+    failure: persistedFailure,
+    toolProvenance: {
+      ...snapshot.steps[1]!.toolProvenance!,
+      gapSummary: {
+        count: 1,
+        keys: ['step:configuration'],
+        failuresHash: expectedStepHash,
+      },
+    },
+  };
+  assert.doesNotThrow(() => verifySmokeGapSummaryHashes({
+    steps: [skippedConfigurationStep],
+    toolOutputsByArtifactId: {},
+  }));
+  assert.throws(() => verifySmokeGapSummaryHashes({
+    steps: [{
+      ...skippedConfigurationStep,
+      failure: { ...persistedFailure, allowedActions: ['retry'] },
+    }],
+    toolOutputsByArtifactId: {},
+  }), /failuresHash.*truth source/u, 'step summaries hash the complete persisted failure');
+  assert.throws(() => verifySmokeGapSummaryHashes({
+    steps: [{ ...skippedConfigurationStep, state: 'succeeded' }],
+    toolOutputsByArtifactId: {},
+  }), /step gapSummary.*not allowed/u);
+
+  snapshot.steps[1]!.toolProvenance!.gapSummary!.failuresHash = `sha256:${'b'.repeat(64)}`;
+  assert.throws(() => verifySmokeGapSummaryHashes({
+    steps: snapshot.steps,
+    toolOutputsByArtifactId: { 'tool-browser': { output: { failures } } },
+  }), /failuresHash.*truth source/u);
 });
 
 test('design smoke accepts one explicit absolute local image path', () => {
@@ -242,25 +694,23 @@ test('real smoke bounds clarification to three rounds', async () => {
 
 test('current real smoke produces one receipt for each supported full-real profile', realSmokeOptions, async () => {
   const smoke = await import('../scripts/current-real-smoke.ts') as {
-    runCurrentRealSmoke: (input: { fixturePath: string; profiles: string[] }) => Promise<SmokeReceipt[]>;
+    runCurrentRealSmoke: RealSmokeRunner;
   };
-  const receipts = await smoke.runCurrentRealSmoke({
-    fixturePath: join(process.cwd(), 'tests/fixtures/current-semantic-gold.json'),
-    profiles: realProfiles,
-  });
+  const receipts = await runConfiguredRealSmokes(smoke.runCurrentRealSmoke);
 
   assert.equal(receipts.length, realProfiles.length);
   assert.deepEqual(receipts.map((receipt) => receipt.profile), realProfiles);
+  assert.deepEqual(
+    receipts.map((receipt) => receipt.scenarioId),
+    realSmokeScenarios.map(({ scenarioId }) => scenarioId),
+  );
 });
 
 test('current real smoke receipts preserve task, plan, attempt, and Report Package identity', realSmokeOptions, async () => {
   const smoke = await import('../scripts/current-real-smoke.ts') as {
-    runCurrentRealSmoke: (input: { fixturePath: string; profiles: string[] }) => Promise<SmokeReceipt[]>;
+    runCurrentRealSmoke: RealSmokeRunner;
   };
-  const receipts = await smoke.runCurrentRealSmoke({
-    fixturePath: join(process.cwd(), 'tests/fixtures/current-semantic-gold.json'),
-    profiles: realProfiles,
-  });
+  const receipts = await runConfiguredRealSmokes(smoke.runCurrentRealSmoke);
 
   for (const key of ['taskId', 'planVersionId', 'attemptId', 'reportPackageId'] as const) {
     const values = receipts.map((receipt) => receipt[key]);
@@ -271,14 +721,12 @@ test('current real smoke receipts preserve task, plan, attempt, and Report Packa
 
 test('current real smoke reports visual and evidence counts for every profile', realSmokeOptions, async () => {
   const smoke = await import('../scripts/current-real-smoke.ts') as {
-    runCurrentRealSmoke: (input: { fixturePath: string; profiles: string[] }) => Promise<SmokeReceipt[]>;
+    runCurrentRealSmoke: RealSmokeRunner;
   };
-  const receipts = await smoke.runCurrentRealSmoke({
-    fixturePath: join(process.cwd(), 'tests/fixtures/current-semantic-gold.json'),
-    profiles: realProfiles,
-  });
+  const receipts = await runConfiguredRealSmokes(smoke.runCurrentRealSmoke);
   const fixture = JSON.parse(readFileSync(join(process.cwd(), 'tests/fixtures/current-semantic-gold.json'), 'utf8')) as {
     scenarios: Array<{
+      id: string;
       profile: string;
       expectedDeliverableType: string;
       minPublicSources: number;
@@ -287,22 +735,26 @@ test('current real smoke reports visual and evidence counts for every profile', 
   };
 
   for (const receipt of receipts) {
-    const expected = fixture.scenarios.find((scenario) => scenario.profile === receipt.profile);
-    assert.ok(expected, `missing fixture profile ${receipt.profile}`);
+    const expected = fixture.scenarios.find((scenario) => scenario.id === receipt.scenarioId);
+    assert.ok(expected, `missing fixture scenario ${receipt.scenarioId}`);
+    assert.equal(expected.profile, receipt.profile);
     assert.equal(receipt.deliverableType, expected.expectedDeliverableType);
     assert.ok(receipt.evidenceCount >= expected.minPublicSources, `${receipt.profile} evidence is insufficient`);
     assert.ok(receipt.visualAssetCount >= expected.minVisualAssets, `${receipt.profile} visual count is insufficient`);
+    assert.equal(receipt.visualAssetCount, receipt.visualAssetIds.length);
+    assert.equal(receipt.visualAssetCount, receipt.visualAssetManifestIds.length);
+    assert.equal(receipt.browserCaptureCount, receipt.browserCaptureIds.length);
+    assert.equal(receipt.screenshotEvidenceCount, receipt.screenshotEvidenceIds.length);
+    assert.equal(receipt.chartRenderCount, receipt.chartRenderIds.length);
+    assert.equal(receipt.historyRereadVerified, true);
   }
 });
 
 test('current real smoke is full-real, model-pinned, core-tool-backed, sealed, and automatically reviewed', realSmokeOptions, async () => {
   const smoke = await import('../scripts/current-real-smoke.ts') as {
-    runCurrentRealSmoke: (input: { fixturePath: string; profiles: string[] }) => Promise<SmokeReceipt[]>;
+    runCurrentRealSmoke: RealSmokeRunner;
   };
-  const receipts = await smoke.runCurrentRealSmoke({
-    fixturePath: join(process.cwd(), 'tests/fixtures/current-semantic-gold.json'),
-    profiles: realProfiles,
-  });
+  const receipts = await runConfiguredRealSmokes(smoke.runCurrentRealSmoke);
 
   for (const receipt of receipts) {
     assert.equal(receipt.provider, 'gateway');
@@ -321,12 +773,9 @@ test('current real smoke is full-real, model-pinned, core-tool-backed, sealed, a
 
 test('current real smoke receipts and machine evidence never expose secrets or raw inputs', realSmokeOptions, async () => {
   const smoke = await import('../scripts/current-real-smoke.ts') as {
-    runCurrentRealSmoke: (input: { fixturePath: string; profiles: string[] }) => Promise<SmokeReceipt[]>;
+    runCurrentRealSmoke: RealSmokeRunner;
   };
-  const receipts = await smoke.runCurrentRealSmoke({
-    fixturePath: join(process.cwd(), 'tests/fixtures/current-semantic-gold.json'),
-    profiles: realProfiles,
-  });
+  const receipts = await runConfiguredRealSmokes(smoke.runCurrentRealSmoke);
 
   for (const receipt of receipts) {
     const serialized = JSON.stringify(receipt);
@@ -345,6 +794,8 @@ test('environment documentation and CI expose an explicit current real smoke gat
   assert.match(envExample, /LLM_MODEL_NAME=/);
   assert.match(envExample, /TAVILY_API_KEY=/);
   assert.match(envExample, /^CURRENT_DESIGN_SMOKE_IMAGE_PATH=$/m);
+  assert.match(envExample, /^CURRENT_SMOKE_SCENARIO=competitive-ai-shopping-assistant$/m);
+  assert.match(envExample, /^CURRENT_REQUIRE_BROWSER_EVIDENCE=0$/m);
   assert.match(envExample, /^GOLD_BUILD_ID=$/m);
   assert.match(envExample, /^GOLD_REVIEWER_JWT=$/m);
   assert.match(envExample, /gold:run collect <batch_id>/);
@@ -352,6 +803,9 @@ test('environment documentation and CI expose an explicit current real smoke gat
   assert.match(envExample, /gold:run decide <batch_id>/);
   assert.match(envExample, /trusted_gold_enabled=false/);
   assert.match(ci, /smoke:current:real/);
+  assert.match(ci, /CURRENT_SMOKE_SCENARIO="\$scenario_id"/);
+  assert.match(ci, /CURRENT_REQUIRE_BROWSER_EVIDENCE=0/);
+  assert.doesNotMatch(ci, /PLAYWRIGHT_CAPTURE_ENABLED:\s*['"]?1/);
   assert.match(ci, /if: github\.event_name != 'pull_request'/);
   assert.match(ci, /steps\.secret_gate\.outputs\.enabled == 'true'/);
   assert.match(ci, /pnpm db:migrate/);

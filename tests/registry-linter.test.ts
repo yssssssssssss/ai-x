@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { lintRegistries } from '../harness/linters/registry-linter.ts';
+import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import {
   setConfigRoot,
   getConfigRoot,
@@ -136,6 +137,84 @@ test('draft skill 缺字段不拦(不参与自动路由)', () => {
   assert.equal(issues.filter((i) => i.target.startsWith('skill:')).length, 0);
 });
 
+test('optional_tools must be unique optional-tier references disjoint from required tools', () => {
+  const base = {
+    name: 'n',
+    path: 'skills/x/SKILL.md',
+    when_to_use: 'w',
+    owner: 'o',
+    status: 'active',
+    task_types: ['competitive_research'],
+    inputs: ['research_goal'],
+    outputs: ['analysis'],
+    required_tools: ['core-tool'],
+    output_schema: 'schemas/skill-result-envelope.schema.json',
+    risk_level: 'low',
+  };
+  const dir = fixtureRoot({
+    decisionGraph: goodGraph,
+    toolRegistry: JSON.stringify({
+      version: 1,
+      tools: [
+        {
+          id: 'core-tool',
+          name: 'core',
+          path: 'tools/core/manifest.yaml',
+          adapter_type: 'tavily',
+          auth_required: false,
+          risk_level: 'low',
+          status: 'active',
+          tier: 'core',
+        },
+        {
+          id: 'optional-tool',
+          name: 'optional',
+          path: 'tools/optional/manifest.yaml',
+          adapter_type: 'playwright',
+          auth_required: false,
+          risk_level: 'medium',
+          status: 'draft',
+          tier: 'optional',
+        },
+      ],
+    }),
+    skillRegistry: JSON.stringify({
+      version: 1,
+      skills: [
+        { ...base, id: 'valid', optional_tools: ['optional-tool'] },
+        { ...base, id: 'scalar', optional_tools: 'optional-tool' },
+        { ...base, id: 'duplicate', optional_tools: ['optional-tool', 'optional-tool'] },
+        { ...base, id: 'overlap', optional_tools: ['core-tool'] },
+        { ...base, id: 'missing', optional_tools: ['missing-tool'] },
+      ],
+    }),
+    toolManifests: {
+      'schemas/skill-result-envelope.schema.json': '{}',
+      'tools/core/manifest.yaml': 'id: core-tool\n',
+      'tools/optional/manifest.yaml': 'id: optional-tool\n',
+    },
+  });
+  setConfigRoot(dir);
+  const issues = lintRegistries();
+  rmSync(dir, { recursive: true, force: true });
+
+  assert.equal(issues.some(({ target, message }) => (
+    target === 'skill:valid' && message.includes('optional_tools')
+  )), false);
+  assert.ok(issues.some(({ target, message }) => (
+    target === 'skill:scalar' && message.includes('optional_tools')
+  )));
+  assert.ok(issues.some(({ target, message }) => (
+    target === 'skill:duplicate' && message.includes('unique')
+  )));
+  assert.ok(issues.some(({ target, message }) => (
+    target === 'skill:overlap' && message.includes('required_tools')
+  )));
+  assert.ok(issues.some(({ target, message }) => (
+    target === 'skill:missing' && message.includes('未登记')
+  )));
+});
+
 test('active Skill 必须使用存在的统一输出信封与存在的 payload schema', () => {
   const dir = fixtureRoot({
     decisionGraph: goodGraph,
@@ -245,4 +324,13 @@ test('Playwright capture stays a draft optional medium-risk tool with a matching
   assert.equal(manifest.risk_level, tool.risk_level);
   assert.equal(manifest.timeout_seconds, 90);
   assert.deepEqual(manifest.retry_policy, { max_attempts: 2, backoff_seconds: 1 });
+});
+
+test('competitive Web research declares Playwright as optional without weakening Tavily', () => {
+  setConfigRoot(realRoot);
+  const skill = new SkillLoader().listCapabilitySkills()
+    .find(({ id }) => id === 'competitive-web-research');
+  assert.ok(skill);
+  assert.deepEqual(skill.required_tools, ['tavily-web-search']);
+  assert.deepEqual(skill.optional_tools, ['playwright-page-capture']);
 });

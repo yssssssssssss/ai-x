@@ -22,11 +22,14 @@ export interface RealSmokeConfig {
   LLM_MODEL_NAME?: string;
   LLM_EXPECTED_ACTUAL_MODEL?: string;
   TAVILY_API_KEY?: string;
+  PLAYWRIGHT_CAPTURE_ENABLED?: string;
+  CURRENT_REQUIRE_BROWSER_EVIDENCE?: string;
 }
 
 type JsonScalar = string | number | boolean | null;
 
-export interface SmokeReceiptInput {
+export interface SmokeReceiptInput extends VerifiedSmokeEvidenceSummary {
+  scenarioId: string;
   profile: string;
   taskType: string;
   deliverableType: string;
@@ -60,7 +63,8 @@ export interface SmokeReceipt extends SmokeReceiptInput {
   evidenceCount: number;
 }
 
-interface SemanticGoldScenario {
+export interface SemanticGoldScenario {
+  id: string;
   profile: string;
   taskType: ResearchTaskV2['task_type'];
   businessDomain: string;
@@ -73,14 +77,44 @@ interface SemanticGoldScenario {
   variant?: 'clear' | 'ambiguous' | 'missing_input' | 'constraint_conflict' | 'pii';
 }
 
-interface SemanticGoldFixture {
-  profiles: string[];
-  scenarios: SemanticGoldScenario[];
+export interface SemanticGoldFixture {
+  profiles: readonly string[];
+  scenarios: readonly SemanticGoldScenario[];
+}
+
+export interface SmokeEvidenceSummary {
+  gapCount: number;
+  toolArtifactIds: string[];
+  visualAssetIds: string[];
+  visualAssetManifestIds: string[];
+  browserCaptureCount: number;
+  browserCaptureIds: string[];
+  browserCaptureHosts: string[];
+  screenshotEvidenceCount: number;
+  screenshotEvidenceIds: string[];
+  chartRenderCount: number;
+  chartRenderIds: string[];
+  browserToolVerified: boolean;
+}
+
+export interface VerifiedSmokeEvidenceSummary extends SmokeEvidenceSummary {
+  historyRereadVerified: true;
+}
+
+interface SmokeEvidenceStep {
+  stepNo: number;
+  actorType: string;
+  actorId: string;
+  state: string;
+  outputArtifactId?: string | null;
+  toolProvenance?: Record<string, unknown> | null;
+  failure?: Record<string, unknown> | null;
 }
 
 interface SmokeRunInput {
   fixturePath: string;
   profiles: string[];
+  scenarioId: string;
   designImagePath?: string;
 }
 
@@ -185,12 +219,12 @@ function jsonScalar(value: unknown, field: string): JsonScalar {
 }
 
 function finiteCount(value: number, field: string): number {
-  if (!Number.isFinite(value) || value < 0) throw new Error(`${field} is not a valid count`);
+  if (!Number.isInteger(value) || value < 0) throw new Error(`${field} is not a valid count`);
   return value;
 }
 
 function positiveCount(value: number, field: string): number {
-  if (!Number.isFinite(value) || value <= 0) throw new Error(`${field} must be greater than zero`);
+  if (!Number.isInteger(value) || value <= 0) throw new Error(`${field} must be greater than zero`);
   return value;
 }
 
@@ -245,8 +279,35 @@ export function formatSmokeReceipt(input: SmokeReceiptInput): SmokeReceipt {
         : jsonScalar(input.toolReceipt[field], `toolReceipt.${field}`),
     ]),
   );
+  const toolArtifactIds = sortedUniqueIds(input.toolArtifactIds, 'toolArtifactIds');
+  const visualAssetIds = sortedUniqueIds(input.visualAssetIds, 'visualAssetIds');
+  const visualAssetManifestIds = sortedUniqueIds(
+    input.visualAssetManifestIds,
+    'visualAssetManifestIds',
+  );
+  const browserCaptureIds = sortedUniqueIds(input.browserCaptureIds, 'browserCaptureIds');
+  const browserCaptureHosts = sortedUniqueIds(input.browserCaptureHosts, 'browserCaptureHosts');
+  const screenshotEvidenceIds = sortedUniqueIds(
+    input.screenshotEvidenceIds,
+    'screenshotEvidenceIds',
+  );
+  const chartRenderIds = sortedUniqueIds(input.chartRenderIds, 'chartRenderIds');
+  if (
+    input.historyRereadVerified !== true
+    || finiteCount(input.visualAssetCount, 'visualAssetCount') !== visualAssetIds.length
+    || visualAssetManifestIds.length !== visualAssetIds.length
+    || finiteCount(input.browserCaptureCount, 'browserCaptureCount') !== browserCaptureIds.length
+    || finiteCount(input.screenshotEvidenceCount, 'screenshotEvidenceCount')
+      !== screenshotEvidenceIds.length
+    || finiteCount(input.chartRenderCount, 'chartRenderCount') !== chartRenderIds.length
+    || typeof input.browserToolVerified !== 'boolean'
+    || (browserCaptureIds.length > 0 && !input.browserToolVerified)
+  ) {
+    throw new Error('Smoke receipt evidence counts or historical verification are invalid');
+  }
 
   return {
+    scenarioId: nonBlankString(input.scenarioId, 'scenarioId'),
     profile: input.profile,
     taskType: input.taskType,
     deliverableType: nonBlankString(input.deliverableType, 'deliverableType'),
@@ -255,6 +316,22 @@ export function formatSmokeReceipt(input: SmokeReceiptInput): SmokeReceipt {
     attemptId: input.attemptId,
     reportPackageId: input.reportPackageId,
     visualAssetCount: finiteCount(input.visualAssetCount, 'visualAssetCount'),
+    gapCount: finiteCount(input.gapCount, 'gapCount'),
+    toolArtifactIds,
+    visualAssetIds,
+    visualAssetManifestIds,
+    browserCaptureCount: finiteCount(input.browserCaptureCount, 'browserCaptureCount'),
+    browserCaptureIds,
+    browserCaptureHosts,
+    screenshotEvidenceCount: finiteCount(
+      input.screenshotEvidenceCount,
+      'screenshotEvidenceCount',
+    ),
+    screenshotEvidenceIds,
+    chartRenderCount: finiteCount(input.chartRenderCount, 'chartRenderCount'),
+    chartRenderIds,
+    browserToolVerified: input.browserToolVerified === true,
+    historyRereadVerified: input.historyRereadVerified,
     evidenceCount: finiteCount(input.counts.evidence, 'counts.evidence'),
     provider: input.provider,
     requestedModel: input.requestedModel,
@@ -351,6 +428,323 @@ function nonBlankString(value: unknown, field: string): string {
     throw new Error(`${field} is missing or invalid`);
   }
   return value;
+}
+
+export function selectSmokeScenario(
+  fixture: SemanticGoldFixture,
+  profile: string,
+  scenarioId: string,
+): SemanticGoldScenario {
+  if (typeof scenarioId !== 'string' || scenarioId.trim() === '') {
+    throw new Error('scenarioId is required');
+  }
+  if (!fixture.profiles.includes(profile)) throw new Error(`fixture has no profile ${profile}`);
+  const scenario = fixture.scenarios.find((candidate) => candidate.id === scenarioId);
+  if (!scenario) throw new Error(`smoke scenario ${scenarioId} was not found`);
+  if (scenario.profile !== profile) {
+    throw new Error(`smoke scenario ${scenarioId} does not match profile ${profile}`);
+  }
+  if (scenario.variant !== 'clear' || scenario.piiDetected !== false) {
+    throw new Error(`smoke scenario ${scenarioId} is not a safe clear scenario`);
+  }
+  return scenario;
+}
+
+function sortedUniqueIds(values: readonly unknown[], field: string): string[] {
+  const ids = values.map((value, index) => nonBlankString(value, `${field}[${index}]`));
+  if (new Set(ids).size !== ids.length) throw new Error(`${field} contains duplicate ids`);
+  return [...ids].sort();
+}
+
+function reportAssetReferences(delivered: Record<string, unknown>): Map<string, string> {
+  const references = new Map<string, string>();
+  if (delivered.reportDocument === undefined) return references;
+  const document = record(delivered.reportDocument, 'reportDocument');
+  const sections = array(document.sections, 'reportDocument.sections');
+  const add = (value: unknown, field: string): void => {
+    const reference = record(value, field);
+    const assetId = nonBlankString(reference.assetId, `${field}.assetId`);
+    const manifestArtifactId = nonBlankString(
+      reference.manifestArtifactId,
+      `${field}.manifestArtifactId`,
+    );
+    const prior = references.get(assetId);
+    if (prior !== undefined && prior !== manifestArtifactId) {
+      throw new Error(`visual Asset ${assetId} has conflicting Manifest ids`);
+    }
+    references.set(assetId, manifestArtifactId);
+  };
+  sections.forEach((sectionValue, sectionIndex) => {
+    const section = record(sectionValue, `reportDocument.sections[${sectionIndex}]`);
+    array(section.blocks, `reportDocument.sections[${sectionIndex}].blocks`)
+      .forEach((blockValue, blockIndex) => {
+        const field = `reportDocument.sections[${sectionIndex}].blocks[${blockIndex}]`;
+        const block = record(blockValue, field);
+        if (block.type === 'image') add(block.assetRef, `${field}.assetRef`);
+        else if (block.type === 'image-comparison') {
+          add(block.beforeAssetRef, `${field}.beforeAssetRef`);
+          add(block.afterAssetRef, `${field}.afterAssetRef`);
+        } else if (block.type === 'chart') add(block.chartRef, `${field}.chartRef`);
+      });
+  });
+  return references;
+}
+
+interface ParsedSmokeGapSummary {
+  keys: string[];
+  failuresHash: string;
+  scope: 'page' | 'step';
+}
+
+function parseSmokeGapSummary(value: unknown, field: string): ParsedSmokeGapSummary {
+  const summary = record(value, field);
+  const fields = Object.keys(summary).sort();
+  if (JSON.stringify(fields) !== JSON.stringify(['count', 'failuresHash', 'keys'])) {
+    throw new Error('gapSummary may contain only count, keys, and failuresHash');
+  }
+  const count = finiteNumber(summary.count, `${field}.count`);
+  const keys = array(summary.keys, `${field}.keys`)
+    .map((key, index) => nonBlankString(key, `${field}.keys[${index}]`));
+  const failuresHash = nonBlankString(summary.failuresHash, `${field}.failuresHash`);
+  if (!Number.isInteger(count) || count <= 0 || count !== keys.length) {
+    throw new Error('gapSummary count does not match its keys');
+  }
+  if (new Set(keys).size !== keys.length) throw new Error('gapSummary keys are not unique');
+  if (!/^sha256:[a-f0-9]{64}$/u.test(failuresHash)) {
+    throw new Error('gapSummary failuresHash is invalid');
+  }
+  const pageScoped = keys.every((key) => /^(?:0|[1-9]\d*):[a-z][a-z0-9_]*$/u.test(key));
+  const stepScoped = keys.length === 1 && /^step:[a-z][a-z0-9_]*$/u.test(keys[0]!);
+  if (!pageScoped && !stepScoped) {
+    throw new Error('gapSummary keys are malformed or mix page and step scopes');
+  }
+  return { keys, failuresHash, scope: pageScoped ? 'page' : 'step' };
+}
+
+function gapKeys(input: {
+  plan: unknown;
+  steps: readonly SmokeEvidenceStep[];
+}): Set<string> {
+  const keys = new Set<string>();
+  const plan = record(input.plan, 'plan');
+  const capabilityGaps = plan.capability_gaps === undefined
+    ? []
+    : array(plan.capability_gaps, 'plan.capability_gaps');
+  capabilityGaps.forEach((value, index) => {
+    const gap = record(value, `plan.capability_gaps[${index}]`);
+    const capabilityId = nonBlankString(gap.capability_id, 'capability gap id');
+    const code = nonBlankString(gap.code, 'capability gap code');
+    keys.add(`capability:${capabilityId}:${code}`);
+  });
+
+  input.steps.forEach((step, index) => {
+    const stepNo = finiteNumber(step.stepNo, `steps[${index}].stepNo`);
+    if (!Number.isInteger(stepNo) || stepNo <= 0) throw new Error(`steps[${index}].stepNo is invalid`);
+    const provenance = step.toolProvenance;
+    if (provenance === null || provenance === undefined) {
+      if (step.actorType === 'tool' && step.state === 'skipped') keys.add(`step:${stepNo}:legacy_skip`);
+      return;
+    }
+    const toolProvenance = record(provenance, `steps[${index}].toolProvenance`);
+    if (toolProvenance.gapSummary === undefined) {
+      if (step.actorType === 'tool' && step.state === 'skipped') keys.add(`step:${stepNo}:legacy_skip`);
+      return;
+    }
+    const summary = parseSmokeGapSummary(
+      toolProvenance.gapSummary,
+      `steps[${index}].toolProvenance.gapSummary`,
+    );
+    summary.keys.forEach((key) => keys.add(`step:${stepNo}:${key}`));
+  });
+  return keys;
+}
+
+function stableSmokeValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableSmokeValue);
+  if (value === null || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => [key, stableSmokeValue(child)]),
+  );
+}
+
+function smokeHashJson(value: unknown): string {
+  return `sha256:${createHash('sha256')
+    .update(JSON.stringify(stableSmokeValue(value)))
+    .digest('hex')}`;
+}
+
+export function verifySmokeGapSummaryHashes(input: {
+  steps: readonly SmokeEvidenceStep[];
+  toolOutputsByArtifactId: Readonly<Record<string, unknown>>;
+}): void {
+  input.steps.forEach((step, index) => {
+    const provenance = step.toolProvenance;
+    if (!provenance || provenance.gapSummary === undefined) return;
+    const summary = parseSmokeGapSummary(
+      provenance.gapSummary,
+      `steps[${index}].toolProvenance.gapSummary`,
+    );
+    let truthSource: unknown;
+    if (summary.scope === 'step') {
+      if (step.state !== 'skipped') {
+        throw new Error(`step gapSummary is not allowed on ${step.state} step ${step.stepNo}`);
+      }
+      truthSource = record(step.failure, `steps[${index}].failure`);
+    } else if (step.state === 'succeeded') {
+      const artifactId = nonBlankString(step.outputArtifactId, `steps[${index}].outputArtifactId`);
+      if (!Object.hasOwn(input.toolOutputsByArtifactId, artifactId)) {
+        throw new Error(`Tool Artifact ${artifactId} is unavailable for gapSummary verification`);
+      }
+      const artifact = record(input.toolOutputsByArtifactId[artifactId], `Tool Artifact ${artifactId}`);
+      truthSource = record(artifact.output, `Tool Artifact ${artifactId}.output`).failures;
+    } else if (step.state === 'skipped') {
+      truthSource = record(step.failure, `steps[${index}].failure`).page_failures;
+    } else {
+      throw new Error(`gapSummary is not allowed on ${step.state} step ${step.stepNo}`);
+    }
+    if (
+      (summary.scope === 'page' && !Array.isArray(truthSource))
+      || smokeHashJson(truthSource) !== summary.failuresHash
+    ) {
+      throw new Error('gapSummary failuresHash does not match its failure truth source');
+    }
+  });
+}
+
+export function summarizeSmokeEvidence(input: {
+  plan: unknown;
+  steps: readonly SmokeEvidenceStep[];
+  delivered: unknown;
+}): SmokeEvidenceSummary {
+  const delivered = record(input.delivered, 'delivered');
+  const references = reportAssetReferences(delivered);
+  const manifests = delivered.visualAssetManifests === undefined
+    ? []
+    : array(delivered.visualAssetManifests, 'delivered.visualAssetManifests');
+  const manifestByAsset = new Map<string, Record<string, unknown>>();
+  manifests.forEach((value, index) => {
+    const manifest = record(value, `delivered.visualAssetManifests[${index}]`);
+    const assetId = nonBlankString(
+      manifest.assetId,
+      `delivered.visualAssetManifests[${index}].assetId`,
+    );
+    if (manifestByAsset.has(assetId)) throw new Error(`duplicate visual Asset ${assetId}`);
+    if (!references.has(assetId)) {
+      throw new Error(`visual Asset ${assetId} has no ReportDocument Manifest reference`);
+    }
+    manifestByAsset.set(assetId, manifest);
+  });
+  if (references.size !== manifestByAsset.size) {
+    throw new Error('ReportDocument visual references do not match delivered visual Assets');
+  }
+
+  const evidenceManifest = record(delivered.evidenceManifest, 'delivered.evidenceManifest');
+  const evidenceEntries = array(evidenceManifest.entries, 'delivered.evidenceManifest.entries')
+    .map((value, index) => record(value, `delivered.evidenceManifest.entries[${index}]`));
+  const screenshotEntries = evidenceEntries.filter((entry) => entry.kind === 'screenshot');
+  const screenshotEvidenceIds = sortedUniqueIds(
+    screenshotEntries.map((entry) => entry.id),
+    'screenshotEvidenceIds',
+  );
+  const screenshotManifestIds = new Set(
+    screenshotEntries.map((entry, index) => nonBlankString(
+      entry.artifactId,
+      `screenshotEntries[${index}].artifactId`,
+    )),
+  );
+
+  const browserCaptureIds: string[] = [];
+  const browserCaptureHosts: string[] = [];
+  const chartRenderIds: string[] = [];
+  for (const [assetId, manifest] of manifestByAsset) {
+    const source = record(manifest.source, `visual Asset ${assetId}.source`);
+    if (source.kind === 'browser_capture') {
+      const manifestArtifactId = references.get(assetId)!;
+      if (!screenshotManifestIds.has(manifestArtifactId)) {
+        throw new Error(`browser capture ${assetId} has no screenshot Evidence`);
+      }
+      const sourceUrl = nonBlankString(
+        source.sourcePageUrl,
+        `browser capture ${assetId}.sourcePageUrl`,
+      );
+      const canonical = canonicalHttpsUrl(sourceUrl);
+      if (canonical === null) throw new Error(`browser capture ${assetId} has an invalid source URL`);
+      browserCaptureIds.push(assetId);
+      browserCaptureHosts.push(new URL(canonical).hostname);
+    } else if (source.kind === 'chart_render') {
+      chartRenderIds.push(assetId);
+    }
+  }
+
+  const toolSteps = input.steps.filter((step) => step.actorType === 'tool');
+  const toolArtifactIds = sortedUniqueIds(
+    toolSteps
+      .filter((step) => step.state === 'succeeded')
+      .map((step) => step.outputArtifactId),
+    'toolArtifactIds',
+  );
+  const browserToolVerified = toolSteps.some((step) => {
+    if (
+      step.actorId !== 'playwright-page-capture'
+      || step.state !== 'succeeded'
+      || typeof step.outputArtifactId !== 'string'
+    ) return false;
+    const provenance = step.toolProvenance;
+    return provenance !== null
+      && typeof provenance === 'object'
+      && !Array.isArray(provenance)
+      && (provenance as Record<string, unknown>).executionMode === 'real'
+      && (provenance as Record<string, unknown>).implementationId === 'playwright-page-capture-v1';
+  });
+  if (browserCaptureIds.length > 0 && !browserToolVerified) {
+    throw new Error('browser captures have no qualifying real Playwright Tool receipt');
+  }
+
+  const visualAssetIds = sortedUniqueIds([...manifestByAsset.keys()], 'visualAssetIds');
+  const visualAssetManifestIds = sortedUniqueIds([...references.values()], 'visualAssetManifestIds');
+  const sortedBrowserCaptureIds = sortedUniqueIds(browserCaptureIds, 'browserCaptureIds');
+  const sortedChartRenderIds = sortedUniqueIds(chartRenderIds, 'chartRenderIds');
+  return {
+    gapCount: gapKeys({ plan: input.plan, steps: input.steps }).size,
+    toolArtifactIds,
+    visualAssetIds,
+    visualAssetManifestIds,
+    browserCaptureCount: sortedBrowserCaptureIds.length,
+    browserCaptureIds: sortedBrowserCaptureIds,
+    browserCaptureHosts: [...new Set(browserCaptureHosts)].sort(),
+    screenshotEvidenceCount: screenshotEvidenceIds.length,
+    screenshotEvidenceIds,
+    chartRenderCount: sortedChartRenderIds.length,
+    chartRenderIds: sortedChartRenderIds,
+    browserToolVerified,
+  };
+}
+
+export function verifySmokeHistoryReread(input: {
+  executionGapCount: number;
+  initial: SmokeEvidenceSummary;
+  reread: SmokeEvidenceSummary;
+  requireBrowserEvidence: boolean;
+}): VerifiedSmokeEvidenceSummary {
+  const executionGapCount = finiteCount(input.executionGapCount, 'executionGapCount');
+  if (executionGapCount !== input.initial.gapCount) {
+    throw new Error('historical gapCount does not match the execution receipt');
+  }
+  if (JSON.stringify(input.initial) !== JSON.stringify(input.reread)) {
+    throw new Error('historical reread counts or ids drifted');
+  }
+  if (input.requireBrowserEvidence && (
+    input.initial.browserCaptureCount < 3
+    || input.initial.browserCaptureHosts.length < 3
+    || input.initial.screenshotEvidenceCount < 3
+    || input.initial.chartRenderCount < 1
+    || !input.initial.browserToolVerified
+  )) {
+    throw new Error('required browser or chart evidence is missing');
+  }
+  return { ...input.initial, historyRereadVerified: true };
 }
 
 const CONTROLLED_SMOKE_DECISION = [
@@ -450,6 +844,7 @@ type SeedUser = { id: string; status: string };
 async function executeRealSmoke(
   scenario: SemanticGoldScenario,
   designImagePath?: string,
+  requireBrowserEvidence = false,
 ): Promise<SmokeReceipt> {
   const [repositoryModule, seedModule, runtimeModule] = await Promise.all([
     import('../database/repository.ts'),
@@ -687,8 +1082,89 @@ async function executeRealSmoke(
   const visualAssetCount = 'visualAssetManifests' in delivered && Array.isArray(delivered.visualAssetManifests)
     ? delivered.visualAssetManifests.length
     : 0;
+  const gapArtifactIds = [...new Set(steps.flatMap((step) => (
+    step.state === 'succeeded'
+    && step.toolProvenance?.gapSummary !== undefined
+    && typeof step.outputArtifactId === 'string'
+      ? [step.outputArtifactId]
+      : []
+  )))];
+  const gapArtifacts = await Promise.all(gapArtifactIds.map(async (artifactId) => {
+    const artifact = await runtime.artifacts.readVerifiedJson<unknown>(artifactId);
+    return [artifactId, artifact.value] as const;
+  }));
+  verifySmokeGapSummaryHashes({
+    steps,
+    toolOutputsByArtifactId: Object.fromEntries(gapArtifacts),
+  });
+  const initialEvidence = summarizeSmokeEvidence({
+    plan: selectedCandidate.plan,
+    steps,
+    delivered,
+  });
+  await Promise.all([
+    ...initialEvidence.toolArtifactIds,
+    ...initialEvidence.visualAssetIds,
+    ...initialEvidence.visualAssetManifestIds,
+  ].map((artifactId) => runtime.artifacts.verifySealed(artifactId)));
+  if (initialEvidence.browserCaptureCount > 0) {
+    const browserStep = steps.find((step) => (
+      step.actorType === 'tool'
+      && step.actorId === 'playwright-page-capture'
+      && step.state === 'succeeded'
+    ));
+    const browserArtifactId = nonBlankString(
+      browserStep?.outputArtifactId,
+      'Playwright Tool Artifact id',
+    );
+    const browserArtifact = await runtime.artifacts.readVerifiedJson<unknown>(browserArtifactId);
+    const browserOutput = record(
+      record(browserArtifact.value, 'Playwright Tool Artifact').output,
+      'Playwright Tool Artifact.output',
+    );
+    if (
+      browserOutput.security_profile !== 'browser-controls-v1'
+      || array(browserOutput.captures, 'Playwright Tool Artifact.output.captures').length
+        < initialEvidence.browserCaptureCount
+    ) {
+      throw new Error('Playwright Tool Artifact does not prove the browser-controls-v1 capture');
+    }
+  }
+  const [rereadPlan, rereadSteps, rereadDelivered, rereadTask, rereadReportPackage] = await Promise.all([
+    runtime.repository.getActivePlan(taskId),
+    runtime.repository.listExecutionSteps(attemptId),
+    runtime.getDeliverable(taskId, seedUser.id),
+    runtime.repository.getTaskDetail(taskId),
+    runtime.repository.findSealedArtifact({ taskId, attemptId, kind: 'report_package' }),
+  ]);
+  if (
+    !rereadPlan
+    || rereadPlan.planVersionId !== selected.planVersionId
+    || !rereadDelivered
+    || !rereadTask
+    || rereadTask.activePlanVersionId !== selected.planVersionId
+    || rereadTask.currentAttemptId !== attemptId
+    || rereadReportPackage?.id !== reportPackageArtifactId
+  ) {
+    throw new Error('historical reread did not preserve task, plan, attempt, and Report Package identity');
+  }
+  const verifiedEvidence = verifySmokeHistoryReread({
+    executionGapCount: finiteNumber(execution.gapCount, 'execution.gapCount'),
+    initial: initialEvidence,
+    reread: summarizeSmokeEvidence({
+      plan: rereadPlan.plan,
+      steps: rereadSteps,
+      delivered: rereadDelivered,
+    }),
+    requireBrowserEvidence,
+  });
+  const expectedTaskState = verifiedEvidence.gapCount > 0 ? 'completed_with_gaps' : 'completed';
+  if (rereadTask.state !== expectedTaskState) {
+    throw new Error('historical task state does not match its gapCount');
+  }
   const provenance = realToolStep.toolProvenance;
   return formatSmokeReceipt({
+    scenarioId: scenario.id,
     profile: scenario.profile,
     taskType: finalized.requirement.task_type,
     deliverableType,
@@ -697,6 +1173,7 @@ async function executeRealSmoke(
     attemptId,
     reportPackageId: reportPackageArtifactId,
     visualAssetCount,
+    ...verifiedEvidence,
     provider: 'gateway',
     requestedModel: representativeModelCall.requestedModel,
     actualModel: representativeModelCall.actualModel,
@@ -725,6 +1202,12 @@ async function executeRealSmoke(
   });
 }
 
+function requireBrowserEvidence(value: string | undefined): boolean {
+  if (value === undefined || value === '' || value === '0') return false;
+  if (value === '1') return true;
+  throw new Error('CURRENT_REQUIRE_BROWSER_EVIDENCE must be exactly 0 or 1');
+}
+
 function readFixture(fixturePath: string): SemanticGoldFixture {
   const fixture = JSON.parse(readFileSync(fixturePath, 'utf8')) as SemanticGoldFixture;
   if (!Array.isArray(fixture.profiles) || !Array.isArray(fixture.scenarios)) {
@@ -736,26 +1219,29 @@ function readFixture(fixturePath: string): SemanticGoldFixture {
 export async function runCurrentRealSmoke(input: SmokeRunInput): Promise<SmokeReceipt[]> {
   try {
     loadEnv();
-    assertRealSmokeConfig(process.env);
     const fixture = readFixture(input.fixturePath);
-    const receipts: SmokeReceipt[] = [];
-    for (const profile of input.profiles) {
-      if (!(CURRENT_REAL_SMOKE_PROFILES as readonly string[]).includes(profile)) {
-        throw new Error(`real smoke profile ${profile} has no supported full-real contract`);
-      }
-      if (!fixture.profiles.includes(profile)) throw new Error(`fixture has no profile ${profile}`);
-      const candidates = fixture.scenarios.filter((candidate) => candidate.profile === profile);
-      const scenario = candidates.find((candidate) => candidate.variant === 'clear' && candidate.piiDetected === false);
-      if (!scenario) throw new Error(`fixture has no safe clear scenario for profile ${profile}`);
-      if (scenario.piiDetected) throw new Error(`PII scenario ${profile} cannot enter real smoke`);
-      const receipt = await executeRealSmoke(
-        scenario,
-        input.designImagePath ?? process.env.CURRENT_DESIGN_SMOKE_IMAGE_PATH,
-      );
-      assertSmokeReceiptMinimums(receipt, scenario);
-      receipts.push(receipt);
+    if (input.profiles.length !== 1) {
+      throw new Error('real smoke requires exactly one profile and one scenarioId');
     }
-    return receipts;
+    const profile = input.profiles[0]!;
+    if (!(CURRENT_REAL_SMOKE_PROFILES as readonly string[]).includes(profile)) {
+      throw new Error(`real smoke profile ${profile} has no supported full-real contract`);
+    }
+    const scenario = selectSmokeScenario(fixture, profile, input.scenarioId);
+    const browserEvidenceRequired = requireBrowserEvidence(
+      process.env.CURRENT_REQUIRE_BROWSER_EVIDENCE,
+    );
+    if (browserEvidenceRequired && process.env.PLAYWRIGHT_CAPTURE_ENABLED !== '1') {
+      throw new Error('required browser evidence needs PLAYWRIGHT_CAPTURE_ENABLED=1');
+    }
+    assertRealSmokeConfig(process.env);
+    const receipt = await executeRealSmoke(
+      scenario,
+      input.designImagePath ?? process.env.CURRENT_DESIGN_SMOKE_IMAGE_PATH,
+      browserEvidenceRequired,
+    );
+    assertSmokeReceiptMinimums(receipt, scenario);
+    return [receipt];
   } finally {
     await closePool();
   }
@@ -772,7 +1258,8 @@ async function main(): Promise<void> {
     const fixturePath = process.env.CURRENT_REAL_SMOKE_FIXTURE
       ?? 'tests/fixtures/current-semantic-gold.json';
     const profile = process.env.CURRENT_SMOKE_PROFILE ?? CURRENT_REAL_SMOKE_PROFILES[0];
-    console.log(JSON.stringify(await runCurrentRealSmoke({ fixturePath, profiles: [profile] })));
+    const scenarioId = nonBlankString(process.env.CURRENT_SMOKE_SCENARIO, 'CURRENT_SMOKE_SCENARIO');
+    console.log(JSON.stringify(await runCurrentRealSmoke({ fixturePath, profiles: [profile], scenarioId })));
   } catch (error) {
     console.error(safeSmokeErrorMessage(error));
     process.exitCode = 1;

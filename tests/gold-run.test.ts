@@ -10,6 +10,7 @@ import type { SmokeReceipt } from '../scripts/current-real-smoke.ts';
 
 function receipt(overrides: Partial<SmokeReceipt> = {}): SmokeReceipt {
   return {
+    scenarioId: 'competitive-pet-food',
     profile: 'competitive_research',
     taskType: 'competitive_research',
     deliverableType: 'competitive_analysis_report',
@@ -18,6 +19,19 @@ function receipt(overrides: Partial<SmokeReceipt> = {}): SmokeReceipt {
     attemptId: 'attempt-1',
     reportPackageId: 'package-1',
     visualAssetCount: 0,
+    gapCount: 0,
+    toolArtifactIds: ['tool-1'],
+    visualAssetIds: [],
+    visualAssetManifestIds: [],
+    browserCaptureCount: 0,
+    browserCaptureIds: [],
+    browserCaptureHosts: [],
+    screenshotEvidenceCount: 0,
+    screenshotEvidenceIds: [],
+    chartRenderCount: 0,
+    chartRenderIds: [],
+    browserToolVerified: false,
+    historyRereadVerified: true,
     evidenceCount: 3,
     provider: 'gateway',
     requestedModel: 'route-a',
@@ -85,10 +99,20 @@ test('Gold pins freeze the real provider, model route, scenario, build, registry
 });
 
 test('Gold collection accepts only sealed full-real Current receipts with an automated pass Review Artifact', () => {
-  assert.doesNotThrow(() => assertGoldSmokeReceipt(receipt()));
-  assert.throws(() => assertGoldSmokeReceipt(receipt({ provider: 'mock' })), /non-qualifying/u);
-  assert.throws(() => assertGoldSmokeReceipt(receipt({ packageSealed: false })), /non-qualifying/u);
+  assert.doesNotThrow(() => assertGoldSmokeReceipt(receipt(), 'competitive-pet-food'));
+  assert.throws(
+    () => assertGoldSmokeReceipt(receipt(), 'competitive-ai-shopping-assistant'),
+    /non-qualifying/u,
+  );
+  assert.throws(
+    () => assertGoldSmokeReceipt(receipt({ provider: 'mock' }), 'competitive-pet-food'),
+    /non-qualifying/u,
+  );
+  assert.throws(
+    () => assertGoldSmokeReceipt(receipt({ packageSealed: false }), 'competitive-pet-food'),
+    /non-qualifying/u,
+  );
   assert.throws(() => assertGoldSmokeReceipt(receipt({
     review: { artifactId: 'review-1', automated: true, verdict: 'revise' as never },
-  })), /non-qualifying/u);
+  }), 'competitive-pet-food'), /non-qualifying/u);
 });

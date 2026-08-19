@@ -167,6 +167,15 @@ export function parseBrowserUrl(
   return url;
 }
 
+export function sameBrowserSourceUrl(left: string, right: string): boolean {
+  try {
+    return parseBrowserUrl(left, 'public source URL').toString()
+      === parseBrowserUrl(right, 'browser source URL').toString();
+  } catch {
+    return false;
+  }
+}
+
 export async function resolvePublicTarget(url: URL, resolveHost: ResolveHost): Promise<string[]> {
   const hostname = normalizedHostname(url);
   const addresses = isIP(hostname) ? [hostname] : await resolveHost(hostname);

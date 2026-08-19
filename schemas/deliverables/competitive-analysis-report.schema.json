@@ -47,6 +47,10 @@
     },
     "instrumentationPlan": { "$ref": "#/$defs/nonEmptyStringArray" },
     "userTestScript": { "$ref": "#/$defs/nonEmptyStringArray" },
+    "visualEvidence": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/visualEvidence" }
+    },
     "screenshotComparisons": {
       "type": "array",
       "items": { "$ref": "#/$defs/screenshotComparison" }
@@ -136,6 +140,19 @@
         "statement": { "$ref": "#/$defs/nonEmptyString" },
         "metric": { "$ref": "#/$defs/nonEmptyString" },
         "validationMethod": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "visualEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sampleIds", "dimension", "assetId", "evidenceIds", "caption"],
+      "properties": {
+        "id": { "$ref": "#/$defs/nonEmptyString" },
+        "sampleIds": { "$ref": "#/$defs/nonEmptyStringArray" },
+        "dimension": { "$ref": "#/$defs/nonEmptyString" },
+        "assetId": { "$ref": "#/$defs/nonEmptyString" },
+        "evidenceIds": { "$ref": "#/$defs/nonEmptyStringArray" },
+        "caption": { "$ref": "#/$defs/nonEmptyString" }
       }
     },
     "screenshotComparison": {

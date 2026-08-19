@@ -167,6 +167,7 @@ function safeReportBlock(
       assetRef: safeAssetReference(block.assetRef),
       caption: block.caption,
       altText: block.altText,
+      ...(block.evidenceIds ? { evidenceIds: block.evidenceIds } : {}),
     };
   }
   if (block.type === 'image-comparison') {
@@ -177,6 +178,7 @@ function safeReportBlock(
       afterAssetRef: safeAssetReference(block.afterAssetRef),
       caption: block.caption,
       altText: block.altText,
+      ...(block.evidenceIds ? { evidenceIds: block.evidenceIds } : {}),
     };
   }
   return {
@@ -251,6 +253,12 @@ function tableMarkdown(table: ChartTableAlternative): string[] {
   return [...lines, ''];
 }
 
+function evidenceMarkdown(evidenceIds?: readonly string[]): string[] {
+  return evidenceIds && evidenceIds.length > 0
+    ? [`Evidence: ${evidenceIds.join(', ')}`, '']
+    : [];
+}
+
 function reportMarkdown(
   document: ReportDocument,
   manifests: ReadonlyMap<string, VisualAssetManifest>,
@@ -288,7 +296,13 @@ function reportMarkdown(
         sectionLines.push(...items.map((item) => `- ${item}`), '');
       }
       if (block.type === 'image' && exportable(block.assetRef.assetId)) {
-        sectionLines.push(`![${block.altText}](${assetPaths.get(block.assetRef.assetId)})`, '', `*${block.caption}*`, '');
+        sectionLines.push(
+          `![${block.altText}](${assetPaths.get(block.assetRef.assetId)})`,
+          '',
+          `*${block.caption}*`,
+          '',
+          ...evidenceMarkdown(block.evidenceIds),
+        );
       }
       if (
         block.type === 'image-comparison'
@@ -302,6 +316,7 @@ function reportMarkdown(
           '',
           `*${block.caption}*`,
           '',
+          ...evidenceMarkdown(block.evidenceIds),
         );
       }
       if (block.type === 'chart' && exportable(block.chartRef.assetId)) {

@@ -195,11 +195,13 @@ function researchPlanningResult(originalInput: string): ResearchPlanningResult {
         inputs: ['research_goal'],
         outputs: ['competitive_analysis'],
         required_tools: ['tavily-search'],
+        optional_tools: [],
         risk_level: 'low' as const,
       },
       reasons: [{ code: 'eligible' as const, message: 'eligible' }],
       pending_inputs: [],
       required_approvals: [],
+      optional_tool_decisions: [],
     }],
     rejected: [],
   };

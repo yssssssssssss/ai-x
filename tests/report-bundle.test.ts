@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { test } from 'node:test';
 import type { ReportDocument } from '../apps/orchestrator-runtime/src/report/report-document-composer.ts';
 import type {
@@ -198,6 +199,7 @@ function reportDocument(): ReportDocument {
         assetRef: { assetId: originalAssetId, manifestArtifactId: originalManifestArtifactId },
         caption: 'Verified source image',
         altText: 'Product comparison source captured from verified evidence.',
+        evidenceIds: ['evidence-1'],
       }, {
         id: 'image-blocked',
         type: 'image',
@@ -216,6 +218,7 @@ function reportDocument(): ReportDocument {
         afterAssetRef: { assetId: annotationAssetId, manifestArtifactId: annotationManifestArtifactId },
         caption: 'Original and annotated evidence',
         altText: 'Original evidence compared with its verified annotation.',
+        evidenceIds: ['evidence-1'],
       }, {
         id: 'chart-1',
         type: 'chart',
@@ -515,8 +518,42 @@ test('Markdown uses deterministic relative image paths, sealed SVG references, a
     [chartBlock.table.rows[0]!.label, ...chartBlock.table.rows[0]!.cells.map(String)],
   );
   assert.match(markdown, /evidence-1/u);
+  assert.match(
+    markdown,
+    /\*Verified source image\*\s+Evidence: evidence-1/u,
+    'single-image Evidence ids must follow the image caption',
+  );
+  assert.match(
+    markdown,
+    /\*Original and annotated evidence\*\s+Evidence: evidence-1/u,
+    'comparison Evidence ids must follow the comparison caption',
+  );
   assert.doesNotMatch(markdown, /(?:src|href)=|blob:|file:|https?:\/\/|\/private\//iu);
   assert.doesNotMatch(markdown, /asset-blocked|Blocked internal source image/u);
+});
+
+test('bundle JSON preserves optional image Evidence ids without breaking legacy image blocks', async () => {
+  const { createReportBundle } = await loadReportBundleModule();
+  const current = multimodalReport();
+  const currentBundle = await unzip(await createReportBundle({ report: current, readAsset: assetReader([]) }));
+  const currentDocument = JSON.parse(currentBundle.text('report-document.json')) as ReportDocument;
+  const currentImage = currentDocument.sections.flatMap(({ blocks }) => blocks).find(({ id }) => id === 'image-1');
+  const currentComparison = currentDocument.sections
+    .flatMap(({ blocks }) => blocks)
+    .find(({ id }) => id === 'comparison-1');
+  assert.deepEqual((currentImage as { evidenceIds?: string[] } | undefined)?.evidenceIds, ['evidence-1']);
+  assert.deepEqual((currentComparison as { evidenceIds?: string[] } | undefined)?.evidenceIds, ['evidence-1']);
+
+  const legacy = multimodalReport();
+  for (const block of legacy.reportDocument.sections.flatMap(({ blocks }) => blocks)) {
+    if (block.type === 'image' || block.type === 'image-comparison') {
+      delete (block as { evidenceIds?: string[] }).evidenceIds;
+    }
+  }
+  const legacyBundle = await unzip(await createReportBundle({ report: legacy, readAsset: assetReader([]) }));
+  const legacyMarkdown = legacyBundle.text('report.md');
+  assert.match(legacyMarkdown, /assets\/asset-original\.png/u);
+  assert.match(legacyMarkdown, /assets\/asset-annotation\.png/u);
 });
 
 test('bundle JSON files are distribution-safe and do not leak storage URIs, hashes, secrets, or blocked metadata', async () => {
@@ -662,10 +699,42 @@ test('ReportDocument view model maps navigation and every professional block wit
   assert.deepEqual(evidence?.evidenceIds, ['evidence-1']);
   const image = blocks.find(({ id }) => id === 'image-1');
   assert.equal(image?.altText, 'Product comparison source captured from verified evidence.');
+  assert.deepEqual(image?.evidenceIds, ['evidence-1']);
   const comparison = blocks.find(({ id }) => id === 'comparison-1');
   assert.equal(comparison?.altText, 'Original evidence compared with its verified annotation.');
   assert.equal(comparison?.originalAssetId, originalAssetId);
   assert.equal(comparison?.annotationAssetId, annotationAssetId);
+  assert.deepEqual(comparison?.evidenceIds, ['evidence-1']);
+});
+
+test('ReportDocumentView exposes image Evidence toggles and print Evidence while collapsed', async () => {
+  const { ReportDocumentView } = await loadReportDocumentViewModule();
+  const requireFromWeb = createRequire(new URL('../apps/web/package.json', import.meta.url));
+  const react = requireFromWeb('react') as {
+    createElement(component: unknown, props: Record<string, unknown>): unknown;
+  };
+  const { renderToStaticMarkup } = requireFromWeb('react-dom/server') as {
+    renderToStaticMarkup(element: unknown): string;
+  };
+  const globals = globalThis as typeof globalThis & { React?: unknown };
+  const priorReact = globals.React;
+  globals.React = react;
+  let markup: string;
+  try {
+    markup = renderToStaticMarkup(react.createElement(ReportDocumentView, {
+      document: reportDocument(),
+      visualAssetManifests: visualAssetManifests(),
+      taskId,
+    }));
+  } finally {
+    if (priorReact === undefined) delete globals.React;
+    else globals.React = priorReact;
+  }
+
+  assert.equal((markup.match(/aria-expanded="false"/gu) ?? []).length, 3);
+  assert.equal((markup.match(/report-evidence-list report-chart-print/gu) ?? []).length, 3);
+  assert.match(markup, /data-block-id="image-1"[\s\S]*?Verified source image[\s\S]*?查看证据（1）/u);
+  assert.match(markup, /data-block-id="comparison-1"[\s\S]*?Original and annotated evidence[\s\S]*?查看证据（1）/u);
 });
 
 test('ReportDocumentView table shape uses sealed columns once with explicit row and cell associations', async () => {
@@ -696,7 +765,7 @@ test('ReportDocumentView table shape uses sealed columns once with explicit row 
   }
 });
 
-test('ReportDocument interactions expand Finding evidence and control original/annotation image zoom', async () => {
+test('ReportDocument interactions expand Finding and image evidence and control original/annotation image zoom', async () => {
   const {
     createReportDocumentInteractionState,
     reduceReportDocumentInteraction,
@@ -710,7 +779,13 @@ test('ReportDocument interactions expand Finding evidence and control original/a
   assert.equal(initial.expandedEvidence.has('finding-1'), false, 'interaction state must be immutable');
   assert.equal(expanded.expandedEvidence.has('finding-1'), true);
 
-  const original = reduceReportDocumentInteraction(expanded, {
+  const imageEvidence = reduceReportDocumentInteraction(expanded, {
+    type: 'toggle-evidence',
+    blockId: 'image-1',
+  });
+  assert.equal(imageEvidence.expandedEvidence.has('image-1'), true);
+
+  const original = reduceReportDocumentInteraction(imageEvidence, {
     type: 'select-image-variant',
     blockId: 'comparison-1',
     variant: 'original',

@@ -20,6 +20,7 @@ import {
   buildConfirmationAnswers,
   createClarificationSubmissionState,
   createRequestId,
+  currentExecutionGapCount,
   executionPlanStepsForTask,
   executionStepsToExecLog,
   hydrateCurrentTask,
@@ -187,7 +188,10 @@ export function useTaskFlow(actorRole?: string) {
         stateVersion: restoredStateVersion,
         status: state as 'completed' | 'completed_with_gaps',
         executionDisabled: false,
-        gapCount: restoredSteps.filter((step) => step.status === 'skipped').length,
+        gapCount: currentExecutionGapCount({
+          plan: current.activePlan?.plan,
+          executionSteps: current.executionSteps,
+        }),
       });
     } else {
       setExec(null);

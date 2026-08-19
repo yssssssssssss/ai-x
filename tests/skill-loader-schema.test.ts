@@ -75,7 +75,39 @@ test('listCapabilitySkills preserves valid visual input metadata', () => {
   withSkillRegistry(capabilitySkill, () => {
     assert.deepEqual(new SkillLoader().listCapabilitySkills()[0]?.visual_inputs, ['designImage']);
     assert.deepEqual(new SkillLoader().listCapabilitySkills()[0]?.multiple_visual_inputs, ['designImage']);
+    assert.deepEqual(new SkillLoader().listCapabilitySkills()[0]?.optional_tools, []);
   });
+});
+
+test('getRegisteredTool reads frozen optional tools without making drafts routable', () => {
+  assert.equal(sl.getTool('playwright-page-capture'), null);
+  assert.equal(sl.getRegisteredTool('playwright-page-capture')?.status, 'draft');
+});
+
+test('listCapabilitySkills preserves optional tools and rejects malformed or overlapping declarations', () => {
+  withSkillRegistry({
+    ...capabilitySkill,
+    optional_tools: ['playwright-page-capture'],
+  }, () => {
+    assert.deepEqual(
+      new SkillLoader().listCapabilitySkills()[0]?.optional_tools,
+      ['playwright-page-capture'],
+    );
+  });
+
+  for (const skill of [
+    { ...capabilitySkill, optional_tools: 'playwright-page-capture' },
+    { ...capabilitySkill, optional_tools: ['playwright-page-capture', 'playwright-page-capture'] },
+    { ...capabilitySkill, optional_tools: [' '] },
+    { ...capabilitySkill, optional_tools: ['vision-tool'] },
+  ]) {
+    withSkillRegistry(skill, () => {
+      assert.throws(
+        () => new SkillLoader().listCapabilitySkills(),
+        /active skill capability metadata invalid/u,
+      );
+    });
+  }
 });
 
 test('listCapabilitySkills rejects malformed or misspelled visual input metadata', () => {

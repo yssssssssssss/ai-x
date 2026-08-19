@@ -202,6 +202,58 @@ export function executionStepsToExecLog(steps: ControlExecutionStepResponse[]): 
   }));
 }
 
+function gapSummaryKeys(value: unknown): string[] | null {
+  if (!isRecord(value)) return null;
+  const fields = Object.keys(value).sort();
+  if (JSON.stringify(fields) !== JSON.stringify(['count', 'failuresHash', 'keys'])) return null;
+  const { count, keys, failuresHash } = value;
+  if (
+    typeof count !== 'number'
+    || !Number.isInteger(count)
+    || count <= 0
+    || !Array.isArray(keys)
+    || keys.length !== count
+    || !keys.every((key): key is string => typeof key === 'string')
+    || new Set(keys).size !== keys.length
+    || typeof failuresHash !== 'string'
+    || !/^sha256:[a-f0-9]{64}$/u.test(failuresHash)
+  ) return null;
+  const pageKeys = keys.every((key) => /^(?:0|[1-9]\d*):[a-z][a-z0-9_]*$/u.test(key));
+  const stepKeys = keys.length === 1 && /^step:[a-z][a-z0-9_]*$/u.test(keys[0]!);
+  if (!pageKeys && !stepKeys) return null;
+  return keys;
+}
+
+export function currentExecutionGapCount(input: {
+  plan: unknown;
+  executionSteps: readonly ControlExecutionStepResponse[];
+}): number {
+  const keys = new Set<string>();
+  if (isRecord(input.plan) && Array.isArray(input.plan.capability_gaps)) {
+    for (const gap of input.plan.capability_gaps) {
+      if (
+        !isRecord(gap)
+        || gap.capability_type !== 'tool'
+        || typeof gap.capability_id !== 'string'
+        || typeof gap.code !== 'string'
+      ) continue;
+      keys.add(`capability:${gap.capability_id}:${gap.code}`);
+    }
+  }
+  for (const step of input.executionSteps) {
+    const provenance = step.toolProvenance;
+    if (isRecord(provenance) && Object.prototype.hasOwnProperty.call(provenance, 'gapSummary')) {
+      const summaryKeys = gapSummaryKeys(provenance.gapSummary);
+      if (summaryKeys) {
+        for (const key of summaryKeys) keys.add(`step:${step.stepNo}:${key}`);
+      }
+      continue;
+    }
+    if (step.state === 'skipped') keys.add(`legacy-skipped:${step.stepNo}`);
+  }
+  return keys.size;
+}
+
 export function finishExecution<TDeliverable>(
   state: DeliverableReadState<TDeliverable>,
   execution: CompletedExecution,

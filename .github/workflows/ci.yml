@@ -170,5 +170,15 @@ jobs:
             voc_diagnosis \
             design_audit \
             a11y_audit; do
-            CURRENT_SMOKE_PROFILE="$profile" pnpm smoke:current:real
+            case "$profile" in
+              competitive_research) scenario_id=competitive-ai-shopping-assistant ;;
+              user_research_planning) scenario_id=planning-checkout-abandonment ;;
+              voc_diagnosis) scenario_id=voc-checkout ;;
+              design_audit) scenario_id=design-product-detail ;;
+              a11y_audit) scenario_id=a11y-mobile-checkout ;;
+            esac
+            CURRENT_SMOKE_PROFILE="$profile" \
+              CURRENT_SMOKE_SCENARIO="$scenario_id" \
+              CURRENT_REQUIRE_BROWSER_EVIDENCE=0 \
+              pnpm smoke:current:real
           done

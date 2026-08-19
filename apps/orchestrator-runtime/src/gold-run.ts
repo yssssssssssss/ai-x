@@ -66,15 +66,20 @@ export function parseGoldCommand(args: string[]): GoldCommand {
   return { kind: 'collect', batchId: command };
 }
 
-export function assertGoldSmokeReceipt(receipt: SmokeReceipt): void {
+export function assertGoldSmokeReceipt(receipt: SmokeReceipt, expectedScenarioId: string): void {
   if (
-    receipt.profile !== GOLD_PROFILE
+    receipt.scenarioId !== expectedScenarioId
+    || receipt.profile !== GOLD_PROFILE
     || receipt.taskType !== GOLD_PROFILE
     || receipt.provider !== 'gateway'
     || receipt.coreTool !== 'tavily-web-search'
     || receipt.packageSealed !== true
     || !receipt.attemptId.trim()
     || !receipt.reportPackageId.trim()
+    || receipt.toolArtifactIds.length === 0
+    || receipt.visualAssetCount !== receipt.visualAssetIds.length
+    || receipt.visualAssetCount !== receipt.visualAssetManifestIds.length
+    || receipt.historyRereadVerified !== true
     || receipt.review.automated !== true
     || receipt.review.verdict !== 'pass'
   ) {
@@ -183,9 +188,13 @@ async function collect(command: Extract<GoldCommand, { kind: 'collect' }>): Prom
     if (slot.attemptId !== null) continue;
     while (true) {
       try {
-        const [receipt] = await runCurrentRealSmoke({ fixturePath, profiles: [GOLD_PROFILE] });
+        const [receipt] = await runCurrentRealSmoke({
+          fixturePath,
+          profiles: [GOLD_PROFILE],
+          scenarioId: scenario.id,
+        });
         if (!receipt) throw new Error('Current real smoke returned no Gold receipt');
-        assertGoldSmokeReceipt(receipt);
+        assertGoldSmokeReceipt(receipt, scenario.id);
         await service.recordAttempt({
           batchId,
           slotNo: slot.slotNo as 1 | 2 | 3,
