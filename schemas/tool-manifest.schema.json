@@ -11,8 +11,8 @@
     "name": { "type": "string", "minLength": 1 },
     "adapter_type": {
       "type": "string",
-      "description": "调用通道。V0 只实现 o2/fake,其余留协议。",
-      "enum": ["o2", "internal_api", "mcp", "script", "fake"]
+      "description": "调用通道。运行时实现与保留协议的完整枚举。",
+      "enum": ["o2", "internal_api", "rest_json", "mcp", "script", "fake", "tavily", "playwright"]
     },
     "entrypoint": { "type": "string", "description": "adapter 入口,如 o2 命令。" },
     "auth_required": { "type": "boolean" },

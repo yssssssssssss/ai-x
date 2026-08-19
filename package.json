@@ -15,6 +15,7 @@
     "lint:knowledge": "tsx harness/linters/knowledge-linter.ts",
     "kb:import": "tsx scripts/kb-import.ts",
     "kb:build": "tsx apps/orchestrator-runtime/src/knowledge/build.ts",
+    "playwright:install:chromium": "playwright install chromium",
     "spike:plan": "tsx apps/orchestrator-runtime/src/spike-plan.ts",
     "spike:execute": "tsx apps/orchestrator-runtime/src/spike-execute.ts",
     "gold:run": "tsx apps/orchestrator-runtime/src/gold-run.ts",
@@ -43,6 +44,7 @@
     "express": "^5.2.1",
     "image-size": "^2.0.2",
     "jsonwebtoken": "^9.0.3",
+    "playwright": "1.60.0",
     "pg": "^8.13.1",
     "sharp": "^0.35.3",
     "yaml": "^2.6.1"

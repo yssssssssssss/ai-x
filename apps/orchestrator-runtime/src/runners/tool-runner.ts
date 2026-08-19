@@ -50,6 +50,10 @@ export class ToolActorRunner implements ActorRunner {
       toolId: step.actor_id,
       input: toolInput,
       manifest,
+      context: {
+        signal: new AbortController().signal,
+        deadlineAt: Date.now() + (manifest.timeout_seconds ?? 90) * 1_000,
+      },
       attemptId: ctx.attemptId,
       retryOf: ctx.retryOf,
     });

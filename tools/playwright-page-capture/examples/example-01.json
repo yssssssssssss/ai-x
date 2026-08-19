@@ -1,0 +1,42 @@
+{
+  "input": {
+    "pages": [
+      {
+        "title": "Example product",
+        "url": "https://example.com/product",
+        "snippet": "Public product page",
+        "score": 0.91,
+        "published_date": "2026-07-30"
+      }
+    ],
+    "capture": {
+      "mode": "auto",
+      "selector": null,
+      "max_pages": 6,
+      "viewport": { "width": 1440, "height": 900 }
+    }
+  },
+  "output": {
+    "captures": [
+      {
+        "attachment_id": "capture-1",
+        "source_result_index": 0,
+        "requested_url": "https://example.com/product",
+        "final_url": "https://example.com/product",
+        "page_title": "Example product",
+        "captured_at": "2026-08-19T08:00:00.000Z",
+        "capture_mode": "element_screenshot",
+        "selector": "main",
+        "viewport": { "width": 1440, "height": 900 },
+        "media_type": "image/png",
+        "width": 1200,
+        "height": 1800,
+        "byte_size": 456789,
+        "content_sha256": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "truncated": false
+      }
+    ],
+    "failures": [],
+    "security_profile": "browser-controls-v1"
+  }
+}

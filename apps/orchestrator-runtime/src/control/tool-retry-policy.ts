@@ -2,18 +2,23 @@ import { randomUUID } from 'node:crypto';
 import type { ToolManifest } from '../runtime/config-loader.ts';
 import {
   ToolInvocationError,
+  type ToolAbortReason,
+  type ToolInvocationContext,
+  type ToolMediaAttachment,
   type ToolInvocationReceipt,
 } from '../runtime/tool-adapter.ts';
 
 export interface ToolRetryAttemptContext {
   attempt: number;
   attemptId: string;
+  invocation: ToolInvocationContext;
 }
 
 export interface ToolRetryAttemptResult<T = unknown> {
   output: T;
   receipt: ToolInvocationReceipt;
   latencyMs?: number;
+  mediaAttachments?: ToolMediaAttachment[];
 }
 
 export interface ToolRetryAttemptReceipt {
@@ -34,6 +39,8 @@ export interface ToolRetryFailure {
   attempts: number;
   maxAttempts: number;
   lastFailure?: string;
+  abortReason?: ToolAbortReason;
+  details?: Record<string, unknown>;
 }
 
 export type ToolRetryResult<T = unknown> =
@@ -42,6 +49,7 @@ export type ToolRetryResult<T = unknown> =
       output: T;
       receipt: ToolInvocationReceipt;
       latencyMs?: number;
+      mediaAttachments?: ToolMediaAttachment[];
       attemptReceipts: ToolRetryAttemptReceipt[];
     }
   | {
@@ -52,8 +60,10 @@ export type ToolRetryResult<T = unknown> =
 
 export interface ToolRetryInput<T = unknown> {
   manifest: ToolManifest;
+  context: ToolInvocationContext;
   isLeaseActive: () => Promise<boolean>;
-  sleep: (ms: number) => Promise<void>;
+  onLeaseLost?: () => void;
+  sleep: (ms: number, signal: AbortSignal) => Promise<void>;
   invoke: (context: ToolRetryAttemptContext) => Promise<ToolRetryAttemptResult<T>>;
 }
 
@@ -63,6 +73,7 @@ interface RetryErrorInfo {
   providerStatus: number | null;
   message: string;
   receipt?: ToolInvocationReceipt;
+  details?: Record<string, unknown>;
 }
 
 function errorInfo(error: unknown): RetryErrorInfo {
@@ -73,6 +84,7 @@ function errorInfo(error: unknown): RetryErrorInfo {
       providerStatus: error.providerStatus,
       message: error.sanitizedMessage,
       receipt: error.receipt ?? undefined,
+      ...(Object.keys(error.details).length > 0 ? { details: error.details } : {}),
     };
   }
   if (error && typeof error === 'object') {
@@ -83,6 +95,7 @@ function errorInfo(error: unknown): RetryErrorInfo {
       sanitizedMessage?: unknown;
       receipt?: unknown;
       message?: unknown;
+      details?: unknown;
     };
     return {
       kind: typeof candidate.kind === 'string' ? candidate.kind : 'unknown',
@@ -94,6 +107,12 @@ function errorInfo(error: unknown): RetryErrorInfo {
       receipt: candidate.receipt && typeof candidate.receipt === 'object'
         ? candidate.receipt as ToolInvocationReceipt
         : undefined,
+      ...(candidate.details
+        && typeof candidate.details === 'object'
+        && !Array.isArray(candidate.details)
+        && Object.keys(candidate.details).length > 0
+        ? { details: candidate.details as Record<string, unknown> }
+        : {}),
     };
   }
   return {
@@ -105,17 +124,37 @@ function errorInfo(error: unknown): RetryErrorInfo {
 }
 
 function retryableFailure(info: RetryErrorInfo): boolean {
+  if (!info.retryable) return false;
+  if (info.kind === 'capacity') return true;
   if (info.kind === 'network' || info.kind === 'timeout') return true;
   if (info.kind === 'rate_limit') return info.providerStatus === 429;
   if (info.kind === 'server') return info.providerStatus !== null && info.providerStatus >= 500 && info.providerStatus <= 599;
   return false;
 }
 
-async function leaseActive(check: () => Promise<boolean>): Promise<boolean> {
+async function leaseActive(
+  check: () => Promise<boolean>,
+  context: ToolInvocationContext,
+): Promise<boolean> {
+  const remainingMs = context.deadlineAt - Date.now();
+  if (context.signal.aborted || remainingMs <= 0) return false;
+
+  let timer: NodeJS.Timeout | undefined;
+  let onAbort: (() => void) | undefined;
+  const interrupted = new Promise<false>((resolve) => {
+    onAbort = () => resolve(false);
+    context.signal.addEventListener('abort', onAbort, { once: true });
+    timer = setTimeout(() => resolve(false), remainingMs);
+    if (context.signal.aborted) onAbort();
+  });
   try {
-    return await check();
-  } catch {
-    return false;
+    return await Promise.race([
+      check().catch(() => false),
+      interrupted,
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (onAbort) context.signal.removeEventListener('abort', onAbort);
   }
 }
 function safeReceipt(receipt: ToolInvocationReceipt | undefined): ToolInvocationReceipt | undefined {
@@ -152,16 +191,85 @@ function leaseLost(
   };
 }
 
+function signalLeaseLost(callback: (() => void) | undefined): void {
+  try { callback?.(); } catch { /* the lease result remains authoritative */ }
+}
+
+function abortReason(context: ToolInvocationContext): ToolAbortReason | null {
+  if (context.signal.aborted) {
+    if (context.signal.reason === 'lease_lost') return 'lease_lost';
+    if (context.signal.reason === 'deadline_exceeded') return 'deadline_exceeded';
+  }
+  return Date.now() >= context.deadlineAt ? 'deadline_exceeded' : null;
+}
+
+function abortedResult<T>(
+  context: ToolInvocationContext,
+  attempts: number,
+  maxAttempts: number,
+  attemptReceipts: ToolRetryAttemptReceipt[],
+): ToolRetryResult<T> | null {
+  const reason = abortReason(context);
+  if (!reason) return null;
+  if (reason === 'lease_lost') {
+    const result = leaseLost(attempts, maxAttempts, attemptReceipts) as ToolRetryResult<T>;
+    if (result.status === 'failed') result.failure.abortReason = reason;
+    return result;
+  }
+  return {
+    status: 'failed',
+    failure: {
+      kind: 'timeout',
+      retryable: true,
+      providerStatus: null,
+      attempts,
+      maxAttempts,
+      lastFailure: 'tool execution deadline exceeded',
+      abortReason: reason,
+    },
+    attemptReceipts,
+  };
+}
+
+async function sleepUntilBackoffOrAbort(
+  sleep: (ms: number, signal: AbortSignal) => Promise<void>,
+  ms: number,
+  signal: AbortSignal,
+): Promise<void> {
+  if (signal.aborted) return;
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<void>((resolve) => {
+    onAbort = () => resolve();
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+  try {
+    await Promise.race([sleep(ms, signal), aborted]);
+  } finally {
+    if (onAbort) signal.removeEventListener('abort', onAbort);
+  }
+}
+
 export async function invokeWithRetry<T = unknown>(input: ToolRetryInput<T>): Promise<ToolRetryResult<T>> {
   const configuredMaxAttempts = input.manifest.retry_policy?.max_attempts ?? 1;
   const maxAttempts = Math.max(1, Math.floor(configuredMaxAttempts));
   const backoffMs = Math.max(0, input.manifest.retry_policy?.backoff_seconds ?? 0) * 1_000;
   const attemptReceipts: ToolRetryAttemptReceipt[] = [];
+  const invocation = input.context;
 
-  if (!(await leaseActive(input.isLeaseActive))) return leaseLost(0, maxAttempts, attemptReceipts) as ToolRetryResult<T>;
+  const abortedBeforeLease = abortedResult<T>(invocation, 0, maxAttempts, attemptReceipts);
+  if (abortedBeforeLease) return abortedBeforeLease;
+  const initiallyActive = await leaseActive(input.isLeaseActive, invocation);
+  const abortedAfterInitialLease = abortedResult<T>(invocation, 0, maxAttempts, attemptReceipts);
+  if (abortedAfterInitialLease) return abortedAfterInitialLease;
+  if (!initiallyActive) {
+    signalLeaseLost(input.onLeaseLost);
+    return leaseLost(0, maxAttempts, attemptReceipts) as ToolRetryResult<T>;
+  }
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const context: ToolRetryAttemptContext = { attempt, attemptId: randomUUID() };
+    const abortedBeforeAttempt = abortedResult<T>(invocation, attempt - 1, maxAttempts, attemptReceipts);
+    if (abortedBeforeAttempt) return abortedBeforeAttempt;
+    const context: ToolRetryAttemptContext = { attempt, attemptId: randomUUID(), invocation };
     try {
       const result = await input.invoke(context);
       attemptReceipts.push({
@@ -170,11 +278,19 @@ export async function invokeWithRetry<T = unknown>(input: ToolRetryInput<T>): Pr
         status: 'succeeded',
         receipt: safeReceipt(result.receipt),
       });
+      const abortedAfterSuccess = abortedResult<T>(
+        invocation,
+        attempt,
+        maxAttempts,
+        attemptReceipts,
+      );
+      if (abortedAfterSuccess) return abortedAfterSuccess;
       return {
         status: 'succeeded',
         output: result.output,
         receipt: safeReceipt(result.receipt)!,
         latencyMs: result.latencyMs,
+        mediaAttachments: result.mediaAttachments,
         attemptReceipts,
       };
     } catch (error) {
@@ -186,6 +302,8 @@ export async function invokeWithRetry<T = unknown>(input: ToolRetryInput<T>): Pr
         receipt: safeReceipt(info.receipt),
         failure: { kind: info.kind, providerStatus: info.providerStatus },
       });
+      const abortedAfterAttempt = abortedResult<T>(invocation, attempt, maxAttempts, attemptReceipts);
+      if (abortedAfterAttempt) return abortedAfterAttempt;
       const canRetry = retryableFailure(info) && attempt < maxAttempts;
       if (!canRetry) {
         return {
@@ -197,13 +315,28 @@ export async function invokeWithRetry<T = unknown>(input: ToolRetryInput<T>): Pr
             attempts: attempt,
             maxAttempts,
             lastFailure: info.message,
+            ...(info.details ? { details: info.details } : {}),
           },
           attemptReceipts,
         };
       }
-      if (!(await leaseActive(input.isLeaseActive))) return leaseLost(attempt, maxAttempts, attemptReceipts) as ToolRetryResult<T>;
-      await input.sleep(backoffMs);
-      if (!(await leaseActive(input.isLeaseActive))) return leaseLost(attempt, maxAttempts, attemptReceipts) as ToolRetryResult<T>;
+      const activeBeforeBackoff = await leaseActive(input.isLeaseActive, invocation);
+      const abortedBeforeBackoff = abortedResult<T>(invocation, attempt, maxAttempts, attemptReceipts);
+      if (abortedBeforeBackoff) return abortedBeforeBackoff;
+      if (!activeBeforeBackoff) {
+        signalLeaseLost(input.onLeaseLost);
+        return leaseLost(attempt, maxAttempts, attemptReceipts) as ToolRetryResult<T>;
+      }
+      await sleepUntilBackoffOrAbort(input.sleep, backoffMs, invocation.signal);
+      const abortedAfterBackoff = abortedResult<T>(invocation, attempt, maxAttempts, attemptReceipts);
+      if (abortedAfterBackoff) return abortedAfterBackoff;
+      const activeAfterBackoff = await leaseActive(input.isLeaseActive, invocation);
+      const abortedAfterFinalLease = abortedResult<T>(invocation, attempt, maxAttempts, attemptReceipts);
+      if (abortedAfterFinalLease) return abortedAfterFinalLease;
+      if (!activeAfterBackoff) {
+        signalLeaseLost(input.onLeaseLost);
+        return leaseLost(attempt, maxAttempts, attemptReceipts) as ToolRetryResult<T>;
+      }
     }
   }
 

@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { loadSchemaText, resolveSchema } from '../apps/orchestrator-runtime/src/runtime/schema-registry.ts';
+import { getConfigRoot, loadToolManifest } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 
 import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 
@@ -161,4 +164,40 @@ test('ResearchTaskV2 通过现有 schema registry 注册并可加载', () => {
   const spec = resolveSchema('research-task-v2');
   assert.equal(spec.file, 'research-task-v2.schema.json');
   assert.ok(loadSchemaText(spec)?.includes('research-task-v2'));
+});
+
+test('tool manifest schema covers every implemented adapter including Playwright', () => {
+  for (const path of [
+    'tools/tavily-web-search/manifest.yaml',
+    'tools/experience-model-lab/manifest.yaml',
+    'tools/playwright-page-capture/manifest.yaml',
+  ]) {
+    const manifest = loadToolManifest(path);
+    assert.deepEqual(v.validate('tool-manifest', manifest), [], path);
+  }
+});
+
+test('Playwright capture schemas accept the metadata-only example and reject media bytes in JSON', () => {
+  const root = getConfigRoot();
+  const manifest = loadToolManifest('tools/playwright-page-capture/manifest.yaml');
+  const example = JSON.parse(readFileSync(
+    join(root, 'tools/playwright-page-capture/examples/example-01.json'),
+    'utf8',
+  )) as { input: unknown; output: Record<string, unknown> };
+
+  assert.deepEqual(v.validateFile(join(root, manifest.input_schema), example.input), []);
+  assert.deepEqual(v.validateFile(join(root, manifest.input_schema), {
+    pages: [{
+      title: 'Provider row with deferred URL validation',
+      url: 'not-yet-normalized',
+      snippet: 'The Adapter records invalid rows as per-page failures.',
+      score: null,
+      published_date: '2026-08-19T08:00:00.000Z',
+    }],
+  }), []);
+  assert.deepEqual(v.validateFile(join(root, manifest.output_schema), example.output), []);
+  assert.ok(v.validateFile(join(root, manifest.output_schema), {
+    ...example.output,
+    bytes: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB',
+  }).length > 0);
 });

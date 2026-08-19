@@ -41,7 +41,7 @@ export function redactSensitiveValue(
   if (/^(authorization|api[_-]?key|token|secret|password|dataurl|base64)$/i.test(key)) return '[REDACTED]';
   if (maskPii && /^(name|full_name|contact_name|email|phone|mobile)$/i.test(key)) return '[REDACTED_PII]';
   if (typeof value === 'string') {
-    const isUrlField = /^(url|oss_url|sourceUrl)$/i.test(key);
+    const isUrlField = /^(url|oss_url|sourceUrl|requested_url|final_url)$/i.test(key);
     return redactString(value, isUrlField ? false : maskPii);
   }
   if (Array.isArray(value)) return value.map((item) => redactSensitiveValue(item, policy));

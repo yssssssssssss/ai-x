@@ -33,6 +33,10 @@ function manifestWith(adapterType: ToolManifest['adapter_type']): ToolManifest {
   return { ...baseManifest, adapter_type: adapterType };
 }
 
+function invocationContext() {
+  return { signal: new AbortController().signal, deadlineAt: Date.now() + 90_000 };
+}
+
 function installFetch(fn: typeof fetch): void {
   globalThis.fetch = fn;
 }
@@ -69,6 +73,7 @@ test('ToolRouter receipt records real Tavily identity and endpoint host', async 
     toolId: 'tavily-web-search',
     input: { query: 'AI search' },
     manifest: manifestWith('tavily'),
+    context: invocationContext(),
   });
 
   assert.equal(result.receipt.declaredAdapterType, 'tavily');
@@ -78,6 +83,46 @@ test('ToolRouter receipt records real Tavily identity and endpoint host', async 
   assert.equal(result.receipt.endpointHost, 'api.tavily.com');
   assert.equal(result.receipt.status, 'ok');
   assert.equal(typeof result.receipt.latencyMs, 'number');
+  assert.equal('toolId' in result.receipt, false);
+  assert.equal('input' in result.receipt, false);
+  assert.equal('manifest' in result.receipt, false);
+  assert.equal('context' in result.receipt, false);
+});
+
+test('ToolRouter gives a shared lease abort priority over a late adapter success', async () => {
+  const controller = new AbortController();
+  const adapter = {
+    adapterType: 'tavily' as const,
+    implementationId: 'late-success-adapter',
+    executionMode: 'real' as const,
+    async invoke() {
+      controller.abort('lease_lost');
+      return {
+        output: { secretProbe: 'must-not-reach-receipt' },
+        latencyMs: 0,
+        receipt: {
+          declaredAdapterType: 'tavily' as const,
+          resolvedAdapterType: 'tavily' as const,
+          implementationId: 'late-success-adapter',
+          executionMode: 'real' as const,
+          endpointHost: null,
+          status: 'ok' as const,
+          latencyMs: 0,
+        },
+      };
+    },
+  } satisfies ToolAdapter;
+
+  const error = await captureToolError(new ToolRouter().register(adapter).invoke({
+    toolId: 'tavily-web-search',
+    input: { secretProbe: 'must-not-reach-receipt' },
+    manifest: manifestWith('tavily'),
+    context: { signal: controller.signal, deadlineAt: Date.now() + 90_000 },
+  }));
+
+  assert.equal(error.kind, 'lease_lost');
+  assert.equal(error.details.abortReason, 'lease_lost');
+  assert.doesNotMatch(JSON.stringify(error.receipt), /secretProbe|must-not-reach-receipt/u);
 });
 
 test('ToolRouter preserves retry lineage through adapter invocation and receipt', async () => {
@@ -108,6 +153,7 @@ test('ToolRouter preserves retry lineage through adapter invocation and receipt'
     toolId: 'tavily-web-search',
     input: { query: 'AI search' },
     manifest: manifestWith('tavily'),
+    context: invocationContext(),
     attemptId: 'attempt-2',
     retryOf: 'attempt-1',
   });
@@ -124,6 +170,7 @@ test('ToolRouter receipt records FakeO2 fake identity without mismatch', async (
     toolId: 'offline-search',
     input: { query: 'AI search' },
     manifest: manifestWith('fake'),
+    context: invocationContext(),
   });
 
   assert.equal(result.receipt.declaredAdapterType, 'fake');
@@ -140,6 +187,7 @@ test('ToolRouter receipt reports declared/resolved mismatch when O2 is aliased t
     toolId: 'o2-web-search',
     input: { query: 'AI search' },
     manifest: manifestWith('o2'),
+    context: invocationContext(),
   });
 
   assert.equal(result.receipt.declaredAdapterType, 'o2');
@@ -156,6 +204,7 @@ test('ToolRouter receipt reports declared/resolved mismatch when Tavily is alias
     toolId: 'tavily-web-search',
     input: { query: 'AI search' },
     manifest: manifestWith('tavily'),
+    context: invocationContext(),
   });
 
   assert.equal(result.receipt.declaredAdapterType, 'tavily');
@@ -173,6 +222,7 @@ test('ToolRouter missing adapter exposes unknown configuration failure', async (
       toolId: 'missing-tool',
       input: { query: 'AI search' },
       manifest: manifestWith('tavily'),
+      context: invocationContext(),
     }),
     (err) => {
       assert.ok(err instanceof ToolInvocationError);
@@ -200,6 +250,7 @@ test('ToolRouter preserves resolved identity when an adapter throws an unknown e
     toolId: 'tavily-web-search',
     input: { query: 'AI search' },
     manifest: manifestWith('tavily'),
+    context: invocationContext(),
   }));
 
   assert.equal(error.kind, 'network');
@@ -228,7 +279,7 @@ test('HttpApiAdapter login uses an AbortSignal and returns a structured timeout 
     timeoutMs: 10,
   });
   const error = await captureToolError(
-    adapter.invoke({ toolId: 'ai-spider-search', input: { query: 'x' }, manifest }),
+    adapter.invoke({ toolId: 'ai-spider-search', input: { query: 'x' }, manifest, context: invocationContext() }),
   );
 
   assert.equal(error.kind, 'timeout');
@@ -237,7 +288,7 @@ test('HttpApiAdapter login uses an AbortSignal and returns a structured timeout 
 test('Tavily failures expose structured kinds without leaking API keys', async () => {
   delete process.env.TAVILY_API_KEY;
   const missingKey = await captureToolError(
-    new TavilyAdapter().invoke({ toolId: 'tavily-web-search', input: { query: 'AI search' }, manifest: manifestWith('tavily') }),
+    new TavilyAdapter().invoke({ toolId: 'tavily-web-search', input: { query: 'AI search' }, manifest: manifestWith('tavily'), context: invocationContext() }),
   );
   assert.ok(missingKey instanceof ToolInvocationError);
   assert.equal(missingKey.kind, 'configuration');
@@ -248,7 +299,7 @@ test('Tavily failures expose structured kinds without leaking API keys', async (
   process.env.TAVILY_API_KEY = 'secret-test-key';
   installFetch(async () => new Response('quota exceeded for secret-test-key', { status: 429 }));
   const rateLimited = await captureToolError(
-    new TavilyAdapter().invoke({ toolId: 'tavily-web-search', input: { query: 'AI search' }, manifest: manifestWith('tavily') }),
+    new TavilyAdapter().invoke({ toolId: 'tavily-web-search', input: { query: 'AI search' }, manifest: manifestWith('tavily'), context: invocationContext() }),
   );
   assert.ok(rateLimited instanceof ToolInvocationError);
   assert.equal(rateLimited.kind, 'rate_limit');
@@ -258,7 +309,7 @@ test('Tavily failures expose structured kinds without leaking API keys', async (
 
   installFetch(async () => new Response('temporary failure', { status: 503 }));
   const server = await captureToolError(
-    new TavilyAdapter().invoke({ toolId: 'tavily-web-search', input: { query: 'AI search' }, manifest: manifestWith('tavily') }),
+    new TavilyAdapter().invoke({ toolId: 'tavily-web-search', input: { query: 'AI search' }, manifest: manifestWith('tavily'), context: invocationContext() }),
   );
   assert.ok(server instanceof ToolInvocationError);
   assert.equal(server.kind, 'server');
@@ -270,7 +321,7 @@ test('Tavily failures expose structured kinds without leaking API keys', async (
     throw new DOMException('The operation was aborted.', 'AbortError');
   });
   const timeout = await captureToolError(
-    new TavilyAdapter().invoke({ toolId: 'tavily-web-search', input: { query: 'AI search' }, manifest: manifestWith('tavily') }),
+    new TavilyAdapter().invoke({ toolId: 'tavily-web-search', input: { query: 'AI search' }, manifest: manifestWith('tavily'), context: invocationContext() }),
   );
   assert.ok(timeout instanceof ToolInvocationError);
   assert.equal(timeout.kind, 'timeout');
@@ -281,7 +332,7 @@ test('Tavily failures expose structured kinds without leaking API keys', async (
     throw new TypeError('fetch failed');
   });
   const network = await captureToolError(
-    new TavilyAdapter().invoke({ toolId: 'tavily-web-search', input: { query: 'AI search' }, manifest: manifestWith('tavily') }),
+    new TavilyAdapter().invoke({ toolId: 'tavily-web-search', input: { query: 'AI search' }, manifest: manifestWith('tavily'), context: invocationContext() }),
   );
   assert.ok(network instanceof ToolInvocationError);
   assert.equal(network.kind, 'network');

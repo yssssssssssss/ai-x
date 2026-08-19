@@ -4,7 +4,13 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { lintRegistries } from '../harness/linters/registry-linter.ts';
-import { setConfigRoot, getConfigRoot, type SkillRegistryEntry } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import {
+  setConfigRoot,
+  getConfigRoot,
+  loadToolManifest,
+  loadToolRegistry,
+  type SkillRegistryEntry,
+} from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 
 // P0-03 验收:registry-linter 能拦截 缺字段 / 高风险无 approver / decision 缺 tier。
 // 每个用例在临时 fixture 根构造配置,setConfigRoot 指过去。
@@ -223,4 +229,20 @@ test('KB Skill 无 input schema 但必须声明统一 output schema', () => {
   assert.equal(kbSkill.input_schema, undefined);
   assert.equal(kbSkill.output_schema, 'schemas/skill-result-envelope.schema.json');
   assert.equal(kbSkill.status, 'active');
+});
+
+test('Playwright capture stays a draft optional medium-risk tool with a matching manifest', () => {
+  setConfigRoot(realRoot);
+  const tool = loadToolRegistry().tools.find(({ id }) => id === 'playwright-page-capture');
+  assert.ok(tool);
+  assert.equal(tool.status, 'draft');
+  assert.equal(tool.tier, 'optional');
+  assert.equal(tool.risk_level, 'medium');
+  assert.equal(tool.adapter_type, 'playwright');
+  const manifest = loadToolManifest(tool.path);
+  assert.equal(manifest.id, tool.id);
+  assert.equal(manifest.adapter_type, tool.adapter_type);
+  assert.equal(manifest.risk_level, tool.risk_level);
+  assert.equal(manifest.timeout_seconds, 90);
+  assert.deepEqual(manifest.retry_policy, { max_attempts: 2, backoff_seconds: 1 });
 });

@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { lookup } from 'node:dns/promises';
 import { once } from 'node:events';
 import type { IncomingMessage } from 'node:http';
 import { Agent as HttpAgent, request as httpRequest } from 'node:http';
@@ -21,6 +20,13 @@ import type {
 import { resolveJsonPointer } from '../evidence/evidence-service.ts';
 import { SchemaValidator } from '../schema/validator.ts';
 import { sniffSupportedImageContentType } from './image-content-type.ts';
+import {
+  defaultResolveHost,
+  normalizedHostname,
+  parseHttpUrl,
+  resolvePublicTarget,
+  type ResolveHost,
+} from '../runtime/public-web-access-policy.ts';
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
@@ -34,7 +40,6 @@ type ArtifactStorePort = Pick<
   | 'invalidateArtifactPublication'
 >;
 
-type ResolveHost = (hostname: string) => Promise<string[]>;
 type FetchPort = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
 interface PinnedRequestInput {
@@ -118,114 +123,6 @@ function assertBinding(artifact: ControlArtifact, binding: AssetBinding, label: 
   ) {
     throw new Error(`${label} binding does not match Task, Plan, and Attempt`);
   }
-}
-
-function parseIpv4(address: string): number[] | null {
-  const octets = address.split('.');
-  if (octets.length !== 4) return null;
-  const parsed = octets.map((part) => Number(part));
-  if (parsed.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return null;
-  return parsed;
-}
-
-function isPublicIpv4(address: string): boolean {
-  const octets = parseIpv4(address);
-  if (!octets) return false;
-  const [a, b, c] = octets;
-  if (a === 0 || a === 10 || a === 127 || a! >= 224) return false;
-  if (a === 100 && b! >= 64 && b! <= 127) return false;
-  if (a === 169 && b === 254) return false;
-  if (a === 172 && b! >= 16 && b! <= 31) return false;
-  if (a === 192 && b === 168) return false;
-  if (a === 192 && b === 0 && (c === 0 || c === 2)) return false;
-  if (a === 192 && b === 88 && c === 99) return false;
-  if (a === 198 && (b === 18 || b === 19)) return false;
-  if (a === 198 && b === 51 && c === 100) return false;
-  if (a === 203 && b === 0 && c === 113) return false;
-  return true;
-}
-
-function ipv6Words(address: string): number[] | null {
-  const zoneIndex = address.indexOf('%');
-  const input = zoneIndex >= 0 ? address.slice(0, zoneIndex) : address;
-  if (input.split('::').length > 2) return null;
-  const parseSide = (side: string): number[] | null => {
-    if (!side) return [];
-    const pieces = side.split(':');
-    const words: number[] = [];
-    for (const piece of pieces) {
-      if (piece.includes('.')) {
-        const ipv4 = parseIpv4(piece);
-        if (!ipv4 || piece !== pieces.at(-1)) return null;
-        words.push((ipv4[0]! << 8) | ipv4[1]!, (ipv4[2]! << 8) | ipv4[3]!);
-        continue;
-      }
-      if (!/^[0-9a-f]{1,4}$/iu.test(piece)) return null;
-      words.push(Number.parseInt(piece, 16));
-    }
-    return words;
-  };
-  const [leftText, rightText] = input.split('::');
-  const left = parseSide(leftText ?? '');
-  const right = parseSide(rightText ?? '');
-  if (!left || !right) return null;
-  if (!input.includes('::')) return left.length === 8 ? left : null;
-  const missing = 8 - left.length - right.length;
-  return missing >= 1 ? [...left, ...Array<number>(missing).fill(0), ...right] : null;
-}
-
-function isPublicIpv6(address: string): boolean {
-  const words = ipv6Words(address);
-  if (!words) return false;
-  const isMappedIpv4 = words.slice(0, 5).every((word) => word === 0) && words[5] === 0xffff;
-  if (isMappedIpv4) {
-    return isPublicIpv4(`${words[6]! >> 8}.${words[6]! & 0xff}.${words[7]! >> 8}.${words[7]! & 0xff}`);
-  }
-  const first = words[0]!;
-  const second = words[1]!;
-  if ((first & 0xe000) !== 0x2000) return false;
-  if (first === 0x2001 && second === 0x0db8) return false;
-  return true;
-}
-
-function isPublicAddress(address: string): boolean {
-  const family = isIP(address);
-  return family === 4 ? isPublicIpv4(address) : family === 6 ? isPublicIpv6(address) : false;
-}
-
-async function defaultResolveHost(hostname: string): Promise<string[]> {
-  const results = await lookup(hostname, { all: true, verbatim: true });
-  return results.map(({ address }) => address);
-}
-
-function normalizedHostname(url: URL): string {
-  return url.hostname.startsWith('[') && url.hostname.endsWith(']')
-    ? url.hostname.slice(1, -1)
-    : url.hostname;
-}
-
-function parseHttpUrl(value: string, context: string): URL {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new Error(`${context} must resolve to a valid HTTP URL`);
-  }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new Error(`${context} uses a forbidden scheme; only HTTP(S) is allowed`);
-  }
-  if (url.username || url.password) throw new Error(`${context} HTTP URL must not contain credentials`);
-  return url;
-}
-
-async function resolvePublicTarget(url: URL, resolveHost: ResolveHost): Promise<string[]> {
-  const hostname = normalizedHostname(url);
-  const literalFamily = isIP(hostname);
-  const addresses = literalFamily ? [hostname] : await resolveHost(hostname);
-  if (addresses.length === 0 || addresses.some((address) => !isPublicAddress(address))) {
-    throw new Error(`HTTP target ${hostname} does not resolve exclusively to public addresses; private, loopback, link-local, and metadata addresses are forbidden`);
-  }
-  return [...new Set(addresses)];
 }
 
 function responseHeaders(response: IncomingMessage): Headers {

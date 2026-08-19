@@ -19,6 +19,10 @@ test('HttpApiAdapter 能登录并检索 ai-spider-app 竞品库', { skip }, asyn
     toolId: 'ai-spider-search',
     input: { query: '直播 数字人', limit: 3 },
     manifest,
+    context: {
+      signal: new AbortController().signal,
+      deadlineAt: Date.now() + 90_000,
+    },
   });
 
   // 输出过 output.schema.json

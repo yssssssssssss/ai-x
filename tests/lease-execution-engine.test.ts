@@ -387,7 +387,10 @@ class FailingRealAdapter implements ToolAdapter {
   readonly executionMode = 'real' as const;
   calls = 0;
 
-  constructor(readonly adapterType: ToolManifest['adapter_type']) {}
+  constructor(
+    readonly adapterType: ToolManifest['adapter_type'],
+    private readonly details: Record<string, unknown> = {},
+  ) {}
 
   endpointHost(): string {
     return 'dependency.test';
@@ -400,6 +403,7 @@ class FailingRealAdapter implements ToolAdapter {
       retryable: true,
       providerStatus: null,
       sanitizedMessage: 'dependency unavailable',
+      details: this.details,
     });
   }
 }
@@ -870,6 +874,7 @@ function buildEngine(
   deliverables: TestDeliverables = new RecordingDeliverablesFake(),
   reportReview?: TestReportReview,
   skillLoader: SkillLoader = new SkillLoader(),
+  toolExecutionDeadlineMs?: number,
 ): LeaseExecutionEngine {
   return new DeliverableAwareLeaseExecutionEngine({
     repository,
@@ -881,6 +886,7 @@ function buildEngine(
     skillLoader,
     validator: new SchemaValidator(),
     heartbeatMs: 60_000,
+    ...(toolExecutionDeadlineMs === undefined ? {} : { toolExecutionDeadlineMs }),
   });
 }
 
@@ -3423,7 +3429,13 @@ test('continues after an optional Tool failure and completes with a sanitized ga
     },
   );
   const coreAdapter = new CountingRealTavilyAdapter();
-  const optionalAdapter = new FailingRealAdapter('internal_api');
+  const pageFailures = [{
+    source_result_index: 0,
+    requested_url: 'https://example.com/product',
+    code: 'login_required',
+    sanitized_message: 'page requires authentication',
+  }];
+  const optionalAdapter = new FailingRealAdapter('internal_api', { page_failures: pageFailures });
   const llm = new CountingRealLLM();
   const deliverables = new RecordingDeliverablesFake();
   const result = await buildEngine(
@@ -3455,6 +3467,7 @@ test('continues after an optional Tool failure and completes with a sanitized ga
   assert.equal(steps[1]?.state, 'skipped');
   assert.equal(steps[1]?.failure?.toolTier, 'optional');
   assert.equal(steps[1]?.failure?.kind, 'network');
+  assert.deepEqual(steps[1]?.failure?.page_failures, pageFailures);
   assert.equal(steps[2]?.state, 'succeeded');
   assert.equal(steps[3]?.state, 'succeeded');
   assert.deepEqual(
@@ -3537,6 +3550,40 @@ test('persists only Tool attempt receipts when the final lease fence loses the l
   assert.equal(failure.retry.attemptReceipts.length, 1);
   assert.equal(failure.actorResult, undefined);
   assert.doesNotMatch(JSON.stringify(failure), /actorResult|digital human competitors|verified public source|secret-value|secret-token|promptHash|Authorization/u);
+});
+
+test('Tool deadline bounds a lease fence that never settles after provider success', { timeout: 1_000 }, async () => {
+  const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), [planSteps[0]]);
+  const originalRequireActiveLease = repository.requireActiveLease.bind(repository);
+  let hangNextFence = false;
+  repository.requireActiveLease = async (candidate) => {
+    if (hangNextFence) {
+      hangNextFence = false;
+      return new Promise<never>(() => {});
+    }
+    return originalRequireActiveLease(candidate);
+  };
+  const adapter = new CountingRealTavilyAdapter();
+  const originalInvoke = adapter.invoke.bind(adapter);
+  adapter.invoke = async (options) => {
+    const result = await originalInvoke(options);
+    hangNextFence = true;
+    return result;
+  };
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(adapter),
+    new CountingRealLLM(),
+    undefined,
+    undefined,
+    undefined,
+    20,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'paused');
+  assert.equal(result.failure?.kind, 'timeout');
+  assert.equal(adapter.calls, 1);
 });
 
 

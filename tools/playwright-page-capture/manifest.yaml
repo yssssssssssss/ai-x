@@ -1,0 +1,16 @@
+id: playwright-page-capture
+name: Playwright 网页视觉取证
+adapter_type: playwright
+entrypoint: browser://capture
+auth_required: false
+risk_level: medium
+approver_rule: none
+timeout_seconds: 90
+retry_policy:
+  max_attempts: 2
+  backoff_seconds: 1
+input_schema: tools/playwright-page-capture/input.schema.json
+output_schema: tools/playwright-page-capture/output.schema.json
+redaction_policy:
+  pii: mask
+  sensitive_business_data: block

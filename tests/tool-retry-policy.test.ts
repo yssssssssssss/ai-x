@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ToolInvocationError,
+  type ToolInvocationContext,
+  type ToolMediaAttachment,
   type ToolInvocationReceipt,
 } from '../apps/orchestrator-runtime/src/runtime/tool-adapter.ts';
 import { invokeWithRetry } from '../apps/orchestrator-runtime/src/control/tool-retry-policy.ts';
@@ -13,12 +15,15 @@ type RetryResult = {
   output?: unknown;
   failure?: {
     kind: string;
+    abortReason?: string;
     retryable?: boolean;
     providerStatus?: number | null;
     attempts: number;
     maxAttempts: number;
     lastFailure?: string;
+    details?: Record<string, unknown>;
   };
+  mediaAttachments?: ToolMediaAttachment[];
   attemptReceipts: Array<{
     attempt: number;
     attemptId: string;
@@ -48,6 +53,10 @@ function receipt(attempt: number, status: 'ok' | 'failed' = 'failed'): ToolInvoc
     status,
     latencyMs: attempt,
   };
+}
+
+function invocationContext(controller = new AbortController()): ToolInvocationContext {
+  return { signal: controller.signal, deadlineAt: Date.now() + 90_000 };
 }
 
 function failure(
@@ -99,6 +108,7 @@ test('retries network, timeout, HTTP 429, and HTTP 5xx failures before success',
       let invocation = 0;
       const result = await invokeWithRetry({
         manifest: baseManifest,
+        context: invocationContext(),
         isLeaseActive: async () => true,
         sleep: async (ms: number) => { sleeps.push(ms); },
         invoke: async (context: unknown) => {
@@ -133,6 +143,7 @@ test('does not retry schema, authentication, safety, or integrity failures', asy
       const sleeps: number[] = [];
       const result = await invokeWithRetry({
         manifest: baseManifest,
+        context: invocationContext(),
         isLeaseActive: async () => true,
         sleep: async (ms: number) => { sleeps.push(ms); },
         invoke: async () => {
@@ -156,6 +167,7 @@ test('honors manifest max_attempts and never exceeds the configured attempt coun
   let calls = 0;
   const result = await invokeWithRetry({
     manifest,
+    context: invocationContext(),
     isLeaseActive: async () => true,
     sleep: async (ms: number) => { sleeps.push(ms); },
     invoke: async (context: unknown) => {
@@ -176,6 +188,7 @@ test('records an independent receipt for every attempt, including failed attempt
   let calls = 0;
   const result = await invokeWithRetry({
     manifest: baseManifest,
+    context: invocationContext(),
     isLeaseActive: async () => true,
     sleep: async () => {},
     invoke: async (context: unknown) => {
@@ -197,9 +210,12 @@ test('records an independent receipt for every attempt, including failed attempt
 
 test('stops before the first provider call when the lease is already lost', async () => {
   let calls = 0;
+  const controller = new AbortController();
   const result = await invokeWithRetry({
     manifest: baseManifest,
+    context: invocationContext(controller),
     isLeaseActive: async () => false,
+    onLeaseLost: () => controller.abort('lease_lost'),
     sleep: async () => { throw new Error('sleep must not run'); },
     invoke: async () => {
       calls += 1;
@@ -210,6 +226,7 @@ test('stops before the first provider call when the lease is already lost', asyn
   assert.equal(result.status, 'failed');
   assert.equal(result.failure?.kind, 'lease_lost');
   assert.equal(result.failure?.attempts, 0);
+  assert.equal(controller.signal.reason, 'lease_lost');
   assert.equal(calls, 0);
 });
 
@@ -219,6 +236,7 @@ test('stops before sleeping when the lease is lost after a retryable failure', a
   let sleeps = 0;
   const result = await invokeWithRetry({
     manifest: baseManifest,
+    context: invocationContext(),
     isLeaseActive: async () => leaseActive,
     sleep: async () => { sleeps += 1; },
     invoke: async (context: unknown) => {
@@ -240,6 +258,7 @@ test('stops before the next provider call when the lease is lost during backoff 
   let calls = 0;
   const result = await invokeWithRetry({
     manifest: baseManifest,
+    context: invocationContext(),
     isLeaseActive: async () => leaseActive,
     sleep: async () => { leaseActive = false; },
     invoke: async (context: unknown) => {
@@ -261,6 +280,7 @@ test('returns a structured final failure after retry exhaustion', async () => {
   const manifest = { ...baseManifest, retry_policy: { max_attempts: 3, backoff_seconds: 0 } };
   const result = await invokeWithRetry({
     manifest,
+    context: invocationContext(),
     isLeaseActive: async () => true,
     sleep: async () => {},
     invoke: async (context: unknown) => {
@@ -277,4 +297,221 @@ test('returns a structured final failure after retry exhaustion', async () => {
     maxAttempts: 3,
     lastFailure: 'rate_limit failure',
   });
+});
+
+test('preserves sanitized failure details from the final attempt', async () => {
+  const pageFailures = [{
+    source_result_index: 0,
+    requested_url: 'https://example.com/product',
+    code: 'login_required',
+    sanitized_message: 'page requires authentication',
+  }];
+  const result = await invokeWithRetry({
+    manifest: { ...baseManifest, retry_policy: { max_attempts: 1, backoff_seconds: 0 } },
+    context: invocationContext(),
+    isLeaseActive: async () => true,
+    sleep: async () => {},
+    invoke: async () => {
+      throw new ToolInvocationError('retry-fixture', {
+        kind: 'unknown',
+        retryable: false,
+        sanitizedMessage: 'all eligible pages failed capture',
+        details: { page_failures: pageFailures },
+      });
+    },
+  }) as RetryResult;
+
+  assert.equal(result.status, 'failed');
+  assert.deepEqual(result.failure?.details, { page_failures: pageFailures });
+});
+
+test('retries an explicitly retryable capacity failure', async () => {
+  let calls = 0;
+  const result = await invokeWithRetry({
+    manifest: { ...baseManifest, retry_policy: { max_attempts: 2, backoff_seconds: 0 } },
+    context: invocationContext(),
+    isLeaseActive: async () => true,
+    sleep: async () => {},
+    invoke: async (attempt) => {
+      calls += 1;
+      if (calls === 1) {
+        throw new ToolInvocationError('retry-fixture', {
+          kind: 'capacity',
+          retryable: true,
+          sanitizedMessage: 'browser queue full',
+          receipt: receipt(attempt.attempt),
+        });
+      }
+      return { output: 'ok', receipt: receipt(attempt.attempt, 'ok') };
+    },
+  }) as RetryResult;
+
+  assert.equal(result.status, 'succeeded');
+  assert.equal(calls, 2);
+});
+
+test('all attempts share one signal and deadline and only the successful sidecar survives', async () => {
+  const controller = new AbortController();
+  const context = invocationContext(controller);
+  const failedBytes = new Uint8Array([1, 2, 3]);
+  const successfulBytes = new Uint8Array([4, 5, 6]);
+  const successfulAttachments: ToolMediaAttachment[] = [{
+    attachmentId: 'capture-2',
+    bytes: successfulBytes,
+    mediaType: 'image/png',
+    contentSha256: 'sha256:success',
+    sourcePageUrl: 'https://example.com',
+    capturedAt: '2026-08-19T08:00:00.000Z',
+    captureMode: 'full_page_screenshot',
+    viewport: { width: 1440, height: 900 },
+    width: 1,
+    height: 1,
+  }];
+  const observedContexts: ToolInvocationContext[] = [];
+  let calls = 0;
+  const result = await invokeWithRetry({
+    manifest: { ...baseManifest, retry_policy: { max_attempts: 2, backoff_seconds: 0 } },
+    context,
+    isLeaseActive: async () => true,
+    sleep: async () => {},
+    invoke: async (attempt) => {
+      observedContexts.push(attempt.invocation);
+      calls += 1;
+      if (calls === 1) {
+        void failedBytes;
+        throw failure('network', attempt.attempt);
+      }
+      return {
+        output: 'ok',
+        receipt: receipt(attempt.attempt, 'ok'),
+        mediaAttachments: successfulAttachments,
+      };
+    },
+  }) as RetryResult;
+
+  assert.equal(result.status, 'succeeded');
+  assert.deepEqual(observedContexts, [context, context]);
+  assert.equal(result.mediaAttachments, successfulAttachments);
+  assert.equal(result.mediaAttachments?.[0]?.bytes, successfulBytes);
+});
+
+test('shared abort observed with a provider success discards the output', async () => {
+  const controller = new AbortController();
+  const result = await invokeWithRetry({
+    manifest: baseManifest,
+    context: invocationContext(controller),
+    isLeaseActive: async () => true,
+    sleep: async () => {},
+    invoke: async (attempt) => {
+      controller.abort('lease_lost');
+      return { output: 'must-be-discarded', receipt: receipt(attempt.attempt, 'ok') };
+    },
+  }) as RetryResult;
+
+  assert.equal(result.status, 'failed');
+  assert.equal(result.failure?.kind, 'lease_lost');
+  assert.equal(result.failure?.abortReason, 'lease_lost');
+  assert.equal(result.attemptReceipts[0]?.status, 'succeeded');
+});
+
+test('deadline abort during backoff prevents the next attempt', async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  const result = await invokeWithRetry({
+    manifest: baseManifest,
+    context: invocationContext(controller),
+    isLeaseActive: async () => true,
+    sleep: async () => { controller.abort('deadline_exceeded'); },
+    invoke: async (attempt) => {
+      calls += 1;
+      throw failure('network', attempt.attempt);
+    },
+  }) as RetryResult;
+
+  assert.equal(result.status, 'failed');
+  assert.equal(result.failure?.kind, 'timeout');
+  assert.equal(result.failure?.abortReason, 'deadline_exceeded');
+  assert.equal(calls, 1);
+});
+
+test('backoff receives the shared abort signal and can clear its timer', { timeout: 1_000 }, async () => {
+  const controller = new AbortController();
+  let timerCleared = false;
+  const result = await invokeWithRetry({
+    manifest: baseManifest,
+    context: invocationContext(controller),
+    isLeaseActive: async () => true,
+    sleep: (_ms, signal) => new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 60_000);
+      const onAbort = () => {
+        clearTimeout(timer);
+        timerCleared = true;
+        resolve();
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      queueMicrotask(() => controller.abort('lease_lost'));
+    }),
+    invoke: async (attempt) => {
+      throw failure('network', attempt.attempt);
+    },
+  }) as RetryResult;
+
+  assert.equal(result.status, 'failed');
+  assert.equal(result.failure?.kind, 'lease_lost');
+  assert.equal(timerCleared, true);
+});
+
+test('shared abort signal keeps lease_lost distinct from deadline_exceeded', async () => {
+  for (const [reason, expectedKind] of [
+    ['lease_lost', 'lease_lost'],
+    ['deadline_exceeded', 'timeout'],
+  ] as const) {
+    const controller = new AbortController();
+    controller.abort(reason);
+    const result = await invokeWithRetry({
+      manifest: baseManifest,
+      context: invocationContext(controller),
+      isLeaseActive: async () => true,
+      sleep: async () => {},
+      invoke: async () => { throw new Error('must not invoke'); },
+    }) as RetryResult;
+    assert.equal(result.status, 'failed');
+    assert.equal(result.failure?.kind, expectedKind);
+    assert.equal(result.failure?.abortReason, reason);
+  }
+});
+
+test('deadline bounds a lease check that never settles', async () => {
+  const context = invocationContext();
+  context.deadlineAt = Date.now() + 10;
+  const result = await invokeWithRetry({
+    manifest: baseManifest,
+    context,
+    isLeaseActive: async () => new Promise<boolean>(() => {}),
+    sleep: async () => {},
+    invoke: async () => { throw new Error('must not invoke'); },
+  }) as RetryResult;
+
+  assert.equal(result.status, 'failed');
+  assert.equal(result.failure?.kind, 'timeout');
+  assert.equal(result.failure?.abortReason, 'deadline_exceeded');
+  assert.equal(result.failure?.attempts, 0);
+});
+
+test('lease loss aborts a lease check that never settles', async () => {
+  const controller = new AbortController();
+  const pending = invokeWithRetry({
+    manifest: baseManifest,
+    context: invocationContext(controller),
+    isLeaseActive: async () => new Promise<boolean>(() => {}),
+    sleep: async () => {},
+    invoke: async () => { throw new Error('must not invoke'); },
+  }) as Promise<RetryResult>;
+  controller.abort('lease_lost');
+  const result = await pending;
+
+  assert.equal(result.status, 'failed');
+  assert.equal(result.failure?.kind, 'lease_lost');
+  assert.equal(result.failure?.abortReason, 'lease_lost');
+  assert.equal(result.failure?.attempts, 0);
 });

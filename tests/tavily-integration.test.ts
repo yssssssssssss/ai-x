@@ -28,6 +28,10 @@ test('TavilyAdapter 能检索公开网页并返回 schema 合法结果', { skip 
     toolId: 'tavily-web-search',
     input: { query: '直播 数字人 竞品', max_results: 3 },
     manifest,
+    context: {
+      signal: new AbortController().signal,
+      deadlineAt: Date.now() + 90_000,
+    },
   });
 
   const validator = new SchemaValidator();

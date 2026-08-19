@@ -365,7 +365,7 @@ export interface ToolRegistryEntry {
   id: string;
   name: string;
   path: string;
-  adapter_type: 'o2' | 'internal_api' | 'rest_json' | 'mcp' | 'script' | 'fake' | 'tavily';
+  adapter_type: 'o2' | 'internal_api' | 'rest_json' | 'mcp' | 'script' | 'fake' | 'tavily' | 'playwright';
   auth_required: boolean;
   risk_level: 'low' | 'medium' | 'high';
   status: 'draft' | 'active' | 'deprecated';
@@ -379,7 +379,7 @@ export interface ToolRegistryEntry {
 export interface ToolManifest {
   id: string;
   name: string;
-  adapter_type: 'o2' | 'internal_api' | 'rest_json' | 'mcp' | 'script' | 'fake' | 'tavily';
+  adapter_type: 'o2' | 'internal_api' | 'rest_json' | 'mcp' | 'script' | 'fake' | 'tavily' | 'playwright';
   entrypoint?: string;
   base_url_env?: string;
   auth_required: boolean;

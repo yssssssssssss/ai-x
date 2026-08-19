@@ -5,6 +5,29 @@ on:
   push:
 
 jobs:
+  playwright-contract:
+    name: Playwright in-memory no-request contract
+    runs-on: ubuntu-latest
+    env:
+      LLM_PROVIDER: mock
+      TOOL_ADAPTER: fake
+      PLAYWRIGHT_CONTRACT: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: corepack prepare pnpm@9.12.1 --activate
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Run about-blank in-memory Chromium contract
+        run: pnpm exec tsx --test tests/playwright-page-capture-adapter.test.ts
+
   quality:
     runs-on: ubuntu-latest
     services:

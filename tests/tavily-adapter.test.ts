@@ -18,6 +18,13 @@ interface CapturedFetch {
   init: RequestInit;
 }
 
+function invocationContext() {
+  return {
+    signal: new AbortController().signal,
+    deadlineAt: Date.now() + 90_000,
+  };
+}
+
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
   globalThis.fetch = ORIGINAL_FETCH;
@@ -46,6 +53,7 @@ test('runtime: TOOL_ADAPTER=fake 时 tavily adapter_type 走离线 fake', async 
     toolId: 'tavily-web-search',
     input: { query: '直播 数字人' },
     manifest,
+    context: invocationContext(),
   });
 
   assert.deepEqual(res.output, {
@@ -62,7 +70,12 @@ test('missing TAVILY_API_KEY rejects with ToolInvocationError for the requested 
   const adapter = new TavilyAdapter();
 
   await assert.rejects(
-    adapter.invoke({ toolId: 'custom-tavily-id', input: { query: 'AI search' }, manifest }),
+    adapter.invoke({
+      toolId: 'custom-tavily-id',
+      input: { query: 'AI search' },
+      manifest,
+      context: invocationContext(),
+    }),
     (err) => {
       assert.ok(err instanceof ToolInvocationError);
       assert.equal(err.toolId, 'custom-tavily-id');
@@ -96,6 +109,7 @@ test('successful invoke sends Tavily POST with bearer auth and default body', as
     toolId: 'tavily-web-search',
     input: { query: 'AI search' },
     manifest,
+    context: invocationContext(),
   });
 
   assert.equal(captured.length, 1);
@@ -148,6 +162,7 @@ test('request body includes optional time_range when supplied', async () => {
       time_range: 'week',
     },
     manifest,
+    context: invocationContext(),
   });
 
   assert.deepEqual(body, {
@@ -175,6 +190,7 @@ test('output passes tavily output schema and falls back from content to snippet'
     toolId: 'tavily-web-search',
     input: { query: 'AI search' },
     manifest,
+    context: invocationContext(),
   });
 
   assert.deepEqual(result.output, {
@@ -206,6 +222,7 @@ test('HTTP non-2xx rejects with ToolInvocationError without leaking API key', as
       toolId: 'tavily-web-search',
       input: { query: 'AI search' },
       manifest,
+      context: invocationContext(),
     }),
     (err) => {
       assert.ok(err instanceof ToolInvocationError);

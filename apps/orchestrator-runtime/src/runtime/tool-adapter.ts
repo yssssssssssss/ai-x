@@ -6,6 +6,8 @@ import { type ToolManifest } from './config-loader.ts';
 export type ToolExecutionMode = 'real' | 'fake';
 
 export type ToolFailureKind =
+  | 'capacity'
+  | 'lease_lost'
   | 'rate_limit'
   | 'server'
   | 'timeout'
@@ -53,6 +55,37 @@ export interface ToolInvokeResult {
   output: object;
   latencyMs: number;
   receipt: ToolInvocationReceipt;
+  mediaAttachments?: ToolMediaAttachment[];
+}
+
+export type ToolAbortReason = 'lease_lost' | 'deadline_exceeded';
+
+export interface ToolInvocationContext {
+  signal: AbortSignal;
+  deadlineAt: number;
+}
+
+export interface ToolMediaAttachment {
+  attachmentId: string;
+  bytes: Uint8Array;
+  mediaType: 'image/png' | 'image/jpeg' | 'image/webp';
+  contentSha256: string;
+  sourcePageUrl: string;
+  capturedAt: string;
+  captureMode: 'extracted_image' | 'element_screenshot' | 'full_page_screenshot';
+  selector?: string;
+  viewport: { width: number; height: number };
+  width: number;
+  height: number;
+}
+
+export interface ToolInvokeOptions {
+  toolId: string;
+  input: object;
+  manifest: ToolManifest;
+  context: ToolInvocationContext;
+  attemptId?: string;
+  retryOf?: string | null;
 }
 
 export interface ToolAdapter {
@@ -60,13 +93,7 @@ export interface ToolAdapter {
   readonly implementationId: string;
   readonly executionMode: ToolExecutionMode;
   endpointHost?(manifest: ToolManifest): string | null;
-  invoke(opts: {
-    toolId: string;
-    input: object;
-    manifest: ToolManifest;
-    attemptId?: string;
-    retryOf?: string | null;
-  }): Promise<ToolInvokeResult>;
+  invoke(opts: ToolInvokeOptions): Promise<ToolInvokeResult>;
 }
 
 
@@ -106,7 +133,13 @@ function receiptFromResolution(
   latencyMs: number,
   context?: { attemptId?: string; retryOf?: string | null },
 ): ToolInvocationReceipt {
-  return { ...resolution, status, latencyMs, ...context };
+  return {
+    ...resolution,
+    status,
+    latencyMs,
+    ...(context?.attemptId === undefined ? {} : { attemptId: context.attemptId }),
+    ...(context?.retryOf === undefined ? {} : { retryOf: context.retryOf }),
+  };
 }
 
 function directReceipt(adapter: ToolAdapter, manifest: ToolManifest, status: ToolInvocationStatus, latencyMs: number): ToolInvocationReceipt {
@@ -134,7 +167,8 @@ function unknownReceipt(
     endpointHost: null,
     status: 'failed',
     latencyMs,
-    ...context,
+    ...(context?.attemptId === undefined ? {} : { attemptId: context.attemptId }),
+    ...(context?.retryOf === undefined ? {} : { retryOf: context.retryOf }),
   };
 }
 
@@ -167,6 +201,83 @@ function errorFromUnknown(toolId: string, err: unknown, fallbackKind: ToolFailur
   });
 }
 
+function stableAbortReason(signal: AbortSignal, deadlineAt?: number): ToolAbortReason | null {
+  if (signal.aborted) {
+    if (signal.reason === 'lease_lost') return 'lease_lost';
+    if (signal.reason === 'deadline_exceeded') return 'deadline_exceeded';
+  }
+  return deadlineAt !== undefined && Date.now() >= deadlineAt ? 'deadline_exceeded' : null;
+}
+
+export function toolAbortError(
+  toolId: string,
+  signal: AbortSignal,
+  deadlineAt?: number,
+): ToolInvocationError {
+  const reason = stableAbortReason(signal, deadlineAt);
+  if (reason === 'lease_lost') {
+    return new ToolInvocationError(toolId, {
+      kind: 'lease_lost',
+      retryable: true,
+      sanitizedMessage: 'execution lease lost',
+      details: { abortReason: reason },
+    });
+  }
+  return new ToolInvocationError(toolId, {
+    kind: 'timeout',
+    retryable: true,
+    sanitizedMessage: reason === 'deadline_exceeded'
+      ? 'tool execution deadline exceeded'
+      : 'tool invocation timed out',
+    details: reason ? { abortReason: reason } : {},
+  });
+}
+
+export function throwIfToolInvocationAborted(toolId: string, context: ToolInvocationContext): void {
+  if (context.signal.aborted || Date.now() >= context.deadlineAt) {
+    throw toolAbortError(toolId, context.signal, context.deadlineAt);
+  }
+}
+
+interface InvocationSignal {
+  signal: AbortSignal;
+  dispose(): void;
+}
+
+function invocationSignal(context: ToolInvocationContext, timeoutMs: number): InvocationSignal {
+  const controller = new AbortController();
+  const forwardAbort = () => controller.abort(context.signal.reason);
+  if (context.signal.aborted) forwardAbort();
+  else context.signal.addEventListener('abort', forwardAbort, { once: true });
+  const remaining = Math.max(0, context.deadlineAt - Date.now());
+  const duration = Math.min(Math.max(0, timeoutMs), remaining);
+  const timer = setTimeout(() => {
+    controller.abort(remaining <= timeoutMs ? 'deadline_exceeded' : 'provider_timeout');
+  }, duration);
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      clearTimeout(timer);
+      context.signal.removeEventListener('abort', forwardAbort);
+    },
+  };
+}
+
+function errorFromInvocation(
+  toolId: string,
+  error: unknown,
+  fallbackKind: ToolFailureKind,
+  signal: AbortSignal,
+  deadlineAt: number,
+): ToolInvocationError {
+  const reason = stableAbortReason(signal, deadlineAt);
+  if (reason || error instanceof DOMException && error.name === 'AbortError') {
+    return toolAbortError(toolId, signal, deadlineAt);
+  }
+  if (error instanceof ToolInvocationError) return error;
+  return errorFromUnknown(toolId, error, fallbackKind);
+}
+
 function httpFailureKind(status: number): ToolFailureKind {
   if (status === 429) return 'rate_limit';
   if (status === 401 || status === 403) return 'authentication';
@@ -192,8 +303,9 @@ export class FakeO2Adapter implements ToolAdapter {
 
   constructor(private readonly opts: { failOnToolIds?: string[] } = {}) {}
 
-  async invoke(opts: { toolId: string; input: object; manifest: ToolManifest }): Promise<ToolInvokeResult> {
+  async invoke(opts: ToolInvokeOptions): Promise<ToolInvokeResult> {
     const start = performance.now();
+    throwIfToolInvocationAborted(opts.toolId, opts.context);
     if (this.opts.failOnToolIds?.includes(opts.toolId)) {
       throw new ToolInvocationError(opts.toolId, {
         kind: 'unknown',
@@ -248,18 +360,17 @@ export class HttpApiAdapter implements ToolAdapter {
   }
 
 
-  private async login(cfg: HttpAdapterConfig): Promise<string> {
+  private async login(toolId: string, cfg: HttpAdapterConfig, context: ToolInvocationContext): Promise<string> {
     if (!cfg.username || !cfg.password) {
       throw new Error('缺少 SPIDER_USERNAME / SPIDER_PASSWORD,无法登录');
     }
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), cfg.timeoutMs);
+    const invocation = invocationSignal(context, cfg.timeoutMs);
     try {
       const res = await fetch(`${cfg.baseUrl}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: cfg.username, password: cfg.password }),
-        signal: ac.signal,
+        signal: invocation.signal,
       });
       if (!res.ok) throw new Error(`登录失败 HTTP ${res.status}`);
       const data: unknown = await res.json();
@@ -267,40 +378,49 @@ export class HttpApiAdapter implements ToolAdapter {
         throw new Error('登录响应缺少 access_token');
       }
       return data.access_token;
+    } catch (error) {
+      throw errorFromInvocation(toolId, error, 'network', invocation.signal, context.deadlineAt);
     } finally {
-      clearTimeout(timer);
+      invocation.dispose();
     }
   }
 
-  async invoke(opts: { toolId: string; input: object; manifest: ToolManifest }): Promise<ToolInvokeResult> {
+  async invoke(opts: ToolInvokeOptions): Promise<ToolInvokeResult> {
     const start = performance.now();
+    throwIfToolInvocationAborted(opts.toolId, opts.context);
     const cfg = this.config();
     // manifest.entrypoint 声明相对路径(如 /api/search);默认 /api/search
     const path = opts.manifest.entrypoint || '/api/search';
 
-    const doCall = async (): Promise<Response> => {
+    const doCall = async (): Promise<InvocationSignal & { response: Response }> => {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (opts.manifest.auth_required) {
-        this.token ??= await this.login(cfg);
+        this.token ??= await this.login(opts.toolId, cfg, opts.context);
         headers.Authorization = `Bearer ${this.token}`;
       }
-      const ac = new AbortController();
-      const timer = setTimeout(() => ac.abort(), cfg.timeoutMs);
+      const invocation = invocationSignal(opts.context, cfg.timeoutMs);
       try {
-        return await fetch(`${cfg.baseUrl}${path}`, {
-          method: 'POST', headers, body: JSON.stringify(opts.input), signal: ac.signal,
+        const response = await fetch(`${cfg.baseUrl}${path}`, {
+          method: 'POST', headers, body: JSON.stringify(opts.input), signal: invocation.signal,
         });
-      } finally {
-        clearTimeout(timer);
+        return { ...invocation, response };
+      } catch (error) {
+        invocation.dispose();
+        throw errorFromInvocation(opts.toolId, error, 'network', invocation.signal, opts.context.deadlineAt);
       }
     };
 
+    let call: (InvocationSignal & { response: Response }) | undefined;
     try {
-      let res = await doCall();
-      if (res.status === 401 && opts.manifest.auth_required) {
+      call = await doCall();
+      if (call.response.status === 401 && opts.manifest.auth_required) {
+        call.dispose();
+        call = undefined;
         this.token = null;
-        res = await doCall();
+        throwIfToolInvocationAborted(opts.toolId, opts.context);
+        call = await doCall();
       }
+      const res = call.response;
       if (!res.ok) {
         throw new ToolInvocationError(opts.toolId, {
           kind: res.status === 429 && quotaExceeded(res.headers) ? 'quota' : httpFailureKind(res.status),
@@ -310,11 +430,19 @@ export class HttpApiAdapter implements ToolAdapter {
         });
       }
       const raw = (await res.json()) as unknown;
+      throwIfToolInvocationAborted(opts.toolId, opts.context);
       const latencyMs = Math.round(performance.now() - start);
       return { output: mapSearchResults(raw), latencyMs, receipt: directReceipt(this, opts.manifest, 'ok', latencyMs) };
     } catch (err) {
-      if (err instanceof ToolInvocationError) throw err;
-      throw errorFromUnknown(opts.toolId, err, 'network');
+      throw errorFromInvocation(
+        opts.toolId,
+        err,
+        'network',
+        call?.signal ?? opts.context.signal,
+        opts.context.deadlineAt,
+      );
+    } finally {
+      call?.dispose();
     }
   }
 }
@@ -335,8 +463,9 @@ export class RestJsonAdapter implements ToolAdapter {
     return baseUrl ? hostFromUrl(baseUrl) : null;
   }
 
-  async invoke(opts: { toolId: string; input: object; manifest: ToolManifest }): Promise<ToolInvokeResult> {
+  async invoke(opts: ToolInvokeOptions): Promise<ToolInvokeResult> {
     const start = performance.now();
+    throwIfToolInvocationAborted(opts.toolId, opts.context);
     const envKey = opts.manifest.base_url_env;
     const baseUrl = (envKey ? process.env[envKey] : undefined)?.replace(/\/$/, '');
     if (!baseUrl) {
@@ -350,14 +479,13 @@ export class RestJsonAdapter implements ToolAdapter {
     const path = opts.manifest.entrypoint || '/api/analyze';
     const timeoutMs = (opts.manifest.timeout_seconds ?? 60) * 1000;
 
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    const invocation = invocationSignal(opts.context, timeoutMs);
     try {
       const res = await fetch(`${baseUrl}${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(opts.input),
-        signal: ac.signal,
+        signal: invocation.signal,
       });
       if (!res.ok) {
         throw new ToolInvocationError(opts.toolId, {
@@ -368,13 +496,13 @@ export class RestJsonAdapter implements ToolAdapter {
         });
       }
       const output = (await res.json()) as object;
+      throwIfToolInvocationAborted(opts.toolId, opts.context);
       const latencyMs = Math.round(performance.now() - start);
       return { output, latencyMs, receipt: directReceipt(this, opts.manifest, 'ok', latencyMs) };
     } catch (err) {
-      if (err instanceof ToolInvocationError) throw err;
-      throw errorFromUnknown(opts.toolId, err, 'network');
+      throw errorFromInvocation(opts.toolId, err, 'network', invocation.signal, opts.context.deadlineAt);
     } finally {
-      clearTimeout(timer);
+      invocation.dispose();
     }
   }
 }
@@ -422,8 +550,9 @@ export class TavilyAdapter implements ToolAdapter {
   }
 
 
-  async invoke(opts: { toolId: string; input: object; manifest: ToolManifest }): Promise<ToolInvokeResult> {
+  async invoke(opts: ToolInvokeOptions): Promise<ToolInvokeResult> {
     const start = performance.now();
+    throwIfToolInvocationAborted(opts.toolId, opts.context);
     const apiKey = this.cfg.apiKey ?? process.env.TAVILY_API_KEY;
     if (!apiKey) {
       throw new ToolInvocationError(opts.toolId, {
@@ -449,8 +578,7 @@ export class TavilyAdapter implements ToolAdapter {
     };
     if (input.time_range !== undefined) body.time_range = input.time_range;
 
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    const invocation = invocationSignal(opts.context, timeoutMs);
     try {
       const res = await fetch(`${baseUrl}${opts.manifest.entrypoint || '/search'}`, {
         method: 'POST',
@@ -459,7 +587,7 @@ export class TavilyAdapter implements ToolAdapter {
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
-        signal: ac.signal,
+        signal: invocation.signal,
       });
       if (!res.ok) {
         throw new ToolInvocationError(opts.toolId, {
@@ -470,13 +598,13 @@ export class TavilyAdapter implements ToolAdapter {
         });
       }
       const raw = (await res.json()) as TavilyResponse;
+      throwIfToolInvocationAborted(opts.toolId, opts.context);
       const latencyMs = Math.round(performance.now() - start);
       return { output: mapTavilyResponse(raw), latencyMs, receipt: directReceipt(this, opts.manifest, 'ok', latencyMs) };
     } catch (err) {
-      if (err instanceof ToolInvocationError) throw err;
-      throw errorFromUnknown(opts.toolId, err, 'network');
+      throw errorFromInvocation(opts.toolId, err, 'network', invocation.signal, opts.context.deadlineAt);
     } finally {
-      clearTimeout(timer);
+      invocation.dispose();
     }
   }
 }
@@ -552,14 +680,9 @@ export class ToolRouter implements ToolAdapter {
     };
   }
 
-  async invoke(opts: {
-    toolId: string;
-    input: object;
-    manifest: ToolManifest;
-    attemptId?: string;
-    retryOf?: string | null;
-  }): Promise<ToolInvokeResult> {
+  async invoke(opts: ToolInvokeOptions): Promise<ToolInvokeResult> {
     const start = performance.now();
+    throwIfToolInvocationAborted(opts.toolId, opts.context);
     const resolution = this.resolve(opts.manifest);
     if (!resolution) {
       const latencyMs = Math.round(performance.now() - start);
@@ -571,22 +694,23 @@ export class ToolRouter implements ToolAdapter {
     }
     try {
       const result = await this.byType.get(opts.manifest.adapter_type)!.invoke(opts);
+      throwIfToolInvocationAborted(opts.toolId, opts.context);
       const latencyMs = Math.round(performance.now() - start);
       return { ...result, latencyMs, receipt: receiptFromResolution(resolution, 'ok', latencyMs, opts) };
     } catch (err) {
       const latencyMs = Math.round(performance.now() - start);
-      if (err instanceof ToolInvocationError) {
-        throw new ToolInvocationError(opts.toolId, {
-          kind: err.kind, retryable: err.retryable, providerStatus: err.providerStatus,
-          sanitizedMessage: err.sanitizedMessage,
-          receipt: receiptFromResolution(resolution, 'failed', latencyMs, opts), details: err.details,
-        });
-      }
-      const structured = errorFromUnknown(opts.toolId, err, 'network');
+      const structured = errorFromInvocation(
+        opts.toolId,
+        err,
+        'network',
+        opts.context.signal,
+        opts.context.deadlineAt,
+      );
       throw new ToolInvocationError(opts.toolId, {
         kind: structured.kind, retryable: structured.retryable, providerStatus: structured.providerStatus,
         sanitizedMessage: structured.sanitizedMessage,
         receipt: receiptFromResolution(resolution, 'failed', latencyMs, opts),
+        details: structured.details,
       });
     }
   }

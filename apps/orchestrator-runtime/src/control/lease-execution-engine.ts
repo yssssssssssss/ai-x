@@ -42,8 +42,12 @@ import { SkillLoader } from '../runtime/skill-loader.ts';
 import {
   ToolInvocationError,
   ToolRouter,
+  throwIfToolInvocationAborted,
+  toolAbortError,
   type ToolAdapterResolution,
   type ToolFailureKind,
+  type ToolInvocationContext,
+  type ToolMediaAttachment,
   type ToolInvocationReceipt,
 } from '../runtime/tool-adapter.ts';
 import { invokeWithRetry, type ToolRetryAttemptReceipt } from './tool-retry-policy.ts';
@@ -136,6 +140,7 @@ interface StepResult {
   artifactValue?: unknown;
   toolReceipt?: ToolInvocationReceipt;
   toolAttemptReceipts?: ToolRetryAttemptReceipt[];
+  mediaAttachments?: ToolMediaAttachment[];
   toolTier?: 'core' | 'optional';
   toolResolution?: ToolAdapterResolution;
   manifestHash?: string;
@@ -147,6 +152,87 @@ interface StepResult {
   configHash?: string;
   sourceRefs?: ToolSourceRef[];
   skillProvenance?: Record<string, unknown>;
+}
+
+const TOOL_EXECUTION_DEADLINE_MS = 90_000;
+
+async function runWithinToolScope<T>(
+  factory: () => Promise<T>,
+  toolId: string,
+  context: ToolInvocationContext,
+): Promise<T> {
+  throwIfToolInvocationAborted(toolId, context);
+  const remainingMs = context.deadlineAt - Date.now();
+  if (remainingMs <= 0) throw toolAbortError(toolId, context.signal, context.deadlineAt);
+
+  const operation = factory();
+  let timer: NodeJS.Timeout | undefined;
+  let onAbort: (() => void) | undefined;
+  const interrupted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(toolAbortError(toolId, context.signal, context.deadlineAt));
+    context.signal.addEventListener('abort', onAbort, { once: true });
+    timer = setTimeout(
+      () => reject(toolAbortError(toolId, context.signal, context.deadlineAt)),
+      remainingMs,
+    );
+    if (context.signal.aborted) onAbort();
+  });
+  try {
+    return await Promise.race([operation, interrupted]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (onAbort) context.signal.removeEventListener('abort', onAbort);
+  }
+}
+
+function sleepWithSignal(ms: number, signal: AbortSignal): Promise<void> {
+  if (ms <= 0 || signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer: NodeJS.Timeout | undefined;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      signal.removeEventListener('abort', finish);
+      resolve();
+    };
+    timer = setTimeout(finish, ms);
+    signal.addEventListener('abort', finish, { once: true });
+    if (signal.aborted) finish();
+  });
+}
+
+class ToolExecutionScope {
+  private readonly controller = new AbortController();
+  private readonly timer: NodeJS.Timeout;
+  readonly context: ToolInvocationContext;
+
+  constructor(deadlineAt: number) {
+    this.context = { signal: this.controller.signal, deadlineAt };
+    this.timer = setTimeout(
+      () => this.abort('deadline_exceeded'),
+      Math.max(0, deadlineAt - Date.now()),
+    );
+    this.timer.unref?.();
+  }
+
+  abort(reason: 'lease_lost' | 'deadline_exceeded'): void {
+    if (!this.controller.signal.aborted) this.controller.abort(reason);
+  }
+
+  assertActive(toolId: string): void {
+    throwIfToolInvocationAborted(toolId, this.context);
+  }
+
+  dispose(): void {
+    clearTimeout(this.timer);
+  }
+}
+
+interface LeaseHeartbeatHandle {
+  assertHealthy(): void;
+  stop(): void;
 }
 
 interface EngineSealedStepOutput extends BindingSealedStepOutput {
@@ -680,7 +766,9 @@ function attachToolAttemptReceipts(error: unknown, actorResult: unknown): void {
     || !Array.isArray(actorResult.toolAttemptReceipts)
     || !isRecord(error)
   ) return;
+  const details = isRecord(error.details) ? error.details : {};
   error.details = {
+    ...details,
     toolAttemptReceipts: actorResult.toolAttemptReceipts as ToolRetryAttemptReceipt[],
   };
 }
@@ -707,13 +795,12 @@ function leaseLostWithRetry(
 function failureFrom(error: unknown): Record<string, unknown> {
   if (error instanceof ToolInvocationError) {
     return {
+      ...error.details,
       kind: error.kind,
       retryable: error.retryable,
       providerStatus: error.providerStatus,
       message: error.sanitizedMessage,
-
       receipt: error.receipt,
-      ...error.details,
     };
   }
   if (error instanceof LLMInvocationError) {
@@ -791,6 +878,7 @@ export class LeaseExecutionEngine {
     skillLoader: SkillLoader;
     validator: SchemaValidator;
     heartbeatMs: number;
+    toolExecutionDeadlineMs?: number;
     deliverables: {
       generate(input: CurrentDeliverableGenerateInput): Promise<{
         deliverable: unknown;
@@ -964,6 +1052,8 @@ export class LeaseExecutionEngine {
         let toolAttemptReceipts: ToolRetryAttemptReceipt[] | undefined;
         let actorResult: StepResult | undefined;
         let unpublishedArtifactId: string | undefined;
+        let toolScope: ToolExecutionScope | undefined;
+        let toolHeartbeat: LeaseHeartbeatHandle | undefined;
         try {
           const checkpoint = reusable.get(step.step_no);
           if (checkpoint) {
@@ -1040,19 +1130,50 @@ export class LeaseExecutionEngine {
             }
             throw error;
           }
-          actorResult = await this.withLeaseHeartbeat(input.lease, () => this.runStep({
-            step,
-            lease: input.lease,
-            researchGoal,
-            resolvedInput,
-            outputs,
-            expectedModel: input.expectedModel,
-          }));
+          if (step.actor_type === 'tool') {
+            toolScope = this.createToolExecutionScope();
+            toolHeartbeat = this.startLeaseHeartbeat(
+              input.lease,
+              () => toolScope?.abort('lease_lost'),
+            );
+            actorResult = await this.runStep({
+              step,
+              lease: input.lease,
+              researchGoal,
+              resolvedInput,
+              outputs,
+              expectedModel: input.expectedModel,
+              toolContext: toolScope.context,
+              onToolLeaseLost: () => toolScope?.abort('lease_lost'),
+            });
+            toolScope.assertActive(step.actor_id);
+            toolHeartbeat.assertHealthy();
+          } else {
+            actorResult = await this.withLeaseHeartbeat(input.lease, () => this.runStep({
+              step,
+              lease: input.lease,
+              researchGoal,
+              resolvedInput,
+              outputs,
+              expectedModel: input.expectedModel,
+            }));
+          }
           const actorOutputHash = actorResult.skillProvenance?.outputHash;
           if (typeof actorOutputHash === 'string') producedSkillOutputHash = actorOutputHash;
           toolAttemptReceipts = actorResult.toolAttemptReceipts;
           const result = sanitizeStepResult(actorResult);
-          await this.dependencies.repository.requireActiveLease(input.lease);
+          if (toolScope) {
+            await this.requireActiveToolLease(
+              input.lease,
+              step.actor_id,
+              toolScope.context,
+              () => toolScope?.abort('lease_lost'),
+            );
+          } else {
+            await this.dependencies.repository.requireActiveLease(input.lease);
+          }
+          toolScope?.assertActive(step.actor_id);
+          toolHeartbeat?.assertHealthy();
           const artifactValue = result.artifactValue ?? result.output;
           const artifact = await this.dependencies.artifacts.writeJson({
             taskId: input.lease.taskId,
@@ -1064,6 +1185,9 @@ export class LeaseExecutionEngine {
             schemaVersion: STEP_ARTIFACT_SCHEMA_VERSIONS[result.kind],
             activeLease: input.lease,
           });
+          unpublishedArtifactId = artifact.id;
+          toolScope?.assertActive(step.actor_id);
+          toolHeartbeat?.assertHealthy();
           if (artifact.state !== 'SEALED' || !artifact.contentSha256) {
             throw new ExecutionAuthenticityError(`step Artifact ${artifact.id} was not sealed`);
           }
@@ -1083,8 +1207,9 @@ export class LeaseExecutionEngine {
               state: 'SEALED',
             },
           };
-          unpublishedArtifactId = artifact.id;
           const verified = await readVerifiedStepArtifact(sealedOutput, this.dependencies.artifacts);
+          toolScope?.assertActive(step.actor_id);
+          toolHeartbeat?.assertHealthy();
           await this.recordSucceededExecutionStep({
             ...input.lease,
             stepNo: step.step_no,
@@ -1136,6 +1261,7 @@ export class LeaseExecutionEngine {
           }
           outputs.push({ ...sealedOutput, output: verified.output });
         } catch (error) {
+          attachToolAttemptReceipts(error, actorResult);
           let artifactCleanupFailed = false;
           const artifactCleanupDeferred = Boolean(
             unpublishedArtifactId
@@ -1269,6 +1395,9 @@ export class LeaseExecutionEngine {
           }
           if (isIntegrityFailure(error)) throw error;
           return;
+        } finally {
+          toolHeartbeat?.stop();
+          toolScope?.dispose();
         }
       }));
       const rejected = waveResults.find((result) => result.status === 'rejected');
@@ -2009,29 +2138,68 @@ export class LeaseExecutionEngine {
     return null;
   }
 
-  private async withLeaseHeartbeat<T>(lease: ControlExecutionLease, operation: () => Promise<T>): Promise<T> {
+  private startLeaseHeartbeat(
+    lease: ControlExecutionLease,
+    onFailure?: (error: unknown) => void,
+  ): LeaseHeartbeatHandle {
     let heartbeatFailure: unknown = null;
     const timer = setInterval(() => {
       void this.dependencies.repository.heartbeatExecutionLease({
         ...lease,
         extendUntil: new Date(Date.now() + this.dependencies.heartbeatMs),
       }).catch((error: unknown) => {
-        heartbeatFailure ??= error;
+        if (heartbeatFailure) return;
+        heartbeatFailure = error;
+        onFailure?.(error);
       });
     }, Math.max(1, Math.floor(this.dependencies.heartbeatMs / 2)));
+    return {
+      assertHealthy: () => {
+        if (heartbeatFailure) throw heartbeatFailure;
+      },
+      stop: () => clearInterval(timer),
+    };
+  }
+
+  private createToolExecutionScope(): ToolExecutionScope {
+    return new ToolExecutionScope(
+      Date.now() + (this.dependencies.toolExecutionDeadlineMs ?? TOOL_EXECUTION_DEADLINE_MS),
+    );
+  }
+
+  private async requireActiveToolLease(
+    lease: ControlExecutionLease,
+    toolId: string,
+    context: ToolInvocationContext,
+    onLeaseLost?: () => void,
+  ): Promise<void> {
+    try {
+      await runWithinToolScope(
+        () => this.dependencies.repository.requireActiveLease(lease),
+        toolId,
+        context,
+      );
+    } catch (error) {
+      if (!(error instanceof ToolInvocationError)) onLeaseLost?.();
+      throw error;
+    }
+  }
+
+  private async withLeaseHeartbeat<T>(lease: ControlExecutionLease, operation: () => Promise<T>): Promise<T> {
+    const heartbeat = this.startLeaseHeartbeat(lease);
     let operationSucceeded = false;
     let operationResult: T | undefined;
     try {
       operationResult = await operation();
       operationSucceeded = true;
-      if (heartbeatFailure) throw heartbeatFailure;
+      heartbeat.assertHealthy();
       await this.dependencies.repository.requireActiveLease(lease);
       return operationResult as T;
     } catch (error) {
       if (operationSucceeded) attachToolAttemptReceipts(error, operationResult);
       throw error;
     } finally {
-      clearInterval(timer);
+      heartbeat.stop();
     }
   }
 
@@ -2050,11 +2218,28 @@ export class LeaseExecutionEngine {
     resolvedInput: Record<string, unknown>;
     outputs: EngineSealedStepOutput[];
     expectedModel: string;
+    toolContext?: ToolInvocationContext;
+    onToolLeaseLost?: () => void;
   }): Promise<StepResult> {
+    if (input.step.actor_type === 'tool') {
+      if (!input.toolContext) throw new ExecutionAuthenticityError('tool execution context is missing');
+      await this.requireActiveToolLease(
+        input.lease,
+        input.step.actor_id,
+        input.toolContext,
+        input.onToolLeaseLost,
+      );
+      return this.runTool(
+        input.step,
+        input.researchGoal,
+        input.resolvedInput,
+        input.lease,
+        input.toolContext,
+        input.onToolLeaseLost,
+      );
+    }
     await this.dependencies.repository.requireActiveLease(input.lease);
     switch (input.step.actor_type) {
-      case 'tool':
-        return this.runTool(input.step, input.researchGoal, input.resolvedInput, input.lease);
       case 'skill':
         return this.runSkill(input);
       case 'llm':
@@ -2192,6 +2377,8 @@ export class LeaseExecutionEngine {
     researchGoal: string,
     resolvedInput: Record<string, unknown>,
     lease: ControlExecutionLease,
+    context: ToolInvocationContext,
+    onLeaseLost?: () => void,
   ): Promise<StepResult> {
     const tool = this.dependencies.skillLoader.getTool(step.actor_id);
     if (!tool) throw new ExecutionAuthenticityError(`tool ${step.actor_id} is not active`);
@@ -2237,6 +2424,8 @@ export class LeaseExecutionEngine {
     }
     const retryResult = await invokeWithRetry({
       manifest,
+      context,
+      onLeaseLost,
       isLeaseActive: async () => {
         try {
           await this.dependencies.repository.requireActiveLease(lease);
@@ -2245,11 +2434,12 @@ export class LeaseExecutionEngine {
           return false;
         }
       },
-      sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+      sleep: sleepWithSignal,
       invoke: (context) => this.dependencies.tools.invoke({
         toolId: step.actor_id,
         input: toolInput,
         manifest,
+        context: context.invocation,
         attemptId: context.attemptId,
         retryOf: lease.retryOf,
       }),
@@ -2270,6 +2460,10 @@ export class LeaseExecutionEngine {
         sanitizedMessage: retryResult.failure.lastFailure ?? retryResult.failure.kind,
         receipt: lastAttempt?.receipt,
         details: {
+          ...retryResult.failure.details,
+          ...(retryResult.failure.abortReason
+            ? { abortReason: retryResult.failure.abortReason }
+            : {}),
           retry: {
             attempts: retryResult.failure.attempts,
             maxAttempts: retryResult.failure.maxAttempts,
@@ -2279,8 +2473,25 @@ export class LeaseExecutionEngine {
       });
     }
     try {
-      await this.dependencies.repository.requireActiveLease(lease);
-    } catch {
+      await this.requireActiveToolLease(lease, step.actor_id, context, onLeaseLost);
+    } catch (error) {
+      if (error instanceof ToolInvocationError && error.kind === 'timeout') {
+        throw new ToolInvocationError(step.actor_id, {
+          kind: 'timeout',
+          retryable: true,
+          providerStatus: error.providerStatus,
+          sanitizedMessage: error.sanitizedMessage,
+          receipt: retryResult.receipt,
+          details: {
+            ...error.details,
+            retry: {
+              attempts: retryResult.attemptReceipts.length,
+              maxAttempts: manifest.retry_policy?.max_attempts ?? retryResult.attemptReceipts.length,
+              attemptReceipts: retryResult.attemptReceipts,
+            },
+          },
+        });
+      }
       throw leaseLostWithRetry('execution lease lost after tool retry', {
         attempts: retryResult.attemptReceipts.length,
         maxAttempts: manifest.retry_policy?.max_attempts ?? retryResult.attemptReceipts.length,
@@ -2291,6 +2502,7 @@ export class LeaseExecutionEngine {
       output: retryResult.output,
       receipt: retryResult.receipt,
       latencyMs: retryResult.latencyMs ?? retryResult.receipt.latencyMs,
+      mediaAttachments: retryResult.mediaAttachments,
     };
     const retryContext = {
       attempts: retryResult.attemptReceipts.length,
@@ -2348,6 +2560,7 @@ export class LeaseExecutionEngine {
       kind: 'tool_output',
       toolReceipt: result.receipt,
       toolAttemptReceipts: retryResult.attemptReceipts,
+      mediaAttachments: result.mediaAttachments,
       toolTier: tool.tier ?? 'optional',
       toolResolution: resolution,
       manifestHash: hashFile(tool.path),

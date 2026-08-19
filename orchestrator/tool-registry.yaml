@@ -23,6 +23,15 @@ tools:
     status: active
     tier: core            # 同上,公开证据主检索
 
+  - id: playwright-page-capture
+    name: Playwright 网页视觉取证
+    path: tools/playwright-page-capture/manifest.yaml
+    adapter_type: playwright
+    auth_required: false
+    risk_level: medium
+    status: draft
+    tier: optional        # 平台 egress/non-root/sandbox 证据齐备前不得激活
+
   - id: ai-spider-search
     name: 竞品截图库检索
     path: tools/ai-spider-search/manifest.yaml
