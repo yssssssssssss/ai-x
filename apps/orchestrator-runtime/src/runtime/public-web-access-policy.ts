@@ -148,6 +148,18 @@ export function parseBrowserUrl(
   context: string,
   options: { allowCredentialQuery?: boolean } = {},
 ): URL {
+  const url = parseBrowserUrlIdentity(value, context, options);
+  if (url.hash) {
+    throw new PublicWebAccessError(`${context} must not contain a fragment`, `${url.origin}${url.pathname}`);
+  }
+  return url;
+}
+
+function parseBrowserUrlIdentity(
+  value: string,
+  context: string,
+  options: { allowCredentialQuery?: boolean } = {},
+): URL {
   const url = parseHttpUrl(value, context);
   const safeUrl = `${url.origin}${url.pathname}`;
   if (url.protocol !== 'https:') {
@@ -163,14 +175,19 @@ export function parseBrowserUrl(
       }
     }
   }
-  url.hash = '';
   return url;
 }
 
 export function sameBrowserSourceUrl(left: string, right: string): boolean {
   try {
-    return parseBrowserUrl(left, 'public source URL').toString()
-      === parseBrowserUrl(right, 'browser source URL').toString();
+    const sourceIdentity = (value: string, context: string): string => {
+      const url = parseBrowserUrlIdentity(value, context);
+      // Historical public-source Evidence may contain a fragment. Ignore it only for
+      // identity comparison; browser navigation always uses parseBrowserUrl and rejects it.
+      url.hash = '';
+      return url.toString();
+    };
+    return sourceIdentity(left, 'public source URL') === sourceIdentity(right, 'browser source URL');
   } catch {
     return false;
   }

@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { afterEach, test } from 'node:test';
 import { chromium, type Page } from 'playwright';
 import { BrowserExecutionGate } from '../apps/orchestrator-runtime/src/runtime/browser-execution-gate.ts';
+import { PublicWebAccessError } from '../apps/orchestrator-runtime/src/runtime/public-web-access-policy.ts';
 import {
   PlaywrightPageCaptureAdapter,
   capturePageVisual,
@@ -188,11 +189,17 @@ function failingRouteLauncher(routeUrl: string): PlaywrightLauncher {
   } as unknown as PlaywrightLauncher;
 }
 
-test('browser URL policy rejects unsafe targets and strips fragments', async () => {
+test('browser URL policy rejects unsafe targets and fragments without exposing fragment data', async () => {
   const publicDns = async () => ['93.184.216.34'];
-  assert.equal(
-    (await validateBrowserTarget('https://example.com/path#fragment', publicDns)).toString(),
-    'https://example.com/path',
+  await assert.rejects(
+    () => validateBrowserTarget('https://example.com/path#access_token=secret', publicDns),
+    (error: unknown) => {
+      assert.ok(error instanceof PublicWebAccessError);
+      assert.match(error.message, /fragment/i);
+      assert.equal(error.safeUrl, 'https://example.com/path');
+      assert.doesNotMatch(error.safeUrl, /access_token|secret|#/i);
+      return true;
+    },
   );
   await assert.rejects(() => validateBrowserTarget('http://example.com', publicDns), /HTTPS/i);
   await assert.rejects(() => validateBrowserTarget('https://example.com:8443', publicDns), /port/i);
@@ -380,6 +387,34 @@ test('a transient DNS failure during normalization is retryable without launchin
     (error.details.page_failures as Array<{ code: string }>)[0]?.code,
     'unsupported_content',
   );
+});
+
+test('fragment URLs become a sanitized unsupported-content gap without launching Chromium', async () => {
+  let launches = 0;
+  const adapter = new PlaywrightPageCaptureAdapter({
+    launcher: {
+      launch: async () => { launches += 1; throw new Error('must not launch'); },
+    } as PlaywrightLauncher,
+    resolveHost: async () => ['93.184.216.34'],
+    getEffectiveUid: () => 501,
+  });
+
+  const error = await toolError(adapter.invoke({
+    toolId: manifest.id,
+    manifest,
+    context: invocationContext(),
+    input: { pages: [{ url: 'https://example.com/product#access_token=secret' }] },
+  }));
+
+  assert.equal(launches, 0);
+  assert.equal(error.retryable, false);
+  assert.deepEqual(error.details.page_failures, [{
+    source_result_index: 0,
+    requested_url: 'https://example.com/product',
+    code: 'unsupported_content',
+    sanitized_message: 'browser target must not contain a fragment',
+  }]);
+  assert.doesNotMatch(JSON.stringify(error.details), /access_token|secret|#/i);
 });
 
 test('a route policy denial is terminal even when goto reports net::ERR_FAILED', async () => {

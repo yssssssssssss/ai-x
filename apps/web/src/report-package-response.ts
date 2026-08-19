@@ -1,10 +1,7 @@
 import type { CurrentReportPackageResponse } from '../../../packages/api-contract/control-workflow.ts';
-import type {
-  ResearchPlanPayload,
-  VisualAssetManifest,
-} from '../../../packages/api-contract/research-deliverable.ts';
+import type { VisualAssetManifest } from '../../../packages/api-contract/research-deliverable.ts';
 
-export type ControlDeliverableResponse = CurrentReportPackageResponse<ResearchPlanPayload>;
+export type ControlDeliverableResponse = CurrentReportPackageResponse<unknown>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);

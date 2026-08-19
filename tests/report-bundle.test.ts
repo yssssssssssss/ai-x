@@ -98,8 +98,9 @@ interface ReportDocumentViewModule {
 }
 
 interface Stage4Module {
+  CurrentStage4Report(props: { report: unknown }): unknown;
   selectCurrentStage4Renderer(report: unknown): {
-    component: 'CurrentTextReport' | 'ReportDocumentView';
+    component: 'CurrentTextReport' | 'GenericTextReport' | 'ReportDocumentView';
     reportDocument?: ReportDocument;
   };
 }
@@ -136,6 +137,7 @@ async function loadStage4Module(): Promise<Stage4Module> {
     'function',
     'Stage4 must expose its presentation-mode dispatch decision',
   );
+  assert.equal(typeof exports.CurrentStage4Report, 'function');
   return exports as unknown as Stage4Module;
 }
 
@@ -815,21 +817,67 @@ test('print stylesheet covers A4, cover and TOC, fixed chrome, page breaks, SVG,
   assert.match(css, /(?:monochrome|grayscale|print-color-adjust|border-style|text-decoration)/iu);
 });
 
-test('Stage4 dispatches multimodal packages to ReportDocumentView without changing text modes', async () => {
-  const { selectCurrentStage4Renderer } = await loadStage4Module();
+test('Stage4 dispatches multimodal, research-plan text, and generic historical text reports', async () => {
+  const { CurrentStage4Report, selectCurrentStage4Renderer } = await loadStage4Module();
   const multimodal = multimodalReport();
+  const requireFromWeb = createRequire(new URL('../apps/web/package.json', import.meta.url));
+  const react = requireFromWeb('react') as {
+    createElement(component: unknown, props: Record<string, unknown>): unknown;
+  };
+  const { renderToStaticMarkup } = requireFromWeb('react-dom/server') as {
+    renderToStaticMarkup(element: unknown): string;
+  };
 
   const selected = selectCurrentStage4Renderer(multimodal);
   assert.equal(selected.component, 'ReportDocumentView');
   assert.equal(selected.reportDocument, multimodal.reportDocument);
 
-  for (const presentationMode of ['legacy_text', 'current_text'] as const) {
-    const textReport = {
-      presentationMode,
-      deliverable: multimodal.deliverable,
-      evidenceManifest: multimodal.evidenceManifest,
-      reportReview: multimodal.reportReview,
-    };
-    assert.equal(selectCurrentStage4Renderer(textReport).component, 'CurrentTextReport');
+  const globals = globalThis as typeof globalThis & { React?: unknown };
+  const priorReact = globals.React;
+  globals.React = react;
+  try {
+    for (const presentationMode of ['legacy_text', 'current_text'] as const) {
+      const researchPlan = {
+        presentationMode,
+        deliverable: { ...multimodal.deliverable, deliverableType: 'research_plan' },
+        evidenceManifest: multimodal.evidenceManifest,
+        reportReview: multimodal.reportReview,
+      };
+      assert.equal(selectCurrentStage4Renderer(researchPlan).component, 'CurrentTextReport');
+
+      const historicalCompetitiveReport = {
+        ...researchPlan,
+        deliverable: {
+          version: 'research-deliverable-v1',
+          taskId,
+          planVersionId,
+          attemptId,
+          deliverableType: 'competitive_analysis_report',
+          evidenceManifestArtifactId: 'evidence-manifest-artifact',
+          methodSummary: 'Historical competitive analysis method.',
+          findingGraph: {
+            findings: [],
+            analyses: [],
+            subQuestionSummaries: [],
+            overallConclusions: [],
+          },
+          payload: { compatibilityMarker: 'historical-competitive-payload' },
+          recommendations: [],
+          coverage: { questionBindings: [], evidenceBindings: [] },
+          risksAndOpenIssues: [],
+          capabilityProvenance: [],
+        },
+      };
+      assert.equal(selectCurrentStage4Renderer(historicalCompetitiveReport).component, 'GenericTextReport');
+      const html = renderToStaticMarkup(react.createElement(CurrentStage4Report, {
+        report: historicalCompetitiveReport,
+      }));
+      assert.match(html, /历史结构化报告/u);
+      assert.match(html, /Competitive Analysis Report/u);
+      assert.match(html, /historical-competitive-payload/u);
+    }
+  } finally {
+    if (priorReact === undefined) delete globals.React;
+    else globals.React = priorReact;
   }
 });

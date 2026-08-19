@@ -136,7 +136,6 @@ export function useTaskFlow(actorRole?: string) {
     try {
       const response = await api.controlDeliverable(taskId);
       setDeliverable(response);
-      setOriginalInput((previous) => previous || response.deliverable.payload.researchGoal);
       setReportState('ready');
     } catch (cause) {
       setDeliverableError(message(cause, '报告加载失败'));
@@ -204,7 +203,6 @@ export function useTaskFlow(actorRole?: string) {
       const restoredDeliverable = await api.controlDeliverable(current.task.id);
       if (generation !== restoreGeneration.current) return;
       setDeliverable(restoredDeliverable);
-      setOriginalInput(restoredDeliverable.deliverable.payload.researchGoal);
       setReportState('ready');
     } catch (cause) {
       if (generation !== restoreGeneration.current) return;

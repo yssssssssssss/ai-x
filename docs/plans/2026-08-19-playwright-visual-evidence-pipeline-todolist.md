@@ -87,8 +87,8 @@
 - [x] 历史任务刷新后复用同一 Report Package，图片、证据编号和 gapCount 不漂移。结果：历史恢复统一读取 Report Package，视觉证据与 gapCount 去重/兼容逻辑有前后端回归覆盖。
 - [x] Smoke 使用 `competitive-ai-shopping-assistant` 精确场景，不再隐式选择 profile 第一条场景。结果：Smoke 必须精确匹配 profile/scenario，缺失或错配直接拒绝。
 - [x] 运行 `pnpm exec tsx --test tests/capability-resolver.test.ts tests/skill-loader-schema.test.ts tests/registry-linter.test.ts tests/plan-compiler.test.ts tests/current-plan-candidate-schema.test.ts tests/direct-invoke-plan.test.ts tests/current-step-bindings.test.ts tests/checkpoint-resume.test.ts tests/control-planning.test.ts tests/current-deliverable-service.test.ts tests/report-document.test.ts tests/report-bundle.test.ts tests/current-flow-state.test.ts tests/current-real-smoke.test.ts`。结果：Node `v22.22.1` 下 240 通过、5 跳过、0 失败。
-- [x] 运行 `pnpm typecheck`、`pnpm lint:registry` 和 `pnpm --dir apps/web build`。结果：均通过；Web production build 完成 655 个模块，仅保留既有 chunk 体积警告；全量 `pnpm quality` 为 1410 通过、12 跳过、0 失败。
-- [x] 检查工作包 C diff 并提交独立 commit，记录 SHA。结果：静态边界与暂存区审计通过；工作包 C 代码、测试和本清单由本提交独立承载。
+- [x] 运行 `pnpm typecheck`、`pnpm lint:registry` 和 `pnpm --dir apps/web build`。结果：均通过；Web production build 完成 655 个模块，仅保留既有 chunk 体积警告；合并审查修复后全量 `pnpm quality` 为 1411 通过、12 跳过、0 失败。
+- [x] 检查工作包 C diff 并提交独立 commit，记录 SHA。结果：工作包 C 主体独立提交为 `e0fbfe9`；合并审查发现的 fragment 导航、历史原始输入和旧文本报告兼容修复由后续独立提交承载。
 
 ### 门禁 C
 
@@ -118,19 +118,19 @@
 
 ## 5. 合并前验证
 
-- [ ] 确认 A、B、C、D 均为独立 commit，依赖顺序正确且没有后续工作包补前序测试。
-- [ ] 运行 `pnpm quality`，记录测试通过、跳过和失败数量。
-- [ ] 运行 `pnpm --dir apps/web build`。
-- [ ] 运行 `git diff --check`，确认没有格式错误、占位符或意外生成物。
-- [ ] 回归旧 Current Plan、V1 Report Package、纯文本研究任务和没有 Playwright Adapter 的降级路径。
-- [ ] 确认 Tool JSON、日志、数据库和 Smoke receipt 中没有媒体 Base64、Cookie、Bearer token、完整 HTML 或未脱敏错误正文。
-- [ ] 确认 Registry 仍为 `draft` 且 `PLAYWRIGHT_CAPTURE_ENABLED` 未设置；代码合并不得自动激活公网截图。
+- [x] 确认 A、B、C、D 均为独立 commit，依赖顺序正确且没有后续工作包补前序测试。结果：A=`314411f`、B=`99c9ecd`、D=`e7c9cf7`、C=`e0fbfe9`，满足 `A -> B -> D/C`；合并审查 follow-up 仅修复三项跨包回归。
+- [x] 运行 `pnpm quality`，记录测试通过、跳过和失败数量。结果：Node `v22.22.1` 下 1411 通过、12 跳过、0 失败；typecheck、Registry linter 与 Knowledge linter 均通过。
+- [x] 运行 `pnpm --dir apps/web build`。结果：production build 通过，完成 655 个模块，仅保留既有 chunk 体积警告。
+- [x] 运行 `git diff --check`，确认没有格式错误、占位符或意外生成物。结果：工作包范围与合并审查 follow-up 均通过；构建目录保持 ignored，未产生待提交生成物。
+- [x] 回归旧 Current Plan、V1 Report Package、纯文本研究任务和没有 Playwright Adapter 的降级路径。结果：全量 quality 通过；V1/V2 Report Package、旧计划规范化、非 `research_plan` 历史文本兼容展示、draft/未注册 Adapter 和文本路径回归均为 0 失败。
+- [x] 确认 Tool JSON、日志、数据库和 Smoke receipt 中没有媒体 Base64、Cookie、Bearer token、完整 HTML 或未脱敏错误正文。结果：新增行、二进制 diff、报告热链与运行态持久化扫描无泄漏；测试 fixture 的占位 data URI 不进入产品输出。
+- [x] 确认 Registry 仍为 `draft` 且 `PLAYWRIGHT_CAPTURE_ENABLED` 未设置；代码合并不得自动激活公网截图。结果：Tool 保持 `draft/optional`，当前 shell 与现有 API 进程均未设置开关，`.env.example` 默认 `0`。
 
 ### 门禁 5
 
-- [ ] 全量 quality、Web build、兼容性、安全、恢复和降级测试通过。
-- [ ] 默认部署仍只提供 Tavily + Skill 文本研究路径。
-- [ ] 代码合并和生产 Tool 激活保持两个独立动作。
+- [x] 全量 quality、Web build、兼容性、安全、恢复和降级测试通过。结果：本地合并前门禁 PASS；真实 Chromium `about:blank` + `setContent()` contract 也为 0 失败。
+- [x] 默认部署仍只提供 Tavily + Skill 文本研究路径。结果：Playwright Tool 为 `draft` 且 Adapter 仅在精确开关值 `1` 时注册。
+- [x] 代码合并和生产 Tool 激活保持两个独立动作。结果：本轮只完成源码与本地门禁，未 push、未切换 Registry、未运行公网视觉 Smoke。
 
 ## 6. 生产激活门禁
 

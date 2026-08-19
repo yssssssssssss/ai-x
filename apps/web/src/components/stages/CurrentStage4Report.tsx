@@ -1,19 +1,31 @@
 import { useCallback, useMemo, useState } from 'react';
 import type { ReportDocument } from '../../../../orchestrator-runtime/src/report/report-document-composer.ts';
 import type { CurrentResearchPlanResponse } from '../../current-report-markdown.ts';
-import { assertCurrentReportTextMode, currentResearchPlanToMarkdown } from '../../current-report-markdown.ts';
-import { api, type ControlVisualAssetResponse } from '../../api/client.ts';
+import { currentResearchPlanToMarkdown } from '../../current-report-markdown.ts';
+import {
+  api,
+  type ControlDeliverableResponse,
+  type ControlVisualAssetResponse,
+} from '../../api/client.ts';
 import { createReportBundle } from '../../reporting/report-bundle.ts';
 import { ReportDocumentView } from '../../reporting/ReportDocumentView.tsx';
 import { Header } from './Stage1Understand.tsx';
 
-type MultimodalResearchPlanResponse = Extract<
+type MultimodalReportResponse = Extract<
+  ControlDeliverableResponse,
+  { presentationMode: 'multimodal' }
+>;
+type TextResearchPlanResponse = Extract<
   CurrentResearchPlanResponse,
+  { presentationMode: 'legacy_text' | 'current_text' }
+>;
+type GenericTextReportResponse = Exclude<
+  ControlDeliverableResponse,
   { presentationMode: 'multimodal' }
 >;
 
 export function selectCurrentStage4Renderer(report: unknown): {
-  component: 'CurrentTextReport' | 'ReportDocumentView';
+  component: 'CurrentTextReport' | 'GenericTextReport' | 'ReportDocumentView';
   reportDocument?: ReportDocument;
 } {
   if (
@@ -27,18 +39,39 @@ export function selectCurrentStage4Renderer(report: unknown): {
       return { component: 'ReportDocumentView', reportDocument: reportDocument as ReportDocument };
     }
   }
-  return { component: 'CurrentTextReport' };
+  if (
+    report !== null
+    && typeof report === 'object'
+    && !Array.isArray(report)
+  ) {
+    const deliverable = (report as Record<string, unknown>).deliverable;
+    if (
+      deliverable !== null
+      && typeof deliverable === 'object'
+      && !Array.isArray(deliverable)
+      && (deliverable as Record<string, unknown>).deliverableType === 'research_plan'
+    ) {
+      return { component: 'CurrentTextReport' };
+    }
+  }
+  return { component: 'GenericTextReport' };
 }
 
-export function CurrentStage4Report({ report }: { report: CurrentResearchPlanResponse }) {
+export function CurrentStage4Report({ report }: { report: ControlDeliverableResponse }) {
   const selected = selectCurrentStage4Renderer(report);
   if (selected.component === 'ReportDocumentView' && report.presentationMode === 'multimodal') {
     return <MultimodalCurrentReport report={report} />;
   }
-  return <CurrentTextReport report={report} />;
+  if (report.presentationMode === 'multimodal') {
+    throw new Error('multimodal report package has no ReportDocument renderer');
+  }
+  if (selected.component === 'CurrentTextReport') {
+    return <CurrentTextReport report={report as TextResearchPlanResponse} />;
+  }
+  return <GenericTextReport report={report} />;
 }
 
-function MultimodalCurrentReport({ report }: { report: MultimodalResearchPlanResponse }) {
+function MultimodalCurrentReport({ report }: { report: MultimodalReportResponse }) {
   const [bundleStatus, setBundleStatus] = useState<'idle' | 'working' | 'error'>('idle');
   const taskId = report.deliverable.taskId;
   const loadVisualAsset = useMemo(() => {
@@ -108,8 +141,7 @@ function MultimodalCurrentReport({ report }: { report: MultimodalResearchPlanRes
   );
 }
 
-function CurrentTextReport({ report }: { report: CurrentResearchPlanResponse }) {
-  assertCurrentReportTextMode(report);
+function CurrentTextReport({ report }: { report: TextResearchPlanResponse }) {
   const { deliverable, evidenceManifest } = report;
   const { payload, findingGraph } = deliverable;
 
@@ -275,6 +307,86 @@ function CurrentTextReport({ report }: { report: CurrentResearchPlanResponse }) 
   );
 }
 
+function GenericTextReport({ report }: { report: GenericTextReportResponse }) {
+  const { deliverable, evidenceManifest } = report;
+  const payload = JSON.stringify(deliverable.payload, null, 2) ?? 'null';
+  const deliverableLabel = deliverable.deliverableType
+    .replace(/[_-]+/gu, ' ')
+    .replace(/\b\w/gu, (letter) => letter.toUpperCase());
+
+  return (
+    <article className="stage-card">
+      <Header n="4" title="历史结构化报告" note="兼容展示原始交付内容与追溯信息" />
+
+      <ReportSection title={deliverableLabel}>
+        <p>{deliverable.methodSummary}</p>
+        <p style={{ color: 'var(--text-dim)' }}>
+          此历史任务没有可用的多模态版式，以下内容按已验证的原始结构展示。
+        </p>
+      </ReportSection>
+
+      <ReportSection title="交付内容">
+        <pre
+          className="mono"
+          style={{
+            margin: 0,
+            padding: 14,
+            overflowX: 'auto',
+            whiteSpace: 'pre-wrap',
+            overflowWrap: 'anywhere',
+            borderRadius: 10,
+            background: 'var(--bg-card-hi)',
+            border: '1px solid var(--border-soft)',
+            fontSize: 12,
+          }}
+        >
+          {payload}
+        </pre>
+      </ReportSection>
+
+      <ReportSection title="证据清单">
+        <ul style={{ margin: 0, paddingLeft: 20 }}>
+          {evidenceManifest.entries.map((evidence) => (
+            <li key={evidence.id}>
+              <code>{evidence.id}</code> · {evidence.evidenceClass} · {evidence.kind}
+              {evidence.sourceUrl ? <> · <SafeExternalLink url={evidence.sourceUrl} /></> : null}
+            </li>
+          ))}
+        </ul>
+      </ReportSection>
+
+      <ReportSection title="建议">
+        <ul style={{ margin: 0, paddingLeft: 20 }}>
+          {deliverable.recommendations.map((recommendation) => (
+            <li key={recommendation.id}>
+              {recommendation.statement}（依据 {recommendation.summaryIds.join('、')}）
+            </li>
+          ))}
+        </ul>
+      </ReportSection>
+
+      <ReportSection title="风险与待解决问题">
+        {deliverable.risksAndOpenIssues.length > 0
+          ? <TextList items={deliverable.risksAndOpenIssues} />
+          : <p style={{ color: 'var(--text-dim)' }}>当前交付物未记录开放风险。</p>}
+      </ReportSection>
+
+      <ReportSection title="能力来源与追溯">
+        <ul style={{ margin: '0 0 10px', paddingLeft: 20 }}>
+          {deliverable.capabilityProvenance.map((capability) => (
+            <li key={`${capability.type}-${capability.id}`}><b>{capability.type}</b>：{capability.id}</li>
+          ))}
+        </ul>
+        <div className="mono" style={{ color: 'var(--text-faint)', fontSize: 11 }}>
+          {deliverable.version} · {deliverable.deliverableType}<br />
+          task {deliverable.taskId} · plan {deliverable.planVersionId} · attempt {deliverable.attemptId}<br />
+          evidence manifest {evidenceManifest.manifestHash} · collected {evidenceManifest.collectedAt}
+        </div>
+      </ReportSection>
+    </article>
+  );
+}
+
 function ReportSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section style={{ marginBottom: 18 }}>
@@ -297,7 +409,7 @@ function TextList({ items }: { items: string[] }) {
   return <ul style={{ margin: 0, paddingLeft: 20 }}>{items.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}</ul>;
 }
 
-function EvidenceReference({ id, report }: { id: string; report: CurrentResearchPlanResponse }) {
+function EvidenceReference({ id, report }: { id: string; report: ControlDeliverableResponse }) {
   const evidence = report.evidenceManifest.entries.find((entry) => entry.id === id);
   if (!evidence?.sourceUrl) return <code style={{ marginLeft: 4 }}>[{id}]</code>;
   return <span style={{ marginLeft: 4 }}>[<SafeExternalLink url={evidence.sourceUrl} label={id} />]</span>;

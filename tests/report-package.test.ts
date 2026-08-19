@@ -35,6 +35,10 @@ import {
   COMPETITIVE_WEIGHT_TITLE,
 } from '../apps/orchestrator-runtime/src/report/competitive-weight-chart.ts';
 
+type ParsedControlPayload = ReturnType<typeof parseControlDeliverableResponse>['deliverable']['payload'];
+// @ts-expect-error A report package payload is deliverable-specific and must be narrowed before field access.
+type ControlPayloadHasNoImplicitResearchGoal = ParsedControlPayload['researchGoal'];
+
 const binding = {
   taskId: 'task-1',
   planVersionId: 'plan-1',
@@ -1639,6 +1643,21 @@ test('runtime package client validates text modes and fail-closes multimodal pac
     reportReview: review(),
   };
   assert.equal(parseControlDeliverableResponse(current).presentationMode, 'current_text');
+  for (const presentationMode of ['legacy_text', 'current_text'] as const) {
+    const historicalCompetitiveReport = {
+      ...current,
+      presentationMode,
+      deliverable: {
+        ...current.deliverable,
+        deliverableType: 'competitive_analysis_report',
+        payload: { compatibilityMarker: 'historical-competitive-payload' },
+      },
+    };
+    assert.equal(
+      parseControlDeliverableResponse(historicalCompetitiveReport).deliverable.deliverableType,
+      'competitive_analysis_report',
+    );
+  }
   assert.throws(
     () => parseControlDeliverableResponse({ ...current, presentationMode: 'future_mode' }),
     /presentationMode|mode/i,

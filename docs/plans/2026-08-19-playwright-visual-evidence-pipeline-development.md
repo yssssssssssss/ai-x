@@ -459,7 +459,7 @@ JSON 输出不含页面 HTML、Cookie、请求头、浏览器日志、图片字�
 
 - URL 精确来自更早的、已封存的 Tavily Tool 输出。
 - 协议为 HTTPS、端口为 443 或省略，无用户名和密码字段。
-- 顶层 URL 和每次重定向先移除 fragment；查询参数名按 `(^|[_-])(token|key|signature|authorization|password|session|credential)([_-]|$)`（大小写不敏感）命中时拒绝，避免把临时访问凭据写入长期 Manifest。
+- 顶层 URL 或重定向 URL 带 fragment 时直接拒绝并记录页面 gap，不得静默移除后导航到另一资源；查询参数名按 `(^|[_-])(token|key|signature|authorization|password|session|credential)([_-]|$)`（大小写不敏感）命中时拒绝，避免把临时访问凭据写入长期 Manifest。
 - 主机解析结果不包含 loopback、RFC 1918、link-local、CGNAT、组播或保留地址。
 - 每次重定向和每个 HTTP(S) 子资源请求都重新执行协议、端口与地址检查；任何非 HTTPS 网络请求均阻断。
 - `file:`、`ftp:`、`data:` 顶层导航、WebSocket 和非 GET、HEAD 请求全部阻断。
@@ -845,7 +845,7 @@ PLAYWRIGHT_CAPTURE_ENABLED=1 CURRENT_SMOKE_PROFILE=competitive_research CURRENT_
 ### 16.1 Adapter 单元测试
 
 - Tavily rows 保持原顺序、去重并截断为 6 页。
-- 非 HTTPS、内网 IP、重定向到内网、带账号密码或凭据型 query 的 URL 被拒绝；fragment 不进入导航记录或 Manifest。
+- 非 HTTPS、内网 IP、重定向到内网、带账号密码、凭据型 query 或 fragment 的 URL 被拒绝；fragment 不进入导航记录或 Manifest，也不会被静默改写后导航。
 - Adapter 固定传入 `chromiumSandbox: true`、`serviceWorkers: 'block'`、`acceptDownloads: false`，缺任一项测试失败。
 - Service Worker 请求路径和 WebSocket 均被阻断；新窗口立即关闭。
 - `auto`、大图提取、元素截图、整页截图返回正确元数据。
