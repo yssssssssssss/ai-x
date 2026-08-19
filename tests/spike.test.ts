@@ -54,7 +54,7 @@ test('planPhase:按 task_type 只激活相关节点子集,生成计划,不写 ex
 });
 
 test('executePhase:确认后执行,每步 succeeded,产出 report artifact', async () => {
-  const orch = buildOrchestrator();
+  const orch = buildOrchestrator({ toolAdapter: new FakeO2Adapter() });
   const r = await orch.planPhase({
     originalInput: '直播数字人竞品研究',
     conversationId: convId, ownerUserId: userId,

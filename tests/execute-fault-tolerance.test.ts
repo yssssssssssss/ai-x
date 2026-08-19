@@ -49,7 +49,7 @@ after(async () => {
 
 // A · 全成功回归:三步全成功 → completed,gapCount=0,有 report。
 test('全成功 → completed(回归)', async () => {
-  const orch = buildOrchestrator();   // FakeO2Adapter 无 failOnToolIds
+  const orch = buildOrchestrator({ toolAdapter: new FakeO2Adapter() });
   const taskId = await planAndSelectDepth(orch);
   const r = await orch.executePhase({ taskId, conversationId: convId });
 
