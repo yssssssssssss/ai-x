@@ -75,3 +75,54 @@ test('BrowserExecutionGate maps an exhausted shared deadline to timeout, not cap
   active.release();
   assert.deepEqual(gate.stats(), { active: 0, queued: 0 });
 });
+
+test('BrowserExecutionGate re-arms a deadline timer that fires before the wall-clock deadline', async (t) => {
+  const realNow = Date.now.bind(Date);
+  let deadlineAt = 0;
+  let injectedEarlyRead = false;
+  t.mock.method(Date, 'now', () => {
+    const now = realNow();
+    if (!injectedEarlyRead && deadlineAt > 0 && now >= deadlineAt) {
+      injectedEarlyRead = true;
+      return deadlineAt - 1;
+    }
+    return now;
+  });
+  const gate = new BrowserExecutionGate({ maxActive: 1, maxQueued: 1, queueTimeoutMs: 1_000 });
+  const active = await gate.acquire('playwright-page-capture', context());
+  deadlineAt = realNow() + 10;
+  const error = await toolError(gate.acquire(
+    'playwright-page-capture',
+    context(new AbortController().signal, deadlineAt),
+  ));
+
+  assert.equal(injectedEarlyRead, true);
+  assert.equal(error.kind, 'timeout');
+  assert.equal(error.details.abortReason, 'deadline_exceeded');
+  active.release();
+  assert.deepEqual(gate.stats(), { active: 0, queued: 0 });
+});
+
+test('BrowserExecutionGate keeps queue capacity timeout monotonic across wall-clock rollback', async (t) => {
+  const realNow = Date.now.bind(Date);
+  let rollBackWallClock = false;
+  t.mock.method(Date, 'now', () => (
+    rollBackWallClock ? realNow() - 60_000 : realNow()
+  ));
+  const gate = new BrowserExecutionGate({ maxActive: 1, maxQueued: 1, queueTimeoutMs: 10 });
+  const active = await gate.acquire('playwright-page-capture', context());
+  const controller = new AbortController();
+  const pending = gate.acquire(
+    'playwright-page-capture',
+    context(controller.signal, realNow() + 1_000),
+  );
+  rollBackWallClock = true;
+  const abortTimer = setTimeout(() => controller.abort('lease_lost'), 50);
+  const error = await toolError(pending);
+  clearTimeout(abortTimer);
+
+  assert.equal(controller.signal.aborted, false);
+  assert.equal(error.kind, 'capacity');
+  active.release();
+  assert.deepEqual(gate.stats(), { active: 0, queued: 0 });
+});

@@ -197,7 +197,7 @@ function errorFromUnknown(toolId: string, err: unknown, fallbackKind: ToolFailur
     kind: err instanceof DOMException && err.name === 'AbortError' ? 'timeout' : fallbackKind,
     retryable: err instanceof DOMException && err.name === 'AbortError' || fallbackKind === 'network' || fallbackKind === 'timeout',
     providerStatus: null,
-    sanitizedMessage: err instanceof Error ? err.message : String(err),
+    sanitizedMessage: sanitizeMessage(err instanceof Error ? err.message : String(err)),
   });
 }
 

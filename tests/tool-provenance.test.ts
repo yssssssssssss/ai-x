@@ -243,7 +243,7 @@ test('ToolRouter preserves resolved identity when an adapter throws an unknown e
     executionMode: 'real' as const,
     endpointHost: () => 'dependency.test',
     async invoke(): Promise<never> {
-      throw new Error('socket closed');
+      throw new Error('socket closed token=secret');
     },
   } satisfies ToolAdapter;
   const error = await captureToolError(new ToolRouter().register(throwingAdapter).invoke({
@@ -258,6 +258,7 @@ test('ToolRouter preserves resolved identity when an adapter throws an unknown e
   assert.equal(error.receipt?.executionMode, 'real');
   assert.equal(error.receipt?.endpointHost, 'dependency.test');
   assert.equal(error.receipt?.status, 'failed');
+  assert.equal(error.sanitizedMessage, 'socket closed token=[REDACTED]');
 });
 
 

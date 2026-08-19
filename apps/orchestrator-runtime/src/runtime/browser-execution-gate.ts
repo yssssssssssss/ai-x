@@ -4,6 +4,7 @@ import {
   toolAbortError,
   type ToolInvocationContext,
 } from './tool-adapter.ts';
+import { performance } from 'node:perf_hooks';
 
 export interface BrowserExecutionLease {
   release(): void;
@@ -20,7 +21,8 @@ interface Waiter {
   context: ToolInvocationContext;
   resolve: (lease: BrowserExecutionLease) => void;
   reject: (error: ToolInvocationError) => void;
-  timer: NodeJS.Timeout;
+  queueTimer: NodeJS.Timeout;
+  deadlineTimer: NodeJS.Timeout;
   onAbort: () => void;
   settled: boolean;
 }
@@ -60,12 +62,13 @@ export class BrowserExecutionGate {
     if (this.queue.length >= this.maxQueued) throw this.capacityError(toolId);
 
     return new Promise<BrowserExecutionLease>((resolve, reject) => {
-      const deadlineDelay = Math.max(0, context.deadlineAt - Date.now());
+      const queueExpiresAt = performance.now() + this.queueTimeoutMs;
       const waiter = {} as Waiter;
       const settleError = (error: ToolInvocationError) => {
         if (waiter.settled) return;
         waiter.settled = true;
-        clearTimeout(waiter.timer);
+        clearTimeout(waiter.queueTimer);
+        clearTimeout(waiter.deadlineTimer);
         context.signal.removeEventListener('abort', waiter.onAbort);
         const index = this.queue.indexOf(waiter);
         if (index >= 0) this.queue.splice(index, 1);
@@ -77,11 +80,31 @@ export class BrowserExecutionGate {
       waiter.reject = reject;
       waiter.settled = false;
       waiter.onAbort = () => settleError(toolAbortError(toolId, context.signal, context.deadlineAt));
-      waiter.timer = setTimeout(() => {
+      const settleAtDeadline = () => {
+        if (waiter.settled) return;
+        const remaining = context.deadlineAt - Date.now();
+        if (remaining > 0) {
+          waiter.deadlineTimer = setTimeout(settleAtDeadline, remaining);
+          return;
+        }
+        settleError(toolAbortError(toolId, context.signal, context.deadlineAt));
+      };
+      const settleAtQueueExpiry = () => {
+        if (waiter.settled) return;
+        const remaining = queueExpiresAt - performance.now();
+        if (remaining > 0) {
+          waiter.queueTimer = setTimeout(settleAtQueueExpiry, remaining);
+          return;
+        }
         settleError(Date.now() >= context.deadlineAt
           ? toolAbortError(toolId, context.signal, context.deadlineAt)
           : this.capacityError(toolId));
-      }, Math.min(this.queueTimeoutMs, deadlineDelay));
+      };
+      waiter.deadlineTimer = setTimeout(
+        settleAtDeadline,
+        Math.max(0, context.deadlineAt - Date.now()),
+      );
+      waiter.queueTimer = setTimeout(settleAtQueueExpiry, this.queueTimeoutMs);
       context.signal.addEventListener('abort', waiter.onAbort, { once: true });
       this.queue.push(waiter);
       if (context.signal.aborted) waiter.onAbort();
@@ -120,7 +143,8 @@ export class BrowserExecutionGate {
       if (!waiter) return;
       if (waiter.settled) continue;
       waiter.settled = true;
-      clearTimeout(waiter.timer);
+      clearTimeout(waiter.queueTimer);
+      clearTimeout(waiter.deadlineTimer);
       waiter.context.signal.removeEventListener('abort', waiter.onAbort);
       if (waiter.context.signal.aborted || Date.now() >= waiter.context.deadlineAt) {
         waiter.reject(toolAbortError(waiter.toolId, waiter.context.signal, waiter.context.deadlineAt));
