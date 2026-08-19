@@ -40,13 +40,13 @@
 - [x] CI 使用真实 Chromium 打开 `about:blank` 并通过 `page.setContent()` 注入内存 fixture，不开放 loopback 或公网。结果：独立 CI job 已配置；Node 22 本机同一 contract 1 通过、0 失败。
 - [x] 运行工作包 A 定向测试（Gate、Adapter、retry、provenance、Schema、Registry、VisualAsset 与 Engine）。结果：172 通过、2 个环境 contract 跳过、0 失败；重定向 requested/final URL 分离修正后 Adapter 26 通过、1 contract 跳过、0 失败；另以 `PLAYWRIGHT_CONTRACT=1` 单独运行真实 Chromium contract，1 通过、0 失败。
 - [x] 运行 `pnpm typecheck` 和 `pnpm lint:registry`。结果：两项均通过；全量 `pnpm quality` 为 1248 通过、12 跳过、0 失败。
-- [ ] 检查工作包 A diff 并提交独立 commit，记录 SHA。
+- [x] 检查工作包 A diff 并提交独立 commit，记录 SHA。结果：合同措辞修正为 `784a8b4`；32 个工作包 A 代码、配置、Tool 合同与测试文件独立提交为 `314411f`，未包含 Harness 或用户迁移指南。
 
 ### 门禁 A
 
 - [x] 并发、排队、取消、重试、超时和资源泄漏测试全部通过。结果：精确门禁、Engine/VisualAsset 回归和全量 quality 均为 0 失败。
 - [x] CI fixture 不访问网络，默认配置不会启动 Chromium。结果：contract 仅使用 `about:blank` + `setContent()`；Registry 为 `draft` 且默认功能开关为 `0`。
-- [ ] 工作包 A 可独立回滚且不改变现有文本研究路径。
+- [x] 工作包 A 可独立回滚且不改变现有文本研究路径。结果：`314411f` 为单一独立代码 commit；Registry 保持 `draft`、默认开关为 `0`，全量文本路径 quality 0 失败。
 
 ## 2. 工作包 B：原子视觉资产发布
 

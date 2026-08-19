@@ -93,8 +93,85 @@
         "timestamp": "2026-08-18T18:10:41Z"
       }],
       "completed_at": "2026-08-18T18:10:41Z"
+    },
+    {
+      "id": "task-005",
+      "title": "Implement work package A browser tool and sidecar contract",
+      "status": "completed",
+      "priority": "P0",
+      "depends_on": ["task-004"],
+      "attempts": 0,
+      "max_attempts": 3,
+      "started_at_commit": "6b771b4",
+      "validation": {
+        "command": "PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm exec tsx --test tests/browser-execution-gate.test.ts tests/playwright-page-capture-adapter.test.ts tests/tool-retry-policy.test.ts tests/tool-provenance.test.ts tests/schema.test.ts tests/registry-linter.test.ts tests/visual-asset-service.test.ts tests/lease-execution-engine.test.ts && PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm typecheck && PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm lint:registry",
+        "timeout_seconds": 1200
+      },
+      "on_failure": { "cleanup": null },
+      "error_log": [],
+      "checkpoints": [{
+        "step": 1,
+        "total": 1,
+        "description": "Work package A committed at 314411f; 172 targeted tests passed with 2 environment skips, real Chromium contract passed, full quality passed 1248/12/0, and both read-only audits reported no blockers",
+        "timestamp": "2026-08-19T12:21:15Z"
+      }],
+      "completed_at": "2026-08-19T12:21:15Z"
+    },
+    {
+      "id": "task-006",
+      "title": "Implement work package B atomic visual asset publication",
+      "status": "pending",
+      "priority": "P0",
+      "depends_on": ["task-005"],
+      "attempts": 0,
+      "max_attempts": 3,
+      "started_at_commit": null,
+      "validation": {
+        "command": "PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm exec tsx --test tests/artifact-publication-group.test.ts tests/visual-asset-service.test.ts tests/lease-execution-engine.test.ts tests/execution-recovery.test.ts tests/report-package.test.ts tests/report-bundle.test.ts tests/control-api-integration.test.ts tests/auth-isolation.test.ts && PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm typecheck && PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm --dir apps/web build",
+        "timeout_seconds": 1800
+      },
+      "on_failure": { "cleanup": null },
+      "error_log": [],
+      "checkpoints": [],
+      "completed_at": null
+    },
+    {
+      "id": "task-007",
+      "title": "Implement work package C optional planning and visual report",
+      "status": "pending",
+      "priority": "P0",
+      "depends_on": ["task-006"],
+      "attempts": 0,
+      "max_attempts": 3,
+      "started_at_commit": null,
+      "validation": {
+        "command": "PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm exec tsx --test tests/capability-resolver.test.ts tests/skill-loader-schema.test.ts tests/registry-linter.test.ts tests/plan-compiler.test.ts tests/current-plan-candidate-schema.test.ts tests/direct-invoke-plan.test.ts tests/current-step-bindings.test.ts tests/checkpoint-resume.test.ts tests/control-planning.test.ts tests/current-deliverable-service.test.ts tests/report-document.test.ts tests/report-bundle.test.ts tests/current-flow-state.test.ts tests/current-real-smoke.test.ts && PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm typecheck && PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm lint:registry && PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm --dir apps/web build",
+        "timeout_seconds": 2400
+      },
+      "on_failure": { "cleanup": null },
+      "error_log": [],
+      "checkpoints": [],
+      "completed_at": null
+    },
+    {
+      "id": "task-008",
+      "title": "Implement work package D data-driven chart lineage",
+      "status": "pending",
+      "priority": "P0",
+      "depends_on": ["task-006"],
+      "attempts": 0,
+      "max_attempts": 3,
+      "started_at_commit": null,
+      "validation": {
+        "command": "PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm exec tsx --test tests/artifact-publication-group.test.ts tests/competitive-weight-chart.test.ts tests/chart-renderer.test.ts tests/lease-execution-engine.test.ts tests/execution-recovery.test.ts tests/control-plane.test.ts tests/report-document.test.ts tests/report-package.test.ts tests/candidate-layout.test.ts && PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm typecheck && PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm --dir apps/web build",
+        "timeout_seconds": 1800
+      },
+      "on_failure": { "cleanup": null },
+      "error_log": [],
+      "checkpoints": [],
+      "completed_at": null
     }
   ],
-  "session_count": 1,
-  "last_session": "2026-08-18T18:10:41Z"
+  "session_count": 2,
+  "last_session": "2026-08-19T10:51:53Z"
 }

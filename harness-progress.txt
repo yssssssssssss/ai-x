@@ -17,3 +17,9 @@
 [2026-08-18T18:10:41Z] [SESSION-1] Completed [task-004] (commit 9e31abe; existing dirty worktree intentionally not committed)
 [2026-08-18T18:10:41Z] [SESSION-1] STATS tasks_total=4 completed=4 failed=0 pending=0 blocked=0 attempts_total=0 checkpoints=4
 [2026-08-18T18:10:41Z] [SESSION-1] LOCK released
+[2026-08-19T10:51:53Z] [SESSION-2] INIT Resumed Harness for approved Playwright visual evidence pipeline development
+[2026-08-19T10:51:53Z] [SESSION-2] INIT Node 22 baseline and Gate 0 already passed at commit 6b771b4; user-owned untracked migration guide remains protected
+[2026-08-19T10:51:53Z] [SESSION-2] LOCK exclusive primary-agent execution selected; subagents restricted to read-only audits
+[2026-08-19T10:51:53Z] [SESSION-2] Starting [task-005] Implement work package A browser tool and sidecar contract (base=6b771b4)
+[2026-08-19T12:21:15Z] [SESSION-2] CHECKPOINT [task-005] step=1/1 "172 targeted tests passed with 2 environment skips; real Chromium contract, typecheck, linters, and full quality passed; security/runtime audits found no blockers"
+[2026-08-19T12:21:15Z] [SESSION-2] Completed [task-005] (commit 314411f)

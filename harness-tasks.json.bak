@@ -28,7 +28,7 @@
     {
       "id": "task-002",
       "title": "Upload real screenshots, confirm, and start the target task",
-      "status": "in_progress",
+      "status": "completed",
       "priority": "P0",
       "depends_on": ["task-001"],
       "attempts": 0,
@@ -40,20 +40,89 @@
       },
       "on_failure": { "cleanup": null },
       "error_log": [],
-      "checkpoints": [],
-      "completed_at": null
+      "checkpoints": [{
+        "step": 1,
+        "total": 1,
+        "description": "Real screenshot task reached completed state with sealed visual inputs",
+        "timestamp": "2026-08-18T18:10:41Z"
+      }],
+      "completed_at": "2026-08-18T18:10:41Z"
     },
     {
       "id": "task-003",
       "title": "Monitor and repair the real execution until report completion",
-      "status": "pending",
+      "status": "completed",
       "priority": "P0",
       "depends_on": ["task-002"],
       "attempts": 0,
       "max_attempts": 3,
-      "started_at_commit": null,
+      "started_at_commit": "9e31abe",
       "validation": {
         "command": "pnpm exec tsx scripts/verify-control-task.ts 91e7bed3-4725-41a7-ba28-742424f4911c completed",
+        "timeout_seconds": 1800
+      },
+      "on_failure": { "cleanup": null },
+      "error_log": [],
+      "checkpoints": [{
+        "step": 1,
+        "total": 1,
+        "description": "Task completed with passed report review, zero gaps, and a multimodal report package",
+        "timestamp": "2026-08-18T18:10:41Z"
+      }],
+      "completed_at": "2026-08-18T18:10:41Z"
+    },
+    {
+      "id": "task-004",
+      "title": "Verify every required report dimension in the history UI",
+      "status": "completed",
+      "priority": "P0",
+      "depends_on": ["task-003"],
+      "attempts": 0,
+      "max_attempts": 3,
+      "started_at_commit": "9e31abe",
+      "validation": {
+        "command": "pnpm exec tsx --test tests/report-document.test.ts tests/report-bundle.test.ts tests/competitive-weight-chart.test.ts",
+        "timeout_seconds": 600
+      },
+      "on_failure": { "cleanup": null },
+      "error_log": [],
+      "checkpoints": [{
+        "step": 1,
+        "total": 1,
+        "description": "History reopen, 13 bilingual sections, real image, SVG chart, table, roadmap, instrumentation, and user-test UI checks passed",
+        "timestamp": "2026-08-18T18:10:41Z"
+      }],
+      "completed_at": "2026-08-18T18:10:41Z"
+    },
+    {
+      "id": "task-005",
+      "title": "Implement work package A browser tool and sidecar contract",
+      "status": "in_progress",
+      "priority": "P0",
+      "depends_on": ["task-004"],
+      "attempts": 0,
+      "max_attempts": 3,
+      "started_at_commit": "6b771b4",
+      "validation": {
+        "command": "PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm exec tsx --test tests/browser-execution-gate.test.ts tests/playwright-page-capture-adapter.test.ts tests/tool-retry-policy.test.ts tests/schema.test.ts tests/registry-linter.test.ts && PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm typecheck && PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm lint:registry",
+        "timeout_seconds": 1200
+      },
+      "on_failure": { "cleanup": null },
+      "error_log": [],
+      "checkpoints": [],
+      "completed_at": null
+    },
+    {
+      "id": "task-006",
+      "title": "Implement work package B atomic visual asset publication",
+      "status": "pending",
+      "priority": "P0",
+      "depends_on": ["task-005"],
+      "attempts": 0,
+      "max_attempts": 3,
+      "started_at_commit": null,
+      "validation": {
+        "command": "PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm exec tsx --test tests/artifact-publication-group.test.ts tests/visual-asset-service.test.ts tests/lease-execution-engine.test.ts tests/execution-recovery.test.ts tests/report-package.test.ts tests/report-bundle.test.ts tests/control-api-integration.test.ts tests/auth-isolation.test.ts && PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm typecheck && PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm --dir apps/web build",
         "timeout_seconds": 1800
       },
       "on_failure": { "cleanup": null },
@@ -62,17 +131,35 @@
       "completed_at": null
     },
     {
-      "id": "task-004",
-      "title": "Verify every required report dimension in the history UI",
+      "id": "task-007",
+      "title": "Implement work package C optional planning and visual report",
       "status": "pending",
       "priority": "P0",
-      "depends_on": ["task-003"],
+      "depends_on": ["task-006"],
       "attempts": 0,
       "max_attempts": 3,
       "started_at_commit": null,
       "validation": {
-        "command": "pnpm exec tsx --test tests/report-document.test.ts tests/report-bundle.test.ts tests/competitive-weight-chart.test.ts",
-        "timeout_seconds": 600
+        "command": "PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm exec tsx --test tests/capability-resolver.test.ts tests/skill-loader-schema.test.ts tests/registry-linter.test.ts tests/plan-compiler.test.ts tests/current-plan-candidate-schema.test.ts tests/direct-invoke-plan.test.ts tests/current-step-bindings.test.ts tests/checkpoint-resume.test.ts tests/control-planning.test.ts tests/current-deliverable-service.test.ts tests/report-document.test.ts tests/report-bundle.test.ts tests/current-flow-state.test.ts tests/current-real-smoke.test.ts && PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm typecheck && PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm lint:registry && PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm --dir apps/web build",
+        "timeout_seconds": 2400
+      },
+      "on_failure": { "cleanup": null },
+      "error_log": [],
+      "checkpoints": [],
+      "completed_at": null
+    },
+    {
+      "id": "task-008",
+      "title": "Implement work package D data-driven chart lineage",
+      "status": "pending",
+      "priority": "P0",
+      "depends_on": ["task-006"],
+      "attempts": 0,
+      "max_attempts": 3,
+      "started_at_commit": null,
+      "validation": {
+        "command": "PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm exec tsx --test tests/artifact-publication-group.test.ts tests/competitive-weight-chart.test.ts tests/chart-renderer.test.ts tests/lease-execution-engine.test.ts tests/execution-recovery.test.ts tests/control-plane.test.ts tests/report-document.test.ts tests/report-package.test.ts tests/candidate-layout.test.ts && PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm typecheck && PATH=/Users/heyunshen/.nvm/versions/node/v22.22.1/bin:$PATH pnpm --dir apps/web build",
+        "timeout_seconds": 1800
       },
       "on_failure": { "cleanup": null },
       "error_log": [],
@@ -80,6 +167,6 @@
       "completed_at": null
     }
   ],
-  "session_count": 1,
-  "last_session": "2026-08-18T16:58:22Z"
+  "session_count": 2,
+  "last_session": "2026-08-19T10:51:53Z"
 }
