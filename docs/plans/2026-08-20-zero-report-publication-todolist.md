@@ -181,69 +181,71 @@ pnpm typecheck
 
 ## Phase 3：Report Renderer
 
-- [ ] 先批量完成 Renderer 与 Transcoder 的全部失败测试，统一运行两份测试文件并确认红灯，再开始本 Phase 实现。
+- [x] 先批量完成 Renderer 与 Transcoder 的全部失败测试，统一运行两份测试文件并确认红灯，再开始本 Phase 实现。
 
 ### 3.1 失败测试
 
-- [ ] 创建 `tests/zero-report-renderer.test.ts`。
-- [ ] fixture 覆盖 paragraph、list、metric、fact。
-- [ ] fixture 覆盖 image、image-comparison、chart。
-- [ ] 断言 HTML 无 script。
-- [ ] 断言 HTML 无事件处理器。
-- [ ] 断言 HTML 无接口请求、localStorage 和远程 JS。
-- [ ] 断言 HTML 不包含图片 data URL。
-- [ ] 断言每个视觉 block 有唯一 placeholder name。
-- [ ] 断言 block 顺序与 ReportDocument 一致。
-- [ ] 断言 HTML 不超过 500,000 字符。
-- [ ] 断言 template version 进入 publication receipt 输入。
+- [x] 创建 `tests/zero-report-renderer.test.ts`。
+- [x] fixture 覆盖 paragraph、list、metric、fact。
+- [x] fixture 覆盖 image、image-comparison、chart。
+- [x] 断言 HTML 无 script。
+- [x] 断言 HTML 无事件处理器。
+- [x] 断言 HTML 无接口请求、localStorage 和远程 JS。
+- [x] 断言 HTML 不包含图片 data URL。
+- [x] 断言每个视觉 block 有唯一 placeholder name。
+- [x] 断言 block 顺序与 ReportDocument 一致。
+- [x] 断言 HTML 不超过 500,000 字符。
+- [x] 断言 template version 进入 publication receipt 输入。
 
 ### 3.2 实现 Renderer
 
-- [ ] 创建 `apps/agent-api/src/integrations/zero/zero-report-renderer.ts`。
-- [ ] 固定 `zero-report-v1` 模板。
-- [ ] 映射 cover 和 executive summary。
-- [ ] 映射 section 标题和说明。
-- [ ] 映射 paragraph/list/fact。
-- [ ] 映射 metric 和 table alternative。
-- [ ] 为 image 创建 placeholder。
-- [ ] 为 image-comparison 创建原图/标注配对 placeholder。
-- [ ] 为 chart 创建 placeholder 和文本表格 fallback。
-- [ ] 加入 evidence boundary 和 gap 展示。
-- [ ] 添加 `data-ai-alt` 和业务语义名称。
-- [ ] 返回 expected width/minimum height 和 placeholder manifest。
+- [x] 创建 `apps/agent-api/src/integrations/zero/zero-report-renderer.ts`。
+- [x] 固定 `zero-report-v1` 模板。
+- [x] 映射 cover 和 executive summary。
+- [x] 映射 section 标题和说明。
+- [x] 映射 paragraph/list/fact。
+- [x] 映射 metric 和 table alternative。
+- [x] 为 image 创建 placeholder。
+- [x] 为 image-comparison 创建原图/标注配对 placeholder。
+- [x] 为 chart 创建 placeholder 和文本表格 fallback。
+- [x] 加入 evidence boundary 和 gap 展示。
+- [x] 添加 `data-ai-alt` 和业务语义名称。
+- [x] 返回 expected width/minimum height 和 placeholder manifest。
 
 ## Phase 3B：Image Transcoder
 
 ### 3B.1 失败测试
 
-- [ ] 创建 `tests/zero-image-transcoder.test.ts`。
-- [ ] JPEG 保持 JPEG。
-- [ ] 普通 PNG flatten 为 JPEG。
-- [ ] 需要透明背景的 PNG 保持 PNG。
-- [ ] SVG chart 转 PNG。
-- [ ] 超长图按垂直顺序切片。
-- [ ] 原图和标注图使用相同切片边界。
-- [ ] 每个 Base64 不超过 44,000 字符。
-- [ ] 最低质量仍超限时增加切片，不继续降质。
-- [ ] block exportPolicy 被拒绝。
-- [ ] allow/mask 可导出。
-- [ ] task/plan/attempt 绑定不一致时拒绝。
-- [ ] 原始 Artifact bytes 和 hash 不变化。
+- [x] 创建 `tests/zero-image-transcoder.test.ts`。
+- [x] JPEG 保持 JPEG。
+- [x] 普通 PNG flatten 为 JPEG。
+- [x] 需要透明背景的 PNG 保持 PNG。
+- [x] SVG chart 转 PNG。
+- [x] 超长图按垂直顺序切片。
+- [x] 原图和标注图使用相同切片边界。
+- [x] 每个 Base64 不超过 44,000 字符。
+- [x] 最低质量仍超限时增加切片，不继续降质。
+- [x] block exportPolicy 被拒绝。
+- [x] allow/mask 可导出。
+- [x] task/plan/attempt 绑定不一致时拒绝。
+- [x] 原始 Artifact bytes 和 hash 不变化。
 
 ### 3B.2 实现 Transcoder
 
-- [ ] 创建 `apps/agent-api/src/integrations/zero/zero-image-transcoder.ts`。
-- [ ] 使用现有 `sharp`，不新增图像依赖。
-- [ ] 实现目标宽度计算。
-- [ ] 实现格式策略。
-- [ ] 实现迭代质量和宽度策略。
-- [ ] 实现垂直切片策略。
-- [ ] 实现 original/annotation 共同切片边界。
-- [ ] 实现 chart PNG 转换。
-- [ ] 实现 Base64 和脚本长度预算检查。
-- [ ] 返回 slice key、placeholder key、bytes、media type、尺寸和 hash。
+- [x] 创建 `apps/agent-api/src/integrations/zero/zero-image-transcoder.ts`。
+- [x] 使用现有 `sharp`，不新增图像依赖。
+- [x] 实现目标宽度计算。
+- [x] 实现格式策略。
+- [x] 实现迭代质量和宽度策略。
+- [x] 实现垂直切片策略。
+- [x] 实现 original/annotation 共同切片边界。
+- [x] 实现 chart PNG 转换。
+- [x] 实现 Base64 和脚本长度预算检查。
+- [x] 返回 slice key、placeholder key、bytes、media type、尺寸和 hash。
 
 ### Phase 3 完成门禁
+
+结果：7 个 Renderer/Transcoder 测试通过，typecheck PASS，diff check PASS。
 
 ```bash
 pnpm exec tsx --test \
@@ -252,9 +254,9 @@ pnpm exec tsx --test \
 pnpm typecheck
 ```
 
-- [ ] Phase 3 测试通过。
-- [ ] `git diff --check` 通过。
-- [ ] 提交 Phase 3，只包含 Renderer、Transcoder 和测试。
+- [x] Phase 3 测试通过。
+- [x] `git diff --check` 通过。
+- [x] 提交 Phase 3，只包含 Renderer、Transcoder 和测试。
 
 ## Phase 4：Publication Service
 

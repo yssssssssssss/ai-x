@@ -379,7 +379,7 @@ const page = relay.root.children.find((candidate) => candidate.type === 'PAGE' &
 if (!page) throw new Error('target page unavailable')
 await relay.setCurrentPageAsync(page)
 const node = await relay.getNodeByIdAsync(${JSON.stringify(input.nodeId)})
-if (!node || node.type !== 'RECTANGLE') throw new Error('image node unavailable')
+if (!node || (node.type !== 'RECTANGLE' && node.type !== 'FRAME')) throw new Error('image node unavailable')
 const image = relay.createImage(relay.base64Decode(${JSON.stringify(encoded)}))
 node.fills = [{ type: 'IMAGE', imageHash: image.hash, scaleMode: 'FIT' }]
 return { mutatedNodeIds: [node.id], nodeId: node.id, imageHash: image.hash }
@@ -405,9 +405,9 @@ return { mutatedNodeIds: [node.id], nodeId: node.id, imageHash: image.hash }
     const code = `
 const node = await relay.getNodeByIdAsync(${JSON.stringify(nodeId)})
 if (!node) throw new Error('node unavailable')
-const nodes = node.type === 'RECTANGLE'
+const nodes = node.type === 'RECTANGLE' || node.type === 'FRAME'
   ? [node]
-  : node.query('RECTANGLE').toArray()
+  : node.query('RECTANGLE, FRAME').toArray()
 return { nodes: nodes.map((item) => ({ id: item.id, name: item.name, fills: item.fills })) }
 `;
     const result = await this.callTool<ZeroNodeInspection>(

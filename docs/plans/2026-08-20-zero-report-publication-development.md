@@ -1,6 +1,6 @@
 # Report Package 发布到 Zero 开发文档
 
-> 状态：开发中。Gate 0、Phase 1 与 Phase 2 已完成，当前进入 Phase 3。
+> 状态：开发中。Gate 0 至 Phase 3 已完成，当前进入 Phase 4。
 >
 > 本文是“发送到 Zero”能力的设计真相源。实现范围、接口、状态机、图片传输、幂等、回滚和验收均以本文为准。
 >
