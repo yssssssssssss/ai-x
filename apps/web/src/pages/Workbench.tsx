@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, type User, type TaskDetail, type PlanProgress, type ExecLogRow, type ControlApprovalRequirement, ApiError } from '../api/client.ts';
 import {
+  api,
+  type User,
+  type TaskDetail,
+  type PlanProgress,
+  type ExecLogRow,
+  type ControlApprovalRequirement,
+  type TaskHistoryPreferencePatch,
+  ApiError,
+} from '../api/client.ts';
+import {
+  applyTaskHistoryPreferences,
   executionFailureAllowsAction,
   mergeTaskHistory,
   type HistoryTaskSummary,
@@ -27,11 +37,14 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
   const [detailError, setDetailError] = useState(''); // 历史打开失败(与任务流 error 分离)
 
   const refreshHistory = useCallback(() => {
-    void Promise.allSettled([
-      api.listTasks(),
-      api.listControlTasks(),
-      api.listApprovalTasks(),
-    ]).then(([legacy, current, approvals]) => {
+    void Promise.all([
+      api.listTaskHistoryPreferences(),
+      Promise.allSettled([
+        api.listTasks(),
+        api.listControlTasks(),
+        api.listApprovalTasks(),
+      ]),
+    ]).then(([preferences, [legacy, current, approvals]]) => {
       const currentTasks = current.status === 'fulfilled' ? current.value.tasks : [];
       const currentIds = new Set(currentTasks.map((task) => task.id));
       const approvalTasks = approvals.status === 'fulfilled'
@@ -45,13 +58,15 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
             // 审批列表只返回待处理项;没有创建时间时以更新时间排序即可。
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
+            requiresAction: true,
           }))
         : [];
       setHistory(mergeTaskHistory(
         legacy.status === 'fulfilled' ? legacy.value.tasks : [],
         [...currentTasks, ...approvalTasks],
+        preferences.preferences,
       ));
-    });
+    }).catch(() => {});
   }, []);
   useEffect(refreshHistory, [refreshHistory]);
 
@@ -90,16 +105,15 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
     flow.reset();
   }
 
-  async function openTask(id: string) {
-    const task = history.find((item) => item.id === id);
-    if (task?.kind === 'current') {
+  async function openTask(task: HistoryTaskSummary) {
+    if (task.kind === 'current') {
       setView('task'); setDetail(null); setDetailError('');
       await flow.openTask(task.id);
       return;
     }
     setView('history'); setDetail(null); setDetailLoading(true); setDetailError('');
     try {
-      setDetail(await api.taskDetail(id));
+      setDetail(await api.taskDetail(task.id));
     } catch (e) {
       setDetailError(e instanceof ApiError ? e.message : '打开历史任务失败');
     } finally {
@@ -107,24 +121,39 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
     }
   }
 
+  async function updateHistoryTask(
+    task: HistoryTaskSummary,
+    patch: TaskHistoryPreferencePatch,
+  ): Promise<void> {
+    const { preference } = await api.updateTaskHistoryPreference(task.kind, task.id, patch);
+    setHistory((current) => applyTaskHistoryPreferences(current, [preference]));
+    if (patch.hidden && (
+      (task.kind === 'current' && task.id === currentTaskId)
+      || (task.kind === 'legacy' && task.id === detail?.task.id)
+    )) {
+      newTask();
+    }
+  }
+
   return (
-    <div className="workbench" style={{ display: 'grid', gridTemplateColumns: '272px 1fr', height: '100%' }}>
+    <div className="workbench">
       <Sidebar
         user={user}
         history={history}
         activeTaskId={currentTaskId}
         onNewTask={newTask}
         onOpenLabs={() => setView('labs')}
-        onOpenTask={(id) => { void openTask(id); }}
+        onOpenTask={(task) => { void openTask(task); }}
+        onUpdateTask={updateHistoryTask}
         onLogout={onLogout}
       />
       {view === 'labs' ? (
-        <main style={{ height: '100%', overflow: 'hidden' }}>
+        <main className="workbench-main">
           <Labs />
         </main>
       ) : view === 'history' ? (
-        <main style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-          <div style={{ flex: 1, overflowY: 'auto', padding: '32px 0' }}>
+        <main className="workbench-main">
+          <div className="workbench-scroll">
             <div className="chat-column">
               {detailLoading && <Loading text="加载历史任务…" />}
               {detailError && <ErrorCard msg={detailError} />}
@@ -133,8 +162,8 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
           </div>
         </main>
       ) : (
-      <main style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-        <div style={{ flex: 1, overflowY: 'auto', padding: '32px 0' }}>
+      <main className="workbench-main">
+        <div className="workbench-scroll">
           <div className={`chat-column${deliverable?.presentationMode === 'multimodal' ? ' chat-column-report' : ''}`} aria-live="polite">
             {phase === 'idle' && <Welcome onPick={flow.submitInput} />}
             {phase === 'loading-task' && <Loading text="正在读取任务状态…" />}

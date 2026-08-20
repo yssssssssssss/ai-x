@@ -9,7 +9,12 @@ export {
   selectAuthoritativeFailedStep,
 } from '../../../packages/api-contract/control-workflow.ts';
 
-import type { ExecLogRow, TaskSummary } from '../../../packages/api-contract/http.ts';
+import type {
+  ExecLogRow,
+  TaskHistoryKind,
+  TaskHistoryPreference,
+  TaskSummary,
+} from '../../../packages/api-contract/http.ts';
 
 export interface ConfirmationRequirement {
   key: string;
@@ -25,13 +30,17 @@ export interface CurrentHistoryTaskSummary {
   state: string;
   createdAt: string;
   updatedAt: string;
+  requiresAction?: boolean;
 }
 
 export interface HistoryTaskSummary extends TaskSummary {
-  kind: 'legacy' | 'current';
+  kind: TaskHistoryKind;
+  displayName?: string | null;
+  pinnedAt?: string | null;
+  requiresAction?: boolean;
 }
 
-export type TaskHistoryGroup = 'action' | 'running' | 'finished';
+export type TaskHistoryGroup = 'pending' | 'running' | 'completed' | 'failed';
 export type TaskStateTone = 'action' | 'running' | 'success' | 'warning' | 'danger' | 'muted';
 
 export interface TaskStatePresentation {
@@ -41,20 +50,20 @@ export interface TaskStatePresentation {
 }
 
 const TASK_STATE_PRESENTATIONS: Record<ControlWorkflowState, TaskStatePresentation> = {
-  awaiting_clarification: { label: '待补充', group: 'action', tone: 'action' },
-  awaiting_selection: { label: '待选方案', group: 'action', tone: 'action' },
-  awaiting_confirmation: { label: '待确认', group: 'action', tone: 'action' },
+  awaiting_clarification: { label: '待补充', group: 'pending', tone: 'action' },
+  awaiting_selection: { label: '待选方案', group: 'pending', tone: 'action' },
+  awaiting_confirmation: { label: '待确认', group: 'pending', tone: 'action' },
   awaiting_approval: { label: '审批中', group: 'running', tone: 'running' },
-  ready: { label: '待执行', group: 'action', tone: 'action' },
+  ready: { label: '待执行', group: 'pending', tone: 'action' },
   executing: { label: '执行中', group: 'running', tone: 'running' },
-  paused: { label: '已暂停', group: 'action', tone: 'warning' },
+  paused: { label: '已暂停', group: 'pending', tone: 'warning' },
   reviewing: { label: '质量复核中', group: 'running', tone: 'running' },
   composing_report: { label: '报告生成中', group: 'running', tone: 'running' },
-  completed: { label: '已完成', group: 'finished', tone: 'success' },
-  completed_with_gaps: { label: '已完成·有缺口', group: 'finished', tone: 'warning' },
-  failed: { label: '失败', group: 'finished', tone: 'danger' },
-  cancelled: { label: '已取消', group: 'finished', tone: 'muted' },
-  rejected: { label: '已驳回', group: 'finished', tone: 'danger' },
+  completed: { label: '已完成', group: 'completed', tone: 'success' },
+  completed_with_gaps: { label: '已完成·有缺口', group: 'completed', tone: 'warning' },
+  failed: { label: '失败', group: 'failed', tone: 'danger' },
+  cancelled: { label: '已取消', group: 'failed', tone: 'muted' },
+  rejected: { label: '已驳回', group: 'failed', tone: 'danger' },
 };
 
 function isControlWorkflowState(state: string): state is ControlWorkflowState {
@@ -66,9 +75,73 @@ export function taskStatePresentation(state: string): TaskStatePresentation {
   return TASK_STATE_PRESENTATIONS[state];
 }
 
+export function historyTaskPresentation(task: HistoryTaskSummary): TaskStatePresentation {
+  if (task.kind === 'current') {
+    if (task.status === 'awaiting_approval' && task.requiresAction) {
+      return { label: '待审批', group: 'pending', tone: 'action' };
+    }
+    try {
+      return taskStatePresentation(task.status);
+    } catch {
+      return { label: '状态异常', group: 'failed', tone: 'danger' };
+    }
+  }
+  if (['completed', 'completed_with_gaps', 'succeeded', 'done'].includes(task.status)) {
+    return {
+      label: task.status === 'completed_with_gaps' ? '历史·已完成·有缺口' : '历史·已完成',
+      group: 'completed',
+      tone: task.status === 'completed_with_gaps' ? 'warning' : 'success',
+    };
+  }
+  if (['failed', 'cancelled', 'rejected'].includes(task.status)) {
+    return {
+      label: task.status === 'cancelled' ? '历史·已取消' : task.status === 'rejected' ? '历史·已驳回' : '历史·失败',
+      group: 'failed',
+      tone: task.status === 'cancelled' ? 'muted' : 'danger',
+    };
+  }
+  if (['running', 'executing', 'reviewing', 'composing_report'].includes(task.status)) {
+    return { label: `历史·${task.status}`, group: 'running', tone: 'running' };
+  }
+  return { label: `历史·${task.status}`, group: 'pending', tone: 'muted' };
+}
+
+function timestamp(value: string | undefined): number {
+  const parsed = Date.parse(value ?? '');
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+export function applyTaskHistoryPreferences(
+  tasks: HistoryTaskSummary[],
+  preferences: TaskHistoryPreference[],
+): HistoryTaskSummary[] {
+  const preferencesByTask = new Map(
+    preferences.map((preference) => [`${preference.taskKind}:${preference.taskId}`, preference]),
+  );
+  return tasks.flatMap((task): HistoryTaskSummary[] => {
+    const preference = preferencesByTask.get(`${task.kind}:${task.id}`);
+    if (preference?.hiddenAt) return [];
+    if (!preference) return [task];
+    return [{
+      ...task,
+      displayName: preference.displayName,
+      pinnedAt: preference.pinnedAt,
+    }];
+  }).sort((left, right) => {
+    if (left.pinnedAt && !right.pinnedAt) return -1;
+    if (!left.pinnedAt && right.pinnedAt) return 1;
+    if (left.pinnedAt && right.pinnedAt) {
+      const pinnedOrder = timestamp(right.pinnedAt) - timestamp(left.pinnedAt);
+      if (pinnedOrder !== 0) return pinnedOrder;
+    }
+    return timestamp(right.updated_at ?? right.created_at) - timestamp(left.updated_at ?? left.created_at);
+  });
+}
+
 export function mergeTaskHistory(
   legacyTasks: TaskSummary[],
   currentTasks: CurrentHistoryTaskSummary[],
+  preferences: TaskHistoryPreference[] = [],
 ): HistoryTaskSummary[] {
   const history: HistoryTaskSummary[] = [
     ...legacyTasks.map((task) => ({ ...task, kind: 'legacy' as const })),
@@ -80,13 +153,10 @@ export function mergeTaskHistory(
       status: task.state,
       created_at: task.createdAt,
       ...(task.updatedAt ? { updated_at: task.updatedAt } : {}),
+      ...(task.requiresAction ? { requiresAction: true } : {}),
     })),
   ];
-  return history.sort((left, right) => {
-    const leftTime = Date.parse(left.created_at ?? '');
-    const rightTime = Date.parse(right.created_at ?? '');
-    return (Number.isNaN(rightTime) ? 0 : rightTime) - (Number.isNaN(leftTime) ? 0 : leftTime);
-  });
+  return applyTaskHistoryPreferences(history, preferences);
 }
 export interface RequestIdCrypto {
   randomUUID?: () => string;
