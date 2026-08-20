@@ -4,7 +4,11 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
-const WebSocket = require(path.join(process.env.HOME, '.claude/skills/browser/node_modules/ws'));
+const WebSocket = globalThis.WebSocket;
+
+if (typeof WebSocket !== 'function') {
+  throw new Error('This exporter requires Node.js 22 or newer with built-in WebSocket support.');
+}
 
 const OUT = __dirname;
 const FILE = pathToFileURL(path.join(__dirname, '_render.html')).href;
@@ -30,19 +34,37 @@ function httpJSON(pathname, method = 'GET') {
 async function main() {
   const targets = await httpJSON('/json');
   let page = targets.find(t => t.type === 'page');
-  const ws = new WebSocket(page.webSocketDebuggerUrl, { perMessageDeflate: false });
+  const ws = new WebSocket(page.webSocketDebuggerUrl);
   let id = 0; const pending = new Map();
   const send = (method, params = {}) => new Promise((resolve, reject) => {
     const mid = ++id; pending.set(mid, { resolve, reject });
     ws.send(JSON.stringify({ id: mid, method, params }));
   });
+  const rejectPending = error => {
+    for (const { reject } of pending.values()) reject(error);
+    pending.clear();
+  };
   const events = {};
-  ws.on('message', m => {
-    const msg = JSON.parse(m);
+  ws.addEventListener('message', event => {
+    const msg = JSON.parse(event.data);
     if (msg.id && pending.has(msg.id)) { pending.get(msg.id).resolve(msg.result); pending.delete(msg.id); }
     else if (msg.method && events[msg.method]) events[msg.method](msg.params);
   });
-  await new Promise(r => ws.on('open', r));
+  const opened = new Promise((resolve, reject) => {
+    ws.addEventListener('open', resolve, { once: true });
+    ws.addEventListener('error', event => {
+      const error = event.error instanceof Error ? event.error : new Error(event.message || 'CDP WebSocket error');
+      rejectPending(error);
+      reject(error);
+    });
+    ws.addEventListener('close', event => {
+      const detail = event.reason ? `${event.code}: ${event.reason}` : event.code;
+      const error = new Error(`CDP WebSocket closed (${detail})`);
+      rejectPending(error);
+      reject(error);
+    });
+  });
+  await opened;
 
   await send('Page.enable');
   await send('Runtime.enable');
