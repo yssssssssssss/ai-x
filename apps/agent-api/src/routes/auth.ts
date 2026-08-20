@@ -7,6 +7,11 @@ import { requireAuth } from '../middleware.ts';
 
 export const authRouter = Router();
 
+function devQuickLoginEmail(): string | null {
+  if (process.env.NODE_ENV === 'production') return null;
+  return process.env.DEV_QUICK_LOGIN_EMAIL?.trim() || null;
+}
+
 function publicUser(user: { id: string; email: string; display_name: string; role: string }) {
   return {
     id: user.id,
@@ -43,6 +48,29 @@ authRouter.post('/login', async (req, res) => {
     res.status(401).json({ error: '邮箱或密码错误' });
     return;
   }
+  const token = signToken({ userId: user.id, email: user.email });
+  res.json({ token, user: publicUser(user) });
+});
+
+authRouter.get('/methods', (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({ quickLogin: devQuickLoginEmail() !== null });
+});
+
+authRouter.post('/quick-login', async (_req, res) => {
+  const email = devQuickLoginEmail();
+  if (!email) {
+    res.status(404).json({ error: '快捷登录未启用' });
+    return;
+  }
+
+  const user = await getUserByEmail(email);
+  if (!user || user.status !== 'active') {
+    res.status(503).json({ error: '快捷登录账号不可用' });
+    return;
+  }
+
+  res.set('Cache-Control', 'no-store');
   const token = signToken({ userId: user.id, email: user.email });
   res.json({ token, user: publicUser(user) });
 });

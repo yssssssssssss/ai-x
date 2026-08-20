@@ -76,10 +76,13 @@ const scopedDatabase = new ScopedMigrationDatabase(database, schema);
 const controlRepository = new ControlPlaneRepository(scopedDatabase);
 const originalJwtSecret = process.env.JWT_SECRET;
 const originalPgOptions = process.env.PGOPTIONS;
+const originalNodeEnv = process.env.NODE_ENV;
+const originalDevQuickLoginEmail = process.env.DEV_QUICK_LOGIN_EMAIL;
 
 let repository: RepositoryModule;
 let closeRepositoryPool: typeof ClosePool | undefined;
 let ownerUserId = '';
+let ownerUserEmail = '';
 let foreignUserId = '';
 let inactiveUserId = '';
 let inactiveUserEmail = '';
@@ -88,7 +91,7 @@ let conversationId = '';
 let currentTaskId = '';
 let currentPlanVersionId = '';
 
-function restoreEnvironment(name: 'JWT_SECRET' | 'PGOPTIONS', value: string | undefined): void {
+function restoreEnvironment(name: string, value: string | undefined): void {
   if (value === undefined) {
     delete process.env[name];
     return;
@@ -178,6 +181,7 @@ before(async () => {
     displayName: 'auth owner',
     passwordHash: 'x',
   });
+  ownerUserEmail = owner.email;
   const foreign = await repository.createUser({
     email: `auth-foreign-${randomUUID()}@test.local`,
     displayName: 'foreign owner',
@@ -233,6 +237,8 @@ before(async () => {
 
 afterEach(() => {
   restoreEnvironment('JWT_SECRET', originalJwtSecret);
+  restoreEnvironment('NODE_ENV', originalNodeEnv);
+  restoreEnvironment('DEV_QUICK_LOGIN_EMAIL', originalDevQuickLoginEmail);
 });
 
 after(async () => {
@@ -245,6 +251,8 @@ after(async () => {
       await database.end();
       restoreEnvironment('JWT_SECRET', originalJwtSecret);
       restoreEnvironment('PGOPTIONS', originalPgOptions);
+      restoreEnvironment('NODE_ENV', originalNodeEnv);
+      restoreEnvironment('DEV_QUICK_LOGIN_EMAIL', originalDevQuickLoginEmail);
     }
   }
 });
@@ -278,6 +286,91 @@ test('agent API factory starts when JWT_SECRET is configured', async () => {
   const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
 
   assert.doesNotThrow(() => createAgentApiApp());
+});
+
+test('quick login is disabled by default and in production', async () => {
+  process.env.JWT_SECRET = `test-only-${randomUUID()}`;
+  process.env.NODE_ENV = 'test';
+  delete process.env.DEV_QUICK_LOGIN_EMAIL;
+  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+  const server = createAgentApiApp().listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const baseUrl = `http://127.0.0.1:${address.port}/api/auth`;
+
+  try {
+    const disabledMethods = await fetch(`${baseUrl}/methods`);
+    assert.deepEqual(await disabledMethods.json(), { quickLogin: false });
+    assert.equal((await fetch(`${baseUrl}/quick-login`, { method: 'POST' })).status, 404);
+
+    process.env.DEV_QUICK_LOGIN_EMAIL = ownerUserEmail;
+    process.env.NODE_ENV = 'production';
+    const productionMethods = await fetch(`${baseUrl}/methods`);
+    assert.deepEqual(await productionMethods.json(), { quickLogin: false });
+    assert.equal((await fetch(`${baseUrl}/quick-login`, { method: 'POST' })).status, 404);
+  } finally {
+    server.close();
+    await once(server, 'close');
+  }
+});
+
+test('quick login issues a normal JWT for the configured active user', async () => {
+  process.env.JWT_SECRET = `test-only-${randomUUID()}`;
+  process.env.NODE_ENV = 'test';
+  process.env.DEV_QUICK_LOGIN_EMAIL = ownerUserEmail;
+  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+  const server = createAgentApiApp().listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const baseUrl = `http://127.0.0.1:${address.port}/api/auth`;
+
+  try {
+    const methods = await fetch(`${baseUrl}/methods`);
+    assert.deepEqual(await methods.json(), { quickLogin: true });
+
+    const response = await fetch(`${baseUrl}/quick-login`, { method: 'POST' });
+    assert.equal(response.status, 200, await response.clone().text());
+    const body = await response.json() as { token: string; user: { id: string; email: string } };
+    assert.equal(body.user.id, ownerUserId);
+    assert.equal(body.user.email, ownerUserEmail);
+    assert.ok(body.token);
+
+    const me = await fetch(`${baseUrl}/me`, {
+      headers: { Authorization: `Bearer ${body.token}` },
+    });
+    assert.equal(me.status, 200, await me.clone().text());
+  } finally {
+    server.close();
+    await once(server, 'close');
+  }
+});
+
+test('quick login does not issue a token for an inactive configured user', async () => {
+  process.env.JWT_SECRET = `test-only-${randomUUID()}`;
+  process.env.NODE_ENV = 'test';
+  process.env.DEV_QUICK_LOGIN_EMAIL = inactiveUserEmail;
+  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+  const server = createAgentApiApp().listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:${address.port}/api/auth/quick-login`,
+      { method: 'POST' },
+    );
+    assert.equal(response.status, 503);
+    const serialized = JSON.stringify(await response.json());
+    assert.equal(serialized.includes(inactiveUserEmail), false);
+    assert.equal(serialized.includes(inactiveUserId), false);
+    assert.equal(serialized.includes(inactiveUserDisplayName), false);
+  } finally {
+    server.close();
+    await once(server, 'close');
+  }
 });
 
 test('conversation routes reject inactive users without leaking user details', async () => {
