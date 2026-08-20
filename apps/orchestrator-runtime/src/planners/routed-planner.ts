@@ -39,7 +39,14 @@ import {
   ProblemGraphPlanner,
   type ProblemGraphProvenance,
 } from './problem-graph-planner.ts';
-import { PlanCompiler, PlanCompilerValidationError, type CurrentPlanCandidateProposal } from './plan-compiler.ts';
+import {
+  MAX_BROWSER_CAPTURE_COUNT,
+  MAX_BROWSER_FALLBACK_RESULTS,
+  PlanCompiler,
+  PlanCompilerValidationError,
+  frozenVisualSourceQueries,
+  type CurrentPlanCandidateProposal,
+} from './plan-compiler.ts';
 import { loadSchemaText, resolveSchema } from '../runtime/schema-registry.ts';
 import { SchemaValidationError, type SchemaValidator } from '../schema/validator.ts';
 
@@ -214,8 +221,7 @@ export interface CurrentPlanArtifacts {
 }
 
 const ROUTED_STEP_LIMITS = { depth: 8, speed: 4 } as const;
-const DEFAULT_BROWSER_CAPTURE_COUNT = 6;
-const MAX_BROWSER_FALLBACK_RESULTS = 20;
+const DEFAULT_BROWSER_CAPTURE_COUNT = MAX_BROWSER_CAPTURE_COUNT;
 
 function scoringDimensions(
   input: Record<string, unknown>,
@@ -305,8 +311,9 @@ function freezeCompetitiveScoringWeights(
 
 function freezePlaywrightFallbackPools(
   candidate: Omit<CurrentPlanCandidateProposal, 'activated_nodes'>,
+  researchGoal: string,
 ): Omit<CurrentPlanCandidateProposal, 'activated_nodes'> {
-  const requiredResultsBySourceStep = new Map<number, number>();
+  const capturePagesBySourceStep = new Map<number, number>();
   const captureOptionsByStep = new Map<number, Record<string, unknown>>();
   for (const [stepIndex, step] of candidate.steps.entries()) {
     if (step.actor_id !== 'playwright-page-capture') continue;
@@ -324,16 +331,15 @@ function freezePlaywrightFallbackPools(
       max_pages: maxPages,
       unique_hostnames: true,
     });
-    const requiredResults = Math.min(MAX_BROWSER_FALLBACK_RESULTS, maxPages * 2);
     for (const binding of step.input_bindings) {
       if (binding.target_pointer !== '/pages' || binding.source_pointer !== '/results') continue;
-      requiredResultsBySourceStep.set(
+      capturePagesBySourceStep.set(
         binding.source_step_no,
-        Math.max(requiredResultsBySourceStep.get(binding.source_step_no) ?? 0, requiredResults),
+        Math.max(capturePagesBySourceStep.get(binding.source_step_no) ?? 0, maxPages),
       );
     }
   }
-  if (requiredResultsBySourceStep.size === 0) return candidate;
+  if (capturePagesBySourceStep.size === 0) return candidate;
   return {
     ...candidate,
     steps: candidate.steps.map((step, index) => {
@@ -346,20 +352,24 @@ function freezePlaywrightFallbackPools(
           input: { ...step.input, capture: frozenCapture },
         };
       }
-      const requiredResults = requiredResultsBySourceStep.get(index + 1);
-      if (step.actor_id !== 'tavily-web-search' || requiredResults === undefined) return step;
-      let input = step.input;
-      if (typeof input.query === 'string') {
-        const queries = input.query.split(/\r?\n/u).map((query) => query.trim()).filter(Boolean);
-        if (queries.length > 1) input = { ...input, query: queries };
-      }
-      return { ...step, input: { ...input, max_results: requiredResults } };
+      const maxPages = capturePagesBySourceStep.get(index + 1);
+      if (step.actor_id !== 'tavily-web-search' || maxPages === undefined) return step;
+      const maxResults = Math.min(MAX_BROWSER_FALLBACK_RESULTS, maxPages * 2);
+      return {
+        ...step,
+        input: {
+          ...step.input,
+          query: frozenVisualSourceQueries(researchGoal, maxPages),
+          max_results: maxResults,
+        },
+      };
     }),
   };
 }
 
 function freezeCompetitiveScoringWeightEnvelope(input: {
   candidates: Array<Omit<CurrentPlanCandidateProposal, 'activated_nodes'>>;
+  researchGoal: string;
   fallbackDimensions?: readonly string[];
   explicitWeights?: Readonly<Record<string, number>>;
 }): {
@@ -368,7 +378,7 @@ function freezeCompetitiveScoringWeightEnvelope(input: {
   return {
     candidates: input.candidates.map((candidate) => (
       freezeCompetitiveScoringWeights(
-        freezePlaywrightFallbackPools(candidate),
+        freezePlaywrightFallbackPools(candidate, input.researchGoal),
         input.fallbackDimensions,
         input.explicitWeights,
       )
@@ -712,6 +722,9 @@ export class RoutedPlanner implements PlanStrategy {
         throw new Error(`Current direct skill ${ctx.direct.skillName} has unresolved optional tools`);
       }
       const plannedTools = [...requiredTools, ...optionalTools];
+      const hasPlannedBrowserCapture = plannedTools.some(
+        ({ id }) => id === 'playwright-page-capture',
+      );
       const tavilyStepNo = plannedTools.findIndex(({ id }) => id === 'tavily-web-search') + 1;
       const toolSteps: CurrentPlanStep[] = plannedTools.map((tool, index) => {
         const manifest = manifestById.get(tool.id);
@@ -723,6 +736,16 @@ export class RoutedPlanner implements PlanStrategy {
           ctx.requirement,
         );
         const isBrowserCapture = tool.id === 'playwright-page-capture';
+        if (tool.id === 'tavily-web-search' && hasPlannedBrowserCapture) {
+          input.query = frozenVisualSourceQueries(
+            ctx.requirement.research_goal,
+            DEFAULT_BROWSER_CAPTURE_COUNT,
+          );
+          input.max_results = Math.min(
+            MAX_BROWSER_FALLBACK_RESULTS,
+            DEFAULT_BROWSER_CAPTURE_COUNT * 2,
+          );
+        }
         if (isBrowserCapture) {
           if (tavilyStepNo < 1 || tavilyStepNo >= index + 1) {
             throw new Error('Playwright capture requires an earlier Tavily step');
@@ -855,7 +878,7 @@ export class RoutedPlanner implements PlanStrategy {
         const { activated_nodes, ...proposal } = candidate;
         return {
           ...freezeCompetitiveScoringWeights(
-            freezePlaywrightFallbackPools(proposal),
+            freezePlaywrightFallbackPools(proposal, ctx.requirement.research_goal),
             ctx.requirement.comparison_dimensions,
             explicitWeights,
           ),
@@ -946,7 +969,7 @@ export class RoutedPlanner implements PlanStrategy {
         `Skill step 的 expected_outputs 及后续 binding source_pointer 必须位于统一输出根 /payload 下。` +
         `Skill 的 required_tools 必须作为更早的 Tool step；所有引用必须真实存在；不得使用 capability_resolution.rejected 中的 actor。` +
         `available optional Tool 也必须作为更早步骤；playwright-page-capture 必须晚于 tavily-web-search、早于对应 Skill，step.input.pages 预置为空数组，只能通过 {target_pointer:"/pages",source_step_no:<Tavily step>,source_pointer:"/results"} 绑定来源，禁止手写 URL。` +
-        `playwright-page-capture 必须显式设置 capture.max_pages 且 capture.unique_hostnames=true；其上游 Tavily step 使用 query 字符串数组逐项检索明确目标，max_results 必须固定为 capture.max_pages 的两倍（最多20），用于页面失败后的备用候选。` +
+        `playwright-page-capture 必须显式设置 capture.max_pages 且 capture.unique_hostnames=true；其上游 Tavily step 的 query 会按 research_goal 与 capture.max_pages 冻结为有序、唯一的字符串数组（max_pages=1 时仍为2项，最多6项），max_results 固定为 capture.max_pages 的两倍（当前六页上限下最多12），用于页面失败后的备用候选。` +
         `Registry optional Tool 不得作为 input_bindings 的 source；下游 Skill 只需在 depends_on 中依赖该 Tool，运行时会通过 prior_outputs 提供其输出。` +
         `requirement.comparison_dimensions 存在时，competitive-web-research Skill step 必须在 input.dimensions 中逐项保序，并写入同 key 顺序的 scoring_weights；用户未指定权重时各维等权且总和为 1。comparison_dimensions 不存在时不得自行补造维度或权重。` +
         (validationFeedback.length > 0
@@ -977,6 +1000,7 @@ export class RoutedPlanner implements PlanStrategy {
     if (validationFeedback.length === 0) {
       candidateEnvelope = freezeCompetitiveScoringWeightEnvelope({
         ...planGen.data,
+        researchGoal: ctx.requirement.research_goal,
         fallbackDimensions: ctx.requirement.comparison_dimensions,
         explicitWeights,
       });
@@ -988,6 +1012,7 @@ export class RoutedPlanner implements PlanStrategy {
       validator.validateSchemaOrThrow(currentPlanProposalSchema, planGen.data, 'current-plan-candidates');
       candidateEnvelope = freezeCompetitiveScoringWeightEnvelope({
         ...planGen.data,
+        researchGoal: ctx.requirement.research_goal,
         fallbackDimensions: ctx.requirement.comparison_dimensions,
         explicitWeights,
       });
@@ -1001,6 +1026,7 @@ export class RoutedPlanner implements PlanStrategy {
         validator.validateSchemaOrThrow(currentPlanProposalSchema, planGen.data, 'current-plan-candidates');
         candidateEnvelope = freezeCompetitiveScoringWeightEnvelope({
           ...planGen.data,
+          researchGoal: ctx.requirement.research_goal,
           fallbackDimensions: ctx.requirement.comparison_dimensions,
           explicitWeights,
         });

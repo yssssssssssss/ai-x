@@ -157,6 +157,14 @@ function capabilityResolution(): CapabilityResolution {
 }
 
 const playwrightToolId = 'playwright-page-capture';
+const frozenVisualQueries = [
+  `${task.research_goal} 官方产品页面`,
+  `${task.research_goal} 官方功能文档`,
+  `${task.research_goal} 官方公告`,
+  `${task.research_goal} 第三方评测`,
+  `${task.research_goal} 行业分析`,
+  `${task.research_goal} 用户反馈`,
+];
 
 function optionalCapabilityResolution(
   status: 'available' | 'unavailable',
@@ -231,7 +239,11 @@ function validCandidate(id: 'depth' | 'speed' = 'depth'): CurrentPlanCandidatePr
 
 function candidateWithBrowserCapture(id: 'depth' | 'speed' = 'depth'): CurrentPlanCandidateProposal {
   const candidate = validCandidate(id);
-  candidate.steps[0]!.input = { ...candidate.steps[0]!.input, max_results: 12 };
+  candidate.steps[0]!.input = {
+    ...candidate.steps[0]!.input,
+    query: [...frozenVisualQueries],
+    max_results: 12,
+  };
   candidate.steps.splice(1, 0, step({
     step_name: '采集网页视觉证据',
     actor_type: 'tool',
@@ -355,6 +367,7 @@ test('freezes available optional Playwright with the exact Tavily results bindin
     source_step_no: 1,
     source_pointer: '/results',
   }]);
+  assert.deepEqual(compiled.plan.steps[0]?.input.query, frozenVisualQueries);
   assert.equal(compiled.plan.steps[0]?.input.max_results, 12);
   assert.deepEqual(compiled.plan.steps[1]?.input.capture, {
     mode: 'auto',
@@ -366,6 +379,51 @@ test('freezes available optional Playwright with the exact Tavily results bindin
     compiled.plan.capability_decisions.eligible[0]?.optional_tool_decisions,
     [{ tool_id: playwrightToolId, status: 'available' }],
   );
+});
+
+test('keeps visual source queries and fallback results aligned at the one-page lower bound', () => {
+  const value = input(candidateWithBrowserCapture());
+  value.capability_resolution = optionalCapabilityResolution('available');
+  value.candidate.steps[0]!.input.query = frozenVisualQueries.slice(0, 2);
+  value.candidate.steps[0]!.input.max_results = 2;
+  (value.candidate.steps[1]!.input.capture as Record<string, unknown>).max_pages = 1;
+
+  const compiled = new PlanCompiler().compile(value);
+  assert.deepEqual(compiled.plan.steps[0]?.input.query, frozenVisualQueries.slice(0, 2));
+  assert.equal(compiled.plan.steps[0]?.input.max_results, 2);
+});
+
+test('rejects scalar, duplicate, undersized, oversized, or drifted visual source query arrays', () => {
+  const scenarios: Array<{
+    issue: string;
+    query: unknown;
+  }> = [
+    { issue: 'tavily.query.scalar', query: task.research_goal },
+    {
+      issue: 'tavily.query.duplicate',
+      query: [...frozenVisualQueries.slice(0, -1), frozenVisualQueries[0]],
+    },
+    { issue: 'tavily.query.undersized', query: frozenVisualQueries.slice(0, -1) },
+    { issue: 'tavily.query.oversized', query: [...frozenVisualQueries, `${task.research_goal} 补充来源`] },
+    {
+      issue: 'tavily.query.drift',
+      query: [...frozenVisualQueries.slice(0, -1), `${task.research_goal} 非冻结来源`],
+    },
+  ];
+  for (const scenario of scenarios) {
+    const value = input(candidateWithBrowserCapture());
+    value.capability_resolution = optionalCapabilityResolution('available');
+    value.candidate.steps[0]!.input.query = scenario.query;
+    assert.throws(
+      () => new PlanCompiler().compile(value),
+      (error: unknown) => {
+        assert.ok(error instanceof PlanCompilerValidationError);
+        assert.equal(error.kind, 'visual_fallback_contract_invalid');
+        assert.match(error.message, new RegExp(scenario.issue.replaceAll('.', '\\.')));
+        return true;
+      },
+    );
+  }
 });
 
 test('turns unavailable optional Playwright into one frozen capability gap without a step', () => {
@@ -970,6 +1028,11 @@ class CurrentPlanningLLM implements LLMClient {
         const { activated_nodes: _nodes, ...candidate } = hasAvailablePlaywright
           ? candidateWithBrowserCapture(id)
           : validCandidate(id);
+        if (hasAvailablePlaywright) {
+          const tavilyInput = candidate.steps.find(({ actor_id }) => actor_id === 'tavily-web-search')!.input;
+          if (id === 'depth') tavilyInput.query = task.research_goal;
+          else delete tavilyInput.query;
+        }
         if (defect === 'missing-weights') {
           delete candidate.steps.find((candidateStep) => (
             candidateStep.actor_type === 'skill'
@@ -1471,6 +1534,8 @@ test('active qualified Playwright is planned as Tavily then capture then Skill i
         const captureIndex = actorIds.indexOf(playwrightToolId);
         const skillIndex = actorIds.indexOf(eligibleSkill.id);
         assert.ok(tavilyIndex >= 0 && tavilyIndex < captureIndex && captureIndex < skillIndex);
+        assert.deepEqual(candidate.steps[tavilyIndex]?.input.query, frozenVisualQueries, mode);
+        assert.equal(new Set(candidate.steps[tavilyIndex]?.input.query as string[]).size, 6, mode);
         assert.equal(candidate.steps[tavilyIndex]?.input.max_results, 12);
         assert.deepEqual(candidate.steps[captureIndex]?.input.pages, []);
         assert.equal(
@@ -1498,6 +1563,9 @@ test('active qualified Playwright is planned as Tavily then capture then Skill i
         activated_nodes: result.activatedNodes,
         requireCompetitiveWeightContract: true,
       });
+      for (const candidate of result.candidates) {
+        assert.doesNotThrow(() => compile(candidate), mode);
+      }
       const missingDiversity = structuredClone(result.candidates[0]!);
       const missingCapture = missingDiversity.steps.find(({ actor_id }) => actor_id === playwrightToolId)!;
       delete (missingCapture.input.capture as Record<string, unknown>).unique_hostnames;
@@ -1507,6 +1575,18 @@ test('active qualified Playwright is planned as Tavily then capture then Skill i
           assert.ok(error instanceof PlanCompilerValidationError);
           assert.equal(error.kind, 'visual_fallback_contract_invalid', mode);
           assert.match(error.message, /capture\.unique_hostnames/u);
+          return true;
+        },
+      );
+      const driftedQueries = structuredClone(result.candidates[0]!);
+      driftedQueries.steps.find(({ actor_id }) => actor_id === 'tavily-web-search')!
+        .input.query = [...frozenVisualQueries].reverse();
+      assert.throws(
+        () => compile(driftedQueries),
+        (error: unknown) => {
+          assert.ok(error instanceof PlanCompilerValidationError);
+          assert.equal(error.kind, 'visual_fallback_contract_invalid', mode);
+          assert.match(error.message, /tavily\.query\.drift/u);
           return true;
         },
       );
