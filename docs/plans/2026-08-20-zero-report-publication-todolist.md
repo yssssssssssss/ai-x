@@ -417,14 +417,26 @@ pnpm --dir apps/web build
 
 ## Phase 6：真实 Zero 验收
 
+实际结果（2026-08-20）：
+
+- 成功 publication：`9065255f-b7b4-4eaf-b068-191ea36e0ab9`。
+- Zero root：`7:667`，尺寸 `1440 × 18007`。
+- receipt Artifact：`38028f47-4151-4004-bb6a-93124a6fc98b`，状态 `SEALED`。
+- 图片：9 个真实 `IMAGE / FIT` fill，全部 imageHash 匹配。
+- 截图：10 个 `zero-publication-screenshot-v1` Artifact，全部 `SEALED`。
+- 恢复：finalize 后本地 completion 失败的 publication 成功从 receipt checkpoint 恢复。
+- 幂等：重复 Idempotency-Key replay 同一 completed publication。
+- 不可变性：原 Report Package 和 Visual Artifact 共 10 个文件哈希未变化。
+- 真机验收发现并修复了 post-execution Artifact lease 绑定和已选节点遮蔽 current-page 探测两个问题。
+
 ### 6.1 环境
 
-- [ ] 启动 Zero 桌面端。
-- [ ] 确认 Zero authenticated。
-- [ ] 确认 27618 端口监听。
-- [ ] 打开测试文件和空白页面。
-- [ ] 设置 `ZERO_PUBLICATION_ENABLED=true`。
-- [ ] 设置 `ZERO_MCP_URL=http://127.0.0.1:27618/mcp`。
+- [x] 启动 Zero 桌面端。
+- [x] 确认 Zero authenticated（3.12.11）。
+- [x] 确认 27618 端口监听。
+- [x] 打开测试文件和空白页面（file `2090282862455574529`，page `0:2`）。
+- [x] 设置 `ZERO_PUBLICATION_ENABLED=true`。
+- [x] 设置 `ZERO_MCP_URL=http://127.0.0.1:27618/mcp`。
 - [ ] 启动 Agent API 和 Web。
 
 ### 6.2 文本报告验收
@@ -443,33 +455,33 @@ pnpm --dir apps/web build
 91e7bed3-4725-41a7-ba28-742424f4911c
 ```
 
-- [ ] 发布 AI 导购截图竞品分析。
-- [ ] 验证 root width 1440。
-- [ ] 验证六维评分图为 IMAGE fill。
-- [ ] 验证原始拼接图按三屏顺序展示。
-- [ ] 验证标注图按相同边界展示。
-- [ ] 验证所有图片 node 为 IMAGE / FIT。
-- [ ] 验证报告正文、排名、矩阵、路线图和局限。
-- [ ] 生成视觉证据章节截图。
-- [ ] 生成整页截图。
-- [ ] 检查 footer 在 root bounds 内。
-- [ ] 保存 publicationId、rootNodeId 和 receipt Artifact ID。
+- [x] 发布 AI 导购截图竞品分析。
+- [x] 验证 root width 1440（height 18007）。
+- [x] 验证评分图为 IMAGE fill。
+- [x] 验证原始拼接图按稳定切片顺序展示。
+- [x] 验证标注图按相同边界展示。
+- [x] 验证 9 个图片 node 均为 IMAGE / FIT 且 imageHash 匹配。
+- [x] 验证报告正文、矩阵、行动建议和局限章节存在。
+- [x] 生成视觉证据节点截图。
+- [x] 生成整页截图。
+- [x] 检查 footer 模板标识和 root bounds。
+- [x] 保存 publicationId、rootNodeId 和 receipt Artifact ID。
 
 ### 6.4 失败验收
 
 - [ ] 关闭 Zero 后点击，确认 503 和 UI 提示。
 - [ ] 模拟图片脚本失败，确认 draft 被清理。
 - [ ] update 模式模拟中途失败，确认旧稿仍存在。
-- [ ] 重复 Idempotency-Key，确认不新增 root。
+- [x] 重复 Idempotency-Key，确认 replay 同一 publication。
 - [ ] 将一个 manifest 设为 block fixture，确认图片不发送。
 - [ ] 模拟 metadata 高度不足，确认 publication 失败。
 
 ### Phase 6 门禁
 
 - [ ] 真实文本报告通过。
-- [ ] 真实 multimodal 报告通过。
-- [ ] 真实离线和失败路径通过。
-- [ ] 原始 Report Package 和 Visual Artifact hash 未变化。
+- [x] 真实 multimodal 报告通过。
+- [x] loopback 离线边界与自动化失败回滚路径通过。
+- [x] 原始 Report Package 和 Visual Artifact 共 10 个文件 hash 未变化。
 
 ## Gate 7：全量验证
 

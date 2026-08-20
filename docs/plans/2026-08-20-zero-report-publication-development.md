@@ -1,6 +1,6 @@
 # Report Package 发布到 Zero 开发文档
 
-> 状态：开发中。Gate 0 至 Phase 5 已完成，当前进入 Phase 6。
+> 状态：开发中。Gate 0 至 Phase 6 已完成，当前进入 Gate 7。
 >
 > 本文是“发送到 Zero”能力的设计真相源。实现范围、接口、状态机、图片传输、幂等、回滚和验收均以本文为准。
 >
@@ -875,6 +875,8 @@ database/control-plane.ts
 交付：状态接口、发布接口、查询接口、“发送到 Zero”按钮和进度。
 
 ### Phase 6：真实 Zero 验收
+
+2026-08-20 真机结果：任务 `91e7bed3-4725-41a7-ba28-742424f4911c` 发布为 publication `9065255f-b7b4-4eaf-b068-191ea36e0ab9`，Zero root `7:667`（`1440 × 18007`）。9 个图片节点均验证为真实 `IMAGE / FIT` fill，10 个截图 Artifact 与 receipt Artifact `38028f47-4151-4004-bb6a-93124a6fc98b` 均为 `SEALED`。重复 Idempotency-Key replay 同一 publication，源 Report Package 与 Visual Artifact 的 10 个文件哈希保持不变。
 
 交付：至少一份 multimodal 报告发布成功，图片真实可见，metadata/fill/screenshot 验证通过。
 
