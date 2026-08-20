@@ -124,58 +124,60 @@ pnpm typecheck
 
 ## Phase 2：Zero MCP Client
 
-- [ ] 批量完成本 Phase 的 MCP 协议和失败路径测试后，统一运行一次 `tests/zero-mcp-client.test.ts` 并确认红灯。
+- [x] 批量完成本 Phase 的 MCP 协议和失败路径测试后，统一运行一次 `tests/zero-mcp-client.test.ts` 并确认红灯。
 
 ### 2.1 失败测试
 
-- [ ] 创建 `tests/zero-mcp-client.test.ts`。
-- [ ] fake MCP server 返回 SSE `event: message`。
-- [ ] 测试 initialize 与 tools/list。
-- [ ] 测试 stateless MCP 无 Session-Id。
-- [ ] 测试带 Session-Id 的兼容分支。
-- [ ] 测试 406 Accept 错误。
-- [ ] 测试 offline。
-- [ ] 测试 authenticated=false。
-- [ ] 测试缺 `use_design_html`。
-- [ ] 测试缺 `use_design_script`。
-- [ ] 测试 screenshot URL 必须与 MCP 同源且路径以 `/assets/` 开头。
-- [ ] 测试 screenshot 下载禁止重定向。
-- [ ] 测试 screenshot Content-Type 必须为 image/png。
-- [ ] 测试 screenshot 超过 10 MiB 被拒绝。
-- [ ] 测试 MCP error result。
-- [ ] 测试 timeout。
-- [ ] 测试非 loopback URL 被拒绝。
+- [x] 创建 `tests/zero-mcp-client.test.ts`。
+- [x] fake MCP server 返回 SSE `event: message`。
+- [x] 测试 initialize 与 tools/list。
+- [x] 测试 stateless MCP 无 Session-Id。
+- [x] 测试带 Session-Id 的兼容分支。
+- [x] 测试 406 Accept 错误。
+- [x] 测试 offline。
+- [x] 测试 authenticated=false。
+- [x] 测试缺 `use_design_html`。
+- [x] 测试缺 `use_design_script`。
+- [x] 测试 screenshot URL 必须与 MCP 同源且路径以 `/assets/` 开头。
+- [x] 测试 screenshot 下载禁止重定向。
+- [x] 测试 screenshot Content-Type 必须为 image/png。
+- [x] 测试 screenshot 超过 10 MiB 被拒绝。
+- [x] 测试 MCP error result。
+- [x] 测试 timeout。
+- [x] 测试非 loopback URL 被拒绝。
 
 ### 2.2 实现 Client
 
-- [ ] 创建 `apps/agent-api/src/integrations/zero/zero-mcp-client.ts`。
-- [ ] 解析 JSON 和 SSE 响应。
-- [ ] 校验 loopback URL。
-- [ ] 实现 initialize。
-- [ ] 实现 tools/list 和 tools/call。
-- [ ] 实现 `getStatus()`。
-- [ ] 实现 `getCurrentTarget()`。
-- [ ] 实现 `createHtmlDraft()`。
-- [ ] 实现 `writeImage()`。
-- [ ] 实现 `inspectNode()`。
-- [ ] 实现 `captureScreenshot()`。
-- [ ] 实现 screenshot 短期 URL 的同源、路径、Content-Type、体积和无重定向校验。
-- [ ] 实现 `finalizeDraft()`。
-- [ ] 实现 `cleanupDraft()`。
-- [ ] 调用 HTML 工具前读取 `use-design-html/SKILL.md`。
-- [ ] 调用 script 工具前读取 Skill 和 API index。
-- [ ] 错误输出去掉本地路径、Base64 和原始堆栈。
+- [x] 创建 `apps/agent-api/src/integrations/zero/zero-mcp-client.ts`。
+- [x] 解析 JSON 和 SSE 响应。
+- [x] 校验 loopback URL。
+- [x] 实现 initialize。
+- [x] 实现 tools/list 和 tools/call。
+- [x] 实现 `getStatus()`。
+- [x] 实现 `getCurrentTarget()`。
+- [x] 实现 `createHtmlDraft()`。
+- [x] 实现 `writeImage()`。
+- [x] 实现 `inspectNode()`。
+- [x] 实现 `captureScreenshot()`。
+- [x] 实现 screenshot 短期 URL 的同源、路径、Content-Type、体积和无重定向校验。
+- [x] 实现 `finalizeDraft()`。
+- [x] 实现 `cleanupDraft()`。
+- [x] 调用 HTML 工具前读取 `use-design-html/SKILL.md`。
+- [x] 调用 script 工具前读取 Skill 和 API index。
+- [x] 错误输出去掉本地路径、Base64 和原始堆栈。
 
 ### Phase 2 门禁
+
+结果：5 个 MCP Client 测试通过，typecheck PASS，diff check PASS。
 
 ```bash
 pnpm exec tsx --test tests/zero-mcp-client.test.ts
 pnpm typecheck
 ```
 
-- [ ] Phase 2 测试通过。
-- [ ] `git diff --check` 通过。
-- [ ] 提交 Phase 2，只包含 MCP Port、Client 和测试。
+- [x] Phase 2 测试通过。
+- [x] `git diff --check` 通过。
+- [x] 提交 Phase 2，只包含 MCP Port、Client 和测试。
 
 ## Phase 3：Report Renderer
 
