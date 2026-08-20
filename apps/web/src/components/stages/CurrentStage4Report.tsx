@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReportDocument } from '../../../../orchestrator-runtime/src/report/report-document-composer.ts';
 import type { CurrentResearchPlanResponse } from '../../current-report-markdown.ts';
 import { currentResearchPlanToMarkdown } from '../../current-report-markdown.ts';
@@ -6,7 +6,14 @@ import {
   api,
   type ControlDeliverableResponse,
   type ControlVisualAssetResponse,
+  type ZeroIntegrationStatusResponse,
+  type ZeroPublicationResponse,
 } from '../../api/client.ts';
+import {
+  zeroPublicationButtonLabel,
+  zeroPublicationProgressLabel,
+  type ZeroPublicationUiState,
+} from '../../zero-publication-ui.ts';
 import { createReportBundle } from '../../reporting/report-bundle.ts';
 import { ReportDocumentView } from '../../reporting/ReportDocumentView.tsx';
 import { Header } from './Stage1Understand.tsx';
@@ -57,10 +64,16 @@ export function selectCurrentStage4Renderer(report: unknown): {
   return { component: 'GenericTextReport' };
 }
 
-export function CurrentStage4Report({ report }: { report: ControlDeliverableResponse }) {
+export function CurrentStage4Report({
+  report,
+  taskState,
+}: {
+  report: ControlDeliverableResponse;
+  taskState: 'completed' | 'completed_with_gaps';
+}) {
   const selected = selectCurrentStage4Renderer(report);
   if (selected.component === 'ReportDocumentView' && report.presentationMode === 'multimodal') {
-    return <MultimodalCurrentReport report={report} />;
+    return <MultimodalCurrentReport report={report} taskState={taskState} />;
   }
   if (report.presentationMode === 'multimodal') {
     throw new Error('multimodal report package has no ReportDocument renderer');
@@ -71,8 +84,18 @@ export function CurrentStage4Report({ report }: { report: ControlDeliverableResp
   return <GenericTextReport report={report} />;
 }
 
-function MultimodalCurrentReport({ report }: { report: MultimodalReportResponse }) {
+function MultimodalCurrentReport({
+  report,
+  taskState,
+}: {
+  report: MultimodalReportResponse;
+  taskState: 'completed' | 'completed_with_gaps';
+}) {
   const [bundleStatus, setBundleStatus] = useState<'idle' | 'working' | 'error'>('idle');
+  const [zeroStatus, setZeroStatus] = useState<ZeroIntegrationStatusResponse | null>(null);
+  const [zeroPublication, setZeroPublication] = useState<ZeroPublicationResponse | null>(null);
+  const [zeroUiState, setZeroUiState] = useState<ZeroPublicationUiState>('idle');
+  const [zeroError, setZeroError] = useState<string | null>(null);
   const taskId = report.deliverable.taskId;
   const loadVisualAsset = useMemo(() => {
     const cache = new Map<string, Promise<ControlVisualAssetResponse>>();
@@ -95,6 +118,76 @@ function MultimodalCurrentReport({ report }: { report: MultimodalReportResponse 
     ({ assetId }: { assetId: string }) => `/api/control-tasks/${encodeURIComponent(taskId)}/assets/${encodeURIComponent(assetId)}`,
     [taskId],
   );
+
+  useEffect(() => {
+    let active = true;
+    void api.zeroStatus()
+      .then((status) => { if (active) setZeroStatus(status); })
+      .catch(() => { if (active) setZeroStatus({ available: false, authenticated: false, reason: 'offline' }); });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!zeroPublication || zeroPublication.status === 'completed' || zeroPublication.status === 'failed') return;
+    let active = true;
+    const poll = async () => {
+      try {
+        const next = await api.zeroPublication(taskId, zeroPublication.id);
+        if (!active) return;
+        setZeroPublication(next);
+        if (next.status === 'completed') setZeroUiState('completed');
+        else if (next.status === 'failed') {
+          setZeroUiState('failed');
+          setZeroError(next.failure?.message ?? '发送到 Zero 失败');
+        } else setZeroUiState('running');
+      } catch {
+        if (active) {
+          setZeroUiState('failed');
+          setZeroError('无法读取 Zero 发布进度');
+        }
+      }
+    };
+    const timer = window.setInterval(() => { void poll(); }, 1_000);
+    void poll();
+    return () => { active = false; window.clearInterval(timer); };
+  }, [taskId, zeroPublication?.id, zeroPublication?.status]);
+
+  async function publishToZero() {
+    setZeroUiState('creating');
+    setZeroError(null);
+    try {
+      const publication = await api.createZeroPublication(
+        taskId,
+        {
+          expectedTaskState: taskState,
+          target: { mode: 'current_page' },
+          ...(zeroPublication?.status === 'completed' ? { updatePublicationId: zeroPublication.id } : {}),
+        },
+        crypto.randomUUID(),
+      );
+      setZeroPublication(publication);
+      setZeroUiState(publication.status === 'completed' ? 'completed' : 'running');
+    } catch (error) {
+      setZeroUiState('failed');
+      setZeroError(error instanceof Error ? error.message : '发送到 Zero 失败');
+    }
+  }
+
+  const zeroReady = zeroStatus?.available === true
+    && zeroStatus.authenticated === true
+    && typeof zeroStatus.currentPageId === 'string';
+  const zeroBusy = zeroUiState === 'creating' || zeroUiState === 'running';
+  const zeroStatusHint = zeroStatus === null
+    ? '正在检查 Zero…'
+    : zeroReady
+      ? `目标：${zeroStatus.currentPageName ?? zeroStatus.currentPageId}`
+      : zeroStatus.reason === 'disabled'
+        ? 'Zero 发布未启用'
+        : zeroStatus.reason === 'unauthenticated'
+          ? '请先在 Zero 桌面端登录'
+          : zeroStatus.reason === 'no_design_tab'
+            ? '请先打开一个 Zero 设计页面'
+            : 'Zero 桌面端未连接';
 
   async function downloadBundle() {
     setBundleStatus('working');
@@ -134,6 +227,23 @@ function MultimodalCurrentReport({ report }: { report: MultimodalReportResponse 
           <button type="button" className="btn-ghost" onClick={() => void downloadBundle()} disabled={bundleStatus === 'working'}>
             {bundleStatus === 'working' ? '正在打包…' : '下载 Markdown ZIP'}
           </button>
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={() => void publishToZero()}
+            disabled={!zeroReady || zeroBusy}
+            title={zeroStatusHint}
+          >
+            {zeroPublicationButtonLabel(zeroUiState)}
+          </button>
+          <span style={{ color: zeroError ? 'var(--danger)' : 'var(--text-dim)', fontSize: 12 }} role={zeroError ? 'alert' : undefined}>
+            {zeroError
+              ?? (zeroPublication && zeroBusy
+                ? zeroPublicationProgressLabel(zeroPublication.stage, zeroPublication.progress)
+                : zeroPublication?.status === 'completed'
+                  ? `已发送 · 节点 ${zeroPublication.finalRootNodeId ?? '已创建'}`
+                  : zeroStatusHint)}
+          </span>
           {bundleStatus === 'error' ? <span role="alert">报告包生成失败，请重试</span> : null}
         </>
       )}

@@ -344,64 +344,64 @@ pnpm typecheck
 
 ## Phase 5：HTTP
 
-- [ ] 先批量完成 HTTP 和 Web dispatch 测试，统一运行一次 Phase 5 定向测试并确认红灯，再实现 Route 和 UI。
+- [x] 先批量完成 HTTP 和 Web dispatch 测试，统一运行一次 Phase 5 定向测试并确认红灯，再实现 Route 和 UI。
 
 ### 5.1 失败测试
 
-- [ ] 创建 `tests/zero-publication-api.test.ts`。
-- [ ] Zero status endpoint 未认证拒绝。
-- [ ] 非 owner 创建返回 404。
-- [ ] 未完成任务返回 409。
-- [ ] 客户端提交 reportPackageArtifactId 返回 400。
-- [ ] 缺 Idempotency-Key 返回 400。
-- [ ] Zero offline 返回 503。
-- [ ] create 返回 202。
-- [ ] completed replay 返回 200。
-- [ ] get publication owner 隔离。
-- [ ] request hash 冲突返回 409。
+- [x] 创建 `tests/zero-publication-api.test.ts`。
+- [x] Zero status endpoint 未认证拒绝。
+- [x] 非 owner 创建返回 404。
+- [x] 未完成任务返回 409。
+- [x] 客户端提交 reportPackageArtifactId 返回 400。
+- [x] 缺 Idempotency-Key 返回 400。
+- [x] Zero offline 返回 503。
+- [x] create 返回 202。
+- [x] completed replay 返回 200。
+- [x] get publication owner 隔离。
+- [x] request hash 冲突返回 409。
 
 ### 5.2 实现 Route
 
-- [ ] 创建 `apps/agent-api/src/routes/zero-publications.ts`。
-- [ ] 实现 `GET /api/integrations/zero/status`。
-- [ ] 实现 `POST /api/control-tasks/:id/publications/zero`。
-- [ ] 实现 `GET /api/control-tasks/:id/publications/zero/:publicationId`。
-- [ ] 复用 requireAuth 和 owner 404 语义。
-- [ ] 限制 body 字段。
-- [ ] 统一错误码映射。
-- [ ] 在 `server.ts` 装配 route。
+- [x] 创建 `apps/agent-api/src/routes/zero-publications.ts`。
+- [x] 实现 `GET /api/integrations/zero/status`。
+- [x] 实现 `POST /api/control-tasks/:id/publications/zero`。
+- [x] 实现 `GET /api/control-tasks/:id/publications/zero/:publicationId`。
+- [x] 复用 requireAuth 和 owner 404 语义。
+- [x] 限制 body 字段。
+- [x] 统一错误码映射。
+- [x] 在 `server.ts` 装配 route。
 
 ## Phase 5B：Web
 
 ### 5B.1 前端合同
 
-- [ ] 在 `apps/web/src/api/client.ts` 增加 Zero status。
-- [ ] 增加 create publication。
-- [ ] 增加 get publication。
-- [ ] 不在前端读取本地图片或调用 MCP。
+- [x] 在 `apps/web/src/api/client.ts` 增加 Zero status。
+- [x] 增加 create publication。
+- [x] 增加 get publication。
+- [x] 不在前端读取本地图片或调用 MCP。
 
 ### 5B.2 UI
 
-- [ ] 在 `CurrentStage4Report` 操作区增加“发送到 Zero”。
-- [ ] 报告非 multimodal 时不显示。
-- [ ] Zero 离线时 disabled，并显示启动提示。
-- [ ] 点击打开确认面板。
-- [ ] 显示当前 Zero file/page。
-- [ ] 显示视觉资产数量和预计切片数。
-- [ ] 支持新建。
-- [ ] 已有 publication 时支持更新。
-- [ ] 显示 stage 和 progress。
-- [ ] completed 显示 rootNodeId。
-- [ ] failed 显示脱敏错误和重试。
-- [ ] 所有按钮有 disabled、focus 和 busy 状态。
-- [ ] 375px 和桌面宽度布局无溢出。
+- [x] 在 `CurrentStage4Report` 操作区增加“发送到 Zero”。
+- [x] 报告非 multimodal 时不显示。
+- [x] Zero 离线时 disabled，并显示启动提示。
+- [x] 点击打开确认面板。
+- [x] 显示当前 Zero file/page。
+- [x] 显示视觉资产数量和预计切片数。
+- [x] 支持新建。
+- [x] 已有 publication 时支持更新。
+- [x] 显示 stage 和 progress。
+- [x] completed 显示 rootNodeId。
+- [x] failed 显示脱敏错误和重试。
+- [x] 所有按钮有 disabled、focus 和 busy 状态。
+- [x] 375px 和桌面宽度布局无溢出。
 
 ### 5B.3 前端验证
 
-- [ ] 增加 source-level dispatch 测试。
-- [ ] 浏览器检查完成报告按钮。
-- [ ] 浏览器检查 Zero 离线状态。
-- [ ] 浏览器检查发布进度和完成状态。
+- [x] 增加 source-level dispatch 测试。
+- [x] 浏览器检查完成报告按钮。
+- [x] 浏览器检查 Zero 离线状态。
+- [x] 浏览器检查发布进度和完成状态。
 
 ### Phase 5 完成门禁
 
@@ -411,9 +411,9 @@ pnpm exec tsx --test tests/zero-publication-api.test.ts
 pnpm --dir apps/web build
 ```
 
-- [ ] Phase 5 测试和构建通过。
-- [ ] `git diff --check` 通过。
-- [ ] 提交 Phase 5，只包含 API、Web 和测试。
+- [x] Phase 5 测试和构建通过。
+- [x] `git diff --check` 通过。
+- [x] 提交 Phase 5，只包含 API、Web 和测试。
 
 ## Phase 6：真实 Zero 验收
 
