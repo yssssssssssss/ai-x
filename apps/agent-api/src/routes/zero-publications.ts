@@ -54,6 +54,7 @@ function statusFor(error: ZeroPublicationServiceError): number {
   if (error.code === 'zero_offline' || error.code === 'zero_unauthenticated' || error.code === 'zero_no_design_tab') return 503;
   if (
     error.code === 'task_not_publishable'
+    || error.code === 'report_not_completed'
     || error.code === 'report_package_missing'
     || error.code === 'idempotency_conflict'
     || error.code === 'publication_conflict'

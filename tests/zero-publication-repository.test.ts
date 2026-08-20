@@ -295,8 +295,8 @@ test('repository claims, updates, heartbeats, and completes a publication', asyn
   assert.equal(completed.receiptArtifactId, receiptArtifactId);
 });
 
-test('repository lists expired publications and records terminal failure', async () => {
-  const publication = await repository.createZeroPublication({
+test('repository lists expired publications and requeues a failed idempotent retry', async () => {
+  const createInput = {
     taskId,
     ownerUserId: ownerId,
     planVersionId,
@@ -309,7 +309,8 @@ test('repository lists expired publications and records terminal failure', async
     zeroFileKey: 'file-zero-1',
     zeroPageId: '30:1',
     zeroPageName: '[p]demo',
-  });
+  };
+  const publication = await repository.createZeroPublication(createInput);
   await repository.claimZeroPublication({
     publicationId: publication.id,
     leaseOwner: 'expired-worker',
@@ -333,4 +334,41 @@ test('repository lists expired publications and records terminal failure', async
     message: 'Zero is offline',
     retryable: true,
   });
+  assert.equal(
+    await repository.claimZeroPublication({
+      publicationId: publication.id,
+      leaseOwner: 'bypass-worker',
+      leaseExpiresAt: new Date(Date.now() + 60_000),
+    }),
+    null,
+    'failed publications must be requeued through the idempotent create transaction',
+  );
+
+  const [retried, replayedRetry] = await Promise.all([
+    repository.createZeroPublication(createInput),
+    repository.createZeroPublication(createInput),
+  ]);
+  assert.equal(retried.id, publication.id);
+  assert.equal(replayedRetry.id, publication.id);
+  assert.equal(retried.idempotencyKey, publication.idempotencyKey);
+  assert.equal(retried.status, 'queued');
+  assert.equal(replayedRetry.status, 'queued');
+  assert.equal(retried.stage, 'checking_zero');
+  assert.equal(retried.progress, 0);
+  assert.equal(retried.failure, null);
+  assert.equal(retried.completedAt, null);
+  const duplicateCount = await query(
+    `SELECT count(*)::int AS count
+     FROM control_zero_publications
+     WHERE task_id = $1 AND idempotency_key = $2`,
+    [taskId, createInput.idempotencyKey],
+  );
+  assert.equal(duplicateCount.rows[0]?.count, 1);
+  const reclaimed = await repository.claimZeroPublication({
+    publicationId: retried.id,
+    leaseOwner: 'retry-worker',
+    leaseExpiresAt: new Date(Date.now() + 60_000),
+  });
+  assert.equal(reclaimed?.status, 'running');
+  assert.equal(reclaimed?.id, publication.id);
 });

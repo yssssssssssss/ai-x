@@ -1,6 +1,51 @@
-import type { ZeroPublicationStage } from './api/client.ts';
+import type {
+  CreateZeroPublicationRequest,
+  ZeroPublicationStage,
+} from '../../../packages/api-contract/zero-publication.ts';
 
 export type ZeroPublicationUiState = 'idle' | 'creating' | 'running' | 'completed' | 'failed';
+
+export interface ZeroPublicationRequestIdentity {
+  body: CreateZeroPublicationRequest;
+  idempotencyKey: string;
+}
+
+export function zeroPublicationRequestForSubmit(input: {
+  uiState: ZeroPublicationUiState;
+  previousRequest: ZeroPublicationRequestIdentity | null;
+  expectedTaskState: CreateZeroPublicationRequest['expectedTaskState'];
+  idempotencyKey: string;
+  updatePublicationId?: string;
+}): ZeroPublicationRequestIdentity {
+  if (input.uiState === 'failed' && input.previousRequest) return input.previousRequest;
+  return {
+    body: {
+      expectedTaskState: input.expectedTaskState,
+      target: { mode: 'current_page' },
+      ...(input.updatePublicationId ? { updatePublicationId: input.updatePublicationId } : {}),
+    },
+    idempotencyKey: input.idempotencyKey,
+  };
+}
+
+export type ZeroPublicationConfirmationState = 'closed' | 'open';
+export type ZeroPublicationConfirmationAction = 'request' | 'cancel' | 'confirm';
+
+export interface ZeroPublicationConfirmationTransition {
+  state: ZeroPublicationConfirmationState;
+  submit: boolean;
+}
+
+export function transitionZeroPublicationConfirmation(
+  state: ZeroPublicationConfirmationState,
+  action: ZeroPublicationConfirmationAction,
+): ZeroPublicationConfirmationTransition {
+  if (action === 'request') return { state: 'open', submit: false };
+  if (action === 'cancel') return { state: 'closed', submit: false };
+  return state === 'open'
+    ? { state: 'closed', submit: true }
+    : { state, submit: false };
+}
 
 export function zeroPublicationButtonLabel(state: ZeroPublicationUiState): string {
   if (state === 'creating') return '正在创建…';

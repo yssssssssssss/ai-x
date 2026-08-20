@@ -436,9 +436,7 @@ return { nodes: nodes.map((item) => ({ id: item.id, name: item.name, fills: item
       throw new ZeroMcpClientError('screenshot_failed', 'Zero screenshot URL is invalid');
     }
     if (
-      parsed.protocol !== this.url.protocol
-      || parsed.port !== this.url.port
-      || !loopback(parsed.hostname)
+      parsed.origin !== this.url.origin
       || !parsed.pathname.startsWith('/assets/')
       || parsed.username
       || parsed.password
