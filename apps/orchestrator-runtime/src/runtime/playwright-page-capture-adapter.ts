@@ -34,7 +34,7 @@ import {
 const MAX_INPUT_PAGES = 20;
 const MAX_CAPTURED_PAGES = 6;
 const MAX_PAGE_CONCURRENCY = 2;
-const MAX_REQUESTS_PER_PAGE = 256;
+const MAX_CONTEXT_REQUESTS = 256;
 const MAX_ASSET_BYTES = 10 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 40 * 1024 * 1024;
 const MAX_CAPTURE_HEIGHT = 12_000;
@@ -336,7 +336,6 @@ async function normalizePages(
       group.push(page);
       grouped.set(page.hostname, group);
     }
-    const prioritized: PageInput[] = [];
     for (const group of grouped.values()) {
       group.sort((left, right) => {
         const score = (page: PageInput): number => {
@@ -348,11 +347,22 @@ async function normalizePages(
         };
         return score(left) - score(right) || left.sourceResultIndex - right.sourceResultIndex;
       });
-      prioritized.push(...group);
     }
-    return { pages: prioritized, failures, retryableFailureKind };
+    const bounded: PageInput[] = [];
+    for (let candidateIndex = 0; bounded.length < MAX_CAPTURED_PAGES; candidateIndex += 1) {
+      let added = false;
+      for (const group of grouped.values()) {
+        const page = group[candidateIndex];
+        if (!page) continue;
+        bounded.push(page);
+        added = true;
+        if (bounded.length >= MAX_CAPTURED_PAGES) break;
+      }
+      if (!added) break;
+    }
+    return { pages: bounded, failures, retryableFailureKind };
   }
-  return { pages, failures, retryableFailureKind };
+  return { pages: pages.slice(0, MAX_CAPTURED_PAGES), failures, retryableFailureKind };
 }
 
 function cropFor(width: number, height: number): { width: number; height: number; truncated: boolean } {
@@ -496,22 +506,14 @@ async function installNetworkControls(
   const blockedPages = new WeakSet<Page>();
   const networkFailedPages = new WeakSet<Page>();
   const timedOutPages = new WeakSet<Page>();
-  const pageRequestCounts = new WeakMap<Page, number>();
   const inFlightDns = new Map<string, Promise<void>>();
-  let detachedRequestCount = 0;
-
-  const consumeRequestBudget = (page: Page | undefined): void => {
-    const requestCount = page
-      ? (pageRequestCounts.get(page) ?? 0) + 1
-      : detachedRequestCount + 1;
-    if (page) pageRequestCounts.set(page, requestCount);
-    else detachedRequestCount = requestCount;
-    if (requestCount > MAX_REQUESTS_PER_PAGE) {
-      throw new PublicWebAccessError('browser request budget exceeded');
-    }
-  };
+  let requestCount = 0;
 
   const validateRequestTarget = async (value: string, navigation: boolean): Promise<void> => {
+    requestCount += 1;
+    if (requestCount > MAX_CONTEXT_REQUESTS) {
+      throw new PublicWebAccessError('browser request budget exceeded');
+    }
     const url = parseBrowserUrl(
       value,
       navigation ? 'browser target' : 'browser resource',
@@ -535,7 +537,6 @@ async function installNetworkControls(
     let page: Page | undefined;
     try { page = request.frame().page(); } catch { /* non-page requests use the Tool deadline */ }
     try {
-      consumeRequestBudget(page);
       if (request.method() !== 'GET' && request.method() !== 'HEAD') {
         throw new PublicWebAccessError('browser requests must use GET or HEAD');
       }

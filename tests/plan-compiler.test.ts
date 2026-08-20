@@ -231,12 +231,16 @@ function validCandidate(id: 'depth' | 'speed' = 'depth'): CurrentPlanCandidatePr
 
 function candidateWithBrowserCapture(id: 'depth' | 'speed' = 'depth'): CurrentPlanCandidateProposal {
   const candidate = validCandidate(id);
+  candidate.steps[0]!.input = { ...candidate.steps[0]!.input, max_results: 12 };
   candidate.steps.splice(1, 0, step({
     step_name: '采集网页视觉证据',
     actor_type: 'tool',
     actor_id: playwrightToolId,
     depends_on: [1],
-    input: { pages: [], capture: { mode: 'auto', max_pages: 6 } },
+    input: {
+      pages: [],
+      capture: { mode: 'auto', max_pages: 6, unique_hostnames: true },
+    },
     input_bindings: [{
       target_pointer: '/pages',
       source_step_no: 1,
@@ -351,6 +355,12 @@ test('freezes available optional Playwright with the exact Tavily results bindin
     source_step_no: 1,
     source_pointer: '/results',
   }]);
+  assert.equal(compiled.plan.steps[0]?.input.max_results, 12);
+  assert.deepEqual(compiled.plan.steps[1]?.input.capture, {
+    mode: 'auto',
+    max_pages: 6,
+    unique_hostnames: true,
+  });
   assert.deepEqual(compiled.plan.capability_gaps, []);
   assert.deepEqual(
     compiled.plan.capability_decisions.eligible[0]?.optional_tool_decisions,
@@ -1444,7 +1454,10 @@ test('active qualified Playwright is planned as Tavily then capture then Skill i
       `$competitive-web-research ${task.research_goal}`,
     );
 
-    for (const result of [routed, direct]) {
+    for (const [mode, result] of [
+      ['routed', routed],
+      ['direct', direct],
+    ] as const) {
       const decision = result.capabilityResolution.eligible.find(({ skill }) => (
         skill.id === eligibleSkill.id
       ));
@@ -1460,12 +1473,55 @@ test('active qualified Playwright is planned as Tavily then capture then Skill i
         assert.ok(tavilyIndex >= 0 && tavilyIndex < captureIndex && captureIndex < skillIndex);
         assert.equal(candidate.steps[tavilyIndex]?.input.max_results, 12);
         assert.deepEqual(candidate.steps[captureIndex]?.input.pages, []);
+        assert.equal(
+          (candidate.steps[captureIndex]?.input.capture as Record<string, unknown>).max_pages,
+          6,
+        );
+        assert.equal(
+          (candidate.steps[captureIndex]?.input.capture as Record<string, unknown>).unique_hostnames,
+          true,
+        );
         assert.deepEqual(candidate.steps[captureIndex]?.input_bindings, [{
           target_pointer: '/pages',
           source_step_no: tavilyIndex + 1,
           source_pointer: '/results',
         }]);
       }
+
+      const compile = (candidate: CurrentPlanCandidateProposal) => new PlanCompiler().compile({
+        candidate,
+        task,
+        problem_graph: result.problemGraph,
+        problem_graph_provenance: result.problemGraphProvenance,
+        capability_resolution: result.capabilityResolution,
+        evidence_requirements: result.problemGraph.questions[0]!.evidence_requirements,
+        activated_nodes: result.activatedNodes,
+        requireCompetitiveWeightContract: true,
+      });
+      const missingDiversity = structuredClone(result.candidates[0]!);
+      const missingCapture = missingDiversity.steps.find(({ actor_id }) => actor_id === playwrightToolId)!;
+      delete (missingCapture.input.capture as Record<string, unknown>).unique_hostnames;
+      assert.throws(
+        () => compile(missingDiversity),
+        (error: unknown) => {
+          assert.ok(error instanceof PlanCompilerValidationError);
+          assert.equal(error.kind, 'visual_fallback_contract_invalid', mode);
+          assert.match(error.message, /capture\.unique_hostnames/u);
+          return true;
+        },
+      );
+      const driftedFallback = structuredClone(result.candidates[0]!);
+      driftedFallback.steps.find(({ actor_id }) => actor_id === 'tavily-web-search')!
+        .input.max_results = 11;
+      assert.throws(
+        () => compile(driftedFallback),
+        (error: unknown) => {
+          assert.ok(error instanceof PlanCompilerValidationError);
+          assert.equal(error.kind, 'visual_fallback_contract_invalid', mode);
+          assert.match(error.message, /tavily\.max_results/u);
+          return true;
+        },
+      );
     }
 
     const routedCall = llm.calls.find((call) => call.schemaName === 'current-plan-candidates');

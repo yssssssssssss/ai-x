@@ -214,6 +214,8 @@ export interface CurrentPlanArtifacts {
 }
 
 const ROUTED_STEP_LIMITS = { depth: 8, speed: 4 } as const;
+const DEFAULT_BROWSER_CAPTURE_COUNT = 6;
+const MAX_BROWSER_FALLBACK_RESULTS = 20;
 
 function scoringDimensions(
   input: Record<string, unknown>,
@@ -305,14 +307,24 @@ function freezePlaywrightFallbackPools(
   candidate: Omit<CurrentPlanCandidateProposal, 'activated_nodes'>,
 ): Omit<CurrentPlanCandidateProposal, 'activated_nodes'> {
   const requiredResultsBySourceStep = new Map<number, number>();
-  for (const step of candidate.steps) {
+  const captureOptionsByStep = new Map<number, Record<string, unknown>>();
+  for (const [stepIndex, step] of candidate.steps.entries()) {
     if (step.actor_id !== 'playwright-page-capture') continue;
-    const capture = step.input.capture;
-    const maxPages = capture && typeof capture === 'object' && !Array.isArray(capture)
-      && typeof (capture as Record<string, unknown>).max_pages === 'number'
-      ? (capture as Record<string, unknown>).max_pages as number
-      : 6;
-    const requiredResults = Math.min(20, maxPages * 2);
+    const rawCapture = step.input.capture;
+    const capture = rawCapture && typeof rawCapture === 'object' && !Array.isArray(rawCapture)
+      ? rawCapture as Record<string, unknown>
+      : {};
+    const maxPages = Number.isInteger(capture.max_pages)
+      && Number(capture.max_pages) >= 1
+      && Number(capture.max_pages) <= DEFAULT_BROWSER_CAPTURE_COUNT
+      ? Number(capture.max_pages)
+      : DEFAULT_BROWSER_CAPTURE_COUNT;
+    captureOptionsByStep.set(stepIndex, {
+      ...capture,
+      max_pages: maxPages,
+      unique_hostnames: true,
+    });
+    const requiredResults = Math.min(MAX_BROWSER_FALLBACK_RESULTS, maxPages * 2);
     for (const binding of step.input_bindings) {
       if (binding.target_pointer !== '/pages' || binding.source_pointer !== '/results') continue;
       requiredResultsBySourceStep.set(
@@ -325,34 +337,23 @@ function freezePlaywrightFallbackPools(
   return {
     ...candidate,
     steps: candidate.steps.map((step, index) => {
-      if (step.actor_id === 'playwright-page-capture') {
-        const capture = step.input.capture;
-        if (capture && typeof capture === 'object' && !Array.isArray(capture)) {
-          const captureInput = capture as Record<string, unknown>;
-          if (captureInput.unique_hostnames !== true) {
-            return {
-              ...step,
-              input: {
-                ...step.input,
-                capture: { ...captureInput, unique_hostnames: true },
-              },
-            };
-          }
-        }
-        return step;
+      const frozenCapture = step.actor_id === 'playwright-page-capture'
+        ? captureOptionsByStep.get(index)
+        : undefined;
+      if (frozenCapture) {
+        return {
+          ...step,
+          input: { ...step.input, capture: frozenCapture },
+        };
       }
       const requiredResults = requiredResultsBySourceStep.get(index + 1);
       if (step.actor_id !== 'tavily-web-search' || requiredResults === undefined) return step;
       let input = step.input;
       if (typeof input.query === 'string') {
         const queries = input.query.split(/\r?\n/u).map((query) => query.trim()).filter(Boolean);
-        if (queries.length > 1) {
-          input = { ...input, query: queries };
-        }
+        if (queries.length > 1) input = { ...input, query: queries };
       }
-      const currentMax = typeof input.max_results === 'number' ? input.max_results : 0;
-      if (currentMax < requiredResults) input = { ...input, max_results: requiredResults };
-      return input === step.input ? step : { ...step, input };
+      return { ...step, input: { ...input, max_results: requiredResults } };
     }),
   };
 }
@@ -945,7 +946,7 @@ export class RoutedPlanner implements PlanStrategy {
         `Skill step 的 expected_outputs 及后续 binding source_pointer 必须位于统一输出根 /payload 下。` +
         `Skill 的 required_tools 必须作为更早的 Tool step；所有引用必须真实存在；不得使用 capability_resolution.rejected 中的 actor。` +
         `available optional Tool 也必须作为更早步骤；playwright-page-capture 必须晚于 tavily-web-search、早于对应 Skill，step.input.pages 预置为空数组，只能通过 {target_pointer:"/pages",source_step_no:<Tavily step>,source_pointer:"/results"} 绑定来源，禁止手写 URL。` +
-        `playwright-page-capture 必须设置 capture.unique_hostnames=true；其上游 Tavily step 使用 query 字符串数组逐项检索明确目标，max_results 必须至少是 capture.max_pages 的两倍（最多20），用于页面失败后的备用候选。` +
+        `playwright-page-capture 必须显式设置 capture.max_pages 且 capture.unique_hostnames=true；其上游 Tavily step 使用 query 字符串数组逐项检索明确目标，max_results 必须固定为 capture.max_pages 的两倍（最多20），用于页面失败后的备用候选。` +
         `Registry optional Tool 不得作为 input_bindings 的 source；下游 Skill 只需在 depends_on 中依赖该 Tool，运行时会通过 prior_outputs 提供其输出。` +
         `requirement.comparison_dimensions 存在时，competitive-web-research Skill step 必须在 input.dimensions 中逐项保序，并写入同 key 顺序的 scoring_weights；用户未指定权重时各维等权且总和为 1。comparison_dimensions 不存在时不得自行补造维度或权重。` +
         (validationFeedback.length > 0

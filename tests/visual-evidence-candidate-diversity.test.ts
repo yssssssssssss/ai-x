@@ -97,6 +97,52 @@ test('Tavily multi-query results are merged round-robin under one global max_res
   );
 });
 
+test('Tavily multi-query cancels and settles a pending sibling before surfacing the first failure', { timeout: 1_000 }, async () => {
+  process.env.TAVILY_API_KEY = 'test-key';
+  let pendingStarted = false;
+  let pendingAborted = false;
+  let pendingSettled = false;
+  let activePendingRequests = 0;
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    if (body.query === 'failed query') {
+      return new Response('temporary failure', { status: 503 });
+    }
+    pendingStarted = true;
+    activePendingRequests += 1;
+    return new Promise<Response>((_resolve, reject) => {
+      const settleAbort = () => {
+        pendingAborted = true;
+        setTimeout(() => {
+          activePendingRequests -= 1;
+          pendingSettled = true;
+          reject(new DOMException('aborted sibling request', 'AbortError'));
+        }, 5);
+      };
+      if (init?.signal?.aborted) settleAbort();
+      else init?.signal?.addEventListener('abort', settleAbort, { once: true });
+    });
+  };
+
+  await assert.rejects(
+    () => new TavilyAdapter().invoke({
+      toolId: TAVILY_MANIFEST.id,
+      manifest: TAVILY_MANIFEST,
+      context: invocationContext(),
+      input: { query: ['failed query', 'pending query'], max_results: 4 },
+    }),
+    (error: unknown) => {
+      assert.equal((error as { kind?: unknown }).kind, 'server');
+      return true;
+    },
+  );
+
+  assert.equal(pendingStarted, true);
+  assert.equal(pendingAborted, true);
+  assert.equal(pendingSettled, true);
+  assert.equal(activePendingRequests, 0, 'a retry may start only after every sibling settles');
+});
+
 test('Playwright capture spends at most one successful slot per normalized hostname', async () => {
   const attemptedUrls: string[] = [];
   let connected = true;
@@ -161,6 +207,70 @@ test('Playwright capture spends at most one successful slot per normalized hostn
       'https://www.alpha.example/first',
     ],
   );
+});
+
+test('Playwright capture bounds a diverse fallback pool to six navigation attempts', async () => {
+  const attemptedUrls: string[] = [];
+  let connected = true;
+  const adapter = new PlaywrightPageCaptureAdapter({
+    launcher: {
+      launch: async () => ({
+        newContext: async () => ({
+          route: async () => undefined,
+          routeWebSocket: async () => undefined,
+          on: () => undefined,
+          newPage: async () => {
+            let currentUrl = 'about:blank';
+            return {
+              goto: async (url: string) => {
+                currentUrl = url;
+                attemptedUrls.push(url);
+                throw new Error('navigation failed');
+              },
+              url: () => currentUrl,
+              close: async () => undefined,
+              on: () => undefined,
+            };
+          },
+          close: async () => undefined,
+        }),
+        close: async () => { connected = false; },
+        isConnected: () => connected,
+      }),
+    } as unknown as PlaywrightLauncher,
+    resolveHost: async () => ['93.184.216.34'],
+    getEffectiveUid: () => 501,
+  });
+
+  await assert.rejects(() => adapter.invoke({
+    toolId: PLAYWRIGHT_MANIFEST.id,
+    manifest: PLAYWRIGHT_MANIFEST,
+    context: invocationContext(),
+    input: {
+      pages: [
+        { url: 'https://alpha.example/about' },
+        { url: 'https://alpha.example/brand' },
+        { url: 'https://alpha.example/product' },
+        { url: 'https://alpha.example/collection' },
+        { url: 'https://alpha.example/shop' },
+        { url: 'https://alpha.example/home' },
+        { url: 'https://alpha.example/privacy' },
+        { url: 'https://beta.example/product' },
+        { url: 'https://gamma.example/product' },
+      ],
+      capture: { mode: 'full_page_screenshot', max_pages: 6, unique_hostnames: true },
+    },
+  }));
+
+  assert.equal(attemptedUrls.length, 6);
+  assert.deepEqual(attemptedUrls.sort(), [
+    'https://alpha.example/about',
+    'https://alpha.example/brand',
+    'https://alpha.example/collection',
+    'https://alpha.example/product',
+    'https://beta.example/product',
+    'https://gamma.example/product',
+  ]);
 });
 
 test('Playwright capture retries the next same-host candidate after a failed or near-blank page', async () => {
