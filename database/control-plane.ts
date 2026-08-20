@@ -4947,6 +4947,29 @@ export class ControlPlaneRepository {
     });
   }
 
+  async getZeroPublicationByIdForOwner(input: {
+    publicationId: string;
+    ownerUserId: string;
+  }): Promise<ControlZeroPublication | null> {
+    const connection = await this.database.connect();
+    try {
+      const result = await connection.query(
+        `SELECT publication.*
+         FROM control_zero_publications AS publication
+         JOIN control_tasks AS task ON task.id = publication.task_id
+         JOIN conversations AS conversation ON conversation.id = task.conversation_id
+         WHERE publication.id = $1
+           AND publication.owner_user_id = $2
+           AND task.owner_user_id = $2
+           AND conversation.owner_user_id = $2`,
+        [input.publicationId, input.ownerUserId],
+      );
+      return result.rows[0] ? zeroPublicationFromRow(result.rows[0]) : null;
+    } finally {
+      connection.release();
+    }
+  }
+
   async getZeroPublicationForOwner(input: {
     publicationId: string;
     taskId: string;
@@ -5026,6 +5049,7 @@ export class ControlPlaneRepository {
     zeroNodeMap?: Record<string, unknown>;
     imageManifest?: unknown[];
     screenshotManifest?: unknown[];
+    receiptArtifactId?: string;
   }): Promise<ControlZeroPublication> {
     return this.transaction(async (connection) => {
       const result = await connection.query(
@@ -5036,6 +5060,7 @@ export class ControlPlaneRepository {
              zero_node_map = COALESCE($6::jsonb, zero_node_map),
              image_manifest = COALESCE($7::jsonb, image_manifest),
              screenshot_manifest = COALESCE($8::jsonb, screenshot_manifest),
+             receipt_artifact_id = COALESCE($9, receipt_artifact_id),
              updated_at = now()
          WHERE id = $1
            AND status = 'running'
@@ -5051,6 +5076,7 @@ export class ControlPlaneRepository {
           input.zeroNodeMap === undefined ? null : JSON.stringify(input.zeroNodeMap),
           input.imageManifest === undefined ? null : JSON.stringify(input.imageManifest),
           input.screenshotManifest === undefined ? null : JSON.stringify(input.screenshotManifest),
+          input.receiptArtifactId ?? null,
         ],
       );
       if (!result.rows[0]) {

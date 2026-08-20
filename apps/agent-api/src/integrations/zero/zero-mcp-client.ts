@@ -298,11 +298,20 @@ export class LocalZeroMcpClient {
     };
   }
 
-  async getCurrentTarget(): Promise<ZeroTargetContext> {
+  async getDesignMetadata(nodeId?: string): Promise<string> {
     const metadata = await this.callTool<string>('get_design_metadata', {
-      maxDepth: 1,
-      maxNodes: 50,
+      ...(nodeId ? { nodeId } : {}),
+      maxDepth: 0,
+      maxNodes: 5_000,
     });
+    if (typeof metadata !== 'string' || !metadata.includes('<')) {
+      throw new ZeroMcpClientError('metadata_mismatch', 'Zero design metadata is malformed');
+    }
+    return metadata;
+  }
+
+  async getCurrentTarget(): Promise<ZeroTargetContext> {
+    const metadata = await this.getDesignMetadata();
     const match = typeof metadata === 'string'
       ? metadata.match(/<canvas\s+id="([^"]+)"\s+name="([^"]+)"/u)
       : null;

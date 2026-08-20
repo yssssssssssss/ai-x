@@ -54,6 +54,11 @@ import { SkillLoader } from '../../orchestrator-runtime/src/runtime/skill-loader
 import { ToolRouter } from '../../orchestrator-runtime/src/runtime/tool-adapter.ts';
 import { VisualInputGateStore } from '../../orchestrator-runtime/src/control/visual-input-gate-store.ts';
 import { parsePendingInputContracts } from '../../orchestrator-runtime/src/control/pending-input-contract.ts';
+import { LocalZeroMcpClient } from './integrations/zero/zero-mcp-client.ts';
+import {
+  ZeroPublicationService,
+  type ZeroPublicationMcp,
+} from './integrations/zero/zero-publication-service.ts';
 
 
 const REVISION_ACTOR_TYPES: Record<string, true> = {
@@ -297,6 +302,8 @@ export interface ControlRuntimeOverrides {
   skillLoader?: SkillLoader;
   artifacts?: ControlArtifactStore;
   expectedActualModel?: string;
+  zeroMcp?: ZeroPublicationMcp;
+  zeroPublicationEnabled?: boolean;
 }
 
 export type ControlPlanningRuntime = Pick<ControlPlanningService, 'plan' | 'planExistingTask'>;
@@ -308,6 +315,7 @@ export interface ControlRuntime {
   workflow: TaskWorkflowService;
   repository: ControlPlaneRepository;
   artifacts: ControlArtifactStore;
+  zeroPublication?: ZeroPublicationService;
   annotateVisualAsset(input: ImageAnnotationInput): Promise<ImageAnnotationResult>;
   getDeliverable(taskId: string, ownerUserId: string): Promise<CurrentReportPackageResponse | null>;
   readVisualAsset(input: {
@@ -525,6 +533,19 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       expectedModel: expectedActualModel,
     }),
   }, planRevisionDriver, artifacts, visualInputGates);
+  const zeroPublicationEnabled = overrides.zeroPublicationEnabled
+    ?? process.env.ZERO_PUBLICATION_ENABLED === 'true';
+  const zeroPublication = zeroPublicationEnabled
+    ? new ZeroPublicationService({
+      store: repository,
+      artifacts,
+      zero: overrides.zeroMcp ?? new LocalZeroMcpClient({
+        url: process.env.ZERO_MCP_URL?.trim() || 'http://127.0.0.1:27618/mcp',
+      }),
+      reportPackages: reportPackageReader,
+      readVisualAsset: (input) => visualAssets.readVerified(input),
+    })
+    : undefined;
 
   return {
     controlPlanning,
@@ -533,6 +554,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     workflow,
     repository,
     artifacts,
+    ...(zeroPublication ? { zeroPublication } : {}),
     annotateVisualAsset: (input) => imageAnnotations.annotate(input),
     async getDeliverable(taskId, ownerUserId) {
       const task = await repository.getTaskDetail(taskId);
