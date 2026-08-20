@@ -227,7 +227,12 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
                 {reportState === 'report-loading-error' && (
                   <ErrorCard msg={deliverableError} onRetry={flow.retryDeliverable} retryLabel="重取报告" />
                 )}
-                {deliverable && <CurrentStage4Report report={deliverable} />}
+                {deliverable && (
+                  <CurrentStage4Report
+                    report={deliverable}
+                    taskState={exec.status === 'completed_with_gaps' ? 'completed_with_gaps' : 'completed'}
+                  />
+                )}
               </>
             )}
             {phase === 'failed' && (

@@ -29,7 +29,7 @@ export interface ZeroIntegrationStatusResponse {
   currentFileKey?: string;
   currentPageId?: string;
   currentPageName?: string;
-  reason?: 'offline' | 'unauthenticated' | 'no_design_tab' | 'protocol_error';
+  reason?: 'disabled' | 'offline' | 'unauthenticated' | 'no_design_tab' | 'protocol_error';
 }
 
 export interface CreateZeroPublicationRequest {
@@ -55,6 +55,15 @@ export interface ZeroPublicationResponse {
   status: ZeroPublicationStatus;
   stage: ZeroPublicationStage;
   progress: number;
+  zeroFileKey?: string | null;
+  zeroPageId?: string;
+  zeroPageName?: string;
+  draftRootNodeId?: string | null;
+  finalRootNodeId?: string | null;
+  updatePublicationId?: string | null;
+  imageManifest?: unknown[] | null;
+  screenshotManifest?: unknown[] | null;
+  receiptArtifactId?: string | null;
   rootNodeId?: string;
   pageId?: string;
   pageName?: string;
@@ -63,6 +72,7 @@ export interface ZeroPublicationResponse {
   failure?: ZeroPublicationFailure;
   createdAt: string;
   updatedAt: string;
+  completedAt?: string | null;
 }
 
 export interface ZeroPublicationReceipt {

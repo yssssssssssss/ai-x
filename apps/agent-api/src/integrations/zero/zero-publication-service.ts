@@ -13,6 +13,7 @@ import type { CurrentReportPackageReader } from '../../../../orchestrator-runtim
 import type { ReportBlock } from '../../../../orchestrator-runtime/src/report/report-document-composer.ts';
 import type { VerifiedVisualAsset } from '../../../../orchestrator-runtime/src/report/visual-asset-service.ts';
 import type {
+  ZeroIntegrationStatusResponse,
   ZeroPublicationFailure,
   ZeroPublicationStage,
 } from '../../../../../packages/api-contract/zero-publication.ts';
@@ -227,6 +228,43 @@ export class ZeroPublicationService {
   constructor(private readonly dependencies: ServiceDependencies) {
     this.leaseOwner = dependencies.leaseOwner ?? `zero-publication-${process.pid}`;
     this.now = dependencies.now ?? (() => new Date());
+  }
+
+  async status(): Promise<ZeroIntegrationStatusResponse> {
+    try {
+      const status = await this.dependencies.zero.getStatus();
+      if (!status.authenticated) {
+        return {
+          available: true,
+          authenticated: false,
+          ...(status.version ? { version: status.version } : {}),
+          reason: 'unauthenticated',
+        };
+      }
+      try {
+        const target = await this.dependencies.zero.getCurrentTarget();
+        return {
+          available: true,
+          authenticated: true,
+          ...(status.version ? { version: status.version } : {}),
+          currentFileKey: target.fileKey,
+          currentPageId: target.pageId,
+          currentPageName: target.pageName,
+        };
+      } catch (error) {
+        if (error instanceof ZeroMcpClientError && error.code === 'zero_no_design_tab') {
+          return {
+            available: true,
+            authenticated: true,
+            ...(status.version ? { version: status.version } : {}),
+            reason: 'no_design_tab',
+          };
+        }
+        throw error;
+      }
+    } catch {
+      return { available: false, authenticated: false, reason: 'offline' };
+    }
   }
 
   async create(input: {
