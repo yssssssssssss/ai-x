@@ -104,6 +104,8 @@ interface ReportPackagePort {
     taskId: string;
     planVersionId: string;
     attemptId: string;
+    reportPackageArtifactId: string;
+    reportPackageHash: string;
   }): Promise<CurrentReportPackageResponse | null>;
 }
 
@@ -222,11 +224,11 @@ function assertMultimodal(
 }
 
 export class ZeroPublicationService {
-  private readonly leaseOwner: string;
+  private readonly leaseOwnerPrefix: string;
   private readonly now: () => Date;
 
   constructor(private readonly dependencies: ServiceDependencies) {
-    this.leaseOwner = dependencies.leaseOwner ?? `zero-publication-${process.pid}`;
+    this.leaseOwnerPrefix = dependencies.leaseOwner ?? `zero-publication-${process.pid}`;
     this.now = dependencies.now ?? (() => new Date());
   }
 
@@ -274,6 +276,12 @@ export class ZeroPublicationService {
     idempotencyKey: string;
     updatePublicationId?: string;
   }): Promise<ControlZeroPublication> {
+    if (input.updatePublicationId) {
+      throw new ZeroPublicationServiceError(
+        'update_not_supported',
+        'Zero publication updates are not supported in this version',
+      );
+    }
     const task = await this.dependencies.store.getTaskDetail(input.taskId);
     if (
       !task
@@ -331,7 +339,6 @@ export class ZeroPublicationService {
       zeroFileKey: target.fileKey,
       zeroPageId: target.pageId,
       zeroPageName: target.pageName,
-      ...(input.updatePublicationId ? { updatePublicationId: input.updatePublicationId } : {}),
     });
   }
 
@@ -343,10 +350,17 @@ export class ZeroPublicationService {
     return this.dependencies.store.getZeroPublicationForOwner({ publicationId, taskId, ownerUserId });
   }
 
+  private leaseOwner(publication: ControlZeroPublication): string {
+    if (!publication.leaseOwner) {
+      throw new ZeroPublicationServiceError('publication_lease_lost', 'Publication lease is unavailable', true);
+    }
+    return publication.leaseOwner;
+  }
+
   private async heartbeat(publication: ControlZeroPublication): Promise<ControlZeroPublication> {
     return this.dependencies.store.heartbeatZeroPublication({
       publicationId: publication.id,
-      leaseOwner: this.leaseOwner,
+      leaseOwner: this.leaseOwner(publication),
       extendUntil: new Date(this.now().getTime() + LEASE_MS),
     });
   }
@@ -362,7 +376,7 @@ export class ZeroPublicationService {
   ): Promise<ControlZeroPublication> {
     return this.dependencies.store.updateZeroPublication({
       publicationId: publication.id,
-      leaseOwner: this.leaseOwner,
+      leaseOwner: this.leaseOwner(publication),
       stage,
       progress,
       ...(values.draftRootNodeId ? { draftRootNodeId: values.draftRootNodeId } : {}),
@@ -430,9 +444,10 @@ export class ZeroPublicationService {
     });
     if (!publication) throw new ZeroPublicationServiceError('task_not_found', 'Publication does not exist');
     if (publication.status === 'completed') return publication;
+    const claimOwner = `${this.leaseOwnerPrefix}:${randomUUID()}`;
     const claimed = await this.dependencies.store.claimZeroPublication({
       publicationId,
-      leaseOwner: this.leaseOwner,
+      leaseOwner: claimOwner,
       leaseExpiresAt: new Date(this.now().getTime() + LEASE_MS),
     });
     if (!claimed) throw new ZeroPublicationServiceError('publication_lease_lost', 'Publication is already running', true);
@@ -453,7 +468,7 @@ export class ZeroPublicationService {
         finalized = true;
         return this.dependencies.store.completeZeroPublication({
           publicationId: publication.id,
-          leaseOwner: this.leaseOwner,
+          leaseOwner: this.leaseOwner(publication),
           finalRootNodeId: resumed.finalRootNodeId,
           receiptArtifactId: publication.receiptArtifactId,
           screenshotManifest: publication.screenshotManifest ?? [],
@@ -471,6 +486,8 @@ export class ZeroPublicationService {
         taskId: publication.taskId,
         planVersionId: publication.planVersionId,
         attemptId: publication.attemptId,
+        reportPackageArtifactId: publication.reportPackageArtifactId,
+        reportPackageHash: publication.reportPackageHash,
       });
       assertMultimodal(report);
       if (
@@ -650,7 +667,7 @@ export class ZeroPublicationService {
       finalized = true;
       return this.dependencies.store.completeZeroPublication({
         publicationId: publication.id,
-        leaseOwner: this.leaseOwner,
+        leaseOwner: this.leaseOwner(publication),
         finalRootNodeId: finalizedDraft.finalRootNodeId,
         receiptArtifactId: receipt.id,
         screenshotManifest,
@@ -677,7 +694,7 @@ export class ZeroPublicationService {
       try {
         await this.dependencies.store.failZeroPublication({
           publicationId: publication.id,
-          leaseOwner: this.leaseOwner,
+          leaseOwner: this.leaseOwner(publication),
           failure: publicFailure,
         });
       } catch {

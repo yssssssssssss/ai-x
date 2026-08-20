@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReportDocument } from '../../../../orchestrator-runtime/src/report/report-document-composer.ts';
 import type { CurrentResearchPlanResponse } from '../../current-report-markdown.ts';
 import { currentResearchPlanToMarkdown } from '../../current-report-markdown.ts';
@@ -96,6 +96,7 @@ function MultimodalCurrentReport({
   const [zeroPublication, setZeroPublication] = useState<ZeroPublicationResponse | null>(null);
   const [zeroUiState, setZeroUiState] = useState<ZeroPublicationUiState>('idle');
   const [zeroError, setZeroError] = useState<string | null>(null);
+  const zeroRequestKey = useRef<string | null>(null);
   const taskId = report.deliverable.taskId;
   const loadVisualAsset = useMemo(() => {
     const cache = new Map<string, Promise<ControlVisualAssetResponse>>();
@@ -135,6 +136,7 @@ function MultimodalCurrentReport({
         const next = await api.zeroPublication(taskId, zeroPublication.id);
         if (!active) return;
         setZeroPublication(next);
+        setZeroError(null);
         if (next.status === 'completed') setZeroUiState('completed');
         else if (next.status === 'failed') {
           setZeroUiState('failed');
@@ -142,8 +144,7 @@ function MultimodalCurrentReport({
         } else setZeroUiState('running');
       } catch {
         if (active) {
-          setZeroUiState('failed');
-          setZeroError('无法读取 Zero 发布进度');
+          setZeroError('暂时无法读取发布进度，正在重试…');
         }
       }
     };
@@ -156,15 +157,17 @@ function MultimodalCurrentReport({
     setZeroUiState('creating');
     setZeroError(null);
     try {
+      const idempotencyKey = zeroRequestKey.current ?? crypto.randomUUID();
+      zeroRequestKey.current = idempotencyKey;
       const publication = await api.createZeroPublication(
         taskId,
         {
           expectedTaskState: taskState,
           target: { mode: 'current_page' },
-          ...(zeroPublication?.status === 'completed' ? { updatePublicationId: zeroPublication.id } : {}),
         },
-        crypto.randomUUID(),
+        idempotencyKey,
       );
+      zeroRequestKey.current = null;
       setZeroPublication(publication);
       setZeroUiState(publication.status === 'completed' ? 'completed' : 'running');
     } catch (error) {
@@ -231,7 +234,7 @@ function MultimodalCurrentReport({
             type="button"
             className="btn-ghost"
             onClick={() => void publishToZero()}
-            disabled={!zeroReady || zeroBusy}
+            disabled={!zeroReady || zeroBusy || zeroUiState === 'completed'}
             title={zeroStatusHint}
           >
             {zeroPublicationButtonLabel(zeroUiState)}

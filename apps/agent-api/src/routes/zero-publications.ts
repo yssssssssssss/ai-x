@@ -59,7 +59,7 @@ function statusFor(error: ZeroPublicationServiceError): number {
     || error.code === 'publication_conflict'
     || error.code === 'publication_lease_lost'
   ) return 409;
-  if (error.code === 'invalid_request' || error.code === 'update_target_invalid') return 400;
+  if (error.code === 'invalid_request' || error.code === 'update_target_invalid' || error.code === 'update_not_supported') return 400;
   return 422;
 }
 
@@ -87,12 +87,25 @@ function routeParam(value: string | string[] | undefined): string {
   return typeof value === 'string' ? value : '';
 }
 
+function requireLoopbackPeer(req: Request, res: Response, next: NextFunction): void {
+  const address = req.socket.remoteAddress ?? '';
+  if (
+    address === '::1'
+    || address.startsWith('127.')
+    || address.startsWith('::ffff:127.')
+  ) {
+    next();
+    return;
+  }
+  res.status(403).json({ error: 'Zero publication is available only on this machine', code: 'zero_local_only' });
+}
+
 export function createZeroIntegrationRouter(
   service: Pick<ZeroPublicationHttpPort, 'status'> | undefined,
   auth: AuthMiddleware = requireAuth,
 ): Router {
   const router = Router();
-  router.get('/status', auth, asyncRoute(async (_req, res) => {
+  router.get('/status', requireLoopbackPeer, auth, asyncRoute(async (_req, res) => {
     if (!service) {
       res.json({ available: false, authenticated: false, reason: 'disabled' });
       return;
@@ -112,7 +125,7 @@ export function createZeroPublicationRouter(
 ): Router {
   const router = Router();
 
-  router.post('/:taskId/publications/zero', auth, asyncRoute(async (req, res) => {
+  router.post('/:taskId/publications/zero', requireLoopbackPeer, auth, asyncRoute(async (req, res) => {
     if (!service) {
       res.status(503).json({ error: 'Zero publication is disabled', code: 'zero_offline' });
       return;
@@ -131,7 +144,6 @@ export function createZeroPublicationRouter(
         ownerUserId,
         expectedTaskState: request.expectedTaskState,
         idempotencyKey,
-        ...(request.updatePublicationId ? { updatePublicationId: request.updatePublicationId } : {}),
       });
       if (publication.status !== 'completed') {
         void service.execute(publication.id, ownerUserId).catch(() => undefined);
@@ -142,7 +154,7 @@ export function createZeroPublicationRouter(
     }
   }));
 
-  router.get('/:taskId/publications/zero/:publicationId', auth, asyncRoute(async (req, res) => {
+  router.get('/:taskId/publications/zero/:publicationId', requireLoopbackPeer, auth, asyncRoute(async (req, res) => {
     if (!service) {
       res.status(503).json({ error: 'Zero publication is disabled', code: 'zero_offline' });
       return;

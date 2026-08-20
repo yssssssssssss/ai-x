@@ -5,7 +5,7 @@ export type ZeroPublicationUiState = 'idle' | 'creating' | 'running' | 'complete
 export function zeroPublicationButtonLabel(state: ZeroPublicationUiState): string {
   if (state === 'creating') return '正在创建…';
   if (state === 'running') return '正在发送…';
-  if (state === 'completed') return '更新 Zero 稿件';
+  if (state === 'completed') return '已发送到 Zero';
   if (state === 'failed') return '重试发送到 Zero';
   return '发送到 Zero';
 }

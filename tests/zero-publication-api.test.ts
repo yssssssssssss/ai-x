@@ -69,7 +69,7 @@ test('Zero publication routes require frozen request fields and Idempotency-Key'
   assert.equal(missing.status, 400);
   const forbidden = await fetch(`${base}/api/control-tasks/${taskId}/publications/zero`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'idem' },
-    body: JSON.stringify({ expectedTaskState: 'completed', target: { mode: 'current_page' }, updateRootNodeId: '31:1' }),
+    body: JSON.stringify({ expectedTaskState: 'completed', target: { mode: 'current_page' }, updatePublicationId: publicationId }),
   });
   assert.equal(forbidden.status, 400);
 });

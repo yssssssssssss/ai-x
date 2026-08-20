@@ -1,6 +1,8 @@
 # Report Package 发布到 Zero 开发文档
 
-> 状态：开发中。Gate 0 至 Phase 6 已完成，当前进入 Gate 7。
+> 状态：V1 send-only 开发完成并通过最终门禁；代码位于本地 `feat/zero-report-publication`，尚未合并或 push。
+
+> V1 范围修订（2026-08-20）：只支持首次“发送到 Zero”，公开合同和 Service 均拒绝 update；运行期间由操作者保持当前 Zero 页面不切换。Zero 路由只接受 loopback socket peer。update two-phase swap、跨页面恢复和更强故障注入作为 V2，不进入本次交付门禁。
 >
 > 本文是“发送到 Zero”能力的设计真相源。实现范围、接口、状态机、图片传输、幂等、回滚和验收均以本文为准。
 >
@@ -206,11 +208,10 @@ interface CreateZeroPublicationRequest {
   target: {
     mode: 'current_page';
   };
-  updatePublicationId?: string;
 }
 ```
 
-第一版只支持 `current_page`。服务端从 task 解析 active plan、current attempt 和 Report Package，不接受客户端提交这些 ID。更新发布只接受同一 task、同一 owner 的 completed `updatePublicationId`，服务端从旧 publication 解析 rootNodeId、fileKey 和 pageId；客户端不能指定任意 Zero nodeId。
+第一版只支持 `current_page` 和首次新建发布。服务端从 task 解析 active plan、current attempt，并验证和读取创建时冻结的准确 Report Package Artifact；客户端不能提交这些 ID、任意 Zero nodeId 或 `updatePublicationId`。更新已有 Zero 稿件延期到 V2。
 
 响应状态码：
 

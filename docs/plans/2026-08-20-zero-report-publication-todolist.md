@@ -5,6 +5,8 @@
 > 规则：按顺序执行。每个 Gate 未通过前，不进入下一阶段。每个阶段独立提交，测试按 Phase 批量运行，不按小功能运行。
 >
 > 测试节奏：每个 Phase 先批量写完测试，统一跑一次红灯；随后完成整个 Phase 的实现，结束时统一跑一次绿灯门禁。实现单个函数、文件、Module 或路由后不立即跑测试。阶段门禁失败时只重跑直接失败的测试文件，`pnpm quality` 只在最终 Gate 7 和独立审查改动后运行。
+>
+> V1 范围修订（2026-08-20）：本次只交付首次发送，公开合同和 Service 拒绝 update；操作者保证执行期间不切换 Zero 页面。update swap 和跨页面故障恢复延期到 V2。
 
 ## 当前已确认事实
 
@@ -65,7 +67,7 @@ clean worktree
 - [x] 断言 publication status 只允许 queued、running、completed、failed。
 - [x] 断言 publication stage 使用开发文档冻结枚举。
 - [x] 断言 create request 不接受 reportPackageArtifactId、planVersionId、attemptId 或任意 updateRootNodeId。
-- [x] 断言更新只接受 `updatePublicationId`。
+- [x] 断言 V1 create request 拒绝 `updatePublicationId`。
 - [x] 断言 Zero node id 格式为 `数字:数字`。
 - [x] 断言 progress 只能为 0 到 100 的整数。
 
@@ -282,10 +284,9 @@ pnpm typecheck
 - [x] 相同 Idempotency-Key replay。
 - [x] 不同 request hash 复用 key 时冲突。
 - [x] create 模式失败时清理 draft。
-- [x] update 模式拒绝其他 task 或其他 owner 的 publication。
-- [x] update 模式从旧 publication 解析 rootNodeId，不接受客户端 nodeId。
-- [x] update 模式失败时保留旧 root。
-- [x] update 完成后再删除旧 root。
+- [x] V1 Service 在持久化前拒绝 update 模式。
+- [ ] V2：update 模式校验同 task、owner 和旧 root。
+- [ ] V2：update two-phase swap 和失败保留旧 root。
 - [x] expired lease 可恢复。
 - [x] 多个 deterministic draft 时 fail closed。
 
@@ -294,7 +295,7 @@ pnpm typecheck
 - [x] 创建 `apps/agent-api/src/integrations/zero/zero-publication-service.ts`。
 - [x] 注入 Repository、ReportPackageReader、ArtifactStore、Renderer、Transcoder 和 ZeroMcpPort。
 - [x] 实现 owner 和 task state 校验。
-- [x] 服务端解析当前 Report Package。
+- [x] 验证并读取创建时冻结的准确 Report Package Artifact 和组件 ID。
 - [x] 冻结 Zero target context。
 - [x] 创建 publication 和 lease。
 - [x] 渲染 HTML。
@@ -310,11 +311,11 @@ pnpm typecheck
 - [x] 将整页和局部 screenshot 写成 SEALED binary Artifact。
 - [x] 在 receipt 中保存 screenshot Artifact IDs。
 - [x] 实现 create finalize。
-- [x] 实现 update two-phase swap。
+- [ ] V2：实现 update two-phase swap。
 - [x] 写 SEALED publication receipt。
 - [x] 标记 completed。
 - [x] 实现失败清理和 failure code。
-- [x] 实现 heartbeat。
+- [x] 实现 heartbeat；每次 claim 使用唯一 lease token，避免同进程 stale worker 复用 owner。
 - [x] 实现 expired publication recovery。
 
 ### 4.3 Runtime 装配
@@ -385,23 +386,22 @@ pnpm typecheck
 - [x] 在 `CurrentStage4Report` 操作区增加“发送到 Zero”。
 - [x] 报告非 multimodal 时不显示。
 - [x] Zero 离线时 disabled，并显示启动提示。
-- [x] 点击打开确认面板。
+- [x] 点击“发送到 Zero”后显式发起创建，不随报告生成自动触发。
 - [x] 显示当前 Zero file/page。
-- [x] 显示视觉资产数量和预计切片数。
-- [x] 支持新建。
-- [x] 已有 publication 时支持更新。
+- [ ] V2：显示视觉资产数量和预计切片数。
+- [x] 支持首次新建。
+- [x] V1 禁用并拒绝更新已有 publication。
 - [x] 显示 stage 和 progress。
 - [x] completed 显示 rootNodeId。
 - [x] failed 显示脱敏错误和重试。
 - [x] 所有按钮有 disabled、focus 和 busy 状态。
-- [x] 375px 和桌面宽度布局无溢出。
+- [ ] 375px 和桌面宽度浏览器布局验收延期。
 
 ### 5B.3 前端验证
 
 - [x] 增加 source-level dispatch 测试。
-- [x] 浏览器检查完成报告按钮。
-- [x] 浏览器检查 Zero 离线状态。
-- [x] 浏览器检查发布进度和完成状态。
+- [x] source-level 检查完成报告按钮、离线文案和发布进度 dispatch。
+- [ ] 浏览器交互验收延期，不作为 V1 send-only 代码门禁。
 
 ### Phase 5 完成门禁
 
@@ -471,7 +471,7 @@ pnpm --dir apps/web build
 
 - [ ] 关闭 Zero 后点击，确认 503 和 UI 提示。
 - [ ] 模拟图片脚本失败，确认 draft 被清理。
-- [ ] update 模式模拟中途失败，确认旧稿仍存在。
+- [x] V1 API 与 Service 拒绝 update；不执行 update 故障 smoke。
 - [x] 重复 Idempotency-Key，确认 replay 同一 publication。
 - [ ] 将一个 manifest 设为 block fixture，确认图片不发送。
 - [ ] 模拟 metadata 高度不足，确认 publication 失败。
@@ -484,6 +484,8 @@ pnpm --dir apps/web build
 - [x] 原始 Report Package 和 Visual Artifact 共 10 个文件 hash 未变化。
 
 ## Gate 7：全量验证
+
+最终结果：`pnpm quality` 通过（1455 tests，1443 pass，12 skip，0 fail），Web production build 通过，`git diff --check` 通过。
 
 ```bash
 pnpm typecheck
@@ -500,39 +502,41 @@ pnpm --dir apps/web build
 pnpm quality
 ```
 
-- [ ] 所有 Zero 定向测试通过。
-- [ ] `pnpm quality` 通过。
-- [ ] Web build 通过。
-- [ ] `git diff --check` 通过。
-- [ ] 无 staged 外文件。
-- [ ] 无敏感信息进入日志、fixture 或 Artifact。
-- [ ] 对新增表执行 migration rollback review。
+- [x] 所有 Zero 定向测试通过。
+- [x] `pnpm quality` 通过。
+- [x] Web build 通过。
+- [x] `git diff --check` 通过。
+- [x] staged/unstaged 范围仅包含本批 V1 代码、测试和计划文档。
+- [x] 无敏感信息进入日志、fixture 或 Artifact。
+- [x] Migration rollback review：014 为独立 ledger 表；回滚边界是先停止 Zero publication worker，再删除 `control_zero_publications`，不修改原 Report/Visual Artifact。
 
 ## Gate 8：独立审查
 
-- [ ] 审查 Zero MCP URL 校验和 SSRF 风险。
-- [ ] 审查 owner 隔离。
-- [ ] 审查外部副作用和用户确认。
-- [ ] 审查幂等和并发。
-- [ ] 审查 update two-phase swap。
-- [ ] 审查图片 exportPolicy。
-- [ ] 审查 Base64、错误信息和日志脱敏。
-- [ ] 审查 Artifact 不可变性。
-- [ ] 审查 publication recovery。
-- [ ] 审查 Web 可访问性和窄屏。
-- [ ] 处理所有 HIGH/CRITICAL finding。
-- [ ] 只有审查导致代码变更时才重新运行 Gate 7；纯审查不重复跑全量测试。
+结果：已完成一次集中式安全、正确性和产品/API/UI 独立审查。按用户确认的 V1 范围处理：修复准确 Report Package、唯一 claim token、轮询重试、原图顺序和 loopback route；运行期间切页被接受为操作前提；update 对外禁用，其 swap 风险延期到 V2。此后不再为本批次重复全局审查。
+
+- [x] 审查 Zero MCP URL 校验和 SSRF 风险。
+- [x] 审查 owner 隔离。
+- [x] 审查外部副作用和用户确认。
+- [x] 审查幂等和并发。
+- [x] V1 已禁用 update，two-phase swap 审查延期到 V2。
+- [x] 审查图片 exportPolicy。
+- [x] 审查 Base64、错误信息和日志脱敏。
+- [x] 审查 Artifact 不可变性。
+- [x] 审查 publication recovery。
+- [x] 审查 Web 可访问性和窄屏；非阻断改进延期。
+- [x] V1 范围内 blocker 已处置；其余偶发恢复加固明确延期。
+- [x] 审查改动合并为一个批次，只补跑一次最终 Gate。
 
 ## Gate 9：交付
 
-- [ ] 更新开发文档中的最终文件路径和实际常量。
-- [ ] 更新 TodoList 的每个执行结果。
-- [ ] 记录真实 Zero 验收的 publicationId、rootNodeId 和 receipt Artifact ID。
+- [x] 更新开发文档中的最终文件路径和实际常量。
+- [x] 更新 TodoList 的执行结果和 V1/V2 边界。
+- [x] 记录真实 Zero 验收的 publicationId、rootNodeId 和 receipt Artifact ID。
 - [ ] 确认所有 Phase commit 独立可构建。
-- [ ] 生成最终 diff summary。
+- [x] 生成最终 diff summary（V1 收尾批次：16 files，243 insertions，109 deletions）。
 - [ ] 用户授权后再 push。
 - [ ] 需要 PR 时创建 PR 并等待 CI。
-- [ ] 不在未授权情况下发布到远端 `main`。
+- [x] 未在未授权情况下发布到远端 `main`。
 
 ## 完成账本
 

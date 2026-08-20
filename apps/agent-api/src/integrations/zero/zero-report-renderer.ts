@@ -72,6 +72,13 @@ function placeholders(input: {
   });
 }
 
+const VISUAL_ROLE_ORDER: Record<ZeroVisualRole, number> = {
+  image_original: 0,
+  image_annotation: 1,
+  image: 2,
+  chart: 3,
+};
+
 function visualGroup(items: readonly ZeroHtmlPlaceholder[]): string {
   if (items.length === 0) return '<div class="visual-empty">该视觉内容没有可导出的图片。</div>';
   const bySlice = new Map<number, ZeroHtmlPlaceholder[]>();
@@ -83,7 +90,7 @@ function visualGroup(items: readonly ZeroHtmlPlaceholder[]): string {
   return `<div class="visual-stack">${[...bySlice.entries()]
     .sort(([left], [right]) => left - right)
     .map(([, slice]) => `<div class="visual-row">${slice
-      .sort((left, right) => left.role.localeCompare(right.role))
+      .sort((left, right) => VISUAL_ROLE_ORDER[left.role] - VISUAL_ROLE_ORDER[right.role])
       .map((item) => `<figure class="visual-card"><div class="visual-label">${escape(item.label)}</div><div class="visual-placeholder ${item.role === 'chart' ? 'chart' : ''}" data-ai-alt="${escape(item.nodeName)}"></div><figcaption>${escape(item.label)} · ${item.sliceIndex + 1}/${item.sliceCount}</figcaption></figure>`)
       .join('')}</div>`)
     .join('')}</div>`;

@@ -35,7 +35,6 @@ export interface ZeroIntegrationStatusResponse {
 export interface CreateZeroPublicationRequest {
   expectedTaskState: 'completed' | 'completed_with_gaps';
   target: { mode: 'current_page' };
-  updatePublicationId?: string;
 }
 
 export interface CreateZeroPublicationResponse {
@@ -111,10 +110,8 @@ export class ZeroPublicationContractError extends Error {
 const CREATE_REQUEST_KEYS = new Set([
   'expectedTaskState',
   'target',
-  'updatePublicationId',
 ]);
 const TARGET_KEYS = new Set(['mode']);
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const ZERO_NODE_ID = /^\d+:\d+$/u;
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -141,17 +138,8 @@ export function parseCreateZeroPublicationRequest(value: unknown): CreateZeroPub
   if (!target || Object.keys(target).some((key) => !TARGET_KEYS.has(key)) || target.mode !== 'current_page') {
     throw new ZeroPublicationContractError('target must select the current Zero page');
   }
-  if (
-    input.updatePublicationId !== undefined
-    && (typeof input.updatePublicationId !== 'string' || !UUID.test(input.updatePublicationId))
-  ) {
-    throw new ZeroPublicationContractError('updatePublicationId must be a UUID');
-  }
   return {
     expectedTaskState: input.expectedTaskState,
     target: { mode: 'current_page' },
-    ...(typeof input.updatePublicationId === 'string'
-      ? { updatePublicationId: input.updatePublicationId }
-      : {}),
   };
 }

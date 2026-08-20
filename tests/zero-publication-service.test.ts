@@ -52,6 +52,7 @@ class MemoryPublicationStore implements ZeroPublicationStore {
     redactionPolicyVersion: 'v1', failureReason: null,
   };
   rows = new Map<string, ControlZeroPublication>();
+  claimOwners: string[] = [];
   created = 0;
   cleaned: string[] = [];
 
@@ -75,6 +76,7 @@ class MemoryPublicationStore implements ZeroPublicationStore {
   async claimZeroPublication(input: { publicationId: string; leaseOwner: string; leaseExpiresAt: Date }) {
     const row = this.rows.get(input.publicationId);
     if (!row || row.status === 'completed' || row.status === 'failed') return null;
+    this.claimOwners.push(input.leaseOwner);
     const next = publication({ ...row, status: 'running', leaseOwner: input.leaseOwner, leaseExpiresAt: input.leaseExpiresAt });
     this.rows.set(next.id, next); return next;
   }
@@ -208,17 +210,18 @@ async function harness() {
   const artifacts = new MemoryArtifacts();
   const zero = new FakeZero();
   const fixture = await reportFixture();
+  const reportReads: Array<Record<string, unknown>> = [];
   const service = new ZeroPublicationService({
     store, artifacts, zero,
-    reportPackages: { async read() { return fixture.report; } },
+    reportPackages: { async read(input) { reportReads.push(input); return fixture.report; } },
     readVisualAsset: fixture.readVisualAsset,
     leaseOwner: 'test-zero-worker',
   });
-  return { service, store, artifacts, zero };
+  return { service, store, artifacts, zero, reportReads };
 }
 
 test('Zero publication service creates and completes a multimodal publication with real image fills', async () => {
-  const { service, store, artifacts, zero } = await harness();
+  const { service, store, artifacts, zero, reportReads } = await harness();
   const created = await service.create({ taskId, ownerUserId, expectedTaskState: 'completed', idempotencyKey: 'idem-1' });
   const completed = await service.execute(created.id, ownerUserId);
   assert.equal(completed.status, 'completed');
@@ -230,6 +233,15 @@ test('Zero publication service creates and completes a multimodal publication wi
   assert.ok(artifacts.json.every((artifact) => artifact.attemptId === undefined));
   assert.equal(zero.cleanup.length, 0);
   assert.equal(store.created, 1);
+  assert.equal(store.claimOwners.length, 1);
+  assert.match(store.claimOwners[0]!, /^test-zero-worker:[0-9a-f-]{36}$/u);
+  assert.deepEqual(reportReads, [{
+    taskId,
+    planVersionId,
+    attemptId,
+    reportPackageArtifactId,
+    reportPackageHash: `sha256:${'a'.repeat(64)}`,
+  }]);
 });
 
 test('Zero publication service fails before persistence when Zero is offline', async () => {
@@ -251,18 +263,33 @@ test('Zero publication service cleans a new draft when image fill verification f
   assert.deepEqual(zero.cleanup, ['31:2']);
 });
 
-test('Zero publication service reclaims expired publications and preserves an update target until success', async () => {
+test('Zero publication service rejects update mode before persistence', async () => {
+  const { service, store } = await harness();
+  await assert.rejects(
+    () => service.create({
+      taskId,
+      ownerUserId,
+      expectedTaskState: 'completed',
+      idempotencyKey: 'idem-update',
+      updatePublicationId: randomUUID(),
+    }),
+    (error: unknown) => error instanceof ZeroPublicationServiceError && error.code === 'update_not_supported',
+  );
+  assert.equal(store.created, 0);
+});
+
+test('Zero publication service reclaims an expired publication with a fresh claim token', async () => {
   const { service, store, zero } = await harness();
   const created = await service.create({
-    taskId, ownerUserId, expectedTaskState: 'completed', idempotencyKey: 'idem-update',
-    updatePublicationId: randomUUID(),
+    taskId, ownerUserId, expectedTaskState: 'completed', idempotencyKey: 'idem-recovery',
   });
   store.rows.set(created.id, publication({
     ...created, status: 'running', leaseOwner: 'lost-worker', leaseExpiresAt: new Date(Date.now() - 1),
-    updateRootNodeId: '29:1',
   }));
   const recovered = await service.recoverExpired();
   assert.equal(recovered, 1);
   assert.equal(store.rows.get(created.id)?.status, 'completed');
-  assert.equal(zero.finalized[0]?.updateRootNodeId, '29:1');
+  assert.equal(zero.finalized[0]?.updateRootNodeId, undefined);
+  assert.equal(store.claimOwners.length, 1);
+  assert.notEqual(store.claimOwners[0], 'lost-worker');
 });

@@ -28,14 +28,12 @@ test('Zero publication create request accepts only the frozen client surface', (
   assert.deepEqual(parseCreateZeroPublicationRequest({
     expectedTaskState: 'completed',
     target: { mode: 'current_page' },
-    updatePublicationId: '11111111-1111-4111-8111-111111111111',
   }), {
     expectedTaskState: 'completed',
     target: { mode: 'current_page' },
-    updatePublicationId: '11111111-1111-4111-8111-111111111111',
   });
 
-  for (const forbidden of ['reportPackageArtifactId', 'planVersionId', 'attemptId', 'updateRootNodeId']) {
+  for (const forbidden of ['reportPackageArtifactId', 'planVersionId', 'attemptId', 'updatePublicationId', 'updateRootNodeId']) {
     assert.throws(
       () => parseCreateZeroPublicationRequest({
         expectedTaskState: 'completed',
@@ -48,14 +46,14 @@ test('Zero publication create request accepts only the frozen client surface', (
   }
 });
 
-test('Zero publication create request rejects malformed states, targets, and update IDs', () => {
+test('Zero publication create request rejects malformed states, targets, and updates', () => {
   const invalid: unknown[] = [
     null,
     {},
     { expectedTaskState: 'executing', target: { mode: 'current_page' } },
     { expectedTaskState: 'completed', target: { mode: 'another_page' } },
     { expectedTaskState: 'completed', target: { mode: 'current_page', extra: true } },
-    { expectedTaskState: 'completed', target: { mode: 'current_page' }, updatePublicationId: 'not-a-uuid' },
+    { expectedTaskState: 'completed', target: { mode: 'current_page' }, updatePublicationId: '11111111-1111-4111-8111-111111111111' },
   ];
   for (const value of invalid) {
     assert.throws(() => parseCreateZeroPublicationRequest(value), ZeroPublicationContractError);

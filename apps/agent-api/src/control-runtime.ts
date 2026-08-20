@@ -35,6 +35,7 @@ import { CurrentDeliverableService } from '../../orchestrator-runtime/src/report
 import { SynthesisMaterializer } from '../../orchestrator-runtime/src/report/synthesis-materializer.ts';
 import { ReportReviewService } from '../../orchestrator-runtime/src/report/report-review-service.ts';
 import { CurrentReportPackageReader } from '../../orchestrator-runtime/src/report/current-report-package-reader.ts';
+import { ReportPackageArtifactService } from '../../orchestrator-runtime/src/report/report-package-artifact.ts';
 import { ReportCompositionService } from '../../orchestrator-runtime/src/report/report-composition-service.ts';
 import {
   ImageAnnotationService,
@@ -451,6 +452,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     schemaValidator: validator,
     visualAssets,
   });
+  const reportPackageArtifacts = new ReportPackageArtifactService(artifacts);
   const deliverables = new CurrentDeliverableService({
     llm: new ReceiptLLMClient(llm, repository),
     validator,
@@ -542,7 +544,26 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       zero: overrides.zeroMcp ?? new LocalZeroMcpClient({
         url: process.env.ZERO_MCP_URL?.trim() || 'http://127.0.0.1:27618/mcp',
       }),
-      reportPackages: reportPackageReader,
+      reportPackages: {
+        async read(input) {
+          const frozen = await reportPackageArtifacts.verify({
+            artifactId: input.reportPackageArtifactId,
+            attemptId: input.attemptId,
+          });
+          if (
+            frozen.artifact.contentSha256 !== input.reportPackageHash
+            || frozen.value.taskId !== input.taskId
+            || frozen.value.planVersionId !== input.planVersionId
+          ) {
+            throw new Error('frozen Report Package identity is invalid');
+          }
+          return reportPackageReader.read({
+            taskId: input.taskId,
+            planVersionId: input.planVersionId,
+            attemptId: input.attemptId,
+          }, frozen.value);
+        },
+      },
       readVisualAsset: (input) => visualAssets.readVerified(input),
     })
     : undefined;

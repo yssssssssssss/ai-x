@@ -81,6 +81,10 @@ test('Zero report renderer maps report blocks and stable visual placeholders', (
   assert.match(rendered.html, /评分权重/);
   assert.deepEqual(rendered.placeholders.map(({ key }) => key), visuals.map(({ key }) => key));
   assert.equal(new Set(rendered.placeholders.map(({ nodeName }) => nodeName)).size, visuals.length);
+  assert.ok(
+    rendered.html.indexOf('原图第 1 段') < rendered.html.indexOf('标注图第 1 段'),
+    'comparison slices render original before annotation',
+  );
   for (const placeholder of rendered.placeholders) {
     assert.match(rendered.html, new RegExp(placeholder.nodeName));
   }
