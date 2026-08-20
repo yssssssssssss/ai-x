@@ -33,17 +33,17 @@ export REPO_ROOT BASE_SHA FEATURE_BRANCH ZERO_MCP_URL
 
 ## Gate 0：冻结开发基线
 
-- [ ] 运行 `git status --short --branch -uall`，保存完整工作区清单。
-- [ ] 确认当前 Control flow、ReportDocument、Visual Asset 和 Report Package 改动已进入明确 commit。
-- [ ] 当前工作区存在未提交 WIP 时，不在原 checkout 开始实现。
-- [ ] 从包含当前报告主链的 commit 创建 `feat/zero-report-publication`。
-- [ ] 为实现创建独立 worktree。
-- [ ] 确认 worktree clean。
-- [ ] 记录 `BASE_SHA`、Node 和 pnpm 版本。
-- [ ] 运行基线 `pnpm typecheck`。
-- [ ] 运行基线 `pnpm --dir apps/web build`。
-- [ ] 运行基线相关报告测试。
-- [ ] 确认只有一个 writer 修改该 worktree。
+- [x] 运行 `git status --short --branch -uall`，保存完整工作区清单。
+- [x] 确认当前 Control flow、ReportDocument、Visual Asset 和 Report Package 改动已进入明确 commit。
+- [x] 当前工作区存在未提交 WIP 时，不在原 checkout 开始实现。
+- [x] 从包含当前报告主链的 commit 创建 `feat/zero-report-publication`。
+- [x] 为实现创建独立 worktree。
+- [x] 确认 worktree clean。
+- [x] 记录 `BASE_SHA`、Node 和 pnpm 版本。
+- [x] 运行基线 `pnpm typecheck`。
+- [x] 运行基线 `pnpm --dir apps/web build`。
+- [x] 运行基线相关报告测试。
+- [x] 确认只有一个 writer 修改该 worktree。
 
 ### Gate 0 完成条件
 
@@ -57,57 +57,59 @@ clean worktree
 
 ## Phase 1：共享合同与数据库
 
-- [ ] 批量完成本 Phase 的合同、Migration、Repository 失败测试后，统一运行一次 Phase 1 定向命令并确认红灯；红灯后再开始生产实现。
+- [x] 批量完成本 Phase 的合同、Migration、Repository 失败测试后，统一运行一次 Phase 1 定向命令并确认红灯；红灯后再开始生产实现。
 
 ### 1.1 先写失败测试
 
-- [ ] 创建 `tests/zero-publication-contract.test.ts`。
-- [ ] 断言 publication status 只允许 queued、running、completed、failed。
-- [ ] 断言 publication stage 使用开发文档冻结枚举。
-- [ ] 断言 create request 不接受 reportPackageArtifactId、planVersionId、attemptId 或任意 updateRootNodeId。
-- [ ] 断言更新只接受 `updatePublicationId`。
-- [ ] 断言 Zero node id 格式为 `数字:数字`。
-- [ ] 断言 progress 只能为 0 到 100 的整数。
+- [x] 创建 `tests/zero-publication-contract.test.ts`。
+- [x] 断言 publication status 只允许 queued、running、completed、failed。
+- [x] 断言 publication stage 使用开发文档冻结枚举。
+- [x] 断言 create request 不接受 reportPackageArtifactId、planVersionId、attemptId 或任意 updateRootNodeId。
+- [x] 断言更新只接受 `updatePublicationId`。
+- [x] 断言 Zero node id 格式为 `数字:数字`。
+- [x] 断言 progress 只能为 0 到 100 的整数。
 
 ### 1.2 实现合同
 
-- [ ] 创建 `packages/api-contract/zero-publication.ts`。
-- [ ] 定义 `ZeroPublicationStatus`。
-- [ ] 定义 `ZeroPublicationStage`。
-- [ ] 定义 `ZeroIntegrationStatusResponse`。
-- [ ] 定义 `CreateZeroPublicationRequest/Response`。
-- [ ] 定义 `ZeroPublicationResponse`。
-- [ ] 定义 `ZeroPublicationReceipt`。
+- [x] 创建 `packages/api-contract/zero-publication.ts`。
+- [x] 定义 `ZeroPublicationStatus`。
+- [x] 定义 `ZeroPublicationStage`。
+- [x] 定义 `ZeroIntegrationStatusResponse`。
+- [x] 定义 `CreateZeroPublicationRequest/Response`。
+- [x] 定义 `ZeroPublicationResponse`。
+- [x] 定义 `ZeroPublicationReceipt`。
 
 ### 1.3 Migration 失败测试
 
-- [ ] 创建 Migration 测试，验证 013 可从当前 schema 升级。
-- [ ] 验证同一 task 和 idempotency key 唯一。
-- [ ] 验证 status check constraint。
-- [ ] 验证 progress check constraint。
-- [ ] 验证 Migration 重跑幂等。
+- [x] 创建 Migration 测试，验证 013 可从当前 schema 升级。
+- [x] 验证同一 task 和 idempotency key 唯一。
+- [x] 验证 status check constraint。
+- [x] 验证 progress check constraint。
+- [x] 验证 Migration 重跑幂等。
 
 ### 1.4 实现 Migration
 
-- [ ] 创建 `database/migrations/014_zero_publications.sql`。
-- [ ] 创建 `control_zero_publications`。
-- [ ] 增加 task、owner、plan、attempt、report package 外键。
-- [ ] 增加唯一约束与索引。
-- [ ] 更新 migration runner 测试清单。
+- [x] 创建 `database/migrations/014_zero_publications.sql`。
+- [x] 创建 `control_zero_publications`。
+- [x] 增加 task、owner、plan、attempt、report package 外键。
+- [x] 增加唯一约束与索引。
+- [x] 更新 migration runner 测试清单。
 
 ### 1.5 Repository
 
-- [ ] 在 `database/control-plane.ts` 增加 publication 类型。
-- [ ] 实现 create/reserve。
-- [ ] 实现 claim lease/heartbeat。
-- [ ] 实现 update stage/progress。
-- [ ] 实现 record draft/final node IDs。
-- [ ] 实现 complete/fail。
-- [ ] 实现 get by owner。
-- [ ] 实现 list expired running publications。
-- [ ] 增加并发 claim、幂等 replay 和 lease lost 测试。
+- [x] 在 `database/control-plane.ts` 增加 publication 类型。
+- [x] 实现 create/reserve。
+- [x] 实现 claim lease/heartbeat。
+- [x] 实现 update stage/progress。
+- [x] 实现 record draft/final node IDs。
+- [x] 实现 complete/fail。
+- [x] 实现 get by owner。
+- [x] 实现 list expired running publications。
+- [x] 增加并发 claim、幂等 replay 和 lease lost 测试。
 
 ### Phase 1 门禁
+
+结果：8 个定向测试通过，typecheck PASS，diff check PASS。
 
 ```bash
 pnpm exec tsx --test \
@@ -116,9 +118,9 @@ pnpm exec tsx --test \
 pnpm typecheck
 ```
 
-- [ ] Phase 1 测试通过。
-- [ ] `git diff --check` 通过。
-- [ ] 提交 Phase 1，commit 只包含合同、Migration、Repository 和测试。
+- [x] Phase 1 测试通过。
+- [x] `git diff --check` 通过。
+- [x] 提交 Phase 1，commit 只包含合同、Migration、Repository 和测试。
 
 ## Phase 2：Zero MCP Client
 
