@@ -12,6 +12,7 @@ import type {
 import { ReportEvidenceValidator } from '../evidence/report-evidence-validator.ts';
 import {
   type MaterializeStepOutput,
+  type SynthesisMaterial,
   type SynthesisMaterializerLike,
 } from './synthesis-materializer.ts';
 import { redactSensitiveValue, redactString } from '../runtime/redaction.ts';
@@ -430,23 +431,46 @@ function projectPayloadToSchema(payload: unknown, schema: object): unknown {
 }
 
 const REQUIRED_DRAFT_KEYS = ['methodSummary', 'findingGraph', 'payload', 'recommendations', 'coverage'] as const;
+const MAX_DRAFT_UNWRAP_DEPTH = 8;
+const MAX_DRAFT_UNWRAP_NODES = 256;
+const MAX_DRAFT_JSON_LENGTH = 1_000_000;
+
+function parsedJsonContainer(value: string): object | null {
+  const candidate = value.trim();
+  if (candidate.length === 0 || candidate.length > MAX_DRAFT_JSON_LENGTH) return null;
+  const looksLikeContainer = (
+    (candidate.startsWith('{') && candidate.endsWith('}'))
+    || (candidate.startsWith('[') && candidate.endsWith(']'))
+  );
+  if (!looksLikeContainer) return null;
+  try {
+    const parsed: unknown = JSON.parse(candidate);
+    return parsed !== null && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
 
 function deliverableDraftRecord(value: unknown): Record<string, unknown> | null {
-  const root = unknownRecord(value);
-  if (!root) return null;
-  const queue: Record<string, unknown>[] = [root];
-  const seen = new Set<Record<string, unknown>>();
-  while (queue.length > 0) {
-    const candidate = queue.shift()!;
-    if (seen.has(candidate)) continue;
+  const queue: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }];
+  const seen = new Set<object>();
+  for (let index = 0; index < queue.length && index < MAX_DRAFT_UNWRAP_NODES; index += 1) {
+    const current = queue[index]!;
+    const candidate = typeof current.value === 'string'
+      ? parsedJsonContainer(current.value)
+      : current.value;
+    if (candidate === null || typeof candidate !== 'object' || seen.has(candidate)) continue;
     seen.add(candidate);
-    if (REQUIRED_DRAFT_KEYS.every((key) => Object.hasOwn(candidate, key))) return candidate;
-    for (const child of Object.values(candidate)) {
-      const nested = unknownRecord(child);
-      if (nested) queue.push(nested);
+    const record = unknownRecord(candidate);
+    if (record && REQUIRED_DRAFT_KEYS.every((key) => Object.hasOwn(record, key))) return record;
+    if (current.depth >= MAX_DRAFT_UNWRAP_DEPTH) continue;
+    const children = Array.isArray(candidate) ? candidate : Object.values(candidate);
+    for (const child of children) {
+      if (queue.length >= MAX_DRAFT_UNWRAP_NODES) break;
+      queue.push({ value: child, depth: current.depth + 1 });
     }
   }
-  return root;
+  return null;
 }
 function deliverableSelection(
   finalizedRequirement: unknown,
@@ -492,6 +516,60 @@ interface DisplayableVisualInventoryItem {
   asset: VerifiedVisualAsset;
   screenshotEvidenceIds: readonly string[];
   publicSourceEvidenceIds: readonly string[];
+}
+
+interface CompetitiveMatrixContract {
+  sampleIds: readonly string[];
+  dimensions: readonly string[];
+}
+
+function competitiveMatrixContract(
+  materials: readonly SynthesisMaterial[],
+  plan: CurrentDeliverableGenerateInput['plan']['plan'],
+): CompetitiveMatrixContract | undefined {
+  let best: CompetitiveMatrixContract | undefined;
+  for (const material of materials) {
+    const root = unknownRecord(material.value);
+    const payload = unknownRecord(root?.payload) ?? root;
+    const cases = Array.isArray(payload?.case_universe) ? payload.case_universe : [];
+    const sampleIds = cases.flatMap((candidate) => {
+      const value = unknownRecord(candidate)?.case_id;
+      return typeof value === 'string' && value.trim().length > 0 ? [value] : [];
+    });
+    const scoringSystem = unknownRecord(payload?.scoring_system);
+    const weights = Array.isArray(scoringSystem?.weights_ordered)
+      ? scoringSystem.weights_ordered
+      : [];
+    const dimensions = weights.flatMap((candidate) => {
+      const value = unknownRecord(candidate)?.dimension;
+      return typeof value === 'string' && value.trim().length > 0 ? [value] : [];
+    });
+    if (sampleIds.length > 0 && dimensions.length > 0) {
+      const candidate = {
+        sampleIds: [...new Set(sampleIds)],
+        dimensions: [...new Set(dimensions)],
+      };
+      if (!best || candidate.sampleIds.length > best.sampleIds.length) best = candidate;
+    }
+  }
+
+  const planDimensions = (plan.steps ?? []).flatMap((candidate) => {
+    const step = unknownRecord(candidate);
+    const weights = step && unknownRecord(step.input)?.scoring_weights;
+    return Array.isArray(weights)
+      ? weights.flatMap((weight) => {
+          const dimension = unknownRecord(weight)?.dimension;
+          return typeof dimension === 'string' && dimension.trim().length > 0 ? [dimension] : [];
+        })
+      : [];
+  });
+  if (planDimensions.length > 0) {
+    const dimensions = [...new Set(planDimensions)];
+    best = best
+      ? { ...best, dimensions: [...new Set([...best.dimensions, ...dimensions])] }
+      : { sampleIds: [], dimensions };
+  }
+  return best;
 }
 
 function sameVisualReference(
@@ -666,6 +744,7 @@ function assertPayloadVisualReferences(
   payload: unknown,
   inventory: VerifiedVisualInventory | undefined,
   displayableInventory: readonly DisplayableVisualInventoryItem[],
+  matrixContract?: CompetitiveMatrixContract,
 ): void {
   if (deliverableId !== 'competitive_analysis_report' && deliverableId !== 'design_audit_report') return;
   const value = unknownRecord(payload);
@@ -685,6 +764,71 @@ function assertPayloadVisualReferences(
       throw new Error('competitive dimensionMatrix dimensions must be unique');
     }
     const dimensions = new Set(dimensionNames);
+    if (matrixContract) {
+      if (samples.length === 0 || sampleIds.size !== samples.length) {
+        throw new Error('competitive competitorSamples must contain unique sample ids');
+      }
+      if (matrixContract.sampleIds.length > 0) {
+        const expectedSampleIds = new Set(matrixContract.sampleIds);
+        if (
+          expectedSampleIds.size !== sampleIds.size
+          || [...expectedSampleIds].some((sampleId) => !sampleIds.has(sampleId))
+        ) {
+          throw new Error(
+            `competitive competitorSamples must preserve the canonical case ids: ${matrixContract.sampleIds.join(', ')}`,
+          );
+        }
+      }
+      const expectedSampleIds = matrixContract.sampleIds.length
+        ? new Set(matrixContract.sampleIds)
+        : sampleIds;
+      for (const candidate of matrix) {
+        const row = unknownRecord(candidate);
+        const values = Array.isArray(row?.values) ? row.values : [];
+        const seenValueIds = new Set<string>();
+        if (values.length !== expectedSampleIds.size) {
+          throw new Error('competitive dimensionMatrix must cover every sampled competitor exactly once');
+        }
+        for (const value of values) {
+          const cell = unknownRecord(value);
+          const sampleId = cell?.sampleId;
+          if (
+            typeof sampleId !== 'string'
+            || !expectedSampleIds.has(sampleId)
+            || seenValueIds.has(sampleId)
+            || typeof cell?.score !== 'number'
+            || !Number.isFinite(cell?.score)
+            || cell.score < 1
+            || cell.score > 5
+          ) {
+            throw new Error(
+              'competitive dimensionMatrix must contain one numeric score from 1 to 5 for every sample',
+            );
+          }
+          seenValueIds.add(sampleId);
+        }
+        if (seenValueIds.size !== expectedSampleIds.size) {
+          throw new Error('competitive dimensionMatrix must cover every sampled competitor exactly once');
+        }
+        if (
+          matrixContract.dimensions.length > 0
+          && !matrixContract.dimensions.includes(String(row?.dimension ?? ''))
+        ) {
+          throw new Error(
+            `competitive dimensionMatrix must preserve canonical scoring dimensions: ${matrixContract.dimensions.join(', ')}`,
+          );
+        }
+      }
+      const expectedDimensions = new Set(matrixContract.dimensions);
+      if (
+        expectedDimensions.size !== dimensions.size
+        || [...expectedDimensions].some((dimension) => !dimensions.has(dimension))
+      ) {
+        throw new Error(
+          `competitive dimensionMatrix must preserve canonical scoring dimensions: ${matrixContract.dimensions.join(', ')}`,
+        );
+      }
+    }
     const visualEvidence = value.visualEvidence;
     if (!Array.isArray(visualEvidence)) {
       throw new Error('competitive visualEvidence must be an explicit array for a newly generated report');
@@ -849,6 +993,25 @@ function coverageRequirements(finalizedRequirement: unknown, problemGraph: unkno
   return { requiredQuestionIds, successCriterionIds };
 }
 
+function assertRequiredCoverage(
+  coverage: DeliverableDraft['coverage'],
+  requirements: ReturnType<typeof coverageRequirements>,
+): void {
+  const coveredQuestions = new Set(coverage.questionBindings.map((binding) => binding.questionId));
+  const coveredCriteria = new Set(
+    coverage.successCriterionBindings.map((binding) => binding.successCriterionId),
+  );
+  const issues = [
+    ...requirements.requiredQuestionIds
+      .filter((questionId) => !coveredQuestions.has(questionId))
+      .map((questionId) => `missing required question ${questionId}`),
+    ...requirements.successCriterionIds
+      .filter((criterionId) => !coveredCriteria.has(criterionId))
+      .map((criterionId) => `missing success criterion ${criterionId}`),
+  ];
+  if (issues.length > 0) throw new Error(`deliverable coverage ${issues.join('; ')}`);
+}
+
 const CAPABILITY_TYPE_BY_OUTPUT_KIND: Record<string, string> = {
   tool_output: 'tool',
   skill_output: 'skill',
@@ -944,6 +1107,9 @@ export class CurrentDeliverableService {
           evidenceEntries: evidenceManifest.entries,
         })
       : [];
+    const matrixContract = strictV2 && contract.entry.id === 'competitive_analysis_report'
+      ? competitiveMatrixContract(synthesisMaterials, input.plan.plan)
+      : undefined;
     const verifiedEvidence = evidenceManifest.entries.map((entry) => ({
       evidenceId: entry.id,
       evidenceClass: entry.evidenceClass,
@@ -985,6 +1151,14 @@ export class CurrentDeliverableService {
       finalizedRequirement: redactSensitiveValue(input.finalizedRequirement),
       problemGraph: redactSensitiveValue(input.problemGraph),
       ...(requiredCoverage === undefined ? {} : { coverageRequirements: requiredCoverage }),
+      ...(matrixContract && (matrixContract.sampleIds.length > 0 || matrixContract.dimensions.length > 0)
+        ? {
+            canonicalCompetitiveMatrix: {
+              sampleIds: [...matrixContract.sampleIds],
+              dimensions: [...matrixContract.dimensions],
+            },
+          }
+        : {}),
       ...(input.revisionInstruction === undefined ? {} : { revisionInstruction: redactString(input.revisionInstruction) }),
       ...(visualInventory === undefined ? {} : {
         verifiedVisualAssetIds: visualInventory.ids,
@@ -1012,8 +1186,12 @@ export class CurrentDeliverableService {
         capabilityProvenance?: unknown;
       }>({
         prompt: contract.synthesisPrompt
+          + '\nCoverage bindings are exhaustive. Include every context.coverageRequirements.requiredQuestionIds item exactly once in coverage.questionBindings and every context.coverageRequirements.successCriterionIds item exactly once in coverage.successCriterionBindings. Bind an explicit gap conclusion and recommendation when a requirement is not yet satisfied; never omit its id.'
           + '\nEvery evidenceIds entry must reference only context.verifiedEvidence[].evidenceId. Never place a Visual Asset id in evidenceIds; Visual Asset ids are allowed only in typed visual fields such as screenshotComparisons.assetIds.'
           + '\nFor findingGraph findings with kind "fact", every evidenceIds entry must have evidenceClass public_source, screenshot, or dataset. user_input, knowledge, simulation, and derived evidence cannot root a fact.'
+          + (matrixContract && (matrixContract.sampleIds.length > 0 || matrixContract.dimensions.length > 0)
+            ? '\nFor competitive analysis, preserve context.canonicalCompetitiveMatrix exactly: use every canonical sampleId once, do not split or rename a case, cover every canonical dimension, and put a numeric score from 1 to 5 in every matrix cell.'
+            : '')
           + (contract.entry.id === 'competitive_analysis_report'
             && (!visualInventory || visualInventory.assets.length === 0)
             ? '\nNo verified visual Asset inventory exists. Return empty visualEvidence and screenshotComparisons arrays and never invent an Asset id.'
@@ -1047,12 +1225,18 @@ export class CurrentDeliverableService {
         ? Object.fromEntries(
             Object.entries(generatedRecord).filter(([key]) => key !== 'capabilityProvenance'),
           )
-        : generated.data;
+        : null;
     };
     let validationFeedback: string[] = [];
     let deliverable: DeliverableEnvelope | null = null;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       const generatedDraft = await generateDraft(validationFeedback);
+      if (!generatedDraft) {
+        const message = `model response did not contain a complete deliverable draft (${REQUIRED_DRAFT_KEYS.join(', ')})`;
+        if (attempt === 3) throw new Error(message);
+        validationFeedback = [message];
+        continue;
+      }
       const generatedRecord = unknownRecord(generatedDraft);
       const contentDraft = generatedRecord
         ? { ...generatedRecord, payload: projectPayloadToSchema(generatedRecord.payload, contract.payloadSchema) }
@@ -1060,12 +1244,14 @@ export class CurrentDeliverableService {
       try {
         this.dependencies.validator.validateSchemaOrThrow(draftSchema, contentDraft, schemaName);
         const draft = contentDraft as DeliverableDraft;
+        if (strictV2 && requiredCoverage) assertRequiredCoverage(draft.coverage, requiredCoverage);
         if (strictV2) {
           assertPayloadVisualReferences(
             contract.entry.id,
             draft.payload,
             visualInventory,
             displayableInventory,
+            matrixContract,
           );
         }
         const risksAndOpenIssues = [...(draft.risksAndOpenIssues ?? [])];

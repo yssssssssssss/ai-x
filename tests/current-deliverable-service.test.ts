@@ -6,7 +6,6 @@ import { join } from 'node:path';
 import Ajv from 'ajv';
 import { afterEach, test } from 'node:test';
 import type {
-  CurrentExecutionPlan,
   ResearchDeliverableEnvelope,
   ResearchPlanPayload,
 } from '../packages/api-contract/research-deliverable.ts';
@@ -20,6 +19,7 @@ import {
 } from '../apps/orchestrator-runtime/src/evidence/evidence-service.ts';
 import type { MaterializeInput, SynthesisMaterial } from '../apps/orchestrator-runtime/src/report/synthesis-materializer.ts';
 import type { ReportReviewArtifact } from '../apps/orchestrator-runtime/src/report/report-review-service.ts';
+import type { CurrentDeliverableGenerateInput } from '../apps/orchestrator-runtime/src/report/current-deliverable-service.ts';
 import type {
   LLMClient,
   LLMProviderIdentity,
@@ -62,10 +62,7 @@ interface SealedEvidenceManifest {
 
 interface DeliverableGenerateInput {
   task: { id: string };
-  plan: {
-    id: string;
-    plan: Pick<CurrentExecutionPlan, 'deliverable_type'>;
-  };
+  plan: CurrentDeliverableGenerateInput['plan'];
   attempt: { id: string };
   researchGoal: string;
   finalizedRequirement?: unknown;
@@ -74,6 +71,7 @@ interface DeliverableGenerateInput {
   evidenceResolver: EvidenceArtifactResolver;
   outputs: unknown[];
   gaps: string[];
+  gapRefs?: ReadonlyArray<{ key: string; stepNo: number }>;
   expectedModel: string;
 }
 
@@ -614,8 +612,49 @@ test('retries deliverable generation once with schema validation feedback', asyn
 
   assert.ok(result.deliverableArtifactId);
   assert.equal(llm.structuredCalls.length, 3);
-  assert.match(JSON.stringify(llm.structuredCalls[1]?.context), /validationFeedback.*methodSummary.*findingGraph.*payload/);
+  assert.match(
+    JSON.stringify(llm.structuredCalls[1]?.context),
+    /validationFeedback.*complete deliverable draft.*methodSummary.*findingGraph.*payload/,
+  );
   assert.match(JSON.stringify(llm.structuredCalls[2]?.context), /validationFeedback.*no roots/);
+});
+
+test('retries strict deliverable generation when required coverage bindings are incomplete', async () => {
+  const incomplete = validDeliverableDraft();
+  const complete = structuredClone(incomplete);
+  complete.coverage.questionBindings.push({ questionId: 'q2', summaryIds: ['S1'] });
+  complete.coverage.successCriterionBindings.push({
+    successCriterionId: 'criterion2',
+    conclusionIds: ['C1'],
+    recommendationIds: ['R1'],
+  });
+  const { service, llm } = await createHarness([incomplete, complete]);
+
+  const result = await service.generate(generateInput({
+    finalizedRequirement: {
+      version: 'research-task-v2',
+      task_type: 'user_research_planning',
+      expected_deliverables: ['research_plan'],
+      success_criteria: [
+        { id: 'criterion1', statement: '结论可追溯' },
+        { id: 'criterion2', statement: '建议覆盖完整' },
+      ],
+    },
+    problemGraph: {
+      version: 'problem-graph-v1',
+      questions: [
+        { id: 'q1', priority: 'required' },
+        { id: 'q2', priority: 'required' },
+      ],
+    },
+  }));
+
+  assert.equal(llm.structuredCalls.length, 2);
+  assert.match(
+    JSON.stringify(llm.structuredCalls[1]?.context),
+    /validationFeedback.*missing required question q2.*missing success criterion criterion2/,
+  );
+  assert.deepEqual(result.deliverable.coverage, complete.coverage);
 });
 
 test('drops undeclared payload root fields before strict validation and sealing', async () => {
@@ -636,6 +675,116 @@ test('unwraps a nested object only when it contains every required deliverable d
 
   assert.equal(result.deliverable.methodSummary, validDeliverableDraft().methodSummary);
 });
+
+for (const wrapped of [
+  { label: 'an array', value: { result: [{ content: validDeliverableDraft() }] } },
+  { label: 'a JSON string', value: { result: JSON.stringify(validDeliverableDraft()) } },
+]) {
+  test(`unwraps a deliverable draft nested in ${wrapped.label}`, async () => {
+    const { service } = await createHarness(wrapped.value);
+
+    const result = await service.generate(generateInput());
+
+    assert.equal(result.deliverable.methodSummary, validDeliverableDraft().methodSummary);
+  });
+}
+
+test('retries competitive synthesis when the canonical case universe or matrix scores are lost', async () => {
+  const valid = {
+    ...validDeliverableDraft(),
+    payload: {
+      competitorSamples: [
+        { id: 'C01', name: 'Case one', rationale: 'Primary case', evidenceIds: ['E1'] },
+        { id: 'C02', name: 'Case two', rationale: 'Secondary case', evidenceIds: ['E1'] },
+      ],
+      dimensionMatrix: [{
+        dimension: '定位清晰度',
+        weight: 1,
+        values: [
+          { sampleId: 'C01', value: '清晰', score: 4, evidenceIds: ['E1'] },
+          { sampleId: 'C02', value: '清晰', score: 5, evidenceIds: ['E1'] },
+        ],
+      }],
+      differences: [{ id: 'D1', dimension: '定位清晰度', statement: 'Case two is clearer', evidenceIds: ['E1'] }],
+      impacts: [{ differenceId: 'D1', audience: '设计团队', statement: 'Provides a clearer reference' }],
+      actionRecommendations: [{ id: 'R2', differenceIds: ['D1'], priority: 'P1', statement: 'Validate the clearer pattern' }],
+      visualEvidence: [],
+      screenshotComparisons: [],
+    },
+  };
+  const invalid = structuredClone(valid) as typeof valid;
+  invalid.payload.competitorSamples[0]!.id = 'S01';
+  invalid.payload.dimensionMatrix[0]!.values[0] = {
+    sampleId: 'S01',
+    value: '清晰',
+    score: 4,
+    evidenceIds: ['E1'],
+  };
+  delete (invalid.payload.dimensionMatrix[0]!.values[0] as unknown as Record<string, unknown>).score;
+  const materializer = {
+    async materialize(_input: MaterializeInput): Promise<SynthesisMaterial[]> {
+      return [{
+        stepNo: 7,
+        actorType: 'skill',
+        actorId: 'competitive-web-research',
+        questionIds: ['q1'],
+        artifactId: 'artifact-step-7',
+        artifactContentSha256: 'sha256:step-seven',
+        value: {
+          payload: {
+            case_universe: [{ case_id: 'C01' }, { case_id: 'C02' }],
+            scoring_system: { weights_ordered: [{ dimension: '定位清晰度', weight: 1 }] },
+          },
+        },
+        semanticRole: 'analysis',
+      }];
+    },
+  };
+  const { service, llm } = await createHarness(
+    [invalid, valid],
+    materializer,
+  );
+  const result = await service.generate(generateInput({
+    plan: {
+      id: planVersionId,
+      plan: {
+        deliverable_type: 'competitive_analysis_report',
+        capability_decisions: {
+          eligible: [{ optional_tool_decisions: [{
+            tool_id: 'playwright-page-capture',
+            status: 'unavailable',
+            reason_code: 'optional_tool_real_adapter_unavailable',
+          }] }],
+        },
+        steps: [],
+      },
+    },
+    finalizedRequirement: {
+      version: 'research-task-v2',
+      task_type: 'competitive_research',
+      expected_deliverables: ['competitive_analysis_report'],
+      success_criteria: [{ id: 'criterion1', statement: '矩阵完整' }],
+    },
+    problemGraph: { version: 'problem-graph-v1', questions: [{ id: 'q1', priority: 'required' }] },
+    gaps: ['optional browser capture is unavailable'],
+    gapRefs: [{
+      key: 'capability:playwright-page-capture:optional_tool_real_adapter_unavailable',
+      stepNo: 0,
+    }],
+  }));
+
+  assert.equal(llm.structuredCalls.length, 2);
+  assert.match(
+    JSON.stringify(llm.structuredCalls[1]?.context),
+    /canonical.*C01.*C02|matrix.*score/isu,
+  );
+  assert.deepEqual(
+    (result.deliverable.payload as unknown as { competitorSamples: Array<{ id: string }> }).competitorSamples
+      .map(({ id }) => id),
+    ['C01', 'C02'],
+  );
+});
+
 test('legacy task_type-only generation falls back to the persisted plan deliverable id', async () => {
   const { service, llm, writes } = await createHarness();
 

@@ -282,6 +282,7 @@ export function executionFailureAllowsAction(
   failure: Record<string, unknown> | null | undefined,
   action: string,
 ): boolean {
+  if (action === 'retry' && failure?.kind === 'deliverable_validation') return true;
   return Array.isArray(failure?.allowedActions) && failure.allowedActions.includes(action);
 }
 

@@ -461,7 +461,8 @@ class TavilyWithUnsupportedSidecarAdapter extends CountingRealTavilyAdapter {
 class TestOnlyPlaywrightSkillLoader extends SkillLoader {
   override getTool(id: string): ToolRegistryEntry | null {
     if (id === 'playwright-page-capture') {
-      return loadToolRegistry().tools.find((tool) => tool.id === id) ?? null;
+      const tool = loadToolRegistry().tools.find((candidate) => candidate.id === id);
+      return tool ? { ...tool, status: 'active' } : null;
     }
     return super.getTool(id);
   }
@@ -4781,6 +4782,8 @@ test('pauses execution when current deliverable validation fails', async () => {
   assert.equal(result.status, 'paused');
   assert.equal(result.failedStepNo, 2);
   assert.equal(result.failure?.kind, 'deliverable_validation');
+  assert.equal(result.failure?.retryable, true);
+  assert.deepEqual(result.failure?.allowedActions, ['retry', 'abort']);
   const steps = await repository.listExecutionSteps(lease.attemptId);
   const failedStep = steps.find((step) => step.state === 'failed');
   assert.ok(failedStep);
@@ -5224,17 +5227,58 @@ test('fails closed when a Playwright step has no frozen optional authorization',
       .register(new CountingRealTavilyAdapter())
       .register(browser),
     new CountingRealLLM(),
+    new RecordingDeliverablesFake(),
+    undefined,
+    new TestOnlyPlaywrightSkillLoader(),
   ).execute({ lease, expectedModel: 'pinned-model' }), ExecutionAuthenticityError);
 
   assert.equal(browser.calls, 0);
   assert.equal((await repository.listAttempts(lease.taskId))[0]?.state, 'paused');
 });
 
-test('adds partial Playwright page failures only after the visual publication commits', async () => {
+test('keeps a successful same-host fallback failure diagnostic without creating a user-visible gap', async () => {
   const { repository, lease } = await claimedBrowserExecution();
   const pageFailures = [{
     source_result_index: 1,
     requested_url: 'https://source.test/product-2',
+    code: 'login_required',
+    sanitized_message: 'page requires authentication',
+  }];
+  const result = await buildEngine(
+    repository,
+    new ToolRouter()
+      .register(new CountingRealTavilyAdapter())
+      .register(new BrowserCaptureAdapter(
+        [browserCaptureFixture(0)],
+        undefined,
+        pageFailures,
+      )),
+    new CountingRealLLM(),
+    new RecordingDeliverablesFake(),
+    undefined,
+    new TestOnlyPlaywrightSkillLoader(),
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed');
+  assert.equal(result.gapCount, 0);
+  const browserStep = (await repository.listExecutionSteps(lease.attemptId))
+    .find(({ stepNo }) => stepNo === 2);
+  assert.equal(browserStep?.state, 'succeeded');
+  assert.equal(browserStep?.toolProvenance?.gapSummary, undefined);
+  const outputArtifactId = browserStep?.outputArtifactId;
+  assert.ok(outputArtifactId);
+  const diagnostic = await new ControlArtifactStore({ root: artifactRoot, registry: repository })
+    .readVerifiedJson<{ output: { failures: Record<string, unknown>[] } }>(outputArtifactId);
+  assert.deepEqual(diagnostic.value.output.failures, pageFailures);
+  const browserArtifacts = await repository.listArtifactsForAttempt(lease);
+  assert.ok(browserArtifacts.some(({ kind, state }) => kind === 'visual_asset' && state === 'SEALED'));
+});
+
+test('adds an unresolved Playwright page failure only after the visual publication commits', async () => {
+  const { repository, lease } = await claimedBrowserExecution();
+  const pageFailures = [{
+    source_result_index: 1,
+    requested_url: 'https://other-source.test/product-2',
     code: 'login_required',
     sanitized_message: 'page requires authentication',
   }];
@@ -5263,7 +5307,7 @@ test('adds partial Playwright page failures only after the visual publication co
     keys: ['1:login_required'],
     failuresHash: canonicalJsonHash(pageFailures),
   });
-  assert.doesNotMatch(JSON.stringify(browserStep?.toolProvenance?.gapSummary), /source\.test|authentication/);
+  assert.doesNotMatch(JSON.stringify(browserStep?.toolProvenance?.gapSummary), /other-source\.test|authentication/);
   const browserArtifacts = await repository.listArtifactsForAttempt(lease);
   assert.ok(browserArtifacts.some(({ kind, state }) => kind === 'visual_asset' && state === 'SEALED'));
 });

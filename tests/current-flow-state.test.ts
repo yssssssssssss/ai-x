@@ -254,6 +254,11 @@ test('selects one authoritative failed step independent of response order', asyn
   ])?.stepNo, 5);
   assert.equal(executionFailureAllowsAction({ allowedActions: ['abort'] }, 'retry'), false);
   assert.equal(executionFailureAllowsAction({ allowedActions: ['abort'] }, 'abort'), true);
+  assert.equal(executionFailureAllowsAction({
+    kind: 'deliverable_validation',
+    retryable: false,
+    allowedActions: ['abort'],
+  }, 'retry'), true);
 });
 test('merges Legacy and Current history by newest creation time while preserving source kind', async () => {
   const { mergeTaskHistory } = await loadCurrentFlowStateModule();

@@ -537,6 +537,43 @@ interface TavilyResponse {
   results?: unknown;
 }
 
+interface MappedTavilyResult {
+  title: string;
+  url: string;
+  snippet: string;
+  score: number | null;
+  published_date: string | null;
+}
+
+interface MappedTavilyResponse {
+  answer: string | null;
+  response_time: number | null;
+  results: MappedTavilyResult[];
+}
+
+const MAX_TAVILY_QUERY_CONCURRENCY = 4;
+
+function tavilyQueries(input: TavilyInput, toolId: string): string[] {
+  const values = Array.isArray(input.query) ? input.query : [input.query];
+  if (
+    values.length === 0
+    || values.some((value) => typeof value !== 'string' || !value.trim())
+  ) {
+    throw new ToolInvocationError(toolId, {
+      kind: 'schema',
+      retryable: false,
+      sanitizedMessage: 'Tavily requires one query or a non-empty query list',
+    });
+  }
+  return values.map((value) => (value as string).trim());
+}
+
+function tavilyMaxResults(value: unknown): number {
+  return Number.isInteger(value) && Number(value) >= 1 && Number(value) <= 20
+    ? Number(value)
+    : 5;
+}
+
 export class TavilyAdapter implements ToolAdapter {
   readonly adapterType = 'tavily' as const;
   readonly implementationId = 'tavily';
@@ -568,39 +605,86 @@ export class TavilyAdapter implements ToolAdapter {
       ? opts.manifest.timeout_seconds * 1000
       : this.cfg.timeoutMs ?? Number(process.env.TAVILY_TIMEOUT_MS ?? 30000);
     const input = opts.input as TavilyInput;
-    const body: Record<string, unknown> = {
-      query: input.query,
-      max_results: input.max_results ?? 5,
+    const queries = tavilyQueries(input, opts.toolId);
+    const maxResults = tavilyMaxResults(input.max_results);
+    const perQueryMaxResults = Math.max(1, Math.ceil(maxResults / queries.length));
+    const commonBody: Record<string, unknown> = {
       search_depth: input.search_depth ?? 'basic',
       topic: input.topic ?? 'general',
       include_answer: input.include_answer ?? false,
       include_raw_content: false,
     };
-    if (input.time_range !== undefined) body.time_range = input.time_range;
+    if (input.time_range !== undefined) commonBody.time_range = input.time_range;
 
     const invocation = invocationSignal(opts.context, timeoutMs);
     try {
-      const res = await fetch(`${baseUrl}${opts.manifest.entrypoint || '/search'}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(body),
-        signal: invocation.signal,
-      });
-      if (!res.ok) {
-        throw new ToolInvocationError(opts.toolId, {
-          kind: res.status === 429 && quotaExceeded(res.headers) ? 'quota' : httpFailureKind(res.status),
-          retryable: !(res.status === 429 && quotaExceeded(res.headers)) && isRetryableHttp(res.status),
-          providerStatus: res.status,
-          sanitizedMessage: `HTTP ${res.status}`,
+      const request = async (query: string, signal: AbortSignal): Promise<TavilyResponse> => {
+        const res = await fetch(`${baseUrl}${opts.manifest.entrypoint || '/search'}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            query,
+            max_results: perQueryMaxResults,
+            ...commonBody,
+          }),
+          signal,
         });
+        if (!res.ok) {
+          throw new ToolInvocationError(opts.toolId, {
+            kind: res.status === 429 && quotaExceeded(res.headers) ? 'quota' : httpFailureKind(res.status),
+            retryable: !(res.status === 429 && quotaExceeded(res.headers)) && isRetryableHttp(res.status),
+            providerStatus: res.status,
+            sanitizedMessage: `HTTP ${res.status}`,
+          });
+        }
+        return (await res.json()) as TavilyResponse;
+      };
+      const requestBatch = async (batch: string[]): Promise<TavilyResponse[]> => {
+        const controller = new AbortController();
+        const forwardAbort = () => controller.abort(invocation.signal.reason);
+        if (invocation.signal.aborted) forwardAbort();
+        else invocation.signal.addEventListener('abort', forwardAbort, { once: true });
+        let hasPrimaryFailure = false;
+        let primaryFailure: unknown;
+        try {
+          const requests = batch.map(async (query) => {
+            try {
+              return await request(query, controller.signal);
+            } catch (error) {
+              if (!hasPrimaryFailure) {
+                hasPrimaryFailure = true;
+                primaryFailure = error;
+                if (!controller.signal.aborted) controller.abort('sibling_failed');
+              }
+              throw error;
+            }
+          });
+          const settled = await Promise.allSettled(requests);
+          if (hasPrimaryFailure) throw primaryFailure;
+          return settled.map((result) => {
+            if (result.status === 'rejected') throw result.reason;
+            return result.value;
+          });
+        } finally {
+          invocation.signal.removeEventListener('abort', forwardAbort);
+        }
+      };
+      const responses: TavilyResponse[] = [];
+      for (let index = 0; index < queries.length; index += MAX_TAVILY_QUERY_CONCURRENCY) {
+        responses.push(...await requestBatch(
+          queries.slice(index, index + MAX_TAVILY_QUERY_CONCURRENCY),
+        ));
       }
-      const raw = (await res.json()) as TavilyResponse;
       throwIfToolInvocationAborted(opts.toolId, opts.context);
       const latencyMs = Math.round(performance.now() - start);
-      return { output: mapTavilyResponse(raw), latencyMs, receipt: directReceipt(this, opts.manifest, 'ok', latencyMs) };
+      return {
+        output: mergeTavilyResponses(responses, maxResults),
+        latencyMs,
+        receipt: directReceipt(this, opts.manifest, 'ok', latencyMs),
+      };
     } catch (err) {
       throw errorFromInvocation(opts.toolId, err, 'network', invocation.signal, opts.context.deadlineAt);
     } finally {
@@ -609,7 +693,7 @@ export class TavilyAdapter implements ToolAdapter {
   }
 }
 
-function mapTavilyResponse(raw: TavilyResponse): object {
+function mapTavilyResponse(raw: TavilyResponse): MappedTavilyResponse {
   const rows = Array.isArray(raw.results) ? raw.results : [];
   return {
     answer: typeof raw.answer === 'string' ? raw.answer : null,
@@ -618,7 +702,39 @@ function mapTavilyResponse(raw: TavilyResponse): object {
   };
 }
 
-function mapTavilyResult(row: TavilyResultRow): object {
+function mergeTavilyResponses(
+  responses: TavilyResponse[],
+  maxResults: number,
+): MappedTavilyResponse {
+  const mapped = responses.map(mapTavilyResponse);
+  if (mapped.length === 1) {
+    return { ...mapped[0]!, results: mapped[0]!.results.slice(0, maxResults) };
+  }
+  const results: MappedTavilyResult[] = [];
+  const seenUrls = new Set<string>();
+  const maxRows = Math.max(0, ...mapped.map((response) => response.results.length));
+  for (let rowIndex = 0; rowIndex < maxRows && results.length < maxResults; rowIndex += 1) {
+    for (const response of mapped) {
+      const row = response.results[rowIndex];
+      if (!row || seenUrls.has(row.url)) continue;
+      seenUrls.add(row.url);
+      results.push(row);
+      if (results.length >= maxResults) break;
+    }
+  }
+  const responseTimes = mapped
+    .map((response) => response.response_time)
+    .filter((value): value is number => value !== null);
+  return {
+    answer: null,
+    response_time: responseTimes.length > 0
+      ? responseTimes.reduce((total, value) => total + value, 0)
+      : null,
+    results,
+  };
+}
+
+function mapTavilyResult(row: TavilyResultRow): MappedTavilyResult {
   return {
     title: typeof row.title === 'string' ? row.title : '',
     url: typeof row.url === 'string' ? row.url : '',

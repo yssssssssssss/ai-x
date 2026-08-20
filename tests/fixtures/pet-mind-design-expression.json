@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "name": "pet-mind-design-expression",
+  "profiles": ["competitive_research"],
+  "scenarios": [
+    {
+      "id": "competitive-pet-mind-design-expression",
+      "profile": "competitive_research",
+      "taskType": "competitive_research",
+      "businessDomain": "pet_brand_design",
+      "input": "最终需求，无需继续澄清。请完成《宠物心智的设计表达策略全景》内部研究：固定比较中国样本小佩、pidan、未卡与海外样本 Different Dog、Wild One、BARK（每组3个；若公开资料不足可记录缺口并替换，不得凭空补造），覆盖品牌定位、宠物拟人化与情绪表达、视觉识别、包装与电商内容、线下触点、用户信任建立六个维度。优先使用品牌官网、官方新闻/产品页、官方案例和认证机构页面；第三方页面只能作为线索，不能独立支撑核心事实。获取可公开访问的官网与案例页面截图，记录页面标题、URL、访问日期、可见原文摘录与对应证据编号；遇到登录墙、付费墙、反爬或无法访问页面直接跳过并记录缺口。研究资料以当前公开页面为主，必要时标注2025—2026时间范围；输出中文报告、整合矩阵、短期/中期/长期建议与截图索引。所有关键结论附可追溯来源，不做区域普遍性或因果效果结论。",
+      "researchGoal": "形成宠物品牌心智设计表达策略全景与可执行的设计机会建议",
+      "sensitivity": "public",
+      "piiDetected": false,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "competitive_analysis_report",
+      "minPublicSources": 3,
+      "minVisualAssets": 1,
+      "variant": "clear",
+      "expectedTaskType": "competitive_research",
+      "expectedDeliverableIds": ["competitive_analysis_report"],
+      "clarificationKeys": [],
+      "clarificationThemes": [],
+      "forbiddenCapabilities": ["private_data_access", "external_side_effects"],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    }
+  ]
+}

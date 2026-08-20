@@ -11,6 +11,7 @@ import {
   designSmokeInputValue,
   formatSmokeReceipt,
   resolveSmokeRequirement,
+  requireActorCoverage,
   runCurrentRealSmoke,
   safeSmokeErrorMessage,
   selectSmokeScenario,
@@ -171,6 +172,30 @@ test('current real smoke covers all five Current profiles', () => {
     'design_audit',
     'a11y_audit',
   ]);
+});
+
+test('smoke plan coverage treats report drafting and review as engine-owned stages', () => {
+  assert.doesNotThrow(() => requireActorCoverage([
+    {
+      actorType: 'tool',
+      actorId: 'tavily-web-search',
+      state: 'succeeded',
+    },
+    {
+      actorType: 'tool',
+      actorId: 'playwright-page-capture',
+      state: 'succeeded',
+    },
+    {
+      actorType: 'skill',
+      actorId: 'competitive-web-research',
+      state: 'succeeded',
+    },
+  ], [
+    { actor_type: 'tool', actor_id: 'tavily-web-search' },
+    { actor_type: 'tool', actor_id: 'playwright-page-capture' },
+    { actor_type: 'skill', actor_id: 'competitive-web-research' },
+  ]));
 });
 
 test('real smoke selects one exact scenario and rejects missing or mismatched ids', () => {
@@ -647,7 +672,7 @@ test('real smoke accepts a profile-specific Skill instead of one global Skill pa
     },
   ]);
 
-  assert.equal(selected.candidateId, 'depth');
+  assert.equal(selected.candidateId, 'speed');
 });
 
 test('real smoke continues clarification until the requirement becomes ready', async () => {

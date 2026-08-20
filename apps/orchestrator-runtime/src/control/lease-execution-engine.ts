@@ -482,14 +482,46 @@ function pageFailureGaps(value: unknown): PageFailureGap[] {
   });
 }
 
-function pageGapSummary(rawFailures: unknown): ToolGapSummary | undefined {
+function pageGapSummary(
+  rawFailures: unknown,
+  diagnosticFailures: unknown = rawFailures,
+): ToolGapSummary | undefined {
   const failures = pageFailureGaps(rawFailures);
   if (failures.length === 0) return undefined;
   return {
     count: failures.length,
     keys: failures.map(({ sourceResultIndex, code }) => `${sourceResultIndex}:${code}`),
-    failuresHash: hashJson(rawFailures),
+    failuresHash: hashJson(diagnosticFailures),
   };
+}
+
+function normalizedPageHostname(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  try {
+    return new URL(value).hostname.toLowerCase().replace(/^www\./u, '');
+  } catch {
+    return null;
+  }
+}
+
+function userVisiblePageFailures(output: Record<string, unknown>): unknown[] {
+  const rawFailures = output.failures;
+  pageFailureGaps(rawFailures);
+  if (!Array.isArray(rawFailures) || !Array.isArray(output.captures)) return [];
+  const capturedHostnames = new Set<string>();
+  for (const capture of output.captures) {
+    if (!isRecord(capture)) continue;
+    for (const value of [capture.requested_url, capture.final_url]) {
+      const hostname = normalizedPageHostname(value);
+      if (hostname) capturedHostnames.add(hostname);
+    }
+  }
+  return rawFailures.filter((failure) => {
+    const hostname = isRecord(failure)
+      ? normalizedPageHostname(failure.requested_url)
+      : null;
+    return hostname === null || !capturedHostnames.has(hostname);
+  });
 }
 
 function stepGapSummary(failure: Record<string, unknown>, kind: ToolFailureKind): ToolGapSummary {
@@ -1175,7 +1207,7 @@ function deliverableFailureFrom(error: unknown): Record<string, unknown> {
   }
   return {
     kind: 'deliverable_validation',
-    retryable: false,
+    retryable: true,
     message: error instanceof CurrentReportValidationError
       ? error.message
       : error instanceof Error ? error.message : String(error),
@@ -1492,11 +1524,16 @@ export class LeaseExecutionEngine {
           if (typeof actorOutputHash === 'string') producedSkillOutputHash = actorOutputHash;
           toolAttemptReceipts = actorResult.toolAttemptReceipts;
           const result = sanitizeStepResult(actorResult);
-          const successfulPageFailures = step.actor_id === 'playwright-page-capture'
-            ? pageFailureGaps(isRecord(result.output) ? result.output.failures : undefined)
+          const successfulPageFailureRows = step.actor_id === 'playwright-page-capture'
+            && isRecord(result.output)
+            ? userVisiblePageFailures(result.output)
             : [];
+          const successfulPageFailures = pageFailureGaps(successfulPageFailureRows);
           const successfulGapSummary = step.actor_id === 'playwright-page-capture'
-            ? pageGapSummary(isRecord(result.output) ? result.output.failures : undefined)
+            ? pageGapSummary(
+                successfulPageFailureRows,
+                isRecord(result.output) ? result.output.failures : successfulPageFailureRows,
+              )
             : undefined;
           const captureAttachments = step.actor_type === 'tool'
             ? browserCaptureAttachments(step.actor_id, result.output, result.mediaAttachments)
@@ -2744,6 +2781,15 @@ export class LeaseExecutionEngine {
         if (!tool) {
           if (frozenOptional) continue;
           return new ExecutionAuthenticityError(`tool ${step.actor_id} is not active`);
+        }
+        if (
+          !frozenOptional
+          && tool.tier === 'optional'
+          && tool.adapter_type === 'playwright'
+        ) {
+          return new ExecutionAuthenticityError(
+            `optional tool ${step.actor_id} has no frozen optional authorization`,
+          );
         }
         if (frozenOptional && tool.status !== 'active') continue;
         let manifest: ToolManifest;

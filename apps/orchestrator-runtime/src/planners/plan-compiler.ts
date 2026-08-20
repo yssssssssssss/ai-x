@@ -67,6 +67,7 @@ export type PlanCompilerValidationKind =
   | 'optional_tool_missing'
   | 'optional_tool_late'
   | 'optional_tool_binding_invalid'
+  | 'visual_fallback_contract_invalid'
   | 'future_binding_source'
   | 'unknown_binding_source'
   | 'unknown_binding_pointer'
@@ -120,6 +121,33 @@ const STEP_KEYS = new Set([
   'approval_role',
   'fallback_actor_ids',
 ]);
+
+export const MAX_BROWSER_CAPTURE_COUNT = 6;
+export const MAX_BROWSER_FALLBACK_RESULTS = 20;
+
+const VISUAL_SOURCE_QUERY_FACETS = [
+  '官方产品页面',
+  '官方功能文档',
+  '官方公告',
+  '第三方评测',
+  '行业分析',
+  '用户反馈',
+] as const;
+
+export function frozenVisualSourceQueries(researchGoal: string, maxPages: number): string[] {
+  if (
+    !Number.isInteger(maxPages)
+    || maxPages < 1
+    || maxPages > MAX_BROWSER_CAPTURE_COUNT
+  ) {
+    throw new Error(`invalid visual capture page count: ${maxPages}`);
+  }
+  const queryCount = Math.max(2, maxPages);
+  const goal = researchGoal.trim();
+  return VISUAL_SOURCE_QUERY_FACETS
+    .slice(0, queryCount)
+    .map((facet) => `${goal} ${facet}`);
+}
 
 function fail(kind: PlanCompilerValidationKind, ...issueIds: string[]): never {
   throw new PlanCompilerValidationError(kind, issueIds);
@@ -396,6 +424,7 @@ function validateActors(
 function validateOptionalTools(
   steps: CurrentPlanStep[],
   eligibleSkills: ReadonlyMap<string, CapabilityResolution['eligible'][number]>,
+  task: ResearchTaskV2,
 ): void {
   const toolSteps = new Map<string, CurrentPlanStep[]>();
   const ownersByTool = new Map<string, string[]>();
@@ -461,6 +490,87 @@ function validateOptionalTools(
       || captureStep.input.pages.length !== 0
     ) {
       fail('optional_tool_binding_invalid', String(captureStep.step_no), captureStep.actor_id);
+    }
+    const capture = captureStep.input.capture;
+    const maxPages = capture !== null && typeof capture === 'object' && !Array.isArray(capture)
+      ? Reflect.get(capture, 'max_pages')
+      : undefined;
+    const uniqueHostnames = capture !== null && typeof capture === 'object' && !Array.isArray(capture)
+      ? Reflect.get(capture, 'unique_hostnames')
+      : undefined;
+    if (
+      !Number.isInteger(maxPages)
+      || Number(maxPages) < 1
+      || Number(maxPages) > MAX_BROWSER_CAPTURE_COUNT
+    ) {
+      fail(
+        'visual_fallback_contract_invalid',
+        String(captureStep.step_no),
+        'capture.max_pages',
+      );
+    }
+    if (uniqueHostnames !== true) {
+      fail(
+        'visual_fallback_contract_invalid',
+        String(captureStep.step_no),
+        'capture.unique_hostnames',
+      );
+    }
+    const expectedQueries = frozenVisualSourceQueries(task.research_goal, Number(maxPages));
+    const rawQueries = source.input.query;
+    if (!Array.isArray(rawQueries)) {
+      fail(
+        'visual_fallback_contract_invalid',
+        String(source.step_no),
+        'tavily.query.scalar',
+      );
+    }
+    if (rawQueries.some((query) => typeof query !== 'string' || !query.trim())) {
+      fail(
+        'visual_fallback_contract_invalid',
+        String(source.step_no),
+        'tavily.query.drift',
+      );
+    }
+    const normalizedQueries = rawQueries.map((query) => (query as string).trim());
+    if (new Set(normalizedQueries).size !== normalizedQueries.length) {
+      fail(
+        'visual_fallback_contract_invalid',
+        String(source.step_no),
+        'tavily.query.duplicate',
+      );
+    }
+    if (normalizedQueries.length < expectedQueries.length) {
+      fail(
+        'visual_fallback_contract_invalid',
+        String(source.step_no),
+        'tavily.query.undersized',
+        String(expectedQueries.length),
+      );
+    }
+    if (normalizedQueries.length > expectedQueries.length) {
+      fail(
+        'visual_fallback_contract_invalid',
+        String(source.step_no),
+        'tavily.query.oversized',
+        String(expectedQueries.length),
+      );
+    }
+    if (!isDeepStrictEqual(rawQueries, expectedQueries)) {
+      fail(
+        'visual_fallback_contract_invalid',
+        String(source.step_no),
+        'tavily.query.drift',
+      );
+    }
+    const expectedResults = Math.min(MAX_BROWSER_FALLBACK_RESULTS, Number(maxPages) * 2);
+    if (source.input.max_results !== expectedResults) {
+      fail(
+        'visual_fallback_contract_invalid',
+        String(source.step_no),
+        'tavily.max_results',
+        String(expectedResults),
+      );
     }
   }
 }
@@ -861,7 +971,7 @@ export class PlanCompiler {
     const eligibleSkills = validateActors(steps, capabilityResolution);
     validateApprovals(steps, capabilityResolution);
     validateRequiredTools(steps, eligibleSkills);
-    validateOptionalTools(steps, eligibleSkills);
+    validateOptionalTools(steps, eligibleSkills, input.task);
     validatePendingInputSchemas(eligibleSkills);
     validateSkillOutputPointers(steps);
     validateFixedActorOutputPointers(steps);
