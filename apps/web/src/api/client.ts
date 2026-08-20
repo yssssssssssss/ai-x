@@ -111,6 +111,12 @@ export type {
   ResearchPlanPayload,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 export type { ClarificationRequiredResponse, CurrentPlanningResponse } from '../../../agent-api/src/routes/control-planning.ts';
+export type {
+  ZeroIntegrationStatusResponse,
+  ZeroPublicationResponse,
+  ZeroPublicationStage,
+  ZeroPublicationStatus,
+} from '../../../../packages/api-contract/zero-publication.ts';
 
 import type {
   ApprovalControlPlanRequest,
@@ -129,6 +135,11 @@ import type {
 } from '../../../../packages/api-contract/control-workflow.ts';
 import type { PlanProgress } from '../../../../packages/api-contract/plan.ts';
 import type { VisualAssetManifest } from '../../../../packages/api-contract/research-deliverable.ts';
+import type {
+  CreateZeroPublicationRequest,
+  ZeroIntegrationStatusResponse,
+  ZeroPublicationResponse,
+} from '../../../../packages/api-contract/zero-publication.ts';
 import type {
   User,
   TaskDetail,
@@ -287,5 +298,18 @@ export const api = {
   },
   controlDeliverable: async (taskId: string) => parseControlDeliverableResponse(
     await req<unknown>(`/control-tasks/${taskId}/deliverable`),
+  ),
+  zeroStatus: () => req<ZeroIntegrationStatusResponse>('/integrations/zero/status'),
+  createZeroPublication: (
+    taskId: string,
+    body: CreateZeroPublicationRequest,
+    idempotencyKey: string,
+  ) => req<ZeroPublicationResponse>(`/control-tasks/${encodeURIComponent(taskId)}/publications/zero`, {
+    method: 'POST',
+    body,
+    headers: { 'Idempotency-Key': idempotencyKey },
+  }),
+  zeroPublication: (taskId: string, publicationId: string) => req<ZeroPublicationResponse>(
+    `/control-tasks/${encodeURIComponent(taskId)}/publications/zero/${encodeURIComponent(publicationId)}`,
   ),
 };

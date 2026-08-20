@@ -35,6 +35,7 @@ import { CurrentDeliverableService } from '../../orchestrator-runtime/src/report
 import { SynthesisMaterializer } from '../../orchestrator-runtime/src/report/synthesis-materializer.ts';
 import { ReportReviewService } from '../../orchestrator-runtime/src/report/report-review-service.ts';
 import { CurrentReportPackageReader } from '../../orchestrator-runtime/src/report/current-report-package-reader.ts';
+import { ReportPackageArtifactService } from '../../orchestrator-runtime/src/report/report-package-artifact.ts';
 import { ReportCompositionService } from '../../orchestrator-runtime/src/report/report-composition-service.ts';
 import {
   ImageAnnotationService,
@@ -54,6 +55,11 @@ import { SkillLoader } from '../../orchestrator-runtime/src/runtime/skill-loader
 import { ToolRouter } from '../../orchestrator-runtime/src/runtime/tool-adapter.ts';
 import { VisualInputGateStore } from '../../orchestrator-runtime/src/control/visual-input-gate-store.ts';
 import { parsePendingInputContracts } from '../../orchestrator-runtime/src/control/pending-input-contract.ts';
+import { LocalZeroMcpClient } from './integrations/zero/zero-mcp-client.ts';
+import {
+  ZeroPublicationService,
+  type ZeroPublicationMcp,
+} from './integrations/zero/zero-publication-service.ts';
 
 
 const REVISION_ACTOR_TYPES: Record<string, true> = {
@@ -297,6 +303,8 @@ export interface ControlRuntimeOverrides {
   skillLoader?: SkillLoader;
   artifacts?: ControlArtifactStore;
   expectedActualModel?: string;
+  zeroMcp?: ZeroPublicationMcp;
+  zeroPublicationEnabled?: boolean;
 }
 
 export type ControlPlanningRuntime = Pick<ControlPlanningService, 'plan' | 'planExistingTask'>;
@@ -308,6 +316,7 @@ export interface ControlRuntime {
   workflow: TaskWorkflowService;
   repository: ControlPlaneRepository;
   artifacts: ControlArtifactStore;
+  zeroPublication?: ZeroPublicationService;
   annotateVisualAsset(input: ImageAnnotationInput): Promise<ImageAnnotationResult>;
   getDeliverable(taskId: string, ownerUserId: string): Promise<CurrentReportPackageResponse | null>;
   readVisualAsset(input: {
@@ -453,6 +462,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     schemaValidator: validator,
     visualAssets,
   });
+  const reportPackageArtifacts = new ReportPackageArtifactService(artifacts);
   const deliverables = new CurrentDeliverableService({
     llm: new ReceiptLLMClient(llm, repository),
     validator,
@@ -535,6 +545,38 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       expectedModel: expectedActualModel,
     }),
   }, planRevisionDriver, artifacts, visualInputGates);
+  const zeroPublicationEnabled = overrides.zeroPublicationEnabled
+    ?? process.env.ZERO_PUBLICATION_ENABLED === 'true';
+  const zeroPublication = zeroPublicationEnabled
+    ? new ZeroPublicationService({
+      store: repository,
+      artifacts,
+      zero: overrides.zeroMcp ?? new LocalZeroMcpClient({
+        url: process.env.ZERO_MCP_URL?.trim() || 'http://127.0.0.1:27618/mcp',
+      }),
+      reportPackages: {
+        async read(input) {
+          const frozen = await reportPackageArtifacts.verify({
+            artifactId: input.reportPackageArtifactId,
+            attemptId: input.attemptId,
+          });
+          if (
+            frozen.artifact.contentSha256 !== input.reportPackageHash
+            || frozen.value.taskId !== input.taskId
+            || frozen.value.planVersionId !== input.planVersionId
+          ) {
+            throw new Error('frozen Report Package identity is invalid');
+          }
+          return reportPackageReader.read({
+            taskId: input.taskId,
+            planVersionId: input.planVersionId,
+            attemptId: input.attemptId,
+          }, frozen.value);
+        },
+      },
+      readVisualAsset: (input) => visualAssets.readVerified(input),
+    })
+    : undefined;
 
   return {
     controlPlanning,
@@ -543,6 +585,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     workflow,
     repository,
     artifacts,
+    ...(zeroPublication ? { zeroPublication } : {}),
     annotateVisualAsset: (input) => imageAnnotations.annotate(input),
     async getDeliverable(taskId, ownerUserId) {
       const task = await repository.getTaskDetail(taskId);

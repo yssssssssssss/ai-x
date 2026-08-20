@@ -33,6 +33,9 @@ import {
 } from './report-document-composer.ts';
 import type { VerifiedVisualAsset, VisualAssetService } from './visual-asset-service.ts';
 import {
+  type ReportPackageArtifactValue,
+} from './report-package-artifact.ts';
+import {
   assertCompetitiveWeightChartBinding,
   COMPETITIVE_WEIGHT_CHART_DATA_VERSION,
   parseCompetitiveWeightChartData,
@@ -169,21 +172,34 @@ export class CurrentReportPackageReader {
     this.schemaValidator = dependencies.schemaValidator ?? new SchemaValidator();
   }
 
-  async read(binding: ReportPackageBinding): Promise<CurrentReportPackageResponse | null> {
-    const selectedReview = await this.dependencies.repository.findSealedArtifact({
-      taskId: binding.taskId,
-      attemptId: binding.attemptId,
-      kind: 'report_review',
-    });
+  async read(
+    binding: ReportPackageBinding,
+    frozen?: ReportPackageArtifactValue,
+  ): Promise<CurrentReportPackageResponse | null> {
+    if (frozen && (
+      frozen.taskId !== binding.taskId
+      || frozen.planVersionId !== binding.planVersionId
+      || frozen.attemptId !== binding.attemptId
+    )) {
+      throw new Error('frozen Report Package binding is invalid');
+    }
+    const repositoryReview = frozen
+      ? null
+      : await this.dependencies.repository.findSealedArtifact({
+          taskId: binding.taskId,
+          attemptId: binding.attemptId,
+          kind: 'report_review',
+        });
+    const selectedReviewId = frozen?.reportReviewArtifactId ?? repositoryReview?.id ?? null;
     let review: PassedReportReviewArtifact | null = null;
     let deliverableArtifactId: string;
-    if (selectedReview) {
+    if (selectedReviewId) {
       const verifiedReview = await this.dependencies.artifacts.readVerifiedJson<unknown>(
-        selectedReview.id,
+        selectedReviewId,
       );
       assertArtifactBinding(
         verifiedReview.artifact,
-        selectedReview.id,
+        selectedReviewId,
         'report_review',
         binding,
         'Review',
@@ -203,6 +219,11 @@ export class CurrentReportPackageReader {
         throw new Error('Review revision round does not match the final Review Artifact');
       }
       deliverableArtifactId = review.deliverableArtifactId;
+      if (frozen && deliverableArtifactId !== frozen.deliverableArtifactId) {
+        throw new Error('frozen Report Package deliverable reference is invalid');
+      }
+    } else if (frozen) {
+      deliverableArtifactId = frozen.deliverableArtifactId;
     } else {
       const selectedDeliverable = await this.dependencies.repository.findSealedArtifact({
         taskId: binding.taskId,
@@ -234,6 +255,9 @@ export class CurrentReportPackageReader {
     }
 
     const manifestId = deliverable.evidenceManifestArtifactId;
+    if (frozen && manifestId !== frozen.evidenceManifestArtifactId) {
+      throw new Error('frozen Report Package Evidence Manifest reference is invalid');
+    }
     const verifiedManifest = await this.dependencies.artifacts.readVerifiedJson<unknown>(manifestId);
     assertArtifactBinding(
       verifiedManifest.artifact,
@@ -327,12 +351,15 @@ export class CurrentReportPackageReader {
       if (schemaVersion !== REVIEW_GATED_DELIVERABLE_SCHEMA_VERSION) {
         throw new Error(`Review-bound deliverable Artifact schema marker ${schemaVersion} is unsupported`);
       }
-      const selectedDocument = await this.dependencies.repository.findSealedArtifact({
-        taskId: binding.taskId,
-        attemptId: binding.attemptId,
-        kind: 'report_document',
-      });
-      if (!selectedDocument) {
+      const repositoryDocument = frozen
+        ? null
+        : await this.dependencies.repository.findSealedArtifact({
+            taskId: binding.taskId,
+            attemptId: binding.attemptId,
+            kind: 'report_document',
+          });
+      const selectedDocumentId = frozen?.reportDocumentArtifactId ?? repositoryDocument?.id ?? null;
+      if (!selectedDocumentId) {
         return {
           presentationMode: 'current_text',
           deliverable: deliverable as unknown as ResearchDeliverableEnvelope<unknown>,
@@ -341,11 +368,11 @@ export class CurrentReportPackageReader {
         };
       }
       const verifiedDocument = await this.dependencies.artifacts.readVerifiedJson<unknown>(
-        selectedDocument.id,
+        selectedDocumentId,
       );
       assertArtifactBinding(
         verifiedDocument.artifact,
-        selectedDocument.id,
+        selectedDocumentId,
         'report_document',
         binding,
         'ReportDocument',

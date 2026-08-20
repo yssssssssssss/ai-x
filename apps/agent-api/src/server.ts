@@ -24,6 +24,10 @@ import {
 } from './routes/control-planning.ts';
 import { requireJwtSecret } from './auth.ts';
 import { buildControlRuntime, type ControlRuntime } from './control-runtime.ts';
+import {
+  createZeroIntegrationRouter,
+  createZeroPublicationRouter,
+} from './routes/zero-publications.ts';
 export interface AgentApiDependencies {
   controlRuntime?: ControlRuntime;
   controlPlanning?: ControlPlanningPort;
@@ -158,6 +162,9 @@ export function createAgentApiApp(deps: AgentApiDependencies = {}) {
   app.use('/api/tasks', feedbackRouter);
   app.use('/api/task-history', taskHistoryRouter);
   app.use('/api/skills', skillsRouter);
+  const zeroPublication = deps.controlRuntime?.zeroPublication;
+  app.use('/api/integrations/zero', createZeroIntegrationRouter(zeroPublication));
+  app.use('/api/control-tasks', createZeroPublicationRouter(zeroPublication));
   if (deps.controlRuntime) {
     const planning = refinementPlanningPort(deps.controlRuntime);
     app.use('/api/control-tasks', createControlPlanningRouter(planning));
@@ -190,10 +197,23 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     }),
   );
   await recovery.start();
+  const zeroRecoveryIntervalMs = Number(process.env.ZERO_PUBLICATION_RECOVERY_INTERVAL_MS ?? 30_000);
+  const recoverZeroPublications = () => {
+    if (!controlRuntime.zeroPublication) return;
+    void controlRuntime.zeroPublication.recoverExpired().catch((error: unknown) => {
+      console.error('Zero publication recovery failed', error);
+    });
+  };
+  recoverZeroPublications();
+  const zeroRecoveryTimer = controlRuntime.zeroPublication
+    ? setInterval(recoverZeroPublications, zeroRecoveryIntervalMs)
+    : null;
+  zeroRecoveryTimer?.unref();
   const server = createAgentApiApp({ controlRuntime }).listen(PORT, () => {
     console.log(`agent-api listening on http://localhost:${PORT}`);
   });
   const shutdown = async () => {
+    if (zeroRecoveryTimer) clearInterval(zeroRecoveryTimer);
     await recovery.stop();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await closePool();

@@ -642,6 +642,29 @@ test('returns a verified review-gated current_text package and reads every JSON 
   ]);
 });
 
+test('reads only component IDs frozen by a verified Report Package', async () => {
+  const fixture = setup();
+  const alternateReviewId = 'review-artifact-alternate';
+  const alternate = artifact(alternateReviewId, 'report_review', 'report-review-v1', {
+    storageUri: '/artifacts/reports/review-r0.json',
+  });
+  fixture.artifacts.add(alternate, review());
+  fixture.repository.byKind.set('report_review', alternate);
+
+  const result = await fixture.reader.read(binding, {
+    version: 'report-package-v1',
+    ...binding,
+    presentationMode: 'current_text',
+    deliverableArtifactId,
+    evidenceManifestArtifactId: manifestArtifactId,
+    reportReviewArtifactId: reviewArtifactId,
+  });
+
+  assert.equal(result?.presentationMode, 'current_text');
+  assert.equal(fixture.artifacts.reads[0], reviewArtifactId);
+  assert.equal(fixture.artifacts.reads.includes(alternateReviewId), false);
+});
+
 test('reads screenshot and user-constraint Evidence from their concrete Artifact kinds', async () => {
   const fixture = setup();
   const screenshotArtifactId = 'screenshot-evidence-1';
