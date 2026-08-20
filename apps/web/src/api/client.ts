@@ -71,6 +71,9 @@ export type {
   ExecuteResponse,
   TaskDetail,
   TaskSummary,
+  TaskHistoryKind,
+  TaskHistoryPreference,
+  TaskHistoryPreferencePatch,
   SkillItem,
 } from '../../../../packages/api-contract/http.ts';
 
@@ -126,7 +129,15 @@ import type {
 } from '../../../../packages/api-contract/control-workflow.ts';
 import type { PlanProgress } from '../../../../packages/api-contract/plan.ts';
 import type { VisualAssetManifest } from '../../../../packages/api-contract/research-deliverable.ts';
-import type { User, TaskDetail, TaskSummary, SkillItem } from '../../../../packages/api-contract/http.ts';
+import type {
+  User,
+  TaskDetail,
+  TaskSummary,
+  TaskHistoryKind,
+  TaskHistoryPreference,
+  TaskHistoryPreferencePatch,
+  SkillItem,
+} from '../../../../packages/api-contract/http.ts';
 import { parseControlDeliverableResponse } from '../report-package-response.ts';
 export type { ControlDeliverableResponse } from '../report-package-response.ts';
 
@@ -229,6 +240,15 @@ export const api = {
     }>;
   }>('/control-tasks'),
   listApprovalTasks: () => req<{ tasks: ControlApprovalTaskSummary[] }>('/control-tasks/approvals'),
+  listTaskHistoryPreferences: () => req<{ preferences: TaskHistoryPreference[] }>('/task-history'),
+  updateTaskHistoryPreference: (
+    kind: TaskHistoryKind,
+    taskId: string,
+    body: TaskHistoryPreferencePatch,
+  ) => req<{ preference: TaskHistoryPreference }>(
+    `/task-history/${kind}/${encodeURIComponent(taskId)}`,
+    { method: 'PATCH', body },
+  ),
   taskDetail: (id: string) =>
     req<TaskDetail>(`/tasks/${id}`),
   feedback: (id: string, b: { rating?: number; adopted?: boolean; comment?: string }) =>

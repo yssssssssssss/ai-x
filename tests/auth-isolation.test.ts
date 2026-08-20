@@ -345,6 +345,79 @@ test('conversation messages route returns 404 for foreign and missing conversati
   }
 });
 
+test('task history preferences persist per user and soft-delete without touching the task', async () => {
+  process.env.JWT_SECRET = `test-only-${randomUUID()}`;
+  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+  const server = createAgentApiApp().listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const baseUrl = `http://127.0.0.1:${address.port}/api/task-history`;
+  const ownerHeaders = {
+    Authorization: `Bearer ${signToken({ userId: ownerUserId, email: 'owner@test.local' })}`,
+    'Content-Type': 'application/json',
+  };
+  const foreignHeaders = {
+    Authorization: `Bearer ${signToken({ userId: foreignUserId, email: 'foreign@test.local' })}`,
+    'Content-Type': 'application/json',
+  };
+
+  try {
+    const unauthorized = await fetch(baseUrl);
+    assert.equal(unauthorized.status, 401);
+
+    const invalid = await fetch(`${baseUrl}/current/${currentTaskId}`, {
+      method: 'PATCH',
+      headers: ownerHeaders,
+      body: JSON.stringify({ displayName: '   ' }),
+    });
+    assert.equal(invalid.status, 400);
+
+    const renamed = await fetch(`${baseUrl}/current/${currentTaskId}`, {
+      method: 'PATCH',
+      headers: ownerHeaders,
+      body: JSON.stringify({ displayName: '置顶后的研究任务', pinned: true }),
+    });
+    assert.equal(renamed.status, 200, await renamed.clone().text());
+    const renamedBody = await renamed.json() as {
+      preference: { displayName: string | null; pinnedAt: string | null; hiddenAt: string | null };
+    };
+    assert.equal(renamedBody.preference.displayName, '置顶后的研究任务');
+    assert.ok(renamedBody.preference.pinnedAt);
+    assert.equal(renamedBody.preference.hiddenAt, null);
+
+    const foreignList = await fetch(baseUrl, { headers: foreignHeaders });
+    assert.equal(foreignList.status, 200);
+    const foreignBody = await foreignList.json() as { preferences: Array<{ taskId: string }> };
+    assert.equal(foreignBody.preferences.some((item) => item.taskId === currentTaskId), false);
+
+    const hidden = await fetch(`${baseUrl}/current/${currentTaskId}`, {
+      method: 'PATCH',
+      headers: ownerHeaders,
+      body: JSON.stringify({ hidden: true }),
+    });
+    assert.equal(hidden.status, 200, await hidden.clone().text());
+
+    const refreshed = await fetch(baseUrl, { headers: ownerHeaders });
+    assert.equal(refreshed.status, 200);
+    const refreshedBody = await refreshed.json() as {
+      preferences: Array<{
+        taskId: string;
+        displayName: string | null;
+        pinnedAt: string | null;
+        hiddenAt: string | null;
+      }>;
+    };
+    const preference = refreshedBody.preferences.find((item) => item.taskId === currentTaskId);
+    assert.equal(preference?.displayName, '置顶后的研究任务');
+    assert.ok(preference?.pinnedAt);
+    assert.ok(preference?.hiddenAt);
+  } finally {
+    server.close();
+    await once(server, 'close');
+  }
+});
+
 test('Current task GET and every command hide foreign and missing task IDs behind 404', async () => {
   process.env.JWT_SECRET = `test-only-${randomUUID()}`;
   // Static import would load the app and shared DB pool before this test installs its scoped environment.

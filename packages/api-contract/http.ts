@@ -124,6 +124,23 @@ export interface TaskSummary {
   updated_at?: string;
 }
 
+export type TaskHistoryKind = 'legacy' | 'current';
+
+export interface TaskHistoryPreference {
+  taskId: string;
+  taskKind: TaskHistoryKind;
+  displayName: string | null;
+  pinnedAt: string | null;
+  hiddenAt: string | null;
+  updatedAt: string;
+}
+
+export interface TaskHistoryPreferencePatch {
+  displayName?: string | null;
+  pinned?: boolean;
+  hidden?: boolean;
+}
+
 export interface SkillItem {
   id: string;
   name: string;
