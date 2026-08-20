@@ -106,6 +106,27 @@ test('Zero publication routes hide foreign tasks and classify offline integratio
   assert.equal(response.status, 404);
 });
 
+test('Zero publication routes map report_not_completed to an exact 409 response', async () => {
+  const base = await app(fakePort({
+    async create() {
+      throw new ZeroPublicationServiceError(
+        'report_not_completed',
+        'Task is not in the expected completed state',
+      );
+    },
+  }));
+  const response = await fetch(`${base}/api/control-tasks/${taskId}/publications/zero`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'idem' },
+    body: JSON.stringify({ expectedTaskState: 'completed', target: { mode: 'current_page' } }),
+  });
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), {
+    error: 'Task is not in the expected completed state',
+    code: 'report_not_completed',
+    retryable: false,
+  });
+});
+
 test('Zero publication routes map offline creation to 503 and idempotency conflicts to 409', async () => {
   for (const [error, expected] of [
     [new ZeroPublicationServiceError('zero_offline', 'Zero is offline', true), 503],

@@ -85,6 +85,53 @@
   font-size: 12px;
 }
 
+.zero-publication-confirmation {
+  flex: 0 0 100%;
+  max-width: 720px;
+  margin-top: 8px;
+  padding: 16px;
+  border: 1px solid var(--report-rule);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--report-paper) 92%, var(--report-accent));
+  color: var(--report-ink);
+}
+
+.zero-publication-confirmation > h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.zero-publication-confirmation > p {
+  margin: 8px 0;
+  color: var(--report-muted);
+  line-height: 1.5;
+}
+
+.zero-publication-confirmation dl {
+  display: grid;
+  grid-template-columns: minmax(88px, auto) minmax(0, 1fr);
+  gap: 6px 12px;
+  margin: 12px 0;
+  font-size: 13px;
+}
+
+.zero-publication-confirmation dt {
+  color: var(--report-muted);
+}
+
+.zero-publication-confirmation dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.zero-publication-confirmation > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 .report-layout {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
@@ -501,6 +548,7 @@
   }
 
   .report-actions,
+  .zero-publication-confirmation,
   .report-image-toolbar,
   .report-comparison-toolbar,
   .report-evidence-toggle,

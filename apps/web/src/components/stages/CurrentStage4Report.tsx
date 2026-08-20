@@ -10,8 +10,12 @@ import {
   type ZeroPublicationResponse,
 } from '../../api/client.ts';
 import {
+  transitionZeroPublicationConfirmation,
   zeroPublicationButtonLabel,
   zeroPublicationProgressLabel,
+  zeroPublicationRequestForSubmit,
+  type ZeroPublicationConfirmationState,
+  type ZeroPublicationRequestIdentity,
   type ZeroPublicationUiState,
 } from '../../zero-publication-ui.ts';
 import { createReportBundle } from '../../reporting/report-bundle.ts';
@@ -95,8 +99,10 @@ function MultimodalCurrentReport({
   const [zeroStatus, setZeroStatus] = useState<ZeroIntegrationStatusResponse | null>(null);
   const [zeroPublication, setZeroPublication] = useState<ZeroPublicationResponse | null>(null);
   const [zeroUiState, setZeroUiState] = useState<ZeroPublicationUiState>('idle');
+  const [zeroConfirmation, setZeroConfirmation] = useState<ZeroPublicationConfirmationState>('closed');
+  const [zeroRequest, setZeroRequest] = useState<ZeroPublicationRequestIdentity | null>(null);
   const [zeroError, setZeroError] = useState<string | null>(null);
-  const zeroRequestKey = useRef<string | null>(null);
+  const zeroPublishButtonRef = useRef<HTMLButtonElement>(null);
   const taskId = report.deliverable.taskId;
   const loadVisualAsset = useMemo(() => {
     const cache = new Map<string, Promise<ControlVisualAssetResponse>>();
@@ -119,6 +125,32 @@ function MultimodalCurrentReport({
     ({ assetId }: { assetId: string }) => `/api/control-tasks/${encodeURIComponent(taskId)}/assets/${encodeURIComponent(assetId)}`,
     [taskId],
   );
+  const estimatedSliceCount = useMemo(() => {
+    const manifests = new Map(report.visualAssetManifests.map((manifest) => [manifest.assetId, manifest]));
+    let count = 0;
+    for (const section of report.reportDocument.sections) {
+      for (const block of section.blocks) {
+        const references = block.type === 'chart'
+          ? [{ assetId: block.chartRef.assetId, chart: true }]
+          : block.type === 'image'
+            ? [{ assetId: block.assetRef.assetId, chart: false }]
+            : block.type === 'image-comparison'
+              ? [
+                  { assetId: block.beforeAssetRef.assetId, chart: false },
+                  { assetId: block.afterAssetRef.assetId, chart: false },
+                ]
+              : [];
+        for (const reference of references) {
+          const manifest = manifests.get(reference.assetId);
+          if (!manifest) continue;
+          count += reference.chart
+            ? 1
+            : Math.max(1, Math.ceil(manifest.height / (manifest.width * 3)));
+        }
+      }
+    }
+    return count;
+  }, [report.reportDocument.sections, report.visualAssetManifests]);
 
   useEffect(() => {
     let active = true;
@@ -153,21 +185,37 @@ function MultimodalCurrentReport({
     return () => { active = false; window.clearInterval(timer); };
   }, [taskId, zeroPublication?.id, zeroPublication?.status]);
 
-  async function publishToZero() {
+  function openZeroConfirmation() {
+    const transition = transitionZeroPublicationConfirmation(zeroConfirmation, 'request');
+    setZeroConfirmation(transition.state);
+  }
+
+  function cancelZeroConfirmation() {
+    const transition = transitionZeroPublicationConfirmation(zeroConfirmation, 'cancel');
+    setZeroConfirmation(transition.state);
+    window.requestAnimationFrame(() => zeroPublishButtonRef.current?.focus());
+  }
+
+  async function confirmZeroPublication() {
+    const transition = transitionZeroPublicationConfirmation(zeroConfirmation, 'confirm');
+    setZeroConfirmation(transition.state);
+    if (!transition.submit) return;
+
+    const request = zeroPublicationRequestForSubmit({
+      uiState: zeroUiState,
+      previousRequest: zeroRequest,
+      expectedTaskState: taskState,
+      idempotencyKey: crypto.randomUUID(),
+    });
+    setZeroRequest(request);
     setZeroUiState('creating');
     setZeroError(null);
     try {
-      const idempotencyKey = zeroRequestKey.current ?? crypto.randomUUID();
-      zeroRequestKey.current = idempotencyKey;
       const publication = await api.createZeroPublication(
         taskId,
-        {
-          expectedTaskState: taskState,
-          target: { mode: 'current_page' },
-        },
-        idempotencyKey,
+        request.body,
+        request.idempotencyKey,
       );
-      zeroRequestKey.current = null;
       setZeroPublication(publication);
       setZeroUiState(publication.status === 'completed' ? 'completed' : 'running');
     } catch (error) {
@@ -231,15 +279,23 @@ function MultimodalCurrentReport({
             {bundleStatus === 'working' ? '正在打包…' : '下载 Markdown ZIP'}
           </button>
           <button
+            ref={zeroPublishButtonRef}
             type="button"
             className="btn-ghost"
-            onClick={() => void publishToZero()}
+            onClick={openZeroConfirmation}
             disabled={!zeroReady || zeroBusy || zeroUiState === 'completed'}
             title={zeroStatusHint}
+            aria-haspopup="dialog"
+            aria-expanded={zeroConfirmation === 'open'}
+            aria-controls={zeroConfirmation === 'open' ? 'zero-publication-confirmation' : undefined}
           >
             {zeroPublicationButtonLabel(zeroUiState)}
           </button>
-          <span style={{ color: zeroError ? 'var(--danger)' : 'var(--text-dim)', fontSize: 12 }} role={zeroError ? 'alert' : undefined}>
+          <span
+            style={{ color: zeroError ? 'var(--danger)' : 'var(--text-dim)', fontSize: 12 }}
+            role={zeroError ? 'alert' : 'status'}
+            aria-live="polite"
+          >
             {zeroError
               ?? (zeroPublication && zeroBusy
                 ? zeroPublicationProgressLabel(zeroPublication.stage, zeroPublication.progress)
@@ -247,6 +303,46 @@ function MultimodalCurrentReport({
                   ? `已发送 · 节点 ${zeroPublication.finalRootNodeId ?? '已创建'}`
                   : zeroStatusHint)}
           </span>
+          {zeroConfirmation === 'open' ? (
+            <section
+              id="zero-publication-confirmation"
+              className="zero-publication-confirmation"
+              role="dialog"
+              aria-labelledby="zero-publication-confirmation-title"
+              aria-describedby="zero-publication-confirmation-description"
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') cancelZeroConfirmation();
+              }}
+            >
+              <h2 id="zero-publication-confirmation-title">确认发送到 Zero</h2>
+              <p>{report.reportDocument.title}</p>
+              <dl>
+                <dt>目标文件</dt>
+                <dd>{zeroStatus?.currentFileKey ?? '当前 Zero 文件'}</dd>
+                <dt>目标页面</dt>
+                <dd>{zeroStatus?.currentPageName ?? zeroStatus?.currentPageId}</dd>
+                <dt>发布类型</dt>
+                <dd>新建稿件</dd>
+                <dt>视觉资产</dt>
+                <dd>{report.visualAssetManifests.length} 个，预计至少 {estimatedSliceCount} 个切片</dd>
+              </dl>
+              <p id="zero-publication-confirmation-description">确认后会将可编辑稿件写入当前 Zero 页面；取消不会创建发布记录。</p>
+              <div>
+                <button
+                  autoFocus
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => void confirmZeroPublication()}
+                  disabled={!zeroReady || zeroBusy}
+                >
+                  确认发送
+                </button>
+                <button type="button" className="btn-ghost" onClick={cancelZeroConfirmation} disabled={zeroBusy}>
+                  取消
+                </button>
+              </div>
+            </section>
+          ) : null}
           {bundleStatus === 'error' ? <span role="alert">报告包生成失败，请重试</span> : null}
         </>
       )}
