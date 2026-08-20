@@ -1243,15 +1243,18 @@ test('route request budget blocks excess requests before another DNS lookup', as
   assert.equal(aborted, 1);
 });
 
-test('route request budget is isolated per page so earlier candidates cannot starve fallbacks', async () => {
+test('route request budget remains capped across fallback candidates', async () => {
   let routeHandler: TestRouteHandler | undefined;
   let continued = 0;
   let aborted = 0;
+  let releaseSecondPage!: () => void;
+  const firstPageRequestsDone = new Promise<void>((resolve) => { releaseSecondPage = resolve; });
   const response = { status: () => 200, headers: () => ({ 'content-type': 'text/html' }) };
-  const page = () => {
+  const page = (waitForFirstPage: boolean) => {
     const current = {
       goto: async () => {
         assert.ok(routeHandler);
+        if (waitForFirstPage) await firstPageRequestsDone;
         for (let index = 0; index < 200; index += 1) {
           await routeHandler({
             request: () => ({
@@ -1264,6 +1267,7 @@ test('route request budget is isolated per page so earlier candidates cannot sta
             abort: async () => { aborted += 1; },
           });
         }
+        if (!waitForFirstPage) releaseSecondPage();
         return response;
       },
       url: () => 'https://example.com/product',
@@ -1275,7 +1279,7 @@ test('route request budget is isolated per page so earlier candidates cannot sta
     };
     return current;
   };
-  const pages = [page(), page()];
+  const pages = [page(false), page(true)];
   let connected = true;
   const adapter = new PlaywrightPageCaptureAdapter({
     launcher: {
@@ -1308,8 +1312,8 @@ test('route request budget is isolated per page so earlier candidates cannot sta
   });
 
   assert.equal(result.mediaAttachments?.length, 2);
-  assert.equal(continued, 400);
-  assert.equal(aborted, 0);
+  assert.equal(continued, 256);
+  assert.equal(aborted, 144);
 });
 
 test('adapter does not launch after lease loss and preserves the abort reason', async () => {

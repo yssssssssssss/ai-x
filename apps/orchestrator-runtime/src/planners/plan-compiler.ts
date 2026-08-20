@@ -67,6 +67,7 @@ export type PlanCompilerValidationKind =
   | 'optional_tool_missing'
   | 'optional_tool_late'
   | 'optional_tool_binding_invalid'
+  | 'visual_fallback_contract_invalid'
   | 'future_binding_source'
   | 'unknown_binding_source'
   | 'unknown_binding_pointer'
@@ -120,6 +121,9 @@ const STEP_KEYS = new Set([
   'approval_role',
   'fallback_actor_ids',
 ]);
+
+const MAX_BROWSER_CAPTURE_COUNT = 6;
+const MAX_BROWSER_FALLBACK_RESULTS = 20;
 
 function fail(kind: PlanCompilerValidationKind, ...issueIds: string[]): never {
   throw new PlanCompilerValidationError(kind, issueIds);
@@ -461,6 +465,40 @@ function validateOptionalTools(
       || captureStep.input.pages.length !== 0
     ) {
       fail('optional_tool_binding_invalid', String(captureStep.step_no), captureStep.actor_id);
+    }
+    const capture = captureStep.input.capture;
+    const maxPages = capture !== null && typeof capture === 'object' && !Array.isArray(capture)
+      ? Reflect.get(capture, 'max_pages')
+      : undefined;
+    const uniqueHostnames = capture !== null && typeof capture === 'object' && !Array.isArray(capture)
+      ? Reflect.get(capture, 'unique_hostnames')
+      : undefined;
+    if (
+      !Number.isInteger(maxPages)
+      || Number(maxPages) < 1
+      || Number(maxPages) > MAX_BROWSER_CAPTURE_COUNT
+    ) {
+      fail(
+        'visual_fallback_contract_invalid',
+        String(captureStep.step_no),
+        'capture.max_pages',
+      );
+    }
+    if (uniqueHostnames !== true) {
+      fail(
+        'visual_fallback_contract_invalid',
+        String(captureStep.step_no),
+        'capture.unique_hostnames',
+      );
+    }
+    const expectedResults = Math.min(MAX_BROWSER_FALLBACK_RESULTS, Number(maxPages) * 2);
+    if (source.input.max_results !== expectedResults) {
+      fail(
+        'visual_fallback_contract_invalid',
+        String(source.step_no),
+        'tavily.max_results',
+        String(expectedResults),
+      );
     }
   }
 }

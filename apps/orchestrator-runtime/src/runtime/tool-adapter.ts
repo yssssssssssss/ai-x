@@ -618,7 +618,7 @@ export class TavilyAdapter implements ToolAdapter {
 
     const invocation = invocationSignal(opts.context, timeoutMs);
     try {
-      const request = async (query: string): Promise<TavilyResponse> => {
+      const request = async (query: string, signal: AbortSignal): Promise<TavilyResponse> => {
         const res = await fetch(`${baseUrl}${opts.manifest.entrypoint || '/search'}`, {
           method: 'POST',
           headers: {
@@ -630,7 +630,7 @@ export class TavilyAdapter implements ToolAdapter {
             max_results: perQueryMaxResults,
             ...commonBody,
           }),
-          signal: invocation.signal,
+          signal,
         });
         if (!res.ok) {
           throw new ToolInvocationError(opts.toolId, {
@@ -642,10 +642,40 @@ export class TavilyAdapter implements ToolAdapter {
         }
         return (await res.json()) as TavilyResponse;
       };
+      const requestBatch = async (batch: string[]): Promise<TavilyResponse[]> => {
+        const controller = new AbortController();
+        const forwardAbort = () => controller.abort(invocation.signal.reason);
+        if (invocation.signal.aborted) forwardAbort();
+        else invocation.signal.addEventListener('abort', forwardAbort, { once: true });
+        let hasPrimaryFailure = false;
+        let primaryFailure: unknown;
+        try {
+          const requests = batch.map(async (query) => {
+            try {
+              return await request(query, controller.signal);
+            } catch (error) {
+              if (!hasPrimaryFailure) {
+                hasPrimaryFailure = true;
+                primaryFailure = error;
+                if (!controller.signal.aborted) controller.abort('sibling_failed');
+              }
+              throw error;
+            }
+          });
+          const settled = await Promise.allSettled(requests);
+          if (hasPrimaryFailure) throw primaryFailure;
+          return settled.map((result) => {
+            if (result.status === 'rejected') throw result.reason;
+            return result.value;
+          });
+        } finally {
+          invocation.signal.removeEventListener('abort', forwardAbort);
+        }
+      };
       const responses: TavilyResponse[] = [];
       for (let index = 0; index < queries.length; index += MAX_TAVILY_QUERY_CONCURRENCY) {
-        responses.push(...await Promise.all(
-          queries.slice(index, index + MAX_TAVILY_QUERY_CONCURRENCY).map(request),
+        responses.push(...await requestBatch(
+          queries.slice(index, index + MAX_TAVILY_QUERY_CONCURRENCY),
         ));
       }
       throwIfToolInvocationAborted(opts.toolId, opts.context);

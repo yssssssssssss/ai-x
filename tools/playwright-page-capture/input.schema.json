@@ -37,7 +37,7 @@
         "unique_hostnames": {
           "type": "boolean",
           "default": false,
-          "description": "为 true 时，去除 www 前缀后每个规范化 hostname 最多保留一个候选页面"
+          "description": "为 true 时优先覆盖不同规范化 hostname；同 hostname 仅在较早候选失败后继续备用 URL，且最多保留一个成功截图"
         },
         "viewport": {
           "type": "object",
