@@ -13,6 +13,11 @@ import type {
   PendingInput,
 } from '../packages/api-contract/research-deliverable.ts';
 import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
+import type {
+  ZeroPublicationFailure,
+  ZeroPublicationStage,
+  ZeroPublicationStatus,
+} from '../packages/api-contract/zero-publication.ts';
 import { validateCurrentPlanRevision } from '../apps/orchestrator-runtime/src/planners/plan-compiler.ts';
 export type { ControlRequirementVersion };
 
@@ -125,6 +130,39 @@ export interface ControlArtifact {
   publicationId?: string | null;
   mediaType?: string | null;
   metadata?: Record<string, unknown> | null;
+}
+
+export interface ControlZeroPublication {
+  id: string;
+  taskId: string;
+  ownerUserId: string;
+  planVersionId: string;
+  attemptId: string;
+  reportPackageArtifactId: string;
+  reportPackageHash: string;
+  idempotencyKey: string;
+  requestHash: string;
+  templateVersion: string;
+  status: ZeroPublicationStatus;
+  stage: ZeroPublicationStage;
+  progress: number;
+  zeroFileKey: string | null;
+  zeroPageId: string;
+  zeroPageName: string;
+  draftRootNodeId: string | null;
+  finalRootNodeId: string | null;
+  updatePublicationId: string | null;
+  updateRootNodeId: string | null;
+  zeroNodeMap: Record<string, unknown> | null;
+  imageManifest: unknown[] | null;
+  screenshotManifest: unknown[] | null;
+  receiptArtifactId: string | null;
+  failure: ZeroPublicationFailure | null;
+  leaseOwner: string | null;
+  leaseExpiresAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  completedAt: Date | null;
 }
 
 export class ControlPlaneConflictError extends Error {
@@ -426,6 +464,60 @@ function artifactFromRow(row: Record<string, unknown>): ControlArtifact {
     publicationId: typeof row.publication_id === 'string' ? row.publication_id : null,
     mediaType: typeof row.media_type === 'string' ? row.media_type : null,
     metadata: asRecord(row.metadata_json),
+  };
+}
+
+function zeroPublicationFromRow(row: Record<string, unknown>): ControlZeroPublication {
+  const failure = row.failure_json == null ? null : asRecord(row.failure_json);
+  if (
+    failure
+    && (
+      typeof failure.code !== 'string'
+      || typeof failure.message !== 'string'
+      || typeof failure.retryable !== 'boolean'
+    )
+  ) {
+    throw new Error('control-plane query has malformed Zero publication failure');
+  }
+  const imageManifest = row.image_manifest == null ? null : row.image_manifest;
+  const screenshotManifest = row.screenshot_manifest == null ? null : row.screenshot_manifest;
+  if (imageManifest !== null && !Array.isArray(imageManifest)) {
+    throw new Error('control-plane query has malformed Zero image manifest');
+  }
+  if (screenshotManifest !== null && !Array.isArray(screenshotManifest)) {
+    throw new Error('control-plane query has malformed Zero screenshot manifest');
+  }
+  return {
+    id: asString(row.id, 'id'),
+    taskId: asString(row.task_id, 'task_id'),
+    ownerUserId: asString(row.owner_user_id, 'owner_user_id'),
+    planVersionId: asString(row.plan_version_id, 'plan_version_id'),
+    attemptId: asString(row.attempt_id, 'attempt_id'),
+    reportPackageArtifactId: asString(row.report_package_artifact_id, 'report_package_artifact_id'),
+    reportPackageHash: asString(row.report_package_hash, 'report_package_hash'),
+    idempotencyKey: asString(row.idempotency_key, 'idempotency_key'),
+    requestHash: asString(row.request_hash, 'request_hash'),
+    templateVersion: asString(row.template_version, 'template_version'),
+    status: asString(row.status, 'status') as ZeroPublicationStatus,
+    stage: asString(row.stage, 'stage') as ZeroPublicationStage,
+    progress: asNumber(row.progress, 'progress'),
+    zeroFileKey: typeof row.zero_file_key === 'string' ? row.zero_file_key : null,
+    zeroPageId: asString(row.zero_page_id, 'zero_page_id'),
+    zeroPageName: asString(row.zero_page_name, 'zero_page_name'),
+    draftRootNodeId: typeof row.draft_root_node_id === 'string' ? row.draft_root_node_id : null,
+    finalRootNodeId: typeof row.final_root_node_id === 'string' ? row.final_root_node_id : null,
+    updatePublicationId: typeof row.update_publication_id === 'string' ? row.update_publication_id : null,
+    updateRootNodeId: typeof row.update_root_node_id === 'string' ? row.update_root_node_id : null,
+    zeroNodeMap: asRecord(row.zero_node_map),
+    imageManifest: imageManifest as unknown[] | null,
+    screenshotManifest: screenshotManifest as unknown[] | null,
+    receiptArtifactId: typeof row.receipt_artifact_id === 'string' ? row.receipt_artifact_id : null,
+    failure: failure as ZeroPublicationFailure | null,
+    leaseOwner: typeof row.lease_owner === 'string' ? row.lease_owner : null,
+    leaseExpiresAt: row.lease_expires_at == null ? null : asDate(row.lease_expires_at, 'lease_expires_at'),
+    createdAt: asDate(row.created_at, 'created_at'),
+    updatedAt: asDate(row.updated_at, 'updated_at'),
+    completedAt: row.completed_at == null ? null : asDate(row.completed_at, 'completed_at'),
   };
 }
 
@@ -4714,6 +4806,367 @@ export class ControlPlaneRepository {
         currentAttemptId: typeof row.current_attempt_id === 'string' ? row.current_attempt_id : null,
       };
     });
+  }
+
+  async createZeroPublication(input: {
+    taskId: string;
+    ownerUserId: string;
+    planVersionId: string;
+    attemptId: string;
+    reportPackageArtifactId: string;
+    reportPackageHash: string;
+    idempotencyKey: string;
+    requestHash: string;
+    templateVersion: string;
+    zeroFileKey?: string;
+    zeroPageId: string;
+    zeroPageName: string;
+    updatePublicationId?: string;
+  }): Promise<ControlZeroPublication> {
+    return this.transaction(async (connection) => {
+      const taskResult = await connection.query(
+        `SELECT task.state, task.owner_user_id,
+                conversation.owner_user_id AS conversation_owner_user_id,
+                task.active_plan_version_id, task.current_attempt_id
+         FROM control_tasks AS task
+         JOIN conversations AS conversation ON conversation.id = task.conversation_id
+         WHERE task.id = $1
+         FOR SHARE OF task`,
+        [input.taskId],
+      );
+      const task = taskResult.rows[0];
+      if (
+        !task
+        || task.owner_user_id !== input.ownerUserId
+        || task.conversation_owner_user_id !== input.ownerUserId
+      ) {
+        throw new ControlPlaneAuthorizationError('Zero publication task is not owned by requester');
+      }
+      if (task.state !== 'completed' && task.state !== 'completed_with_gaps') {
+        throw new ControlPlaneConflictError(`task ${input.taskId} is not completed`);
+      }
+      if (
+        task.active_plan_version_id !== input.planVersionId
+        || task.current_attempt_id !== input.attemptId
+      ) {
+        throw new ControlPlaneConflictError('Zero publication binding does not match the completed task');
+      }
+
+      const packageResult = await connection.query(
+        `SELECT artifact.content_sha256
+         FROM control_artifacts AS artifact
+         WHERE artifact.id = $1
+           AND artifact.task_id = $2
+           AND artifact.plan_version_id = $3
+           AND artifact.attempt_id = $4
+           AND artifact.kind = 'report_package'
+           AND artifact.schema_version = 'report-package-v1'
+           AND artifact.state = 'SEALED'
+         FOR SHARE`,
+        [
+          input.reportPackageArtifactId,
+          input.taskId,
+          input.planVersionId,
+          input.attemptId,
+        ],
+      );
+      if (packageResult.rows[0]?.content_sha256 !== input.reportPackageHash) {
+        throw new ControlPlaneConflictError('Zero publication Report Package is not verified');
+      }
+
+      let updateRootNodeId: string | null = null;
+      if (input.updatePublicationId) {
+        const previous = await connection.query(
+          `SELECT final_root_node_id, zero_file_key, zero_page_id
+           FROM control_zero_publications
+           WHERE id = $1
+             AND task_id = $2
+             AND owner_user_id = $3
+             AND status = 'completed'
+           FOR SHARE`,
+          [input.updatePublicationId, input.taskId, input.ownerUserId],
+        );
+        const row = previous.rows[0];
+        if (
+          !row
+          || typeof row.final_root_node_id !== 'string'
+          || row.zero_page_id !== input.zeroPageId
+          || (row.zero_file_key ?? null) !== (input.zeroFileKey ?? null)
+        ) {
+          throw new ControlPlaneConflictError('Zero update publication is not a completed compatible target');
+        }
+        updateRootNodeId = row.final_root_node_id;
+      }
+
+      const inserted = await connection.query(
+        `INSERT INTO control_zero_publications
+           (task_id, owner_user_id, plan_version_id, attempt_id,
+            report_package_artifact_id, report_package_hash,
+            idempotency_key, request_hash, template_version,
+            status, stage, progress, zero_file_key, zero_page_id, zero_page_name,
+            update_publication_id, update_root_node_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+                 'queued', 'checking_zero', 0, $10, $11, $12, $13, $14)
+         ON CONFLICT (task_id, idempotency_key) DO NOTHING
+         RETURNING *`,
+        [
+          input.taskId,
+          input.ownerUserId,
+          input.planVersionId,
+          input.attemptId,
+          input.reportPackageArtifactId,
+          input.reportPackageHash,
+          input.idempotencyKey,
+          input.requestHash,
+          input.templateVersion,
+          input.zeroFileKey ?? null,
+          input.zeroPageId,
+          input.zeroPageName,
+          input.updatePublicationId ?? null,
+          updateRootNodeId,
+        ],
+      );
+      if (inserted.rows[0]) return zeroPublicationFromRow(inserted.rows[0]);
+      const existing = await connection.query(
+        `SELECT * FROM control_zero_publications
+         WHERE task_id = $1 AND idempotency_key = $2
+         FOR SHARE`,
+        [input.taskId, input.idempotencyKey],
+      );
+      const row = existing.rows[0];
+      if (
+        !row
+        || row.owner_user_id !== input.ownerUserId
+        || row.request_hash !== input.requestHash
+      ) {
+        throw new ControlPlaneConflictError(
+          `Zero publication idempotency key ${input.idempotencyKey} conflicts`,
+        );
+      }
+      return zeroPublicationFromRow(row);
+    });
+  }
+
+  async getZeroPublicationForOwner(input: {
+    publicationId: string;
+    taskId: string;
+    ownerUserId: string;
+  }): Promise<ControlZeroPublication | null> {
+    const connection = await this.database.connect();
+    try {
+      const result = await connection.query(
+        `SELECT publication.*
+         FROM control_zero_publications AS publication
+         JOIN control_tasks AS task ON task.id = publication.task_id
+         JOIN conversations AS conversation ON conversation.id = task.conversation_id
+         WHERE publication.id = $1
+           AND publication.task_id = $2
+           AND publication.owner_user_id = $3
+           AND task.owner_user_id = $3
+           AND conversation.owner_user_id = $3`,
+        [input.publicationId, input.taskId, input.ownerUserId],
+      );
+      return result.rows[0] ? zeroPublicationFromRow(result.rows[0]) : null;
+    } finally {
+      connection.release();
+    }
+  }
+
+  async claimZeroPublication(input: {
+    publicationId: string;
+    leaseOwner: string;
+    leaseExpiresAt: Date;
+  }): Promise<ControlZeroPublication | null> {
+    return this.transaction(async (connection) => {
+      const result = await connection.query(
+        `UPDATE control_zero_publications
+         SET status = 'running', lease_owner = $2, lease_expires_at = $3,
+             updated_at = now()
+         WHERE id = $1
+           AND (
+             status = 'queued'
+             OR (status = 'running' AND lease_expires_at <= now())
+           )
+         RETURNING *`,
+        [input.publicationId, input.leaseOwner, input.leaseExpiresAt],
+      );
+      return result.rows[0] ? zeroPublicationFromRow(result.rows[0]) : null;
+    });
+  }
+
+  async heartbeatZeroPublication(input: {
+    publicationId: string;
+    leaseOwner: string;
+    extendUntil: Date;
+  }): Promise<ControlZeroPublication> {
+    return this.transaction(async (connection) => {
+      const result = await connection.query(
+        `UPDATE control_zero_publications
+         SET lease_expires_at = GREATEST(lease_expires_at, $3), updated_at = now()
+         WHERE id = $1
+           AND status = 'running'
+           AND lease_owner = $2
+           AND lease_expires_at > now()
+         RETURNING *`,
+        [input.publicationId, input.leaseOwner, input.extendUntil],
+      );
+      if (!result.rows[0]) {
+        throw new ControlPlaneConflictError(`Zero publication lease ${input.publicationId} is not active`);
+      }
+      return zeroPublicationFromRow(result.rows[0]);
+    });
+  }
+
+  async updateZeroPublication(input: {
+    publicationId: string;
+    leaseOwner: string;
+    stage: ZeroPublicationStage;
+    progress: number;
+    draftRootNodeId?: string;
+    zeroNodeMap?: Record<string, unknown>;
+    imageManifest?: unknown[];
+    screenshotManifest?: unknown[];
+  }): Promise<ControlZeroPublication> {
+    return this.transaction(async (connection) => {
+      const result = await connection.query(
+        `UPDATE control_zero_publications
+         SET stage = $3,
+             progress = $4,
+             draft_root_node_id = COALESCE($5, draft_root_node_id),
+             zero_node_map = COALESCE($6::jsonb, zero_node_map),
+             image_manifest = COALESCE($7::jsonb, image_manifest),
+             screenshot_manifest = COALESCE($8::jsonb, screenshot_manifest),
+             updated_at = now()
+         WHERE id = $1
+           AND status = 'running'
+           AND lease_owner = $2
+           AND lease_expires_at > now()
+         RETURNING *`,
+        [
+          input.publicationId,
+          input.leaseOwner,
+          input.stage,
+          input.progress,
+          input.draftRootNodeId ?? null,
+          input.zeroNodeMap === undefined ? null : JSON.stringify(input.zeroNodeMap),
+          input.imageManifest === undefined ? null : JSON.stringify(input.imageManifest),
+          input.screenshotManifest === undefined ? null : JSON.stringify(input.screenshotManifest),
+        ],
+      );
+      if (!result.rows[0]) {
+        throw new ControlPlaneConflictError(`Zero publication lease ${input.publicationId} cannot update`);
+      }
+      return zeroPublicationFromRow(result.rows[0]);
+    });
+  }
+
+  async completeZeroPublication(input: {
+    publicationId: string;
+    leaseOwner: string;
+    finalRootNodeId: string;
+    receiptArtifactId: string;
+    screenshotManifest: unknown[];
+  }): Promise<ControlZeroPublication> {
+    return this.transaction(async (connection) => {
+      const publicationResult = await connection.query(
+        `SELECT task_id, plan_version_id, attempt_id
+         FROM control_zero_publications
+         WHERE id = $1
+           AND status = 'running'
+           AND lease_owner = $2
+           AND lease_expires_at > now()
+         FOR UPDATE`,
+        [input.publicationId, input.leaseOwner],
+      );
+      const publication = publicationResult.rows[0];
+      if (!publication) {
+        throw new ControlPlaneConflictError(`Zero publication lease ${input.publicationId} cannot complete`);
+      }
+      const receipt = await connection.query(
+        `SELECT 1 FROM control_artifacts
+         WHERE id = $1
+           AND task_id = $2
+           AND plan_version_id = $3
+           AND attempt_id = $4
+           AND kind = 'zero_publication_receipt'
+           AND schema_version = 'zero-publication-receipt-v1'
+           AND state = 'SEALED'
+         FOR SHARE`,
+        [
+          input.receiptArtifactId,
+          publication.task_id,
+          publication.plan_version_id,
+          publication.attempt_id,
+        ],
+      );
+      if (!receipt.rows[0]) {
+        throw new ControlPlaneConflictError('Zero publication receipt Artifact is not verified');
+      }
+      const result = await connection.query(
+        `UPDATE control_zero_publications
+         SET status = 'completed', stage = 'finalizing_receipt', progress = 100,
+             final_root_node_id = $3, receipt_artifact_id = $4,
+             screenshot_manifest = $5::jsonb,
+             lease_owner = NULL, lease_expires_at = NULL,
+             completed_at = now(), updated_at = now()
+         WHERE id = $1 AND status = 'running' AND lease_owner = $2
+         RETURNING *`,
+        [
+          input.publicationId,
+          input.leaseOwner,
+          input.finalRootNodeId,
+          input.receiptArtifactId,
+          JSON.stringify(input.screenshotManifest),
+        ],
+      );
+      if (!result.rows[0]) {
+        throw new ControlPlaneConflictError(`Zero publication ${input.publicationId} cannot complete`);
+      }
+      return zeroPublicationFromRow(result.rows[0]);
+    });
+  }
+
+  async failZeroPublication(input: {
+    publicationId: string;
+    leaseOwner?: string;
+    failure: ZeroPublicationFailure;
+  }): Promise<ControlZeroPublication> {
+    return this.transaction(async (connection) => {
+      const result = await connection.query(
+        `UPDATE control_zero_publications
+         SET status = 'failed', failure_json = $3::jsonb,
+             lease_owner = NULL, lease_expires_at = NULL,
+             completed_at = now(), updated_at = now()
+         WHERE id = $1
+           AND status IN ('queued', 'running')
+           AND (
+             ($2::text IS NULL AND lease_owner IS NULL)
+             OR lease_owner = $2
+           )
+         RETURNING *`,
+        [input.publicationId, input.leaseOwner ?? null, JSON.stringify(input.failure)],
+      );
+      if (!result.rows[0]) {
+        throw new ControlPlaneConflictError(`Zero publication ${input.publicationId} cannot fail`);
+      }
+      return zeroPublicationFromRow(result.rows[0]);
+    });
+  }
+
+  async listExpiredZeroPublications(input: { limit: number }): Promise<ControlZeroPublication[]> {
+    const connection = await this.database.connect();
+    try {
+      const result = await connection.query(
+        `SELECT * FROM control_zero_publications
+         WHERE status = 'running' AND lease_expires_at <= now()
+         ORDER BY lease_expires_at, id
+         LIMIT $1`,
+        [Math.min(Math.max(input.limit, 1), 100)],
+      );
+      return result.rows.map(zeroPublicationFromRow);
+    } finally {
+      connection.release();
+    }
   }
 
   async pauseExecution(input: { taskId: string; attemptId: string; expectedVersion: number; reason: string }): Promise<ControlTask> {
