@@ -144,6 +144,8 @@ export interface ControlVisualAssetResponse {
 }
 
 export const api = {
+  authMethods: () => req<{ quickLogin: boolean }>('/auth/methods'),
+  quickLogin: () => req<{ token: string; user: User }>('/auth/quick-login', { method: 'POST' }),
   register: (b: { email: string; password: string; displayName: string }) =>
     req<{ token: string; user: User }>('/auth/register', { method: 'POST', body: b }),
   login: (b: { email: string; password: string }) =>
