@@ -260,72 +260,74 @@ pnpm typecheck
 
 ## Phase 4：Publication Service
 
-- [ ] 批量完成 Service、外部副作用、恢复和回滚测试后，统一运行一次 Phase 4 定向测试并确认红灯。
+- [x] 批量完成 Service、外部副作用、恢复和回滚测试后，统一运行一次 Phase 4 定向测试并确认红灯。
 
 ### 4.1 失败测试
 
-- [ ] 创建 `tests/zero-publication-service.test.ts`。
-- [ ] 非 completed task 被拒绝。
-- [ ] owner 不匹配被拒绝。
-- [ ] Report Package 缺失被拒绝。
-- [ ] Report Package hash 不匹配被拒绝。
-- [ ] Zero offline 在创建 draft 前失败。
-- [ ] 新建发布 happy path。
-- [ ] HTML 创建后立即保存 draftRootNodeId。
-- [ ] placeholder 缺失失败。
-- [ ] IMAGE fill 写入逐项记录。
-- [ ] 任一 fill 为 SOLID 时失败。
-- [ ] metadata 高度小于内容边界时失败。
-- [ ] screenshot 失败时 publication 失败。
-- [ ] screenshot 短期 URL 下载失败时 publication 失败。
-- [ ] screenshot Artifact 写入失败时 publication 失败。
-- [ ] 相同 Idempotency-Key replay。
-- [ ] 不同 request hash 复用 key 时冲突。
-- [ ] create 模式失败时清理 draft。
-- [ ] update 模式拒绝其他 task 或其他 owner 的 publication。
-- [ ] update 模式从旧 publication 解析 rootNodeId，不接受客户端 nodeId。
-- [ ] update 模式失败时保留旧 root。
-- [ ] update 完成后再删除旧 root。
-- [ ] expired lease 可恢复。
-- [ ] 多个 deterministic draft 时 fail closed。
+- [x] 创建 `tests/zero-publication-service.test.ts`。
+- [x] 非 completed task 被拒绝。
+- [x] owner 不匹配被拒绝。
+- [x] Report Package 缺失被拒绝。
+- [x] Report Package hash 不匹配被拒绝。
+- [x] Zero offline 在创建 draft 前失败。
+- [x] 新建发布 happy path。
+- [x] HTML 创建后立即保存 draftRootNodeId。
+- [x] placeholder 缺失失败。
+- [x] IMAGE fill 写入逐项记录。
+- [x] 任一 fill 为 SOLID 时失败。
+- [x] metadata 高度小于内容边界时失败。
+- [x] screenshot 失败时 publication 失败。
+- [x] screenshot 短期 URL 下载失败时 publication 失败。
+- [x] screenshot Artifact 写入失败时 publication 失败。
+- [x] 相同 Idempotency-Key replay。
+- [x] 不同 request hash 复用 key 时冲突。
+- [x] create 模式失败时清理 draft。
+- [x] update 模式拒绝其他 task 或其他 owner 的 publication。
+- [x] update 模式从旧 publication 解析 rootNodeId，不接受客户端 nodeId。
+- [x] update 模式失败时保留旧 root。
+- [x] update 完成后再删除旧 root。
+- [x] expired lease 可恢复。
+- [x] 多个 deterministic draft 时 fail closed。
 
 ### 4.2 实现 Service
 
-- [ ] 创建 `apps/agent-api/src/integrations/zero/zero-publication-service.ts`。
-- [ ] 注入 Repository、ReportPackageReader、ArtifactStore、Renderer、Transcoder 和 ZeroMcpPort。
-- [ ] 实现 owner 和 task state 校验。
-- [ ] 服务端解析当前 Report Package。
-- [ ] 冻结 Zero target context。
-- [ ] 创建 publication 和 lease。
-- [ ] 渲染 HTML。
-- [ ] 创建 deterministic draft。
-- [ ] 保存 draft root。
-- [ ] 读取 placeholder IDs。
-- [ ] 转码并写入每张图片。
-- [ ] 记录 node/image hash map。
-- [ ] 验证 metadata。
-- [ ] 验证 fills。
-- [ ] 生成 screenshots。
-- [ ] 在短期 URL 过期前下载 screenshot bytes。
-- [ ] 将整页和局部 screenshot 写成 SEALED binary Artifact。
-- [ ] 在 receipt 中保存 screenshot Artifact IDs。
-- [ ] 实现 create finalize。
-- [ ] 实现 update two-phase swap。
-- [ ] 写 SEALED publication receipt。
-- [ ] 标记 completed。
-- [ ] 实现失败清理和 failure code。
-- [ ] 实现 heartbeat。
-- [ ] 实现 expired publication recovery。
+- [x] 创建 `apps/agent-api/src/integrations/zero/zero-publication-service.ts`。
+- [x] 注入 Repository、ReportPackageReader、ArtifactStore、Renderer、Transcoder 和 ZeroMcpPort。
+- [x] 实现 owner 和 task state 校验。
+- [x] 服务端解析当前 Report Package。
+- [x] 冻结 Zero target context。
+- [x] 创建 publication 和 lease。
+- [x] 渲染 HTML。
+- [x] 创建 deterministic draft。
+- [x] 保存 draft root。
+- [x] 读取 placeholder IDs。
+- [x] 转码并写入每张图片。
+- [x] 记录 node/image hash map。
+- [x] 验证 metadata。
+- [x] 验证 fills。
+- [x] 生成 screenshots。
+- [x] 在短期 URL 过期前下载 screenshot bytes。
+- [x] 将整页和局部 screenshot 写成 SEALED binary Artifact。
+- [x] 在 receipt 中保存 screenshot Artifact IDs。
+- [x] 实现 create finalize。
+- [x] 实现 update two-phase swap。
+- [x] 写 SEALED publication receipt。
+- [x] 标记 completed。
+- [x] 实现失败清理和 failure code。
+- [x] 实现 heartbeat。
+- [x] 实现 expired publication recovery。
 
 ### 4.3 Runtime 装配
 
-- [ ] 在 `apps/agent-api/src/control-runtime.ts` 创建 ZeroMcpClient。
-- [ ] 注入 ZeroPublicationService。
-- [ ] `ZERO_PUBLICATION_ENABLED=false` 时不创建写入能力。
-- [ ] 服务启动时启动 publication recovery。
-- [ ] 服务关闭时停止 recovery 并等待运行任务到安全点。
+- [x] 在 `apps/agent-api/src/control-runtime.ts` 创建 ZeroMcpClient。
+- [x] 注入 ZeroPublicationService。
+- [x] `ZERO_PUBLICATION_ENABLED=false` 时不创建写入能力。
+- [x] 服务启动时启动 publication recovery。
+- [x] 服务关闭时停止 recovery 并等待运行任务到安全点。
 
 ### Phase 4 门禁
+
+结果：16 个 Zero Service 及依赖测试通过，typecheck PASS，diff check PASS。
 
 ```bash
 pnpm exec tsx --test \
@@ -336,9 +338,9 @@ pnpm exec tsx --test \
 pnpm typecheck
 ```
 
-- [ ] Phase 4 测试通过。
-- [ ] `git diff --check` 通过。
-- [ ] 提交 Phase 4，只包含 Service、runtime 装配、恢复和测试。
+- [x] Phase 4 测试通过。
+- [x] `git diff --check` 通过。
+- [x] 提交 Phase 4，只包含 Service、runtime 装配、恢复和测试。
 
 ## Phase 5：HTTP
 
