@@ -65,7 +65,7 @@ export interface ZeroPublicationArtifacts {
   writeJson(input: {
     taskId: string;
     planVersionId: string;
-    attemptId: string;
+    attemptId?: string;
     kind: string;
     relativePath: string;
     value: unknown;
@@ -76,7 +76,7 @@ export interface ZeroPublicationArtifacts {
   writeBinary(input: {
     taskId: string;
     planVersionId: string;
-    attemptId: string;
+    attemptId?: string;
     kind: string;
     relativePath: string;
     bytes: Uint8Array;
@@ -586,7 +586,6 @@ export class ZeroPublicationService {
         const artifact = await this.dependencies.artifacts.writeBinary({
           taskId: publication.taskId,
           planVersionId: publication.planVersionId,
-          attemptId: publication.attemptId,
           kind: 'zero_publication_screenshot',
           relativePath: `publications/zero/${publication.id}/${targetNodeId.replace(':', '-')}.png`,
           bytes: screenshot.bytes,
@@ -610,7 +609,6 @@ export class ZeroPublicationService {
       const receipt = await this.dependencies.artifacts.writeJson({
         taskId: publication.taskId,
         planVersionId: publication.planVersionId,
-        attemptId: publication.attemptId,
         kind: 'zero_publication_receipt',
         relativePath: `publications/zero/${publication.id}.json`,
         schemaVersion: 'zero-publication-receipt-v1',

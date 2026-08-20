@@ -5113,7 +5113,7 @@ export class ControlPlaneRepository {
          WHERE id = $1
            AND task_id = $2
            AND plan_version_id = $3
-           AND attempt_id = $4
+           AND attempt_id IS NULL
            AND kind = 'zero_publication_receipt'
            AND schema_version = 'zero-publication-receipt-v1'
            AND state = 'SEALED'
@@ -5122,7 +5122,6 @@ export class ControlPlaneRepository {
           input.receiptArtifactId,
           publication.task_id,
           publication.plan_version_id,
-          publication.attempt_id,
         ],
       );
       if (!receipt.rows[0]) {

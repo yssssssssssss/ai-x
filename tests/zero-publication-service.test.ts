@@ -114,14 +114,14 @@ class MemoryPublicationStore implements ZeroPublicationStore {
 }
 
 class MemoryArtifacts implements ZeroPublicationArtifacts {
-  json: Array<{ id: string; value: unknown }> = [];
-  binary: Array<{ id: string; bytes: Uint8Array }> = [];
-  async writeJson(input: { value: unknown }) {
-    const value = { id: randomUUID(), value: input.value }; this.json.push(value);
+  json: Array<{ id: string; value: unknown; attemptId?: string }> = [];
+  binary: Array<{ id: string; bytes: Uint8Array; attemptId?: string }> = [];
+  async writeJson(input: { value: unknown; attemptId?: string }) {
+    const value = { id: randomUUID(), value: input.value, ...(input.attemptId ? { attemptId: input.attemptId } : {}) }; this.json.push(value);
     return { id: value.id, state: 'SEALED', contentSha256: `sha256:${'c'.repeat(64)}` };
   }
-  async writeBinary(input: { bytes: Uint8Array }) {
-    const value = { id: randomUUID(), bytes: input.bytes }; this.binary.push(value);
+  async writeBinary(input: { bytes: Uint8Array; attemptId?: string }) {
+    const value = { id: randomUUID(), bytes: input.bytes, ...(input.attemptId ? { attemptId: input.attemptId } : {}) }; this.binary.push(value);
     return { id: value.id, state: 'SEALED', contentSha256: `sha256:${'d'.repeat(64)}` };
   }
 }
@@ -226,6 +226,8 @@ test('Zero publication service creates and completes a multimodal publication wi
   assert.ok((completed.imageManifest?.length ?? 0) >= 2);
   assert.ok(artifacts.binary.length >= 1, 'screenshot is sealed as an Artifact');
   assert.equal(artifacts.json.length, 1, 'one publication receipt is sealed');
+  assert.ok(artifacts.binary.every((artifact) => artifact.attemptId === undefined));
+  assert.ok(artifacts.json.every((artifact) => artifact.attemptId === undefined));
   assert.equal(zero.cleanup.length, 0);
   assert.equal(store.created, 1);
 });
