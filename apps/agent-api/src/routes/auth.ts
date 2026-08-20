@@ -1,4 +1,5 @@
-import { Router } from 'express';
+import { isIPv4 } from 'node:net';
+import { Router, type Request } from 'express';
 import { createUser, getUserByEmail, getUserById } from '../../../../database/repository.ts';
 import { hashPassword, verifyPassword, signToken } from '../auth.ts';
 import { requireAuth } from '../middleware.ts';
@@ -7,8 +8,20 @@ import { requireAuth } from '../middleware.ts';
 
 export const authRouter = Router();
 
-function devQuickLoginEmail(): string | null {
-  if (process.env.NODE_ENV === 'production') return null;
+function isLoopbackClient(req: Request): boolean {
+  const address = req.socket.remoteAddress;
+  if (!address) return false;
+  if (address === '::1') return true;
+  if (isIPv4(address)) return address.startsWith('127.');
+
+  const ipv4Mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/iu.exec(address)?.[1];
+  return ipv4Mapped !== undefined && isIPv4(ipv4Mapped) && ipv4Mapped.startsWith('127.');
+}
+
+function devQuickLoginEmail(req: Request): string | null {
+  if (process.env.NODE_ENV !== 'development') return null;
+  if (process.env.DEV_QUICK_LOGIN_ENABLED !== '1') return null;
+  if (!isLoopbackClient(req)) return null;
   return process.env.DEV_QUICK_LOGIN_EMAIL?.trim() || null;
 }
 
@@ -52,13 +65,14 @@ authRouter.post('/login', async (req, res) => {
   res.json({ token, user: publicUser(user) });
 });
 
-authRouter.get('/methods', (_req, res) => {
+authRouter.get('/methods', (req, res) => {
   res.set('Cache-Control', 'no-store');
-  res.json({ quickLogin: devQuickLoginEmail() !== null });
+  res.json({ quickLogin: devQuickLoginEmail(req) !== null });
 });
 
-authRouter.post('/quick-login', async (_req, res) => {
-  const email = devQuickLoginEmail();
+authRouter.post('/quick-login', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const email = devQuickLoginEmail(req);
   if (!email) {
     res.status(404).json({ error: '快捷登录未启用' });
     return;
@@ -70,7 +84,6 @@ authRouter.post('/quick-login', async (_req, res) => {
     return;
   }
 
-  res.set('Cache-Control', 'no-store');
   const token = signToken({ userId: user.id, email: user.email });
   res.json({ token, user: publicUser(user) });
 });
