@@ -461,7 +461,8 @@ class TavilyWithUnsupportedSidecarAdapter extends CountingRealTavilyAdapter {
 class TestOnlyPlaywrightSkillLoader extends SkillLoader {
   override getTool(id: string): ToolRegistryEntry | null {
     if (id === 'playwright-page-capture') {
-      return loadToolRegistry().tools.find((tool) => tool.id === id) ?? null;
+      const tool = loadToolRegistry().tools.find((candidate) => candidate.id === id);
+      return tool ? { ...tool, status: 'active' } : null;
     }
     return super.getTool(id);
   }
@@ -4781,6 +4782,8 @@ test('pauses execution when current deliverable validation fails', async () => {
   assert.equal(result.status, 'paused');
   assert.equal(result.failedStepNo, 2);
   assert.equal(result.failure?.kind, 'deliverable_validation');
+  assert.equal(result.failure?.retryable, true);
+  assert.deepEqual(result.failure?.allowedActions, ['retry', 'abort']);
   const steps = await repository.listExecutionSteps(lease.attemptId);
   const failedStep = steps.find((step) => step.state === 'failed');
   assert.ok(failedStep);
@@ -5224,6 +5227,9 @@ test('fails closed when a Playwright step has no frozen optional authorization',
       .register(new CountingRealTavilyAdapter())
       .register(browser),
     new CountingRealLLM(),
+    new RecordingDeliverablesFake(),
+    undefined,
+    new TestOnlyPlaywrightSkillLoader(),
   ).execute({ lease, expectedModel: 'pinned-model' }), ExecutionAuthenticityError);
 
   assert.equal(browser.calls, 0);

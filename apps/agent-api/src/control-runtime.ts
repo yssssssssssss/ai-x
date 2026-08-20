@@ -324,6 +324,16 @@ export interface ControlRuntime {
     ownerUserId: string;
   }): Promise<VerifiedVisualAsset | null>;
 }
+
+export function visualAssetManifestStorageUri(storageUri: string): string | null {
+  for (const suffix of ['.image', '.svg'] as const) {
+    if (storageUri.endsWith(suffix)) {
+      return `${storageUri.slice(0, -suffix.length)}.manifest.json`;
+    }
+  }
+  return null;
+}
+
 function defaultConversations(): RuntimeConversationAdapter {
   return {
     async create(input) {
@@ -584,6 +594,9 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
         return null;
       }
       const asset = await repository.getArtifact(input.assetId);
+      const manifestStorageUri = asset
+        ? visualAssetManifestStorageUri(asset.storageUri)
+        : null;
       if (
         !asset
         || asset.taskId !== input.taskId
@@ -591,11 +604,10 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
         || asset.state !== 'SEALED'
         || !asset.planVersionId
         || !asset.attemptId
-        || !asset.storageUri.endsWith('.image')
+        || manifestStorageUri === null
       ) {
         return null;
       }
-      const manifestStorageUri = `${asset.storageUri.slice(0, -'.image'.length)}.manifest.json`;
       const candidates = await repository.listArtifactsByStorageUri(manifestStorageUri);
       const manifest = candidates.find((candidate) =>
         candidate.state === 'SEALED'

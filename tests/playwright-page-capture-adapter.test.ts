@@ -319,7 +319,7 @@ test('invalid element selectors fail before Chromium starts', async () => {
   assert.equal(launches, 0);
 });
 
-test('normalization stops at max_pages and uses a safe URI for non-HTTP failures', async () => {
+test('normalization records unsafe fallbacks while max_pages caps successful captures', async () => {
   const resolvedHosts: string[] = [];
   const adapter = new PlaywrightPageCaptureAdapter({
     launcher: fakeLauncher([], {}),
@@ -342,7 +342,21 @@ test('normalization stops at max_pages and uses a safe URI for non-HTTP failures
     },
   });
   assert.equal(truncated.mediaAttachments?.length, 1);
-  assert.equal(resolvedHosts.includes('private.invalid'), false);
+  assert.equal(resolvedHosts.includes('private.invalid'), true);
+  const fallbackFailures = (truncated.output as {
+    failures: Array<{
+      source_result_index: number;
+      requested_url: string;
+      code: string;
+      sanitized_message: string;
+    }>;
+  }).failures;
+  assert.equal(fallbackFailures.length, 1);
+  const fallbackFailure = fallbackFailures[0]!;
+  assert.equal(fallbackFailure.source_result_index, 1);
+  assert.equal(fallbackFailure.requested_url, 'https://private.invalid/should-not-resolve');
+  assert.equal(fallbackFailure.code, 'unsupported_content');
+  assert.match(fallbackFailure.sanitized_message, /public addresses.*forbidden/u);
 
   const mixed = await adapter.invoke({
     toolId: manifest.id,
@@ -359,6 +373,71 @@ test('normalization stops at max_pages and uses a safe URI for non-HTTP failures
   const failure = (mixed.output as { failures: Array<{ requested_url: string }> }).failures[0];
   assert.equal(failure?.requested_url, 'https://invalid.invalid/');
   assert.doesNotThrow(() => new URL(failure!.requested_url));
+});
+
+test('max_pages counts successful captures and continues through fallback candidates', async () => {
+  const attemptedUrls: string[] = [];
+  let connected = true;
+  const launcher = {
+    launch: async () => ({
+      newContext: async () => ({
+        route: async () => undefined,
+        routeWebSocket: async () => undefined,
+        on: () => undefined,
+        newPage: async () => {
+          let currentUrl = 'about:blank';
+          return {
+            goto: async (url: string) => {
+              attemptedUrls.push(url);
+              currentUrl = url;
+              if (url.includes('/fails')) throw new Error('navigation failed');
+              return { status: () => 200, headers: () => ({ 'content-type': 'text/html' }) };
+            },
+            url: () => currentUrl,
+            title: async () => 'Captured page',
+            evaluate: async (fn: unknown) => String(fn).includes('innerText')
+              ? ''
+              : { width: 1, height: 1 },
+            screenshot: async () => PNG_1X1,
+            close: async () => undefined,
+            on: () => undefined,
+          };
+        },
+        close: async () => undefined,
+      }),
+      close: async () => { connected = false; },
+      isConnected: () => connected,
+    }),
+  } as unknown as PlaywrightLauncher;
+  const adapter = new PlaywrightPageCaptureAdapter({
+    launcher,
+    resolveHost: async () => ['93.184.216.34'],
+    getEffectiveUid: () => 501,
+  });
+
+  const result = await adapter.invoke({
+    toolId: manifest.id,
+    manifest,
+    context: invocationContext(),
+    input: {
+      pages: [
+        { url: 'https://example.com/fails' },
+        { url: 'https://example.com/good-one' },
+        { url: 'https://example.com/good-two' },
+      ],
+      capture: { mode: 'full_page_screenshot', max_pages: 2 },
+    },
+  });
+
+  assert.deepEqual(attemptedUrls, [
+    'https://example.com/fails',
+    'https://example.com/good-one',
+    'https://example.com/good-two',
+  ]);
+  assert.deepEqual(result.mediaAttachments?.map((attachment) => attachment.sourcePageUrl), [
+    'https://example.com/good-one',
+    'https://example.com/good-two',
+  ]);
 });
 
 test('a transient DNS failure during normalization is retryable without launching Chromium', async () => {
@@ -1162,6 +1241,75 @@ test('route request budget blocks excess requests before another DNS lookup', as
   assert.equal(budgetResolutions, 256);
   assert.equal(continued, 256);
   assert.equal(aborted, 1);
+});
+
+test('route request budget is isolated per page so earlier candidates cannot starve fallbacks', async () => {
+  let routeHandler: TestRouteHandler | undefined;
+  let continued = 0;
+  let aborted = 0;
+  const response = { status: () => 200, headers: () => ({ 'content-type': 'text/html' }) };
+  const page = () => {
+    const current = {
+      goto: async () => {
+        assert.ok(routeHandler);
+        for (let index = 0; index < 200; index += 1) {
+          await routeHandler({
+            request: () => ({
+              method: () => 'GET',
+              url: () => `https://budget.invalid/resource-${index}.png`,
+              isNavigationRequest: () => false,
+              frame: () => ({ page: () => current }),
+            }),
+            continue: async () => { continued += 1; },
+            abort: async () => { aborted += 1; },
+          });
+        }
+        return response;
+      },
+      url: () => 'https://example.com/product',
+      title: async () => 'Example product',
+      evaluate: async (fn: unknown) => String(fn).includes('innerText') ? '' : { width: 1, height: 1 },
+      screenshot: async () => PNG_1X1,
+      close: async () => undefined,
+      on: () => undefined,
+    };
+    return current;
+  };
+  const pages = [page(), page()];
+  let connected = true;
+  const adapter = new PlaywrightPageCaptureAdapter({
+    launcher: {
+      launch: async () => ({
+        newContext: async () => ({
+          route: async (_pattern: string, handler: TestRouteHandler) => { routeHandler = handler; },
+          routeWebSocket: async () => undefined,
+          newPage: async () => pages.shift(),
+          close: async () => undefined,
+        }),
+        close: async () => { connected = false; },
+        isConnected: () => connected,
+      }),
+    } as unknown as PlaywrightLauncher,
+    resolveHost: async () => ['93.184.216.34'],
+    getEffectiveUid: () => 501,
+  });
+
+  const result = await adapter.invoke({
+    toolId: manifest.id,
+    manifest,
+    context: invocationContext(),
+    input: {
+      pages: [
+        { url: 'https://example.com/first' },
+        { url: 'https://example.com/second' },
+      ],
+      capture: { mode: 'full_page_screenshot', max_pages: 2 },
+    },
+  });
+
+  assert.equal(result.mediaAttachments?.length, 2);
+  assert.equal(continued, 400);
+  assert.equal(aborted, 0);
 });
 
 test('adapter does not launch after lease loss and preserves the abort reason', async () => {

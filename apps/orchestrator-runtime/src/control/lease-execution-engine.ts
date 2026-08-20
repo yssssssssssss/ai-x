@@ -1175,7 +1175,7 @@ function deliverableFailureFrom(error: unknown): Record<string, unknown> {
   }
   return {
     kind: 'deliverable_validation',
-    retryable: false,
+    retryable: true,
     message: error instanceof CurrentReportValidationError
       ? error.message
       : error instanceof Error ? error.message : String(error),
@@ -2744,6 +2744,15 @@ export class LeaseExecutionEngine {
         if (!tool) {
           if (frozenOptional) continue;
           return new ExecutionAuthenticityError(`tool ${step.actor_id} is not active`);
+        }
+        if (
+          !frozenOptional
+          && tool.tier === 'optional'
+          && tool.adapter_type === 'playwright'
+        ) {
+          return new ExecutionAuthenticityError(
+            `optional tool ${step.actor_id} has no frozen optional authorization`,
+          );
         }
         if (frozenOptional && tool.status !== 'active') continue;
         let manifest: ToolManifest;

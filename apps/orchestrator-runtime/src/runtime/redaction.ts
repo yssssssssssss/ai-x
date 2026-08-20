@@ -7,7 +7,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+const CANONICAL_SHA256 = /^sha256:[a-f0-9]{64}$/;
+const STRUCTURED_CHINESE_ADDRESS = /(?:(?:[\u4e00-\u9fa5]{2,}(?:省|自治区))?[\u4e00-\u9fa5]{2,}(?:市|自治州))?[\u4e00-\u9fa5]{2,}(?:区|县)[\u4e00-\u9fa5]{2,}(?:路|街|大道|道|巷)\d+(?:号)?/g;
+
 export function redactString(value: string, maskPii = true): string {
+  if (CANONICAL_SHA256.test(value)) return value;
   const withoutData = value.startsWith('data:') && value.includes(';base64,')
     ? '[REDACTED_DATA]'
     : value;
@@ -29,7 +33,7 @@ export function redactString(value: string, maskPii = true): string {
     .replace(/\b1[3-9]\d{9}\b/g, '[REDACTED_PHONE]')
     .replace(/\b\d{17}[\dXx]\b/g, '[REDACTED_ID]')
     .replace(/(?:0\d{2,3}-)?\d{7,8}/g, '[REDACTED_LANDLINE]')
-    .replace(/[\u4e00-\u9fa5]{2,}(?:省|市|区|县|路|街|号)[\u4e00-\u9fa5\d-]{0,24}/g, '[REDACTED_ADDRESS]');
+    .replace(STRUCTURED_CHINESE_ADDRESS, '[REDACTED_ADDRESS]');
 }
 
 export function redactSensitiveValue(
@@ -39,7 +43,7 @@ export function redactSensitiveValue(
 ): unknown {
   const maskPii = policy.pii === 'mask';
   if (/^(authorization|api[_-]?key|token|secret|password|dataurl|base64)$/i.test(key)) return '[REDACTED]';
-  if (maskPii && /^(name|full_name|contact_name|email|phone|mobile)$/i.test(key)) return '[REDACTED_PII]';
+  if (maskPii && /^(full_name|contact_name|email|phone|mobile)$/i.test(key)) return '[REDACTED_PII]';
   if (typeof value === 'string') {
     const isUrlField = /^(url|oss_url|sourceUrl|requested_url|final_url)$/i.test(key);
     return redactString(value, isUrlField ? false : maskPii);

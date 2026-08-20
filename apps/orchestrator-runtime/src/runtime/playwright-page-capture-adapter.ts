@@ -34,12 +34,13 @@ import {
 const MAX_INPUT_PAGES = 20;
 const MAX_CAPTURED_PAGES = 6;
 const MAX_PAGE_CONCURRENCY = 2;
-const MAX_CONTEXT_REQUESTS = 256;
+const MAX_REQUESTS_PER_PAGE = 256;
 const MAX_ASSET_BYTES = 10 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 40 * 1024 * 1024;
 const MAX_CAPTURE_HEIGHT = 12_000;
 const MAX_CAPTURE_WIDTH = 12_000;
 const MAX_CAPTURE_PIXELS = 20_000_000;
+const MIN_LARGE_CAPTURE_BYTES = 8 * 1024;
 const PAGE_TIMEOUT_MS = 20_000;
 const BROWSER_CLOSE_TIMEOUT_MS = 5_000;
 const SECURITY_PROFILE = 'browser-controls-v1';
@@ -72,6 +73,7 @@ interface CaptureOptions {
   mode: CaptureMode;
   selector?: string;
   maxPages: number;
+  uniqueHostnames: boolean;
   viewport: { width: number; height: number };
 }
 
@@ -79,6 +81,7 @@ interface PageInput {
   sourceResultIndex: number;
   requestedUrl: string;
   url: URL;
+  hostname: string;
 }
 
 interface PageFailure {
@@ -256,6 +259,7 @@ function captureOptions(input: object): CaptureOptions {
     mode: mode as CaptureMode,
     ...(typeof selector === 'string' ? { selector } : {}),
     maxPages: Number(requestedMaxPages),
+    uniqueHostnames: capture.unique_hostnames === true,
     viewport: { width: Number(width), height: Number(height) },
   };
 }
@@ -274,7 +278,7 @@ function safeRequestedUrl(value: unknown, error?: unknown): string {
 
 async function normalizePages(
   input: object,
-  options: CaptureOptions,
+  uniqueHostnames: boolean,
   resolveHost: ResolveHost,
   toolId: string,
   context: ToolInvocationContext,
@@ -291,7 +295,6 @@ async function normalizePages(
   let retryableFailureKind: 'timeout' | 'network' | null = null;
   const seen = new Set<string>();
   for (const [sourceResultIndex, value] of rows.entries()) {
-    if (pages.length >= options.maxPages) break;
     const rawUrl = value && typeof value === 'object' ? (value as { url?: unknown }).url : undefined;
     try {
       if (typeof rawUrl !== 'string') throw new PublicWebAccessError('browser target URL is required');
@@ -303,8 +306,9 @@ async function normalizePages(
       );
       const normalized = url.toString();
       if (seen.has(normalized)) continue;
+      const hostname = normalizedHostname(url).toLowerCase().replace(/^www\./u, '');
       seen.add(normalized);
-      pages.push({ sourceResultIndex, requestedUrl: normalized, url });
+      pages.push({ sourceResultIndex, requestedUrl: normalized, url, hostname });
     } catch (error) {
       if (error instanceof ToolInvocationError) throw error;
       const failureKind = retryablePageFailureKind(error, false);
@@ -324,6 +328,29 @@ async function normalizePages(
         ),
       });
     }
+  }
+  if (uniqueHostnames) {
+    const grouped = new Map<string, PageInput[]>();
+    for (const page of pages) {
+      const group = grouped.get(page.hostname) ?? [];
+      group.push(page);
+      grouped.set(page.hostname, group);
+    }
+    const prioritized: PageInput[] = [];
+    for (const group of grouped.values()) {
+      group.sort((left, right) => {
+        const score = (page: PageInput): number => {
+          const path = page.url.pathname.toLowerCase();
+          if (/(?:login|signin|auth|terms|privacy|membership|cookie|legal|return|cart)/u.test(path)) return 100;
+          if (/(?:about|brand|product|collection|shop|home)/u.test(path)) return 10;
+          if (path === '/' || path === '') return 20;
+          return 30;
+        };
+        return score(left) - score(right) || left.sourceResultIndex - right.sourceResultIndex;
+      });
+      prioritized.push(...group);
+    }
+    return { pages: prioritized, failures, retryableFailureKind };
   }
   return { pages, failures, retryableFailureKind };
 }
@@ -394,6 +421,13 @@ function inspectedCapture(
   if (dimensions.height > MAX_CAPTURE_HEIGHT || dimensions.width * dimensions.height > MAX_CAPTURE_PIXELS) {
     throw captureError('unsupported_content', 'capture dimensions exceed the supported limit');
   }
+  if (
+    dimensions.width >= 1024
+    && dimensions.height >= 720
+    && bytes.byteLength < MIN_LARGE_CAPTURE_BYTES
+  ) {
+    throw captureError('unsupported_content', 'capture is empty or near blank');
+  }
   return {
     bytes,
     mediaType: 'image/png',
@@ -462,14 +496,22 @@ async function installNetworkControls(
   const blockedPages = new WeakSet<Page>();
   const networkFailedPages = new WeakSet<Page>();
   const timedOutPages = new WeakSet<Page>();
+  const pageRequestCounts = new WeakMap<Page, number>();
   const inFlightDns = new Map<string, Promise<void>>();
-  let requestCount = 0;
+  let detachedRequestCount = 0;
 
-  const validateRequestTarget = async (value: string, navigation: boolean): Promise<void> => {
-    requestCount += 1;
-    if (requestCount > MAX_CONTEXT_REQUESTS) {
+  const consumeRequestBudget = (page: Page | undefined): void => {
+    const requestCount = page
+      ? (pageRequestCounts.get(page) ?? 0) + 1
+      : detachedRequestCount + 1;
+    if (page) pageRequestCounts.set(page, requestCount);
+    else detachedRequestCount = requestCount;
+    if (requestCount > MAX_REQUESTS_PER_PAGE) {
       throw new PublicWebAccessError('browser request budget exceeded');
     }
+  };
+
+  const validateRequestTarget = async (value: string, navigation: boolean): Promise<void> => {
     const url = parseBrowserUrl(
       value,
       navigation ? 'browser target' : 'browser resource',
@@ -493,6 +535,7 @@ async function installNetworkControls(
     let page: Page | undefined;
     try { page = request.frame().page(); } catch { /* non-page requests use the Tool deadline */ }
     try {
+      consumeRequestBudget(page);
       if (request.method() !== 'GET' && request.method() !== 'HEAD') {
         throw new PublicWebAccessError('browser requests must use GET or HEAD');
       }
@@ -713,7 +756,7 @@ export class PlaywrightPageCaptureAdapter implements ToolAdapter {
     const capture = captureOptions(options.input);
     const normalized = await normalizePages(
       options.input,
-      capture,
+      capture.uniqueHostnames,
       this.resolveHost,
       options.toolId,
       options.context,
@@ -821,11 +864,8 @@ export class PlaywrightPageCaptureAdapter implements ToolAdapter {
         backgroundClosures.add(task);
       };
       let totalBytes = 0;
-      let cursor = 0;
 
-      const worker = async () => {
-        while (cursor < normalized.pages.length) {
-          const pageInput = normalized.pages[cursor++]!;
+      const processPage = async (pageInput: PageInput): Promise<boolean> => {
           let page: Page | undefined;
           let pageDeadlineAt = options.context.deadlineAt;
           let pageCloseConfirmed = true;
@@ -964,7 +1004,7 @@ export class PlaywrightPageCaptureAdapter implements ToolAdapter {
               pageCloseConfirmed = closeResult === true;
             }
           }
-          if (!candidate) continue;
+          if (!candidate) return false;
           if (!pageCloseConfirmed) {
             const timedOut = Date.now() >= pageDeadlineAt;
             if (timedOut) retryableFailureKind ??= 'timeout';
@@ -977,7 +1017,7 @@ export class PlaywrightPageCaptureAdapter implements ToolAdapter {
               false,
               timedOut,
             ));
-            continue;
+            return false;
           }
           if (page && interactionBlocked.has(page)) {
             failures.push(pageFailure(
@@ -986,7 +1026,7 @@ export class PlaywrightPageCaptureAdapter implements ToolAdapter {
               true,
               false,
             ));
-            continue;
+            return false;
           }
           const nextTotalBytes = totalBytes + candidate.attachment.bytes.byteLength;
           if (nextTotalBytes > MAX_TOTAL_BYTES) {
@@ -996,11 +1036,47 @@ export class PlaywrightPageCaptureAdapter implements ToolAdapter {
               false,
               false,
             ));
-            continue;
+            return false;
           }
           totalBytes = nextTotalBytes;
           captures.push(candidate.metadata);
           attachments.push(candidate.attachment);
+          return true;
+      };
+
+      const candidateGroups = new Map<string, { pages: PageInput[]; cursor: number; active: boolean; succeeded: boolean }>();
+      for (const page of normalized.pages) {
+        const key = capture.uniqueHostnames ? page.hostname : String(page.sourceResultIndex);
+        const group = candidateGroups.get(key) ?? { pages: [], cursor: 0, active: false, succeeded: false };
+        group.pages.push(page);
+        candidateGroups.set(key, group);
+      }
+      let activeCandidates = 0;
+      const reserved = new Map<PageInput, { pages: PageInput[]; cursor: number; active: boolean; succeeded: boolean }>();
+      const reservePage = (): PageInput | undefined => {
+        if (captures.length + activeCandidates >= capture.maxPages) return undefined;
+        for (const group of candidateGroups.values()) {
+          if (group.active || group.succeeded || group.cursor >= group.pages.length) continue;
+          group.active = true;
+          const page = group.pages[group.cursor++]!;
+          reserved.set(page, group);
+          activeCandidates += 1;
+          return page;
+        }
+        return undefined;
+      };
+      const worker = async () => {
+        while (true) {
+          const pageInput = reservePage();
+          if (!pageInput) return;
+          const group = reserved.get(pageInput)!;
+          try {
+            group.succeeded = await processPage(pageInput);
+          } finally {
+            group.active = false;
+            reserved.delete(pageInput);
+            activeCandidates -= 1;
+          }
         }
       };
       const workerResults = await Promise.allSettled(Array.from(

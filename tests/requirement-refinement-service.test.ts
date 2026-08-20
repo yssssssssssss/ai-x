@@ -239,6 +239,59 @@ test('explicit requirements return ready_to_plan and invoke planner with finaliz
   assert.deepEqual(repository.events, ['persist_activate']);
 });
 
+test('explicit weighted scoring matrix overrides unrelated LLM comparison dimensions before persistence', async () => {
+  const { RequirementRefinementService } = await loadModule();
+  const weightedDimensions = [
+    '宠物心智定位清晰度',
+    '六类设计表达覆盖度',
+    '功能适配与可达性',
+    '情感叙事',
+    '服务旅程闭环',
+    '内容可信度与证据充分度',
+    '可持续性与包容性',
+  ];
+  const generated = requirement({
+    comparison_dimensions: ['品牌视觉', '包装', '产品', '空间', '数字体验', '内容与服务'],
+    constraints: [
+      {
+        id: 'scoring-matrix',
+        source: 'user',
+        statement: '矩阵采用5分制并按权重：宠物心智定位清晰度20%、六类设计表达覆盖度20%、功能适配与可达性15%、情感叙事15%、服务旅程闭环15%、内容可信度与证据充分度10%、可持续性与包容性5%。',
+      },
+      {
+        id: 'key-case-selection',
+        source: 'user',
+        statement: '关键案例按设计创新性30%、市场/地区/行业代表性25%、证据充分度25%、加权矩阵总分20%选择。',
+      },
+    ],
+  });
+  const repository = makeRepository();
+  let plannedRequirement: ResearchTaskV2 | undefined;
+  const service = new RequirementRefinementService({
+    llm: new FixtureLLM([generated]),
+    validator: new SchemaValidator(),
+    repository,
+    conversations: makeConversations(),
+    planner: {
+      async plan(input: { requirement: ResearchTaskV2 }) {
+        plannedRequirement = input.requirement;
+      },
+    },
+  });
+
+  const result = await service.understand({
+    taskId,
+    conversationId,
+    ownerUserId,
+    originalInput: '研究宠物心智设计表达，并使用已声明的加权矩阵。',
+  });
+
+  assert.equal(result.status, 'ready_to_plan');
+  assert.deepEqual(result.requirement.comparison_dimensions, weightedDimensions);
+  assert.deepEqual(repository.versions[0]?.structuredTask.comparison_dimensions, weightedDimensions);
+  assert.deepEqual(plannedRequirement?.comparison_dimensions, weightedDimensions);
+});
+
 test('non-blocking questions proceed to planning instead of creating an endless clarification loop', async () => {
   const { RequirementRefinementService } = await loadModule();
   const nonBlocking = requirement({
