@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "source": {
     "baseCommit": "6c9f19fb8109ca6882241bc903d82332a9da0d5e",
-    "approvedIntegratedSourceCommit": "fc281403d62ea3002f2aeeae499063fcfa659fe9",
+    "approvedIntegratedSourceCommit": "3a5fafe18a13714186150489c8434f7c5a58c887",
     "approvedContentTree": {
-      "hash": "cc79fba1cc510f6d149a8e67a2a7a4f8ff488825",
+      "hash": "00b7e87b0c9c592799d15884bc69d7dd0069f040",
       "definition": "The pre-manifest, non-self-referential content tree of approvedIntegratedSourceCommit; this freeze manifest is intentionally not included."
     }
   },
