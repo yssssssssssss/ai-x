@@ -311,13 +311,6 @@ export class LocalZeroMcpClient {
   }
 
   async getCurrentTarget(): Promise<ZeroTargetContext> {
-    const metadata = await this.getDesignMetadata();
-    const match = typeof metadata === 'string'
-      ? metadata.match(/<canvas\s+id="([^"]+)"\s+name="([^"]+)"/u)
-      : null;
-    if (!match || !isZeroNodeId(match[1])) {
-      throw new ZeroMcpClientError('zero_no_design_tab', 'Zero has no current design page');
-    }
     await this.loadScriptResources();
     const file = await this.callTool<{ fileKey?: unknown; pageId?: unknown; pageName?: unknown }>(
       'use_design_script',
@@ -326,10 +319,16 @@ export class LocalZeroMcpClient {
         code: `return { fileKey: relay.fileKey, pageId: relay.currentPage.id, pageName: relay.currentPage.name }`,
       },
     );
-    if (typeof file.fileKey !== 'string' || !file.fileKey.trim()) {
-      throw new ZeroMcpClientError('zero_no_design_tab', 'Zero current design has no file key');
+    if (
+      typeof file.fileKey !== 'string'
+      || !file.fileKey.trim()
+      || !isZeroNodeId(file.pageId)
+      || typeof file.pageName !== 'string'
+      || !file.pageName.trim()
+    ) {
+      throw new ZeroMcpClientError('zero_no_design_tab', 'Zero current design has no file or page identity');
     }
-    return { fileKey: file.fileKey, pageId: match[1], pageName: match[2]! };
+    return { fileKey: file.fileKey, pageId: file.pageId, pageName: file.pageName };
   }
 
   async createHtmlDraft(input: {

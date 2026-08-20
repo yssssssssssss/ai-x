@@ -71,7 +71,7 @@ async function createReceiptArtifact(publicationId: string): Promise<string> {
       id,
       taskId,
       planVersionId,
-      attemptId,
+      null,
       `/tmp/${publicationId}-zero-receipt.json`,
       `sha256:${'b'.repeat(64)}`,
     ],
