@@ -168,15 +168,16 @@ if (!schemaText) throw new Error('problem-graph schema is not registered');
 const problemGraphSchema = JSON.parse(schemaText) as object;
 
 const PROBLEM_GRAPH_PROMPT = `Build a ProblemGraph for the finalized research task. Organize the work as questions, not tool calls. Every question must reference only supplied success criteria and dependencies. Required questions must include required evidence from the supplied Evidence Policy. Every required Evidence Policy requirement id must appear on at least one required question with matching accepted classes and minimum count.`;
-const MAX_EVIDENCE_COVERAGE_REPAIRS = 2;
-const REPAIRABLE_EVIDENCE_ERRORS = new Set<ProblemGraphValidationKind>([
+const MAX_GRAPH_REPAIRS = 2;
+const REPAIRABLE_GRAPH_ERRORS = new Set<ProblemGraphValidationKind>([
+  'uncovered_success_criterion',
   'required_question_without_required_evidence',
   'missing_required_evidence',
 ]);
 
-function isRepairableEvidenceError(error: unknown): error is ProblemGraphValidationError {
+function isRepairableGraphError(error: unknown): error is ProblemGraphValidationError {
   return error instanceof ProblemGraphValidationError
-    && REPAIRABLE_EVIDENCE_ERRORS.has(error.kind);
+    && REPAIRABLE_GRAPH_ERRORS.has(error.kind);
 }
 
 export class ProblemGraphPlanner {
@@ -186,10 +187,9 @@ export class ProblemGraphPlanner {
     try {
       validateProblemGraphCoverage(task, graph);
     } catch (error) {
-      // A graph with no required evidence can still be repaired against the
-      // frozen policy. Preserve fail-closed behavior for every other structural
-      // error and let the policy check produce the repair feedback.
-      if (!isRepairableEvidenceError(error)) throw error;
+      // Coverage omissions can be repaired against the frozen task and policy.
+      // Every other structural error remains fail-closed.
+      if (!isRepairableGraphError(error)) throw error;
     }
     validateProblemGraphEvidenceCoverage(graph, this.dependencies.evidenceRequirements);
     validateProblemGraphCoverage(task, graph);
@@ -203,7 +203,7 @@ export class ProblemGraphPlanner {
     };
     const generateGraph = (validationFeedback: string[] = []) => this.dependencies.llm.generateStructured<ProblemGraph>({
       prompt: validationFeedback.length > 0
-        ? `${PROBLEM_GRAPH_PROMPT} 上一次问题图未满足 ProblemGraph 证据约束，必须逐项修复：${validationFeedback.join('；')}`
+        ? `${PROBLEM_GRAPH_PROMPT} 上一次问题图未满足 ProblemGraph 覆盖约束，必须逐项修复：${validationFeedback.join('；')}`
         : PROBLEM_GRAPH_PROMPT,
       schema: problemGraphSchema,
       schemaName: 'problem-graph',
@@ -230,14 +230,14 @@ export class ProblemGraphPlanner {
       generated.data,
       'problem-graph',
     );
-    for (let attempt = 0; attempt < MAX_EVIDENCE_COVERAGE_REPAIRS; attempt += 1) {
+    for (let attempt = 0; attempt < MAX_GRAPH_REPAIRS; attempt += 1) {
       try {
         this.validateGeneratedGraph(task, generated.data);
         break;
       } catch (error) {
         if (
-          !isRepairableEvidenceError(error)
-          || attempt === MAX_EVIDENCE_COVERAGE_REPAIRS - 1
+          !isRepairableGraphError(error)
+          || attempt === MAX_GRAPH_REPAIRS - 1
         ) throw error;
         generated = await generateGraph([error.message]);
         if (!generated.receiptId) {

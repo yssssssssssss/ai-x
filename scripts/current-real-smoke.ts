@@ -9,6 +9,7 @@ import {
   parseModelRoutes,
   type GatewayModelRoute,
 } from '../apps/orchestrator-runtime/src/runtime/gateway-llm-client.ts';
+import { requiredApprovals } from '../apps/orchestrator-runtime/src/control/task-workflow.ts';
 import { ReportPackageArtifactService } from '../apps/orchestrator-runtime/src/report/report-package-artifact.ts';
 
 export interface RealSmokeConfig {
@@ -148,7 +149,12 @@ interface SmokePlanStep {
 const REQUIRED_EXACT_CAPABILITIES: SmokePlanStep[] = [
   { actor_type: 'tool', actor_id: 'tavily-web-search' },
 ];
-const REQUIRED_ACTOR_TYPES = ['skill', 'llm', 'reviewer'] as const;
+// Report drafting and review are engine-owned stages. They are appended after
+// the frozen plan steps, so requiring `llm`/`reviewer` actors in the plan makes
+// the smoke contract reject valid plans before execution starts. Their actual
+// execution is verified below through the sealed Deliverable and Review
+// Artifacts instead.
+const REQUIRED_ACTOR_TYPES = ['skill'] as const;
 const REQUIRED_CAPABILITY_DESCRIPTION = [
   ...REQUIRED_EXACT_CAPABILITIES.map(({ actor_id }) => actor_id),
   ...REQUIRED_ACTOR_TYPES,
@@ -919,7 +925,7 @@ async function executeRealSmoke(
     planVersionId: selectedCandidate.planVersionId,
   });
   const structuredTask = finalized.requirement;
-  const confirmed = await runtime.workflow.confirm({
+  let confirmed = await runtime.workflow.confirm({
     taskId,
     planVersionId: selected.planVersionId,
     expectedVersion: selected.stateVersion,
@@ -930,6 +936,27 @@ async function executeRealSmoke(
       ? { designImage: designSmokeInputValue(designImagePath) }
       : {},
   });
+  if (confirmed.state === 'awaiting_approval') {
+    const approvalTask = await runtime.repository.getTaskDetail(taskId);
+    const approvalPlan = await runtime.repository.getPlanVersionDetail(selected.planVersionId);
+    if (!approvalTask || !approvalPlan) {
+      throw new Error('real smoke approval state lost its task or plan');
+    }
+    for (const approval of requiredApprovals(approvalTask, approvalPlan)) {
+      if (approval.authority !== actor.role) {
+        throw new Error(`real smoke requires an unavailable ${approval.authority} approval for ${approval.key}`);
+      }
+      confirmed = await runtime.workflow.approve({
+        taskId,
+        planVersionId: selected.planVersionId,
+        expectedVersion: confirmed.stateVersion,
+        idempotencyKey: `current-real-smoke:approve:${scenario.profile}:${taskId}:${approval.key}`,
+        actor,
+        gateKey: approval.key,
+        decision: 'approved',
+      });
+    }
+  }
   if (confirmed.state !== 'ready') {
     throw new Error(`confirmed task must be ready, received ${confirmed.state}`);
   }

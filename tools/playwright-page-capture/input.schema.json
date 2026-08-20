@@ -34,6 +34,11 @@
         },
         "selector": { "type": ["string", "null"], "minLength": 1, "maxLength": 512 },
         "max_pages": { "type": "integer", "minimum": 1, "maximum": 6, "default": 6 },
+        "unique_hostnames": {
+          "type": "boolean",
+          "default": false,
+          "description": "为 true 时，去除 www 前缀后每个规范化 hostname 最多保留一个候选页面"
+        },
         "viewport": {
           "type": "object",
           "additionalProperties": false,

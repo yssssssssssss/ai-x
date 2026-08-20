@@ -296,6 +296,23 @@ test('planner never returns a structurally valid graph that fails coverage valid
   );
 });
 
+test('planner repairs a graph that omits a required success criterion', async () => {
+  const uncovered = validGraph();
+  uncovered.questions[1].success_criterion_ids = ['criterion-market'];
+  const { provider, recorder, planner } = buildPlanner((callNumber: number) => (
+    callNumber === 0 ? uncovered : validGraph()
+  ));
+
+  const result = await planner.build(task);
+
+  assert.deepEqual(result.graph, validGraph());
+  assert.equal(provider.calls.length, 2);
+  assert.deepEqual((provider.calls[1]?.context as Record<string, unknown>)?.validation_feedback, [
+    'problem graph uncovered_success_criterion: criterion-action',
+  ]);
+  assert.equal(recorder.calls.length, 2);
+});
+
 test('planner repairs a graph that omits a configured evidence requirement', async () => {
   const provider = new GraphProvider((callNumber: number) => {
     if (callNumber === 0) {
@@ -347,6 +364,6 @@ test('planner repairs one required question without required evidence when polic
   assert.deepEqual((provider.calls[1]?.context as Record<string, unknown>)?.validation_feedback, [
     'problem graph required_question_without_required_evidence: question-market',
   ]);
-  assert.match(provider.calls[1]?.prompt ?? '', /ProblemGraph 证据约束/);
+  assert.match(provider.calls[1]?.prompt ?? '', /ProblemGraph 覆盖约束/);
   assert.equal(recorder.calls.length, 2);
 });

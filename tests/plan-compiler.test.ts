@@ -884,11 +884,13 @@ type CurrentCandidateFixtureMode =
   | 'missing-tool'
   | 'unknown-binding'
   | 'input-prefixed-binding'
+  | 'pseudo-step-zero'
   | 'invalid-actor-output'
   | 'object-assumptions'
   | 'string-assumptions'
   | 'over-limit-once'
   | 'over-limit-always'
+  | 'orphan-question-twice'
   | 'exact-limit'
   | null;
 
@@ -940,15 +942,19 @@ class CurrentPlanningLLM implements LLMClient {
           || !/invalid_actor_output_pointer.*llm.*\/boundary_definition.*\/text/u
             .test(validationFeedback)
         );
+      const orphanQuestionNeedsRepair = this.candidateFixtureMode === 'orphan-question-twice'
+        && this.candidateCalls < 2;
       const defect = this.candidateFixtureMode === 'over-limit-always'
         ? 'over-limit'
         : inputPrefixedBindingNeedsRepair
           ? 'input-prefixed-binding'
           : invalidActorOutputNeedsRepair
             ? 'invalid-actor-output'
-            : this.candidateCalls === 0
-              ? this.candidateFixtureMode
-              : null;
+            : orphanQuestionNeedsRepair
+              ? 'orphan-question'
+              : this.candidateCalls === 0
+                ? this.candidateFixtureMode
+                : null;
       this.candidateCalls += 1;
       const proposal = (id: 'depth' | 'speed') => {
         const { activated_nodes: _nodes, ...candidate } = hasAvailablePlaywright
@@ -990,6 +996,24 @@ class CurrentPlanningLLM implements LLMClient {
               : step),
           };
         }
+        if (defect === 'pseudo-step-zero') {
+          return {
+            ...candidate,
+            steps: candidate.steps.map((candidateStep) => candidateStep.actor_type === 'skill'
+              ? {
+                ...candidateStep,
+                input_bindings: [
+                  ...candidateStep.input_bindings,
+                  {
+                    target_pointer: '/research_goal',
+                    source_step_no: 0,
+                    source_pointer: '/planning_input',
+                  },
+                ],
+              }
+              : candidateStep),
+          };
+        }
         if (defect === 'invalid-actor-output') {
           return {
             ...candidate,
@@ -1004,6 +1028,15 @@ class CurrentPlanningLLM implements LLMClient {
                 }],
               }
               : candidateStep),
+          };
+        }
+        if (defect === 'orphan-question') {
+          return {
+            ...candidate,
+            steps: candidate.steps.map((candidateStep) => ({
+              ...candidateStep,
+              question_ids: candidateStep.question_ids.filter((questionId) => questionId !== 'question-action'),
+            })),
           };
         }
         if (defect === 'object-assumptions' || defect === 'string-assumptions') {
@@ -1111,6 +1144,9 @@ test('Current planning assembles Task8 graph and Task9 real-adapter capability s
   assert.match(candidateCall.prompt, /fallback_actor_ids 必须为空数组/);
   assert.match(candidateCall.prompt, /统一输出根 \/payload/);
   assert.match(candidateCall.prompt, /目标槽必须预先存在于 step\.input/);
+  assert.match(candidateCall.prompt, /optional Tool.*不得作为 input_bindings.*prior_outputs/);
+  assert.match(candidateCall.prompt, /source_step_no.*必须 >= 1.*禁止把 planning_input 虚构成第 0 步/);
+  assert.match(candidateCall.prompt, /每个 question\.id 必须至少出现在一个 step\.question_ids/);
   assert.match(candidateCall.prompt, /LLM step 的唯一运行时输出指针是 \/text.*reviewer step.*\/review/);
   assert.match(candidateCall.prompt, /depth 总步数不得超过 8，speed 总步数不得超过 4/);
   assert.match(candidateCall.prompt, /competitive-web-research.*scoring_weights/);
@@ -1181,6 +1217,10 @@ test('Current planning retries once with complete Compiler feedback before retur
       expectedFeedback: /target_pointer is relative to step\.input.*use \/sources instead of \/input\/sources/,
     },
     {
+      defect: 'pseudo-step-zero' as const,
+      expectedFeedback: /source_step_no must reference a real earlier step \(>= 1\).*planning_input.*pseudo step 0/,
+    },
+    {
       defect: 'invalid-actor-output' as const,
       expectedFeedback: /invalid_actor_output_pointer.*llm.*\/boundary_definition.*\/text/,
     },
@@ -1231,6 +1271,17 @@ test('Current routed planning repairs candidates that exceed the depth/speed ste
   assert.match(JSON.stringify(candidateCalls[1]?.context), /depth: routed_step_limit_exceeded: actual=9, max=8/);
   assert.match(JSON.stringify(candidateCalls[1]?.context), /speed: routed_step_limit_exceeded: actual=5, max=4/);
   assert.deepEqual(result.candidates.map((candidate) => candidate.steps.length), [2, 2]);
+});
+
+test('Current routed planning allows one extra targeted repair for orphaned required questions', async () => {
+  const { llm, planning } = routedPlanningHarness('orphan-question-twice');
+
+  const result = await planning.planCurrentFromRequirement(task, task.research_goal);
+  const candidateCalls = llm.calls.filter((call) => call.schemaName === 'current-plan-candidates');
+  assert.equal(candidateCalls.length, 3);
+  assert.match(JSON.stringify(candidateCalls[1]?.context), /orphan_required_question.*question-action/);
+  assert.match(JSON.stringify(candidateCalls[2]?.context), /orphan_required_question.*question-action/);
+  assert.deepEqual(result.candidates.map((candidate) => candidate.id), ['depth', 'speed']);
 });
 
 test('Current routed planning rejects non-array assumptions instead of coercing provider output', async () => {
@@ -1318,6 +1369,39 @@ test('finalized Current direct skill builds deterministic strict depth/speed pro
   }
 });
 
+test('Current direct planning freezes explicit user percentages instead of replacing them with equal weights', async () => {
+  const percentages = [30, 25, 20, 15, 10];
+  const weightedTask: ResearchTaskV2 = {
+    ...task,
+    constraints: [
+      ...task.constraints,
+      {
+        id: 'explicit-weights',
+        source: 'user',
+        statement: `评分权重：${comparisonDimensions.map((dimension, index) => (
+          `${dimension}${percentages[index]}%`
+        )).join('、')}`,
+      },
+    ],
+  };
+  const expectedWeights = Object.fromEntries(comparisonDimensions.map((dimension, index) => [
+    dimension,
+    percentages[index]! / 100,
+  ]));
+  const { llm, planning } = routedPlanningHarness(null);
+
+  const result = await planning.planCurrentFromRequirement(
+    weightedTask,
+    `$competitive-web-research ${weightedTask.research_goal}`,
+  );
+
+  assert.equal(llm.calls.some((call) => call.schemaName === 'current-plan-candidates'), false);
+  for (const candidate of result.candidates) {
+    const skillInput = candidate.steps.find((item) => item.actor_id === eligibleSkill.id)?.input;
+    assert.deepEqual(skillInput?.scoring_weights, expectedWeights);
+  }
+});
+
 test('active qualified Playwright is planned as Tavily then capture then Skill in routed and direct Current plans', async () => {
   const realRoot = getConfigRoot();
   const fixtureRoot = mkdtempSync(join(tmpdir(), 'active-playwright-planning-'));
@@ -1374,6 +1458,7 @@ test('active qualified Playwright is planned as Tavily then capture then Skill i
         const captureIndex = actorIds.indexOf(playwrightToolId);
         const skillIndex = actorIds.indexOf(eligibleSkill.id);
         assert.ok(tavilyIndex >= 0 && tavilyIndex < captureIndex && captureIndex < skillIndex);
+        assert.equal(candidate.steps[tavilyIndex]?.input.max_results, 12);
         assert.deepEqual(candidate.steps[captureIndex]?.input.pages, []);
         assert.deepEqual(candidate.steps[captureIndex]?.input_bindings, [{
           target_pointer: '/pages',
@@ -1385,6 +1470,7 @@ test('active qualified Playwright is planned as Tavily then capture then Skill i
 
     const routedCall = llm.calls.find((call) => call.schemaName === 'current-plan-candidates');
     assert.match(routedCall?.prompt ?? '', /playwright-page-capture.*禁止手写 URL/u);
+    assert.match(routedCall?.prompt ?? '', /max_pages.*两倍.*备用候选/u);
   } finally {
     setConfigRoot(realRoot);
     rmSync(fixtureRoot, { recursive: true, force: true });

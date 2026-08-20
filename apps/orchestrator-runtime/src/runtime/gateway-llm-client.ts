@@ -250,7 +250,11 @@ export class GatewayLLMClient implements LLMClient {
     const messages = [
       {
         role: 'system',
-        content: `你是用研任务编排器。只输出 JSON,不要任何解释或 markdown 代码块。\n${schemaHint(spec, opts.schema)}`,
+        // Some OpenAI-compatible gateways validate response_format=json_object by
+        // looking for the lowercase token "json" in the prompt. Keep the human
+        // instruction and the protocol marker together so all supported routes
+        // receive the same contract.
+        content: `你是用研任务编排器。只输出 JSON（json object）,不要任何解释或 markdown 代码块。\n${schemaHint(spec, opts.schema)}`,
       },
       {
         role: 'user',

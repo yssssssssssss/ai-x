@@ -95,6 +95,51 @@ export interface RequirementRefinementDependencies {
 
 const REQUIREMENT_PROMPT = `把会话整理为 ResearchTaskV2。必须忠实保留用户目标、范围、成功标准和约束；竞品任务若明确列出对比维度，必须按原顺序写入 comparison_dimensions，未明确时不得自行补写；可安全推断的信息写入 assumptions；无法安全推断的信息写入 ambiguities 与 clarification_questions；敏感、授权或合规风险写入 blocking_issues。`;
 
+const SCORING_MATRIX_MARKER = /(?:矩阵\s*采用[^。；;\n]{0,40}(?:分制|权重)|(?:评分|评价)(?:维度|矩阵)?\s*(?:及|与|和)?\s*权重|(?:评分|评价)?矩阵(?:维度)?\s*(?:及|与|和)?\s*权重|\b(?:scoring|evaluation)\s+(?:matrix|dimensions?)\b)/iu;
+const PERCENTAGE_ITEM = /(?:^|[、,，;；\n])\s*([^、,，;；\n]*?\S)\s*(\d+(?:\.\d+)?)\s*[%％]\s*[)）]?/gu;
+
+function cleanWeightedDimension(value: string): string {
+  let dimension = value.trim();
+  const labelSeparator = Math.max(dimension.lastIndexOf('：'), dimension.lastIndexOf(':'));
+  if (labelSeparator >= 0) dimension = dimension.slice(labelSeparator + 1);
+  return dimension
+    .replace(/^(?:第?\s*\d+\s*[.)、）]\s*|[-*]\s*)/u, '')
+    .replace(/[（(]\s*$/u, '')
+    .replace(/\s*(?:权重|weight(?:ing)?)\s*(?:为|[:：=])?\s*$/iu, '')
+    .replace(/\s*(?:为|[:：=])\s*$/u, '')
+    .trim();
+}
+
+function explicitWeightedMatrixDimensions(requirement: ResearchTaskV2): string[] | undefined {
+  const candidates = requirement.constraints.flatMap((constraint) => {
+    if (constraint.source !== 'user' || !SCORING_MATRIX_MARKER.test(constraint.statement)) {
+      return [];
+    }
+    const items = [...constraint.statement.matchAll(PERCENTAGE_ITEM)].map((match) => ({
+      dimension: cleanWeightedDimension(match[1] ?? ''),
+      percentage: Number(match[2]),
+    }));
+    const total = items.reduce((sum, item) => sum + item.percentage, 0);
+    if (
+      items.length < 2
+      || items.some((item) => !item.dimension
+        || !Number.isFinite(item.percentage)
+        || item.percentage <= 0
+        || item.percentage > 100)
+      || new Set(items.map((item) => item.dimension)).size !== items.length
+      || Math.abs(total - 100) > 0.001
+    ) return [];
+    return [items.map((item) => item.dimension)];
+  });
+  const unique = new Map(candidates.map((candidate) => [JSON.stringify(candidate), candidate]));
+  return unique.size === 1 ? [...unique.values()][0] : undefined;
+}
+
+function normalizeExplicitWeightedMatrix(requirement: ResearchTaskV2): ResearchTaskV2 {
+  const dimensions = explicitWeightedMatrixDimensions(requirement);
+  return dimensions ? { ...requirement, comparison_dimensions: dimensions } : requirement;
+}
+
 function hasBlockingAmbiguity(requirement: ResearchTaskV2): boolean {
   return requirement.ambiguities.some((ambiguity) => ambiguity.blocking);
 }
@@ -316,7 +361,9 @@ export class RequirementRefinementService {
       },
     });
     this.dependencies.validator.validateOrThrow('research-task-v2', generated.data);
-    const requirement = canonicalizeExpectedDeliverables(generated.data);
+    const requirement = normalizeExplicitWeightedMatrix(
+      canonicalizeExpectedDeliverables(generated.data),
+    );
     const task = await this.dependencies.repository.getTaskDetail?.(input.taskId);
     const expectedVersion = input.expectedVersion
       ?? input.expectedStateVersion
