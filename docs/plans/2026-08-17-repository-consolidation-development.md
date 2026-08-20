@@ -17,7 +17,7 @@
 - 四个 `run-inputs/real-ai-shopping-case/*.jpg` 是本地真实输入，不作为源码提交；正式备份必须保留原路径、字节和 SHA-256，最终通过 `.gitignore` 保留本地文件而不污染 Git 状态。
 - 初始备份同时覆盖 tracked diff、staged diff、全部 11 个未跟踪文件和所有 worktree 状态。
 - 在正式归档前已建立一次不改 Git refs/index 的紧急捕获：`$BACKUP_DIR/emergency-freeze-20260817T154231Z/`，包含 binary patch、全部未跟踪文件、refs bundle、状态记录和通过复核的 SHA-256。
-- 将正式恢复资产改到持久化仓库外目录，保留一份清理前全引用 bundle 和一份完成后的 final-main bundle；`/private/tmp` 仅用于恢复演练。
+- 将正式恢复资产改到持久化仓库外目录，保留一份清理前全引用 bundle 和一份完成后的 final-main bundle；恢复演练目录使用 TodoList 中以 `${TMPDIR:-/tmp}` 可移植构造的 `$RESTORE_DIR`。
 - 增加两次远端 fetch 门禁，默认通过 integration PR 和远端 CI 更新 `main`。
 - 明确从 stash 第一父提交创建 rescue worktree，使用非破坏性 apply，禁止 `stash pop`。
 - 要求 disposition 由非原执行者独立复核。
@@ -224,7 +224,7 @@ worktree-status.txt
 sha256.txt
 ```
 
-`pre-cleanup` bundle 在删除分支和 stash 前最后刷新，必须保留全部待删除 refs；清理后不得覆盖它。完成记录 PR 合入后另建 `final-main` bundle，并创建 `archive/repository-consolidation/completed-20260817` 指向最终 `main`。`/private/tmp/ai-x-repository-consolidation-20260817-restore-drill/` 只能用于 bundle 恢复演练，不能作为唯一备份。
+`pre-cleanup` bundle 在删除分支和 stash 前最后刷新，必须保留全部待删除 refs；清理后不得覆盖它。完成记录 PR 合入后另建 `final-main` bundle，并创建 `archive/repository-consolidation/completed-20260817` 指向最终 `main`。`$RESTORE_DIR/` 只能用于 bundle 恢复演练，不能作为唯一备份。
 
 ### 工作包 B：同步远端并建立整合工作区
 
@@ -411,7 +411,7 @@ git switch -c <restored-branch> <archive-tag>
 - stash 中没有本次整合相关内容。
 - archive tags 和 completion tag 已推送，两份持久化仓库外 bundle 均可读取，SHA-256 与仓库外最终收据一致。
 - pre-cleanup bundle 可以恢复被删除的 refs，final-main bundle 可以恢复最终 `main` 和 completion tag。
-- 两份 bundle 都已在 `/private/tmp` 的独立 clone 中完成恢复演练。
+- 两份 bundle 都已在 `$RESTORE_DIR` 的独立 clone 中完成恢复演练。
 
 ## 10. 变更控制
 

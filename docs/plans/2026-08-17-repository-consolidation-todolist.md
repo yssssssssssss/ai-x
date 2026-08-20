@@ -13,13 +13,13 @@
 ```bash
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 BACKUP_DIR="$(cd "$REPO_ROOT/.." && pwd)/ai-x-backups/repository-consolidation-20260817"
-RESTORE_DIR="/private/tmp/ai-x-repository-consolidation-20260817-restore-drill"
+RESTORE_DIR="${TMPDIR:-/tmp}/ai-x-repository-consolidation-20260817-restore-drill"
 export REPO_ROOT BACKUP_DIR RESTORE_DIR
 ```
 
-- [x] 确认 `REPO_ROOT` 是当前仓库根目录。结果：`/Users/heyunshen/work/PROJECT/jdc/ai-x`。
-- [x] 确认 `BACKUP_DIR` 在当前 Git 仓库外，位于持久化文件系统。结果：`/Users/heyunshen/work/PROJECT/jdc/ai-x-backups/repository-consolidation-20260817`，紧急捕获可写、可读且校验通过。
-- [x] 将最终 `BACKUP_DIR` 绝对路径写入 disposition 元数据。结果：disposition 第 1 节已记录。
+- [x] 确认 `REPO_ROOT` 是当前仓库根目录。结果：`$REPO_ROOT` 由 `git rev-parse --show-toplevel` 解析。
+- [x] 确认 `BACKUP_DIR` 在当前 Git 仓库外，位于持久化文件系统。结果：`$BACKUP_DIR` 按上述规则构造，紧急捕获可写、可读且校验通过。
+- [x] 将最终 `BACKUP_DIR` 变量化路径写入 disposition 元数据。结果：disposition 第 1 节已记录。
 - [x] 确认 `RESTORE_DIR` 仅用于恢复演练，不承担长期备份责任。结果：开发文档和本清单均将正式资产固定到 `BACKUP_DIR`。
 
 ## 0. 开发前冻结门禁

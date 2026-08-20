@@ -8,6 +8,8 @@
 >
 > 规则：本文件是来源处置和验证证据的唯一真相源。TodoList 勾选不能代替本文件。执行期间允许临时状态 `unreviewed`，最终门禁前必须全部替换为 `forward-ported`、`covered-by-main` 或 `archived`。
 
+> 路径按 TodoList“执行变量”记录：`REPO_ROOT` 由 Git 解析，`BACKUP_DIR` 和 `RESTORE_DIR` 由该变量可移植地构造。
+
 ## 1. 执行元数据
 
 | 字段 | 值 |
@@ -22,8 +24,8 @@
 | v4 冻结快照 | `2026-08-17T15:50:16Z` / `2026-08-17T15:51:38Z`，41 tracked、11 untracked、0 staged，Git 状态和 worktree 清单一致 |
 | v4 内容指纹 | `2026-08-17T15:52:00Z` / `2026-08-17T15:53:11Z`，binary diff、全部未跟踪文件和所有 worktree status 指纹一致 |
 | 门禁 0 结果 | PASS；受管根 Web 预览进程经 `SIGINT` 正常退出且未重启，最终采样无仓库相关进程，4 个非根 worktree clean |
-| 持久化备份绝对路径 | `/Users/heyunshen/work/PROJECT/jdc/ai-x-backups/repository-consolidation-20260817` |
-| 紧急捕获路径 | `/Users/heyunshen/work/PROJECT/jdc/ai-x-backups/repository-consolidation-20260817/emergency-freeze-20260817T154231Z` |
+| 持久化备份路径 | `$BACKUP_DIR` |
+| 紧急捕获路径 | `$BACKUP_DIR/emergency-freeze-20260817T154231Z` |
 | 紧急捕获验证 | refs bundle verify 通过；binary patch、11 个未跟踪文件和状态记录 SHA-256 复核通过 |
 | bundle SHA-256 | `6de8573f8b63169bb8f37e435c530dc63642be08cc7d388b1f6b679de01ef6ed`（rescue commits 后刷新的 pre-cleanup bundle；最终清理前仍须再次刷新） |
 | integration PR | 未填写 |

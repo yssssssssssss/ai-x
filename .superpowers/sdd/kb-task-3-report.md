@@ -10,11 +10,13 @@ Command:
 pnpm exec tsx --test tests/kb-assessment.test.ts tests/skill-evaluator.test.ts
 ```
 
+The recorded machine-local repository prefix is normalized below as `$REPO_ROOT`, where `REPO_ROOT="$(git rev-parse --show-toplevel)"`.
+
 Summary:
 
 ```text
-# Subtest: /Users/heyunshen/work/PROJECT/jdc/ai-x/.worktrees/skill-capability-evaluation/tests/kb-assessment.test.ts
-not ok 1 - /Users/heyunshen/work/PROJECT/jdc/ai-x/.worktrees/skill-capability-evaluation/tests/kb-assessment.test.ts
+# Subtest: ${REPO_ROOT}/.worktrees/skill-capability-evaluation/tests/kb-assessment.test.ts
+not ok 1 - ${REPO_ROOT}/.worktrees/skill-capability-evaluation/tests/kb-assessment.test.ts
   error: 'test failed'
   code: 'ERR_TEST_FAILURE'
 # Subtest: injects optional KB context into generation and scoring without changing base score

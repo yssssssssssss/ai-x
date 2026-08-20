@@ -5,6 +5,12 @@ node_modules/
 *.tsbuildinfo
 .claude/settings.local.json
 
+# 本地 Harness 状态文件
+/harness-progress.txt
+/harness-tasks.json
+/harness-tasks.json.bak
+/.harness-active
+
 # 本地隔离工作区
 .worktrees/
 

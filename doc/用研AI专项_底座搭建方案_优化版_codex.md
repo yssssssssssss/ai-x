@@ -24,7 +24,7 @@
 
 **配置不进运行时 DB,但执行必须可复盘:** MVP 不单独建设 `skill_versions` 配置表,但每次执行必须记录当次使用的 manifest Git commit、文件 hash 或 manifest snapshot。否则 skill 更新后,无法解释历史任务为什么选了某个能力、为什么给出某个结论。
 
-**识别层边界(避免误解):** 任务理解(一句话 → ResearchTask)由 **LLM** 承担,是"判断放 LLM"的一部分。[用研AI专项_前台页面demo.html](/Users/heyunshen/work/PROJECT/jdc/ai-x/doc/用研AI专项_前台页面demo.html) 里的关键词匹配只是**前端原型示意**,不代表真实识别逻辑——真实系统靠 LLM 结构化理解,demo 仅用于敲定交互形态。
+**识别层边界(避免误解):** 任务理解(一句话 → ResearchTask)由 **LLM** 承担,是"判断放 LLM"的一部分。[用研AI专项_前台页面demo.html](./用研AI专项_前台页面demo.html) 里的关键词匹配只是**前端原型示意**,不代表真实识别逻辑——真实系统靠 LLM 结构化理解,demo 仅用于敲定交互形态。
 
 ---
 
@@ -778,7 +778,7 @@ updated_at: 2026-07-07
 
 ## 五·补 · 前端形态(交互参考基线)
 
-界面参考 [用研AI专项_前台页面demo.html](/Users/heyunshen/work/PROJECT/jdc/ai-x/doc/用研AI专项_前台页面demo.html) 的交互形态,但 demo 是**交互参考基线**,不是代码基线,也不是最终视觉规范。**一句话:一个 ChatGPT 式的对话工作台,把"计划→确认→执行→交付"四段流渲染成可交互的对话回合。**
+界面参考 [用研AI专项_前台页面demo.html](./用研AI专项_前台页面demo.html) 的交互形态,但 demo 是**交互参考基线**,不是代码基线,也不是最终视觉规范。**一句话:一个 ChatGPT 式的对话工作台,把"计划→确认→执行→交付"四段流渲染成可交互的对话回合。**
 
 ### 布局(三区)
 
@@ -864,7 +864,7 @@ MVP 阶段按此清单落地,均为可 review 的文件/配置,非运行时黑�
 14. `apps/agent-api` + `apps/orchestrator-runtime` — 薄后端(打包期)。`orchestrator-runtime` 不含业务判断,但要承载 LLM 调用、MVP o2 adapter、schema 校验、重试、审计、context_manifest、failures 回放,须单独排期。
 15. `migration-checklist.md` + skill 模板 — 用 1-2 个种子 skill 改造过程沉淀,供后续团队批量接入。
 
-详细工程任务拆解见: [用研AI专项_开发Todolist_codex.md](/Users/heyunshen/work/PROJECT/jdc/ai-x/doc/用研AI专项_开发Todolist_codex.md)。
+详细工程任务拆解见: [用研AI专项_开发Todolist_codex.md](./用研AI专项_开发Todolist_codex.md)。
 
 ---
 

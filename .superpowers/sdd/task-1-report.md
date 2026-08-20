@@ -10,10 +10,10 @@ Command: `pnpm exec tsx --test tests/cutover-cli.test.ts`
 
 Initial prerequisite failure: worktree had no local `node_modules`, so `pnpm exec` could not find `tsx`. I ran `pnpm install --offline` only to restore local dependency links, with no network.
 
-Observed RED after prerequisite restore:
+Observed RED after prerequisite restore (the recorded machine-local repository prefix is normalized as `$REPO_ROOT`, where `REPO_ROOT="$(git rev-parse --show-toplevel)"`):
 
 ```text
-Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/Users/heyunshen/work/PROJECT/jdc/ai-x/.worktrees/cutover-operator-cli/apps/orchestrator-runtime/src/cutover/cutover-input.ts' imported from /Users/heyunshen/work/PROJECT/jdc/ai-x/.worktrees/cutover-operator-cli/tests/cutover-cli.test.ts
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '${REPO_ROOT}/.worktrees/cutover-operator-cli/apps/orchestrator-runtime/src/cutover/cutover-input.ts' imported from ${REPO_ROOT}/.worktrees/cutover-operator-cli/tests/cutover-cli.test.ts
 # tests 1
 # pass 0
 # fail 1

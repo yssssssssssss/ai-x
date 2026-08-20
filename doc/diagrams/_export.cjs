@@ -3,10 +3,11 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const WebSocket = require(path.join(process.env.HOME, '.claude/skills/browser/node_modules/ws'));
 
-const OUT = '/Users/heyunshen/work/PROJECT/jdc/ai-x/doc/diagrams';
-const FILE = 'file://' + encodeURI('/Users/heyunshen/work/PROJECT/jdc/ai-x/doc/diagrams/_render.html');
+const OUT = __dirname;
+const FILE = pathToFileURL(path.join(__dirname, '_render.html')).href;
 const NAMES = {
   '01': '01_系统架构',
   '02': '02_四段协作流',
