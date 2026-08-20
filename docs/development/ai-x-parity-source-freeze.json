@@ -1,0 +1,288 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "baseCommit": "6c9f19fb8109ca6882241bc903d82332a9da0d5e",
+    "approvedIntegratedSourceCommit": "0d72de148346faa77694010fcd9f6a4bd8928752",
+    "approvedContentTree": {
+      "hash": "b1912234043d8b41399f749bc53273f04ed493e1",
+      "definition": "The pre-manifest, non-self-referential content tree of approvedIntegratedSourceCommit; this freeze manifest is intentionally not included."
+    }
+  },
+  "ancestry": {
+    "ordering": "Reverse topological ancestry order from source.baseCommit (exclusive) through source.approvedIntegratedSourceCommit (inclusive).",
+    "approvedFeatureCommits": [
+      {
+        "order": 1,
+        "commit": "1be761755b0e068500bbad16f2ff5db7d1d3dd83",
+        "subject": "feat: add guarded development quick login"
+      },
+      {
+        "order": 2,
+        "commit": "9caabeddd766aecd9396728a3a698988936cfe6e",
+        "subject": "fix: restrict development quick login"
+      },
+      {
+        "order": 3,
+        "commit": "03189f5dd54fb47334eb718cff0412ab3c24bedd",
+        "subject": "Track locked parity source assets"
+      },
+      {
+        "order": 4,
+        "commit": "bb98aa08aa6fe5e0efa2b394b80dd037966f89a9",
+        "subject": "Add persistent task history controls"
+      },
+      {
+        "order": 5,
+        "commit": "fde3e1c1d563aaefd3fdbe083880e067c745e773",
+        "subject": "Harden visual evidence candidate diversity"
+      },
+      {
+        "order": 6,
+        "commit": "50ff2314597c4dbab73cd028ad4e9b9e16df0775",
+        "subject": "Fix visual evidence fallback contracts"
+      },
+      {
+        "order": 7,
+        "commit": "90225375d8761f9db329d7de8ee385874b5ae914",
+        "subject": "Enforce visual source query diversity"
+      },
+      {
+        "order": 8,
+        "commit": "0762caa48cbb778831dac22415a5d36a4bc6cd91",
+        "subject": "docs: plan Zero report publication"
+      },
+      {
+        "order": 9,
+        "commit": "78006bd66953335d6eda0fecf6ea1131df23abc6",
+        "subject": "feat: add Zero publication control ledger"
+      },
+      {
+        "order": 10,
+        "commit": "ed29fbf0ac58f780b4808693608a3ab05baf4955",
+        "subject": "feat: add local Zero MCP client"
+      },
+      {
+        "order": 11,
+        "commit": "b16b09c3d3911a43d751b0eb9fd514ae5cb34fc5",
+        "subject": "feat: render Zero reports and transcode visuals"
+      },
+      {
+        "order": 12,
+        "commit": "4c0d37f6066a646f57015598817f039ca2431bbc",
+        "subject": "feat: orchestrate durable Zero publications"
+      },
+      {
+        "order": 13,
+        "commit": "7b202c1450f1e02d4186dae745363ae6b79a906d",
+        "subject": "feat(web): publish completed reports to Zero"
+      },
+      {
+        "order": 14,
+        "commit": "f7e2d8cb60a6ea7528eadff9bc9c4bda0400c2b8",
+        "subject": "fix: reconcile completed Zero publication artifacts"
+      },
+      {
+        "order": 15,
+        "commit": "fcad526e3bf297ae7b176cece8d15720de977c39",
+        "subject": "docs: record real Zero publication acceptance"
+      },
+      {
+        "order": 16,
+        "commit": "ac58b4a8201e4c30b0017bc6184235119b8c5059",
+        "subject": "fix: freeze Zero publication V1 scope"
+      },
+      {
+        "order": 17,
+        "commit": "34b6882c2605d86eec673e1fbeaa4d8a7e268bf5",
+        "subject": "fix: gate and retry Zero publications"
+      },
+      {
+        "order": 18,
+        "commit": "e809983e257fd95eadb126be9803f777262404e0",
+        "subject": "Track locked parity source assets"
+      },
+      {
+        "order": 19,
+        "commit": "c44f7b4c0f28f09c530a198d646b5841e958a300",
+        "subject": "docs: plan Zero report publication"
+      },
+      {
+        "order": 20,
+        "commit": "ec0b3871f55afe895236709c5412ac1ac4c7d254",
+        "subject": "feat: add Zero publication control ledger"
+      },
+      {
+        "order": 21,
+        "commit": "71b3c6fb996f9c0132d46ce1cc0c31c2d9c9725a",
+        "subject": "feat: add local Zero MCP client"
+      },
+      {
+        "order": 22,
+        "commit": "4e4376f62a22a10f17e28d2e38559b49f1da9d1f",
+        "subject": "feat: render Zero reports and transcode visuals"
+      },
+      {
+        "order": 23,
+        "commit": "f92eb1e313d6bfb675cbef216035125bbc0e2eaf",
+        "subject": "feat: orchestrate durable Zero publications"
+      },
+      {
+        "order": 24,
+        "commit": "5c7fab9127be57030f0520e877cb9f2e561bba19",
+        "subject": "feat(web): publish completed reports to Zero"
+      },
+      {
+        "order": 25,
+        "commit": "69fee94922886bc1bf19d193b9df6bd965e0c2b4",
+        "subject": "fix: reconcile completed Zero publication artifacts"
+      },
+      {
+        "order": 26,
+        "commit": "8db146ac368bdecfe3a78d8c8d197062568ea189",
+        "subject": "docs: record real Zero publication acceptance"
+      },
+      {
+        "order": 27,
+        "commit": "675eb898d3a8599480d1fb1289f65a129fea88f9",
+        "subject": "fix: gate and retry Zero publications"
+      },
+      {
+        "order": 28,
+        "commit": "617db83a2a115a18a2289b743be338c7733cd0ba",
+        "subject": "Harden visual evidence candidate diversity"
+      },
+      {
+        "order": 29,
+        "commit": "caa5450efa1768e1543537ea1f0d3bc1171b4af0",
+        "subject": "Fix visual evidence fallback contracts"
+      },
+      {
+        "order": 30,
+        "commit": "7b5d33b7e96bbf6a37ebc58c5b1246fe00e200c7",
+        "subject": "Enforce visual source query diversity"
+      },
+      {
+        "order": 31,
+        "commit": "363115016d60cc09611ea6448fc1803b89e0d277",
+        "subject": "Add persistent task history controls"
+      },
+      {
+        "order": 32,
+        "commit": "0d6da591e25889987a3a15f2e4c6ef15a40bd9d8",
+        "subject": "feat: add guarded development quick login"
+      },
+      {
+        "order": 33,
+        "commit": "3938dab914282e0863bf63f0542d729005ef0c60",
+        "subject": "fix: restrict development quick login"
+      }
+    ],
+    "integrationMergeCommits": [
+      {
+        "order": 1,
+        "commit": "32c4cc2db1f5ae9ac3bad8d81b713405ef94e10c",
+        "parents": [
+          "6c9f19fb8109ca6882241bc903d82332a9da0d5e",
+          "9caabeddd766aecd9396728a3a698988936cfe6e"
+        ],
+        "subject": "merge: integrate guarded development auth"
+      },
+      {
+        "order": 2,
+        "commit": "52d1268fc62e2bf60a6691f897088351d2fff048",
+        "parents": [
+          "32c4cc2db1f5ae9ac3bad8d81b713405ef94e10c",
+          "03189f5dd54fb47334eb718cff0412ab3c24bedd"
+        ],
+        "subject": "merge: integrate parity source assets"
+      },
+      {
+        "order": 3,
+        "commit": "909cba24cd956e0c3d7bfc0d0af9d7f5e1640557",
+        "parents": [
+          "52d1268fc62e2bf60a6691f897088351d2fff048",
+          "bb98aa08aa6fe5e0efa2b394b80dd037966f89a9"
+        ],
+        "subject": "merge: integrate persistent task history"
+      },
+      {
+        "order": 4,
+        "commit": "89e9c928676ac1a3c6ebb5fa75a4e809cdb0445b",
+        "parents": [
+          "909cba24cd956e0c3d7bfc0d0af9d7f5e1640557",
+          "90225375d8761f9db329d7de8ee385874b5ae914"
+        ],
+        "subject": "merge: integrate visual evidence parity"
+      },
+      {
+        "order": 5,
+        "commit": "538ec59fa2a63c412b10bcfd4b5e7eeb17c20138",
+        "parents": [
+          "89e9c928676ac1a3c6ebb5fa75a4e809cdb0445b",
+          "ac58b4a8201e4c30b0017bc6184235119b8c5059"
+        ],
+        "subject": "merge: integrate Zero report publication V1"
+      },
+      {
+        "order": 6,
+        "commit": "a0edc843848f6eaf995e39b2700fd017838fb701",
+        "parents": [
+          "538ec59fa2a63c412b10bcfd4b5e7eeb17c20138",
+          "34b6882c2605d86eec673e1fbeaa4d8a7e268bf5"
+        ],
+        "subject": "merge: integrate Zero publication gate and retry"
+      },
+      {
+        "order": 7,
+        "commit": "0d72de148346faa77694010fcd9f6a4bd8928752",
+        "parents": [
+          "a0edc843848f6eaf995e39b2700fd017838fb701",
+          "3938dab914282e0863bf63f0542d729005ef0c60"
+        ],
+        "subject": "merge: retire integrated parity source freeze"
+      }
+    ]
+  },
+  "registryCounts": {
+    "skills": 22,
+    "tools": 9,
+    "deliverables": 5,
+    "decisionNodes": 7,
+    "labs": 5
+  },
+  "assetCounts": {
+    "knowledgeBaseSkillBodies": 18,
+    "specializedRegisteredSkillBodies": 4,
+    "separateOrchestratorSkillBodies": 1,
+    "requiredReferences": 21,
+    "knowledgeMarkdownFiles": 179,
+    "schemaFiles": 22
+  },
+  "integrity": {
+    "requiredReferenceManifest": {
+      "algorithm": "sha256",
+      "hash": "90cce776ff548dad8537a8208e58a0fccc1204ac682917edcd2d946e8787dd66",
+      "scope": "All knowledge-base/skills/*/references/*.md files, ordered by repository-relative path in C locale.",
+      "definition": "SHA-256 of newline-terminated lines in the form '<file-sha256>  <repository-relative-path>'."
+    },
+    "migrationGuide": {
+      "algorithm": "sha256",
+      "path": "docs/development/research-orchestration-migration-guide.md",
+      "hash": "5c0df919394ca33f22b996c9dcf9be060ed820e6c53c7752e6f3951c3d0169b2"
+    }
+  },
+  "exclusions": {
+    "secrets": {
+      "excluded": true,
+      "scope": "Secret values, credentials, tokens, and local environment files are excluded."
+    },
+    "runtimeData": {
+      "excluded": true,
+      "scope": "Runtime-generated workspaces, run audit outputs, logs, caches, and dependency installation directories are excluded."
+    },
+    "localAbsolutePaths": {
+      "excluded": true,
+      "scope": "Recorded paths are repository-relative; no local absolute paths are recorded."
+    }
+  }
+}
