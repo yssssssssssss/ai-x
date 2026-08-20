@@ -20,6 +20,7 @@ const REQUIRED_TOOLS = [
 interface FakeOptions {
   tools?: string[];
   screenshotUrl?: string;
+  screenshotHostname?: '127.0.0.1' | 'localhost';
   screenshotContentType?: string;
   screenshotBytes?: Uint8Array;
   delayMs?: number;
@@ -139,7 +140,7 @@ async function fakeZero(options: FakeOptions = {}): Promise<{ url: string; calls
           content: [{
             type: 'text',
             text: JSON.stringify({
-              image_url: options.screenshotUrl ?? `http://localhost:${port}/assets/screenshot.png`,
+              image_url: options.screenshotUrl ?? `http://${options.screenshotHostname ?? '127.0.0.1'}:${port}/assets/screenshot.png`,
               width: 100,
               height: 200,
               format: 'png',
@@ -222,6 +223,14 @@ test('Zero MCP client rejects missing tools, non-loopback URLs, and unsafe scree
   await assert.rejects(
     () => new LocalZeroMcpClient({ url: missing.url, timeoutMs: 2_000 }).getStatus(),
     /required tool use_design_script/,
+  );
+  const differentLoopbackOrigin = await fakeZero({ screenshotHostname: 'localhost' });
+  await assert.rejects(
+    () => new LocalZeroMcpClient({
+      url: differentLoopbackOrigin.url,
+      timeoutMs: 2_000,
+    }).captureScreenshot('31:2', 4096),
+    /screenshot URL/,
   );
   const unsafe = await fakeZero({ screenshotUrl: 'https://example.com/assets/screenshot.png' });
   await assert.rejects(

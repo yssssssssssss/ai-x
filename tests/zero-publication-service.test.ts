@@ -59,7 +59,22 @@ class MemoryPublicationStore implements ZeroPublicationStore {
   async findSealedArtifact() { return this.reportArtifact; }
   async createZeroPublication(input: Parameters<ZeroPublicationStore['createZeroPublication']>[0]) {
     const existing = [...this.rows.values()].find((row) => row.taskId === input.taskId && row.idempotencyKey === input.idempotencyKey);
-    if (existing) return existing;
+    if (existing) {
+      if (existing.requestHash !== input.requestHash) throw new Error('idempotency conflict');
+      if (existing.status !== 'failed') return existing;
+      const retried = publication({
+        ...existing,
+        status: 'queued',
+        stage: 'checking_zero',
+        progress: 0,
+        failure: null,
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        completedAt: null,
+      });
+      this.rows.set(retried.id, retried);
+      return retried;
+    }
     this.created += 1;
     const row = publication({
       idempotencyKey: input.idempotencyKey, requestHash: input.requestHash,
@@ -74,8 +89,18 @@ class MemoryPublicationStore implements ZeroPublicationStore {
   async getZeroPublicationForOwner(input: { publicationId: string }) { return this.rows.get(input.publicationId) ?? null; }
   async claimZeroPublication(input: { publicationId: string; leaseOwner: string; leaseExpiresAt: Date }) {
     const row = this.rows.get(input.publicationId);
-    if (!row || row.status === 'completed' || row.status === 'failed') return null;
-    const next = publication({ ...row, status: 'running', leaseOwner: input.leaseOwner, leaseExpiresAt: input.leaseExpiresAt });
+    const reclaimable = row?.status === 'running'
+      && row.leaseExpiresAt !== null
+      && row.leaseExpiresAt <= new Date();
+    if (!row || (row.status !== 'queued' && !reclaimable)) return null;
+    const next = publication({
+      ...row,
+      status: 'running',
+      failure: null,
+      leaseOwner: input.leaseOwner,
+      leaseExpiresAt: input.leaseExpiresAt,
+      completedAt: null,
+    });
     this.rows.set(next.id, next); return next;
   }
   async heartbeatZeroPublication(input: { publicationId: string; leaseOwner: string; extendUntil: Date }) {
@@ -242,13 +267,24 @@ test('Zero publication service fails before persistence when Zero is offline', a
   assert.equal(store.created, 0);
 });
 
-test('Zero publication service cleans a new draft when image fill verification fails', async () => {
+test('Zero publication service cleans a failed draft and retries the same publication identity', async () => {
   const { service, store, zero } = await harness();
   zero.fillFailure = true;
-  const created = await service.create({ taskId, ownerUserId, expectedTaskState: 'completed', idempotencyKey: 'idem-fill' });
+  const request = { taskId, ownerUserId, expectedTaskState: 'completed' as const, idempotencyKey: 'idem-fill' };
+  const created = await service.create(request);
   await assert.rejects(() => service.execute(created.id, ownerUserId), /IMAGE fill/);
   assert.equal(store.rows.get(created.id)?.status, 'failed');
   assert.deepEqual(zero.cleanup, ['31:2']);
+
+  zero.fillFailure = false;
+  const retried = await service.create(request);
+  assert.equal(retried.id, created.id);
+  assert.equal(retried.idempotencyKey, created.idempotencyKey);
+  assert.equal(retried.status, 'queued');
+  const completed = await service.execute(retried.id, ownerUserId);
+  assert.equal(completed.status, 'completed');
+  assert.equal(completed.id, created.id);
+  assert.equal(store.created, 1, 'retry must not create a second publication');
 });
 
 test('Zero publication service reclaims expired publications and preserves an update target until success', async () => {

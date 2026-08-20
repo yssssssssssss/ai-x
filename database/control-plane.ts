@@ -4930,7 +4930,7 @@ export class ControlPlaneRepository {
       const existing = await connection.query(
         `SELECT * FROM control_zero_publications
          WHERE task_id = $1 AND idempotency_key = $2
-         FOR SHARE`,
+         FOR UPDATE`,
         [input.taskId, input.idempotencyKey],
       );
       const row = existing.rows[0];
@@ -4943,7 +4943,20 @@ export class ControlPlaneRepository {
           `Zero publication idempotency key ${input.idempotencyKey} conflicts`,
         );
       }
-      return zeroPublicationFromRow(row);
+      if (row.status !== 'failed') return zeroPublicationFromRow(row);
+      const retried = await connection.query(
+        `UPDATE control_zero_publications
+         SET status = 'queued', stage = 'checking_zero', progress = 0,
+             failure_json = NULL, lease_owner = NULL, lease_expires_at = NULL,
+             completed_at = NULL, updated_at = now()
+         WHERE id = $1 AND status = 'failed'
+         RETURNING *`,
+        [row.id],
+      );
+      if (!retried.rows[0]) {
+        throw new ControlPlaneConflictError(`Zero publication ${row.id} cannot retry`);
+      }
+      return zeroPublicationFromRow(retried.rows[0]);
     });
   }
 
@@ -5003,7 +5016,8 @@ export class ControlPlaneRepository {
     return this.transaction(async (connection) => {
       const result = await connection.query(
         `UPDATE control_zero_publications
-         SET status = 'running', lease_owner = $2, lease_expires_at = $3,
+         SET status = 'running', failure_json = NULL, completed_at = NULL,
+             lease_owner = $2, lease_expires_at = $3,
              updated_at = now()
          WHERE id = $1
            AND (
