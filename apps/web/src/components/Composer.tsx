@@ -61,7 +61,7 @@ export function Composer({ disabled, onSubmit }: { disabled: boolean; onSubmit: 
   }
 
   return (
-    <form onSubmit={submit} style={{ borderTop: '1px solid var(--border-soft)', padding: '18px 20px 22px', background: 'var(--bg)' }}>
+    <form className="composer" onSubmit={submit}>
       <div style={{ maxWidth: 760, margin: '0 auto', position: 'relative' }}>
         {menuOpen && (
           <div

@@ -74,10 +74,23 @@ interface CurrentHistoryTask {
   state: string;
   createdAt: string;
   updatedAt?: string;
+  requiresAction?: boolean;
 }
 
 interface HistoryTask extends LegacyHistoryTask {
   kind: 'legacy' | 'current';
+  displayName?: string | null;
+  pinnedAt?: string | null;
+  requiresAction?: boolean;
+}
+
+interface TaskHistoryPreference {
+  taskId: string;
+  taskKind: 'legacy' | 'current';
+  displayName: string | null;
+  pinnedAt: string | null;
+  hiddenAt: string | null;
+  updatedAt: string;
 }
 
 interface CurrentFlowStateModule {
@@ -119,9 +132,18 @@ interface CurrentFlowStateModule {
   };
   taskStatePresentation(state: string): {
     label: string;
-    group: 'action' | 'running' | 'finished';
+    group: 'pending' | 'running' | 'completed' | 'failed';
     tone: 'action' | 'running' | 'success' | 'warning' | 'danger' | 'muted';
   };
+  historyTaskPresentation(task: HistoryTask): {
+    label: string;
+    group: 'pending' | 'running' | 'completed' | 'failed';
+    tone: 'action' | 'running' | 'success' | 'warning' | 'danger' | 'muted';
+  };
+  applyTaskHistoryPreferences(
+    tasks: HistoryTask[],
+    preferences: TaskHistoryPreference[],
+  ): HistoryTask[];
   createClarificationSubmissionState(): ClarificationSubmissionState;
   beginClarificationSubmission(
     state: ClarificationSubmissionState,
@@ -136,6 +158,7 @@ interface CurrentFlowStateModule {
   mergeTaskHistory(
     legacyTasks: LegacyHistoryTask[],
     currentTasks: CurrentHistoryTask[],
+    preferences?: TaskHistoryPreference[],
   ): HistoryTask[];
   createRequestId(source: {
     randomUUID?: () => string;
@@ -185,6 +208,8 @@ async function loadCurrentFlowStateModule(): Promise<CurrentFlowStateModule> {
     'buildClarificationSubmission',
     'missingBlockingAnswers',
     'mergeTaskHistory',
+    'applyTaskHistoryPreferences',
+    'historyTaskPresentation',
     'createRequestId',
     'taskStatePresentation',
   ]) {
@@ -277,20 +302,20 @@ test('merges Legacy and Current history by newest creation time while preserving
 test('every Current workflow state has an explicit history label and group', async () => {
   const { taskStatePresentation } = await loadCurrentFlowStateModule();
   const expected = [
-    ['awaiting_clarification', '待补充', 'action'],
-    ['awaiting_selection', '待选方案', 'action'],
-    ['awaiting_confirmation', '待确认', 'action'],
+    ['awaiting_clarification', '待补充', 'pending'],
+    ['awaiting_selection', '待选方案', 'pending'],
+    ['awaiting_confirmation', '待确认', 'pending'],
     ['awaiting_approval', '审批中', 'running'],
-    ['ready', '待执行', 'action'],
+    ['ready', '待执行', 'pending'],
     ['executing', '执行中', 'running'],
-    ['paused', '已暂停', 'action'],
+    ['paused', '已暂停', 'pending'],
     ['reviewing', '质量复核中', 'running'],
     ['composing_report', '报告生成中', 'running'],
-    ['completed', '已完成', 'finished'],
-    ['completed_with_gaps', '已完成·有缺口', 'finished'],
-    ['failed', '失败', 'finished'],
-    ['cancelled', '已取消', 'finished'],
-    ['rejected', '已驳回', 'finished'],
+    ['completed', '已完成', 'completed'],
+    ['completed_with_gaps', '已完成·有缺口', 'completed'],
+    ['failed', '失败', 'failed'],
+    ['cancelled', '已取消', 'failed'],
+    ['rejected', '已驳回', 'failed'],
   ] as const;
 
   assert.deepEqual(
@@ -301,6 +326,88 @@ test('every Current workflow state has an explicit history label and group', asy
     expected,
   );
   assert.throws(() => taskStatePresentation('unknown_state'), /unknown|unsupported|state/i);
+});
+
+test('history preferences pin, rename and hide tasks without mutating their source identity', async () => {
+  const { mergeTaskHistory, historyTaskPresentation } = await loadCurrentFlowStateModule();
+  const history = mergeTaskHistory(
+    [{
+      id: 'legacy-hidden',
+      original_input: 'Hidden legacy task',
+      task_type: 'competitive_research',
+      status: 'failed',
+      created_at: '2026-08-20T10:00:00.000Z',
+    }],
+    [{
+      id: 'current-pinned',
+      originalInput: 'Original current title',
+      taskType: 'design_audit',
+      state: 'ready',
+      createdAt: '2026-08-19T10:00:00.000Z',
+      updatedAt: '2026-08-19T10:00:00.000Z',
+    }, {
+      id: 'current-recent',
+      originalInput: 'Recent current task',
+      taskType: 'competitive_research',
+      state: 'completed',
+      createdAt: '2026-08-20T12:00:00.000Z',
+      updatedAt: '2026-08-20T12:00:00.000Z',
+    }],
+    [{
+      taskId: 'legacy-hidden',
+      taskKind: 'legacy',
+      displayName: null,
+      pinnedAt: null,
+      hiddenAt: '2026-08-20T13:00:00.000Z',
+      updatedAt: '2026-08-20T13:00:00.000Z',
+    }, {
+      taskId: 'current-pinned',
+      taskKind: 'current',
+      displayName: '重命名后的任务',
+      pinnedAt: '2026-08-20T14:00:00.000Z',
+      hiddenAt: null,
+      updatedAt: '2026-08-20T14:00:00.000Z',
+    }],
+  );
+
+  assert.deepEqual(history.map((task) => task.id), ['current-pinned', 'current-recent']);
+  assert.equal(history[0]?.original_input, 'Original current title');
+  assert.equal(history[0]?.displayName, '重命名后的任务');
+  assert.equal(historyTaskPresentation(history[0]!).group, 'pending');
+  assert.equal(historyTaskPresentation(history[1]!).group, 'completed');
+});
+
+test('approval work is pending only for the approver, while the owner sees it as running', async () => {
+  const { historyTaskPresentation } = await loadCurrentFlowStateModule();
+  const task: HistoryTask = {
+    kind: 'current',
+    id: 'approval-task',
+    original_input: 'Approve screenshot access',
+    task_type: 'design_audit',
+    status: 'awaiting_approval',
+  };
+
+  assert.equal(historyTaskPresentation(task).group, 'running');
+  assert.deepEqual(historyTaskPresentation({ ...task, requiresAction: true }), {
+    label: '待审批',
+    group: 'pending',
+    tone: 'action',
+  });
+});
+
+test('unknown Current history state degrades to the failed tab without crashing the sidebar', async () => {
+  const { historyTaskPresentation } = await loadCurrentFlowStateModule();
+  assert.deepEqual(historyTaskPresentation({
+    kind: 'current',
+    id: 'unknown-state-task',
+    original_input: 'Unknown state',
+    task_type: null,
+    status: 'future_state',
+  }), {
+    label: '状态异常',
+    group: 'failed',
+    tone: 'danger',
+  });
 });
 test('creates request IDs with native randomUUID when available', async () => {
   const { createRequestId } = await loadCurrentFlowStateModule();

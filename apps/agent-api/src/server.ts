@@ -14,6 +14,7 @@ import { conversationsRouter } from './routes/conversations.ts';
 import { tasksRouter } from './routes/tasks.ts';
 import { feedbackRouter } from './routes/feedback.ts';
 import { skillsRouter } from './routes/skills.ts';
+import { taskHistoryRouter } from './routes/task-history.ts';
 import { createControlTasksRouter, type ControlClarificationPort } from './routes/control-tasks.ts';
 import {
   createControlPlanningRouter,
@@ -159,6 +160,7 @@ export function createAgentApiApp(deps: AgentApiDependencies = {}) {
   app.use('/api/conversations', conversationsRouter);
   app.use('/api/tasks', tasksRouter);
   app.use('/api/tasks', feedbackRouter);
+  app.use('/api/task-history', taskHistoryRouter);
   app.use('/api/skills', skillsRouter);
   const zeroPublication = deps.controlRuntime?.zeroPublication;
   app.use('/api/integrations/zero', createZeroIntegrationRouter(zeroPublication));
