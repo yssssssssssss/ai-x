@@ -209,7 +209,7 @@ test('Playwright capture spends at most one successful slot per normalized hostn
   );
 });
 
-test('Playwright capture bounds a diverse fallback pool to six navigation attempts', async () => {
+test('Playwright capture bounds a failed fallback pool to twenty navigation attempts', async () => {
   const attemptedUrls: string[] = [];
   let connected = true;
   const adapter = new PlaywrightPageCaptureAdapter({
@@ -242,35 +242,24 @@ test('Playwright capture bounds a diverse fallback pool to six navigation attemp
     getEffectiveUid: () => 501,
   });
 
+  const candidatePages = Array.from({ length: 20 }, (_, index) => ({
+    url: `https://source-${index}.example/product`,
+  }));
   await assert.rejects(() => adapter.invoke({
     toolId: PLAYWRIGHT_MANIFEST.id,
     manifest: PLAYWRIGHT_MANIFEST,
     context: invocationContext(),
     input: {
-      pages: [
-        { url: 'https://alpha.example/about' },
-        { url: 'https://alpha.example/brand' },
-        { url: 'https://alpha.example/product' },
-        { url: 'https://alpha.example/collection' },
-        { url: 'https://alpha.example/shop' },
-        { url: 'https://alpha.example/home' },
-        { url: 'https://alpha.example/privacy' },
-        { url: 'https://beta.example/product' },
-        { url: 'https://gamma.example/product' },
-      ],
+      pages: candidatePages,
       capture: { mode: 'full_page_screenshot', max_pages: 6, unique_hostnames: true },
     },
   }));
 
-  assert.equal(attemptedUrls.length, 6);
-  assert.deepEqual(attemptedUrls.sort(), [
-    'https://alpha.example/about',
-    'https://alpha.example/brand',
-    'https://alpha.example/collection',
-    'https://alpha.example/product',
-    'https://beta.example/product',
-    'https://gamma.example/product',
-  ]);
+  assert.equal(attemptedUrls.length, 20);
+  assert.deepEqual(
+    [...attemptedUrls].sort(),
+    candidatePages.map(({ url }) => url).sort(),
+  );
 });
 
 test('Playwright capture retries the next same-host candidate after a failed or near-blank page', async () => {

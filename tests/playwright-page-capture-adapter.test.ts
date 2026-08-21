@@ -1243,18 +1243,15 @@ test('route request budget blocks excess requests before another DNS lookup', as
   assert.equal(aborted, 1);
 });
 
-test('route request budget remains capped across fallback candidates', async () => {
+test('route request budget is isolated per page so earlier candidates cannot starve fallbacks', async () => {
   let routeHandler: TestRouteHandler | undefined;
   let continued = 0;
   let aborted = 0;
-  let releaseSecondPage!: () => void;
-  const firstPageRequestsDone = new Promise<void>((resolve) => { releaseSecondPage = resolve; });
   const response = { status: () => 200, headers: () => ({ 'content-type': 'text/html' }) };
-  const page = (waitForFirstPage: boolean) => {
+  const page = () => {
     const current = {
       goto: async () => {
         assert.ok(routeHandler);
-        if (waitForFirstPage) await firstPageRequestsDone;
         for (let index = 0; index < 200; index += 1) {
           await routeHandler({
             request: () => ({
@@ -1267,7 +1264,6 @@ test('route request budget remains capped across fallback candidates', async () 
             abort: async () => { aborted += 1; },
           });
         }
-        if (!waitForFirstPage) releaseSecondPage();
         return response;
       },
       url: () => 'https://example.com/product',
@@ -1279,7 +1275,7 @@ test('route request budget remains capped across fallback candidates', async () 
     };
     return current;
   };
-  const pages = [page(false), page(true)];
+  const pages = [page(), page()];
   let connected = true;
   const adapter = new PlaywrightPageCaptureAdapter({
     launcher: {
@@ -1312,8 +1308,77 @@ test('route request budget remains capped across fallback candidates', async () 
   });
 
   assert.equal(result.mediaAttachments?.length, 2);
-  assert.equal(continued, 256);
-  assert.equal(aborted, 144);
+  assert.equal(continued, 400);
+  assert.equal(aborted, 0);
+});
+
+test('route request budget also enforces one bounded invocation total across fallbacks', async () => {
+  let routeHandler: TestRouteHandler | undefined;
+  let continued = 0;
+  let aborted = 0;
+  const response = { status: () => 200, headers: () => ({ 'content-type': 'text/html' }) };
+  const page = (requestCount: number, failCapture = false) => {
+    const current = {
+      goto: async () => {
+        assert.ok(routeHandler);
+        for (let index = 0; index < requestCount; index += 1) {
+          await routeHandler({
+            request: () => ({
+              method: () => 'GET',
+              url: () => `https://budget.invalid/resource-${index}.png`,
+              isNavigationRequest: () => false,
+              frame: () => ({ page: () => current }),
+            }),
+            continue: async () => { continued += 1; },
+            abort: async () => { aborted += 1; },
+          });
+        }
+        return response;
+      },
+      url: () => 'https://example.com/product',
+      title: async () => 'Example product',
+      evaluate: async (fn: unknown) => String(fn).includes('innerText') ? '' : { width: 1, height: 1 },
+      screenshot: async () => {
+        if (failCapture) throw new Error('fixture capture failure');
+        return PNG_1X1;
+      },
+      close: async () => undefined,
+      on: () => undefined,
+    };
+    return current;
+  };
+  const pages = [page(250, true), ...Array.from({ length: 6 }, () => page(220))];
+  let connected = true;
+  const adapter = new PlaywrightPageCaptureAdapter({
+    launcher: {
+      launch: async () => ({
+        newContext: async () => ({
+          route: async (_pattern: string, handler: TestRouteHandler) => { routeHandler = handler; },
+          routeWebSocket: async () => undefined,
+          newPage: async () => pages.shift(),
+          close: async () => undefined,
+        }),
+        close: async () => { connected = false; },
+        isConnected: () => connected,
+      }),
+    } as unknown as PlaywrightLauncher,
+    resolveHost: async () => ['93.184.216.34'],
+    getEffectiveUid: () => 501,
+  });
+
+  const result = await adapter.invoke({
+    toolId: manifest.id,
+    manifest,
+    context: invocationContext(),
+    input: {
+      pages: Array.from({ length: 7 }, (_, index) => ({ url: `https://source-${index}.example/product` })),
+      capture: { mode: 'full_page_screenshot', max_pages: 6 },
+    },
+  });
+
+  assert.equal(result.mediaAttachments?.length, 6);
+  assert.equal(continued, 1_536);
+  assert.equal(aborted, 34);
 });
 
 test('adapter does not launch after lease loss and preserves the abort reason', async () => {

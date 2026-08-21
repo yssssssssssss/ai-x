@@ -34,7 +34,8 @@ import {
 const MAX_INPUT_PAGES = 20;
 const MAX_CAPTURED_PAGES = 6;
 const MAX_PAGE_CONCURRENCY = 2;
-const MAX_CONTEXT_REQUESTS = 256;
+const MAX_REQUESTS_PER_PAGE = 256;
+const MAX_REQUESTS_PER_INVOCATION = 1_536;
 const MAX_ASSET_BYTES = 10 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 40 * 1024 * 1024;
 const MAX_CAPTURE_HEIGHT = 12_000;
@@ -348,21 +349,20 @@ async function normalizePages(
         return score(left) - score(right) || left.sourceResultIndex - right.sourceResultIndex;
       });
     }
-    const bounded: PageInput[] = [];
-    for (let candidateIndex = 0; bounded.length < MAX_CAPTURED_PAGES; candidateIndex += 1) {
+    const prioritized: PageInput[] = [];
+    for (let candidateIndex = 0; ; candidateIndex += 1) {
       let added = false;
       for (const group of grouped.values()) {
         const page = group[candidateIndex];
         if (!page) continue;
-        bounded.push(page);
+        prioritized.push(page);
         added = true;
-        if (bounded.length >= MAX_CAPTURED_PAGES) break;
       }
       if (!added) break;
     }
-    return { pages: bounded, failures, retryableFailureKind };
+    return { pages: prioritized, failures, retryableFailureKind };
   }
-  return { pages: pages.slice(0, MAX_CAPTURED_PAGES), failures, retryableFailureKind };
+  return { pages, failures, retryableFailureKind };
 }
 
 function cropFor(width: number, height: number): { width: number; height: number; truncated: boolean } {
@@ -506,14 +506,27 @@ async function installNetworkControls(
   const blockedPages = new WeakSet<Page>();
   const networkFailedPages = new WeakSet<Page>();
   const timedOutPages = new WeakSet<Page>();
+  const pageRequestCounts = new WeakMap<Page, number>();
   const inFlightDns = new Map<string, Promise<void>>();
-  let requestCount = 0;
+  let detachedRequestCount = 0;
+  let invocationRequestCount = 0;
 
-  const validateRequestTarget = async (value: string, navigation: boolean): Promise<void> => {
-    requestCount += 1;
-    if (requestCount > MAX_CONTEXT_REQUESTS) {
+  const consumeRequestBudget = (page: Page | undefined): void => {
+    invocationRequestCount += 1;
+    const pageRequestCount = page
+      ? (pageRequestCounts.get(page) ?? 0) + 1
+      : detachedRequestCount + 1;
+    if (page) pageRequestCounts.set(page, pageRequestCount);
+    else detachedRequestCount = pageRequestCount;
+    if (
+      pageRequestCount > MAX_REQUESTS_PER_PAGE
+      || invocationRequestCount > MAX_REQUESTS_PER_INVOCATION
+    ) {
       throw new PublicWebAccessError('browser request budget exceeded');
     }
+  };
+
+  const validateRequestTarget = async (value: string, navigation: boolean): Promise<void> => {
     const url = parseBrowserUrl(
       value,
       navigation ? 'browser target' : 'browser resource',
@@ -540,6 +553,7 @@ async function installNetworkControls(
       if (request.method() !== 'GET' && request.method() !== 'HEAD') {
         throw new PublicWebAccessError('browser requests must use GET or HEAD');
       }
+      consumeRequestBudget(page);
       await runBounded(
         () => validateRequestTarget(request.url(), request.isNavigationRequest()),
         toolId,
