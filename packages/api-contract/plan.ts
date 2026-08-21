@@ -39,7 +39,7 @@ export interface PlanningProvenance {
   signal_catalog_hash: string;
   profile_spec_hash: string;
   scenario_mapping_hash: string;
-  classification_method: 'rule' | 'classifier' | 'clarification' | 'direct_skill_bypass';
+  classification_method: 'rule' | 'classifier' | 'clarification' | 'direct_skill_bypass' | 'fixed_policy';
   classifier_call_count: 0 | 1;
   primary_scenario_id: string | null;
   secondary_scenario_ids: string[];

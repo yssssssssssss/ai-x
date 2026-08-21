@@ -15,7 +15,7 @@ import {
 import { hashPrompt } from '../runtime/llm-client.ts';
 import { searchKnowledge } from '../knowledge/index.ts';
 import type { GuidanceRef, PlanCandidate } from '../plan-types.ts';
-import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
+import type { PlanningProvenance, ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
 import type {
   CurrentPlanStep,
   EvidenceRequirement,
@@ -49,6 +49,7 @@ import {
 } from './plan-compiler.ts';
 import { loadSchemaText, resolveSchema } from '../runtime/schema-registry.ts';
 import { SchemaValidationError, type SchemaValidator } from '../schema/validator.ts';
+import { resolvePlannerGuidance, type ResolvedProfileSpec } from './planning-guidance-adapter.ts';
 
 interface SchemaWithDefinitions {
   $defs: Record<string, object>;
@@ -74,47 +75,55 @@ if (!currentExecutionPlanSchemaValue || typeof currentExecutionPlanSchemaValue !
 }
 const currentExecutionPlanSchema = currentExecutionPlanSchemaValue as SchemaWithDefinitions;
 const legacyCandidateDefinitions = currentPlanCandidatesSchema.$defs;
-const currentPlanProposalSchema = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['candidates'],
-  properties: {
-    candidates: {
-      type: 'array',
-      minItems: 2,
-      maxItems: 2,
-      items: [
-        { allOf: [{ $ref: '#/$defs/candidate' }, { properties: { id: { const: 'depth' } } }] },
-        { allOf: [{ $ref: '#/$defs/candidate' }, { properties: { id: { const: 'speed' } } }] },
-      ],
-      additionalItems: false,
-    },
-  },
-  $defs: {
-    ...currentExecutionPlanSchema.$defs,
-    assumption: legacyCandidateDefinitions.assumption,
-    candidate: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['id', 'title', 'rationale', 'tradeoffs', 'steps', 'assumptions'],
-      properties: {
-        id: { enum: ['depth', 'speed'] },
-        title: { type: 'string', minLength: 1 },
-        rationale: { type: 'string', minLength: 1 },
-        tradeoffs: { type: 'string', minLength: 1 },
-        steps: { type: 'array', minItems: 1, items: { $ref: '#/$defs/step' } },
-        assumptions: { type: 'array', items: { $ref: '#/$defs/assumption' } },
+
+function currentPlanProposalSchemaFor(profileIds: readonly string[]): object {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['candidates'],
+    properties: {
+      candidates: {
+        type: 'array',
+        minItems: profileIds.length,
+        maxItems: profileIds.length,
+        items: profileIds.map((profileId) => ({
+          allOf: [
+            { $ref: '#/$defs/candidate' },
+            { properties: { id: { const: profileId } } },
+          ],
+        })),
+        additionalItems: false,
       },
     },
-  },
-};
+    $defs: {
+      ...currentExecutionPlanSchema.$defs,
+      assumption: legacyCandidateDefinitions.assumption,
+      candidate: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'title', 'rationale', 'tradeoffs', 'steps', 'assumptions'],
+        properties: {
+          id: { enum: ['speed', 'depth', 'breadth', 'focused', 'mixed_method', 'decision', 'remediation'] },
+          title: { type: 'string', minLength: 1 },
+          rationale: { type: 'string', minLength: 1 },
+          tradeoffs: { type: 'string', minLength: 1 },
+          steps: { type: 'array', minItems: 1, items: { $ref: '#/$defs/step' } },
+          assumptions: { type: 'array', items: { $ref: '#/$defs/assumption' } },
+        },
+      },
+    },
+  };
+}
+
+const currentPlanProposalSchema = currentPlanProposalSchemaFor(['depth', 'speed']);
 
 function recoverableCandidateSchemaFeedback(
   validator: SchemaValidator,
+  schema: object,
   value: unknown,
 ): string[] {
   try {
-    validator.validateSchemaOrThrow(currentPlanProposalSchema, value, 'current-plan-candidates');
+    validator.validateSchemaOrThrow(schema, value, 'current-plan-candidates');
     return [];
   } catch (error) {
     if (
@@ -218,9 +227,18 @@ export interface CurrentPlanArtifacts {
   problemGraph: ProblemGraph;
   problemGraphProvenance: ProblemGraphProvenance;
   capabilityResolution: CapabilityResolution;
+  planningProvenance: PlanningProvenance;
 }
 
-const ROUTED_STEP_LIMITS = { depth: 8, speed: 4 } as const;
+const ROUTED_STEP_LIMITS = {
+  speed: 4,
+  depth: 8,
+  breadth: 8,
+  focused: 6,
+  mixed_method: 8,
+  decision: 7,
+  remediation: 7,
+} as const;
 const DEFAULT_BROWSER_CAPTURE_COUNT = MAX_BROWSER_CAPTURE_COUNT;
 
 function scoringDimensions(
@@ -388,6 +406,8 @@ function freezeCompetitiveScoringWeightEnvelope(input: {
 
 function routedCandidateValidationFeedback(input: {
   candidates: Array<Omit<CurrentPlanCandidateProposal, 'activated_nodes'>>;
+  profileSpecs: readonly ResolvedProfileSpec[];
+  planningProvenance: PlanningProvenance;
   task: ResearchTaskV2;
   problemGraph: ProblemGraph;
   problemGraphProvenance: ProblemGraphProvenance;
@@ -397,12 +417,14 @@ function routedCandidateValidationFeedback(input: {
 }): string[] {
   const compiler = new PlanCompiler();
   const issues: string[] = [];
+  const profileById = new Map(input.profileSpecs.map((profile) => [profile.id, profile]));
   for (const candidate of input.candidates) {
-    if (candidate.id !== 'depth' && candidate.id !== 'speed') {
-      issues.push(`${candidate.id}: routed_candidate_profile_not_enabled`);
+    const profile = profileById.get(candidate.id);
+    if (!profile) {
+      issues.push(`${candidate.id}: routed_candidate_profile_not_requested`);
       continue;
     }
-    const maxSteps = ROUTED_STEP_LIMITS[candidate.id];
+    const maxSteps = profile.max_steps ?? ROUTED_STEP_LIMITS[candidate.id];
     if (candidate.steps.length > maxSteps) {
       issues.push(
         `${candidate.id}: routed_step_limit_exceeded: actual=${candidate.steps.length}, max=${maxSteps}`,
@@ -417,6 +439,7 @@ function routedCandidateValidationFeedback(input: {
         capability_resolution: input.capabilityResolution,
         evidence_requirements: input.evidenceRequirements,
         activated_nodes: input.activatedNodes,
+        planning_provenance: input.planningProvenance,
         requireCompetitiveWeightContract: true,
       });
     } catch (error) {
@@ -695,6 +718,24 @@ export class RoutedPlanner implements PlanStrategy {
     if (capabilityResolution.eligible.length === 0) {
       throw new Error(`Current planning has no eligible skill for ${ctx.requirement.task_type}`);
     }
+    const planningGuidance = await resolvePlannerGuidance({
+      rawInput: ctx.originalInput ?? ctx.requirement.research_goal,
+      task: ctx.guidanceRequirement ?? ctx.requirement,
+      problemGraph: problemGraphResult.graph,
+      capabilityResolution,
+      ...(ctx.direct ? { directSkillId: ctx.direct.skillName } : {}),
+      llm,
+      expectedActualModel: this.deps.expectedActualModel,
+      ...(this.deps.planningPolicy === undefined
+        ? {}
+        : { policy: this.deps.planningPolicy }),
+    });
+    if (planningGuidance.status === 'clarification') {
+      throw new Error(`Planning Guidance requires clarification: ${planningGuidance.clarification?.reason_code ?? 'unknown'}`);
+    }
+    if (planningGuidance.status === 'blocked') {
+      throw new Error('Planning Guidance could not establish both baseline candidates');
+    }
     if (ctx.direct) {
       const directDecision = capabilityResolution.eligible.find(
         (decision) => decision.skill.id === ctx.direct!.skillName,
@@ -897,6 +938,11 @@ export class RoutedPlanner implements PlanStrategy {
         proposalEnvelope,
         'current-plan-candidates',
       );
+      const recommendedProfileId = planningGuidance.profiles.find(({ recommended }) => recommended)?.id;
+      const writtenCandidates = candidates.map((candidate): CurrentPlanCandidateProposal => ({
+        ...candidate,
+        recommended: candidate.id === recommendedProfileId,
+      }));
       ctx.emit({
         phase: 'candidates',
         status: 'done',
@@ -906,12 +952,13 @@ export class RoutedPlanner implements PlanStrategy {
       return {
         activated,
         decisionStates,
-        candidates,
+        candidates: writtenCandidates,
         planProvenance: ctx.taskProvenance,
         guidanceSources,
         problemGraph: problemGraphResult.graph,
         problemGraphProvenance: problemGraphResult.provenance,
         capabilityResolution,
+        planningProvenance: planningGuidance.planning_provenance,
       };
     }
 
@@ -932,12 +979,16 @@ export class RoutedPlanner implements PlanStrategy {
           input_schema: loadToolInputSchema(manifest.input_schema),
         };
       });
+    const requestedProfiles = planningGuidance.profiles;
+    const requestedProfileIds = requestedProfiles.map(({ id }) => id);
+    const proposalSchema = currentPlanProposalSchemaFor(requestedProfileIds);
     const candidateContext = {
       task: ctx.task,
       requirement: ctx.requirement,
       planning_input: ctx.originalInput ?? ctx.requirement.research_goal,
       problem_graph: problemGraphResult.graph,
       capability_resolution: capabilityResolution,
+      profile_specs: requestedProfiles,
       skills: capabilityResolution.eligible.map((decision) => ({
         id: decision.skill.id,
         when_to_use: decision.skill.when_to_use,
@@ -956,14 +1007,28 @@ export class RoutedPlanner implements PlanStrategy {
     type CandidateEnvelope = {
       candidates: Array<Omit<CurrentPlanCandidateProposal, 'activated_nodes'>>;
     };
-    const generateCandidates = (validationFeedback: string[] = []) => {
+    const generateCandidates = (
+      profiles: readonly ResolvedProfileSpec[],
+      validationFeedback: string[] = [],
+      passingProfileIds: readonly string[] = [],
+    ) => {
       const context = validationFeedback.length > 0
-        ? { ...candidateContext, validation_feedback: validationFeedback }
+        ? {
+            ...candidateContext,
+            profile_specs: profiles,
+            passing_profile_ids_preserved: [...passingProfileIds],
+            failed_profile_ids_to_replace: profiles.map(({ id }) => id),
+            validation_feedback: validationFeedback,
+          }
         : candidateContext;
+      const profileSummary = profiles.map(({ id, max_steps }) => `${id}(max ${max_steps})`).join(', ');
       return llm.generateStructured<CandidateEnvelope>({
         prompt:
-        `基于 finalized ResearchTaskV2、ProblemGraph、Evidence Policy 和 eligible capability shortlist 生成 depth/speed 两份 Current 候选。` +
-        `depth 总步数不得超过 ${ROUTED_STEP_LIMITS.depth}，speed 总步数不得超过 ${ROUTED_STEP_LIMITS.speed}；只选择与 research_goal/when_to_use 最匹配的少数能力，不得堆叠整个 shortlist。` +
+        `基于 finalized ResearchTaskV2、ProblemGraph、Evidence Policy、eligible capability shortlist 与精确 ProfileSpec 填充候选。` +
+        `只能按顺序返回 [${profiles.map(({ id }) => id).join(', ')}]，不得新增、删除、重排 Profile，也不得生成 recommended；步骤预算为 ${profileSummary}。` +
+        (profiles.length === 2 && profiles[0]?.id === 'depth' && profiles[1]?.id === 'speed'
+          ? `depth 总步数不得超过 ${ROUTED_STEP_LIMITS.depth}，speed 总步数不得超过 ${ROUTED_STEP_LIMITS.speed}；`
+          : '') +
         `每个 step 必须精确包含 step_no、step_name、actor_type、actor_id、question_ids、depends_on、input、input_bindings、expected_outputs、acceptance_criteria、requires_approval、fallback_actor_ids。` +
         `ProblemGraph 中每个 question.id 必须至少出现在一个 step.question_ids 中；提交前逐项核对，禁止遗留 orphan_required_question。` +
         `input_bindings[].target_pointer 是相对当前 step.input 的 JSON Pointer，目标槽必须预先存在于 step.input；例如 step.input.public_sources 必须写 /public_sources，禁止写 /input/public_sources。` +
@@ -977,9 +1042,9 @@ export class RoutedPlanner implements PlanStrategy {
         `Registry optional Tool 不得作为 input_bindings 的 source；下游 Skill 只需在 depends_on 中依赖该 Tool，运行时会通过 prior_outputs 提供其输出。` +
         `requirement.comparison_dimensions 存在时，competitive-web-research Skill step 必须在 input.dimensions 中逐项保序，并写入同 key 顺序的 scoring_weights；用户未指定权重时各维等权且总和为 1。comparison_dimensions 不存在时不得自行补造维度或权重。` +
         (validationFeedback.length > 0
-          ? `上一次候选未通过候选校验，必须逐项修复：${validationFeedback.join('；')}。`
+          ? `这是唯一一次合并纠错调用，只返回 failed_profile_ids_to_replace，绝不重写 passing_profile_ids_preserved：${validationFeedback.join('；')}。`
           : ''),
-        schema: currentPlanProposalSchema,
+        schema: currentPlanProposalSchemaFor(profiles.map(({ id }) => id)),
         schemaName: 'current-plan-candidates',
         context,
         receipt: {
@@ -989,60 +1054,127 @@ export class RoutedPlanner implements PlanStrategy {
         },
       });
     };
-    const candidateValidationFeedback = (envelope: CandidateEnvelope) => routedCandidateValidationFeedback({
-      candidates: envelope.candidates,
-      task: ctx.requirement,
-      problemGraph: problemGraphResult.graph,
-      problemGraphProvenance: problemGraphResult.provenance,
-      capabilityResolution,
-      evidenceRequirements,
-      activatedNodes: activatedNodeKeys,
-    });
-    let planGen = await generateCandidates();
+    const freezeEnvelope = (envelope: CandidateEnvelope): CandidateEnvelope => (
+      freezeCompetitiveScoringWeightEnvelope({
+        ...envelope,
+        researchGoal: ctx.requirement.research_goal,
+        fallbackDimensions: ctx.requirement.comparison_dimensions,
+        explicitWeights,
+      })
+    );
+    const candidateValidationFeedback = (envelope: CandidateEnvelope): string[] => {
+      const feedback = routedCandidateValidationFeedback({
+        candidates: envelope.candidates,
+        profileSpecs: requestedProfiles,
+        planningProvenance: planningGuidance.planning_provenance,
+        task: ctx.requirement,
+        problemGraph: problemGraphResult.graph,
+        problemGraphProvenance: problemGraphResult.provenance,
+        capabilityResolution,
+        evidenceRequirements,
+        activatedNodes: activatedNodeKeys,
+      });
+      if (requestedProfileIds.length > 2) {
+        const fingerprints = new Map<string, string>();
+        for (const candidate of envelope.candidates) {
+          const fingerprint = JSON.stringify(candidate.steps.map((step) => ({
+            actor_type: step.actor_type,
+            actor_id: step.actor_id,
+            question_ids: step.question_ids,
+            input: step.input,
+            input_bindings: step.input_bindings,
+            expected_outputs: step.expected_outputs,
+            acceptance_criteria: step.acceptance_criteria,
+          })));
+          const existing = fingerprints.get(fingerprint);
+          if (existing) {
+            const duplicateProfiles = [existing, candidate.id];
+            for (const profileId of duplicateProfiles) {
+              const spec = requestedProfiles.find(({ id }) => id === profileId);
+              feedback.push(
+                `${profileId}: profile_difference_missing: ${spec?.required_difference_dimensions.join(',') ?? 'unknown'}`,
+              );
+            }
+          } else {
+            fingerprints.set(fingerprint, candidate.id);
+          }
+        }
+      }
+      return [...new Set(feedback)];
+    };
+
+    let planGen = await generateCandidates(requestedProfiles);
     let candidateEnvelope = planGen.data;
-    let validationFeedback = recoverableCandidateSchemaFeedback(validator, planGen.data);
+    let validationFeedback: string[];
+    try {
+      validationFeedback = recoverableCandidateSchemaFeedback(validator, proposalSchema, planGen.data);
+    } catch (error) {
+      if (!(error instanceof SchemaValidationError) || requestedProfileIds.length === 2) throw error;
+      validationFeedback = error.errors.map((issue) => `candidate schema: ${issue}`);
+    }
     if (validationFeedback.length === 0) {
-      candidateEnvelope = freezeCompetitiveScoringWeightEnvelope({
-        ...planGen.data,
-        researchGoal: ctx.requirement.research_goal,
-        fallbackDimensions: ctx.requirement.comparison_dimensions,
-        explicitWeights,
-      });
-      validator.validateSchemaOrThrow(currentPlanProposalSchema, candidateEnvelope, 'current-plan-candidates');
+      candidateEnvelope = freezeEnvelope(planGen.data);
+      validator.validateSchemaOrThrow(proposalSchema, candidateEnvelope, 'current-plan-candidates');
       validationFeedback = candidateValidationFeedback(candidateEnvelope);
     }
+
     if (validationFeedback.length > 0) {
-      planGen = await generateCandidates(validationFeedback);
-      validator.validateSchemaOrThrow(currentPlanProposalSchema, planGen.data, 'current-plan-candidates');
-      candidateEnvelope = freezeCompetitiveScoringWeightEnvelope({
-        ...planGen.data,
-        researchGoal: ctx.requirement.research_goal,
-        fallbackDimensions: ctx.requirement.comparison_dimensions,
-        explicitWeights,
-      });
-      validator.validateSchemaOrThrow(currentPlanProposalSchema, candidateEnvelope, 'current-plan-candidates');
+      const failedIds = requestedProfileIds.filter((profileId) => (
+        validationFeedback.some((issue) => issue.startsWith(`${profileId}:`))
+      ));
+      const idsToRepair = failedIds.length > 0 ? failedIds : requestedProfileIds;
+      const failedProfiles = requestedProfiles.filter(({ id }) => idsToRepair.includes(id));
+      const passingCandidates = candidateEnvelope.candidates.filter(({ id }) => !idsToRepair.includes(id));
+      planGen = await generateCandidates(
+        failedProfiles,
+        validationFeedback,
+        passingCandidates.map(({ id }) => id),
+      );
+      const repairSchema = currentPlanProposalSchemaFor(idsToRepair);
+      validator.validateSchemaOrThrow(repairSchema, planGen.data, 'current-plan-candidates');
+      const repairedEnvelope = freezeEnvelope(planGen.data);
+      validator.validateSchemaOrThrow(repairSchema, repairedEnvelope, 'current-plan-candidates');
+      const repairedById = new Map(repairedEnvelope.candidates.map((candidate) => [candidate.id, candidate]));
+      candidateEnvelope = {
+        candidates: requestedProfileIds.map((profileId) => (
+          repairedById.get(profileId)
+          ?? passingCandidates.find(({ id }) => id === profileId)
+        )).filter((candidate): candidate is Omit<CurrentPlanCandidateProposal, 'activated_nodes'> => candidate !== undefined),
+      };
       validationFeedback = candidateValidationFeedback(candidateEnvelope);
-      if (
-        validationFeedback.length > 0
-        && validationFeedback.every((issue) => issue.includes('orphan_required_question'))
-      ) {
-        planGen = await generateCandidates(validationFeedback);
-        validator.validateSchemaOrThrow(currentPlanProposalSchema, planGen.data, 'current-plan-candidates');
-        candidateEnvelope = freezeCompetitiveScoringWeightEnvelope({
-          ...planGen.data,
-          researchGoal: ctx.requirement.research_goal,
-          fallbackDimensions: ctx.requirement.comparison_dimensions,
-          explicitWeights,
-        });
-        validator.validateSchemaOrThrow(currentPlanProposalSchema, candidateEnvelope, 'current-plan-candidates');
-        validationFeedback = candidateValidationFeedback(candidateEnvelope);
-      }
-      if (validationFeedback.length > 0) {
-        throw new Error(`Current plan candidates failed candidate validation repair: ${validationFeedback.join('; ')}`);
-      }
     }
+
+    const failingProfileIds = new Set(requestedProfileIds.filter((profileId) => (
+      validationFeedback.some((issue) => issue.startsWith(`${profileId}:`))
+    )));
+    if (failingProfileIds.has('speed') || failingProfileIds.has('depth')) {
+      throw new Error(`Current plan candidates failed candidate validation repair: ${validationFeedback.join('; ')}`);
+    }
+    const droppedSpecialtyIds = requestedProfileIds.filter((profileId) => (
+      profileId !== 'speed' && profileId !== 'depth' && failingProfileIds.has(profileId)
+    ));
+    candidateEnvelope = {
+      candidates: candidateEnvelope.candidates.filter(({ id }) => !droppedSpecialtyIds.includes(id)),
+    };
+    if (candidateEnvelope.candidates.length < 2) {
+      throw new Error(`Current plan candidates failed candidate validation repair: ${validationFeedback.join('; ')}`);
+    }
+
+    const planningProvenance: PlanningProvenance = structuredClone(planningGuidance.planning_provenance);
+    planningProvenance.selected_profile_ids = candidateEnvelope.candidates.map(({ id }) => id);
+    for (const profileId of droppedSpecialtyIds) {
+      planningProvenance.degradations.push({
+        code: 'specialty_candidate_validation_failed',
+        profile_id: profileId,
+      });
+    }
+    const resolverRecommendedId = requestedProfiles.find(({ recommended }) => recommended)?.id;
+    const recommendedId = candidateEnvelope.candidates.some(({ id }) => id === resolverRecommendedId)
+      ? resolverRecommendedId
+      : 'depth';
     const candidates: CurrentPlanCandidateProposal[] = candidateEnvelope.candidates.map((candidate) => ({
       ...candidate,
+      recommended: candidate.id === recommendedId,
       activated_nodes: activatedNodeKeys,
     }));
     const planProvenance: PlanProvenance = {
@@ -1066,6 +1198,7 @@ export class RoutedPlanner implements PlanStrategy {
       problemGraph: problemGraphResult.graph,
       problemGraphProvenance: problemGraphResult.provenance,
       capabilityResolution,
+      planningProvenance,
     };
   }
 }

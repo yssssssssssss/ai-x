@@ -333,6 +333,7 @@ function planningResult(originalInput: string): CurrentResearchPlanningResult {
     decisionStates: [],
     candidates: (['depth', 'speed'] as const).map((id) => ({
       id,
+      recommended: id === 'depth',
       title: id,
       rationale: id,
       tradeoffs: id,
@@ -356,6 +357,22 @@ function planningResult(originalInput: string): CurrentResearchPlanningResult {
       traceId: 'revision-problem-graph',
     },
     capabilityResolution,
+    planningProvenance: {
+      version: 'planning-guidance-provenance-v1',
+      resolver_version: 'candidate-profile-resolver-v1',
+      scenario_catalog_hash: `sha256:${'1'.repeat(64)}`,
+      signal_catalog_hash: `sha256:${'2'.repeat(64)}`,
+      profile_spec_hash: `sha256:${'3'.repeat(64)}`,
+      scenario_mapping_hash: `sha256:${'4'.repeat(64)}`,
+      classification_method: 'fixed_policy',
+      classifier_call_count: 0,
+      primary_scenario_id: null,
+      secondary_scenario_ids: [],
+      confidence: null,
+      signals: [],
+      selected_profile_ids: ['depth', 'speed'],
+      degradations: [{ code: 'dynamic_generation_disabled' }],
+    },
   };
 }
 
@@ -548,7 +565,12 @@ test('production runtime replans from research goal and instruction while preser
     title: 'speed',
     rationale: 'speed',
     tradeoffs: 'speed',
+    recommended: false,
   });
+  assert.deepEqual(
+    (persisted.plan as Record<string, unknown>).planning_provenance,
+    planningResult(instruction).planningProvenance,
+  );
   assert.deepEqual((persisted.plan as Record<string, unknown>).activated_nodes, ['D3_method_selection']);
   const steps = (persisted.plan as { steps: Array<Record<string, unknown>> }).steps;
   assert.equal(steps[0]?.step_name, 'speed search');

@@ -3,7 +3,7 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { test } from 'node:test';
 import { join } from 'node:path';
-import type { PlanCandidate, PlanningProvenance, ResearchTaskData, ResearchTaskV2 } from '../packages/api-contract/plan.ts';
+import type { CandidateProfile, PlanCandidate, PlanningProvenance, ResearchTaskData, ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import type {
   CurrentExecutionPlan,
   EvidenceRequirement,
@@ -19,10 +19,10 @@ import {
   type PlanCompileInput,
 } from '../apps/orchestrator-runtime/src/planners/plan-compiler.ts';
 import { ControlPlanningService } from '../apps/orchestrator-runtime/src/control/control-planning-service.ts';
-import {
-  ResearchPlanningService,
+import { ResearchPlanningService,
   resolvePlanningDeliverableSelection,
 } from '../apps/orchestrator-runtime/src/planners/research-planning-service.ts';
+import { loadPlanningPolicy } from '../apps/orchestrator-runtime/src/planners/planning-guidance-adapter.ts';
 import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 import { ToolRouter, type ToolAdapter } from '../apps/orchestrator-runtime/src/runtime/tool-adapter.ts';
@@ -82,6 +82,23 @@ const problemGraphProvenance = {
   modelVersion: '2026-08-14',
   promptHash: 'sha256:problem-graph',
   traceId: 'trace-problem-graph',
+};
+
+const currentPlanningProvenance: PlanningProvenance = {
+  version: 'planning-guidance-provenance-v1',
+  resolver_version: 'candidate-profile-resolver-v1',
+  scenario_catalog_hash: `sha256:${'1'.repeat(64)}`,
+  signal_catalog_hash: `sha256:${'2'.repeat(64)}`,
+  profile_spec_hash: `sha256:${'3'.repeat(64)}`,
+  scenario_mapping_hash: `sha256:${'4'.repeat(64)}`,
+  classification_method: 'fixed_policy',
+  classifier_call_count: 0,
+  primary_scenario_id: null,
+  secondary_scenario_ids: [],
+  confidence: null,
+  signals: [],
+  selected_profile_ids: ['depth', 'speed'],
+  degradations: [{ code: 'dynamic_generation_disabled' }],
 };
 
 function graph(): ProblemGraph {
@@ -863,6 +880,7 @@ interface CurrentResearchPlanningFixture {
     traceId: string;
   };
   capabilityResolution: CapabilityResolution;
+  planningProvenance: PlanningProvenance;
 }
 
 interface PreparedCandidate {
@@ -895,7 +913,10 @@ function currentPlanningResult(candidate = validCandidate('depth')): CurrentRese
     structuredTask: task,
     activatedNodes: ['D5_competitive'],
     decisionStates: [],
-    candidates: [candidate, validCandidate('speed')],
+    candidates: [
+      { ...candidate, recommended: candidate.id === 'depth' },
+      { ...validCandidate('speed'), recommended: candidate.id !== 'depth' },
+    ],
     guidanceSources: [],
     provenance: {
       modelName: 'fixture-model',
@@ -906,6 +927,7 @@ function currentPlanningResult(candidate = validCandidate('depth')): CurrentRese
     problemGraph,
     problemGraphProvenance: structuredClone(problemGraphProvenance),
     capabilityResolution: capabilityResolution(),
+    planningProvenance: structuredClone(currentPlanningProvenance),
   };
 }
 
@@ -1008,6 +1030,9 @@ type CurrentCandidateFixtureMode =
   | 'over-limit-always'
   | 'orphan-question-twice'
   | 'exact-limit'
+  | 'dynamic'
+  | 'dynamic-specialty-fails'
+  | 'dynamic-classifier'
   | null;
 
 class CurrentPlanningLLM implements LLMClient {
@@ -1037,6 +1062,17 @@ class CurrentPlanningLLM implements LLMClient {
       data = problemGraph;
     } else if (options.schemaName === 'decision-states') {
       data = [];
+    } else if (options.schemaName === 'scenario-guidance') {
+      data = {
+        primary_scenario_id: 'competitor-benchmark-research',
+        secondary_scenarios: [{ scenario_id: 'priority-roadmap', relationship: 'serial' }],
+        confidence: 'high',
+        signals: [
+          { signal_id: 'scenario.competitor-benchmark', source_path: 'raw_input' },
+          { signal_id: 'scenario.priority-roadmap', source_path: 'raw_input' },
+        ],
+        rationale_codes: ['semantic_disambiguation'],
+      };
     } else if (options.schemaName === 'current-plan-candidates') {
       const validationFeedback = JSON.stringify(options.context);
       const resolution = (options.context as { capability_resolution?: CapabilityResolution } | undefined)
@@ -1072,13 +1108,20 @@ class CurrentPlanningLLM implements LLMClient {
                 ? this.candidateFixtureMode
                 : null;
       this.candidateCalls += 1;
-      const proposal = (id: 'depth' | 'speed') => {
+      const proposal = (id: CandidateProfile) => {
+        const baselineId = id === 'speed' ? 'speed' : 'depth';
         const { activated_nodes: _nodes, ...candidate } = hasAvailablePlaywright
-          ? candidateWithBrowserCapture(id)
-          : validCandidate(id);
+          ? candidateWithBrowserCapture(baselineId)
+          : validCandidate(baselineId);
+        candidate.id = id;
+        candidate.title = id;
+        candidate.steps = candidate.steps.map((candidateStep) => ({
+          ...candidateStep,
+          input: { ...candidateStep.input, profile_contract: id },
+        }));
         if (hasAvailablePlaywright) {
           const tavilyInput = candidate.steps.find(({ actor_id }) => actor_id === 'tavily-web-search')!.input;
-          if (id === 'depth') tavilyInput.query = task.research_goal;
+          if (baselineId === 'depth') tavilyInput.query = task.research_goal;
           else delete tavilyInput.query;
         }
         if (defect === 'missing-weights') {
@@ -1169,6 +1212,7 @@ class CurrentPlanningLLM implements LLMClient {
           };
         }
         if (defect === 'over-limit' || defect === 'over-limit-once' || defect === 'exact-limit') {
+          if (id !== 'depth' && id !== 'speed') return candidate;
           const targetLengths = defect === 'exact-limit'
             ? { depth: 8, speed: 4 }
             : { depth: 9, speed: 5 };
@@ -1189,9 +1233,35 @@ class CurrentPlanningLLM implements LLMClient {
             }));
           }
         }
+        if (
+          this.candidateFixtureMode === 'dynamic-specialty-fails'
+          && id === 'breadth'
+        ) {
+          while (candidate.steps.length < 9) {
+            const stepNo = candidate.steps.length + 1;
+            candidate.steps.push(step({
+              step_no: stepNo,
+              step_name: `广度补充分析 ${stepNo}`,
+              actor_type: 'llm',
+              actor_id: 'current-planning-model',
+              question_ids: ['question-action'],
+              depends_on: [stepNo - 1],
+              input: { profile_contract: id },
+              input_bindings: [],
+              expected_outputs: [{ pointer: '/text', description: '广度补充分析' }],
+              acceptance_criteria: ['形成广度补充分析'],
+            }));
+          }
+        }
         return candidate;
       };
-      data = { candidates: [proposal('depth'), proposal('speed')] };
+      const requestedIds = this.candidateFixtureMode === 'dynamic'
+        || this.candidateFixtureMode === 'dynamic-specialty-fails'
+        || this.candidateFixtureMode === 'dynamic-classifier'
+        ? ((options.context as { profile_specs?: Array<{ id: CandidateProfile }> }).profile_specs ?? [])
+            .map(({ id }) => id)
+        : ['depth', 'speed'] as const;
+      data = { candidates: requestedIds.map((id) => proposal(id)) };
     } else {
       throw new Error(`unexpected schema ${options.schemaName}`);
     }
@@ -1212,7 +1282,10 @@ class CurrentPlanningLLM implements LLMClient {
   }
 }
 
-function routedPlanningHarness(candidateFixtureMode: CurrentCandidateFixtureMode) {
+function routedPlanningHarness(
+  candidateFixtureMode: CurrentCandidateFixtureMode,
+  planningPolicy?: unknown,
+) {
   const llm = new CurrentPlanningLLM(candidateFixtureMode);
   const tools = new ToolRouter();
   tools.register({
@@ -1228,6 +1301,7 @@ function routedPlanningHarness(candidateFixtureMode: CurrentCandidateFixtureMode
     skillLoader: new SkillLoader(),
     tools,
     approvalAuthorities: ['owner'],
+    ...(planningPolicy === undefined ? {} : { planningPolicy }),
   } as never);
   return { llm, planning };
 }
@@ -1288,7 +1362,16 @@ test('Current planning assembles Task8 graph and Task9 real-adapter capability s
       candidate.steps.every((item) => item.actor_id !== decision.skill.id)
     )
   ));
-  assert.deepEqual(result.candidates.map((candidate) => candidate.id), ['depth', 'speed']);
+  assert.deepEqual(result.candidates.map((candidate) => ({
+    id: candidate.id,
+    recommended: candidate.recommended,
+  })), [
+    { id: 'depth', recommended: true },
+    { id: 'speed', recommended: false },
+  ]);
+  assert.equal(result.planningProvenance.classification_method, 'fixed_policy');
+  assert.equal(result.planningProvenance.classifier_call_count, 0);
+  assert.equal(llm.calls.some(({ schemaName }) => schemaName === 'scenario-guidance'), false);
   for (const candidate of result.candidates) {
     assert.deepEqual(
       candidate.steps.find((candidateStep) => candidateStep.actor_id === eligibleSkill.id)
@@ -1296,6 +1379,119 @@ test('Current planning assembles Task8 graph and Task9 real-adapter capability s
       Object.fromEntries(comparisonDimensions.map((dimension) => [dimension, 0.2])),
     );
   }
+});
+
+test('injected dynamic policy drives exact 2/3/4 ProfileSpec order and canonical provenance', async () => {
+  const dynamicPolicy = {
+    ...loadPlanningPolicy(),
+    candidate_generation_mode: 'dynamic',
+  } as const;
+  const cases = [
+    {
+      name: 'two',
+      rawInput: '开展竞品研究',
+      scope: ['单一对象'],
+      expectedDeliverables: ['competitive analysis report'],
+      expectedProfiles: ['speed', 'depth'],
+      recommended: 'depth',
+    },
+    {
+      name: 'three',
+      rawInput: '开展竞品研究并覆盖多个竞品',
+      scope: ['多个竞品'],
+      expectedDeliverables: ['competitive analysis report'],
+      expectedProfiles: ['speed', 'depth', 'breadth'],
+      recommended: 'breadth',
+    },
+    {
+      name: 'four',
+      rawInput: '开展竞品研究，覆盖多个竞品，并比较多种执行路径后给出决策建议',
+      scope: ['方案 A', '方案 B', '多个竞品'],
+      expectedDeliverables: ['competitive analysis report', '决策建议'],
+      expectedProfiles: ['speed', 'depth', 'breadth', 'decision'],
+      recommended: 'decision',
+    },
+  ] as const;
+
+  for (const scenario of cases) {
+    const { llm, planning } = routedPlanningHarness('dynamic', dynamicPolicy);
+    const requirement: ResearchTaskV2 = {
+      ...structuredClone(task),
+      research_goal: scenario.rawInput,
+      scope: [...scenario.scope],
+      expected_deliverables: [...scenario.expectedDeliverables],
+    };
+    const result = await planning.planCurrentFromRequirement(requirement, scenario.rawInput);
+    assert.deepEqual(result.candidates.map(({ id }) => id), scenario.expectedProfiles, scenario.name);
+    assert.equal(result.candidates.filter(({ recommended }) => recommended).length, 1, scenario.name);
+    assert.equal(result.candidates.find(({ recommended }) => recommended)?.id, scenario.recommended, scenario.name);
+    assert.deepEqual(result.planningProvenance.selected_profile_ids, scenario.expectedProfiles, scenario.name);
+    assert.ok(result.candidates.every(({ id }, index) => (
+      id === result.planningProvenance.selected_profile_ids[index]
+    )), scenario.name);
+    assert.equal(
+      llm.calls.filter(({ schemaName }) => schemaName === 'scenario-guidance').length,
+      0,
+      `${scenario.name} unique rule path must not spend a classifier call`,
+    );
+  }
+});
+
+test('dynamic routed ambiguity spends exactly one Scenario classifier call', async () => {
+  const dynamicPolicy = {
+    ...loadPlanningPolicy(),
+    candidate_generation_mode: 'dynamic',
+  } as const;
+  const { llm, planning } = routedPlanningHarness('dynamic-classifier', dynamicPolicy);
+  const rawInput = '开展竞品研究并制定下一季度优先级建议';
+  const requirement: ResearchTaskV2 = {
+    ...structuredClone(task),
+    research_goal: rawInput,
+    scope: ['方案 A', '方案 B'],
+    expected_deliverables: ['competitive analysis report', '优先级建议'],
+  };
+
+  const result = await planning.planCurrentFromRequirement(requirement, rawInput);
+
+  assert.equal(llm.calls.filter(({ schemaName }) => schemaName === 'scenario-guidance').length, 1);
+  assert.equal(result.planningProvenance.classifier_call_count, 1);
+  assert.equal(result.planningProvenance.primary_scenario_id, 'competitor-benchmark-research');
+  assert.deepEqual(result.planningProvenance.secondary_scenario_ids, ['priority-roadmap']);
+  assert.deepEqual(result.candidates.map(({ id }) => id), ['speed', 'depth', 'decision']);
+});
+
+test('dynamic repair preserves passing baselines and drops a specialty after the single merged correction', async () => {
+  const dynamicPolicy = {
+    ...loadPlanningPolicy(),
+    candidate_generation_mode: 'dynamic',
+  } as const;
+  const { llm, planning } = routedPlanningHarness('dynamic-specialty-fails', dynamicPolicy);
+  const requirement: ResearchTaskV2 = {
+    ...structuredClone(task),
+    research_goal: '开展竞品研究并覆盖多个竞品',
+    scope: ['多个竞品'],
+    expected_deliverables: ['competitive analysis report'],
+  };
+
+  const result = await planning.planCurrentFromRequirement(requirement, requirement.research_goal);
+
+  assert.deepEqual(result.candidates.map(({ id }) => id), ['speed', 'depth']);
+  assert.equal(result.candidates.find(({ id }) => id === 'depth')?.recommended, true);
+  assert.deepEqual(result.planningProvenance.selected_profile_ids, ['speed', 'depth']);
+  assert.ok(result.planningProvenance.degradations.some((degradation) => (
+    degradation.code === 'specialty_candidate_validation_failed'
+    && degradation.profile_id === 'breadth'
+  )));
+  const candidateCalls = llm.calls.filter(({ schemaName }) => schemaName === 'current-plan-candidates');
+  assert.equal(candidateCalls.length, 2);
+  assert.deepEqual(
+    (candidateCalls[1]?.context as { passing_profile_ids_preserved?: string[] }).passing_profile_ids_preserved,
+    ['speed', 'depth'],
+  );
+  assert.deepEqual(
+    (candidateCalls[1]?.context as { failed_profile_ids_to_replace?: string[] }).failed_profile_ids_to_replace,
+    ['breadth'],
+  );
 });
 
 test('Current routed planning freezes equal weights from explicit dimensions before validation', async () => {
@@ -1394,15 +1590,16 @@ test('Current routed planning repairs candidates that exceed the depth/speed ste
   assert.deepEqual(result.candidates.map((candidate) => candidate.steps.length), [2, 2]);
 });
 
-test('Current routed planning allows one extra targeted repair for orphaned required questions', async () => {
+test('Current routed planning permits only one merged repair and fails closed when baselines remain invalid', async () => {
   const { llm, planning } = routedPlanningHarness('orphan-question-twice');
 
-  const result = await planning.planCurrentFromRequirement(task, task.research_goal);
+  await assert.rejects(
+    () => planning.planCurrentFromRequirement(task, task.research_goal),
+    /failed candidate validation repair: depth: orphan_required_question: question-action; speed: orphan_required_question: question-action/,
+  );
   const candidateCalls = llm.calls.filter((call) => call.schemaName === 'current-plan-candidates');
-  assert.equal(candidateCalls.length, 3);
+  assert.equal(candidateCalls.length, 2);
   assert.match(JSON.stringify(candidateCalls[1]?.context), /orphan_required_question.*question-action/);
-  assert.match(JSON.stringify(candidateCalls[2]?.context), /orphan_required_question.*question-action/);
-  assert.deepEqual(result.candidates.map((candidate) => candidate.id), ['depth', 'speed']);
 });
 
 test('Current routed planning rejects non-array assumptions instead of coercing provider output', async () => {
@@ -1459,6 +1656,12 @@ test('finalized Current direct skill builds deterministic strict depth/speed pro
   );
 
   assert.equal(llm.calls.some((call) => call.schemaName === 'current-plan-candidates'), false);
+  assert.deepEqual(result.candidates.map(({ id, recommended }) => ({ id, recommended })), [
+    { id: 'depth', recommended: true },
+    { id: 'speed', recommended: false },
+  ]);
+  assert.equal(result.planningProvenance.classification_method, 'direct_skill_bypass');
+  assert.equal(result.planningProvenance.primary_scenario_id, null);
   assert.deepEqual(
     result.candidates.find((candidate) => candidate.id === 'speed')?.steps.map((item) => item.actor_type),
     ['tool', 'skill'],

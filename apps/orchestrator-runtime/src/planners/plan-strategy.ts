@@ -51,6 +51,8 @@ export interface PlannerDeps {
   expectedActualModel?: string;
   tools?: ToolRouter;
   approvalAuthorities?: readonly CapabilityApprovalAuthority[];
+  /** Tests/evaluation may inject a complete policy; production loads the checked-in YAML. */
+  planningPolicy?: unknown;
 }
 
 // 策略入参:公共前置产出的运行态数据 + 流式进度回调。deps 不在此(构造期注入)。
@@ -59,6 +61,8 @@ export interface PlanContext {
   direct: DirectInvoke | null;
   originalInput?: string;
   requirement?: ResearchTaskV2;
+  /** Finalized user requirement before deliverable labels are canonicalized for execution. */
+  guidanceRequirement?: ResearchTaskV2;
   // 段1 taskGen 的溯源,direct 支路无路由 LLM,用它兜底 planProvenance。
   taskProvenance: PlanProvenance;
   emit: (ev: PlanProgress) => void;

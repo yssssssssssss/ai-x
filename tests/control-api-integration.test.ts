@@ -750,6 +750,7 @@ function planningResult(
   ];
   const candidate = (id: 'depth' | 'speed') => ({
     id,
+    recommended: id === 'depth',
     title: id === 'depth' ? '深度研究' : '快速研究',
     rationale: id === 'depth' ? '优先覆盖更多研究维度' : '优先形成可信的最小闭环',
     tradeoffs: id === 'depth' ? '执行时间更长' : '研究维度更聚焦',
@@ -788,6 +789,22 @@ function planningResult(
       traceId: 'trace-problem-graph',
     },
     capabilityResolution,
+    planningProvenance: {
+      version: 'planning-guidance-provenance-v1',
+      resolver_version: 'candidate-profile-resolver-v1',
+      scenario_catalog_hash: `sha256:${'1'.repeat(64)}`,
+      signal_catalog_hash: `sha256:${'2'.repeat(64)}`,
+      profile_spec_hash: `sha256:${'3'.repeat(64)}`,
+      scenario_mapping_hash: `sha256:${'4'.repeat(64)}`,
+      classification_method: 'fixed_policy',
+      classifier_call_count: 0,
+      primary_scenario_id: null,
+      secondary_scenario_ids: [],
+      confidence: null,
+      signals: [],
+      selected_profile_ids: ['depth', 'speed'],
+      degradations: [{ code: 'dynamic_generation_disabled' }],
+    },
   };
 }
 

@@ -207,6 +207,7 @@ function researchPlanningResult(originalInput: string): ResearchPlanningResult {
   };
   const candidate = (id: 'depth' | 'speed') => ({
     id,
+    recommended: id === 'depth',
     title: id === 'depth' ? '深度研究' : '快速研究',
     rationale: id === 'depth' ? '优先覆盖来源与交叉验证' : '优先产出可执行框架',
     tradeoffs: id === 'depth' ? '耗时更长' : '来源覆盖较窄',
@@ -263,6 +264,22 @@ function researchPlanningResult(originalInput: string): ResearchPlanningResult {
       traceId: 'trace_problem_graph',
     },
     capabilityResolution,
+    planningProvenance: {
+      version: 'planning-guidance-provenance-v1',
+      resolver_version: 'candidate-profile-resolver-v1',
+      scenario_catalog_hash: `sha256:${'1'.repeat(64)}`,
+      signal_catalog_hash: `sha256:${'2'.repeat(64)}`,
+      profile_spec_hash: `sha256:${'3'.repeat(64)}`,
+      scenario_mapping_hash: `sha256:${'4'.repeat(64)}`,
+      classification_method: 'fixed_policy',
+      classifier_call_count: 0,
+      primary_scenario_id: null,
+      secondary_scenario_ids: [],
+      confidence: null,
+      signals: [],
+      selected_profile_ids: ['depth', 'speed'],
+      degradations: [{ code: 'dynamic_generation_disabled' }],
+    },
   };
 }
 
@@ -510,7 +527,9 @@ test('creates a conversation and persists ResearchPlanningResult candidates as C
       title: planningResult.candidates[index]?.title,
       rationale: planningResult.candidates[index]?.rationale,
       tradeoffs: planningResult.candidates[index]?.tradeoffs,
+      recommended: planningResult.candidates[index]?.recommended,
     });
+    assert.deepEqual(candidate.plan.planning_provenance, planningResult.planningProvenance);
     assert.deepEqual(candidate.plan.activated_nodes, planningResult.activatedNodes);
     assert.deepEqual(candidate.pendingInputs, []);
   }
@@ -553,8 +572,8 @@ test('creates a conversation and persists ResearchPlanningResult candidates as C
 test('persists a three-profile compatibility fixture with one recommendation in stable order', async () => {
   const { ControlPlanningService } = await loadControlPlanningModule();
   const planningResult = researchPlanningResult('三方案兼容 fixture');
-  const speed = structuredClone(planningResult.candidates.find(({ id }) => id === 'speed')!);
-  const depth = structuredClone(planningResult.candidates.find(({ id }) => id === 'depth')!);
+  const speed = { ...structuredClone(planningResult.candidates.find(({ id }) => id === 'speed')!), recommended: false };
+  const depth = { ...structuredClone(planningResult.candidates.find(({ id }) => id === 'depth')!), recommended: false };
   const breadth = {
     ...structuredClone(depth),
     id: 'breadth' as const,
@@ -569,6 +588,7 @@ test('persists a three-profile compatibility fixture with one recommendation in 
     })),
   };
   planningResult.candidates = [speed, depth, breadth];
+  planningResult.planningProvenance.selected_profile_ids = ['speed', 'depth', 'breadth'];
   const persistedInputs: CreateTaskWithCandidatesInput[] = [];
   const taskId = '00000000-0000-0000-0000-000000000331';
   const service = new ControlPlanningService({
@@ -616,7 +636,7 @@ test('persists a three-profile compatibility fixture with one recommendation in 
     ['speed', 'depth', 'breadth'],
   );
   assert.equal(response.candidates[2]?.plan.candidate_metadata.recommended, true);
-  assert.equal(response.candidates[0]?.plan.candidate_metadata.recommended, undefined);
+  assert.equal(response.candidates[0]?.plan.candidate_metadata.recommended, false);
 });
 
 test('rejects duplicate controlled candidate IDs even when their display content differs', async () => {

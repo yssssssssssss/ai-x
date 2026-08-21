@@ -162,6 +162,7 @@ function capability(input: {
     profile_support: [input.profile],
     roles: input.roles,
     ...(input.methodFamily ? { method_family: input.methodFamily } : {}),
+    evidence_paths: [input.methodFamily ?? 'knowledge_method'],
   };
 }
 
@@ -313,7 +314,7 @@ test('direct-Skill bypass and no-match calibration examples degrade deterministi
     const result = await resolvePlanningGuidance(requestFor(example));
     assert.equal(result.status, example.expected?.status, example.id);
     assert.equal(result.planning_provenance.classifier_call_count, 0, example.id);
-    assert.deepEqual(result.profiles.map(({ id }) => id), example.direct_skill_id ? ['speed', 'depth'] : []);
+    assert.deepEqual(result.profiles.map(({ id }) => id), example.direct_skill_id ? ['depth', 'speed'] : []);
     if (example.direct_skill_id) {
       assert.equal(result.profiles.filter(({ recommended }) => recommended).at(0)?.id, 'depth');
       assert.equal(result.planning_provenance.classification_method, 'direct_skill_bypass');
@@ -627,13 +628,14 @@ test('baseline readiness fails closed and provenance contains hashes and control
   )));
 });
 
-test('planning-guidance module exposes one runtime interface and is not connected to RoutedPlanner', async () => {
+test('planning-guidance module exposes one deep interface and RoutedPlanner connects only through its adapter', async () => {
   const module = await import('../apps/orchestrator-runtime/src/planners/planning-guidance.ts');
   assert.deepEqual(Object.keys(module), ['resolvePlanningGuidance']);
   const routedPlannerSource = readFileSync(
     join(ROOT, 'apps/orchestrator-runtime/src/planners/routed-planner.ts'),
     'utf8',
   );
-  assert.equal(routedPlannerSource.includes('planning-guidance'), false);
+  assert.equal(routedPlannerSource.includes("from './planning-guidance.ts'"), false);
   assert.equal(routedPlannerSource.includes('resolvePlanningGuidance'), false);
+  assert.equal(routedPlannerSource.includes('resolvePlannerGuidance'), true);
 });

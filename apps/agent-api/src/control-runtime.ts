@@ -310,6 +310,7 @@ export interface ControlRuntimeOverrides {
   skillLoader?: SkillLoader;
   artifacts?: ControlArtifactStore;
   expectedActualModel?: string;
+  planningPolicy?: unknown;
   zeroMcp?: ZeroPublicationMcp;
   zeroPublicationEnabled?: boolean;
 }
@@ -415,6 +416,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     skillLoader,
     tools,
     approvalAuthorities: ['owner'],
+    ...(overrides.planningPolicy === undefined ? {} : { planningPolicy: overrides.planningPolicy }),
     expectedActualModel,
   });
   const planning: PlanningAdapter = overrides.planning ?? {
@@ -529,15 +531,8 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       if (!candidate) {
         throw new CandidateProfileNoLongerEligibleError(activePlan.candidateId);
       }
-      const activePlanRecord = revisionRecord(activePlan.plan);
-      const activeCandidateMetadata = revisionRecord(activePlanRecord?.candidate_metadata);
-      const recommended = activeCandidateMetadata?.recommended;
-      const planningProvenance = activePlanRecord?.planning_provenance;
       const compiled = new PlanCompiler(validator).compile({
-        candidate: {
-          ...candidate,
-          ...(typeof recommended === 'boolean' ? { recommended } : {}),
-        },
+        candidate,
         task: structuredTask,
         deliverable_selection: deliverableSelection,
         problem_graph: planningResult.problemGraph,
@@ -545,9 +540,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
         capability_resolution: planningResult.capabilityResolution,
         evidence_requirements: deliverableSelection.evidenceRequirements,
         activated_nodes: planningResult.activatedNodes,
-        ...(planningProvenance
-          ? { planning_provenance: planningProvenance as CurrentExecutionPlan['planning_provenance'] }
-          : {}),
+        planning_provenance: planningResult.planningProvenance,
         requireCompetitiveWeightContract: true,
       });
       return {

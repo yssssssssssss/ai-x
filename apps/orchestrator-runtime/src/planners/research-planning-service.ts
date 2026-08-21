@@ -7,6 +7,7 @@ import type {
   GuidanceRef,
   PlanCandidate,
   PlanProgress,
+  PlanningProvenance,
   ResearchTaskData,
   ResearchTaskV2,
 } from '../../../../packages/api-contract/plan.ts';
@@ -58,6 +59,7 @@ export interface CurrentResearchPlanningResult extends Omit<ResearchPlanningResu
   problemGraph: ProblemGraph;
   capabilityResolution: CapabilityResolution;
   problemGraphProvenance: ProblemGraphProvenance;
+  planningProvenance: PlanningProvenance;
 }
 
 const TASK_UNDERSTANDING_PROMPT =
@@ -182,6 +184,7 @@ export class ResearchPlanningService {
       direct,
       originalInput,
       requirement: canonicalRequirement,
+      guidanceRequirement: requirement,
       taskProvenance,
       emit,
     }, deliverableSelection.evidenceRequirements);
@@ -196,6 +199,7 @@ export class ResearchPlanningService {
       problemGraph: artifacts.problemGraph,
       problemGraphProvenance: artifacts.problemGraphProvenance,
       capabilityResolution: artifacts.capabilityResolution,
+      planningProvenance: artifacts.planningProvenance,
     };
   }
 

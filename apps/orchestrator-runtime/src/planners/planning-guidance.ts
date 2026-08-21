@@ -90,6 +90,7 @@ export interface PlanningGuidanceCapability {
     | 'retest'
   >;
   method_family?: string;
+  evidence_paths: string[];
 }
 
 export interface PlanningGuidanceRequest {
@@ -112,6 +113,8 @@ export interface PlanningGuidancePolicy {
 export interface PlanningGuidanceOptions {
   classifier?: (request: ScenarioClassifierRequest) => Promise<unknown>;
   policy?: PlanningGuidancePolicy;
+  /** Fixed production mode bypasses Scenario classification so adapter activation is output/call neutral. */
+  preserve_legacy_fixed_mode?: boolean;
 }
 
 export interface ResolvedProfileSpec {
@@ -134,6 +137,7 @@ export interface ResolvedProfileSpec {
 
 export type GuidanceDegradationCode =
   | 'direct_skill_bypass'
+  | 'fixed_policy_bypass'
   | 'task_blocking_ambiguity'
   | 'classifier_unavailable'
   | 'classifier_failed'
@@ -637,7 +641,9 @@ function capabilitySupportsProfile(
   profileId: Exclude<CandidateProfileId, 'speed' | 'depth'>,
   capabilities: readonly PlanningGuidanceCapability[],
 ): boolean {
-  const supporting = capabilities.filter(({ profile_support }) => profile_support.includes(profileId));
+  const supporting = capabilities.filter(({ profile_support, evidence_paths }) => (
+    profile_support.includes(profileId) && evidence_paths.length > 0
+  ));
   if (profileId === 'breadth') return supporting.some(({ roles }) => roles.includes('scope_expansion'));
   if (profileId === 'focused') return supporting.some(({ roles }) => roles.includes('focused_analysis'));
   if (profileId === 'decision') return supporting.some(({ roles }) => roles.includes('decision_support'));
@@ -646,7 +652,10 @@ function capabilitySupportsProfile(
       .filter(({ roles }) => roles.includes('independent_method'))
       .map(({ method_family }) => method_family)
       .filter((family): family is string => typeof family === 'string' && family.length > 0));
-    return methodFamilies.size >= 2;
+    const evidencePaths = new Set(supporting
+      .filter(({ roles }) => roles.includes('independent_method'))
+      .flatMap(({ evidence_paths }) => evidence_paths));
+    return methodFamilies.size >= 2 && evidencePaths.size >= 2;
   }
   const roles = new Set(supporting.flatMap((capability) => capability.roles));
   return roles.has('issue_identification') && roles.has('retest');
@@ -735,14 +744,15 @@ function resolvedProfiles(
   ids: readonly CandidateProfileId[],
   recommended: CandidateProfileId,
 ): ResolvedProfileSpec[] {
-  const selected = new Set(ids);
-  return PROFILE_SPECS
-    .filter(({ id }) => selected.has(id))
-    .map((profile) => ({
+  return ids.map((id) => {
+    const profile = PROFILE_BY_ID.get(id);
+    if (!profile) throw new Error(`Unknown candidate profile ${id}`);
+    return {
       ...structuredClone(profile),
       coverage_invariant_ids: [...COVERAGE_INVARIANT_IDS],
       recommended: profile.id === recommended,
-    }));
+    };
+  });
 }
 
 function resolveProfiles(input: {
@@ -794,6 +804,10 @@ function resolveProfiles(input: {
     'depth',
     ...qualified.slice(0, specialtyLimit).map(({ id }) => id),
   ] as CandidateProfileId[];
+  selected.sort((left, right) => (
+    (PROFILE_BY_ID.get(left)?.ordinal ?? Number.POSITIVE_INFINITY)
+    - (PROFILE_BY_ID.get(right)?.ordinal ?? Number.POSITIVE_INFINITY)
+  ));
   const recommended = recommendedProfile(selected, input.signals);
   return { profiles: resolvedProfiles(selected, recommended), degradations };
 }
@@ -863,18 +877,19 @@ function unresolvedResult(input: {
 }
 
 /**
- * The sole Planning Guidance entry point. It is intentionally not wired to RoutedPlanner in
- * Phase B. Rules, classifier validation, ProfileSpec resolution, and degradation stay behind
- * this boundary so a later production adapter cannot bypass deterministic controls.
+ * The sole Planning Guidance entry point. Phase C2 reaches it only through the planner adapter,
+ * which validates versioned policy and maps real CapabilityResolution entries through the
+ * reviewed crosswalk before invoking this deterministic contract.
  */
 export async function resolvePlanningGuidance(
   request: PlanningGuidanceRequest,
   options: PlanningGuidanceOptions = {},
 ): Promise<PlanningGuidanceResult> {
   const signals = recognizeSignals(request);
+  const mode = options.policy?.candidate_generation_mode ?? 'fixed';
 
   if (request.direct_skill_id) {
-    const profiles = resolvedProfiles(['speed', 'depth'], 'depth');
+    const profiles = resolvedProfiles(['depth', 'speed'], 'depth');
     const degradations: PlanningGuidanceDegradation[] = [{ code: 'direct_skill_bypass' }];
     return {
       status: 'bypassed',
@@ -889,6 +904,36 @@ export async function resolvePlanningGuidance(
       clarification: null,
       planning_provenance: provenance({
         method: 'direct_skill_bypass',
+        classifierCalls: 0,
+        primaryScenarioId: null,
+        secondaryScenarioIds: [],
+        confidence: null,
+        signals: [],
+        profiles,
+        degradations,
+      }),
+    };
+  }
+
+  if (mode === 'fixed' && options.preserve_legacy_fixed_mode) {
+    const profiles = resolvedProfiles(['depth', 'speed'], 'depth');
+    const degradations: PlanningGuidanceDegradation[] = [
+      { code: 'fixed_policy_bypass' },
+      { code: 'dynamic_generation_disabled' },
+    ];
+    return {
+      status: 'resolved',
+      scenario: {
+        primary_scenario_id: null,
+        secondary_scenarios: [],
+        confidence: null,
+        signals: [],
+        rationale_codes: [],
+      },
+      profiles,
+      clarification: null,
+      planning_provenance: provenance({
+        method: 'fixed_policy',
         classifierCalls: 0,
         primaryScenarioId: null,
         secondaryScenarioIds: [],
@@ -1038,7 +1083,7 @@ export async function resolvePlanningGuidance(
 
   const profileResolution = resolveProfiles({
     request,
-    mode: options.policy?.candidate_generation_mode ?? 'fixed',
+    mode,
     primaryScenarioId: classification.primary_scenario_id,
     secondaryScenarioIds,
     signals,

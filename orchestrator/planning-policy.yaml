@@ -14,6 +14,9 @@ scenario_mapping:
 signal_catalog:
   version: planning-signal-gate-2-candidate-v1
   sha256: sha256:47025811d89ca6c0cc4abd3f2f01cfcfc640051c5cfe8084faa18331105e1775
+capability_crosswalk:
+  version: planning-capability-crosswalk-v1
+  sha256: sha256:66d77ef7984fb3e4e032289ad5d02fbf0710216f49207083bdfe54780864e3b3
 candidate_contract:
   min_items: 2
   max_items: 4

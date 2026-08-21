@@ -135,10 +135,14 @@ export class ControlPlanningService {
         candidateIds.length > 2
         && (candidateIds[0] !== 'speed' || candidateIds[1] !== 'depth')
       )
-      || recommendedCount > 1
+      || recommendedCount !== 1
+      || planningResult.planningProvenance.selected_profile_ids.length !== candidateIds.length
+      || planningResult.planningProvenance.selected_profile_ids.some((candidateId, index) => (
+        candidateId !== candidateIds[index]
+      ))
     ) {
       throw new Error(
-        'Current planning requires 2-4 unique controlled candidates in baseline-first order with at most one recommendation',
+        'Current planning requires 2-4 unique controlled candidates in baseline-first order, exactly one recommendation, and matching provenance',
       );
     }
     const deliverableSelection = resolvePlanningDeliverableSelection(
@@ -154,6 +158,7 @@ export class ControlPlanningService {
         capability_resolution: planningResult.capabilityResolution,
         evidence_requirements: deliverableSelection.evidenceRequirements,
         activated_nodes: planningResult.activatedNodes,
+        planning_provenance: planningResult.planningProvenance,
         requireCompetitiveWeightContract: true,
       });
       return {
