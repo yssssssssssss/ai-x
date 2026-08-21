@@ -1,7 +1,7 @@
 # User Research Hub 受控接入与动态方案卡片方案
 
 > 日期：2026-08-21
-> 状态：已批准执行；Phase A 自动检查完成，Gate 1 等待人工决策
+> 状态：已批准执行；Phase A 与 Gate 1 已完成，等待进入 Phase B
 > 版本：v3（受控内容接入、可审计 Planning Guidance 与分步动态方案卡片）
 > 来源目录：`wiki/user-research/`
 > 接入目标：在不破坏 Current 可信研究闭环的前提下，尽量完整保留并吸收其中的方法、设计策略、Skill、模板和案例经验，并让 Task/Scenario 受控影响前台候选方案。
@@ -661,15 +661,15 @@ C1 完成后，内容增强可以被单独评测和批准，但 Gate 3 前不进
 - Profile draft：7 个 ProfileSpec、15/15 Scenario、30 个专项绑定、60/60 静态语义比较通过；catalog 为 0 supported / 27 conditional / 3 gap，不声称 Runtime 可执行性。
 - Gold：新增并精确锁定 `competitive-digital-human-gold`；原 ambiguous fixture 保留；Gold 使用 `approvalMode: forbid`，普通 Smoke 保持 `allow_owner`。
 - 自动验证：56 tests，51 pass，5 个安全环境限定的全真测试 skip，0 fail；typecheck、manifest check、`git diff --check` 通过。
-- Gate 1 状态：`review_required`，下面 5 项必须一次性决策。
+- Gate 1 状态：`ready`；5 项决策已于 2026-08-21 一次性确认并写入 manifest。
 
-待决项：
+Gate 1 决策：
 
-1. 上游 Agent Skill 声明 55 项、当前只观察到 27 个物理项：接受为缺失 link target 的已知快照例外，或重新获取来源。
-2. Huangliu 声明 5,587 文件、当前只观察到 5,585：接受已知快照例外，或重新获取来源。
-3. Hub 未声明 merge/import 内容的复用权、保留期、敏感级和扫描结论：由具备权限的内容负责人批准“仅限内部 evaluation 复用”，否则 Phase B materialization 保持阻塞。
-4. Hub 只通过本机只读挂载提供：接受 Gate 显式要求 `--source` 的挂载合同，或先建设受控来源制品。
-5. 当前仓库没有服务端部署/package 命令：接受“Git 不跟踪 `/wiki/`，真实部署边界在发布产物定义后补验”，或先定义发布制品再通过 Gate 1。
+1. 接受 Agent Skill `55 declared / 27 observed` 为已知物理快照例外，不宣称已恢复缺失 link target。
+2. 接受 Huangliu `5,587 declared / 5,585 observed` 为已知物理快照例外，不把缺失文件记为已存在。
+3. 批准 merge/import 候选仅限内部 evaluation 复用；统一 owner 为 `user-research-hub-maintainers`、retention 为 `through-gate-3-or-revocation`。正文扫描仍为 Gate 2 前置，Gate 3 前不得生产晋级。
+4. 接受显式只读挂载合同：Gate 必须提供不可变 Hub snapshot 并传 `--source`，缺失时 fail closed。
+5. 当前以 Git 不跟踪 `/wiki/` 作为源码边界；真实部署/package 命令定义后必须补产物负向测试，在此之前不宣称已验证部署包排除。
 
 ### Gate 1：范围与处置冻结
 

@@ -62,33 +62,33 @@ known_transforms:
     affected_count: 169
     affected_paths_hash: sha256:e7ba0977a0e1a5a390674ed518124582e7b1bbc0b224da14d576114d7ca73abf
 gate_1:
-  status: review_required
+  status: ready
   facts:
     - id: agent-skill-entry-count-mismatch
       category: source_integrity
-      status: review_required
+      status: accepted
       statement: Upstream declares 55 Agent Skill entries; 27 physical entries are observed.
-      decision_required: Accept the snapshot exception or reacquire the missing link targets before Gate 1 approval.
+      decision_required: Accepted 2026-08-21 as a known observed-snapshot exception; no claim is made that missing upstream link targets were recovered.
     - id: deploy-artifact-boundary-undefined
       category: release_boundary
-      status: review_required
+      status: accepted
       statement: This repository defines no deploy/package artifact whose file list can prove source-only and reject-runtime exclusion.
-      decision_required: Define the real release artifact command before adding a package-boundary assertion.
+      decision_required: "Accepted 2026-08-21 as deferred: Git excludes /wiki; an actual package-boundary test becomes mandatory when a deploy artifact is defined."
     - id: huangliu-file-count-mismatch
       category: source_integrity
-      status: review_required
+      status: accepted
       statement: Upstream declares 5587 Huangliu files; 5585 physical files are observed.
-      decision_required: Accept the snapshot exception or reacquire the missing files before Gate 1 approval.
+      decision_required: Accepted 2026-08-21 as a known observed-snapshot exception; the two absent upstream-declared files are not represented as present.
     - id: hub-source-mounted-out-of-band
       category: source_availability
-      status: review_required
+      status: accepted
       statement: The Hub is an ignored read-only mount and is not available in a clean checkout by itself.
-      decision_required: Gate automation must provision the snapshot and pass it explicitly with --source.
+      decision_required: "Accepted 2026-08-21: Gate automation must provision the immutable snapshot as a read-only mount and pass --source explicitly."
     - id: source-rights-not-declared
       category: governance
-      status: review_required
+      status: accepted
       statement: The Hub registries do not establish reuse rights, retention, sensitivity, or completed content scans for merge/import candidates.
-      decision_required: A rights owner must clear each promotion set before Phase-B materialization; Phase A grants no runtime rights.
+      decision_required: Accepted 2026-08-21 for internal evaluation reuse only; production promotion remains blocked until Gate 2 content scans and Gate 3 approval.
 entities:
   - key: case:ds-case-2026-07-06-checkin-channel
     registry_kind: case
@@ -513,11 +513,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -525,7 +525,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-competitor-01-competitor-selection
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -542,11 +542,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -554,7 +554,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-competitor-02-comparison-dimensions
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -571,11 +571,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -583,7 +583,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-competitor-03
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -600,11 +600,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -612,7 +612,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-competitor-03-pattern-analysis
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -629,11 +629,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -641,7 +641,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-competitor-04
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -658,11 +658,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -670,7 +670,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-competitor-04-opportunity-and-risk
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -687,11 +687,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -699,7 +699,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-competitor-05-insight-output
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -716,11 +716,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -728,7 +728,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-strategy-00-module-overview
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -745,11 +745,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -757,7 +757,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-strategy-01-problem-framing
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -774,11 +774,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -786,7 +786,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-strategy-02-strategy-map
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -803,11 +803,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -815,7 +815,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-strategy-04-priority-and-roadmap
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -832,11 +832,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -844,7 +844,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-strategy-05
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -861,11 +861,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -873,7 +873,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-strategy-05-review-and-validation
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -890,11 +890,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -902,7 +902,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-strategy-06
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -919,11 +919,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -931,7 +931,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-user-00-module-overview
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -948,11 +948,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -960,7 +960,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-user-01
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -977,11 +977,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -989,7 +989,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-user-01-research-scope
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1006,11 +1006,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -1018,7 +1018,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-user-02
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1035,11 +1035,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -1047,7 +1047,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-user-02-user-segmentation
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1064,11 +1064,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -1076,7 +1076,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-user-03-journey-and-tasks
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1093,11 +1093,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -1105,7 +1105,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-user-04-painpoint-diagnosis
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1122,11 +1122,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -1134,7 +1134,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-user-05-insight-output
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1151,11 +1151,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -1163,7 +1163,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ds-skill-competitor-strategy-analysis-checklist
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1213,11 +1213,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -1225,7 +1225,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:mechanism-case-intake
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1462,11 +1462,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -1474,7 +1474,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ur-asset-concept-test
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1491,11 +1491,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -1503,7 +1503,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ur-asset-decision-journey
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1520,11 +1520,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -1532,7 +1532,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ur-asset-experience-painpoints
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1549,11 +1549,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -1561,7 +1561,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ur-asset-interview-forbidden-questions
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1578,11 +1578,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -1590,7 +1590,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ur-asset-mindset-cognition
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1607,11 +1607,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -1619,7 +1619,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ur-asset-needs-scenarios
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1636,11 +1636,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -1648,7 +1648,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ur-asset-screener-demographics
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1665,11 +1665,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -1677,7 +1677,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ur-asset-standardized-ux-scales
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1694,11 +1694,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -1706,7 +1706,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ur-method-methods-scenarios-category-consumption-cross-category-category-research
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -3492,11 +3492,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -3504,7 +3504,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ur-template-churn-survey-framework
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -3521,11 +3521,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -3533,7 +3533,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ur-template-experience-issue-description-script
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -3550,11 +3550,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -3562,7 +3562,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ur-template-opportunity-solution-tree
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -3579,11 +3579,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -3591,7 +3591,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: knowledge:ux-method-experience-diagnosis-framework
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -3608,11 +3608,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -3620,7 +3620,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: skill:ds-skill-competitor-strategy-analysis
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -3638,11 +3638,11 @@ entities:
     merge_sections:
       - review_required
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -3650,7 +3650,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
     coalescence_group_id: coalesce-competitive-analysis
   - key: skill:ds-skill-solution-generation
     registry_kind: skill
@@ -3668,11 +3668,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -3680,7 +3680,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: skill:ds-skill-strategy-map-generation
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -3697,11 +3697,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -3709,7 +3709,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: skill:ds-skill-trend-change-scan
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -3727,11 +3727,11 @@ entities:
     merge_sections:
       - review_required
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -3739,7 +3739,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: skill:ds-skill-user-insight-synthesis
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -3757,11 +3757,11 @@ entities:
     merge_sections:
       - review_required
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -3769,7 +3769,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
     coalescence_group_id: coalesce-synthesize-qualitative-insights
   - key: skill:ur-skill-accessibility-review
     registry_kind: skill
@@ -3788,11 +3788,11 @@ entities:
     merge_sections:
       - review_required
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -3800,7 +3800,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: skill:ur-skill-analyze-satisfaction
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -3818,11 +3818,11 @@ entities:
     merge_sections:
       - review_required
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -3830,7 +3830,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: skill:ur-skill-build-experience-metrics
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -3848,11 +3848,11 @@ entities:
     merge_sections:
       - review_required
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -3860,7 +3860,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: skill:ur-skill-code-open-feedback
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -3878,11 +3878,11 @@ entities:
     merge_sections:
       - review_required
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -3890,7 +3890,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: skill:ur-skill-competitive-analysis
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -3908,11 +3908,11 @@ entities:
     merge_sections:
       - review_required
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -3920,7 +3920,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
     coalescence_group_id: coalesce-competitive-analysis
   - key: skill:ur-skill-conversion-funnel-analysis
     registry_kind: skill
@@ -3939,11 +3939,11 @@ entities:
     merge_sections:
       - review_required
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -3951,7 +3951,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: skill:ur-skill-experience-walkthrough
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -3969,11 +3969,11 @@ entities:
     merge_sections:
       - review_required
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -3981,7 +3981,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
     coalescence_group_id: coalesce-run-heuristic-evaluation
   - key: skill:ur-skill-feature-adoption-analysis
     registry_kind: skill
@@ -4000,11 +4000,11 @@ entities:
     merge_sections:
       - review_required
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -4012,7 +4012,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: skill:ur-skill-generate-interview-guide
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4030,11 +4030,11 @@ entities:
     merge_sections:
       - review_required
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -4042,7 +4042,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: skill:ur-skill-generate-persona
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4060,11 +4060,11 @@ entities:
     merge_sections:
       - review_required
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -4072,7 +4072,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: skill:ur-skill-generate-research-plan
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4090,11 +4090,11 @@ entities:
     merge_sections:
       - review_required
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -4102,7 +4102,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: skill:ur-skill-generate-survey
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4120,11 +4120,11 @@ entities:
     merge_sections:
       - review_required
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -4132,7 +4132,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: skill:ur-skill-generate-usability-test
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4150,11 +4150,11 @@ entities:
     merge_sections:
       - review_required
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -4162,7 +4162,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: skill:ur-skill-issue-prioritization
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4180,11 +4180,11 @@ entities:
     merge_sections:
       - review_required
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -4192,7 +4192,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: skill:ur-skill-jobs-to-be-done
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4210,11 +4210,11 @@ entities:
     merge_sections:
       - review_required
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -4222,7 +4222,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: skill:ur-skill-journey-map
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4240,11 +4240,11 @@ entities:
     merge_sections:
       - review_required
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -4252,7 +4252,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: skill:ur-skill-research-screenshot-analyzer
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4281,11 +4281,11 @@ entities:
     merge_sections:
       - review_required
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -4293,7 +4293,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
     coalescence_group_id: coalesce-run-heuristic-evaluation
   - key: skill:ur-skill-structure-interview-transcript
     registry_kind: skill
@@ -4312,11 +4312,11 @@ entities:
     merge_sections:
       - review_required
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -4324,7 +4324,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: skill:ur-skill-synthesize-qualitative-insights
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4342,11 +4342,11 @@ entities:
     merge_sections:
       - review_required
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: review_required
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -4354,7 +4354,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
     coalescence_group_id: coalesce-synthesize-qualitative-insights
   - key: task:competitor-benchmark-research
     registry_kind: task
@@ -4372,11 +4372,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: experience-knowledge-hub-maintainers
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -4384,7 +4384,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: task:data-behavior-diagnosis
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4401,11 +4401,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: experience-knowledge-hub-maintainers
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -4413,7 +4413,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: task:define-strategy
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4485,11 +4485,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: experience-knowledge-hub-maintainers
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -4497,7 +4497,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: task:feedback-issue-clustering
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4514,11 +4514,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: experience-knowledge-hub-maintainers
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -4526,7 +4526,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: task:find-direction
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4565,11 +4565,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: experience-knowledge-hub-maintainers
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -4577,7 +4577,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: task:opportunity-direction-evaluation
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4594,11 +4594,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: experience-knowledge-hub-maintainers
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -4606,7 +4606,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: task:priority-roadmap
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4623,11 +4623,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: experience-knowledge-hub-maintainers
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -4635,7 +4635,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: task:root-cause-analysis
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4652,11 +4652,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: experience-knowledge-hub-maintainers
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -4664,7 +4664,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: task:solution-comparison
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4681,11 +4681,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: experience-knowledge-hub-maintainers
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -4693,7 +4693,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: task:solution-generation
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4710,11 +4710,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: experience-knowledge-hub-maintainers
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -4722,7 +4722,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: task:solve-problems
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4750,11 +4750,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: experience-knowledge-hub-maintainers
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -4762,7 +4762,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: task:trend-change-identification
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4779,11 +4779,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: experience-knowledge-hub-maintainers
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -4791,7 +4791,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: task:understand-users
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4874,11 +4874,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: experience-knowledge-hub-maintainers
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -4886,7 +4886,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: task:user-material-synthesis
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4903,11 +4903,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: experience-knowledge-hub-maintainers
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -4915,7 +4915,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
   - key: task:user-segmentation
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4932,11 +4932,11 @@ entities:
       status: candidate
     merge_sections: []
     governance:
-      sensitivity: unknown
+      sensitivity: internal
       distribution_scope: evaluation_only
-      owner: experience-knowledge-hub-maintainers
-      retention: review_required
-      source_rights: unknown
+      owner: user-research-hub-maintainers
+      retention: through-gate-3-or-revocation
+      source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
         secrets: review_required
@@ -4944,7 +4944,7 @@ entities:
         local_paths: review_required
         internal_business_facts: review_required
       finding_refs:
-        - source-rights-not-declared
+        - gate-1-internal-evaluation-only
 attachment_groups:
   - id: hub-navigation
     owner_refs:
@@ -106895,4 +106895,4 @@ files:
     coverage:
       kind: attachment
       attachment_group_ref: migration-records
-disposition_hash: sha256:3ddf1aefbfa8f7bfed818a8da7fbab48f6c3ac05538d82f85584065d91e12036
+disposition_hash: sha256:80cc603cd3306c519a0c7c0f462dde68279aac02aeaa9c81f2bcd52f5d420734
