@@ -8,6 +8,7 @@ import {
 import { ModelDriftError } from '../../apps/orchestrator-runtime/src/runtime/receipt-llm-client.ts';
 import type { SkillLoader } from '../../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import type { SchemaValidator } from '../../apps/orchestrator-runtime/src/schema/validator.ts';
+import type { EvaluationContentInstructions } from './content-overlay.ts';
 import { assessKnowledgeUsage } from './kb/assessment.ts';
 import type { KnowledgeContext, RetrievalRecord } from './kb/types.ts';
 import type {
@@ -173,6 +174,7 @@ export class SkillEvaluator {
   async evaluate(
     loadedCase: LoadedEvaluationCase,
     kb?: { knowledgeContext: KnowledgeContext; retrieval: RetrievalRecord },
+    content?: EvaluationContentInstructions,
   ): Promise<SkillEvaluationRecord> {
     const startedAt = Date.now();
     const evaluationCase = loadedCase.data;
@@ -212,9 +214,21 @@ export class SkillEvaluator {
         expected_deliverables: evaluationCase.expected_deliverables,
         risk_checks: evaluationCase.risk_checks,
         ...(kb ? { knowledge_context: kb.knowledgeContext } : {}),
+        ...(content ? {
+          content_evaluation: {
+            overlay_id: content.overlayId,
+            rubric_hash: content.rubricHash,
+            candidate_source_ids: content.sourceIds,
+            candidate_method_source_ids: content.methodSourceIds,
+            skill_delta_ids: content.skillDeltaIds,
+          },
+        } : {}),
       };
       const kbPrompt = kb
-        ? `\n\nKnowledge context is authoritative for this KB-aware evaluation. Cite every KB-backed claim with an explicit source_id or source_path marker, and preserve source status in the output. Draft sources may be used only with a warning.`
+        ? `\n\nKnowledge context is authoritative for this KB-aware evaluation. Cite every KB-backed claim with an explicit source_id or source_path marker, and preserve source status in the output. Draft and candidate sources may be used only with a warning.`
+        : '';
+      const contentPrompt = content
+        ? `\n\n${content.prompt}${content.skillDeltaText ? `\n\nEvaluation-only Skill delta:\n${content.skillDeltaText}` : ''}`
         : '';
 
       generated =
@@ -222,7 +236,7 @@ export class SkillEvaluator {
           prompt:
             `你是「${skill.name}」能力。严格按以下 SKILL.md 的工作流与质量门禁执行。` +
             `本次输入均为标准合成评测数据；只能基于 input_materials 与 tool_outputs 产出结果，` +
-            `不得表述为真实业务事实。无数据支撑的判断必须明确标为 llm_inference 或待人工确认。${kbPrompt}\n\n${body}`,
+            `不得表述为真实业务事实。无数据支撑的判断必须明确标为 llm_inference 或待人工确认。${kbPrompt}${contentPrompt}\n\n${body}`,
           schema: outputSchema ?? {
             type: 'object',
             additionalProperties: true,
@@ -296,6 +310,13 @@ export class SkillEvaluator {
         ...(kb
           ? { knowledge_context: kb.knowledgeContext, retrieval: kb.retrieval }
           : {}),
+        ...(content ? {
+          content_evaluation: {
+            overlay_id: content.overlayId,
+            rubric_hash: content.rubricHash,
+            criteria_are_additive: true,
+          },
+        } : {}),
       };
       const kbScoringPrompt = kb
         ? `\nKB context and retrieval metadata are supplied for grounding review only; do not alter the 100-point Skill score normalization because of KB assessment metadata.`

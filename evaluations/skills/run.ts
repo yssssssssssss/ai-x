@@ -19,13 +19,26 @@ import {
   configureFsSafeNative,
   root as openFsSafeRoot,
 } from '@openclaw/fs-safe';
-import type { SkillRegistryEntry } from '../../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import {
+  loadSkillRegistry,
+  type SkillRegistryEntry,
+} from '../../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 import {
   buildRuntime,
   type AgentRuntime,
 } from '../../apps/orchestrator-runtime/src/runtime/agent-runtime.ts';
 import type { SkillLoader } from '../../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import { loadEvaluationCases } from './case-loader.ts';
+import {
+  addContentOverlayToKnowledge,
+  assessContentEvaluation,
+  loadContentOverlay,
+  USER_RESEARCH_HUB_C1_OVERLAY_ID,
+  type ContentEvaluationManifestMetadata,
+  type ContentEvaluationVariant,
+  type EvaluationContentInstructions,
+  type LoadedContentOverlay,
+} from './content-overlay.ts';
 import { SkillEvaluator, validateScorecardEvidence } from './evaluator.ts';
 import { assessKnowledgeUsage, type KBAssessment } from './kb/assessment.ts';
 import {
@@ -52,6 +65,7 @@ import {
   writeEvaluationArtifacts,
   writeInputArtifact,
   writeKbArtifacts,
+  writeContentOverlayArtifact,
   writeManifest,
   writeSummaries,
 } from './report-writer.ts';
@@ -74,6 +88,9 @@ export interface EvaluationRunOptions {
   resume: boolean;
   kbMode?: KBMode;
   kbSnapshotId?: string;
+  contentOverlay?: string;
+  contentVariant?: ContentEvaluationVariant;
+  dryRun?: boolean;
 }
 
 interface EvaluationSkillLoader {
@@ -85,6 +102,7 @@ interface EvaluationCaseEvaluator {
   evaluate(
     loadedCase: LoadedEvaluationCase,
     kb?: { knowledgeContext: KnowledgeContext; retrieval: RetrievalRecord },
+    content?: EvaluationContentInstructions,
   ): Promise<SkillEvaluationRecord>;
 }
 
@@ -311,6 +329,13 @@ function sha256(value: unknown): string {
   return `sha256:${createHash('sha256').update(stableJson(value)).digest('hex')}`;
 }
 
+function assertContentVariant(value: ContentEvaluationVariant | undefined): ContentEvaluationVariant | undefined {
+  if (value !== undefined && value !== 'baseline' && value !== 'enhanced') {
+    throw new Error(`content-variant must be one of baseline, enhanced: ${String(value)}`);
+  }
+  return value;
+}
+
 function snapshotContentHash(snapshot: KnowledgeSnapshot): string {
   return sha256({
     index_hash: snapshot.index_hash,
@@ -324,6 +349,22 @@ function assertKbMode(value: KBMode | undefined): KBMode {
     throw new Error(`kb-mode must be one of none, gold, live: ${String(value)}`);
   }
   return mode;
+}
+
+function prepareContentOverlay(
+  options: EvaluationRunOptions,
+  kbMode: KBMode,
+): { overlay: LoadedContentOverlay; variant: ContentEvaluationVariant } | undefined {
+  const variant = assertContentVariant(options.contentVariant);
+  if (!options.contentOverlay) {
+    if (variant !== undefined) throw new Error('--content-variant requires --content-overlay');
+    return undefined;
+  }
+  if (variant === undefined) throw new Error('--content-variant is required with --content-overlay');
+  if (kbMode !== 'gold') {
+    throw new Error('content overlay evaluation requires --kb-mode gold and never uses production search');
+  }
+  return { overlay: loadContentOverlay(options.contentOverlay), variant };
 }
 
 interface PreparedKbRun {
@@ -548,6 +589,7 @@ function assertResumeIdentity(
   expectedActualModel: string | undefined,
   kbMode: KBMode,
   activeSkillIds: string[],
+  contentEvaluation: ContentEvaluationManifestMetadata | undefined,
 ): void {
   if (!prior) return;
   if (typeof prior.value.provider === 'string' && prior.value.provider !== provider) {
@@ -583,6 +625,12 @@ function assertResumeIdentity(
   if (priorKbMode !== kbMode) {
     throw new Error(`resume KB mode mismatch: prior ${priorKbMode}, current ${kbMode}`);
   }
+  const priorContentEvaluation = isRecord(prior.value.contentEvaluation)
+    ? prior.value.contentEvaluation
+    : undefined;
+  if (stableJson(priorContentEvaluation) !== stableJson(contentEvaluation)) {
+    throw new Error('resume content evaluation overlay metadata mismatch');
+  }
 }
 
 function resumedRecord(
@@ -592,6 +640,7 @@ function resumedRecord(
   currentSkillHash: string | undefined,
   expectedActualModel: string | undefined,
   kb: PreparedKbRun | undefined,
+  contentAssessmentExpected: boolean,
 ): SkillEvaluationRecord | undefined {
   const skillId = loadedCase.data.skill_id;
   if (
@@ -637,6 +686,16 @@ function resumedRecord(
       !isKbContext(knowledgeContext, kb.mode, kb.snapshot.snapshot_id) ||
       !isRetrievalRecord(retrieval, kb.mode, kb.snapshot.snapshot_id) ||
       !isRecord(kbAssessment)
+    ) {
+      return undefined;
+    }
+  }
+  if (contentAssessmentExpected) {
+    const contentAssessment = readJson(join(skillDirectory, 'content-assessment.json'));
+    if (
+      !isRecord(contentAssessment) ||
+      contentAssessment.overlay_id !== USER_RESEARCH_HUB_C1_OVERLAY_ID ||
+      (contentAssessment.variant !== 'baseline' && contentAssessment.variant !== 'enhanced')
     ) {
       return undefined;
     }
@@ -887,13 +946,19 @@ export async function runEvaluationBatch(
 ): Promise<EvaluationManifest> {
   assertRunId(options.runId);
   assertConcurrency(options.concurrency);
+  if (options.dryRun) throw new Error('dry-run must be executed through runEvaluationCli');
   const kbMode = assertKbMode(options.kbMode);
+  const preparedContent = prepareContentOverlay(options, kbMode);
   const { skillLoader, evaluator } = resolveDependencies(dependencies);
   const clock = dependencies.clock ?? (() => new Date());
   const activeSkills = skillLoader.listActiveSkills();
   const activeSkillIds = activeSkills.map(({ id }) => id);
   const selected = selectedSkills(activeSkills, options.skillId);
   const selectedIds = new Set(selected.map(({ id }) => id));
+  const contentEvaluation = preparedContent?.overlay.metadata(
+    preparedContent.variant,
+    selected.map(({ id }) => id),
+  );
   const provider = dependencies.provider ?? process.env.LLM_PROVIDER ?? 'injected';
   const expectedActualModel =
     dependencies.expectedActualModel ??
@@ -907,6 +972,12 @@ export async function runEvaluationBatch(
     dependencies.kb,
   );
   const cases = loadEvaluationCases(activeSkills, options.casesDir);
+  if (preparedContent && selectedIds.has(preparedContent.overlay.manifest.fixed_task.skill_id)) {
+    const fixedCase = cases.get(preparedContent.overlay.manifest.fixed_task.skill_id);
+    if (fixedCase?.caseHash !== preparedContent.overlay.manifest.fixed_task.case_hash) {
+      throw new Error('content evaluation fixed task case hash differs from the frozen overlay case');
+    }
+  }
   const requestedRunDirectory = join(options.outputRoot, options.runId);
   const claim = claimRunDirectory(
     options.outputRoot,
@@ -934,7 +1005,9 @@ export async function runEvaluationBatch(
       expectedActualModel,
       kbMode,
       activeSkillIds,
+      contentEvaluation,
     );
+    if (contentEvaluation) await writeContentOverlayArtifact(artifactRoot, contentEvaluation);
     const currentSkillHashes = new Map<string, string | undefined>();
     const kbMetadataMatches =
       !preparedKb ||
@@ -958,6 +1031,7 @@ export async function runEvaluationBatch(
           currentSkillHashes.get(id),
           expectedActualModel,
           preparedKb,
+          preparedContent?.overlay.bindingFor(id) !== undefined,
         );
       },
     );
@@ -1003,6 +1077,7 @@ export async function runEvaluationBatch(
         records,
         counts: counts(records),
         ...(preparedKb ? { kb: preparedKb.metadata } : {}),
+        ...(contentEvaluation ? { contentEvaluation } : {}),
       };
     };
     let manifestWriteQueue = Promise.resolve();
@@ -1035,6 +1110,24 @@ export async function runEvaluationBatch(
           retrieval = preparedKb
             ? loadKbForSkill(preparedKb, skill.id, loadedCase, dependencies.kb)
             : undefined;
+          let contentInstructions: EvaluationContentInstructions | undefined;
+          if (preparedContent?.variant === 'enhanced' && retrieval) {
+            const enhanced = addContentOverlayToKnowledge(
+              retrieval.context,
+              retrieval.record,
+              preparedContent.overlay,
+              skill.id,
+            );
+            if (enhanced) {
+              retrieval = {
+                context: enhanced.knowledgeContext,
+                record: enhanced.retrieval,
+                warnings: retrieval.warnings,
+                failures: retrieval.failures,
+              };
+              contentInstructions = enhanced.instructions;
+            }
+          }
           record = await evaluator.evaluate(
             loadedCase,
             retrieval
@@ -1043,7 +1136,16 @@ export async function runEvaluationBatch(
                   retrieval: retrieval.record,
                 }
               : undefined,
+            contentInstructions,
           );
+          if (preparedContent?.overlay.bindingFor(skill.id) && record.output) {
+            record.contentAssessment = assessContentEvaluation(
+              loadedCase,
+              record.output,
+              preparedContent.overlay,
+              preparedContent.variant,
+            );
+          }
         } catch (error) {
           record = failedRecord(
             loadedCase,
@@ -1117,6 +1219,9 @@ function parseOptions(args: string[], clock: () => Date): EvaluationRunOptions {
   let resume = false;
   let kbMode: KBMode | undefined;
   let kbSnapshotId: string | undefined;
+  let contentOverlay: string | undefined;
+  let contentVariant: ContentEvaluationVariant | undefined;
+  let dryRun = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
@@ -1148,6 +1253,17 @@ function parseOptions(args: string[], clock: () => Date): EvaluationRunOptions {
         kbSnapshotId = optionValue(args, index, argument);
         index += 1;
         break;
+      case '--content-overlay':
+        contentOverlay = optionValue(args, index, argument);
+        index += 1;
+        break;
+      case '--content-variant':
+        contentVariant = assertContentVariant(optionValue(args, index, argument) as ContentEvaluationVariant);
+        index += 1;
+        break;
+      case '--dry-run':
+        dryRun = true;
+        break;
       default:
         throw new Error(`unknown argument: ${argument}`);
     }
@@ -1161,6 +1277,57 @@ function parseOptions(args: string[], clock: () => Date): EvaluationRunOptions {
     resume,
     ...(kbMode ? { kbMode } : {}),
     ...(kbSnapshotId ? { kbSnapshotId } : {}),
+    ...(contentOverlay ? { contentOverlay } : {}),
+    ...(contentVariant ? { contentVariant } : {}),
+    ...(dryRun ? { dryRun } : {}),
+  };
+}
+
+export interface ContentEvaluationDryRun {
+  status: 'ready';
+  runId: string;
+  selectedSkillIds: string[];
+  kbSnapshotId: string;
+  kbIndexHash: string;
+  contentEvaluation: ContentEvaluationManifestMetadata;
+  checks: {
+    fixedTaskCaseMatched: true;
+    candidateStatusPreserved: true;
+    draftSkillInactive: true;
+    productionFilesUnchanged: true;
+    candidateGenerationMode: 'fixed';
+    productionSearchUsed: false;
+  };
+}
+
+export function dryRunContentEvaluation(options: EvaluationRunOptions): ContentEvaluationDryRun {
+  const kbMode = assertKbMode(options.kbMode);
+  const preparedContent = prepareContentOverlay(options, kbMode);
+  if (!preparedContent) throw new Error('--dry-run requires --content-overlay');
+  const activeSkills = loadSkillRegistry().skills.filter(({ status }) => status === 'active');
+  const selected = selectedSkills(activeSkills, options.skillId);
+  const snapshot = loadKnowledgeSnapshot().snapshot;
+  if (options.kbSnapshotId && options.kbSnapshotId !== snapshot.snapshot_id) {
+    throw new Error(`kb snapshot mismatch: requested ${options.kbSnapshotId}, loaded ${snapshot.snapshot_id}`);
+  }
+  return {
+    status: 'ready',
+    runId: options.runId,
+    selectedSkillIds: selected.map(({ id }) => id),
+    kbSnapshotId: snapshot.snapshot_id,
+    kbIndexHash: snapshot.index_hash,
+    contentEvaluation: preparedContent.overlay.metadata(
+      preparedContent.variant,
+      selected.map(({ id }) => id),
+    ),
+    checks: {
+      fixedTaskCaseMatched: true,
+      candidateStatusPreserved: true,
+      draftSkillInactive: true,
+      productionFilesUnchanged: true,
+      candidateGenerationMode: 'fixed',
+      productionSearchUsed: false,
+    },
   };
 }
 
@@ -1168,7 +1335,7 @@ export async function runEvaluationCli(
   args = process.argv.slice(2),
   dependencies: EvaluationCliDependencies = {},
   runBatch: RunEvaluationBatch = runEvaluationBatch,
-): Promise<EvaluationManifest> {
+): Promise<EvaluationManifest | ContentEvaluationDryRun> {
   const env = dependencies.env ?? process.env;
   const loadEnvFile =
     dependencies.loadEnvFile ?? ((path: string) => process.loadEnvFile(path));
@@ -1178,10 +1345,16 @@ export async function runEvaluationCli(
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
 
-  assertRealProvider(env.LLM_PROVIDER);
-  assertExpectedActualModel(env.LLM_EXPECTED_ACTUAL_MODEL);
   const clock = dependencies.clock ?? (() => new Date());
   const options = parseOptions(args, clock);
+  if (options.dryRun) {
+    const report = dryRunContentEvaluation(options);
+    console.log(JSON.stringify(report, null, 2));
+    return report;
+  }
+
+  assertRealProvider(env.LLM_PROVIDER);
+  assertExpectedActualModel(env.LLM_EXPECTED_ACTUAL_MODEL);
   const runtime = (dependencies.buildRuntime ?? buildRuntime)();
   const evaluator = new SkillEvaluator({
     llm: runtime.deps.llm,

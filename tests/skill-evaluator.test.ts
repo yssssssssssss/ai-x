@@ -729,6 +729,35 @@ test('keeps generated output and KB assessment when scoring fails', async () => 
 });
 
 
+test('adds the C1 prompt and Skill delta only when evaluation content instructions are supplied', async () => {
+  const { evaluator, llm } = makeEvaluator();
+  await evaluator.evaluate(loadedCase, undefined, {
+    overlayId: 'user-research-hub-c1',
+    prompt: 'EVALUATION-ONLY STRATEGY CHAIN',
+    rubricHash: 'sha256:rubric',
+    sourceIds: ['candidate-method'],
+    methodSourceIds: ['candidate-method'],
+    skillDeltaIds: ['narrow-delta'],
+    skillDeltaText: 'NARROW DELTA BODY',
+  });
+
+  const generation = structuredCall(llm, 0);
+  assert.match(generation.prompt, /EVALUATION-ONLY STRATEGY CHAIN/);
+  assert.match(generation.prompt, /NARROW DELTA BODY/);
+  assert.deepEqual(callContext(generation).content_evaluation, {
+    overlay_id: 'user-research-hub-c1',
+    rubric_hash: 'sha256:rubric',
+    candidate_source_ids: ['candidate-method'],
+    candidate_method_source_ids: ['candidate-method'],
+    skill_delta_ids: ['narrow-delta'],
+  });
+  assert.deepEqual(callContext(structuredCall(llm, 1)).content_evaluation, {
+    overlay_id: 'user-research-hub-c1',
+    rubric_hash: 'sha256:rubric',
+    criteria_are_additive: true,
+  });
+});
+
 test('returns a generation failure and never scores when generation throws', async () => {
   const llm = new FakeLLM([new Error('generation unavailable')]);
   const { evaluator, validator } = makeEvaluator({ llm });

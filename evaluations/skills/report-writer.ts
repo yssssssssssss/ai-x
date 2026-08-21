@@ -6,6 +6,7 @@ import type {
   LoadedEvaluationCase,
   SkillEvaluationRecord,
 } from './types.ts';
+import type { ContentEvaluationManifestMetadata } from './content-overlay.ts';
 import type { KBAssessment } from './kb/assessment.ts';
 import type { KnowledgeContext, RetrievalRecord } from './kb/types.ts';
 
@@ -109,6 +110,13 @@ export async function writeKbArtifacts(
   }
 }
 
+export async function writeContentOverlayArtifact(
+  root: Root,
+  metadata: ContentEvaluationManifestMetadata,
+): Promise<void> {
+  await writeRootJsonAtomic(root, 'content-overlay.json', metadata);
+}
+
 export async function writeEvaluationArtifacts(
   root: Root,
   skillId: string,
@@ -117,7 +125,7 @@ export async function writeEvaluationArtifacts(
   await root.mkdir(skillId);
   const errorPath = skillArtifactPath(skillId, 'error.json');
   if (record.status === 'failed') {
-    for (const filename of ['output.json', 'output.md', 'scorecard.json']) {
+    for (const filename of ['output.json', 'output.md', 'scorecard.json', 'content-assessment.json']) {
       await removeRootArtifact(root, skillArtifactPath(skillId, filename));
     }
     await writeRootJsonAtomic(root, errorPath, record);
@@ -125,6 +133,15 @@ export async function writeEvaluationArtifacts(
   }
 
   await removeRootArtifact(root, errorPath);
+  if (record.contentAssessment !== undefined) {
+    await writeRootJsonAtomic(
+      root,
+      skillArtifactPath(skillId, 'content-assessment.json'),
+      record.contentAssessment,
+    );
+  } else {
+    await removeRootArtifact(root, skillArtifactPath(skillId, 'content-assessment.json'));
+  }
   if (record.output !== undefined) {
     await writeRootJsonAtomic(root, skillArtifactPath(skillId, 'output.json'), record.output);
     await writeRootAtomic(

@@ -5,10 +5,16 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { setConfigRoot } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 import {
+  compareContentEvaluationRounds,
   compareEvaluationRounds,
   loadComparisonJson,
+  type ContentComparisonOutput,
   type ComparisonOutput,
 } from '../evaluations/skills/kb/compare.ts';
+import type {
+  ContentEvaluationAssessment,
+  ContentEvaluationManifestMetadata,
+} from '../evaluations/skills/content-overlay.ts';
 import type { KBAssessment } from '../evaluations/skills/kb/assessment.ts';
 import type {
   EvaluationManifest,
@@ -390,4 +396,99 @@ test('rejects comparisons when model, case hashes, or KB snapshot IDs differ', (
 
   writeJson(manifestPath, { ...original, kb: { ...original.kb!, snapshotId: 'sha256:other-snapshot' } });
   assert.throws(() => compareEvaluationRounds({ round0: setup.round0, roundA: setup.roundA, roundB: setup.roundB, output: setup.compare }), /snapshot/i);
+});
+
+
+test('compares baseline and content-enhanced rounds with frozen hashes and explicit criteria', () => {
+  const setup = fixture();
+  const entry = {
+    id: 'candidate-method',
+    kind: 'method' as const,
+    path: 'knowledge-base/methods/candidate.md',
+    status: 'candidate' as const,
+    sourceHash: 'sha256:source',
+    contentHash: 'sha256:content',
+    artifactHash: 'sha256:artifact',
+  };
+  function metadata(variant: 'baseline' | 'enhanced'): ContentEvaluationManifestMetadata {
+    return {
+      overlayId: 'user-research-hub-c1',
+      overlayVersion: 1,
+      variant,
+      scope: 'evaluation_only',
+      gate: 'gate-3-pending',
+      manifestHash: 'sha256:manifest',
+      contentSetHash: 'sha256:set',
+      promptHash: 'sha256:prompt',
+      rubricHash: 'sha256:rubric',
+      criteria: {
+        grounding: [{ id: 'external_evidence_bound', criterion: 'grounding' }],
+        strategyChain: [{ id: 'recommendation_coverage', criterion: 'coverage' }],
+      },
+      fixedTaskSkillId: SKILL_IDS[0]!,
+      fixedTaskCaseHash: 'sha256:case-0',
+      productionSearchUsed: false,
+      candidateGenerationMode: 'fixed',
+      entries: [entry],
+      promotionSet: {
+        knowledgeCandidateIds: [entry.id],
+        assetCandidateIds: [],
+        draftSkillIds: [],
+        skillDeltaIds: [],
+      },
+      injectedSourceIds: variant === 'enhanced' ? [entry.id] : [],
+      appliedSkillDeltaIds: [],
+      productionBaseline: {
+        planningPolicyHash: 'sha256:policy',
+        promptHash: 'sha256:production-prompt',
+        rubricHash: 'sha256:production-rubric',
+      },
+    };
+  }
+  function assessment(variant: 'baseline' | 'enhanced'): ContentEvaluationAssessment {
+    const pass = variant === 'enhanced';
+    return {
+      overlay_id: 'user-research-hub-c1',
+      variant,
+      grounding_verdict: 'pass',
+      strategy_chain_verdict: pass ? 'pass' : 'fail',
+      grounding_criteria: [{ id: 'external_evidence_bound', status: 'pass', evidence: ['C1'] }],
+      strategy_chain_criteria: [{ id: 'recommendation_coverage', status: pass ? 'pass' : 'fail', evidence: [] }],
+      chain_count: pass ? 1 : 0,
+      candidate_source_ids: [entry.id],
+      cited_candidate_source_ids: pass ? [entry.id] : [],
+      tool_evidence_ids: ['C1'],
+      review_notes: pass ? [] : ['strategy-chain criterion failed: recommendation_coverage'],
+    };
+  }
+  for (const [directory, variant] of [[setup.roundA, 'baseline'], [setup.roundB, 'enhanced']] as const) {
+    const path = join(directory, 'manifest.json');
+    const original = JSON.parse(readFileSync(path, 'utf8')) as EvaluationManifest;
+    const records = original.records.map((current) => ({ ...current, contentAssessment: assessment(variant) }));
+    writeJson(path, {
+      ...original,
+      kb: { ...original.kb!, mode: 'gold' },
+      contentEvaluation: metadata(variant),
+      records,
+    });
+    for (const record of records) writeJson(join(directory, record.skillId, 'content-assessment.json'), record.contentAssessment);
+  }
+
+  const result = compareContentEvaluationRounds({
+    baseline: setup.roundA,
+    contentEnhanced: setup.roundB,
+    output: setup.compare,
+  });
+
+  assert.equal(result.rows.length, 22);
+  assert.equal(result.rows[0]?.baseline_strategy_chain_verdict, 'fail');
+  assert.equal(result.rows[0]?.content_enhanced_strategy_chain_verdict, 'pass');
+  assert.equal(result.metadata.productionSearchUsed, false);
+  assert.equal(result.metadata.candidateGenerationMode, 'fixed');
+  assert.deepEqual(result.metadata.sourceContentHashes, [entry]);
+  assert.deepEqual(result.metadata.promotionSet.knowledgeCandidateIds, [entry.id]);
+  const json = loadComparisonJson(join(setup.compare, 'content-comparison.json')) as ContentComparisonOutput;
+  assert.equal(json.metadata.contentSetHash, 'sha256:set');
+  assert.match(readFileSync(join(setup.compare, 'content-comparison.md'), 'utf8'), /Frozen source and content hashes/);
+  assert.match(readFileSync(join(setup.compare, 'content-comparison.csv'), 'utf8'), /content_enhanced_strategy_chain_verdict/);
 });

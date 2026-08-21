@@ -1,0 +1,35 @@
+version: 1
+id: user-research-hub-c1
+scope: evaluation_only
+grounding:
+  - id: external_evidence_bound
+    criterion: Every strategy chain cites at least one supplied synthetic Tool record.
+  - id: candidate_sources_method_only
+    criterion: Candidate content is cited as method guidance and never used as external factual evidence.
+  - id: candidate_method_citation
+    criterion: Every enhanced strategy chain cites at least one supplied candidate method source.
+  - id: source_reference_integrity
+    criterion: Every evidence and method source reference resolves to the frozen evaluation inputs.
+  - id: claim_type_explicit
+    criterion: Every strategy chain distinguishes observed fact, inference, or hypothesis.
+strategy_chain:
+  - id: recommendation_coverage
+    criterion: Every top-level recommendation has exactly one strategy chain.
+  - id: evidence
+    field: evidence_refs
+  - id: phenomenon
+    field: phenomenon
+  - id: problem_attribution
+    field: problem_attribution
+  - id: insight
+    field: insight
+  - id: strategy
+    field: strategy
+  - id: design_action
+    field: design_action
+  - id: priority
+    field: priority
+  - id: metric
+    field: metric
+  - id: validation
+    field: validation_method

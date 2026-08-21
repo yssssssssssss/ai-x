@@ -1,4 +1,8 @@
 import type { KBAssessment } from './kb/assessment.ts';
+import type {
+  ContentEvaluationAssessment,
+  ContentEvaluationManifestMetadata,
+} from './content-overlay.ts';
 
 export interface SkillEvaluationCase {
   skill_id: string;
@@ -63,6 +67,7 @@ export interface SkillEvaluationRecord {
   output?: Record<string, unknown>;
   scorecard?: SkillScorecard;
   kbAssessment?: KBAssessment;
+  contentAssessment?: ContentEvaluationAssessment;
   knowledgeContextRef?: {
     mode: 'gold' | 'live';
     snapshot_id: string;
@@ -106,4 +111,5 @@ export interface EvaluationManifest {
   records: SkillEvaluationRecord[];
   counts: EvaluationManifestCounts;
   kb?: EvaluationManifestKbMetadata;
+  contentEvaluation?: ContentEvaluationManifestMetadata;
 }

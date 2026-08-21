@@ -3,6 +3,10 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { loadSkillRegistry } from '../../../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 import { writeAtomic, writeJsonAtomic } from '../report-writer.ts';
+import type {
+  ContentEvaluationAssessment,
+  ContentEvaluationManifestMetadata,
+} from '../content-overlay.ts';
 import type { KBAssessment } from './assessment.ts';
 import type { RetrievalRecord } from './types.ts';
 import type { EvaluationManifest, EvaluationVerdict, SkillEvaluationRecord } from '../types.ts';
@@ -12,6 +16,51 @@ export interface CompareOptions {
   roundA: string;
   roundB: string;
   output: string;
+}
+
+export interface ContentCompareOptions {
+  baseline: string;
+  contentEnhanced: string;
+  output: string;
+}
+
+export interface ContentComparisonRow {
+  skill_id: string;
+  baseline_score: number | null;
+  content_enhanced_score: number | null;
+  score_delta: number | null;
+  baseline_kb_grounding_verdict: KBAssessment['kb_grounding_verdict'] | null;
+  content_enhanced_kb_grounding_verdict: KBAssessment['kb_grounding_verdict'] | null;
+  baseline_content_grounding_verdict: ContentEvaluationAssessment['grounding_verdict'] | null;
+  content_enhanced_grounding_verdict: ContentEvaluationAssessment['grounding_verdict'] | null;
+  baseline_strategy_chain_verdict: ContentEvaluationAssessment['strategy_chain_verdict'] | null;
+  content_enhanced_strategy_chain_verdict: ContentEvaluationAssessment['strategy_chain_verdict'] | null;
+  baseline_failed_criteria: string[];
+  content_enhanced_failed_criteria: string[];
+  cited_candidate_source_ids: string[];
+}
+
+export interface ContentComparisonOutput {
+  metadata: {
+    generatedAt: string;
+    baseline: RoundMetadata;
+    contentEnhanced: RoundMetadata;
+    overlayId: string;
+    manifestHash: string;
+    contentSetHash: string;
+    promptHash: string;
+    rubricHash: string;
+    criteria: ContentEvaluationManifestMetadata['criteria'];
+    productionSearchUsed: false;
+    candidateGenerationMode: 'fixed';
+    sourceContentHashes: ContentEvaluationManifestMetadata['entries'];
+    promotionSet: ContentEvaluationManifestMetadata['promotionSet'];
+    injectedSourceIds: string[];
+    appliedSkillDeltaIds: string[];
+    activeSkillCount: number;
+    activeSkillIds: string[];
+  };
+  rows: ContentComparisonRow[];
 }
 
 export interface ComparisonRow {
@@ -406,6 +455,217 @@ export function compareEvaluationRounds(options: CompareOptions): ComparisonOutp
   return output;
 }
 
+function contentAssessmentFrom(
+  roundDirectory: string,
+  record: SkillEvaluationRecord | undefined,
+): ContentEvaluationAssessment | undefined {
+  if (!record) return undefined;
+  if (record.contentAssessment) return record.contentAssessment;
+  try {
+    return readJson<ContentEvaluationAssessment>(join(roundDirectory, record.skillId, 'content-assessment.json'));
+  } catch {
+    return undefined;
+  }
+}
+
+function failedCriteria(assessment: ContentEvaluationAssessment | undefined): string[] {
+  if (!assessment) return ['missing_content_assessment'];
+  return [...assessment.grounding_criteria, ...assessment.strategy_chain_criteria]
+    .filter(({ status }) => status === 'fail')
+    .map(({ id }) => id);
+}
+
+function contentMetadata(manifest: EvaluationManifest, label: string): ContentEvaluationManifestMetadata {
+  if (!manifest.contentEvaluation) throw new Error(`${label} is missing content evaluation metadata`);
+  return manifest.contentEvaluation;
+}
+
+function assertContentComparisonIdentity(
+  baseline: EvaluationManifest,
+  enhanced: EvaluationManifest,
+): { baseline: ContentEvaluationManifestMetadata; enhanced: ContentEvaluationManifestMetadata } {
+  if (!sameSet(baseline.activeSkillIds, enhanced.activeSkillIds)) throw new Error('content comparison active Skill ID sets differ');
+  if (modelKey(baseline) !== modelKey(enhanced)) throw new Error('content comparison model metadata differs');
+  assertSameCaseHashes(baseline, enhanced, enhanced);
+  if (!baseline.kb || !enhanced.kb || baseline.kb.mode !== 'gold' || enhanced.kb.mode !== 'gold') {
+    throw new Error('content comparison requires deterministic gold KB mode for both rounds');
+  }
+  if (baseline.kb.snapshotId !== enhanced.kb.snapshotId
+    || baseline.kb.snapshotHash !== enhanced.kb.snapshotHash
+    || baseline.kb.indexHash !== enhanced.kb.indexHash
+    || baseline.kb.sourceMappingHash !== enhanced.kb.sourceMappingHash) {
+    throw new Error('content comparison KB snapshot metadata differs');
+  }
+  const baselineMetadata = contentMetadata(baseline, 'baseline');
+  const enhancedMetadata = contentMetadata(enhanced, 'content-enhanced round');
+  if (baselineMetadata.variant !== 'baseline' || enhancedMetadata.variant !== 'enhanced') {
+    throw new Error('content comparison requires baseline and enhanced variants');
+  }
+  for (const key of ['overlayId', 'overlayVersion', 'scope', 'gate', 'manifestHash', 'contentSetHash', 'promptHash', 'rubricHash', 'fixedTaskSkillId', 'fixedTaskCaseHash', 'candidateGenerationMode'] as const) {
+    if (baselineMetadata[key] !== enhancedMetadata[key]) throw new Error(`content comparison overlay ${key} differs`);
+  }
+  if (JSON.stringify(baselineMetadata.criteria) !== JSON.stringify(enhancedMetadata.criteria)) {
+    throw new Error('content comparison criteria differ');
+  }
+  if (baselineMetadata.productionSearchUsed !== false || enhancedMetadata.productionSearchUsed !== false) {
+    throw new Error('content comparison cannot use production search');
+  }
+  if (JSON.stringify(baselineMetadata.entries) !== JSON.stringify(enhancedMetadata.entries)
+    || JSON.stringify(baselineMetadata.promotionSet) !== JSON.stringify(enhancedMetadata.promotionSet)
+    || JSON.stringify(baselineMetadata.productionBaseline) !== JSON.stringify(enhancedMetadata.productionBaseline)) {
+    throw new Error('content comparison source/content hashes differ');
+  }
+  if (baselineMetadata.injectedSourceIds.length !== 0 || baselineMetadata.appliedSkillDeltaIds.length !== 0) {
+    throw new Error('baseline content comparison round must not inject overlay content');
+  }
+  if (!baseline.activeSkillIds.includes(enhancedMetadata.fixedTaskSkillId)) {
+    throw new Error(`content comparison must include fixed task ${enhancedMetadata.fixedTaskSkillId}`);
+  }
+  const fixedRecord = baseline.records.find(({ skillId }) => skillId === enhancedMetadata.fixedTaskSkillId);
+  if (fixedRecord?.caseHash !== enhancedMetadata.fixedTaskCaseHash) {
+    throw new Error('content comparison fixed task case hash differs from the frozen overlay case');
+  }
+  if (enhancedMetadata.injectedSourceIds.length === 0) {
+    throw new Error('content-enhanced round did not inject overlay sources');
+  }
+  return { baseline: baselineMetadata, enhanced: enhancedMetadata };
+}
+
+function renderContentMarkdown(output: ContentComparisonOutput): string {
+  const headers = [
+    'skill_id',
+    'baseline_score',
+    'content_enhanced_score',
+    'score_delta',
+    'baseline_kb_grounding_verdict',
+    'content_enhanced_kb_grounding_verdict',
+    'baseline_content_grounding_verdict',
+    'content_enhanced_grounding_verdict',
+    'baseline_strategy_chain_verdict',
+    'content_enhanced_strategy_chain_verdict',
+    'baseline_failed_criteria',
+    'content_enhanced_failed_criteria',
+    'cited_candidate_source_ids',
+  ];
+  return [
+    '# User Research Hub C1 content evaluation comparison',
+    '',
+    `Generated at: ${output.metadata.generatedAt}`,
+    `Baseline: ${output.metadata.baseline.runId}`,
+    `Content enhanced: ${output.metadata.contentEnhanced.runId}`,
+    `Overlay: ${output.metadata.overlayId} (${output.metadata.manifestHash})`,
+    `Content set: ${output.metadata.contentSetHash}`,
+    `Evaluation prompt: ${output.metadata.promptHash}`,
+    `Evaluation rubric: ${output.metadata.rubricHash}`,
+    `Production search used: ${String(output.metadata.productionSearchUsed)}`,
+    `Candidate generation mode: ${output.metadata.candidateGenerationMode}`,
+    `Promotion set: ${output.metadata.promotionSet.knowledgeCandidateIds.length} methods; ${output.metadata.promotionSet.assetCandidateIds.length} asset; ${output.metadata.promotionSet.draftSkillIds.length} draft Skill; ${output.metadata.promotionSet.skillDeltaIds.length} Skill deltas`,
+    `Injected sources: ${output.metadata.injectedSourceIds.join(', ')}`,
+    `Applied Skill deltas: ${output.metadata.appliedSkillDeltaIds.join(', ') || 'none for selected Skill set'}`,
+    '',
+    '## Grounding and strategy-chain criteria',
+    '',
+    `| ${headers.join(' | ')} |`,
+    `| ${headers.map(() => '---').join(' | ')} |`,
+    ...output.rows.map((row) => `| ${headers.map((header) => markdownCell(row[header as keyof ContentComparisonRow])).join(' | ')} |`),
+    '',
+    '### Grounding criteria',
+    ...output.metadata.criteria.grounding.map(({ id, criterion }) => `- ${id}: ${criterion}`),
+    '',
+    '### Strategy-chain criteria',
+    ...output.metadata.criteria.strategyChain.map(({ id, criterion: description, field }) => `- ${id}: ${description ?? `non-empty ${field}`}`),
+    '',
+    '## Frozen source and content hashes',
+    '',
+    '| id | kind | candidate_status | registry_status | runtime_consumed | source_hash | content_hash | artifact_hash | path |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+    ...output.metadata.sourceContentHashes.map((entry) => (
+      `| ${entry.id} | ${entry.kind} | ${entry.status} | ${entry.registryStatus ?? ''} | ${String(entry.runtimeConsumed ?? '')} | ${entry.sourceHash} | ${entry.contentHash} | ${entry.artifactHash} | ${entry.path} |`
+    )),
+    '',
+  ].join('\n');
+}
+
+function renderContentCsv(rows: ContentComparisonRow[]): string {
+  const headers = [
+    'skill_id', 'baseline_score', 'content_enhanced_score', 'score_delta',
+    'baseline_kb_grounding_verdict', 'content_enhanced_kb_grounding_verdict',
+    'baseline_content_grounding_verdict', 'content_enhanced_grounding_verdict',
+    'baseline_strategy_chain_verdict', 'content_enhanced_strategy_chain_verdict',
+    'baseline_failed_criteria', 'content_enhanced_failed_criteria', 'cited_candidate_source_ids',
+  ];
+  return [
+    headers.join(','),
+    ...rows.map((row) => headers.map((header) => csvCell(row[header as keyof ContentComparisonRow])).join(',')),
+    '',
+  ].join('\n');
+}
+
+export function compareContentEvaluationRounds(options: ContentCompareOptions): ContentComparisonOutput {
+  const baselineDirectory = resolve(options.baseline);
+  const enhancedDirectory = resolve(options.contentEnhanced);
+  const outputDirectory = resolve(options.output);
+  const baseline = loadManifest(baselineDirectory);
+  const enhanced = loadManifest(enhancedDirectory);
+  const metadata = assertContentComparisonIdentity(baseline, enhanced);
+  assertCompleteRound('round0', baselineDirectory, baseline);
+  assertCompleteRound('roundA', enhancedDirectory, enhanced);
+
+  const order = activeRegistryOrder(baseline.activeSkillIds);
+  const baselineRecords = bySkill(baseline.records);
+  const enhancedRecords = bySkill(enhanced.records);
+  const rows = order.map((skillId): ContentComparisonRow => {
+    const baselineRecord = baselineRecords.get(skillId);
+    const enhancedRecord = enhancedRecords.get(skillId);
+    const baselineAssessment = contentAssessmentFrom(baselineDirectory, baselineRecord);
+    const enhancedAssessment = contentAssessmentFrom(enhancedDirectory, enhancedRecord);
+    const baselineScore = score(baselineRecord);
+    const enhancedScore = score(enhancedRecord);
+    return {
+      skill_id: skillId,
+      baseline_score: baselineScore,
+      content_enhanced_score: enhancedScore,
+      score_delta: baselineScore === null || enhancedScore === null ? null : enhancedScore - baselineScore,
+      baseline_kb_grounding_verdict: assessmentFrom(baselineDirectory, baselineRecord)?.kb_grounding_verdict ?? null,
+      content_enhanced_kb_grounding_verdict: assessmentFrom(enhancedDirectory, enhancedRecord)?.kb_grounding_verdict ?? null,
+      baseline_content_grounding_verdict: baselineAssessment?.grounding_verdict ?? null,
+      content_enhanced_grounding_verdict: enhancedAssessment?.grounding_verdict ?? null,
+      baseline_strategy_chain_verdict: baselineAssessment?.strategy_chain_verdict ?? null,
+      content_enhanced_strategy_chain_verdict: enhancedAssessment?.strategy_chain_verdict ?? null,
+      baseline_failed_criteria: failedCriteria(baselineAssessment),
+      content_enhanced_failed_criteria: failedCriteria(enhancedAssessment),
+      cited_candidate_source_ids: enhancedAssessment?.cited_candidate_source_ids ?? [],
+    };
+  });
+  const output: ContentComparisonOutput = {
+    metadata: {
+      generatedAt: new Date().toISOString(),
+      baseline: roundMetadata(baselineDirectory, baseline),
+      contentEnhanced: roundMetadata(enhancedDirectory, enhanced),
+      overlayId: metadata.enhanced.overlayId,
+      manifestHash: metadata.enhanced.manifestHash,
+      contentSetHash: metadata.enhanced.contentSetHash,
+      promptHash: metadata.enhanced.promptHash,
+      rubricHash: metadata.enhanced.rubricHash,
+      criteria: metadata.enhanced.criteria,
+      productionSearchUsed: false,
+      candidateGenerationMode: 'fixed',
+      sourceContentHashes: metadata.enhanced.entries,
+      promotionSet: metadata.enhanced.promotionSet,
+      injectedSourceIds: metadata.enhanced.injectedSourceIds,
+      appliedSkillDeltaIds: metadata.enhanced.appliedSkillDeltaIds,
+      activeSkillCount: order.length,
+      activeSkillIds: order,
+    },
+    rows,
+  };
+  mkdirSync(outputDirectory, { recursive: true });
+  writeJsonAtomic(join(outputDirectory, 'content-comparison.json'), output);
+  writeAtomic(join(outputDirectory, 'content-comparison.csv'), renderContentCsv(rows));
+  writeAtomic(join(outputDirectory, 'content-comparison.md'), renderContentMarkdown(output));
+  return output;
+}
+
 export function loadComparisonJson(path: string): unknown {
   return readJson<unknown>(path);
 }
@@ -416,10 +676,12 @@ function optionValue(args: string[], index: number, option: string): string {
   return value;
 }
 
-function parseCli(args: string[]): CompareOptions {
+function parseCli(args: string[]): CompareOptions | ContentCompareOptions {
   let round0: string | undefined;
   let roundA: string | undefined;
   let roundB: string | undefined;
+  let baseline: string | undefined;
+  let contentEnhanced: string | undefined;
   let output: string | undefined;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -432,12 +694,27 @@ function parseCli(args: string[]): CompareOptions {
     } else if (arg === '--roundB') {
       roundB = optionValue(args, index, arg);
       index += 1;
+    } else if (arg === '--baseline') {
+      baseline = optionValue(args, index, arg);
+      index += 1;
+    } else if (arg === '--content-enhanced') {
+      contentEnhanced = optionValue(args, index, arg);
+      index += 1;
     } else if (arg === '--output') {
       output = optionValue(args, index, arg);
       index += 1;
     } else {
       throw new Error(`unknown option: ${arg}`);
     }
+  }
+  const contentMode = baseline !== undefined || contentEnhanced !== undefined;
+  const legacyMode = round0 !== undefined || roundA !== undefined || roundB !== undefined;
+  if (contentMode && legacyMode) throw new Error('content comparison and three-round KB comparison options cannot be mixed');
+  if (contentMode) {
+    if (!baseline || !contentEnhanced || !output) {
+      throw new Error('usage: tsx evaluations/skills/kb/compare.ts --baseline <dir> --content-enhanced <dir> --output <dir>');
+    }
+    return { baseline, contentEnhanced, output };
   }
   if (!round0 || !roundA || !roundB || !output) {
     throw new Error('usage: tsx evaluations/skills/kb/compare.ts --round0 <dir> --roundA <dir> --roundB <dir> --output <dir>');
@@ -446,8 +723,14 @@ function parseCli(args: string[]): CompareOptions {
 }
 
 export function runCompareCli(args = process.argv.slice(2)): void {
-  const result = compareEvaluationRounds(parseCli(args));
-  console.log(`Wrote KB comparison for ${result.rows.length} Skills to ${resolve(parseCli(args).output)}`);
+  const options = parseCli(args);
+  if ('baseline' in options) {
+    const result = compareContentEvaluationRounds(options);
+    console.log(`Wrote C1 content comparison for ${result.rows.length} Skills to ${resolve(options.output)}`);
+    return;
+  }
+  const result = compareEvaluationRounds(options);
+  console.log(`Wrote KB comparison for ${result.rows.length} Skills to ${resolve(options.output)}`);
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
