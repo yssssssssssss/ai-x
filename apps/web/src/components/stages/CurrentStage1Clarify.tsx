@@ -49,6 +49,7 @@ export function CurrentStage1Clarify({
           <span style={{ display: 'block', marginBottom: 4, fontWeight: 600 }}>{question.question}</span>
           <span style={{ display: 'block', marginBottom: 5, color: 'var(--text-faint)', fontSize: 12 }}>为什么要问：{question.rationale}</span>
           <input
+            className="clarification-field"
             value={answers[question.key] ?? ''}
             onChange={(event) => setAnswers((previous) => ({ ...previous, [question.key]: event.target.value }))}
             disabled={disabled}
@@ -66,6 +67,7 @@ export function CurrentStage1Clarify({
             <label key={assumption.key} style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8, fontSize: 13 }}>
               <span style={{ width: 100, color: 'var(--text-faint)' }}>{assumption.key}</span>
               <input
+                className="clarification-field"
                 value={assumptionEdits[assumption.key] ?? assumption.value}
                 disabled={disabled || !assumption.editable}
                 onChange={(event) => setAssumptionEdits((previous) => ({ ...previous, [assumption.key]: event.target.value }))}

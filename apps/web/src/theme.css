@@ -506,6 +506,39 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .stage-title { font-size: 15px; letter-spacing: -0.005em; }
 .stage-note { color: var(--text-faint); font-size: 12px; }
 
+/* ---- 澄清需求:深色内嵌编辑面 ---- */
+.clarification-field {
+  min-width: 0;
+  min-height: 42px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+  color: var(--text);
+  caret-color: var(--primary-strong);
+  color-scheme: dark;
+  font: inherit;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.clarification-field::placeholder { color: var(--text-faint); opacity: 1; }
+.clarification-field:focus {
+  border-color: var(--primary);
+  background: var(--bg-card-hi);
+}
+.clarification-field:disabled {
+  background: var(--bg);
+  color: var(--text-faint);
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+.clarification-field:-webkit-autofill,
+.clarification-field:-webkit-autofill:hover,
+.clarification-field:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--text);
+  box-shadow: 0 0 0 1000px var(--bg-elev) inset;
+  caret-color: var(--primary-strong);
+}
+
 /* ---- 用户气泡(claude.ai 风:右对齐、圆润、克制的强调色)---- */
 .user-row {
   display: flex;
