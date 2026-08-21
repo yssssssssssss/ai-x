@@ -40,6 +40,19 @@ test('candidate 状态保留在 Evaluation index，Skill candidate 只派生 dra
   assert.equal(skills[0]?.status, 'draft');
 });
 
+test('知识索引拒绝缺失或未知状态，而不是默认批准', () => {
+  const missingStatus = modelMd.replace('status: approved', '');
+  const unknownStatus = modelMd.replace('status: approved', 'status: typo');
+  assert.throws(
+    () => buildIndex([{ relPath: 'models/jtbd.md', md: missingStatus }]),
+    /invalid or missing status/u,
+  );
+  assert.throws(
+    () => buildIndex([{ relPath: 'models/jtbd.md', md: unknownStatus }]),
+    /invalid or missing status/u,
+  );
+});
+
 test('知识条目进 knowledge 索引,skill 进 skills,asset 被排除', () => {
   const { knowledge, skills } = buildIndex([
     { relPath: 'models/jtbd.md', md: modelMd },

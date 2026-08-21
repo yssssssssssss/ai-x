@@ -72,7 +72,6 @@ human_confirmation:
 candidate_profiles:
   - speed
   - depth
-  - decision
   - focused
 ---
 

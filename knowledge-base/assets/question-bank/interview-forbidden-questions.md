@@ -1,14 +1,24 @@
 ---
-title:          访谈禁问清单与中立替代话术
-type:           asset
-domain:         []
-research_type:  [定性]
-tags:           [访谈题, 禁问清单, 中立话术, 提问改写, AI主持人]
-status:         draft
-sensitivity:    internal
-owner:
-updated:        2026-06-25
-related:        [methods/toolbox/collection/interviews.md, methods/toolbox/collection/interview-guide-design.md, methods/standards/questionnaire-design.md]
+title: 访谈禁问清单与中立替代话术
+type: asset
+domain: []
+research_type:
+  - 定性
+tags:
+  - 访谈题
+  - 禁问清单
+  - 中立话术
+  - 提问改写
+  - AI主持人
+status: draft
+sensitivity: internal
+owner: null
+updated: 2026-06-25
+related:
+  - methods/toolbox/collection/interviews.md
+  - methods/toolbox/collection/interview-guide-design.md
+  - methods/standards/questionnaire-design.md
+content_hash: sha256:9d2c7a22c923994d4be2b2ee012753e1c89fd2ff083fcb64b95e7bf02dd9c880
 ---
 
 # 访谈禁问清单与中立替代话术
@@ -37,7 +47,7 @@ related:        [methods/toolbox/collection/interviews.md, methods/toolbox/colle
 
 ## 来源
 
-- 访谈技巧知识库·孙文佳《AI主持人访谈原则及技巧》（Joyspace，原稿留底 `joyspace-raw/f2-ai-moderator-principles.md`）。
+- 访谈技巧知识库·孙文佳《AI主持人访谈原则及技巧》；原始 Hub 路径与哈希记录在 `knowledge-base/.sources/user-research-hub-2026-08-21.yaml`，不保留不可解析的本机仓库引用。
 
 ## 关联
 

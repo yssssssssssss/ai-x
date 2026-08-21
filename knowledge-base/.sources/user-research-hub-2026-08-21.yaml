@@ -504,28 +504,10 @@ entities:
     entity_type: method
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析00模块总览.md
-    disposition: import_candidate
-    rationale: New method content is a Phase-B candidate and remains non-runtime until governance review.
-    mapping_basis: registry_type_method
-    target:
-      canonical_id: ds-method-competitor-00-module-overview
-      path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-00-module-overview.md
-      status: candidate
+    disposition: source_only
+    rationale: Navigation or multi-method omnibus source is retained for audit/coalescence and is not a recallable canonical method.
+    mapping_basis: gate_2_method_coalescence
     merge_sections: []
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: clear
-        internal_business_facts: clear
-      finding_refs:
-        - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-competitor-01-competitor-selection
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -534,8 +516,8 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析01竞品选择.md
     disposition: import_candidate
-    rationale: New method content is a Phase-B candidate and remains non-runtime until governance review.
-    mapping_basis: registry_type_method
+    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
+    mapping_basis: gate_2_single_method_candidate
     target:
       canonical_id: ds-method-competitor-01-competitor-selection
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-01-competitor-selection.md
@@ -547,7 +529,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -563,8 +545,8 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析02对比维度.md
     disposition: import_candidate
-    rationale: New method content is a Phase-B candidate and remains non-runtime until governance review.
-    mapping_basis: registry_type_method
+    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
+    mapping_basis: gate_2_single_method_candidate
     target:
       canonical_id: ds-method-competitor-02-comparison-dimensions
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-02-comparison-dimensions.md
@@ -576,7 +558,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -591,29 +573,10 @@ entities:
     entity_type: method
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析竞品研究方法类.md
-    disposition: import_candidate
-    rationale: New method content is a Phase-B candidate and remains non-runtime until governance review.
-    mapping_basis: registry_type_method
-    target:
-      canonical_id: ds-method-competitor-03
-      path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-03.md
-      status: candidate
+    disposition: source_only
+    rationale: Navigation or multi-method omnibus source is retained for audit/coalescence and is not a recallable canonical method.
+    mapping_basis: gate_2_method_coalescence
     merge_sections: []
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: clear
-        internal_business_facts: reviewed
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
   - key: knowledge:ds-method-competitor-03-pattern-analysis
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -622,8 +585,8 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析03模式分析.md
     disposition: import_candidate
-    rationale: New method content is a Phase-B candidate and remains non-runtime until governance review.
-    mapping_basis: registry_type_method
+    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
+    mapping_basis: gate_2_single_method_candidate
     target:
       canonical_id: ds-method-competitor-03-pattern-analysis
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-03-pattern-analysis.md
@@ -635,7 +598,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -650,29 +613,10 @@ entities:
     entity_type: method
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析竞品分析框架类.md
-    disposition: import_candidate
-    rationale: New method content is a Phase-B candidate and remains non-runtime until governance review.
-    mapping_basis: registry_type_method
-    target:
-      canonical_id: ds-method-competitor-04
-      path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-04.md
-      status: candidate
+    disposition: source_only
+    rationale: Navigation or multi-method omnibus source is retained for audit/coalescence and is not a recallable canonical method.
+    mapping_basis: gate_2_method_coalescence
     merge_sections: []
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: clear
-        internal_business_facts: reviewed
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
   - key: knowledge:ds-method-competitor-04-opportunity-and-risk
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -681,8 +625,8 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析04机会风险.md
     disposition: import_candidate
-    rationale: New method content is a Phase-B candidate and remains non-runtime until governance review.
-    mapping_basis: registry_type_method
+    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
+    mapping_basis: gate_2_single_method_candidate
     target:
       canonical_id: ds-method-competitor-04-opportunity-and-risk
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-04-opportunity-and-risk.md
@@ -694,7 +638,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -710,8 +654,8 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析05洞察输出.md
     disposition: import_candidate
-    rationale: New method content is a Phase-B candidate and remains non-runtime until governance review.
-    mapping_basis: registry_type_method
+    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
+    mapping_basis: gate_2_single_method_candidate
     target:
       canonical_id: ds-method-competitor-05-insight-output
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-05-insight-output.md
@@ -723,7 +667,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -738,28 +682,10 @@ entities:
     entity_type: method
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/策略推导/设计策略00模块总览.md
-    disposition: import_candidate
-    rationale: New method content is a Phase-B candidate and remains non-runtime until governance review.
-    mapping_basis: registry_type_method
-    target:
-      canonical_id: ds-method-strategy-00-module-overview
-      path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-00-module-overview.md
-      status: candidate
+    disposition: source_only
+    rationale: Navigation or multi-method omnibus source is retained for audit/coalescence and is not a recallable canonical method.
+    mapping_basis: gate_2_method_coalescence
     merge_sections: []
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: clear
-        internal_business_facts: clear
-      finding_refs:
-        - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-strategy-01-problem-framing
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -768,8 +694,8 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/策略推导/设计策略01问题定义.md
     disposition: import_candidate
-    rationale: New method content is a Phase-B candidate and remains non-runtime until governance review.
-    mapping_basis: registry_type_method
+    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
+    mapping_basis: gate_2_single_method_candidate
     target:
       canonical_id: ds-method-strategy-01-problem-framing
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-01-problem-framing.md
@@ -781,7 +707,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -797,8 +723,8 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/策略推导/设计策略02策略地图.md
     disposition: import_candidate
-    rationale: New method content is a Phase-B candidate and remains non-runtime until governance review.
-    mapping_basis: registry_type_method
+    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
+    mapping_basis: gate_2_single_method_candidate
     target:
       canonical_id: ds-method-strategy-02-strategy-map
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-02-strategy-map.md
@@ -810,7 +736,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -826,8 +752,8 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/策略推导/设计策略04优先路线.md
     disposition: import_candidate
-    rationale: New method content is a Phase-B candidate and remains non-runtime until governance review.
-    mapping_basis: registry_type_method
+    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
+    mapping_basis: gate_2_single_method_candidate
     target:
       canonical_id: ds-method-strategy-04-priority-and-roadmap
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-04-priority-and-roadmap.md
@@ -839,7 +765,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -854,29 +780,10 @@ entities:
     entity_type: method
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/策略推导/设计策略体验策略方法论类.md
-    disposition: import_candidate
-    rationale: New method content is a Phase-B candidate and remains non-runtime until governance review.
-    mapping_basis: registry_type_method
-    target:
-      canonical_id: ds-method-strategy-05
-      path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-05.md
-      status: candidate
+    disposition: source_only
+    rationale: Navigation or multi-method omnibus source is retained for audit/coalescence and is not a recallable canonical method.
+    mapping_basis: gate_2_method_coalescence
     merge_sections: []
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: clear
-        internal_business_facts: reviewed
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
   - key: knowledge:ds-method-strategy-05-review-and-validation
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -885,8 +792,8 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/策略推导/设计策略05评审验证.md
     disposition: import_candidate
-    rationale: New method content is a Phase-B candidate and remains non-runtime until governance review.
-    mapping_basis: registry_type_method
+    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
+    mapping_basis: gate_2_single_method_candidate
     target:
       canonical_id: ds-method-strategy-05-review-and-validation
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-05-review-and-validation.md
@@ -898,7 +805,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -913,29 +820,10 @@ entities:
     entity_type: method
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/策略推导/设计策略策略推导模型类.md
-    disposition: import_candidate
-    rationale: New method content is a Phase-B candidate and remains non-runtime until governance review.
-    mapping_basis: registry_type_method
-    target:
-      canonical_id: ds-method-strategy-06
-      path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-06.md
-      status: candidate
+    disposition: source_only
+    rationale: Navigation or multi-method omnibus source is retained for audit/coalescence and is not a recallable canonical method.
+    mapping_basis: gate_2_method_coalescence
     merge_sections: []
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: clear
-        internal_business_facts: reviewed
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
   - key: knowledge:ds-method-user-00-module-overview
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -943,28 +831,10 @@ entities:
     entity_type: method
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/用户分析/用户分析00模块总览.md
-    disposition: import_candidate
-    rationale: New method content is a Phase-B candidate and remains non-runtime until governance review.
-    mapping_basis: registry_type_method
-    target:
-      canonical_id: ds-method-user-00-module-overview
-      path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-00-module-overview.md
-      status: candidate
+    disposition: source_only
+    rationale: Navigation or multi-method omnibus source is retained for audit/coalescence and is not a recallable canonical method.
+    mapping_basis: gate_2_method_coalescence
     merge_sections: []
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: clear
-        internal_business_facts: clear
-      finding_refs:
-        - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-user-01
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -972,29 +842,10 @@ entities:
     entity_type: method
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/用户分析/用户画像Persona.md
-    disposition: import_candidate
-    rationale: New method content is a Phase-B candidate and remains non-runtime until governance review.
-    mapping_basis: registry_type_method
-    target:
-      canonical_id: ds-method-user-01
-      path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-01.md
-      status: candidate
+    disposition: source_only
+    rationale: Navigation or multi-method omnibus source is retained for audit/coalescence and is not a recallable canonical method.
+    mapping_basis: gate_2_method_coalescence
     merge_sections: []
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: clear
-        internal_business_facts: reviewed
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
   - key: knowledge:ds-method-user-01-research-scope
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1003,8 +854,8 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/用户分析/用户分析01分析边界.md
     disposition: import_candidate
-    rationale: New method content is a Phase-B candidate and remains non-runtime until governance review.
-    mapping_basis: registry_type_method
+    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
+    mapping_basis: gate_2_single_method_candidate
     target:
       canonical_id: ds-method-user-01-research-scope
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-01-research-scope.md
@@ -1016,7 +867,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -1031,29 +882,10 @@ entities:
     entity_type: method
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/用户分析/用户分析用户认知与行为模型类.md
-    disposition: import_candidate
-    rationale: New method content is a Phase-B candidate and remains non-runtime until governance review.
-    mapping_basis: registry_type_method
-    target:
-      canonical_id: ds-method-user-02
-      path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-02.md
-      status: candidate
+    disposition: source_only
+    rationale: Navigation or multi-method omnibus source is retained for audit/coalescence and is not a recallable canonical method.
+    mapping_basis: gate_2_method_coalescence
     merge_sections: []
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: clear
-        internal_business_facts: reviewed
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
   - key: knowledge:ds-method-user-02-user-segmentation
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1062,8 +894,8 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/用户分析/用户分析02用户分层.md
     disposition: import_candidate
-    rationale: New method content is a Phase-B candidate and remains non-runtime until governance review.
-    mapping_basis: registry_type_method
+    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
+    mapping_basis: gate_2_single_method_candidate
     target:
       canonical_id: ds-method-user-02-user-segmentation
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-02-user-segmentation.md
@@ -1075,7 +907,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -1091,8 +923,8 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/用户分析/用户分析03旅程任务.md
     disposition: import_candidate
-    rationale: New method content is a Phase-B candidate and remains non-runtime until governance review.
-    mapping_basis: registry_type_method
+    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
+    mapping_basis: gate_2_single_method_candidate
     target:
       canonical_id: ds-method-user-03-journey-and-tasks
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-03-journey-and-tasks.md
@@ -1104,7 +936,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -1120,8 +952,8 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/用户分析/用户分析04痛点诊断.md
     disposition: import_candidate
-    rationale: New method content is a Phase-B candidate and remains non-runtime until governance review.
-    mapping_basis: registry_type_method
+    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
+    mapping_basis: gate_2_single_method_candidate
     target:
       canonical_id: ds-method-user-04-painpoint-diagnosis
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-04-painpoint-diagnosis.md
@@ -1133,7 +965,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -1149,8 +981,8 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/用户分析/用户分析05洞察输出.md
     disposition: import_candidate
-    rationale: New method content is a Phase-B candidate and remains non-runtime until governance review.
-    mapping_basis: registry_type_method
+    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
+    mapping_basis: gate_2_single_method_candidate
     target:
       canonical_id: ds-method-user-05-insight-output
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-05-insight-output.md
@@ -1162,7 +994,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -1211,8 +1043,8 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/模板库/设计策略/设计策略案例卡模板.md
     disposition: import_candidate
-    rationale: Registry template is a Phase-B Asset candidate and is not a general runtime knowledge entry.
-    mapping_basis: registry_type_template
+    rationale: Unique design-strategy case-card template is retained as an evaluation-only candidate.
+    mapping_basis: gate_2_unique_template_candidate
     target:
       canonical_id: ds-template-design-strategy-case-card-template
       path: knowledge-base/assets/templates/ds-template-design-strategy-case-card-template.md
@@ -1224,7 +1056,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -1459,29 +1291,14 @@ entities:
     entity_type: template
     source_status: draft
     source_path: 03-knowledge-知识/模板库/用户研究/问卷题库行为与习惯（behavior-habits）.md
-    disposition: import_candidate
-    rationale: Registry template is a Phase-B Asset candidate and is not a general runtime knowledge entry.
-    mapping_basis: registry_type_template
+    disposition: map_existing
+    rationale: Gate-2 review identified an existing canonical Asset; retain the Hub row as provenance without a duplicate candidate.
+    mapping_basis: gate_2_existing_asset
     target:
-      canonical_id: ur-asset-behavior-habits
-      path: knowledge-base/assets/templates/ur-asset-behavior-habits.md
-      status: candidate
+      canonical_id: behavior-habits
+      path: knowledge-base/assets/question-bank/survey/behavior-habits.md
+      status: existing
     merge_sections: []
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: clear
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - known-local-path-source-reference-removed
   - key: knowledge:ur-asset-concept-test
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1489,29 +1306,14 @@ entities:
     entity_type: template
     source_status: draft
     source_path: 03-knowledge-知识/模板库/用户研究/问卷题库概念与方案评估（concept-test）.md
-    disposition: import_candidate
-    rationale: Registry template is a Phase-B Asset candidate and is not a general runtime knowledge entry.
-    mapping_basis: registry_type_template
+    disposition: map_existing
+    rationale: Gate-2 review identified an existing canonical Asset; retain the Hub row as provenance without a duplicate candidate.
+    mapping_basis: gate_2_existing_asset
     target:
-      canonical_id: ur-asset-concept-test
-      path: knowledge-base/assets/templates/ur-asset-concept-test.md
-      status: candidate
+      canonical_id: concept-test
+      path: knowledge-base/assets/question-bank/survey/concept-test.md
+      status: existing
     merge_sections: []
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: clear
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - known-local-path-source-reference-removed
   - key: knowledge:ur-asset-decision-journey
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1519,30 +1321,14 @@ entities:
     entity_type: template
     source_status: draft
     source_path: 03-knowledge-知识/模板库/用户研究/问卷题库决策与链路（decision-journey）.md
-    disposition: import_candidate
-    rationale: Registry template is a Phase-B Asset candidate and is not a general runtime knowledge entry.
-    mapping_basis: registry_type_template
+    disposition: map_existing
+    rationale: Gate-2 review identified an existing canonical Asset; retain the Hub row as provenance without a duplicate candidate.
+    mapping_basis: gate_2_existing_asset
     target:
-      canonical_id: ur-asset-decision-journey
-      path: knowledge-base/assets/templates/ur-asset-decision-journey.md
-      status: candidate
+      canonical_id: decision-journey
+      path: knowledge-base/assets/question-bank/survey/decision-journey.md
+      status: existing
     merge_sections: []
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: reviewed
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
-        - known-local-path-source-reference-removed
   - key: knowledge:ur-asset-experience-painpoints
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1550,30 +1336,14 @@ entities:
     entity_type: template
     source_status: draft
     source_path: 03-knowledge-知识/模板库/用户研究/问卷题库体验与痛点（experience-painpoints）.md
-    disposition: import_candidate
-    rationale: Registry template is a Phase-B Asset candidate and is not a general runtime knowledge entry.
-    mapping_basis: registry_type_template
+    disposition: map_existing
+    rationale: Gate-2 review identified an existing canonical Asset; retain the Hub row as provenance without a duplicate candidate.
+    mapping_basis: gate_2_existing_asset
     target:
-      canonical_id: ur-asset-experience-painpoints
-      path: knowledge-base/assets/templates/ur-asset-experience-painpoints.md
-      status: candidate
+      canonical_id: experience-painpoints
+      path: knowledge-base/assets/question-bank/survey/experience-painpoints.md
+      status: existing
     merge_sections: []
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: reviewed
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
-        - known-local-path-source-reference-removed
   - key: knowledge:ur-asset-interview-forbidden-questions
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1581,29 +1351,14 @@ entities:
     entity_type: template
     source_status: draft
     source_path: 03-knowledge-知识/模板库/用户研究/访谈禁问清单与中立替代话术.md
-    disposition: import_candidate
-    rationale: Registry template is a Phase-B Asset candidate and is not a general runtime knowledge entry.
-    mapping_basis: registry_type_template
+    disposition: map_existing
+    rationale: Gate-2 review identified an existing canonical Asset; retain the Hub row as provenance without a duplicate candidate.
+    mapping_basis: gate_2_existing_asset
     target:
-      canonical_id: ur-asset-interview-forbidden-questions
-      path: knowledge-base/assets/templates/ur-asset-interview-forbidden-questions.md
-      status: candidate
+      canonical_id: interview-forbidden-questions
+      path: knowledge-base/assets/question-bank/interview-forbidden-questions.md
+      status: existing
     merge_sections: []
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: clear
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - known-local-path-source-reference-removed
   - key: knowledge:ur-asset-mindset-cognition
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1611,30 +1366,14 @@ entities:
     entity_type: template
     source_status: draft
     source_path: 03-knowledge-知识/模板库/用户研究/问卷题库心智与认知（mindset-cognition）.md
-    disposition: import_candidate
-    rationale: Registry template is a Phase-B Asset candidate and is not a general runtime knowledge entry.
-    mapping_basis: registry_type_template
+    disposition: map_existing
+    rationale: Gate-2 review identified an existing canonical Asset; retain the Hub row as provenance without a duplicate candidate.
+    mapping_basis: gate_2_existing_asset
     target:
-      canonical_id: ur-asset-mindset-cognition
-      path: knowledge-base/assets/templates/ur-asset-mindset-cognition.md
-      status: candidate
+      canonical_id: mindset-cognition
+      path: knowledge-base/assets/question-bank/survey/mindset-cognition.md
+      status: existing
     merge_sections: []
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: reviewed
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
-        - known-local-path-source-reference-removed
   - key: knowledge:ur-asset-needs-scenarios
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1642,29 +1381,14 @@ entities:
     entity_type: template
     source_status: draft
     source_path: 03-knowledge-知识/模板库/用户研究/问卷题库需求与场景（needs-scenarios）.md
-    disposition: import_candidate
-    rationale: Registry template is a Phase-B Asset candidate and is not a general runtime knowledge entry.
-    mapping_basis: registry_type_template
+    disposition: map_existing
+    rationale: Gate-2 review identified an existing canonical Asset; retain the Hub row as provenance without a duplicate candidate.
+    mapping_basis: gate_2_existing_asset
     target:
-      canonical_id: ur-asset-needs-scenarios
-      path: knowledge-base/assets/templates/ur-asset-needs-scenarios.md
-      status: candidate
+      canonical_id: needs-scenarios
+      path: knowledge-base/assets/question-bank/survey/needs-scenarios.md
+      status: existing
     merge_sections: []
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: clear
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - known-local-path-source-reference-removed
   - key: knowledge:ur-asset-screener-demographics
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1672,29 +1396,14 @@ entities:
     entity_type: template
     source_status: draft
     source_path: 03-knowledge-知识/模板库/用户研究/问卷题库筛选与背景（screener-demographics）.md
-    disposition: import_candidate
-    rationale: Registry template is a Phase-B Asset candidate and is not a general runtime knowledge entry.
-    mapping_basis: registry_type_template
+    disposition: map_existing
+    rationale: Gate-2 review identified an existing canonical Asset; retain the Hub row as provenance without a duplicate candidate.
+    mapping_basis: gate_2_existing_asset
     target:
-      canonical_id: ur-asset-screener-demographics
-      path: knowledge-base/assets/templates/ur-asset-screener-demographics.md
-      status: candidate
+      canonical_id: screener-demographics
+      path: knowledge-base/assets/question-bank/survey/screener-demographics.md
+      status: existing
     merge_sections: []
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: clear
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - known-local-path-source-reference-removed
   - key: knowledge:ur-asset-standardized-ux-scales
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1702,29 +1411,14 @@ entities:
     entity_type: template
     source_status: draft
     source_path: 03-knowledge-知识/模板库/用户研究/标准化体验量表（SUSUMUX-LiteSEQNPSCSATCES）.md
-    disposition: import_candidate
-    rationale: Registry template is a Phase-B Asset candidate and is not a general runtime knowledge entry.
-    mapping_basis: registry_type_template
+    disposition: map_existing
+    rationale: Gate-2 review identified an existing canonical Asset; retain the Hub row as provenance without a duplicate candidate.
+    mapping_basis: gate_2_existing_asset
     target:
-      canonical_id: ur-asset-standardized-ux-scales
-      path: knowledge-base/assets/templates/ur-asset-standardized-ux-scales.md
-      status: candidate
+      canonical_id: standardized-ux-scales
+      path: knowledge-base/assets/scales/standardized-ux-scales.md
+      status: existing
     merge_sections: []
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: clear
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - known-local-path-source-reference-removed
   - key: knowledge:ur-method-methods-scenarios-category-consumption-cross-category-category-research
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -3501,30 +3195,14 @@ entities:
     entity_type: template
     source_status: draft
     source_path: 03-knowledge-知识/模板库/用户研究/流失用户电话回访话术框架.md
-    disposition: import_candidate
-    rationale: Registry template is a Phase-B Asset candidate and is not a general runtime knowledge entry.
-    mapping_basis: registry_type_template
+    disposition: map_existing
+    rationale: Gate-2 review identified an existing canonical Asset; retain the Hub row as provenance without a duplicate candidate.
+    mapping_basis: gate_2_existing_asset
     target:
-      canonical_id: ur-template-churn-phone-interview-script
-      path: knowledge-base/assets/templates/ur-template-churn-phone-interview-script.md
-      status: candidate
+      canonical_id: churn-phone-interview-script
+      path: knowledge-base/assets/templates/churn-phone-interview-script.md
+      status: existing
     merge_sections: []
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: reviewed
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
-        - known-local-path-source-reference-removed
   - key: knowledge:ur-template-churn-survey-framework
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -3532,30 +3210,14 @@ entities:
     entity_type: template
     source_status: draft
     source_path: 03-knowledge-知识/模板库/用户研究/流失用户定量问卷框架.md
-    disposition: import_candidate
-    rationale: Registry template is a Phase-B Asset candidate and is not a general runtime knowledge entry.
-    mapping_basis: registry_type_template
+    disposition: map_existing
+    rationale: Gate-2 review identified an existing canonical Asset; retain the Hub row as provenance without a duplicate candidate.
+    mapping_basis: gate_2_existing_asset
     target:
-      canonical_id: ur-template-churn-survey-framework
-      path: knowledge-base/assets/templates/ur-template-churn-survey-framework.md
-      status: candidate
+      canonical_id: churn-survey-framework
+      path: knowledge-base/assets/templates/churn-survey-framework.md
+      status: existing
     merge_sections: []
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: reviewed
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
-        - known-local-path-source-reference-removed
   - key: knowledge:ur-template-experience-issue-description-script
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -3563,30 +3225,14 @@ entities:
     entity_type: template
     source_status: draft
     source_path: 03-knowledge-知识/模板库/用户研究/体验问题描述话术模板.md
-    disposition: import_candidate
-    rationale: Registry template is a Phase-B Asset candidate and is not a general runtime knowledge entry.
-    mapping_basis: registry_type_template
+    disposition: map_existing
+    rationale: Gate-2 review identified an existing canonical Asset; retain the Hub row as provenance without a duplicate candidate.
+    mapping_basis: gate_2_existing_asset
     target:
-      canonical_id: ur-template-experience-issue-description-script
-      path: knowledge-base/assets/templates/ur-template-experience-issue-description-script.md
-      status: candidate
+      canonical_id: experience-issue-description-script
+      path: knowledge-base/assets/templates/experience-issue-description-script.md
+      status: existing
     merge_sections: []
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: reviewed
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
-        - known-local-path-source-reference-removed
   - key: knowledge:ur-template-opportunity-solution-tree
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -3594,29 +3240,14 @@ entities:
     entity_type: template
     source_status: draft
     source_path: 03-knowledge-知识/模板库/用户研究/机会-解决方案树（OpportunitySolutionTree,OST）.md
-    disposition: import_candidate
-    rationale: Registry template is a Phase-B Asset candidate and is not a general runtime knowledge entry.
-    mapping_basis: registry_type_template
+    disposition: map_existing
+    rationale: Gate-2 review identified an existing canonical Asset; retain the Hub row as provenance without a duplicate candidate.
+    mapping_basis: gate_2_existing_asset
     target:
-      canonical_id: ur-template-opportunity-solution-tree
-      path: knowledge-base/assets/templates/ur-template-opportunity-solution-tree.md
-      status: candidate
+      canonical_id: opportunity-solution-tree
+      path: knowledge-base/assets/templates/opportunity-solution-tree.md
+      status: existing
     merge_sections: []
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: clear
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - known-local-path-source-reference-removed
   - key: knowledge:ux-method-experience-diagnosis-framework
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -3625,8 +3256,8 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/通用体验/体验问题诊断与走查框架.md
     disposition: import_candidate
-    rationale: New method content is a Phase-B candidate and remains non-runtime until governance review.
-    mapping_basis: registry_type_method
+    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
+    mapping_basis: gate_2_single_method_candidate
     target:
       canonical_id: ux-method-experience-diagnosis-framework
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ux-method-experience-diagnosis-framework.md
@@ -3638,7 +3269,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -3654,30 +3285,10 @@ entities:
     entity_type: skill
     source_status: draft
     source_path: 02-skills-技能/设计策略/竞品策略分析/SKILL.md
-    disposition: merge_into_existing
-    rationale: Plan-approved semantic merge target avoids activating a duplicate Skill.
-    mapping_basis: plan_semantic_merge
-    target:
-      canonical_id: competitive-analysis
-      path: knowledge-base/skills/competitive-analysis
-      status: existing
-    merge_sections:
-      - review_required
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: clear
-        internal_business_facts: clear
-      finding_refs:
-        - gate-1-internal-evaluation-only
-    coalescence_group_id: coalesce-competitive-analysis
+    disposition: reject_runtime
+    rationale: Gate-2 review rejected the generic duplicate Skill body; source remains available only in the Hub snapshot.
+    mapping_basis: gate_2_generic_skill_reject
+    merge_sections: []
   - key: skill:ds-skill-solution-generation
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -3686,7 +3297,7 @@ entities:
     source_status: draft
     source_path: 02-skills-技能/设计策略/解决方案生成/SKILL.md
     disposition: import_candidate
-    rationale: Unique Skill remains a non-active candidate/draft because no approved independent runtime contract exists.
+    rationale: Gate-2 approved this Skill only as an evaluation-only draft; it remains non-routable with no active contract.
     mapping_basis: plan_draft_skill
     target:
       canonical_id: solution-generation
@@ -3699,7 +3310,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -3714,28 +3325,10 @@ entities:
     entity_type: skill
     source_status: draft
     source_path: 02-skills-技能/设计策略/设计策略地图生成/SKILL.md
-    disposition: import_candidate
-    rationale: Unique Skill remains a non-active candidate/draft because no approved independent runtime contract exists.
-    mapping_basis: plan_draft_skill
-    target:
-      canonical_id: strategy-map-generation
-      path: knowledge-base/skills/strategy-map-generation/SKILL.md
-      status: candidate
+    disposition: reject_runtime
+    rationale: Gate-2 review rejected the generic strategy-map Skill candidate; its useful concepts remain in method candidates.
+    mapping_basis: gate_2_skill_candidate_reject
     merge_sections: []
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: clear
-        internal_business_facts: clear
-      finding_refs:
-        - gate-1-internal-evaluation-only
   - key: skill:ds-skill-trend-change-scan
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -3744,21 +3337,24 @@ entities:
     source_status: draft
     source_path: 02-skills-技能/设计策略/趋势变化扫描/SKILL.md
     disposition: merge_into_existing
-    rationale: Plan-approved semantic merge target avoids activating a duplicate Skill.
-    mapping_basis: plan_semantic_merge
+    rationale: Gate-2 approved only a narrow trigger/evidence/fallback/confirmation delta; the canonical Skill contract remains authoritative.
+    mapping_basis: gate_2_narrow_skill_delta
     target:
       canonical_id: competitive-web-research
       path: skills/competitive-analysis/web-research/SKILL.md
       status: existing
     merge_sections:
-      - review_required
+      - when_to_use
+      - evidence_boundary
+      - fallback
+      - human_confirmation
     governance:
       sensitivity: internal
       distribution_scope: evaluation_only
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -3773,30 +3369,10 @@ entities:
     entity_type: skill
     source_status: draft
     source_path: 02-skills-技能/设计策略/用户洞察综合分析/SKILL.md
-    disposition: merge_into_existing
-    rationale: Plan-approved semantic merge target avoids activating a duplicate Skill.
-    mapping_basis: plan_semantic_merge
-    target:
-      canonical_id: synthesize-qualitative-insights
-      path: knowledge-base/skills/synthesize-qualitative-insights
-      status: existing
-    merge_sections:
-      - review_required
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: clear
-        internal_business_facts: clear
-      finding_refs:
-        - gate-1-internal-evaluation-only
-    coalescence_group_id: coalesce-synthesize-qualitative-insights
+    disposition: reject_runtime
+    rationale: Gate-2 review rejected the generic duplicate Skill body; source remains available only in the Hub snapshot.
+    mapping_basis: gate_2_generic_skill_reject
+    merge_sections: []
   - key: skill:ur-skill-accessibility-review
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -3804,31 +3380,14 @@ entities:
     entity_type: skill
     source_status: draft
     source_path: 02-skills-技能/用户研究/无障碍审查/SKILL.md
-    disposition: merge_into_existing
-    rationale: Hub Skill overlaps an active canonical Skill; only reviewed semantic deltas may merge in Phase C.
-    mapping_basis: exact_skill_slug
+    disposition: map_existing
+    rationale: Gate-2 review confirmed the Hub body already exists in the canonical Skill or its references; no merge draft is needed.
+    mapping_basis: gate_2_skill_noop
     target:
       canonical_id: accessibility-review
       path: knowledge-base/skills/accessibility-review
       status: existing
-    merge_sections:
-      - review_required
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: reviewed
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
-        - known-local-path-source-reference-removed
+    merge_sections: []
   - key: skill:ur-skill-analyze-satisfaction
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -3836,30 +3395,14 @@ entities:
     entity_type: skill
     source_status: draft
     source_path: 02-skills-技能/用户研究/满意度诊断/SKILL.md
-    disposition: merge_into_existing
-    rationale: Hub Skill overlaps an active canonical Skill; only reviewed semantic deltas may merge in Phase C.
-    mapping_basis: exact_skill_slug
+    disposition: map_existing
+    rationale: Gate-2 review confirmed the Hub body already exists in the canonical Skill or its references; no merge draft is needed.
+    mapping_basis: gate_2_skill_noop
     target:
       canonical_id: analyze-satisfaction
       path: knowledge-base/skills/analyze-satisfaction
       status: existing
-    merge_sections:
-      - review_required
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: clear
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - known-local-path-source-reference-removed
+    merge_sections: []
   - key: skill:ur-skill-build-experience-metrics
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -3867,31 +3410,14 @@ entities:
     entity_type: skill
     source_status: draft
     source_path: 02-skills-技能/用户研究/体验度量体系/SKILL.md
-    disposition: merge_into_existing
-    rationale: Hub Skill overlaps an active canonical Skill; only reviewed semantic deltas may merge in Phase C.
-    mapping_basis: exact_skill_slug
+    disposition: map_existing
+    rationale: Gate-2 review confirmed the Hub body already exists in the canonical Skill or its references; no merge draft is needed.
+    mapping_basis: gate_2_skill_noop
     target:
       canonical_id: build-experience-metrics
       path: knowledge-base/skills/build-experience-metrics
       status: existing
-    merge_sections:
-      - review_required
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: reviewed
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
-        - known-local-path-source-reference-removed
+    merge_sections: []
   - key: skill:ur-skill-code-open-feedback
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -3899,31 +3425,14 @@ entities:
     entity_type: skill
     source_status: draft
     source_path: 02-skills-技能/用户研究/VOC反馈编码/SKILL.md
-    disposition: merge_into_existing
-    rationale: Hub Skill overlaps an active canonical Skill; only reviewed semantic deltas may merge in Phase C.
-    mapping_basis: exact_skill_slug
+    disposition: map_existing
+    rationale: Gate-2 review confirmed the Hub body already exists in the canonical Skill or its references; no merge draft is needed.
+    mapping_basis: gate_2_skill_noop
     target:
       canonical_id: code-open-feedback
       path: knowledge-base/skills/code-open-feedback
       status: existing
-    merge_sections:
-      - review_required
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: reviewed
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
-        - known-local-path-source-reference-removed
+    merge_sections: []
   - key: skill:ur-skill-competitive-analysis
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -3931,31 +3440,14 @@ entities:
     entity_type: skill
     source_status: draft
     source_path: 02-skills-技能/用户研究/竞品分析/SKILL.md
-    disposition: merge_into_existing
-    rationale: Hub Skill overlaps an active canonical Skill; only reviewed semantic deltas may merge in Phase C.
-    mapping_basis: exact_skill_slug
+    disposition: map_existing
+    rationale: Gate-2 review confirmed the Hub body already exists in the canonical Skill or its references; no merge draft is needed.
+    mapping_basis: gate_2_skill_noop
     target:
       canonical_id: competitive-analysis
       path: knowledge-base/skills/competitive-analysis
       status: existing
-    merge_sections:
-      - review_required
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: clear
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - known-local-path-source-reference-removed
-    coalescence_group_id: coalesce-competitive-analysis
+    merge_sections: []
   - key: skill:ur-skill-conversion-funnel-analysis
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -3963,30 +3455,14 @@ entities:
     entity_type: skill
     source_status: draft
     source_path: 02-skills-技能/用户研究/转化漏斗分析/SKILL.md
-    disposition: merge_into_existing
-    rationale: Hub Skill overlaps an active canonical Skill; only reviewed semantic deltas may merge in Phase C.
-    mapping_basis: exact_skill_slug
+    disposition: map_existing
+    rationale: Gate-2 review confirmed the Hub body already exists in the canonical Skill or its references; no merge draft is needed.
+    mapping_basis: gate_2_skill_noop
     target:
       canonical_id: conversion-funnel-analysis
       path: knowledge-base/skills/conversion-funnel-analysis
       status: existing
-    merge_sections:
-      - review_required
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: clear
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - known-local-path-source-reference-removed
+    merge_sections: []
   - key: skill:ur-skill-experience-walkthrough
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -3995,21 +3471,25 @@ entities:
     source_status: draft
     source_path: 02-skills-技能/用户研究/体验走查/SKILL.md
     disposition: merge_into_existing
-    rationale: Plan-approved semantic merge target avoids activating a duplicate Skill.
-    mapping_basis: plan_semantic_merge
+    rationale: Gate-2 approved only a narrow trigger/evidence/fallback/confirmation delta; the canonical Skill contract remains authoritative.
+    mapping_basis: gate_2_narrow_skill_delta
     target:
       canonical_id: run-heuristic-evaluation
       path: knowledge-base/skills/run-heuristic-evaluation
       status: existing
     merge_sections:
-      - review_required
+      - when_to_use
+      - scope
+      - evidence_location
+      - confidence
+      - human_confirmation
     governance:
       sensitivity: internal
       distribution_scope: evaluation_only
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -4025,30 +3505,14 @@ entities:
     entity_type: skill
     source_status: draft
     source_path: 02-skills-技能/用户研究/功能采纳分析/SKILL.md
-    disposition: merge_into_existing
-    rationale: Hub Skill overlaps an active canonical Skill; only reviewed semantic deltas may merge in Phase C.
-    mapping_basis: exact_skill_slug
+    disposition: map_existing
+    rationale: Gate-2 review confirmed the Hub body already exists in the canonical Skill or its references; no merge draft is needed.
+    mapping_basis: gate_2_skill_noop
     target:
       canonical_id: feature-adoption-analysis
       path: knowledge-base/skills/feature-adoption-analysis
       status: existing
-    merge_sections:
-      - review_required
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: clear
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - known-local-path-source-reference-removed
+    merge_sections: []
   - key: skill:ur-skill-generate-interview-guide
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4056,30 +3520,14 @@ entities:
     entity_type: skill
     source_status: draft
     source_path: 02-skills-技能/用户研究/生成访谈提纲/SKILL.md
-    disposition: merge_into_existing
-    rationale: Hub Skill overlaps an active canonical Skill; only reviewed semantic deltas may merge in Phase C.
-    mapping_basis: exact_skill_slug
+    disposition: map_existing
+    rationale: Gate-2 review confirmed the Hub body already exists in the canonical Skill or its references; no merge draft is needed.
+    mapping_basis: gate_2_skill_noop
     target:
       canonical_id: generate-interview-guide
       path: knowledge-base/skills/generate-interview-guide
       status: existing
-    merge_sections:
-      - review_required
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: clear
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - known-local-path-source-reference-removed
+    merge_sections: []
   - key: skill:ur-skill-generate-persona
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4087,30 +3535,14 @@ entities:
     entity_type: skill
     source_status: draft
     source_path: 02-skills-技能/用户研究/用户画像/SKILL.md
-    disposition: merge_into_existing
-    rationale: Hub Skill overlaps an active canonical Skill; only reviewed semantic deltas may merge in Phase C.
-    mapping_basis: exact_skill_slug
+    disposition: map_existing
+    rationale: Gate-2 review confirmed the Hub body already exists in the canonical Skill or its references; no merge draft is needed.
+    mapping_basis: gate_2_skill_noop
     target:
       canonical_id: generate-persona
       path: knowledge-base/skills/generate-persona
       status: existing
-    merge_sections:
-      - review_required
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: clear
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - known-local-path-source-reference-removed
+    merge_sections: []
   - key: skill:ur-skill-generate-research-plan
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4118,30 +3550,14 @@ entities:
     entity_type: skill
     source_status: draft
     source_path: 02-skills-技能/用户研究/生成研究方案/SKILL.md
-    disposition: merge_into_existing
-    rationale: Hub Skill overlaps an active canonical Skill; only reviewed semantic deltas may merge in Phase C.
-    mapping_basis: exact_skill_slug
+    disposition: map_existing
+    rationale: Gate-2 review confirmed the Hub body already exists in the canonical Skill or its references; no merge draft is needed.
+    mapping_basis: gate_2_skill_noop
     target:
       canonical_id: generate-research-plan
       path: knowledge-base/skills/generate-research-plan
       status: existing
-    merge_sections:
-      - review_required
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: clear
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - known-local-path-source-reference-removed
+    merge_sections: []
   - key: skill:ur-skill-generate-survey
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4149,30 +3565,14 @@ entities:
     entity_type: skill
     source_status: draft
     source_path: 02-skills-技能/用户研究/生成问卷/SKILL.md
-    disposition: merge_into_existing
-    rationale: Hub Skill overlaps an active canonical Skill; only reviewed semantic deltas may merge in Phase C.
-    mapping_basis: exact_skill_slug
+    disposition: map_existing
+    rationale: Gate-2 review confirmed the Hub body already exists in the canonical Skill or its references; no merge draft is needed.
+    mapping_basis: gate_2_skill_noop
     target:
       canonical_id: generate-survey
       path: knowledge-base/skills/generate-survey
       status: existing
-    merge_sections:
-      - review_required
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: clear
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - known-local-path-source-reference-removed
+    merge_sections: []
   - key: skill:ur-skill-generate-usability-test
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4180,30 +3580,14 @@ entities:
     entity_type: skill
     source_status: draft
     source_path: 02-skills-技能/用户研究/可用性测试/SKILL.md
-    disposition: merge_into_existing
-    rationale: Hub Skill overlaps an active canonical Skill; only reviewed semantic deltas may merge in Phase C.
-    mapping_basis: exact_skill_slug
+    disposition: map_existing
+    rationale: Gate-2 review confirmed the Hub body already exists in the canonical Skill or its references; no merge draft is needed.
+    mapping_basis: gate_2_skill_noop
     target:
       canonical_id: generate-usability-test
       path: knowledge-base/skills/generate-usability-test
       status: existing
-    merge_sections:
-      - review_required
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: clear
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - known-local-path-source-reference-removed
+    merge_sections: []
   - key: skill:ur-skill-issue-prioritization
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4211,31 +3595,14 @@ entities:
     entity_type: skill
     source_status: draft
     source_path: 02-skills-技能/用户研究/问题分层与优先级/SKILL.md
-    disposition: merge_into_existing
-    rationale: Hub Skill overlaps an active canonical Skill; only reviewed semantic deltas may merge in Phase C.
-    mapping_basis: exact_skill_slug
+    disposition: map_existing
+    rationale: Gate-2 review confirmed the Hub body already exists in the canonical Skill or its references; no merge draft is needed.
+    mapping_basis: gate_2_skill_noop
     target:
       canonical_id: issue-prioritization
       path: knowledge-base/skills/issue-prioritization
       status: existing
-    merge_sections:
-      - review_required
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: reviewed
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
-        - known-local-path-source-reference-removed
+    merge_sections: []
   - key: skill:ur-skill-jobs-to-be-done
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4243,30 +3610,14 @@ entities:
     entity_type: skill
     source_status: draft
     source_path: 02-skills-技能/用户研究/需求定义JTBD/SKILL.md
-    disposition: merge_into_existing
-    rationale: Hub Skill overlaps an active canonical Skill; only reviewed semantic deltas may merge in Phase C.
-    mapping_basis: exact_skill_slug
+    disposition: map_existing
+    rationale: Gate-2 review confirmed the Hub body already exists in the canonical Skill or its references; no merge draft is needed.
+    mapping_basis: gate_2_skill_noop
     target:
       canonical_id: jobs-to-be-done
       path: knowledge-base/skills/jobs-to-be-done
       status: existing
-    merge_sections:
-      - review_required
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: clear
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - known-local-path-source-reference-removed
+    merge_sections: []
   - key: skill:ur-skill-journey-map
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4274,31 +3625,14 @@ entities:
     entity_type: skill
     source_status: draft
     source_path: 02-skills-技能/用户研究/体验旅程图/SKILL.md
-    disposition: merge_into_existing
-    rationale: Hub Skill overlaps an active canonical Skill; only reviewed semantic deltas may merge in Phase C.
-    mapping_basis: exact_skill_slug
+    disposition: map_existing
+    rationale: Gate-2 review confirmed the Hub body already exists in the canonical Skill or its references; no merge draft is needed.
+    mapping_basis: gate_2_skill_noop
     target:
       canonical_id: journey-map
       path: knowledge-base/skills/journey-map
       status: existing
-    merge_sections:
-      - review_required
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: reviewed
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
-        - known-local-path-source-reference-removed
+    merge_sections: []
   - key: skill:ur-skill-research-screenshot-analyzer
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4317,31 +3651,14 @@ entities:
     entity_type: skill
     source_status: draft
     source_path: 02-skills-技能/用户研究/启发式评估/SKILL.md
-    disposition: merge_into_existing
-    rationale: Hub Skill overlaps an active canonical Skill; only reviewed semantic deltas may merge in Phase C.
-    mapping_basis: exact_skill_slug
+    disposition: map_existing
+    rationale: Gate-2 review confirmed the Hub body already exists in the canonical Skill or its references; no merge draft is needed.
+    mapping_basis: gate_2_skill_noop
     target:
       canonical_id: run-heuristic-evaluation
       path: knowledge-base/skills/run-heuristic-evaluation
       status: existing
-    merge_sections:
-      - review_required
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: reviewed
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
-        - known-local-path-source-reference-removed
+    merge_sections: []
     coalescence_group_id: coalesce-run-heuristic-evaluation
   - key: skill:ur-skill-structure-interview-transcript
     registry_kind: skill
@@ -4350,30 +3667,14 @@ entities:
     entity_type: skill
     source_status: draft
     source_path: 02-skills-技能/用户研究/单场访谈小结/SKILL.md
-    disposition: merge_into_existing
-    rationale: Hub Skill overlaps an active canonical Skill; only reviewed semantic deltas may merge in Phase C.
-    mapping_basis: exact_skill_slug
+    disposition: map_existing
+    rationale: Gate-2 review confirmed the Hub body already exists in the canonical Skill or its references; no merge draft is needed.
+    mapping_basis: gate_2_skill_noop
     target:
       canonical_id: structure-interview-transcript
       path: knowledge-base/skills/structure-interview-transcript
       status: existing
-    merge_sections:
-      - review_required
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: clear
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - known-local-path-source-reference-removed
+    merge_sections: []
   - key: skill:ur-skill-synthesize-qualitative-insights
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4381,31 +3682,14 @@ entities:
     entity_type: skill
     source_status: draft
     source_path: 02-skills-技能/用户研究/定性归纳与洞察/SKILL.md
-    disposition: merge_into_existing
-    rationale: Hub Skill overlaps an active canonical Skill; only reviewed semantic deltas may merge in Phase C.
-    mapping_basis: exact_skill_slug
+    disposition: map_existing
+    rationale: Gate-2 review confirmed the Hub body already exists in the canonical Skill or its references; no merge draft is needed.
+    mapping_basis: gate_2_skill_noop
     target:
       canonical_id: synthesize-qualitative-insights
       path: knowledge-base/skills/synthesize-qualitative-insights
       status: existing
-    merge_sections:
-      - review_required
-    governance:
-      sensitivity: internal
-      distribution_scope: evaluation_only
-      owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
-      source_rights: cleared_internal_reuse
-      review_status: review_required
-      scans:
-        secrets: clear
-        pii: clear
-        local_paths: reviewed
-        internal_business_facts: clear
-      finding_refs:
-        - gate-1-internal-evaluation-only
-        - known-local-path-source-reference-removed
-    coalescence_group_id: coalesce-synthesize-qualitative-insights
+    merge_sections: []
   - key: task:competitor-benchmark-research
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4427,7 +3711,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -4457,7 +3741,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -4542,7 +3826,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -4572,7 +3856,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -4624,7 +3908,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -4654,7 +3938,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -4683,7 +3967,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -4713,7 +3997,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -4742,7 +4026,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -4771,7 +4055,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -4812,7 +4096,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -4842,7 +4126,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -4938,7 +4222,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -4968,7 +4252,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -4998,7 +4282,7 @@ entities:
       owner: user-research-hub-maintainers
       retention: through-gate-3-or-revocation
       source_rights: cleared_internal_reuse
-      review_status: review_required
+      review_status: complete
       scans:
         secrets: clear
         pii: clear
@@ -106957,4 +106241,4 @@ files:
     coverage:
       kind: attachment
       attachment_group_ref: migration-records
-disposition_hash: sha256:c1e961de7b418a68d9a5c5964fc0ad7b5795b88f94e4e6b1474cd0dc85260c8d
+disposition_hash: sha256:a292119183545e4d77540443dd839a3ca810a407bcd74bc73f4a54e83372e584

@@ -72,7 +72,6 @@ candidate_profiles:
   - speed
   - depth
   - breadth
-  - decision
 ---
 
 # 解决方案生成

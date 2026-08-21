@@ -1,5 +1,5 @@
 {
-  "version": "planning-guidance-dataset-manifest-v1",
+  "version": "planning-guidance-dataset-manifest-v2",
   "frozen": true,
   "freeze_order": "split_locked_before_rule_or_prompt_tuning",
   "total_count": 90,
@@ -12,9 +12,9 @@
     "holdout": {
       "count": 30,
       "file": "tests/fixtures/planning-guidance-holdout.json",
-      "sha256": "sha256:2261d160f937011ec2455c26036a1bc63a86d30a5823d9a459a26c4404738a95",
+      "sha256": "sha256:b481bb69715710d682d2cccff4d478784f1a3223a3f313163b0f7b7fb64532a6",
       "expected_labels": "withheld_until_gate_3",
-      "expected_labels_commitment_sha256": "sha256:51e67e74eeb9d48cf3e6edd031c6042db0bdc73792ea90c4a688269c7d04978c"
+      "expected_labels_commitment_sha256": "sha256:2de84cd2b5a51d8f51f10a09c4ef29f418d9db25080989841108e968d441ce3a"
     }
   },
   "composition": {
@@ -49,5 +49,5 @@
       "holdout": 3
     }
   },
-  "split_assignment_sha256": "sha256:9db998c58e7a7908a4180a63b15b41317904f7e36c09c87f36ce3903ce43949c"
+  "split_assignment_sha256": "sha256:dcede2f4af948ecea8d2d81c8aed195cd5422e5081f2d7ad2aed5816ab44cb1b"
 }

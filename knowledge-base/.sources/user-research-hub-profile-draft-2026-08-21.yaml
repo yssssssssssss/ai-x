@@ -2,7 +2,7 @@ schema_version: phase-a-profile-feasibility-v1
 status: draft
 runtime_consumed: false
 review_gate: gate-2
-catalog_snapshot_hash: sha256:3eb8c566c2a4e7bc0198d03151e078d56ad69fbedb0034433df23693d326ff8b
+catalog_snapshot_hash: sha256:9d8167f2659964a4dd42a27c7d320cf8545eeff037e8b288ae205173a2aa7921
 dimension_order:
   - scope
   - method
@@ -20,8 +20,12 @@ profile_order:
 candidate_contract:
   min_items: 2
   max_items: 4
-  baseline_profile_ids: [speed, depth]
-  legacy_runtime_order: [depth, speed]
+  baseline_profile_ids:
+    - speed
+    - depth
+  legacy_runtime_order:
+    - depth
+    - speed
   deterministic_control: Candidate count, IDs, ordering, and recommendation remain deterministic; an LLM may not choose them.
   invariant_ids:
     - all_required_questions
@@ -40,8 +44,14 @@ profile_specs:
       method: shortest_eligible_path_per_required_question
       evidence: minimum_required_no_waiver
       review: mandatory_only
-      output_emphasis: [complete_requested_deliverables, explicit_gaps]
-    required_difference_dimensions: [scope, method, evidence, review]
+      output_emphasis:
+        - complete_requested_deliverables
+        - explicit_gaps
+    required_difference_dimensions:
+      - scope
+      - method
+      - evidence
+      - review
   - id: depth
     ordinal: 1
     kind: baseline
@@ -52,20 +62,32 @@ profile_specs:
       method: cross_source_and_counterevidence
       evidence: triangulated_with_counterevidence
       review: enhanced_consistency_and_alternatives
-      output_emphasis: [evidence_consistency, risks, alternative_explanations]
-    required_difference_dimensions: [scope, evidence, review]
+      output_emphasis:
+        - evidence_consistency
+        - risks
+        - alternative_explanations
+    required_difference_dimensions:
+      - scope
+      - evidence
+      - review
   - id: breadth
     ordinal: 2
     kind: specialty
     display_name: 广度扫描
     max_steps: 8
     dimensions:
-      scope: expanded_scope_units_including_solution_option
+      scope: expanded_task_scope_units
       method: repeat_minimum_sufficient_path_per_scope_unit
       evidence: minimum_required_per_scope_unit
       review: coverage_matrix_consistency
-      output_emphasis: [coverage_matrix, cross_unit_commonalities, cross_unit_differences]
-    required_difference_dimensions: [scope, evidence, output_emphasis]
+      output_emphasis:
+        - coverage_matrix
+        - cross_unit_commonalities
+        - cross_unit_differences
+    required_difference_dimensions:
+      - scope
+      - evidence
+      - output_emphasis
   - id: focused
     ordinal: 3
     kind: specialty
@@ -76,8 +98,13 @@ profile_specs:
       method: focused_deep_dive
       evidence: higher_density_in_focus_required_elsewhere
       review: focus_attribution
-      output_emphasis: [focused_root_cause, focused_actions]
-    required_difference_dimensions: [scope, evidence, output_emphasis]
+      output_emphasis:
+        - focused_root_cause
+        - focused_actions
+    required_difference_dimensions:
+      - scope
+      - evidence
+      - output_emphasis
   - id: mixed_method
     ordinal: 4
     kind: specialty
@@ -88,8 +115,14 @@ profile_specs:
       method: two_or_more_independent_method_families
       evidence: triangulated_independent_paths
       review: conflict_and_limitation_review
-      output_emphasis: [convergence, conflicts, limitations]
-    required_difference_dimensions: [method, evidence, review]
+      output_emphasis:
+        - convergence
+        - conflicts
+        - limitations
+    required_difference_dimensions:
+      - method
+      - evidence
+      - review
   - id: decision
     ordinal: 5
     kind: specialty
@@ -100,8 +133,15 @@ profile_specs:
       method: comparative_tradeoff_prioritization
       evidence: option_comparison_risk_priority
       review: decision_risk_review
-      output_emphasis: [tradeoffs, roadmap, metrics, validation_plan]
-    required_difference_dimensions: [method, evidence, output_emphasis]
+      output_emphasis:
+        - tradeoffs
+        - roadmap
+        - metrics
+        - validation_plan
+    required_difference_dimensions:
+      - method
+      - evidence
+      - output_emphasis
   - id: remediation
     ordinal: 6
     kind: specialty
@@ -112,201 +152,295 @@ profile_specs:
       method: diagnose_remediate_retest
       evidence: baseline_action_retest_or_retest_plan
       review: acceptance_threshold_review
-      output_emphasis: [issue_action_retest_trace, acceptance_thresholds]
-    required_difference_dimensions: [scope, method, evidence, output_emphasis]
+      output_emphasis:
+        - issue_action_retest_trace
+        - acceptance_thresholds
+    required_difference_dimensions:
+      - scope
+      - method
+      - evidence
+      - output_emphasis
 scenario_profile_mappings:
   - scenario_id: trend-change-identification
     source_entity_id: trend-change-identification
     source_path: 01-task-任务/01-find-direction-找方向/01-trend-change-identification-趋势与变化识别.md
     source_sha256: 4a8ba893144e3b46a7d9be3bf9d351fdbe15a0261d00eb1b2f970da480f4a5c1
     parent_task_id: find-direction
-    candidate_profiles: [speed, depth, breadth]
+    candidate_profiles:
+      - speed
+      - depth
+      - breadth
     specialty_assessments:
       - profile_id: breadth
         catalog_support: conditional
-        reason_codes: [no_exact_active_default_skill]
+        reason_codes:
+          - no_exact_active_default_skill
   - scenario_id: competitor-benchmark-research
     source_entity_id: competitor-benchmark-research
     source_path: 01-task-任务/01-find-direction-找方向/02-competitor-benchmark-research-竞品与标杆研究.md
     source_sha256: 531debd9853f262ab80a3c2b4b09fd657a14b8d4c6f8054115ceb855e685b4f5
     parent_task_id: find-direction
-    candidate_profiles: [speed, depth, breadth, decision]
+    candidate_profiles:
+      - speed
+      - depth
+      - breadth
+      - decision
     specialty_assessments:
       - profile_id: breadth
         catalog_support: conditional
-        reason_codes: [tool_health_runtime_dependent]
+        reason_codes:
+          - tool_health_runtime_dependent
       - profile_id: decision
         catalog_support: conditional
-        reason_codes: [semantic_crosswalk_review_required]
+        reason_codes:
+          - semantic_crosswalk_review_required
   - scenario_id: opportunity-direction-evaluation
     source_entity_id: opportunity-direction-evaluation
     source_path: 01-task-任务/01-find-direction-找方向/03-opportunity-direction-evaluation-机会方向判断.md
     source_sha256: a62d21667d82a143111686a81c64ef4779a28ffaa9fe02c4a6b9fd38ac550943
     parent_task_id: find-direction
-    candidate_profiles: [speed, depth, focused, decision]
+    candidate_profiles:
+      - speed
+      - depth
+      - focused
+      - decision
     specialty_assessments:
       - profile_id: focused
         catalog_support: conditional
-        reason_codes: [selected_task_type_unreviewed]
+        reason_codes:
+          - selected_task_type_unreviewed
       - profile_id: decision
         catalog_support: conditional
-        reason_codes: [no_exact_active_strategy_skill]
+        reason_codes:
+          - no_exact_active_strategy_skill
   - scenario_id: user-material-synthesis
     source_entity_id: user-material-synthesis
     source_path: 01-task-任务/02-understand-users-懂用户/01-user-material-synthesis-已有用户资料归纳.md
     source_sha256: 014d084680664f371ca13cd25bfb41b31b147170d94ab4d1f16a952e5988f599
     parent_task_id: understand-users
-    candidate_profiles: [speed, depth, focused]
+    candidate_profiles:
+      - speed
+      - depth
+      - focused
     specialty_assessments:
       - profile_id: focused
         catalog_support: conditional
-        reason_codes: [selected_task_type_unreviewed]
+        reason_codes:
+          - selected_task_type_unreviewed
   - scenario_id: user-segmentation
     source_entity_id: user-segmentation
     source_path: 01-task-任务/02-understand-users-懂用户/02-user-segmentation-用户分层与重点人群识别.md
     source_sha256: 0950e81b5bef7359acd06f3a3297d6835a5ccd2cbe94ca836c05984f0f605f5e
     parent_task_id: understand-users
-    candidate_profiles: [speed, depth, focused, breadth, mixed_method]
+    candidate_profiles:
+      - speed
+      - depth
+      - focused
+      - breadth
+      - mixed_method
     specialty_assessments:
       - profile_id: focused
         catalog_support: conditional
-        reason_codes: [input_availability_runtime_dependent]
+        reason_codes:
+          - input_availability_runtime_dependent
       - profile_id: breadth
         catalog_support: conditional
-        reason_codes: [input_availability_runtime_dependent]
+        reason_codes:
+          - input_availability_runtime_dependent
       - profile_id: mixed_method
         catalog_support: conditional
-        reason_codes: [method_family_independence_unmodeled]
+        reason_codes:
+          - method_family_independence_unmodeled
   - scenario_id: user-journey-insight
     source_entity_id: user-journey-insight
     source_path: 01-task-任务/02-understand-users-懂用户/03-user-journey-insight-用户旅程与需求洞察.md
     source_sha256: 23d7007234e9754f59e491c33112d9a9e773ba3277b62b41aae7a15e4aa53bbf
     parent_task_id: understand-users
-    candidate_profiles: [speed, depth, focused, mixed_method]
+    candidate_profiles:
+      - speed
+      - depth
+      - focused
+      - mixed_method
     specialty_assessments:
       - profile_id: focused
         catalog_support: conditional
-        reason_codes: [input_availability_runtime_dependent]
+        reason_codes:
+          - input_availability_runtime_dependent
       - profile_id: mixed_method
         catalog_support: conditional
-        reason_codes: [method_family_independence_unmodeled]
+        reason_codes:
+          - method_family_independence_unmodeled
   - scenario_id: experience-walkthrough
     source_entity_id: experience-walkthrough
     source_path: 01-task-任务/03-find-problems-找问题/01-experience-walkthrough-页面与链路体验走查.md
     source_sha256: bef132c56fb2c72e1f247064239a88c7b6202fde1d45ae2a505e7f3654ef9a61
     parent_task_id: find-problems
-    candidate_profiles: [speed, depth, remediation, focused, breadth]
+    candidate_profiles:
+      - speed
+      - depth
+      - remediation
+      - focused
+      - breadth
     specialty_assessments:
       - profile_id: remediation
         catalog_support: conditional
-        reason_codes: [retest_evidence_requires_post_change_input]
+        reason_codes:
+          - retest_evidence_requires_post_change_input
       - profile_id: focused
         catalog_support: conditional
-        reason_codes: [tool_health_runtime_dependent]
+        reason_codes:
+          - tool_health_runtime_dependent
       - profile_id: breadth
         catalog_support: conditional
-        reason_codes: [tool_health_runtime_dependent]
+        reason_codes:
+          - tool_health_runtime_dependent
   - scenario_id: feedback-issue-clustering
     source_entity_id: feedback-issue-clustering
     source_path: 01-task-任务/03-find-problems-找问题/02-feedback-issue-clustering-用户反馈问题聚类.md
     source_sha256: de8c3e04e9e0fb2f535c729171704620e69fa53970fdec16ccc663e660b447f5
     parent_task_id: find-problems
-    candidate_profiles: [speed, depth, decision]
+    candidate_profiles:
+      - speed
+      - depth
+      - decision
     specialty_assessments:
       - profile_id: decision
         catalog_support: conditional
-        reason_codes: [decision_profile_tautology_review_required, task_type_split]
+        reason_codes:
+          - decision_profile_tautology_review_required
+          - task_type_split
   - scenario_id: data-behavior-diagnosis
     source_entity_id: data-behavior-diagnosis
     source_path: 01-task-任务/03-find-problems-找问题/03-data-behavior-diagnosis-数据与行为异常诊断.md
     source_sha256: 5c1facdbb73015d8154030fe26fd69b5115e7ab6014c079ab0b27a975b6dae4c
     parent_task_id: find-problems
-    candidate_profiles: [speed, depth, focused, mixed_method, decision]
+    candidate_profiles:
+      - speed
+      - depth
+      - focused
+      - mixed_method
+      - decision
+      - remediation
     specialty_assessments:
       - profile_id: focused
         catalog_support: conditional
-        reason_codes: [task_type_split]
+        reason_codes:
+          - task_type_split
       - profile_id: mixed_method
         catalog_support: conditional
-        reason_codes: [method_family_independence_unmodeled, task_type_split]
+        reason_codes:
+          - method_family_independence_unmodeled
+          - task_type_split
       - profile_id: decision
         catalog_support: conditional
-        reason_codes: [task_type_split]
+        reason_codes:
+          - task_type_split
+      - profile_id: remediation
+        catalog_support: conditional
+        reason_codes:
+          - retest_evidence_requires_post_change_input
   - scenario_id: root-cause-analysis
     source_entity_id: root-cause-analysis
     source_path: 01-task-任务/04-solve-problems-解问题/01-root-cause-analysis-问题根因拆解.md
     source_sha256: 49954209aa22190d0bf61edf7b7cb824b1fb23780ba59e334b9583819eff332b
     parent_task_id: solve-problems
-    candidate_profiles: [speed, depth, focused, mixed_method]
+    candidate_profiles:
+      - speed
+      - depth
+      - focused
+      - mixed_method
+      - remediation
     specialty_assessments:
       - profile_id: focused
         catalog_support: conditional
-        reason_codes: [semantic_crosswalk_review_required]
+        reason_codes:
+          - semantic_crosswalk_review_required
       - profile_id: mixed_method
         catalog_support: conditional
-        reason_codes: [method_family_independence_unmodeled]
+        reason_codes:
+          - method_family_independence_unmodeled
+      - profile_id: remediation
+        catalog_support: conditional
+        reason_codes:
+          - retest_evidence_requires_post_change_input
   - scenario_id: solution-generation
     source_entity_id: solution-generation
     source_path: 01-task-任务/04-solve-problems-解问题/02-solution-generation-解决方案生成.md
     source_sha256: 008fe0c13431aca9d757886fcfd2447f2cc52b2addb21ab3ccc923365e366256
     parent_task_id: solve-problems
-    candidate_profiles: [speed, depth, breadth, decision]
+    candidate_profiles:
+      - speed
+      - depth
+      - breadth
     specialty_assessments:
       - profile_id: breadth
         catalog_support: gap
-        reason_codes: [no_exact_active_source_capability]
-      - profile_id: decision
-        catalog_support: gap
-        reason_codes: [no_exact_active_source_capability]
+        reason_codes:
+          - no_exact_active_source_capability
   - scenario_id: solution-comparison
     source_entity_id: solution-comparison
     source_path: 01-task-任务/04-solve-problems-解问题/03-solution-comparison-方案比较与风险评估.md
     source_sha256: 538af477a6f805545d8a3703c7020c176e5528337be5225e0cba3619ba1ca6a0
     parent_task_id: solve-problems
-    candidate_profiles: [speed, depth, decision, focused]
+    candidate_profiles:
+      - speed
+      - depth
+      - focused
     specialty_assessments:
-      - profile_id: decision
-        catalog_support: conditional
-        reason_codes: [decision_profile_tautology_review_required]
       - profile_id: focused
         catalog_support: conditional
-        reason_codes: [selected_task_type_unreviewed]
+        reason_codes:
+          - selected_task_type_unreviewed
   - scenario_id: strategy-synthesis
     source_entity_id: strategy-synthesis
     source_path: 01-task-任务/05-define-strategy-定策略/01-strategy-synthesis-结论整合与策略提炼.md
     source_sha256: ee7dde7f1a4c2c63589cf0daf13311f13b8874af2f50139de6ab3aa7f9f9afbc
     parent_task_id: define-strategy
-    candidate_profiles: [speed, depth, decision]
+    candidate_profiles:
+      - speed
+      - depth
+      - decision
     specialty_assessments:
       - profile_id: decision
         catalog_support: gap
-        reason_codes: [no_exact_active_source_capability]
+        reason_codes:
+          - no_exact_active_source_capability
   - scenario_id: priority-roadmap
     source_entity_id: priority-roadmap
     source_path: 01-task-任务/05-define-strategy-定策略/02-priority-roadmap-优先级与实施路径.md
     source_sha256: 5d39f9e3d0d7293ae941e33b8f33bb2cefd61fe558689e27bd7ecbc9f61b3bbe
     parent_task_id: define-strategy
-    candidate_profiles: [speed, depth, decision, focused]
+    candidate_profiles:
+      - speed
+      - depth
+      - focused
     specialty_assessments:
-      - profile_id: decision
-        catalog_support: conditional
-        reason_codes: [decision_profile_tautology_review_required]
       - profile_id: focused
         catalog_support: conditional
-        reason_codes: [input_availability_runtime_dependent]
+        reason_codes:
+          - input_availability_runtime_dependent
   - scenario_id: metrics-validation
     source_entity_id: metrics-validation
     source_path: 01-task-任务/05-define-strategy-定策略/03-metrics-validation-指标与验证计划.md
     source_sha256: 8005b7c43ea286ff946ad792c8d7883fad62c7dc4ec50b8c4f6f479389a46472
     parent_task_id: define-strategy
-    candidate_profiles: [speed, depth, mixed_method, decision, focused]
+    candidate_profiles:
+      - speed
+      - depth
+      - mixed_method
+      - decision
+      - focused
     specialty_assessments:
       - profile_id: mixed_method
         catalog_support: conditional
-        reason_codes: [method_family_independence_unmodeled, task_type_split]
+        reason_codes:
+          - method_family_independence_unmodeled
+          - task_type_split
       - profile_id: decision
         catalog_support: conditional
-        reason_codes: [task_type_split]
+        reason_codes:
+          - task_type_split
       - profile_id: focused
         catalog_support: conditional
-        reason_codes: [selected_task_type_unreviewed]
+        reason_codes:
+          - selected_task_type_unreviewed

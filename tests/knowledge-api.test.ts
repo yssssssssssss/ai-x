@@ -40,8 +40,13 @@ test('生产与 Evaluation 使用不可切换的独立 candidate 可见性接口
   const runtime = loadRuntimeKnowledgeIndex();
   const evaluation = loadEvaluationKnowledgeIndex();
   assert.equal(runtime.some(({ status }) => status === 'candidate'), false);
-  assert.equal(evaluation.filter(({ status }) => status === 'candidate').length, 39);
+  assert.equal(evaluation.filter(({ status }) => status === 'candidate').length, 30);
   assert.equal(getEntry('ds-method-strategy-02-strategy-map'), null, '生产 getEntry 不得读取 candidate');
+});
+
+test('生产过滤只允许 approved/draft，未知状态不能因黑名单遗漏而进入', () => {
+  const malformed = { ...items[0]!, id: 'malformed', status: 'typo' } as unknown as KnowledgeIndexItem;
+  assert.deepEqual(filterKnowledge([...items, malformed], {}).map(({ id }) => id), ['model_jtbd', 'std_report']);
 });
 
 test('按 domain 召回(domain 为数组, includes 匹配)', () => {

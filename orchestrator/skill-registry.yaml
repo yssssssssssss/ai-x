@@ -473,17 +473,6 @@ skills:
       - solution-generation
     output_schema: schemas/skill-result-envelope.schema.json
     status: draft
-  - id: strategy-map-generation
-    name: strategy-map-generation
-    path: knowledge-base/skills/strategy-map-generation
-    entry: knowledge-base/skills/strategy-map-generation/SKILL.md
-    when_to_use: 设计策略地图生成 Skill
-    owner: user-research-hub-maintainers
-    risk_level: low
-    task_types:
-      - strategy-map-generation
-    output_schema: schemas/skill-result-envelope.schema.json
-    status: draft
   - id: structure-interview-transcript
     name: structure-interview-transcript
     path: knowledge-base/skills/structure-interview-transcript

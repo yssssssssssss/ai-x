@@ -20,16 +20,33 @@ export function isCandidateProfile(value: unknown): value is CandidateProfile {
     && (CANDIDATE_PROFILES as readonly string[]).includes(value);
 }
 
+export type PlanningSignalSourcePath =
+  | 'raw_input'
+  | 'task.task_type'
+  | 'task.research_goal'
+  | 'task.target_audience'
+  | 'task.scope'
+  | 'task.constraints'
+  | 'task.success_criteria'
+  | 'task.expected_deliverables'
+  | 'problem_graph.evidence_requirements'
+  | 'available_material_roles';
+
 export interface PlanningProvenance {
-  primary_scenario_id: string;
+  version: 'planning-guidance-provenance-v1';
+  resolver_version: 'candidate-profile-resolver-v1';
+  scenario_catalog_hash: string;
+  signal_catalog_hash: string;
+  profile_spec_hash: string;
+  scenario_mapping_hash: string;
+  classification_method: 'rule' | 'classifier' | 'clarification' | 'direct_skill_bypass';
+  classifier_call_count: 0 | 1;
+  primary_scenario_id: string | null;
   secondary_scenario_ids: string[];
-  confidence: 'high' | 'medium' | 'low';
-  signal_ids: string[];
-  source_field_paths: string[];
-  resolver_version_hash: string;
-  mapping_version_hash: string;
-  candidate_profiles: CandidateProfile[];
-  degradation_reasons: string[];
+  confidence: 'high' | 'medium' | 'low' | null;
+  signals: Array<{ signal_id: string; source_path: PlanningSignalSourcePath }>;
+  selected_profile_ids: CandidateProfile[];
+  degradations: Array<{ code: string; profile_id?: CandidateProfile }>;
 }
 
 export interface GuidanceRef {

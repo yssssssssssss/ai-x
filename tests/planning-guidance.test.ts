@@ -19,6 +19,8 @@ const ROOT = process.cwd();
 const CALIBRATION_PATH = join(ROOT, 'tests/fixtures/planning-guidance-calibration.json');
 const HOLDOUT_PATH = join(ROOT, 'tests/fixtures/planning-guidance-holdout.json');
 const MANIFEST_PATH = join(ROOT, 'tests/fixtures/planning-guidance-dataset-manifest.json');
+const DYNAMIC_POLICY = { candidate_generation_mode: 'dynamic', gate_3_activation_required: true } as const;
+const DYNAMIC_OPTIONS = { policy: DYNAMIC_POLICY };
 
 interface DatasetTask {
   task_type: ResearchTaskV2['task_type'];
@@ -30,7 +32,7 @@ interface DatasetTask {
 
 interface DatasetExample {
   id: string;
-  stratum: 'single_scenario' | 'multi_scenario' | 'clarification' | 'bypass_or_no_match';
+  stratum?: 'single_scenario' | 'multi_scenario' | 'clarification' | 'bypass_or_no_match';
   polarity?: 'positive' | 'negative';
   probe_scenario_id?: ScenarioId;
   raw_input: string;
@@ -186,24 +188,24 @@ test('the frozen 90-example corpus preserves its 60/30 split, strata, and holdou
   assert.equal(holdout.labels, 'withheld_until_gate_3');
   assert.ok(holdout.examples.every((example) => example.expected === undefined));
   assert.ok(holdout.examples.every((example) => example.classifier_response === undefined));
+  assert.ok(holdout.examples.every((example) => /^h-[a-f0-9]{16}$/u.test(example.id)));
+  assert.ok(holdout.examples.every((example) => (
+    example.stratum === undefined && example.polarity === undefined && example.probe_scenario_id === undefined
+  )));
+  const normalizedCalibrationInputs = new Set(calibration.examples.map(({ raw_input }) => raw_input.normalize('NFKC').toLowerCase().replace(/\s+/gu, ' ').trim()));
+  assert.ok(holdout.examples.every(({ raw_input }) => !normalizedCalibrationInputs.has(raw_input.normalize('NFKC').toLowerCase().replace(/\s+/gu, ' ').trim())));
 
   const all = [...calibration.examples, ...holdout.examples];
   assert.equal(new Set(all.map(({ id }) => id)).size, 90);
-  assert.deepEqual(countBy(all.map(({ stratum }) => stratum)), {
-    single_scenario: 60,
-    multi_scenario: 15,
-    clarification: 10,
-    bypass_or_no_match: 5,
+  assert.deepEqual(countBy(calibration.examples.map(({ stratum }) => stratum!)), {
+    single_scenario: 45,
+    multi_scenario: 8,
+    clarification: 5,
+    bypass_or_no_match: 2,
   });
   assert.deepEqual(countBy(calibration.examples
     .filter(({ stratum }) => stratum === 'single_scenario')
     .map(({ polarity }) => polarity!)), { positive: 20, negative: 25 });
-  assert.deepEqual(countBy(holdout.examples
-    .filter(({ stratum }) => stratum === 'single_scenario')
-    .map(({ polarity }) => polarity!)), { positive: 10, negative: 5 });
-  assert.ok(holdout.examples
-    .filter(({ stratum }) => stratum === 'single_scenario')
-    .every(({ probe_scenario_id }) => probe_scenario_id === undefined));
   assert.deepEqual(manifest.composition.single_scenario, {
     total: 60,
     calibration: 45,
@@ -321,8 +323,8 @@ test('direct-Skill bypass and no-match calibration examples degrade deterministi
   }
 });
 
-test('medium confidence continues only when every remaining Scenario has the same Profile set', async () => {
-  const sameMapping = baseRequest({
+test('medium confidence always requires clarification even when Profile sets match', async () => {
+  const input = baseRequest({
     raw_input: '反馈问题聚类与策略提炼的主次需要判断',
     task: task({
       task_type: 'voc_diagnosis',
@@ -332,7 +334,7 @@ test('medium confidence continues only when every remaining Scenario has the sam
       expected_deliverables: ['问题簇与策略'],
     }),
   });
-  const continued = await resolvePlanningGuidance(sameMapping, {
+  const result = await resolvePlanningGuidance(input, {
     classifier: async () => ({
       primary_scenario_id: 'feedback-issue-clustering',
       secondary_scenarios: [{ scenario_id: 'strategy-synthesis', relationship: 'serial' }],
@@ -344,34 +346,86 @@ test('medium confidence continues only when every remaining Scenario has the sam
       rationale_codes: ['semantic_disambiguation'],
     }),
   });
-  assert.equal(continued.status, 'resolved');
-  assert.equal(continued.planning_provenance.classifier_call_count, 1);
+  assert.equal(result.status, 'clarification');
+  assert.equal(result.clarification?.reason_code, 'medium_confidence_profile_conflict');
+  assert.equal(result.planning_provenance.classifier_call_count, 1);
+});
 
-  const conflictingMapping = baseRequest({
-    raw_input: '竞品研究与机会方向判断的主次需要判断',
+test('negated or hypothetical Scenario mentions never take the zero-call high-confidence path', async () => {
+  for (const rawInput of ['不要做竞品研究，只整理现有约束', '如果后续需要竞品研究再另行评估']) {
+    const result = await resolvePlanningGuidance(baseRequest({
+      raw_input: rawInput,
+      task: task({
+        task_type: 'competitive_research',
+        research_goal: rawInput,
+        target_audience: ['消费者'],
+        scope: ['购物助手'],
+        expected_deliverables: ['约束清单'],
+      }),
+    }));
+    assert.equal(result.status, 'clarification', rawInput);
+    assert.equal(result.scenario.primary_scenario_id, null, rawInput);
+  }
+});
+
+test('classifier evidence must support every selected Scenario', async () => {
+  const input = baseRequest({
+    raw_input: '竞品研究与机会方向判断',
     task: task({
       task_type: 'competitive_research',
-      research_goal: '竞品研究与机会方向判断的主次需要判断',
+      research_goal: '竞品研究与机会方向判断',
       target_audience: ['消费者'],
-      scope: ['市场'],
+      scope: ['购物助手'],
       expected_deliverables: ['竞品结论与机会判断'],
     }),
   });
-  const clarified = await resolvePlanningGuidance(conflictingMapping, {
+  const result = await resolvePlanningGuidance(input, {
     classifier: async () => ({
       primary_scenario_id: 'competitor-benchmark-research',
-      secondary_scenarios: [{ scenario_id: 'opportunity-direction-evaluation', relationship: 'conditional' }],
-      confidence: 'medium',
-      signals: [
-        { signal_id: 'scenario.competitor-benchmark', source_path: 'raw_input' },
-        { signal_id: 'scenario.opportunity-direction', source_path: 'raw_input' },
-      ],
+      secondary_scenarios: [],
+      confidence: 'high',
+      signals: [{ signal_id: 'scenario.opportunity-direction', source_path: 'raw_input' }],
       rationale_codes: ['semantic_disambiguation'],
     }),
   });
-  assert.equal(clarified.status, 'clarification');
-  assert.equal(clarified.clarification?.reason_code, 'medium_confidence_profile_conflict');
-  assert.deepEqual(clarified.profiles, []);
+  assert.equal(result.status, 'clarification');
+  assert.equal(result.clarification?.reason_code, 'classifier_invalid');
+});
+
+test('conflicting explicit Profile preferences require clarification', async () => {
+  const result = await resolvePlanningGuidance(baseRequest({
+    raw_input: '竞品研究既要速度优先又要深度研究',
+    task: task({
+      task_type: 'competitive_research',
+      research_goal: '竞品研究既要速度优先又要深度研究',
+      target_audience: ['消费者'],
+      scope: ['购物助手'],
+      expected_deliverables: ['竞品分析'],
+    }),
+  }));
+  assert.equal(result.status, 'clarification');
+  assert.equal(result.clarification?.reason_code, 'conflicting_profile_preferences');
+});
+
+test('decision Profile requires an explicit deliverable and at least two viable options', async () => {
+  const base = baseRequest({
+    raw_input: '开展竞品研究并给出决策建议',
+    task: task({
+      task_type: 'competitive_research',
+      research_goal: '开展竞品研究并给出决策建议',
+      target_audience: ['消费者'],
+      scope: ['单一方案'],
+      expected_deliverables: ['决策建议'],
+    }),
+    capabilities: [capability({ id: 'decision-support', profile: 'decision', roles: ['decision_support'] })],
+  });
+  const oneOption = await resolvePlanningGuidance(base, DYNAMIC_OPTIONS);
+  assert.equal(oneOption.profiles.some(({ id }) => id === 'decision'), false);
+  const twoOptions = await resolvePlanningGuidance({
+    ...base,
+    task: { ...base.task, scope: ['方案 A', '方案 B'] },
+  }, DYNAMIC_OPTIONS);
+  assert.equal(twoOptions.profiles.some(({ id }) => id === 'decision'), true);
 });
 
 test('invalid or failed classifiers are never retried and cannot invent input evidence', async () => {
@@ -436,7 +490,7 @@ test('fixed mode stays at the two baselines while dynamic mode selects determini
   assert.equal(fixed.profiles.filter(({ recommended }) => recommended).length, 1);
   assert.equal(fixed.planning_provenance.degradations.at(0)?.code, 'dynamic_generation_disabled');
 
-  const dynamic = await resolvePlanningGuidance({ ...input, candidate_generation_mode: 'dynamic' });
+  const dynamic = await resolvePlanningGuidance(input, DYNAMIC_OPTIONS);
   assert.deepEqual(dynamic.profiles.map(({ id }) => id), ['speed', 'depth', 'breadth', 'decision']);
   assert.equal(dynamic.profiles.filter(({ recommended }) => recommended).at(0)?.id, 'decision');
   assert.ok(dynamic.profiles.every(({ coverage_invariant_ids }) => (
@@ -447,12 +501,11 @@ test('fixed mode stays at the two baselines while dynamic mode selects determini
 
   const withoutPathComparison = await resolvePlanningGuidance({
     ...input,
-    candidate_generation_mode: 'dynamic',
     task: {
       ...input.task,
       expected_deliverables: ['多个竞品覆盖矩阵', '决策建议'],
     },
-  });
+  }, DYNAMIC_OPTIONS);
   assert.deepEqual(withoutPathComparison.profiles.map(({ id }) => id), ['speed', 'depth', 'breadth']);
 });
 
@@ -466,11 +519,10 @@ test('focused ProfileSpec is selected only with a traceable focus signal and act
       scope: ['重点机会'],
       expected_deliverables: ['机会判断'],
     }),
-    candidate_generation_mode: 'dynamic',
     capabilities: [
       capability({ id: 'focused-analysis', profile: 'focused', roles: ['focused_analysis'] }),
     ],
-  }));
+  }), DYNAMIC_OPTIONS);
 
   assert.deepEqual(result.profiles.map(({ id }) => id), ['speed', 'depth', 'focused']);
   const focused = result.profiles.find(({ id }) => id === 'focused');
@@ -489,7 +541,6 @@ test('dynamic mode never treats draft, planned, deprecated, or rejected capabili
       scope: ['多个竞品'],
       expected_deliverables: ['多个竞品覆盖矩阵', '决策建议', '比较多种执行路径'],
     }),
-    candidate_generation_mode: 'dynamic',
     capabilities: [
       capability({ id: 'active-breadth', profile: 'breadth', roles: ['scope_expansion'] }),
       capability({ id: 'draft-decision', profile: 'decision', roles: ['decision_support'], lifecycle: 'draft' }),
@@ -499,7 +550,7 @@ test('dynamic mode never treats draft, planned, deprecated, or rejected capabili
     ],
   });
 
-  const result = await resolvePlanningGuidance(input);
+  const result = await resolvePlanningGuidance(input, DYNAMIC_OPTIONS);
   assert.deepEqual(result.profiles.map(({ id }) => id), ['speed', 'depth', 'breadth']);
   assert.deepEqual(result.planning_provenance.degradations, [
     { code: 'specialty_capability_unavailable', profile_id: 'decision' },
@@ -516,13 +567,12 @@ test('mixed-method and remediation profiles require their complete active capabi
       scope: ['重点人群'],
       expected_deliverables: ['用户分层'],
     }),
-    candidate_generation_mode: 'dynamic',
     capabilities: [
       capability({ id: 'interview', profile: 'mixed_method', roles: ['independent_method'], methodFamily: 'qualitative' }),
       capability({ id: 'survey', profile: 'mixed_method', roles: ['independent_method'], methodFamily: 'quantitative' }),
     ],
   });
-  const mixed = await resolvePlanningGuidance(mixedRequest);
+  const mixed = await resolvePlanningGuidance(mixedRequest, DYNAMIC_OPTIONS);
   assert.deepEqual(mixed.profiles.map(({ id }) => id), ['speed', 'depth', 'mixed_method']);
 
   const incompleteMixed = await resolvePlanningGuidance({
@@ -531,7 +581,7 @@ test('mixed-method and remediation profiles require their complete active capabi
       mixedRequest.capabilities[0]!,
       { ...mixedRequest.capabilities[1]!, lifecycle_status: 'planned' },
     ],
-  });
+  }, DYNAMIC_OPTIONS);
   assert.deepEqual(incompleteMixed.profiles.map(({ id }) => id), ['speed', 'depth']);
 
   const remediationRequest = baseRequest({
@@ -543,13 +593,12 @@ test('mixed-method and remediation profiles require their complete active capabi
       scope: ['关键链路'],
       expected_deliverables: ['整改动作', '复测计划'],
     }),
-    candidate_generation_mode: 'dynamic',
     capabilities: [
       capability({ id: 'audit', profile: 'remediation', roles: ['issue_identification'] }),
       capability({ id: 'retest', profile: 'remediation', roles: ['retest'] }),
     ],
   });
-  const remediation = await resolvePlanningGuidance(remediationRequest);
+  const remediation = await resolvePlanningGuidance(remediationRequest, DYNAMIC_OPTIONS);
   assert.deepEqual(remediation.profiles.map(({ id }) => id), ['speed', 'depth', 'remediation']);
   assert.equal(remediation.profiles.find(({ id }) => id === 'remediation')?.max_steps, 7);
 });

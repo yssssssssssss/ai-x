@@ -16,6 +16,7 @@ import YAML from 'yaml';
 import {
   buildHubContentApply,
   checkAppliedHubContent,
+  HUB_CONTENT_REPORT_PATH,
   writeHubContentApply,
 } from '../scripts/user-research-hub-content.ts';
 import type { HubManifest, ProfileDraft } from '../scripts/user-research-hub-integration.ts';
@@ -68,22 +69,23 @@ test('Phase-B content apply is deterministic, governed, and never overwrites can
     const first = buildHubContentApply(manifest, SOURCE_ROOT, repositoryRoot, profileDraft);
 
     assert.deepEqual(first.report.materialized, {
-      candidate_files: 55,
-      knowledge_methods: 24,
+      candidate_files: 32,
+      knowledge_methods: 15,
       scenarios: 15,
-      assets: 14,
-      draft_skills: 2,
+      assets: 1,
+      draft_skills: 1,
     });
     assert.deepEqual(first.report.merge_drafts, {
-      files: 22,
-      skill_files: 22,
+      files: 2,
+      skill_files: 2,
       knowledge_files: 0,
     });
-    assert.equal(first.report.mapped_existing.knowledge_entries, 104);
-    assert.equal(first.report.governance.scanned_entities, 77);
+    assert.equal(first.report.mapped_existing.knowledge_entries, 117);
+    assert.equal(first.report.governance.scanned_entities, 34);
     assert.equal(first.report.governance.blocked_entities, 0);
-    assert.equal(first.report.comparisons.length, 126);
-    assert.equal(first.files.size, 78, '55 candidates + 22 merge drafts + one report');
+    assert.equal(first.report.governance.gate_2_review_required, false);
+    assert.equal(first.report.comparisons.length, 137);
+    assert.equal(first.files.size, 35, '32 candidates + 2 merge drafts + one report');
     assert.equal(first.report.runtime_boundary.source_only_materialized, 0);
     assert.equal(first.report.runtime_boundary.reject_runtime_materialized, 0);
     assert.equal(first.report.runtime_boundary.opaque_materialized, 0);
@@ -97,7 +99,8 @@ test('Phase-B content apply is deterministic, governed, and never overwrites can
     rmSync(join(repositoryRoot, collisionPath));
 
     const firstWrite = writeHubContentApply(first, repositoryRoot);
-    assert.equal(firstWrite.written, 78);
+    assert.equal(firstWrite.written, 35);
+    assert.equal(firstWrite.removed, 0);
     assert.deepEqual(checkAppliedHubContent(first, repositoryRoot), []);
     const firstOutputs = new Map([...first.files.keys()].map((path) => [
       path,
@@ -106,10 +109,32 @@ test('Phase-B content apply is deterministic, governed, and never overwrites can
 
     const second = buildHubContentApply(first.manifest, SOURCE_ROOT, repositoryRoot, profileDraft);
     const secondWrite = writeHubContentApply(second, repositoryRoot);
-    assert.deepEqual(secondWrite, { written: 0, unchanged: 78 });
+    assert.deepEqual(secondWrite, { written: 0, unchanged: 35, removed: 0 });
     assert.equal(second.report.output_set_hash, first.report.output_set_hash);
     assert.deepEqual(checkAppliedHubContent(second, repositoryRoot), []);
     for (const [path, value] of firstOutputs) assert.equal(readFileSync(join(repositoryRoot, path), 'utf8'), value, path);
+
+    const stalePath = 'knowledge-base/assets/templates/stale-hub-candidate.md';
+    write(join(repositoryRoot, stalePath), [
+      '---',
+      'id: stale-hub-candidate',
+      'type: asset',
+      'title: stale',
+      'status: candidate',
+      'managed_by: user-research-hub-integration-v1',
+      '---',
+      '',
+      '# stale',
+      '',
+    ].join('\n'));
+    const previousReportPath = join(repositoryRoot, HUB_CONTENT_REPORT_PATH);
+    const previousReport = JSON.parse(readFileSync(previousReportPath, 'utf8')) as { outputs: Array<{ path: string }> };
+    previousReport.outputs.push({ path: stalePath });
+    writeFileSync(previousReportPath, `${JSON.stringify(previousReport, null, 2)}\n`);
+    const cleanupWrite = writeHubContentApply(second, repositoryRoot);
+    assert.deepEqual(cleanupWrite, { written: 1, unchanged: 34, removed: 1 });
+    assert.equal(existsSync(join(repositoryRoot, stalePath)), false);
+    assert.deepEqual(checkAppliedHubContent(second, repositoryRoot), []);
 
     const candidateOutputs = second.report.outputs.filter(({ kind }) => kind === 'candidate');
     assert.ok(candidateOutputs.every(({ path }) => !path.includes('00-source-sync')));
@@ -119,9 +144,11 @@ test('Phase-B content apply is deterministic, governed, and never overwrites can
     assert.ok(second.manifest.entities.filter(({ disposition }) => (
       disposition === 'import_candidate' || disposition === 'merge_into_existing'
     )).every(({ governance }) => (
-      governance?.review_status === 'review_required'
+      governance?.review_status === 'complete'
       && governance.scans.secrets === 'clear'
       && governance.scans.pii === 'clear'
+      && (governance.scans.internal_business_facts === 'clear'
+        || governance.scans.internal_business_facts === 'reviewed')
     )));
   } finally {
     rmSync(repositoryRoot, { recursive: true, force: true });

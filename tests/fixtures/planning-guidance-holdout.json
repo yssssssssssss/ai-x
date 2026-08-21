@@ -1,579 +1,546 @@
 {
-  "version": "planning-guidance-dataset-v1",
+  "version": "planning-guidance-dataset-v2",
   "split": "holdout",
   "frozen": true,
   "labels": "withheld_until_gate_3",
   "examples": [
     {
-      "id": "hold-single-01-positive-2",
-      "stratum": "single_scenario",
-      "polarity": "positive",
-      "raw_input": "需要一次趋势扫描，判断消费决策工具近两年的变化",
+      "id": "h-c5510861ef9fa43c",
+      "raw_input": "梳理近三年智能导购市场信号的演变",
       "task": {
         "task_type": "competitive_research",
-        "research_goal": "需要一次趋势扫描，判断消费决策工具近两年的变化",
+        "research_goal": "梳理近三年智能导购市场信号的演变",
         "target_audience": [
           "目标用户"
         ],
         "scope": [
-          "核心场景"
+          "本次明确范围"
         ],
         "expected_deliverables": [
-          "研究结论"
+          "可追溯研究交付"
         ]
       },
       "available_material_roles": []
     },
     {
-      "id": "hold-single-02-positive-2",
-      "stratum": "single_scenario",
-      "polarity": "positive",
-      "raw_input": "请做竞品研究，核验各平台的体验差异",
+      "id": "h-3c1f45272e7acdcf",
+      "raw_input": "核验主要购物助手的能力和体验差异",
       "task": {
         "task_type": "competitive_research",
-        "research_goal": "请做竞品研究，核验各平台的体验差异",
+        "research_goal": "核验主要购物助手的能力和体验差异",
         "target_audience": [
           "目标用户"
         ],
         "scope": [
-          "核心场景"
+          "本次明确范围"
         ],
         "expected_deliverables": [
-          "研究结论"
+          "可追溯研究交付"
         ]
       },
       "available_material_roles": []
     },
     {
-      "id": "hold-single-03-positive-2",
-      "stratum": "single_scenario",
-      "polarity": "positive",
-      "raw_input": "请做机会评估，判断服务下沉方向",
+      "id": "h-a884a888dc4ff508",
+      "raw_input": "判断售后服务还有哪些机会方向",
       "task": {
         "task_type": "competitive_research",
-        "research_goal": "请做机会评估，判断服务下沉方向",
+        "research_goal": "判断售后服务还有哪些机会方向",
         "target_audience": [
           "目标用户"
         ],
         "scope": [
-          "核心场景"
+          "本次明确范围"
         ],
         "expected_deliverables": [
-          "研究结论"
+          "可追溯研究交付"
         ]
       },
       "available_material_roles": []
     },
     {
-      "id": "hold-single-04-positive-2",
-      "stratum": "single_scenario",
-      "polarity": "positive",
-      "raw_input": "请整理访谈资料，归纳现有研究材料",
+      "id": "h-53b0c79eeb9cff72",
+      "raw_input": "综合已有访谈纪要形成主题结论",
       "task": {
         "task_type": "user_research_planning",
-        "research_goal": "请整理访谈资料，归纳现有研究材料",
+        "research_goal": "综合已有访谈纪要形成主题结论",
         "target_audience": [
           "目标用户"
         ],
         "scope": [
-          "核心场景"
+          "本次明确范围"
         ],
         "expected_deliverables": [
-          "研究结论"
+          "可追溯研究交付"
         ]
       },
       "available_material_roles": []
     },
     {
-      "id": "hold-single-05-positive-2",
-      "stratum": "single_scenario",
-      "polarity": "positive",
-      "raw_input": "根据研究资料做用户分群和人群分层",
+      "id": "h-c33b3221852df5e0",
+      "raw_input": "按行为和需求识别核心用户分层",
       "task": {
         "task_type": "user_research_planning",
-        "research_goal": "根据研究资料做用户分群和人群分层",
+        "research_goal": "按行为和需求识别核心用户分层",
         "target_audience": [
           "目标用户"
         ],
         "scope": [
-          "核心场景"
+          "本次明确范围"
         ],
         "expected_deliverables": [
-          "研究结论"
+          "可追溯研究交付"
         ]
       },
       "available_material_roles": []
     },
     {
-      "id": "hold-single-06-positive-2",
-      "stratum": "single_scenario",
-      "polarity": "positive",
-      "raw_input": "围绕售后流程做用户旅程分析",
+      "id": "h-53867f3828356d2c",
+      "raw_input": "还原新用户首购旅程与关键需求",
       "task": {
         "task_type": "user_research_planning",
-        "research_goal": "围绕售后流程做用户旅程分析",
+        "research_goal": "还原新用户首购旅程与关键需求",
         "target_audience": [
           "目标用户"
         ],
         "scope": [
-          "核心场景"
+          "本次明确范围"
         ],
         "expected_deliverables": [
-          "研究结论"
+          "可追溯研究交付"
         ]
       },
       "available_material_roles": []
     },
     {
-      "id": "hold-single-07-positive-2",
-      "stratum": "single_scenario",
-      "polarity": "positive",
-      "raw_input": "请做结算链路走查并记录体验问题",
+      "id": "h-c918c23e8bc781e7",
+      "raw_input": "走查结算页面到支付成功的完整链路",
       "task": {
         "task_type": "design_audit",
-        "research_goal": "请做结算链路走查并记录体验问题",
+        "research_goal": "走查结算页面到支付成功的完整链路",
         "target_audience": [
           "目标用户"
         ],
         "scope": [
-          "核心场景"
+          "本次明确范围"
         ],
         "expected_deliverables": [
-          "研究结论"
+          "可追溯研究交付"
         ]
       },
       "available_material_roles": []
     },
     {
-      "id": "hold-single-08-positive-2",
-      "stratum": "single_scenario",
-      "polarity": "positive",
-      "raw_input": "请做工单聚类，识别高频反馈",
+      "id": "h-e7a5abe4095d85e5",
+      "raw_input": "聚类近期客服反馈并提炼主要问题",
       "task": {
         "task_type": "voc_diagnosis",
-        "research_goal": "请做工单聚类，识别高频反馈",
+        "research_goal": "聚类近期客服反馈并提炼主要问题",
         "target_audience": [
           "目标用户"
         ],
         "scope": [
-          "核心场景"
+          "本次明确范围"
         ],
         "expected_deliverables": [
-          "研究结论"
+          "可追溯研究交付"
         ]
       },
       "available_material_roles": []
     },
     {
-      "id": "hold-single-09-positive-2",
-      "stratum": "single_scenario",
-      "polarity": "positive",
-      "raw_input": "诊断转化漏斗异常及行为变化",
+      "id": "h-f13eaeba6d5323b3",
+      "raw_input": "诊断搜索转化漏斗的异常变化",
       "task": {
         "task_type": "voc_diagnosis",
-        "research_goal": "诊断转化漏斗异常及行为变化",
+        "research_goal": "诊断搜索转化漏斗的异常变化",
         "target_audience": [
           "目标用户"
         ],
         "scope": [
-          "核心场景"
+          "本次明确范围"
         ],
         "expected_deliverables": [
-          "研究结论"
+          "可追溯研究交付"
         ]
       },
       "available_material_roles": []
     },
     {
-      "id": "hold-single-10-positive-2",
-      "stratum": "single_scenario",
-      "polarity": "positive",
-      "raw_input": "对留存下滑做根因分析",
+      "id": "h-c2995d3200f760ea",
+      "raw_input": "拆解会员流失问题的多层根因",
+      "task": {
+        "task_type": "user_research_planning",
+        "research_goal": "拆解会员流失问题的多层根因",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "本次明确范围"
+        ],
+        "expected_deliverables": [
+          "可追溯研究交付"
+        ]
+      },
+      "available_material_roles": []
+    },
+    {
+      "id": "h-14c0f2ad3a1d71d4",
+      "raw_input": "针对筛选困难生成多套解决思路",
+      "task": {
+        "task_type": "user_research_planning",
+        "research_goal": "针对筛选困难生成多套解决思路",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "本次明确范围"
+        ],
+        "expected_deliverables": [
+          "可追溯研究交付"
+        ]
+      },
+      "available_material_roles": []
+    },
+    {
+      "id": "h-d9fa9bfa67ebc75b",
+      "raw_input": "比较两套会员方案的风险和收益",
+      "task": {
+        "task_type": "user_research_planning",
+        "research_goal": "比较两套会员方案的风险和收益",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "本次明确范围"
+        ],
+        "expected_deliverables": [
+          "可追溯研究交付"
+        ]
+      },
+      "available_material_roles": []
+    },
+    {
+      "id": "h-f862289d124e901f",
+      "raw_input": "整合研究结论并提炼设计策略",
+      "task": {
+        "task_type": "user_research_planning",
+        "research_goal": "整合研究结论并提炼设计策略",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "本次明确范围"
+        ],
+        "expected_deliverables": [
+          "可追溯研究交付"
+        ]
+      },
+      "available_material_roles": []
+    },
+    {
+      "id": "h-ec0a18712b700655",
+      "raw_input": "形成下一季度改进优先级和实施节奏",
+      "task": {
+        "task_type": "user_research_planning",
+        "research_goal": "形成下一季度改进优先级和实施节奏",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "本次明确范围"
+        ],
+        "expected_deliverables": [
+          "可追溯研究交付"
+        ]
+      },
+      "available_material_roles": []
+    },
+    {
+      "id": "h-e9902406cf23e681",
+      "raw_input": "定义改版后的成功指标与验证方法",
+      "task": {
+        "task_type": "user_research_planning",
+        "research_goal": "定义改版后的成功指标与验证方法",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "本次明确范围"
+        ],
+        "expected_deliverables": [
+          "可追溯研究交付"
+        ]
+      },
+      "available_material_roles": []
+    },
+    {
+      "id": "h-99d0fa960f6b7a05",
+      "raw_input": "对比主要竞品后给出明确的季度实施优先级",
+      "task": {
+        "task_type": "competitive_research",
+        "research_goal": "对比主要竞品后给出明确的季度实施优先级",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "本次明确范围"
+        ],
+        "expected_deliverables": [
+          "可追溯研究交付"
+        ]
+      },
+      "available_material_roles": []
+    },
+    {
+      "id": "h-68f29a9cf0414f27",
+      "raw_input": "归纳访谈材料并还原关键用户旅程",
+      "task": {
+        "task_type": "user_research_planning",
+        "research_goal": "归纳访谈材料并还原关键用户旅程",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "本次明确范围"
+        ],
+        "expected_deliverables": [
+          "可追溯研究交付"
+        ]
+      },
+      "available_material_roles": []
+    },
+    {
+      "id": "h-294a29b985f2d86f",
+      "raw_input": "走查支付链路并给出整改复测方案",
+      "task": {
+        "task_type": "design_audit",
+        "research_goal": "走查支付链路并给出整改复测方案",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "本次明确范围"
+        ],
+        "expected_deliverables": [
+          "可追溯研究交付"
+        ]
+      },
+      "available_material_roles": []
+    },
+    {
+      "id": "h-0aff535567083e5c",
+      "raw_input": "聚类用户反馈并拆解问题根因",
       "task": {
         "task_type": "voc_diagnosis",
-        "research_goal": "对留存下滑做根因分析",
+        "research_goal": "聚类用户反馈并拆解问题根因",
         "target_audience": [
           "目标用户"
         ],
         "scope": [
-          "核心场景"
+          "本次明确范围"
         ],
         "expected_deliverables": [
-          "研究结论"
+          "可追溯研究交付"
         ]
       },
       "available_material_roles": []
     },
     {
-      "id": "hold-single-11-negative-2",
-      "stratum": "single_scenario",
-      "polarity": "negative",
-      "raw_input": "汇总研究结论并做策略提炼",
-      "task": {
-        "task_type": "competitive_research",
-        "research_goal": "汇总研究结论并做策略提炼",
-        "target_audience": [
-          "目标用户"
-        ],
-        "scope": [
-          "核心场景"
-        ],
-        "expected_deliverables": [
-          "研究结论"
-        ]
-      },
-      "available_material_roles": []
-    },
-    {
-      "id": "hold-single-12-negative-2",
-      "stratum": "single_scenario",
-      "polarity": "negative",
-      "raw_input": "输出下一季度优先级和实施路线图",
-      "task": {
-        "task_type": "competitive_research",
-        "research_goal": "输出下一季度优先级和实施路线图",
-        "target_audience": [
-          "目标用户"
-        ],
-        "scope": [
-          "核心场景"
-        ],
-        "expected_deliverables": [
-          "研究结论"
-        ]
-      },
-      "available_material_roles": []
-    },
-    {
-      "id": "hold-single-13-negative-2",
-      "stratum": "single_scenario",
-      "polarity": "negative",
-      "raw_input": "设计成功指标并形成验证计划",
-      "task": {
-        "task_type": "user_research_planning",
-        "research_goal": "设计成功指标并形成验证计划",
-        "target_audience": [
-          "目标用户"
-        ],
-        "scope": [
-          "核心场景"
-        ],
-        "expected_deliverables": [
-          "研究结论"
-        ]
-      },
-      "available_material_roles": []
-    },
-    {
-      "id": "hold-single-14-negative-2",
-      "stratum": "single_scenario",
-      "polarity": "negative",
-      "raw_input": "需要一次趋势扫描，判断消费决策工具近两年的变化",
-      "task": {
-        "task_type": "competitive_research",
-        "research_goal": "需要一次趋势扫描，判断消费决策工具近两年的变化",
-        "target_audience": [
-          "目标用户"
-        ],
-        "scope": [
-          "核心场景"
-        ],
-        "expected_deliverables": [
-          "研究结论"
-        ]
-      },
-      "available_material_roles": []
-    },
-    {
-      "id": "hold-single-15-negative-2",
-      "stratum": "single_scenario",
-      "polarity": "negative",
-      "raw_input": "请做竞品研究，核验各平台的体验差异",
-      "task": {
-        "task_type": "competitive_research",
-        "research_goal": "请做竞品研究，核验各平台的体验差异",
-        "target_audience": [
-          "目标用户"
-        ],
-        "scope": [
-          "核心场景"
-        ],
-        "expected_deliverables": [
-          "研究结论"
-        ]
-      },
-      "available_material_roles": []
-    },
-    {
-      "id": "hold-multi-01",
-      "stratum": "multi_scenario",
-      "raw_input": "并行开展竞品分析与策略提炼",
-      "task": {
-        "task_type": "competitive_research",
-        "research_goal": "并行开展竞品分析与策略提炼",
-        "target_audience": [
-          "目标用户"
-        ],
-        "scope": [
-          "核心场景"
-        ],
-        "expected_deliverables": [
-          "研究结论"
-        ]
-      },
-      "available_material_roles": []
-    },
-    {
-      "id": "hold-multi-02",
-      "stratum": "multi_scenario",
-      "raw_input": "体验走查完成后生成解决方案",
-      "task": {
-        "task_type": "design_audit",
-        "research_goal": "体验走查完成后生成解决方案",
-        "target_audience": [
-          "目标用户"
-        ],
-        "scope": [
-          "核心场景"
-        ],
-        "expected_deliverables": [
-          "研究结论"
-        ]
-      },
-      "available_material_roles": []
-    },
-    {
-      "id": "hold-multi-03",
-      "stratum": "multi_scenario",
-      "raw_input": "诊断行为异常并拆解问题根因",
+      "id": "h-6e5dfc2a4504fdeb",
+      "raw_input": "诊断行为异常并定义效果验证指标",
       "task": {
         "task_type": "voc_diagnosis",
-        "research_goal": "诊断行为异常并拆解问题根因",
+        "research_goal": "诊断行为异常并定义效果验证指标",
         "target_audience": [
           "目标用户"
         ],
         "scope": [
-          "核心场景"
+          "本次明确范围"
         ],
         "expected_deliverables": [
-          "研究结论"
+          "可追溯研究交付"
         ]
       },
       "available_material_roles": []
     },
     {
-      "id": "hold-multi-04",
-      "stratum": "multi_scenario",
-      "raw_input": "归纳访谈记录并梳理用户旅程",
+      "id": "h-bca46a528fcc9fa9",
+      "raw_input": "生成多个解决方向并比较风险取舍",
       "task": {
         "task_type": "user_research_planning",
-        "research_goal": "归纳访谈记录并梳理用户旅程",
+        "research_goal": "生成多个解决方向并比较风险取舍",
         "target_audience": [
           "目标用户"
         ],
         "scope": [
-          "核心场景"
+          "本次明确范围"
         ],
         "expected_deliverables": [
-          "研究结论"
+          "可追溯研究交付"
         ]
       },
       "available_material_roles": []
     },
     {
-      "id": "hold-multi-05",
-      "stratum": "multi_scenario",
-      "raw_input": "比较方案风险并制定优先级与实施路径",
-      "task": {
-        "task_type": "design_audit",
-        "research_goal": "比较方案风险并制定优先级与实施路径",
-        "target_audience": [
-          "目标用户"
-        ],
-        "scope": [
-          "核心场景"
-        ],
-        "expected_deliverables": [
-          "研究结论"
-        ]
-      },
-      "available_material_roles": []
-    },
-    {
-      "id": "hold-multi-06",
-      "stratum": "multi_scenario",
-      "raw_input": "同时做趋势扫描和竞品研究",
-      "task": {
-        "task_type": "competitive_research",
-        "research_goal": "同时做趋势扫描和竞品研究",
-        "target_audience": [
-          "目标用户"
-        ],
-        "scope": [
-          "核心场景"
-        ],
-        "expected_deliverables": [
-          "研究结论"
-        ]
-      },
-      "available_material_roles": []
-    },
-    {
-      "id": "hold-multi-07",
-      "stratum": "multi_scenario",
-      "raw_input": "制定验证计划与实施路线图",
+      "id": "h-60b5e184b3957a9e",
+      "raw_input": "整合研究结论并制定优先级路线图",
       "task": {
         "task_type": "user_research_planning",
-        "research_goal": "制定验证计划与实施路线图",
+        "research_goal": "整合研究结论并制定优先级路线图",
         "target_audience": [
           "目标用户"
         ],
         "scope": [
-          "核心场景"
+          "本次明确范围"
         ],
         "expected_deliverables": [
-          "研究结论"
+          "可追溯研究交付"
         ]
       },
       "available_material_roles": []
     },
     {
-      "id": "hold-ambiguity-01",
-      "stratum": "clarification",
-      "raw_input": "竞品研究和趋势扫描都可能，主目标未确认",
-      "task": {
-        "task_type": "competitive_research",
-        "research_goal": "竞品研究和趋势扫描都可能，主目标未确认",
-        "target_audience": [
-          "待确认"
-        ],
-        "scope": [
-          "待确认"
-        ],
-        "expected_deliverables": [
-          "待确认"
-        ]
-      },
-      "available_material_roles": []
-    },
-    {
-      "id": "hold-ambiguity-02",
-      "stratum": "clarification",
-      "raw_input": "反馈问题聚类与数据异常诊断边界不清",
-      "task": {
-        "task_type": "voc_diagnosis",
-        "research_goal": "反馈问题聚类与数据异常诊断边界不清",
-        "target_audience": [
-          "待确认"
-        ],
-        "scope": [
-          "待确认"
-        ],
-        "expected_deliverables": [
-          "待确认"
-        ]
-      },
-      "available_material_roles": []
-    },
-    {
-      "id": "hold-ambiguity-03",
-      "stratum": "clarification",
-      "raw_input": "用户分层或已有用户资料归纳，材料用途未确认",
+      "id": "h-35e2f883acb6c5ce",
+      "raw_input": "不要做竞品研究，只需说明当前需求边界",
       "task": {
         "task_type": "user_research_planning",
-        "research_goal": "用户分层或已有用户资料归纳，材料用途未确认",
+        "research_goal": "不要做竞品研究，只需说明当前需求边界",
         "target_audience": [
-          "待确认"
+          "目标用户"
         ],
         "scope": [
-          "待确认"
+          "本次明确范围"
         ],
         "expected_deliverables": [
-          "待确认"
+          "可追溯研究交付"
         ]
       },
       "available_material_roles": []
     },
     {
-      "id": "hold-ambiguity-04",
-      "stratum": "clarification",
-      "raw_input": "体验走查与根因分析先后关系未确认",
+      "id": "h-be431f181ec0b468",
+      "raw_input": "文档引用了验证计划，但本次不要求设计验证",
       "task": {
-        "task_type": "design_audit",
-        "research_goal": "体验走查与根因分析先后关系未确认",
+        "task_type": "user_research_planning",
+        "research_goal": "文档引用了验证计划，但本次不要求设计验证",
         "target_audience": [
-          "待确认"
+          "目标用户"
         ],
         "scope": [
-          "待确认"
+          "本次明确范围"
         ],
         "expected_deliverables": [
-          "待确认"
+          "可追溯研究交付"
         ]
       },
       "available_material_roles": []
     },
     {
-      "id": "hold-ambiguity-05",
-      "stratum": "clarification",
-      "raw_input": "方案生成与优先级实施路径的目标尚未确认",
+      "id": "h-5c203443f061ad82",
+      "raw_input": "如果以后做用户分层，可能需要哪些准备",
       "task": {
-        "task_type": "design_audit",
-        "research_goal": "方案生成与优先级实施路径的目标尚未确认",
+        "task_type": "user_research_planning",
+        "research_goal": "如果以后做用户分层，可能需要哪些准备",
         "target_audience": [
-          "待确认"
+          "目标用户"
         ],
         "scope": [
-          "待确认"
+          "本次明确范围"
         ],
         "expected_deliverables": [
-          "待确认"
+          "可追溯研究交付"
         ]
       },
       "available_material_roles": []
     },
     {
-      "id": "hold-bypass-01",
-      "stratum": "bypass_or_no_match",
-      "raw_input": "请直接运行 $run-heuristic-evaluation",
+      "id": "h-7145bac592802dbe",
+      "raw_input": "有人提到关键链路，不过我尚未确定研究范围",
       "task": {
-        "task_type": "design_audit",
-        "research_goal": "请直接运行 $run-heuristic-evaluation",
-        "target_audience": [],
-        "scope": [],
+        "task_type": "user_research_planning",
+        "research_goal": "有人提到关键链路，不过我尚未确定研究范围",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "本次明确范围"
+        ],
         "expected_deliverables": [
-          "待确认"
+          "可追溯研究交付"
+        ]
+      },
+      "available_material_roles": []
+    },
+    {
+      "id": "h-ea196dc622cdf988",
+      "raw_input": "快速方案和深度方案都必须作为唯一推荐",
+      "task": {
+        "task_type": "user_research_planning",
+        "research_goal": "快速方案和深度方案都必须作为唯一推荐",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "本次明确范围"
+        ],
+        "expected_deliverables": [
+          "可追溯研究交付"
+        ]
+      },
+      "available_material_roles": []
+    },
+    {
+      "id": "h-4225de96eaaedfef",
+      "raw_input": "直接运行指定技能生成访谈提纲",
+      "task": {
+        "task_type": "user_research_planning",
+        "research_goal": "直接运行指定技能生成访谈提纲",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "本次明确范围"
+        ],
+        "expected_deliverables": [
+          "可追溯研究交付"
         ]
       },
       "available_material_roles": [],
-      "direct_skill_id": "run-heuristic-evaluation"
+      "direct_skill_id": "generate-interview-guide"
     },
     {
-      "id": "hold-no-match-01",
-      "stratum": "bypass_or_no_match",
-      "raw_input": "需要研究支持，但目标、范围和交付均未提供",
+      "id": "h-41180ec35ecee61a",
+      "raw_input": "请帮助梳理一下当前情况",
       "task": {
         "task_type": "user_research_planning",
-        "research_goal": "需要研究支持，但目标、范围和交付均未提供",
-        "target_audience": [],
-        "scope": [],
+        "research_goal": "请帮助梳理一下当前情况",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "本次明确范围"
+        ],
         "expected_deliverables": [
-          "待确认"
+          "可追溯研究交付"
         ]
       },
       "available_material_roles": []
     },
     {
-      "id": "hold-no-match-02",
-      "stratum": "bypass_or_no_match",
-      "raw_input": "先看看情况再说",
+      "id": "h-167ea382e5cf2090",
+      "raw_input": "只记录这段原始说明，不生成研究方案",
       "task": {
-        "task_type": "voc_diagnosis",
-        "research_goal": "先看看情况再说",
-        "target_audience": [],
-        "scope": [],
+        "task_type": "user_research_planning",
+        "research_goal": "只记录这段原始说明，不生成研究方案",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "本次明确范围"
+        ],
         "expected_deliverables": [
-          "待确认"
+          "可追溯研究交付"
         ]
       },
       "available_material_roles": []

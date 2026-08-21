@@ -4,19 +4,21 @@ candidate_generation_mode: fixed
 activation_gate: gate-3
 profile_spec:
   version: profile-spec-gate-2-candidate-v1
-  sha256: sha256:ed159f1c09164983cc124604163f91ced92432d5c704dbfc0c0bc98504d6f44e
+  sha256: sha256:f4e5a0fc13f3f3c501db24cda6d1ad27610f1a93aed870bb39b1eb7f9d5fed0d
 scenario_catalog:
   version: scenario-profile-mapping-gate-2-candidate-v1
   sha256: sha256:0c94094949b9aa17c554da2386e0a11a5fcea79080ba0bdef967b89a33ab52fb
 scenario_mapping:
   version: scenario-profile-mapping-gate-2-candidate-v1
-  sha256: sha256:40b1ef3399cf27052a2f24902d8d81418b22e30f25f512d122684c5ecf1d44e4
+  sha256: sha256:39a7848d5c195a8244fa10eaa1afc9f0fb1b0a3e429cda41025dfa200f168082
 signal_catalog:
   version: planning-signal-gate-2-candidate-v1
-  sha256: sha256:ff7e1bc059e1a0c56e53c7fba36e4fa71b751663c3a12c48002d290a3d1c6ad5
+  sha256: sha256:47025811d89ca6c0cc4abd3f2f01cfcfc640051c5cfe8084faa18331105e1775
 candidate_contract:
   min_items: 2
   max_items: 4
-  baseline_profile_ids: [speed, depth]
+  baseline_profile_ids:
+    - speed
+    - depth
   classifier_max_calls: 1
   high_confidence_rule_classifier_calls: 0

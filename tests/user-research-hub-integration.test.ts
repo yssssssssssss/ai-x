@@ -146,20 +146,28 @@ test('checked-in Hub snapshot covers every physical file and registry entity exa
   );
 });
 
-test('manifest records exact 104 Knowledge and 18 Skill canonical mappings', () => {
+test('manifest records exact canonical Knowledge, Asset, and Skill mappings', () => {
   const manifest = loadManifest();
   const knowledgeMappings = manifest.entities.filter((entity) => (
-    entity.registry_kind === 'knowledge' && entity.disposition === 'map_existing'
+    entity.registry_kind === 'knowledge'
+    && entity.disposition === 'map_existing'
+    && (entity.mapping_basis === 'normalized_title' || entity.mapping_basis === 'explicit_continuous_discovery')
   ));
-  const exactSkillMappings = manifest.entities.filter((entity) => (
-    entity.registry_kind === 'skill' && entity.mapping_basis === 'exact_skill_slug'
+  const assetMappings = manifest.entities.filter((entity) => (
+    entity.mapping_basis === 'gate_2_existing_asset' && entity.disposition === 'map_existing'
+  ));
+  const skillMappings = manifest.entities.filter((entity) => (
+    entity.registry_kind === 'skill'
+    && entity.mapping_basis === 'gate_2_skill_noop'
+    && entity.disposition === 'map_existing'
   ));
   const continuousDiscovery = manifest.entities.find(({ id }) => (
     id === 'ur-method-methods-scenarios-product-experience-iteration-continuous-discovery'
   ));
 
   assert.equal(knowledgeMappings.length, 104);
-  assert.equal(exactSkillMappings.length, 18);
+  assert.equal(assetMappings.length, 13);
+  assert.equal(skillMappings.length, 18);
   assert.equal(continuousDiscovery?.mapping_basis, 'explicit_continuous_discovery');
   assert.equal(continuousDiscovery?.target?.canonical_id, 'scenario_continuous_discovery');
 });
@@ -231,7 +239,7 @@ test('opaque binary files remain source-only or reject-runtime through their exa
   }
 });
 
-test('Profile draft deterministically reports all 15 Scenarios and 60 baseline comparisons', () => {
+test('Profile draft deterministically reports all 15 Scenarios and 58 baseline spec comparisons', () => {
   const draft = YAML.parse(readFileSync(PROFILE_DRAFT_PATH, 'utf8')) as ProfileDraft;
   const report = buildDistinctnessReport(draft);
   const checkedIn = readFileSync(DISTINCTNESS_REPORT_PATH, 'utf8');
@@ -248,13 +256,13 @@ test('Profile draft deterministically reports all 15 Scenarios and 60 baseline c
   assert.deepEqual(report.summary, {
     scenarioCount: 15,
     mappedScenarioCount: 15,
-    specialtyBindingCount: 30,
-    baselineComparisonCount: 60,
-    semanticPassCount: 60,
-    semanticFailCount: 0,
+    specialtyBindingCount: 29,
+    baselineComparisonCount: 58,
+    specPassCount: 58,
+    specFailCount: 0,
     catalogSupportedCount: 0,
     catalogConditionalCount: 27,
-    catalogGapCount: 3,
+    catalogGapCount: 2,
   });
   assert.equal(serializeDistinctnessReport(report), checkedIn);
   assert.equal(serializeDistinctnessReport(buildDistinctnessReport(draft)), checkedIn);

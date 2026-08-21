@@ -4,6 +4,7 @@ import {
   type SkillRegistryEntry,
 } from '../runtime/config-loader.ts';
 
+export type KnowledgeStatus = 'approved' | 'draft' | 'candidate' | 'deprecated';
 export interface KnowledgeIndexItem {
   id: string;
   type: string;
@@ -16,12 +17,17 @@ export interface KnowledgeIndexItem {
   summary: string;
   source_path: string;
   content_hash: string;
-  status: string;
+  status: KnowledgeStatus;
 }
 
 // status 映射:知识库用 approved/draft/deprecated,registry 用 active/draft/deprecated
+function knowledgeStatus(value: unknown): KnowledgeStatus {
+  if (value === 'approved' || value === 'draft' || value === 'candidate' || value === 'deprecated') return value;
+  throw new Error(`Knowledge entry has invalid or missing status: ${String(value)}`);
+}
 function toRegistryStatus(s: unknown): SkillRegistryEntry['status'] {
-  return s === 'approved' || s === 'active' ? 'active' : s === 'deprecated' ? 'deprecated' : 'draft';
+  const status = knowledgeStatus(s);
+  return status === 'approved' ? 'active' : status === 'deprecated' ? 'deprecated' : 'draft';
 }
 
 export function buildIndex(entries: Array<{ relPath: string; md: string }>): {
@@ -69,7 +75,7 @@ export function buildIndex(entries: Array<{ relPath: string; md: string }>): {
         summary: (fm.summary as string) ?? '',
         source_path: fm.source_path as string,
         content_hash: fm.content_hash as string,
-        status: (fm.status as string) ?? 'approved',
+        status: knowledgeStatus(fm.status),
       });
     }
   }

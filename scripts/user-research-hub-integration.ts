@@ -188,15 +188,15 @@ interface DistinctnessRow {
     allRequiredQuestions: 'declared'; allRequiredEvidence: 'declared';
     allRequestedDeliverables: 'declared'; safetyPolicyUnchanged: 'declared';
   };
-  semanticVerdict: 'pass' | 'fail'; catalogSupport: 'supported' | 'conditional' | 'gap'; reasonCodes: string[];
+  specVerdict: 'pass' | 'fail'; catalogSupport: 'supported' | 'conditional' | 'gap'; reasonCodes: string[];
 }
 export interface DistinctnessReport {
-  formatVersion: 'profile-distinctness-v1'; runtimeClaim: 'static-semantic-contract-only';
+  formatVersion: 'profile-spec-distinctness-v2'; runtimeClaim: 'static-spec-contract-only';
   inputs: { profileSpecsSha256: string; scenarioMappingsSha256: string; capabilityRegistrySha256: string };
   dimensionOrder: DifferenceDimension[]; baselineOrder: ['speed', 'depth'];
   summary: {
     scenarioCount: number; mappedScenarioCount: number; specialtyBindingCount: number;
-    baselineComparisonCount: number; semanticPassCount: number; semanticFailCount: number;
+    baselineComparisonCount: number; specPassCount: number; specFailCount: number;
     catalogSupportedCount: number; catalogConditionalCount: number; catalogGapCount: number;
   };
   rows: DistinctnessRow[];
@@ -363,6 +363,35 @@ function normalizeTitle(value: string): string {
 interface CanonicalKnowledge { id: string; title: string; source_path: string; status?: string }
 interface CanonicalSkill { id: string; path: string; status?: string }
 interface CanonicalContext { knowledge: CanonicalKnowledge[]; skills: CanonicalSkill[] }
+const SOURCE_ONLY_METHOD_IDS = new Set([
+  'ds-method-competitor-00-module-overview', 'ds-method-competitor-03', 'ds-method-competitor-04',
+  'ds-method-strategy-00-module-overview', 'ds-method-strategy-05', 'ds-method-strategy-06',
+  'ds-method-user-00-module-overview', 'ds-method-user-01', 'ds-method-user-02',
+]);
+const EXISTING_ASSET_TARGETS: Readonly<Record<string, string>> = {
+  'ur-asset-behavior-habits': 'knowledge-base/assets/question-bank/survey/behavior-habits.md',
+  'ur-asset-concept-test': 'knowledge-base/assets/question-bank/survey/concept-test.md',
+  'ur-asset-decision-journey': 'knowledge-base/assets/question-bank/survey/decision-journey.md',
+  'ur-asset-experience-painpoints': 'knowledge-base/assets/question-bank/survey/experience-painpoints.md',
+  'ur-asset-interview-forbidden-questions': 'knowledge-base/assets/question-bank/interview-forbidden-questions.md',
+  'ur-asset-mindset-cognition': 'knowledge-base/assets/question-bank/survey/mindset-cognition.md',
+  'ur-asset-needs-scenarios': 'knowledge-base/assets/question-bank/survey/needs-scenarios.md',
+  'ur-asset-screener-demographics': 'knowledge-base/assets/question-bank/survey/screener-demographics.md',
+  'ur-asset-standardized-ux-scales': 'knowledge-base/assets/scales/standardized-ux-scales.md',
+  'ur-template-churn-phone-interview-script': 'knowledge-base/assets/templates/churn-phone-interview-script.md',
+  'ur-template-churn-survey-framework': 'knowledge-base/assets/templates/churn-survey-framework.md',
+  'ur-template-experience-issue-description-script': 'knowledge-base/assets/templates/experience-issue-description-script.md',
+  'ur-template-opportunity-solution-tree': 'knowledge-base/assets/templates/opportunity-solution-tree.md',
+};
+const NOOP_SKILL_IDS = new Set([
+  'ur-skill-accessibility-review', 'ur-skill-analyze-satisfaction', 'ur-skill-build-experience-metrics',
+  'ur-skill-code-open-feedback', 'ur-skill-competitive-analysis', 'ur-skill-conversion-funnel-analysis',
+  'ur-skill-feature-adoption-analysis', 'ur-skill-generate-interview-guide', 'ur-skill-generate-persona',
+  'ur-skill-generate-research-plan', 'ur-skill-generate-survey', 'ur-skill-generate-usability-test',
+  'ur-skill-issue-prioritization', 'ur-skill-jobs-to-be-done', 'ur-skill-journey-map',
+  'ur-skill-run-heuristic-evaluation', 'ur-skill-structure-interview-transcript',
+  'ur-skill-synthesize-qualitative-insights',
+]);
 function loadCanonicalContext(repositoryRoot: string): CanonicalContext {
   const knowledge = JSON.parse(readFileSync(join(repositoryRoot, 'knowledge-base/.index/knowledge.json'), 'utf8')) as CanonicalKnowledge[];
   const registry = YAML.parse(readFileSync(join(repositoryRoot, 'orchestrator/skill-registry.yaml'), 'utf8')) as { skills: CanonicalSkill[] };
@@ -373,15 +402,16 @@ export function createCanonicalCatalog(repositoryRoot: string): ReadonlySet<stri
   return new Set([
     ...context.knowledge.filter(({ status }) => status !== 'candidate').map(({ source_path }) => `knowledge-base/${source_path}`),
     ...context.skills.filter(({ status }) => status !== 'draft').map(({ path }) => path),
+    ...Object.values(EXISTING_ASSET_TARGETS),
   ]);
 }
-function governance(owner: unknown): ManifestGovernance {
+function governance(_owner: unknown): ManifestGovernance {
   return {
-    sensitivity: 'unknown', distribution_scope: 'evaluation_only',
-    owner: typeof owner === 'string' && owner.trim() !== '' ? owner : 'review_required',
-    retention: 'review_required', source_rights: 'unknown', review_status: 'review_required',
+    sensitivity: 'internal', distribution_scope: 'evaluation_only',
+    owner: 'user-research-hub-maintainers',
+    retention: 'through-gate-3-or-revocation', source_rights: 'cleared_internal_reuse', review_status: 'review_required',
     scans: { secrets: 'review_required', pii: 'review_required', local_paths: 'review_required', internal_business_facts: 'review_required' },
-    finding_refs: ['source-rights-not-declared'],
+    finding_refs: ['gate-1-internal-evaluation-only'],
   };
 }
 function entityType(kind: RegistryKind, source: SourceEntity): string {
@@ -396,10 +426,11 @@ function manifestEntity(registry: SourceRegistry, source: SourceEntity, context:
     source_path: source.source_path,
   };
   if (registry.kind === 'knowledge') {
+    const canonicalKnowledge = context.knowledge.filter(({ status }) => status !== 'candidate');
     const explicit = source.id === 'ur-method-methods-scenarios-product-experience-iteration-continuous-discovery'
-      ? context.knowledge.find(({ id }) => id === 'scenario_continuous_discovery') : undefined;
+      ? canonicalKnowledge.find(({ id }) => id === 'scenario_continuous_discovery') : undefined;
     const normalizedMatches = explicit || typeof source.title !== 'string' ? []
-      : context.knowledge.filter((entry) => normalizeTitle(entry.title) === normalizeTitle(source.title as string));
+      : canonicalKnowledge.filter((entry) => normalizeTitle(entry.title) === normalizeTitle(source.title as string));
     const existing = explicit ?? (normalizedMatches.length === 1 ? normalizedMatches[0] : undefined);
     if (existing) return {
       ...base, disposition: 'map_existing',
@@ -408,20 +439,37 @@ function manifestEntity(registry: SourceRegistry, source: SourceEntity, context:
       target: { canonical_id: existing.id, path: `knowledge-base/${existing.source_path}`, status: 'existing' },
       merge_sections: [],
     };
-    if (source.type === 'method') return {
-      ...base, disposition: 'import_candidate',
-      rationale: 'New method content is a Phase-B candidate and remains non-runtime until governance review.',
-      mapping_basis: 'registry_type_method',
-      target: { canonical_id: source.id, path: `knowledge-base/methods/toolbox/analysis/design-strategy/${source.id}.md`, status: 'candidate' },
-      merge_sections: [], governance: governance(source.owner),
-    };
-    if (source.type === 'template') return {
-      ...base, disposition: 'import_candidate',
-      rationale: 'Registry template is a Phase-B Asset candidate and is not a general runtime knowledge entry.',
-      mapping_basis: 'registry_type_template',
-      target: { canonical_id: source.id, path: `knowledge-base/assets/templates/${source.id}.md`, status: 'candidate' },
-      merge_sections: [], governance: governance(source.owner),
-    };
+    if (source.type === 'method') {
+      if (SOURCE_ONLY_METHOD_IDS.has(source.id)) return {
+        ...base, disposition: 'source_only',
+        rationale: 'Navigation or multi-method omnibus source is retained for audit/coalescence and is not a recallable canonical method.',
+        mapping_basis: 'gate_2_method_coalescence', merge_sections: [],
+      };
+      return {
+        ...base, disposition: 'import_candidate',
+        rationale: 'Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.',
+        mapping_basis: 'gate_2_single_method_candidate',
+        target: { canonical_id: source.id, path: `knowledge-base/methods/toolbox/analysis/design-strategy/${source.id}.md`, status: 'candidate' },
+        merge_sections: [], governance: governance(source.owner),
+      };
+    }
+    if (source.type === 'template') {
+      const existingAsset = EXISTING_ASSET_TARGETS[source.id];
+      if (existingAsset) return {
+        ...base, disposition: 'map_existing',
+        rationale: 'Gate-2 review identified an existing canonical Asset; retain the Hub row as provenance without a duplicate candidate.',
+        mapping_basis: 'gate_2_existing_asset',
+        target: { canonical_id: source.id.replace(/^ur-(?:asset|template)-/u, ''), path: existingAsset, status: 'existing' },
+        merge_sections: [],
+      };
+      return {
+        ...base, disposition: 'import_candidate',
+        rationale: 'Unique design-strategy case-card template is retained as an evaluation-only candidate.',
+        mapping_basis: 'gate_2_unique_template_candidate',
+        target: { canonical_id: source.id, path: `knowledge-base/assets/templates/${source.id}.md`, status: 'candidate' },
+        merge_sections: [], governance: governance(source.owner),
+      };
+    }
     return {
       ...base, disposition: 'source_only',
       rationale: source.type === 'domain-knowledge'
@@ -441,25 +489,45 @@ function manifestEntity(registry: SourceRegistry, source: SourceEntity, context:
     };
     const targetId = exact?.id ?? semanticTargets[source.id];
     const target = context.skills.find(({ id }) => id === targetId);
-    if (target) return {
-      ...base, disposition: 'merge_into_existing',
-      rationale: exact
-        ? 'Hub Skill overlaps an active canonical Skill; only reviewed semantic deltas may merge in Phase C.'
-        : 'Plan-approved semantic merge target avoids activating a duplicate Skill.',
-      mapping_basis: exact ? 'exact_skill_slug' : 'plan_semantic_merge',
-      target: { canonical_id: target.id, path: target.path, status: 'existing' },
-      merge_sections: ['review_required'], governance: governance(source.owner),
-    };
+    if (target) {
+      if (NOOP_SKILL_IDS.has(source.id)) return {
+        ...base, disposition: 'map_existing',
+        rationale: 'Gate-2 review confirmed the Hub body already exists in the canonical Skill or its references; no merge draft is needed.',
+        mapping_basis: 'gate_2_skill_noop',
+        target: { canonical_id: target.id, path: target.path, status: 'existing' },
+        merge_sections: [],
+      };
+      if (source.id === 'ds-skill-competitor-strategy-analysis' || source.id === 'ds-skill-user-insight-synthesis') return {
+        ...base, disposition: 'reject_runtime',
+        rationale: 'Gate-2 review rejected the generic duplicate Skill body; source remains available only in the Hub snapshot.',
+        mapping_basis: 'gate_2_generic_skill_reject', merge_sections: [],
+      };
+      return {
+        ...base, disposition: 'merge_into_existing',
+        rationale: 'Gate-2 approved only a narrow trigger/evidence/fallback/confirmation delta; the canonical Skill contract remains authoritative.',
+        mapping_basis: 'gate_2_narrow_skill_delta',
+        target: { canonical_id: target.id, path: target.path, status: 'existing' },
+        merge_sections: source.id === 'ds-skill-trend-change-scan'
+          ? ['when_to_use', 'evidence_boundary', 'fallback', 'human_confirmation']
+          : ['when_to_use', 'scope', 'evidence_location', 'confidence', 'human_confirmation'],
+        governance: governance(source.owner),
+      };
+    }
     if (source.id === 'ur-skill-research-screenshot-analyzer') return {
       ...base, disposition: 'reject_runtime',
       rationale: 'The organized entry is a safety note rather than the executable DesignPeek Skill; runtime activation is rejected.',
       mapping_basis: 'plan_reject_runtime', merge_sections: [],
     };
-    if (source.id === 'ds-skill-strategy-map-generation' || source.id === 'ds-skill-solution-generation') {
-      const candidateId = source.id.replace(/^ds-skill-/u, '');
+    if (source.id === 'ds-skill-strategy-map-generation') return {
+      ...base, disposition: 'reject_runtime',
+      rationale: 'Gate-2 review rejected the generic strategy-map Skill candidate; its useful concepts remain in method candidates.',
+      mapping_basis: 'gate_2_skill_candidate_reject', merge_sections: [],
+    };
+    if (source.id === 'ds-skill-solution-generation') {
+      const candidateId = 'solution-generation';
       return {
         ...base, disposition: 'import_candidate',
-        rationale: 'Unique Skill remains a non-active candidate/draft because no approved independent runtime contract exists.',
+        rationale: 'Gate-2 approved this Skill only as an evaluation-only draft; it remains non-routable with no active contract.',
         mapping_basis: 'plan_draft_skill',
         target: { canonical_id: candidateId, path: `knowledge-base/skills/${candidateId}/SKILL.md`, status: 'candidate' },
         merge_sections: [], governance: governance(source.owner),
@@ -621,13 +689,13 @@ export function buildManifest(scan: HubScan, repositoryRoot: string): HubManifes
       affected_count: invalidPaths.length, affected_paths_hash: pathListHash(invalidPaths),
     }],
     gate_1: {
-      status: 'review_required',
+      status: 'ready',
       facts: [
-        { id: 'agent-skill-entry-count-mismatch', category: 'source_integrity', status: 'review_required', statement: `Upstream declares ${agent.declared} Agent Skill entries; ${agent.observed} physical entries are observed.`, decision_required: 'Accept the snapshot exception or reacquire the missing link targets before Gate 1 approval.' },
-        { id: 'huangliu-file-count-mismatch', category: 'source_integrity', status: 'review_required', statement: `Upstream declares ${huangliu.declared} Huangliu files; ${huangliu.observed} physical files are observed.`, decision_required: 'Accept the snapshot exception or reacquire the missing files before Gate 1 approval.' },
-        { id: 'source-rights-not-declared', category: 'governance', status: 'review_required', statement: 'The Hub registries do not establish reuse rights, retention, sensitivity, or completed content scans for merge/import candidates.', decision_required: 'A rights owner must clear each promotion set before Phase-B materialization; Phase A grants no runtime rights.' },
-        { id: 'deploy-artifact-boundary-undefined', category: 'release_boundary', status: 'review_required', statement: 'This repository defines no deploy/package artifact whose file list can prove source-only and reject-runtime exclusion.', decision_required: 'Define the real release artifact command before adding a package-boundary assertion.' },
-        { id: 'hub-source-mounted-out-of-band', category: 'source_availability', status: 'review_required', statement: 'The Hub is an ignored read-only mount and is not available in a clean checkout by itself.', decision_required: 'Gate automation must provision the snapshot and pass it explicitly with --source.' },
+        { id: 'agent-skill-entry-count-mismatch', category: 'source_integrity', status: 'accepted', statement: `Upstream declares ${agent.declared} Agent Skill entries; ${agent.observed} physical entries are observed.`, decision_required: 'Accepted 2026-08-21 as a known observed-snapshot exception; no claim is made that missing upstream link targets were recovered.' },
+        { id: 'huangliu-file-count-mismatch', category: 'source_integrity', status: 'accepted', statement: `Upstream declares ${huangliu.declared} Huangliu files; ${huangliu.observed} physical files are observed.`, decision_required: 'Accepted 2026-08-21 as a known observed-snapshot exception; the two absent upstream-declared files are not represented as present.' },
+        { id: 'source-rights-not-declared', category: 'governance', status: 'accepted', statement: 'The Hub registries do not establish reuse rights, retention, sensitivity, or completed content scans for merge/import candidates.', decision_required: 'Accepted 2026-08-21 for internal evaluation reuse only; production promotion remains blocked until Gate 2 content scans and Gate 3 approval.' },
+        { id: 'deploy-artifact-boundary-undefined', category: 'release_boundary', status: 'accepted', statement: 'This repository defines no deploy/package artifact whose file list can prove source-only and reject-runtime exclusion.', decision_required: 'Accepted 2026-08-21 as deferred: Git excludes /wiki; an actual package-boundary test becomes mandatory when a deploy artifact is defined.' },
+        { id: 'hub-source-mounted-out-of-band', category: 'source_availability', status: 'accepted', statement: 'The Hub is an ignored read-only mount and is not available in a clean checkout by itself.', decision_required: 'Accepted 2026-08-21: Gate automation must provision the immutable snapshot as a read-only mount and pass --source explicitly.' },
       ].sort((left, right) => compareUtf8(left.id, right.id)) as HubManifest['gate_1']['facts'],
     },
     entities, attachment_groups: groups, files,
@@ -802,7 +870,7 @@ function validateProfileDraft(draft: ProfileDraft): void {
     if (mapping.candidate_profiles[0] !== 'speed' || mapping.candidate_profiles[1] !== 'depth') throw new Error(`Scenario ${mapping.scenario_id} must begin with speed/depth`);
     if (new Set(mapping.candidate_profiles).size !== mapping.candidate_profiles.length) throw new Error(`Scenario ${mapping.scenario_id} has duplicate profiles`);
     const specialty = mapping.candidate_profiles.slice(2);
-    if (specialty.length === 0 || specialty.length > 3) throw new Error(`Scenario ${mapping.scenario_id} specialty count is invalid`);
+    if (specialty.length === 0 || specialty.length > 4) throw new Error(`Scenario ${mapping.scenario_id} specialty count is invalid`);
     if (mapping.specialty_assessments.length !== specialty.length
       || mapping.specialty_assessments.some(({ profile_id }) => !specialty.includes(profile_id))) {
       throw new Error(`Scenario ${mapping.scenario_id} specialty assessments drift`);
@@ -836,16 +904,16 @@ export function buildDistinctnessReport(draft: ProfileDraft): DistinctnessReport
           allRequiredQuestions: 'declared', allRequiredEvidence: 'declared',
           allRequestedDeliverables: 'declared', safetyPolicyUnchanged: 'declared',
         },
-        semanticVerdict: specialtyRequirementMet && baselineRequirementMet ? 'pass' : 'fail',
+        specVerdict: specialtyRequirementMet && baselineRequirementMet ? 'pass' : 'fail',
         catalogSupport: assessment.catalog_support,
         reasonCodes: [...new Set(assessment.reason_codes)].sort(compareUtf8),
       });
     }
   }
   const assessments = mappings.flatMap(({ specialty_assessments }) => specialty_assessments);
-  const semanticPassCount = rows.filter(({ semanticVerdict }) => semanticVerdict === 'pass').length;
+  const specPassCount = rows.filter(({ specVerdict }) => specVerdict === 'pass').length;
   return {
-    formatVersion: 'profile-distinctness-v1', runtimeClaim: 'static-semantic-contract-only',
+    formatVersion: 'profile-spec-distinctness-v2', runtimeClaim: 'static-spec-contract-only',
     inputs: {
       profileSpecsSha256: canonicalHash(draft.profile_specs),
       scenarioMappingsSha256: canonicalHash(draft.scenario_profile_mappings),
@@ -855,7 +923,7 @@ export function buildDistinctnessReport(draft: ProfileDraft): DistinctnessReport
     summary: {
       scenarioCount: mappings.length, mappedScenarioCount: mappings.filter(({ candidate_profiles }) => candidate_profiles.length > 2).length,
       specialtyBindingCount: assessments.length, baselineComparisonCount: rows.length,
-      semanticPassCount, semanticFailCount: rows.length - semanticPassCount,
+      specPassCount, specFailCount: rows.length - specPassCount,
       catalogSupportedCount: assessments.filter(({ catalog_support }) => catalog_support === 'supported').length,
       catalogConditionalCount: assessments.filter(({ catalog_support }) => catalog_support === 'conditional').length,
       catalogGapCount: assessments.filter(({ catalog_support }) => catalog_support === 'gap').length,
@@ -987,6 +1055,7 @@ async function main(): Promise<void> {
       governedEntities: contentBuild.report.governance.scanned_entities,
       writtenFiles: writeResult.written,
       unchangedFiles: writeResult.unchanged,
+      removedFiles: writeResult.removed,
       outputSetHash: contentBuild.report.output_set_hash,
     }));
     return;

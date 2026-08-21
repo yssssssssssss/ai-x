@@ -66,48 +66,51 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "primary_scenario_id",
-        "secondary_scenario_ids",
-        "confidence",
-        "signal_ids",
-        "source_field_paths",
-        "resolver_version_hash",
-        "mapping_version_hash",
-        "candidate_profiles",
-        "degradation_reasons"
+        "version", "resolver_version", "scenario_catalog_hash", "signal_catalog_hash",
+        "profile_spec_hash", "scenario_mapping_hash", "classification_method", "classifier_call_count",
+        "primary_scenario_id", "secondary_scenario_ids", "confidence", "signals",
+        "selected_profile_ids", "degradations"
       ],
       "properties": {
-        "primary_scenario_id": { "type": "string", "minLength": 1 },
+        "version": { "const": "planning-guidance-provenance-v1" },
+        "resolver_version": { "const": "candidate-profile-resolver-v1" },
+        "scenario_catalog_hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "signal_catalog_hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "profile_spec_hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "scenario_mapping_hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "classification_method": { "enum": ["rule", "classifier", "clarification", "direct_skill_bypass"] },
+        "classifier_call_count": { "enum": [0, 1] },
+        "primary_scenario_id": { "type": ["string", "null"], "minLength": 1 },
         "secondary_scenario_ids": {
-          "type": "array",
-          "maxItems": 2,
-          "uniqueItems": true,
+          "type": "array", "maxItems": 2, "uniqueItems": true,
           "items": { "type": "string", "minLength": 1 }
         },
-        "confidence": { "enum": ["high", "medium", "low"] },
-        "signal_ids": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": { "type": "string", "minLength": 1 }
+        "confidence": { "enum": ["high", "medium", "low", null] },
+        "signals": {
+          "type": "array", "uniqueItems": true,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["signal_id", "source_path"],
+            "properties": {
+              "signal_id": { "type": "string", "minLength": 1 },
+              "source_path": { "enum": ["raw_input", "task.task_type", "task.research_goal", "task.target_audience", "task.scope", "task.constraints", "task.success_criteria", "task.expected_deliverables", "problem_graph.evidence_requirements", "available_material_roles"] }
+            }
+          }
         },
-        "source_field_paths": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": { "type": "string", "pattern": "^(?:original_input|research_task_v2)(?:\\.[a-z][a-z0-9_]*)*$" }
-        },
-        "resolver_version_hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
-        "mapping_version_hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
-        "candidate_profiles": {
-          "type": "array",
-          "minItems": 2,
-          "maxItems": 4,
-          "uniqueItems": true,
+        "selected_profile_ids": {
+          "type": "array", "minItems": 0, "maxItems": 4, "uniqueItems": true,
           "items": { "$ref": "#/$defs/candidateProfile" }
         },
-        "degradation_reasons": {
+        "degradations": {
           "type": "array",
-          "uniqueItems": true,
-          "items": { "type": "string", "minLength": 1 }
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["code"],
+            "properties": {
+              "code": { "type": "string", "minLength": 1 },
+              "profile_id": { "$ref": "#/$defs/candidateProfile" }
+            }
+          }
         }
       }
     },

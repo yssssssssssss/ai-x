@@ -8,6 +8,7 @@ import {
   type KnowledgeRetrievalResult,
 } from '../evaluations/skills/kb/retriever.ts';
 import { filterKnowledge } from '../apps/orchestrator-runtime/src/knowledge/index.ts';
+import type { KnowledgeIndexItem as RuntimeKnowledgeIndexItem } from '../apps/orchestrator-runtime/src/knowledge/indexer.ts';
 import { parseFrontmatter } from '../apps/orchestrator-runtime/src/knowledge/frontmatter.ts';
 import { assessKnowledgeUsage } from '../evaluations/skills/kb/assessment.ts';
 import { buildKnowledgeSnapshot } from '../evaluations/skills/kb/snapshot.ts';
@@ -257,7 +258,7 @@ function realSnapshotFixture(sources: RealSourceFixture[]) {
   const root = mkdtempSync(join('/tmp', 'kb-retriever-real-'));
   const kb = join(root, 'knowledge-base');
   const indexPath = join(root, 'knowledge.json');
-  const indexItems = sources.map((source) => {
+  const indexItems: RuntimeKnowledgeIndexItem[] = sources.map((source) => {
     const sourcePath = join(kb, source.path);
     mkdirSync(dirname(sourcePath), { recursive: true });
     writeFileSync(sourcePath, source.content);
@@ -272,7 +273,7 @@ function realSnapshotFixture(sources: RealSourceFixture[]) {
       summary: 'A tagged canonical source',
       source_path: source.path,
       content_hash: 'sha256:index-placeholder',
-      status: 'reviewed',
+      status: 'approved',
     };
   });
   writeFileSync(indexPath, JSON.stringify(indexItems));

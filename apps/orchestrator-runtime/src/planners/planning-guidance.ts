@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
+import type { PlanningProvenance, PlanningSignalSourcePath, ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
 
 export type ScenarioId =
   | 'trend-change-identification'
@@ -28,16 +28,7 @@ export type CandidateProfileId =
   | 'decision'
   | 'remediation';
 
-export type GuidanceSourcePath =
-  | 'raw_input'
-  | 'task.task_type'
-  | 'task.research_goal'
-  | 'task.target_audience'
-  | 'task.scope'
-  | 'task.constraints'
-  | 'task.success_criteria'
-  | 'task.expected_deliverables'
-  | 'available_material_roles';
+export type GuidanceSourcePath = PlanningSignalSourcePath;
 
 export type ScenarioRelationship = 'serial' | 'parallel' | 'conditional';
 export type GuidanceConfidence = 'high' | 'medium' | 'low';
@@ -105,7 +96,7 @@ export interface PlanningGuidanceRequest {
   raw_input: string;
   task: ResearchTaskV2;
   available_material_roles: string[];
-  candidate_generation_mode?: CandidateGenerationMode;
+  problem_graph_signal_ids?: Array<'independent_evidence_paths_required'>;
   direct_skill_id?: string;
   baseline_readiness: {
     speed: boolean;
@@ -114,8 +105,13 @@ export interface PlanningGuidanceRequest {
   capabilities: PlanningGuidanceCapability[];
 }
 
+export interface PlanningGuidancePolicy {
+  candidate_generation_mode: CandidateGenerationMode;
+  gate_3_activation_required: true;
+}
 export interface PlanningGuidanceOptions {
   classifier?: (request: ScenarioClassifierRequest) => Promise<unknown>;
+  policy?: PlanningGuidancePolicy;
 }
 
 export interface ResolvedProfileSpec {
@@ -144,6 +140,7 @@ export type GuidanceDegradationCode =
   | 'classifier_invalid'
   | 'low_confidence_classification'
   | 'medium_confidence_profile_conflict'
+  | 'conflicting_profile_preferences'
   | 'dynamic_generation_disabled'
   | 'specialty_capability_unavailable'
   | 'baseline_not_ready';
@@ -153,22 +150,7 @@ export interface PlanningGuidanceDegradation {
   profile_id?: CandidateProfileId;
 }
 
-export interface PlanningGuidanceProvenance {
-  version: 'planning-guidance-provenance-v1';
-  resolver_version: 'candidate-profile-resolver-v1';
-  scenario_catalog_hash: string;
-  signal_catalog_hash: string;
-  profile_spec_hash: string;
-  scenario_mapping_hash: string;
-  classification_method: 'rule' | 'classifier' | 'clarification' | 'direct_skill_bypass';
-  classifier_call_count: 0 | 1;
-  primary_scenario_id: ScenarioId | null;
-  secondary_scenario_ids: ScenarioId[];
-  confidence: GuidanceConfidence | null;
-  signals: ControlledSignalRef[];
-  selected_profile_ids: CandidateProfileId[];
-  degradations: PlanningGuidanceDegradation[];
-}
+export type PlanningGuidanceProvenance = PlanningProvenance;
 
 export interface PlanningGuidanceResult {
   status: 'resolved' | 'clarification' | 'bypassed' | 'blocked';
@@ -190,7 +172,8 @@ export interface PlanningGuidanceResult {
       | 'classifier_failed'
       | 'classifier_invalid'
       | 'low_confidence_classification'
-      | 'medium_confidence_profile_conflict';
+      | 'medium_confidence_profile_conflict'
+      | 'conflicting_profile_preferences';
     candidate_scenario_ids: ScenarioId[];
   };
   planning_provenance: PlanningGuidanceProvenance;
@@ -253,7 +236,7 @@ const PROFILE_SPECS: readonly ProfileSpecDefinition[] = [
   {
     id: 'breadth', ordinal: 2, kind: 'specialty', display_name: '广度扫描', max_steps: 8,
     dimensions: {
-      scope: 'expanded_scope_units_including_solution_option',
+      scope: 'expanded_task_scope_units',
       method: 'repeat_minimum_sufficient_path_per_scope_unit',
       evidence: 'minimum_required_per_scope_unit',
       review: 'coverage_matrix_consistency',
@@ -316,12 +299,12 @@ const SCENARIOS: readonly ScenarioDefinition[] = [
   { id: 'user-journey-insight', parent_task_id: 'understand-users', candidate_profiles: ['speed', 'depth', 'focused', 'mixed_method'] },
   { id: 'experience-walkthrough', parent_task_id: 'find-problems', candidate_profiles: ['speed', 'depth', 'remediation', 'focused', 'breadth'] },
   { id: 'feedback-issue-clustering', parent_task_id: 'find-problems', candidate_profiles: ['speed', 'depth', 'decision'] },
-  { id: 'data-behavior-diagnosis', parent_task_id: 'find-problems', candidate_profiles: ['speed', 'depth', 'focused', 'mixed_method', 'decision'] },
-  { id: 'root-cause-analysis', parent_task_id: 'solve-problems', candidate_profiles: ['speed', 'depth', 'focused', 'mixed_method'] },
-  { id: 'solution-generation', parent_task_id: 'solve-problems', candidate_profiles: ['speed', 'depth', 'breadth', 'decision'] },
-  { id: 'solution-comparison', parent_task_id: 'solve-problems', candidate_profiles: ['speed', 'depth', 'decision', 'focused'] },
+  { id: 'data-behavior-diagnosis', parent_task_id: 'find-problems', candidate_profiles: ['speed', 'depth', 'focused', 'mixed_method', 'decision', 'remediation'] },
+  { id: 'root-cause-analysis', parent_task_id: 'solve-problems', candidate_profiles: ['speed', 'depth', 'focused', 'mixed_method', 'remediation'] },
+  { id: 'solution-generation', parent_task_id: 'solve-problems', candidate_profiles: ['speed', 'depth', 'breadth'] },
+  { id: 'solution-comparison', parent_task_id: 'solve-problems', candidate_profiles: ['speed', 'depth', 'focused'] },
   { id: 'strategy-synthesis', parent_task_id: 'define-strategy', candidate_profiles: ['speed', 'depth', 'decision'] },
-  { id: 'priority-roadmap', parent_task_id: 'define-strategy', candidate_profiles: ['speed', 'depth', 'decision', 'focused'] },
+  { id: 'priority-roadmap', parent_task_id: 'define-strategy', candidate_profiles: ['speed', 'depth', 'focused'] },
   { id: 'metrics-validation', parent_task_id: 'define-strategy', candidate_profiles: ['speed', 'depth', 'mixed_method', 'decision', 'focused'] },
 ];
 
@@ -340,6 +323,7 @@ const PROFILE_SIGNAL_PATHS = [
   'task.constraints',
   'task.success_criteria',
   'task.expected_deliverables',
+  'problem_graph.evidence_requirements',
 ] as const satisfies readonly GuidanceSourcePath[];
 
 const SIGNALS: readonly SignalDefinition[] = [
@@ -367,10 +351,11 @@ const SIGNALS: readonly SignalDefinition[] = [
   { id: 'profile.depth.explicit', profile_id: 'depth', kind: 'profile_preference', source_paths: PROFILE_SIGNAL_PATHS, terms: ['深度研究', '深入研究', '深挖方案', '证据深度优先'] },
   { id: 'profile.breadth.scope-units', profile_id: 'breadth', kind: 'profile_content', source_paths: PROFILE_SIGNAL_PATHS, terms: ['多个竞品', '多个人群', '多个场景', '多个触点', '全部平台', '覆盖矩阵'] },
   { id: 'profile.breadth.explicit', profile_id: 'breadth', kind: 'profile_preference', source_paths: PROFILE_SIGNAL_PATHS, terms: ['广度优先', '广度扫描', '全景扫描', '扩大覆盖'] },
-  { id: 'profile.focused.named-focus', profile_id: 'focused', kind: 'profile_content', source_paths: PROFILE_SIGNAL_PATHS, terms: ['关键人群', '关键触点', '关键链路', '关键问题', '重点人群'] },
+  { id: 'profile.focused.named-focus', profile_id: 'focused', kind: 'profile_content', source_paths: PROFILE_SIGNAL_PATHS, terms: ['聚焦于', '仅分析', '只研究', '限定为', '指定人群', '指定触点', '指定链路'] },
   { id: 'profile.focused.explicit', profile_id: 'focused', kind: 'profile_preference', source_paths: PROFILE_SIGNAL_PATHS, terms: ['聚焦研究', '聚焦方案', '收窄范围', '聚焦关键'] },
   { id: 'profile.mixed-method.explicit', profile_id: 'mixed_method', kind: 'profile_preference', source_paths: PROFILE_SIGNAL_PATHS, terms: ['混合方法', '定性+定量', '定性与定量', '多方法验证', '两类独立证据'] },
-  { id: 'profile.decision.deliverable', profile_id: 'decision', kind: 'profile_content', source_paths: PROFILE_SIGNAL_PATHS, terms: ['比较取舍', '决策建议', '产品优先级', '优先级建议', '实施路径', '路线图'] },
+  { id: 'profile.mixed-method.problem-graph', profile_id: 'mixed_method', kind: 'profile_content', source_paths: ['problem_graph.evidence_requirements'], terms: ['independent_evidence_paths_required'] },
+  { id: 'profile.decision.deliverable', profile_id: 'decision', kind: 'profile_content', source_paths: ['task.expected_deliverables'], terms: ['比较取舍', '决策建议', '产品优先级', '优先级建议', '实施路径', '路线图'] },
   { id: 'profile.decision.explicit', profile_id: 'decision', kind: 'profile_preference', source_paths: PROFILE_SIGNAL_PATHS, terms: ['决策收敛', '决策优先', '以决策为主'] },
   { id: 'profile.remediation.closed-loop', profile_id: 'remediation', kind: 'profile_content', source_paths: PROFILE_SIGNAL_PATHS, terms: ['整改动作', '整改复测', '修复后复测', '验收阈值', '问题修复'] },
   { id: 'profile.remediation.explicit', profile_id: 'remediation', kind: 'profile_preference', source_paths: PROFILE_SIGNAL_PATHS, terms: ['整改复测方案', '复测优先'] },
@@ -470,8 +455,24 @@ function sourceValues(request: PlanningGuidanceRequest): ReadonlyMap<GuidanceSou
     ['task.constraints', request.task.constraints.filter(({ source }) => source === 'user').map(({ statement }) => statement)],
     ['task.success_criteria', request.task.success_criteria.map(({ statement }) => statement)],
     ['task.expected_deliverables', request.task.expected_deliverables],
+    ['problem_graph.evidence_requirements', request.problem_graph_signal_ids ?? []],
     ['available_material_roles', request.available_material_roles],
   ]);
+}
+
+function affirmativeTermMatch(value: string, term: string): boolean {
+  const haystack = normalized(value);
+  const needle = normalized(term);
+  let index = haystack.indexOf(needle);
+  while (index >= 0) {
+    const prefix = haystack.slice(Math.max(0, index - 12), index);
+    const quoted = /[“"'「『][^”"'」』]*$/u.test(prefix);
+    const negated = /(?:不要(?:做|进行)?|不(?:做|需要|要)?|无需(?:做|进行)?|不是|避免|禁止|别(?:做)?)\s*$/u.test(prefix);
+    const hypothetical = /(?:如果|假设|例如|比如|提到|引用|是否要)(?:[^，。；]{0,8})$/u.test(prefix);
+    if (!quoted && !negated && !hypothetical) return true;
+    index = haystack.indexOf(needle, index + needle.length);
+  }
+  return false;
 }
 
 function recognizeSignals(request: PlanningGuidanceRequest): ControlledSignalRef[] {
@@ -480,7 +481,7 @@ function recognizeSignals(request: PlanningGuidanceRequest): ControlledSignalRef
   for (const signal of SIGNALS) {
     for (const sourcePath of signal.source_paths) {
       const normalizedValues = (values.get(sourcePath) ?? []).map(normalized);
-      if (!signal.terms.some((term) => normalizedValues.some((value) => value.includes(normalized(term))))) continue;
+      if (!signal.terms.some((term) => normalizedValues.some((value) => affirmativeTermMatch(value, term)))) continue;
       hits.push({ signal_id: signal.id, source_path: sourcePath });
     }
   }
@@ -508,14 +509,6 @@ function relevantScenarioSignals(
     const signal = SIGNAL_BY_ID.get(signal_id);
     return signal?.kind === 'task_type' || (signal?.scenario_id !== undefined && allowed.has(signal.scenario_id));
   });
-}
-
-function sameProfileSet(scenarioIds: readonly ScenarioId[]): boolean {
-  const signatures = scenarioIds.map((scenarioId) => {
-    const profiles = SCENARIO_BY_ID.get(scenarioId)?.candidate_profiles ?? [];
-    return [...profiles].sort().join('|');
-  });
-  return new Set(signatures).size <= 1;
 }
 
 function hasExactKeys(value: object, expectedKeys: readonly string[]): boolean {
@@ -587,6 +580,10 @@ function validateClassifierResult(
   const allowed = new Set(allowedScenarioIds);
   if (!allowed.has(result.primary_scenario_id)) return false;
   if (result.secondary_scenarios.some(({ scenario_id }) => !allowed.has(scenario_id))) return false;
+  const selectedScenarios = [result.primary_scenario_id, ...result.secondary_scenarios.map(({ scenario_id }) => scenario_id)];
+  if (selectedScenarios.some((scenarioId) => !result.signals.some(({ signal_id }) => (
+    SIGNAL_BY_ID.get(signal_id)?.scenario_id === scenarioId
+  )))) return false;
   const observed = new Set(observedSignals.map(({ signal_id, source_path }) => `${signal_id}\u0000${source_path}`));
   return result.signals.every(({ signal_id, source_path }) => {
     const definition = SIGNAL_BY_ID.get(signal_id);
@@ -595,11 +592,37 @@ function validateClassifierResult(
   });
 }
 
+function rationaleCodesForSignals(signals: readonly ControlledSignalRef[]): ScenarioClassifierResult['rationale_codes'] {
+  const codes = new Set<ScenarioClassifierResult['rationale_codes'][number]>();
+  for (const { source_path } of signals) {
+    if (source_path === 'task.expected_deliverables') codes.add('deliverable_match');
+    else if (source_path === 'available_material_roles') codes.add('material_match');
+    else if (source_path === 'task.scope' || source_path === 'task.target_audience') codes.add('scope_match');
+    else if (source_path === 'task.task_type') codes.add('task_type_context');
+    else codes.add('explicit_goal_match');
+  }
+  return [...codes];
+}
+
 function profileSignalRefs(
   signals: readonly ControlledSignalRef[],
   profileId: CandidateProfileId,
 ): ControlledSignalRef[] {
   return signals.filter(({ signal_id }) => SIGNAL_BY_ID.get(signal_id)?.profile_id === profileId);
+}
+
+function conflictingProfilePreferences(signals: readonly ControlledSignalRef[]): boolean {
+  const explicit = new Set(signals.filter(({ signal_id }) => SIGNAL_BY_ID.get(signal_id)?.kind === 'profile_preference')
+    .map(({ signal_id }) => SIGNAL_BY_ID.get(signal_id)?.profile_id)
+    .filter((id): id is CandidateProfileId => id !== undefined));
+  return (explicit.has('speed') && explicit.has('depth'))
+    || (explicit.has('breadth') && explicit.has('focused'))
+    || (explicit.size > 1 && !signals.some(({ signal_id }) => signal_id === 'execution.compare-paths.explicit'));
+}
+function hasDecisionOptions(request: PlanningGuidanceRequest): boolean {
+  if (request.task.scope.length >= 2) return true;
+  const optionText = [request.raw_input, ...request.task.scope, ...request.task.expected_deliverables].join(' ');
+  return /(?:多个|两种|两套|两个|多方案|a\s*[\/对比vs]+\s*b|方案.{0,8}(?:比较|对比|取舍|选择))/iu.test(optionText);
 }
 
 function activeEligibleCapabilities(
@@ -724,11 +747,12 @@ function resolvedProfiles(
 
 function resolveProfiles(input: {
   request: PlanningGuidanceRequest;
+  mode: CandidateGenerationMode;
   primaryScenarioId: ScenarioId;
   secondaryScenarioIds: ScenarioId[];
   signals: ControlledSignalRef[];
 }): { profiles: ResolvedProfileSpec[]; degradations: PlanningGuidanceDegradation[] } {
-  const mode = input.request.candidate_generation_mode ?? 'fixed';
+  const mode = input.mode;
   if (mode === 'fixed') {
     return {
       profiles: resolvedProfiles(['speed', 'depth'], recommendedProfile(['speed', 'depth'], input.signals)),
@@ -750,6 +774,7 @@ function resolveProfiles(input: {
       input.signals,
     )) continue;
     if (profileSignalRefs(input.signals, profileId).length === 0) continue;
+    if (profileId === 'decision' && !hasDecisionOptions(input.request)) continue;
     if (!capabilitySupportsProfile(profileId, activeCapabilities)) {
       degradations.push({ code: 'specialty_capability_unavailable', profile_id: profileId });
       continue;
@@ -875,6 +900,16 @@ export async function resolvePlanningGuidance(
     };
   }
 
+  if (conflictingProfilePreferences(signals)) {
+    return unresolvedResult({
+      reason: 'conflicting_profile_preferences',
+      candidateScenarioIds: [...TASK_TYPE_SCENARIOS[request.task.task_type]],
+      classifierCalls: 0,
+      signals,
+      degradation: 'conflicting_profile_preferences',
+    });
+  }
+
   if (
     request.task.blocking_issues.length > 0
     || request.task.ambiguities.some(({ blocking }) => blocking)
@@ -894,12 +929,13 @@ export async function resolvePlanningGuidance(
   let classifierCalls: 0 | 1 = 0;
 
   if (ruleCandidates.length === 1) {
+    const ruleSignals = relevantScenarioSignals(signals, ruleCandidates);
     classification = {
       primary_scenario_id: ruleCandidates[0]!,
       secondary_scenarios: [],
       confidence: 'high',
-      signals: relevantScenarioSignals(signals, ruleCandidates),
-      rationale_codes: ['explicit_goal_match'],
+      signals: ruleSignals,
+      rationale_codes: rationaleCodesForSignals(ruleSignals),
     };
   } else {
     const allowedScenarioIds = ruleCandidates.length > 1
@@ -962,7 +998,7 @@ export async function resolvePlanningGuidance(
         degradation: 'low_confidence_classification',
       });
     }
-    if (parsed.confidence === 'medium' && !sameProfileSet(allowedScenarioIds)) {
+    if (parsed.confidence === 'medium') {
       return unresolvedResult({
         reason: 'medium_confidence_profile_conflict',
         candidateScenarioIds: allowedScenarioIds,
@@ -1002,6 +1038,7 @@ export async function resolvePlanningGuidance(
 
   const profileResolution = resolveProfiles({
     request,
+    mode: options.policy?.candidate_generation_mode ?? 'fixed',
     primaryScenarioId: classification.primary_scenario_id,
     secondaryScenarioIds,
     signals,

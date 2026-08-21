@@ -1,14 +1,22 @@
 ---
-title:          流失用户定量问卷框架
-type:           asset
-domain:         [品类消费-跨品类方法]
-research_type:  [定量]
-tags:           [问卷题, 模板, 流失, 定量问卷]
-status:         draft
-sensitivity:    internal
-owner:          王仰龙
-updated:        2026-06-24
-related:        [methods/scenarios/category-consumption/cross-category/churn-user-research.md]
+title: 流失用户定量问卷框架
+type: asset
+domain:
+  - 品类消费-跨品类方法
+research_type:
+  - 定量
+tags:
+  - 问卷题
+  - 模板
+  - 流失
+  - 定量问卷
+status: draft
+sensitivity: internal
+owner: 王仰龙
+updated: 2026-06-24
+related:
+  - methods/scenarios/category-consumption/cross-category/churn-user-research.md
+content_hash: sha256:97fbe555298e083db22c6533da57926bc545e81f139685ab931a5abb267b82fb
 ---
 
 # 流失用户定量问卷框架
@@ -31,7 +39,7 @@ related:        [methods/scenarios/category-consumption/cross-category/churn-use
 ### 二、问卷投放
 
 1. **目标人群**：主要投放对象仍是 P0–P3 的流失用户，但**建议抽取一部分复购用户作为对照组**。
-2. **抽样策略**：高价值用户比例通常较低，为确保有效收集高价值用户反馈，建议继续采用**分层抽样**，从 P0–P3 依次降低抽样比例。例如 P0（抽样 50%）、P1（抽样 40%）、P2（抽样 30%）、P3（抽样 20%）。
+2. **抽样策略**：高价值用户比例通常较低，可采用分层抽样。P0/P1/P2/P3 和 50%/40%/30%/20% 仅是原项目示例，不是通用默认值；新项目必须先定义分层口径，再按总体规模、目标精度、响应率和成本计算各层样本。
 
 > 因采用非等比例（分层）抽样，分析整体流失用户的原因占比时需对结果**加权**修正，权重口径见父打法《流失用户调研打法》「加权计算示例表」。
 
@@ -40,7 +48,7 @@ related:        [methods/scenarios/category-consumption/cross-category/churn-use
 - **何时用**：在定性（电话回访/深访）形成明确假设后，用于**量化验证**——量化各流失原因的影响范围、提供有统计说服力的数据、做不同用户群的细分对比。
 - **怎么替换品类**：表中「海参」「核污水/泡发」「参刺数量」「500g 干海参」等为示例，按目标品类替换为对应商品、流失诱因、选购因素、价位口径。
 - **对照组设置**：除 P0–P3 流失用户外，务必抽取部分复购用户作对照，便于「流失 vs 复购」交叉对比。
-- **分层抽样**：P0→P3 抽样比例递减，分析整体时记得加权。
+- **分层抽样**：按当前项目定义的分层口径计算各层样本；分析总体时使用实际抽样概率和响应率计算权重，不复用示例比例。
 
 ## 来源
 

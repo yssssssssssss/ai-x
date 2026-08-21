@@ -1,7 +1,7 @@
 # User Research Hub 受控接入与动态方案卡片方案
 
 > 日期：2026-08-21
-> 状态：已批准执行；Phase A 与 Gate 1 已完成，等待进入 Phase B
+> 状态：已批准执行；Phase A/Gate 1 与 Phase B/Gate 2 已完成，等待进入 Phase C release slices
 > 版本：v3（受控内容接入、可审计 Planning Guidance 与分步动态方案卡片）
 > 来源目录：`wiki/user-research/`
 > 接入目标：在不破坏 Current 可信研究闭环的前提下，尽量完整保留并吸收其中的方法、设计策略、Skill、模板和案例经验，并让 Task/Scenario 受控影响前台候选方案。
@@ -348,19 +348,19 @@ Profile 信号提取不增加模型调用：只读取用户原始表达，以及
 4. 不把标题变化、重复 H1、迁移说明或本地路径视为有效增量。
 5. 每个合并项在 disposition 中记录来源路径、目标路径和被吸收的章节名。
 
-### 7.4 24 条新增设计策略/体验方法
+### 7.4 设计策略/体验方法
 
-处置：原则上全部 `import_candidate`，但不把长短重复版本同时作为可召回条目。
+最终处置：15 张单一方法卡为 `import_candidate`；3 个导航总览和 6 个多方法长文为 `source_only`，其独有内容只允许按章节吸收到对应单一方法卡，不作为第二个召回项。
 
 目标位置：`knowledge-base/methods/toolbox/analysis/design-strategy/`。
 
 归一规则：
 
-- 模块卡片作为可检索正典；
-- 同主题长文作为该卡片的 source reference 或保留在来源目录，不生成第二个召回项；
-- 每个方法必须具备目标、适用条件、输入、步骤、输出、误用、证据边界和验证方式；
-- “策略推导模型类”等长文中的独有模型必须拆到对应正典卡片，不整篇塞进 Prompt；
-- 未经团队案例验证的通用方法保持 `candidate` 或 `draft`，不得称为京东标准。
+- 每张候选方法卡必须具备目标、适用条件、输入、可执行步骤、输出、常见误用、证据边界、验证方式和非空 `evidence_types`；
+- 模块总览只作来源导航，不进入 Knowledge Index；
+- 同主题长文只作 source reference，不生成第二个召回项；
+- “策略推导模型类”等长文中的独有模型必须拆到对应单一方法卡，不整篇塞进 Prompt；
+- 未经团队案例验证的方法保持 `candidate`，不得称为京东标准。
 
 优先接入的完整链路为：
 
@@ -368,17 +368,12 @@ Profile 信号提取不增加模型调用：只读取用户原始表达，以及
 
 ### 7.5 14 条模板
 
-处置：全部 `import_candidate`。
+最终处置：设计策略案例卡 1 条为 `import_candidate`；其余 13 条与现有 question-bank、scale 或 template 正典重复，改为 `map_existing`，不生成 `ur-*` 第二份文件。
 
-目标位置沿用现有结构：
-
-- 问卷题库：`knowledge-base/assets/question-bank/survey/`；
-- 访谈话术：`knowledge-base/assets/question-bank/interview/`；
-- 量表：`knowledge-base/assets/scales/`；
-- 画布和案例卡：`knowledge-base/assets/templates/`；
-- 经验打法：`knowledge-base/assets/playbooks/`。
-
-Assets 继续不进入通用 Knowledge Index，只由明确引用它们的 Skill 加载，避免一次生成任务注入整个题库。
+- 新候选位置：`knowledge-base/assets/templates/ds-template-design-strategy-case-card-template.md`。
+- 13 个现有正典继续位于 `assets/question-bank/survey/`、`assets/question-bank/`、`assets/scales/` 与 `assets/templates/`。
+- Gate 2 已修正现有正典中的 Kano/PSM 误称、标识符传递、固定抽样比例、未限定 benchmark 和无效本地 source reference。
+- Assets 继续不进入通用 Knowledge Index，只由明确引用它们的 Skill 加载。
 
 ### 7.6 33 条机制与检查清单
 
@@ -392,41 +387,22 @@ Assets 继续不进入通用 Knowledge Index，只由明确引用它们的 Skill
 
 ### 7.7 18 个重合 Skill
 
-处置：`merge_into_existing`，绝不覆盖当前 active Skill 合同。
+最终处置：18 个重合 Skill 全部 `map_existing`，不保留完整 merge draft。审核确认其主要增量已存在于当前 Skill 的 `references/`，结构比较不能替代语义差异，因此当前 active Skill 合同和正文均保持不变。
 
-合并单位只允许是：
-
-- 更清楚的触发和不适用条件；
-- 缺失的执行步骤；
-- 输出结构；
-- 质量检查；
-- fallback 与 human confirmation；
-- 有效的知识引用。
-
-以下字段始终以当前项目为准：
-
-- Skill ID 和路径；
-- `task_types`；
-- inputs/outputs；
-- required/optional tools；
-- input/output/payload schema；
-- active/draft 状态；
-- 风险等级和审批边界。
-
-每个 Skill 只做一次完整语义差异合并，不按章节反复审核。
+若未来来源出现新的独有章节，只允许生成最小 section delta，并继续遵守：当前 Skill ID、路径、`task_types`、inputs/outputs、required/optional tools、Schema、active 状态、风险等级和审批边界始终为正典。
 
 ### 7.8 7 个新增 Skill
 
 第一版新增 active Skill 数量固定为 0。
 
-| Hub Skill | 处置 |
+| Hub Skill | 最终处置 |
 |---|---|
-| `competitor-strategy-analysis` | 合并独有策略判断到现有 `competitive-analysis` / `competitive-web-research`，拒绝重复激活 |
-| `user-insight-synthesis` | 合并到 `synthesize-qualitative-insights`，拒绝重复激活 |
-| `experience-walkthrough` | 合并到 `run-heuristic-evaluation` / `design-experience-review`，拒绝重复激活 |
-| `trend-change-scan` | 合并触发和趋势扫描步骤到 `competitive-web-research`，拒绝重复激活 |
-| `strategy-map-generation` | 保留为 draft Skill，并把策略地图方法接入现有报告链路；本版不激活 |
-| `solution-generation` | 保留为 draft Skill；当前没有独立 Deliverable 合同，本版不激活 |
+| `competitor-strategy-analysis` | `reject_runtime`；泛化五步框架无独有合同，来源保留 |
+| `user-insight-synthesis` | `reject_runtime`；与现有定性洞察正典重合，来源保留 |
+| `experience-walkthrough` | 仅保留一份窄 section delta，候选合入 `run-heuristic-evaluation` / `design-experience-review`，不覆盖合同 |
+| `trend-change-scan` | 仅保留触发、证据强度、fallback 和确认规则的窄 section delta，候选合入 `competitive-web-research` |
+| `strategy-map-generation` | `reject_runtime`；作为 Skill 过于泛化，概念保留在 strategy-map 方法卡 |
+| `solution-generation` | 保留为 evaluation-only draft Skill；当前没有独立 Deliverable 合同，本版不激活 |
 | `research-screenshot-analyzer` | `reject_runtime`；只保留文档来源，不接入 DesignPeek |
 
 `experience-strategy-designer` 不作为第八个新 Skill 激活。它是覆盖用户、竞品、业务、数据、策略、汇报和工具 UI 的“大 Skill”，与现有深模块职责重叠。其方法、模板、质量规则和案例结构分别吸收到方法卡、现有 Skill reference、报告 Prompt 和 playbook；HTML、Node Server、`.command` 文件和工具原型全部 `reject_runtime`。
@@ -602,6 +578,18 @@ Assets 继续不进入通用 Knowledge Index，只由明确引用它们的 Skill
 
 阶段 B 不修改现有 active Skill、生产生成 Prompt 或 Rubric。合并后 reader/UI 能向后兼容动态 fixture，新内容可被显式评测，但用户实际规划仍只生成原有 depth/speed。
 
+### 阶段 B 实际结果（2026-08-21）
+
+- Knowledge/content lane 经 Gate 2 收敛为 32 个 evaluation-only candidate（15 方法、15 Scenario、1 Asset、1 draft Skill）、2 个窄 Skill merge delta 和 117 个 no-op `map_existing`；3 个导航总览、6 个多方法长文、13 个重复 Asset、20 个无有效增量的 Skill draft 及 `strategy-map-generation` 已删除或重分类为 source-only/reject-runtime。
+- Index/Registry：Knowledge 134（104 draft + 30 candidate），Skill 23（22 active + 1 draft）；生产 loader 白名单只允许 approved/draft，拒绝缺失或未知状态并校验 source/index 状态一致，Evaluation 使用独立 loader。
+- Governance scan：34 个受管实体；secret/PII/local path 命中 0；15 个内部业务词命中均有行号、snippet hash、分类、来源范围/日期和处置，Gate 2 审定后 blocked entities 为 0。
+- Planning Guidance：非生产深模块、默认 fixed policy、7 个 ProfileSpec、15 个 Scenario mapping、90 条数据集（60 calibration / 30 holdout）及统一最小 provenance 已实现，未接入 RoutedPlanner。
+- Scenario/Profile 合同按 Gate 2 修订：medium 一律 clarification；增加否定/假设保护和 Scenario 证据绑定；收紧 focused/decision/mixed_method 信号；移除 3 个同义 decision 映射，条件增加 2 个 remediation 映射。
+- Holdout 已重新封存：ID 不携带标签、无 polarity/stratum/expected 字段、与 calibration 无规范化输入重复；label commitment 为 `sha256:2de84cd2b5a51d8f51f10a09c4ef29f418d9db25080989841108e968d441ce3a`。
+- Candidate compatibility：Schema、类型、PlanCompiler、Control Plane、revision、历史恢复和前端已兼容 2–4 个受控 Profile；生产 Routed/Direct writer 仍只生成 depth/speed，旧计划无 recommended/provenance 时继续合法。
+- 集成门禁：初次合并 210 tests pass；Gate 2 修复后 123 个受影响测试 pass、0 fail；typecheck、knowledge/registry lint、Web build 和 diff check 通过。
+- Gate 2 状态：`approved_for_evaluation`。Profile static report 为 15 Scenario、29 specialty bindings、58/58 spec comparisons；catalog 为 0 supported / 27 conditional / 2 gap，因此只批准评测合同，不批准生产动态接线。
+
 ### 阶段 C：分步生产接入与批量晋级
 
 阶段 C 保持一个人工 Gate，但拆成两个可独立审定、可独立回滚的 release slice。两者在 Gate 3 前只存在于受控 release branch/evaluation overlay，不提前进入生产 `main`；Gate 3 可以批准 C1、拒绝 C2，而不要求再次召开内容审核。
@@ -656,9 +644,9 @@ C1 完成后，内容增强可以被单独评测和批准，但 Gate 3 前不进
 - Source snapshot：8,491 files / 400,355,408 bytes / `sha256:e5a9885f3e98e9c187823da2ab7361081e1b5ec0e21ecec8639d5288a7eb4d00`。
 - `00-source-sync`：7,683 files / `sha256:99565ecfb96d4ac8178bcfbc37ebddeec7d4736de33a183516c46858ac729347`。
 - Organized layer：808 files；275 registry entities；8,491/8,491 文件均有唯一覆盖。
-- Disposition：104 `map_existing`、22 `merge_into_existing`、55 `import_candidate`、85 `source_only`、9 `reject_runtime`。
+- Disposition（Gate 2 定向重开映射后）：135 `map_existing`、2 `merge_into_existing`、32 `import_candidate`、94 `source_only`、12 `reject_runtime`。
 - Frontmatter：731 个 Markdown，562 valid，169 个已绑定 `quote-local-home-frontmatter-v1`，无未知解析错误。
-- Profile draft：7 个 ProfileSpec、15/15 Scenario、30 个专项绑定、60/60 静态语义比较通过；catalog 为 0 supported / 27 conditional / 3 gap，不声称 Runtime 可执行性。
+- Profile draft：7 个 ProfileSpec、15/15 Scenario；Gate 2 修订后为 29 个专项绑定、58/58 静态 spec 比较通过，catalog 为 0 supported / 27 conditional / 2 gap，不声称 Runtime 可执行性。
 - Gold：新增并精确锁定 `competitive-digital-human-gold`；原 ambiguous fixture 保留；Gold 使用 `approvalMode: forbid`，普通 Smoke 保持 `allow_owner`。
 - 自动验证：56 tests，51 pass，5 个安全环境限定的全真测试 skip，0 fail；typecheck、manifest check、`git diff --check` 通过。
 - Gate 1 状态：`ready`；5 项决策已于 2026-08-21 一次性确认并写入 manifest。
@@ -701,14 +689,13 @@ Gate 1 通过后只冻结 source manifest hash、处置枚举、目标正典映�
 
 审核对象：
 
-- 24 条新增方法；
+- 15 张完整单一方法候选，以及 3 个导航总览和 6 个多方法长文的 source-only 处置；
 - 15 个 Scenario；
 - 15 个 Scenario 的 `candidate_profiles` 语义映射、专项 Profile 默认顺序和完整 ProfileSpec；
 - 7 个 Profile 的范围、方法、证据、复核、输出侧重点、步骤预算和 `required_difference_dimensions`；
-- 14 条模板；
-- 104 条重合 Knowledge 中所有拟执行的 `merge_into_existing` 语义差异；
-- 18 个 Skill 的语义合并差异；
-- 7 个新增 Skill 的处置；
+- 1 条新案例卡模板和 13 条现有模板/题库/量表的 no-op 映射；
+- 117 条 Knowledge/Asset `map_existing` 的 no-op 结论；
+- 18 个重合 Skill 的 no-op 映射、2 个窄 Skill delta、2 个泛化 Skill reject 以及 1 个 evaluation-only draft Skill；
 - 实际拟晋级的案例卡；
 - Planning Guidance Schema、置信度/clarification 规则、受控 signal、最小 provenance、候选差异与一次纠错合同；
 - 90 条样本的数据划分、标签和 holdout 封存结果；
@@ -718,8 +705,8 @@ Gate 1 通过后只冻结 source manifest hash、处置枚举、目标正典映�
 一次性风险分层审核规则：
 
 - 100% 审核所有将影响 active Skill、Prompt、Rubric 的内容；
-- 100% 审核新增方法和 Scenario 的目标、步骤、边界、来源及 Profile 映射；
-- 100% 审核 14 条模板及所有 `merge_into_existing` 差异；同一内容不因同时被方法、Skill 或 Prompt 引用而重复审核，只复用同一 content hash 的审定结果；
+- 100% 审核 15 张方法候选和 15 个 Scenario 的目标、步骤、边界、来源及 Profile 映射；
+- 100% 审核 1 条新模板、13 条现有正典修订、2 个 Skill delta 和 1 个 draft Skill；同一 content hash 不重复审核；
 - Case 全量做机器校验，只人工审核拟晋级案例卡；未抽象晋级的完整案例保持 source-only；
 - 100% 审核价格、库存、履约、交易、隐私等高风险内容；
 - 不审核 `source_only` 原始镜像正文。

@@ -3,6 +3,144 @@
     {
       "body_equal": false,
       "changed_shared_headings": [
+        "问卷题库 · 行为与习惯（behavior-habits）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-asset-behavior-habits",
+      "source_body_hash": "sha256:81df362d29fa61c650b849279b9bcb6f34f8edcf11e4faef0413b909af531bd3",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/模板库/用户研究/问卷题库行为与习惯（behavior-habits）.md",
+      "target_body_hash": "sha256:dd9c5177d9b6a71320dc99338a1aef027216ea5ff5fb85e315709c5eb4d09192",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/assets/question-bank/survey/behavior-habits.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "问卷题库 · 概念与方案评估（concept-test）",
+        "新品 / 新品类尝试意愿 + 定价测试"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-asset-concept-test",
+      "source_body_hash": "sha256:b8e11e1368758f306b1711894cd2c2470cdea5142411749e9684611e8617bf6f",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/模板库/用户研究/问卷题库概念与方案评估（concept-test）.md",
+      "target_body_hash": "sha256:191427fc0ee276358f165d4df66c3661db802b89aca3125ed61c06ddef512f7c",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/assets/question-bank/survey/concept-test.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "问卷题库 · 决策与链路（decision-journey）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-asset-decision-journey",
+      "source_body_hash": "sha256:4a08d8a2b62ff0770e81185cecf6e93327077f6b4938c61934b4de0cee8f62c8",
+      "source_only_headings": [
+        "信息展示优先级 —— Kano 五档题组（可复用模式）"
+      ],
+      "source_path": "03-knowledge-知识/模板库/用户研究/问卷题库决策与链路（decision-journey）.md",
+      "target_body_hash": "sha256:667a984c0ff6e0dd0ba75be1150cab7dfd83d421386dffae3dd44bd5dc878df1",
+      "target_only_headings": [
+        "信息展示优先级 — 五类直接分类题组（非标准 Kano）"
+      ],
+      "target_path": "knowledge-base/assets/question-bank/survey/decision-journey.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "问卷题库 · 体验与痛点（experience-painpoints）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-asset-experience-painpoints",
+      "source_body_hash": "sha256:4bf559051b56528dce5903ec196166eec8eb2cdf3e5aac2d1dc7eb6a1d6b5764",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/模板库/用户研究/问卷题库体验与痛点（experience-painpoints）.md",
+      "target_body_hash": "sha256:1e8f4fd527ff3b75bc626059ba72ff179c4e074c22ecefc74be312fe3f12397d",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/assets/question-bank/survey/experience-painpoints.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "访谈禁问清单与中立替代话术",
+        "来源"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-asset-interview-forbidden-questions",
+      "source_body_hash": "sha256:efb6758ff7511dfb53b3f05ae917693e03c0bcea3d7699421c27f057189c7756",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/模板库/用户研究/访谈禁问清单与中立替代话术.md",
+      "target_body_hash": "sha256:9d2c7a22c923994d4be2b2ee012753e1c89fd2ff083fcb64b95e7bf02dd9c880",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/assets/question-bank/interview-forbidden-questions.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "问卷题库 · 心智与认知（mindset-cognition）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-asset-mindset-cognition",
+      "source_body_hash": "sha256:9f6e404d52c954578a7870d995b62314bdf0e74f2d259ebafd3205ac1e29d458",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/模板库/用户研究/问卷题库心智与认知（mindset-cognition）.md",
+      "target_body_hash": "sha256:08c2ce148841eb591ce39810d3f81d257d77c3fd010e9036a2e753d648ed8ccb",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/assets/question-bank/survey/mindset-cognition.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "问卷题库 · 需求与场景（needs-scenarios）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-asset-needs-scenarios",
+      "source_body_hash": "sha256:07d9ef82741fa6a5811cf04ff71c53c3fdb384e96f660c797545f8400a947c8b",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/模板库/用户研究/问卷题库需求与场景（needs-scenarios）.md",
+      "target_body_hash": "sha256:72fe280fd363454d483258fe0ec4b033eef1c7d14077edba4d89d8a1b72033f1",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/assets/question-bank/survey/needs-scenarios.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "问卷题库 · 筛选与背景（screener-demographics）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-asset-screener-demographics",
+      "source_body_hash": "sha256:d437bfd8bcfdea53ba48947c5977afe440ef25a468c76df2d681a2fe44834d79",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/模板库/用户研究/问卷题库筛选与背景（screener-demographics）.md",
+      "target_body_hash": "sha256:9f8a3d76451ed6e29d034fa16f21b757646eb66237f54bd629799eb98b6cbe3b",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/assets/question-bank/survey/screener-demographics.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "标准化体验量表（SUS / UMUX-Lite / SEQ / NPS / CSAT / CES）",
+        "SUS（System Usability Scale，系统可用性量表）",
+        "UMUX-Lite",
+        "SEQ（Single Ease Question，单题难易度）",
+        "NPS（Net Promoter Score，净推荐值）",
+        "使用说明",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-asset-standardized-ux-scales",
+      "source_body_hash": "sha256:b673697288fc8f95a45a3059d0189aa653cb356666625160d16cede91bdb0f45",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/模板库/用户研究/标准化体验量表（SUSUMUX-LiteSEQNPSCSATCES）.md",
+      "target_body_hash": "sha256:cda26c5fae5de864ec9d46e31a2acf571fce2e848d45129191cc4066a27881d5",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/assets/scales/standardized-ux-scales.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
         "品类研究打法"
       ],
       "disposition": "map_existing",
@@ -1534,32 +1672,69 @@
     },
     {
       "body_equal": false,
-      "changed_shared_headings": [],
-      "disposition": "merge_into_existing",
-      "entity_key": "skill:ds-skill-competitor-strategy-analysis",
-      "source_body_hash": "sha256:bcae01187144a46e1b785411fa48a593ec5095a50b79c6d1613c22f54eeaf046",
-      "source_only_headings": [
-        "竞品策略分析 Skill",
-        "适用场景",
-        "执行流程",
-        "质量自检"
+      "changed_shared_headings": [
+        "流失用户电话回访话术框架",
+        "一、回访话术框架表",
+        "三、执行技巧",
+        "使用说明"
       ],
-      "source_path": "02-skills-技能/设计策略/竞品策略分析/SKILL.md",
-      "target_body_hash": "sha256:23578375f868f72fd868d7c10b19f708d67ad7ba14ebc3894ca2dc2038e837c4",
-      "target_only_headings": [
-        "Competitive Analysis — 竞品素材 + 知己 → 竞品分析（编排 wiki 正典）",
-        "北极星与边界（先理解，再动手）",
-        "四条纪律（本 skill 必须遵守，产出据此被信任）",
-        "第 0 步：定位 wiki 根目录",
-        "第 1 步：解析 brief",
-        "第 2 步：读正典（本 skill 的核心——cross-walk）",
-        "第 3 步 · A：直接分析（默认模式 —— 有竞品素材时）",
-        "第 3 步 · B：产框架/工具包（无竞品素材时）",
-        "第 4 步：分析自检（拿「局限与误用」回头扫一遍）",
-        "第 5 步：组装交付",
-        "references"
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-template-churn-phone-interview-script",
+      "source_body_hash": "sha256:089763f972483bd4139138e9e954be3c1d559605754b1575803e9481aa485d2a",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/模板库/用户研究/流失用户电话回访话术框架.md",
+      "target_body_hash": "sha256:20486ffa91223e3d46b42847e072998e13a04c907c68628e902bd16fa7083052",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/assets/templates/churn-phone-interview-script.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "流失用户定量问卷框架",
+        "二、问卷投放",
+        "使用说明"
       ],
-      "target_path": "knowledge-base/skills/competitive-analysis"
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-template-churn-survey-framework",
+      "source_body_hash": "sha256:a2442768020fc487c3189b50b2eaad7b9224997a916394e03a53618e77a14e28",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/模板库/用户研究/流失用户定量问卷框架.md",
+      "target_body_hash": "sha256:97fbe555298e083db22c6533da57926bc545e81f139685ab931a5abb267b82fb",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/assets/templates/churn-survey-framework.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "体验问题描述话术模板",
+        "一、描述体验问题的三要素",
+        "二、5W 话术框架（可直接套用模板）",
+        "三、数据佐证（增强说服力）",
+        "使用说明",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-template-experience-issue-description-script",
+      "source_body_hash": "sha256:9ee250bc4fa63922f5e0c038d7471e69e322e65ec19945f48207038d46aa2ac8",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/模板库/用户研究/体验问题描述话术模板.md",
+      "target_body_hash": "sha256:b825dc766cdd8f05ad29ed600c32d49a58087afef2df827cac8ae4c61feb716a",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/assets/templates/experience-issue-description-script.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "机会-解决方案树（Opportunity Solution Tree, OST）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-template-opportunity-solution-tree",
+      "source_body_hash": "sha256:993520a397c81899dbc10d82a92a0aee7370e84889a93de7b47529dbbf94d3bc",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/模板库/用户研究/机会-解决方案树（OpportunitySolutionTree,OST）.md",
+      "target_body_hash": "sha256:2346e3b3606fd12797526f50d93df93e7cf14521467626f87bc084e5732c66d7",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/assets/templates/opportunity-solution-tree.md"
     },
     {
       "body_equal": false,
@@ -1598,37 +1773,7 @@
     {
       "body_equal": false,
       "changed_shared_headings": [],
-      "disposition": "merge_into_existing",
-      "entity_key": "skill:ds-skill-user-insight-synthesis",
-      "source_body_hash": "sha256:f0f82a87e7f1a611bdd2507b8c8d7f0ba6a70757ca1a8816e61d8b203b730da2",
-      "source_only_headings": [
-        "用户洞察综合分析 Skill",
-        "适用场景",
-        "执行流程",
-        "质量自检"
-      ],
-      "source_path": "02-skills-技能/设计策略/用户洞察综合分析/SKILL.md",
-      "target_body_hash": "sha256:47444536e263c3926a57691caa593cd7394bfa2c0479338c912945a6dc576262",
-      "target_only_headings": [
-        "Synthesize Qualitative Insights — 多份定性材料 → 跨场主题 + 结构化洞察（编排 wiki 正典）",
-        "北极星与边界（先理解，再动手）",
-        "敏感素材处理（本 skill 特有，务必遵守）",
-        "四条纪律（本 skill 必须遵守，产出据此被信任）",
-        "第 0 步：定位 wiki 根目录",
-        "第 1 步：接收并解析输入",
-        "第 2 步：读正典（本 skill 的核心——cross-walk）",
-        "第 3 步：跨场归纳（聚类）——把散落发现聚成多层主题",
-        "第 4 步：拔高洞察——把主题升华成能指导行动的洞察",
-        "第 5 步（可选，弱支撑，按需触发）：从洞察到机会与落地建议",
-        "第 6 步：组织交付（两态：交付稿正文 + 分析底稿附录）",
-        "references"
-      ],
-      "target_path": "knowledge-base/skills/synthesize-qualitative-insights"
-    },
-    {
-      "body_equal": false,
-      "changed_shared_headings": [],
-      "disposition": "merge_into_existing",
+      "disposition": "map_existing",
       "entity_key": "skill:ur-skill-accessibility-review",
       "source_body_hash": "sha256:78a828ac645371e37233de572f366eeb4b6f8f601896578ac5f0f409f5b422f3",
       "source_only_headings": [
@@ -1674,7 +1819,7 @@
     {
       "body_equal": false,
       "changed_shared_headings": [],
-      "disposition": "merge_into_existing",
+      "disposition": "map_existing",
       "entity_key": "skill:ur-skill-analyze-satisfaction",
       "source_body_hash": "sha256:fb28000498500195fa82ebd924acd588fcba40d873798a63712374b2bdd4c61b",
       "source_only_headings": [
@@ -1730,7 +1875,7 @@
     {
       "body_equal": false,
       "changed_shared_headings": [],
-      "disposition": "merge_into_existing",
+      "disposition": "map_existing",
       "entity_key": "skill:ur-skill-build-experience-metrics",
       "source_body_hash": "sha256:5c187247b75ab196716df254f9c57d10d4aa9a8f9293b95ae5c1d2c4cd6690d9",
       "source_only_headings": [
@@ -1787,7 +1932,7 @@
     {
       "body_equal": false,
       "changed_shared_headings": [],
-      "disposition": "merge_into_existing",
+      "disposition": "map_existing",
       "entity_key": "skill:ur-skill-code-open-feedback",
       "source_body_hash": "sha256:ef9efd3ba48cd6e5a00816f199cdc7b876d1e45cd24fbfda472fd1f9f683ca52",
       "source_only_headings": [
@@ -1837,7 +1982,7 @@
     {
       "body_equal": false,
       "changed_shared_headings": [],
-      "disposition": "merge_into_existing",
+      "disposition": "map_existing",
       "entity_key": "skill:ur-skill-competitive-analysis",
       "source_body_hash": "sha256:4bab18fe9c11ac2a89247528dbce006ad63403bc1573b60a9d3f70607cc8ce69",
       "source_only_headings": [
@@ -1887,7 +2032,7 @@
     {
       "body_equal": false,
       "changed_shared_headings": [],
-      "disposition": "merge_into_existing",
+      "disposition": "map_existing",
       "entity_key": "skill:ur-skill-conversion-funnel-analysis",
       "source_body_hash": "sha256:6f3d615e6d85eefda9ac5fc80f00933f58a2fe2e5f759983da104ea978576f09",
       "source_only_headings": [
@@ -1978,7 +2123,7 @@
     {
       "body_equal": false,
       "changed_shared_headings": [],
-      "disposition": "merge_into_existing",
+      "disposition": "map_existing",
       "entity_key": "skill:ur-skill-feature-adoption-analysis",
       "source_body_hash": "sha256:23cfce587762599175033c2de2c145fab2e424324a85175a7aadccd675c035e0",
       "source_only_headings": [
@@ -2031,7 +2176,7 @@
     {
       "body_equal": false,
       "changed_shared_headings": [],
-      "disposition": "merge_into_existing",
+      "disposition": "map_existing",
       "entity_key": "skill:ur-skill-generate-interview-guide",
       "source_body_hash": "sha256:fba719117794d1d1399cf2097fe4c23b9b7ea925e39622ee4710c6d900503cad",
       "source_only_headings": [
@@ -2066,7 +2211,7 @@
     {
       "body_equal": false,
       "changed_shared_headings": [],
-      "disposition": "merge_into_existing",
+      "disposition": "map_existing",
       "entity_key": "skill:ur-skill-generate-persona",
       "source_body_hash": "sha256:ce58dc34426d1130358961fb0ed8cf96d17f67417dc37dd4435d8ea588cdcf49",
       "source_only_headings": [
@@ -2108,7 +2253,7 @@
     {
       "body_equal": false,
       "changed_shared_headings": [],
-      "disposition": "merge_into_existing",
+      "disposition": "map_existing",
       "entity_key": "skill:ur-skill-generate-research-plan",
       "source_body_hash": "sha256:0ff6188f0e12041735a31d033c94324b88417b45ec778f3a5ebd6d00e342f1ad",
       "source_only_headings": [
@@ -2159,7 +2304,7 @@
     {
       "body_equal": false,
       "changed_shared_headings": [],
-      "disposition": "merge_into_existing",
+      "disposition": "map_existing",
       "entity_key": "skill:ur-skill-generate-survey",
       "source_body_hash": "sha256:465318154b99b6474408d8b57b9059e462f10e7102ce7eaf2f139d9c0ef3c385",
       "source_only_headings": [
@@ -2196,7 +2341,7 @@
     {
       "body_equal": false,
       "changed_shared_headings": [],
-      "disposition": "merge_into_existing",
+      "disposition": "map_existing",
       "entity_key": "skill:ur-skill-generate-usability-test",
       "source_body_hash": "sha256:6709151ea62d291534a188d25740b6cc0f7f8386fdd3c0e695db49f428578285",
       "source_only_headings": [
@@ -2234,7 +2379,7 @@
     {
       "body_equal": false,
       "changed_shared_headings": [],
-      "disposition": "merge_into_existing",
+      "disposition": "map_existing",
       "entity_key": "skill:ur-skill-issue-prioritization",
       "source_body_hash": "sha256:177ae86c265096768934160a6f650015b09933df9f7b81ff0a27ebc0f0c9d56f",
       "source_only_headings": [
@@ -2279,7 +2424,7 @@
     {
       "body_equal": false,
       "changed_shared_headings": [],
-      "disposition": "merge_into_existing",
+      "disposition": "map_existing",
       "entity_key": "skill:ur-skill-jobs-to-be-done",
       "source_body_hash": "sha256:83129d79ed048c6f95c428f86f2919d0b928086a52c28e48e35e2bef79d28a30",
       "source_only_headings": [
@@ -2336,7 +2481,7 @@
     {
       "body_equal": false,
       "changed_shared_headings": [],
-      "disposition": "merge_into_existing",
+      "disposition": "map_existing",
       "entity_key": "skill:ur-skill-journey-map",
       "source_body_hash": "sha256:dbfe7c769319bd77be6abb0056d4971b208a9bc9a9d2abb7ba24472214a140a4",
       "source_only_headings": [
@@ -2380,7 +2525,7 @@
     {
       "body_equal": false,
       "changed_shared_headings": [],
-      "disposition": "merge_into_existing",
+      "disposition": "map_existing",
       "entity_key": "skill:ur-skill-run-heuristic-evaluation",
       "source_body_hash": "sha256:f17973bde5285c592cb982d0b192ca1dbf66c2b139128a66787dfcd6d5709490",
       "source_only_headings": [
@@ -2424,7 +2569,7 @@
     {
       "body_equal": false,
       "changed_shared_headings": [],
-      "disposition": "merge_into_existing",
+      "disposition": "map_existing",
       "entity_key": "skill:ur-skill-structure-interview-transcript",
       "source_body_hash": "sha256:f6d3e2c7d9bacb5370cacc6158abb6f8d9acaa7eba304b8664ec7c16060ef7de",
       "source_only_headings": [
@@ -2461,7 +2606,7 @@
     {
       "body_equal": false,
       "changed_shared_headings": [],
-      "disposition": "merge_into_existing",
+      "disposition": "map_existing",
       "entity_key": "skill:ur-skill-synthesize-qualitative-insights",
       "source_body_hash": "sha256:1d992e61b7951d0e7de21f0c93fdeea13239ce7c448fe6c942cef7dbe3e90e62",
       "source_only_headings": [
@@ -2504,252 +2649,54 @@
       "target_path": "knowledge-base/skills/synthesize-qualitative-insights"
     }
   ],
-  "disposition_hash": "sha256:c1e961de7b418a68d9a5c5964fc0ad7b5795b88f94e4e6b1474cd0dc85260c8d",
+  "disposition_hash": "sha256:a292119183545e4d77540443dd839a3ca810a407bcd74bc73f4a54e83372e584",
   "format_version": "user-research-hub-content-apply-v1",
   "gate_1_reuse_scope": "internal-evaluation-only",
   "governance": {
     "blocked_entities": 0,
-    "gate_2_review_required": true,
-    "scanned_entities": 77,
+    "gate_2_review_required": false,
+    "scanned_entities": 34,
     "source_finding_counts": {
-      "internal_business_facts": 116,
-      "local_paths": 31,
+      "internal_business_facts": 15,
+      "local_paths": 0,
       "pii": 0,
       "secrets": 0
     }
   },
   "mapped_existing": {
-    "knowledge_entries": 104
+    "knowledge_entries": 117
   },
   "materialized": {
-    "assets": 14,
-    "candidate_files": 55,
-    "draft_skills": 2,
-    "knowledge_methods": 24,
+    "assets": 1,
+    "candidate_files": 32,
+    "draft_skills": 1,
+    "knowledge_methods": 15,
     "scenarios": 15
   },
   "merge_drafts": {
-    "files": 22,
+    "files": 2,
     "knowledge_files": 0,
-    "skill_files": 22
+    "skill_files": 2
   },
-  "output_set_hash": "sha256:1113d68ccd84bf02757b1d5f884eb8924af738f8db2e8eb91f06b4a77ef509ff",
+  "output_set_hash": "sha256:4b86ab2e449b83d03c892b2c0488b6fbab60e6ed6b6a7f9b7000c45d2fd17e5a",
   "outputs": [
-    {
-      "entity_key": "skill:ds-skill-competitor-strategy-analysis",
-      "kind": "merge_draft",
-      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ds-skill-competitor-strategy-analysis.md",
-      "sha256": "sha256:936b6051504541e110a3d3c54aad7ddf6bde0018d07764b87ca6b2ddb6fe34d6"
-    },
     {
       "entity_key": "skill:ds-skill-trend-change-scan",
       "kind": "merge_draft",
       "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ds-skill-trend-change-scan.md",
-      "sha256": "sha256:01911bd9ca6a1afb1f432ec7a694f68d9a859bda16b742ad5f163f2c80c624b9"
-    },
-    {
-      "entity_key": "skill:ds-skill-user-insight-synthesis",
-      "kind": "merge_draft",
-      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ds-skill-user-insight-synthesis.md",
-      "sha256": "sha256:b4be7cc54f4aaa3e2f7898612cfdd3c67072df6e2e42cf8027329c73122bdc65"
-    },
-    {
-      "entity_key": "skill:ur-skill-accessibility-review",
-      "kind": "merge_draft",
-      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-accessibility-review.md",
-      "sha256": "sha256:2aea7c92a5ef53954744101d691024a73dc14009c372e420ebbb6d4d3f126cc1"
-    },
-    {
-      "entity_key": "skill:ur-skill-analyze-satisfaction",
-      "kind": "merge_draft",
-      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-analyze-satisfaction.md",
-      "sha256": "sha256:6ad0ef7f5e90d33047985ab45205b86450324a23265f44fd4d6f2a2c43cb3480"
-    },
-    {
-      "entity_key": "skill:ur-skill-build-experience-metrics",
-      "kind": "merge_draft",
-      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-build-experience-metrics.md",
-      "sha256": "sha256:6d223ec907532f96b766ad42ca9b2693694bd0b22947a1305104468bac198ee8"
-    },
-    {
-      "entity_key": "skill:ur-skill-code-open-feedback",
-      "kind": "merge_draft",
-      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-code-open-feedback.md",
-      "sha256": "sha256:6ea01cc5ebe27a1e8245c6a4dca8049a86fbd24b32c57f029266ff8f4e2a8172"
-    },
-    {
-      "entity_key": "skill:ur-skill-competitive-analysis",
-      "kind": "merge_draft",
-      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-competitive-analysis.md",
-      "sha256": "sha256:a88302163c39c1d427434e68b661192f62ca279dc8c5ed5c5736bed558ac7aff"
-    },
-    {
-      "entity_key": "skill:ur-skill-conversion-funnel-analysis",
-      "kind": "merge_draft",
-      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-conversion-funnel-analysis.md",
-      "sha256": "sha256:5bb3fd39dfd5d1ccc47f747b4ebd672090affc81fa57f38a0ccacb2cddcecb6e"
+      "sha256": "sha256:7640e2a3d26f711e7deb1f4cc04b25ae8f2323e0eb30f043ce679a1cedc01a39"
     },
     {
       "entity_key": "skill:ur-skill-experience-walkthrough",
       "kind": "merge_draft",
       "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-experience-walkthrough.md",
-      "sha256": "sha256:e709e45988b174d7f41682c31937a821606d50a25cfdef15f42f61fb9cf09a59"
-    },
-    {
-      "entity_key": "skill:ur-skill-feature-adoption-analysis",
-      "kind": "merge_draft",
-      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-feature-adoption-analysis.md",
-      "sha256": "sha256:f8213749e0a73c12dc347f9e3f226e0bfee45fa17f4a44a65531881608d5a690"
-    },
-    {
-      "entity_key": "skill:ur-skill-generate-interview-guide",
-      "kind": "merge_draft",
-      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-generate-interview-guide.md",
-      "sha256": "sha256:0ce616fd4db73a0908b399cd2c69ea79283823da71d04ce46f672baf791d1e89"
-    },
-    {
-      "entity_key": "skill:ur-skill-generate-persona",
-      "kind": "merge_draft",
-      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-generate-persona.md",
-      "sha256": "sha256:316db495c42b8cf04a1631bff2946554b45b82ea7e6fa874844bd725362e608b"
-    },
-    {
-      "entity_key": "skill:ur-skill-generate-research-plan",
-      "kind": "merge_draft",
-      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-generate-research-plan.md",
-      "sha256": "sha256:6f9ee7012cb840b74e47dab7b5845ddc2b7b47948d99957f53c905efeb048098"
-    },
-    {
-      "entity_key": "skill:ur-skill-generate-survey",
-      "kind": "merge_draft",
-      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-generate-survey.md",
-      "sha256": "sha256:f6227b55c19ca66544f84849bc3c86c0fc9b7cf1864d932a7859d4629f91928f"
-    },
-    {
-      "entity_key": "skill:ur-skill-generate-usability-test",
-      "kind": "merge_draft",
-      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-generate-usability-test.md",
-      "sha256": "sha256:3ee70a385745c01b9e0a953af4745174018c53e31a42919a2a028bfa10ad35ee"
-    },
-    {
-      "entity_key": "skill:ur-skill-issue-prioritization",
-      "kind": "merge_draft",
-      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-issue-prioritization.md",
-      "sha256": "sha256:167d0ff42b0b00776ec9d1388f34956d47e5e3fa634193d155a5284cd0df1ad4"
-    },
-    {
-      "entity_key": "skill:ur-skill-jobs-to-be-done",
-      "kind": "merge_draft",
-      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-jobs-to-be-done.md",
-      "sha256": "sha256:eb234c2152e3c3aa469a371a044a7ec88c05939830f9ab218646497be03c3596"
-    },
-    {
-      "entity_key": "skill:ur-skill-journey-map",
-      "kind": "merge_draft",
-      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-journey-map.md",
-      "sha256": "sha256:8523e2728bd7d08e6624ee81adf372576c87064855a8492763412486135b8287"
-    },
-    {
-      "entity_key": "skill:ur-skill-run-heuristic-evaluation",
-      "kind": "merge_draft",
-      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-run-heuristic-evaluation.md",
-      "sha256": "sha256:b0cf09c0c8970fef32ad7545f82d35afb8887f93cc5b70f5a05d3891913281ac"
-    },
-    {
-      "entity_key": "skill:ur-skill-structure-interview-transcript",
-      "kind": "merge_draft",
-      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-structure-interview-transcript.md",
-      "sha256": "sha256:3993a4c3a2a845e7bdf64b9757416499ca86b306fdb6fc6ef7911375b8559ee7"
-    },
-    {
-      "entity_key": "skill:ur-skill-synthesize-qualitative-insights",
-      "kind": "merge_draft",
-      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-synthesize-qualitative-insights.md",
-      "sha256": "sha256:42d044e8aba2ced2dcd4d6938abb126b5e647d15a8faf2d85855ec67ac7fb29e"
+      "sha256": "sha256:b87e2605a6230bc2a7bea9e5f3de76ba5c11a7e518c475d95b25682b74bf381b"
     },
     {
       "entity_key": "knowledge:ds-template-design-strategy-case-card-template",
       "kind": "candidate",
       "path": "knowledge-base/assets/templates/ds-template-design-strategy-case-card-template.md",
       "sha256": "sha256:2720bbbe50692bf57e7126cd6ee85f037ef8b76f5899605205e18dcc397affba"
-    },
-    {
-      "entity_key": "knowledge:ur-asset-behavior-habits",
-      "kind": "candidate",
-      "path": "knowledge-base/assets/templates/ur-asset-behavior-habits.md",
-      "sha256": "sha256:1754b763d2af2175aa7f664b7cc0b3cb25990fde84012595757db2bac615f595"
-    },
-    {
-      "entity_key": "knowledge:ur-asset-concept-test",
-      "kind": "candidate",
-      "path": "knowledge-base/assets/templates/ur-asset-concept-test.md",
-      "sha256": "sha256:19177ffa7f59449425bb5a01a294bbac04a92a40634dcd1c565271f76e2abd7f"
-    },
-    {
-      "entity_key": "knowledge:ur-asset-decision-journey",
-      "kind": "candidate",
-      "path": "knowledge-base/assets/templates/ur-asset-decision-journey.md",
-      "sha256": "sha256:001d3ac75fa450467ec19d2ff57e11819ff59242c7320144f40b911869cfc295"
-    },
-    {
-      "entity_key": "knowledge:ur-asset-experience-painpoints",
-      "kind": "candidate",
-      "path": "knowledge-base/assets/templates/ur-asset-experience-painpoints.md",
-      "sha256": "sha256:35fb194312aa98c0f62877d1eb5f0c8b950422ff4fd9c7fb89b408f0a46fee52"
-    },
-    {
-      "entity_key": "knowledge:ur-asset-interview-forbidden-questions",
-      "kind": "candidate",
-      "path": "knowledge-base/assets/templates/ur-asset-interview-forbidden-questions.md",
-      "sha256": "sha256:52dbd76c9ff5667646920549d171cfa1803690071886e24552d7080d33996ab7"
-    },
-    {
-      "entity_key": "knowledge:ur-asset-mindset-cognition",
-      "kind": "candidate",
-      "path": "knowledge-base/assets/templates/ur-asset-mindset-cognition.md",
-      "sha256": "sha256:dfaf64e42c97ead3e3faa6ad053a34a6008089523c8f4aaf0087bcf5e55fa112"
-    },
-    {
-      "entity_key": "knowledge:ur-asset-needs-scenarios",
-      "kind": "candidate",
-      "path": "knowledge-base/assets/templates/ur-asset-needs-scenarios.md",
-      "sha256": "sha256:b257289f3a9eebf0ec64a058eee723b03f632aa0c03888982a1240e18fa611e1"
-    },
-    {
-      "entity_key": "knowledge:ur-asset-screener-demographics",
-      "kind": "candidate",
-      "path": "knowledge-base/assets/templates/ur-asset-screener-demographics.md",
-      "sha256": "sha256:efe65dd86a6f714bb8b826b50618545e1c34a8dcd61b635d6fe2c03ecab56399"
-    },
-    {
-      "entity_key": "knowledge:ur-asset-standardized-ux-scales",
-      "kind": "candidate",
-      "path": "knowledge-base/assets/templates/ur-asset-standardized-ux-scales.md",
-      "sha256": "sha256:0c91b89bb1645d15685da99e44825ac70a17f4fed10af550abf8409f0c531570"
-    },
-    {
-      "entity_key": "knowledge:ur-template-churn-phone-interview-script",
-      "kind": "candidate",
-      "path": "knowledge-base/assets/templates/ur-template-churn-phone-interview-script.md",
-      "sha256": "sha256:073bcdc09783fe878d283d997ce28db2738ee99edd6f57b991ec9fbf1bc9ffec"
-    },
-    {
-      "entity_key": "knowledge:ur-template-churn-survey-framework",
-      "kind": "candidate",
-      "path": "knowledge-base/assets/templates/ur-template-churn-survey-framework.md",
-      "sha256": "sha256:10345e55656c97d2b214a4f08c28ec24c7054d6eff1e1039fdeed471dccf02c3"
-    },
-    {
-      "entity_key": "knowledge:ur-template-experience-issue-description-script",
-      "kind": "candidate",
-      "path": "knowledge-base/assets/templates/ur-template-experience-issue-description-script.md",
-      "sha256": "sha256:cd6e84a41e95048729459059abf4baef249d69722987b7cf870b967706d152a7"
-    },
-    {
-      "entity_key": "knowledge:ur-template-opportunity-solution-tree",
-      "kind": "candidate",
-      "path": "knowledge-base/assets/templates/ur-template-opportunity-solution-tree.md",
-      "sha256": "sha256:39a2a3dd725094c1e741bedaf06275483e2713b75e224f3be46686573803883b"
     },
     {
       "entity_key": "task:competitor-benchmark-research",
@@ -2761,7 +2708,7 @@
       "entity_key": "task:data-behavior-diagnosis",
       "kind": "candidate",
       "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/data-behavior-diagnosis.md",
-      "sha256": "sha256:e972e5102e9e17710ac6bc5c378c05ac045ea471eef426f68bd5987785461da4"
+      "sha256": "sha256:906f66374bf0dfdefab4188e54c7aa91882f7498e7f8cbdeafc206e179641e6c"
     },
     {
       "entity_key": "task:experience-walkthrough",
@@ -2791,25 +2738,25 @@
       "entity_key": "task:priority-roadmap",
       "kind": "candidate",
       "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/priority-roadmap.md",
-      "sha256": "sha256:fb5ae2281e81efe6016e96e5dffa648851b37728a9844f8cad5dd2e1118ab1fb"
+      "sha256": "sha256:c3467340738090cc488fee36f3bda3933be8609c3571d2128205641f5a0b3c58"
     },
     {
       "entity_key": "task:root-cause-analysis",
       "kind": "candidate",
       "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/root-cause-analysis.md",
-      "sha256": "sha256:625e1afeae6811099bacb54b328ff010441cc0b07827a0e4f595ab16c54fb4dd"
+      "sha256": "sha256:6dfad044e55551089cf2abd0e706493ca2828851576ef3124d5ad23a87a72dfa"
     },
     {
       "entity_key": "task:solution-comparison",
       "kind": "candidate",
       "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/solution-comparison.md",
-      "sha256": "sha256:61b096b090deb4bd21adf2b88917f8ca2f37a076471cde662dc2544361524a41"
+      "sha256": "sha256:5afe09bdf7f6357577b7997c900e8b1125ae1b361b3f59a2b8c6d98bc3c61ba4"
     },
     {
       "entity_key": "task:solution-generation",
       "kind": "candidate",
       "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/solution-generation.md",
-      "sha256": "sha256:c403fb8c1d703d96dc4bef6cd31211bbd6b7f6b79747b65602814f4e97a1ecf7"
+      "sha256": "sha256:88e45cd9cf772b222c33b3fa1e4c716f130bff60b8f50f4f19afc0d4638a3f28"
     },
     {
       "entity_key": "task:strategy-synthesis",
@@ -2842,160 +2789,100 @@
       "sha256": "sha256:14e46233215261333d6f8bcd7ce2692b0e97c0576b41ab9391049bc6429927b9"
     },
     {
-      "entity_key": "knowledge:ds-method-competitor-00-module-overview",
-      "kind": "candidate",
-      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-00-module-overview.md",
-      "sha256": "sha256:5fd0bd158bebd250bd13fcc3508cb34209cd953518904a9c4887f2830e634415"
-    },
-    {
       "entity_key": "knowledge:ds-method-competitor-01-competitor-selection",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-01-competitor-selection.md",
-      "sha256": "sha256:3b816983caffcd9c1757c70e5987a4bcc0b842a066c0ce0ff970b0f3f5bbe00c"
+      "sha256": "sha256:3fafa75ffac0fddb6edec28283d3f5cc250fbc7e8ff0c65a77bab894049774d0"
     },
     {
       "entity_key": "knowledge:ds-method-competitor-02-comparison-dimensions",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-02-comparison-dimensions.md",
-      "sha256": "sha256:058c64cf042dd5ec6eb3acc727655778afbcac77e69c71036d313080ef71fa2a"
+      "sha256": "sha256:fda3e2c23207565b0648abc358161a29074f39febeb9abeab2f661d351ae9939"
     },
     {
       "entity_key": "knowledge:ds-method-competitor-03-pattern-analysis",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-03-pattern-analysis.md",
-      "sha256": "sha256:3f90d22fcc55064d7c26f912629544a7e4a7bfd43e57e02b8f2573acca66c31b"
-    },
-    {
-      "entity_key": "knowledge:ds-method-competitor-03",
-      "kind": "candidate",
-      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-03.md",
-      "sha256": "sha256:6b0717d9c3c2509254046ba3d96d701c24e157a6e2b1af4990811f9572569776"
+      "sha256": "sha256:8f281480ab69a11ceec61b94d63e72c81b9e6b09fcdef9d6e20ae16cac4df2bf"
     },
     {
       "entity_key": "knowledge:ds-method-competitor-04-opportunity-and-risk",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-04-opportunity-and-risk.md",
-      "sha256": "sha256:b4413bede26039ae2fba64b75be098ac63830377d9b3fd0018c9180815cdd97f"
-    },
-    {
-      "entity_key": "knowledge:ds-method-competitor-04",
-      "kind": "candidate",
-      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-04.md",
-      "sha256": "sha256:fd6024b8626530630a1503631c4ce0cd3f4ac06d92cc92aafdc60e83a7c2e9ec"
+      "sha256": "sha256:e2d153643b630ca7678bfc5c3a6dc06bf9bf97d1b4cba7d32072d829f2c6657a"
     },
     {
       "entity_key": "knowledge:ds-method-competitor-05-insight-output",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-05-insight-output.md",
-      "sha256": "sha256:62db690a7c61c0671428bb60c89c769344f3f16e8edf9e0a60d09bd032b4ffec"
-    },
-    {
-      "entity_key": "knowledge:ds-method-strategy-00-module-overview",
-      "kind": "candidate",
-      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-00-module-overview.md",
-      "sha256": "sha256:5d6294baf06c202bfe2495e17f9c54a97fa3656fff12d998134122fdad16dc05"
+      "sha256": "sha256:6ab8b73e8948c198770e4ac342d0702776f3b09cf5fd8233ecd2bb04a4c753e6"
     },
     {
       "entity_key": "knowledge:ds-method-strategy-01-problem-framing",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-01-problem-framing.md",
-      "sha256": "sha256:e636a77d43362aaa0ea92d09e9f18ccfc678770f85996c85bb8f031d54725fdf"
+      "sha256": "sha256:a03fd5261dba921862fffab0ca7736753e3cf58f26d9aafe64b2db3b85ce92b2"
     },
     {
       "entity_key": "knowledge:ds-method-strategy-02-strategy-map",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-02-strategy-map.md",
-      "sha256": "sha256:d03e08c323d33860a571368d649538abac5f18a25a87ee4bb1f1112e6787dad0"
+      "sha256": "sha256:9bc62874c6efe36fb4daf7ea4a52fa324fdfa74aa70e9b6f07651c5b48caec3b"
     },
     {
       "entity_key": "knowledge:ds-method-strategy-04-priority-and-roadmap",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-04-priority-and-roadmap.md",
-      "sha256": "sha256:afe6e0ff8902c70b39307aa2d6475811ebf20e1f835a876807dfb5e40fe10e12"
+      "sha256": "sha256:8133c25be0f3b19b9eec14d71e01dfd7946ad514af448a66be2b01c27805ecf4"
     },
     {
       "entity_key": "knowledge:ds-method-strategy-05-review-and-validation",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-05-review-and-validation.md",
-      "sha256": "sha256:73aae9caf90e1eb0e64f190a20f7693e73c9e534c02247dfc6ef01fc22d85ba4"
-    },
-    {
-      "entity_key": "knowledge:ds-method-strategy-05",
-      "kind": "candidate",
-      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-05.md",
-      "sha256": "sha256:4b303f2dcdebf8c2a1fdc9f400c0c6481f0377f50669817b4fe8a0ebcc80340c"
-    },
-    {
-      "entity_key": "knowledge:ds-method-strategy-06",
-      "kind": "candidate",
-      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-06.md",
-      "sha256": "sha256:dc816b463b10b84f128e96168cd1e9f34ff864124adf65e199dedf3c7acf2129"
-    },
-    {
-      "entity_key": "knowledge:ds-method-user-00-module-overview",
-      "kind": "candidate",
-      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-00-module-overview.md",
-      "sha256": "sha256:881832c9b24eb1d0f4db78ff88e01dd4f6f4c500574c584143d43f34ac25b708"
+      "sha256": "sha256:6dbd6740d61740b9ee9b4bbeda66968c77eb6c5f7273219bdff94f579ffeb7a7"
     },
     {
       "entity_key": "knowledge:ds-method-user-01-research-scope",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-01-research-scope.md",
-      "sha256": "sha256:55532e10e02742f1a2efcb6e5a982237937851122bc36e8561e3a956b0487986"
-    },
-    {
-      "entity_key": "knowledge:ds-method-user-01",
-      "kind": "candidate",
-      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-01.md",
-      "sha256": "sha256:fc546250983b67e80dcaa84412982b94a070759d8f843306353a08e8b7283957"
+      "sha256": "sha256:615233f55b2729705ac2a6d2ef98de2147f551b4d3564f4d9a2d35ab2577a166"
     },
     {
       "entity_key": "knowledge:ds-method-user-02-user-segmentation",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-02-user-segmentation.md",
-      "sha256": "sha256:fb7cf9104d1656d2eeeee594fba8f0156c7bb2a8eca7823a0cde516962600b66"
-    },
-    {
-      "entity_key": "knowledge:ds-method-user-02",
-      "kind": "candidate",
-      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-02.md",
-      "sha256": "sha256:79e9d9601f6477cd12c82694717c01713d734f842bf4f2149679d9103ef06ac2"
+      "sha256": "sha256:dd89fa539df9a431acc7a110c030d03e6ab8fc0e261ecd3e1388e6c7dc5ddf23"
     },
     {
       "entity_key": "knowledge:ds-method-user-03-journey-and-tasks",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-03-journey-and-tasks.md",
-      "sha256": "sha256:47a8f57cb8177edc8b919bafe493eb6d8d4852a9ff37c7e395f873880b918d6e"
+      "sha256": "sha256:8365a691b7e93c848d18778bea7fe3f685f3740b2800f77e69bf6eb9b5cec9f0"
     },
     {
       "entity_key": "knowledge:ds-method-user-04-painpoint-diagnosis",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-04-painpoint-diagnosis.md",
-      "sha256": "sha256:d1530931f8a1c12b7229551e6b7fa61327f45d7d7c1749de6374ac66e8a4cfd1"
+      "sha256": "sha256:55eff9d7125ef75aec7954076ba7f485d46afba81a556b778ed3ff4376ae2253"
     },
     {
       "entity_key": "knowledge:ds-method-user-05-insight-output",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-05-insight-output.md",
-      "sha256": "sha256:d6ae44bed2696ab3008b33dcf21fb045c0eb96c6cc17b5171f45bd078069314a"
+      "sha256": "sha256:56b47fae9a1ecf3d8275a21f372420cd5e7159e5c45c573cc0e692139e2d5cc9"
     },
     {
       "entity_key": "knowledge:ux-method-experience-diagnosis-framework",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ux-method-experience-diagnosis-framework.md",
-      "sha256": "sha256:7d73ceea2853b95f3342e228bf7ee91a7b262df987282dc4d100c505d3267eec"
+      "sha256": "sha256:2b49bcb2daa5186afe02992e6a61973481c5f70b499cebc0ddbac6f6c8f827f3"
     },
     {
       "entity_key": "skill:ds-skill-solution-generation",
       "kind": "candidate",
       "path": "knowledge-base/skills/solution-generation/SKILL.md",
       "sha256": "sha256:ebaff00f5ab64d1606a8b83f8fc7ba5688f076656a21711d1538fd6419a0c51b"
-    },
-    {
-      "entity_key": "skill:ds-skill-strategy-map-generation",
-      "kind": "candidate",
-      "path": "knowledge-base/skills/strategy-map-generation/SKILL.md",
-      "sha256": "sha256:26a3d9880c8d6f5f68d72eb9629b72eec8c84d4f2a85af116fd4646db1a7997d"
     }
   ],
   "runtime_boundary": {
@@ -3007,25 +2894,6 @@
   },
   "scans": [
     {
-      "entity_key": "knowledge:ds-method-competitor-00-module-overview",
-      "finding_counts": {
-        "internal_business_facts": 0,
-        "local_paths": 0,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only"
-      ],
-      "results": {
-        "internal_business_facts": "clear",
-        "local_paths": "clear",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析00模块总览.md"
-    },
-    {
       "entity_key": "knowledge:ds-method-competitor-01-competitor-selection",
       "finding_counts": {
         "internal_business_facts": 0,
@@ -3036,6 +2904,7 @@
       "finding_refs": [
         "gate-1-internal-evaluation-only"
       ],
+      "findings": [],
       "results": {
         "internal_business_facts": "clear",
         "local_paths": "clear",
@@ -3055,6 +2924,7 @@
       "finding_refs": [
         "gate-1-internal-evaluation-only"
       ],
+      "findings": [],
       "results": {
         "internal_business_facts": "clear",
         "local_paths": "clear",
@@ -3062,26 +2932,6 @@
         "secrets": "clear"
       },
       "source_path": "03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析02对比维度.md"
-    },
-    {
-      "entity_key": "knowledge:ds-method-competitor-03",
-      "finding_counts": {
-        "internal_business_facts": 11,
-        "local_paths": 0,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only"
-      ],
-      "results": {
-        "internal_business_facts": "reviewed",
-        "local_paths": "clear",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析竞品研究方法类.md"
     },
     {
       "entity_key": "knowledge:ds-method-competitor-03-pattern-analysis",
@@ -3094,6 +2944,7 @@
       "finding_refs": [
         "gate-1-internal-evaluation-only"
       ],
+      "findings": [],
       "results": {
         "internal_business_facts": "clear",
         "local_paths": "clear",
@@ -3101,26 +2952,6 @@
         "secrets": "clear"
       },
       "source_path": "03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析03模式分析.md"
-    },
-    {
-      "entity_key": "knowledge:ds-method-competitor-04",
-      "finding_counts": {
-        "internal_business_facts": 11,
-        "local_paths": 0,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only"
-      ],
-      "results": {
-        "internal_business_facts": "reviewed",
-        "local_paths": "clear",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析竞品分析框架类.md"
     },
     {
       "entity_key": "knowledge:ds-method-competitor-04-opportunity-and-risk",
@@ -3133,6 +2964,7 @@
       "finding_refs": [
         "gate-1-internal-evaluation-only"
       ],
+      "findings": [],
       "results": {
         "internal_business_facts": "clear",
         "local_paths": "clear",
@@ -3152,6 +2984,7 @@
       "finding_refs": [
         "gate-1-internal-evaluation-only"
       ],
+      "findings": [],
       "results": {
         "internal_business_facts": "clear",
         "local_paths": "clear",
@@ -3159,25 +2992,6 @@
         "secrets": "clear"
       },
       "source_path": "03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析05洞察输出.md"
-    },
-    {
-      "entity_key": "knowledge:ds-method-strategy-00-module-overview",
-      "finding_counts": {
-        "internal_business_facts": 0,
-        "local_paths": 0,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only"
-      ],
-      "results": {
-        "internal_business_facts": "clear",
-        "local_paths": "clear",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "03-knowledge-知识/方法知识/设计策略/策略推导/设计策略00模块总览.md"
     },
     {
       "entity_key": "knowledge:ds-method-strategy-01-problem-framing",
@@ -3190,6 +3004,7 @@
       "finding_refs": [
         "gate-1-internal-evaluation-only"
       ],
+      "findings": [],
       "results": {
         "internal_business_facts": "clear",
         "local_paths": "clear",
@@ -3209,6 +3024,7 @@
       "finding_refs": [
         "gate-1-internal-evaluation-only"
       ],
+      "findings": [],
       "results": {
         "internal_business_facts": "clear",
         "local_paths": "clear",
@@ -3228,6 +3044,7 @@
       "finding_refs": [
         "gate-1-internal-evaluation-only"
       ],
+      "findings": [],
       "results": {
         "internal_business_facts": "clear",
         "local_paths": "clear",
@@ -3235,26 +3052,6 @@
         "secrets": "clear"
       },
       "source_path": "03-knowledge-知识/方法知识/设计策略/策略推导/设计策略04优先路线.md"
-    },
-    {
-      "entity_key": "knowledge:ds-method-strategy-05",
-      "finding_counts": {
-        "internal_business_facts": 7,
-        "local_paths": 0,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only"
-      ],
-      "results": {
-        "internal_business_facts": "reviewed",
-        "local_paths": "clear",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "03-knowledge-知识/方法知识/设计策略/策略推导/设计策略体验策略方法论类.md"
     },
     {
       "entity_key": "knowledge:ds-method-strategy-05-review-and-validation",
@@ -3267,6 +3064,7 @@
       "finding_refs": [
         "gate-1-internal-evaluation-only"
       ],
+      "findings": [],
       "results": {
         "internal_business_facts": "clear",
         "local_paths": "clear",
@@ -3274,65 +3072,6 @@
         "secrets": "clear"
       },
       "source_path": "03-knowledge-知识/方法知识/设计策略/策略推导/设计策略05评审验证.md"
-    },
-    {
-      "entity_key": "knowledge:ds-method-strategy-06",
-      "finding_counts": {
-        "internal_business_facts": 8,
-        "local_paths": 0,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only"
-      ],
-      "results": {
-        "internal_business_facts": "reviewed",
-        "local_paths": "clear",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "03-knowledge-知识/方法知识/设计策略/策略推导/设计策略策略推导模型类.md"
-    },
-    {
-      "entity_key": "knowledge:ds-method-user-00-module-overview",
-      "finding_counts": {
-        "internal_business_facts": 0,
-        "local_paths": 0,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only"
-      ],
-      "results": {
-        "internal_business_facts": "clear",
-        "local_paths": "clear",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "03-knowledge-知识/方法知识/设计策略/用户分析/用户分析00模块总览.md"
-    },
-    {
-      "entity_key": "knowledge:ds-method-user-01",
-      "finding_counts": {
-        "internal_business_facts": 8,
-        "local_paths": 0,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only"
-      ],
-      "results": {
-        "internal_business_facts": "reviewed",
-        "local_paths": "clear",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "03-knowledge-知识/方法知识/设计策略/用户分析/用户画像Persona.md"
     },
     {
       "entity_key": "knowledge:ds-method-user-01-research-scope",
@@ -3345,6 +3084,7 @@
       "finding_refs": [
         "gate-1-internal-evaluation-only"
       ],
+      "findings": [],
       "results": {
         "internal_business_facts": "clear",
         "local_paths": "clear",
@@ -3352,26 +3092,6 @@
         "secrets": "clear"
       },
       "source_path": "03-knowledge-知识/方法知识/设计策略/用户分析/用户分析01分析边界.md"
-    },
-    {
-      "entity_key": "knowledge:ds-method-user-02",
-      "finding_counts": {
-        "internal_business_facts": 6,
-        "local_paths": 0,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only"
-      ],
-      "results": {
-        "internal_business_facts": "reviewed",
-        "local_paths": "clear",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "03-knowledge-知识/方法知识/设计策略/用户分析/用户分析用户认知与行为模型类.md"
     },
     {
       "entity_key": "knowledge:ds-method-user-02-user-segmentation",
@@ -3384,6 +3104,7 @@
       "finding_refs": [
         "gate-1-internal-evaluation-only"
       ],
+      "findings": [],
       "results": {
         "internal_business_facts": "clear",
         "local_paths": "clear",
@@ -3403,6 +3124,7 @@
       "finding_refs": [
         "gate-1-internal-evaluation-only"
       ],
+      "findings": [],
       "results": {
         "internal_business_facts": "clear",
         "local_paths": "clear",
@@ -3422,6 +3144,7 @@
       "finding_refs": [
         "gate-1-internal-evaluation-only"
       ],
+      "findings": [],
       "results": {
         "internal_business_facts": "clear",
         "local_paths": "clear",
@@ -3441,6 +3164,7 @@
       "finding_refs": [
         "gate-1-internal-evaluation-only"
       ],
+      "findings": [],
       "results": {
         "internal_business_facts": "clear",
         "local_paths": "clear",
@@ -3460,6 +3184,7 @@
       "finding_refs": [
         "gate-1-internal-evaluation-only"
       ],
+      "findings": [],
       "results": {
         "internal_business_facts": "clear",
         "local_paths": "clear",
@@ -3467,272 +3192,6 @@
         "secrets": "clear"
       },
       "source_path": "03-knowledge-知识/模板库/设计策略/设计策略案例卡模板.md"
-    },
-    {
-      "entity_key": "knowledge:ur-asset-behavior-habits",
-      "finding_counts": {
-        "internal_business_facts": 0,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "clear",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "03-knowledge-知识/模板库/用户研究/问卷题库行为与习惯（behavior-habits）.md"
-    },
-    {
-      "entity_key": "knowledge:ur-asset-concept-test",
-      "finding_counts": {
-        "internal_business_facts": 0,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "clear",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "03-knowledge-知识/模板库/用户研究/问卷题库概念与方案评估（concept-test）.md"
-    },
-    {
-      "entity_key": "knowledge:ur-asset-decision-journey",
-      "finding_counts": {
-        "internal_business_facts": 4,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "reviewed",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "03-knowledge-知识/模板库/用户研究/问卷题库决策与链路（decision-journey）.md"
-    },
-    {
-      "entity_key": "knowledge:ur-asset-experience-painpoints",
-      "finding_counts": {
-        "internal_business_facts": 2,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "reviewed",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "03-knowledge-知识/模板库/用户研究/问卷题库体验与痛点（experience-painpoints）.md"
-    },
-    {
-      "entity_key": "knowledge:ur-asset-interview-forbidden-questions",
-      "finding_counts": {
-        "internal_business_facts": 0,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "clear",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "03-knowledge-知识/模板库/用户研究/访谈禁问清单与中立替代话术.md"
-    },
-    {
-      "entity_key": "knowledge:ur-asset-mindset-cognition",
-      "finding_counts": {
-        "internal_business_facts": 5,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "reviewed",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "03-knowledge-知识/模板库/用户研究/问卷题库心智与认知（mindset-cognition）.md"
-    },
-    {
-      "entity_key": "knowledge:ur-asset-needs-scenarios",
-      "finding_counts": {
-        "internal_business_facts": 0,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "clear",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "03-knowledge-知识/模板库/用户研究/问卷题库需求与场景（needs-scenarios）.md"
-    },
-    {
-      "entity_key": "knowledge:ur-asset-screener-demographics",
-      "finding_counts": {
-        "internal_business_facts": 0,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "clear",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "03-knowledge-知识/模板库/用户研究/问卷题库筛选与背景（screener-demographics）.md"
-    },
-    {
-      "entity_key": "knowledge:ur-asset-standardized-ux-scales",
-      "finding_counts": {
-        "internal_business_facts": 0,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "clear",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "03-knowledge-知识/模板库/用户研究/标准化体验量表（SUSUMUX-LiteSEQNPSCSATCES）.md"
-    },
-    {
-      "entity_key": "knowledge:ur-template-churn-phone-interview-script",
-      "finding_counts": {
-        "internal_business_facts": 13,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "reviewed",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "03-knowledge-知识/模板库/用户研究/流失用户电话回访话术框架.md"
-    },
-    {
-      "entity_key": "knowledge:ur-template-churn-survey-framework",
-      "finding_counts": {
-        "internal_business_facts": 3,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "reviewed",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "03-knowledge-知识/模板库/用户研究/流失用户定量问卷框架.md"
-    },
-    {
-      "entity_key": "knowledge:ur-template-experience-issue-description-script",
-      "finding_counts": {
-        "internal_business_facts": 2,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "reviewed",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "03-knowledge-知识/模板库/用户研究/体验问题描述话术模板.md"
-    },
-    {
-      "entity_key": "knowledge:ur-template-opportunity-solution-tree",
-      "finding_counts": {
-        "internal_business_facts": 0,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "clear",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "03-knowledge-知识/模板库/用户研究/机会-解决方案树（OpportunitySolutionTree,OST）.md"
     },
     {
       "entity_key": "knowledge:ux-method-experience-diagnosis-framework",
@@ -3746,6 +3205,17 @@
         "gate-1-internal-evaluation-only",
         "internal-business-facts-evaluation-only"
       ],
+      "findings": [
+        {
+          "classification": "boundary_statement",
+          "disposition": "retain_as_scoped_example",
+          "kind": "internal_business_fact",
+          "line": 31,
+          "snippet_hash": "sha256:998790605ded3711c7040f84d6204a113c31f032db5741f0bd1f4c83696fd724",
+          "source_date": "unknown",
+          "source_scope": "evaluation_only"
+        }
+      ],
       "results": {
         "internal_business_facts": "reviewed",
         "local_paths": "clear",
@@ -3753,25 +3223,6 @@
         "secrets": "clear"
       },
       "source_path": "03-knowledge-知识/方法知识/通用体验/体验问题诊断与走查框架.md"
-    },
-    {
-      "entity_key": "skill:ds-skill-competitor-strategy-analysis",
-      "finding_counts": {
-        "internal_business_facts": 0,
-        "local_paths": 0,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only"
-      ],
-      "results": {
-        "internal_business_facts": "clear",
-        "local_paths": "clear",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "02-skills-技能/设计策略/竞品策略分析/SKILL.md"
     },
     {
       "entity_key": "skill:ds-skill-solution-generation",
@@ -3784,6 +3235,7 @@
       "finding_refs": [
         "gate-1-internal-evaluation-only"
       ],
+      "findings": [],
       "results": {
         "internal_business_facts": "clear",
         "local_paths": "clear",
@@ -3791,25 +3243,6 @@
         "secrets": "clear"
       },
       "source_path": "02-skills-技能/设计策略/解决方案生成/SKILL.md"
-    },
-    {
-      "entity_key": "skill:ds-skill-strategy-map-generation",
-      "finding_counts": {
-        "internal_business_facts": 0,
-        "local_paths": 0,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only"
-      ],
-      "results": {
-        "internal_business_facts": "clear",
-        "local_paths": "clear",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "02-skills-技能/设计策略/设计策略地图生成/SKILL.md"
     },
     {
       "entity_key": "skill:ds-skill-trend-change-scan",
@@ -3822,6 +3255,7 @@
       "finding_refs": [
         "gate-1-internal-evaluation-only"
       ],
+      "findings": [],
       "results": {
         "internal_business_facts": "clear",
         "local_paths": "clear",
@@ -3829,148 +3263,6 @@
         "secrets": "clear"
       },
       "source_path": "02-skills-技能/设计策略/趋势变化扫描/SKILL.md"
-    },
-    {
-      "entity_key": "skill:ds-skill-user-insight-synthesis",
-      "finding_counts": {
-        "internal_business_facts": 0,
-        "local_paths": 0,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only"
-      ],
-      "results": {
-        "internal_business_facts": "clear",
-        "local_paths": "clear",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "02-skills-技能/设计策略/用户洞察综合分析/SKILL.md"
-    },
-    {
-      "entity_key": "skill:ur-skill-accessibility-review",
-      "finding_counts": {
-        "internal_business_facts": 2,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "reviewed",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "02-skills-技能/用户研究/无障碍审查/SKILL.md"
-    },
-    {
-      "entity_key": "skill:ur-skill-analyze-satisfaction",
-      "finding_counts": {
-        "internal_business_facts": 0,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "clear",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "02-skills-技能/用户研究/满意度诊断/SKILL.md"
-    },
-    {
-      "entity_key": "skill:ur-skill-build-experience-metrics",
-      "finding_counts": {
-        "internal_business_facts": 1,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "reviewed",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "02-skills-技能/用户研究/体验度量体系/SKILL.md"
-    },
-    {
-      "entity_key": "skill:ur-skill-code-open-feedback",
-      "finding_counts": {
-        "internal_business_facts": 2,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "reviewed",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "02-skills-技能/用户研究/VOC反馈编码/SKILL.md"
-    },
-    {
-      "entity_key": "skill:ur-skill-competitive-analysis",
-      "finding_counts": {
-        "internal_business_facts": 0,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "clear",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "02-skills-技能/用户研究/竞品分析/SKILL.md"
-    },
-    {
-      "entity_key": "skill:ur-skill-conversion-funnel-analysis",
-      "finding_counts": {
-        "internal_business_facts": 0,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "clear",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "02-skills-技能/用户研究/转化漏斗分析/SKILL.md"
     },
     {
       "entity_key": "skill:ur-skill-experience-walkthrough",
@@ -3983,6 +3275,7 @@
       "finding_refs": [
         "gate-1-internal-evaluation-only"
       ],
+      "findings": [],
       "results": {
         "internal_business_facts": "clear",
         "local_paths": "clear",
@@ -3990,249 +3283,6 @@
         "secrets": "clear"
       },
       "source_path": "02-skills-技能/用户研究/体验走查/SKILL.md"
-    },
-    {
-      "entity_key": "skill:ur-skill-feature-adoption-analysis",
-      "finding_counts": {
-        "internal_business_facts": 0,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "clear",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "02-skills-技能/用户研究/功能采纳分析/SKILL.md"
-    },
-    {
-      "entity_key": "skill:ur-skill-generate-interview-guide",
-      "finding_counts": {
-        "internal_business_facts": 0,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "clear",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "02-skills-技能/用户研究/生成访谈提纲/SKILL.md"
-    },
-    {
-      "entity_key": "skill:ur-skill-generate-persona",
-      "finding_counts": {
-        "internal_business_facts": 0,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "clear",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "02-skills-技能/用户研究/用户画像/SKILL.md"
-    },
-    {
-      "entity_key": "skill:ur-skill-generate-research-plan",
-      "finding_counts": {
-        "internal_business_facts": 0,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "clear",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "02-skills-技能/用户研究/生成研究方案/SKILL.md"
-    },
-    {
-      "entity_key": "skill:ur-skill-generate-survey",
-      "finding_counts": {
-        "internal_business_facts": 0,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "clear",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "02-skills-技能/用户研究/生成问卷/SKILL.md"
-    },
-    {
-      "entity_key": "skill:ur-skill-generate-usability-test",
-      "finding_counts": {
-        "internal_business_facts": 0,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "clear",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "02-skills-技能/用户研究/可用性测试/SKILL.md"
-    },
-    {
-      "entity_key": "skill:ur-skill-issue-prioritization",
-      "finding_counts": {
-        "internal_business_facts": 2,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "reviewed",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "02-skills-技能/用户研究/问题分层与优先级/SKILL.md"
-    },
-    {
-      "entity_key": "skill:ur-skill-jobs-to-be-done",
-      "finding_counts": {
-        "internal_business_facts": 0,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "clear",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "02-skills-技能/用户研究/需求定义JTBD/SKILL.md"
-    },
-    {
-      "entity_key": "skill:ur-skill-journey-map",
-      "finding_counts": {
-        "internal_business_facts": 8,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "reviewed",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "02-skills-技能/用户研究/体验旅程图/SKILL.md"
-    },
-    {
-      "entity_key": "skill:ur-skill-run-heuristic-evaluation",
-      "finding_counts": {
-        "internal_business_facts": 6,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "reviewed",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "02-skills-技能/用户研究/启发式评估/SKILL.md"
-    },
-    {
-      "entity_key": "skill:ur-skill-structure-interview-transcript",
-      "finding_counts": {
-        "internal_business_facts": 0,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "clear",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "02-skills-技能/用户研究/单场访谈小结/SKILL.md"
-    },
-    {
-      "entity_key": "skill:ur-skill-synthesize-qualitative-insights",
-      "finding_counts": {
-        "internal_business_facts": 0,
-        "local_paths": 1,
-        "pii": 0,
-        "secrets": 0
-      },
-      "finding_refs": [
-        "gate-1-internal-evaluation-only",
-        "known-local-path-source-reference-removed"
-      ],
-      "results": {
-        "internal_business_facts": "clear",
-        "local_paths": "reviewed",
-        "pii": "clear",
-        "secrets": "clear"
-      },
-      "source_path": "02-skills-技能/用户研究/定性归纳与洞察/SKILL.md"
     },
     {
       "entity_key": "task:competitor-benchmark-research",
@@ -4245,6 +3295,17 @@
       "finding_refs": [
         "gate-1-internal-evaluation-only",
         "internal-business-facts-evaluation-only"
+      ],
+      "findings": [
+        {
+          "classification": "generic_example",
+          "disposition": "retain_as_scoped_example",
+          "kind": "internal_business_fact",
+          "line": 127,
+          "snippet_hash": "sha256:c464340630b775d9f3c3d7953250dfbf4fdbc4fb6d6bdb803172a3c022e57d69",
+          "source_date": "2026-08-05",
+          "source_scope": "evaluation_only"
+        }
       ],
       "results": {
         "internal_business_facts": "reviewed",
@@ -4266,6 +3327,17 @@
         "gate-1-internal-evaluation-only",
         "internal-business-facts-evaluation-only"
       ],
+      "findings": [
+        {
+          "classification": "generic_example",
+          "disposition": "retain_as_scoped_example",
+          "kind": "internal_business_fact",
+          "line": 127,
+          "snippet_hash": "sha256:7cea6c5f84464a05aa73dc213110cef901e2bf7fefaab08022ba733956fa80ed",
+          "source_date": "2026-08-05",
+          "source_scope": "evaluation_only"
+        }
+      ],
       "results": {
         "internal_business_facts": "reviewed",
         "local_paths": "clear",
@@ -4285,6 +3357,17 @@
       "finding_refs": [
         "gate-1-internal-evaluation-only",
         "internal-business-facts-evaluation-only"
+      ],
+      "findings": [
+        {
+          "classification": "generic_example",
+          "disposition": "retain_as_scoped_example",
+          "kind": "internal_business_fact",
+          "line": 120,
+          "snippet_hash": "sha256:0bd827c22af0c737d9e87e8855b16167518b57a8da251d771261d96ed9922b06",
+          "source_date": "2026-08-05",
+          "source_scope": "evaluation_only"
+        }
       ],
       "results": {
         "internal_business_facts": "reviewed",
@@ -4306,6 +3389,17 @@
         "gate-1-internal-evaluation-only",
         "internal-business-facts-evaluation-only"
       ],
+      "findings": [
+        {
+          "classification": "generic_example",
+          "disposition": "retain_as_scoped_example",
+          "kind": "internal_business_fact",
+          "line": 121,
+          "snippet_hash": "sha256:0fd86134246e7b950d4cc48374ac0187ad4a3a41ee6ddc48c4b9709fdd567614",
+          "source_date": "2026-08-05",
+          "source_scope": "evaluation_only"
+        }
+      ],
       "results": {
         "internal_business_facts": "reviewed",
         "local_paths": "clear",
@@ -4326,6 +3420,17 @@
         "gate-1-internal-evaluation-only",
         "internal-business-facts-evaluation-only"
       ],
+      "findings": [
+        {
+          "classification": "generic_example",
+          "disposition": "retain_as_scoped_example",
+          "kind": "internal_business_fact",
+          "line": 127,
+          "snippet_hash": "sha256:37f18a04f7aa738e09c2cf5008072d26bc2fcdcee972391d88aaa1b64a9028c5",
+          "source_date": "2026-08-05",
+          "source_scope": "evaluation_only"
+        }
+      ],
       "results": {
         "internal_business_facts": "reviewed",
         "local_paths": "clear",
@@ -4345,6 +3450,7 @@
       "finding_refs": [
         "gate-1-internal-evaluation-only"
       ],
+      "findings": [],
       "results": {
         "internal_business_facts": "clear",
         "local_paths": "clear",
@@ -4365,6 +3471,17 @@
         "gate-1-internal-evaluation-only",
         "internal-business-facts-evaluation-only"
       ],
+      "findings": [
+        {
+          "classification": "generic_example",
+          "disposition": "retain_as_scoped_example",
+          "kind": "internal_business_fact",
+          "line": 124,
+          "snippet_hash": "sha256:10989474513185adf6d82337f444d56174d6e93f0d471cb2c3712e79dfda8edb",
+          "source_date": "2026-08-05",
+          "source_scope": "evaluation_only"
+        }
+      ],
       "results": {
         "internal_business_facts": "reviewed",
         "local_paths": "clear",
@@ -4384,6 +3501,7 @@
       "finding_refs": [
         "gate-1-internal-evaluation-only"
       ],
+      "findings": [],
       "results": {
         "internal_business_facts": "clear",
         "local_paths": "clear",
@@ -4403,6 +3521,7 @@
       "finding_refs": [
         "gate-1-internal-evaluation-only"
       ],
+      "findings": [],
       "results": {
         "internal_business_facts": "clear",
         "local_paths": "clear",
@@ -4422,6 +3541,17 @@
       "finding_refs": [
         "gate-1-internal-evaluation-only",
         "internal-business-facts-evaluation-only"
+      ],
+      "findings": [
+        {
+          "classification": "generic_example",
+          "disposition": "retain_as_scoped_example",
+          "kind": "internal_business_fact",
+          "line": 123,
+          "snippet_hash": "sha256:97d35a035f53e3cab9e31590bce289c9f82464fe22bbbb6599d53207a2c9af98",
+          "source_date": "2026-08-05",
+          "source_scope": "evaluation_only"
+        }
       ],
       "results": {
         "internal_business_facts": "reviewed",
@@ -4443,6 +3573,17 @@
         "gate-1-internal-evaluation-only",
         "internal-business-facts-evaluation-only"
       ],
+      "findings": [
+        {
+          "classification": "generic_example",
+          "disposition": "retain_as_scoped_example",
+          "kind": "internal_business_fact",
+          "line": 130,
+          "snippet_hash": "sha256:1103676e27b3a0f7d4f3dc2a53c6579e28f031d102065323f13e25e52fbcd68b",
+          "source_date": "2026-08-05",
+          "source_scope": "evaluation_only"
+        }
+      ],
       "results": {
         "internal_business_facts": "reviewed",
         "local_paths": "clear",
@@ -4462,6 +3603,26 @@
       "finding_refs": [
         "gate-1-internal-evaluation-only",
         "internal-business-facts-evaluation-only"
+      ],
+      "findings": [
+        {
+          "classification": "input_category",
+          "disposition": "retain_as_scoped_example",
+          "kind": "internal_business_fact",
+          "line": 19,
+          "snippet_hash": "sha256:8405f45600f862b95e14575de47318bbb61c7c2c351f4095e3172447d3d58055",
+          "source_date": "2026-08-05",
+          "source_scope": "evaluation_only"
+        },
+        {
+          "classification": "generic_example",
+          "disposition": "retain_as_scoped_example",
+          "kind": "internal_business_fact",
+          "line": 124,
+          "snippet_hash": "sha256:6f1094a89c8fb52fadfb9c7c5a4ba289f0eb71ff1819141f3b10e172c39f6fde",
+          "source_date": "2026-08-05",
+          "source_scope": "evaluation_only"
+        }
       ],
       "results": {
         "internal_business_facts": "reviewed",
@@ -4483,6 +3644,17 @@
         "gate-1-internal-evaluation-only",
         "internal-business-facts-evaluation-only"
       ],
+      "findings": [
+        {
+          "classification": "generic_example",
+          "disposition": "retain_as_scoped_example",
+          "kind": "internal_business_fact",
+          "line": 134,
+          "snippet_hash": "sha256:3d25d399c6c6331691d519e5f4e8ca9de76a904c42cc0de3e63d73ea6c733e36",
+          "source_date": "2026-08-05",
+          "source_scope": "evaluation_only"
+        }
+      ],
       "results": {
         "internal_business_facts": "reviewed",
         "local_paths": "clear",
@@ -4503,6 +3675,17 @@
         "gate-1-internal-evaluation-only",
         "internal-business-facts-evaluation-only"
       ],
+      "findings": [
+        {
+          "classification": "generic_example",
+          "disposition": "retain_as_scoped_example",
+          "kind": "internal_business_fact",
+          "line": 120,
+          "snippet_hash": "sha256:d83c957c1ee2c8dac114fd79d8ae4b722cd59369465f2ba5d4822636df333a0e",
+          "source_date": "2026-08-05",
+          "source_scope": "evaluation_only"
+        }
+      ],
       "results": {
         "internal_business_facts": "reviewed",
         "local_paths": "clear",
@@ -4522,6 +3705,17 @@
       "finding_refs": [
         "gate-1-internal-evaluation-only",
         "internal-business-facts-evaluation-only"
+      ],
+      "findings": [
+        {
+          "classification": "generic_example",
+          "disposition": "retain_as_scoped_example",
+          "kind": "internal_business_fact",
+          "line": 121,
+          "snippet_hash": "sha256:0f36f9ee8a0053c0e9dceff5180e751c2c65f12dc3af1f8dd8cb10b03463b446",
+          "source_date": "2026-08-05",
+          "source_scope": "evaluation_only"
+        }
       ],
       "results": {
         "internal_business_facts": "reviewed",

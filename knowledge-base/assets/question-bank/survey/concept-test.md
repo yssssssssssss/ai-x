@@ -1,15 +1,35 @@
 ---
-title:          问卷题库·概念与方案评估
-type:           asset
-domain:         [通用]
-research_type:  [定量]
-method_family:  [问卷]
-tags:           [问卷题, 概念评估, 方案偏好, 专区分类, 品质感打分, 概念测试, 价格测试, 商卡展示, 品牌形象, 标签验证, 态度量表, 权益偏好, 机制验证, AI需求]
-status:         draft
-sensitivity:    internal
-owner:
-updated:        2026-07-09
-related:        [assets/question-bank/survey/decision-journey.md, assets/scales/standardized-ux-scales.md]
+title: 问卷题库·概念与方案评估
+type: asset
+domain:
+  - 通用
+research_type:
+  - 定量
+method_family:
+  - 问卷
+tags:
+  - 问卷题
+  - 概念评估
+  - 方案偏好
+  - 专区分类
+  - 品质感打分
+  - 概念测试
+  - 价格测试
+  - 商卡展示
+  - 品牌形象
+  - 标签验证
+  - 态度量表
+  - 权益偏好
+  - 机制验证
+  - AI需求
+status: draft
+sensitivity: internal
+owner: null
+updated: 2026-07-09
+related:
+  - assets/question-bank/survey/decision-journey.md
+  - assets/scales/standardized-ux-scales.md
+content_hash: sha256:191427fc0ee276358f165d4df66c3661db802b89aca3125ed61c06ddef512f7c
 ---
 
 # 问卷题库 · 概念与方案评估（concept-test）
@@ -70,7 +90,7 @@ related:        [assets/question-bank/survey/decision-journey.md, assets/scales/
 - **【多选】若尝试 `[新品类]`，您更偏好哪种 `[风味/口感/香型/包装风格]`？** — 各维度偏好池（风味：果味/茶味/草本/复合；口感：醇厚/绵柔/清新等；香型：酱香/浓香/清香等；包装风格：老字号经典/极简高级/小清新自然/国潮插画/潮玩酷炫/环保轻量）。
 - source：光瓶酒 A14/A14b-d/A15/A16/A17/A18/A19 · 低度酒 A10/A11/A14/A15/A16/A17
 - **【单选】您认为 `[新品]` 的定价应比 `[对标品]`？** — 低很多(8折以下)/略低(9折)/持平/更高（相对定价测试）。
-- **【单选/多选】您比较倾向哪些价位段？** / **您认为 `[某规格某价]` 属于什么水平？** — 价位段池 + 贵贱感知（非常便宜→非常贵，PSM式）。
+- **【单选/多选】您比较倾向哪些价位段？** / **您认为 `[某规格某价]` 属于什么水平？** — 价位段池 + 贵贱感知（非常便宜→非常贵）。这只是价格感知题，不是 PSM；需要 PSM 时必须另用“太便宜/便宜/贵/太贵”四问和累计曲线。
 - source：低度酒 A18/A19 · 光瓶酒 A(价格水平感知)
 
 ### 品牌形象拟人化投射

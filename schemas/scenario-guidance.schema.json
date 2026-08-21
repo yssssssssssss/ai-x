@@ -98,6 +98,7 @@
         "task.constraints",
         "task.success_criteria",
         "task.expected_deliverables",
+        "problem_graph.evidence_requirements",
         "available_material_roles"
       ]
     },
@@ -131,6 +132,7 @@
         "profile.focused.named-focus",
         "profile.focused.explicit",
         "profile.mixed-method.explicit",
+        "profile.mixed-method.problem-graph",
         "profile.decision.deliverable",
         "profile.decision.explicit",
         "profile.remediation.closed-loop",

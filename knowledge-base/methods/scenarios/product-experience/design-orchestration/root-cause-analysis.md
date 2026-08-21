@@ -74,6 +74,7 @@ candidate_profiles:
   - depth
   - focused
   - mixed_method
+  - remediation
 ---
 
 # 问题根因拆解

@@ -1,15 +1,33 @@
 ---
-title:          问卷题库·决策与链路
-type:           asset
-domain:         [通用]
-research_type:  [定量]
-method_family:  [问卷]
-tags:           [问卷题, 决策链路, 关注因素, 信息优先级, 信息展示, 显示逻辑, Kano, 筛选方式, 抢券用券, 营销活动, 流失召回, 平台竞争]
-status:         draft
-sensitivity:    internal
-owner:
-updated:        2026-07-09
-related:        [assets/question-bank/interview/decision-journey.md, methods/toolbox/analysis/satisfaction-analysis-models.md]
+title: 问卷题库·决策与链路
+type: asset
+domain:
+  - 通用
+research_type:
+  - 定量
+method_family:
+  - 问卷
+tags:
+  - 问卷题
+  - 决策链路
+  - 关注因素
+  - 信息优先级
+  - 信息展示
+  - 显示逻辑
+  - Kano
+  - 筛选方式
+  - 抢券用券
+  - 营销活动
+  - 流失召回
+  - 平台竞争
+status: draft
+sensitivity: internal
+owner: null
+updated: 2026-07-09
+related:
+  - assets/question-bank/interview/decision-journey.md
+  - methods/toolbox/analysis/satisfaction-analysis-models.md
+content_hash: sha256:667a984c0ff6e0dd0ba75be1150cab7dfd83d421386dffae3dd44bd5dc878df1
 ---
 
 # 问卷题库 · 决策与链路（decision-journey）
@@ -33,9 +51,9 @@ related:        [assets/question-bank/interview/decision-journey.md, methods/too
 - **【多选·选项随机】用 `[目标品类]` 时，更倾向选下列哪些类型的 `[店铺/商品]`？** — 偏好类型池（连锁品牌/堂食过/商场内/专业店/标注安全/有实体照片评价好/网红…）。
 - source：qb3 Q10
 
-### 信息展示优先级 —— Kano 五档题组（可复用模式）
+### 信息展示优先级 — 五类直接分类题组（非标准 Kano）
 
-> **一个属性池 × 五种问法**测每条信息的 Kano 归类。原问卷对"店铺信息"和"商品信息"各跑一遍五问（qb5 Q7–Q11、Q12–Q16），**去重折叠为 1 个题组模式**，`[对象]` 换成 店铺 / 商品 / 其他即可复用。
+> **一个属性池 × 五种直接问法**，分别收集必备/期望/魅力/无差异/反向属性。该折叠方式可用于快速信息优先级探索，但不是标准 Kano：标准 Kano 需要对同一属性成对询问功能具备/不具备时的感受，并通过评价矩阵分类。需要 Kano 结论时必须改用标准配对题，不能把本题组直接标成 Kano 结果。
 
 - **同一属性池，依次问 5 题（均多选）**：
   1. 【必备】哪些信息"必须展示，不展示肯定不行"？
@@ -46,8 +64,8 @@ related:        [assets/question-bank/interview/decision-journey.md, methods/too
 - **属性池（示例·`[对象]`=外卖店铺）**：店名 / 是否品牌连锁 / 是否新店 / 是否堂食店 / 24h / 跨天预定 / 开发票 / 饭卡 / 后厨直播 / 到店自取 / 评分 / 销量 / 榜单 / 店铺特色 / 回头客数 / 推荐菜 / 优惠 / 配送时长距离 / 起送与配送费 / 配送方式 / 食安保障 / 现炒 / 人均 / 短评价。
 - **属性池（示例·`[对象]`=外卖商品）**：餐品名 / 图 / 所属店 / 已售 / 回头客推荐 / 近期下单数 / 好评率 / 短评价 / 食材 / 口味 / 分量 / 到手价 / 优惠 / 限购 / 招牌菜 / 平台专供 / 配送费·时长·距离。
 - 用法：后 4 题选项池引用第 1 题（问卷里写"选项同 QX"）。
-- 变体（关注因素→信息展示，与 Kano 互补）：另有一种"显示逻辑式"信息优先级测法——见下方「关注因素 → 分因素信息展示追问（显示逻辑 battery）」，对每个被选中的关注因素单独追问希望展示的信息；可作为 Kano 五档之外的并列测法，供 `generate-survey` 按题量二选一。source：s1商旅 Q5–Q18。
-- source：qb5 Q7–Q11（店铺）+ Q12–Q16（商品），Kano 五档折叠
+- 变体（关注因素→信息展示，与五类直接分类互补）：另有一种"显示逻辑式"信息优先级测法——见下方「关注因素 → 分因素信息展示追问（显示逻辑 battery）」，对每个被选中的关注因素单独追问希望展示的信息；可作为直接分类题组之外的并列测法，供 `generate-survey` 按题量二选一。source：s1商旅 Q5–Q18。
+- source：qb5 Q7–Q11（店铺）+ Q12–Q16（商品），五类直接分类折叠；不得据此直接输出标准 Kano 分类
 
 ### 关注因素 → 分因素信息展示追问（显示逻辑 battery·可复用模式）
 

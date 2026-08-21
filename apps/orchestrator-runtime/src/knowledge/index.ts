@@ -30,26 +30,40 @@ function applySearchFilters(items: KnowledgeIndexItem[], opts: SearchOpts): Know
 
 // 生产过滤没有 visibility 开关：candidate 与 deprecated 在接口边界被物理移除。
 export function filterKnowledge(items: KnowledgeIndexItem[], opts: SearchOpts): KnowledgeIndexItem[] {
-  return applySearchFilters(items.filter((item) => item.status !== 'candidate' && item.status !== 'deprecated'), opts);
+  return applySearchFilters(items.filter((item) => item.status === 'approved' || item.status === 'draft'), opts);
 }
 
 // Evaluation 是独立接口；显式保留 candidate，但仍排除 deprecated。
 export function filterEvaluationKnowledge(items: KnowledgeIndexItem[], opts: SearchOpts): KnowledgeIndexItem[] {
-  return applySearchFilters(items.filter((item) => item.status !== 'deprecated'), opts);
+  return applySearchFilters(items.filter((item) => item.status === 'approved' || item.status === 'draft' || item.status === 'candidate'), opts);
+}
+
+const RUNTIME_KNOWLEDGE_STATUSES = new Set(['approved', 'draft']);
+const EVALUATION_KNOWLEDGE_STATUSES = new Set(['approved', 'draft', 'candidate']);
+function assertIndexedKnowledge(items: unknown): KnowledgeIndexItem[] {
+  if (!Array.isArray(items)) throw new Error('Knowledge index must be an array');
+  for (const item of items) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('Knowledge index entry is malformed');
+    const status = (item as { status?: unknown }).status;
+    if (status !== 'approved' && status !== 'draft' && status !== 'candidate' && status !== 'deprecated') {
+      throw new Error(`Knowledge index entry has invalid or missing status: ${String(status)}`);
+    }
+  }
+  return items as KnowledgeIndexItem[];
 }
 
 function loadKnowledgeIndexFile(): KnowledgeIndexItem[] {
   const path = kbPath('knowledge-base/.index/knowledge.json');
   if (!existsSync(path)) return [];
-  return JSON.parse(readFileSync(path, 'utf8')) as KnowledgeIndexItem[];
+  return assertIndexedKnowledge(JSON.parse(readFileSync(path, 'utf8')));
 }
 
 export function loadRuntimeKnowledgeIndex(): KnowledgeIndexItem[] {
-  return loadKnowledgeIndexFile().filter((item) => item.status !== 'candidate' && item.status !== 'deprecated');
+  return loadKnowledgeIndexFile().filter((item) => RUNTIME_KNOWLEDGE_STATUSES.has(item.status));
 }
 
 export function loadEvaluationKnowledgeIndex(): KnowledgeIndexItem[] {
-  return loadKnowledgeIndexFile().filter((item) => item.status !== 'deprecated');
+  return loadKnowledgeIndexFile().filter((item) => EVALUATION_KNOWLEDGE_STATUSES.has(item.status));
 }
 
 export function searchKnowledge(opts: SearchOpts): KnowledgeIndexItem[] {
@@ -65,7 +79,9 @@ export function getEntry(id: string): { frontmatter: Record<string, unknown>; co
   if (!item) return null;
   const full = kbPath('knowledge-base', item.source_path);
   if (!existsSync(full)) return null;
-  return parseFrontmatter(readFileSync(full, 'utf8'));
+  const parsed = parseFrontmatter(readFileSync(full, 'utf8'));
+  if (parsed.frontmatter.status !== item.status) throw new Error(`Knowledge source/index status drift for ${id}`);
+  return parsed;
 }
 
 export function getEvaluationEntry(id: string): { frontmatter: Record<string, unknown>; content: string } | null {
@@ -73,7 +89,9 @@ export function getEvaluationEntry(id: string): { frontmatter: Record<string, un
   if (!item) return null;
   const full = kbPath('knowledge-base', item.source_path);
   if (!existsSync(full)) return null;
-  return parseFrontmatter(readFileSync(full, 'utf8'));
+  const parsed = parseFrontmatter(readFileSync(full, 'utf8'));
+  if (parsed.frontmatter.status !== item.status) throw new Error(`Knowledge source/index status drift for ${id}`);
+  return parsed;
 }
 
 function loadSkills(): SkillRegistryEntry[] {

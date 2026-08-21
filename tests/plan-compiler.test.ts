@@ -3,7 +3,7 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { test } from 'node:test';
 import { join } from 'node:path';
-import type { PlanCandidate, ResearchTaskData, ResearchTaskV2 } from '../packages/api-contract/plan.ts';
+import type { PlanCandidate, PlanningProvenance, ResearchTaskData, ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import type {
   CurrentExecutionPlan,
   EvidenceRequirement,
@@ -732,22 +732,27 @@ test('compiles a controlled specialty profile and freezes optional recommendatio
     tradeoffs: '单对象深挖较少',
     recommended: true,
   };
-  const planningProvenance = {
-    primary_scenario_id: 'competitive-benchmark-research',
+  const planningProvenance: PlanningProvenance = {
+    version: 'planning-guidance-provenance-v1',
+    resolver_version: 'candidate-profile-resolver-v1',
+    scenario_catalog_hash: `sha256:${'a'.repeat(64)}`,
+    signal_catalog_hash: `sha256:${'b'.repeat(64)}`,
+    profile_spec_hash: `sha256:${'c'.repeat(64)}`,
+    scenario_mapping_hash: `sha256:${'d'.repeat(64)}`,
+    classification_method: 'rule',
+    classifier_call_count: 0,
+    primary_scenario_id: 'competitor-benchmark-research',
     secondary_scenario_ids: ['priority-roadmap'],
-    confidence: 'high' as const,
-    signal_ids: ['explicit-breadth-request'],
-    source_field_paths: ['research_task_v2.scope'],
-    resolver_version_hash: `sha256:${'a'.repeat(64)}`,
-    mapping_version_hash: `sha256:${'b'.repeat(64)}`,
-    candidate_profiles: ['speed', 'depth', 'breadth'] as const,
-    degradation_reasons: [],
+    confidence: 'high',
+    signals: [{ signal_id: 'profile.breadth.explicit', source_path: 'task.scope' }],
+    selected_profile_ids: ['speed', 'depth', 'breadth'],
+    degradations: [],
   };
   const compiled = compiler.compile({
     ...input(candidate),
     planning_provenance: {
       ...planningProvenance,
-      candidate_profiles: [...planningProvenance.candidate_profiles],
+      selected_profile_ids: [...planningProvenance.selected_profile_ids],
     },
   });
 

@@ -76,6 +76,7 @@ candidate_profiles:
   - focused
   - mixed_method
   - decision
+  - remediation
 ---
 
 # 数据与行为异常诊断
