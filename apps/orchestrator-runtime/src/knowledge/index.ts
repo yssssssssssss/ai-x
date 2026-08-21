@@ -14,9 +14,8 @@ export interface SearchOpts {
   limit?: number;
 }
 
-// 纯函数:可注入数据测试,不碰磁盘。
-export function filterKnowledge(items: KnowledgeIndexItem[], opts: SearchOpts): KnowledgeIndexItem[] {
-  let out = items.filter((i) => i.status !== 'deprecated');
+function applySearchFilters(items: KnowledgeIndexItem[], opts: SearchOpts): KnowledgeIndexItem[] {
+  let out = items;
   if (opts.domain) out = out.filter((i) => i.domain.includes(opts.domain!));
   // 结构化过滤走受控 guide_tags(对齐 decision-graph related_tags)
   if (opts.guide_tags?.length) out = out.filter((i) => i.guide_tags.some((t) => opts.guide_tags!.includes(t)));
@@ -29,18 +28,48 @@ export function filterKnowledge(items: KnowledgeIndexItem[], opts: SearchOpts): 
   return opts.limit ? out.slice(0, opts.limit) : out;
 }
 
-function loadKnowledgeIndex(): KnowledgeIndexItem[] {
-  const p = kbPath('knowledge-base/.index/knowledge.json');
-  if (!existsSync(p)) return [];
-  return JSON.parse(readFileSync(p, 'utf8')) as KnowledgeIndexItem[];
+// 生产过滤没有 visibility 开关：candidate 与 deprecated 在接口边界被物理移除。
+export function filterKnowledge(items: KnowledgeIndexItem[], opts: SearchOpts): KnowledgeIndexItem[] {
+  return applySearchFilters(items.filter((item) => item.status !== 'candidate' && item.status !== 'deprecated'), opts);
+}
+
+// Evaluation 是独立接口；显式保留 candidate，但仍排除 deprecated。
+export function filterEvaluationKnowledge(items: KnowledgeIndexItem[], opts: SearchOpts): KnowledgeIndexItem[] {
+  return applySearchFilters(items.filter((item) => item.status !== 'deprecated'), opts);
+}
+
+function loadKnowledgeIndexFile(): KnowledgeIndexItem[] {
+  const path = kbPath('knowledge-base/.index/knowledge.json');
+  if (!existsSync(path)) return [];
+  return JSON.parse(readFileSync(path, 'utf8')) as KnowledgeIndexItem[];
+}
+
+export function loadRuntimeKnowledgeIndex(): KnowledgeIndexItem[] {
+  return loadKnowledgeIndexFile().filter((item) => item.status !== 'candidate' && item.status !== 'deprecated');
+}
+
+export function loadEvaluationKnowledgeIndex(): KnowledgeIndexItem[] {
+  return loadKnowledgeIndexFile().filter((item) => item.status !== 'deprecated');
 }
 
 export function searchKnowledge(opts: SearchOpts): KnowledgeIndexItem[] {
-  return filterKnowledge(loadKnowledgeIndex(), opts);
+  return applySearchFilters(loadRuntimeKnowledgeIndex(), opts);
+}
+
+export function searchEvaluationKnowledge(opts: SearchOpts): KnowledgeIndexItem[] {
+  return applySearchFilters(loadEvaluationKnowledgeIndex(), opts);
 }
 
 export function getEntry(id: string): { frontmatter: Record<string, unknown>; content: string } | null {
-  const item = loadKnowledgeIndex().find((i) => i.id === id);
+  const item = loadRuntimeKnowledgeIndex().find((candidate) => candidate.id === id);
+  if (!item) return null;
+  const full = kbPath('knowledge-base', item.source_path);
+  if (!existsSync(full)) return null;
+  return parseFrontmatter(readFileSync(full, 'utf8'));
+}
+
+export function getEvaluationEntry(id: string): { frontmatter: Record<string, unknown>; content: string } | null {
+  const item = loadEvaluationKnowledgeIndex().find((candidate) => candidate.id === id);
   if (!item) return null;
   const full = kbPath('knowledge-base', item.source_path);
   if (!existsSync(full)) return null;
@@ -48,20 +77,20 @@ export function getEntry(id: string): { frontmatter: Record<string, unknown>; co
 }
 
 function loadSkills(): SkillRegistryEntry[] {
-  const p = kbPath('orchestrator/skill-registry.yaml');
-  const parsed = parseYaml(readFileSync(p, 'utf8')) as { skills?: SkillRegistryEntry[] };
+  const path = kbPath('orchestrator/skill-registry.yaml');
+  const parsed = parseYaml(readFileSync(path, 'utf8')) as { skills?: SkillRegistryEntry[] };
   return parsed.skills ?? [];
 }
 
 export function listSkills(opts?: { task_type?: string; domain?: string }): SkillRegistryEntry[] {
-  let out = loadSkills().filter((s) => s.status === 'active');
-  if (opts?.task_type) out = out.filter((s) => (s.task_types ?? []).includes(opts.task_type!));
+  let out = loadSkills().filter((skill) => skill.status === 'active');
+  if (opts?.task_type) out = out.filter((skill) => (skill.task_types ?? []).includes(opts.task_type!));
   return out;
 }
 
 export function resolveSkill(name: string): { path: string; frontmatter: Record<string, unknown> } | null {
-  const s = loadSkills().find((x) => x.name === name);
-  const entry = s?.entry ?? s?.path;
+  const skill = loadSkills().find((candidate) => candidate.name === name && candidate.status === 'active');
+  const entry = skill?.entry ?? skill?.path;
   if (!entry) return null;
   const full = kbPath(entry.endsWith('.md') ? entry : `${entry}/SKILL.md`);
   if (!existsSync(full)) return null;

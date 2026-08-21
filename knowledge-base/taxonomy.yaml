@@ -1,5 +1,6 @@
 # 受控标签词表。tags 必须涵盖 decision-graph.yaml 全部 related_tags(否则"节点→条目"召回断裂)。
 # guide_stage: 引导阶段枚举。normalizer 补元数据须归一到本表,linter 卡越界。
+# knowledge_statuses: candidate 仅供独立 Evaluation loader；生产 loader 始终排除 candidate/deprecated。
 version: 1
 tags:
   - research_goal
@@ -18,9 +19,16 @@ tags:
   - framework
   - qualitative
   - quantitative
+  - design-strategy
+  - scenario-guidance
 guide_stages:
   - intent
   - goal-definition
   - need-discovery
   - method-selection
   - output-standard
+knowledge_statuses:
+  - approved
+  - draft
+  - candidate
+  - deprecated

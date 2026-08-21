@@ -1,0 +1,4538 @@
+{
+  "comparisons": [
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "品类研究打法"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-scenarios-category-consumption-cross-category-category-research",
+      "source_body_hash": "sha256:41b6232e7c8200010b84ae0b56624b747d6cd7279dbee33be769f2446e5f5899",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/场景打法/品类研究打法.md",
+      "target_body_hash": "sha256:2a28ced8f77cbfdded502b690788968b8033ce43be76614ace9236133d43075c",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/scenarios/category-consumption/cross-category/category-research.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "流失用户调研打法",
+        "阶段2 · 电话回访阶段结论"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-scenarios-category-consumption-cross-category-churn-user-research",
+      "source_body_hash": "sha256:6173e197494ba21217f19b9f973c486c91ef58ca2d24ae2e836c2695c69dc159",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/场景打法/流失用户调研打法.md",
+      "target_body_hash": "sha256:158a39dce251fe94c8ae8f58a77d74ce984f5365d10ce3f41dc109ee8e75d6a0",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/scenarios/category-consumption/cross-category/churn-user-research.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "B 端系统体验度量打法",
+        "场景定义 / 典型问题",
+        "搭建体系化测量",
+        "场景化及投放策略",
+        "最小样本和误差估计",
+        "体验问题改善",
+        "附录：常见的体验度量模型"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-scenarios-comprehensive-business-cross-line-topics-b-end-experience-measurement",
+      "source_body_hash": "sha256:d8d7b57be9f97c83ef2b3892321e592cf253fabe4b4a2a4fccd94ae4e7d3ae03",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/场景打法/B端系统体验度量打法.md",
+      "target_body_hash": "sha256:3c67fca180ed3dc38fde734ba70187d1429493e6a5e9f3d86db59aa51abbba23",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/scenarios/comprehensive-business/cross-line-topics/b-end-experience-measurement.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "持续发现（Continuous Discovery）打法"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-scenarios-product-experience-iteration-continuous-discovery",
+      "source_body_hash": "sha256:af7cf417ed4502f3aba7a9b9b1d84f9f22ec803cf86b7b371157cc7fc833f679",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/场景打法/持续发现（ContinuousDiscovery）打法.md",
+      "target_body_hash": "sha256:6571aa6d3f0ff0e49faad1e55618670e754fca43987109a854271f897b6a5ba4",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/scenarios/product-experience/iteration/continuous-discovery.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "产品迭代期·效果评估与问题诊断打法"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-scenarios-product-experience-iteration-iteration-evaluation-diagnosis",
+      "source_body_hash": "sha256:2cb48edc1fc5b6baa8f6b066e009c068fb658e8e4a8eb949c6d456d426ab67eb",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/场景打法/产品迭代期效果评估与问题诊断打法.md",
+      "target_body_hash": "sha256:99f46804825e27d609fdf6fcb80e4012696d4f06e11574d019602d0c36358d35",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/scenarios/product-experience/iteration/iteration-evaluation-diagnosis.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "无障碍产品体验与适配规范"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-standards-accessibility-adaptation",
+      "source_body_hash": "sha256:cf66d230653e8cce955aa9705e679c92c496b6156fcff0aa54f70b2aaeb132d7",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/执行规范/无障碍产品体验与适配规范.md",
+      "target_body_hash": "sha256:248be3f5ed0a96fb137ae6a47acbd8afec0a7a7ba87121e3cbcafe6aeb6d1689",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/standards/accessibility-adaptation.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-standards-interview-guide-standard",
+      "source_body_hash": "sha256:589dcb6786658229a1277fb5e16b25dd3a21b923be7b715a2d11e26cd20d85b9",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/执行规范/访谈提纲设计规范.md",
+      "target_body_hash": "sha256:fb4cdde35c483767a1046c465a48e90648ce19d2d33fb6b5af771b34c5e8d5c7",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/standards/interview-guide-standard.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "需求洞察的样本选择"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-standards-need-discovery-sampling",
+      "source_body_hash": "sha256:568da07bb1678c7c4ec9ccc69e2882bbecdd74ae2e30e90830bcf72d19dccccc",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/执行规范/需求洞察的样本选择.md",
+      "target_body_hash": "sha256:ee8284730757caa62f7ac6845949e9e9f08e09cb05a746f5872d26b5623d937c",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/standards/need-discovery-sampling.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "问卷设计规范"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-standards-questionnaire-design",
+      "source_body_hash": "sha256:c4df09dcf12663e2893f2ebf5ea9a4178c5f9153379a53c24710fba3c9adabde",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/执行规范/问卷设计规范.md",
+      "target_body_hash": "sha256:ac33e4818c3f309369de14d325ec1b4954b76d348bdff20bb27872c55a01bea6",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/standards/questionnaire-design.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "问卷体验审核规范"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-standards-questionnaire-experience-audit",
+      "source_body_hash": "sha256:c3b17ee186bd6b06fbd71d5ca94b06346edf440f45a8e8a754afcf5d4e1963c6",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/执行规范/问卷体验审核规范.md",
+      "target_body_hash": "sha256:61d52c4f6068d86635636150c1d58c081b43c27e6f278ad227914ae7535a054e",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/standards/questionnaire-experience-audit.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "用研需求分析与沟通规范"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-standards-requirement-elicitation",
+      "source_body_hash": "sha256:ef7270a8e80ead2a72331f41732bdcb8a45f6fe88ca3e193ca1c3f6acfa766e2",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/执行规范/用研需求分析与沟通规范.md",
+      "target_body_hash": "sha256:9d00d73be53ad2bd17bfe6c1610c2a2eb6ed9b89161864cd50d973e630d15d72",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/standards/requirement-elicitation.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "用研项目流程与角色规范"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-standards-research-project-workflow",
+      "source_body_hash": "sha256:22a7517dce302cadece6bf3c4e43b2eab383b80ef42810dba90eefe27c93446e",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/执行规范/用研项目流程与角色规范.md",
+      "target_body_hash": "sha256:fa16e405cbf486d64351c8b095e0e99c681f2c283ff5b5da1b2ffbd3e5a8d76c",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/standards/research-project-workflow.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "研究问题定义规范（业务问题 vs 研究问题）",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-standards-research-question-definition",
+      "source_body_hash": "sha256:042cffdd31d1b430559c35fa399c3b179583ff97f7dae4c4ea3e86834500dffd",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/执行规范/研究问题定义规范（业务问题vs研究问题）.md",
+      "target_body_hash": "sha256:76a604cfb36f586608afd882013476b98f5ba6daea48c4c1519fd07e388f628a",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/standards/research-question-definition.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "调研报告撰写规范"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-standards-research-report-writing",
+      "source_body_hash": "sha256:dedca7b470b2a4a9cd1ef21c3b1e28579bbc37705813139b3979a2e52f7eac1e",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/执行规范/调研报告撰写规范.md",
+      "target_body_hash": "sha256:4a0b38ded92385538520f10f3d115ae6e8992196203f6ece402e5ce2bd80ab16",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/standards/research-report-writing.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "抽样与样本量规范"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-standards-sampling",
+      "source_body_hash": "sha256:0f51d5d49e027434682ac91146e9369058a6de679ca925b33131b47fff6e7746",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/执行规范/抽样与样本量规范.md",
+      "target_body_hash": "sha256:f3fbb6dbb97722f0f3870fc4f921b742e9d8d578d541705e7571945456cdee5e",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/standards/sampling.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "A/B 测试与在线对照实验（A/B Testing / OCE）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-ab-testing",
+      "source_body_hash": "sha256:8db6b9083d9cb332d0bdc2b493494bd7c4d0dfea52750c8048dbe96e9fed5cda",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/AB测试与在线对照实验（ABTestingOCE）.md",
+      "target_body_hash": "sha256:c2ef04c09bf98895be371473b181bdba032233b8f7511d2183791d64b8a441d6",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/ab-testing.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "亲和图法（Affinity Diagram）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-affinity-diagram",
+      "source_body_hash": "sha256:5d9b61430f6b1bce6143c817775974b9a3992f0e3fc3194e392830a91c302f3b",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/亲和图法（AffinityDiagram）.md",
+      "target_body_hash": "sha256:1114bf609e6b394a60899e20993bfea873a0a21429c148342b10780df902f38a",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/affinity-diagram.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "贝叶斯平台间品类优势对比"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-bayesian-platform-category-comparison",
+      "source_body_hash": "sha256:3d9209e70429c60c4648eabbffa1abfdb0f1715bd60a17d56d2dd07161481004",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/贝叶斯平台间品类优势对比.md",
+      "target_body_hash": "sha256:0534884eea66422b3d7233b85be7c7c537d5461a70c0ec65c481eaf70a7b98a0",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/bayesian-platform-category-comparison.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "行为数据辅助用研"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-behavioral-data-augmented-research",
+      "source_body_hash": "sha256:458de03cfa5328ec85350b278dffd6d9a73be84bd81e4fedcaee8485bd38ed4b",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/行为数据辅助用研.md",
+      "target_body_hash": "sha256:dbf7c5a950f657d2e73abd22ffc25b16a712c771ebc4af4cdf53eeb2988284cf",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/behavioral-data-augmented-research.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "控件热区点击实验"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-click-hotzone-experiment",
+      "source_body_hash": "sha256:4a13a9d646d6f57aefcee220627064ba0bf3070b68e3d6aaf1780052f5c9b126",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/控件热区点击实验.md",
+      "target_body_hash": "sha256:42fa3bb9051edeb21fc19b6da0f87f7be4c4b996fc40669929804cda04726a6c",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/click-hotzone-experiment.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "竞品分析"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-competitive-analysis",
+      "source_body_hash": "sha256:936a2092fef80473cb0b0b71ee5350c37a6e7315eea86fb3199fa8ab99545036",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/竞品分析.md",
+      "target_body_hash": "sha256:748775cf866a3b868a568e2b8b7167c7d899fb91a66a5012b61cb1bc8b3d6e68",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/competitive-analysis.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "联合分析（Conjoint Analysis）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-conjoint-analysis",
+      "source_body_hash": "sha256:87fc047f70e3584a3a59e67d9d657fc77ef653777493b692ab22f6cb8231e28c",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/联合分析（ConjointAnalysis）.md",
+      "target_body_hash": "sha256:671de697a4118a3e5e82c7a76acc1796bd1407cbf456378b2045322c5c83ad23",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/conjoint-analysis.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "转化漏斗分析（Conversion Funnel Analysis）",
+        "何时用",
+        "分析步骤",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-conversion-funnel",
+      "source_body_hash": "sha256:fb6b9c1194fd5db6e7e4db3b61c661bcdb3445f6d1c752690d63ea645c3e88a8",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/转化漏斗分析（ConversionFunnelAnalysis）.md",
+      "target_body_hash": "sha256:e5244746fbc6c00d3eac619c4068c3fe30b6f9511d2b1c9fe237e7d303bea00b",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/conversion-funnel.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "数据标准化与跨维度对比"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-data-standardization",
+      "source_body_hash": "sha256:bb9d72fc8c3b949d0034799d368ade6884876987d6cfaa78f084def688b6b690",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/数据标准化与跨维度对比.md",
+      "target_body_hash": "sha256:8553f5f2555261cfbe5614e02d0f1d5784c5cb6ae7219ea5244e3314285e1424",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/data-standardization.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "体验度量方法（HEART 框架与体验量化）",
+        "何时用",
+        "输入数据要求",
+        "结果解读",
+        "工具 / 实现",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-experience-metrics-heart",
+      "source_body_hash": "sha256:a8f1fcbd93e9fe0eaf8901770257fe8cb64b3fe75b8100547d2f8130e9ad822e",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/体验度量方法（HEART框架与体验量化）.md",
+      "target_body_hash": "sha256:36bc48d82fc0724f4df2d44289245c29093ec62cc3ee8138b83e3b2821e4a649",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/experience-metrics-heart.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "功能采纳分析（Feature Adoption Analysis）",
+        "何时用",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-feature-adoption",
+      "source_body_hash": "sha256:36b01016170742408a104a972a1b08a9c038595af3887014a21ee61733b49cfa",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/功能采纳分析（FeatureAdoptionAnalysis）.md",
+      "target_body_hash": "sha256:92704d9de4b3041a27a1385b262007b782529795c63b284f96920e320d88e84f",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/feature-adoption.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "问题分层与优先级评估（Issue Severity & Prioritization）",
+        "何时用",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-issue-prioritization",
+      "source_body_hash": "sha256:a14bb64c9ff73ea2f5f14518191fc823e1f5c4016fcaa480487c43b9e8ebc363",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/问题分层与优先级评估（IssueSeverity&Prioritization）.md",
+      "target_body_hash": "sha256:24ccbf7844537dd43385c87ea75dcca3e4b7a550eccc5218cb1bfe10ca24b6f2",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/issue-prioritization.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "用户旅程图（CJM）",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-journey-map",
+      "source_body_hash": "sha256:3c1a4203d603237dc748d1e0be3b636564f12806c91d4e81c0c3dc4b8c4c206c",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/用户旅程图（CJM）.md",
+      "target_body_hash": "sha256:10f43a1c5ce9340e8c8073a985773e72a60e36e10f0d925acf11644f33f9c361",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/journey-map.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "满意度驱动因素分析（Key Driver Analysis）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-key-driver-analysis",
+      "source_body_hash": "sha256:ee3b4199b76ff862d80b619a5c051fc2af76f5c5ca88dcd775c95dd5ebced4e4",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/满意度驱动因素分析（KeyDriverAnalysis）.md",
+      "target_body_hash": "sha256:aea203b572744bb9ebf83bdc330ffad3db9d7820c39c7d8f282121616f25116d",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/key-driver-analysis.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "跨版本纵向 / 基准追踪（Longitudinal / Benchmark Tracking）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-longitudinal-benchmark-tracking",
+      "source_body_hash": "sha256:6d61804e5174adf7863bc2814dcb756f475d1e8e76972e20b87c73ef89748529",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/跨版本纵向基准追踪（LongitudinalBenchmarkTracking）.md",
+      "target_body_hash": "sha256:d6aae88af9debc8896e3aad57ece972242d9626315bef599b3bb462effe2ea2f",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/longitudinal-benchmark-tracking.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "购物篮分析（关联分析）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-market-basket-analysis",
+      "source_body_hash": "sha256:f08a8bef56020539d7f2a2585ad27923cae6d34f59c774c46ee555550a3df956",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/购物篮分析（关联分析）.md",
+      "target_body_hash": "sha256:fb968a1ba7776f379b52b1243cb2f35bf463a3e77d92e9b3e69c3b75580e08cc",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/market-basket-analysis.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "MaxDiff 最大差异缩放"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-maxdiff",
+      "source_body_hash": "sha256:fbd48a05d2b52665ae51ac57655a01e54ac9dc76c5e08dbceb4b7a6e44301b4d",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/MaxDiff最大差异缩放.md",
+      "target_body_hash": "sha256:289f3d5d1cc2c8d999be8da30f449b5c3c1030dff244623cf9c2f10e118961ad",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/maxdiff.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "机会点研究"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-opportunity-research",
+      "source_body_hash": "sha256:011c4fe4d580e0d19e163b5783e447c632028994b6177ce57c175f793598a551",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/机会点研究.md",
+      "target_body_hash": "sha256:d13848dbdcca9daf9117c56b1408922d465e903debb09d4f659fd35e13017dde",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/opportunity-research.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "对偶比较法"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-paired-comparison",
+      "source_body_hash": "sha256:bb9eefa1f133d8b833219ca84b3077e427261ff713e55cb54f49517f5f2e4a00",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/对偶比较法.md",
+      "target_body_hash": "sha256:0d4d6a99769dde36ee91e5e97ef42751bf36404be1996da29277c89ead15183f",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/paired-comparison.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "Persona 构建（Cooper 法）",
+        "何时用",
+        "局限与误用",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-persona-building",
+      "source_body_hash": "sha256:3dc4ec865244bb204ad49f04fe1e9d8d0795817dbe9704863b146a983ba1a25f",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/Persona构建（Cooper法）.md",
+      "target_body_hash": "sha256:4b96eb23e362c6adfd2654b183adfc316130a0a6f061e11fe2547e59529d4cca",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/persona-building.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "四象限优先级决策法",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-priority-quadrant-method",
+      "source_body_hash": "sha256:5357e3ef23af1a026341954e68288449e4a03d733cc3fdf166d844f3a5d2fa49",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/四象限优先级决策法.md",
+      "target_body_hash": "sha256:1e1b04648b7767f91afa9f91cdf95f6761c8e9861e3d5e4a1b3f752b0a90ef53",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/priority-quadrant-method.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "优惠文案内隐联结测试（IAT）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-promo-copy-iat",
+      "source_body_hash": "sha256:7fa6886163eaf6d1f04bc7fc162c17ffa4d3a4ecd9ae31f91e83eda310597918",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/优惠文案内隐联结测试（IAT）.md",
+      "target_body_hash": "sha256:0a58b33e1e7b1bb131332e9bad3640e996158ecbcd029555e116637040875b0a",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/promo-copy-iat.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "PSM 价格敏感度测试"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-psm-price-sensitivity",
+      "source_body_hash": "sha256:891f54174c0a8bdf6e7fc05587ae0ac2fe91b1316894021a3b54b30246d84e7b",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/PSM价格敏感度测试.md",
+      "target_body_hash": "sha256:3b94b57842f53eba49eea83b9dd784538fe855c9154235afe22c2ed89a0aa7dc",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/psm-price-sensitivity.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "质性资料分析（Miles & Huberman 框架）",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-qualitative-analysis",
+      "source_body_hash": "sha256:0c9a1c741a601e13e31813fe19e781555314732f06417dda51098feeac5c2f85",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/质性资料分析（Miles&Huberman框架）.md",
+      "target_body_hash": "sha256:66af9d40a47fa9215ddeaa5112dfbf1644236ec229dc0f8ecdf5464f440740d5",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/qualitative-analysis.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "质性编码与访谈资料分析"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-qualitative-coding",
+      "source_body_hash": "sha256:077d34f0109d240ba598a2bb2e1011b348256546882a7d85d6f470e532a45a1d",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/质性编码与访谈资料分析.md",
+      "target_body_hash": "sha256:1ac8eff3abe3088ec9de8c916da65f00f07ea778e9e0bb543ef942eb1a8e95b5",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/qualitative-coding.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "定性洞察分析框架"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-qualitative-insight-frameworks",
+      "source_body_hash": "sha256:c9e18f397322745154d5cdbf07968b0a359ebdb8e2e0c49ec545c2f022335b96",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/定性洞察分析框架.md",
+      "target_body_hash": "sha256:69dfb5a8706c21646b3ed4e39d0aa90882dd2969fdb575e4e4c4291f5734136b",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/qualitative-insight-frameworks.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "RFM 模型用户分群",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-rfm",
+      "source_body_hash": "sha256:8806a8712b917ee1c5a8d1a08e1fbd5a74a75e545485bf505b31798a2ed97553",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/RFM模型用户分群.md",
+      "target_body_hash": "sha256:03fcfa6c9462754e74b0b4b59e4f08e3e50400429c44a9a8afbbbf50d95ce508",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/rfm.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "满意度分析模型（四分图/Kano/AHP/SEM）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-satisfaction-analysis-models",
+      "source_body_hash": "sha256:24f5ae0dbb4d50b68b4bdb6180adeb180f1e4f944acab9eef8d668e878c2b448",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/满意度分析模型（四分图KanoAHPSEM）.md",
+      "target_body_hash": "sha256:2efd74bbac0cb2d3689efd0fb83a0d9289b5f50f18827691d3e0415d637fe715",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/satisfaction-analysis-models.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "满意度异动归因（满意度下降如何分析）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-satisfaction-drop-attribution",
+      "source_body_hash": "sha256:aeb9e9d2bd41ef361128a328bc53e86a4bcc2e9ced5a3b48ce6bb5afcea148f7",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/满意度异动归因（满意度下降如何分析）.md",
+      "target_body_hash": "sha256:c47ee85e866fad79b58ed5c12d149e6270f0ec9f44bf9947905ece7075f3b9dd",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/satisfaction-drop-attribution.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "问卷数据统计分析（差异性与关联性）",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-survey-statistics",
+      "source_body_hash": "sha256:0a30431d7c06837792d91d11e2d4eeee9cff614e9a4790f071ce2040e4c51fd8",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/问卷数据统计分析（差异性与关联性）.md",
+      "target_body_hash": "sha256:23ef4ef4eb60b4c5d3ea54bde237a2be2e06d856136fd9f1ef2202155db5095f",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/survey-statistics.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "系统思维做业务调研"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-systems-thinking-research",
+      "source_body_hash": "sha256:52a1bf252615d7adf42ec86320fdd2481047d0c25d8f64b41c41c939e2d2a002",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/系统思维做业务调研.md",
+      "target_body_hash": "sha256:c2fc160183ec7432c8f9cd0980d147e2b460ab33554838e3bc21aa21e5eda90b",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/systems-thinking-research.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "文本分析"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-text-analysis",
+      "source_body_hash": "sha256:575c6896a08758c04c05392a21320d9b13a5d1819fd009f105b012cdc3c38215",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/文本分析.md",
+      "target_body_hash": "sha256:a88d1e3171a956a6a62a7a63912a7b53ca27b9eaa11a5e689aba64d9e7641b80",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/text-analysis.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "目标群体指数（TGI）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-tgi-index",
+      "source_body_hash": "sha256:169fceded6a35f23e79e5e0d9f36bd3af18665a736218640504065c5e25d9c67",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/目标群体指数（TGI）.md",
+      "target_body_hash": "sha256:bc2c33c0cbc33f973284306bf54e32cab195587e2e65804cf815af294c31808a",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/tgi-index.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "TURF 分析"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-turf-analysis",
+      "source_body_hash": "sha256:8c2a04433a5b54a484a2e9593dcdc59047f99509d5b0089a3274da4bcb380c6c",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/TURF分析.md",
+      "target_body_hash": "sha256:129e00b0a89f8b82aa384afb2d817f25e31057d4c6adb2f0b97b772d721c76a6",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/turf-analysis.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "VOC 用户之声分析（Voice of Customer）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-voc-analysis",
+      "source_body_hash": "sha256:1491e9899d74419f994951e455f3a2a790836ace1ddb178ee8f17e1eb2e51e21",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/VOC用户之声分析（VoiceofCustomer）.md",
+      "target_body_hash": "sha256:31a235e210cbb303b4cefedbf7459bebe6dd03799bc6cd23129bb3661a4ed4d6",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/voc-analysis.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "VOC 产品线/模块分类法（京东 App 体验反馈）",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-analysis-voc-product-line-classification",
+      "source_body_hash": "sha256:d17574690b2402717a707a919630b3ac9571bd244292b8b08e749be7a28af421",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/VOC产品线模块分类法（京东App体验反馈）.md",
+      "target_body_hash": "sha256:bff55de91f93bec8ff09c89c52d41ab2e22dde83ae8deac84795afe9cc138966",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/analysis/voc-product-line-classification.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "无障碍走查 / 无障碍审查（Accessibility Audit）",
+        "何时用 / 不适合",
+        "前置准备",
+        "执行步骤",
+        "产出与交付",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-accessibility-audit",
+      "source_body_hash": "sha256:072e1d6886e10531894dcce0ffadf795dc50a46aa8b1ebd2b67bf45802598fb2",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/无障碍走查无障碍审查（AccessibilityAudit）.md",
+      "target_body_hash": "sha256:d8428c8d0568fe68b9ac9f08a97c6bf0998362ace4a3d356c6fe8d0f56db0814",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/accessibility-audit.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "品牌命名研究与测评"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-brand-naming-research",
+      "source_body_hash": "sha256:e034b9bbcbfe04280d9809e62febfb01fc9f48e2c77638b5e1b5e89e6cabccc0",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/品牌命名研究与测评.md",
+      "target_body_hash": "sha256:cfab2f22b7ef8f62e861594d7bb3a0d74b5a67faef53e93d2e24914233086803",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/brand-naming-research.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "共创工作坊"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-co-creation-workshop",
+      "source_body_hash": "sha256:8fc66587ccc8042cb53c32226beafcde77f21210f5931674668da3824ca7c457",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/共创工作坊.md",
+      "target_body_hash": "sha256:04027d37c36e61c86bfa4175d408d58183882ece91db1c44ae7e28a4168e2b3b",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/co-creation-workshop.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "文案内容测试"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-copy-content-testing",
+      "source_body_hash": "sha256:7a391c4e5a23f175e72f2ffc590b7df712003058f81bdb6ed99a52851701a7fb",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/文案内容测试.md",
+      "target_body_hash": "sha256:776e3a48354b4541eb4ae402ad0ca72e85570d007ab3018f6bb00e4b298cd68f",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/copy-content-testing.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "桌面研究"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-desk-research",
+      "source_body_hash": "sha256:506b5888b4f5c34067b5d3163dad72bf6252df0e9e15f5bccfa0af7272b87774",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/桌面研究.md",
+      "target_body_hash": "sha256:6289beac5c773755577272e24d717024cbe90a188db3d958cfed4a72b47f49fa",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/desk-research.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "民族志与田野调查（参与观察）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-ethnography-field-research",
+      "source_body_hash": "sha256:31e8a5dcae607e8dfc1eda515cc6e3d7bc5b648dd74c29d8e2e46b9b04b43da1",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/民族志与田野调查（参与观察）.md",
+      "target_body_hash": "sha256:f362e40a728263726bffdb95dafdbbe64c3bcdac56495359b569f2fd8960aca4",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/ethnography-field-research.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "产品体验评测"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-experience-evaluation-rating",
+      "source_body_hash": "sha256:527daa37e78803a2f1ca0e2dccafd35913d9fb1500b1119e68af5590138a6b64",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/产品体验评测.md",
+      "target_body_hash": "sha256:6f88d44f1a8f6ff668969bf402fefcb30c23852483f54cf276ef91b6964c9c85",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/experience-evaluation-rating.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "用户体验地图"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-experience-map",
+      "source_body_hash": "sha256:64110afa2b96588cf9e1f4379037370a35a63ca6fc930a36255a1c7405c2f61c",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/用户体验地图.md",
+      "target_body_hash": "sha256:0802c4894c1e825ce1c2a0e610f3af12ce724ecffd8d5a2b10ebf70a67f3c55e",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/experience-map.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "眼动研究"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-eye-tracking",
+      "source_body_hash": "sha256:5d7789ab8a785e5cb3859e809406e1ec041d2438853c3e9d6f1b7fb078f10f01",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/眼动研究.md",
+      "target_body_hash": "sha256:4a034aeeb3d709918f2a489a9ca608dd6763f3c3d35397628d47dddb3ddd38b0",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/eye-tracking.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "焦点小组（Focus Group）",
+        "与深度访谈的区别",
+        "3. 确定并邀请用户",
+        "5. 访谈提纲结构示例",
+        "产出与交付",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-focus-group",
+      "source_body_hash": "sha256:5d83aef45176e89951539de6978559fa29669f5679bcc0d37b816d166ae1ca10",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/焦点小组（FocusGroup）.md",
+      "target_body_hash": "sha256:7c412ebda4edb052f020a597216e093582bff91c54d0e48d65338ad85f32f0a0",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/focus-group.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "启发式评估 / 体验走查（Heuristic Evaluation）",
+        "执行步骤",
+        "关键技巧与注意",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-heuristic-evaluation",
+      "source_body_hash": "sha256:8fb37a3bbf706ad488e5a01ffca33b0f9c0836e32cf3259a00a2268da132dc30",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/启发式评估体验走查（HeuristicEvaluation）.md",
+      "target_body_hash": "sha256:74aca85ca79881eafd2f8f6e7bd4a5e87af7e9a3d7c277c671be505253274857",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/heuristic-evaluation.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "线上在用追踪 / 迭代式研究设计（日记研究 · ESM）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-in-product-longitudinal-tracking",
+      "source_body_hash": "sha256:7246b1199e1c33cb957f26c11a3c48d38a96c3e3ec4af033669138c616772739",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/线上在用追踪迭代式研究设计（日记研究ESM）.md",
+      "target_body_hash": "sha256:fcf66ddd19bf97a2bed7c8307d39f4c865ffff326071f9b541832103591aec03",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/in-product-longitudinal-tracking.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "拦访（街头/现场拦截访谈）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-intercept-interview",
+      "source_body_hash": "sha256:87654f91e941d3128d9e49b9cac6fcf99e195c888e8a80193ea4da14e97b6ac3",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/拦访（街头现场拦截访谈）.md",
+      "target_body_hash": "sha256:02efdde48a58c702b96f02a9e021edd58114bc15211a6edefaeda30e11b67f5c",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/intercept-interview.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "访谈提纲设计"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-interview-guide-design",
+      "source_body_hash": "sha256:5cd3eb29845e9f8ed5b947299efe2a4b454b1825c5bbb14a5da5fc74bc5b4952",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/访谈提纲设计.md",
+      "target_body_hash": "sha256:bc53d31178838ad4454004c9d9f6b048eaa7420d72983369c3032a08e3af050a",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/interview-guide-design.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "用户深度访谈",
+        "分类与选型",
+        "被访人数详解"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-interviews",
+      "source_body_hash": "sha256:df819ad0349b7be1d356d5aabf16dab35356732b74853c6244190eecb1bfd699",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/用户深度访谈.md",
+      "target_body_hash": "sha256:e3cb6397a46181a8e17dde4dc41abe472e655033bf0466330ecf83d416a889ca",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/interviews.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "Job Interview 任务访谈",
+        "不适用 / 与 Switch Interview 区别",
+        "招募与样本",
+        "Step 2 · 任务全流程还原，搭建 Job Map 框架",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-job-interview",
+      "source_body_hash": "sha256:8886754b3e86a3183c4951c9e65fa723ceecf67fb3076461e43af3add0ef79a6",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/JobInterview任务访谈.md",
+      "target_body_hash": "sha256:4904163bf1c407db72e5ee809042fd8eeffe3df4eb8c584283051e52f5914aa7",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/job-interview.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "情绪板（Mood Board）",
+        "前置准备",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-mood-board",
+      "source_body_hash": "sha256:1510045c66eb61fe819ed08108c3ec6344c76c31d4147cfa824a39f42572ab3a",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/情绪板（MoodBoard）.md",
+      "target_body_hash": "sha256:a9049d753dc1fbc6c32b6c6bf7ed7e623cfd2d45f6b44d9d15085609b44f31b8",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/mood-board.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "在线焦点小组"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-online-focus-group",
+      "source_body_hash": "sha256:31e15dd1a3ec8310a9e113fb6cfe6eab7bf3af01f7d4dea5e64ed0b1e41ce0bb",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/在线焦点小组.md",
+      "target_body_hash": "sha256:c82fb4cbf354babdbc399885526c4d2e6df1ada722492665983173a8640f9312",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/online-focus-group.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "用户招募（访谈/调研）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-participant-recruitment",
+      "source_body_hash": "sha256:c9dacf3d2e31d01e3042b9db07f5a47c54a2a2dbc28e5de1c8940d97ac240c2a",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/用户招募（访谈调研）.md",
+      "target_body_hash": "sha256:b9f12336dffe37c5737a46555d979f081e509f73298fbe2c2639ad8dfa8b5f5e",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/participant-recruitment.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "人物角色（Persona）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-persona",
+      "source_body_hash": "sha256:626b0cbe6f62b125868de520936e7b12256a943d57154962cc494b36ff25f408",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/人物角色（Persona）.md",
+      "target_body_hash": "sha256:44585abfdf646543731c92fabef2ed4ec2bca1da3242fe16907a5bc320a60058",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/persona.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "投射技术在用户访谈中的应用",
+        "前置准备",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-projective-techniques",
+      "source_body_hash": "sha256:6caca529a4bddabbff2949e195110da5aac8034a331388b27ab01ef3ea659db9",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/投射技术在用户访谈中的应用.md",
+      "target_body_hash": "sha256:8743f4a5045082aa968dcabebf93df481423a08dd58c66d8fe345193bb58a543",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/projective-techniques.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "定性问卷"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-qualitative-questionnaire",
+      "source_body_hash": "sha256:38930dc4a5504950a99913994cc3ed2c53de51152929657d1406addcd55c1bf2",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/定性问卷.md",
+      "target_body_hash": "sha256:f3212d61f78fddf8bb4de4222fb6ee100a62d137f5a41836fee72d6b6162f114",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/qualitative-questionnaire.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "受访者认知偏误与规避"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-respondent-bias",
+      "source_body_hash": "sha256:8cccba1c6b0ecbc81e022d275cb7dbada33331287ef8b9dae77467b93b1b4bd1",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/受访者认知偏误与规避.md",
+      "target_body_hash": "sha256:9c535c03eb318f1095223b130c74f60542c5a9ac3c558b190ded5912839d826b",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/respondent-bias.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "满意度问卷设计与数据清洗"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-satisfaction-survey",
+      "source_body_hash": "sha256:daffac4cf16b5b5eda0d86aa5ed31304a541a9ca89d938f97a86fb4b6cd252f6",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/满意度问卷设计与数据清洗.md",
+      "target_body_hash": "sha256:b28ddf9637c3fdbd45d5a81fbfba97836a3df87c3caa09fa285e32a449481a5a",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/satisfaction-survey.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "量表编制（量表设计与分析）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-scale-development",
+      "source_body_hash": "sha256:a43f0aa9acea6159d1adf3d605e3b7c89428163e4ceb364b25b9f1cc17bd3b87",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/量表编制（量表设计与分析）.md",
+      "target_body_hash": "sha256:e6e616751b0c80bdae7db742b1ebdf1a51f3ae8e3151d200e6279fde6b7e6fa4",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/scale-development.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "用户场景洞察需求"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-scenario-based-need-discovery",
+      "source_body_hash": "sha256:502ee48257e0a84211693f4ade6217762f41a1d728601ee9a3561c33fa6c0155",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/用户场景洞察需求.md",
+      "target_body_hash": "sha256:2d0165c0d74e0e2216d97b4977cc6a539bfff1797e27641925b0d53c1df496c6",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/scenario-based-need-discovery.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "巡店与场域调研"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-store-visit-field-research",
+      "source_body_hash": "sha256:a1ba848e277540e02ce8a7695494ce65caceee62ea09a84f13491c7791c74d91",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/巡店与场域调研.md",
+      "target_body_hash": "sha256:43f95f247560896159debe7c638aa71423c8549282619d494296fac9f1274478",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/store-visit-field-research.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "问卷调研（Survey）",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-surveys",
+      "source_body_hash": "sha256:20464d7c9b560e342948c1074ede03bb0934141c93bc7c754d63f9a438503037",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/问卷调研（Survey）.md",
+      "target_body_hash": "sha256:d466b99124b03a17489a5f31186fed73e19b0d9b399e6ad74fe163ccc9800ab5",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/surveys.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "Switch Interview 转换访谈",
+        "招募与样本",
+        "Step 3 · 识别\"四力\"——从故事中提取四种力量",
+        "产出与交付",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-switch-interview",
+      "source_body_hash": "sha256:7d11c4effbee8f1536d4bf41a39b8424eb873bd4541f8f9fd782e7d1365b9100",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/SwitchInterview转换访谈.md",
+      "target_body_hash": "sha256:a66d2be36b0798f8be26234dd8926f0792194424fbffdedb52c2f57ea653d332",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/switch-interview.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "可用性测试"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-usability-testing",
+      "source_body_hash": "sha256:108774075c608d644420eb8ac9f100bcb73678d875b450324a5609d19fc829fa",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/可用性测试.md",
+      "target_body_hash": "sha256:a8fc840976f0ab1cf7e3b9ad78dc930f729804a5905abdde5d4f0a7f2232678b",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/usability-testing.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "U&A 使用习惯与态度研究",
+        "产出与交付",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-usage-attitude-research",
+      "source_body_hash": "sha256:a7c0945f24a2e62ed428beea4325ec16d913e3b1415d19c215d212657b07e7c8",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/U&A使用习惯与态度研究.md",
+      "target_body_hash": "sha256:6fe7ecd306a0f8299cbfeb544ade4efa6685eaf24df98cd266d12c3efe1430e5",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/usage-attitude-research.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "共创工作坊（盖房子六步法）",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-methods-toolbox-collection-workshop",
+      "source_body_hash": "sha256:aa7f0f2af43ffcf4f6be0b9c1823dc2450ce77685fc6f28c1d8f32b969946a0e",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/方法工具箱/共创工作坊（盖房子六步法）.md",
+      "target_body_hash": "sha256:9b701d2f4252e7bcb82f4e60d361aebfe60280ef1f70a2f3ff9f66819c3c9a9a",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/methods/toolbox/collection/workshop.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "5W2H 模型"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-models-5w2h",
+      "source_body_hash": "sha256:0ad3b3418f3e5fd34d0b376656209908748f322319178d94993f4bee3c890109",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/5W2H模型/5W2H模型.md",
+      "target_body_hash": "sha256:b2ff40de62f4d2fb5076c2740d97b8f466ff4d462e0c60348da51aeb795e5f5a",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/models/5w2h.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "人类学视角（厚数据与文化透镜）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-models-anthropological-lens",
+      "source_body_hash": "sha256:94601cdcc6a65ee23d01705a31f406bef43161d3dca39452f4b878664f0e411b",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/人类学视角（厚数据与文化透镜）/人类学视角（厚数据与文化透镜）.md",
+      "target_body_hash": "sha256:cef7481e55b3328f6e5b9831a70d23c2039d43822ff42cd61c96819d401b148d",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/models/anthropological-lens.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "认知偏见与用户决策"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-models-cognitive-biases",
+      "source_body_hash": "sha256:4279b0ed783db30047b50f7b91a43baf8c11ce829f2455c4db83faf5f2f4f410",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/认知偏见与用户决策/认知偏见与用户决策.md",
+      "target_body_hash": "sha256:8b8e750803a75c2179f25fcc3884addc9e7be30c7d8d4fa63f0a51204f4a1728",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/models/cognitive-biases.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "设计冲刺（Design Sprint）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-models-design-sprint",
+      "source_body_hash": "sha256:d3be0061be7b23fda16c19d6a443496fac96eee9f2e189506266732d890873fb",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/设计冲刺（DesignSprint）/设计冲刺（DesignSprint）.md",
+      "target_body_hash": "sha256:d32cffd512867488166b93f879ccfbac086942dd87eb154b7d6065b4fc510b6f",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/models/design-sprint.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "期望确认理论（ECT）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-models-ect",
+      "source_body_hash": "sha256:037926910711492f8cb96284173add5aefbafc17199e29fc5ca72b72c6826fbe",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/期望确认理论（ECT）/期望确认理论（ECT）.md",
+      "target_body_hash": "sha256:d6916632fdde4d3363835455b218080c9192a45643a8b06990ed58b1159d297d",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/models/ect.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "四力模型（推力 / 拉力 / 焦虑 / 惯性）",
+        "采集阶段",
+        "与方法 / 分析的衔接",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-models-four-forces",
+      "source_body_hash": "sha256:541c64e199599bb21726b4121706fd9d7079369d3ceee5a567424f2ecec8e9a2",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/四力模型（推力拉力焦虑惯性）/四力模型（推力拉力焦虑惯性）.md",
+      "target_body_hash": "sha256:bc5e6831cedbb3127d1df017b9200957373d1c87a77394c6655a1790398246fd",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/models/four-forces.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "G7 品牌人群细分模型"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-models-g7-brand-segmentation",
+      "source_body_hash": "sha256:ce6b791d42c9790a7ff3c04e93b71eec33cd4c0a6c3f8dd0610e8d5a434d80ca",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/G7品牌人群细分模型/G7品牌人群细分模型.md",
+      "target_body_hash": "sha256:2d859b69a75cee5482227914f2230603b31764801dc34076ea0d9f875ef24feb",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/models/g7-brand-segmentation.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "黄金圈模型（Golden Circle）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-models-golden-circle",
+      "source_body_hash": "sha256:fe4ed160253b23d5e2a4198b03cee86523e6d8cd247345691cb42ab31b1bd505",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/黄金圈模型（GoldenCircle）/黄金圈模型（GoldenCircle）.md",
+      "target_body_hash": "sha256:ff12096735fc8785b1248036d77b975ef8e86207d44b72cc9c735b882b2ba1e8",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/models/golden-circle.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "访谈认识论（知识建构观）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-models-interview-epistemology",
+      "source_body_hash": "sha256:ce88fc01db35da97eeaa3c8902f57d16b295ff4dcf32662da6ab043322d40cb3",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/访谈认识论（知识建构观）/访谈认识论（知识建构观）.md",
+      "target_body_hash": "sha256:24e11cc4eb99a39ea9a5b750411792d152766554579b3eedf5c036056c020ae2",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/models/interview-epistemology.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "Job Map（任务地图，ODI 8 步框架）",
+        "采集阶段",
+        "与方法 / 分析的衔接",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-models-job-map",
+      "source_body_hash": "sha256:569b4ecbb048117fd4b0f652da0ffbbb0044d42910ecdd8c3a3fa5e252b096ad",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/JobMap（任务地图，ODI8步框架）/JobMap（任务地图，ODI8步框架）.md",
+      "target_body_hash": "sha256:68f44935ad90ad27744a1986c30318c5f17eda15016147400c97633d36789841",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/models/job-map.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "Jobs To Be Done（JTBD）",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-models-jtbd",
+      "source_body_hash": "sha256:0c9a7ff5a9d0dbbe3404971ce58cd82b0d427861e68811ce3285a56564e41bc1",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/JobsToBeDone（JTBD）/JobsToBeDone（JTBD）.md",
+      "target_body_hash": "sha256:f9d651044dfcece1b62823ce5ce260cf66bed526371acab2e8ac59df55a76343",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/models/jtbd.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "KANO 模型",
+        "顾客满意度的本质（与 ECT 一致）",
+        "与方法 / 分析的衔接",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-models-kano",
+      "source_body_hash": "sha256:1cdf6709769e306eb8a0e1aef2a7fa262617d14b4927f29d19257572d4c3509f",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/KANO模型/KANO模型.md",
+      "target_body_hash": "sha256:f44f2b18ccd70f319e691066443da1a482ed375650da40838633e35f7813416c",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/models/kano.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "梯子理论（手段-目的链 / Means-End Laddering）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-models-means-end-laddering",
+      "source_body_hash": "sha256:c601bf1d06a8c6b5d26e09420ffaaa622ed5a40c4e813f980134b1faaa118b4c",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/梯子理论（手段-目的链Means-EndLaddering）/梯子理论（手段-目的链Means-EndLaddering）.md",
+      "target_body_hash": "sha256:a1ff7826566028aafa837d786841f26e106d6a12f03e604e4c7deb8527f87e41",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/models/means-end-laddering.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "尼尔森十大可用性启发式（Nielsen's 10 Usability Heuristics）",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-models-nielsen-heuristics",
+      "source_body_hash": "sha256:a360305eec0b90a870b5168e4c8cf063e27d3d83884f949b939bb2e24e1e20d7",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/尼尔森十大可用性启发式（Nielsen's10UsabilityHeuristics）/尼尔森十大可用性启发式（Nielsen's10UsabilityHeuristics）.md",
+      "target_body_hash": "sha256:f40e931422cc6073e150c62410af75ec790bef3bbb66dfca4435e5b2e8b650fc",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/models/nielsen-heuristics.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "ORID 焦点式呈现法"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-models-orid",
+      "source_body_hash": "sha256:07a304c19d2fbb3e3837e705fac72e5bec27771418931c6b056950d72a4edfc1",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/ORID焦点式呈现法/ORID焦点式呈现法.md",
+      "target_body_hash": "sha256:2ca0aa993061867731cc85e127bd1c598423cd7cb18732f5b6146604a25075ea",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/models/orid.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "心理物理学（阈限与信号检测论）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-models-psychophysics",
+      "source_body_hash": "sha256:4e84f18106b684c6889343a8edc280793328c7412a53b32b5c70f0bdb17062b9",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/心理物理学（阈限与信号检测论）/心理物理学（阈限与信号检测论）.md",
+      "target_body_hash": "sha256:6b6825c88d47d3d41f904bb6a7d59b272292361a240e6b794f9d8a64449e2a71",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/models/psychophysics.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "金字塔原理",
+        "与方法 / 分析的衔接"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-models-pyramid-principle",
+      "source_body_hash": "sha256:da9a5233e94a87caab19ab765fca0890d713697acb960ec434d820774c7cc3d3",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/金字塔原理/金字塔原理.md",
+      "target_body_hash": "sha256:c5d4ca1a4e83bd7ea472fc54ba035097822ce31e149dad701bf6fefaea4482c3",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/models/pyramid-principle.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "用户养成运营模型"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-models-user-cultivation-growth",
+      "source_body_hash": "sha256:ea5158b1e075760bf60593536f14997131a749cddb9f0dfec9145dcf365aeae6",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/用户养成运营模型/用户养成运营模型.md",
+      "target_body_hash": "sha256:0fbe04675e4e3ddc4264ef4818d01e2c929a548478f3d882f0b41020da38f769",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/models/user-cultivation-growth.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "用户洞察（认知与误区）"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-models-user-insight",
+      "source_body_hash": "sha256:bd90746af1e229de37173cf6bfde2edf2a2754b6be3305661d5778539765a1ec",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/用户洞察（认知与误区）/用户洞察（认知与误区）.md",
+      "target_body_hash": "sha256:eba867fa5c195e5037247715f8bbdbc37337a093e24b742c6a9d1753b8ca1aa0",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/models/user-insight.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "用户需求的本质（三层模型）",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-models-user-needs",
+      "source_body_hash": "sha256:10ba0334907e2aa727af9bc233ba49b242ae91c21456978f553a44e885552825",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/用户需求的本质（三层模型）/用户需求的本质（三层模型）.md",
+      "target_body_hash": "sha256:4cb63a508fc6e7b039c9189cae33aa2a479a8e329081b7ed77915a4d4e8f48b4",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/models/user-needs.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "用户画像 / 用户分层 / 用户分群（三概念辨析）",
+        "Persona vs Profile（必须先区分）",
+        "2. 用户分层",
+        "3. 用户分群",
+        "与方法 / 分析的衔接",
+        "关联"
+      ],
+      "disposition": "map_existing",
+      "entity_key": "knowledge:ur-method-models-user-personas-segmentation",
+      "source_body_hash": "sha256:f50738d40291d1017909d7c1b6667cf4f8d0d425d689f5c76c2fcf9fddbc76b6",
+      "source_only_headings": [],
+      "source_path": "03-knowledge-知识/方法知识/用户研究/用户画像用户分层用户分群（三概念辨析）/用户画像用户分层用户分群（三概念辨析）.md",
+      "target_body_hash": "sha256:557a3153e6fa24f47f29e8eaa5f3003427d2581acc2781feda617813c044971c",
+      "target_only_headings": [],
+      "target_path": "knowledge-base/models/user-personas-segmentation.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [],
+      "disposition": "merge_into_existing",
+      "entity_key": "skill:ds-skill-competitor-strategy-analysis",
+      "source_body_hash": "sha256:bcae01187144a46e1b785411fa48a593ec5095a50b79c6d1613c22f54eeaf046",
+      "source_only_headings": [
+        "竞品策略分析 Skill",
+        "适用场景",
+        "执行流程",
+        "质量自检"
+      ],
+      "source_path": "02-skills-技能/设计策略/竞品策略分析/SKILL.md",
+      "target_body_hash": "sha256:23578375f868f72fd868d7c10b19f708d67ad7ba14ebc3894ca2dc2038e837c4",
+      "target_only_headings": [
+        "Competitive Analysis — 竞品素材 + 知己 → 竞品分析（编排 wiki 正典）",
+        "北极星与边界（先理解，再动手）",
+        "四条纪律（本 skill 必须遵守，产出据此被信任）",
+        "第 0 步：定位 wiki 根目录",
+        "第 1 步：解析 brief",
+        "第 2 步：读正典（本 skill 的核心——cross-walk）",
+        "第 3 步 · A：直接分析（默认模式 —— 有竞品素材时）",
+        "第 3 步 · B：产框架/工具包（无竞品素材时）",
+        "第 4 步：分析自检（拿「局限与误用」回头扫一遍）",
+        "第 5 步：组装交付",
+        "references"
+      ],
+      "target_path": "knowledge-base/skills/competitive-analysis"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [
+        "执行步骤"
+      ],
+      "disposition": "merge_into_existing",
+      "entity_key": "skill:ds-skill-trend-change-scan",
+      "source_body_hash": "sha256:e00ec212e861828270414928d16a9bfd51ddcf0f3036332a7598a5a6353ea4c1",
+      "source_only_headings": [
+        "趋势与变化扫描 Skill",
+        "适用 Task / Scenario",
+        "Trigger / 使用条件",
+        "Input",
+        "所需 Knowledge",
+        "Output",
+        "变化信号",
+        "初步判断",
+        "待验证问题",
+        "推荐后续 Task",
+        "Human Confirmation 条件",
+        "Fallback 条件",
+        "与其他 Skill 的边界"
+      ],
+      "source_path": "02-skills-技能/设计策略/趋势变化扫描/SKILL.md",
+      "target_body_hash": "sha256:5becaeb731d4b0f6d482414203621579fe786114d324aa0c07532e3f24b4dd56",
+      "target_only_headings": [
+        "竞品分析 · Web 搜索路径",
+        "何时使用 / 不使用",
+        "输入",
+        "产出",
+        "边界与合规"
+      ],
+      "target_path": "skills/competitive-analysis/web-research/SKILL.md"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [],
+      "disposition": "merge_into_existing",
+      "entity_key": "skill:ds-skill-user-insight-synthesis",
+      "source_body_hash": "sha256:f0f82a87e7f1a611bdd2507b8c8d7f0ba6a70757ca1a8816e61d8b203b730da2",
+      "source_only_headings": [
+        "用户洞察综合分析 Skill",
+        "适用场景",
+        "执行流程",
+        "质量自检"
+      ],
+      "source_path": "02-skills-技能/设计策略/用户洞察综合分析/SKILL.md",
+      "target_body_hash": "sha256:47444536e263c3926a57691caa593cd7394bfa2c0479338c912945a6dc576262",
+      "target_only_headings": [
+        "Synthesize Qualitative Insights — 多份定性材料 → 跨场主题 + 结构化洞察（编排 wiki 正典）",
+        "北极星与边界（先理解，再动手）",
+        "敏感素材处理（本 skill 特有，务必遵守）",
+        "四条纪律（本 skill 必须遵守，产出据此被信任）",
+        "第 0 步：定位 wiki 根目录",
+        "第 1 步：接收并解析输入",
+        "第 2 步：读正典（本 skill 的核心——cross-walk）",
+        "第 3 步：跨场归纳（聚类）——把散落发现聚成多层主题",
+        "第 4 步：拔高洞察——把主题升华成能指导行动的洞察",
+        "第 5 步（可选，弱支撑，按需触发）：从洞察到机会与落地建议",
+        "第 6 步：组织交付（两态：交付稿正文 + 分析底稿附录）",
+        "references"
+      ],
+      "target_path": "knowledge-base/skills/synthesize-qualitative-insights"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [],
+      "disposition": "merge_into_existing",
+      "entity_key": "skill:ur-skill-accessibility-review",
+      "source_body_hash": "sha256:78a828ac645371e37233de572f366eeb4b6f8f601896578ac5f0f409f5b422f3",
+      "source_only_headings": [
+        "无障碍走查 · 输出骨架与模板",
+        "来源重构说明",
+        "无障碍走查 · 输出骨架与模板",
+        "一、直接审模式 · 输出骨架（有界面素材时，默认）",
+        "0. 无障碍评估结论摘要（结论先行，放最前）",
+        "1. 无障碍问题清单（核心产物）",
+        "2. 按 POUR 原则归类小结",
+        "3. 整改清单（可直接派给研发 —— 本 skill 的关键交付）",
+        "4. 评估范围与未评到（诚实声明覆盖边界）",
+        "二、工具包模式 · 输出骨架（无界面素材时）",
+        "1. 交付前 checklist",
+        "2. A/B/C 评级卡",
+        "3. 读屏三遍法走查脚本",
+        "4. 量化阈值速查",
+        "5. 记录表 + 整改汇总模板",
+        "6. 给用户的素材索要",
+        "三、评估自检结果模板（对照\"禁止 / 例外 / 常见坑\"逐条）",
+        "评估自检结果（对照无障碍正典，正典 status: [draft/reviewed]）",
+        "四、《本次运行说明》模板（固定附在最后，五部分齐全）",
+        "本次运行说明",
+        "五、形态示意（仅示范\"长什么样\"，**勿照抄内容**——务必按真实素材重写）"
+      ],
+      "source_path": "02-skills-技能/用户研究/无障碍审查/SKILL.md",
+      "target_body_hash": "sha256:cb3d02d27dcf10bc41922d6f82159be3dded40213d2fdb4d125deb0472efc4a9",
+      "target_only_headings": [
+        "Accessibility Review — 评估对象 + 范围 → 无障碍走查（编排 wiki 正典）",
+        "北极星与边界（先理解，再动手）",
+        "四条纪律（本 skill 必须遵守，产出据此被信任）",
+        "第 0 步：定位 wiki 根目录",
+        "第 1 步：解析 brief",
+        "第 2 步：读正典（本 skill 的核心——cross-walk）",
+        "第 3 步 · A：直接审（默认模式 —— 有界面素材时）",
+        "第 3 步 · B：产工具包（无界面素材时）",
+        "第 4 步：评估自检（拿\"局限与常见坑\"回头扫一遍）",
+        "第 5 步：组装交付",
+        "references"
+      ],
+      "target_path": "knowledge-base/skills/accessibility-review"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [],
+      "disposition": "merge_into_existing",
+      "entity_key": "skill:ur-skill-analyze-satisfaction",
+      "source_body_hash": "sha256:fb28000498500195fa82ebd924acd588fcba40d873798a63712374b2bdd4c61b",
+      "source_only_headings": [
+        "满意度诊断 · 输出骨架与模板",
+        "来源重构说明",
+        "满意度诊断 · 输出骨架与模板",
+        "数据研判小结（输出时放在【依据与边界层】：路线发现之后、《运行说明》之前）",
+        "数据研判",
+        "〇·B、《数据补充请求》（数据准入闸判硬缺口 → 本次交付这个，不硬出诊断）",
+        "暂时无法出诊断：需要你先补一点数据",
+        "本次运行说明（简版）",
+        "一、路线 A — 关键驱动因素 + IPA 改进优先级",
+        "A1 驱动权重排序",
+        "关键驱动因素（重要性来源：[相对权重(脚本实算) / 多元回归beta / 相关系数近似]）",
+        "A2 IPA 四象限（重要性 × 表现）",
+        "IPA 四象限（横轴=表现/属性满意度均值，纵轴=重要性/派生权重，均值划十字）",
+        "A3 重点改进清单",
+        "重点改进清单（按\"高重要 × 低表现\"排序）",
+        "二、路线 B — 满意度异动 / 掉分归因",
+        "B0 三道闸的判定（先排除\"假异动\"）",
+        "异动判断（先过四闸，再决定要不要深度归因）",
+        "B1 四段叙事（异动归因正典的标准输出）",
+        "归因结论（事实 — 定位 — 根因 — 总结）",
+        "三、路线 C — 上线后期望落差（ECT）",
+        "期望-感知落差（Gap = 期望E − 感知P）",
+        "四、《本次运行说明》模板（固定附在最后，五部分齐全）",
+        "本次运行说明",
+        "五、形态示意（仅示范「长什么样」，**勿照抄内容**——务必按真实数据重写）",
+        "数据研判",
+        "关键驱动因素（重要性来源：相关系数近似，未做相对权重）",
+        "IPA 四象限（表现均值线=3.6，重要性按 r 排序）",
+        "重点改进清单"
+      ],
+      "source_path": "02-skills-技能/用户研究/满意度诊断/SKILL.md",
+      "target_body_hash": "sha256:257addb7cd32961d1a13e164a424cec7fabad708693ea190e2ae7265a93a5d8c",
+      "target_only_headings": [
+        "Analyze Satisfaction — 满意度数据 → 关键驱动 + IPA 改进优先级 + 掉分归因（编排 wiki 正典）",
+        "北极星与边界（先理解，再动手）",
+        "敏感素材处理（先读再动手）",
+        "四条纪律（本 skill 必须遵守，产出据此被信任）",
+        "第 0 步：定位 wiki 根目录",
+        "第 1 步：接收并研判这批满意度数据",
+        "数据准入闸（硬缺口 → 先补数据再分析，不硬出结论）",
+        "第 2 步：读正典（本 skill 的核心——cross-walk）",
+        "第 3 步：路线 A — 关键驱动因素 + IPA 改进优先级（截面：总分 + 属性分）",
+        "第 4 步：路线 B — 满意度异动 / 掉分归因（时间序列：本期 vs 对比期）",
+        "第 5 步：路线 C — 上线后期望落差（ECT，常叠加在 A/B 上）",
+        "第 6 步：组织交付",
+        "references"
+      ],
+      "target_path": "knowledge-base/skills/analyze-satisfaction"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [],
+      "disposition": "merge_into_existing",
+      "entity_key": "skill:ur-skill-build-experience-metrics",
+      "source_body_hash": "sha256:5c187247b75ab196716df254f9c57d10d4aa9a8f9293b95ae5c1d2c4cd6690d9",
+      "source_only_headings": [
+        "体验度量体系 · 输出骨架与模板",
+        "来源重构说明",
+        "体验度量体系 · 输出骨架与模板",
+        "〇、brief 研判小结（放在最前，统领全篇）",
+        "brief 研判",
+        "一、体验度量体系",
+        "1.1 GSM 推导链（体系的脊梁，先目标后指标）",
+        "GSM 推导（目标 → 信号 → 指标）",
+        "1.2 HEART 维度选取（3–4 维，不硬凑五维）",
+        "HEART 维度选取（按目标选 3–4 维；标 C/B 端选型理由）",
+        "1.3 北极星指标 + 护栏指标",
+        "北极星指标（一个全局体验指标，定方向）",
+        "护栏指标（不可恶化的底线，跌破即预警）",
+        "1.4 采集口径看板",
+        "采集口径看板",
+        "1.5 拆解度量体系（拆解树，定位问题的地基）",
+        "拆解树（方法：[因子分解法 / 客户旅程法]）",
+        "1.6 采集方案",
+        "采集方案",
+        "二、纵向追踪方案（持续怎么量、跟谁比）",
+        "纵向追踪方案（口径冻结 + 基线 + 适应期再测）",
+        "三、指标质量自检结果（对照\"好/坏指标\"与 HEART 局限逐条）",
+        "指标质量自检",
+        "四、《本次运行说明》模板（固定附在最后，六部分齐全）",
+        "本次运行说明",
+        "五、形态示意（仅示范「长什么样」，**勿照抄内容**——务必按真实 brief 重写）",
+        "brief 研判",
+        "GSM 推导",
+        "北极星指标",
+        "采集口径看板（节选）",
+        "指标质量自检（节选）"
+      ],
+      "source_path": "02-skills-技能/用户研究/体验度量体系/SKILL.md",
+      "target_body_hash": "sha256:5c29ba09002454b793b19d882b9d183e20af58d675745dcb9cf05eb97177bd1a",
+      "target_only_headings": [
+        "Build Experience Metrics — 产品/系统 + 业务目标 → HEART 度量体系（北极星·护栏 + 采集口径 + 纵向追踪）（编排 wiki 正典）",
+        "北极星与边界（先理解，再动手）",
+        "敏感素材处理（先读再动手）",
+        "四条纪律（本 skill 必须遵守，产出据此被信任）",
+        "第 0 步：定位 wiki 根目录",
+        "第 1 步：解析 brief",
+        "第 2 步：读正典（本 skill 的核心——cross-walk）",
+        "第 3 步：搭建度量体系主体（GSM → 维度 → 北极星/护栏 → 采集口径 → 拆解树 → 采集方案）",
+        "第 4 步：设计纵向追踪方案（让体系能\"持续怎么量、跟谁比\"）",
+        "第 5 步：指标质量自检（拿\"指标好坏\"的规范回头扫一遍）",
+        "第 6 步：组装交付",
+        "references"
+      ],
+      "target_path": "knowledge-base/skills/build-experience-metrics"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [],
+      "disposition": "merge_into_existing",
+      "entity_key": "skill:ur-skill-code-open-feedback",
+      "source_body_hash": "sha256:ef9efd3ba48cd6e5a00816f199cdc7b876d1e45cd24fbfda472fd1f9f683ca52",
+      "source_only_headings": [
+        "短反馈编码 · 输出骨架与模板（结论先行）",
+        "来源重构说明",
+        "短反馈编码 · 输出骨架与模板（结论先行）",
+        "正文（结论先行，给产品/设计/运营看）",
+        "零、分析范围与过滤（**做了范围过滤才写**；全量则省略）",
+        "分析范围与过滤",
+        "一、关键问题摘要（TL;DR）",
+        "关键问题摘要",
+        "二、Top 痛点清单（高频 × 高负面排序）",
+        "痛点 N ｜ [痛点一句话]",
+        "三、主题表（按 VOC 洞察输出模板逐主题）",
+        "主题表（频次/占比为简单计数，非统计检验；分母：[占纳入 N=… / 占负面 N=…]）",
+        "四、关键变量 / 下钻分析（**范围内有可切分维度时才做**）",
+        "关键变量分析",
+        "附录（方法论后置，给要追溯的人看）",
+        "附录 A、编码标签库（codebook）",
+        "编码标签库（基于 VOC 标签体系模板，模板 status: [draft/...]）",
+        "维度与取值",
+        "标签定义表（每个会用到的标签给定义 + 正反例，保证口径一致）",
+        "附录 B、逐条编码明细（按数据规模 N 分流）",
+        "附录 C、《本次运行说明》（固定附在最后，五部分齐全）",
+        "本次运行说明",
+        "形态示意（仅示范「长什么样」，**勿照抄内容**——务必按真实反馈重写）",
+        "关键问题摘要",
+        "痛点 1 ｜ 想退却退不掉"
+      ],
+      "source_path": "02-skills-技能/用户研究/VOC反馈编码/SKILL.md",
+      "target_body_hash": "sha256:b8326eee28f95c7003fcd3bb43ff1bfe59cbd4573aedee64fb03ad57e412f716",
+      "target_only_headings": [
+        "Code Open Feedback — 海量短反馈 → 编码标签库 + 主题频次/情感 + Top 痛点（编排 wiki 正典）",
+        "北极星与边界（先理解，再动手）",
+        "四条纪律（本 skill 必须遵守，产出据此被信任）",
+        "敏感素材处理（本 skill 特有，先读再动手）",
+        "第 0 步：定位 wiki 根目录",
+        "第 1 步：接收并研判这批反馈",
+        "第 2 步：读正典（本 skill 的核心——照 VOC 流水线做）",
+        "第 3 步：建编码体系 + 编码打标",
+        "第 4 步：量化 + 主题表 + Top 痛点",
+        "第 5 步：组装交付（结论先行，编码过程后置）",
+        "references"
+      ],
+      "target_path": "knowledge-base/skills/code-open-feedback"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [],
+      "disposition": "merge_into_existing",
+      "entity_key": "skill:ur-skill-competitive-analysis",
+      "source_body_hash": "sha256:4bab18fe9c11ac2a89247528dbce006ad63403bc1573b60a9d3f70607cc8ce69",
+      "source_only_headings": [
+        "竞品分析 · 输出骨架与模板",
+        "来源重构说明",
+        "竞品分析 · 输出骨架与模板",
+        "一、直接分析模式 · 输出骨架（有竞品素材时，默认）",
+        "0. 竞品分析结论摘要（结论先行，放最前）",
+        "1. 知己小结（先「知己」再「知彼」）",
+        "2. 竞品分层范围",
+        "3. 读懂意图 · 战略意图四问（核心产物，每个值得关注的动作走一遍）",
+        "动作 1：[竞对做了什么——基于素材的客观描述，注明证据出处]",
+        "4. 用户体验五要素拆解 + 打勾对比（成长/成熟期产品）",
+        "5. 结果解读 + 跟进决策",
+        "6. 差异化行动建议",
+        "7. 分析范围与未覆盖（诚实声明边界）",
+        "二、框架模式 · 输出骨架（无竞品素材时）",
+        "1. 知己清单（先要用户补齐）",
+        "2. 竞品分层监控框架",
+        "3. 战略意图四问清单 + AARRR 映射表 + SWOT 模板",
+        "4. 用户体验五要素拆解清单 + 打勾对比表模板",
+        "5. 跟进决策矩阵模板",
+        "6. 给用户的素材索要",
+        "三、分析自检结果模板（对照「局限与误用」逐条）",
+        "分析自检结果（对照竞品分析正典，正典 status: [draft/reviewed]）",
+        "四、《本次运行说明》模板（固定附在最后，五部分齐全）",
+        "本次运行说明",
+        "五、形态示意（仅示范「长什么样」，**勿照抄内容**——务必按真实竞品与素材重写）"
+      ],
+      "source_path": "02-skills-技能/用户研究/竞品分析/SKILL.md",
+      "target_body_hash": "sha256:23578375f868f72fd868d7c10b19f708d67ad7ba14ebc3894ca2dc2038e837c4",
+      "target_only_headings": [
+        "Competitive Analysis — 竞品素材 + 知己 → 竞品分析（编排 wiki 正典）",
+        "北极星与边界（先理解，再动手）",
+        "四条纪律（本 skill 必须遵守，产出据此被信任）",
+        "第 0 步：定位 wiki 根目录",
+        "第 1 步：解析 brief",
+        "第 2 步：读正典（本 skill 的核心——cross-walk）",
+        "第 3 步 · A：直接分析（默认模式 —— 有竞品素材时）",
+        "第 3 步 · B：产框架/工具包（无竞品素材时）",
+        "第 4 步：分析自检（拿「局限与误用」回头扫一遍）",
+        "第 5 步：组装交付",
+        "references"
+      ],
+      "target_path": "knowledge-base/skills/competitive-analysis"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [],
+      "disposition": "merge_into_existing",
+      "entity_key": "skill:ur-skill-conversion-funnel-analysis",
+      "source_body_hash": "sha256:6f3d615e6d85eefda9ac5fc80f00933f58a2fe2e5f759983da104ea978576f09",
+      "source_only_headings": [
+        "转化漏斗分析 · 输出骨架与模板",
+        "来源重构说明",
+        "转化漏斗分析 · 输出骨架与模板",
+        "一、直接诊断模式 · 输出骨架（有分步数据时，默认）",
+        "0. 诊断结论摘要（结论先行，放最前）",
+        "1. 口径小结（先约定再算）",
+        "2. 数据可信度校验",
+        "3. 分步转化率 / 流失率 + 总转化率（核心量）",
+        "4. 最大流失环节定位（看相对流失，不看绝对人数）",
+        "5. 分群下钻（拆穿「平均的谎言」）",
+        "6. 归因假设（Fogg 五类，一律「假设/待验证」）",
+        "7. 定性求证方向",
+        "8. 优化建议 + 回测方案",
+        "9. 诊断范围与未覆盖（诚实声明边界）",
+        "二、框架模式 · 输出骨架（无数据时）",
+        "1. 口径清单（按正典「漏斗定义清单」逐项）",
+        "2. 步骤拆解建议（针对用户这条具体路径）",
+        "3. 埋点校验清单",
+        "4. 分群维度建议",
+        "5. Fogg 五类诊断假设清单（口径取自正典，运行时现读）",
+        "6. 出图建议",
+        "7. 给用户的数据索要",
+        "三、分析自检结果模板（对照「局限与误用」逐条）",
+        "分析自检结果（对照转化漏斗正典，正典 status: [draft/reviewed]）",
+        "四、《本次运行说明》模板（固定附在最后，五部分齐全）",
+        "本次运行说明",
+        "五、形态示意（仅示范「长什么样」，**勿照抄内容**——务必按真实路径与数据重写）"
+      ],
+      "source_path": "02-skills-技能/用户研究/转化漏斗分析/SKILL.md",
+      "target_body_hash": "sha256:16f8beafc1448b2f25afb99ebe46f28cf76cc7f2e6c161288baf8494b6b85ced",
+      "target_only_headings": [
+        "Conversion Funnel Analysis — 分步数据 + 转化路径 → 漏斗诊断（编排 wiki 正典）",
+        "北极星与边界（先理解，再动手）",
+        "四条纪律（本 skill 必须遵守，产出据此被信任）",
+        "第 0 步：定位 wiki 根目录",
+        "第 1 步：解析 brief",
+        "第 2 步：读正典（本 skill 的核心——cross-walk）",
+        "第 3 步 · A：直接诊断（默认模式 —— 有分步数据时）",
+        "第 3 步 · B：产漏斗设计/诊断框架（无数据时）",
+        "第 4 步：分析自检（拿「局限与误用」回头扫一遍）",
+        "第 5 步：组装交付",
+        "references"
+      ],
+      "target_path": "knowledge-base/skills/conversion-funnel-analysis"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [],
+      "disposition": "merge_into_existing",
+      "entity_key": "skill:ur-skill-experience-walkthrough",
+      "source_body_hash": "sha256:9899938bb107f0251ca1a0a12ee8b105e5900309c30a965b90584dc7cdc75d60",
+      "source_only_headings": [
+        "页面与链路体验走查 Skill",
+        "适用 Task / Scenario",
+        "Trigger / 使用条件",
+        "Input",
+        "所需 Knowledge",
+        "执行步骤",
+        "Output",
+        "走查范围",
+        "问题清单",
+        "未覆盖范围",
+        "需要人工确认",
+        "Human Confirmation 条件",
+        "Fallback 条件",
+        "与其他 Skill 的边界"
+      ],
+      "source_path": "02-skills-技能/用户研究/体验走查/SKILL.md",
+      "target_body_hash": "sha256:9c0f30f395aab2679e7a51ce854a8fe414758c0aea3886bf08b6840e6660ee5c",
+      "target_only_headings": [
+        "Run Heuristic Evaluation — 评估对象 + 范围 → 启发式评估（编排 wiki 正典）",
+        "北极星与边界（先理解，再动手）",
+        "四条纪律（本 skill 必须遵守，产出据此被信任）",
+        "第 0 步：定位 wiki 根目录",
+        "第 1 步：解析 brief",
+        "第 2 步：读正典（本 skill 的核心——cross-walk）",
+        "第 3 步 · A：直接评（默认模式 —— 有界面素材时）",
+        "第 3 步 · B：产工具包（无界面素材时）",
+        "第 4 步：评估自检（拿\"局限与误用\"回头扫一遍）",
+        "第 5 步：组装交付",
+        "references"
+      ],
+      "target_path": "knowledge-base/skills/run-heuristic-evaluation"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [],
+      "disposition": "merge_into_existing",
+      "entity_key": "skill:ur-skill-feature-adoption-analysis",
+      "source_body_hash": "sha256:23cfce587762599175033c2de2c145fab2e424324a85175a7aadccd675c035e0",
+      "source_only_headings": [
+        "功能采纳诊断 · 输出骨架与模板",
+        "来源重构说明",
+        "功能采纳诊断 · 输出骨架与模板",
+        "一、直接分析模式 · 输出骨架",
+        "【发现层】",
+        "0. 采纳诊断结论摘要（结论先行，放最前）",
+        "1. 采纳漏斗",
+        "2. 五维采纳指标",
+        "3. 功能留存 / cohort（可选，有 cohort 才做）",
+        "4. 最大流失段病因（先给最可能的一个）",
+        "5. 迭代建议 + 回测",
+        "【依据与边界层】（集中放后面，别淹没上面的发现）",
+        "6. 数据与口径说明",
+        "7. 分析自检结果（对照正典「局限与误用」逐条）",
+        "8. 《本次运行说明》（固定附最后，五部分，见下方通用模板）",
+        "二、工具包模式 · 输出骨架（无采纳行为数据时）",
+        "三、《数据补充请求》模板（有部分数据但硬缺口 → 交付这个，不硬出诊断）",
+        "暂时无法出采纳诊断：需要你先补一点数据",
+        "本次运行说明（简版）",
+        "四、《本次运行说明》通用模板（固定附最后，五部分齐全，没有的写「无」）",
+        "本次运行说明",
+        "五、形态示意（仅示范「长什么样」，**勿照抄内容**——按真实数据重写）",
+        "采纳诊断结论摘要",
+        "采纳漏斗",
+        "最大流失段病因",
+        "数据与口径说明"
+      ],
+      "source_path": "02-skills-技能/用户研究/功能采纳分析/SKILL.md",
+      "target_body_hash": "sha256:d979b3a5537515446a06f66a6b937b7a63d05147c57c590e880207c07a25a33f",
+      "target_only_headings": [
+        "Feature Adoption Analysis — 采纳行为数据 → 采纳漏斗 + 五维指标 + 流失段归因（编排 wiki 正典）",
+        "北极星与边界（先理解，再动手）",
+        "敏感素材处理（先读再动手）",
+        "四条纪律（本 skill 必须遵守，产出据此被信任）",
+        "第 0 步：定位 wiki 根目录",
+        "第 1 步：接收并研判这批采纳数据",
+        "数据准入闸（硬缺口 → 先补数据或先出工具包，不硬出结论）",
+        "第 2 步：读正典（本 skill 的核心——cross-walk）",
+        "第 3 步 · A：直接分析（默认模式 —— 有采纳行为数据时）",
+        "第 3 步 · B：产工具包（无采纳行为数据时）",
+        "第 4 步：分析自检（拿\"局限与误用\"回头扫一遍）",
+        "第 5 步：组装交付",
+        "references"
+      ],
+      "target_path": "knowledge-base/skills/feature-adoption-analysis"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [],
+      "disposition": "merge_into_existing",
+      "entity_key": "skill:ur-skill-generate-interview-guide",
+      "source_body_hash": "sha256:fba719117794d1d1399cf2097fe4c23b9b7ea925e39622ee4710c6d900503cad",
+      "source_only_headings": [
+        "访谈提纲 · 输出骨架与模板",
+        "来源重构说明",
+        "访谈提纲 · 输出骨架与模板",
+        "一、访谈提纲骨架",
+        "开场 / 暖场",
+        "主问题模块（每个研究维度一个模块，按 brief 数量增减）",
+        "收尾",
+        "二、用法提示（附在提纲后，给执行访谈的人）",
+        "三、《本次运行说明》模板（固定附在最后，五部分齐全）",
+        "本次运行说明",
+        "四、形态示意（仅示范\"长什么样\"，**勿照抄内容**——务必按真实 brief 重写）"
+      ],
+      "source_path": "02-skills-技能/用户研究/生成访谈提纲/SKILL.md",
+      "target_body_hash": "sha256:c57843769357f223204d554035b43795700ce7a678033fe9eb790bf2a6ebfeee",
+      "target_only_headings": [
+        "Generate Interview Guide — 研究目标 → 结构化访谈提纲（编排 wiki 正典）",
+        "北极星与边界（先理解，再动手）",
+        "四条纪律（本 skill 必须遵守，产出据此被信任）",
+        "第 0 步：定位 wiki 根目录",
+        "第 1 步：解析 brief",
+        "第 2 步：读正典（本 skill 的核心——cross-walk）",
+        "第 3 步：起草提纲",
+        "第 4 步：偏误自检",
+        "第 5 步：组装交付",
+        "references"
+      ],
+      "target_path": "knowledge-base/skills/generate-interview-guide"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [],
+      "disposition": "merge_into_existing",
+      "entity_key": "skill:ur-skill-generate-persona",
+      "source_body_hash": "sha256:ce58dc34426d1130358961fb0ed8cf96d17f67417dc37dd4435d8ea588cdcf49",
+      "source_only_headings": [
+        "人物角色（Persona）· 输出骨架与模板",
+        "来源重构说明",
+        "人物角色（Persona）· 输出骨架与模板",
+        "一、人物角色描摹骨架（每个角色九模块）",
+        "人物角色（研究目标：[一句话复述本次目标]）",
+        "角色 1：[角色类型名称——朗朗上口、可记忆，如「凑券型囤货妈妈」]",
+        "角色 2：[…]",
+        "二、用户划分依据骨架（支撑角色可信度）",
+        "用户划分依据",
+        "三、质量自检骨架（对照 persona 正典 6 条标准）",
+        "质量自检（persona 6 条标准）",
+        "四、《本次运行说明》模板（固定附在最后，五部分齐全）",
+        "本次运行说明",
+        "五、形态示意（仅示范\"长什么样\"，**勿照抄内容**——务必按真实材料重写）",
+        "角色 1：精打细算的凑券达人",
+        "用户划分依据"
+      ],
+      "source_path": "02-skills-技能/用户研究/用户画像/SKILL.md",
+      "target_body_hash": "sha256:f2789ca873cdfedfc611e701572a281aadc292b0650bbf3864a49ad359725d68",
+      "target_only_headings": [
+        "Generate Persona — 研究数据/洞察 → 结构化人物角色（编排 wiki 正典）",
+        "北极星与边界（先理解，再动手）",
+        "敏感素材处理（本 skill 特有，务必遵守）",
+        "四条纪律（本 skill 必须遵守，产出据此被信任）",
+        "第 0 步：定位 wiki 根目录",
+        "第 1 步：接收并解析输入（含选定创建方法）",
+        "第 2 步：读正典（本 skill 的核心——cross-walk）",
+        "第 3 步：收集划分变量 + 聚类浮现用户类型",
+        "第 4 步：选核心变量、划分用户 +（如适用）量化验证",
+        "第 5 步：描摹每个人物角色",
+        "第 6 步：质量自检 + 组装交付",
+        "references"
+      ],
+      "target_path": "knowledge-base/skills/generate-persona"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [],
+      "disposition": "merge_into_existing",
+      "entity_key": "skill:ur-skill-generate-research-plan",
+      "source_body_hash": "sha256:0ff6188f0e12041735a31d033c94324b88417b45ec778f3a5ebd6d00e342f1ad",
+      "source_only_headings": [
+        "研究 brief · 输出骨架与模板（阶段一产出）",
+        "来源重构说明",
+        "研究 brief · 输出骨架与模板（阶段一产出）",
+        "一、结构化 brief 骨架（五个核心字段）",
+        "研究 brief：[一句话题目]",
+        "核心研究问题",
+        "决策用途",
+        "目标人群",
+        "约束",
+        "成功标准",
+        "二、待确认问题清单模板（仅在闸门未过时输出）",
+        "待确认问题（补充以下信息后，我再展开完整研究方案）",
+        "三、形态示意（仅示范\"长什么样\"，**勿照抄内容**——务必按真实需求重写）",
+        "研究 brief：会员频道改版前的需求与体验探索",
+        "核心研究问题",
+        "决策用途",
+        "目标人群",
+        "约束",
+        "成功标准"
+      ],
+      "source_path": "02-skills-技能/用户研究/生成研究方案/SKILL.md",
+      "target_body_hash": "sha256:3b07113d20a872720ff6273292dbfe3c642ba2888d3a8ab94c484e1b4fafd19f",
+      "target_only_headings": [
+        "Generate Research Plan — 研究需求 →（对齐）研究 brief →（展开）可执行研究方案",
+        "北极星与边界（先理解，再动手）",
+        "四条纪律（本 skill 必须遵守，产出据此被信任）",
+        "第 0 步：定位 wiki 根目录",
+        "阶段一 · 需求拆解与对齐（先问清，再动手）",
+        "1.1 读需求沟通规范，建立追问逻辑",
+        "1.2 借场景「聊需求清单」反推该追问什么",
+        "1.3 结构化出 brief",
+        "1.4 ⛔ 条件停顿（关键闸门——别跳过）",
+        "阶段二 · 方案展开（需求清晰后）",
+        "2.1 取方案骨架与自检清单",
+        "2.2 方法选型（采集 + 分析）",
+        "2.3 方法编排（场景打法做范例）",
+        "2.4 （可选）选理论透镜",
+        "2.5 样本与配额 —— 读抽样规范，运行时判断有无",
+        "2.6 起草各段 + 对照清单自检",
+        "输出结构（固定）",
+        "references"
+      ],
+      "target_path": "knowledge-base/skills/generate-research-plan"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [],
+      "disposition": "merge_into_existing",
+      "entity_key": "skill:ur-skill-generate-survey",
+      "source_body_hash": "sha256:465318154b99b6474408d8b57b9059e462f10e7102ce7eaf2f139d9c0ef3c385",
+      "source_only_headings": [
+        "问卷 · 输出骨架与模板",
+        "来源重构说明",
+        "问卷 · 输出骨架与模板",
+        "一、问卷正文骨架",
+        "封面信（问卷开头）",
+        "指导语（投放前的填答说明）",
+        "分节题目（每个研究维度一节，按 brief 维度数增减）",
+        "结尾致谢",
+        "二、合规自检结果模板（对照规范检查清单逐条）",
+        "合规自检结果（对照《问卷设计规范》检查清单，规范 status: [draft/reviewed]）",
+        "三、《本次运行说明》模板（固定附在最后，五部分齐全）",
+        "本次运行说明",
+        "四、形态示意（仅示范\"长什么样\"，**勿照抄内容**——务必按真实 brief 重写）"
+      ],
+      "source_path": "02-skills-技能/用户研究/生成问卷/SKILL.md",
+      "target_body_hash": "sha256:3992ac0225c2f9107a20cfb8f39606b2892b4d570fba13f6b62f0da5727333a5",
+      "target_only_headings": [
+        "Generate Survey — 研究目标 → 合规问卷草稿（编排 wiki 正典）",
+        "北极星与边界（先理解，再动手）",
+        "四条纪律（本 skill 必须遵守，产出据此被信任）",
+        "第 0 步：定位 wiki 根目录",
+        "第 1 步：解析 brief",
+        "第 2 步：读正典（本 skill 的核心——cross-walk）",
+        "第 3 步：选量表 / 选范式，并起草问卷",
+        "第 4 步：合规自检（逐条过规范的检查清单）",
+        "第 5 步：组装交付",
+        "references"
+      ],
+      "target_path": "knowledge-base/skills/generate-survey"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [],
+      "disposition": "merge_into_existing",
+      "entity_key": "skill:ur-skill-generate-usability-test",
+      "source_body_hash": "sha256:6709151ea62d291534a188d25740b6cc0f7f8386fdd3c0e695db49f428578285",
+      "source_only_headings": [
+        "可用性测试执行包 · 输出骨架与模板",
+        "来源重构说明",
+        "可用性测试执行包 · 输出骨架与模板",
+        "一、可用性测试执行包骨架（五件套）",
+        "1. 任务场景（每条核心流程一个任务，按 brief 增减）",
+        "2. 出声思考脚本（主持人逐字稿）",
+        "3. 观察记录表（给现场执行者即填）",
+        "4. 度量计划",
+        "5. 招募甄别",
+        "二、偏误与可用性自检结果模板（对照偏误规范逐条）",
+        "偏误与可用性自检结果（对照《受访者偏误规范》，规范 status: [draft/reviewed]）",
+        "三、《本次运行说明》模板（固定附在最后，五部分齐全）",
+        "本次运行说明",
+        "四、形态示意（仅示范\"长什么样\"，**勿照抄内容**——务必按真实 brief 重写）"
+      ],
+      "source_path": "02-skills-技能/用户研究/可用性测试/SKILL.md",
+      "target_body_hash": "sha256:58e228e23eeac3ee0e5c55046b00ef5522772fbef0d1f096998a630b58e0c898",
+      "target_only_headings": [
+        "Generate Usability Test — 测试对象 + 研究目标 → 可用性测试执行包（编排 wiki 正典）",
+        "北极星与边界（先理解，再动手）",
+        "四条纪律（本 skill 必须遵守，产出据此被信任）",
+        "第 0 步：定位 wiki 根目录",
+        "第 1 步：解析 brief",
+        "第 2 步：读正典（本 skill 的核心——cross-walk）",
+        "第 3 步：起草执行包（五件套）",
+        "第 4 步：偏误与可用性自检（拿规范回头扫一遍）",
+        "第 5 步：组装交付",
+        "references"
+      ],
+      "target_path": "knowledge-base/skills/generate-usability-test"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [],
+      "disposition": "merge_into_existing",
+      "entity_key": "skill:ur-skill-issue-prioritization",
+      "source_body_hash": "sha256:177ae86c265096768934160a6f650015b09933df9f7b81ff0a27ebc0f0c9d56f",
+      "source_only_headings": [
+        "问题分层与优先级 · 输出骨架与模板",
+        "来源重构说明",
+        "问题分层与优先级 · 输出骨架与模板",
+        "一、直接排模式 · 输出骨架（有问题清单时，默认）",
+        "0. 优先级结论摘要（结论先行，放最前）",
+        "1. 优先级排序表（核心产物）",
+        "2. 影响×难度矩阵（圈出快赢）",
+        "3. 分层小结 + 最终顺序（评审后）",
+        "二、工具包模式 · 输出骨架（无问题清单时）",
+        "1. 分层标准卡",
+        "2. 严重度评分卡",
+        "3. 框架选型指南",
+        "4. RICE/ICE 评分模板 + 影响×难度矩阵模板",
+        "5. 汇总排序表模板 + 评审清单",
+        "6. 给用户的清单与数据索要",
+        "三、排序自检结果模板（对照\"局限与误用\"逐条）",
+        "排序自检结果（对照问题分层与优先级正典，正典 status: [draft/reviewed]）",
+        "四、《本次运行说明》模板（固定附在最后，五部分齐全）",
+        "本次运行说明",
+        "五、形态示意（仅示范\"长什么样\"，**勿照抄内容**——务必按真实清单重写）"
+      ],
+      "source_path": "02-skills-技能/用户研究/问题分层与优先级/SKILL.md",
+      "target_body_hash": "sha256:887eeec94552344bb33f6796936f2cfb54508bb25beaf51e04f2cbadc7b7c595",
+      "target_only_headings": [
+        "Issue Prioritization — 一堆问题/需求 + (可选)量化证据 → 分层·定级·排序（编排 wiki 正典）",
+        "北极星与边界（先理解，再动手）",
+        "四条纪律（本 skill 必须遵守，产出据此被信任）",
+        "第 0 步：定位 wiki 根目录",
+        "第 1 步：解析 brief",
+        "第 2 步：读正典（本 skill 的核心——cross-walk）",
+        "第 3 步 · A：直接排（默认模式 —— 有问题清单时）",
+        "第 3 步 · B：产工具包（无问题清单时）",
+        "第 4 步：排序自检（拿\"局限与误用\"回头扫一遍）",
+        "第 5 步：组装交付",
+        "references"
+      ],
+      "target_path": "knowledge-base/skills/issue-prioritization"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [],
+      "disposition": "merge_into_existing",
+      "entity_key": "skill:ur-skill-jobs-to-be-done",
+      "source_body_hash": "sha256:83129d79ed048c6f95c428f86f2919d0b928086a52c28e48e35e2bef79d28a30",
+      "source_only_headings": [
+        "JTBD 需求定义（Jobs To Be Done）· 输出骨架与模板",
+        "来源重构说明",
+        "JTBD 需求定义（Jobs To Be Done）· 输出骨架与模板",
+        "一、一句话结论（放最前，结论先行）",
+        "JTBD 需求定义：[一句话复述本次要挖的需求 / 功能]",
+        "二、需求解析（精简对照，不展开推理）",
+        "需求解析",
+        "三、Job 定义（核心产出）",
+        "Job 定义",
+        "核心 Job",
+        "三层维度（\"标注\"列只填短标签：`用户A,C` / `假设` / `证据不足`，不写整句解释）",
+        "触发情境",
+        "（如适用）Job Map 八阶段拆解",
+        "四、竞争格局（完成同一 Job 的替代方案）",
+        "竞争格局：用户还能\"雇\"谁完成这个 Job",
+        "五、（如适用）切换 / 采纳四力诊断",
+        "四力诊断（流失 / 切换 / 新功能采纳）",
+        "六、未被满足的期待效果 / 机会点",
+        "期待效果与机会点",
+        "关键期待效果（\"方向 + 测量单位 + 对象 + 情境\"）",
+        "机会点",
+        "七、对原始需求的回应（把 Job 定义翻译回决策输入）",
+        "回到原始需求：该怎么办",
+        "八、JTBD 命根自检（放结论之后，表格化，不展开）",
+        "JTBD 命根自检",
+        "九、《本次运行说明》模板（方法论都在这里；五部分齐全）",
+        "本次运行说明",
+        "十、形态示意（示范\"精简正文长什么样\"，**勿照抄内容**）",
+        "JTBD 需求定义：给外卖 App 加一个\"收藏这家店\"功能",
+        "需求解析",
+        "竞争格局"
+      ],
+      "source_path": "02-skills-技能/用户研究/需求定义JTBD/SKILL.md",
+      "target_body_hash": "sha256:ac2caa1d1dca5204abaf16f66ba551b2493ae65132bbfe4c1a5d5ffc595958e7",
+      "target_only_headings": [
+        "Jobs To Be Done — 需求（功能设想 / 表层诉求）→ 用户真正的 Job（编排 wiki 正典）",
+        "北极星与边界（先理解，再动手）",
+        "敏感素材处理（本 skill 特有，务必遵守）",
+        "四条纪律（本 skill 必须遵守，产出据此被信任）",
+        "产出写法：正文只给结果分析，理论与方法交代下沉（务必遵守）",
+        "第 0 步：定位 wiki 根目录",
+        "第 1 步：接收并解析输入",
+        "第 2 步：读正典（本 skill 的核心——cross-walk）",
+        "第 3 步：把需求\"向上翻译\"成 Job（本 skill 的核心动作）",
+        "第 4 步：把 Job 定义完整（功能/情感/社会层 · Job Map · 竞争 · 四力 · 期待效果）",
+        "第 5 步：回应原始需求 + 自检 + 组装交付",
+        "references"
+      ],
+      "target_path": "knowledge-base/skills/jobs-to-be-done"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [],
+      "disposition": "merge_into_existing",
+      "entity_key": "skill:ur-skill-journey-map",
+      "source_body_hash": "sha256:dbfe7c769319bd77be6abb0056d4971b208a9bc9a9d2abb7ba24472214a140a4",
+      "source_only_headings": [
+        "用户体验旅程图 · 输出骨架与模板",
+        "来源重构说明",
+        "用户体验旅程图 · 输出骨架与模板",
+        "〇、旅程图研判小结（放在最前，统领全篇）",
+        "旅程图研判",
+        "一、用户旅程图（逐张，表格网格）",
+        "旅程图 [①]：[**场景命名**——朗朗上口，如「置办新家全套采购」「旧机急换」「复购认准款」；**不用\"研究型\"这类人物特征名**]",
+        "二、需求与机会点优先级清单（把图里的痛点/机会点抽出来排序）",
+        "需求与机会点优先级",
+        "三、旅程图自检结果（对照 experience-map 关键技巧/构成逐条）",
+        "旅程图自检（对照体验地图正典，status: [draft/reviewed]）",
+        "四、《本次运行说明》模板（固定附在最后，五部分齐全）",
+        "本次运行说明",
+        "五、形态示意（仅示范\"长什么样\"，**勿照抄内容**——务必按真实材料重写）",
+        "旅程图研判",
+        "旅程图 ①：全面研究型",
+        "需求与机会点优先级（节选）",
+        "旅程图自检（节选）",
+        "六、可视化 spec（喂给 `scripts/render_journey_map.py`，第 5 步 B 出图用）"
+      ],
+      "source_path": "02-skills-技能/用户研究/体验旅程图/SKILL.md",
+      "target_body_hash": "sha256:80f37ab56cb73e5a1f1f88a92e6fdb2d4be446d3b5623be91240c042193035b4",
+      "target_only_headings": [
+        "Journey Map — 研究材料 + 研究目标/场景 → 用户体验旅程图（编排 wiki 正典）",
+        "北极星与边界（先理解，再动手）",
+        "敏感素材处理（本 skill 特有，务必遵守）",
+        "四条纪律（本 skill 必须遵守，产出据此被信任）",
+        "第 0 步：定位 wiki 根目录",
+        "第 1 步：接收并解析输入",
+        "第 2 步：读正典（本 skill 的核心——cross-walk）",
+        "第 3 步：起草旅程图",
+        "第 4 步：需求/机会点评级 + 旅程图自检",
+        "第 5 步：组装交付（Markdown 文档 + 可视化 HTML 两份）",
+        "references"
+      ],
+      "target_path": "knowledge-base/skills/journey-map"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [],
+      "disposition": "merge_into_existing",
+      "entity_key": "skill:ur-skill-run-heuristic-evaluation",
+      "source_body_hash": "sha256:f17973bde5285c592cb982d0b192ca1dbf66c2b139128a66787dfcd6d5709490",
+      "source_only_headings": [
+        "启发式评估 · 输出骨架与模板",
+        "来源重构说明",
+        "启发式评估 · 输出骨架与模板",
+        "一、直接评模式 · 输出骨架（有界面素材时，默认）",
+        "1. 问题清单（核心产物）",
+        "2. 按启发式归类小结",
+        "3. 按严重度排序 · Top 问题 · 修复优先级",
+        "4. 评估范围与未评到（诚实声明覆盖边界）",
+        "二、工具包模式 · 输出骨架（无界面素材时）",
+        "1. 启发式检查清单",
+        "2. 严重度评分卡",
+        "3. 评估员任务书 + 两遍法脚本",
+        "4. 记录表 + 汇总模板",
+        "5. 给用户的素材索要",
+        "三、评估自检结果模板（对照\"局限与误用 / 常见坑\"逐条）",
+        "评估自检结果（对照启发式评估正典，正典 status: [draft/reviewed]）",
+        "四、《本次运行说明》模板（固定附在最后，五部分齐全）",
+        "本次运行说明",
+        "五、形态示意（仅示范\"长什么样\"，**勿照抄内容**——务必按真实素材重写）"
+      ],
+      "source_path": "02-skills-技能/用户研究/启发式评估/SKILL.md",
+      "target_body_hash": "sha256:9c0f30f395aab2679e7a51ce854a8fe414758c0aea3886bf08b6840e6660ee5c",
+      "target_only_headings": [
+        "Run Heuristic Evaluation — 评估对象 + 范围 → 启发式评估（编排 wiki 正典）",
+        "北极星与边界（先理解，再动手）",
+        "四条纪律（本 skill 必须遵守，产出据此被信任）",
+        "第 0 步：定位 wiki 根目录",
+        "第 1 步：解析 brief",
+        "第 2 步：读正典（本 skill 的核心——cross-walk）",
+        "第 3 步 · A：直接评（默认模式 —— 有界面素材时）",
+        "第 3 步 · B：产工具包（无界面素材时）",
+        "第 4 步：评估自检（拿\"局限与误用\"回头扫一遍）",
+        "第 5 步：组装交付",
+        "references"
+      ],
+      "target_path": "knowledge-base/skills/run-heuristic-evaluation"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [],
+      "disposition": "merge_into_existing",
+      "entity_key": "skill:ur-skill-structure-interview-transcript",
+      "source_body_hash": "sha256:f6d3e2c7d9bacb5370cacc6158abb6f8d9acaa7eba304b8664ec7c16060ef7de",
+      "source_only_headings": [
+        "访谈小结 · 产出骨架与组装规则",
+        "来源重构说明",
+        "访谈小结 · 产出骨架与组装规则",
+        "A. 固定头部（结构稳定，可固定）",
+        "B. 以研究内容 / 研究问题为主干的分主题发现（框架作透镜，绝不写死）",
+        "B-1 先立主干（顶层小标题）",
+        "B-2 再用框架作透镜，在每条主干内深挖",
+        "B-3 每个发现点的写法",
+        "C. 痛点 / 待跟进",
+        "D. 《本次运行说明》（每次必附，放小结最末）",
+        "E. 正文内的局限声明（与运行说明呼应，写在小结正文显著处）"
+      ],
+      "source_path": "02-skills-技能/用户研究/单场访谈小结/SKILL.md",
+      "target_body_hash": "sha256:4f387525363a940a5cd83493a186085c3e5a6d58d56e73473bb2f8da79b08aec",
+      "target_only_headings": [
+        "Structure Interview Transcript — 单场访谈逐字稿 → 结构化小结（降噪整理版）",
+        "核心原则（先理解，再动手）",
+        "工作流",
+        "1. 接稿 + 锁定研究目的与研究内容（决定主干骨架）",
+        "2. 读\"访谈如何被结构化记录\"的正典 → 定固定头部 + 痛点/待跟进的字段来源",
+        "3. 选**一个**理论框架作**深化透镜**（不是骨架）",
+        "4.（单场内）发现点多而散时，先归并主题",
+        "5. 产出结构化小结",
+        "6. 末尾附《本次运行说明》",
+        "敏感素材处理（本类 skill 特有，务必遵守）",
+        "通用纪律（每次产出固定遵守）",
+        "参考文件"
+      ],
+      "target_path": "knowledge-base/skills/structure-interview-transcript"
+    },
+    {
+      "body_equal": false,
+      "changed_shared_headings": [],
+      "disposition": "merge_into_existing",
+      "entity_key": "skill:ur-skill-synthesize-qualitative-insights",
+      "source_body_hash": "sha256:1d992e61b7951d0e7de21f0c93fdeea13239ce7c448fe6c942cef7dbe3e90e62",
+      "source_only_headings": [
+        "分析底稿（后置附录）· 主题归纳 + 结构化洞察 + 运行说明骨架",
+        "来源重构说明",
+        "分析底稿（后置附录）· 主题归纳 + 结构化洞察 + 运行说明骨架",
+        "一、主题归纳骨架（聚类的产出）",
+        "主题归纳（研究目标：[一句话复述本次目标]）",
+        "主题 1（level 2）：[第一人称的高层主题，如「我希望省心地完成 X，而不必逐步操心」]",
+        "主题 2（level 2）：[…]",
+        "可选：数字化亲和图骨架（一张表替代\"便签墙\"）",
+        "二、结构化洞察骨架（拔高的产出）",
+        "洞察 N：[一句话洞察陈述——可指导行动的策略判断，不是现象复述]",
+        "可选：分层 / 阶梯洞察变体",
+        "分层洞察：[一句话点出这是一条怎样的进阶主线，如「从『省力完成』到『被懂得』的三层价值进阶」]",
+        "负向边界（标准动作，别省）",
+        "负向边界：不该做 / 不该硬推的",
+        "三、《本次运行说明》模板（固定附在最后，五部分齐全）",
+        "本次运行说明",
+        "四、形态示意（仅示范\"长什么样\"，**勿照抄内容**——务必按真实材料重写）",
+        "主题 2（level 2）：我想\"顺手\"表达心意，而不是为送礼专门安排一场任务",
+        "洞察 1：把\"送礼\"从节庆任务，重做成可顺手完成的日常表达"
+      ],
+      "source_path": "02-skills-技能/用户研究/定性归纳与洞察/SKILL.md",
+      "target_body_hash": "sha256:47444536e263c3926a57691caa593cd7394bfa2c0479338c912945a6dc576262",
+      "target_only_headings": [
+        "Synthesize Qualitative Insights — 多份定性材料 → 跨场主题 + 结构化洞察（编排 wiki 正典）",
+        "北极星与边界（先理解，再动手）",
+        "敏感素材处理（本 skill 特有，务必遵守）",
+        "四条纪律（本 skill 必须遵守，产出据此被信任）",
+        "第 0 步：定位 wiki 根目录",
+        "第 1 步：接收并解析输入",
+        "第 2 步：读正典（本 skill 的核心——cross-walk）",
+        "第 3 步：跨场归纳（聚类）——把散落发现聚成多层主题",
+        "第 4 步：拔高洞察——把主题升华成能指导行动的洞察",
+        "第 5 步（可选，弱支撑，按需触发）：从洞察到机会与落地建议",
+        "第 6 步：组织交付（两态：交付稿正文 + 分析底稿附录）",
+        "references"
+      ],
+      "target_path": "knowledge-base/skills/synthesize-qualitative-insights"
+    }
+  ],
+  "disposition_hash": "sha256:c1e961de7b418a68d9a5c5964fc0ad7b5795b88f94e4e6b1474cd0dc85260c8d",
+  "format_version": "user-research-hub-content-apply-v1",
+  "gate_1_reuse_scope": "internal-evaluation-only",
+  "governance": {
+    "blocked_entities": 0,
+    "gate_2_review_required": true,
+    "scanned_entities": 77,
+    "source_finding_counts": {
+      "internal_business_facts": 116,
+      "local_paths": 31,
+      "pii": 0,
+      "secrets": 0
+    }
+  },
+  "mapped_existing": {
+    "knowledge_entries": 104
+  },
+  "materialized": {
+    "assets": 14,
+    "candidate_files": 55,
+    "draft_skills": 2,
+    "knowledge_methods": 24,
+    "scenarios": 15
+  },
+  "merge_drafts": {
+    "files": 22,
+    "knowledge_files": 0,
+    "skill_files": 22
+  },
+  "output_set_hash": "sha256:1113d68ccd84bf02757b1d5f884eb8924af738f8db2e8eb91f06b4a77ef509ff",
+  "outputs": [
+    {
+      "entity_key": "skill:ds-skill-competitor-strategy-analysis",
+      "kind": "merge_draft",
+      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ds-skill-competitor-strategy-analysis.md",
+      "sha256": "sha256:936b6051504541e110a3d3c54aad7ddf6bde0018d07764b87ca6b2ddb6fe34d6"
+    },
+    {
+      "entity_key": "skill:ds-skill-trend-change-scan",
+      "kind": "merge_draft",
+      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ds-skill-trend-change-scan.md",
+      "sha256": "sha256:01911bd9ca6a1afb1f432ec7a694f68d9a859bda16b742ad5f163f2c80c624b9"
+    },
+    {
+      "entity_key": "skill:ds-skill-user-insight-synthesis",
+      "kind": "merge_draft",
+      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ds-skill-user-insight-synthesis.md",
+      "sha256": "sha256:b4be7cc54f4aaa3e2f7898612cfdd3c67072df6e2e42cf8027329c73122bdc65"
+    },
+    {
+      "entity_key": "skill:ur-skill-accessibility-review",
+      "kind": "merge_draft",
+      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-accessibility-review.md",
+      "sha256": "sha256:2aea7c92a5ef53954744101d691024a73dc14009c372e420ebbb6d4d3f126cc1"
+    },
+    {
+      "entity_key": "skill:ur-skill-analyze-satisfaction",
+      "kind": "merge_draft",
+      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-analyze-satisfaction.md",
+      "sha256": "sha256:6ad0ef7f5e90d33047985ab45205b86450324a23265f44fd4d6f2a2c43cb3480"
+    },
+    {
+      "entity_key": "skill:ur-skill-build-experience-metrics",
+      "kind": "merge_draft",
+      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-build-experience-metrics.md",
+      "sha256": "sha256:6d223ec907532f96b766ad42ca9b2693694bd0b22947a1305104468bac198ee8"
+    },
+    {
+      "entity_key": "skill:ur-skill-code-open-feedback",
+      "kind": "merge_draft",
+      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-code-open-feedback.md",
+      "sha256": "sha256:6ea01cc5ebe27a1e8245c6a4dca8049a86fbd24b32c57f029266ff8f4e2a8172"
+    },
+    {
+      "entity_key": "skill:ur-skill-competitive-analysis",
+      "kind": "merge_draft",
+      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-competitive-analysis.md",
+      "sha256": "sha256:a88302163c39c1d427434e68b661192f62ca279dc8c5ed5c5736bed558ac7aff"
+    },
+    {
+      "entity_key": "skill:ur-skill-conversion-funnel-analysis",
+      "kind": "merge_draft",
+      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-conversion-funnel-analysis.md",
+      "sha256": "sha256:5bb3fd39dfd5d1ccc47f747b4ebd672090affc81fa57f38a0ccacb2cddcecb6e"
+    },
+    {
+      "entity_key": "skill:ur-skill-experience-walkthrough",
+      "kind": "merge_draft",
+      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-experience-walkthrough.md",
+      "sha256": "sha256:e709e45988b174d7f41682c31937a821606d50a25cfdef15f42f61fb9cf09a59"
+    },
+    {
+      "entity_key": "skill:ur-skill-feature-adoption-analysis",
+      "kind": "merge_draft",
+      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-feature-adoption-analysis.md",
+      "sha256": "sha256:f8213749e0a73c12dc347f9e3f226e0bfee45fa17f4a44a65531881608d5a690"
+    },
+    {
+      "entity_key": "skill:ur-skill-generate-interview-guide",
+      "kind": "merge_draft",
+      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-generate-interview-guide.md",
+      "sha256": "sha256:0ce616fd4db73a0908b399cd2c69ea79283823da71d04ce46f672baf791d1e89"
+    },
+    {
+      "entity_key": "skill:ur-skill-generate-persona",
+      "kind": "merge_draft",
+      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-generate-persona.md",
+      "sha256": "sha256:316db495c42b8cf04a1631bff2946554b45b82ea7e6fa874844bd725362e608b"
+    },
+    {
+      "entity_key": "skill:ur-skill-generate-research-plan",
+      "kind": "merge_draft",
+      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-generate-research-plan.md",
+      "sha256": "sha256:6f9ee7012cb840b74e47dab7b5845ddc2b7b47948d99957f53c905efeb048098"
+    },
+    {
+      "entity_key": "skill:ur-skill-generate-survey",
+      "kind": "merge_draft",
+      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-generate-survey.md",
+      "sha256": "sha256:f6227b55c19ca66544f84849bc3c86c0fc9b7cf1864d932a7859d4629f91928f"
+    },
+    {
+      "entity_key": "skill:ur-skill-generate-usability-test",
+      "kind": "merge_draft",
+      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-generate-usability-test.md",
+      "sha256": "sha256:3ee70a385745c01b9e0a953af4745174018c53e31a42919a2a028bfa10ad35ee"
+    },
+    {
+      "entity_key": "skill:ur-skill-issue-prioritization",
+      "kind": "merge_draft",
+      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-issue-prioritization.md",
+      "sha256": "sha256:167d0ff42b0b00776ec9d1388f34956d47e5e3fa634193d155a5284cd0df1ad4"
+    },
+    {
+      "entity_key": "skill:ur-skill-jobs-to-be-done",
+      "kind": "merge_draft",
+      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-jobs-to-be-done.md",
+      "sha256": "sha256:eb234c2152e3c3aa469a371a044a7ec88c05939830f9ab218646497be03c3596"
+    },
+    {
+      "entity_key": "skill:ur-skill-journey-map",
+      "kind": "merge_draft",
+      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-journey-map.md",
+      "sha256": "sha256:8523e2728bd7d08e6624ee81adf372576c87064855a8492763412486135b8287"
+    },
+    {
+      "entity_key": "skill:ur-skill-run-heuristic-evaluation",
+      "kind": "merge_draft",
+      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-run-heuristic-evaluation.md",
+      "sha256": "sha256:b0cf09c0c8970fef32ad7545f82d35afb8887f93cc5b70f5a05d3891913281ac"
+    },
+    {
+      "entity_key": "skill:ur-skill-structure-interview-transcript",
+      "kind": "merge_draft",
+      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-structure-interview-transcript.md",
+      "sha256": "sha256:3993a4c3a2a845e7bdf64b9757416499ca86b306fdb6fc6ef7911375b8559ee7"
+    },
+    {
+      "entity_key": "skill:ur-skill-synthesize-qualitative-insights",
+      "kind": "merge_draft",
+      "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-synthesize-qualitative-insights.md",
+      "sha256": "sha256:42d044e8aba2ced2dcd4d6938abb126b5e647d15a8faf2d85855ec67ac7fb29e"
+    },
+    {
+      "entity_key": "knowledge:ds-template-design-strategy-case-card-template",
+      "kind": "candidate",
+      "path": "knowledge-base/assets/templates/ds-template-design-strategy-case-card-template.md",
+      "sha256": "sha256:2720bbbe50692bf57e7126cd6ee85f037ef8b76f5899605205e18dcc397affba"
+    },
+    {
+      "entity_key": "knowledge:ur-asset-behavior-habits",
+      "kind": "candidate",
+      "path": "knowledge-base/assets/templates/ur-asset-behavior-habits.md",
+      "sha256": "sha256:1754b763d2af2175aa7f664b7cc0b3cb25990fde84012595757db2bac615f595"
+    },
+    {
+      "entity_key": "knowledge:ur-asset-concept-test",
+      "kind": "candidate",
+      "path": "knowledge-base/assets/templates/ur-asset-concept-test.md",
+      "sha256": "sha256:19177ffa7f59449425bb5a01a294bbac04a92a40634dcd1c565271f76e2abd7f"
+    },
+    {
+      "entity_key": "knowledge:ur-asset-decision-journey",
+      "kind": "candidate",
+      "path": "knowledge-base/assets/templates/ur-asset-decision-journey.md",
+      "sha256": "sha256:001d3ac75fa450467ec19d2ff57e11819ff59242c7320144f40b911869cfc295"
+    },
+    {
+      "entity_key": "knowledge:ur-asset-experience-painpoints",
+      "kind": "candidate",
+      "path": "knowledge-base/assets/templates/ur-asset-experience-painpoints.md",
+      "sha256": "sha256:35fb194312aa98c0f62877d1eb5f0c8b950422ff4fd9c7fb89b408f0a46fee52"
+    },
+    {
+      "entity_key": "knowledge:ur-asset-interview-forbidden-questions",
+      "kind": "candidate",
+      "path": "knowledge-base/assets/templates/ur-asset-interview-forbidden-questions.md",
+      "sha256": "sha256:52dbd76c9ff5667646920549d171cfa1803690071886e24552d7080d33996ab7"
+    },
+    {
+      "entity_key": "knowledge:ur-asset-mindset-cognition",
+      "kind": "candidate",
+      "path": "knowledge-base/assets/templates/ur-asset-mindset-cognition.md",
+      "sha256": "sha256:dfaf64e42c97ead3e3faa6ad053a34a6008089523c8f4aaf0087bcf5e55fa112"
+    },
+    {
+      "entity_key": "knowledge:ur-asset-needs-scenarios",
+      "kind": "candidate",
+      "path": "knowledge-base/assets/templates/ur-asset-needs-scenarios.md",
+      "sha256": "sha256:b257289f3a9eebf0ec64a058eee723b03f632aa0c03888982a1240e18fa611e1"
+    },
+    {
+      "entity_key": "knowledge:ur-asset-screener-demographics",
+      "kind": "candidate",
+      "path": "knowledge-base/assets/templates/ur-asset-screener-demographics.md",
+      "sha256": "sha256:efe65dd86a6f714bb8b826b50618545e1c34a8dcd61b635d6fe2c03ecab56399"
+    },
+    {
+      "entity_key": "knowledge:ur-asset-standardized-ux-scales",
+      "kind": "candidate",
+      "path": "knowledge-base/assets/templates/ur-asset-standardized-ux-scales.md",
+      "sha256": "sha256:0c91b89bb1645d15685da99e44825ac70a17f4fed10af550abf8409f0c531570"
+    },
+    {
+      "entity_key": "knowledge:ur-template-churn-phone-interview-script",
+      "kind": "candidate",
+      "path": "knowledge-base/assets/templates/ur-template-churn-phone-interview-script.md",
+      "sha256": "sha256:073bcdc09783fe878d283d997ce28db2738ee99edd6f57b991ec9fbf1bc9ffec"
+    },
+    {
+      "entity_key": "knowledge:ur-template-churn-survey-framework",
+      "kind": "candidate",
+      "path": "knowledge-base/assets/templates/ur-template-churn-survey-framework.md",
+      "sha256": "sha256:10345e55656c97d2b214a4f08c28ec24c7054d6eff1e1039fdeed471dccf02c3"
+    },
+    {
+      "entity_key": "knowledge:ur-template-experience-issue-description-script",
+      "kind": "candidate",
+      "path": "knowledge-base/assets/templates/ur-template-experience-issue-description-script.md",
+      "sha256": "sha256:cd6e84a41e95048729459059abf4baef249d69722987b7cf870b967706d152a7"
+    },
+    {
+      "entity_key": "knowledge:ur-template-opportunity-solution-tree",
+      "kind": "candidate",
+      "path": "knowledge-base/assets/templates/ur-template-opportunity-solution-tree.md",
+      "sha256": "sha256:39a2a3dd725094c1e741bedaf06275483e2713b75e224f3be46686573803883b"
+    },
+    {
+      "entity_key": "task:competitor-benchmark-research",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/competitor-benchmark-research.md",
+      "sha256": "sha256:0e938c2506c9be36906e522f8df6941ec5d7ac3691c95077d25534cf8a3048fe"
+    },
+    {
+      "entity_key": "task:data-behavior-diagnosis",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/data-behavior-diagnosis.md",
+      "sha256": "sha256:e972e5102e9e17710ac6bc5c378c05ac045ea471eef426f68bd5987785461da4"
+    },
+    {
+      "entity_key": "task:experience-walkthrough",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/experience-walkthrough.md",
+      "sha256": "sha256:9f9927559c29d6e93a804c19c8354e8005f1e9c98a4e9ee928a5927fb70ca41c"
+    },
+    {
+      "entity_key": "task:feedback-issue-clustering",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/feedback-issue-clustering.md",
+      "sha256": "sha256:32ed0fe54a84da49f9dc8e292c1f1d0eb9572b525d599225dc3e58f5300ac222"
+    },
+    {
+      "entity_key": "task:metrics-validation",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/metrics-validation.md",
+      "sha256": "sha256:e1a0c96c97c74fc5c8cdfc78a47f00cd4b9dab47bb6cb5df49962418ed1f907f"
+    },
+    {
+      "entity_key": "task:opportunity-direction-evaluation",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/opportunity-direction-evaluation.md",
+      "sha256": "sha256:9fb90e883b4f46a7713591e8553a5964135e07aeb82046284e32ea4191520824"
+    },
+    {
+      "entity_key": "task:priority-roadmap",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/priority-roadmap.md",
+      "sha256": "sha256:fb5ae2281e81efe6016e96e5dffa648851b37728a9844f8cad5dd2e1118ab1fb"
+    },
+    {
+      "entity_key": "task:root-cause-analysis",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/root-cause-analysis.md",
+      "sha256": "sha256:625e1afeae6811099bacb54b328ff010441cc0b07827a0e4f595ab16c54fb4dd"
+    },
+    {
+      "entity_key": "task:solution-comparison",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/solution-comparison.md",
+      "sha256": "sha256:61b096b090deb4bd21adf2b88917f8ca2f37a076471cde662dc2544361524a41"
+    },
+    {
+      "entity_key": "task:solution-generation",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/solution-generation.md",
+      "sha256": "sha256:c403fb8c1d703d96dc4bef6cd31211bbd6b7f6b79747b65602814f4e97a1ecf7"
+    },
+    {
+      "entity_key": "task:strategy-synthesis",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/strategy-synthesis.md",
+      "sha256": "sha256:051674072dda5c206ce4a12eedd5c82aac9a9fcf059c436d14e86d304bd91a9f"
+    },
+    {
+      "entity_key": "task:trend-change-identification",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/trend-change-identification.md",
+      "sha256": "sha256:a9b45dd682e932e78be5e0cdfe996ce056ecdba48b761c08e89b5c9d24ff910f"
+    },
+    {
+      "entity_key": "task:user-journey-insight",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/user-journey-insight.md",
+      "sha256": "sha256:e89d20b803376d2d697e1ec91bf41fcf5b8465606d2000b44456e44cca0aebc6"
+    },
+    {
+      "entity_key": "task:user-material-synthesis",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/user-material-synthesis.md",
+      "sha256": "sha256:e5edf86958f7dfce020c434b39997479fdc59503d6eb0a830540b53963a7fc05"
+    },
+    {
+      "entity_key": "task:user-segmentation",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/user-segmentation.md",
+      "sha256": "sha256:14e46233215261333d6f8bcd7ce2692b0e97c0576b41ab9391049bc6429927b9"
+    },
+    {
+      "entity_key": "knowledge:ds-method-competitor-00-module-overview",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-00-module-overview.md",
+      "sha256": "sha256:5fd0bd158bebd250bd13fcc3508cb34209cd953518904a9c4887f2830e634415"
+    },
+    {
+      "entity_key": "knowledge:ds-method-competitor-01-competitor-selection",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-01-competitor-selection.md",
+      "sha256": "sha256:3b816983caffcd9c1757c70e5987a4bcc0b842a066c0ce0ff970b0f3f5bbe00c"
+    },
+    {
+      "entity_key": "knowledge:ds-method-competitor-02-comparison-dimensions",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-02-comparison-dimensions.md",
+      "sha256": "sha256:058c64cf042dd5ec6eb3acc727655778afbcac77e69c71036d313080ef71fa2a"
+    },
+    {
+      "entity_key": "knowledge:ds-method-competitor-03-pattern-analysis",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-03-pattern-analysis.md",
+      "sha256": "sha256:3f90d22fcc55064d7c26f912629544a7e4a7bfd43e57e02b8f2573acca66c31b"
+    },
+    {
+      "entity_key": "knowledge:ds-method-competitor-03",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-03.md",
+      "sha256": "sha256:6b0717d9c3c2509254046ba3d96d701c24e157a6e2b1af4990811f9572569776"
+    },
+    {
+      "entity_key": "knowledge:ds-method-competitor-04-opportunity-and-risk",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-04-opportunity-and-risk.md",
+      "sha256": "sha256:b4413bede26039ae2fba64b75be098ac63830377d9b3fd0018c9180815cdd97f"
+    },
+    {
+      "entity_key": "knowledge:ds-method-competitor-04",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-04.md",
+      "sha256": "sha256:fd6024b8626530630a1503631c4ce0cd3f4ac06d92cc92aafdc60e83a7c2e9ec"
+    },
+    {
+      "entity_key": "knowledge:ds-method-competitor-05-insight-output",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-05-insight-output.md",
+      "sha256": "sha256:62db690a7c61c0671428bb60c89c769344f3f16e8edf9e0a60d09bd032b4ffec"
+    },
+    {
+      "entity_key": "knowledge:ds-method-strategy-00-module-overview",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-00-module-overview.md",
+      "sha256": "sha256:5d6294baf06c202bfe2495e17f9c54a97fa3656fff12d998134122fdad16dc05"
+    },
+    {
+      "entity_key": "knowledge:ds-method-strategy-01-problem-framing",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-01-problem-framing.md",
+      "sha256": "sha256:e636a77d43362aaa0ea92d09e9f18ccfc678770f85996c85bb8f031d54725fdf"
+    },
+    {
+      "entity_key": "knowledge:ds-method-strategy-02-strategy-map",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-02-strategy-map.md",
+      "sha256": "sha256:d03e08c323d33860a571368d649538abac5f18a25a87ee4bb1f1112e6787dad0"
+    },
+    {
+      "entity_key": "knowledge:ds-method-strategy-04-priority-and-roadmap",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-04-priority-and-roadmap.md",
+      "sha256": "sha256:afe6e0ff8902c70b39307aa2d6475811ebf20e1f835a876807dfb5e40fe10e12"
+    },
+    {
+      "entity_key": "knowledge:ds-method-strategy-05-review-and-validation",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-05-review-and-validation.md",
+      "sha256": "sha256:73aae9caf90e1eb0e64f190a20f7693e73c9e534c02247dfc6ef01fc22d85ba4"
+    },
+    {
+      "entity_key": "knowledge:ds-method-strategy-05",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-05.md",
+      "sha256": "sha256:4b303f2dcdebf8c2a1fdc9f400c0c6481f0377f50669817b4fe8a0ebcc80340c"
+    },
+    {
+      "entity_key": "knowledge:ds-method-strategy-06",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-06.md",
+      "sha256": "sha256:dc816b463b10b84f128e96168cd1e9f34ff864124adf65e199dedf3c7acf2129"
+    },
+    {
+      "entity_key": "knowledge:ds-method-user-00-module-overview",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-00-module-overview.md",
+      "sha256": "sha256:881832c9b24eb1d0f4db78ff88e01dd4f6f4c500574c584143d43f34ac25b708"
+    },
+    {
+      "entity_key": "knowledge:ds-method-user-01-research-scope",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-01-research-scope.md",
+      "sha256": "sha256:55532e10e02742f1a2efcb6e5a982237937851122bc36e8561e3a956b0487986"
+    },
+    {
+      "entity_key": "knowledge:ds-method-user-01",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-01.md",
+      "sha256": "sha256:fc546250983b67e80dcaa84412982b94a070759d8f843306353a08e8b7283957"
+    },
+    {
+      "entity_key": "knowledge:ds-method-user-02-user-segmentation",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-02-user-segmentation.md",
+      "sha256": "sha256:fb7cf9104d1656d2eeeee594fba8f0156c7bb2a8eca7823a0cde516962600b66"
+    },
+    {
+      "entity_key": "knowledge:ds-method-user-02",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-02.md",
+      "sha256": "sha256:79e9d9601f6477cd12c82694717c01713d734f842bf4f2149679d9103ef06ac2"
+    },
+    {
+      "entity_key": "knowledge:ds-method-user-03-journey-and-tasks",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-03-journey-and-tasks.md",
+      "sha256": "sha256:47a8f57cb8177edc8b919bafe493eb6d8d4852a9ff37c7e395f873880b918d6e"
+    },
+    {
+      "entity_key": "knowledge:ds-method-user-04-painpoint-diagnosis",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-04-painpoint-diagnosis.md",
+      "sha256": "sha256:d1530931f8a1c12b7229551e6b7fa61327f45d7d7c1749de6374ac66e8a4cfd1"
+    },
+    {
+      "entity_key": "knowledge:ds-method-user-05-insight-output",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-05-insight-output.md",
+      "sha256": "sha256:d6ae44bed2696ab3008b33dcf21fb045c0eb96c6cc17b5171f45bd078069314a"
+    },
+    {
+      "entity_key": "knowledge:ux-method-experience-diagnosis-framework",
+      "kind": "candidate",
+      "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ux-method-experience-diagnosis-framework.md",
+      "sha256": "sha256:7d73ceea2853b95f3342e228bf7ee91a7b262df987282dc4d100c505d3267eec"
+    },
+    {
+      "entity_key": "skill:ds-skill-solution-generation",
+      "kind": "candidate",
+      "path": "knowledge-base/skills/solution-generation/SKILL.md",
+      "sha256": "sha256:ebaff00f5ab64d1606a8b83f8fc7ba5688f076656a21711d1538fd6419a0c51b"
+    },
+    {
+      "entity_key": "skill:ds-skill-strategy-map-generation",
+      "kind": "candidate",
+      "path": "knowledge-base/skills/strategy-map-generation/SKILL.md",
+      "sha256": "sha256:26a3d9880c8d6f5f68d72eb9629b72eec8c84d4f2a85af116fd4646db1a7997d"
+    }
+  ],
+  "runtime_boundary": {
+    "candidate_status": "candidate",
+    "opaque_materialized": 0,
+    "reject_runtime_materialized": 0,
+    "skill_registry_status": "draft",
+    "source_only_materialized": 0
+  },
+  "scans": [
+    {
+      "entity_key": "knowledge:ds-method-competitor-00-module-overview",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析00模块总览.md"
+    },
+    {
+      "entity_key": "knowledge:ds-method-competitor-01-competitor-selection",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析01竞品选择.md"
+    },
+    {
+      "entity_key": "knowledge:ds-method-competitor-02-comparison-dimensions",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析02对比维度.md"
+    },
+    {
+      "entity_key": "knowledge:ds-method-competitor-03",
+      "finding_counts": {
+        "internal_business_facts": 11,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析竞品研究方法类.md"
+    },
+    {
+      "entity_key": "knowledge:ds-method-competitor-03-pattern-analysis",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析03模式分析.md"
+    },
+    {
+      "entity_key": "knowledge:ds-method-competitor-04",
+      "finding_counts": {
+        "internal_business_facts": 11,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析竞品分析框架类.md"
+    },
+    {
+      "entity_key": "knowledge:ds-method-competitor-04-opportunity-and-risk",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析04机会风险.md"
+    },
+    {
+      "entity_key": "knowledge:ds-method-competitor-05-insight-output",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析05洞察输出.md"
+    },
+    {
+      "entity_key": "knowledge:ds-method-strategy-00-module-overview",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/方法知识/设计策略/策略推导/设计策略00模块总览.md"
+    },
+    {
+      "entity_key": "knowledge:ds-method-strategy-01-problem-framing",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/方法知识/设计策略/策略推导/设计策略01问题定义.md"
+    },
+    {
+      "entity_key": "knowledge:ds-method-strategy-02-strategy-map",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/方法知识/设计策略/策略推导/设计策略02策略地图.md"
+    },
+    {
+      "entity_key": "knowledge:ds-method-strategy-04-priority-and-roadmap",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/方法知识/设计策略/策略推导/设计策略04优先路线.md"
+    },
+    {
+      "entity_key": "knowledge:ds-method-strategy-05",
+      "finding_counts": {
+        "internal_business_facts": 7,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/方法知识/设计策略/策略推导/设计策略体验策略方法论类.md"
+    },
+    {
+      "entity_key": "knowledge:ds-method-strategy-05-review-and-validation",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/方法知识/设计策略/策略推导/设计策略05评审验证.md"
+    },
+    {
+      "entity_key": "knowledge:ds-method-strategy-06",
+      "finding_counts": {
+        "internal_business_facts": 8,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/方法知识/设计策略/策略推导/设计策略策略推导模型类.md"
+    },
+    {
+      "entity_key": "knowledge:ds-method-user-00-module-overview",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/方法知识/设计策略/用户分析/用户分析00模块总览.md"
+    },
+    {
+      "entity_key": "knowledge:ds-method-user-01",
+      "finding_counts": {
+        "internal_business_facts": 8,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/方法知识/设计策略/用户分析/用户画像Persona.md"
+    },
+    {
+      "entity_key": "knowledge:ds-method-user-01-research-scope",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/方法知识/设计策略/用户分析/用户分析01分析边界.md"
+    },
+    {
+      "entity_key": "knowledge:ds-method-user-02",
+      "finding_counts": {
+        "internal_business_facts": 6,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/方法知识/设计策略/用户分析/用户分析用户认知与行为模型类.md"
+    },
+    {
+      "entity_key": "knowledge:ds-method-user-02-user-segmentation",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/方法知识/设计策略/用户分析/用户分析02用户分层.md"
+    },
+    {
+      "entity_key": "knowledge:ds-method-user-03-journey-and-tasks",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/方法知识/设计策略/用户分析/用户分析03旅程任务.md"
+    },
+    {
+      "entity_key": "knowledge:ds-method-user-04-painpoint-diagnosis",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/方法知识/设计策略/用户分析/用户分析04痛点诊断.md"
+    },
+    {
+      "entity_key": "knowledge:ds-method-user-05-insight-output",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/方法知识/设计策略/用户分析/用户分析05洞察输出.md"
+    },
+    {
+      "entity_key": "knowledge:ds-template-design-strategy-case-card-template",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/模板库/设计策略/设计策略案例卡模板.md"
+    },
+    {
+      "entity_key": "knowledge:ur-asset-behavior-habits",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/模板库/用户研究/问卷题库行为与习惯（behavior-habits）.md"
+    },
+    {
+      "entity_key": "knowledge:ur-asset-concept-test",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/模板库/用户研究/问卷题库概念与方案评估（concept-test）.md"
+    },
+    {
+      "entity_key": "knowledge:ur-asset-decision-journey",
+      "finding_counts": {
+        "internal_business_facts": 4,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/模板库/用户研究/问卷题库决策与链路（decision-journey）.md"
+    },
+    {
+      "entity_key": "knowledge:ur-asset-experience-painpoints",
+      "finding_counts": {
+        "internal_business_facts": 2,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/模板库/用户研究/问卷题库体验与痛点（experience-painpoints）.md"
+    },
+    {
+      "entity_key": "knowledge:ur-asset-interview-forbidden-questions",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/模板库/用户研究/访谈禁问清单与中立替代话术.md"
+    },
+    {
+      "entity_key": "knowledge:ur-asset-mindset-cognition",
+      "finding_counts": {
+        "internal_business_facts": 5,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/模板库/用户研究/问卷题库心智与认知（mindset-cognition）.md"
+    },
+    {
+      "entity_key": "knowledge:ur-asset-needs-scenarios",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/模板库/用户研究/问卷题库需求与场景（needs-scenarios）.md"
+    },
+    {
+      "entity_key": "knowledge:ur-asset-screener-demographics",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/模板库/用户研究/问卷题库筛选与背景（screener-demographics）.md"
+    },
+    {
+      "entity_key": "knowledge:ur-asset-standardized-ux-scales",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/模板库/用户研究/标准化体验量表（SUSUMUX-LiteSEQNPSCSATCES）.md"
+    },
+    {
+      "entity_key": "knowledge:ur-template-churn-phone-interview-script",
+      "finding_counts": {
+        "internal_business_facts": 13,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/模板库/用户研究/流失用户电话回访话术框架.md"
+    },
+    {
+      "entity_key": "knowledge:ur-template-churn-survey-framework",
+      "finding_counts": {
+        "internal_business_facts": 3,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/模板库/用户研究/流失用户定量问卷框架.md"
+    },
+    {
+      "entity_key": "knowledge:ur-template-experience-issue-description-script",
+      "finding_counts": {
+        "internal_business_facts": 2,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/模板库/用户研究/体验问题描述话术模板.md"
+    },
+    {
+      "entity_key": "knowledge:ur-template-opportunity-solution-tree",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/模板库/用户研究/机会-解决方案树（OpportunitySolutionTree,OST）.md"
+    },
+    {
+      "entity_key": "knowledge:ux-method-experience-diagnosis-framework",
+      "finding_counts": {
+        "internal_business_facts": 2,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "03-knowledge-知识/方法知识/通用体验/体验问题诊断与走查框架.md"
+    },
+    {
+      "entity_key": "skill:ds-skill-competitor-strategy-analysis",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "02-skills-技能/设计策略/竞品策略分析/SKILL.md"
+    },
+    {
+      "entity_key": "skill:ds-skill-solution-generation",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "02-skills-技能/设计策略/解决方案生成/SKILL.md"
+    },
+    {
+      "entity_key": "skill:ds-skill-strategy-map-generation",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "02-skills-技能/设计策略/设计策略地图生成/SKILL.md"
+    },
+    {
+      "entity_key": "skill:ds-skill-trend-change-scan",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "02-skills-技能/设计策略/趋势变化扫描/SKILL.md"
+    },
+    {
+      "entity_key": "skill:ds-skill-user-insight-synthesis",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "02-skills-技能/设计策略/用户洞察综合分析/SKILL.md"
+    },
+    {
+      "entity_key": "skill:ur-skill-accessibility-review",
+      "finding_counts": {
+        "internal_business_facts": 2,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "02-skills-技能/用户研究/无障碍审查/SKILL.md"
+    },
+    {
+      "entity_key": "skill:ur-skill-analyze-satisfaction",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "02-skills-技能/用户研究/满意度诊断/SKILL.md"
+    },
+    {
+      "entity_key": "skill:ur-skill-build-experience-metrics",
+      "finding_counts": {
+        "internal_business_facts": 1,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "02-skills-技能/用户研究/体验度量体系/SKILL.md"
+    },
+    {
+      "entity_key": "skill:ur-skill-code-open-feedback",
+      "finding_counts": {
+        "internal_business_facts": 2,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "02-skills-技能/用户研究/VOC反馈编码/SKILL.md"
+    },
+    {
+      "entity_key": "skill:ur-skill-competitive-analysis",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "02-skills-技能/用户研究/竞品分析/SKILL.md"
+    },
+    {
+      "entity_key": "skill:ur-skill-conversion-funnel-analysis",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "02-skills-技能/用户研究/转化漏斗分析/SKILL.md"
+    },
+    {
+      "entity_key": "skill:ur-skill-experience-walkthrough",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "02-skills-技能/用户研究/体验走查/SKILL.md"
+    },
+    {
+      "entity_key": "skill:ur-skill-feature-adoption-analysis",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "02-skills-技能/用户研究/功能采纳分析/SKILL.md"
+    },
+    {
+      "entity_key": "skill:ur-skill-generate-interview-guide",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "02-skills-技能/用户研究/生成访谈提纲/SKILL.md"
+    },
+    {
+      "entity_key": "skill:ur-skill-generate-persona",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "02-skills-技能/用户研究/用户画像/SKILL.md"
+    },
+    {
+      "entity_key": "skill:ur-skill-generate-research-plan",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "02-skills-技能/用户研究/生成研究方案/SKILL.md"
+    },
+    {
+      "entity_key": "skill:ur-skill-generate-survey",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "02-skills-技能/用户研究/生成问卷/SKILL.md"
+    },
+    {
+      "entity_key": "skill:ur-skill-generate-usability-test",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "02-skills-技能/用户研究/可用性测试/SKILL.md"
+    },
+    {
+      "entity_key": "skill:ur-skill-issue-prioritization",
+      "finding_counts": {
+        "internal_business_facts": 2,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "02-skills-技能/用户研究/问题分层与优先级/SKILL.md"
+    },
+    {
+      "entity_key": "skill:ur-skill-jobs-to-be-done",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "02-skills-技能/用户研究/需求定义JTBD/SKILL.md"
+    },
+    {
+      "entity_key": "skill:ur-skill-journey-map",
+      "finding_counts": {
+        "internal_business_facts": 8,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "02-skills-技能/用户研究/体验旅程图/SKILL.md"
+    },
+    {
+      "entity_key": "skill:ur-skill-run-heuristic-evaluation",
+      "finding_counts": {
+        "internal_business_facts": 6,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "02-skills-技能/用户研究/启发式评估/SKILL.md"
+    },
+    {
+      "entity_key": "skill:ur-skill-structure-interview-transcript",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "02-skills-技能/用户研究/单场访谈小结/SKILL.md"
+    },
+    {
+      "entity_key": "skill:ur-skill-synthesize-qualitative-insights",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 1,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "known-local-path-source-reference-removed"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "reviewed",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "02-skills-技能/用户研究/定性归纳与洞察/SKILL.md"
+    },
+    {
+      "entity_key": "task:competitor-benchmark-research",
+      "finding_counts": {
+        "internal_business_facts": 1,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "01-task-任务/01-find-direction-找方向/02-competitor-benchmark-research-竞品与标杆研究.md"
+    },
+    {
+      "entity_key": "task:data-behavior-diagnosis",
+      "finding_counts": {
+        "internal_business_facts": 1,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "01-task-任务/03-find-problems-找问题/03-data-behavior-diagnosis-数据与行为异常诊断.md"
+    },
+    {
+      "entity_key": "task:experience-walkthrough",
+      "finding_counts": {
+        "internal_business_facts": 1,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "01-task-任务/03-find-problems-找问题/01-experience-walkthrough-页面与链路体验走查.md"
+    },
+    {
+      "entity_key": "task:feedback-issue-clustering",
+      "finding_counts": {
+        "internal_business_facts": 1,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "01-task-任务/03-find-problems-找问题/02-feedback-issue-clustering-用户反馈问题聚类.md"
+    },
+    {
+      "entity_key": "task:metrics-validation",
+      "finding_counts": {
+        "internal_business_facts": 1,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "01-task-任务/05-define-strategy-定策略/03-metrics-validation-指标与验证计划.md"
+    },
+    {
+      "entity_key": "task:opportunity-direction-evaluation",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "01-task-任务/01-find-direction-找方向/03-opportunity-direction-evaluation-机会方向判断.md"
+    },
+    {
+      "entity_key": "task:priority-roadmap",
+      "finding_counts": {
+        "internal_business_facts": 1,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "01-task-任务/05-define-strategy-定策略/02-priority-roadmap-优先级与实施路径.md"
+    },
+    {
+      "entity_key": "task:root-cause-analysis",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "01-task-任务/04-solve-problems-解问题/01-root-cause-analysis-问题根因拆解.md"
+    },
+    {
+      "entity_key": "task:solution-comparison",
+      "finding_counts": {
+        "internal_business_facts": 0,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "clear",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "01-task-任务/04-solve-problems-解问题/03-solution-comparison-方案比较与风险评估.md"
+    },
+    {
+      "entity_key": "task:solution-generation",
+      "finding_counts": {
+        "internal_business_facts": 1,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "01-task-任务/04-solve-problems-解问题/02-solution-generation-解决方案生成.md"
+    },
+    {
+      "entity_key": "task:strategy-synthesis",
+      "finding_counts": {
+        "internal_business_facts": 1,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "01-task-任务/05-define-strategy-定策略/01-strategy-synthesis-结论整合与策略提炼.md"
+    },
+    {
+      "entity_key": "task:trend-change-identification",
+      "finding_counts": {
+        "internal_business_facts": 2,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "01-task-任务/01-find-direction-找方向/01-trend-change-identification-趋势与变化识别.md"
+    },
+    {
+      "entity_key": "task:user-journey-insight",
+      "finding_counts": {
+        "internal_business_facts": 1,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "01-task-任务/02-understand-users-懂用户/03-user-journey-insight-用户旅程与需求洞察.md"
+    },
+    {
+      "entity_key": "task:user-material-synthesis",
+      "finding_counts": {
+        "internal_business_facts": 1,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "01-task-任务/02-understand-users-懂用户/01-user-material-synthesis-已有用户资料归纳.md"
+    },
+    {
+      "entity_key": "task:user-segmentation",
+      "finding_counts": {
+        "internal_business_facts": 1,
+        "local_paths": 0,
+        "pii": 0,
+        "secrets": 0
+      },
+      "finding_refs": [
+        "gate-1-internal-evaluation-only",
+        "internal-business-facts-evaluation-only"
+      ],
+      "results": {
+        "internal_business_facts": "reviewed",
+        "local_paths": "clear",
+        "pii": "clear",
+        "secrets": "clear"
+      },
+      "source_path": "01-task-任务/02-understand-users-懂用户/02-user-segmentation-用户分层与重点人群识别.md"
+    }
+  ],
+  "snapshot_id": "user-research-hub-2026-08-21",
+  "source_mutation_contract": "read-only-hash-verified",
+  "source_tree_hash": "sha256:e5a9885f3e98e9c187823da2ab7361081e1b5ec0e21ecec8639d5288a7eb4d00"
+}

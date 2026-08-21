@@ -23,6 +23,23 @@ const skillMd = [
   'content_hash: sha256:y', 'status: approved', '---', '', '# 生成研究方案',
 ].join('\n');
 
+test('candidate 状态保留在 Evaluation index，Skill candidate 只派生 draft', () => {
+  const candidateKnowledge = modelMd
+    .replace('id: model_jtbd', 'id: method_candidate')
+    .replace('source_path: models/jtbd.md', 'source_path: methods/toolbox/analysis/design-strategy/candidate.md')
+    .replace('status: approved', 'status: candidate');
+  const candidateSkill = skillMd
+    .replace('name: generate-research-plan', 'name: strategy-map-generation')
+    .replace('status: approved', 'status: candidate');
+  const { knowledge, skills } = buildIndex([
+    { relPath: 'methods/toolbox/analysis/design-strategy/candidate.md', md: candidateKnowledge },
+    { relPath: 'skills/strategy-map-generation/SKILL.md', md: candidateSkill },
+  ]);
+
+  assert.equal(knowledge[0]?.status, 'candidate');
+  assert.equal(skills[0]?.status, 'draft');
+});
+
 test('知识条目进 knowledge 索引,skill 进 skills,asset 被排除', () => {
   const { knowledge, skills } = buildIndex([
     { relPath: 'models/jtbd.md', md: modelMd },

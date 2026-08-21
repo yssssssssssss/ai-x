@@ -26,14 +26,14 @@
 
 ## 内容盘点
 
-> **129 篇**方法/模型/素材文档 + **18 个** skills；均 `status: draft`，待评审。
+> **182 篇**方法/模型/素材文档 + **20 个** skills。既有内容保留原 `draft`/`approved` 行为；Hub 新增内容为隔离的 `candidate`，未进入生产召回。
 
 | 区 | 篇数 | 覆盖（简） |
 |---|---|---|
-| `methods/` | **83** | **采集 32**：深访 · 提纲设计 · 招募 · 受访者偏误 · 满意度问卷 · 定性问卷 · 桌面研究 · 民族志 · 眼动 · 拦访 · 巡店 · 在线焦点小组 · 可用性测试 · 启发式评估 · 人物角色 · 体验地图 · 场景洞察 · 品牌命名 · 文案测试 · 体验评测 · 共创工作坊 · 量表编制 · 在用追踪 · 转换访谈 · 任务访谈 · 投射技术 · 情绪板 · 工作坊 · 焦点小组(线下) · 问卷调研 · U&A · 无障碍走查<br>**分析 36**：KDA · HEART体验度量 · 转化漏斗 · 功能采纳 · VOC · 问题分层 · A/B · 满意度异动归因 · 跨版本基准 · PSM · 联合分析 · TURF · 购物篮 · 对偶比较 · 贝叶斯品类对比 · 亲和图 · 数据标准化 · 满意度四模型 · 竞品分析 · 文本分析 · 定性洞察框架 · 定性编码 · 行为数据 · 系统思维 · 机会点 · IAT文案 · 控件热区 · TGI · 用户旅程图 · MaxDiff · 画像构建 · 优先级四象限 · 定性分析 · RFM · 问卷统计<br>**规范 10**：抽样 · 问卷设计 · 问卷体验审核 · 无障碍适配 · 报告撰写 · 项目流程 · 需求分析 · 访谈提纲规范 · 需求发现抽样 · 研究问题定义<br>**场景打法 5**：持续发现 · 迭代期评估诊断 · 流失用户调研 · 品类研究 · B端体验度量 |
+| `methods/` | **122** | 既有采集/分析/规范/场景打法；另含 **24** 条 Hub 设计策略方法候选和 **15** 条设计编排 Scenario 候选（仅 Evaluation） |
 | `models/` | **21** | **需求与任务 7**：JTBD · 用户需求三层 · Job Map · 阶梯法 · 四力模型 · Kano · 5W2H<br>**用户与人群 3**：画像/分层/分群 · G7人群细分 · 用户养成<br>**认知与洞察 4**：用户洞察 · 认知偏见 · 心理物理学 · 人类学透镜<br>**满意度与可用性 2**：ECT · 尼尔森十大可用性启发式<br>**方法论与表达 5**：访谈认识论 · ORID · 设计冲刺 · 金字塔原理 · 黄金圈 |
-| `assets/` | **25** | **题库 15**：访谈禁问清单 + 访谈题·问卷题各 7 主题（筛选背景 · 行为习惯 · 需求场景 · 心智认知 · 决策链路 · 体验痛点 · 概念评估）<br>**量表 1**：标准化体验量表（SUS/SEQ/NPS/CSAT…）<br>**模板 4**：OST · 流失话术 · 流失问卷 · 体验问题描述<br>**经验卡片 5**：京喜流失 · 撰写提纲Tips · 访谈感知训练 · 机会点研究三法 · 优先级框架综述 |
-| `skills/` | **18** | **通用·全流程 6**：研究方案 · 访谈提纲 · 问卷 · 单场访谈小结 · 定性归纳与洞察 · VOC 反馈编码<br>**产品规划 4**：用户画像 · 体验旅程图 · 需求定义 JTBD · 竞品分析<br>**产品设计 3**：可用性测试 · 启发式评估 · 无障碍审查<br>**产品迭代 5**：满意度诊断 · 体验度量体系 · 转化漏斗分析 · 功能采纳分析 · 问题分层与优先级 |
+| `assets/` | **39** | 既有题库、量表、模板和经验卡片；另含 **14** 条 Hub 模板候选（Asset 不进通用 Knowledge Index） |
+| `skills/` | **20** | 既有 **18** 个 active KB Skill；`solution-generation`、`strategy-map-generation` 为 `candidate`，派生 Registry 状态固定为 `draft` |
 
 ---
 
@@ -72,7 +72,7 @@ research_type:  []        # [定性, 定量, 探索, 评估, 概念验证, 度�
 method_family:  []        # [访谈, 问卷, 可用性测试, ...]，采集类必填
 stage:          []        # [规划, 设计, 迭代]，仅产品体验类需要
 tags:           []        # 自由标签
-status:         draft     # draft | reviewed | deprecated
+status:         draft     # candidate | draft | approved | deprecated
 sensitivity:    internal  # public | internal | restricted
 owner:
 updated:        # YYYY-MM-DD
@@ -98,9 +98,17 @@ related:        []        # [path/to/method, path/to/model]，跨层关联，手
 - **`research_type`**：`定性` · `定量` · `探索` · `评估` · `概念验证` · `度量`
 - **`method_family`**（采集类）：`访谈` · `问卷` · `可用性测试` · `焦点小组` · `日记研究` · `现场观察` · `日志/行为数据分析` · `桌面研究` · `抽样` · `视觉风格研究` · `工作坊`（分析技术不靠此归类，用 `type: analysis` + `tags`）
 - **`stage`**（仅产品体验）：`规划`（需求探索/机会与概念定义）· `设计`（概念验证/可用性/信息架构）· `迭代`（体验度量/问题诊断/效果验证）
-- **`status`**：`draft`（草稿未评审）· `reviewed`（已评审可信赖）· `deprecated`（已废弃勿用）
+- **`status`**：`candidate`（Hub 内部评测候选，生产 loader 物理排除）· `draft`（既有草稿，保持当前生产行为）· `approved`（已批准）· `deprecated`（已废弃勿用）
 - **`sensitivity`**：`public`（全员）· `internal`（内部员工）· `restricted`（受限）
 - **`domain`**（多值，与 `methods/scenarios/` 目录对齐，格式 `线-子类`）：`通用`（场景无关）；`品类消费-<品类>`（`category-consumption/<slug>`：3C数码/商超/时尚/家电家居/个护/酒类/母婴/宠物/文具/新零售/跨品类方法）；`产品体验`（`product-experience`，阶段由 `stage` 承载）；`综合业务-<子类>`（`comprehensive-business/<slug>`：商业战略/品牌心智/跨业务专题/外卖/到家/到店/酒旅/特价版/会员权益）；`人群研究-<人群>`（`audience-research/<slug>`）。扩展新 slug 先在本表登记，再建目录。
+
+---
+
+## Hub 候选内容生命周期
+
+`wiki/user-research/` 是只读、仓库外提供的来源快照；canonical 文件只保存逻辑来源路径 `wiki/user-research/...`、来源哈希和 Gate-1 内部评测治理字段，不保存本机挂载路径。`scripts/user-research-hub-integration.ts apply` 只物化 disposition 为 `import_candidate` 的 Markdown，并为 `merge_into_existing` 生成 `.sources/` 下的审计合并稿；`source_only`、`reject_runtime` 和不透明附件不会进入 canonical 路径。
+
+Knowledge 的状态流为 `candidate → approved`，Gate 3 前禁止用 `draft` 绕过隔离。`loadRuntimeKnowledgeIndex()` 固定排除 `candidate`/`deprecated`，且没有 visibility 开关；显式评测必须使用独立的 `loadEvaluationKnowledgeIndex()`。Skill 的 `candidate` 仅派生为 Registry `draft`，`listSkills()` 与 `resolveSkill()` 均不会返回。既有 canonical 条目始终权威，Hub 差异只能先进入可审计合并稿，不得由 apply 覆盖 active 内容。
 
 ---
 

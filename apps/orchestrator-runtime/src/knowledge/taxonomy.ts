@@ -14,10 +14,15 @@ export function kbPath(...segs: string[]): string {
 export interface Taxonomy {
   tags: string[];
   guide_stages: string[];
+  knowledge_statuses: string[];
 }
 
 export function loadTaxonomy(): Taxonomy {
   const raw = readFileSync(kbPath('knowledge-base/taxonomy.yaml'), 'utf8');
-  const parsed = parseYaml(raw) as { tags?: string[]; guide_stages?: string[] };
-  return { tags: parsed.tags ?? [], guide_stages: parsed.guide_stages ?? [] };
+  const parsed = parseYaml(raw) as { tags?: string[]; guide_stages?: string[]; knowledge_statuses?: string[] };
+  return {
+    tags: parsed.tags ?? [],
+    guide_stages: parsed.guide_stages ?? [],
+    knowledge_statuses: parsed.knowledge_statuses ?? [],
+  };
 }

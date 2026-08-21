@@ -16,6 +16,11 @@ test('taxonomy 覆盖 decision-graph 全部 related_tags', () => {
   assert.deepEqual(missing, [], `taxonomy 缺 related_tags: ${missing.join(', ')}`);
 });
 
+test('candidate 生命周期状态与生产隔离状态齐全', () => {
+  const { knowledge_statuses } = loadTaxonomy();
+  assert.deepEqual(knowledge_statuses, ['approved', 'draft', 'candidate', 'deprecated']);
+});
+
 test('guide_stages 五阶段齐全', () => {
   const { guide_stages } = loadTaxonomy();
   assert.deepEqual(

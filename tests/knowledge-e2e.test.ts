@@ -21,11 +21,17 @@ test('resolveSkill 能定位 generate-research-plan', () => {
   assert.match(r!.path, /generate-research-plan/);
 });
 
-// registry 合并两类能力:18 个 wiki KB skill(v16 快照 user-research/skills/*/SKILL.md)
-// + 2 个编排器原生 skill(skills/*, 带 JSON schema)= 20 active。
-// brief 预估的 21 为估算值(knowledge 亦估 ~114 实为 104);此处以实际全量数作为下限。
-test('listSkills 覆盖 KB + 原生全部 skill(≥20 active)', () => {
-  assert.ok(listSkills().length >= 20, `实际 ${listSkills().length}`);
+// Registry 合并 KB Skill 与编排器原生 Skill；Phase-B 基线固定为 22 active，
+// 另有 2 个 Hub candidate 只派生为 draft。
+test('listSkills 覆盖 KB + 原生全部 active skill', () => {
+  assert.equal(listSkills().length, 22);
+});
+
+test('candidate/draft Skill 不进入生产 list/resolve 接口', () => {
+  assert.equal(listSkills().length, 22);
+  assert.equal(listSkills().some(({ id }) => id === 'solution-generation' || id === 'strategy-map-generation'), false);
+  assert.equal(resolveSkill('solution-generation'), null);
+  assert.equal(resolveSkill('strategy-map-generation'), null);
 });
 
 test('每个 active skill 的 task_types 非空(router 可路由)', () => {

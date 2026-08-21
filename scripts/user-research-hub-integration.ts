@@ -15,6 +15,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import Ajv from 'ajv';
 import YAML from 'yaml';
 
+import {
+  buildHubContentApply,
+  checkAppliedHubContent,
+  writeHubContentApply,
+} from './user-research-hub-content.ts';
+
 const LOGICAL_ROOT = 'wiki/user-research';
 const SNAPSHOT_ID = 'user-research-hub-2026-08-21';
 const HASH_PATTERN = /^sha256:[a-f0-9]{64}$/u;
@@ -30,7 +36,7 @@ const REGISTRY_CONFIG = [
 ] as const;
 
 type RegistryKind = (typeof REGISTRY_CONFIG)[number]['kind'];
-type Disposition = 'map_existing' | 'merge_into_existing' | 'import_candidate' | 'source_only' | 'reject_runtime';
+export type Disposition = 'map_existing' | 'merge_into_existing' | 'import_candidate' | 'source_only' | 'reject_runtime';
 type ProfileId = (typeof PROFILE_IDS)[number];
 type DifferenceDimension = (typeof DIMENSIONS)[number];
 
@@ -71,7 +77,7 @@ interface ManifestTarget {
   path: string;
   status: 'existing' | 'candidate';
 }
-interface ManifestGovernance {
+export interface ManifestGovernance {
   sensitivity: 'public' | 'internal' | 'restricted' | 'unknown';
   distribution_scope: 'internal_repository' | 'evaluation_only' | 'source_archive_only';
   owner: string;
@@ -354,8 +360,8 @@ function summarizeFiles(files: readonly ScannedFile[]) {
 function normalizeTitle(value: string): string {
   return value.normalize('NFKC').toLocaleLowerCase('en-US').replace(/[\p{P}\p{S}\s]/gu, '');
 }
-interface CanonicalKnowledge { id: string; title: string; source_path: string }
-interface CanonicalSkill { id: string; path: string }
+interface CanonicalKnowledge { id: string; title: string; source_path: string; status?: string }
+interface CanonicalSkill { id: string; path: string; status?: string }
 interface CanonicalContext { knowledge: CanonicalKnowledge[]; skills: CanonicalSkill[] }
 function loadCanonicalContext(repositoryRoot: string): CanonicalContext {
   const knowledge = JSON.parse(readFileSync(join(repositoryRoot, 'knowledge-base/.index/knowledge.json'), 'utf8')) as CanonicalKnowledge[];
@@ -365,8 +371,8 @@ function loadCanonicalContext(repositoryRoot: string): CanonicalContext {
 export function createCanonicalCatalog(repositoryRoot: string): ReadonlySet<string> {
   const context = loadCanonicalContext(repositoryRoot);
   return new Set([
-    ...context.knowledge.map(({ source_path }) => `knowledge-base/${source_path}`),
-    ...context.skills.map(({ path }) => path),
+    ...context.knowledge.filter(({ status }) => status !== 'candidate').map(({ source_path }) => `knowledge-base/${source_path}`),
+    ...context.skills.filter(({ status }) => status !== 'draft').map(({ path }) => path),
   ]);
 }
 function governance(owner: unknown): ManifestGovernance {
@@ -861,11 +867,11 @@ export function serializeDistinctnessReport(report: DistinctnessReport): string 
   return `${JSON.stringify(stableValue(report), null, 2)}\n`;
 }
 
-interface CliOptions { command: 'inventory' | 'check'; source: string; output?: string; manifest?: string }
+interface CliOptions { command: 'inventory' | 'check' | 'apply'; source: string; output?: string; manifest?: string }
 function parseCli(args: string[]): CliOptions {
   const [command, ...rest] = args;
-  if (command !== 'inventory' && command !== 'check') {
-    throw new Error('usage: hub:integration <inventory|check> --source <hub-root> [--output <file>|--manifest <file>]');
+  if (command !== 'inventory' && command !== 'check' && command !== 'apply') {
+    throw new Error('usage: hub:integration <inventory|check|apply> --source <hub-root> [--output <file>|--manifest <file>]');
   }
   const flags = new Map<string, string>();
   for (let index = 0; index < rest.length; index += 2) {
@@ -881,7 +887,7 @@ function parseCli(args: string[]): CliOptions {
   for (const flag of flags.keys()) if (!allowed.has(flag)) throw new Error(`unknown ${command} flag ${flag}`);
   const source = flags.get('--source');
   if (!source) throw new Error('--source is required');
-  if (command === 'check') {
+  if (command === 'check' || command === 'apply') {
     const manifest = flags.get('--manifest');
     if (!manifest) throw new Error('--manifest is required');
     return { command, source, manifest };
@@ -907,8 +913,23 @@ function profileArtifacts(manifestPath: string, scan: HubScan): string[] {
         diagnostics.push(`Profile draft Scenario source drift ${mapping.scenario_id}`);
       }
     }
-    const registryHash = sha256Bytes(readFileSync(join(REPOSITORY_ROOT, 'orchestrator/skill-registry.yaml')));
-    if (draft.catalog_snapshot_hash !== registryHash) diagnostics.push('Profile draft capability Registry hash drift');
+    const registryPath = join(REPOSITORY_ROOT, 'orchestrator/skill-registry.yaml');
+    const registryHash = sha256Bytes(readFileSync(registryPath));
+    if (draft.catalog_snapshot_hash !== registryHash) {
+      const manifest = YAML.parse(readFileSync(manifestPath, 'utf8')) as HubManifest;
+      const expectedDraftIds = manifest.entities.filter(({ disposition, registry_kind }) => (
+        disposition === 'import_candidate' && registry_kind === 'skill'
+      )).map(({ target }) => target!.canonical_id).sort(compareUtf8);
+      const registry = YAML.parse(readFileSync(registryPath, 'utf8')) as {
+        skills?: Array<{ id: string; status: string }>;
+      };
+      const actualDraftIds = (registry.skills ?? []).filter(({ status }) => status === 'draft')
+        .map(({ id }) => id).sort(compareUtf8);
+      const unexpectedNonActive = (registry.skills ?? []).filter(({ status }) => status !== 'active' && status !== 'draft');
+      if (JSON.stringify(actualDraftIds) !== JSON.stringify(expectedDraftIds) || unexpectedNonActive.length > 0) {
+        diagnostics.push('Profile draft capability Registry hash drift beyond the governed candidate Skill drafts');
+      }
+    }
   } catch (error) {
     diagnostics.push(error instanceof Error ? error.message : String(error));
   }
@@ -927,19 +948,70 @@ async function main(): Promise<void> {
     return;
   }
   const manifestPath = resolve(options.manifest!);
+  const manifestRelative = relative(REPOSITORY_ROOT, manifestPath);
+  if (manifestRelative === '..' || manifestRelative.startsWith(`..${sep}`) || isAbsolute(manifestRelative)) {
+    throw new Error('--manifest must be a logical path inside the managed repository');
+  }
   const manifest = YAML.parse(readFileSync(manifestPath, 'utf8')) as HubManifest;
-  const diagnostics = [
+  const profileDraftPath = join(dirname(manifestPath), 'user-research-hub-profile-draft-2026-08-21.yaml');
+  const profileDraft = YAML.parse(readFileSync(profileDraftPath, 'utf8')) as ProfileDraft;
+  const baseDiagnostics = [
     ...validateManifestSchema(manifest, REPOSITORY_ROOT),
     ...checkManifest(manifest, scan, createCanonicalCatalog(REPOSITORY_ROOT)),
     ...profileArtifacts(manifestPath, scan),
   ].sort(compareUtf8);
-  if (diagnostics.length > 0) throw new Error(`Hub manifest check failed:\n${diagnostics.map((value) => `- ${value}`).join('\n')}`);
-  const profileDraft = YAML.parse(readFileSync(join(dirname(manifestPath), 'user-research-hub-profile-draft-2026-08-21.yaml'), 'utf8')) as ProfileDraft;
+  if (baseDiagnostics.length > 0) {
+    throw new Error(`Hub manifest check failed:\n${baseDiagnostics.map((value) => `- ${value}`).join('\n')}`);
+  }
+
+  const contentBuild = buildHubContentApply(manifest, options.source, REPOSITORY_ROOT, profileDraft);
+  if (options.command === 'apply') {
+    const writeResult = writeHubContentApply(contentBuild, REPOSITORY_ROOT);
+    const serializedManifest = serializeManifest(contentBuild.manifest);
+    if (readFileSync(manifestPath, 'utf8') !== serializedManifest) writeFileSync(manifestPath, serializedManifest, 'utf8');
+    const afterScan = scanHub(options.source);
+    if (hashFiles(afterScan.files) !== hashFiles(scan.files) || afterScan.files.length !== scan.files.length) {
+      throw new Error('Hub source mutation detected during apply');
+    }
+    const appliedDiagnostics = checkAppliedHubContent(contentBuild, REPOSITORY_ROOT);
+    if (appliedDiagnostics.length > 0) {
+      throw new Error(`Hub content apply failed:\n${appliedDiagnostics.map((value) => `- ${value}`).join('\n')}`);
+    }
+    console.log(JSON.stringify({
+      status: 'applied',
+      snapshotId: manifest.snapshot_id,
+      sourceMutationCheck: 'unchanged',
+      ...contentBuild.report.materialized,
+      mergeDrafts: contentBuild.report.merge_drafts.files,
+      mappedKnowledge: contentBuild.report.mapped_existing.knowledge_entries,
+      governedEntities: contentBuild.report.governance.scanned_entities,
+      writtenFiles: writeResult.written,
+      unchangedFiles: writeResult.unchanged,
+      outputSetHash: contentBuild.report.output_set_hash,
+    }));
+    return;
+  }
+
+  const contentDiagnostics = [
+    ...(serializeManifest(contentBuild.manifest) === serializeManifest(manifest)
+      ? []
+      : ['content apply governance manifest drift']),
+    ...checkAppliedHubContent(contentBuild, REPOSITORY_ROOT),
+  ].sort(compareUtf8);
+  if (contentDiagnostics.length > 0) {
+    throw new Error(`Hub content check failed:\n${contentDiagnostics.map((value) => `- ${value}`).join('\n')}`);
+  }
   console.log(JSON.stringify({
     status: 'ok', snapshotId: manifest.snapshot_id, fileCount: manifest.snapshot.file_count,
     entityCount: manifest.entities.length, treeHash: manifest.snapshot.tree_hash,
     dispositionHash: manifest.disposition_hash,
     profileDistinctness: buildDistinctnessReport(profileDraft).summary,
+    content: {
+      ...contentBuild.report.materialized,
+      mergeDrafts: contentBuild.report.merge_drafts.files,
+      governedEntities: contentBuild.report.governance.scanned_entities,
+      outputSetHash: contentBuild.report.output_set_hash,
+    },
     gate1Status: manifest.gate_1.status,
   }));
 }

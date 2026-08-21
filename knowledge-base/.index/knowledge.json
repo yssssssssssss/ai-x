@@ -92,6 +92,306 @@
     "status": "draft"
   },
   {
+    "id": "competitor-benchmark-research",
+    "type": "scenario-guide",
+    "title": "竞品与标杆研究",
+    "domain": [
+      "产品体验"
+    ],
+    "tags": [],
+    "guide_tags": [
+      "scenario-guidance"
+    ],
+    "guide_stage": [
+      "intent",
+      "method-selection"
+    ],
+    "summary": "围绕同类任务或体验问题选择竞品和标杆，抽取可借鉴模式与不可照搬条件。",
+    "source_path": "methods/scenarios/product-experience/design-orchestration/competitor-benchmark-research.md",
+    "content_hash": "sha256:c890458da3a7897b6c76faa8809a7ee98c4e36523a21fd137edd3c0e4e35cff8",
+    "status": "candidate"
+  },
+  {
+    "id": "data-behavior-diagnosis",
+    "type": "scenario-guide",
+    "title": "数据与行为异常诊断",
+    "domain": [
+      "产品体验"
+    ],
+    "tags": [],
+    "guide_tags": [
+      "scenario-guidance"
+    ],
+    "guide_stage": [
+      "intent",
+      "method-selection"
+    ],
+    "summary": "根据转化、点击、停留、流失、功能采纳等数据异常，判断可能发生问题的阶段和触点。",
+    "source_path": "methods/scenarios/product-experience/design-orchestration/data-behavior-diagnosis.md",
+    "content_hash": "sha256:7462455cdfba27b663fed5b046df3f31079e90aaa5f0f5ef6dd6f314d4d140cf",
+    "status": "candidate"
+  },
+  {
+    "id": "experience-walkthrough",
+    "type": "scenario-guide",
+    "title": "页面与链路体验走查",
+    "domain": [
+      "产品体验"
+    ],
+    "tags": [],
+    "guide_tags": [
+      "scenario-guidance"
+    ],
+    "guide_stage": [
+      "intent",
+      "method-selection"
+    ],
+    "summary": "基于页面、链路、状态和规则进行体验走查，识别可描述、可定位的问题。",
+    "source_path": "methods/scenarios/product-experience/design-orchestration/experience-walkthrough.md",
+    "content_hash": "sha256:1f47e1f671b88e0282a182062c72bba750ece27b3fd7f97dc9be12da4b4d82e7",
+    "status": "candidate"
+  },
+  {
+    "id": "feedback-issue-clustering",
+    "type": "scenario-guide",
+    "title": "用户反馈问题聚类",
+    "domain": [
+      "产品体验"
+    ],
+    "tags": [],
+    "guide_tags": [
+      "scenario-guidance"
+    ],
+    "guide_stage": [
+      "intent",
+      "method-selection"
+    ],
+    "summary": "将用户原声、客服反馈、评价或开放题反馈聚类成问题主题，并评估影响范围。",
+    "source_path": "methods/scenarios/product-experience/design-orchestration/feedback-issue-clustering.md",
+    "content_hash": "sha256:8f1ddf48c9fc0dc8bd1aaa0dbb3de67190de6b8037f53860d41a8694b3dfd23d",
+    "status": "candidate"
+  },
+  {
+    "id": "metrics-validation",
+    "type": "scenario-guide",
+    "title": "指标与验证计划",
+    "domain": [
+      "产品体验"
+    ],
+    "tags": [],
+    "guide_tags": [
+      "scenario-guidance"
+    ],
+    "guide_stage": [
+      "intent",
+      "method-selection"
+    ],
+    "summary": "为策略或方案设计上线前验证、灰度观察和上线后指标口径。",
+    "source_path": "methods/scenarios/product-experience/design-orchestration/metrics-validation.md",
+    "content_hash": "sha256:eff18347fa8bc3e55557f892aabde29f0eaf65003cf04a7f264dc05223f3600b",
+    "status": "candidate"
+  },
+  {
+    "id": "opportunity-direction-evaluation",
+    "type": "scenario-guide",
+    "title": "机会方向判断",
+    "domain": [
+      "产品体验"
+    ],
+    "tags": [],
+    "guide_tags": [
+      "scenario-guidance"
+    ],
+    "guide_stage": [
+      "intent",
+      "method-selection"
+    ],
+    "summary": "基于趋势、用户、竞品、业务和数据线索，判断哪些方向值得优先探索。",
+    "source_path": "methods/scenarios/product-experience/design-orchestration/opportunity-direction-evaluation.md",
+    "content_hash": "sha256:1dfd0d5ef883d563f9b9d0d2f36bed309fd7075d2bd2a862677c639e9aa7072a",
+    "status": "candidate"
+  },
+  {
+    "id": "priority-roadmap",
+    "type": "scenario-guide",
+    "title": "优先级与实施路径",
+    "domain": [
+      "产品体验"
+    ],
+    "tags": [],
+    "guide_tags": [
+      "scenario-guidance"
+    ],
+    "guide_stage": [
+      "intent",
+      "method-selection"
+    ],
+    "summary": "根据用户影响、业务影响、实现成本、上线窗口和风险，形成优先级与实施路径。",
+    "source_path": "methods/scenarios/product-experience/design-orchestration/priority-roadmap.md",
+    "content_hash": "sha256:7a3d10485cc5aed0e527fc3cec96157edf08989cfac087d795dd3a3b824e1889",
+    "status": "candidate"
+  },
+  {
+    "id": "root-cause-analysis",
+    "type": "scenario-guide",
+    "title": "问题根因拆解",
+    "domain": [
+      "产品体验"
+    ],
+    "tags": [],
+    "guide_tags": [
+      "scenario-guidance"
+    ],
+    "guide_stage": [
+      "intent",
+      "method-selection"
+    ],
+    "summary": "将已识别问题拆解到心智、信息、链路、能力、规则或业务约束等根因层。",
+    "source_path": "methods/scenarios/product-experience/design-orchestration/root-cause-analysis.md",
+    "content_hash": "sha256:1f31261afdae4a069b6c0a7f8738e74a13b127b5d175fb8e88a0336810532857",
+    "status": "candidate"
+  },
+  {
+    "id": "solution-comparison",
+    "type": "scenario-guide",
+    "title": "方案比较与风险评估",
+    "domain": [
+      "产品体验"
+    ],
+    "tags": [],
+    "guide_tags": [
+      "scenario-guidance"
+    ],
+    "guide_stage": [
+      "intent",
+      "method-selection"
+    ],
+    "summary": "比较多个方案在用户价值、业务价值、实现成本、风险和验证难度上的差异。",
+    "source_path": "methods/scenarios/product-experience/design-orchestration/solution-comparison.md",
+    "content_hash": "sha256:acba7f64544d159bde16988d0a90406375181a2c5370c3615c5a876f87e9e857",
+    "status": "candidate"
+  },
+  {
+    "id": "solution-generation",
+    "type": "scenario-guide",
+    "title": "解决方案生成",
+    "domain": [
+      "产品体验"
+    ],
+    "tags": [],
+    "guide_tags": [
+      "scenario-guidance"
+    ],
+    "guide_stage": [
+      "intent",
+      "method-selection"
+    ],
+    "summary": "基于根因和约束生成可落到触点、流程、文案、状态或规则的解决方向。",
+    "source_path": "methods/scenarios/product-experience/design-orchestration/solution-generation.md",
+    "content_hash": "sha256:eed9dda3598a1aad26413bfb7e7a69bff66e66bf31c532b3a4315aa957579f0e",
+    "status": "candidate"
+  },
+  {
+    "id": "strategy-synthesis",
+    "type": "scenario-guide",
+    "title": "结论整合与策略提炼",
+    "domain": [
+      "产品体验"
+    ],
+    "tags": [],
+    "guide_tags": [
+      "scenario-guidance"
+    ],
+    "guide_stage": [
+      "intent",
+      "method-selection"
+    ],
+    "summary": "整合用户、竞品、业务、数据和方案判断，提炼可评审的设计策略。",
+    "source_path": "methods/scenarios/product-experience/design-orchestration/strategy-synthesis.md",
+    "content_hash": "sha256:e21576221e78de56c34a8a4de1f85f6601538f759d40eeeb399528469a86adee",
+    "status": "candidate"
+  },
+  {
+    "id": "trend-change-identification",
+    "type": "scenario-guide",
+    "title": "趋势与变化识别",
+    "domain": [
+      "产品体验"
+    ],
+    "tags": [],
+    "guide_tags": [
+      "scenario-guidance"
+    ],
+    "guide_stage": [
+      "intent",
+      "method-selection"
+    ],
+    "summary": "识别市场、用户、业务、技术或体验模式中的变化信号，形成方向探索的输入。",
+    "source_path": "methods/scenarios/product-experience/design-orchestration/trend-change-identification.md",
+    "content_hash": "sha256:c622b1d40f35c90bd31aff4cadcf37c6441d9f8cc6d1decfda65507bd5ce61d2",
+    "status": "candidate"
+  },
+  {
+    "id": "user-journey-insight",
+    "type": "scenario-guide",
+    "title": "用户旅程与需求洞察",
+    "domain": [
+      "产品体验"
+    ],
+    "tags": [],
+    "guide_tags": [
+      "scenario-guidance"
+    ],
+    "guide_stage": [
+      "intent",
+      "method-selection"
+    ],
+    "summary": "按用户任务链路梳理触点、行为、信息需求、情绪变化和关键洞察。",
+    "source_path": "methods/scenarios/product-experience/design-orchestration/user-journey-insight.md",
+    "content_hash": "sha256:3ee3295c166361e5b87dd31cb6c6ce28790a542669d393ed4bcecf7e38da7259",
+    "status": "candidate"
+  },
+  {
+    "id": "user-material-synthesis",
+    "type": "scenario-guide",
+    "title": "已有用户资料归纳",
+    "domain": [
+      "产品体验"
+    ],
+    "tags": [],
+    "guide_tags": [
+      "scenario-guidance"
+    ],
+    "guide_stage": [
+      "intent",
+      "method-selection"
+    ],
+    "summary": "把访谈、问卷、反馈、研究报告等已有用户资料归纳成可用于设计判断的主题和证据。",
+    "source_path": "methods/scenarios/product-experience/design-orchestration/user-material-synthesis.md",
+    "content_hash": "sha256:9c050180133901729daf4ee322c7b7213744457a94327f95c507247fb45c8225",
+    "status": "candidate"
+  },
+  {
+    "id": "user-segmentation",
+    "type": "scenario-guide",
+    "title": "用户分层与重点人群识别",
+    "domain": [
+      "产品体验"
+    ],
+    "tags": [],
+    "guide_tags": [
+      "scenario-guidance"
+    ],
+    "guide_stage": [
+      "intent",
+      "method-selection"
+    ],
+    "summary": "根据行为、价值、任务、心智或风险差异识别用户分层和当前应优先关注的人群。",
+    "source_path": "methods/scenarios/product-experience/design-orchestration/user-segmentation.md",
+    "content_hash": "sha256:52652cc0421650ccc44a6dc050169a9c9eb206b67d22ae87c16a3f2f836fc8a3",
+    "status": "candidate"
+  },
+  {
     "id": "scenario_continuous_discovery",
     "type": "scenario-guide",
     "title": "持续发现（Continuous Discovery）",
@@ -706,6 +1006,575 @@
     "source_path": "methods/toolbox/analysis/data-standardization.md",
     "content_hash": "sha256:8553f5f2555261cfbe5614e02d0f1d5784c5cb6ae7219ea5244e3314285e1424",
     "status": "draft"
+  },
+  {
+    "id": "ds-method-competitor-00-module-overview",
+    "type": "analysis",
+    "title": "竞品分析 / 00 模块总览",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "competitor-analysis",
+      "method"
+    ],
+    "guide_tags": [
+      "method",
+      "design-strategy",
+      "business-competitive"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "竞品分析子模块用于回答“行业中相似问题如何被组织、表达、承接和取舍”，为设计策略提供外部参照。",
+    "source_path": "methods/toolbox/analysis/design-strategy/ds-method-competitor-00-module-overview.md",
+    "content_hash": "sha256:d2a2129d102df5af60d31a0424a2f59c0abb40ddf0da0bd72958e235814c3ba2",
+    "status": "candidate"
+  },
+  {
+    "id": "ds-method-competitor-01-competitor-selection",
+    "type": "analysis",
+    "title": "竞品分析 / 01 竞品选择",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "competitor-analysis",
+      "method"
+    ],
+    "guide_tags": [
+      "method",
+      "design-strategy",
+      "business-competitive"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "明确本次分析为什么选择这些竞品，避免只看熟悉或视觉相似的对象。",
+    "source_path": "methods/toolbox/analysis/design-strategy/ds-method-competitor-01-competitor-selection.md",
+    "content_hash": "sha256:21a526a4563f10f53e1c0d2b18971e2ee52b60d9f5a9441dee8a98d611c2d485",
+    "status": "candidate"
+  },
+  {
+    "id": "ds-method-competitor-02-comparison-dimensions",
+    "type": "analysis",
+    "title": "竞品分析 / 02 对比维度",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "competitor-analysis",
+      "method"
+    ],
+    "guide_tags": [
+      "method",
+      "design-strategy",
+      "business-competitive"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "建立稳定的对比口径，让竞品分析从“截图罗列”转向“模式判断”。",
+    "source_path": "methods/toolbox/analysis/design-strategy/ds-method-competitor-02-comparison-dimensions.md",
+    "content_hash": "sha256:8a38c1e50e6f1bd4abe0bb8ae2613176072a86ac9676d413de78b76ca0e9695b",
+    "status": "candidate"
+  },
+  {
+    "id": "ds-method-competitor-03-pattern-analysis",
+    "type": "analysis",
+    "title": "竞品分析 / 03 模式分析",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "competitor-analysis",
+      "method"
+    ],
+    "guide_tags": [
+      "method",
+      "design-strategy",
+      "business-competitive"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "从竞品做法中抽象出可复用的组织模式，而不是停留在单个页面样式。",
+    "source_path": "methods/toolbox/analysis/design-strategy/ds-method-competitor-03-pattern-analysis.md",
+    "content_hash": "sha256:e71d0f1bc859f35c086f4950f49ab9ab27c674c63538d22a2854ce6dfb3eaf41",
+    "status": "candidate"
+  },
+  {
+    "id": "ds-method-competitor-03",
+    "type": "analysis",
+    "title": "竞品分析 / 竞品研究方法类",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "competitor-analysis",
+      "method"
+    ],
+    "guide_tags": [
+      "method",
+      "design-strategy",
+      "business-competitive"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "本文件基于通用方法论整理，待补充团队案例或业务资料验证。",
+    "source_path": "methods/toolbox/analysis/design-strategy/ds-method-competitor-03.md",
+    "content_hash": "sha256:7428697a027f84d3f11944d444fdcd1147cd91ce8d381bc41725788ff8884fc9",
+    "status": "candidate"
+  },
+  {
+    "id": "ds-method-competitor-04-opportunity-and-risk",
+    "type": "analysis",
+    "title": "竞品分析 / 04 机会风险",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "competitor-analysis",
+      "method"
+    ],
+    "guide_tags": [
+      "method",
+      "design-strategy",
+      "business-competitive"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "判断竞品做法中哪些值得吸收，哪些因为业务、用户或规则差异不能直接照搬。",
+    "source_path": "methods/toolbox/analysis/design-strategy/ds-method-competitor-04-opportunity-and-risk.md",
+    "content_hash": "sha256:a6f8ecc2302b455bd2126ac31f99edc6d06bf9b399199e6e71e69810429bcdef",
+    "status": "candidate"
+  },
+  {
+    "id": "ds-method-competitor-04",
+    "type": "analysis",
+    "title": "竞品分析 / 竞品分析框架类",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "competitor-analysis",
+      "method"
+    ],
+    "guide_tags": [
+      "method",
+      "design-strategy",
+      "business-competitive"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "本文件基于通用方法论整理，待补充团队案例或业务资料验证。",
+    "source_path": "methods/toolbox/analysis/design-strategy/ds-method-competitor-04.md",
+    "content_hash": "sha256:03a8cf033d548db13d25b497b8bd218e3f27e9cef73b086517cb752370ddfc57",
+    "status": "candidate"
+  },
+  {
+    "id": "ds-method-competitor-05-insight-output",
+    "type": "analysis",
+    "title": "竞品分析 / 05 洞察输出",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "competitor-analysis",
+      "method"
+    ],
+    "guide_tags": [
+      "method",
+      "design-strategy",
+      "business-competitive"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "把竞品分析收敛成可用于策略推导的外部启发。",
+    "source_path": "methods/toolbox/analysis/design-strategy/ds-method-competitor-05-insight-output.md",
+    "content_hash": "sha256:3aee411e743158606b390381ebeaf1a2e130671508569bc94b9e2c6c80cfff49",
+    "status": "candidate"
+  },
+  {
+    "id": "ds-method-strategy-00-module-overview",
+    "type": "analysis",
+    "title": "设计策略 / 00 模块总览",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "strategy",
+      "method"
+    ],
+    "guide_tags": [
+      "method",
+      "design-strategy"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "设计策略子模块用于把用户、竞品、业务和数据证据转译成可评审、可落地、可验证的设计方向。",
+    "source_path": "methods/toolbox/analysis/design-strategy/ds-method-strategy-00-module-overview.md",
+    "content_hash": "sha256:83435a11ff5704530f18637ea0cca23f789078af968504c4852404a7e55e458a",
+    "status": "candidate"
+  },
+  {
+    "id": "ds-method-strategy-01-problem-framing",
+    "type": "analysis",
+    "title": "设计策略 / 01 问题定义",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "strategy",
+      "method"
+    ],
+    "guide_tags": [
+      "method",
+      "design-strategy"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "把分散证据收敛为 2 到 4 个高阶问题，说明为什么必须做设计策略，而不是只做单点优化。",
+    "source_path": "methods/toolbox/analysis/design-strategy/ds-method-strategy-01-problem-framing.md",
+    "content_hash": "sha256:a5e9a3d80b4e7ad956f6458ae388118130f1ae571667c3e1e8014446775337e3",
+    "status": "candidate"
+  },
+  {
+    "id": "ds-method-strategy-02-strategy-map",
+    "type": "analysis",
+    "title": "设计策略 / 02 策略地图",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "strategy",
+      "method"
+    ],
+    "guide_tags": [
+      "method",
+      "design-strategy"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "从痛点反推策略层、策略方向、关键措施、对应触点和验证指标。",
+    "source_path": "methods/toolbox/analysis/design-strategy/ds-method-strategy-02-strategy-map.md",
+    "content_hash": "sha256:21282cff0b8710d69b02b7efed2550eae35cbb5d21f3f59ff82fc957d398b01b",
+    "status": "candidate"
+  },
+  {
+    "id": "ds-method-strategy-04-priority-and-roadmap",
+    "type": "analysis",
+    "title": "设计策略 / 04 优先路线",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "strategy",
+      "method"
+    ],
+    "guide_tags": [
+      "method",
+      "design-strategy"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "根据用户影响、业务影响、上线窗口、实现成本和风险判断策略落地优先级。",
+    "source_path": "methods/toolbox/analysis/design-strategy/ds-method-strategy-04-priority-and-roadmap.md",
+    "content_hash": "sha256:a20e439e3dd0197dadf6bc48bb45957a407043b95e0bdfa78d9f0678a7aa3ac7",
+    "status": "candidate"
+  },
+  {
+    "id": "ds-method-strategy-05-review-and-validation",
+    "type": "analysis",
+    "title": "设计策略 / 05 评审验证",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "strategy",
+      "method"
+    ],
+    "guide_tags": [
+      "method",
+      "design-strategy"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "让设计策略可以被评审、被决策、被上线后验证。",
+    "source_path": "methods/toolbox/analysis/design-strategy/ds-method-strategy-05-review-and-validation.md",
+    "content_hash": "sha256:00ccb8e5497f75089e7f64f446b41707bb353e05316d0085d7f44fb597a2f54f",
+    "status": "candidate"
+  },
+  {
+    "id": "ds-method-strategy-05",
+    "type": "analysis",
+    "title": "设计策略 / 体验策略方法论类",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "strategy",
+      "method"
+    ],
+    "guide_tags": [
+      "method",
+      "design-strategy"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "本文件基于通用方法论整理，待补充团队案例或业务资料验证。",
+    "source_path": "methods/toolbox/analysis/design-strategy/ds-method-strategy-05.md",
+    "content_hash": "sha256:4e5f411092bd7d8a8ee8f84c271f9e7936dbc14f2b67210ff9649d58dc313bf2",
+    "status": "candidate"
+  },
+  {
+    "id": "ds-method-strategy-06",
+    "type": "analysis",
+    "title": "设计策略 / 策略推导模型类",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "strategy",
+      "method"
+    ],
+    "guide_tags": [
+      "method",
+      "design-strategy"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "本文件基于通用方法论整理，待补充团队案例或业务资料验证。",
+    "source_path": "methods/toolbox/analysis/design-strategy/ds-method-strategy-06.md",
+    "content_hash": "sha256:25794dca2614ef2fac7f5f9db9a79f06c0e0cf43490c3c0fd266483ae4184b66",
+    "status": "candidate"
+  },
+  {
+    "id": "ds-method-user-00-module-overview",
+    "type": "analysis",
+    "title": "用户分析 / 00 模块总览",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "user-analysis",
+      "method"
+    ],
+    "guide_tags": [
+      "method",
+      "design-strategy",
+      "persona"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "用户分析子模块用于回答“用户是谁、在什么任务里为什么卡住、这些卡点如何影响体验和业务结果”。",
+    "source_path": "methods/toolbox/analysis/design-strategy/ds-method-user-00-module-overview.md",
+    "content_hash": "sha256:6d26095b5465dd1f7ced2487b515f6e21b5acf4f0570a88aadddbc664ba33eb2",
+    "status": "candidate"
+  },
+  {
+    "id": "ds-method-user-01-research-scope",
+    "type": "analysis",
+    "title": "用户分析 / 01 分析边界",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "user-analysis",
+      "method"
+    ],
+    "guide_tags": [
+      "method",
+      "design-strategy",
+      "persona"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "在开始分析前，明确本次用户分析服务于哪个项目、哪类用户、哪个任务阶段和哪种设计决策。",
+    "source_path": "methods/toolbox/analysis/design-strategy/ds-method-user-01-research-scope.md",
+    "content_hash": "sha256:71ecf3d6057af56e1e9ee51e98b217b20939ddaedf0dfec109dce07068169b62",
+    "status": "candidate"
+  },
+  {
+    "id": "ds-method-user-01",
+    "type": "analysis",
+    "title": "用户画像 Persona",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "user-analysis",
+      "method"
+    ],
+    "guide_tags": [
+      "method",
+      "design-strategy",
+      "persona"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "Persona 是将用户研究信息综合为代表性用户类型的方法，用于判断不同用户的目标、行为、信息需求、决策标准和主要阻力是否存在差异。它不是为了描述“一个人”，而是帮助体验设计判断：谁是主要用户、谁需要兼容、谁不应影响主路径，以及是否需要差异化设计动作。",
+    "source_path": "methods/toolbox/analysis/design-strategy/ds-method-user-01.md",
+    "content_hash": "sha256:32f06e1387ec1119574ce9ea948d506f903b0937e5e07d2ee19a0b37022e225e",
+    "status": "candidate"
+  },
+  {
+    "id": "ds-method-user-02-user-segmentation",
+    "type": "analysis",
+    "title": "用户分析 / 02 用户分层",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "user-analysis",
+      "method"
+    ],
+    "guide_tags": [
+      "method",
+      "design-strategy",
+      "persona"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "识别不同用户类型在目标、认知、经验、敏感点和行为路径上的差异。",
+    "source_path": "methods/toolbox/analysis/design-strategy/ds-method-user-02-user-segmentation.md",
+    "content_hash": "sha256:b1cfb3cbef73b52d7b3b8f1bc5b7f5dd2b2b85c736b76d14fb706b73a1a35dcb",
+    "status": "candidate"
+  },
+  {
+    "id": "ds-method-user-02",
+    "type": "analysis",
+    "title": "用户分析 / 用户认知与行为模型类",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "user-analysis",
+      "method"
+    ],
+    "guide_tags": [
+      "method",
+      "design-strategy",
+      "persona"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "本文件基于通用方法论整理，待补充团队案例或业务资料验证。",
+    "source_path": "methods/toolbox/analysis/design-strategy/ds-method-user-02.md",
+    "content_hash": "sha256:c64d362325d69e5f321576e9a712f1d32b69f047fdc2f084a40fbcd58ab14aca",
+    "status": "candidate"
+  },
+  {
+    "id": "ds-method-user-03-journey-and-tasks",
+    "type": "analysis",
+    "title": "用户分析 / 03 旅程任务",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "user-analysis",
+      "method"
+    ],
+    "guide_tags": [
+      "method",
+      "design-strategy",
+      "persona"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "按照用户完成任务的真实顺序，拆解触点、动作、信息需求、情绪变化和阻断点。",
+    "source_path": "methods/toolbox/analysis/design-strategy/ds-method-user-03-journey-and-tasks.md",
+    "content_hash": "sha256:2045018d2b45d1268c689f9f5940eb121d5b0fa1a5ab66b8a806cb25c0d65dd0",
+    "status": "candidate"
+  },
+  {
+    "id": "ds-method-user-04-painpoint-diagnosis",
+    "type": "analysis",
+    "title": "用户分析 / 04 痛点诊断",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "user-analysis",
+      "method"
+    ],
+    "guide_tags": [
+      "method",
+      "design-strategy",
+      "persona"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "把零散问题归因为可被设计解决的体验痛点，避免只罗列现象。",
+    "source_path": "methods/toolbox/analysis/design-strategy/ds-method-user-04-painpoint-diagnosis.md",
+    "content_hash": "sha256:e33e57212a7a2c25d297258fd02d5bf77ffe1a05c42fdac8ef5b91d9f437337f",
+    "status": "candidate"
+  },
+  {
+    "id": "ds-method-user-05-insight-output",
+    "type": "analysis",
+    "title": "用户分析 / 05 洞察输出",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "user-analysis",
+      "method"
+    ],
+    "guide_tags": [
+      "method",
+      "design-strategy",
+      "persona"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "把用户分析结论收敛为设计策略可以直接使用的洞察。",
+    "source_path": "methods/toolbox/analysis/design-strategy/ds-method-user-05-insight-output.md",
+    "content_hash": "sha256:144f1b81f94a199a9482d3f62ba758ae65a400f5a0c9f0167afce2c729f59f01",
+    "status": "candidate"
+  },
+  {
+    "id": "ux-method-experience-diagnosis-framework",
+    "type": "analysis",
+    "title": "体验问题诊断与走查框架",
+    "domain": [
+      "通用"
+    ],
+    "tags": [
+      "general-ux",
+      "experience-diagnosis"
+    ],
+    "guide_tags": [
+      "method",
+      "design-strategy",
+      "ux-audit"
+    ],
+    "guide_stage": [
+      "method-selection"
+    ],
+    "summary": "本文件提供跨场域可复用的体验问题诊断框架，用于页面走查、链路诊断、根因拆解和方案生成。它不替代具体场域知识，也不提供京东内部业务规则。",
+    "source_path": "methods/toolbox/analysis/design-strategy/ux-method-experience-diagnosis-framework.md",
+    "content_hash": "sha256:77b213c67e01d358b8447225f138162904bfd9ec0ea832a55695dd1fc6df8c55",
+    "status": "candidate"
   },
   {
     "id": "toolbox_analysis_experience_metrics_heart",

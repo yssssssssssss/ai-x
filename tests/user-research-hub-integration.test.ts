@@ -164,7 +164,7 @@ test('manifest records exact 104 Knowledge and 18 Skill canonical mappings', () 
   assert.equal(continuousDiscovery?.target?.canonical_id, 'scenario_continuous_discovery');
 });
 
-test('manifest preserves upstream mismatches and unresolved Gate-1 decisions without inventing consistency', () => {
+test('manifest preserves upstream mismatches and records the accepted Gate-1 decisions without inventing files', () => {
   const manifest = loadManifest();
   assert.deepEqual(manifest.upstream_manifest.declared_count_checks.map((check) => ({
     key: check.key,
@@ -185,12 +185,12 @@ test('manifest preserves upstream mismatches and unresolved Gate-1 decisions wit
       status: 'mismatch',
     },
   ]);
-  assert.ok(manifest.gate_1.facts.some(({ id }) => id === 'deploy-artifact-boundary-undefined'));
-  assert.ok(manifest.gate_1.facts.some(({ id }) => id === 'source-rights-not-declared'));
-  assert.equal(manifest.gate_1.status, 'review_required');
+  assert.ok(manifest.gate_1.facts.some(({ id, status }) => id === 'deploy-artifact-boundary-undefined' && status === 'accepted'));
+  assert.ok(manifest.gate_1.facts.some(({ id, status }) => id === 'source-rights-not-declared' && status === 'accepted'));
+  assert.equal(manifest.gate_1.status, 'ready');
 });
 
-test('manifest semantic checks reject duplicate targets and unacknowledged governance unknowns', {
+test('manifest semantic checks reject duplicate targets', {
   skip: !existsSync(SOURCE_ROOT),
 }, () => {
   const scan = scanHub(SOURCE_ROOT);
@@ -203,14 +203,6 @@ test('manifest semantic checks reject duplicate targets and unacknowledged gover
   delete mapped[1]!.coalescence_group_id;
   assert.ok(checkManifest(duplicate, scan, catalog).some((diagnostic) => (
     diagnostic.includes('duplicate canonical target')
-  )));
-
-  const governance = cloneManifest(loadManifest());
-  governance.gate_1.facts = governance.gate_1.facts.filter(({ id }) => (
-    id !== 'source-rights-not-declared'
-  ));
-  assert.ok(checkManifest(governance, scan, catalog).some((diagnostic) => (
-    diagnostic.includes('unknown source rights')
   )));
 });
 

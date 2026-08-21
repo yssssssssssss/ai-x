@@ -140,10 +140,9 @@ skills:
     risk_level: low
     task_types:
       - a11y_audit
-      - design_audit
+    output_schema: schemas/skill-result-envelope.schema.json
     required_tools:
       - tavily-web-search
-    output_schema: schemas/skill-result-envelope.schema.json
     status: active
   - id: analyze-satisfaction
     name: analyze-satisfaction
@@ -210,9 +209,9 @@ skills:
     risk_level: low
     task_types:
       - voc_diagnosis
+    output_schema: schemas/skill-result-envelope.schema.json
     required_tools:
       - tavily-web-search
-    output_schema: schemas/skill-result-envelope.schema.json
     status: active
   - id: competitive-analysis
     name: competitive-analysis
@@ -332,9 +331,9 @@ skills:
     risk_level: low
     task_types:
       - user_research_planning
+    output_schema: schemas/skill-result-envelope.schema.json
     required_tools:
       - tavily-web-search
-    output_schema: schemas/skill-result-envelope.schema.json
     status: active
   - id: generate-survey
     name: generate-survey
@@ -369,7 +368,6 @@ skills:
     risk_level: low
     task_types:
       - design_audit
-      - user_research_planning
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
   - id: issue-prioritization
@@ -442,7 +440,6 @@ skills:
     risk_level: low
     task_types:
       - user_research_planning
-      - voc_diagnosis
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
   - id: run-heuristic-evaluation
@@ -465,6 +462,28 @@ skills:
       - design_audit
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
+  - id: solution-generation
+    name: solution-generation
+    path: knowledge-base/skills/solution-generation
+    entry: knowledge-base/skills/solution-generation/SKILL.md
+    when_to_use: 解决方案生成 Skill
+    owner: user-research-hub-maintainers
+    risk_level: low
+    task_types:
+      - solution-generation
+    output_schema: schemas/skill-result-envelope.schema.json
+    status: draft
+  - id: strategy-map-generation
+    name: strategy-map-generation
+    path: knowledge-base/skills/strategy-map-generation
+    entry: knowledge-base/skills/strategy-map-generation/SKILL.md
+    when_to_use: 设计策略地图生成 Skill
+    owner: user-research-hub-maintainers
+    risk_level: low
+    task_types:
+      - strategy-map-generation
+    output_schema: schemas/skill-result-envelope.schema.json
+    status: draft
   - id: structure-interview-transcript
     name: structure-interview-transcript
     path: knowledge-base/skills/structure-interview-transcript

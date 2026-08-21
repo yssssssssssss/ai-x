@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { lintEntry } from '../harness/linters/knowledge-linter.ts';
 
 const GOOD = [
@@ -59,6 +61,28 @@ test('缺必填字段报错', async () => {
                  .replace('PLACEHOLDER', contentHash('# JTBD\n\n正文'));
   const issues = lintEntry('models/jtbd.md', md, new Set());
   assert.ok(issues.some((i) => i.message.includes('必填')), '应报缺必填字段');
+});
+
+test('candidate 必须匹配 disposition 治理与逻辑来源路径', () => {
+  const relPath = 'methods/toolbox/analysis/design-strategy/ds-method-strategy-02-strategy-map.md';
+  const markdown = readFileSync(join(process.cwd(), 'knowledge-base', relPath), 'utf8');
+  assert.deepEqual(lintEntry(relPath, markdown, new Set()), []);
+
+  const localPath = markdown.replace(
+    'hub_source_path: wiki/user-research/',
+    'hub_source_path: /Users/example/wiki/user-research/',
+  );
+  const issues = lintEntry(relPath, localPath, new Set());
+  assert.ok(issues.some((issue) => issue.message.includes('逻辑相对路径')));
+  assert.ok(issues.some((issue) => issue.message.includes('disposition')));
+});
+
+test('越界 status 报错', async () => {
+  const { contentHash } = await import('../apps/orchestrator-runtime/src/knowledge/normalizer.ts');
+  const markdown = GOOD.replace('status: approved', 'status: reviewed')
+    .replace('PLACEHOLDER', contentHash('# JTBD\n\n正文'));
+  const issues = lintEntry('models/jtbd.md', markdown, new Set());
+  assert.ok(issues.some((issue) => issue.message.includes('status')));
 });
 
 test('hash 不匹配报错', () => {

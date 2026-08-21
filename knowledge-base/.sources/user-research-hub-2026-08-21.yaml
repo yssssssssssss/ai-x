@@ -520,10 +520,10 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-competitor-01-competitor-selection
@@ -549,10 +549,10 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-competitor-02-comparison-dimensions
@@ -578,10 +578,10 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-competitor-03
@@ -607,12 +607,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
   - key: knowledge:ds-method-competitor-03-pattern-analysis
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -636,10 +637,10 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-competitor-04
@@ -665,12 +666,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
   - key: knowledge:ds-method-competitor-04-opportunity-and-risk
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -694,10 +696,10 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-competitor-05-insight-output
@@ -723,10 +725,10 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-strategy-00-module-overview
@@ -752,10 +754,10 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-strategy-01-problem-framing
@@ -781,10 +783,10 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-strategy-02-strategy-map
@@ -810,10 +812,10 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-strategy-04-priority-and-roadmap
@@ -839,10 +841,10 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-strategy-05
@@ -868,12 +870,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
   - key: knowledge:ds-method-strategy-05-review-and-validation
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -897,10 +900,10 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-strategy-06
@@ -926,12 +929,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
   - key: knowledge:ds-method-user-00-module-overview
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -955,10 +959,10 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-user-01
@@ -984,12 +988,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
   - key: knowledge:ds-method-user-01-research-scope
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1013,10 +1018,10 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-user-02
@@ -1042,12 +1047,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
   - key: knowledge:ds-method-user-02-user-segmentation
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1071,10 +1077,10 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-user-03-journey-and-tasks
@@ -1100,10 +1106,10 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-user-04-painpoint-diagnosis
@@ -1129,10 +1135,10 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
   - key: knowledge:ds-method-user-05-insight-output
@@ -1158,10 +1164,10 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
   - key: knowledge:ds-skill-competitor-strategy-analysis-checklist
@@ -1220,10 +1226,10 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
   - key: knowledge:mechanism-case-intake
@@ -1469,12 +1475,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - known-local-path-source-reference-removed
   - key: knowledge:ur-asset-concept-test
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1498,12 +1505,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - known-local-path-source-reference-removed
   - key: knowledge:ur-asset-decision-journey
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1527,12 +1535,14 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
+        - known-local-path-source-reference-removed
   - key: knowledge:ur-asset-experience-painpoints
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1556,12 +1566,14 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
+        - known-local-path-source-reference-removed
   - key: knowledge:ur-asset-interview-forbidden-questions
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1585,12 +1597,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - known-local-path-source-reference-removed
   - key: knowledge:ur-asset-mindset-cognition
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1614,12 +1627,14 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
+        - known-local-path-source-reference-removed
   - key: knowledge:ur-asset-needs-scenarios
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1643,12 +1658,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - known-local-path-source-reference-removed
   - key: knowledge:ur-asset-screener-demographics
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1672,12 +1688,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - known-local-path-source-reference-removed
   - key: knowledge:ur-asset-standardized-ux-scales
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1701,12 +1718,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - known-local-path-source-reference-removed
   - key: knowledge:ur-method-methods-scenarios-category-consumption-cross-category-category-research
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -3499,12 +3517,14 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
+        - known-local-path-source-reference-removed
   - key: knowledge:ur-template-churn-survey-framework
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -3528,12 +3548,14 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
+        - known-local-path-source-reference-removed
   - key: knowledge:ur-template-experience-issue-description-script
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -3557,12 +3579,14 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
+        - known-local-path-source-reference-removed
   - key: knowledge:ur-template-opportunity-solution-tree
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -3586,12 +3610,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - known-local-path-source-reference-removed
   - key: knowledge:ux-method-experience-diagnosis-framework
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -3615,12 +3640,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
   - key: skill:ds-skill-competitor-strategy-analysis
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -3645,10 +3671,10 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
     coalescence_group_id: coalesce-competitive-analysis
@@ -3675,10 +3701,10 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
   - key: skill:ds-skill-strategy-map-generation
@@ -3704,10 +3730,10 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
   - key: skill:ds-skill-trend-change-scan
@@ -3734,10 +3760,10 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
   - key: skill:ds-skill-user-insight-synthesis
@@ -3764,10 +3790,10 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
     coalescence_group_id: coalesce-synthesize-qualitative-insights
@@ -3795,12 +3821,14 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
+        - known-local-path-source-reference-removed
   - key: skill:ur-skill-analyze-satisfaction
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -3825,12 +3853,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - known-local-path-source-reference-removed
   - key: skill:ur-skill-build-experience-metrics
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -3855,12 +3884,14 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
+        - known-local-path-source-reference-removed
   - key: skill:ur-skill-code-open-feedback
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -3885,12 +3916,14 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
+        - known-local-path-source-reference-removed
   - key: skill:ur-skill-competitive-analysis
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -3915,12 +3948,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - known-local-path-source-reference-removed
     coalescence_group_id: coalesce-competitive-analysis
   - key: skill:ur-skill-conversion-funnel-analysis
     registry_kind: skill
@@ -3946,12 +3980,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - known-local-path-source-reference-removed
   - key: skill:ur-skill-experience-walkthrough
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -3976,10 +4011,10 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
     coalescence_group_id: coalesce-run-heuristic-evaluation
@@ -4007,12 +4042,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - known-local-path-source-reference-removed
   - key: skill:ur-skill-generate-interview-guide
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4037,12 +4073,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - known-local-path-source-reference-removed
   - key: skill:ur-skill-generate-persona
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4067,12 +4104,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - known-local-path-source-reference-removed
   - key: skill:ur-skill-generate-research-plan
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4097,12 +4135,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - known-local-path-source-reference-removed
   - key: skill:ur-skill-generate-survey
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4127,12 +4166,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - known-local-path-source-reference-removed
   - key: skill:ur-skill-generate-usability-test
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4157,12 +4197,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - known-local-path-source-reference-removed
   - key: skill:ur-skill-issue-prioritization
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4187,12 +4228,14 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
+        - known-local-path-source-reference-removed
   - key: skill:ur-skill-jobs-to-be-done
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4217,12 +4260,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - known-local-path-source-reference-removed
   - key: skill:ur-skill-journey-map
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4247,12 +4291,14 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
+        - known-local-path-source-reference-removed
   - key: skill:ur-skill-research-screenshot-analyzer
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4288,12 +4334,14 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
+        - known-local-path-source-reference-removed
     coalescence_group_id: coalesce-run-heuristic-evaluation
   - key: skill:ur-skill-structure-interview-transcript
     registry_kind: skill
@@ -4319,12 +4367,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - known-local-path-source-reference-removed
   - key: skill:ur-skill-synthesize-qualitative-insights
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -4349,12 +4398,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: reviewed
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - known-local-path-source-reference-removed
     coalescence_group_id: coalesce-synthesize-qualitative-insights
   - key: task:competitor-benchmark-research
     registry_kind: task
@@ -4379,12 +4429,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
   - key: task:data-behavior-diagnosis
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4408,12 +4459,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
   - key: task:define-strategy
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4492,12 +4544,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
   - key: task:feedback-issue-clustering
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4521,12 +4574,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
   - key: task:find-direction
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4572,12 +4626,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
   - key: task:opportunity-direction-evaluation
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4601,10 +4656,10 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
   - key: task:priority-roadmap
@@ -4630,12 +4685,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
   - key: task:root-cause-analysis
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4659,10 +4715,10 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
   - key: task:solution-comparison
@@ -4688,10 +4744,10 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
   - key: task:solution-generation
@@ -4717,12 +4773,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
   - key: task:solve-problems
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4757,12 +4814,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
   - key: task:trend-change-identification
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4786,12 +4844,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
   - key: task:understand-users
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4881,12 +4940,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
   - key: task:user-material-synthesis
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4910,12 +4970,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
   - key: task:user-segmentation
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4939,12 +5000,13 @@ entities:
       source_rights: cleared_internal_reuse
       review_status: review_required
       scans:
-        secrets: review_required
-        pii: review_required
-        local_paths: review_required
-        internal_business_facts: review_required
+        secrets: clear
+        pii: clear
+        local_paths: clear
+        internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
+        - internal-business-facts-evaluation-only
 attachment_groups:
   - id: hub-navigation
     owner_refs:
@@ -106895,4 +106957,4 @@ files:
     coverage:
       kind: attachment
       attachment_group_ref: migration-records
-disposition_hash: sha256:80cc603cd3306c519a0c7c0f462dde68279aac02aeaa9c81f2bcd52f5d420734
+disposition_hash: sha256:c1e961de7b418a68d9a5c5964fc0ad7b5795b88f94e4e6b1474cd0dc85260c8d
