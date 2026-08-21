@@ -4,6 +4,7 @@
 // 从而 route 与前端共享同一份响应契约,漂移在编译期就炸。
 
 import type {
+  CandidateProfile,
   ResearchTaskData,
   ResearchTaskV2,
   PlanStep,
@@ -82,7 +83,7 @@ export interface PlanCandidatesResponse {
 
 export interface SelectResponse {
   taskId: string;
-  candidateId: 'depth' | 'speed';
+  candidateId: CandidateProfile;
   plan: FinalizedPlan;
   pendingUploads: PendingUpload[];
 }

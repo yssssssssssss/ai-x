@@ -398,6 +398,10 @@ function routedCandidateValidationFeedback(input: {
   const compiler = new PlanCompiler();
   const issues: string[] = [];
   for (const candidate of input.candidates) {
+    if (candidate.id !== 'depth' && candidate.id !== 'speed') {
+      issues.push(`${candidate.id}: routed_candidate_profile_not_enabled`);
+      continue;
+    }
     const maxSteps = ROUTED_STEP_LIMITS[candidate.id];
     if (candidate.steps.length > maxSteps) {
       issues.push(

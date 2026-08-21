@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState, type KeyboardEvent } from 'react';
 import useEmblaCarousel from 'embla-carousel-react';
+import type { CandidateProfile } from '../../../../../packages/api-contract/plan.ts';
 import type { CurrentPlanCandidate } from '../../api/client.ts';
+import { candidateInitialIndex } from '../../current-flow-state.ts';
 import { Header } from './Stage1Understand.tsx';
 
 function ArrowIcon({ direction }: { direction: 'previous' | 'next' }) {
@@ -16,6 +18,31 @@ function shouldReduceMotion() {
   return typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
+const CANDIDATE_PROFILE_PRESENTATIONS: Record<CandidateProfile, { label: string; className: string }> = {
+  speed: { label: '快速判断', className: 'tag-speed' },
+  depth: { label: '深度研究', className: 'tag-depth' },
+  breadth: { label: '广度扫描', className: 'tag-breadth' },
+  focused: { label: '聚焦关键链路', className: 'tag-focused' },
+  mixed_method: { label: '混合方法', className: 'tag-mixed-method' },
+  decision: { label: '决策收敛', className: 'tag-decision' },
+  remediation: { label: '整改复测', className: 'tag-remediation' },
+};
+
+export function candidateProfilePresentation(candidateId: string): {
+  label: string;
+  className: string;
+} {
+  const presentation = Object.prototype.hasOwnProperty.call(
+    CANDIDATE_PROFILE_PRESENTATIONS,
+    candidateId,
+  )
+    ? CANDIDATE_PROFILE_PRESENTATIONS[candidateId as CandidateProfile]
+    : undefined;
+  if (presentation) return presentation;
+  console.error(`Unknown candidate profile: ${candidateId}`);
+  return { label: '研究方案', className: 'tag-unknown' };
+}
+
 // 段2a · Current 候选计划：选择的稳定标识是 planVersionId，而不是展示用 candidateId。
 export function Stage2Candidates({
   candidates, onSelect, selectedId, loading, readOnly = false,
@@ -26,7 +53,7 @@ export function Stage2Candidates({
   loading?: boolean;
   readOnly?: boolean;
 }) {
-  const initialIndex = Math.max(0, candidates.findIndex((candidate) => candidate.planVersionId === selectedId));
+  const initialIndex = candidateInitialIndex(candidates, selectedId);
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [canScrollPrevious, setCanScrollPrevious] = useState(false);
   const [canScrollNext, setCanScrollNext] = useState(candidates.length > 1);
@@ -56,6 +83,11 @@ export function Stage2Candidates({
       carouselApi.off('reInit', updateCarouselState);
     };
   }, [carouselApi, updateCarouselState]);
+
+  useEffect(() => {
+    if (!carouselApi) return;
+    carouselApi.scrollTo(initialIndex, true);
+  }, [carouselApi, initialIndex]);
 
   const scrollTo = useCallback((index: number, jump = shouldReduceMotion()) => {
     carouselApi?.scrollTo(index, jump);
@@ -119,6 +151,8 @@ export function Stage2Candidates({
               const current = candidateIndex === currentIndex;
               const active = selectedId === candidate.planVersionId;
               const steps = candidate.plan.steps;
+              const profile = candidateProfilePresentation(candidate.candidateId);
+              const recommended = candidate.plan.candidate_metadata.recommended === true;
               return (
                 <div
                   key={candidate.planVersionId}
@@ -139,9 +173,10 @@ export function Stage2Candidates({
                     className={`candidate-card${active ? ' is-active' : ''}`}
                   >
                     <div className="candidate-head">
-                      <span className={`candidate-tag tag-${candidate.candidateId}`}>
-                        {candidate.candidateId === 'depth' ? '深度优先' : '速度优先'}
+                      <span className={`candidate-tag ${profile.className}`}>
+                        {profile.label}
                       </span>
+                      {recommended ? <span className="candidate-recommended">推荐</span> : null}
                       <b className="candidate-title">{candidate.title}</b>
                       {active && loading ? <span className="spinner candidate-spinner" /> : null}
                     </div>

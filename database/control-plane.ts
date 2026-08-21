@@ -12,7 +12,11 @@ import type {
   CurrentExecutionPlan,
   PendingInput,
 } from '../packages/api-contract/research-deliverable.ts';
-import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
+import {
+  isCandidateProfile,
+  type CandidateProfile,
+  type ResearchTaskV2,
+} from '../packages/api-contract/plan.ts';
 import type {
   ZeroPublicationFailure,
   ZeroPublicationStage,
@@ -367,6 +371,50 @@ function candidateActivatedNodes(plan: Record<string, unknown>): string[] {
   return activatedNodes;
 }
 
+function candidateRecommended(plan: Record<string, unknown>): boolean | undefined {
+  const metadata = asRecord(plan.candidate_metadata);
+  if (!metadata) {
+    throw new ControlPlaneConflictError('candidate plan metadata is missing or malformed');
+  }
+  if (!Object.hasOwn(metadata, 'recommended')) return undefined;
+  if (typeof metadata.recommended !== 'boolean') {
+    throw new ControlPlaneConflictError('candidate plan recommendation is malformed');
+  }
+  return metadata.recommended;
+}
+
+function assertCompatibleCandidateSet(
+  candidates: readonly { candidateId: unknown; plan: unknown }[],
+  context: string,
+): void {
+  const candidateIds = candidates.map(({ candidateId }) => candidateId);
+  if (
+    candidates.length < 2
+    || candidates.length > 4
+    || candidateIds.some((candidateId) => !isCandidateProfile(candidateId))
+    || new Set(candidateIds).size !== candidateIds.length
+    || !candidateIds.includes('speed')
+    || !candidateIds.includes('depth')
+    || (
+      candidateIds.length > 2
+      && (candidateIds[0] !== 'speed' || candidateIds[1] !== 'depth')
+    )
+  ) {
+    throw new ControlPlaneConflictError(
+      `${context} requires 2-4 unique controlled candidates in baseline-first order`,
+    );
+  }
+  const recommendedCount = candidates.filter(({ plan }) => {
+    const planRecord = asRecord(plan);
+    if (!planRecord) throw new ControlPlaneConflictError('candidate plan must be an object');
+    candidateMetadata(planRecord);
+    return candidateRecommended(planRecord) === true;
+  }).length;
+  if (recommendedCount > 1) {
+    throw new ControlPlaneConflictError(`${context} has multiple recommended candidates`);
+  }
+}
+
 function currentPlanCandidateFromRow(
   row: Record<string, unknown>,
   taskId: string,
@@ -380,13 +428,14 @@ function currentPlanCandidateFromRow(
     throw new ControlPlaneConflictError('candidate plan canonical hash does not match stored hash');
   }
   const candidateId = asString(row.candidate_id, 'candidate_id');
-  if (candidateId !== 'depth' && candidateId !== 'speed') {
+  if (!isCandidateProfile(candidateId)) {
     throw new ControlPlaneConflictError('candidate plan identity is malformed');
   }
   if (!Array.isArray(row.pending_inputs)) {
     throw new ControlPlaneConflictError('candidate pending inputs are malformed');
   }
   candidateActivatedNodes(plan);
+  candidateRecommended(plan);
   return {
     planVersionId: asString(row.id, 'id'),
     candidateId,
@@ -397,28 +446,36 @@ function currentPlanCandidateFromRow(
   };
 }
 
-function latestCandidatePair(
+function latestCandidateSet(
   rows: Array<Record<string, unknown>>,
-): [Record<string, unknown>, Record<string, unknown>] {
-  const byCandidate = [...rows].sort((left, right) => {
-    const order = { depth: 0, speed: 1 } as const;
-    return (order[left.candidate_id as keyof typeof order] ?? 2)
-      - (order[right.candidate_id as keyof typeof order] ?? 2);
-  });
-  const versions = byCandidate
-    .map((row) => asNumber(row.version, 'version'))
-    .sort((left, right) => left - right);
-  if (
-    byCandidate.length !== 2
-    || byCandidate[0]?.candidate_id !== 'depth'
-    || byCandidate[1]?.candidate_id !== 'speed'
-    || versions[1] !== versions[0]! + 1
-  ) {
+): Record<string, unknown>[] {
+  const newestGeneration: Record<string, unknown>[] = [];
+  const candidateIds = new Set<CandidateProfile>();
+  for (const row of rows) {
+    const candidateId = asString(row.candidate_id, 'candidate_id');
+    if (!isCandidateProfile(candidateId)) {
+      throw new ControlPlaneConflictError('candidate plan identity is malformed');
+    }
+    if (candidateIds.has(candidateId)) break;
+    candidateIds.add(candidateId);
+    newestGeneration.push(row);
+    if (candidateIds.has('speed') && candidateIds.has('depth')) break;
+    if (newestGeneration.length === 4) break;
+  }
+  const byVersion = newestGeneration.sort(
+    (left, right) => asNumber(left.version, 'version') - asNumber(right.version, 'version'),
+  );
+  assertCompatibleCandidateSet(
+    byVersion.map((row) => ({ candidateId: row.candidate_id, plan: row.plan_json })),
+    'awaiting_selection task',
+  );
+  const firstVersion = asNumber(byVersion[0]?.version, 'version');
+  if (byVersion.some((row, index) => asNumber(row.version, 'version') !== firstVersion + index)) {
     throw new ControlPlaneConflictError(
-      'awaiting_selection task requires exactly depth and speed as the latest consecutive candidates',
+      'awaiting_selection task requires consecutive candidate plan versions',
     );
   }
-  return [byCandidate[0], byCandidate[1]];
+  return byVersion;
 }
 
 export interface SelectionResponse {
@@ -584,7 +641,7 @@ export interface ControlPlanVersionDetail extends ControlPlanVersion {
   pendingInputs: unknown;
 }
 
-export type ControlCandidateId = 'depth' | 'speed';
+export type ControlCandidateId = CandidateProfile;
 
 export interface ControlCandidatePlanVersionDetail
   extends Omit<ControlPlanVersionDetail, 'candidateId' | 'plan' | 'pendingInputs'> {
@@ -1037,13 +1094,7 @@ export class ControlPlaneRepository {
       if (!conversation || conversation.owner_user_id !== input.ownerUserId) {
         throw new ControlPlaneConflictError(`conversation ${input.conversationId} does not belong to owner ${input.ownerUserId}`);
       }
-      const candidateIds = new Set<ControlCandidateId>();
-      for (const candidate of input.candidates) {
-        if (candidateIds.has(candidate.candidateId)) {
-          throw new ControlPlaneConflictError(`candidate id ${candidate.candidateId} is duplicated`);
-        }
-        candidateIds.add(candidate.candidateId);
-      }
+      assertCompatibleCandidateSet(input.candidates, 'task planning');
 
       const taskId = randomUUID();
       const taskResult = await connection.query(
@@ -1160,15 +1211,7 @@ export class ControlPlaneRepository {
       if (!input.taskType || !structuredTask || structuredTask.task_type !== input.taskType) {
         throw new ControlPlaneConflictError(`task ${input.taskId} has invalid finalized structured task`);
       }
-      const candidateIds = input.candidates.map((candidate) => candidate.candidateId);
-      if (
-        input.candidates.length !== 2
-        || new Set(candidateIds).size !== 2
-        || !candidateIds.includes('depth')
-        || !candidateIds.includes('speed')
-      ) {
-        throw new ControlPlaneConflictError('existing task planning requires exactly depth and speed candidates');
-      }
+      assertCompatibleCandidateSet(input.candidates, 'existing task planning');
 
       const preparedCandidates = input.candidates.map((candidate) => ({
         candidate,
@@ -1349,24 +1392,20 @@ export class ControlPlaneRepository {
       if (!structuredTask || structuredTask.task_type !== input.taskType) {
         throw new ControlPlaneConflictError(`task ${input.taskId} has invalid finalized structured task`);
       }
-      const candidateById = new Map(input.candidates.map((candidate) => [candidate.candidateId, candidate]));
-      if (
-        input.candidates.length !== 2
-        || candidateById.size !== 2
-        || !candidateById.has('depth')
-        || !candidateById.has('speed')
-      ) {
-        throw new ControlPlaneConflictError('clarification planning requires exactly depth and speed candidates');
-      }
-      const preparedCandidates = (['depth', 'speed'] as const).map((candidateId) => {
-        const candidate = candidateById.get(candidateId)!;
-        return { candidate, persistedPlan: planForTask(candidate.plan, input.taskId) };
-      });
+      assertCompatibleCandidateSet(input.candidates, 'clarification planning');
+      const preparedCandidates = input.candidates.map((candidate) => ({
+        candidate,
+        persistedPlan: planForTask(candidate.plan, input.taskId),
+      }));
       for (const { persistedPlan } of preparedCandidates) {
         await validateProblemGraphReceipt(connection, JSON.parse(persistedPlan.json));
       }
-      if (preparedCandidates[0]!.persistedPlan.hash === preparedCandidates[1]!.persistedPlan.hash) {
-        throw new ControlPlaneConflictError('clarification candidate plan hashes are duplicated');
+      const clarificationPlanHashes = new Set<string>();
+      for (const { persistedPlan } of preparedCandidates) {
+        if (clarificationPlanHashes.has(persistedPlan.hash)) {
+          throw new ControlPlaneConflictError('clarification candidate plan hashes are duplicated');
+        }
+        clarificationPlanHashes.add(persistedPlan.hash);
       }
       const versionResult = await connection.query(
         `SELECT COALESCE(MAX(version), 0) + 1 AS version
@@ -1535,11 +1574,11 @@ export class ControlPlaneRepository {
          FROM control_plan_versions
          WHERE task_id = $1
          ORDER BY version DESC
-         LIMIT 2
+         LIMIT 8
          FOR UPDATE`,
         [input.taskId],
       );
-      const plan = latestCandidatePair(planResult.rows).find((candidate) => (
+      const plan = latestCandidateSet(planResult.rows).find((candidate) => (
         candidate.id === input.planVersionId
       ));
       if (!plan || plan.task_id !== input.taskId || typeof plan.candidate_id !== 'string') {
@@ -1649,8 +1688,8 @@ export class ControlPlaneRepository {
     pendingInputs?: unknown;
   }): Promise<{ plan: ControlPlanVersion; task: ControlTask }> {
     const candidateId = input.candidateId;
-    if (candidateId !== 'depth' && candidateId !== 'speed') {
-      throw new ControlPlaneConflictError('Current plan revision requires a depth or speed candidate id');
+    if (!isCandidateProfile(candidateId)) {
+      throw new ControlPlaneConflictError('Current plan revision requires a controlled candidate profile');
     }
     const plan = asRecord(input.plan);
     if (!plan) throw new ControlPlaneConflictError('candidate revision plan must be an object');
@@ -2564,10 +2603,10 @@ export class ControlPlaneRepository {
          FROM control_plan_versions
          WHERE task_id = $1
          ORDER BY version DESC
-         LIMIT 2`,
+         LIMIT 8`,
         [input.taskId],
       );
-      const rows = latestCandidatePair(result.rows);
+      const rows = latestCandidateSet(result.rows);
 
       let activatedNodes: string[] | null = null;
       const candidates = rows.map((row): CurrentPlanCandidate => {

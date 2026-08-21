@@ -722,6 +722,49 @@ test('compiles exact depth and speed candidates, rebuilds numbering, freezes gra
   assert.equal('purpose' in depth.plan.steps[0]!, false);
 });
 
+test('compiles a controlled specialty profile and freezes optional recommendation and planning provenance', () => {
+  const compiler = new PlanCompiler();
+  const candidate: CurrentPlanCandidateProposal = {
+    ...validCandidate('depth'),
+    id: 'breadth',
+    title: '广度扫描',
+    rationale: '扩大对象覆盖',
+    tradeoffs: '单对象深挖较少',
+    recommended: true,
+  };
+  const planningProvenance = {
+    primary_scenario_id: 'competitive-benchmark-research',
+    secondary_scenario_ids: ['priority-roadmap'],
+    confidence: 'high' as const,
+    signal_ids: ['explicit-breadth-request'],
+    source_field_paths: ['research_task_v2.scope'],
+    resolver_version_hash: `sha256:${'a'.repeat(64)}`,
+    mapping_version_hash: `sha256:${'b'.repeat(64)}`,
+    candidate_profiles: ['speed', 'depth', 'breadth'] as const,
+    degradation_reasons: [],
+  };
+  const compiled = compiler.compile({
+    ...input(candidate),
+    planning_provenance: {
+      ...planningProvenance,
+      candidate_profiles: [...planningProvenance.candidate_profiles],
+    },
+  });
+
+  assert.equal(compiled.plan.candidate_metadata.recommended, true);
+  assert.deepEqual(compiled.plan.planning_provenance, planningProvenance);
+  const taskId = 'task-breadth-revision';
+  const validated = validateCurrentPlanRevision({
+    plan: { ...compiled.plan, task_id: taskId },
+    task,
+    pending_inputs: compiled.pending_inputs,
+    task_id: taskId,
+    candidate_id: 'breadth',
+  });
+  assert.equal(validated.candidate_metadata.recommended, true);
+  assert.deepEqual(validated.planning_provenance, planningProvenance);
+});
+
 test('revision recompilation preserves ProblemGraph receipt provenance in frozen equality', () => {
   const compiled = new PlanCompiler().compile(input());
   const plan = {
@@ -818,7 +861,7 @@ interface CurrentResearchPlanningFixture {
 }
 
 interface PreparedCandidate {
-  candidateId: 'depth' | 'speed';
+  candidateId: PlanCandidate['id'];
   plan: Omit<CurrentExecutionPlan, 'task_id'> & { task_id?: '' };
   pendingInputs: PendingInput[];
 }

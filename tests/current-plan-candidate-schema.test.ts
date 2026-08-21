@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { PlanCandidate, ResearchTaskData } from '../packages/api-contract/plan.ts';
+import {
+  CANDIDATE_PROFILES,
+  type PlanCandidate,
+  type ResearchTaskData,
+} from '../packages/api-contract/plan.ts';
 import { RoutedPlanner } from '../apps/orchestrator-runtime/src/planners/routed-planner.ts';
 import {
   defaultFixtures,
@@ -19,14 +23,14 @@ type CandidatePayload = Omit<PlanCandidate, 'activated_nodes'>;
 function candidate(id: PlanCandidate['id']): CandidatePayload {
   return {
     id,
-    title: id === 'depth' ? '深度方案' : '速度方案',
-    rationale: id === 'depth' ? '覆盖完整并交叉验证' : '优先获得关键结论',
-    tradeoffs: id === 'depth' ? '耗时更长' : '覆盖范围较窄',
+    title: `${id} 方案`,
+    rationale: `${id} 执行策略`,
+    tradeoffs: `${id} 取舍`,
     steps: [{
       step_no: 1,
-      step_name: id === 'depth' ? '深度分析' : '快速分析',
+      step_name: `${id} 分析`,
       actor_type: 'llm',
-      actor_id: id === 'depth' ? '深度分析器' : '快速分析器',
+      actor_id: `${id} 分析器`,
       input: { focus: id },
     }],
     assumptions: [{ key: 'scope', value: '公开资料', editable: true }],
@@ -57,11 +61,38 @@ test('current-plan-candidates schema is registered and accepts the strict baseli
   assert.deepEqual(errorsFor(payload()), []);
 });
 
-test('Current candidates must contain exactly depth then speed', () => {
+test('candidate profile type and candidate schema share the same controlled IDs', () => {
+  const schema = JSON.parse(
+    loadSchemaText(resolveSchema('current-plan-candidates')) ?? '{}',
+  ) as { $defs?: { candidateProfile?: { enum?: unknown } } };
+  assert.deepEqual(schema.$defs?.candidateProfile?.enum, [...CANDIDATE_PROFILES]);
+});
+
+test('Current candidates accept two to four homogeneous controlled profiles in persisted order', () => {
+  for (const ids of [
+    ['speed', 'depth'],
+    ['depth', 'speed'],
+    ['speed', 'depth', 'breadth'],
+    ['speed', 'depth', 'focused', 'decision'],
+  ] as const) {
+    const value = { candidates: ids.map(candidate) };
+    value.candidates.at(-1)!.recommended = true;
+    assert.deepEqual(errorsFor(value), [], ids.join(','));
+  }
+});
+
+test('Current candidates reject counts outside 2-4, unknown IDs, and identical duplicates', () => {
   const cases = [
     { candidates: [candidate('depth')] },
+    { candidates: [
+      candidate('speed'),
+      candidate('depth'),
+      candidate('breadth'),
+      candidate('focused'),
+      candidate('decision'),
+    ] },
     { candidates: [candidate('depth'), candidate('speed'), candidate('speed')] },
-    { candidates: [candidate('speed'), candidate('depth')] },
+    { candidates: [candidate('depth'), { ...candidate('speed'), id: 'invented' }] },
   ];
 
   for (const value of cases) {

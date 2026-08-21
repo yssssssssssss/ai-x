@@ -157,6 +157,12 @@ function existingTaskCandidates(label: string): Array<{
           traceId: 'trace-control-fixture-problem-graph',
         },
         steps: [{ step_no: 1, step_name: `${label}-depth` }],
+        candidate_metadata: {
+          title: `${label} depth`,
+          rationale: 'depth compatibility fixture',
+          tradeoffs: 'slower',
+        },
+        activated_nodes: [],
       },
       pendingInputs: [],
     },
@@ -173,6 +179,12 @@ function existingTaskCandidates(label: string): Array<{
           traceId: 'trace-control-fixture-problem-graph',
         },
         steps: [{ step_no: 1, step_name: `${label}-speed` }],
+        candidate_metadata: {
+          title: `${label} speed`,
+          rationale: 'speed compatibility fixture',
+          tradeoffs: 'less review',
+        },
+        activated_nodes: [],
       },
       pendingInputs: [],
     },
@@ -645,7 +657,7 @@ test('persists a Current task and its depth/speed candidates without activating 
         taskId: created.task.id,
         ownerUserId: ownerId,
       }),
-      /exactly depth and speed/i,
+      /identity|controlled candidate/i,
     );
     await extraConnection.query(
       `DELETE FROM control_plan_versions WHERE task_id = $1 AND candidate_id = 'extra'`,
@@ -676,6 +688,64 @@ test('persists a Current task and its depth/speed candidates without activating 
     }),
     /metadata/i,
   );
+});
+
+test('persists, recovers, and selects a recommended three-profile candidate generation by planVersionId', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const candidateRepository = repository as unknown as CandidatePersistenceRepository;
+  const [depth, speed] = existingTaskCandidates('dynamic-generation');
+  const breadth = {
+    ...structuredClone(depth!),
+    candidateId: 'breadth',
+    plan: {
+      ...structuredClone(depth!.plan),
+      steps: [{ step_no: 1, step_name: 'dynamic-generation-breadth' }],
+      candidate_metadata: {
+        title: 'Breadth',
+        rationale: 'Wider coverage',
+        tradeoffs: 'Less depth per object',
+        recommended: true,
+      },
+    },
+  };
+  const created = await candidateRepository.createTaskWithCandidates({
+    conversationId,
+    ownerUserId: ownerId,
+    originalInput: 'Dynamic candidate compatibility',
+    taskType: 'competitive_research',
+    structuredTask: { research_goal: 'persist three controlled candidates' },
+    candidates: [speed!, depth!, breadth],
+  });
+
+  assert.deepEqual(
+    created.candidates.map(({ candidateId, version }) => ({ candidateId, version })),
+    [
+      { candidateId: 'speed', version: 1 },
+      { candidateId: 'depth', version: 2 },
+      { candidateId: 'breadth', version: 3 },
+    ],
+  );
+  const recovered = await candidateRepository.listCandidatePlanVersionsForOwner({
+    taskId: created.task.id,
+    ownerUserId: ownerId,
+  });
+  assert.ok(recovered);
+  assert.deepEqual(
+    recovered.candidates.map(({ candidateId }) => candidateId),
+    ['speed', 'depth', 'breadth'],
+  );
+  assert.equal(recovered.candidates[2]?.plan.candidate_metadata.recommended, true);
+
+  const selected = await repository.selectCandidate({
+    taskId: created.task.id,
+    planVersionId: recovered.candidates[2]!.planVersionId,
+    expectedVersion: created.task.stateVersion,
+    idempotencyKey: `select-breadth-${randomUUID()}`,
+    requestHash: `sha256:${'c'.repeat(64)}`,
+    actor: { userId: ownerId, role: 'owner' },
+  });
+  assert.equal(selected.planVersionId, recovered.candidates[2]!.planVersionId);
+  assert.equal((await repository.getActivePlan(created.task.id))?.candidateId, 'breadth');
 });
 
 test('persists clarified depth/speed plans on the same task and advances selection state atomically', async () => {

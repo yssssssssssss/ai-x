@@ -19,6 +19,12 @@ test('candidate plans render as an accessible, responsive carousel', async () =>
   assert.match(source, /event\.key === 'ArrowLeft'/);
   assert.match(source, /event\.key === 'ArrowRight'/);
   assert.match(source, /tabIndex=\{candidateIndex === currentIndex \? 0 : -1\}/);
+  for (const label of ['快速判断', '深度研究', '广度扫描', '聚焦关键链路', '混合方法', '决策收敛', '整改复测']) {
+    assert.match(source, new RegExp(label));
+  }
+  assert.match(source, /Unknown candidate profile/);
+  assert.match(source, /candidate_metadata\.recommended === true/);
+  assert.match(source, /candidate-recommended/);
 
   assert.match(css, /\.candidate-carousel-viewport\s*\{[^}]*overflow\s*:\s*hidden/su);
   assert.match(css, /\.candidate-slide\s*\{[^}]*flex\s*:\s*0 0 min\(80%, 540px\)/su);

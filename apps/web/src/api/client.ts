@@ -23,7 +23,13 @@ async function req<T>(path: string, opts: { method?: string; body?: unknown; hea
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(res.status, data?.error ?? `HTTP ${res.status}`);
+  if (!res.ok) {
+    throw new ApiError(
+      res.status,
+      data?.error ?? `HTTP ${res.status}`,
+      typeof data?.code === 'string' ? data.code : undefined,
+    );
+  }
   return data as T;
 }
 
@@ -40,7 +46,11 @@ async function reqBlob(path: string): Promise<Response> {
 }
 
 export class ApiError extends Error {
-  constructor(public readonly status: number, message: string) {
+  constructor(
+    public readonly status: number,
+    message: string,
+    public readonly code?: string,
+  ) {
     super(message);
   }
 }
@@ -49,6 +59,8 @@ export class ApiError extends Error {
 // 契约类型集中在 packages/api-contract(前后端共享同一份,漂移编译期即炸)。
 // 这里 re-export,让前端各组件的 import 路径('./api/client.ts')保持不变。
 export type {
+  CandidateProfile,
+  PlanningProvenance,
   Assumption,
   PlanStep,
   ResearchTaskData,

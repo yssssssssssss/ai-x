@@ -3,6 +3,35 @@
 // re-export)、agent-api 都从这里 import type。零运行时依赖,纯 import type。
 // 生产者是 orchestrator,故这些类型以后端历史定义为准。
 
+export const CANDIDATE_PROFILES = [
+  'speed',
+  'depth',
+  'breadth',
+  'focused',
+  'mixed_method',
+  'decision',
+  'remediation',
+] as const;
+
+export type CandidateProfile = typeof CANDIDATE_PROFILES[number];
+
+export function isCandidateProfile(value: unknown): value is CandidateProfile {
+  return typeof value === 'string'
+    && (CANDIDATE_PROFILES as readonly string[]).includes(value);
+}
+
+export interface PlanningProvenance {
+  primary_scenario_id: string;
+  secondary_scenario_ids: string[];
+  confidence: 'high' | 'medium' | 'low';
+  signal_ids: string[];
+  source_field_paths: string[];
+  resolver_version_hash: string;
+  mapping_version_hash: string;
+  candidate_profiles: CandidateProfile[];
+  degradation_reasons: string[];
+}
+
 export interface GuidanceRef {
   node: string;
   id: string;
@@ -96,10 +125,11 @@ export interface PlanStep {
 }
 
 export interface PlanCandidate {
-  id: 'depth' | 'speed';
+  id: CandidateProfile;
   title: string;
   rationale: string;
   tradeoffs: string;
+  recommended?: boolean;
   steps: PlanStep[];
   assumptions: Assumption[];
   activated_nodes: string[];

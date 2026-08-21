@@ -49,7 +49,7 @@ async function main(): Promise<void> {
   console.log(`task_id       : ${result.taskId}`);
   console.log(`conversation  : ${conv.id}`);
   console.log(`workspace     : ${result.workspaceUri}`);
-  console.log(`\n选中后执行: pnpm spike:execute ${result.taskId} ${conv.id} <depth|speed>`);
+  console.log(`\n选中后执行: pnpm spike:execute ${result.taskId} ${conv.id} <${result.candidates.map((candidate) => candidate.id).join('|')}>`);
 }
 
 main()

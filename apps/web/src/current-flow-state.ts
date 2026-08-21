@@ -1,3 +1,4 @@
+import { isCandidateProfile } from '../../../packages/api-contract/plan.ts';
 import type {
   ControlExecutionStepResponse,
   ControlPlanCandidatesResponse,
@@ -504,7 +505,7 @@ function isRestorableClarificationRequirement(value: unknown): boolean {
 function isRestorableCandidate(value: unknown): value is CurrentPlanCandidate {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const candidate = value as Partial<CurrentPlanCandidate>;
-  return (candidate.candidateId === 'depth' || candidate.candidateId === 'speed')
+  return isCandidateProfile(candidate.candidateId)
     && isNonEmptyString(candidate.planVersionId)
     && isNonEmptyString(candidate.title)
     && isNonEmptyString(candidate.rationale)
@@ -512,6 +513,25 @@ function isRestorableCandidate(value: unknown): value is CurrentPlanCandidate {
     && isNonEmptyString(candidate.planHash)
     && Boolean(candidate.plan && typeof candidate.plan === 'object')
     && Array.isArray(candidate.pendingInputs);
+}
+
+function isRecommendedCandidate(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const plan = isRecord(value.plan) ? value.plan : null;
+  const metadata = plan && isRecord(plan.candidate_metadata) ? plan.candidate_metadata : null;
+  return metadata?.recommended === true;
+}
+
+export function candidateInitialIndex(
+  candidates: readonly CurrentPlanCandidate[],
+  selectedPlanVersionId?: string,
+): number {
+  const selectedIndex = selectedPlanVersionId
+    ? candidates.findIndex((candidate) => candidate.planVersionId === selectedPlanVersionId)
+    : -1;
+  if (selectedIndex >= 0) return selectedIndex;
+  const recommendedIndex = candidates.findIndex(isRecommendedCandidate);
+  return Math.max(0, recommendedIndex);
 }
 
 export interface CurrentTaskHydrationInput {
@@ -560,12 +580,17 @@ export function hydrateCurrentTask(input: CurrentTaskHydrationInput): {
   if (task.state === 'awaiting_selection') {
     const candidates = input.candidates;
     const activatedNodes = input.activatedNodes;
+    const candidateIds = candidates?.map((candidate) => candidate.candidateId) ?? [];
+    const recommendedCount = candidates?.filter(isRecommendedCandidate).length ?? 0;
     if (
       !Array.isArray(candidates)
-      || candidates.length !== 2
+      || candidates.length < 2
+      || candidates.length > 4
       || !candidates.every(isRestorableCandidate)
-      || candidates[0]?.candidateId !== 'depth'
-      || candidates[1]?.candidateId !== 'speed'
+      || new Set(candidateIds).size !== candidateIds.length
+      || !candidateIds.includes('speed')
+      || !candidateIds.includes('depth')
+      || recommendedCount > 1
       || !Array.isArray(activatedNodes)
       || activatedNodes.some((node) => typeof node !== 'string')
     ) {

@@ -11,6 +11,10 @@ import {
   type ControlArtifact,
 } from '../../../../database/control-plane.ts';
 import {
+  isCandidateProfile,
+  type CandidateProfile,
+} from '../../../../packages/api-contract/plan.ts';
+import {
   executionFailureAllowsAction,
   selectAuthoritativeFailedStep,
   type ControlExecutionResult,
@@ -90,6 +94,15 @@ export interface WorkflowPlanRevisionDriver {
 }
 
 export type WorkflowExecutionResponse = DisabledExecutionResponse | ControlExecutionResult;
+
+export class CandidateProfileNoLongerEligibleError extends ControlPlaneConflictError {
+  readonly code = 'candidate_profile_no_longer_eligible' as const;
+
+  constructor(readonly candidateProfile: CandidateProfile) {
+    super(`candidate profile ${candidateProfile} is no longer eligible for revision`);
+    this.name = 'CandidateProfileNoLongerEligibleError';
+  }
+}
 
 export class TaskWorkflowGateError extends Error {
   constructor(readonly unresolved: string[]) {
@@ -776,7 +789,7 @@ export class TaskWorkflowService {
       throw new ControlPlaneConflictError(`task ${task.id} has no active plan to revise`);
     }
     const activePlan = await this.requirePlan(task, task.activePlanVersionId);
-    if (activePlan.candidateId !== 'depth' && activePlan.candidateId !== 'speed') {
+    if (!isCandidateProfile(activePlan.candidateId)) {
       throw new ControlPlaneConflictError(`active plan ${activePlan.id} has no valid candidate choice`);
     }
     if (!this.planRevisionDriver) {

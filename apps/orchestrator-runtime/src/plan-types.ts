@@ -3,6 +3,8 @@
 // 这里 re-export 让 orchestrator/runner/tests 的老 import 路径('./plan-types.ts')继续可用。
 
 export type {
+  CandidateProfile,
+  PlanningProvenance,
   GuidanceRef,
   Assumption,
   ResearchTaskData,

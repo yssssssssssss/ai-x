@@ -13,7 +13,12 @@ import type {
   ProblemGraph,
   ProblemGraphProvenance,
 } from '../../../../packages/api-contract/research-deliverable.ts';
-import type { PlanCandidate, ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
+import {
+  isCandidateProfile,
+  type PlanCandidate,
+  type PlanningProvenance,
+  type ResearchTaskV2,
+} from '../../../../packages/api-contract/plan.ts';
 import type { CapabilityResolution } from './capability-resolver.ts';
 import { validateProblemGraphCoverage } from './problem-graph-planner.ts';
 import {
@@ -47,6 +52,7 @@ export interface PlanCompileInput {
   capability_resolution: CapabilityResolution;
   evidence_requirements: EvidenceRequirement[];
   activated_nodes: string[];
+  planning_provenance?: PlanningProvenance;
   requireCompetitiveWeightContract?: boolean;
 }
 
@@ -101,6 +107,7 @@ const CANDIDATE_KEYS = new Set([
   'title',
   'rationale',
   'tradeoffs',
+  'recommended',
   'steps',
   'assumptions',
   'activated_nodes',
@@ -158,13 +165,14 @@ function validateProposalShape(candidate: CurrentPlanCandidateProposal): void {
   const unknownCandidateKeys = Object.keys(candidate).filter((key) => !CANDIDATE_KEYS.has(key));
   if (unknownCandidateKeys.length > 0) fail('candidate_schema_invalid', ...unknownCandidateKeys);
   if (
-    (candidate.id !== 'depth' && candidate.id !== 'speed')
+    !isCandidateProfile(candidate.id)
     || typeof candidate.title !== 'string'
     || candidate.title.length === 0
     || typeof candidate.rationale !== 'string'
     || candidate.rationale.length === 0
     || typeof candidate.tradeoffs !== 'string'
     || candidate.tradeoffs.length === 0
+    || (candidate.recommended !== undefined && typeof candidate.recommended !== 'boolean')
     || !Array.isArray(candidate.steps)
     || candidate.steps.length === 0
   ) {
@@ -959,7 +967,13 @@ export class PlanCompiler {
         title: input.candidate.title,
         rationale: input.candidate.rationale,
         tradeoffs: input.candidate.tradeoffs,
+        ...(input.candidate.recommended === undefined
+          ? {}
+          : { recommended: input.candidate.recommended }),
       },
+      ...(input.planning_provenance
+        ? { planning_provenance: structuredClone(input.planning_provenance) }
+        : {}),
       problem_graph_provenance: input.problem_graph_provenance,
       activated_nodes: input.activated_nodes,
     });
@@ -990,9 +1004,14 @@ export class PlanCompiler {
       candidate_metadata: {
         title: input.candidate.title,
         rationale: input.candidate.rationale,
-
         tradeoffs: input.candidate.tradeoffs,
+        ...(input.candidate.recommended === undefined
+          ? {}
+          : { recommended: input.candidate.recommended }),
       },
+      ...(input.planning_provenance
+        ? { planning_provenance: structuredClone(input.planning_provenance) }
+        : {}),
       activated_nodes: [...input.activated_nodes],
     };
     this.validator.validateOrThrow('current-execution-plan', plan);
@@ -1004,7 +1023,7 @@ export function validateCurrentPlanRevision(input: {
   task: unknown;
   pending_inputs: unknown;
   task_id: string;
-  candidate_id: 'depth' | 'speed';
+  candidate_id: PlanCandidate['id'];
 }, validator = new SchemaValidator()): CurrentExecutionPlan {
   validator.validateOrThrow('research-task-v2', input.task);
   validator.validateOrThrow('current-execution-plan', input.plan);
@@ -1019,6 +1038,9 @@ export function validateCurrentPlanRevision(input: {
     title: plan.candidate_metadata.title,
     rationale: plan.candidate_metadata.rationale,
     tradeoffs: plan.candidate_metadata.tradeoffs,
+    ...(plan.candidate_metadata.recommended === undefined
+      ? {}
+      : { recommended: plan.candidate_metadata.recommended }),
     steps: plan.steps,
     assumptions: [],
     activated_nodes: plan.activated_nodes,
@@ -1035,6 +1057,9 @@ export function validateCurrentPlanRevision(input: {
     capability_resolution: plan.capability_decisions as CapabilityResolution,
     evidence_requirements: plan.evidence_requirements,
     activated_nodes: plan.activated_nodes,
+    ...(plan.planning_provenance
+      ? { planning_provenance: plan.planning_provenance }
+      : {}),
   });
   if (!isDeepStrictEqual(compiled.pending_inputs, input.pending_inputs)) {
     fail('candidate_schema_invalid', 'pending_inputs_mismatch');

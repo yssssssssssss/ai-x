@@ -5,6 +5,7 @@ import type { VisualAssetManifest } from '../../../../packages/api-contract/rese
 import { ControlPlaneConflictError, type ControlPlaneRepository } from '../../../../database/control-plane.ts';
 import { getUserById } from '../../../../database/repository.ts';
 import {
+  CandidateProfileNoLongerEligibleError,
   TaskWorkflowAuthorizationError,
   TaskWorkflowGateError,
   requiredApprovals,
@@ -142,6 +143,10 @@ function responseError(res: Response, error: unknown): void {
       kind: error.kind,
       retryable: error.retryable,
     });
+    return;
+  }
+  if (error instanceof CandidateProfileNoLongerEligibleError) {
+    res.status(409).json({ error: error.message, code: error.code });
     return;
   }
   if (error instanceof ControlPlaneConflictError) {

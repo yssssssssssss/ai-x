@@ -1,4 +1,4 @@
-import type { ResearchTaskData, ResearchTaskV2 } from './plan.ts';
+import type { CandidateProfile, ResearchTaskData, ResearchTaskV2 } from './plan.ts';
 import type {
   CurrentExecutionPlan,
   EvidenceManifest,
@@ -76,7 +76,7 @@ export interface CreateControlTaskRequest {
 
 export interface CurrentPlanCandidate {
   planVersionId: string;
-  candidateId: 'depth' | 'speed';
+  candidateId: CandidateProfile;
   title: string;
   rationale: string;
   tradeoffs: string;

@@ -681,6 +681,23 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 }
 .tag-depth { background: rgba(124, 124, 240, 0.16); color: var(--primary-strong); }
 .tag-speed { background: rgba(251, 191, 36, 0.15); color: #fcd34d; }
+.tag-breadth { background: rgba(56, 189, 248, 0.15); color: #7dd3fc; }
+.tag-focused { background: rgba(244, 114, 182, 0.15); color: #f9a8d4; }
+.tag-mixed-method { background: rgba(45, 212, 191, 0.15); color: #5eead4; }
+.tag-decision { background: rgba(167, 139, 250, 0.17); color: #c4b5fd; }
+.tag-remediation { background: rgba(248, 113, 113, 0.15); color: #fca5a5; }
+.tag-unknown { background: rgba(148, 163, 184, 0.15); color: var(--text-dim); }
+.candidate-recommended {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  padding: 3px 7px;
+  border: 1px solid rgba(124, 124, 240, 0.4);
+  border-radius: 999px;
+  color: var(--primary-strong);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
 .candidate-title {
   min-width: 0;
   font-size: 15px;

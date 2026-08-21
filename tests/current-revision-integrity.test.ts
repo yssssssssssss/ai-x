@@ -31,7 +31,10 @@ import type {
   CurrentResearchPlanningResult,
   ResearchPlanningInput,
 } from '../apps/orchestrator-runtime/src/planners/research-planning-service.ts';
-import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
+import type {
+  CandidateProfile,
+  ResearchTaskV2,
+} from '../packages/api-contract/plan.ts';
 
 class ScopedRevisionDatabase implements MigrationDatabase {
   constructor(
@@ -164,7 +167,7 @@ function finalizedTask(researchGoal = '研究国内宠物辅食品牌'): Researc
   };
 }
 
-function candidateSteps(mode: 'depth' | 'speed') {
+function candidateSteps(mode: CandidateProfile) {
   return [{
     step_no: 99,
     step_name: `${mode} search`,
@@ -182,7 +185,8 @@ function candidateSteps(mode: 'depth' | 'speed') {
 }
 
 async function createSelectedTask(options: {
-  candidateId?: 'depth' | 'speed';
+  candidateId?: CandidateProfile;
+  candidateProfiles?: CandidateProfile[];
   structuredTask?: unknown;
   pendingInputs?: typeof pendingInputs;
   workflow?: TaskWorkflowService;
@@ -190,13 +194,14 @@ async function createSelectedTask(options: {
 } = {}) {
   const suffix = options.suffix ?? randomUUID();
   const selectedId = options.candidateId ?? 'speed';
+  const candidateProfiles = options.candidateProfiles ?? ['depth', 'speed'];
   const created = await repository.createTaskWithCandidates({
     conversationId,
     ownerUserId: ownerId,
     originalInput: `original ${suffix}`,
     taskType: 'user_research_planning',
     structuredTask: options.structuredTask ?? finalizedTask(),
-    candidates: (['depth', 'speed'] as const).map((candidateId) => ({
+    candidates: candidateProfiles.map((candidateId) => ({
       candidateId,
       plan: {
         task_id: '',
@@ -551,6 +556,62 @@ test('production runtime replans from research goal and instruction while preser
   assert.equal('extra_client_field' in (steps[0] ?? {}), false);
   assert.equal(persisted.planHash, canonicalPlanHash(persisted.plan));
 });
+test('revision keeps a selected controlled profile and returns the stable 409 when it is no longer eligible', async () => {
+  const runtime = await buildRuntime({
+    async plan(input) {
+      return planningResult(input.originalInput);
+    },
+  });
+  const seeded = await createSelectedTask({
+    candidateId: 'breadth',
+    candidateProfiles: ['speed', 'depth', 'breadth'],
+    workflow: runtime.workflow,
+    suffix: 'breadth-no-longer-eligible',
+  });
+  const { createControlTasksRouter } = await import('../apps/agent-api/src/routes/control-tasks.ts');
+  const { signToken } = await import('../apps/agent-api/src/auth.ts');
+  ({ closePool: closeSharedPool } = await import('../database/db.ts'));
+  const app = express();
+  app.use(express.json());
+  app.use('/api/control-tasks', createControlTasksRouter({
+    repository,
+    workflow: runtime.workflow,
+    getDeliverable: async () => null,
+  }));
+  const server: Server = createServer(app);
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+    const response = await fetch(
+      `http://127.0.0.1:${address.port}/api/control-tasks/${seeded.created.task.id}/revise`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${signToken({ userId: ownerId, email: 'revision-owner@test.local' })}`,
+          'content-type': 'application/json',
+          'idempotency-key': 'breadth-profile-revision',
+        },
+        body: JSON.stringify({
+          expectedVersion: seeded.selected.stateVersion,
+          revisionInstruction: '收窄到一个对象，不再适合广度扫描',
+        }),
+      },
+    );
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), {
+      error: 'candidate profile breadth is no longer eligible for revision',
+      code: 'candidate_profile_no_longer_eligible',
+    });
+    const unchanged = await repository.getTaskDetail(seeded.created.task.id);
+    assert.equal(unchanged?.activePlanVersionId, seeded.selectedPlan.id);
+    assert.equal((await repository.getActivePlan(seeded.created.task.id))?.candidateId, 'breadth');
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
 test('production runtime replaces legacy value and visual pending-input plans with wholly new revisions', async () => {
   let plannerCalls = 0;
   const runtime = await buildRuntime({

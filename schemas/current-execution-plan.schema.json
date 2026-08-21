@@ -46,9 +46,11 @@
       "properties": {
         "title": { "type": "string", "minLength": 1 },
         "rationale": { "type": "string", "minLength": 1 },
-        "tradeoffs": { "type": "string", "minLength": 1 }
+        "tradeoffs": { "type": "string", "minLength": 1 },
+        "recommended": { "type": "boolean" }
       }
     },
+    "planning_provenance": { "$ref": "#/$defs/planningProvenance" },
     "activated_nodes": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
@@ -56,6 +58,59 @@
     }
   },
   "$defs": {
+    "candidateProfile": {
+      "type": "string",
+      "enum": ["speed", "depth", "breadth", "focused", "mixed_method", "decision", "remediation"]
+    },
+    "planningProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "primary_scenario_id",
+        "secondary_scenario_ids",
+        "confidence",
+        "signal_ids",
+        "source_field_paths",
+        "resolver_version_hash",
+        "mapping_version_hash",
+        "candidate_profiles",
+        "degradation_reasons"
+      ],
+      "properties": {
+        "primary_scenario_id": { "type": "string", "minLength": 1 },
+        "secondary_scenario_ids": {
+          "type": "array",
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "confidence": { "enum": ["high", "medium", "low"] },
+        "signal_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "source_field_paths": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^(?:original_input|research_task_v2)(?:\\.[a-z][a-z0-9_]*)*$" }
+        },
+        "resolver_version_hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "mapping_version_hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "candidate_profiles": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/candidateProfile" }
+        },
+        "degradation_reasons": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
     "evidenceRequirement": {
       "type": "object",
       "additionalProperties": false,

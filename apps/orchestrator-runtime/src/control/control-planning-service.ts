@@ -7,9 +7,10 @@ import type {
   CurrentExecutionPlan,
   PendingInput,
 } from '../../../../packages/api-contract/research-deliverable.ts';
-import type {
-  PlanCandidate,
-  PlanProgress,
+import {
+  isCandidateProfile,
+  type PlanCandidate,
+  type PlanProgress,
 } from '../../../../packages/api-contract/plan.ts';
 import {
   resolvePlanningDeliverableSelection,
@@ -120,13 +121,25 @@ export class ControlPlanningService {
     pendingInputs: PendingInput[];
   }> {
     const candidateIds = planningResult.candidates.map((candidate) => candidate.id);
+    const recommendedCount = planningResult.candidates.filter(
+      (candidate) => candidate.recommended === true,
+    ).length;
     if (
-      candidateIds.length !== 2
-      || new Set(candidateIds).size !== 2
-      || !candidateIds.includes('depth')
+      candidateIds.length < 2
+      || candidateIds.length > 4
+      || new Set(candidateIds).size !== candidateIds.length
+      || candidateIds.some((candidateId) => !isCandidateProfile(candidateId))
       || !candidateIds.includes('speed')
+      || !candidateIds.includes('depth')
+      || (
+        candidateIds.length > 2
+        && (candidateIds[0] !== 'speed' || candidateIds[1] !== 'depth')
+      )
+      || recommendedCount > 1
     ) {
-      throw new Error('Current planning requires exactly depth and speed candidates');
+      throw new Error(
+        'Current planning requires 2-4 unique controlled candidates in baseline-first order with at most one recommendation',
+      );
     }
     const deliverableSelection = resolvePlanningDeliverableSelection(
       planningResult.structuredTask,

@@ -108,6 +108,10 @@ interface CurrentFlowStateModule {
   finishExecution(state: DeliverableReadState, execution: CompletedExecution): FlowTransition;
   failDeliverableRead(state: DeliverableReadState, error: string): FlowTransition;
   retryDeliverable(state: DeliverableReadState): FlowTransition;
+  candidateInitialIndex(candidates: Array<{
+    planVersionId: string;
+    plan: { candidate_metadata?: { recommended?: boolean } };
+  }>, selectedPlanVersionId?: string): number;
   hydrateCurrentTask(input: {
     task: {
       id: string;
@@ -205,6 +209,7 @@ async function loadCurrentFlowStateModule(): Promise<CurrentFlowStateModule> {
     'finishExecution',
     'failDeliverableRead',
     'retryDeliverable',
+    'candidateInitialIndex',
     'buildClarificationSubmission',
     'missingBlockingAnswers',
     'mergeTaskHistory',
@@ -562,6 +567,58 @@ test('hydrates an awaiting selection task with the server-validated candidate pa
     activatedNodes: ['D5_competitive'],
     candidates,
   });
+});
+
+test('hydrates 2-4 controlled profiles and focuses the sole recommendation unless selection wins', async () => {
+  const { candidateInitialIndex, hydrateCurrentTask } = await loadCurrentFlowStateModule();
+  const task = {
+    id: 'task-dynamic-selection',
+    state: 'awaiting_selection',
+    stateVersion: 3,
+    originalInput: '动态候选恢复',
+    conversationId: 'conversation-dynamic-selection',
+    structuredTask: { assumptions: [] },
+    activePlanVersionId: null,
+    currentAttemptId: null,
+  };
+  const candidates = (['speed', 'depth', 'decision'] as const).map((candidateId, index) => ({
+    planVersionId: `plan-${candidateId}`,
+    candidateId,
+    title: candidateId,
+    rationale: `${candidateId} rationale`,
+    tradeoffs: `${candidateId} tradeoffs`,
+    planHash: `sha256:${String(index + 1).repeat(64)}`,
+    plan: {
+      task_id: task.id,
+      candidate_metadata: {
+        title: candidateId,
+        rationale: `${candidateId} rationale`,
+        tradeoffs: `${candidateId} tradeoffs`,
+        ...(candidateId === 'decision' ? { recommended: true } : {}),
+      },
+      activated_nodes: [],
+      steps: [],
+    },
+    pendingInputs: [],
+  }));
+
+  const hydrated = hydrateCurrentTask({ task, candidates, activatedNodes: [] });
+  assert.equal(hydrated.phase, 'picking');
+  assert.deepEqual(
+    (hydrated.candidatesResp as { candidates: typeof candidates }).candidates.map(
+      ({ candidateId }) => candidateId,
+    ),
+    ['speed', 'depth', 'decision'],
+  );
+  assert.equal(candidateInitialIndex(candidates), 2);
+  assert.equal(candidateInitialIndex(candidates, 'plan-speed'), 0);
+
+  const duplicateRecommendation = structuredClone(candidates);
+  duplicateRecommendation[0]!.plan.candidate_metadata.recommended = true;
+  assert.throws(
+    () => hydrateCurrentTask({ task, candidates: duplicateRecommendation, activatedNodes: [] }),
+    /candidate|候选|awaiting_selection/i,
+  );
 });
 
 test('fails closed when awaiting selection refresh lacks validated candidates', async () => {

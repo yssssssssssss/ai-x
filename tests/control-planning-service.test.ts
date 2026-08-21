@@ -419,11 +419,11 @@ test('creates a conversation and persists ResearchPlanningResult candidates as C
   const createdConversations: Array<{ ownerUserId: string; title: string }> = [];
   const requiredConversations: Array<{ conversationId: string; ownerUserId: string }> = [];
   const repositoryInputs: CreateTaskWithCandidatesInput[] = [];
-  const versionIds = {
+  const versionIds: Record<string, string> = {
     depth: '00000000-0000-0000-0000-000000000401',
     speed: '00000000-0000-0000-0000-000000000402',
   };
-  const repositoryPlanHashes = {
+  const repositoryPlanHashes: Record<string, string> = {
     depth: `sha256:${'a'.repeat(64)}`,
     speed: `sha256:${'b'.repeat(64)}`,
   };
@@ -548,6 +548,106 @@ test('creates a conversation and persists ResearchPlanningResult candidates as C
       pendingInputs: [],
     })),
   );
+});
+
+test('persists a three-profile compatibility fixture with one recommendation in stable order', async () => {
+  const { ControlPlanningService } = await loadControlPlanningModule();
+  const planningResult = researchPlanningResult('三方案兼容 fixture');
+  const speed = structuredClone(planningResult.candidates.find(({ id }) => id === 'speed')!);
+  const depth = structuredClone(planningResult.candidates.find(({ id }) => id === 'depth')!);
+  const breadth = {
+    ...structuredClone(depth),
+    id: 'breadth' as const,
+    title: '广度扫描',
+    rationale: '扩大对象覆盖',
+    tradeoffs: '单对象深挖较少',
+    recommended: true,
+    steps: depth.steps.map((step) => ({
+      ...step,
+      step_name: '公开来源广度扫描',
+      input: { ...step.input, coverage: 'breadth' },
+    })),
+  };
+  planningResult.candidates = [speed, depth, breadth];
+  const persistedInputs: CreateTaskWithCandidatesInput[] = [];
+  const taskId = '00000000-0000-0000-0000-000000000331';
+  const service = new ControlPlanningService({
+    planning: { async plan() { return planningResult; } },
+    conversations: {
+      async create() { return { id: '00000000-0000-0000-0000-000000000231' }; },
+      async requireOwned(input) { return { id: input.conversationId }; },
+    },
+    repository: {
+      async createTaskWithCandidates(input) {
+        persistedInputs.push(structuredClone(input));
+        return {
+          task: {
+            id: taskId,
+            state: 'awaiting_selection',
+            stateVersion: 0,
+            activePlanVersionId: null,
+            currentAttemptId: null,
+          },
+          candidates: input.candidates.map((candidate, index) => ({
+            id: `00000000-0000-0000-0000-00000000043${index}`,
+            taskId,
+            version: index + 1,
+            candidateId: candidate.candidateId,
+            plan: { ...candidate.plan, task_id: taskId },
+            planHash: `sha256:${String(index + 4).repeat(64)}`,
+            pendingInputs: candidate.pendingInputs,
+          })),
+        };
+      },
+    },
+  });
+
+  const response = await service.plan({
+    originalInput: '三方案兼容 fixture',
+    ownerUserId: '00000000-0000-0000-0000-000000000131',
+  });
+
+  assert.deepEqual(
+    persistedInputs[0]?.candidates.map(({ candidateId }) => candidateId),
+    ['speed', 'depth', 'breadth'],
+  );
+  assert.deepEqual(
+    response.candidates.map(({ candidateId }) => candidateId),
+    ['speed', 'depth', 'breadth'],
+  );
+  assert.equal(response.candidates[2]?.plan.candidate_metadata.recommended, true);
+  assert.equal(response.candidates[0]?.plan.candidate_metadata.recommended, undefined);
+});
+
+test('rejects duplicate controlled candidate IDs even when their display content differs', async () => {
+  const { ControlPlanningService } = await loadControlPlanningModule();
+  const planningResult = researchPlanningResult('重复 Profile');
+  const duplicate = structuredClone(planningResult.candidates[0]!);
+  duplicate.title = '不同标题不能掩盖重复 Profile';
+  planningResult.candidates.push(duplicate);
+  let repositoryCalls = 0;
+  const service = new ControlPlanningService({
+    planning: { async plan() { return planningResult; } },
+    conversations: {
+      async create() { return { id: '00000000-0000-0000-0000-000000000232' }; },
+      async requireOwned(input) { return { id: input.conversationId }; },
+    },
+    repository: {
+      async createTaskWithCandidates() {
+        repositoryCalls += 1;
+        throw new Error('repository must not be called');
+      },
+    },
+  });
+
+  await assert.rejects(
+    () => service.plan({
+      originalInput: '重复 Profile',
+      ownerUserId: '00000000-0000-0000-0000-000000000132',
+    }),
+    /2-4 unique controlled candidates/,
+  );
+  assert.equal(repositoryCalls, 0);
 });
 
 test('rejects generated Current step drift before repository persistence', async () => {

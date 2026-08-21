@@ -1,3 +1,4 @@
+import type { PlanningProvenance } from './plan.ts';
 
 export type EvidenceClass =
   | 'public_source'
@@ -169,7 +170,9 @@ export interface CurrentExecutionPlan {
     title: string;
     rationale: string;
     tradeoffs: string;
+    recommended?: boolean;
   };
+  planning_provenance?: PlanningProvenance;
   activated_nodes: string[];
 }
 

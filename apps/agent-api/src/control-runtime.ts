@@ -7,6 +7,7 @@ import { ControlArtifactStore } from '../../orchestrator-runtime/src/control/art
 import { ControlPlanningService } from '../../orchestrator-runtime/src/control/control-planning-service.ts';
 import { LeaseExecutionEngine } from '../../orchestrator-runtime/src/control/lease-execution-engine.ts';
 import {
+  CandidateProfileNoLongerEligibleError,
   TaskWorkflowService,
   type WorkflowPlanRevisionDriver,
 } from '../../orchestrator-runtime/src/control/task-workflow.ts';
@@ -23,7 +24,13 @@ import {
   type ResearchPlanningInput,
 } from '../../orchestrator-runtime/src/planners/research-planning-service.ts';
 import { PlanCompiler } from '../../orchestrator-runtime/src/planners/plan-compiler.ts';
-import type { PlanCandidate, PlanProgress, ResearchTaskV2 } from '../../../packages/api-contract/plan.ts';
+import {
+  isCandidateProfile,
+  type CandidateProfile,
+  type PlanCandidate,
+  type PlanProgress,
+  type ResearchTaskV2,
+} from '../../../packages/api-contract/plan.ts';
 import type { CurrentReportPackageResponse } from '../../../packages/api-contract/control-workflow.ts';
 import type {
   CurrentExecutionPlan,
@@ -243,7 +250,7 @@ function assertRevisionSourceContract(input: {
 }
 
 
-function revisionCandidate(result: unknown, candidateId: 'depth' | 'speed'): PlanCandidate {
+function revisionCandidate(result: unknown, candidateId: CandidateProfile): PlanCandidate {
   const record = revisionRecord(result);
   if (!record || !Array.isArray(record.candidates)) {
     throw new Error('revision planning result has no candidates');
@@ -504,8 +511,8 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       if (!activePlan || activePlan.taskId !== task.id) {
         throw new Error(`active plan ${input.activePlanVersionId} does not belong to task ${task.id}`);
       }
-      if (activePlan.candidateId !== 'depth' && activePlan.candidateId !== 'speed') {
-        throw new Error(`active plan ${activePlan.id} has no depth/speed candidate`);
+      if (!isCandidateProfile(activePlan.candidateId)) {
+        throw new Error(`active plan ${activePlan.id} has no controlled candidate profile`);
       }
       const deliverableSelection = resolvePlanningDeliverableSelection(structuredTask);
       if (!await repository.isPlanPendingInputQuarantined(activePlan.id)) {
@@ -520,10 +527,17 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       });
       const candidate = planningResult.candidates.find((item) => item.id === activePlan.candidateId);
       if (!candidate) {
-        throw new Error(`revision planning result has no ${activePlan.candidateId} candidate`);
+        throw new CandidateProfileNoLongerEligibleError(activePlan.candidateId);
       }
+      const activePlanRecord = revisionRecord(activePlan.plan);
+      const activeCandidateMetadata = revisionRecord(activePlanRecord?.candidate_metadata);
+      const recommended = activeCandidateMetadata?.recommended;
+      const planningProvenance = activePlanRecord?.planning_provenance;
       const compiled = new PlanCompiler(validator).compile({
-        candidate,
+        candidate: {
+          ...candidate,
+          ...(typeof recommended === 'boolean' ? { recommended } : {}),
+        },
         task: structuredTask,
         deliverable_selection: deliverableSelection,
         problem_graph: planningResult.problemGraph,
@@ -531,6 +545,9 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
         capability_resolution: planningResult.capabilityResolution,
         evidence_requirements: deliverableSelection.evidenceRequirements,
         activated_nodes: planningResult.activatedNodes,
+        ...(planningProvenance
+          ? { planning_provenance: planningProvenance as CurrentExecutionPlan['planning_provenance'] }
+          : {}),
         requireCompetitiveWeightContract: true,
       });
       return {
