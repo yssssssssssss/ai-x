@@ -1,0 +1,53 @@
+{
+  "version": "planning-guidance-dataset-manifest-v1",
+  "frozen": true,
+  "freeze_order": "split_locked_before_rule_or_prompt_tuning",
+  "total_count": 90,
+  "splits": {
+    "calibration": {
+      "count": 60,
+      "file": "tests/fixtures/planning-guidance-calibration.json",
+      "sha256": "sha256:ad1056271ca192ede0ced05c35c3834ba4278b8a044e7eb1c607aa1f9ea09fd9"
+    },
+    "holdout": {
+      "count": 30,
+      "file": "tests/fixtures/planning-guidance-holdout.json",
+      "sha256": "sha256:2261d160f937011ec2455c26036a1bc63a86d30a5823d9a459a26c4404738a95",
+      "expected_labels": "withheld_until_gate_3",
+      "expected_labels_commitment_sha256": "sha256:51e67e74eeb9d48cf3e6edd031c6042db0bdc73792ea90c4a688269c7d04978c"
+    }
+  },
+  "composition": {
+    "single_scenario": {
+      "total": 60,
+      "calibration": 45,
+      "holdout": 15,
+      "positive": {
+        "total": 30,
+        "calibration": 20,
+        "holdout": 10
+      },
+      "negative": {
+        "total": 30,
+        "calibration": 25,
+        "holdout": 5
+      }
+    },
+    "multi_scenario": {
+      "total": 15,
+      "calibration": 8,
+      "holdout": 7
+    },
+    "clarification": {
+      "total": 10,
+      "calibration": 5,
+      "holdout": 5
+    },
+    "bypass_or_no_match": {
+      "total": 5,
+      "calibration": 2,
+      "holdout": 3
+    }
+  },
+  "split_assignment_sha256": "sha256:9db998c58e7a7908a4180a63b15b41317904f7e36c09c87f36ce3903ce43949c"
+}

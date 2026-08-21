@@ -1,0 +1,1868 @@
+{
+  "version": "planning-guidance-dataset-v1",
+  "split": "calibration",
+  "frozen": true,
+  "examples": [
+    {
+      "id": "cal-single-01-positive-1",
+      "stratum": "single_scenario",
+      "polarity": "positive",
+      "probe_scenario_id": "trend-change-identification",
+      "raw_input": "请做趋势与变化识别，梳理生成式搜索的市场趋势",
+      "task": {
+        "task_type": "competitive_research",
+        "research_goal": "请做趋势与变化识别，梳理生成式搜索的市场趋势",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "trend-change-identification",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-01-negative-2",
+      "stratum": "single_scenario",
+      "polarity": "negative",
+      "raw_input": "请做机会评估，判断服务下沉方向",
+      "task": {
+        "task_type": "competitive_research",
+        "research_goal": "请做机会评估，判断服务下沉方向",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "probe_scenario_id": "trend-change-identification",
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "opportunity-direction-evaluation",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-01-negative-1",
+      "stratum": "single_scenario",
+      "polarity": "negative",
+      "probe_scenario_id": "trend-change-identification",
+      "raw_input": "开展竞品与标杆研究，对比主流购物助手",
+      "task": {
+        "task_type": "competitive_research",
+        "research_goal": "开展竞品与标杆研究，对比主流购物助手",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "competitor-benchmark-research",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-02-positive-1",
+      "stratum": "single_scenario",
+      "polarity": "positive",
+      "probe_scenario_id": "competitor-benchmark-research",
+      "raw_input": "开展竞品与标杆研究，对比主流购物助手",
+      "task": {
+        "task_type": "competitive_research",
+        "research_goal": "开展竞品与标杆研究，对比主流购物助手",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "competitor-benchmark-research",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-02-negative-2",
+      "stratum": "single_scenario",
+      "polarity": "negative",
+      "raw_input": "请整理访谈资料，归纳现有研究材料",
+      "task": {
+        "task_type": "user_research_planning",
+        "research_goal": "请整理访谈资料，归纳现有研究材料",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "probe_scenario_id": "competitor-benchmark-research",
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "user-material-synthesis",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-02-negative-1",
+      "stratum": "single_scenario",
+      "polarity": "negative",
+      "probe_scenario_id": "competitor-benchmark-research",
+      "raw_input": "完成机会方向判断，评估新客导购机会",
+      "task": {
+        "task_type": "competitive_research",
+        "research_goal": "完成机会方向判断，评估新客导购机会",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "opportunity-direction-evaluation",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-03-positive-1",
+      "stratum": "single_scenario",
+      "polarity": "positive",
+      "probe_scenario_id": "opportunity-direction-evaluation",
+      "raw_input": "完成机会方向判断，评估新客导购机会",
+      "task": {
+        "task_type": "competitive_research",
+        "research_goal": "完成机会方向判断，评估新客导购机会",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "opportunity-direction-evaluation",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-03-negative-2",
+      "stratum": "single_scenario",
+      "polarity": "negative",
+      "raw_input": "根据研究资料做用户分群和人群分层",
+      "task": {
+        "task_type": "user_research_planning",
+        "research_goal": "根据研究资料做用户分群和人群分层",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "probe_scenario_id": "opportunity-direction-evaluation",
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "user-segmentation",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-03-negative-1",
+      "stratum": "single_scenario",
+      "polarity": "negative",
+      "probe_scenario_id": "opportunity-direction-evaluation",
+      "raw_input": "对已有用户资料归纳，整理访谈结论",
+      "task": {
+        "task_type": "user_research_planning",
+        "research_goal": "对已有用户资料归纳，整理访谈结论",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "user-material-synthesis",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-04-positive-1",
+      "stratum": "single_scenario",
+      "polarity": "positive",
+      "probe_scenario_id": "user-material-synthesis",
+      "raw_input": "对已有用户资料归纳，整理访谈结论",
+      "task": {
+        "task_type": "user_research_planning",
+        "research_goal": "对已有用户资料归纳，整理访谈结论",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "user-material-synthesis",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-04-negative-2",
+      "stratum": "single_scenario",
+      "polarity": "negative",
+      "raw_input": "围绕售后流程做用户旅程分析",
+      "task": {
+        "task_type": "user_research_planning",
+        "research_goal": "围绕售后流程做用户旅程分析",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "probe_scenario_id": "user-material-synthesis",
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "user-journey-insight",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-04-negative-1",
+      "stratum": "single_scenario",
+      "polarity": "negative",
+      "probe_scenario_id": "user-material-synthesis",
+      "raw_input": "开展用户分层与重点人群识别",
+      "task": {
+        "task_type": "user_research_planning",
+        "research_goal": "开展用户分层与重点人群识别",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "user-segmentation",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-05-positive-1",
+      "stratum": "single_scenario",
+      "polarity": "positive",
+      "probe_scenario_id": "user-segmentation",
+      "raw_input": "开展用户分层与重点人群识别",
+      "task": {
+        "task_type": "user_research_planning",
+        "research_goal": "开展用户分层与重点人群识别",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "user-segmentation",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-05-negative-2",
+      "stratum": "single_scenario",
+      "polarity": "negative",
+      "raw_input": "请做结算链路走查并记录体验问题",
+      "task": {
+        "task_type": "design_audit",
+        "research_goal": "请做结算链路走查并记录体验问题",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "probe_scenario_id": "user-segmentation",
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "experience-walkthrough",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-05-negative-1",
+      "stratum": "single_scenario",
+      "polarity": "negative",
+      "probe_scenario_id": "user-segmentation",
+      "raw_input": "梳理用户旅程与需求洞察",
+      "task": {
+        "task_type": "user_research_planning",
+        "research_goal": "梳理用户旅程与需求洞察",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "user-journey-insight",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-06-positive-1",
+      "stratum": "single_scenario",
+      "polarity": "positive",
+      "probe_scenario_id": "user-journey-insight",
+      "raw_input": "梳理用户旅程与需求洞察",
+      "task": {
+        "task_type": "user_research_planning",
+        "research_goal": "梳理用户旅程与需求洞察",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "user-journey-insight",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-06-negative-2",
+      "stratum": "single_scenario",
+      "polarity": "negative",
+      "raw_input": "请做工单聚类，识别高频反馈",
+      "task": {
+        "task_type": "voc_diagnosis",
+        "research_goal": "请做工单聚类，识别高频反馈",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "probe_scenario_id": "user-journey-insight",
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "feedback-issue-clustering",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-06-negative-1",
+      "stratum": "single_scenario",
+      "polarity": "negative",
+      "probe_scenario_id": "user-journey-insight",
+      "raw_input": "执行页面与链路体验走查",
+      "task": {
+        "task_type": "design_audit",
+        "research_goal": "执行页面与链路体验走查",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "experience-walkthrough",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-07-positive-1",
+      "stratum": "single_scenario",
+      "polarity": "positive",
+      "probe_scenario_id": "experience-walkthrough",
+      "raw_input": "执行页面与链路体验走查",
+      "task": {
+        "task_type": "design_audit",
+        "research_goal": "执行页面与链路体验走查",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "experience-walkthrough",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-07-negative-2",
+      "stratum": "single_scenario",
+      "polarity": "negative",
+      "raw_input": "诊断转化漏斗异常及行为变化",
+      "task": {
+        "task_type": "voc_diagnosis",
+        "research_goal": "诊断转化漏斗异常及行为变化",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "probe_scenario_id": "experience-walkthrough",
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "data-behavior-diagnosis",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-07-negative-1",
+      "stratum": "single_scenario",
+      "polarity": "negative",
+      "probe_scenario_id": "experience-walkthrough",
+      "raw_input": "对用户反馈问题聚类",
+      "task": {
+        "task_type": "voc_diagnosis",
+        "research_goal": "对用户反馈问题聚类",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "feedback-issue-clustering",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-08-positive-1",
+      "stratum": "single_scenario",
+      "polarity": "positive",
+      "probe_scenario_id": "feedback-issue-clustering",
+      "raw_input": "对用户反馈问题聚类",
+      "task": {
+        "task_type": "voc_diagnosis",
+        "research_goal": "对用户反馈问题聚类",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "feedback-issue-clustering",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-08-negative-2",
+      "stratum": "single_scenario",
+      "polarity": "negative",
+      "raw_input": "对留存下滑做根因分析",
+      "task": {
+        "task_type": "voc_diagnosis",
+        "research_goal": "对留存下滑做根因分析",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "probe_scenario_id": "feedback-issue-clustering",
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "root-cause-analysis",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-08-negative-1",
+      "stratum": "single_scenario",
+      "polarity": "negative",
+      "probe_scenario_id": "feedback-issue-clustering",
+      "raw_input": "进行数据与行为异常诊断",
+      "task": {
+        "task_type": "voc_diagnosis",
+        "research_goal": "进行数据与行为异常诊断",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "data-behavior-diagnosis",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-09-positive-1",
+      "stratum": "single_scenario",
+      "polarity": "positive",
+      "probe_scenario_id": "data-behavior-diagnosis",
+      "raw_input": "进行数据与行为异常诊断",
+      "task": {
+        "task_type": "voc_diagnosis",
+        "research_goal": "进行数据与行为异常诊断",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "data-behavior-diagnosis",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-09-negative-2",
+      "stratum": "single_scenario",
+      "polarity": "negative",
+      "raw_input": "针对已识别问题生成解决方案",
+      "task": {
+        "task_type": "design_audit",
+        "research_goal": "针对已识别问题生成解决方案",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "probe_scenario_id": "data-behavior-diagnosis",
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "solution-generation",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-09-negative-1",
+      "stratum": "single_scenario",
+      "polarity": "negative",
+      "probe_scenario_id": "data-behavior-diagnosis",
+      "raw_input": "完成问题根因拆解",
+      "task": {
+        "task_type": "voc_diagnosis",
+        "research_goal": "完成问题根因拆解",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "root-cause-analysis",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-10-positive-1",
+      "stratum": "single_scenario",
+      "polarity": "positive",
+      "probe_scenario_id": "root-cause-analysis",
+      "raw_input": "完成问题根因拆解",
+      "task": {
+        "task_type": "voc_diagnosis",
+        "research_goal": "完成问题根因拆解",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "root-cause-analysis",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-10-negative-2",
+      "stratum": "single_scenario",
+      "polarity": "negative",
+      "raw_input": "对三个改版方案做方案比较",
+      "task": {
+        "task_type": "design_audit",
+        "research_goal": "对三个改版方案做方案比较",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "probe_scenario_id": "root-cause-analysis",
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "solution-comparison",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-10-negative-1",
+      "stratum": "single_scenario",
+      "polarity": "negative",
+      "probe_scenario_id": "root-cause-analysis",
+      "raw_input": "开展解决方案生成",
+      "task": {
+        "task_type": "design_audit",
+        "research_goal": "开展解决方案生成",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "solution-generation",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-11-positive-1",
+      "stratum": "single_scenario",
+      "polarity": "positive",
+      "probe_scenario_id": "solution-generation",
+      "raw_input": "开展解决方案生成",
+      "task": {
+        "task_type": "design_audit",
+        "research_goal": "开展解决方案生成",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "solution-generation",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-11-positive-2",
+      "stratum": "single_scenario",
+      "polarity": "positive",
+      "probe_scenario_id": "solution-generation",
+      "raw_input": "针对已识别问题生成解决方案",
+      "task": {
+        "task_type": "design_audit",
+        "research_goal": "针对已识别问题生成解决方案",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "solution-generation",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-11-negative-1",
+      "stratum": "single_scenario",
+      "polarity": "negative",
+      "probe_scenario_id": "solution-generation",
+      "raw_input": "完成方案比较与风险评估",
+      "task": {
+        "task_type": "design_audit",
+        "research_goal": "完成方案比较与风险评估",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "solution-comparison",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-12-positive-1",
+      "stratum": "single_scenario",
+      "polarity": "positive",
+      "probe_scenario_id": "solution-comparison",
+      "raw_input": "完成方案比较与风险评估",
+      "task": {
+        "task_type": "design_audit",
+        "research_goal": "完成方案比较与风险评估",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "solution-comparison",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-12-positive-2",
+      "stratum": "single_scenario",
+      "polarity": "positive",
+      "probe_scenario_id": "solution-comparison",
+      "raw_input": "对三个改版方案做方案比较",
+      "task": {
+        "task_type": "design_audit",
+        "research_goal": "对三个改版方案做方案比较",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "solution-comparison",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-12-negative-1",
+      "stratum": "single_scenario",
+      "polarity": "negative",
+      "probe_scenario_id": "solution-comparison",
+      "raw_input": "完成结论整合与策略提炼",
+      "task": {
+        "task_type": "competitive_research",
+        "research_goal": "完成结论整合与策略提炼",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "strategy-synthesis",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-13-positive-1",
+      "stratum": "single_scenario",
+      "polarity": "positive",
+      "probe_scenario_id": "strategy-synthesis",
+      "raw_input": "完成结论整合与策略提炼",
+      "task": {
+        "task_type": "competitive_research",
+        "research_goal": "完成结论整合与策略提炼",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "strategy-synthesis",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-13-positive-2",
+      "stratum": "single_scenario",
+      "polarity": "positive",
+      "probe_scenario_id": "strategy-synthesis",
+      "raw_input": "汇总研究结论并做策略提炼",
+      "task": {
+        "task_type": "competitive_research",
+        "research_goal": "汇总研究结论并做策略提炼",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "strategy-synthesis",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-13-negative-1",
+      "stratum": "single_scenario",
+      "polarity": "negative",
+      "probe_scenario_id": "strategy-synthesis",
+      "raw_input": "制定优先级与实施路径",
+      "task": {
+        "task_type": "competitive_research",
+        "research_goal": "制定优先级与实施路径",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "priority-roadmap",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-14-positive-1",
+      "stratum": "single_scenario",
+      "polarity": "positive",
+      "probe_scenario_id": "priority-roadmap",
+      "raw_input": "制定优先级与实施路径",
+      "task": {
+        "task_type": "competitive_research",
+        "research_goal": "制定优先级与实施路径",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "priority-roadmap",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-14-positive-2",
+      "stratum": "single_scenario",
+      "polarity": "positive",
+      "probe_scenario_id": "priority-roadmap",
+      "raw_input": "输出下一季度优先级和实施路线图",
+      "task": {
+        "task_type": "competitive_research",
+        "research_goal": "输出下一季度优先级和实施路线图",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "priority-roadmap",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-14-negative-1",
+      "stratum": "single_scenario",
+      "polarity": "negative",
+      "probe_scenario_id": "priority-roadmap",
+      "raw_input": "制定指标与验证计划",
+      "task": {
+        "task_type": "user_research_planning",
+        "research_goal": "制定指标与验证计划",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "metrics-validation",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-15-positive-1",
+      "stratum": "single_scenario",
+      "polarity": "positive",
+      "probe_scenario_id": "metrics-validation",
+      "raw_input": "制定指标与验证计划",
+      "task": {
+        "task_type": "user_research_planning",
+        "research_goal": "制定指标与验证计划",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "metrics-validation",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-15-positive-2",
+      "stratum": "single_scenario",
+      "polarity": "positive",
+      "probe_scenario_id": "metrics-validation",
+      "raw_input": "设计成功指标并形成验证计划",
+      "task": {
+        "task_type": "user_research_planning",
+        "research_goal": "设计成功指标并形成验证计划",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "metrics-validation",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-single-15-negative-1",
+      "stratum": "single_scenario",
+      "polarity": "negative",
+      "probe_scenario_id": "metrics-validation",
+      "raw_input": "请做趋势与变化识别，梳理生成式搜索的市场趋势",
+      "task": {
+        "task_type": "competitive_research",
+        "research_goal": "请做趋势与变化识别，梳理生成式搜索的市场趋势",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "trend-change-identification",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-multi-01",
+      "stratum": "multi_scenario",
+      "raw_input": "请先做竞品研究，再输出下一季度优先级与实施路径",
+      "task": {
+        "task_type": "competitive_research",
+        "research_goal": "请先做竞品研究，再输出下一季度优先级与实施路径",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "竞品分析",
+          "优先级建议"
+        ]
+      },
+      "available_material_roles": [],
+      "classifier_response": {
+        "primary_scenario_id": "competitor-benchmark-research",
+        "secondary_scenarios": [
+          {
+            "scenario_id": "priority-roadmap",
+            "relationship": "serial"
+          }
+        ],
+        "confidence": "high",
+        "signals": [
+          {
+            "signal_id": "scenario.competitor-benchmark",
+            "source_path": "raw_input"
+          },
+          {
+            "signal_id": "scenario.priority-roadmap",
+            "source_path": "raw_input"
+          }
+        ],
+        "rationale_codes": [
+          "semantic_disambiguation"
+        ]
+      },
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "competitor-benchmark-research",
+        "secondary_scenario_ids": [
+          "priority-roadmap"
+        ],
+        "classifier_call_count": 1
+      }
+    },
+    {
+      "id": "cal-multi-02",
+      "stratum": "multi_scenario",
+      "raw_input": "执行体验走查，并制定指标与验证计划",
+      "task": {
+        "task_type": "design_audit",
+        "research_goal": "执行体验走查，并制定指标与验证计划",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "走查清单",
+          "验证计划"
+        ]
+      },
+      "available_material_roles": [],
+      "classifier_response": {
+        "primary_scenario_id": "experience-walkthrough",
+        "secondary_scenarios": [
+          {
+            "scenario_id": "metrics-validation",
+            "relationship": "serial"
+          }
+        ],
+        "confidence": "high",
+        "signals": [
+          {
+            "signal_id": "scenario.experience-walkthrough",
+            "source_path": "raw_input"
+          },
+          {
+            "signal_id": "scenario.metrics-validation",
+            "source_path": "raw_input"
+          }
+        ],
+        "rationale_codes": [
+          "semantic_disambiguation"
+        ]
+      },
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "experience-walkthrough",
+        "secondary_scenario_ids": [
+          "metrics-validation"
+        ],
+        "classifier_call_count": 1
+      }
+    },
+    {
+      "id": "cal-multi-03",
+      "stratum": "multi_scenario",
+      "raw_input": "先做反馈问题聚类，再完成问题根因拆解",
+      "task": {
+        "task_type": "voc_diagnosis",
+        "research_goal": "先做反馈问题聚类，再完成问题根因拆解",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "问题簇",
+          "根因结论"
+        ]
+      },
+      "available_material_roles": [],
+      "classifier_response": {
+        "primary_scenario_id": "feedback-issue-clustering",
+        "secondary_scenarios": [
+          {
+            "scenario_id": "root-cause-analysis",
+            "relationship": "serial"
+          }
+        ],
+        "confidence": "high",
+        "signals": [
+          {
+            "signal_id": "scenario.feedback-clustering",
+            "source_path": "raw_input"
+          },
+          {
+            "signal_id": "scenario.root-cause",
+            "source_path": "raw_input"
+          }
+        ],
+        "rationale_codes": [
+          "semantic_disambiguation"
+        ]
+      },
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "feedback-issue-clustering",
+        "secondary_scenario_ids": [
+          "root-cause-analysis"
+        ],
+        "classifier_call_count": 1
+      }
+    },
+    {
+      "id": "cal-multi-04",
+      "stratum": "multi_scenario",
+      "raw_input": "同时开展用户分层和用户旅程洞察",
+      "task": {
+        "task_type": "user_research_planning",
+        "research_goal": "同时开展用户分层和用户旅程洞察",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "人群分层",
+          "用户旅程"
+        ]
+      },
+      "available_material_roles": [],
+      "classifier_response": {
+        "primary_scenario_id": "user-segmentation",
+        "secondary_scenarios": [
+          {
+            "scenario_id": "user-journey-insight",
+            "relationship": "parallel"
+          }
+        ],
+        "confidence": "high",
+        "signals": [
+          {
+            "signal_id": "scenario.user-segmentation",
+            "source_path": "raw_input"
+          },
+          {
+            "signal_id": "scenario.user-journey",
+            "source_path": "raw_input"
+          }
+        ],
+        "rationale_codes": [
+          "semantic_disambiguation"
+        ]
+      },
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "user-segmentation",
+        "secondary_scenario_ids": [
+          "user-journey-insight"
+        ],
+        "classifier_call_count": 1
+      }
+    },
+    {
+      "id": "cal-multi-05",
+      "stratum": "multi_scenario",
+      "raw_input": "完成数据异常诊断后给出优先级与实施路径",
+      "task": {
+        "task_type": "voc_diagnosis",
+        "research_goal": "完成数据异常诊断后给出优先级与实施路径",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "诊断结果",
+          "实施路径"
+        ]
+      },
+      "available_material_roles": [],
+      "classifier_response": {
+        "primary_scenario_id": "data-behavior-diagnosis",
+        "secondary_scenarios": [
+          {
+            "scenario_id": "priority-roadmap",
+            "relationship": "serial"
+          }
+        ],
+        "confidence": "high",
+        "signals": [
+          {
+            "signal_id": "scenario.data-diagnosis",
+            "source_path": "raw_input"
+          },
+          {
+            "signal_id": "scenario.priority-roadmap",
+            "source_path": "raw_input"
+          }
+        ],
+        "rationale_codes": [
+          "semantic_disambiguation"
+        ]
+      },
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "data-behavior-diagnosis",
+        "secondary_scenario_ids": [
+          "priority-roadmap"
+        ],
+        "classifier_call_count": 1
+      }
+    },
+    {
+      "id": "cal-multi-06",
+      "stratum": "multi_scenario",
+      "raw_input": "做方案比较，并为选中方案制定指标与验证计划",
+      "task": {
+        "task_type": "design_audit",
+        "research_goal": "做方案比较，并为选中方案制定指标与验证计划",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "方案比较",
+          "验证计划"
+        ]
+      },
+      "available_material_roles": [],
+      "classifier_response": {
+        "primary_scenario_id": "solution-comparison",
+        "secondary_scenarios": [
+          {
+            "scenario_id": "metrics-validation",
+            "relationship": "serial"
+          }
+        ],
+        "confidence": "high",
+        "signals": [
+          {
+            "signal_id": "scenario.solution-comparison",
+            "source_path": "raw_input"
+          },
+          {
+            "signal_id": "scenario.metrics-validation",
+            "source_path": "raw_input"
+          }
+        ],
+        "rationale_codes": [
+          "semantic_disambiguation"
+        ]
+      },
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "solution-comparison",
+        "secondary_scenario_ids": [
+          "metrics-validation"
+        ],
+        "classifier_call_count": 1
+      }
+    },
+    {
+      "id": "cal-multi-07",
+      "stratum": "multi_scenario",
+      "raw_input": "先做趋势扫描，再完成机会方向判断",
+      "task": {
+        "task_type": "competitive_research",
+        "research_goal": "先做趋势扫描，再完成机会方向判断",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "趋势结论",
+          "机会判断"
+        ]
+      },
+      "available_material_roles": [],
+      "classifier_response": {
+        "primary_scenario_id": "trend-change-identification",
+        "secondary_scenarios": [
+          {
+            "scenario_id": "opportunity-direction-evaluation",
+            "relationship": "serial"
+          }
+        ],
+        "confidence": "high",
+        "signals": [
+          {
+            "signal_id": "scenario.trend-change",
+            "source_path": "raw_input"
+          },
+          {
+            "signal_id": "scenario.opportunity-direction",
+            "source_path": "raw_input"
+          }
+        ],
+        "rationale_codes": [
+          "semantic_disambiguation"
+        ]
+      },
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "trend-change-identification",
+        "secondary_scenario_ids": [
+          "opportunity-direction-evaluation"
+        ],
+        "classifier_call_count": 1
+      }
+    },
+    {
+      "id": "cal-multi-08",
+      "stratum": "multi_scenario",
+      "raw_input": "已有用户资料归纳，并据此开展用户分层",
+      "task": {
+        "task_type": "user_research_planning",
+        "research_goal": "已有用户资料归纳，并据此开展用户分层",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "资料归纳",
+          "用户分层"
+        ]
+      },
+      "available_material_roles": [],
+      "classifier_response": {
+        "primary_scenario_id": "user-material-synthesis",
+        "secondary_scenarios": [
+          {
+            "scenario_id": "user-segmentation",
+            "relationship": "serial"
+          }
+        ],
+        "confidence": "high",
+        "signals": [
+          {
+            "signal_id": "scenario.user-material",
+            "source_path": "raw_input"
+          },
+          {
+            "signal_id": "scenario.user-segmentation",
+            "source_path": "raw_input"
+          }
+        ],
+        "rationale_codes": [
+          "semantic_disambiguation"
+        ]
+      },
+      "expected": {
+        "status": "resolved",
+        "primary_scenario_id": "user-material-synthesis",
+        "secondary_scenario_ids": [
+          "user-segmentation"
+        ],
+        "classifier_call_count": 1
+      }
+    },
+    {
+      "id": "cal-ambiguity-01",
+      "stratum": "clarification",
+      "raw_input": "竞品研究还是机会方向判断，当前目标尚未确定",
+      "task": {
+        "task_type": "competitive_research",
+        "research_goal": "竞品研究还是机会方向判断，当前目标尚未确定",
+        "target_audience": [
+          "待确认"
+        ],
+        "scope": [
+          "待确认"
+        ],
+        "expected_deliverables": [
+          "待确认"
+        ]
+      },
+      "available_material_roles": [],
+      "classifier_response": {
+        "primary_scenario_id": "competitor-benchmark-research",
+        "secondary_scenarios": [
+          {
+            "scenario_id": "opportunity-direction-evaluation",
+            "relationship": "conditional"
+          }
+        ],
+        "confidence": "low",
+        "signals": [
+          {
+            "signal_id": "scenario.competitor-benchmark",
+            "source_path": "raw_input"
+          },
+          {
+            "signal_id": "scenario.opportunity-direction",
+            "source_path": "raw_input"
+          }
+        ],
+        "rationale_codes": [
+          "semantic_disambiguation"
+        ]
+      },
+      "expected": {
+        "status": "clarification",
+        "clarification_reason": "low_confidence_classification",
+        "classifier_call_count": 1
+      }
+    },
+    {
+      "id": "cal-ambiguity-02",
+      "stratum": "clarification",
+      "raw_input": "需要用户分层还是用户旅程，研究问题尚未确定",
+      "task": {
+        "task_type": "user_research_planning",
+        "research_goal": "需要用户分层还是用户旅程，研究问题尚未确定",
+        "target_audience": [
+          "待确认"
+        ],
+        "scope": [
+          "待确认"
+        ],
+        "expected_deliverables": [
+          "待确认"
+        ]
+      },
+      "available_material_roles": [],
+      "classifier_response": {
+        "primary_scenario_id": "user-segmentation",
+        "secondary_scenarios": [
+          {
+            "scenario_id": "user-journey-insight",
+            "relationship": "conditional"
+          }
+        ],
+        "confidence": "low",
+        "signals": [
+          {
+            "signal_id": "scenario.user-segmentation",
+            "source_path": "raw_input"
+          },
+          {
+            "signal_id": "scenario.user-journey",
+            "source_path": "raw_input"
+          }
+        ],
+        "rationale_codes": [
+          "semantic_disambiguation"
+        ]
+      },
+      "expected": {
+        "status": "clarification",
+        "clarification_reason": "low_confidence_classification",
+        "classifier_call_count": 1
+      }
+    },
+    {
+      "id": "cal-ambiguity-03",
+      "stratum": "clarification",
+      "raw_input": "要做反馈问题聚类还是根因分析，范围未确认",
+      "task": {
+        "task_type": "voc_diagnosis",
+        "research_goal": "要做反馈问题聚类还是根因分析，范围未确认",
+        "target_audience": [
+          "待确认"
+        ],
+        "scope": [
+          "待确认"
+        ],
+        "expected_deliverables": [
+          "待确认"
+        ]
+      },
+      "available_material_roles": [],
+      "classifier_response": {
+        "primary_scenario_id": "feedback-issue-clustering",
+        "secondary_scenarios": [
+          {
+            "scenario_id": "root-cause-analysis",
+            "relationship": "conditional"
+          }
+        ],
+        "confidence": "low",
+        "signals": [
+          {
+            "signal_id": "scenario.feedback-clustering",
+            "source_path": "raw_input"
+          },
+          {
+            "signal_id": "scenario.root-cause",
+            "source_path": "raw_input"
+          }
+        ],
+        "rationale_codes": [
+          "semantic_disambiguation"
+        ]
+      },
+      "expected": {
+        "status": "clarification",
+        "clarification_reason": "low_confidence_classification",
+        "classifier_call_count": 1
+      }
+    },
+    {
+      "id": "cal-ambiguity-04",
+      "stratum": "clarification",
+      "raw_input": "需要方案生成还是方案比较，决策阶段不清楚",
+      "task": {
+        "task_type": "design_audit",
+        "research_goal": "需要方案生成还是方案比较，决策阶段不清楚",
+        "target_audience": [
+          "待确认"
+        ],
+        "scope": [
+          "待确认"
+        ],
+        "expected_deliverables": [
+          "待确认"
+        ]
+      },
+      "available_material_roles": [],
+      "classifier_response": {
+        "primary_scenario_id": "solution-generation",
+        "secondary_scenarios": [
+          {
+            "scenario_id": "solution-comparison",
+            "relationship": "conditional"
+          }
+        ],
+        "confidence": "low",
+        "signals": [
+          {
+            "signal_id": "scenario.solution-generation",
+            "source_path": "raw_input"
+          },
+          {
+            "signal_id": "scenario.solution-comparison",
+            "source_path": "raw_input"
+          }
+        ],
+        "rationale_codes": [
+          "semantic_disambiguation"
+        ]
+      },
+      "expected": {
+        "status": "clarification",
+        "clarification_reason": "low_confidence_classification",
+        "classifier_call_count": 1
+      }
+    },
+    {
+      "id": "cal-ambiguity-05",
+      "stratum": "clarification",
+      "raw_input": "要先定优先级与实施路径还是指标与验证计划，尚未确认",
+      "task": {
+        "task_type": "competitive_research",
+        "research_goal": "要先定优先级与实施路径还是指标与验证计划，尚未确认",
+        "target_audience": [
+          "待确认"
+        ],
+        "scope": [
+          "待确认"
+        ],
+        "expected_deliverables": [
+          "待确认"
+        ]
+      },
+      "available_material_roles": [],
+      "classifier_response": {
+        "primary_scenario_id": "priority-roadmap",
+        "secondary_scenarios": [
+          {
+            "scenario_id": "metrics-validation",
+            "relationship": "conditional"
+          }
+        ],
+        "confidence": "low",
+        "signals": [
+          {
+            "signal_id": "scenario.priority-roadmap",
+            "source_path": "raw_input"
+          },
+          {
+            "signal_id": "scenario.metrics-validation",
+            "source_path": "raw_input"
+          }
+        ],
+        "rationale_codes": [
+          "semantic_disambiguation"
+        ]
+      },
+      "expected": {
+        "status": "clarification",
+        "clarification_reason": "low_confidence_classification",
+        "classifier_call_count": 1
+      }
+    },
+    {
+      "id": "cal-bypass-01",
+      "stratum": "bypass_or_no_match",
+      "raw_input": "请直接执行 $competitive-analysis，不要做场景识别",
+      "direct_skill_id": "competitive-analysis",
+      "task": {
+        "task_type": "competitive_research",
+        "research_goal": "请直接执行 $competitive-analysis，不要做场景识别",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "bypassed",
+        "classifier_call_count": 0
+      }
+    },
+    {
+      "id": "cal-no-match-01",
+      "stratum": "bypass_or_no_match",
+      "raw_input": "请帮我整理一下接下来该做什么，目前没有研究目标或交付物信息",
+      "task": {
+        "task_type": "user_research_planning",
+        "research_goal": "请帮我整理一下接下来该做什么，目前没有研究目标或交付物信息",
+        "target_audience": [
+          "目标用户"
+        ],
+        "scope": [
+          "核心场景"
+        ],
+        "expected_deliverables": [
+          "研究结论"
+        ]
+      },
+      "available_material_roles": [],
+      "expected": {
+        "status": "clarification",
+        "clarification_reason": "classifier_unavailable",
+        "classifier_call_count": 0
+      }
+    }
+  ]
+}

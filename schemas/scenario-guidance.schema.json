@@ -1,0 +1,142 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "scenario-guidance.schema.json",
+  "title": "Scenario Guidance Classification",
+  "description": "Phase-B non-production classifier contract. IDs and controlled signals are Gate-2 candidates; no free-form user text is returned.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "primary_scenario_id",
+    "secondary_scenarios",
+    "confidence",
+    "signals",
+    "rationale_codes"
+  ],
+  "properties": {
+    "primary_scenario_id": { "$ref": "#/$defs/scenario_id" },
+    "secondary_scenarios": {
+      "type": "array",
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["scenario_id", "relationship"],
+        "properties": {
+          "scenario_id": { "$ref": "#/$defs/scenario_id" },
+          "relationship": {
+            "type": "string",
+            "enum": ["serial", "parallel", "conditional"]
+          }
+        }
+      }
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["high", "medium", "low"]
+    },
+    "signals": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["signal_id", "source_path"],
+        "properties": {
+          "signal_id": { "$ref": "#/$defs/signal_id" },
+          "source_path": { "$ref": "#/$defs/source_path" }
+        }
+      }
+    },
+    "rationale_codes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "explicit_goal_match",
+          "deliverable_match",
+          "material_match",
+          "scope_match",
+          "task_type_context",
+          "semantic_disambiguation"
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "scenario_id": {
+      "type": "string",
+      "enum": [
+        "trend-change-identification",
+        "competitor-benchmark-research",
+        "opportunity-direction-evaluation",
+        "user-material-synthesis",
+        "user-segmentation",
+        "user-journey-insight",
+        "experience-walkthrough",
+        "feedback-issue-clustering",
+        "data-behavior-diagnosis",
+        "root-cause-analysis",
+        "solution-generation",
+        "solution-comparison",
+        "strategy-synthesis",
+        "priority-roadmap",
+        "metrics-validation"
+      ]
+    },
+    "source_path": {
+      "type": "string",
+      "enum": [
+        "raw_input",
+        "task.task_type",
+        "task.research_goal",
+        "task.target_audience",
+        "task.scope",
+        "task.constraints",
+        "task.success_criteria",
+        "task.expected_deliverables",
+        "available_material_roles"
+      ]
+    },
+    "signal_id": {
+      "type": "string",
+      "enum": [
+        "scenario.trend-change",
+        "scenario.competitor-benchmark",
+        "scenario.opportunity-direction",
+        "scenario.user-material",
+        "scenario.user-segmentation",
+        "scenario.user-journey",
+        "scenario.experience-walkthrough",
+        "scenario.feedback-clustering",
+        "scenario.data-diagnosis",
+        "scenario.root-cause",
+        "scenario.solution-generation",
+        "scenario.solution-comparison",
+        "scenario.strategy-synthesis",
+        "scenario.priority-roadmap",
+        "scenario.metrics-validation",
+        "task-type.competitive-research",
+        "task-type.user-research-planning",
+        "task-type.voc-diagnosis",
+        "task-type.design-audit",
+        "task-type.a11y-audit",
+        "profile.speed.explicit",
+        "profile.depth.explicit",
+        "profile.breadth.scope-units",
+        "profile.breadth.explicit",
+        "profile.focused.named-focus",
+        "profile.focused.explicit",
+        "profile.mixed-method.explicit",
+        "profile.decision.deliverable",
+        "profile.decision.explicit",
+        "profile.remediation.closed-loop",
+        "profile.remediation.explicit",
+        "execution.compare-paths.explicit"
+      ]
+    }
+  }
+}
