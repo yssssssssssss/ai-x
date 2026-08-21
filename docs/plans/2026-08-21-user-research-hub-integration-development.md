@@ -1,7 +1,7 @@
 # User Research Hub 受控接入与动态方案卡片方案
 
 > 日期：2026-08-21
-> 状态：已完成科学性与工程可行性修订，待批准
+> 状态：已批准执行；Phase A 自动检查完成，Gate 1 等待人工决策
 > 版本：v3（受控内容接入、可审计 Planning Guidance 与分步动态方案卡片）
 > 来源目录：`wiki/user-research/`
 > 接入目标：在不破坏 Current 可信研究闭环的前提下，尽量完整保留并吸收其中的方法、设计策略、Skill、模板和案例经验，并让 Task/Scenario 受控影响前台候选方案。
@@ -514,7 +514,7 @@ Assets 继续不进入通用 Knowledge Index，只由明确引用它们的 Skill
 - `scripts/user-research-hub-integration.ts`：提供 `inventory`、`check`、`apply` 三个确定性子命令。
 - `tests/user-research-hub-integration.test.ts`：覆盖已知坏 YAML、路径转换、重复映射、拒绝项和幂等。
 - `tests/user-research-hub-disposition.test.ts`：覆盖来源实体完整性、数据治理字段、部署包负向清单和零未处置项。
-- `tests/user-research-hub-package-boundary.test.ts`：构建实际发布文件清单，断言 `00-source-sync`、完整 Case 原文和 source-only/reject_runtime 内容不进入产物。
+- `tests/user-research-hub-package-boundary.test.ts`：只有 Gate 1 定义了真实部署/发布产物命令后才新增，用该产物断言 `00-source-sync`、完整 Case 原文和 source-only/reject_runtime 内容不进入产物；当前仓库没有可验证的部署产物，禁止用虚构文件清单替代。
 - `schemas/scenario-guidance.schema.json`：约束主/次 Scenario、关系、置信度、受控 signal 和来源字段路径，只允许 approved Scenario ID。
 - `orchestrator/planning-policy.yaml`：内部生产策略，固定 `candidate_generation_mode: fixed | dynamic`、ProfileSpec 版本和映射哈希；默认 `fixed`。
 - `apps/orchestrator-runtime/src/planners/planning-guidance.ts`：对外只暴露一个 Planning Guidance 解析接口，内部封装规则识别、必要时的一次 LLM 分类、Candidate Profile 选择与 provenance 生成，不新增 Agent 或服务。
@@ -561,7 +561,7 @@ Assets 继续不进入通用 Knowledge Index，只由明确引用它们的 Skill
 - 7 个 Candidate Profile 的候选语义草案、2–4 数量边界，以及覆盖 15 个 Scenario 的 Profile 可分辨性报告；Profile 枚举和映射在 Gate 2 前不冻结；
 - Gold 精确场景修复：新增 `competitive-digital-human-gold` clear fixture，并让 `gold-run.ts` 按 ID/profile/variant/PII 精确选择；
 - 所有 reject/source-only 分组；
-- 不修改 Runtime 和现有知识内容。
+- 不修改生产 Planner、Knowledge Runtime 和现有知识内容；Phase A 只修复独立的 Gold 验收入口，不改变普通 Current Smoke 行为。
 
 完成条件：
 
@@ -650,6 +650,26 @@ C1 完成后，内容增强可以被单独评测和批准，但 Gate 3 前不进
 - 自动检查：lint、schema、hash、路径、单测、快照和差异报告，可在开发中反复运行，不需要人工确认，不算审核。
 - 人工审核：对范围、方法语义或生产结果作批准/拒绝判断，只在以下 3 个 Gate 发生。
 - Commit、文件修改、单测修复和文案调整本身不得触发人工审核。
+
+### 阶段 A 实际结果（2026-08-21）
+
+- Source snapshot：8,491 files / 400,355,408 bytes / `sha256:e5a9885f3e98e9c187823da2ab7361081e1b5ec0e21ecec8639d5288a7eb4d00`。
+- `00-source-sync`：7,683 files / `sha256:99565ecfb96d4ac8178bcfbc37ebddeec7d4736de33a183516c46858ac729347`。
+- Organized layer：808 files；275 registry entities；8,491/8,491 文件均有唯一覆盖。
+- Disposition：104 `map_existing`、22 `merge_into_existing`、55 `import_candidate`、85 `source_only`、9 `reject_runtime`。
+- Frontmatter：731 个 Markdown，562 valid，169 个已绑定 `quote-local-home-frontmatter-v1`，无未知解析错误。
+- Profile draft：7 个 ProfileSpec、15/15 Scenario、30 个专项绑定、60/60 静态语义比较通过；catalog 为 0 supported / 27 conditional / 3 gap，不声称 Runtime 可执行性。
+- Gold：新增并精确锁定 `competitive-digital-human-gold`；原 ambiguous fixture 保留；Gold 使用 `approvalMode: forbid`，普通 Smoke 保持 `allow_owner`。
+- 自动验证：56 tests，51 pass，5 个安全环境限定的全真测试 skip，0 fail；typecheck、manifest check、`git diff --check` 通过。
+- Gate 1 状态：`review_required`，下面 5 项必须一次性决策。
+
+待决项：
+
+1. 上游 Agent Skill 声明 55 项、当前只观察到 27 个物理项：接受为缺失 link target 的已知快照例外，或重新获取来源。
+2. Huangliu 声明 5,587 文件、当前只观察到 5,585：接受已知快照例外，或重新获取来源。
+3. Hub 未声明 merge/import 内容的复用权、保留期、敏感级和扫描结论：由具备权限的内容负责人批准“仅限内部 evaluation 复用”，否则 Phase B materialization 保持阻塞。
+4. Hub 只通过本机只读挂载提供：接受 Gate 显式要求 `--source` 的挂载合同，或先建设受控来源制品。
+5. 当前仓库没有服务端部署/package 命令：接受“Git 不跟踪 `/wiki/`，真实部署边界在发布产物定义后补验”，或先定义发布制品再通过 Gate 1。
 
 ### Gate 1：范围与处置冻结
 

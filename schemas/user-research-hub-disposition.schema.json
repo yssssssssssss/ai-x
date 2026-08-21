@@ -1,0 +1,353 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "user-research-hub-disposition.schema.json",
+  "title": "User Research Hub Phase-A Disposition Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "snapshot_id",
+    "logical_root",
+    "hash_spec",
+    "snapshot",
+    "upstream_manifest",
+    "registries",
+    "known_transforms",
+    "gate_1",
+    "entities",
+    "attachment_groups",
+    "files",
+    "disposition_hash"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "snapshot_id": { "type": "string", "minLength": 1 },
+    "logical_root": { "const": "wiki/user-research" },
+    "hash_spec": { "$ref": "#/$defs/hashSpec" },
+    "snapshot": { "$ref": "#/$defs/snapshot" },
+    "upstream_manifest": { "$ref": "#/$defs/upstreamManifest" },
+    "registries": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "items": { "$ref": "#/$defs/registry" }
+    },
+    "known_transforms": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/knownTransform" }
+    },
+    "gate_1": { "$ref": "#/$defs/gate" },
+    "entities": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/entity" }
+    },
+    "attachment_groups": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/attachmentGroup" }
+    },
+    "files": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/file" }
+    },
+    "disposition_hash": { "$ref": "#/$defs/hash" }
+  },
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+    },
+    "hashSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "leaf_input", "tree_input", "disposition_input", "path_encoding"],
+      "properties": {
+        "algorithm": { "const": "sha256" },
+        "leaf_input": { "const": "raw-bytes" },
+        "tree_input": { "const": "canonical-ndjson-v1" },
+        "disposition_input": { "const": "canonical-json-v1" },
+        "path_encoding": { "const": "utf8-nfc-posix" }
+      }
+    },
+    "treeSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file_count", "byte_count", "tree_hash"],
+      "properties": {
+        "file_count": { "type": "integer", "minimum": 0 },
+        "byte_count": { "type": "integer", "minimum": 0 },
+        "tree_hash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file_count", "byte_count", "tree_hash", "source_sync", "organized"],
+      "properties": {
+        "file_count": { "type": "integer", "minimum": 0 },
+        "byte_count": { "type": "integer", "minimum": 0 },
+        "tree_hash": { "$ref": "#/$defs/hash" },
+        "source_sync": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "file_count", "byte_count", "tree_hash"],
+          "properties": {
+            "path": { "const": "00-source-sync" },
+            "file_count": { "type": "integer", "minimum": 0 },
+            "byte_count": { "type": "integer", "minimum": 0 },
+            "tree_hash": { "$ref": "#/$defs/hash" }
+          }
+        },
+        "organized": { "$ref": "#/$defs/treeSummary" }
+      }
+    },
+    "countCheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "declared", "observed", "status", "reason"],
+      "properties": {
+        "key": { "type": "string", "minLength": 1 },
+        "declared": { "type": "integer", "minimum": 0 },
+        "observed": { "type": "integer", "minimum": 0 },
+        "status": { "enum": ["match", "mismatch"] },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    },
+    "upstreamManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "declared_count_checks"],
+      "properties": {
+        "path": { "$ref": "#/$defs/path" },
+        "sha256": { "$ref": "#/$defs/hash" },
+        "declared_count_checks": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/countCheck" }
+        }
+      }
+    },
+    "registry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path", "sha256", "entity_count"],
+      "properties": {
+        "kind": { "enum": ["knowledge", "skill", "task", "case", "domain"] },
+        "path": { "$ref": "#/$defs/path" },
+        "sha256": { "$ref": "#/$defs/hash" },
+        "entity_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "knownTransform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "applies_to", "source_pattern", "affected_count", "affected_paths_hash"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "applies_to": { "type": "string", "minLength": 1 },
+        "source_pattern": { "type": "string", "minLength": 1 },
+        "affected_count": { "type": "integer", "minimum": 0 },
+        "affected_paths_hash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "facts"],
+      "properties": {
+        "status": { "enum": ["ready", "review_required", "blocked"] },
+        "facts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/gateFact" }
+        }
+      }
+    },
+    "gateFact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "category", "status", "statement", "decision_required"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "category": { "enum": ["source_integrity", "governance", "release_boundary", "source_availability"] },
+        "status": { "enum": ["accepted", "review_required", "blocked"] },
+        "statement": { "type": "string", "minLength": 1 },
+        "decision_required": { "type": "string", "minLength": 1 }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["canonical_id", "path", "status"],
+      "properties": {
+        "canonical_id": { "type": "string", "minLength": 1 },
+        "path": { "$ref": "#/$defs/path" },
+        "status": { "enum": ["existing", "candidate"] }
+      }
+    },
+    "scanResult": {
+      "enum": ["clear", "reviewed", "review_required", "blocked"]
+    },
+    "governance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sensitivity",
+        "distribution_scope",
+        "owner",
+        "retention",
+        "source_rights",
+        "review_status",
+        "scans",
+        "finding_refs"
+      ],
+      "properties": {
+        "sensitivity": { "enum": ["public", "internal", "restricted", "unknown"] },
+        "distribution_scope": { "enum": ["internal_repository", "evaluation_only", "source_archive_only"] },
+        "owner": { "type": "string", "minLength": 1 },
+        "retention": { "type": "string", "minLength": 1 },
+        "source_rights": { "enum": ["cleared_public_reuse", "cleared_internal_reuse", "restricted", "unknown"] },
+        "review_status": { "enum": ["complete", "review_required", "blocked"] },
+        "scans": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["secrets", "pii", "local_paths", "internal_business_facts"],
+          "properties": {
+            "secrets": { "$ref": "#/$defs/scanResult" },
+            "pii": { "$ref": "#/$defs/scanResult" },
+            "local_paths": { "$ref": "#/$defs/scanResult" },
+            "internal_business_facts": { "$ref": "#/$defs/scanResult" }
+          }
+        },
+        "finding_refs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "registry_kind",
+        "registry_path",
+        "id",
+        "entity_type",
+        "source_status",
+        "source_path",
+        "disposition",
+        "rationale",
+        "mapping_basis",
+        "merge_sections"
+      ],
+      "properties": {
+        "key": { "type": "string", "minLength": 1 },
+        "registry_kind": { "enum": ["knowledge", "skill", "task", "case", "domain"] },
+        "registry_path": { "$ref": "#/$defs/path" },
+        "id": { "type": "string", "minLength": 1 },
+        "entity_type": { "type": "string", "minLength": 1 },
+        "source_status": { "type": "string", "minLength": 1 },
+        "source_path": { "$ref": "#/$defs/path" },
+        "disposition": { "enum": ["map_existing", "merge_into_existing", "import_candidate", "source_only", "reject_runtime"] },
+        "rationale": { "type": "string", "minLength": 1 },
+        "mapping_basis": { "type": ["string", "null"] },
+        "target": { "$ref": "#/$defs/target" },
+        "merge_sections": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "governance": { "$ref": "#/$defs/governance" },
+        "coalescence_group_id": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "disposition": { "enum": ["map_existing", "merge_into_existing", "import_candidate"] } } },
+          "then": { "required": ["target"] },
+          "else": { "not": { "required": ["target"] } }
+        },
+        {
+          "if": { "properties": { "disposition": { "enum": ["merge_into_existing", "import_candidate"] } } },
+          "then": { "required": ["governance"] }
+        }
+      ]
+    },
+    "attachmentGroup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "owner_refs", "disposition", "rationale"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "owner_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "disposition": { "enum": ["source_only", "reject_runtime"] },
+        "rationale": { "type": "string", "minLength": 1 }
+      }
+    },
+    "frontmatter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "transform_rule_id"],
+      "properties": {
+        "status": { "enum": ["valid", "absent", "known_invalid", "not_applicable"] },
+        "transform_rule_id": { "type": ["string", "null"] }
+      }
+    },
+    "entityCoverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "entity_ref"],
+      "properties": {
+        "kind": { "const": "entity" },
+        "entity_ref": { "type": "string", "minLength": 1 }
+      }
+    },
+    "attachmentCoverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "attachment_group_ref"],
+      "properties": {
+        "kind": { "const": "attachment" },
+        "attachment_group_ref": { "type": "string", "minLength": 1 }
+      }
+    },
+    "orphanCoverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "disposition", "reason"],
+      "properties": {
+        "kind": { "const": "orphan" },
+        "disposition": { "enum": ["source_only", "reject_runtime"] },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "node_type", "size_bytes", "sha256", "executable", "media_type", "frontmatter", "coverage"],
+      "properties": {
+        "path": { "$ref": "#/$defs/path" },
+        "node_type": { "const": "regular" },
+        "size_bytes": { "type": "integer", "minimum": 0 },
+        "sha256": { "$ref": "#/$defs/hash" },
+        "executable": { "type": "boolean" },
+        "media_type": { "type": "string", "minLength": 1 },
+        "frontmatter": { "$ref": "#/$defs/frontmatter" },
+        "coverage": {
+          "oneOf": [
+            { "$ref": "#/$defs/entityCoverage" },
+            { "$ref": "#/$defs/attachmentCoverage" },
+            { "$ref": "#/$defs/orphanCoverage" }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -22,10 +22,13 @@ import {
 import type { MigrationDatabase } from '../../../database/migration-runner.ts';
 import {
   runCurrentRealSmoke,
+  type SemanticGoldFixture,
+  type SemanticGoldScenario,
   type SmokeReceipt,
 } from '../../../scripts/current-real-smoke.ts';
 
 const GOLD_PROFILE = 'competitive_research';
+export const GOLD_SCENARIO_ID = 'competitive-digital-human-gold';
 const DEFAULT_FIXTURE = 'tests/fixtures/current-semantic-gold.json';
 
 type GoldCommand =
@@ -73,6 +76,14 @@ export function assertGoldSmokeReceipt(receipt: SmokeReceipt, expectedScenarioId
     || receipt.taskType !== GOLD_PROFILE
     || receipt.provider !== 'gateway'
     || receipt.coreTool !== 'tavily-web-search'
+    || receipt.toolReceipt.actorId !== 'tavily-web-search'
+    || receipt.toolReceipt.executionMode !== 'real'
+    || receipt.toolReceipt.declaredAdapterType !== 'tavily'
+    || receipt.toolReceipt.resolvedAdapterType !== 'tavily'
+    || typeof receipt.toolReceipt.implementationId !== 'string'
+    || receipt.toolReceipt.implementationId.trim() === ''
+    || !receipt.requestedModel.trim()
+    || !receipt.actualModel.trim()
     || receipt.packageSealed !== true
     || !receipt.attemptId.trim()
     || !receipt.reportPackageId.trim()
@@ -139,18 +150,31 @@ function goldService(authenticatedReviewerId?: string): {
   return { service, store };
 }
 
-function fixtureScenario(fixturePath: string): { id: string; input: string } {
-  const fixture = JSON.parse(readFileSync(fixturePath, 'utf8')) as {
-    scenarios?: Array<{ id?: unknown; profile?: unknown; variant?: unknown; piiDetected?: unknown; input?: unknown }>;
-  };
-  const scenario = fixture.scenarios?.find((candidate) => (
-    candidate.profile === GOLD_PROFILE
-    && candidate.variant === 'clear'
-    && candidate.piiDetected === false
-  ));
-  if (!scenario || typeof scenario.id !== 'string' || typeof scenario.input !== 'string') {
-    throw new Error('Gold fixture has no safe clear competitive scenario');
+export function selectGoldScenario(fixture: SemanticGoldFixture): SemanticGoldScenario {
+  const matches = fixture.scenarios.filter(({ id }) => id === GOLD_SCENARIO_ID);
+  if (matches.length !== 1) {
+    throw new Error(`Gold fixture must contain exactly one ${GOLD_SCENARIO_ID} scenario`);
   }
+  const scenario = matches[0]!;
+  if (
+    scenario.profile !== GOLD_PROFILE
+    || scenario.taskType !== GOLD_PROFILE
+    || scenario.variant !== 'clear'
+    || scenario.piiDetected !== false
+    || typeof scenario.input !== 'string'
+    || scenario.input.trim() === ''
+  ) {
+    throw new Error(`Gold scenario ${GOLD_SCENARIO_ID} is not a safe clear competitive scenario`);
+  }
+  return scenario;
+}
+
+function fixtureScenario(fixturePath: string): { id: string; input: string } {
+  const fixture = JSON.parse(readFileSync(fixturePath, 'utf8')) as SemanticGoldFixture;
+  if (!Array.isArray(fixture.profiles) || !Array.isArray(fixture.scenarios)) {
+    throw new Error('Gold fixture is malformed');
+  }
+  const scenario = selectGoldScenario(fixture);
   return { id: scenario.id, input: scenario.input };
 }
 
@@ -192,6 +216,7 @@ async function collect(command: Extract<GoldCommand, { kind: 'collect' }>): Prom
           fixturePath,
           profiles: [GOLD_PROFILE],
           scenarioId: scenario.id,
+          approvalMode: 'forbid',
         });
         if (!receipt) throw new Error('Current real smoke returned no Gold receipt');
         assertGoldSmokeReceipt(receipt, scenario.id);

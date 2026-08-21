@@ -15,6 +15,7 @@
     "lint:knowledge": "tsx harness/linters/knowledge-linter.ts",
     "kb:import": "tsx scripts/kb-import.ts",
     "kb:build": "tsx apps/orchestrator-runtime/src/knowledge/build.ts",
+    "hub:integration": "tsx scripts/user-research-hub-integration.ts",
     "playwright:install:chromium": "playwright install chromium",
     "spike:plan": "tsx apps/orchestrator-runtime/src/spike-plan.ts",
     "spike:execute": "tsx apps/orchestrator-runtime/src/spike-execute.ts",

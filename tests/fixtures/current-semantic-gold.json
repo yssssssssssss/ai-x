@@ -112,6 +112,38 @@
       ]
     },
     {
+      "id": "competitive-digital-human-gold",
+      "profile": "competitive_research",
+      "taskType": "competitive_research",
+      "businessDomain": "live_commerce",
+      "input": "我要为直播场域做一次数字人竞品研究,了解各家能力与体验差异",
+      "researchGoal": "了解直播场域数字人竞品的能力与体验差异",
+      "sensitivity": "public",
+      "piiDetected": false,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "competitive_analysis_report",
+      "minPublicSources": 3,
+      "minVisualAssets": 0,
+      "variant": "clear",
+      "expectedTaskType": "competitive_research",
+      "expectedDeliverableIds": [
+        "competitive_analysis_report"
+      ],
+      "clarificationKeys": [],
+      "clarificationThemes": [],
+      "forbiddenCapabilities": [
+        "private_data_access",
+        "external_side_effects"
+      ],
+      "reportSections": [
+        "executive_summary",
+        "findings",
+        "evidence",
+        "recommendations",
+        "risks_and_open_questions"
+      ]
+    },
+    {
       "id": "competitive-grocery-delivery",
       "profile": "competitive_research",
       "taskType": "competitive_research",

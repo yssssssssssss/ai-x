@@ -6,10 +6,14 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import {
   assertGatewayModelReceipts,
+  assertRealSmokeConfig,
+  assertSmokePlanApprovalPolicy,
   assertSmokeReceiptMinimums,
   CURRENT_REAL_SMOKE_PROFILES,
   designSmokeInputValue,
   formatSmokeReceipt,
+  mayAutoApproveSmoke,
+  resolveApprovalMode,
   resolveSmokeRequirement,
   requireActorCoverage,
   runCurrentRealSmoke,
@@ -163,6 +167,86 @@ function visualSmokeSnapshot() {
     },
   };
 }
+
+test('Gold forbid approval mode rejects approval steps before confirmation and never auto-approves', () => {
+  assert.equal(resolveApprovalMode(undefined), 'allow_owner');
+  assert.equal(mayAutoApproveSmoke(undefined), true);
+  assert.equal(resolveApprovalMode('forbid'), 'forbid');
+  assert.equal(mayAutoApproveSmoke('forbid'), false);
+  assert.doesNotThrow(() => assertSmokePlanApprovalPolicy([
+    { actor_type: 'skill', actor_id: 'competitive-analysis', requires_approval: false },
+  ], 'forbid'));
+  assert.throws(() => assertSmokePlanApprovalPolicy([
+    { actor_type: 'skill', actor_id: 'competitive-analysis', requires_approval: true },
+  ], 'forbid'), /GOLD_APPROVAL_GATE/u);
+  assert.doesNotThrow(() => assertSmokePlanApprovalPolicy([
+    { actor_type: 'skill', actor_id: 'competitive-analysis', requires_approval: true },
+  ]));
+});
+
+test('ordinary smoke keeps owner approval by default while Gold forbid mode rejects remaining gates', () => {
+  assert.equal(mayAutoApproveSmoke(), true);
+  assert.equal(mayAutoApproveSmoke('allow_owner'), true);
+  assert.equal(mayAutoApproveSmoke('forbid'), false);
+});
+
+test('real smoke configuration rejects mock and half-real provider modes', () => {
+  const valid = {
+    ALLOW_REAL_PROVIDER: '1',
+    LLM_PROVIDER: 'gateway',
+    TOOL_ADAPTER: 'real',
+    DATABASE_URL: 'postgres://smoke.invalid/db',
+    JWT_SECRET: 'test-only',
+    LLM_GATEWAY_BASE_URL: 'https://gateway.invalid',
+    LLM_GATEWAY_API_KEY: 'test-only',
+    LLM_MODEL_NAME: 'route-a',
+    LLM_EXPECTED_ACTUAL_MODEL: 'model-a',
+    TAVILY_API_KEY: 'test-only',
+  };
+  assert.doesNotThrow(() => assertRealSmokeConfig(valid));
+  assert.throws(() => assertRealSmokeConfig({ ...valid, ALLOW_REAL_PROVIDER: '0' }), /exactly 1/u);
+  assert.throws(() => assertRealSmokeConfig({ ...valid, LLM_PROVIDER: 'mock' }), /exactly gateway/u);
+  assert.throws(() => assertRealSmokeConfig({ ...valid, TOOL_ADAPTER: 'fake' }), /exactly real/u);
+});
+
+test('formatted receipt rejects non-real or non-Tavily Tool proof', () => {
+  const snapshot = visualSmokeSnapshot();
+  const summary = verifySmokeHistoryReread({
+    executionGapCount: 1,
+    initial: summarizeSmokeEvidence(snapshot),
+    reread: summarizeSmokeEvidence(snapshot),
+    requireBrowserEvidence: true,
+  });
+  const base = {
+    ...summary,
+    scenarioId: 'competitive-ai-shopping-assistant',
+    profile: 'competitive_research',
+    taskType: 'competitive_research',
+    deliverableType: 'competitive_analysis_report',
+    taskId: 'task-1',
+    planVersionId: 'plan-1',
+    attemptId: 'attempt-1',
+    reportPackageId: 'package-1',
+    visualAssetCount: 4,
+    deliverableArtifactId: 'deliverable-1',
+    evidenceManifestArtifactId: 'evidence-manifest-1',
+    evidenceArtifactIds: ['evidence-1'],
+    counts: { evidence: 3, findings: 1, recommendations: 1 },
+    sources: ['https://one.test', 'https://two.test', 'https://three.test'],
+    provider: 'gateway',
+    requestedModel: 'route-a',
+    actualModel: 'model-a',
+    coreTool: 'tavily-web-search',
+    packageSealed: true,
+    review: { artifactId: 'review-1', automated: true as const, verdict: 'pass' as const },
+  };
+  for (const toolReceipt of [
+    { actorId: 'tavily-web-search', declaredAdapterType: 'tavily', resolvedAdapterType: 'tavily', implementationId: 'tavily-rest-v1', executionMode: 'mock', endpointHost: 'api.tavily.com', status: 'ok', latencyMs: 1 },
+    { actorId: 'tavily-web-search', declaredAdapterType: 'fake', resolvedAdapterType: 'tavily', implementationId: 'tavily-rest-v1', executionMode: 'real', endpointHost: 'api.tavily.com', status: 'ok', latencyMs: 1 },
+  ]) {
+    assert.throws(() => formatSmokeReceipt({ ...base, toolReceipt }), /real Tavily/u);
+  }
+});
 
 test('current real smoke covers all five Current profiles', () => {
   assert.deepEqual(realProfiles, [

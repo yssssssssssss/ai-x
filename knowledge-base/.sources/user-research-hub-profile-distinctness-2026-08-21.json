@@ -1,0 +1,2231 @@
+{
+  "baselineOrder": [
+    "speed",
+    "depth"
+  ],
+  "dimensionOrder": [
+    "scope",
+    "method",
+    "evidence",
+    "review",
+    "output_emphasis"
+  ],
+  "formatVersion": "profile-distinctness-v1",
+  "inputs": {
+    "capabilityRegistrySha256": "sha256:3eb8c566c2a4e7bc0198d03151e078d56ad69fbedb0034433df23693d326ff8b",
+    "profileSpecsSha256": "sha256:f61c5b019659e2e4e7fa8e82338806313c88e1e4aa4d679572ebf1ef87b96fc6",
+    "scenarioMappingsSha256": "sha256:eb2901a6e46593c2c68b34c56055418f1d030e9bc62210b6d9baaefe9c16ea3c"
+  },
+  "rows": [
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "no_exact_active_default_skill"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "trend-change-identification",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/01-find-direction-找方向/01-trend-change-identification-趋势与变化识别.md",
+      "specialtyProfileId": "breadth",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "no_exact_active_default_skill"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "trend-change-identification",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/01-find-direction-找方向/01-trend-change-identification-趋势与变化识别.md",
+      "specialtyProfileId": "breadth",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "tool_health_runtime_dependent"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "competitor-benchmark-research",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/01-find-direction-找方向/02-competitor-benchmark-research-竞品与标杆研究.md",
+      "specialtyProfileId": "breadth",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "tool_health_runtime_dependent"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "competitor-benchmark-research",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/01-find-direction-找方向/02-competitor-benchmark-research-竞品与标杆研究.md",
+      "specialtyProfileId": "breadth",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "semantic_crosswalk_review_required"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "competitor-benchmark-research",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/01-find-direction-找方向/02-competitor-benchmark-research-竞品与标杆研究.md",
+      "specialtyProfileId": "decision",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "semantic_crosswalk_review_required"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "competitor-benchmark-research",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/01-find-direction-找方向/02-competitor-benchmark-research-竞品与标杆研究.md",
+      "specialtyProfileId": "decision",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "selected_task_type_unreviewed"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "opportunity-direction-evaluation",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/01-find-direction-找方向/03-opportunity-direction-evaluation-机会方向判断.md",
+      "specialtyProfileId": "focused",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "selected_task_type_unreviewed"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "opportunity-direction-evaluation",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/01-find-direction-找方向/03-opportunity-direction-evaluation-机会方向判断.md",
+      "specialtyProfileId": "focused",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "no_exact_active_strategy_skill"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "opportunity-direction-evaluation",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/01-find-direction-找方向/03-opportunity-direction-evaluation-机会方向判断.md",
+      "specialtyProfileId": "decision",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "no_exact_active_strategy_skill"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "opportunity-direction-evaluation",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/01-find-direction-找方向/03-opportunity-direction-evaluation-机会方向判断.md",
+      "specialtyProfileId": "decision",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "selected_task_type_unreviewed"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "user-material-synthesis",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/02-understand-users-懂用户/01-user-material-synthesis-已有用户资料归纳.md",
+      "specialtyProfileId": "focused",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "selected_task_type_unreviewed"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "user-material-synthesis",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/02-understand-users-懂用户/01-user-material-synthesis-已有用户资料归纳.md",
+      "specialtyProfileId": "focused",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "input_availability_runtime_dependent"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "user-segmentation",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/02-understand-users-懂用户/02-user-segmentation-用户分层与重点人群识别.md",
+      "specialtyProfileId": "focused",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "input_availability_runtime_dependent"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "user-segmentation",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/02-understand-users-懂用户/02-user-segmentation-用户分层与重点人群识别.md",
+      "specialtyProfileId": "focused",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "input_availability_runtime_dependent"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "user-segmentation",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/02-understand-users-懂用户/02-user-segmentation-用户分层与重点人群识别.md",
+      "specialtyProfileId": "breadth",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "input_availability_runtime_dependent"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "user-segmentation",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/02-understand-users-懂用户/02-user-segmentation-用户分层与重点人群识别.md",
+      "specialtyProfileId": "breadth",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "method_family_independence_unmodeled"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "review"
+      ],
+      "scenarioId": "user-segmentation",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/02-understand-users-懂用户/02-user-segmentation-用户分层与重点人群识别.md",
+      "specialtyProfileId": "mixed_method",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "method_family_independence_unmodeled"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "review"
+      ],
+      "scenarioId": "user-segmentation",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/02-understand-users-懂用户/02-user-segmentation-用户分层与重点人群识别.md",
+      "specialtyProfileId": "mixed_method",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "input_availability_runtime_dependent"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "user-journey-insight",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/02-understand-users-懂用户/03-user-journey-insight-用户旅程与需求洞察.md",
+      "specialtyProfileId": "focused",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "input_availability_runtime_dependent"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "user-journey-insight",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/02-understand-users-懂用户/03-user-journey-insight-用户旅程与需求洞察.md",
+      "specialtyProfileId": "focused",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "method_family_independence_unmodeled"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "review"
+      ],
+      "scenarioId": "user-journey-insight",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/02-understand-users-懂用户/03-user-journey-insight-用户旅程与需求洞察.md",
+      "specialtyProfileId": "mixed_method",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "method_family_independence_unmodeled"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "review"
+      ],
+      "scenarioId": "user-journey-insight",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/02-understand-users-懂用户/03-user-journey-insight-用户旅程与需求洞察.md",
+      "specialtyProfileId": "mixed_method",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "retest_evidence_requires_post_change_input"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "method",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "experience-walkthrough",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/03-find-problems-找问题/01-experience-walkthrough-页面与链路体验走查.md",
+      "specialtyProfileId": "remediation",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "retest_evidence_requires_post_change_input"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "method",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "experience-walkthrough",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/03-find-problems-找问题/01-experience-walkthrough-页面与链路体验走查.md",
+      "specialtyProfileId": "remediation",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "tool_health_runtime_dependent"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "experience-walkthrough",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/03-find-problems-找问题/01-experience-walkthrough-页面与链路体验走查.md",
+      "specialtyProfileId": "focused",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "tool_health_runtime_dependent"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "experience-walkthrough",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/03-find-problems-找问题/01-experience-walkthrough-页面与链路体验走查.md",
+      "specialtyProfileId": "focused",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "tool_health_runtime_dependent"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "experience-walkthrough",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/03-find-problems-找问题/01-experience-walkthrough-页面与链路体验走查.md",
+      "specialtyProfileId": "breadth",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "tool_health_runtime_dependent"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "experience-walkthrough",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/03-find-problems-找问题/01-experience-walkthrough-页面与链路体验走查.md",
+      "specialtyProfileId": "breadth",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "decision_profile_tautology_review_required",
+        "task_type_split"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "feedback-issue-clustering",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/03-find-problems-找问题/02-feedback-issue-clustering-用户反馈问题聚类.md",
+      "specialtyProfileId": "decision",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "decision_profile_tautology_review_required",
+        "task_type_split"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "feedback-issue-clustering",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/03-find-problems-找问题/02-feedback-issue-clustering-用户反馈问题聚类.md",
+      "specialtyProfileId": "decision",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "task_type_split"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "data-behavior-diagnosis",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/03-find-problems-找问题/03-data-behavior-diagnosis-数据与行为异常诊断.md",
+      "specialtyProfileId": "focused",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "task_type_split"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "data-behavior-diagnosis",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/03-find-problems-找问题/03-data-behavior-diagnosis-数据与行为异常诊断.md",
+      "specialtyProfileId": "focused",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "method_family_independence_unmodeled",
+        "task_type_split"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "review"
+      ],
+      "scenarioId": "data-behavior-diagnosis",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/03-find-problems-找问题/03-data-behavior-diagnosis-数据与行为异常诊断.md",
+      "specialtyProfileId": "mixed_method",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "method_family_independence_unmodeled",
+        "task_type_split"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "review"
+      ],
+      "scenarioId": "data-behavior-diagnosis",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/03-find-problems-找问题/03-data-behavior-diagnosis-数据与行为异常诊断.md",
+      "specialtyProfileId": "mixed_method",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "task_type_split"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "data-behavior-diagnosis",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/03-find-problems-找问题/03-data-behavior-diagnosis-数据与行为异常诊断.md",
+      "specialtyProfileId": "decision",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "task_type_split"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "data-behavior-diagnosis",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/03-find-problems-找问题/03-data-behavior-diagnosis-数据与行为异常诊断.md",
+      "specialtyProfileId": "decision",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "semantic_crosswalk_review_required"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "root-cause-analysis",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/04-solve-problems-解问题/01-root-cause-analysis-问题根因拆解.md",
+      "specialtyProfileId": "focused",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "semantic_crosswalk_review_required"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "root-cause-analysis",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/04-solve-problems-解问题/01-root-cause-analysis-问题根因拆解.md",
+      "specialtyProfileId": "focused",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "method_family_independence_unmodeled"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "review"
+      ],
+      "scenarioId": "root-cause-analysis",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/04-solve-problems-解问题/01-root-cause-analysis-问题根因拆解.md",
+      "specialtyProfileId": "mixed_method",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "method_family_independence_unmodeled"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "review"
+      ],
+      "scenarioId": "root-cause-analysis",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/04-solve-problems-解问题/01-root-cause-analysis-问题根因拆解.md",
+      "specialtyProfileId": "mixed_method",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "gap",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "no_exact_active_source_capability"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "solution-generation",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/04-solve-problems-解问题/02-solution-generation-解决方案生成.md",
+      "specialtyProfileId": "breadth",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "gap",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "no_exact_active_source_capability"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "solution-generation",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/04-solve-problems-解问题/02-solution-generation-解决方案生成.md",
+      "specialtyProfileId": "breadth",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "gap",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "no_exact_active_source_capability"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "solution-generation",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/04-solve-problems-解问题/02-solution-generation-解决方案生成.md",
+      "specialtyProfileId": "decision",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "gap",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "no_exact_active_source_capability"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "solution-generation",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/04-solve-problems-解问题/02-solution-generation-解决方案生成.md",
+      "specialtyProfileId": "decision",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "decision_profile_tautology_review_required"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "solution-comparison",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/04-solve-problems-解问题/03-solution-comparison-方案比较与风险评估.md",
+      "specialtyProfileId": "decision",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "decision_profile_tautology_review_required"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "solution-comparison",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/04-solve-problems-解问题/03-solution-comparison-方案比较与风险评估.md",
+      "specialtyProfileId": "decision",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "selected_task_type_unreviewed"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "solution-comparison",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/04-solve-problems-解问题/03-solution-comparison-方案比较与风险评估.md",
+      "specialtyProfileId": "focused",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "selected_task_type_unreviewed"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "solution-comparison",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/04-solve-problems-解问题/03-solution-comparison-方案比较与风险评估.md",
+      "specialtyProfileId": "focused",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "gap",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "no_exact_active_source_capability"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "strategy-synthesis",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/05-define-strategy-定策略/01-strategy-synthesis-结论整合与策略提炼.md",
+      "specialtyProfileId": "decision",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "gap",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "no_exact_active_source_capability"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "strategy-synthesis",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/05-define-strategy-定策略/01-strategy-synthesis-结论整合与策略提炼.md",
+      "specialtyProfileId": "decision",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "decision_profile_tautology_review_required"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "priority-roadmap",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/05-define-strategy-定策略/02-priority-roadmap-优先级与实施路径.md",
+      "specialtyProfileId": "decision",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "decision_profile_tautology_review_required"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "priority-roadmap",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/05-define-strategy-定策略/02-priority-roadmap-优先级与实施路径.md",
+      "specialtyProfileId": "decision",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "input_availability_runtime_dependent"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "priority-roadmap",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/05-define-strategy-定策略/02-priority-roadmap-优先级与实施路径.md",
+      "specialtyProfileId": "focused",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "input_availability_runtime_dependent"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "priority-roadmap",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/05-define-strategy-定策略/02-priority-roadmap-优先级与实施路径.md",
+      "specialtyProfileId": "focused",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "method_family_independence_unmodeled",
+        "task_type_split"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "review"
+      ],
+      "scenarioId": "metrics-validation",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/05-define-strategy-定策略/03-metrics-validation-指标与验证计划.md",
+      "specialtyProfileId": "mixed_method",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "method_family_independence_unmodeled",
+        "task_type_split"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "review"
+      ],
+      "scenarioId": "metrics-validation",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/05-define-strategy-定策略/03-metrics-validation-指标与验证计划.md",
+      "specialtyProfileId": "mixed_method",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "task_type_split"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "metrics-validation",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/05-define-strategy-定策略/03-metrics-validation-指标与验证计划.md",
+      "specialtyProfileId": "decision",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "task_type_split"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "method",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "metrics-validation",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/05-define-strategy-定策略/03-metrics-validation-指标与验证计划.md",
+      "specialtyProfileId": "decision",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "speed",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "selected_task_type_unreviewed"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "method",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "metrics-validation",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/05-define-strategy-定策略/03-metrics-validation-指标与验证计划.md",
+      "specialtyProfileId": "focused",
+      "specialtyRequirementMet": true
+    },
+    {
+      "baselineProfileId": "depth",
+      "baselineRequirementMet": true,
+      "catalogSupport": "conditional",
+      "differentDimensions": [
+        "scope",
+        "method",
+        "evidence",
+        "review",
+        "output_emphasis"
+      ],
+      "invariantResults": {
+        "allRequestedDeliverables": "declared",
+        "allRequiredEvidence": "declared",
+        "allRequiredQuestions": "declared",
+        "safetyPolicyUnchanged": "declared"
+      },
+      "reasonCodes": [
+        "selected_task_type_unreviewed"
+      ],
+      "requiredByBaseline": [
+        "scope",
+        "evidence",
+        "review"
+      ],
+      "requiredBySpecialty": [
+        "scope",
+        "evidence",
+        "output_emphasis"
+      ],
+      "scenarioId": "metrics-validation",
+      "semanticVerdict": "pass",
+      "sourcePath": "01-task-任务/05-define-strategy-定策略/03-metrics-validation-指标与验证计划.md",
+      "specialtyProfileId": "focused",
+      "specialtyRequirementMet": true
+    }
+  ],
+  "runtimeClaim": "static-semantic-contract-only",
+  "summary": {
+    "baselineComparisonCount": 60,
+    "catalogConditionalCount": 27,
+    "catalogGapCount": 3,
+    "catalogSupportedCount": 0,
+    "mappedScenarioCount": 15,
+    "scenarioCount": 15,
+    "semanticFailCount": 0,
+    "semanticPassCount": 60,
+    "specialtyBindingCount": 30
+  }
+}

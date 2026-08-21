@@ -366,11 +366,11 @@ function service(): GoldBatchService {
   return new GoldBatchService(new MemoryGoldStore(), dependencies);
 }
 
-test('semantic Gold fixture contains exactly 26 scenarios and the fixed AI shopping assistant task', () => {
+test('semantic Gold fixture contains exactly 27 scenarios and distinct digital-human fixtures', () => {
   assert.equal(fixture.version, 1);
   assert.deepEqual(fixture.profiles, [...TASK_TYPES]);
-  assert.equal(fixture.scenarios.length, 26);
-  assert.equal(new Set(fixture.scenarios.map((scenario) => scenario.id)).size, 26);
+  assert.equal(fixture.scenarios.length, 27);
+  assert.equal(new Set(fixture.scenarios.map((scenario) => scenario.id)).size, 27);
   const scenario = fixture.scenarios.find(({ id }) => id === 'competitive-ai-shopping-assistant');
   assert.ok(scenario);
   assert.equal(scenario.profile, 'competitive_research');
@@ -380,6 +380,17 @@ test('semantic Gold fixture contains exactly 26 scenarios and the fixed AI shopp
     scenario.input,
     '请对比中国主流电商平台的 AI 购物助手在消费者决策支持体验上的差异，重点比较需求理解、推荐可解释性、商品参数与价格对比、内容可信度、购买转化闭环，并给出京东下一季度产品优先级建议。仅使用 2025—2026 年公开可访问资料，所有关键结论必须附可追溯来源。',
   );
+
+  const ambiguous = fixture.scenarios.find(({ id }) => id === 'competitive-digital-human');
+  const gold = fixture.scenarios.find(({ id }) => id === 'competitive-digital-human-gold');
+  assert.ok(ambiguous);
+  assert.ok(gold);
+  assert.equal(ambiguous.variant, 'ambiguous');
+  assert.deepEqual(ambiguous.clarificationKeys, ['scope', 'audience']);
+  assert.equal(gold.variant, 'clear');
+  assert.equal(gold.profile, 'competitive_research');
+  assert.equal(gold.piiDetected, false);
+  assert.deepEqual(gold.clarificationKeys, []);
 });
 test('every semantic Gold scenario carries profile contracts and exactly five PII variants', () => {
   const variants = new Set(['clear', 'ambiguous', 'missing_input', 'constraint_conflict', 'pii']);

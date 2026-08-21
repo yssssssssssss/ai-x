@@ -1,16 +1,23 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
 
 import {
   assertGoldSmokeReceipt,
   buildGoldPins,
+  GOLD_SCENARIO_ID,
   parseGoldCommand,
+  selectGoldScenario,
 } from '../apps/orchestrator-runtime/src/gold-run.ts';
-import type { SmokeReceipt } from '../scripts/current-real-smoke.ts';
+import type {
+  SemanticGoldFixture,
+  SmokeReceipt,
+} from '../scripts/current-real-smoke.ts';
 
 function receipt(overrides: Partial<SmokeReceipt> = {}): SmokeReceipt {
   return {
-    scenarioId: 'competitive-pet-food',
+    scenarioId: GOLD_SCENARIO_ID,
     profile: 'competitive_research',
     taskType: 'competitive_research',
     deliverableType: 'competitive_analysis_report',
@@ -58,6 +65,12 @@ function receipt(overrides: Partial<SmokeReceipt> = {}): SmokeReceipt {
   };
 }
 
+function semanticFixture(): SemanticGoldFixture {
+  return JSON.parse(
+    readFileSync(join(process.cwd(), 'tests/fixtures/current-semantic-gold.json'), 'utf8'),
+  ) as SemanticGoldFixture;
+}
+
 test('Gold CLI separates collection, asynchronous review, and final decision', () => {
   assert.deepEqual(parseGoldCommand([]), { kind: 'collect' });
   assert.deepEqual(parseGoldCommand(['batch-1']), { kind: 'collect', batchId: 'batch-1' });
@@ -72,9 +85,73 @@ test('Gold CLI separates collection, asynchronous review, and final decision', (
   assert.throws(() => parseGoldCommand(['review', 'batch-1', 'attempt-1', 'pass']), /usage/u);
 });
 
+test('Gold selects competitive-digital-human-gold by exact ID regardless of fixture order', () => {
+  const fixture = semanticFixture();
+  const selected = selectGoldScenario(fixture);
+  const reversed = selectGoldScenario({ ...fixture, scenarios: [...fixture.scenarios].reverse() });
+  const targetLast = selectGoldScenario({
+    ...fixture,
+    scenarios: [
+      ...fixture.scenarios.filter(({ id }) => id !== GOLD_SCENARIO_ID),
+      ...fixture.scenarios.filter(({ id }) => id === GOLD_SCENARIO_ID),
+    ],
+  });
+
+  assert.equal(selected.id, GOLD_SCENARIO_ID);
+  assert.equal(reversed.id, GOLD_SCENARIO_ID);
+  assert.equal(targetLast.id, GOLD_SCENARIO_ID);
+  assert.equal(reversed.input, selected.input);
+  assert.equal(targetLast.input, selected.input);
+});
+
+test('Gold keeps the ambiguous digital-human regression scenario separate', () => {
+  const fixture = semanticFixture();
+  const ambiguous = fixture.scenarios.find(({ id }) => id === 'competitive-digital-human') as
+    | (typeof fixture.scenarios)[number] & { clarificationKeys?: string[] }
+    | undefined;
+  const gold = selectGoldScenario(fixture) as (typeof fixture.scenarios)[number] & {
+    clarificationKeys?: string[];
+  };
+
+  assert.ok(ambiguous);
+  assert.equal(ambiguous.variant, 'ambiguous');
+  assert.equal(ambiguous.piiDetected, false);
+  assert.deepEqual(ambiguous.clarificationKeys, ['scope', 'audience']);
+  assert.equal(gold.variant, 'clear');
+  assert.equal(gold.piiDetected, false);
+  assert.deepEqual(gold.clarificationKeys, []);
+});
+
+test('Gold exact target selection fails closed on identity and safety drift', () => {
+  const fixture = semanticFixture();
+  const target = fixture.scenarios.find(({ id }) => id === GOLD_SCENARIO_ID)!;
+  const withoutTarget = fixture.scenarios.filter(({ id }) => id !== GOLD_SCENARIO_ID);
+  assert.throws(
+    () => selectGoldScenario({ ...fixture, scenarios: withoutTarget }),
+    /exactly one.*competitive-digital-human-gold/u,
+  );
+  assert.throws(
+    () => selectGoldScenario({ ...fixture, scenarios: [...fixture.scenarios, target] }),
+    /exactly one.*competitive-digital-human-gold/u,
+  );
+  for (const mutation of [
+    { profile: 'voc_diagnosis' },
+    { variant: 'ambiguous' },
+    { piiDetected: true },
+    { input: '   ' },
+  ]) {
+    assert.throws(() => selectGoldScenario({
+      ...fixture,
+      scenarios: fixture.scenarios.map((scenario) => (
+        scenario.id === GOLD_SCENARIO_ID ? { ...scenario, ...mutation } : scenario
+      )),
+    } as SemanticGoldFixture), /safe clear competitive scenario/u);
+  }
+});
+
 test('Gold pins freeze the real provider, model route, scenario, build, registry, schema, and review policy', () => {
   const pins = buildGoldPins({
-    scenarioId: 'competitive-pet-food',
+    scenarioId: GOLD_SCENARIO_ID,
     scenarioInput: 'fixed scenario input',
     endpoint: 'https://llm-gw.test/v1?token=must-not-leak',
     requestedModel: 'route-a',
@@ -82,6 +159,7 @@ test('Gold pins freeze the real provider, model route, scenario, build, registry
     buildId: 'commit-a',
   });
 
+  assert.equal(pins.scenarioId, GOLD_SCENARIO_ID);
   assert.equal(pins.provider, 'gateway');
   assert.equal(pins.endpoint, 'llm-gw.test');
   assert.equal(pins.coreTool, 'tavily-web-search');
@@ -98,21 +176,32 @@ test('Gold pins freeze the real provider, model route, scenario, build, registry
   assert.doesNotMatch(JSON.stringify(pins), /must-not-leak/u);
 });
 
-test('Gold collection accepts only sealed full-real Current receipts with an automated pass Review Artifact', () => {
-  assert.doesNotThrow(() => assertGoldSmokeReceipt(receipt(), 'competitive-pet-food'));
+test('Gold collection accepts only sealed Gateway and real Tavily Current receipts', () => {
+  assert.doesNotThrow(() => assertGoldSmokeReceipt(receipt(), GOLD_SCENARIO_ID));
   assert.throws(
-    () => assertGoldSmokeReceipt(receipt(), 'competitive-ai-shopping-assistant'),
+    () => assertGoldSmokeReceipt(receipt(), 'competitive-digital-human'),
     /non-qualifying/u,
   );
   assert.throws(
-    () => assertGoldSmokeReceipt(receipt({ provider: 'mock' }), 'competitive-pet-food'),
+    () => assertGoldSmokeReceipt(receipt({ provider: 'mock' }), GOLD_SCENARIO_ID),
     /non-qualifying/u,
   );
   assert.throws(
-    () => assertGoldSmokeReceipt(receipt({ packageSealed: false }), 'competitive-pet-food'),
+    () => assertGoldSmokeReceipt(receipt({ packageSealed: false }), GOLD_SCENARIO_ID),
     /non-qualifying/u,
   );
+  for (const toolReceipt of [
+    { ...receipt().toolReceipt, executionMode: 'mock' },
+    { ...receipt().toolReceipt, declaredAdapterType: 'fake' },
+    { ...receipt().toolReceipt, resolvedAdapterType: 'fake' },
+    { ...receipt().toolReceipt, actorId: 'fake-search' },
+  ]) {
+    assert.throws(
+      () => assertGoldSmokeReceipt(receipt({ toolReceipt }), GOLD_SCENARIO_ID),
+      /non-qualifying/u,
+    );
+  }
   assert.throws(() => assertGoldSmokeReceipt(receipt({
     review: { artifactId: 'review-1', automated: true, verdict: 'revise' as never },
-  }), 'competitive-pet-food'), /non-qualifying/u);
+  }), GOLD_SCENARIO_ID), /non-qualifying/u);
 });

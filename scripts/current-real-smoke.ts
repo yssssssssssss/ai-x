@@ -112,11 +112,14 @@ interface SmokeEvidenceStep {
   failure?: Record<string, unknown> | null;
 }
 
-interface SmokeRunInput {
+export type ApprovalMode = 'allow_owner' | 'forbid';
+
+export interface SmokeRunInput {
   fixturePath: string;
   profiles: string[];
   scenarioId: string;
   designImagePath?: string;
+  approvalMode?: ApprovalMode;
 }
 
 const REQUIRED_NON_BLANK_FIELDS = [
@@ -141,9 +144,10 @@ const TOOL_RECEIPT_FIELDS = [
 ] as const;
 
 
-interface SmokePlanStep {
+export interface SmokePlanStep {
   actor_type: string;
   actor_id: string;
+  requires_approval?: boolean;
 }
 
 const REQUIRED_EXACT_CAPABILITIES: SmokePlanStep[] = [
@@ -835,6 +839,23 @@ export function requireActorCoverage(
   }
 
 }
+export function resolveApprovalMode(mode: ApprovalMode | undefined): ApprovalMode {
+  return mode ?? 'allow_owner';
+}
+
+export function mayAutoApproveSmoke(mode?: ApprovalMode): boolean {
+  return resolveApprovalMode(mode) === 'allow_owner';
+}
+
+export function assertSmokePlanApprovalPolicy(
+  steps: readonly SmokePlanStep[],
+  mode?: ApprovalMode,
+): void {
+  if (resolveApprovalMode(mode) === 'forbid' && steps.some((step) => step.requires_approval === true)) {
+    throw new Error('GOLD_APPROVAL_GATE: selected plan contains requires_approval before confirmation');
+  }
+}
+
 export function selectSmokeCandidate<
   T extends { candidateId: string; plan: { steps: SmokePlanStep[] } },
 >(candidates: T[]): T {
@@ -851,6 +872,7 @@ async function executeRealSmoke(
   scenario: SemanticGoldScenario,
   designImagePath?: string,
   requireBrowserEvidence = false,
+  approvalMode: ApprovalMode = 'allow_owner',
 ): Promise<SmokeReceipt> {
   const [repositoryModule, seedModule, runtimeModule] = await Promise.all([
     import('../database/repository.ts'),
@@ -914,6 +936,7 @@ async function executeRealSmoke(
   if (selectedCandidate.plan.deliverable_type !== scenario.expectedDeliverableType) {
     throw new Error(`real smoke plan deliverable drifted for ${scenario.profile}`);
   }
+  assertSmokePlanApprovalPolicy(selectedCandidate.plan.steps, approvalMode);
 
   const actor = { userId: seedUser.id, role: 'owner' as const };
   const taskId = nonBlankString(planned.task.id, 'taskId');
@@ -937,6 +960,9 @@ async function executeRealSmoke(
       : {},
   });
   if (confirmed.state === 'awaiting_approval') {
+    if (!mayAutoApproveSmoke(approvalMode)) {
+      throw new Error('GOLD_APPROVAL_GATE: Gold confirmation reached awaiting_approval');
+    }
     const approvalTask = await runtime.repository.getTaskDetail(taskId);
     const approvalPlan = await runtime.repository.getPlanVersionDetail(selected.planVersionId);
     if (!approvalTask || !approvalPlan) {
@@ -1266,6 +1292,7 @@ export async function runCurrentRealSmoke(input: SmokeRunInput): Promise<SmokeRe
       scenario,
       input.designImagePath ?? process.env.CURRENT_DESIGN_SMOKE_IMAGE_PATH,
       browserEvidenceRequired,
+      resolveApprovalMode(input.approvalMode),
     );
     assertSmokeReceiptMinimums(receipt, scenario);
     return [receipt];
