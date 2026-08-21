@@ -27,6 +27,7 @@ domain: general
 title: Journey Map — 研究材料 + 研究目标/场景 → 用户体验旅程图（编排 wiki 正典）
 task_types:
   - user_research_planning
+  - voc_diagnosis
 inputs: []
 outputs: []
 status: approved

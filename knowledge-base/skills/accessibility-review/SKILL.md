@@ -28,6 +28,7 @@ domain: general
 title: Accessibility Review — 评估对象 + 范围 → 无障碍走查（编排 wiki 正典）
 task_types:
   - a11y_audit
+  - design_audit
 required_tools:
   - tavily-web-search
 inputs: []

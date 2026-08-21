@@ -1,7 +1,7 @@
 # User Research Hub 受控接入与动态方案卡片方案
 
 > 日期：2026-08-21
-> 状态：已批准执行；Phase A/Gate 1 与 Phase B/Gate 2 已完成，等待进入 Phase C release slices
+> 状态：已批准执行；Phase A/Gate 1、Phase B/Gate 2 与 Phase C dormant 实现已完成，Gate 3 等待真实评测与独立研究员审定
 > 版本：v3（受控内容接入、可审计 Planning Guidance 与分步动态方案卡片）
 > 来源目录：`wiki/user-research/`
 > 接入目标：在不破坏 Current 可信研究闭环的前提下，尽量完整保留并吸收其中的方法、设计策略、Skill、模板和案例经验，并让 Task/Scenario 受控影响前台候选方案。
@@ -630,6 +630,16 @@ C1 完成后，内容增强可以被单独评测和批准，但 Gate 3 前不进
 - 真实任务满足项目既有 P0 通过批次标准。
 
 阶段 C 只有经 Gate 3 批准的 slice 才可合并到生产 `main`。任何 C2 问题可通过 Planning Policy 恢复固定两卡，而不回滚已单独批准的 C1 内容增强或历史 reader。
+
+### 阶段 C 实际结果（2026-08-21）
+
+- C1：新增 evaluation-only content overlay、冻结 Prompt/Rubric、baseline/enhanced runner 与四组对照报告合同；生产 Knowledge loader、active Skill、生产 Prompt/Rubric 均未切换。
+- C2：Planning Guidance 已通过 adapter 接入 RoutedPlanner；实际 CapabilityResolution 经受控 crosswalk 映射到 Profile role/method family/evidence path；fixed policy 下生产输出继续是 legacy `depth/speed`，测试可注入受校验 dynamic policy。
+- 动态测试覆盖 2/3/4 卡、唯一 recommended、一次 classifier、一次合并修复、专项卡降级、baseline fail closed、provenance、revision 和 direct-Skill 两卡行为。
+- 离线整合门禁：Phase C 受影响测试初次 161 项中 155 pass、6 项因并行 slice 的 planning-policy hash 不一致失败；统一冻结 hash 后 6/6 通过，typecheck 通过。
+- 最终 `pnpm quality` 执行 1,559 项测试，1,546 pass、12 skip，唯一失败为 KB Registry 重建丢失 3 个既有合法 secondary task routes；已把这些正典声明回写至 `accessibility-review`、`generate-usability-test`、`journey-map`，并针对失败文件复验 15/15 通过，registry lint 通过。依照测试节奏不重复整套 quality。
+- Planning Policy 仍为 `fixed`；Knowledge 仍为 candidate；未进行真实 Gateway/Tavily 调用，未开启 `trusted_gold_enabled`。
+- Gate 3 尚缺：holdout 私有标签揭盲与 commitment 校验、四组真实/受控对照、五类 task_type 真实 Smoke、三次 Gold 全真运行和独立研究员评审。
 
 ## 11. 审核规范：只设 3 个关键审核点
 

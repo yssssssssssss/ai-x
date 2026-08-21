@@ -22,6 +22,7 @@ domain: general
 title: Generate Usability Test — 测试对象 + 研究目标 → 可用性测试执行包（编排 wiki 正典）
 task_types:
   - design_audit
+  - user_research_planning
 inputs: []
 outputs: []
 status: approved
