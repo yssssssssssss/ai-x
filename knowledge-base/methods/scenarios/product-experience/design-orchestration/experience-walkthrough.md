@@ -5,7 +5,7 @@ title: 页面与链路体验走查
 domain:
   - 产品体验
 tags: []
-status: candidate
+status: approved
 sensitivity: internal
 owner: user-research-hub-maintainers
 source: user-research-hub
@@ -13,8 +13,8 @@ source_path: methods/scenarios/product-experience/design-orchestration/experienc
 hub_snapshot_id: user-research-hub-2026-08-21
 hub_source_path: wiki/user-research/01-task-任务/03-find-problems-找问题/01-experience-walkthrough-页面与链路体验走查.md
 hub_source_hash: sha256:bef132c56fb2c72e1f247064239a88c7b6202fde1d45ae2a505e7f3654ef9a61
-distribution_scope: evaluation_only
-retention: through-gate-3-or-revocation
+distribution_scope: internal_repository
+retention: repository-lifetime-or-revocation
 source_rights: cleared_internal_reuse
 managed_by: user-research-hub-integration-v1
 content_hash: sha256:1f47e1f671b88e0282a182062c72bba750ece27b3fd7f97dc9be12da4b4d82e7

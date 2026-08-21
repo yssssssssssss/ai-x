@@ -5,7 +5,7 @@ title: 结论整合与策略提炼
 domain:
   - 产品体验
 tags: []
-status: candidate
+status: approved
 sensitivity: internal
 owner: user-research-hub-maintainers
 source: user-research-hub
@@ -13,8 +13,8 @@ source_path: methods/scenarios/product-experience/design-orchestration/strategy-
 hub_snapshot_id: user-research-hub-2026-08-21
 hub_source_path: wiki/user-research/01-task-任务/05-define-strategy-定策略/01-strategy-synthesis-结论整合与策略提炼.md
 hub_source_hash: sha256:ee7dde7f1a4c2c63589cf0daf13311f13b8874af2f50139de6ab3aa7f9f9afbc
-distribution_scope: evaluation_only
-retention: through-gate-3-or-revocation
+distribution_scope: internal_repository
+retention: repository-lifetime-or-revocation
 source_rights: cleared_internal_reuse
 managed_by: user-research-hub-integration-v1
 content_hash: sha256:e21576221e78de56c34a8a4de1f85f6601538f759d40eeeb399528469a86adee

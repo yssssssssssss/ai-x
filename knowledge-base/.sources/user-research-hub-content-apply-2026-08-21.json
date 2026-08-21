@@ -1760,13 +1760,15 @@
         "与其他 Skill 的边界"
       ],
       "source_path": "02-skills-技能/设计策略/趋势变化扫描/SKILL.md",
-      "target_body_hash": "sha256:5becaeb731d4b0f6d482414203621579fe786114d324aa0c07532e3f24b4dd56",
+      "target_body_hash": "sha256:bba49e90f9d900e0ecdb9cafeeb4b20c5e85dcb9650296139237dad0e21fcd34",
       "target_only_headings": [
         "竞品分析 · Web 搜索路径",
         "何时使用 / 不使用",
         "输入",
         "产出",
-        "边界与合规"
+        "边界与合规",
+        "趋势与变化扫描补充",
+        "趋势与变化扫描补充"
       ],
       "target_path": "skills/competitive-analysis/web-research/SKILL.md"
     },
@@ -2104,7 +2106,7 @@
         "与其他 Skill 的边界"
       ],
       "source_path": "02-skills-技能/用户研究/体验走查/SKILL.md",
-      "target_body_hash": "sha256:9c0f30f395aab2679e7a51ce854a8fe414758c0aea3886bf08b6840e6660ee5c",
+      "target_body_hash": "sha256:35a8877c5c91ef14060b05cf23eda1f339398c63919a924c4aa93e2404368fe9",
       "target_only_headings": [
         "Run Heuristic Evaluation — 评估对象 + 范围 → 启发式评估（编排 wiki 正典）",
         "北极星与边界（先理解，再动手）",
@@ -2116,6 +2118,7 @@
         "第 3 步 · B：产工具包（无界面素材时）",
         "第 4 步：评估自检（拿\"局限与误用\"回头扫一遍）",
         "第 5 步：组装交付",
+        "页面与链路走查补充",
         "references"
       ],
       "target_path": "knowledge-base/skills/run-heuristic-evaluation"
@@ -2550,7 +2553,7 @@
         "五、形态示意（仅示范\"长什么样\"，**勿照抄内容**——务必按真实素材重写）"
       ],
       "source_path": "02-skills-技能/用户研究/启发式评估/SKILL.md",
-      "target_body_hash": "sha256:9c0f30f395aab2679e7a51ce854a8fe414758c0aea3886bf08b6840e6660ee5c",
+      "target_body_hash": "sha256:35a8877c5c91ef14060b05cf23eda1f339398c63919a924c4aa93e2404368fe9",
       "target_only_headings": [
         "Run Heuristic Evaluation — 评估对象 + 范围 → 启发式评估（编排 wiki 正典）",
         "北极星与边界（先理解，再动手）",
@@ -2562,6 +2565,7 @@
         "第 3 步 · B：产工具包（无界面素材时）",
         "第 4 步：评估自检（拿\"局限与误用\"回头扫一遍）",
         "第 5 步：组装交付",
+        "页面与链路走查补充",
         "references"
       ],
       "target_path": "knowledge-base/skills/run-heuristic-evaluation"
@@ -2649,9 +2653,9 @@
       "target_path": "knowledge-base/skills/synthesize-qualitative-insights"
     }
   ],
-  "disposition_hash": "sha256:a292119183545e4d77540443dd839a3ca810a407bcd74bc73f4a54e83372e584",
+  "disposition_hash": "sha256:19c1771887054021c7418fd6499d84d20bb90fd0d04cef9ae361bc75997687ae",
   "format_version": "user-research-hub-content-apply-v1",
-  "gate_1_reuse_scope": "internal-evaluation-only",
+  "gate_1_reuse_scope": "production-owner-waiver",
   "governance": {
     "blocked_entities": 0,
     "gate_2_review_required": false,
@@ -2678,205 +2682,205 @@
     "knowledge_files": 0,
     "skill_files": 2
   },
-  "output_set_hash": "sha256:4b86ab2e449b83d03c892b2c0488b6fbab60e6ed6b6a7f9b7000c45d2fd17e5a",
+  "output_set_hash": "sha256:a3143c18be2f8e95b677584e5143426ef258a520c4a48d942bd6d070d21a4209",
   "outputs": [
     {
       "entity_key": "skill:ds-skill-trend-change-scan",
       "kind": "merge_draft",
       "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ds-skill-trend-change-scan.md",
-      "sha256": "sha256:7640e2a3d26f711e7deb1f4cc04b25ae8f2323e0eb30f043ce679a1cedc01a39"
+      "sha256": "sha256:e7436163b60cb636744d44286d66c8145bc42bbb6b1d862699a77c3b7c15cdee"
     },
     {
       "entity_key": "skill:ur-skill-experience-walkthrough",
       "kind": "merge_draft",
       "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-experience-walkthrough.md",
-      "sha256": "sha256:b87e2605a6230bc2a7bea9e5f3de76ba5c11a7e518c475d95b25682b74bf381b"
+      "sha256": "sha256:5b1f6015ec0f47ae9b2d63a85d08dd34d7af82f1ce7e0fc9bbdf3d6c9f4b34e0"
     },
     {
       "entity_key": "knowledge:ds-template-design-strategy-case-card-template",
       "kind": "candidate",
       "path": "knowledge-base/assets/templates/ds-template-design-strategy-case-card-template.md",
-      "sha256": "sha256:2720bbbe50692bf57e7126cd6ee85f037ef8b76f5899605205e18dcc397affba"
+      "sha256": "sha256:538c975d5b6e73b831166ca4f0cd985240fe631bfd040d451df9a54df55a1053"
     },
     {
       "entity_key": "task:competitor-benchmark-research",
       "kind": "candidate",
       "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/competitor-benchmark-research.md",
-      "sha256": "sha256:0e938c2506c9be36906e522f8df6941ec5d7ac3691c95077d25534cf8a3048fe"
+      "sha256": "sha256:5102a5e036142ec956903f8300a743a7a135e778278d46e3c1ed17238fd74cd5"
     },
     {
       "entity_key": "task:data-behavior-diagnosis",
       "kind": "candidate",
       "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/data-behavior-diagnosis.md",
-      "sha256": "sha256:906f66374bf0dfdefab4188e54c7aa91882f7498e7f8cbdeafc206e179641e6c"
+      "sha256": "sha256:71f0eea2b9f8d5d42333d5453b10444c97b7a06ff8b3513b06f943a08036aba1"
     },
     {
       "entity_key": "task:experience-walkthrough",
       "kind": "candidate",
       "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/experience-walkthrough.md",
-      "sha256": "sha256:9f9927559c29d6e93a804c19c8354e8005f1e9c98a4e9ee928a5927fb70ca41c"
+      "sha256": "sha256:11f4c1aa8a54a4b22a4a75d8b7b083f0df24f79b7c55ab01994aca8a24597ec6"
     },
     {
       "entity_key": "task:feedback-issue-clustering",
       "kind": "candidate",
       "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/feedback-issue-clustering.md",
-      "sha256": "sha256:32ed0fe54a84da49f9dc8e292c1f1d0eb9572b525d599225dc3e58f5300ac222"
+      "sha256": "sha256:1731dba9ee1e72fc5c935b4465134eca9e9e03501223fb76681f7fbe84193680"
     },
     {
       "entity_key": "task:metrics-validation",
       "kind": "candidate",
       "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/metrics-validation.md",
-      "sha256": "sha256:e1a0c96c97c74fc5c8cdfc78a47f00cd4b9dab47bb6cb5df49962418ed1f907f"
+      "sha256": "sha256:8405b10f18b9d797372bb6ba0e2b6276d79055fc070a5596635dd64b854b6995"
     },
     {
       "entity_key": "task:opportunity-direction-evaluation",
       "kind": "candidate",
       "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/opportunity-direction-evaluation.md",
-      "sha256": "sha256:9fb90e883b4f46a7713591e8553a5964135e07aeb82046284e32ea4191520824"
+      "sha256": "sha256:fea97227e385781c0262a3f374151cf2073814ca1ab6102e8073b78cd121c0df"
     },
     {
       "entity_key": "task:priority-roadmap",
       "kind": "candidate",
       "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/priority-roadmap.md",
-      "sha256": "sha256:c3467340738090cc488fee36f3bda3933be8609c3571d2128205641f5a0b3c58"
+      "sha256": "sha256:693b787043afa29804de57d9da44004cb8c23d27d825380b9682e72639e2f74c"
     },
     {
       "entity_key": "task:root-cause-analysis",
       "kind": "candidate",
       "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/root-cause-analysis.md",
-      "sha256": "sha256:6dfad044e55551089cf2abd0e706493ca2828851576ef3124d5ad23a87a72dfa"
+      "sha256": "sha256:f0930a902181d563562ecae8a916046eda580588ba3ea69ed292ab02c5b0b64d"
     },
     {
       "entity_key": "task:solution-comparison",
       "kind": "candidate",
       "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/solution-comparison.md",
-      "sha256": "sha256:5afe09bdf7f6357577b7997c900e8b1125ae1b361b3f59a2b8c6d98bc3c61ba4"
+      "sha256": "sha256:1a0ef6202e3be8dfb55f28f750670d662629079db5b032e7d596947dcc5ae2b7"
     },
     {
       "entity_key": "task:solution-generation",
       "kind": "candidate",
       "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/solution-generation.md",
-      "sha256": "sha256:88e45cd9cf772b222c33b3fa1e4c716f130bff60b8f50f4f19afc0d4638a3f28"
+      "sha256": "sha256:0271e8ccd02eb1a3fd6cd008997c0bfb5b839272d62137c2fbb232e3efba005e"
     },
     {
       "entity_key": "task:strategy-synthesis",
       "kind": "candidate",
       "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/strategy-synthesis.md",
-      "sha256": "sha256:051674072dda5c206ce4a12eedd5c82aac9a9fcf059c436d14e86d304bd91a9f"
+      "sha256": "sha256:7de639a79433771fd3c1d3bfee26497d39249135e925326808edc6a13911504a"
     },
     {
       "entity_key": "task:trend-change-identification",
       "kind": "candidate",
       "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/trend-change-identification.md",
-      "sha256": "sha256:a9b45dd682e932e78be5e0cdfe996ce056ecdba48b761c08e89b5c9d24ff910f"
+      "sha256": "sha256:d051054ac9947742df319d10921570708682801e1aec1d4244bead451818a993"
     },
     {
       "entity_key": "task:user-journey-insight",
       "kind": "candidate",
       "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/user-journey-insight.md",
-      "sha256": "sha256:e89d20b803376d2d697e1ec91bf41fcf5b8465606d2000b44456e44cca0aebc6"
+      "sha256": "sha256:2f0dc787ff37f8137ad073a6773ee3ca5a40417539aaf740aab9682652a49779"
     },
     {
       "entity_key": "task:user-material-synthesis",
       "kind": "candidate",
       "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/user-material-synthesis.md",
-      "sha256": "sha256:e5edf86958f7dfce020c434b39997479fdc59503d6eb0a830540b53963a7fc05"
+      "sha256": "sha256:f90330e80a66b8ef1bf2307747886aeb5389673ebf30482e1e2050a2051e9e46"
     },
     {
       "entity_key": "task:user-segmentation",
       "kind": "candidate",
       "path": "knowledge-base/methods/scenarios/product-experience/design-orchestration/user-segmentation.md",
-      "sha256": "sha256:14e46233215261333d6f8bcd7ce2692b0e97c0576b41ab9391049bc6429927b9"
+      "sha256": "sha256:f4396e8bd044da58ffa29fcdc8837afa19d82229dac4fa08279675bea40a5850"
     },
     {
       "entity_key": "knowledge:ds-method-competitor-01-competitor-selection",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-01-competitor-selection.md",
-      "sha256": "sha256:3fafa75ffac0fddb6edec28283d3f5cc250fbc7e8ff0c65a77bab894049774d0"
+      "sha256": "sha256:b87fdc2f32d17a3b984cc4d8a0e8cded380efd5eb95d733ba91217a0cd9cfc12"
     },
     {
       "entity_key": "knowledge:ds-method-competitor-02-comparison-dimensions",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-02-comparison-dimensions.md",
-      "sha256": "sha256:fda3e2c23207565b0648abc358161a29074f39febeb9abeab2f661d351ae9939"
+      "sha256": "sha256:ce3aab088f5c12d64742e45dc5da614a34761f95b130ad8513b05d56c6dd7b44"
     },
     {
       "entity_key": "knowledge:ds-method-competitor-03-pattern-analysis",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-03-pattern-analysis.md",
-      "sha256": "sha256:8f281480ab69a11ceec61b94d63e72c81b9e6b09fcdef9d6e20ae16cac4df2bf"
+      "sha256": "sha256:725f864866b665195fac53104bd8fe401c45258444238f9f0894876eb0c7809f"
     },
     {
       "entity_key": "knowledge:ds-method-competitor-04-opportunity-and-risk",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-04-opportunity-and-risk.md",
-      "sha256": "sha256:e2d153643b630ca7678bfc5c3a6dc06bf9bf97d1b4cba7d32072d829f2c6657a"
+      "sha256": "sha256:852b2d6107cd347e46144e41a4cfb292d42c209f5a508c045cd8df2ea1cec4d9"
     },
     {
       "entity_key": "knowledge:ds-method-competitor-05-insight-output",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-05-insight-output.md",
-      "sha256": "sha256:6ab8b73e8948c198770e4ac342d0702776f3b09cf5fd8233ecd2bb04a4c753e6"
+      "sha256": "sha256:0ae33a9d1420c307403a62b4db1571444face3fc8c286cd7ca985f681eb01c8a"
     },
     {
       "entity_key": "knowledge:ds-method-strategy-01-problem-framing",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-01-problem-framing.md",
-      "sha256": "sha256:a03fd5261dba921862fffab0ca7736753e3cf58f26d9aafe64b2db3b85ce92b2"
+      "sha256": "sha256:5a8b76e7de52b113ebd680935f3090ff626c710de80d2c035a0ed04c5bdfa475"
     },
     {
       "entity_key": "knowledge:ds-method-strategy-02-strategy-map",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-02-strategy-map.md",
-      "sha256": "sha256:9bc62874c6efe36fb4daf7ea4a52fa324fdfa74aa70e9b6f07651c5b48caec3b"
+      "sha256": "sha256:555dee1e0d2880465457228005458825adf5861c5a827e17a93c4e917660e467"
     },
     {
       "entity_key": "knowledge:ds-method-strategy-04-priority-and-roadmap",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-04-priority-and-roadmap.md",
-      "sha256": "sha256:8133c25be0f3b19b9eec14d71e01dfd7946ad514af448a66be2b01c27805ecf4"
+      "sha256": "sha256:7106d2f8936065edde86e4bd4e5f5210c3f107e44620d84a744fa0b8041f4f54"
     },
     {
       "entity_key": "knowledge:ds-method-strategy-05-review-and-validation",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-05-review-and-validation.md",
-      "sha256": "sha256:6dbd6740d61740b9ee9b4bbeda66968c77eb6c5f7273219bdff94f579ffeb7a7"
+      "sha256": "sha256:5f38b341afd1f7fbebb99a3a2b0f4deb1ad599cdc581eff158749f372c1b2ce8"
     },
     {
       "entity_key": "knowledge:ds-method-user-01-research-scope",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-01-research-scope.md",
-      "sha256": "sha256:615233f55b2729705ac2a6d2ef98de2147f551b4d3564f4d9a2d35ab2577a166"
+      "sha256": "sha256:34b0c5348672b27b7492a579dde008eceddbbee879995819b3deda20baeb3340"
     },
     {
       "entity_key": "knowledge:ds-method-user-02-user-segmentation",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-02-user-segmentation.md",
-      "sha256": "sha256:dd89fa539df9a431acc7a110c030d03e6ab8fc0e261ecd3e1388e6c7dc5ddf23"
+      "sha256": "sha256:221d2f0371d471c4743333bd5c5b295ce900b1350f041491b9125f93a36fe60d"
     },
     {
       "entity_key": "knowledge:ds-method-user-03-journey-and-tasks",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-03-journey-and-tasks.md",
-      "sha256": "sha256:8365a691b7e93c848d18778bea7fe3f685f3740b2800f77e69bf6eb9b5cec9f0"
+      "sha256": "sha256:2b9829d938edf473ae03a82b887e639b958b69366beef291b8322afa8a62acc6"
     },
     {
       "entity_key": "knowledge:ds-method-user-04-painpoint-diagnosis",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-04-painpoint-diagnosis.md",
-      "sha256": "sha256:55eff9d7125ef75aec7954076ba7f485d46afba81a556b778ed3ff4376ae2253"
+      "sha256": "sha256:5591a12783cb26aa7d6c24252078c349647ab08096a631088119f9ee5f5f0ef4"
     },
     {
       "entity_key": "knowledge:ds-method-user-05-insight-output",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-05-insight-output.md",
-      "sha256": "sha256:56b47fae9a1ecf3d8275a21f372420cd5e7159e5c45c573cc0e692139e2d5cc9"
+      "sha256": "sha256:2b92d0362d6b2fe028a352a599e78193bb412fae3c8dad63a9bbc14acb791e24"
     },
     {
       "entity_key": "knowledge:ux-method-experience-diagnosis-framework",
       "kind": "candidate",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ux-method-experience-diagnosis-framework.md",
-      "sha256": "sha256:2b49bcb2daa5186afe02992e6a61973481c5f70b499cebc0ddbac6f6c8f827f3"
+      "sha256": "sha256:07a1a6140a94a5ffb49c64ee0a1ed3944e5b6d7f6ba5bf19eee734bf9c06f883"
     },
     {
       "entity_key": "skill:ds-skill-solution-generation",
@@ -2886,7 +2890,7 @@
     }
   ],
   "runtime_boundary": {
-    "candidate_status": "candidate",
+    "candidate_status": "mixed",
     "opaque_materialized": 0,
     "reject_runtime_materialized": 0,
     "skill_registry_status": "draft",
@@ -2902,7 +2906,8 @@
         "secrets": 0
       },
       "finding_refs": [
-        "gate-1-internal-evaluation-only"
+        "gate-1-internal-evaluation-only",
+        "gate-3-owner-waiver-production"
       ],
       "findings": [],
       "results": {
@@ -2922,7 +2927,8 @@
         "secrets": 0
       },
       "finding_refs": [
-        "gate-1-internal-evaluation-only"
+        "gate-1-internal-evaluation-only",
+        "gate-3-owner-waiver-production"
       ],
       "findings": [],
       "results": {
@@ -2942,7 +2948,8 @@
         "secrets": 0
       },
       "finding_refs": [
-        "gate-1-internal-evaluation-only"
+        "gate-1-internal-evaluation-only",
+        "gate-3-owner-waiver-production"
       ],
       "findings": [],
       "results": {
@@ -2962,7 +2969,8 @@
         "secrets": 0
       },
       "finding_refs": [
-        "gate-1-internal-evaluation-only"
+        "gate-1-internal-evaluation-only",
+        "gate-3-owner-waiver-production"
       ],
       "findings": [],
       "results": {
@@ -2982,7 +2990,8 @@
         "secrets": 0
       },
       "finding_refs": [
-        "gate-1-internal-evaluation-only"
+        "gate-1-internal-evaluation-only",
+        "gate-3-owner-waiver-production"
       ],
       "findings": [],
       "results": {
@@ -3002,7 +3011,8 @@
         "secrets": 0
       },
       "finding_refs": [
-        "gate-1-internal-evaluation-only"
+        "gate-1-internal-evaluation-only",
+        "gate-3-owner-waiver-production"
       ],
       "findings": [],
       "results": {
@@ -3022,7 +3032,8 @@
         "secrets": 0
       },
       "finding_refs": [
-        "gate-1-internal-evaluation-only"
+        "gate-1-internal-evaluation-only",
+        "gate-3-owner-waiver-production"
       ],
       "findings": [],
       "results": {
@@ -3042,7 +3053,8 @@
         "secrets": 0
       },
       "finding_refs": [
-        "gate-1-internal-evaluation-only"
+        "gate-1-internal-evaluation-only",
+        "gate-3-owner-waiver-production"
       ],
       "findings": [],
       "results": {
@@ -3062,7 +3074,8 @@
         "secrets": 0
       },
       "finding_refs": [
-        "gate-1-internal-evaluation-only"
+        "gate-1-internal-evaluation-only",
+        "gate-3-owner-waiver-production"
       ],
       "findings": [],
       "results": {
@@ -3082,7 +3095,8 @@
         "secrets": 0
       },
       "finding_refs": [
-        "gate-1-internal-evaluation-only"
+        "gate-1-internal-evaluation-only",
+        "gate-3-owner-waiver-production"
       ],
       "findings": [],
       "results": {
@@ -3102,7 +3116,8 @@
         "secrets": 0
       },
       "finding_refs": [
-        "gate-1-internal-evaluation-only"
+        "gate-1-internal-evaluation-only",
+        "gate-3-owner-waiver-production"
       ],
       "findings": [],
       "results": {
@@ -3122,7 +3137,8 @@
         "secrets": 0
       },
       "finding_refs": [
-        "gate-1-internal-evaluation-only"
+        "gate-1-internal-evaluation-only",
+        "gate-3-owner-waiver-production"
       ],
       "findings": [],
       "results": {
@@ -3142,7 +3158,8 @@
         "secrets": 0
       },
       "finding_refs": [
-        "gate-1-internal-evaluation-only"
+        "gate-1-internal-evaluation-only",
+        "gate-3-owner-waiver-production"
       ],
       "findings": [],
       "results": {
@@ -3162,7 +3179,8 @@
         "secrets": 0
       },
       "finding_refs": [
-        "gate-1-internal-evaluation-only"
+        "gate-1-internal-evaluation-only",
+        "gate-3-owner-waiver-production"
       ],
       "findings": [],
       "results": {
@@ -3182,7 +3200,8 @@
         "secrets": 0
       },
       "finding_refs": [
-        "gate-1-internal-evaluation-only"
+        "gate-1-internal-evaluation-only",
+        "gate-3-owner-waiver-production"
       ],
       "findings": [],
       "results": {
@@ -3203,7 +3222,8 @@
       },
       "finding_refs": [
         "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only"
+        "gate-3-owner-waiver-production",
+        "internal-business-facts-reviewed-for-internal-repository"
       ],
       "findings": [
         {
@@ -3253,7 +3273,8 @@
         "secrets": 0
       },
       "finding_refs": [
-        "gate-1-internal-evaluation-only"
+        "gate-1-internal-evaluation-only",
+        "gate-3-owner-waiver-production"
       ],
       "findings": [],
       "results": {
@@ -3273,7 +3294,8 @@
         "secrets": 0
       },
       "finding_refs": [
-        "gate-1-internal-evaluation-only"
+        "gate-1-internal-evaluation-only",
+        "gate-3-owner-waiver-production"
       ],
       "findings": [],
       "results": {
@@ -3294,7 +3316,8 @@
       },
       "finding_refs": [
         "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only"
+        "gate-3-owner-waiver-production",
+        "internal-business-facts-reviewed-for-internal-repository"
       ],
       "findings": [
         {
@@ -3325,7 +3348,8 @@
       },
       "finding_refs": [
         "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only"
+        "gate-3-owner-waiver-production",
+        "internal-business-facts-reviewed-for-internal-repository"
       ],
       "findings": [
         {
@@ -3356,7 +3380,8 @@
       },
       "finding_refs": [
         "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only"
+        "gate-3-owner-waiver-production",
+        "internal-business-facts-reviewed-for-internal-repository"
       ],
       "findings": [
         {
@@ -3387,7 +3412,8 @@
       },
       "finding_refs": [
         "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only"
+        "gate-3-owner-waiver-production",
+        "internal-business-facts-reviewed-for-internal-repository"
       ],
       "findings": [
         {
@@ -3418,7 +3444,8 @@
       },
       "finding_refs": [
         "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only"
+        "gate-3-owner-waiver-production",
+        "internal-business-facts-reviewed-for-internal-repository"
       ],
       "findings": [
         {
@@ -3448,7 +3475,8 @@
         "secrets": 0
       },
       "finding_refs": [
-        "gate-1-internal-evaluation-only"
+        "gate-1-internal-evaluation-only",
+        "gate-3-owner-waiver-production"
       ],
       "findings": [],
       "results": {
@@ -3469,7 +3497,8 @@
       },
       "finding_refs": [
         "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only"
+        "gate-3-owner-waiver-production",
+        "internal-business-facts-reviewed-for-internal-repository"
       ],
       "findings": [
         {
@@ -3499,7 +3528,8 @@
         "secrets": 0
       },
       "finding_refs": [
-        "gate-1-internal-evaluation-only"
+        "gate-1-internal-evaluation-only",
+        "gate-3-owner-waiver-production"
       ],
       "findings": [],
       "results": {
@@ -3519,7 +3549,8 @@
         "secrets": 0
       },
       "finding_refs": [
-        "gate-1-internal-evaluation-only"
+        "gate-1-internal-evaluation-only",
+        "gate-3-owner-waiver-production"
       ],
       "findings": [],
       "results": {
@@ -3540,7 +3571,8 @@
       },
       "finding_refs": [
         "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only"
+        "gate-3-owner-waiver-production",
+        "internal-business-facts-reviewed-for-internal-repository"
       ],
       "findings": [
         {
@@ -3571,7 +3603,8 @@
       },
       "finding_refs": [
         "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only"
+        "gate-3-owner-waiver-production",
+        "internal-business-facts-reviewed-for-internal-repository"
       ],
       "findings": [
         {
@@ -3602,7 +3635,8 @@
       },
       "finding_refs": [
         "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only"
+        "gate-3-owner-waiver-production",
+        "internal-business-facts-reviewed-for-internal-repository"
       ],
       "findings": [
         {
@@ -3642,7 +3676,8 @@
       },
       "finding_refs": [
         "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only"
+        "gate-3-owner-waiver-production",
+        "internal-business-facts-reviewed-for-internal-repository"
       ],
       "findings": [
         {
@@ -3673,7 +3708,8 @@
       },
       "finding_refs": [
         "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only"
+        "gate-3-owner-waiver-production",
+        "internal-business-facts-reviewed-for-internal-repository"
       ],
       "findings": [
         {
@@ -3704,7 +3740,8 @@
       },
       "finding_refs": [
         "gate-1-internal-evaluation-only",
-        "internal-business-facts-evaluation-only"
+        "gate-3-owner-waiver-production",
+        "internal-business-facts-reviewed-for-internal-repository"
       ],
       "findings": [
         {

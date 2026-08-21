@@ -12,10 +12,10 @@ dimensions:
     criterion: Issues and annotations are traceable to audited pages and screenshots.
   - id: reasoning_quality
     required: true
-    criterion: Principles and severity judgments are consistently applied and justified.
+    criterion: Principles and severity judgments are consistently applied and justified; every diagnosis distinguishes direct observation from inference.
   - id: recommendation_quality
     required: true
-    criterion: Remediations are specific, feasible, and have testable acceptance criteria.
+    criterion: Remediations are specific, feasible, traceable to issue evidence, prioritized with impact and cost or risk, and include an acceptance threshold plus a concrete retest method without claiming an unperformed retest.
   - id: visual_quality
     required: true
     criterion: Annotated screenshots clearly locate each issue without obscuring context.

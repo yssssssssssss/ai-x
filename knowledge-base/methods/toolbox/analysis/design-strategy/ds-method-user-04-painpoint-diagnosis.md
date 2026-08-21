@@ -7,7 +7,7 @@ domain:
 tags:
   - user-analysis
   - method
-status: candidate
+status: approved
 sensitivity: internal
 owner: user-research-hub-maintainers
 source: user-research-hub
@@ -15,8 +15,8 @@ source_path: methods/toolbox/analysis/design-strategy/ds-method-user-04-painpoin
 hub_snapshot_id: user-research-hub-2026-08-21
 hub_source_path: wiki/user-research/03-knowledge-知识/方法知识/设计策略/用户分析/用户分析04痛点诊断.md
 hub_source_hash: sha256:94c2257517ba030f74c6e357df7ffa325df0bb0e999e1a17e13879aaf5c60d00
-distribution_scope: evaluation_only
-retention: through-gate-3-or-revocation
+distribution_scope: internal_repository
+retention: repository-lifetime-or-revocation
 source_rights: cleared_internal_reuse
 managed_by: user-research-hub-integration-v1
 content_hash: sha256:b34b6e6821fcaab73fb5d2dd26d8c98ffdfeee73eca438b77f4535ff57054924

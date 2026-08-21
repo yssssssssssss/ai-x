@@ -2,7 +2,7 @@
   "version": 1,
   "id": "user-research-hub-c1",
   "scope": "evaluation_only",
-  "gate": "gate-3-pending",
+  "gate": "gate-3-owner-waived",
   "production_search_allowed": false,
   "prompt": {
     "path": "evaluations/skills/content/user-research-hub-c1-prompt.md",
@@ -19,157 +19,157 @@
   },
   "production_baseline": {
     "planning_policy_path": "orchestrator/planning-policy.yaml",
-    "planning_policy_hash": "sha256:10f17f2fe816ab805bcf817609c7815280b9c6be78c23fa5c670dfcbf77829ec",
-    "candidate_generation_mode": "fixed",
+    "planning_policy_hash": "sha256:9951251424517cdb4ba5b13db53025cc9bac7be8e50f89211290cc2d579d733c",
+    "candidate_generation_mode": "dynamic",
     "prompt_path": "orchestrator/prompts/deliverables/competitive-analysis-report.md",
-    "prompt_hash": "sha256:806d7ce7faffea9c7bed6c48870588a715379e4d04cec56a79eb0279054001a5",
+    "prompt_hash": "sha256:93d9c91869f6b2ef297fb9395bc16e3a3de13813b19b7477233a2a8d62737de9",
     "rubric_path": "orchestrator/report-rubrics/competitive-analysis-report.yaml",
-    "rubric_hash": "sha256:41fe367c3e37d1d77bda930e2f87835c7f181a4f80619d583f5a094b3db615a1"
+    "rubric_hash": "sha256:31f95486f3718803f36840c3b3ab7efc2c6c017ace25df694d7db49d1447cd44"
   },
   "entries": [
     {
       "id": "ds-method-competitor-01-competitor-selection",
       "kind": "method",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-01-competitor-selection.md",
-      "status": "candidate",
+      "status": "approved",
       "source_hash": "sha256:d9cc916ae69580e4301d21ec958ea22b76f4a29774658323b613981d7f4b2f0f",
       "content_hash": "sha256:5d246dfff93ec1bd4a14b9be8a8efea34cd693592cc5f2f0817f3a43998e4301",
-      "artifact_hash": "sha256:3fafa75ffac0fddb6edec28283d3f5cc250fbc7e8ff0c65a77bab894049774d0"
+      "artifact_hash": "sha256:b87fdc2f32d17a3b984cc4d8a0e8cded380efd5eb95d733ba91217a0cd9cfc12"
     },
     {
       "id": "ds-method-competitor-02-comparison-dimensions",
       "kind": "method",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-02-comparison-dimensions.md",
-      "status": "candidate",
+      "status": "approved",
       "source_hash": "sha256:1d99fa2b7b8067df8395f5a1f40fe9b233f65010252cbad51233e2066aa505cf",
       "content_hash": "sha256:3ac2a9a5a06f111de0a70669da63655c2d8e4178e5a002ff34c27659b3d66876",
-      "artifact_hash": "sha256:fda3e2c23207565b0648abc358161a29074f39febeb9abeab2f661d351ae9939"
+      "artifact_hash": "sha256:ce3aab088f5c12d64742e45dc5da614a34761f95b130ad8513b05d56c6dd7b44"
     },
     {
       "id": "ds-method-competitor-03-pattern-analysis",
       "kind": "method",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-03-pattern-analysis.md",
-      "status": "candidate",
+      "status": "approved",
       "source_hash": "sha256:e69e310d560b8440a6f59390d98fe5e4dc14aa464325d3393b9fe0fd4676de3e",
       "content_hash": "sha256:c2c1cae2d70a02ef65a3eb928d5c25310ca6cb448c7acfabc135fcb38505594d",
-      "artifact_hash": "sha256:8f281480ab69a11ceec61b94d63e72c81b9e6b09fcdef9d6e20ae16cac4df2bf"
+      "artifact_hash": "sha256:725f864866b665195fac53104bd8fe401c45258444238f9f0894876eb0c7809f"
     },
     {
       "id": "ds-method-competitor-04-opportunity-and-risk",
       "kind": "method",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-04-opportunity-and-risk.md",
-      "status": "candidate",
+      "status": "approved",
       "source_hash": "sha256:b8f2f53b0d2946bb407af915e7d668b47d9897d6943ab646fed8651a74bd9ecf",
       "content_hash": "sha256:e62c8b2987adb4e0d796c77df57d302ccc19bfac52ff9cb239ebe967f2b05997",
-      "artifact_hash": "sha256:e2d153643b630ca7678bfc5c3a6dc06bf9bf97d1b4cba7d32072d829f2c6657a"
+      "artifact_hash": "sha256:852b2d6107cd347e46144e41a4cfb292d42c209f5a508c045cd8df2ea1cec4d9"
     },
     {
       "id": "ds-method-competitor-05-insight-output",
       "kind": "method",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-05-insight-output.md",
-      "status": "candidate",
+      "status": "approved",
       "source_hash": "sha256:e96ae99b37672d9d8354e265de91f26e4fab7bfedbc46685867fcadea7e636d4",
       "content_hash": "sha256:dd02c880be842bc9cb6bb8da263d80a21ef8efa8f03210de6cefb82e5c04dc91",
-      "artifact_hash": "sha256:6ab8b73e8948c198770e4ac342d0702776f3b09cf5fd8233ecd2bb04a4c753e6"
+      "artifact_hash": "sha256:0ae33a9d1420c307403a62b4db1571444face3fc8c286cd7ca985f681eb01c8a"
     },
     {
       "id": "ds-method-strategy-01-problem-framing",
       "kind": "method",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-01-problem-framing.md",
-      "status": "candidate",
+      "status": "approved",
       "source_hash": "sha256:89a0f7ebdb5addae99d8a1b363f556e44eda7b9adc66ebbf1a8f7f11cc5cedae",
       "content_hash": "sha256:60950005742b127dbcd057fb5eaa820c2ebf34e548045904e566796d42d7d058",
-      "artifact_hash": "sha256:a03fd5261dba921862fffab0ca7736753e3cf58f26d9aafe64b2db3b85ce92b2"
+      "artifact_hash": "sha256:5a8b76e7de52b113ebd680935f3090ff626c710de80d2c035a0ed04c5bdfa475"
     },
     {
       "id": "ds-method-strategy-02-strategy-map",
       "kind": "method",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-02-strategy-map.md",
-      "status": "candidate",
+      "status": "approved",
       "source_hash": "sha256:5f13307c48afcdc2d6dbf48fdbeaca72895549e70cb667e78fdd0e1452dfebb8",
       "content_hash": "sha256:bda3173c0ae9c394b4dc687b9b4aaae510210062b91ed95ad774b7d3c3722dc0",
-      "artifact_hash": "sha256:9bc62874c6efe36fb4daf7ea4a52fa324fdfa74aa70e9b6f07651c5b48caec3b"
+      "artifact_hash": "sha256:555dee1e0d2880465457228005458825adf5861c5a827e17a93c4e917660e467"
     },
     {
       "id": "ds-method-strategy-04-priority-and-roadmap",
       "kind": "method",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-04-priority-and-roadmap.md",
-      "status": "candidate",
+      "status": "approved",
       "source_hash": "sha256:0c8ad237732eb643fcf7afa8ceac76aac756f1fb61993de8ba6097e737f54ea8",
       "content_hash": "sha256:f27f2cf0ee7a661c7d077ecddf12bf80a8ef7906f71341e1655ae895424f5223",
-      "artifact_hash": "sha256:8133c25be0f3b19b9eec14d71e01dfd7946ad514af448a66be2b01c27805ecf4"
+      "artifact_hash": "sha256:7106d2f8936065edde86e4bd4e5f5210c3f107e44620d84a744fa0b8041f4f54"
     },
     {
       "id": "ds-method-strategy-05-review-and-validation",
       "kind": "method",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-05-review-and-validation.md",
-      "status": "candidate",
+      "status": "approved",
       "source_hash": "sha256:8f5e25f17526862382e419e367054f7023c77e65081167ac069b22406aeed7a1",
       "content_hash": "sha256:1b510fe7eadae5746d04e370110aff21b72f210c1056b63064a18ecdadaf6a54",
-      "artifact_hash": "sha256:6dbd6740d61740b9ee9b4bbeda66968c77eb6c5f7273219bdff94f579ffeb7a7"
+      "artifact_hash": "sha256:5f38b341afd1f7fbebb99a3a2b0f4deb1ad599cdc581eff158749f372c1b2ce8"
     },
     {
       "id": "ds-method-user-01-research-scope",
       "kind": "method",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-01-research-scope.md",
-      "status": "candidate",
+      "status": "approved",
       "source_hash": "sha256:b200380dd6bd4a8b4e4cfd708bb60c734f7418fe8f1afbf1b09a7c3c05c39a5c",
       "content_hash": "sha256:e2336e2a8e25fc21d25915cd9e196b798480dc4672430c328d3b302e12c14645",
-      "artifact_hash": "sha256:615233f55b2729705ac2a6d2ef98de2147f551b4d3564f4d9a2d35ab2577a166"
+      "artifact_hash": "sha256:34b0c5348672b27b7492a579dde008eceddbbee879995819b3deda20baeb3340"
     },
     {
       "id": "ds-method-user-02-user-segmentation",
       "kind": "method",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-02-user-segmentation.md",
-      "status": "candidate",
+      "status": "approved",
       "source_hash": "sha256:145fce590f5d40d95b01c61914a256363dee46edd03c7f2c2401e9d7f55901f9",
       "content_hash": "sha256:5ce273ed1382208efac8186cd01e91544803f1802e00d7f840ed188042099e14",
-      "artifact_hash": "sha256:dd89fa539df9a431acc7a110c030d03e6ab8fc0e261ecd3e1388e6c7dc5ddf23"
+      "artifact_hash": "sha256:221d2f0371d471c4743333bd5c5b295ce900b1350f041491b9125f93a36fe60d"
     },
     {
       "id": "ds-method-user-03-journey-and-tasks",
       "kind": "method",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-03-journey-and-tasks.md",
-      "status": "candidate",
+      "status": "approved",
       "source_hash": "sha256:91f15a80bcffa19799c4f06e822997e68934393f31ce3f0a2b216418db1ed715",
       "content_hash": "sha256:3f7b53b15627d291365f9fd73367638e237ad87211308557e743a85e7603a68c",
-      "artifact_hash": "sha256:8365a691b7e93c848d18778bea7fe3f685f3740b2800f77e69bf6eb9b5cec9f0"
+      "artifact_hash": "sha256:2b9829d938edf473ae03a82b887e639b958b69366beef291b8322afa8a62acc6"
     },
     {
       "id": "ds-method-user-04-painpoint-diagnosis",
       "kind": "method",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-04-painpoint-diagnosis.md",
-      "status": "candidate",
+      "status": "approved",
       "source_hash": "sha256:94c2257517ba030f74c6e357df7ffa325df0bb0e999e1a17e13879aaf5c60d00",
       "content_hash": "sha256:b34b6e6821fcaab73fb5d2dd26d8c98ffdfeee73eca438b77f4535ff57054924",
-      "artifact_hash": "sha256:55eff9d7125ef75aec7954076ba7f485d46afba81a556b778ed3ff4376ae2253"
+      "artifact_hash": "sha256:5591a12783cb26aa7d6c24252078c349647ab08096a631088119f9ee5f5f0ef4"
     },
     {
       "id": "ds-method-user-05-insight-output",
       "kind": "method",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-05-insight-output.md",
-      "status": "candidate",
+      "status": "approved",
       "source_hash": "sha256:94ecd672879bf4ce62bd935c32b10a59ee79d1c033dfbe73675487035dc0f5ba",
       "content_hash": "sha256:d68f5a1c41e0c0c2f013985cc4202e8a1ebe7c63abd064dced3b59ed5e4afb8c",
-      "artifact_hash": "sha256:56b47fae9a1ecf3d8275a21f372420cd5e7159e5c45c573cc0e692139e2d5cc9"
+      "artifact_hash": "sha256:2b92d0362d6b2fe028a352a599e78193bb412fae3c8dad63a9bbc14acb791e24"
     },
     {
       "id": "ux-method-experience-diagnosis-framework",
       "kind": "method",
       "path": "knowledge-base/methods/toolbox/analysis/design-strategy/ux-method-experience-diagnosis-framework.md",
-      "status": "candidate",
+      "status": "approved",
       "source_hash": "sha256:25717b7e1c2ad1c41c56c67ad93697beb1632dcc58405508f3f1cc3c3bb9bab7",
       "content_hash": "sha256:d3bf69dcf479e6adecb3fb5f4cc02c9600fd6daf75cf0bc149631bbf84ee8c26",
-      "artifact_hash": "sha256:2b49bcb2daa5186afe02992e6a61973481c5f70b499cebc0ddbac6f6c8f827f3"
+      "artifact_hash": "sha256:07a1a6140a94a5ffb49c64ee0a1ed3944e5b6d7f6ba5bf19eee734bf9c06f883"
     },
     {
       "id": "ds-template-design-strategy-case-card-template",
       "kind": "asset",
       "path": "knowledge-base/assets/templates/ds-template-design-strategy-case-card-template.md",
-      "status": "candidate",
+      "status": "approved",
       "source_hash": "sha256:b2de65772de63178c255fa3fefaaf93f42171313aeb1b1c4a824c1cded504df5",
       "content_hash": "sha256:d57cf7d05d37616acd870307ba15667846633d11572a3a8e3b52dc878d934fbb",
-      "artifact_hash": "sha256:2720bbbe50692bf57e7126cd6ee85f037ef8b76f5899605205e18dcc397affba"
+      "artifact_hash": "sha256:538c975d5b6e73b831166ca4f0cd985240fe631bfd040d451df9a54df55a1053"
     },
     {
       "id": "skill_solution_generation",
@@ -186,10 +186,10 @@
       "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ds-skill-trend-change-scan.md",
       "status": "draft",
       "source_hash": "sha256:953ac3cc8b46bdda988654f8880e767ca489202e6b26a8afee561e39f1ed07e1",
-      "content_hash": "sha256:e7f0ef287ee26c35984027d6c59fe4523edd3174688f1b0d4972cf30d8f7b9df",
-      "artifact_hash": "sha256:7640e2a3d26f711e7deb1f4cc04b25ae8f2323e0eb30f043ce679a1cedc01a39",
+      "content_hash": "sha256:49546c55a6ae48a56740ef7e708efb516d9757140d5dbd48e33cdac0f7215243",
+      "artifact_hash": "sha256:e7436163b60cb636744d44286d66c8145bc42bbb6b1d862699a77c3b7c15cdee",
       "canonical_target": "skills/competitive-analysis/web-research/SKILL.md",
-      "canonical_hash": "sha256:9eacba95cc36931d6da736efa8ce74a0e8f90fb6b187c2d8debf9c35c69b7d59"
+      "canonical_hash": "sha256:ce2e8219c6a2d201cd65a9deb8653fd42296a7fcba56db5ab18b8d23920ce7e4"
     },
     {
       "id": "experience-walkthrough-delta",
@@ -197,10 +197,10 @@
       "path": "knowledge-base/.sources/user-research-hub-merge-drafts-2026-08-21/skill/skill-ur-skill-experience-walkthrough.md",
       "status": "draft",
       "source_hash": "sha256:99c1b0a3790963c83a2fc9a4f906a8593d8140df3a7651ceac7b1cb92dd835e4",
-      "content_hash": "sha256:e2b7950d4bf153217e4bdbe555f265410ae1885fd0165ee231da0d9ea5565b4c",
-      "artifact_hash": "sha256:b87e2605a6230bc2a7bea9e5f3de76ba5c11a7e518c475d95b25682b74bf381b",
+      "content_hash": "sha256:89e0bb9a1ac0dcdfc3d19b250006995fafcce0e41a48d09e4dafedd4596ec252",
+      "artifact_hash": "sha256:5b1f6015ec0f47ae9b2d63a85d08dd34d7af82f1ce7e0fc9bbdf3d6c9f4b34e0",
       "canonical_target": "knowledge-base/skills/run-heuristic-evaluation",
-      "canonical_hash": "sha256:8f2b6079b6e66582709a2abfca9b6a2797b27a3fff47f22f76ea2d3e7b134395"
+      "canonical_hash": "sha256:072072add7be148880e8d57d5aa05c114b707f7ffd61e88d6756602f4f03509a"
     }
   ],
   "bindings": [

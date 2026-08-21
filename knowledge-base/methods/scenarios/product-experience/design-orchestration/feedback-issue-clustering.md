@@ -5,7 +5,7 @@ title: 用户反馈问题聚类
 domain:
   - 产品体验
 tags: []
-status: candidate
+status: approved
 sensitivity: internal
 owner: user-research-hub-maintainers
 source: user-research-hub
@@ -13,8 +13,8 @@ source_path: methods/scenarios/product-experience/design-orchestration/feedback-
 hub_snapshot_id: user-research-hub-2026-08-21
 hub_source_path: wiki/user-research/01-task-任务/03-find-problems-找问题/02-feedback-issue-clustering-用户反馈问题聚类.md
 hub_source_hash: sha256:de8c3e04e9e0fb2f535c729171704620e69fa53970fdec16ccc663e660b447f5
-distribution_scope: evaluation_only
-retention: through-gate-3-or-revocation
+distribution_scope: internal_repository
+retention: repository-lifetime-or-revocation
 source_rights: cleared_internal_reuse
 managed_by: user-research-hub-integration-v1
 content_hash: sha256:8f1ddf48c9fc0dc8bd1aaa0dbb3de67190de6b8037f53860d41a8694b3dfd23d

@@ -7,7 +7,7 @@ domain:
 tags:
   - user-analysis
   - method
-status: candidate
+status: approved
 sensitivity: internal
 owner: user-research-hub-maintainers
 source: user-research-hub
@@ -15,8 +15,8 @@ source_path: methods/toolbox/analysis/design-strategy/ds-method-user-02-user-seg
 hub_snapshot_id: user-research-hub-2026-08-21
 hub_source_path: wiki/user-research/03-knowledge-知识/方法知识/设计策略/用户分析/用户分析02用户分层.md
 hub_source_hash: sha256:145fce590f5d40d95b01c61914a256363dee46edd03c7f2c2401e9d7f55901f9
-distribution_scope: evaluation_only
-retention: through-gate-3-or-revocation
+distribution_scope: internal_repository
+retention: repository-lifetime-or-revocation
 source_rights: cleared_internal_reuse
 managed_by: user-research-hub-integration-v1
 content_hash: sha256:5ce273ed1382208efac8186cd01e91544803f1802e00d7f840ed188042099e14

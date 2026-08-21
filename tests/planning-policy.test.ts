@@ -58,12 +58,12 @@ function task(): ResearchTaskV2 {
   };
 }
 
-test('Phase-B planning policy is fixed, Gate-3 guarded, and preserves the frozen candidate boundary', () => {
+test('production planning policy enables dynamic candidates under the documented owner waiver', () => {
   const value = policy();
   assert.equal(value.schema_version, 'planning-policy-v1');
-  assert.equal(value.status, 'gate-2-candidate');
-  assert.equal(value.candidate_generation_mode, 'fixed');
-  assert.equal(value.activation_gate, 'gate-3');
+  assert.equal(value.status, 'production-owner-waiver-2026-08-21');
+  assert.equal(value.candidate_generation_mode, 'dynamic');
+  assert.equal(value.activation_gate, 'gate-3-owner-waiver');
   assert.equal(value.capability_crosswalk.version, 'planning-capability-crosswalk-v1');
   assert.deepEqual(value.candidate_contract, {
     min_items: 2,

@@ -5,7 +5,7 @@ title: 指标与验证计划
 domain:
   - 产品体验
 tags: []
-status: candidate
+status: approved
 sensitivity: internal
 owner: user-research-hub-maintainers
 source: user-research-hub
@@ -13,8 +13,8 @@ source_path: methods/scenarios/product-experience/design-orchestration/metrics-v
 hub_snapshot_id: user-research-hub-2026-08-21
 hub_source_path: wiki/user-research/01-task-任务/05-define-strategy-定策略/03-metrics-validation-指标与验证计划.md
 hub_source_hash: sha256:8005b7c43ea286ff946ad792c8d7883fad62c7dc4ec50b8c4f6f479389a46472
-distribution_scope: evaluation_only
-retention: through-gate-3-or-revocation
+distribution_scope: internal_repository
+retention: repository-lifetime-or-revocation
 source_rights: cleared_internal_reuse
 managed_by: user-research-hub-integration-v1
 content_hash: sha256:eff18347fa8bc3e55557f892aabde29f0eaf65003cf04a7f264dc05223f3600b

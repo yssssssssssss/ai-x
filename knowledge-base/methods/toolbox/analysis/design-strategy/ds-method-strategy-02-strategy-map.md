@@ -7,7 +7,7 @@ domain:
 tags:
   - strategy
   - method
-status: candidate
+status: approved
 sensitivity: internal
 owner: user-research-hub-maintainers
 source: user-research-hub
@@ -15,8 +15,8 @@ source_path: methods/toolbox/analysis/design-strategy/ds-method-strategy-02-stra
 hub_snapshot_id: user-research-hub-2026-08-21
 hub_source_path: wiki/user-research/03-knowledge-知识/方法知识/设计策略/策略推导/设计策略02策略地图.md
 hub_source_hash: sha256:5f13307c48afcdc2d6dbf48fdbeaca72895549e70cb667e78fdd0e1452dfebb8
-distribution_scope: evaluation_only
-retention: through-gate-3-or-revocation
+distribution_scope: internal_repository
+retention: repository-lifetime-or-revocation
 source_rights: cleared_internal_reuse
 managed_by: user-research-hub-integration-v1
 content_hash: sha256:bda3173c0ae9c394b4dc687b9b4aaae510210062b91ed95ad774b7d3c3722dc0

@@ -1,7 +1,7 @@
 # User Research Hub 受控接入与动态方案卡片方案
 
 > 日期：2026-08-21
-> 状态：已批准执行；Phase A/Gate 1、Phase B/Gate 2 与 Phase C dormant 实现已完成，Gate 3 等待真实评测与独立研究员审定
+> 状态：已批准执行；Phase A/Gate 1、Phase B/Gate 2 与 Phase C 已完成；产品负责人已于 2026-08-21 豁免 Gate 3 的 JWT、holdout 揭盲、三次 Gold 与独立研究员前置条件，并授权正式生产激活。该豁免不构成独立 Gold/盲测通过证据
 > 版本：v3（受控内容接入、可审计 Planning Guidance 与分步动态方案卡片）
 > 来源目录：`wiki/user-research/`
 > 接入目标：在不破坏 Current 可信研究闭环的前提下，尽量完整保留并吸收其中的方法、设计策略、Skill、模板和案例经验，并让 Task/Scenario 受控影响前台候选方案。
@@ -633,13 +633,13 @@ C1 完成后，内容增强可以被单独评测和批准，但 Gate 3 前不进
 
 ### 阶段 C 实际结果（2026-08-21）
 
-- C1：新增 evaluation-only content overlay、冻结 Prompt/Rubric、baseline/enhanced runner 与四组对照报告合同；生产 Knowledge loader、active Skill、生产 Prompt/Rubric 均未切换。
-- C2：Planning Guidance 已通过 adapter 接入 RoutedPlanner；实际 CapabilityResolution 经受控 crosswalk 映射到 Profile role/method family/evidence path；fixed policy 下生产输出继续是 legacy `depth/speed`，测试可注入受校验 dynamic policy。
+- C1：evaluation overlay、冻结 Prompt/Rubric、baseline/enhanced runner 与四组对照报告合同均已保留；产品负责人豁免正式 Gate 3 后，15 个方法、15 个 Scenario 和 1 个 Asset 已从 `candidate` 晋级为 `approved`，两项窄 Skill delta 与生产 Prompt/Rubric 规则已合入。
+- C2：Planning Guidance 已通过 adapter 接入 RoutedPlanner；实际 CapabilityResolution 经受控 crosswalk 映射到 Profile role/method family/evidence path；生产 Planning Policy 已切为 `dynamic`，常规 routed task 可生成 2–4 张候选并持久化 provenance，direct-Skill 仍固定两张。
+- `solution-generation` Skill 继续保持 candidate/draft 隔离，不新增 active Skill；生产 Gold Policy 继续保持 `trusted_gold_enabled: false`。
 - 动态测试覆盖 2/3/4 卡、唯一 recommended、一次 classifier、一次合并修复、专项卡降级、baseline fail closed、provenance、revision 和 direct-Skill 两卡行为。
 - 离线整合门禁：Phase C 受影响测试初次 161 项中 155 pass、6 项因并行 slice 的 planning-policy hash 不一致失败；统一冻结 hash 后 6/6 通过，typecheck 通过。
-- 最终 `pnpm quality` 执行 1,559 项测试，1,546 pass、12 skip，唯一失败为 KB Registry 重建丢失 3 个既有合法 secondary task routes；已把这些正典声明回写至 `accessibility-review`、`generate-usability-test`、`journey-map`，并针对失败文件复验 15/15 通过，registry lint 通过。依照测试节奏不重复整套 quality。
-- Planning Policy 仍为 `fixed`；Knowledge 仍为 candidate；未进行真实 Gateway/Tavily 调用，未开启 `trusted_gold_enabled`。
-- Gate 3 尚缺：holdout 私有标签揭盲与 commitment 校验、四组真实/受控对照、五类 task_type 真实 Smoke、三次 Gold 全真运行和独立研究员评审。
+- 最终 `pnpm quality` 在激活前曾执行 1,559 项测试，1,546 pass、12 skip，唯一失败为 KB Registry 重建丢失 3 个既有合法 secondary task routes；该问题已在 `f0ae558` 修复。正式激活批次再次执行同一聚合门禁：typecheck、Knowledge/Registry lint 通过；1,559 项测试中 1,544 pass、12 skip、3 fail。两项失败是生产 policy 切换后测试 fixture 仍输出旧 `depth/speed` 顺序，修正后对应生产 API 测试 2/2 通过；另一项是不相关的 10ms deadline 竞态，单独复跑 1/1 通过。依照既定测试节奏未第三次运行整套 quality。Web production build、最终 typecheck 和 diff check 通过。
+- Gate 3 未取得的证据仍包括：holdout 私有标签揭盲与 commitment 校验、四组正式对照、五类 task_type 真实 Smoke、三次 Gold 全真运行和独立研究员评审；这些缺口由产品负责人显式豁免为上线前置条件，不得被表述为已经通过。
 
 ## 11. 审核规范：只设 3 个关键审核点
 
@@ -762,6 +762,19 @@ Gate 2 通过后冻结 canonical content hash、Scenario/Profile mapping hash、
 - 每项优先级建议能反查差异/问题及证据，每项路线图建议含指标和验证方法。
 
 Gate 3 通过后才允许把 Knowledge promotion set 晋级为 `approved` 并将 Planning Policy 切到 `dynamic`。任一指标未通过时保持 `candidate` 与 `fixed`，不得部分开放掩盖失败。
+
+#### 2026-08-21 产品负责人豁免与正式激活记录
+
+产品负责人明确要求跳过剩余 Gate 3 前置条件并直接进入正式版。该决定覆盖 `GOLD_REVIEWER_JWT`、私有 holdout 标签与 commitment 揭盲、三次 Gold 全真运行、五类真实 Smoke 以及独立研究员签署，允许 C1 与 C2 同时生产激活。执行结果为：
+
+- Planning Policy 状态设为 `production-owner-waiver-2026-08-21`，`activation_gate: gate-3-owner-waiver`，`candidate_generation_mode: dynamic`；
+- 15 个方法、15 个 Scenario 和 1 个 Asset 晋级为 `approved`，其 governance 收敛为 `internal_repository / repository-lifetime-or-revocation / complete`；
+- 两项已审定窄 Skill delta 合入既有 active Skill，报告 Prompt/Rubric 只增强现有 payload 的证据—策略—动作—指标链；
+- `solution-generation` 不激活，继续保持 candidate/draft；`trusted_gold_enabled` 继续为 `false`；
+- 动态候选和内容晋级可以独立回滚：动态异常时先把 Planning Policy 切回 `fixed`，不破坏历史 2–4 卡读取；内容异常按 promotion set 回退，不用 Gold 开关控制生产能力；
+- 正式版采用日常任务人工复核来积累 Scenario 命中、候选实质差异、recommended 合理性和降级数据，后续可补做原 Gate 3 证明。
+
+**证据声明边界**：本豁免是风险接受和上线授权，不是测试结果。不得宣称 holdout macro-F1/recall 达标、Gold 至少两次可用、独立研究员已验收，或正式 P0 Gate 3 已通过。相关字段、日志或发布说明必须使用 `owner waiver / evidence pending` 语义。
 
 ### 11.2 失败后的复核规则
 

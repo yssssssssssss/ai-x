@@ -71,7 +71,7 @@ export interface PlanningPolicy {
   schema_version: 'planning-policy-v1';
   status: string;
   candidate_generation_mode: CandidateGenerationMode;
-  activation_gate: 'gate-3';
+  activation_gate: 'gate-3' | 'gate-3-owner-waiver';
   profile_spec: { version: 'profile-spec-gate-2-candidate-v1'; sha256: string };
   scenario_catalog: { version: 'scenario-profile-mapping-gate-2-candidate-v1'; sha256: string };
   scenario_mapping: { version: 'scenario-profile-mapping-gate-2-candidate-v1'; sha256: string };
@@ -160,8 +160,11 @@ export function validatePlanningPolicy(value: unknown): PlanningPolicy {
   if (root.candidate_generation_mode !== 'fixed' && root.candidate_generation_mode !== 'dynamic') {
     throw new Error('Planning Policy candidate_generation_mode: must be fixed or dynamic');
   }
-  if (root.activation_gate !== 'gate-3') {
-    throw new Error('Planning Policy activation_gate: must equal gate-3');
+  if (root.activation_gate !== 'gate-3' && root.activation_gate !== 'gate-3-owner-waiver') {
+    throw new Error('Planning Policy activation_gate: must equal gate-3 or gate-3-owner-waiver');
+  }
+  if (root.activation_gate === 'gate-3-owner-waiver' && root.status !== 'production-owner-waiver-2026-08-21') {
+    throw new Error('Planning Policy owner waiver: status must record the production owner waiver');
   }
   const candidateContract = record(root.candidate_contract, 'candidate_contract');
   exactKeys(candidateContract, [
@@ -187,7 +190,7 @@ export function validatePlanningPolicy(value: unknown): PlanningPolicy {
     schema_version: 'planning-policy-v1',
     status: root.status,
     candidate_generation_mode: root.candidate_generation_mode,
-    activation_gate: 'gate-3',
+    activation_gate: root.activation_gate,
     profile_spec: versionedHash(root.profile_spec, 'profile_spec', 'profile-spec-gate-2-candidate-v1'),
     scenario_catalog: versionedHash(root.scenario_catalog, 'scenario_catalog', 'scenario-profile-mapping-gate-2-candidate-v1'),
     scenario_mapping: versionedHash(root.scenario_mapping, 'scenario_mapping', 'scenario-profile-mapping-gate-2-candidate-v1'),

@@ -5,7 +5,7 @@ title: 竞品与标杆研究
 domain:
   - 产品体验
 tags: []
-status: candidate
+status: approved
 sensitivity: internal
 owner: user-research-hub-maintainers
 source: user-research-hub
@@ -13,8 +13,8 @@ source_path: methods/scenarios/product-experience/design-orchestration/competito
 hub_snapshot_id: user-research-hub-2026-08-21
 hub_source_path: wiki/user-research/01-task-任务/01-find-direction-找方向/02-competitor-benchmark-research-竞品与标杆研究.md
 hub_source_hash: sha256:531debd9853f262ab80a3c2b4b09fd657a14b8d4c6f8054115ceb855e685b4f5
-distribution_scope: evaluation_only
-retention: through-gate-3-or-revocation
+distribution_scope: internal_repository
+retention: repository-lifetime-or-revocation
 source_rights: cleared_internal_reuse
 managed_by: user-research-hub-integration-v1
 content_hash: sha256:c890458da3a7897b6c76faa8809a7ee98c4e36523a21fd137edd3c0e4e35cff8

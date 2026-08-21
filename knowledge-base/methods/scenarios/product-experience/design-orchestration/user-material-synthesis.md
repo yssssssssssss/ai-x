@@ -5,7 +5,7 @@ title: 已有用户资料归纳
 domain:
   - 产品体验
 tags: []
-status: candidate
+status: approved
 sensitivity: internal
 owner: user-research-hub-maintainers
 source: user-research-hub
@@ -13,8 +13,8 @@ source_path: methods/scenarios/product-experience/design-orchestration/user-mate
 hub_snapshot_id: user-research-hub-2026-08-21
 hub_source_path: wiki/user-research/01-task-任务/02-understand-users-懂用户/01-user-material-synthesis-已有用户资料归纳.md
 hub_source_hash: sha256:014d084680664f371ca13cd25bfb41b31b147170d94ab4d1f16a952e5988f599
-distribution_scope: evaluation_only
-retention: through-gate-3-or-revocation
+distribution_scope: internal_repository
+retention: repository-lifetime-or-revocation
 source_rights: cleared_internal_reuse
 managed_by: user-research-hub-integration-v1
 content_hash: sha256:9c050180133901729daf4ee322c7b7213744457a94327f95c507247fb45c8225

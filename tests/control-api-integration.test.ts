@@ -260,15 +260,23 @@ class OfflineEligibleRealLLM implements LLMClient {
         }],
       };
     } else if (options.schemaName === 'current-plan-candidates') {
+      const proposalById = new Map(planningResult('offline-current-candidate').candidates.map((candidate) => {
+        const { activated_nodes: _activatedNodes, ...proposal } = candidate;
+        return [candidate.id, {
+          ...proposal,
+          steps: proposal.steps.map((step) => step.actor_type === 'skill'
+            ? { ...step, actor_id: 'competitive-web-research' }
+            : step),
+        }];
+      }));
+      const profileSpecs = (options.context as {
+        profile_specs?: Array<{ id: 'speed' | 'depth'; display_name?: string }>;
+      }).profile_specs ?? [{ id: 'depth' as const }, { id: 'speed' as const }];
       data = {
-        candidates: planningResult('offline-current-candidate').candidates.map((candidate) => {
-          const { activated_nodes: _activatedNodes, ...proposal } = candidate;
-          return {
-            ...proposal,
-            steps: proposal.steps.map((step) => step.actor_type === 'skill'
-              ? { ...step, actor_id: 'competitive-web-research' }
-              : step),
-          };
+        candidates: profileSpecs.map(({ id, display_name }) => {
+          const proposal = proposalById.get(id);
+          if (!proposal) throw new Error(`missing fixture candidate for ${id}`);
+          return { ...proposal, title: display_name ?? proposal.title };
         }),
       };
     } else if (options.schemaName === 'research-plan-deliverable-content') {
@@ -420,28 +428,36 @@ class PlanningModelFixtureLLM implements LLMClient {
         requires_approval: false,
         fallback_actor_ids: [],
       });
+      const candidateById = new Map([
+        ['depth', {
+          id: 'depth',
+          title: '深度研究',
+          rationale: '包含复核',
+          tradeoffs: '耗时更长',
+          steps: [
+            systemStep('llm', 'research-synthesis', []),
+            systemStep('reviewer', 'evidence-reviewer', [1]),
+          ],
+          assumptions: [],
+        }],
+        ['speed', {
+          id: 'speed',
+          title: '快速研究',
+          rationale: '最短路径',
+          tradeoffs: '复核较少',
+          steps: [systemStep('llm', 'research-synthesis', [])],
+          assumptions: [],
+        }],
+      ]);
+      const profileSpecs = (options.context as {
+        profile_specs?: Array<{ id: 'speed' | 'depth'; display_name?: string }>;
+      }).profile_specs ?? [{ id: 'depth' as const }, { id: 'speed' as const }];
       data = {
-        candidates: [
-          {
-            id: 'depth',
-            title: '深度研究',
-            rationale: '包含复核',
-            tradeoffs: '耗时更长',
-            steps: [
-              systemStep('llm', 'research-synthesis', []),
-              systemStep('reviewer', 'evidence-reviewer', [1]),
-            ],
-            assumptions: [],
-          },
-          {
-            id: 'speed',
-            title: '快速研究',
-            rationale: '最短路径',
-            tradeoffs: '复核较少',
-            steps: [systemStep('llm', 'research-synthesis', [])],
-            assumptions: [],
-          },
-        ],
+        candidates: profileSpecs.map(({ id, display_name }) => {
+          const proposal = candidateById.get(id);
+          if (!proposal) throw new Error(`missing fixture candidate for ${id}`);
+          return { ...proposal, title: display_name ?? proposal.title };
+        }),
       };
     } else {
       const generated = await this.fixtures.generateStructured<T>(options);
@@ -944,7 +960,7 @@ function clarificationRequirement(): ResearchTaskV2 {
     version: 'research-task-v2',
     task_type: 'competitive_research',
     business_domain: '宠物辅食',
-    research_goal: '确认目标受众后生成研究计划',
+    research_goal: '确认目标受众后生成竞品研究计划',
     target_audience: [],
     scope: ['公开资料'],
     constraints: [],
@@ -1762,7 +1778,7 @@ test('production plan stream forwards requirement-backed planning progress in or
     );
     const result = events.at(-1)?.data as ControlPlanCandidatesResponse;
     assert.equal(result.task.state, 'awaiting_selection');
-    assert.deepEqual(result.candidates.map((candidate) => candidate.candidateId), ['depth', 'speed']);
+    assert.deepEqual(result.candidates.map((candidate) => candidate.candidateId), ['speed', 'depth']);
   } finally {
     await closeLocalServer(app.server);
   }
@@ -1911,7 +1927,7 @@ test('production Current planning persists candidates only when every receipt ma
     );
 
     assert.equal(planned.task.state, 'awaiting_selection');
-    assert.deepEqual(planned.candidates.map((candidate) => candidate.candidateId), ['depth', 'speed']);
+    assert.deepEqual(planned.candidates.map((candidate) => candidate.candidateId), ['speed', 'depth']);
     assert.deepEqual(persisted.rows[0], { tasks: 1, candidates: 2 });
     assert.deepEqual(
       receipts.rows.map((row) => ({

@@ -7,7 +7,7 @@ domain:
 tags:
   - competitor-analysis
   - method
-status: candidate
+status: approved
 sensitivity: internal
 owner: user-research-hub-maintainers
 source: user-research-hub
@@ -15,8 +15,8 @@ source_path: methods/toolbox/analysis/design-strategy/ds-method-competitor-03-pa
 hub_snapshot_id: user-research-hub-2026-08-21
 hub_source_path: wiki/user-research/03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析03模式分析.md
 hub_source_hash: sha256:e69e310d560b8440a6f59390d98fe5e4dc14aa464325d3393b9fe0fd4676de3e
-distribution_scope: evaluation_only
-retention: through-gate-3-or-revocation
+distribution_scope: internal_repository
+retention: repository-lifetime-or-revocation
 source_rights: cleared_internal_reuse
 managed_by: user-research-hub-integration-v1
 content_hash: sha256:c2c1cae2d70a02ef65a3eb928d5c25310ca6cb448c7acfabc135fcb38505594d

@@ -5,7 +5,7 @@ title: 方案比较与风险评估
 domain:
   - 产品体验
 tags: []
-status: candidate
+status: approved
 sensitivity: internal
 owner: user-research-hub-maintainers
 source: user-research-hub
@@ -13,8 +13,8 @@ source_path: methods/scenarios/product-experience/design-orchestration/solution-
 hub_snapshot_id: user-research-hub-2026-08-21
 hub_source_path: wiki/user-research/01-task-任务/04-solve-problems-解问题/03-solution-comparison-方案比较与风险评估.md
 hub_source_hash: sha256:538af477a6f805545d8a3703c7020c176e5528337be5225e0cba3619ba1ca6a0
-distribution_scope: evaluation_only
-retention: through-gate-3-or-revocation
+distribution_scope: internal_repository
+retention: repository-lifetime-or-revocation
 source_rights: cleared_internal_reuse
 managed_by: user-research-hub-integration-v1
 content_hash: sha256:acba7f64544d159bde16988d0a90406375181a2c5370c3615c5a876f87e9e857

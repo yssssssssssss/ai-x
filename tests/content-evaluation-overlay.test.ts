@@ -118,7 +118,7 @@ test('existing KB evaluation dry-run reports the overlay and rejects production-
   );
 });
 
-test('C1 overlay freezes exactly the Gate-2 content set without changing production visibility', () => {
+test('C1 overlay preserves the reviewed content set after owner-waived production activation', () => {
   const first = loadContentOverlay();
   const second = loadContentOverlay();
   const kinds = first.entries.map(({ metadata }) => metadata.kind);
@@ -134,12 +134,12 @@ test('C1 overlay freezes exactly the Gate-2 content set without changing product
 
   const runtimeIds = new Set(loadRuntimeKnowledgeIndex().map(({ id }) => id));
   for (const entry of first.entries.filter(({ metadata }) => metadata.kind === 'method')) {
-    assert.equal(runtimeIds.has(entry.metadata.id), false, entry.metadata.id);
-    assert.equal(entry.metadata.status, 'candidate');
+    assert.equal(runtimeIds.has(entry.metadata.id), true, entry.metadata.id);
+    assert.equal(entry.metadata.status, 'approved');
   }
   assert.equal(loadSkillRegistry().skills.find(({ id }) => id === 'solution-generation')?.status, 'draft');
   assert.equal(first.manifest.production_search_allowed, false);
-  assert.equal(first.manifest.production_baseline.candidate_generation_mode, 'fixed');
+  assert.equal(first.manifest.production_baseline.candidate_generation_mode, 'dynamic');
 });
 
 test('enhanced overlay injects frozen content by explicit binding and applies only the two narrow deltas', () => {
@@ -161,7 +161,7 @@ test('enhanced overlay injects frozen content by explicit binding and applies on
   assert.ok(competitive);
   assert.deepEqual(competitive.instructions.skillDeltaIds, ['trend-change-scan-delta']);
   assert.match(competitive.instructions.skillDeltaText, /dated, traceable public sources/);
-  assert.ok(competitive.knowledgeContext.items.every(({ status }) => status === 'draft' || status === 'candidate'));
+  assert.ok(competitive.knowledgeContext.items.every(({ status }) => status === 'approved' || status === 'draft' || status === 'candidate'));
   assert.deepEqual(walkthrough?.instructions.skillDeltaIds, ['experience-walkthrough-delta']);
   assert.match(walkthrough?.instructions.skillDeltaText ?? '', /exact page\/state\/step/);
   assert.equal(addContentOverlayToKnowledge(baseline.context, baseline.retrieval, overlay, 'generate-survey'), undefined);

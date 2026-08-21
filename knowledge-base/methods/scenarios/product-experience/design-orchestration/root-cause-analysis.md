@@ -5,7 +5,7 @@ title: 问题根因拆解
 domain:
   - 产品体验
 tags: []
-status: candidate
+status: approved
 sensitivity: internal
 owner: user-research-hub-maintainers
 source: user-research-hub
@@ -13,8 +13,8 @@ source_path: methods/scenarios/product-experience/design-orchestration/root-caus
 hub_snapshot_id: user-research-hub-2026-08-21
 hub_source_path: wiki/user-research/01-task-任务/04-solve-problems-解问题/01-root-cause-analysis-问题根因拆解.md
 hub_source_hash: sha256:49954209aa22190d0bf61edf7b7cb824b1fb23780ba59e334b9583819eff332b
-distribution_scope: evaluation_only
-retention: through-gate-3-or-revocation
+distribution_scope: internal_repository
+retention: repository-lifetime-or-revocation
 source_rights: cleared_internal_reuse
 managed_by: user-research-hub-integration-v1
 content_hash: sha256:1f31261afdae4a069b6c0a7f8738e74a13b127b5d175fb8e88a0336810532857

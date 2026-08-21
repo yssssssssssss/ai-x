@@ -1282,9 +1282,13 @@ class CurrentPlanningLLM implements LLMClient {
   }
 }
 
+function fixedTestPlanningPolicy() {
+  return { ...loadPlanningPolicy(), candidate_generation_mode: 'fixed' as const };
+}
+
 function routedPlanningHarness(
   candidateFixtureMode: CurrentCandidateFixtureMode,
-  planningPolicy?: unknown,
+  planningPolicy: unknown = fixedTestPlanningPolicy(),
 ) {
   const llm = new CurrentPlanningLLM(candidateFixtureMode);
   const tools = new ToolRouter();
@@ -1301,7 +1305,7 @@ function routedPlanningHarness(
     skillLoader: new SkillLoader(),
     tools,
     approvalAuthorities: ['owner'],
-    ...(planningPolicy === undefined ? {} : { planningPolicy }),
+    planningPolicy,
   } as never);
   return { llm, planning };
 }
@@ -1323,6 +1327,7 @@ test('Current planning assembles Task8 graph and Task9 real-adapter capability s
     skillLoader: new SkillLoader(),
     tools,
     approvalAuthorities: ['owner'],
+    planningPolicy: fixedTestPlanningPolicy(),
   } as never);
 
   const result = await (planning as ResearchPlanningService & {
@@ -1381,11 +1386,10 @@ test('Current planning assembles Task8 graph and Task9 real-adapter capability s
   }
 });
 
-test('injected dynamic policy drives exact 2/3/4 ProfileSpec order and canonical provenance', async () => {
-  const dynamicPolicy = {
-    ...loadPlanningPolicy(),
-    candidate_generation_mode: 'dynamic',
-  } as const;
+test('production dynamic policy drives exact 2/3/4 ProfileSpec order and canonical provenance', async () => {
+  const dynamicPolicy = loadPlanningPolicy();
+  assert.equal(dynamicPolicy.candidate_generation_mode, 'dynamic');
+  assert.equal(dynamicPolicy.activation_gate, 'gate-3-owner-waiver');
   const cases = [
     {
       name: 'two',
@@ -1557,6 +1561,7 @@ test('Current planning retries once with complete Compiler feedback before retur
       skillLoader: new SkillLoader(),
       tools,
       approvalAuthorities: ['owner'],
+      planningPolicy: fixedTestPlanningPolicy(),
     } as never);
 
     const result = await planning.planCurrentFromRequirement(task, task.research_goal);
@@ -1760,6 +1765,7 @@ test('active qualified Playwright is planned as Tavily then capture then Skill i
       skillLoader: new SkillLoader(),
       tools,
       approvalAuthorities: ['owner'],
+      planningPolicy: fixedTestPlanningPolicy(),
     });
 
     const routed = await planning.planCurrentFromRequirement(task, task.research_goal);

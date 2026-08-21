@@ -75,7 +75,7 @@ export interface HubScan {
 interface ManifestTarget {
   canonical_id: string;
   path: string;
-  status: 'existing' | 'candidate';
+  status: 'existing' | 'candidate' | 'approved';
 }
 export interface ManifestGovernance {
   sensitivity: 'public' | 'internal' | 'restricted' | 'unknown';
@@ -787,10 +787,12 @@ export function checkManifest(manifest: HubManifest, scan: HubScan, canonicalCat
       else if (!canonicalCatalog.has(entity.target.path)) add(`existing target does not exist ${entity.key}: ${entity.target.path}`);
     }
     if (entity.disposition === 'import_candidate') {
-      if (!entity.target || entity.target.status !== 'candidate') add(`import candidate has no candidate target ${entity.key}`);
-      else {
+      if (!entity.target || (entity.target.status !== 'candidate' && entity.target.status !== 'approved')) {
+        add(`import candidate has no candidate/approved target ${entity.key}`);
+      } else {
         if (!targetPathValid(entity.target.path)) add(`invalid candidate target ${entity.key}: ${entity.target.path}`);
-        if (canonicalCatalog.has(entity.target.path)) add(`candidate target already exists ${entity.key}: ${entity.target.path}`);
+        const exists = canonicalCatalog.has(entity.target.path);
+        if (entity.target.status === 'candidate' && exists) add(`candidate target already exists ${entity.key}: ${entity.target.path}`);
       }
     }
     if (entity.target && !targetPathValid(entity.target.path)) add(`invalid target path ${entity.key}: ${entity.target.path}`);

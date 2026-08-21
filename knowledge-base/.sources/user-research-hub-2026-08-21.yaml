@@ -516,18 +516,18 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析01竞品选择.md
     disposition: import_candidate
-    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
-    mapping_basis: gate_2_single_method_candidate
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: ds-method-competitor-01-competitor-selection
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-01-competitor-selection.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -537,6 +537,7 @@ entities:
         internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - gate-3-owner-waiver-production
   - key: knowledge:ds-method-competitor-02-comparison-dimensions
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -545,18 +546,18 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析02对比维度.md
     disposition: import_candidate
-    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
-    mapping_basis: gate_2_single_method_candidate
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: ds-method-competitor-02-comparison-dimensions
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-02-comparison-dimensions.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -566,6 +567,7 @@ entities:
         internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - gate-3-owner-waiver-production
   - key: knowledge:ds-method-competitor-03
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -585,18 +587,18 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析03模式分析.md
     disposition: import_candidate
-    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
-    mapping_basis: gate_2_single_method_candidate
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: ds-method-competitor-03-pattern-analysis
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-03-pattern-analysis.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -606,6 +608,7 @@ entities:
         internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - gate-3-owner-waiver-production
   - key: knowledge:ds-method-competitor-04
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -625,18 +628,18 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析04机会风险.md
     disposition: import_candidate
-    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
-    mapping_basis: gate_2_single_method_candidate
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: ds-method-competitor-04-opportunity-and-risk
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-04-opportunity-and-risk.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -646,6 +649,7 @@ entities:
         internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - gate-3-owner-waiver-production
   - key: knowledge:ds-method-competitor-05-insight-output
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -654,18 +658,18 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析05洞察输出.md
     disposition: import_candidate
-    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
-    mapping_basis: gate_2_single_method_candidate
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: ds-method-competitor-05-insight-output
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-competitor-05-insight-output.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -675,6 +679,7 @@ entities:
         internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - gate-3-owner-waiver-production
   - key: knowledge:ds-method-strategy-00-module-overview
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -694,18 +699,18 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/策略推导/设计策略01问题定义.md
     disposition: import_candidate
-    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
-    mapping_basis: gate_2_single_method_candidate
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: ds-method-strategy-01-problem-framing
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-01-problem-framing.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -715,6 +720,7 @@ entities:
         internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - gate-3-owner-waiver-production
   - key: knowledge:ds-method-strategy-02-strategy-map
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -723,18 +729,18 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/策略推导/设计策略02策略地图.md
     disposition: import_candidate
-    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
-    mapping_basis: gate_2_single_method_candidate
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: ds-method-strategy-02-strategy-map
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-02-strategy-map.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -744,6 +750,7 @@ entities:
         internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - gate-3-owner-waiver-production
   - key: knowledge:ds-method-strategy-04-priority-and-roadmap
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -752,18 +759,18 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/策略推导/设计策略04优先路线.md
     disposition: import_candidate
-    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
-    mapping_basis: gate_2_single_method_candidate
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: ds-method-strategy-04-priority-and-roadmap
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-04-priority-and-roadmap.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -773,6 +780,7 @@ entities:
         internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - gate-3-owner-waiver-production
   - key: knowledge:ds-method-strategy-05
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -792,18 +800,18 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/策略推导/设计策略05评审验证.md
     disposition: import_candidate
-    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
-    mapping_basis: gate_2_single_method_candidate
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: ds-method-strategy-05-review-and-validation
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-strategy-05-review-and-validation.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -813,6 +821,7 @@ entities:
         internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - gate-3-owner-waiver-production
   - key: knowledge:ds-method-strategy-06
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -854,18 +863,18 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/用户分析/用户分析01分析边界.md
     disposition: import_candidate
-    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
-    mapping_basis: gate_2_single_method_candidate
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: ds-method-user-01-research-scope
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-01-research-scope.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -875,6 +884,7 @@ entities:
         internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - gate-3-owner-waiver-production
   - key: knowledge:ds-method-user-02
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -894,18 +904,18 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/用户分析/用户分析02用户分层.md
     disposition: import_candidate
-    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
-    mapping_basis: gate_2_single_method_candidate
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: ds-method-user-02-user-segmentation
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-02-user-segmentation.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -915,6 +925,7 @@ entities:
         internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - gate-3-owner-waiver-production
   - key: knowledge:ds-method-user-03-journey-and-tasks
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -923,18 +934,18 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/用户分析/用户分析03旅程任务.md
     disposition: import_candidate
-    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
-    mapping_basis: gate_2_single_method_candidate
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: ds-method-user-03-journey-and-tasks
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-03-journey-and-tasks.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -944,6 +955,7 @@ entities:
         internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - gate-3-owner-waiver-production
   - key: knowledge:ds-method-user-04-painpoint-diagnosis
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -952,18 +964,18 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/用户分析/用户分析04痛点诊断.md
     disposition: import_candidate
-    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
-    mapping_basis: gate_2_single_method_candidate
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: ds-method-user-04-painpoint-diagnosis
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-04-painpoint-diagnosis.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -973,6 +985,7 @@ entities:
         internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - gate-3-owner-waiver-production
   - key: knowledge:ds-method-user-05-insight-output
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -981,18 +994,18 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/设计策略/用户分析/用户分析05洞察输出.md
     disposition: import_candidate
-    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
-    mapping_basis: gate_2_single_method_candidate
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: ds-method-user-05-insight-output
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ds-method-user-05-insight-output.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -1002,6 +1015,7 @@ entities:
         internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - gate-3-owner-waiver-production
   - key: knowledge:ds-skill-competitor-strategy-analysis-checklist
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -1043,18 +1057,18 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/模板库/设计策略/设计策略案例卡模板.md
     disposition: import_candidate
-    rationale: Unique design-strategy case-card template is retained as an evaluation-only candidate.
-    mapping_basis: gate_2_unique_template_candidate
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: ds-template-design-strategy-case-card-template
       path: knowledge-base/assets/templates/ds-template-design-strategy-case-card-template.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -1064,6 +1078,7 @@ entities:
         internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - gate-3-owner-waiver-production
   - key: knowledge:mechanism-case-intake
     registry_kind: knowledge
     registry_path: 05-registry-索引/knowledge-registry.yaml
@@ -3256,18 +3271,18 @@ entities:
     source_status: draft
     source_path: 03-knowledge-知识/方法知识/通用体验/体验问题诊断与走查框架.md
     disposition: import_candidate
-    rationale: Reviewed single-method content remains a Phase-B candidate until Gate-3 promotion.
-    mapping_basis: gate_2_single_method_candidate
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: ux-method-experience-diagnosis-framework
       path: knowledge-base/methods/toolbox/analysis/design-strategy/ux-method-experience-diagnosis-framework.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -3277,7 +3292,8 @@ entities:
         internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
+        - gate-3-owner-waiver-production
+        - internal-business-facts-reviewed-for-internal-repository
   - key: skill:ds-skill-competitor-strategy-analysis
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -3350,9 +3366,9 @@ entities:
       - human_confirmation
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -3362,6 +3378,7 @@ entities:
         internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - gate-3-owner-waiver-production
   - key: skill:ds-skill-user-insight-synthesis
     registry_kind: skill
     registry_path: 05-registry-索引/skill-registry.yaml
@@ -3485,9 +3502,9 @@ entities:
       - human_confirmation
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -3497,6 +3514,7 @@ entities:
         internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - gate-3-owner-waiver-production
     coalescence_group_id: coalesce-run-heuristic-evaluation
   - key: skill:ur-skill-feature-adoption-analysis
     registry_kind: skill
@@ -3698,18 +3716,18 @@ entities:
     source_status: draft
     source_path: 01-task-任务/01-find-direction-找方向/02-competitor-benchmark-research-竞品与标杆研究.md
     disposition: import_candidate
-    rationale: Scenario semantics are a non-runtime Phase-B candidate; this Phase records source identity only.
-    mapping_basis: registry_level_scenario
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: competitor-benchmark-research
       path: knowledge-base/methods/scenarios/product-experience/design-orchestration/competitor-benchmark-research.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -3719,7 +3737,8 @@ entities:
         internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
+        - gate-3-owner-waiver-production
+        - internal-business-facts-reviewed-for-internal-repository
   - key: task:data-behavior-diagnosis
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -3728,18 +3747,18 @@ entities:
     source_status: draft
     source_path: 01-task-任务/03-find-problems-找问题/03-data-behavior-diagnosis-数据与行为异常诊断.md
     disposition: import_candidate
-    rationale: Scenario semantics are a non-runtime Phase-B candidate; this Phase records source identity only.
-    mapping_basis: registry_level_scenario
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: data-behavior-diagnosis
       path: knowledge-base/methods/scenarios/product-experience/design-orchestration/data-behavior-diagnosis.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -3749,7 +3768,8 @@ entities:
         internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
+        - gate-3-owner-waiver-production
+        - internal-business-facts-reviewed-for-internal-repository
   - key: task:define-strategy
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -3813,18 +3833,18 @@ entities:
     source_status: draft
     source_path: 01-task-任务/03-find-problems-找问题/01-experience-walkthrough-页面与链路体验走查.md
     disposition: import_candidate
-    rationale: Scenario semantics are a non-runtime Phase-B candidate; this Phase records source identity only.
-    mapping_basis: registry_level_scenario
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: experience-walkthrough
       path: knowledge-base/methods/scenarios/product-experience/design-orchestration/experience-walkthrough.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -3834,7 +3854,8 @@ entities:
         internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
+        - gate-3-owner-waiver-production
+        - internal-business-facts-reviewed-for-internal-repository
   - key: task:feedback-issue-clustering
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -3843,18 +3864,18 @@ entities:
     source_status: draft
     source_path: 01-task-任务/03-find-problems-找问题/02-feedback-issue-clustering-用户反馈问题聚类.md
     disposition: import_candidate
-    rationale: Scenario semantics are a non-runtime Phase-B candidate; this Phase records source identity only.
-    mapping_basis: registry_level_scenario
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: feedback-issue-clustering
       path: knowledge-base/methods/scenarios/product-experience/design-orchestration/feedback-issue-clustering.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -3864,7 +3885,8 @@ entities:
         internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
+        - gate-3-owner-waiver-production
+        - internal-business-facts-reviewed-for-internal-repository
   - key: task:find-direction
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -3895,18 +3917,18 @@ entities:
     source_status: draft
     source_path: 01-task-任务/05-define-strategy-定策略/03-metrics-validation-指标与验证计划.md
     disposition: import_candidate
-    rationale: Scenario semantics are a non-runtime Phase-B candidate; this Phase records source identity only.
-    mapping_basis: registry_level_scenario
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: metrics-validation
       path: knowledge-base/methods/scenarios/product-experience/design-orchestration/metrics-validation.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -3916,7 +3938,8 @@ entities:
         internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
+        - gate-3-owner-waiver-production
+        - internal-business-facts-reviewed-for-internal-repository
   - key: task:opportunity-direction-evaluation
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -3925,18 +3948,18 @@ entities:
     source_status: draft
     source_path: 01-task-任务/01-find-direction-找方向/03-opportunity-direction-evaluation-机会方向判断.md
     disposition: import_candidate
-    rationale: Scenario semantics are a non-runtime Phase-B candidate; this Phase records source identity only.
-    mapping_basis: registry_level_scenario
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: opportunity-direction-evaluation
       path: knowledge-base/methods/scenarios/product-experience/design-orchestration/opportunity-direction-evaluation.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -3946,6 +3969,7 @@ entities:
         internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - gate-3-owner-waiver-production
   - key: task:priority-roadmap
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -3954,18 +3978,18 @@ entities:
     source_status: draft
     source_path: 01-task-任务/05-define-strategy-定策略/02-priority-roadmap-优先级与实施路径.md
     disposition: import_candidate
-    rationale: Scenario semantics are a non-runtime Phase-B candidate; this Phase records source identity only.
-    mapping_basis: registry_level_scenario
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: priority-roadmap
       path: knowledge-base/methods/scenarios/product-experience/design-orchestration/priority-roadmap.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -3975,7 +3999,8 @@ entities:
         internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
+        - gate-3-owner-waiver-production
+        - internal-business-facts-reviewed-for-internal-repository
   - key: task:root-cause-analysis
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -3984,18 +4009,18 @@ entities:
     source_status: draft
     source_path: 01-task-任务/04-solve-problems-解问题/01-root-cause-analysis-问题根因拆解.md
     disposition: import_candidate
-    rationale: Scenario semantics are a non-runtime Phase-B candidate; this Phase records source identity only.
-    mapping_basis: registry_level_scenario
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: root-cause-analysis
       path: knowledge-base/methods/scenarios/product-experience/design-orchestration/root-cause-analysis.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -4005,6 +4030,7 @@ entities:
         internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - gate-3-owner-waiver-production
   - key: task:solution-comparison
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4013,18 +4039,18 @@ entities:
     source_status: draft
     source_path: 01-task-任务/04-solve-problems-解问题/03-solution-comparison-方案比较与风险评估.md
     disposition: import_candidate
-    rationale: Scenario semantics are a non-runtime Phase-B candidate; this Phase records source identity only.
-    mapping_basis: registry_level_scenario
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: solution-comparison
       path: knowledge-base/methods/scenarios/product-experience/design-orchestration/solution-comparison.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -4034,6 +4060,7 @@ entities:
         internal_business_facts: clear
       finding_refs:
         - gate-1-internal-evaluation-only
+        - gate-3-owner-waiver-production
   - key: task:solution-generation
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4042,18 +4069,18 @@ entities:
     source_status: draft
     source_path: 01-task-任务/04-solve-problems-解问题/02-solution-generation-解决方案生成.md
     disposition: import_candidate
-    rationale: Scenario semantics are a non-runtime Phase-B candidate; this Phase records source identity only.
-    mapping_basis: registry_level_scenario
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: solution-generation
       path: knowledge-base/methods/scenarios/product-experience/design-orchestration/solution-generation.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -4063,7 +4090,8 @@ entities:
         internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
+        - gate-3-owner-waiver-production
+        - internal-business-facts-reviewed-for-internal-repository
   - key: task:solve-problems
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4083,18 +4111,18 @@ entities:
     source_status: draft
     source_path: 01-task-任务/05-define-strategy-定策略/01-strategy-synthesis-结论整合与策略提炼.md
     disposition: import_candidate
-    rationale: Scenario semantics are a non-runtime Phase-B candidate; this Phase records source identity only.
-    mapping_basis: registry_level_scenario
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: strategy-synthesis
       path: knowledge-base/methods/scenarios/product-experience/design-orchestration/strategy-synthesis.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -4104,7 +4132,8 @@ entities:
         internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
+        - gate-3-owner-waiver-production
+        - internal-business-facts-reviewed-for-internal-repository
   - key: task:trend-change-identification
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4113,18 +4142,18 @@ entities:
     source_status: draft
     source_path: 01-task-任务/01-find-direction-找方向/01-trend-change-identification-趋势与变化识别.md
     disposition: import_candidate
-    rationale: Scenario semantics are a non-runtime Phase-B candidate; this Phase records source identity only.
-    mapping_basis: registry_level_scenario
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: trend-change-identification
       path: knowledge-base/methods/scenarios/product-experience/design-orchestration/trend-change-identification.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -4134,7 +4163,8 @@ entities:
         internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
+        - gate-3-owner-waiver-production
+        - internal-business-facts-reviewed-for-internal-repository
   - key: task:understand-users
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4209,18 +4239,18 @@ entities:
     source_status: draft
     source_path: 01-task-任务/02-understand-users-懂用户/03-user-journey-insight-用户旅程与需求洞察.md
     disposition: import_candidate
-    rationale: Scenario semantics are a non-runtime Phase-B candidate; this Phase records source identity only.
-    mapping_basis: registry_level_scenario
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: user-journey-insight
       path: knowledge-base/methods/scenarios/product-experience/design-orchestration/user-journey-insight.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -4230,7 +4260,8 @@ entities:
         internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
+        - gate-3-owner-waiver-production
+        - internal-business-facts-reviewed-for-internal-repository
   - key: task:user-material-synthesis
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4239,18 +4270,18 @@ entities:
     source_status: draft
     source_path: 01-task-任务/02-understand-users-懂用户/01-user-material-synthesis-已有用户资料归纳.md
     disposition: import_candidate
-    rationale: Scenario semantics are a non-runtime Phase-B candidate; this Phase records source identity only.
-    mapping_basis: registry_level_scenario
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: user-material-synthesis
       path: knowledge-base/methods/scenarios/product-experience/design-orchestration/user-material-synthesis.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -4260,7 +4291,8 @@ entities:
         internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
+        - gate-3-owner-waiver-production
+        - internal-business-facts-reviewed-for-internal-repository
   - key: task:user-segmentation
     registry_kind: task
     registry_path: 05-registry-索引/task-registry.yaml
@@ -4269,18 +4301,18 @@ entities:
     source_status: draft
     source_path: 01-task-任务/02-understand-users-懂用户/02-user-segmentation-用户分层与重点人群识别.md
     disposition: import_candidate
-    rationale: Scenario semantics are a non-runtime Phase-B candidate; this Phase records source identity only.
-    mapping_basis: registry_level_scenario
+    rationale: Gate-2-reviewed content approved for internal production under the 2026-08-21 product-owner Gate-3 waiver.
+    mapping_basis: gate_3_owner_waiver_production
     target:
       canonical_id: user-segmentation
       path: knowledge-base/methods/scenarios/product-experience/design-orchestration/user-segmentation.md
-      status: candidate
+      status: approved
     merge_sections: []
     governance:
       sensitivity: internal
-      distribution_scope: evaluation_only
+      distribution_scope: internal_repository
       owner: user-research-hub-maintainers
-      retention: through-gate-3-or-revocation
+      retention: repository-lifetime-or-revocation
       source_rights: cleared_internal_reuse
       review_status: complete
       scans:
@@ -4290,7 +4322,8 @@ entities:
         internal_business_facts: reviewed
       finding_refs:
         - gate-1-internal-evaluation-only
-        - internal-business-facts-evaluation-only
+        - gate-3-owner-waiver-production
+        - internal-business-facts-reviewed-for-internal-repository
 attachment_groups:
   - id: hub-navigation
     owner_refs:
@@ -106241,4 +106274,4 @@ files:
     coverage:
       kind: attachment
       attachment_group_ref: migration-records
-disposition_hash: sha256:a292119183545e4d77540443dd839a3ca810a407bcd74bc73f4a54e83372e584
+disposition_hash: sha256:19c1771887054021c7418fd6499d84d20bb90fd0d04cef9ae361bc75997687ae

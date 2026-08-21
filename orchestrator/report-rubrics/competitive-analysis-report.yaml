@@ -12,10 +12,10 @@ dimensions:
     criterion: Samples, matrix values, differences, and screenshots are traceable to evidence.
   - id: reasoning_quality
     required: true
-    criterion: Differences and impacts follow coherently from observed comparisons.
+    criterion: Differences and impacts follow coherently from observed comparisons; every strategy direction identifies the bounded phenomenon, attribution, and insight it responds to.
   - id: recommendation_quality
     required: true
-    criterion: Actions are prioritized, specific, and rooted in identified differences.
+    criterion: Actions are prioritized, specific, rooted in identified differences, and include user impact, business impact, cost or risk, a target metric, and a concrete validation method.
   - id: visual_quality
     required: true
     criterion: Each visualEvidence single image is legible, relevant, and bound to matching screenshot Evidence plus same-URL public_source Evidence. Every screenshot comparison contains exactly two unique Asset ids in original-to-annotation order with exact lineage and visibly states that the whole-image input-provenance boundary does not locate or substantiate a research finding. Without a displayable visual, empty visualEvidence and screenshotComparisons arrays are valid and no Asset id is invented.

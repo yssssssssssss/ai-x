@@ -5,7 +5,7 @@ title: 优先级与实施路径
 domain:
   - 产品体验
 tags: []
-status: candidate
+status: approved
 sensitivity: internal
 owner: user-research-hub-maintainers
 source: user-research-hub
@@ -13,8 +13,8 @@ source_path: methods/scenarios/product-experience/design-orchestration/priority-
 hub_snapshot_id: user-research-hub-2026-08-21
 hub_source_path: wiki/user-research/01-task-任务/05-define-strategy-定策略/02-priority-roadmap-优先级与实施路径.md
 hub_source_hash: sha256:5d39f9e3d0d7293ae941e33b8f33bb2cefd61fe558689e27bd7ecbc9f61b3bbe
-distribution_scope: evaluation_only
-retention: through-gate-3-or-revocation
+distribution_scope: internal_repository
+retention: repository-lifetime-or-revocation
 source_rights: cleared_internal_reuse
 managed_by: user-research-hub-integration-v1
 content_hash: sha256:7a3d10485cc5aed0e527fc3cec96157edf08989cfac087d795dd3a3b824e1889

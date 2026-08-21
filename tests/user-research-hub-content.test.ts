@@ -57,7 +57,7 @@ function governedSourceHashes(manifest: HubManifest): Map<string, string> {
   ]));
 }
 
-test('Phase-B content apply is deterministic, governed, and never overwrites canonical active content', {
+test('owner-waived content apply is deterministic, governed, and never overwrites canonical active content', {
   skip: !existsSync(SOURCE_ROOT),
 }, () => {
   const manifest = YAML.parse(readFileSync(MANIFEST_PATH, 'utf8')) as HubManifest;
@@ -84,6 +84,14 @@ test('Phase-B content apply is deterministic, governed, and never overwrites can
     assert.equal(first.report.governance.scanned_entities, 34);
     assert.equal(first.report.governance.blocked_entities, 0);
     assert.equal(first.report.governance.gate_2_review_required, false);
+    assert.equal(first.report.gate_1_reuse_scope, 'production-owner-waiver');
+    assert.equal(first.report.runtime_boundary.candidate_status, 'mixed');
+    assert.equal(first.manifest.entities.filter(({ disposition, target }) => (
+      disposition === 'import_candidate' && target?.status === 'approved'
+    )).length, 31);
+    assert.equal(first.manifest.entities.filter(({ disposition, target }) => (
+      disposition === 'import_candidate' && target?.status === 'candidate'
+    )).length, 1);
     assert.equal(first.report.comparisons.length, 137);
     assert.equal(first.files.size, 35, '32 candidates + 2 merge drafts + one report');
     assert.equal(first.report.runtime_boundary.source_only_materialized, 0);

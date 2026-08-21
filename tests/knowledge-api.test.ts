@@ -33,15 +33,15 @@ test('关键词命中 title/summary', () => {
   assert.deepEqual(r.map((i) => i.id), ['model_jtbd']);
 });
 
-test('生产与 Evaluation 使用不可切换的独立 candidate 可见性接口', () => {
+test('candidate visibility stays isolated while owner-approved Hub Knowledge is production-readable', () => {
   assert.deepEqual(filterKnowledge(items, {}).map(({ id }) => id), ['model_jtbd', 'std_report']);
   assert.deepEqual(filterEvaluationKnowledge(items, {}).map(({ id }) => id), ['model_jtbd', 'std_report', 'candidate_x']);
 
   const runtime = loadRuntimeKnowledgeIndex();
   const evaluation = loadEvaluationKnowledgeIndex();
   assert.equal(runtime.some(({ status }) => status === 'candidate'), false);
-  assert.equal(evaluation.filter(({ status }) => status === 'candidate').length, 30);
-  assert.equal(getEntry('ds-method-strategy-02-strategy-map'), null, '生产 getEntry 不得读取 candidate');
+  assert.equal(evaluation.filter(({ status }) => status === 'candidate').length, 0);
+  assert.equal(getEntry('ds-method-strategy-02-strategy-map')?.frontmatter.status, 'approved');
 });
 
 test('生产过滤只允许 approved/draft，未知状态不能因黑名单遗漏而进入', () => {

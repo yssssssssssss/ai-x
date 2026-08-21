@@ -7,7 +7,7 @@ domain:
 tags:
   - template
   - design-strategy
-status: candidate
+status: approved
 sensitivity: internal
 owner: user-research-hub-maintainers
 source: user-research-hub
@@ -15,8 +15,8 @@ source_path: assets/templates/ds-template-design-strategy-case-card-template.md
 hub_snapshot_id: user-research-hub-2026-08-21
 hub_source_path: wiki/user-research/03-knowledge-知识/模板库/设计策略/设计策略案例卡模板.md
 hub_source_hash: sha256:b2de65772de63178c255fa3fefaaf93f42171313aeb1b1c4a824c1cded504df5
-distribution_scope: evaluation_only
-retention: through-gate-3-or-revocation
+distribution_scope: internal_repository
+retention: repository-lifetime-or-revocation
 source_rights: cleared_internal_reuse
 managed_by: user-research-hub-integration-v1
 content_hash: sha256:d57cf7d05d37616acd870307ba15667846633d11572a3a8e3b52dc878d934fbb

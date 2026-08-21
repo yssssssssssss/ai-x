@@ -7,7 +7,7 @@ source_entity: skill:ds-skill-trend-change-scan
 source_path: wiki/user-research/02-skills-技能/设计策略/趋势变化扫描/SKILL.md
 source_hash: sha256:953ac3cc8b46bdda988654f8880e767ca489202e6b26a8afee561e39f1ed07e1
 canonical_target: skills/competitive-analysis/web-research/SKILL.md
-canonical_hash: sha256:9eacba95cc36931d6da736efa8ce74a0e8f90fb6b187c2d8debf9c35c69b7d59
+canonical_hash: sha256:ce2e8219c6a2d201cd65a9deb8653fd42296a7fcba56db5ab18b8d23920ce7e4
 disposition: merge_into_existing
 merge_sections:
   - when_to_use
@@ -25,7 +25,7 @@ managed_by: user-research-hub-integration-v1
 ## Structural comparison
 
 - Source-only headings: 趋势与变化扫描 Skill | 适用 Task / Scenario | Trigger / 使用条件 | Input | 所需 Knowledge | Output | 变化信号 | 初步判断 | 待验证问题 | 推荐后续 Task | Human Confirmation 条件 | Fallback 条件 | 与其他 Skill 的边界
-- Canonical-only headings: 竞品分析 · Web 搜索路径 | 何时使用 / 不使用 | 输入 | 产出 | 边界与合规
+- Canonical-only headings: 竞品分析 · Web 搜索路径 | 何时使用 / 不使用 | 输入 | 产出 | 边界与合规 | 趋势与变化扫描补充 | 趋势与变化扫描补充
 - Shared headings with changed text: 执行步骤
 
 ## Approved narrow delta

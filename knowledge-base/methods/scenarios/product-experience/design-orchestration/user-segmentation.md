@@ -5,7 +5,7 @@ title: 用户分层与重点人群识别
 domain:
   - 产品体验
 tags: []
-status: candidate
+status: approved
 sensitivity: internal
 owner: user-research-hub-maintainers
 source: user-research-hub
@@ -13,8 +13,8 @@ source_path: methods/scenarios/product-experience/design-orchestration/user-segm
 hub_snapshot_id: user-research-hub-2026-08-21
 hub_source_path: wiki/user-research/01-task-任务/02-understand-users-懂用户/02-user-segmentation-用户分层与重点人群识别.md
 hub_source_hash: sha256:0950e81b5bef7359acd06f3a3297d6835a5ccd2cbe94ca836c05984f0f605f5e
-distribution_scope: evaluation_only
-retention: through-gate-3-or-revocation
+distribution_scope: internal_repository
+retention: repository-lifetime-or-revocation
 source_rights: cleared_internal_reuse
 managed_by: user-research-hub-integration-v1
 content_hash: sha256:52652cc0421650ccc44a6dc050169a9c9eb206b67d22ae87c16a3f2f836fc8a3

@@ -27,7 +27,7 @@ interface OverlayEntryDefinition {
   id: string;
   kind: ContentOverlayEntryKind;
   path: string;
-  status: 'candidate' | 'draft';
+  status: 'approved' | 'candidate' | 'draft';
   source_hash: string;
   content_hash: string;
   artifact_hash: string;
@@ -45,7 +45,7 @@ interface OverlayManifestDefinition {
   version: 1;
   id: typeof USER_RESEARCH_HUB_C1_OVERLAY_ID;
   scope: 'evaluation_only';
-  gate: 'gate-3-pending';
+  gate: 'gate-3-pending' | 'gate-3-owner-waived';
   production_search_allowed: false;
   prompt: OverlayFileReference;
   rubric: OverlayFileReference;
@@ -53,7 +53,7 @@ interface OverlayManifestDefinition {
   production_baseline: {
     planning_policy_path: string;
     planning_policy_hash: string;
-    candidate_generation_mode: 'fixed';
+    candidate_generation_mode: 'fixed' | 'dynamic';
     prompt_path: string;
     prompt_hash: string;
     rubric_path: string;
@@ -81,7 +81,7 @@ export interface ContentOverlayEntryMetadata {
   id: string;
   kind: ContentOverlayEntryKind;
   path: string;
-  status: 'candidate' | 'draft';
+  status: 'approved' | 'candidate' | 'draft';
   sourceHash: string;
   contentHash: string;
   artifactHash: string;
@@ -96,7 +96,7 @@ export interface ContentEvaluationManifestMetadata {
   overlayVersion: 1;
   variant: ContentEvaluationVariant;
   scope: 'evaluation_only';
-  gate: 'gate-3-pending';
+  gate: 'gate-3-pending' | 'gate-3-owner-waived';
   manifestHash: string;
   contentSetHash: string;
   promptHash: string;
@@ -108,7 +108,7 @@ export interface ContentEvaluationManifestMetadata {
   fixedTaskSkillId: string;
   fixedTaskCaseHash: string;
   productionSearchUsed: false;
-  candidateGenerationMode: 'fixed';
+  candidateGenerationMode: 'fixed' | 'dynamic';
   entries: ContentOverlayEntryMetadata[];
   promotionSet: {
     knowledgeCandidateIds: string[];
@@ -288,7 +288,7 @@ function parseManifest(raw: string): OverlayManifestDefinition {
     || value.version !== 1
     || value.id !== USER_RESEARCH_HUB_C1_OVERLAY_ID
     || value.scope !== 'evaluation_only'
-    || value.gate !== 'gate-3-pending'
+    || (value.gate !== 'gate-3-pending' && value.gate !== 'gate-3-owner-waived')
     || value.production_search_allowed !== false
     || !record(value.prompt)
     || !record(value.rubric)
@@ -342,8 +342,9 @@ function assertProductionBaseline(root: string, manifest: OverlayManifestDefinit
     if (actual !== expected) throw new Error(`${label} hash drift: expected ${expected}, got ${actual}`);
   }
   const policy = parseYaml(readFileSync(safePath(root, baseline.planning_policy_path), 'utf8')) as { candidate_generation_mode?: unknown };
-  if (policy.candidate_generation_mode !== baseline.candidate_generation_mode || policy.candidate_generation_mode !== 'fixed') {
-    throw new Error('C1 content evaluation requires production candidate_generation_mode to remain fixed');
+  if (policy.candidate_generation_mode !== baseline.candidate_generation_mode
+    || (policy.candidate_generation_mode !== 'fixed' && policy.candidate_generation_mode !== 'dynamic')) {
+    throw new Error('C1 content evaluation planning policy mode drifted');
   }
 }
 
@@ -446,8 +447,10 @@ function validateEntry(
       throw new Error(`canonical Skill changed beneath delta ${definition.id}`);
     }
   } else {
-    if (parsed.frontmatter.status !== 'candidate'
-      || parsed.frontmatter.distribution_scope !== 'evaluation_only'
+    const expectedStatus = definition.kind === 'draft_skill' ? 'candidate' : definition.status;
+    const expectedDistribution = expectedStatus === 'approved' ? 'internal_repository' : 'evaluation_only';
+    if (parsed.frontmatter.status !== expectedStatus
+      || parsed.frontmatter.distribution_scope !== expectedDistribution
       || parsed.frontmatter.hub_source_hash !== definition.source_hash
       || parsed.frontmatter.content_hash !== definition.content_hash
       || parsed.frontmatter.id !== definition.id) {
@@ -457,7 +460,7 @@ function validateEntry(
       const indexed = index.get(definition.id);
       const sourcePath = definition.path.replace(/^knowledge-base\//u, '');
       if (!indexed
-        || indexed.status !== 'candidate'
+        || indexed.status !== definition.status
         || indexed.source_path !== sourcePath
         || indexed.content_hash !== definition.content_hash) {
         throw new Error(`candidate method is missing from the Evaluation index: ${definition.id}`);

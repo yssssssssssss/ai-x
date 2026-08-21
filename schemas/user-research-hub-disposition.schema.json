@@ -186,7 +186,7 @@
       "properties": {
         "canonical_id": { "type": "string", "minLength": 1 },
         "path": { "$ref": "#/$defs/path" },
-        "status": { "enum": ["existing", "candidate"] }
+        "status": { "enum": ["existing", "candidate", "approved"] }
       }
     },
     "scanResult": {

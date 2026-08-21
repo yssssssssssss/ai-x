@@ -26,7 +26,7 @@ capabilities:
     method_family: expert_visual_review
     evidence_paths: [public_web, screenshot_analysis]
   - id: accessibility-review
-    task_types: [a11y_audit]
+    task_types: [a11y_audit, design_audit]
     profile_support: [focused, remediation]
     roles: [focused_analysis, issue_identification, retest]
     method_family: accessibility_review
@@ -92,7 +92,7 @@ capabilities:
     method_family: quantitative_survey
     evidence_paths: [survey_dataset]
   - id: generate-usability-test
-    task_types: [design_audit]
+    task_types: [design_audit, user_research_planning]
     profile_support: [focused, mixed_method, remediation]
     roles: [focused_analysis, independent_method, issue_identification, retest]
     method_family: moderated_usability_test
@@ -110,7 +110,7 @@ capabilities:
     method_family: qualitative_jtbd
     evidence_paths: [user_material, knowledge_method]
   - id: journey-map
-    task_types: [user_research_planning]
+    task_types: [user_research_planning, voc_diagnosis]
     profile_support: [breadth, focused, mixed_method, remediation]
     roles: [scope_expansion, focused_analysis, independent_method, issue_identification, retest]
     method_family: journey_synthesis

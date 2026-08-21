@@ -29,6 +29,7 @@ const LOCAL_PATH_PATTERN = /\[LOCAL_HOME\]\/|(?:^|[\s'"(])\/(?:Users|home|privat
 interface HubCandidateMapping {
   sourcePath: string;
   sourceHash: string;
+  targetStatus: 'candidate' | 'approved';
   governance: {
     distribution_scope: string;
     retention: string;
@@ -55,11 +56,12 @@ function loadCandidateMappings(): Map<string, HubCandidateMapping> {
   const sourceHashes = new Map(manifest.files.map((file) => [file.path, file.sha256]));
   candidateMappings = new Map(manifest.entities.filter((entity) => (
     entity.disposition === 'import_candidate'
-    && entity.target?.status === 'candidate'
+    && (entity.target?.status === 'candidate' || entity.target?.status === 'approved')
     && entity.governance !== undefined
   )).map((entity) => [entity.target!.path, {
     sourcePath: `${manifest.logical_root}/${entity.source_path}`,
     sourceHash: sourceHashes.get(entity.source_path) ?? '',
+    targetStatus: entity.target!.status as 'candidate' | 'approved',
     governance: entity.governance!,
   }]));
   return candidateMappings;
@@ -108,7 +110,7 @@ export function lintEntry(relPath: string, rawMd: string, seenIds: Set<string>):
     issues.push({ level: 'error', target: tgt, message: 'content_hash 与正文不匹配' });
   }
 
-  if (fm.status === 'candidate') {
+  if (fm.managed_by === 'user-research-hub-integration-v1') {
     for (const field of CANDIDATE_REQUIRED) {
       if (fm[field] === undefined || fm[field] === null || fm[field] === '') {
         issues.push({ level: 'error', target: tgt, message: `candidate 缺治理字段 "${field}"` });
@@ -117,7 +119,7 @@ export function lintEntry(relPath: string, rawMd: string, seenIds: Set<string>):
     const targetPath = `knowledge-base/${relPath}`;
     const mapping = loadCandidateMappings().get(targetPath);
     if (!mapping) {
-      issues.push({ level: 'error', target: tgt, message: 'candidate 不在 Hub import_candidate disposition 中' });
+      issues.push({ level: 'error', target: tgt, message: 'Hub managed entry 不在 import_candidate disposition 中' });
     } else {
       const expected: Record<string, unknown> = {
         hub_source_path: mapping.sourcePath,
@@ -129,11 +131,17 @@ export function lintEntry(relPath: string, rawMd: string, seenIds: Set<string>):
         owner: mapping.governance.owner,
       };
       for (const [field, value] of Object.entries(expected)) {
-        if (fm[field] !== value) issues.push({ level: 'error', target: tgt, message: `candidate ${field} 与 disposition 不一致` });
+        if (fm[field] !== value) issues.push({ level: 'error', target: tgt, message: `Hub managed ${field} 与 disposition 不一致` });
+      }
+      if (fm.status !== mapping.targetStatus) {
+        issues.push({ level: 'error', target: tgt, message: 'Hub managed status 与 disposition target 不一致' });
       }
     }
-    if (fm.distribution_scope !== 'evaluation_only') {
+    if (fm.status === 'candidate' && fm.distribution_scope !== 'evaluation_only') {
       issues.push({ level: 'error', target: tgt, message: 'candidate 只能是 evaluation_only' });
+    }
+    if (fm.status === 'approved' && fm.distribution_scope !== 'internal_repository') {
+      issues.push({ level: 'error', target: tgt, message: 'approved Hub entry 必须是 internal_repository' });
     }
     if (!HASH_PATTERN.test(String(fm.hub_source_hash ?? ''))) {
       issues.push({ level: 'error', target: tgt, message: 'candidate hub_source_hash 非法' });

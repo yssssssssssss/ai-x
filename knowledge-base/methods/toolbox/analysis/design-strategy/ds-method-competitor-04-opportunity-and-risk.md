@@ -7,7 +7,7 @@ domain:
 tags:
   - competitor-analysis
   - method
-status: candidate
+status: approved
 sensitivity: internal
 owner: user-research-hub-maintainers
 source: user-research-hub
@@ -15,8 +15,8 @@ source_path: methods/toolbox/analysis/design-strategy/ds-method-competitor-04-op
 hub_snapshot_id: user-research-hub-2026-08-21
 hub_source_path: wiki/user-research/03-knowledge-知识/方法知识/设计策略/竞品分析/竞品分析04机会风险.md
 hub_source_hash: sha256:b8f2f53b0d2946bb407af915e7d668b47d9897d6943ab646fed8651a74bd9ecf
-distribution_scope: evaluation_only
-retention: through-gate-3-or-revocation
+distribution_scope: internal_repository
+retention: repository-lifetime-or-revocation
 source_rights: cleared_internal_reuse
 managed_by: user-research-hub-integration-v1
 content_hash: sha256:e62c8b2987adb4e0d796c77df57d302ccc19bfac52ff9cb239ebe967f2b05997

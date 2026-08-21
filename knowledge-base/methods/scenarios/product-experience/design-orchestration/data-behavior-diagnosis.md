@@ -5,7 +5,7 @@ title: 数据与行为异常诊断
 domain:
   - 产品体验
 tags: []
-status: candidate
+status: approved
 sensitivity: internal
 owner: user-research-hub-maintainers
 source: user-research-hub
@@ -13,8 +13,8 @@ source_path: methods/scenarios/product-experience/design-orchestration/data-beha
 hub_snapshot_id: user-research-hub-2026-08-21
 hub_source_path: wiki/user-research/01-task-任务/03-find-problems-找问题/03-data-behavior-diagnosis-数据与行为异常诊断.md
 hub_source_hash: sha256:5c1facdbb73015d8154030fe26fd69b5115e7ab6014c079ab0b27a975b6dae4c
-distribution_scope: evaluation_only
-retention: through-gate-3-or-revocation
+distribution_scope: internal_repository
+retention: repository-lifetime-or-revocation
 source_rights: cleared_internal_reuse
 managed_by: user-research-hub-integration-v1
 content_hash: sha256:7462455cdfba27b663fed5b046df3f31079e90aaa5f0f5ef6dd6f314d4d140cf

@@ -7,7 +7,7 @@ domain:
 tags:
   - general-ux
   - experience-diagnosis
-status: candidate
+status: approved
 sensitivity: internal
 owner: user-research-hub-maintainers
 source: user-research-hub
@@ -15,8 +15,8 @@ source_path: methods/toolbox/analysis/design-strategy/ux-method-experience-diagn
 hub_snapshot_id: user-research-hub-2026-08-21
 hub_source_path: wiki/user-research/03-knowledge-知识/方法知识/通用体验/体验问题诊断与走查框架.md
 hub_source_hash: sha256:25717b7e1c2ad1c41c56c67ad93697beb1632dcc58405508f3f1cc3c3bb9bab7
-distribution_scope: evaluation_only
-retention: through-gate-3-or-revocation
+distribution_scope: internal_repository
+retention: repository-lifetime-or-revocation
 source_rights: cleared_internal_reuse
 managed_by: user-research-hub-integration-v1
 content_hash: sha256:d3bf69dcf479e6adecb3fb5f4cc02c9600fd6daf75cf0bc149631bbf84ee8c26

@@ -101,7 +101,7 @@ export interface HubContentApplyReport {
   source_tree_hash: string;
   disposition_hash: string;
   source_mutation_contract: 'read-only-hash-verified';
-  gate_1_reuse_scope: 'internal-evaluation-only';
+  gate_1_reuse_scope: 'internal-evaluation-only' | 'production-owner-waiver';
   materialized: {
     candidate_files: number;
     knowledge_methods: number;
@@ -121,7 +121,7 @@ export interface HubContentApplyReport {
     source_only_materialized: 0;
     reject_runtime_materialized: 0;
     opaque_materialized: 0;
-    candidate_status: 'candidate';
+    candidate_status: 'candidate' | 'approved' | 'mixed';
     skill_registry_status: 'draft';
   };
   outputs: Array<{
@@ -270,7 +270,7 @@ function candidateFrontmatter(
     title,
     domain: type === 'scenario-guide' ? ['产品体验'] : type === 'skill' ? ['general'] : ['通用'],
     tags: stringArray(sourceFrontmatter.tags),
-    status: 'candidate',
+    status: entity.target.status === 'approved' ? 'approved' : 'candidate',
     sensitivity: entity.governance!.sensitivity,
     owner: entity.governance!.owner,
     source: 'user-research-hub',
@@ -381,9 +381,16 @@ function scanEntity(entity: Entity, raw: string, normalizedBody: string, frontma
   }
   const findings = internalBusinessFindings(raw, frontmatter);
   const unresolvedInternalFinding = findings.some(({ disposition }) => disposition === 'review_required');
+  const productionApproved = entity.target?.status === 'approved'
+    || (entity.disposition === 'merge_into_existing' && entity.governance?.review_status === 'complete');
   const finding_refs = ['gate-1-internal-evaluation-only'];
+  if (productionApproved) finding_refs.push('gate-3-owner-waiver-production');
   if (finding_counts.local_paths > 0) finding_refs.push('known-local-path-source-reference-removed');
-  if (finding_counts.internal_business_facts > 0) finding_refs.push('internal-business-facts-evaluation-only');
+  if (finding_counts.internal_business_facts > 0) {
+    finding_refs.push(productionApproved
+      ? 'internal-business-facts-reviewed-for-internal-repository'
+      : 'internal-business-facts-evaluation-only');
+  }
   return {
     entity_key: entity.key,
     source_path: entity.source_path,
@@ -403,13 +410,19 @@ function scanEntity(entity: Entity, raw: string, normalizedBody: string, frontma
 function validateGovernance(entity: Entity): void {
   const governance = entity.governance;
   if (!governance) throw new Error(`governance is missing: ${entity.key}`);
+  const approved = entity.target?.status === 'approved'
+    || (entity.disposition === 'merge_into_existing' && governance.review_status === 'complete');
   if (governance.sensitivity !== 'internal'
-    || governance.distribution_scope !== 'evaluation_only'
     || governance.owner !== 'user-research-hub-maintainers'
-    || governance.retention !== 'through-gate-3-or-revocation'
     || governance.source_rights !== 'cleared_internal_reuse'
-    || (governance.review_status !== 'review_required' && governance.review_status !== 'complete')) {
-    throw new Error(`candidate is outside the accepted Gate-1 internal-evaluation governance contract: ${entity.key}`);
+    || (approved
+      ? governance.distribution_scope !== 'internal_repository'
+        || governance.retention !== 'repository-lifetime-or-revocation'
+        || governance.review_status !== 'complete'
+      : governance.distribution_scope !== 'evaluation_only'
+        || governance.retention !== 'through-gate-3-or-revocation'
+        || (governance.review_status !== 'review_required' && governance.review_status !== 'complete'))) {
+    throw new Error(`candidate is outside the approved governance contract: ${entity.key}`);
   }
 }
 
@@ -522,8 +535,8 @@ function draftPath(entity: Entity): string {
   return `${MERGE_DRAFT_ROOT}/${entity.registry_kind}/${file}.md`;
 }
 function assertCandidateTarget(entity: Entity): void {
-  if (!entity.target || entity.target.status !== 'candidate') {
-    throw new Error(`import candidate target is invalid: ${entity.key}`);
+  if (!entity.target || (entity.target.status !== 'candidate' && entity.target.status !== 'approved')) {
+    throw new Error(`import target is invalid: ${entity.key}`);
   }
   assertLogicalPath(entity.target.path, `candidate target ${entity.key}`);
   if (!CANDIDATE_PREFIXES.some((prefix) => entity.target!.path.startsWith(prefix))) {
@@ -626,7 +639,9 @@ export function buildHubContentApply<TManifest extends Manifest>(
     source_tree_hash: manifest.snapshot.tree_hash,
     disposition_hash: manifest.disposition_hash,
     source_mutation_contract: 'read-only-hash-verified',
-    gate_1_reuse_scope: 'internal-evaluation-only',
+    gate_1_reuse_scope: importCandidates.some(({ target }) => target?.status === 'approved')
+      ? 'production-owner-waiver'
+      : 'internal-evaluation-only',
     materialized: {
       candidate_files: importCandidates.length,
       knowledge_methods: importCandidates.filter(({ registry_kind, entity_type }) => registry_kind === 'knowledge' && entity_type === 'method').length,
@@ -652,7 +667,9 @@ export function buildHubContentApply<TManifest extends Manifest>(
       source_only_materialized: 0,
       reject_runtime_materialized: 0,
       opaque_materialized: 0,
-      candidate_status: 'candidate',
+      candidate_status: importCandidates.some(({ target }) => target?.status === 'candidate')
+        ? importCandidates.some(({ target }) => target?.status === 'approved') ? 'mixed' : 'candidate'
+        : 'approved',
       skill_registry_status: 'draft',
     },
     outputs: outputRows,
@@ -672,7 +689,8 @@ function managedExisting(path: string, raw: string): boolean {
   }
   try {
     const { frontmatter } = parseFrontmatter(raw);
-    return (frontmatter.managed_by === MANAGED_BY && frontmatter.status === 'candidate')
+    return (frontmatter.managed_by === MANAGED_BY
+      && (frontmatter.status === 'candidate' || frontmatter.status === 'approved'))
       || (frontmatter.managed_by === MANAGED_BY && frontmatter.format === 'user-research-hub-merge-draft-v1');
   } catch { return false; }
 }

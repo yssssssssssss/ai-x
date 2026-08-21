@@ -5,7 +5,7 @@ title: 机会方向判断
 domain:
   - 产品体验
 tags: []
-status: candidate
+status: approved
 sensitivity: internal
 owner: user-research-hub-maintainers
 source: user-research-hub
@@ -13,8 +13,8 @@ source_path: methods/scenarios/product-experience/design-orchestration/opportuni
 hub_snapshot_id: user-research-hub-2026-08-21
 hub_source_path: wiki/user-research/01-task-任务/01-find-direction-找方向/03-opportunity-direction-evaluation-机会方向判断.md
 hub_source_hash: sha256:a62d21667d82a143111686a81c64ef4779a28ffaa9fe02c4a6b9fd38ac550943
-distribution_scope: evaluation_only
-retention: through-gate-3-or-revocation
+distribution_scope: internal_repository
+retention: repository-lifetime-or-revocation
 source_rights: cleared_internal_reuse
 managed_by: user-research-hub-integration-v1
 content_hash: sha256:1dfd0d5ef883d563f9b9d0d2f36bed309fd7075d2bd2a862677c639e9aa7072a

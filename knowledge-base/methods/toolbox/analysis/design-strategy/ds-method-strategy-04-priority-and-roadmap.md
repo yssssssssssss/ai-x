@@ -7,7 +7,7 @@ domain:
 tags:
   - strategy
   - method
-status: candidate
+status: approved
 sensitivity: internal
 owner: user-research-hub-maintainers
 source: user-research-hub
@@ -15,8 +15,8 @@ source_path: methods/toolbox/analysis/design-strategy/ds-method-strategy-04-prio
 hub_snapshot_id: user-research-hub-2026-08-21
 hub_source_path: wiki/user-research/03-knowledge-知识/方法知识/设计策略/策略推导/设计策略04优先路线.md
 hub_source_hash: sha256:0c8ad237732eb643fcf7afa8ceac76aac756f1fb61993de8ba6097e737f54ea8
-distribution_scope: evaluation_only
-retention: through-gate-3-or-revocation
+distribution_scope: internal_repository
+retention: repository-lifetime-or-revocation
 source_rights: cleared_internal_reuse
 managed_by: user-research-hub-integration-v1
 content_hash: sha256:f27f2cf0ee7a661c7d077ecddf12bf80a8ef7906f71341e1655ae895424f5223

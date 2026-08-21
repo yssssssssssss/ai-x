@@ -5,7 +5,7 @@ title: 用户旅程与需求洞察
 domain:
   - 产品体验
 tags: []
-status: candidate
+status: approved
 sensitivity: internal
 owner: user-research-hub-maintainers
 source: user-research-hub
@@ -13,8 +13,8 @@ source_path: methods/scenarios/product-experience/design-orchestration/user-jour
 hub_snapshot_id: user-research-hub-2026-08-21
 hub_source_path: wiki/user-research/01-task-任务/02-understand-users-懂用户/03-user-journey-insight-用户旅程与需求洞察.md
 hub_source_hash: sha256:23d7007234e9754f59e491c33112d9a9e773ba3277b62b41aae7a15e4aa53bbf
-distribution_scope: evaluation_only
-retention: through-gate-3-or-revocation
+distribution_scope: internal_repository
+retention: repository-lifetime-or-revocation
 source_rights: cleared_internal_reuse
 managed_by: user-research-hub-integration-v1
 content_hash: sha256:3ee3295c166361e5b87dd31cb6c6ce28790a542669d393ed4bcecf7e38da7259
