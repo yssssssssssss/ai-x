@@ -1,6 +1,6 @@
 # Skill 可执行化、知识调用与报告保真开发文档
 
-> 状态：Phase 1–5 与两轮独立审查整改已完成；自动化质量门禁和 Web build 通过；等待独立 reviewer 最终确认与远端交付授权。
+> 状态：Phase 1–5、两轮审查整改与第三次独立 Gate 8 复审已完成；最终自动化质量门禁和 Web build 通过；本地分支 READY，等待远端交付授权。
 >
 > 架构决策：`docs/adr/0003-compile-skills-into-frozen-execution-dag.md`
 >

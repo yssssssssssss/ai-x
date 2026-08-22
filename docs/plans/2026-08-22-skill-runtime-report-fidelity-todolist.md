@@ -469,7 +469,7 @@ git diff --check
 - [x] 审查Artifact不可变性。
 - [x] 审查日志、错误和下载包脱敏。
 - [x] 审查改动后补跑一次最终Gate。
-- [ ] 由独立 reviewer 确认第二轮整改并关闭 Gate 8。
+- [x] 由独立 reviewer 确认第二轮整改并关闭 Gate 8。
 
 ### 第二轮审查整改
 
@@ -481,7 +481,7 @@ git diff --check
 - [x] `researchPlanRequiredPointers()` 使用配置根，而非进程 cwd。
 - [x] 修正 Artifact/Receipt 不直接保存 invocation/stage ID 的文档表述。
 
-> 第一轮审查的 3 个 Blocker、3 个 High 和 3 个 Medium 已整改；第二轮复审的 2 个 High 和 3 个 Medium 已完成代码整改。复审定向命令：389 tests，388 pass，1 skip，0 fail；最终 `pnpm quality`：1613 tests，1598 pass，15 skip，0 fail；Web production build 通过（仅保留既有大 chunk 警告）；浏览器回归确认仅存在冻结 `resource_gaps` 时页面显示“部分完成 · 1 个数据缺口”。在新的独立复核给出通过结论前，Gate 8 保持未关闭。
+> 第一轮审查的 3 个 Blocker、3 个 High 和 3 个 Medium 已整改；第二轮复审的 2 个 High 和 3 个 Medium 已完成代码整改。复审定向命令：389 tests，388 pass，1 skip，0 fail；最终 `pnpm quality`：1613 tests，1598 pass，15 skip，0 fail；Web production build 通过（仅保留既有大 chunk 警告）；浏览器回归确认仅存在冻结 `resource_gaps` 时页面显示“部分完成 · 1 个数据缺口”。第三次独立复审结论为 **READY**，无 Blocker、High 或 Medium 遗留；Gate 8 已关闭。
 
 # Gate 9：交付
 
@@ -514,7 +514,7 @@ legacy compatibility              done
 targeted tests                    done
 full quality gate                 done (1613 tests; 1598 pass, 15 skip)
 real runtime acceptance           not rerun (external quota); browser + sealed artifacts passed
-independent review                pending acceptance after second review corrections
+independent review                done (third Gate 8 review READY; no blocker/high/medium)
 docs synchronized                 done
 remote delivery authorization     not authorized
 ```
