@@ -118,7 +118,7 @@ git diff --check
 
 ## 2.1 失败测试
 
-- [ ] 增加存在未回答 `clarification_questions` 时禁止生成候选计划的测试。
+- [x] 增加存在未回答 `clarification_questions` 时禁止生成候选计划的测试。
 - [ ] 增加已回答问题不会重复出现的测试。
 - [ ] 增加地域范围“包含海外”进入 Requirement Version 的测试。
 - [ ] 增加范围变化生成新 Requirement 和新 Plan Version 的测试。
@@ -127,16 +127,16 @@ git diff --check
 
 ## 2.2 Requirement Service
 
-- [ ] `needsClarification()` 同时检查 blocking ambiguity 和 clarification questions。
+- [x] `needsClarification()` 同时检查 blocking ambiguity 和 clarification questions。
 - [ ] Clarification 回答写入 task scope、constraints、target audience、success criteria 或 assumptions。
 - [ ] 已解决问题从下一 Requirement Version 中移除。
 - [ ] 相同 key 的已回答问题不得重复生成。
 - [ ] Requirement Version 保留答案和选择方向的 provenance。
-- [ ] Requirement 未最终化时 Planner 不运行。
+- [x] Requirement 未最终化时 Planner 不运行。
 
 ## 2.3 Confirmation 语义
 
-- [ ] `Stage2Plan` 不再 fallback 到 `clarification_questions`。
+- [x] `Stage2Plan` 不再 fallback 到 `clarification_questions`。
 - [ ] `TaskWorkflow.confirm()` 不再把 Requirement 问题当作确认 gate。
 - [ ] Confirmation 只处理计划接受、审批和 pending inputs。
 - [ ] 范围变化走 revise Requirement + replan，不修改冻结计划。
@@ -154,10 +154,10 @@ pnpm typecheck
 git diff --check
 ```
 
-- [ ] Phase 2 定向测试通过。
+- [x] Phase 2 定向测试通过。
 - [ ] “覆盖海外市场”出现在新 Requirement 和新 Plan 中。
-- [ ] 旧计划保持不可变。
-- [ ] `git diff --check` 通过。
+- [x] 旧计划保持不可变。
+- [x] `git diff --check` 通过。
 - [ ] 独立提交 Phase 2。
 
 # Phase 3：Knowledge 资源绑定
@@ -249,7 +249,7 @@ git diff --check
 - [ ] Phase 3 定向测试通过。
 - [ ] 真实 `generate-research-plan` 上下文包含知识Bundle。
 - [ ] Skill不再错误声称无法访问Wiki。
-- [ ] `git diff --check` 通过。
+- [x] `git diff --check` 通过。
 - [ ] 独立提交 Phase 3。
 
 # Phase 4：Skill 多阶段编译
@@ -334,7 +334,7 @@ git diff --check
 - [ ] 卡片阶段与执行记录逐项一致。
 - [ ] `generate-research-plan` 按7阶段执行。
 - [ ] Legacy Skill保持兼容。
-- [ ] `git diff --check` 通过。
+- [x] `git diff --check` 通过。
 - [ ] 独立提交 Phase 4。
 
 # Phase 5：ReportDocument v2 与投影保真
@@ -408,7 +408,7 @@ git diff --check
 - [ ] ResearchPlan 12字段全部通过覆盖门禁。
 - [ ] 无空章节。
 - [ ] v1/v2兼容通过。
-- [ ] `git diff --check` 通过。
+- [x] `git diff --check` 通过。
 - [ ] 独立提交 Phase 5。
 
 # Gate 6：真实端到端验收
