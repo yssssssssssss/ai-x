@@ -65,6 +65,10 @@ import {
 } from '../runtime/redaction.ts';
 import { compactLlmInput } from '../runtime/llm-input-compactor.ts';
 import {
+  prepareSkillExecution,
+  SKILL_EXECUTION_PROMPT_PREFIX,
+} from '../skills/skill-runtime.ts';
+import {
   KnowledgeBundleResolver,
   RequiredKnowledgeUnavailableError,
   type FrozenKnowledgeReference,
@@ -188,8 +192,6 @@ interface ToolSourceRef {
   sourceUrl: string;
   originalIndex: number;
 }
-
-const SKILL_PROMPT_PREFIX = 'Execute this Skill workflow using only supplied outputs.';
 
 type StepArtifactKind = 'knowledge_output' | 'tool_output' | 'skill_output' | 'llm_output' | 'review_output';
 
@@ -2626,7 +2628,11 @@ export class LeaseExecutionEngine {
         throw new ExecutionAuthenticityError('Report Package cannot bind a document without its Review Artifact');
       }
       const finalReviewArtifactId = reportReviewArtifactId;
+      const canSealTextPackage = finalReviewArtifactId !== undefined
+        && reportDocumentArtifactId === undefined
+        && this.dependencies.reportComposition !== undefined;
       const reportPackage = finalReviewArtifactId === undefined
+        || (reportDocumentArtifactId === undefined && !canSealTextPackage)
         ? undefined
         : await new ReportPackageArtifactService(this.dependencies.artifacts).seal({
             activeLease: input.lease,
@@ -3194,7 +3200,7 @@ export class LeaseExecutionEngine {
         prior_outputs: verifiedPriorOutputs(input.priorOutputs, input.step),
         ...stepContract(input.step),
       };
-      const prompt = `${SKILL_PROMPT_PREFIX}\n${JSON.stringify(stepContract(input.step))}\n\n${body.body}`;
+      const prompt = `${SKILL_EXECUTION_PROMPT_PREFIX}\n${JSON.stringify(stepContract(input.step))}\n\n${body.body}`;
       return {
         skillBodyHash: body.hash,
         inputSchemaHash: input.schemaHashes?.inputSchemaHash
@@ -3522,31 +3528,21 @@ export class LeaseExecutionEngine {
     }
     const skill = this.dependencies.skillLoader.getSkill(input.step.actor_id);
     if (!skill) throw new ExecutionAuthenticityError(`skill ${input.step.actor_id} is not active`);
-    const body = this.dependencies.skillLoader.loadSkillBody(input.step.actor_id);
-    const schemas = this.dependencies.skillLoader.loadSkillSchemas(input.step.actor_id);
-    if (!skill.output_schema) throw new ExecutionAuthenticityError(`skill ${input.step.actor_id} has no output contract`);
-    const schemaHashes = {
-      inputSchemaHash: skill.input_schema ? hashFile(skill.input_schema) : null,
-      outputSchemaHash: hashFile(skill.output_schema),
-      payloadSchemaHash: skill.payload_schema ? hashFile(skill.payload_schema) : null,
-    };
-    if (skill.input_schema) {
-      try {
-        this.dependencies.validator.validateFileOrThrow(
-          join(getConfigRoot(), skill.input_schema),
-          input.resolvedInput,
-        );
-      } catch {
-        throw new LLMInvocationError('schema', false, null, 'skill input failed schema validation');
-      }
+    let prepared;
+    try {
+      prepared = prepareSkillExecution({
+        skillId: input.step.actor_id,
+        researchGoal: input.researchGoal,
+        resolvedInput: compactLlmInput(input.resolvedInput) as Record<string, unknown>,
+        priorOutputs: verifiedPriorOutputs(input.outputs, input.step),
+        stepContract: stepContract(input.step),
+        skillLoader: this.dependencies.skillLoader,
+        validator: this.dependencies.validator,
+      });
+    } catch {
+      throw new LLMInvocationError('schema', false, null, 'skill input failed schema validation');
     }
-    const skillContext = {
-      research_goal: input.researchGoal,
-      input: compactLlmInput(input.resolvedInput),
-      prior_outputs: verifiedPriorOutputs(input.outputs, input.step),
-      ...stepContract(input.step),
-    };
-    const prompt = `${SKILL_PROMPT_PREFIX}\n${JSON.stringify(stepContract(input.step))}\n\n${body.body}`;
+    const { body, schemas, schemaHashes, context: skillContext, prompt } = prepared;
     const result = await this.llm.generateStructured<object>({
       prompt,
       schema: schemas.output ?? {},

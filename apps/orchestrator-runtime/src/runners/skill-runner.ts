@@ -2,6 +2,7 @@ import type { LLMClient } from '../runtime/llm-client.ts';
 import type { SkillLoader } from '../runtime/skill-loader.ts';
 import type { SchemaValidator } from '../schema/validator.ts';
 import type { PlanStep } from '../plan-types.ts';
+import { prepareSkillExecution } from '../skills/skill-runtime.ts';
 import type { ActorRunner, ExecCtx, StepArtifact } from './actor-runner.ts';
 
 // skill 步:加载 SKILL.md 全文 + output schema,调 LLM 按工作流基于 tool_outputs 产出结构化结果。
@@ -16,19 +17,20 @@ export class SkillActorRunner implements ActorRunner {
   ) {}
 
   async run(step: PlanStep, ctx: ExecCtx): Promise<StepArtifact> {
-    const skillEntry = this.skillLoader.getSkill(step.actor_id);
-    if (!skillEntry) throw new Error(`skill 非 active 或不存在: ${step.actor_id}`);
-
-    const { body, hash: manifestHash } = this.skillLoader.loadSkillBody(step.actor_id);
-    const { output } = this.skillLoader.loadSkillSchemas(step.actor_id);
+    const prepared = prepareSkillExecution({
+      skillId: step.actor_id,
+      researchGoal: ctx.researchGoal,
+      resolvedInput: step.input ?? {},
+      priorOutputs: ctx.toolOutputs,
+      skillLoader: this.skillLoader,
+      validator: this.validator,
+    });
 
     const skillGen = await this.llm.generateStructured<object>({
-      prompt:
-        `你是「${skillEntry.name}」能力。严格按以下 SKILL.md 的工作流与质量门禁执行,` +
-        `基于提供的检索数据(tool_outputs)产出结构化结果;无数据支撑的判断标 llm_inference,不得冒充事实。\n\n${body}`,
-      schema: output ?? {},
+      prompt: prepared.prompt,
+      schema: prepared.schemas.output ?? {},
       schemaName: `skill:${step.actor_id}`,
-      context: { research_goal: ctx.researchGoal, tool_outputs: ctx.toolOutputs },
+      context: prepared.context,
       receipt: {
         stage: 'skill',
         attemptId: ctx.attemptId,
@@ -38,7 +40,7 @@ export class SkillActorRunner implements ActorRunner {
       },
     });
 
-    this.validator.validateSchemaOrThrow(output, skillGen.data, `skill:${step.actor_id}`);
+    this.validator.validateSchemaOrThrow(prepared.schemas.output, skillGen.data, `skill:${step.actor_id}`);
 
     const outputRef = ctx.ws.writeToolOutput(step.step_no, skillGen.data);
 
@@ -47,7 +49,7 @@ export class SkillActorRunner implements ActorRunner {
       actorId: step.actor_id,
       output: skillGen.data,
       outputRef,
-      manifestHash,
+      manifestHash: prepared.body.hash,
       tokens: skillGen.tokens,
     };
   }
