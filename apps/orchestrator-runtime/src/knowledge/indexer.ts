@@ -54,6 +54,12 @@ export function buildIndex(entries: Array<{ relPath: string; md: string }>): {
         risk_level: (fm.risk_level as SkillRegistryEntry['risk_level']) ?? 'low',
         task_types: (fm.task_types as string[]) ?? [],
         output_schema: SKILL_RESULT_ENVELOPE_SCHEMA,
+        ...(fm.execution_mode === 'compiled' || fm.execution_mode === 'legacy_single_call'
+          ? { execution_mode: fm.execution_mode }
+          : {}),
+        ...(typeof fm.execution_contract === 'string'
+          ? { execution_contract: fm.execution_contract }
+          : {}),
         ...(requiredTools === undefined ? {} : { required_tools: requiredTools }),
         status: toRegistryStatus(fm.status),
       });

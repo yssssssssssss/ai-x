@@ -333,6 +333,8 @@ skills:
     task_types:
       - user_research_planning
     output_schema: schemas/skill-result-envelope.schema.json
+    execution_mode: compiled
+    execution_contract: orchestrator/skill-executions/generate-research-plan.yaml
     required_tools:
       - tavily-web-search
     status: active

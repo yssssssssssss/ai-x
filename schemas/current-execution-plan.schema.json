@@ -17,6 +17,11 @@
   ],
   "properties": {
     "task_id": { "type": "string" },
+    "execution_contract_version": { "const": "current-execution-plan-v2" },
+    "skill_invocations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/skillInvocation" }
+    },
     "deliverable_type": {
       "type": "string",
       "minLength": 1,
@@ -57,7 +62,27 @@
       "uniqueItems": true
     }
   },
+  "allOf": [
+    {
+      "if": { "required": ["execution_contract_version"] },
+      "then": { "required": ["skill_invocations"] },
+      "else": { "not": { "required": ["skill_invocations"] } }
+    }
+  ],
   "$defs": {
+    "skillInvocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["invocation_id", "skill_id", "execution_mode", "contract_version", "contract_hash", "step_nos"],
+      "properties": {
+        "invocation_id": { "type": "string", "minLength": 1 },
+        "skill_id": { "type": "string", "minLength": 1 },
+        "execution_mode": { "const": "compiled" },
+        "contract_version": { "const": "skill-execution-contract-v1" },
+        "contract_hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "step_nos": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "integer", "minimum": 1 } }
+      }
+    },
     "candidateProfile": {
       "type": "string",
       "enum": ["speed", "depth", "breadth", "focused", "mixed_method", "decision", "remediation"]
@@ -266,6 +291,8 @@
           "uniqueItems": true,
           "items": { "type": "string", "minLength": 1 }
         },
+        "execution_mode": { "enum": ["legacy_single_call", "compiled"] },
+        "execution_contract": { "type": "string", "minLength": 1 },
         "cost_level": { "type": "string" },
         "risk_level": { "enum": ["low", "medium", "high"] }
       }
@@ -392,7 +419,7 @@
       "properties": {
         "step_no": { "type": "integer", "minimum": 1 },
         "step_name": { "type": "string", "minLength": 1 },
-        "actor_type": { "enum": ["tool", "skill", "llm", "reviewer"] },
+        "actor_type": { "enum": ["knowledge", "tool", "skill", "llm", "reviewer"] },
         "actor_id": { "type": "string", "minLength": 1 },
         "question_ids": {
           "type": "array",
@@ -423,7 +450,9 @@
           "type": "array",
           "uniqueItems": true,
           "items": { "type": "string", "minLength": 1 }
-        }
+        },
+        "skill_invocation_id": { "type": "string", "minLength": 1 },
+        "skill_stage_id": { "type": "string", "minLength": 1 }
       },
       "allOf": [
         {

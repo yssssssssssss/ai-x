@@ -13,6 +13,7 @@ import {
   type DecisionNode,
 } from '../../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 import { inspectDeliverableRegistry } from '../../apps/orchestrator-runtime/src/report/deliverable-registry.ts';
+import { loadSkillExecutionContract } from '../../apps/orchestrator-runtime/src/skills/skill-execution-contract.ts';
 
 // registry linter(方案 §2.4 校验器之一 · P0-03 门禁):
 //   - status=active 的 skill/tool 必须字段完整、schema 文件存在、required_tools 存在
@@ -100,6 +101,22 @@ function lintSkills(issues: LintIssue[]): void {
     }
     if (s.payload_schema && !fileExists(s.payload_schema)) {
       issues.push({ level: 'error', target: tgt, message: `payload_schema 不存在: ${s.payload_schema}` });
+    }
+    const executionMode = s.execution_mode ?? 'legacy_single_call';
+    if (executionMode === 'compiled') {
+      if (!s.execution_contract) {
+        issues.push({ level: 'error', target: tgt, message: 'compiled skill 缺 execution_contract' });
+      } else if (!fileExists(s.execution_contract)) {
+        issues.push({ level: 'error', target: tgt, message: `execution_contract 不存在: ${s.execution_contract}` });
+      } else {
+        try {
+          loadSkillExecutionContract(s.execution_contract, s.id);
+        } catch (error) {
+          issues.push({ level: 'error', target: tgt, message: error instanceof Error ? error.message : String(error) });
+        }
+      }
+    } else if (s.execution_contract) {
+      issues.push({ level: 'error', target: tgt, message: 'legacy_single_call skill 不得声明 execution_contract' });
     }
     for (const t of s.required_tools ?? []) {
       if (!toolsById.has(t)) {

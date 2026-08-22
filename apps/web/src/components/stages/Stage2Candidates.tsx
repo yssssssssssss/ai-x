@@ -197,7 +197,12 @@ export function Stage2Candidates({
                     </ol>
                     <div className="candidate-meta">
                       <span>
-                        共 {steps.length} 步 · {steps.filter((step) => step.actor_type === 'skill').length} skill / {steps.filter((step) => step.actor_type === 'tool').length} tool
+                        共 {steps.length} 步 · {(candidate.plan.skill_invocations ?? []).length || steps.filter((step) => step.actor_type === 'skill').length} skill / {steps.filter((step) => step.actor_type === 'tool').length} tool
+                        {(candidate.plan.skill_invocations ?? []).length > 0
+                          ? ` · ${candidate.plan.skill_invocations!.reduce((count, invocation) => count + invocation.step_nos.length, 0)} skill stages`
+                          : steps.some((step) => step.actor_type === 'skill')
+                            ? ' · 单次 Skill 生成'
+                            : ''}
                       </span>
                       <span className="candidate-card-action" aria-hidden="true">
                         {readOnly ? '只读预览' : current ? '点击选择' : '点击查看'}

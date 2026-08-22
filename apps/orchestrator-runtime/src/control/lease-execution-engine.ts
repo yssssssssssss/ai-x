@@ -64,6 +64,12 @@ import {
   redactToolOutput,
 } from '../runtime/redaction.ts';
 import { compactLlmInput } from '../runtime/llm-input-compactor.ts';
+import {
+  KnowledgeBundleResolver,
+  RequiredKnowledgeUnavailableError,
+  type FrozenKnowledgeReference,
+  type KnowledgeResolutionGap,
+} from '../knowledge/knowledge-bundle-resolver.ts';
 import { ArtifactIntegrityError, ControlArtifactStore } from './artifact-store.ts';
 import {
   ArtifactInvalidationError,
@@ -185,9 +191,10 @@ interface ToolSourceRef {
 
 const SKILL_PROMPT_PREFIX = 'Execute this Skill workflow using only supplied outputs.';
 
-type StepArtifactKind = 'tool_output' | 'skill_output' | 'llm_output' | 'review_output';
+type StepArtifactKind = 'knowledge_output' | 'tool_output' | 'skill_output' | 'llm_output' | 'review_output';
 
 const STEP_ARTIFACT_SCHEMA_VERSIONS: Record<StepArtifactKind, string> = {
+  knowledge_output: 'knowledge-bundle-v1',
   tool_output: 'tool-output-v1',
   skill_output: 'skill-output-v2',
   llm_output: 'llm-output-v1',
@@ -212,6 +219,7 @@ interface StepResult {
   configHash?: string;
   sourceRefs?: ToolSourceRef[];
   skillProvenance?: Record<string, unknown>;
+  knowledgeGaps?: KnowledgeResolutionGap[];
 }
 
 const TOOL_EXECUTION_DEADLINE_MS = 90_000;
@@ -704,7 +712,7 @@ function parsePlan(taskId: string, value: unknown, contract: DeliverableContract
       || stepNo !== index + 1
       || typeof stepName !== 'string'
       || typeof actorId !== 'string'
-      || (actorType !== 'tool' && actorType !== 'skill' && actorType !== 'llm' && actorType !== 'reviewer')
+      || (actorType !== 'knowledge' && actorType !== 'tool' && actorType !== 'skill' && actorType !== 'llm' && actorType !== 'reviewer')
       || (input !== undefined && !isRecord(input))
       || !Array.isArray(rawBindings)
     ) {
@@ -1162,6 +1170,14 @@ function failureFrom(error: unknown): Record<string, unknown> {
       message: error.sanitizedMessage,
     };
   }
+  if (error instanceof RequiredKnowledgeUnavailableError) {
+    return {
+      kind: 'required_knowledge_unavailable',
+      retryable: false,
+      resourceId: error.resourceId,
+      message: error.message,
+    };
+  }
   if (error instanceof ExecutionSafetyError) {
     return { kind: 'safety', retryable: false, message: error.message };
   }
@@ -1510,7 +1526,7 @@ export class LeaseExecutionEngine {
             }
             unpublishedArtifactId = undefined;
             outputs.push({ ...sealedOutput, output: verified.output });
-            if (step.actor_type === 'tool') {
+            if (step.actor_type === 'tool' || step.actor_type === 'knowledge') {
               resolvedArtifacts.set(resealed.id, {
                 artifact: { id: resealed.id, contentSha256: resealed.contentSha256 },
                 value: verified.value,
@@ -1738,7 +1754,14 @@ export class LeaseExecutionEngine {
               message: skillDegradationMessage(step, skillOutcome),
             });
           }
-          if (step.actor_type === 'tool') {
+          for (const knowledgeGap of result.knowledgeGaps ?? []) {
+            addGap({
+              key: `step:${step.step_no}:${knowledgeGap.key}`,
+              stepNo: step.step_no,
+              message: redactString(knowledgeGap.message),
+            });
+          }
+          if (step.actor_type === 'tool' || step.actor_type === 'knowledge') {
             resolvedArtifacts.set(verified.artifact.id, {
               artifact: {
                 id: verified.artifact.id,
@@ -2036,6 +2059,37 @@ export class LeaseExecutionEngine {
       const evidenceEntries = (await this.dependencies.repository.listExecutionSteps(input.lease.attemptId))
         .flatMap((step): EvidenceEntry[] => {
           const proof = step.toolProvenance;
+          const knowledgeProof = step.skillProvenance;
+          const knowledgeOutputArtifactId = typeof knowledgeProof?.outputArtifactId === 'string'
+            ? knowledgeProof.outputArtifactId
+            : null;
+          const knowledgeArtifact = knowledgeOutputArtifactId
+            ? resolvedArtifacts.get(knowledgeOutputArtifactId)
+            : undefined;
+          if (
+            step.actorType === 'knowledge'
+            && step.state === 'succeeded'
+            && knowledgeArtifact
+            && Array.isArray(knowledgeProof?.resources)
+          ) {
+            return knowledgeProof.resources.flatMap((resource, index): EvidenceEntry[] => (
+              isRecord(resource)
+              && typeof resource.id === 'string'
+              && typeof resource.contentHash === 'string'
+                ? [{
+                    id: `K${step.stepNo}-${index + 1}`,
+                    kind: 'knowledge_excerpt',
+                    evidenceClass: 'knowledge',
+                    artifactId: knowledgeArtifact.artifact.id,
+                    artifactContentSha256: knowledgeArtifact.artifact.contentSha256,
+                    jsonPointer: `/resources/${index}/content`,
+                    stepNo: step.stepNo,
+                    sensitivity: 'internal',
+                    redaction: 'none',
+                  }]
+                : []
+            ));
+          }
           const outputArtifactId = typeof proof?.outputArtifactId === 'string' ? proof.outputArtifactId : null;
           const artifact = outputArtifactId ? resolvedArtifacts.get(outputArtifactId) : undefined;
           const executionMode = proof?.executionMode;
@@ -2516,7 +2570,13 @@ export class LeaseExecutionEngine {
           to: 'composing_report',
         });
         active = { ...active, stateVersion: composingTask.stateVersion };
-        if (this.dependencies.reportComposition) {
+        const shouldComposeReport = this.dependencies.reportComposition
+          && (
+            deliverableId !== 'research_plan'
+            || reportMaterials.visualAssets.length > 0
+            || reportMaterials.charts.length > 0
+          );
+        if (shouldComposeReport) {
           await this.dependencies.repository.requireActiveLease(input.lease);
           const [verifiedDeliverable, verifiedEvidenceManifest, verifiedReview] = await Promise.all([
             this.dependencies.artifacts.readVerifiedJson<ResearchDeliverableEnvelope<ResearchPlanPayload>>(
@@ -2551,7 +2611,10 @@ export class LeaseExecutionEngine {
             || composition.artifact.planVersionId !== input.lease.planVersionId
             || composition.artifact.attemptId !== input.lease.attemptId
             || composition.artifact.kind !== 'report_document'
-            || composition.artifact.schemaVersion !== 'report-document-v1'
+            || (
+              composition.artifact.schemaVersion !== 'report-document-v1'
+              && composition.artifact.schemaVersion !== 'report-document-v2'
+            )
           ) {
             throw new ExecutionAuthenticityError('ReportDocument composition did not return a sealed bound Artifact');
           }
@@ -2563,15 +2626,15 @@ export class LeaseExecutionEngine {
         throw new ExecutionAuthenticityError('Report Package cannot bind a document without its Review Artifact');
       }
       const finalReviewArtifactId = reportReviewArtifactId;
-      const reportPackage = reportDocumentArtifactId === undefined
+      const reportPackage = finalReviewArtifactId === undefined
         ? undefined
         : await new ReportPackageArtifactService(this.dependencies.artifacts).seal({
             activeLease: input.lease,
-            presentationMode: 'multimodal',
+            presentationMode: reportDocumentArtifactId === undefined ? 'current_text' : 'multimodal',
             deliverableArtifactId,
             evidenceManifestArtifactId: sealedEvidenceManifest.artifact.id,
             reportReviewArtifactId: finalReviewArtifactId,
-            reportDocumentArtifactId,
+            ...(reportDocumentArtifactId === undefined ? {} : { reportDocumentArtifactId }),
           });
       await this.dependencies.repository.requireActiveLease(input.lease);
       const status = gaps.size > 0 ? 'completed_with_gaps' : 'completed';
@@ -3016,6 +3079,8 @@ export class LeaseExecutionEngine {
     }
     await this.dependencies.repository.requireActiveLease(input.lease);
     switch (input.step.actor_type) {
+      case 'knowledge':
+        return this.runKnowledge(input);
       case 'skill':
         return this.runSkill(input);
       case 'llm':
@@ -3392,6 +3457,55 @@ export class LeaseExecutionEngine {
       redactedOutputHash,
       configHash: toolConfigHash(manifest, resolution),
       sourceRefs: refs,
+    };
+  }
+
+  private async runKnowledge(input: {
+    step: EngineStep;
+    lease: ControlExecutionLease;
+    resolvedInput: Record<string, unknown>;
+  }): Promise<StepResult> {
+    const references = input.resolvedInput.references;
+    const contractHash = input.resolvedInput.contractHash;
+    if (!Array.isArray(references) || typeof contractHash !== 'string') {
+      throw new ExecutionAuthenticityError('knowledge step has no frozen references or contract hash');
+    }
+    const parsedReferences: FrozenKnowledgeReference[] = references.map((reference) => {
+      if (
+        !isRecord(reference)
+        || typeof reference.resourceId !== 'string'
+        || typeof reference.sourcePath !== 'string'
+        || (reference.status !== 'approved' && reference.status !== 'draft')
+        || typeof reference.contentHash !== 'string'
+        || typeof reference.required !== 'boolean'
+        || (reference.failurePolicy !== 'block' && reference.failurePolicy !== 'gap')
+      ) {
+        throw new ExecutionAuthenticityError('knowledge step contains a malformed frozen reference');
+      }
+      return reference as unknown as FrozenKnowledgeReference;
+    });
+    const resolved = new KnowledgeBundleResolver(this.dependencies.validator).resolve({
+      taskId: input.lease.taskId,
+      planVersionId: input.lease.planVersionId,
+      attemptId: input.lease.attemptId,
+      stepNo: input.step.step_no,
+      contractHash,
+      references: parsedReferences,
+    });
+    return {
+      output: resolved.bundle,
+      kind: 'knowledge_output',
+      knowledgeGaps: resolved.gaps,
+      skillProvenance: {
+        kind: 'knowledge',
+        contractHash,
+        resources: resolved.bundle.resources.map(({ id, status, sourcePath, contentHash }) => ({
+          id,
+          status,
+          sourcePath,
+          contentHash,
+        })),
+      },
     };
   }
 

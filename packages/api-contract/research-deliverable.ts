@@ -58,7 +58,7 @@ export interface CurrentPlanExpectedOutput {
 export interface CurrentPlanStep {
   step_no: number;
   step_name: string;
-  actor_type: 'tool' | 'skill' | 'llm' | 'reviewer';
+  actor_type: 'knowledge' | 'tool' | 'skill' | 'llm' | 'reviewer';
   actor_id: string;
   question_ids: string[];
   depends_on: number[];
@@ -69,6 +69,26 @@ export interface CurrentPlanStep {
   requires_approval: boolean;
   approval_role?: 'owner' | 'legal' | 'security';
   fallback_actor_ids: string[];
+  skill_invocation_id?: string;
+  skill_stage_id?: string;
+}
+
+export interface CurrentSkillInvocation {
+  invocation_id: string;
+  skill_id: string;
+  execution_mode: 'compiled';
+  contract_version: 'skill-execution-contract-v1';
+  contract_hash: string;
+  step_nos: number[];
+}
+
+export interface CurrentKnowledgeReference {
+  resourceId: string;
+  sourcePath: string;
+  status: 'approved' | 'draft';
+  contentHash: string;
+  required: boolean;
+  failurePolicy: 'block' | 'gap';
 }
 
 export interface CurrentCapabilitySkill {
@@ -89,6 +109,8 @@ export interface CurrentCapabilitySkill {
   entry?: string;
   required_tools: string[];
   optional_tools?: string[];
+  execution_mode?: 'legacy_single_call' | 'compiled';
+  execution_contract?: string;
   cost_level?: string;
   risk_level?: 'low' | 'medium' | 'high';
 }
@@ -159,6 +181,8 @@ export interface CurrentCapabilityDecisions {
 
 export interface CurrentExecutionPlan {
   task_id: string;
+  execution_contract_version?: 'current-execution-plan-v2';
+  skill_invocations?: CurrentSkillInvocation[];
   deliverable_type: DeliverableType;
   evidence_requirements: EvidenceRequirement[];
   problem_graph: ProblemGraph;

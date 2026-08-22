@@ -1,0 +1,167 @@
+version: skill-execution-contract-v1
+skill_id: generate-research-plan
+required_requirement_fields:
+  - /research_goal
+  - /target_audience
+  - /success_criteria
+resources:
+  - resource_id: standard_requirement_elicitation
+    required: true
+    accepted_statuses: [approved, draft]
+    purpose: Finalize the research brief before method selection.
+    failure_policy: block
+  - resource_id: standard_research_project_workflow
+    required: true
+    accepted_statuses: [approved, draft]
+    purpose: Apply the canonical research planning workflow.
+    failure_policy: block
+  - resource_id: standard_sampling
+    required: true
+    accepted_statuses: [approved, draft]
+    purpose: Bind sample sizes and quotas to the current sampling standard.
+    failure_policy: block
+stages:
+  - stage_id: load-standards
+    title: 加载研究规范
+    actor_type: knowledge
+    actor_id: knowledge.index
+    depends_on: []
+    input: {}
+    input_bindings: []
+    expected_outputs:
+      - pointer: /resources
+        description: Frozen verified knowledge resources.
+    acceptance_criteria:
+      - Every required resource matches its frozen id, path, status, and content hash.
+    failure_policy: block
+  - stage_id: external-context
+    title: 检索外部研究背景
+    actor_type: tool
+    actor_id: tavily-web-search
+    depends_on: []
+    input:
+      query: research goal public evidence
+      topic: general
+      max_results: 6
+      search_depth: basic
+      include_answer: false
+    input_bindings: []
+    expected_outputs:
+      - pointer: /results
+        description: Public context used by the research plan.
+    acceptance_criteria:
+      - Results contain traceable public URLs.
+    failure_policy: block
+  - stage_id: align-brief
+    title: 对齐研究 Brief
+    actor_type: llm
+    actor_id: llm.openai.gpt-4o
+    depends_on: [load-standards, external-context]
+    input:
+      instruction: Align goal, audience, scope, constraints, and success criteria.
+      knowledge: null
+      public_context: null
+    input_bindings:
+      - target_pointer: /knowledge
+        source_stage_id: load-standards
+        source_pointer: /resources
+      - target_pointer: /public_context
+        source_stage_id: external-context
+        source_pointer: /results
+    expected_outputs:
+      - pointer: /text
+        description: Finalized research brief.
+    acceptance_criteria:
+      - Brief states goal, decision use, audience, constraints, and success criteria.
+    failure_policy: block
+  - stage_id: select-methods
+    title: 选择研究方法
+    actor_type: llm
+    actor_id: llm.openai.gpt-4o
+    depends_on: [align-brief]
+    input:
+      instruction: Select collection and analysis methods with inclusion and exclusion reasons.
+      brief: null
+    input_bindings:
+      - target_pointer: /brief
+        source_stage_id: align-brief
+        source_pointer: /text
+    expected_outputs:
+      - pointer: /text
+        description: Method selection with rationale and exclusions.
+    acceptance_criteria:
+      - Every selected method is tied to a research question and evidence need.
+    failure_policy: block
+  - stage_id: design-sampling-and-schedule
+    title: 设计样本、排期与证据路径
+    actor_type: llm
+    actor_id: llm.openai.gpt-4o
+    depends_on: [align-brief, select-methods]
+    input:
+      instruction: Design sampling, quotas, evidence paths, cost, schedule, and risks.
+      brief: null
+      methods: null
+    input_bindings:
+      - target_pointer: /brief
+        source_stage_id: align-brief
+        source_pointer: /text
+      - target_pointer: /methods
+        source_stage_id: select-methods
+        source_pointer: /text
+    expected_outputs:
+      - pointer: /text
+        description: Executable sample, evidence, cost, and schedule design.
+    acceptance_criteria:
+      - Sampling follows the frozen standard and explicitly states uncertainty.
+    failure_policy: block
+  - stage_id: compose-plan
+    title: 合成研究方案
+    actor_type: skill
+    actor_id: generate-research-plan
+    depends_on: [load-standards, external-context, align-brief, select-methods, design-sampling-and-schedule]
+    input:
+      instruction: Compose the final structured research plan from verified stage outputs.
+      knowledge: null
+      brief: null
+      methods: null
+      sampling_and_schedule: null
+    input_bindings:
+      - target_pointer: /knowledge
+        source_stage_id: load-standards
+        source_pointer: /resources
+      - target_pointer: /brief
+        source_stage_id: align-brief
+        source_pointer: /text
+      - target_pointer: /methods
+        source_stage_id: select-methods
+        source_pointer: /text
+      - target_pointer: /sampling_and_schedule
+        source_stage_id: design-sampling-and-schedule
+        source_pointer: /text
+    expected_outputs:
+      - pointer: /payload
+        description: Structured research plan payload.
+    acceptance_criteria:
+      - Output follows the Skill payload schema and identifies all limitations.
+    failure_policy: block
+  - stage_id: self-review
+    title: 审校研究方案
+    actor_type: reviewer
+    actor_id: reviewer.research-lead
+    depends_on: [compose-plan]
+    input:
+      instruction: Review method fit, sampling, evidence, scope, risks, and decision usefulness.
+      plan: null
+    input_bindings:
+      - target_pointer: /plan
+        source_stage_id: compose-plan
+        source_pointer: /payload
+    expected_outputs:
+      - pointer: /review
+        description: Final research-plan review.
+    acceptance_criteria:
+      - Review identifies blocking gaps and actionable revisions.
+    failure_policy: block
+output_stage_id: compose-plan
+output_pointer: /payload
+degraded_policy: gap

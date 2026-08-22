@@ -74,6 +74,7 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 }
 .badge-skill { background: var(--skill-bg); color: var(--skill-fg); }
 .badge-tool { background: var(--tool-bg); color: var(--tool-fg); }
+.badge-knowledge { background: rgba(45,212,191,.15); color: #5eead4; }
 .badge-llm { background: rgba(167,139,250,.15); color: #c4b5fd; }
 .badge-reviewer { background: rgba(148,163,184,.15); color: #cbd5e1; }
 
@@ -1223,6 +1224,7 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .execution-flow-actor.actor-llm { background: rgba(167, 139, 250, 0.15); color: #c4b5fd; }
 .execution-flow-actor.actor-skill { background: var(--skill-bg); color: var(--skill-fg); }
 .execution-flow-actor.actor-tool { background: var(--tool-bg); color: var(--tool-fg); }
+.execution-flow-actor.actor-knowledge { background: rgba(45, 212, 191, 0.15); color: #5eead4; }
 .execution-flow-actor.actor-reviewer { background: rgba(148, 163, 184, 0.15); color: #cbd5e1; }
 .execution-flow-actor.actor-system { background: rgba(96, 165, 250, 0.14); color: #93c5fd; }
 .execution-flow-node-spinner {

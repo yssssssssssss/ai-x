@@ -290,6 +290,8 @@ export interface SkillRegistryEntry {
   entry?: string; // SKILL.md 文件夹路径(KB 派生)
   required_tools?: string[];
   optional_tools?: string[];
+  execution_mode?: 'legacy_single_call' | 'compiled';
+  execution_contract?: string;
   cost_level?: string;
   risk_level: 'low' | 'medium' | 'high';
 }
@@ -313,6 +315,8 @@ const SKILL_REGISTRY_ENTRY_KEYS = new Set<keyof SkillRegistryEntry>([
   'entry',
   'required_tools',
   'optional_tools',
+  'execution_mode',
+  'execution_contract',
   'cost_level',
   'risk_level',
 ]);

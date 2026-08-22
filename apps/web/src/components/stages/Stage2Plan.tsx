@@ -3,6 +3,7 @@ import {
   COMPETITIVE_WEIGHT_TITLE,
   extractCompetitiveScoringWeights,
 } from '../../../../orchestrator-runtime/src/report/competitive-weight-chart.ts';
+import type { CurrentPlanStep } from '../../../../../packages/api-contract/research-deliverable.ts';
 import type { PlanResponse, PlanStep, PendingUpload, Upload } from '../../api/client.ts';
 import { Header } from './Stage1Understand.tsx';
 import { buildPlanConfirmationPayload } from './stage2-plan-confirmation.ts';
@@ -274,18 +275,20 @@ function formatSuggestion(value: unknown): string {
   return JSON.stringify(value) ?? String(value);
 }
 
-function StepRow({ step }: { step: PlanStep }) {
+function StepRow({ step }: { step: PlanStep | CurrentPlanStep }) {
+  const purpose = 'purpose' in step ? step.purpose : undefined;
   const cls =
     step.actor_type === 'skill' ? 'badge-skill'
     : step.actor_type === 'tool' ? 'badge-tool'
     : step.actor_type === 'reviewer' ? 'badge-reviewer'
+    : step.actor_type === 'knowledge' ? 'badge-knowledge'
     : 'badge-llm';
   return (
     <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', padding: '8px 12px', background: 'var(--bg)', borderRadius: 8 }}>
       <span style={{ color: 'var(--text-faint)', fontFamily: 'var(--mono)', fontSize: 12 }}>{step.step_no}</span>
       <div style={{ flex: 1 }}>
         <div style={{ fontSize: 13 }}>{step.step_name}</div>
-        {step.purpose && <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>{step.purpose}</div>}
+        {purpose && <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>{purpose}</div>}
       </div>
       <span className={`badge ${cls}`}>{step.actor_type.toUpperCase()}</span>
       <code style={{ fontSize: 11, color: 'var(--text-faint)' }}>{step.actor_id}</code>

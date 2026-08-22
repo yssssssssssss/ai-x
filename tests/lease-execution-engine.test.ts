@@ -64,6 +64,8 @@ import {
 } from '../apps/orchestrator-runtime/src/report/chart-renderer.ts';
 import { chartSpecHash } from '../apps/orchestrator-runtime/src/report/chart-spec-validator.ts';
 import { CurrentReportPackageReader } from '../apps/orchestrator-runtime/src/report/current-report-package-reader.ts';
+import { compileSkillSteps } from '../apps/orchestrator-runtime/src/skills/skill-plan-compiler.ts';
+import { loadRuntimeKnowledgeIndex } from '../apps/orchestrator-runtime/src/knowledge/index.ts';
 import { ReportPackageArtifactService } from '../apps/orchestrator-runtime/src/report/report-package-artifact.ts';
 import {
   ReportCompositionService,
@@ -3408,6 +3410,135 @@ test('executes the current plan with real Tool provenance and complete model rec
   assert.equal(skillProvenance.status, 'succeeded');
   const attempts = await repository.listAttempts(lease.taskId);
   assert.equal(attempts[0]?.state, 'completed');
+});
+
+test('executes frozen Knowledge before Skill and emits Knowledge Evidence', async () => {
+  const knowledge = loadRuntimeKnowledgeIndex().find(({ id }) => id === 'standard_sampling');
+  assert.ok(knowledge && (knowledge.status === 'approved' || knowledge.status === 'draft'));
+  const knowledgeStep: CurrentPlanStep = {
+    step_no: 1,
+    step_name: '加载抽样规范',
+    actor_type: 'knowledge',
+    actor_id: 'knowledge.index',
+    question_ids: ['question-1'],
+    depends_on: [],
+    input: {
+      contractHash: `sha256:${'a'.repeat(64)}`,
+      references: [{
+        resourceId: knowledge.id,
+        sourcePath: knowledge.source_path,
+        status: knowledge.status,
+        contentHash: knowledge.content_hash,
+        required: true,
+        failurePolicy: 'block',
+      }],
+    },
+    input_bindings: [],
+    expected_outputs: [{ pointer: '/resources', description: 'knowledge' }],
+    acceptance_criteria: ['hash matches'],
+    requires_approval: false,
+    fallback_actor_ids: [],
+  };
+  const remapped: CurrentPlanStep[] = [
+    knowledgeStep,
+    { ...planSteps[0]!, step_no: 2 },
+    {
+      ...planSteps[1]!,
+      step_no: 3,
+      depends_on: [1, 2],
+      input_bindings: [{
+        target_pointer: '/business_domain',
+        source_step_no: 1,
+        source_pointer: '/resources/0/content',
+      }],
+    },
+    { ...planSteps[2]!, step_no: 4, depends_on: [3] },
+    { ...planSteps[3]!, step_no: 5, depends_on: [4] },
+  ];
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    remapped,
+    {
+      deliverable_type: 'competitive_analysis_report',
+      evidence_requirements: [{
+        id: 'competitive-analysis-report',
+        acceptedClasses: ['public_source', 'knowledge'],
+        minimumCount: 1,
+        required: true,
+      }],
+    },
+  );
+  const deliverables = new RecordingDeliverablesFake();
+  const engine = buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new CountingRealLLM(),
+    deliverables,
+  );
+
+  const result = await engine.execute({ lease, expectedModel: 'pinned-model' });
+  assert.equal(result.status, 'completed');
+  const input = deliverables.calls[0];
+  assert.ok(input);
+  const knowledgeEvidence = input.evidenceManifest.value.entries.find(({ kind }) => kind === 'knowledge_excerpt');
+  assert.ok(knowledgeEvidence);
+  assert.equal(knowledgeEvidence.evidenceClass, 'knowledge');
+  assert.equal(knowledgeEvidence.jsonPointer, '/resources/0/content');
+  const steps = await repository.listExecutionSteps(lease.attemptId);
+  assert.equal(steps[0]?.actorType, 'knowledge');
+  assert.equal(steps[0]?.skillProvenance?.kind, 'knowledge');
+});
+
+test('executes a compiled generate-research-plan invocation stage by stage', async () => {
+  const original: CurrentPlanStep[] = [
+    planSteps[0]!,
+    {
+      ...planSteps[1]!,
+      actor_id: 'generate-research-plan',
+      input: {},
+      input_bindings: [],
+      expected_outputs: [{ pointer: '/payload', description: 'research plan' }],
+    },
+    { ...planSteps[3]!, step_no: 3, depends_on: [2], actor_id: 'reviewer.research-lead' },
+  ];
+  const task = {
+    version: 'research-task-v2' as const,
+    task_type: 'user_research_planning' as const,
+    business_domain: 'pet services',
+    research_goal: 'plan a pet mindshare study',
+    target_audience: ['platform operations'],
+    scope: ['mobile app'], constraints: [],
+    success_criteria: [{ id: 'SC-1', statement: 'executable plan' }],
+    expected_deliverables: ['research_plan'], assumptions: [], ambiguities: [],
+    clarification_questions: [], blocking_issues: [], sensitivity: 'internal' as const, pii_detected: false,
+  };
+  const compiled = compileSkillSteps(original, task);
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    compiled.steps,
+    {
+      deliverable_type: 'research_plan',
+      evidence_requirements: [{ id: 'public-market-evidence', acceptedClasses: ['public_source', 'knowledge'], minimumCount: 1, required: true }],
+      execution_contract_version: 'current-execution-plan-v2',
+      skill_invocations: compiled.invocations,
+    },
+    { task_type: 'competitive_research', research_goal: task.research_goal },
+  );
+  const deliverables = new RecordingDeliverablesFake();
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new CountingRealLLM(),
+    deliverables,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed');
+  const persisted = await repository.listExecutionSteps(lease.attemptId);
+  assert.equal(persisted.length, 7);
+  assert.deepEqual(persisted.map(({ actorType }) => actorType), [
+    'tool', 'knowledge', 'llm', 'llm', 'llm', 'skill', 'reviewer',
+  ]);
+  assert.ok(deliverables.calls[0]?.evidenceManifest.value.entries.some(({ kind }) => kind === 'knowledge_excerpt'));
 });
 
 test('records a degraded Skill as a completed task with one visible gap', async () => {

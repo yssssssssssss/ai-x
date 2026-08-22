@@ -72,8 +72,8 @@ function createGraphLayout(graph: ExecutionFlowGraph): GraphLayout {
   return { width, height, positions };
 }
 
-function actorTone(actorType: string): 'llm' | 'skill' | 'tool' | 'reviewer' | 'system' {
-  if (actorType === 'llm' || actorType === 'skill' || actorType === 'tool' || actorType === 'reviewer') {
+function actorTone(actorType: string): 'llm' | 'skill' | 'tool' | 'reviewer' | 'knowledge' | 'system' {
+  if (actorType === 'llm' || actorType === 'skill' || actorType === 'tool' || actorType === 'reviewer' || actorType === 'knowledge') {
     return actorType;
   }
   return 'system';
@@ -85,6 +85,7 @@ function actorLabel(actorType: string): string {
     case 'skill': return 'SKILL';
     case 'tool': return 'TOOL';
     case 'reviewer': return 'REVIEW';
+    case 'knowledge': return 'KNOWLEDGE';
     case 'system': return 'SYSTEM';
   }
 }
