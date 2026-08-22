@@ -1695,6 +1695,20 @@ test('confirmation, required input, role matrix, and plan revision gate ready st
     TaskWorkflowGateError,
   );
 
+  await assert.rejects(
+    () => workflow.confirm({
+      taskId: task.id,
+      planVersionId: selection.planVersionId,
+      expectedVersion: selection.stateVersion,
+      idempotencyKey: 'confirm-extra-answer',
+      actor: { userId: ownerId, role: 'owner' },
+      confirmationAnswers: { competitors: '头部三家', geography: '海外市场' },
+      inputValues: { brief: '研究简报' },
+    }),
+    (error: unknown) => error instanceof TaskWorkflowGateError
+      && error.unresolved.includes('confirmation:geography'),
+  );
+
   const confirmed = await workflow.confirm({
     taskId: task.id,
     planVersionId: selection.planVersionId,

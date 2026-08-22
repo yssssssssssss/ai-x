@@ -505,9 +505,13 @@ export class TaskWorkflowService {
       if (completed) return completed;
       throw new ControlPlaneConflictError(`task ${task.id} is not awaiting confirmation at version ${input.expectedVersion}`);
     }
-    const missingAnswers = (taskShape(task).clarification_questions ?? [])
+    const clarificationQuestions = taskShape(task).clarification_questions ?? [];
+    const confirmationKeys = new Set(clarificationQuestions.map((requirement) => requirement.key));
+    const missingAnswers = clarificationQuestions
       .map((requirement) => requirement.key)
       .filter((key) => !(key in input.confirmationAnswers));
+    const extraAnswers = Object.keys(input.confirmationAnswers)
+      .filter((key) => !confirmationKeys.has(key));
     const pendingInputs = pendingInputRequirements(plan);
     const requiredInputRoles = new Set(pendingInputs.map(({ role }) => role));
     const extraInputs = Object.keys(input.inputValues).filter((key) => !requiredInputRoles.has(key));
@@ -515,8 +519,13 @@ export class TaskWorkflowService {
       !Object.prototype.hasOwnProperty.call(input.inputValues, key)
       || input.inputValues[key] === undefined
     ));
-    if (missingAnswers.length || missingInputs.length || extraInputs.length) {
-      throw new TaskWorkflowGateError([...missingAnswers, ...missingInputs, ...extraInputs]);
+    if (missingAnswers.length || extraAnswers.length || missingInputs.length || extraInputs.length) {
+      throw new TaskWorkflowGateError([
+        ...missingAnswers,
+        ...extraAnswers.map((key) => `confirmation:${key}`),
+        ...missingInputs,
+        ...extraInputs,
+      ]);
     }
     if (containsInlineImageData(input.confirmationAnswers)) {
       throw new TaskWorkflowGateError(['confirmation_answers.dataUrl']);
