@@ -506,6 +506,7 @@ function setup(options: {
   review?: ReportReviewArtifact | null;
   reviewArtifact?: ControlArtifact;
   reportDocument?: ReportDocument | null;
+  reportDocumentSchemaVersion?: 'report-document-v1' | 'report-document-v2';
   visualAssets?: FixtureVerifiedVisualAsset[];
 } = {}): {
   reader: CurrentReportPackageReader;
@@ -542,7 +543,7 @@ function setup(options: {
     const reportDocumentArtifact = artifact(
       reportDocumentArtifactId,
       'report_document',
-      'report-document-v1',
+      options.reportDocumentSchemaVersion ?? 'report-document-v1',
     );
     artifacts.add(reportDocumentArtifact, options.reportDocument);
     repository.byKind.set('report_document', reportDocumentArtifact);
@@ -828,6 +829,30 @@ test('returns multimodal only from a sealed ReportDocument and its exact verifie
     chartId: 'chart-1',
   }]);
   assert.equal(fixture.visualAssets.reads.some(({ assetId }) => assetId === extra.artifact.id), false);
+});
+
+test('reads a schema-valid ReportDocument v2 without breaking v1 packages', async () => {
+  const image = packageVerifiedVisualAsset(imageAssetId, imageManifestArtifactId, 'image/png');
+  const chart = packageVerifiedVisualAsset(chartAssetId, chartManifestArtifactId, 'image/svg+xml');
+  const document: ReportDocument = {
+    ...packageReportDocument(),
+    version: 'report-document-v2',
+    sourceDeliverableArtifactId: deliverableArtifactId,
+    projectionMode: 'full',
+    coveredPointers: ['/title'],
+    omittedPointers: [],
+  };
+  const fixture = setup({
+    reportDocument: document,
+    reportDocumentSchemaVersion: 'report-document-v2',
+    visualAssets: [image, chart],
+  });
+
+  const result = await fixture.reader.read(binding);
+  assert.equal(result?.presentationMode, 'multimodal');
+  if (result?.presentationMode !== 'multimodal') assert.fail('expected a multimodal package');
+  assert.equal(result.reportDocument.version, 'report-document-v2');
+  assert.equal(parseControlDeliverableResponse(result).presentationMode, 'multimodal');
 });
 
 test('reads a mixed V2 browser image and V1 Chart package without rewriting either Manifest', async () => {
