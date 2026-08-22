@@ -21,6 +21,7 @@ function reference(id: string, overrides: Partial<FrozenKnowledgeReference> = {}
   assert.ok(item.status === 'approved' || item.status === 'draft');
   return {
     resourceId: item.id,
+    resourceType: item.type,
     sourcePath: item.source_path,
     status: item.status,
     contentHash: item.content_hash,
@@ -71,7 +72,7 @@ test('required knowledge path and hash drift fail closed', () => {
 
 test('required missing and non-runtime status Knowledge fail with explicit codes', () => {
   const missingReference: FrozenKnowledgeReference = {
-    resourceId: 'missing-resource', sourcePath: 'methods/missing.md', status: 'approved',
+    resourceId: 'missing-resource', resourceType: 'method', sourcePath: 'methods/missing.md', status: 'approved',
     contentHash: `sha256:${'c'.repeat(64)}`, required: true, failurePolicy: 'block',
   };
   assert.throws(() => new KnowledgeBundleResolver().resolve({
@@ -90,7 +91,7 @@ test('required missing and non-runtime status Knowledge fail with explicit codes
   assert.throws(() => resolver.resolve({
     ...binding,
     references: [{
-      resourceId: deprecated.id, sourcePath: deprecated.source_path, status: 'approved',
+      resourceId: deprecated.id, resourceType: deprecated.type, sourcePath: deprecated.source_path, status: 'approved',
       contentHash: deprecated.content_hash, required: true, failurePolicy: 'block',
     }],
   }), (error: unknown) => (
@@ -134,6 +135,7 @@ test('rejects traversal, symlink, and physical source hash drift with distinct d
     ...binding,
     references: [{
       resourceId: item.id,
+      resourceType: item.type,
       sourcePath,
       status: 'approved',
       contentHash: originalHash,

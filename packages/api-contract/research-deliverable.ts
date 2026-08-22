@@ -87,6 +87,7 @@ export interface CurrentSkillInvocation {
   execution_mode: 'compiled';
   contract_version: 'skill-execution-contract-v1';
   contract_hash: string;
+  degraded_policy: 'block' | 'gap';
   skill_reference_hashes: Array<{ path: string; hash: string }>;
   knowledge_references: CurrentKnowledgeReference[];
   resource_gaps: CurrentSkillResourceGap[];
@@ -95,6 +96,7 @@ export interface CurrentSkillInvocation {
 
 export interface CurrentKnowledgeReference {
   resourceId: string;
+  resourceType: string;
   sourcePath: string;
   status: 'approved' | 'draft';
   contentHash: string;

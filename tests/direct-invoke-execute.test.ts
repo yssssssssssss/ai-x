@@ -2,6 +2,11 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { rmSync } from 'node:fs';
 import { buildOrchestrator } from '../apps/orchestrator-runtime/src/orchestrator.ts';
+import {
+  MockLLMClient,
+  type LegacyStructuredLLMCallOptions,
+  type LLMResult,
+} from '../apps/orchestrator-runtime/src/runtime/llm-client.ts';
 import { createUser, createConversation, listExecutionLog, listArtifacts } from '../database/repository.ts';
 import { closePool } from '../database/db.ts';
 
@@ -53,4 +58,35 @@ test('$ 直呼无 schema KB skill → executePhase 跑完、有 report、skill �
 
   const arts = await listArtifacts(plan.taskId);
   assert.ok(arts.some((a) => a.artifact_type === 'report'), '应有 report 类型 artifact');
+});
+
+test('legacy SkillActorRunner propagates degraded status into completed_with_gaps', async () => {
+  class DegradedLegacySkillLLM extends MockLLMClient {
+    override async generateStructured<T>(options: LegacyStructuredLLMCallOptions): Promise<LLMResult<T>> {
+      const result = await super.generateStructured<T>(options);
+      if (!options.schemaName.startsWith('skill:')) return result;
+      return {
+        ...result,
+        data: {
+          ...(result.data as Record<string, unknown>),
+          status: 'degraded',
+          summary: 'Partial legacy Skill result.',
+          limitations: ['legacy source unavailable'],
+        } as T,
+      };
+    }
+  }
+  const orch = buildOrchestrator({ llm: new DegradedLegacySkillLLM() });
+  const plan = await orch.planPhase({
+    originalInput: '$competitive-analysis 对比拼多多直播',
+    conversationId: convId,
+    ownerUserId: userId,
+  });
+  cleanupDirs.push(plan.workspaceUri);
+  await orch.selectPlan({ taskId: plan.taskId, candidateId: 'speed' });
+
+  const result = await orch.executePhase({ taskId: plan.taskId, conversationId: convId });
+  assert.equal(result.status, 'completed_with_gaps');
+  assert.equal(result.gapCount, 1);
+  assert.ok((await listArtifacts(plan.taskId)).some((artifact) => artifact.artifact_type === 'report'));
 });

@@ -77,6 +77,8 @@ import {
 import {
   prepareSkillExecution,
   SKILL_EXECUTION_PROMPT_PREFIX,
+  SkillRuntimeDriftError,
+  type FrozenSkillExecutionBinding,
 } from '../skills/skill-runtime.ts';
 import {
   KnowledgeBundleResolver,
@@ -153,6 +155,7 @@ interface EnginePlan {
   steps: EngineStep[];
   optionalToolStepNos: Set<number>;
   capabilityGaps: ExecutionGap[];
+  frozenSkillExecutions: Map<number, FrozenSkillExecutionBinding>;
 }
 
 interface FrozenSkillToolRoles {
@@ -756,6 +759,8 @@ function parsePlan(taskId: string, value: unknown, contract: DeliverableContract
       fallback_actor_ids: Array.isArray(item.fallback_actor_ids)
         ? item.fallback_actor_ids.filter((actor): actor is string => typeof actor === 'string')
         : [],
+      ...(typeof item.skill_invocation_id === 'string' ? { skill_invocation_id: item.skill_invocation_id } : {}),
+      ...(typeof item.skill_stage_id === 'string' ? { skill_stage_id: item.skill_stage_id } : {}),
       ...(typeof item.purpose === 'string' ? { purpose: item.purpose } : {}),
     };
   });
@@ -903,12 +908,65 @@ function parsePlan(taskId: string, value: unknown, contract: DeliverableContract
   if (unavailableOptionalKeys.size > 0) {
     throw new ExecutionAuthenticityError('plan optional tool decision has no capability gap');
   }
+  const resourceGaps: ExecutionGap[] = [];
+  const frozenSkillExecutions = new Map<number, FrozenSkillExecutionBinding>();
+  const rawInvocations = value.skill_invocations ?? [];
+  if (!Array.isArray(rawInvocations)) {
+    throw new ExecutionAuthenticityError('plan Skill invocations are malformed');
+  }
+  for (const [invocationIndex, invocation] of rawInvocations.entries()) {
+    if (
+      !isRecord(invocation)
+      || typeof invocation.invocation_id !== 'string'
+      || typeof invocation.contract_hash !== 'string'
+      || (invocation.degraded_policy !== 'gap' && invocation.degraded_policy !== 'block')
+      || !Array.isArray(invocation.skill_reference_hashes)
+      || !invocation.skill_reference_hashes.every((reference) => (
+        isRecord(reference) && typeof reference.path === 'string' && typeof reference.hash === 'string'
+      ))
+      || !Array.isArray(invocation.step_nos)
+      || !Array.isArray(invocation.resource_gaps)
+    ) throw new ExecutionAuthenticityError(`plan Skill invocation ${invocationIndex + 1} is malformed`);
+    const stepNo = steps.find((step) => (
+      step.skill_invocation_id === invocation.invocation_id && step.actor_type === 'knowledge'
+    ))?.step_no ?? invocation.step_nos.find((candidate): candidate is number => Number.isInteger(candidate)) ?? 0;
+    for (const candidateStepNo of invocation.step_nos) {
+      if (!Number.isInteger(candidateStepNo)) continue;
+      const invocationStep = steps.find(({ step_no }) => step_no === candidateStepNo);
+      if (invocationStep?.actor_type !== 'skill') continue;
+      frozenSkillExecutions.set(candidateStepNo, {
+        contractHash: invocation.contract_hash,
+        referenceHashes: invocation.skill_reference_hashes.map((reference) => ({
+          path: String((reference as Record<string, unknown>).path),
+          hash: String((reference as Record<string, unknown>).hash),
+        })),
+        degradedPolicy: invocation.degraded_policy,
+      });
+    }
+    for (const [gapIndex, gap] of invocation.resource_gaps.entries()) {
+      if (
+        !isRecord(gap)
+        || typeof gap.query_id !== 'string'
+        || !Number.isInteger(gap.min_items)
+        || !Number.isInteger(gap.selected_items)
+        || gap.failure_policy !== 'gap'
+        || typeof gap.reason !== 'string'
+        || !gap.reason.trim()
+      ) throw new ExecutionAuthenticityError(`plan Skill resource gap ${invocationIndex + 1}.${gapIndex + 1} is malformed`);
+      resourceGaps.push({
+        key: `skill:${invocation.invocation_id}:resource:${gap.query_id}`,
+        stepNo,
+        message: redactString(`Skill resource gap ${gap.query_id}: ${gap.reason}`),
+      });
+    }
+  }
   return {
     taskId,
     evidence_requirements: evidenceRequirements,
     steps,
     optionalToolStepNos,
-    capabilityGaps,
+    capabilityGaps: [...capabilityGaps, ...resourceGaps],
+    frozenSkillExecutions,
   };
 }
 interface ReviewCoverageIds {
@@ -1164,7 +1222,7 @@ export function failureFrom(error: unknown): Record<string, unknown> {
       message: error.sanitizedMessage,
     };
   }
-  if (error instanceof CompiledSkillPlanDriftError) {
+  if (error instanceof CompiledSkillPlanDriftError || error instanceof SkillRuntimeDriftError) {
     return {
       kind: 'skill_contract_drift',
       retryable: false,
@@ -1474,10 +1532,12 @@ export class LeaseExecutionEngine {
         let toolScope: ToolExecutionScope | undefined;
         let toolHeartbeat: LeaseHeartbeatHandle | undefined;
         let skillDegradedPolicy: 'gap' | 'block' | undefined;
+        let frozenSkillExecution: FrozenSkillExecutionBinding | undefined;
         try {
-          skillDegradedPolicy = step.actor_type === 'skill'
+          frozenSkillExecution = plan.frozenSkillExecutions.get(step.step_no);
+          skillDegradedPolicy = frozenSkillExecution?.degradedPolicy ?? (step.actor_type === 'skill'
             ? this.dependencies.skillLoader.loadSkillExecution(step.actor_id)?.contract.degraded_policy
-            : undefined;
+            : undefined);
           const checkpoint = reusable.get(step.step_no);
           if (checkpoint) {
             active = await this.refreshLease(input.lease);
@@ -1606,6 +1666,7 @@ export class LeaseExecutionEngine {
               outputs,
               expectedModel: input.expectedModel,
               optionalTool: false,
+              frozenSkillExecution,
             }));
           }
           const actorOutputHash = actorResult.skillProvenance?.outputHash;
@@ -3087,6 +3148,7 @@ export class LeaseExecutionEngine {
     outputs: EngineSealedStepOutput[];
     expectedModel: string;
     optionalTool: boolean;
+    frozenSkillExecution?: FrozenSkillExecutionBinding;
     toolContext?: ToolInvocationContext;
     onToolLeaseLost?: () => void;
   }): Promise<StepResult> {
@@ -3505,11 +3567,13 @@ export class LeaseExecutionEngine {
       if (
         !isRecord(reference)
         || typeof reference.resourceId !== 'string'
+        || typeof reference.resourceType !== 'string'
         || typeof reference.sourcePath !== 'string'
         || (reference.status !== 'approved' && reference.status !== 'draft')
         || typeof reference.contentHash !== 'string'
         || typeof reference.required !== 'boolean'
         || (reference.failurePolicy !== 'block' && reference.failurePolicy !== 'gap')
+        || (reference.queryId !== undefined && typeof reference.queryId !== 'string')
       ) {
         throw new ExecutionAuthenticityError('knowledge step contains a malformed frozen reference');
       }
@@ -3547,6 +3611,7 @@ export class LeaseExecutionEngine {
     resolvedInput: Record<string, unknown>;
     outputs: EngineSealedStepOutput[];
     expectedModel: string;
+    frozenSkillExecution?: FrozenSkillExecutionBinding;
   }): Promise<StepResult> {
     if (!this.dependencies.llm.identity.eligibleAsReal) {
       throw new ExecutionAuthenticityError('skill LLM provider is not eligible as real');
@@ -3563,8 +3628,10 @@ export class LeaseExecutionEngine {
         stepContract: stepContract(input.step),
         skillLoader: this.dependencies.skillLoader,
         validator: this.dependencies.validator,
+        frozenExecution: input.frozenSkillExecution,
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof SkillRuntimeDriftError) throw error;
       throw new LLMInvocationError('schema', false, null, 'skill input failed schema validation');
     }
     const { body, schemas, schemaHashes, context: skillContext, prompt, referenceHashes } = prepared;

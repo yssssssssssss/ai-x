@@ -125,7 +125,9 @@ test('skill-runner:使用 effective output schema 校验统一 Skill 输出', as
 
   const llm = {
     generateStructured: async () => ({
-      data: { version: 'skill-output-v2' },
+      data: {
+        version: 'skill-output-v2', status: 'succeeded', summary: 'done', limitations: [],
+      },
       tokens: { prompt: 10, completion: 20, total: 30 },
     }),
     generateText: async () => ({ text: '', tokens: { prompt: 0, completion: 0, total: 0 } }),
@@ -146,7 +148,10 @@ test('skill-runner:使用 effective output schema 校验统一 Skill 输出', as
   assert.equal(artifact.kind, 'skill_output');
   if (artifact.kind === 'skill_output') {
     assert.equal(artifact.manifestHash, 'skill-hash-1');
-    assert.deepEqual(artifact.output, { version: 'skill-output-v2' });
+    assert.deepEqual(artifact.output, {
+      version: 'skill-output-v2', status: 'succeeded', summary: 'done', limitations: [],
+    });
+    assert.equal(artifact.skillOutcome.status, 'succeeded');
     assert.equal(artifact.tokens?.total, 30);
   }
 });

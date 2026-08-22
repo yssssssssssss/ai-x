@@ -1629,6 +1629,37 @@ test('rejects any pre-existing gate on the active plan and invalidates newly sea
   }
 });
 
+test('confirmation rejects unresolved v2 clarification and post-plan answers', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const workflow = new TaskWorkflowService(repository);
+  const unresolved = await createCandidateTask(repository, 'unresolved-confirmation', {
+    structuredTask: currentTask({
+      clarification_questions: [{
+        key: 'competitors',
+        question: '竞品范围?',
+        rationale: '确认公开研究范围',
+      }],
+    }),
+  });
+  const selected = await workflow.select({
+    taskId: unresolved.task.id,
+    expectedVersion: unresolved.task.stateVersion,
+    idempotencyKey: 'unresolved-confirmation-select',
+    actor: { userId: ownerId, role: 'owner' },
+    planVersionId: unresolved.candidates[0]!.id,
+  });
+  await assert.rejects(() => workflow.confirm({
+    taskId: unresolved.task.id,
+    planVersionId: selected.planVersionId,
+    expectedVersion: selected.stateVersion,
+    idempotencyKey: 'unresolved-confirmation-confirm',
+    actor: { userId: ownerId, role: 'owner' },
+    confirmationAnswers: {},
+    inputValues: {},
+  }), (error: unknown) => error instanceof ControlPlaneConflictError
+    && /planning integrity/u.test(error.message));
+});
+
 test('confirmation, required input, role matrix, and plan revision gate ready state', async () => {
   const repository = new ControlPlaneRepository(scopedDatabase);
   const workflow = new TaskWorkflowService(repository, undefined, {
@@ -1641,11 +1672,7 @@ test('confirmation, required input, role matrix, and plan revision gate ready st
   });
   const created = await createCandidateTask(repository, 'workflow-gate', {
     structuredTask: currentTask({
-      clarification_questions: [{
-        key: 'competitors',
-        question: '竞品范围?',
-        rationale: '确认公开研究范围',
-      }],
+      clarification_questions: [],
       blocking_issues: [{ key: 'privacy', kind: 'privacy_compliance', reason: '敏感材料' }],
     }),
     plan: currentPlan('', 'workflow-gate', [currentStep({
@@ -1675,12 +1702,13 @@ test('confirmation, required input, role matrix, and plan revision gate ready st
       taskId: task.id,
       planVersionId: selection.planVersionId,
       expectedVersion: selection.stateVersion,
-      idempotencyKey: 'confirm-missing',
+      idempotencyKey: 'confirm-answer-not-allowed',
       actor: { userId: ownerId, role: 'owner' },
-      confirmationAnswers: {},
+      confirmationAnswers: { competitors: '头部三家' },
       inputValues: { brief: '研究简报' },
     }),
-    TaskWorkflowGateError,
+    (error: unknown) => error instanceof TaskWorkflowGateError
+      && error.unresolved.includes('confirmation:competitors'),
   );
   await assert.rejects(
     () => workflow.confirm({
@@ -1689,7 +1717,7 @@ test('confirmation, required input, role matrix, and plan revision gate ready st
       expectedVersion: selection.stateVersion,
       idempotencyKey: 'confirm-missing-input',
       actor: { userId: ownerId, role: 'owner' },
-      confirmationAnswers: { competitors: '头部三家' },
+      confirmationAnswers: {},
       inputValues: {},
     }),
     TaskWorkflowGateError,
@@ -1702,7 +1730,7 @@ test('confirmation, required input, role matrix, and plan revision gate ready st
       expectedVersion: selection.stateVersion,
       idempotencyKey: 'confirm-extra-answer',
       actor: { userId: ownerId, role: 'owner' },
-      confirmationAnswers: { competitors: '头部三家', geography: '海外市场' },
+      confirmationAnswers: { geography: '海外市场' },
       inputValues: { brief: '研究简报' },
     }),
     (error: unknown) => error instanceof TaskWorkflowGateError
@@ -1715,7 +1743,7 @@ test('confirmation, required input, role matrix, and plan revision gate ready st
     expectedVersion: selection.stateVersion,
     idempotencyKey: 'confirm-1',
     actor: { userId: ownerId, role: 'owner' },
-    confirmationAnswers: { competitors: '头部三家' },
+    confirmationAnswers: {},
     inputValues: { brief: '研究简报' },
   });
   assert.equal(confirmed.state, 'awaiting_approval');
@@ -1767,7 +1795,7 @@ test('confirmation, required input, role matrix, and plan revision gate ready st
     expectedVersion: revision.stateVersion,
     idempotencyKey: 'confirm-revised-plan',
     actor: { userId: ownerId, role: 'owner' },
-    confirmationAnswers: { competitors: '头部三家' },
+    confirmationAnswers: {},
     inputValues: {},
   });
   assert.equal(reconfirmed.state, 'awaiting_approval');

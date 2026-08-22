@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ResearchPlanPayload } from '../../../../packages/api-contract/research-deliverable.ts';
+import { getConfigRoot } from '../runtime/config-loader.ts';
 import type {
   ReportDocument,
   ReportProjectionListBlock,
@@ -32,7 +33,7 @@ export function requiredPayloadPointers(payloadSchema: unknown): string[] {
 
 export function researchPlanRequiredPointers(): string[] {
   const schema = JSON.parse(readFileSync(
-    join(process.cwd(), 'schemas/deliverables/research-plan.schema.json'),
+    join(getConfigRoot(), 'schemas/deliverables/research-plan.schema.json'),
     'utf8',
   )) as unknown;
   return requiredPayloadPointers(schema);

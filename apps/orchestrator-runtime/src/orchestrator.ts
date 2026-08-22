@@ -226,7 +226,7 @@ export class Orchestrator {
       taskId: input.taskId, conversationId: input.conversationId, researchGoal, ws, plan,
       graphHash: hashFile(CONFIG_PATHS.decisionGraph),
       uploads: input.uploads,
-      toolOutputs: [], reviewNotes: [], stepFailures: [], usedCapabilities: [], toolOutputRefs: [],
+      toolOutputs: [], reviewNotes: [], stepFailures: [], executionGaps: [], usedCapabilities: [], toolOutputRefs: [],
     };
     return this.runFrom(0, ctx);
   }
@@ -263,6 +263,7 @@ export class Orchestrator {
       // 从落盘重建已完成步的上下文(不重放前序步)
       toolOutputs: state.toolOutputRefs.map((r) => ({ toolId: r.toolId, output: ws.readToolOutput<unknown>(r.stepNo) })),
       reviewNotes: state.reviewNotes, stepFailures: state.stepFailures,
+      executionGaps: state.executionGaps ?? [],
       usedCapabilities: state.usedCapabilities, toolOutputRefs: state.toolOutputRefs,
     };
 
@@ -301,7 +302,8 @@ export class Orchestrator {
           failedStepNo: step.step_no, failedStepName: step.step_name,
           failedActorType: step.actor_type, failedActorId: step.actor_id,
           toolOutputRefs: ctx.toolOutputRefs, reviewNotes: ctx.reviewNotes,
-          stepFailures: ctx.stepFailures, usedCapabilities: ctx.usedCapabilities,
+          stepFailures: ctx.stepFailures, executionGaps: ctx.executionGaps,
+          usedCapabilities: ctx.usedCapabilities,
           uploads: ctx.uploads,
         };
         ctx.ws.writeRunState(runState);
@@ -356,6 +358,15 @@ export class Orchestrator {
         ctx.toolOutputs.push({ toolId: artifact.actorId, output: artifact.output });
         ctx.toolOutputRefs.push({ stepNo: step.step_no, toolId: artifact.actorId });
         ctx.usedCapabilities.push({ id: artifact.actorId, type: 'skill' });
+        if (artifact.skillOutcome.status === 'degraded') {
+          const reason = artifact.skillOutcome.limitations[0] ?? artifact.skillOutcome.summary;
+          (ctx.executionGaps ??= []).push({
+            key: `step:${step.step_no}:skill:${artifact.actorId}:degraded`,
+            stepNo: step.step_no,
+            actorId: artifact.actorId,
+            message: `Skill ${artifact.actorId} degraded: ${reason}`,
+          });
+        }
         return { outputRef: artifact.outputRef, tokens: artifact.tokens, manifestHashes: [artifact.manifestHash] };
       case 'llm_note':
         ctx.toolOutputs.push({ toolId: artifact.actorId, output: artifact.output });
@@ -377,11 +388,16 @@ export class Orchestrator {
       throw new AllStepsFailedError(ctx.stepFailures);
     }
 
-    const gapNote =
-      ctx.stepFailures.length > 0
-        ? `\n以下步骤失败或被跳过,其覆盖维度数据缺失,必须在 risks_and_open_issues 中如实说明缺口,不得假装有数据:` +
-          ctx.stepFailures.map((f) => `[step ${f.stepNo} ${f.actorType}:${f.actorId} — ${f.message}]`).join('; ')
-        : '';
+    const gapMessages = [
+      ...ctx.stepFailures.map((failure) => (
+        `step ${failure.stepNo} ${failure.actorType}:${failure.actorId} — ${failure.message}`
+      )),
+      ...(ctx.executionGaps ?? []).map((gap) => gap.message),
+    ];
+    const gapNote = gapMessages.length > 0
+      ? `\n以下执行缺口必须在 risks_and_open_issues 中如实说明，不得假装有数据:`
+        + gapMessages.map((message) => `[${message}]`).join('; ')
+      : '';
     const reviewNote =
       ctx.reviewNotes.length > 0
         ? `\n以下为质量复核意见,未解决项写入 risks_and_open_issues:` + ctx.reviewNotes.map((r, i) => `[复核${i + 1}] ${r}`).join('; ')
@@ -432,7 +448,7 @@ export class Orchestrator {
       sourceRefs: ctx.usedCapabilities,
     });
 
-    const gapCount = ctx.stepFailures.length;
+    const gapCount = ctx.stepFailures.length + (ctx.executionGaps?.length ?? 0);
     const status: ExecuteResult['status'] = gapCount > 0 ? 'completed_with_gaps' : 'completed';
     await checkpointStore.updateTaskStatus(ctx.taskId, status);
     return { status, reportArtifactId: artifact.id, gapCount };
@@ -459,7 +475,7 @@ export class Orchestrator {
 
 // 执行累积上下文与 StepFailure:契约见 runners/actor-runner.ts,orchestrator 在此
 // 落 run_state / commit artifact 时消费,不额外再声明。
-import type { ExecCtx, StepFailure } from './runners/actor-runner.ts';
+import type { ExecCtx, StepFailure, StepGap } from './runners/actor-runner.ts';
 
 // run_state.json:停在失败步时落盘的断点,resume 据此重建上下文并从下一步续跑。
 interface RunState {
@@ -470,6 +486,7 @@ interface RunState {
   toolOutputRefs: Array<{ stepNo: number; toolId: string }>;
   reviewNotes: string[];
   stepFailures: StepFailure[];
+  executionGaps?: StepGap[];
   usedCapabilities: Array<{ id: string; type: string }>;
   uploads?: Array<{ role: string; dataUrl: string }>;
 }

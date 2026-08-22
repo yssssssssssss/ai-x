@@ -53,6 +53,7 @@ interface BlockingIssue {
 }
 
 interface WorkflowTaskShape {
+  version?: string;
   clarification_questions?: ConfirmationRequirement[];
   blocking_issues?: BlockingIssue[];
 }
@@ -146,11 +147,13 @@ function leaseTokenHash(token: string): string {
 
 function taskShape(task: ControlTaskDetail): WorkflowTaskShape {
   if (!isRecord(task.structuredTask)) throw new TaskWorkflowGateError(['structured_task']);
+  const version = task.structuredTask.version;
   const clarificationQuestions = task.structuredTask.clarification_questions;
   const blockingIssues = task.structuredTask.blocking_issues;
   if (clarificationQuestions !== undefined && !Array.isArray(clarificationQuestions)) throw new TaskWorkflowGateError(['structured_task.clarification_questions']);
   if (blockingIssues !== undefined && !Array.isArray(blockingIssues)) throw new TaskWorkflowGateError(['structured_task.blocking_issues']);
   return {
+    ...(typeof version === 'string' ? { version } : {}),
     clarification_questions: clarificationQuestions?.map((item) => {
       if (!isRecord(item) || typeof item.key !== 'string' || !item.key) throw new TaskWorkflowGateError(['structured_task.clarification_questions']);
       return { key: item.key, question: typeof item.question === 'string' ? item.question : undefined };
@@ -505,11 +508,21 @@ export class TaskWorkflowService {
       if (completed) return completed;
       throw new ControlPlaneConflictError(`task ${task.id} is not awaiting confirmation at version ${input.expectedVersion}`);
     }
-    const clarificationQuestions = taskShape(task).clarification_questions ?? [];
-    const confirmationKeys = new Set(clarificationQuestions.map((requirement) => requirement.key));
-    const missingAnswers = clarificationQuestions
-      .map((requirement) => requirement.key)
-      .filter((key) => !(key in input.confirmationAnswers));
+    const taskData = taskShape(task);
+    const clarificationQuestions = taskData.clarification_questions ?? [];
+    if (taskData.version === 'research-task-v2' && clarificationQuestions.length > 0) {
+      throw new ControlPlaneConflictError(
+        'planning integrity violation: ResearchTaskV2 clarification_questions must be resolved before confirmation',
+      );
+    }
+    const confirmationKeys = taskData.version === 'research-task-v2'
+      ? new Set<string>()
+      : new Set(clarificationQuestions.map((requirement) => requirement.key));
+    const missingAnswers = taskData.version === 'research-task-v2'
+      ? []
+      : clarificationQuestions
+          .map((requirement) => requirement.key)
+          .filter((key) => !(key in input.confirmationAnswers));
     const extraAnswers = Object.keys(input.confirmationAnswers)
       .filter((key) => !confirmationKeys.has(key));
     const pendingInputs = pendingInputRequirements(plan);

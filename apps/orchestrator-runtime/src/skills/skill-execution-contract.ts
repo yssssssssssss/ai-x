@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { readFileSync, lstatSync, realpathSync, statSync } from 'node:fs';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { SchemaValidator } from '../schema/validator.ts';
 import { getConfigRoot } from '../runtime/config-loader.ts';
@@ -29,6 +29,7 @@ export interface SkillExecutionStage {
   actor_id: string;
   depends_on: string[];
   input: Record<string, unknown>;
+  frozen_input_fields?: string[];
   input_bindings: SkillExecutionStageBinding[];
   expected_outputs: Array<{ pointer: string; description: string }>;
   acceptance_criteria: string[];
@@ -65,13 +66,34 @@ export interface LoadedSkillExecutionContract {
 }
 
 function contractPath(relativePath: string): string {
-  if (isAbsolute(relativePath)) throw new Error('Skill execution contract path must be relative');
+  if (
+    !relativePath
+    || isAbsolute(relativePath)
+    || relativePath.includes('\\')
+    || relativePath.split('/').some((segment) => segment === '' || segment === '.' || segment === '..')
+  ) throw new Error('Skill execution contract path must be a normalized relative path');
   const root = resolve(getConfigRoot());
+  const rootReal = realpathSync(root);
   const full = resolve(root, relativePath);
-  if (relative(root, full).startsWith('..')) {
+  const lexicalRelative = relative(root, full);
+  if (lexicalRelative === '..' || lexicalRelative.startsWith(`..${sep}`)) {
     throw new Error('Skill execution contract path escapes the configuration root');
   }
-  return full;
+  let cursor = root;
+  for (const segment of relativePath.split('/')) {
+    cursor = resolve(cursor, segment);
+    const metadata = lstatSync(cursor);
+    if (metadata.isSymbolicLink()) {
+      throw new Error('Skill execution contract path contains a symbolic link');
+    }
+  }
+  const physical = realpathSync(full);
+  const physicalRelative = relative(rootReal, physical);
+  if (physicalRelative === '..' || physicalRelative.startsWith(`..${sep}`)) {
+    throw new Error('Skill execution contract path physically escapes the configuration root');
+  }
+  if (!statSync(physical).isFile()) throw new Error('Skill execution contract path is not a regular file');
+  return physical;
 }
 
 function validateGraph(contract: SkillExecutionContract): void {
@@ -83,6 +105,14 @@ function validateGraph(contract: SkillExecutionContract): void {
   const stages = new Map<string, SkillExecutionStage>();
   for (const stage of contract.stages) {
     if (stages.has(stage.stage_id)) throw new Error(`duplicate Skill stage ${stage.stage_id}`);
+    if ((stage.frozen_input_fields?.length ?? 0) > 0 && stage.actor_type !== 'tool') {
+      throw new Error(`Skill stage ${stage.stage_id} may declare frozen_input_fields only for Tool input`);
+    }
+    for (const field of stage.frozen_input_fields ?? []) {
+      if (!Object.hasOwn(stage.input, field)) {
+        throw new Error(`Skill stage ${stage.stage_id} frozen input field ${field} is not declared in input`);
+      }
+    }
     stages.set(stage.stage_id, stage);
   }
   if (!stages.has(contract.output_stage_id)) {

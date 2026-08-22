@@ -9,11 +9,13 @@ import { SchemaValidator } from '../schema/validator.ts';
 
 export interface FrozenKnowledgeReference {
   resourceId: string;
+  resourceType: string;
   sourcePath: string;
   status: 'approved' | 'draft';
   contentHash: string;
   required: boolean;
   failurePolicy: 'block' | 'gap';
+  queryId?: string;
 }
 
 export interface KnowledgeBundle {
@@ -38,7 +40,7 @@ export interface KnowledgeResolutionGap {
   message: string;
 }
 
-export type KnowledgeUnavailableCode = 'missing' | 'status_drift' | 'path_drift' | 'content_drift';
+export type KnowledgeUnavailableCode = 'missing' | 'status_drift' | 'type_drift' | 'path_drift' | 'content_drift';
 
 export class RequiredKnowledgeUnavailableError extends Error {
   constructor(
@@ -108,6 +110,10 @@ export class KnowledgeBundleResolver {
         continue;
       }
       const status = runtimeStatus(item.status);
+      if (item.type !== reference.resourceType) {
+        gaps.push(unavailable(reference, 'type_drift', `type drifted from ${reference.resourceType} to ${item.type}`).gap);
+        continue;
+      }
       if (!status || status !== reference.status) {
         gaps.push(unavailable(reference, 'status_drift', `status drifted from ${reference.status} to ${item.status}`).gap);
         continue;

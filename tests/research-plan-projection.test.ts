@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
+import { getConfigRoot, setConfigRoot } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 import type { ResearchPlanPayload } from '../packages/api-contract/research-deliverable.ts';
 import type { ReportDocument } from '../apps/orchestrator-runtime/src/report/report-document-composer.ts';
 import {
@@ -109,4 +113,20 @@ test('v2 projection integrity rejects source identity, block provenance, and pay
     deliverableArtifactId: 'deliverable-1',
     payload: source,
   }), /pointer does not exist/u);
+});
+
+test('research plan required pointers resolve from the configured root', () => {
+  const originalRoot = getConfigRoot();
+  const root = mkdtempSync(join(tmpdir(), 'report-schema-root-'));
+  mkdirSync(join(root, 'schemas/deliverables'), { recursive: true });
+  writeFileSync(join(root, 'schemas/deliverables/research-plan.schema.json'), JSON.stringify({
+    type: 'object',
+    required: ['configuredField'],
+  }), 'utf8');
+  setConfigRoot(root);
+  try {
+    assert.deepEqual(researchPlanRequiredPointers(), ['/configuredField']);
+  } finally {
+    setConfigRoot(originalRoot);
+  }
 });

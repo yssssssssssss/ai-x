@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { readFileSync, lstatSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { getConfigRoot, hashFile, type SkillRegistryEntry } from '../runtime/config-loader.ts';
 import type { SkillLoader, LoadedSkillSchemas } from '../runtime/skill-loader.ts';
+import type { LoadedSkillExecutionContract } from './skill-execution-contract.ts';
 import type { SchemaValidator } from '../schema/validator.ts';
 
 export const SKILL_EXECUTION_PROMPT_PREFIX = 'Execute this Skill workflow using only supplied verified inputs.';
@@ -28,16 +30,32 @@ export interface SkillReferenceDocument {
   hash: string;
 }
 
+export class SkillRuntimeDriftError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SkillRuntimeDriftError';
+  }
+}
+
+export interface FrozenSkillExecutionBinding {
+  contractHash: string;
+  referenceHashes: Array<{ path: string; hash: string }>;
+  degradedPolicy: 'gap' | 'block';
+}
+
 export function loadSkillReferenceDocuments(input: {
   skillId: string;
   skillLoader: SkillLoader;
+  execution?: LoadedSkillExecutionContract | null;
 }): SkillReferenceDocument[] {
   const contractLoader = input.skillLoader as SkillLoader & {
     loadSkillExecution?: (id: string) => ReturnType<SkillLoader['loadSkillExecution']>;
   };
-  const execution = typeof contractLoader.loadSkillExecution === 'function'
-    ? contractLoader.loadSkillExecution(input.skillId)
-    : null;
+  const execution = input.execution !== undefined
+    ? input.execution
+    : typeof contractLoader.loadSkillExecution === 'function'
+      ? contractLoader.loadSkillExecution(input.skillId)
+      : null;
   if (!execution) return [];
   const body = input.skillLoader.loadSkillBody(input.skillId);
   const skillRoot = realpathSync(dirname(resolve(getConfigRoot(), body.path)));
@@ -74,6 +92,7 @@ export function prepareSkillExecution(input: {
   skillLoader: SkillLoader;
   validator: SchemaValidator;
   captureSchemaHashes?: boolean;
+  frozenExecution?: FrozenSkillExecutionBinding;
 }): PreparedSkillExecution {
   const skill = input.skillLoader.getSkill(input.skillId);
   if (!skill) throw new Error(`skill ${input.skillId} is not active`);
@@ -93,7 +112,25 @@ export function prepareSkillExecution(input: {
   const execution = typeof contractLoader.loadSkillExecution === 'function'
     ? contractLoader.loadSkillExecution(input.skillId)
     : null;
-  const references = loadSkillReferenceDocuments({ skillId: input.skillId, skillLoader: input.skillLoader });
+  if (input.frozenExecution) {
+    if (!execution || execution.hash !== input.frozenExecution.contractHash) {
+      throw new SkillRuntimeDriftError(`Skill ${input.skillId} contract hash drift before invocation`);
+    }
+    if (execution.contract.degraded_policy !== input.frozenExecution.degradedPolicy) {
+      throw new SkillRuntimeDriftError(`Skill ${input.skillId} degraded policy drift before invocation`);
+    }
+  }
+  const references = loadSkillReferenceDocuments({
+    skillId: input.skillId,
+    skillLoader: input.skillLoader,
+    execution,
+  });
+  if (input.frozenExecution) {
+    const referenceHashes = references.map(({ path, hash }) => ({ path, hash }));
+    if (!isDeepStrictEqual(referenceHashes, input.frozenExecution.referenceHashes)) {
+      throw new SkillRuntimeDriftError(`Skill ${input.skillId} reference hash drift before invocation`);
+    }
+  }
   const referenceText = references.length === 0
     ? ''
     : `\n\nVerified Skill references:\n${references.map(({ path, content }) => `--- ${path} ---\n${content}`).join('\n\n')}`;

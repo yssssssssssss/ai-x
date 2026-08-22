@@ -1,6 +1,6 @@
 # Skill 可执行化、知识调用与报告保真开发文档
 
-> 状态：Phase 1–5 实现完成；自动化质量门禁与浏览器验收通过；等待独立审查和远端交付授权。
+> 状态：Phase 1–5 与两轮独立审查整改已完成；自动化质量门禁和 Web build 通过；等待独立 reviewer 最终确认与远端交付授权。
 >
 > 架构决策：`docs/adr/0003-compile-skills-into-frozen-execution-dag.md`
 >
@@ -224,12 +224,12 @@ Skill 自身引用：
 
 动态选择资源：
 
-- 最多 2 篇场景打法。
+- 1–2 篇场景打法。
 - 2–3 篇采集方法。
 - 3–5 篇分析方法。
-- 最多 1 个理论模型。
+- 0–1 个理论模型。
 
-动态选择在规划阶段完成，并将最终资源 ID 和 hash 冻结进计划；执行阶段不得重新换一批知识。
+动态选择在规划阶段完成，并将最终资源 ID 和 hash 冻结进计划；查询通过 `min_items`/`max_items` 明确基数。低于最小值时按合同在确认前阻断，或写入可见 `resource_gaps`；运行时将该缺口传播为 Execution Gap 与 `completed_with_gaps`。
 
 ### 8.3 阶段声明
 
@@ -242,6 +242,7 @@ actor_type
 actor_id
 depends_on
 input
+frozen_input_fields（仅 Tool，可声明允许在规划阶段覆盖并随 Plan 冻结的字段）
 input_bindings
 expected_outputs
 acceptance_criteria
@@ -277,6 +278,7 @@ skill_id
 execution_mode
 contract_version
 contract_hash
+degraded_policy
 skill_reference_hashes
 knowledge_references
 resource_gaps
@@ -301,7 +303,7 @@ knowledge
 - 没有 `execution_contract_version` 的计划按 v1 处理。
 - v2 中每个 `skill_invocation.step_nos` 必须唯一且存在。
 - 每个关联步骤必须拥有相同 invocation ID 和合同 hash。
-- Skill 合同依赖必须与最终 step `depends_on` 完全一致。
+- Skill 合同依赖、input bindings、静态 input、acceptance 和 output 必须与最终步骤逐项一致；仅 Tool stage 可通过合同 `frozen_input_fields` 声明规划期动态值，这些值随 Plan 冻结。
 - Tool 必须来自该 Skill 的 required/optional tool 声明。
 - Contract 中未声明的步骤不得挂到该 Skill Invocation 下。
 - 卡片读取 `skill_invocations` 分组展示；无该字段时沿用旧视图。
@@ -447,9 +449,8 @@ evidenceClass: knowledge
 
 ### 13.4 Runner 收敛
 
-- `LeaseExecutionEngine.runSkill()` 使用统一 Module。
-- `SkillActorRunner` 改为同一 Module 的 Adapter，或在确认无生产调用后删除。
-- 不保留两套独立的 Skill 状态、Schema 和 Prompt 逻辑。
+- `SkillActorRunner` 与 `LeaseExecutionEngine.runSkill()` 共用 Skill preparation 与 status/policy 解析；两条路径都把 `degraded` 传播为可见 Gap 和 `completed_with_gaps`。
+- 不保留两套独立的 Skill 状态与 `degraded_policy` 判断。
 
 ## 14. Requirement 最终化
 
@@ -476,7 +477,7 @@ Stage2 只允许：
 - Plan 自身声明的审批项。
 - `pending_inputs` 明确绑定的文本、数据或视觉输入。
 
-不再 fallback 到 `ResearchTaskV2.clarification_questions`。
+Stage2 不再 fallback 到 `ResearchTaskV2.clarification_questions`；后端确认入口同样拒绝仍含 clarification questions 的 v2 Requirement，并在没有独立 Plan confirmation contract 时要求 `confirmationAnswers` 为空。
 
 ### 14.3 范围变化
 
@@ -518,7 +519,7 @@ SKILL · generate-research-plan · 7 stages
 - Skill 内部阶段按 `skill_invocation_id` 分组。
 - Knowledge 使用独立视觉标签。
 - degraded 使用 warning tone。
-- Tooltip 显示 contract hash、stage ID 和 Artifact。
+- Tooltip 显示执行节点及其依赖；Skill invocation/stage 身份以冻结 Plan 为真相源，并通过 `planVersionId + stepNo` 关联执行记录和 Artifact。
 - 系统追加的 Deliverable、Review、Report Composer 节点明确标为系统后处理，不混入用户确认的 Skill DAG。
 
 ### 15.3 历史计划

@@ -73,6 +73,7 @@ export function selectFrozenKnowledgeReferences(contract: SkillExecutionContract
     }
     return {
       resourceId: item.id,
+      resourceType: item.type,
       sourcePath: item.source_path,
       status: item.status,
       contentHash: item.content_hash,
@@ -115,6 +116,7 @@ export function selectFrozenKnowledgeReferences(contract: SkillExecutionContract
       seen.add(item.id);
       references.push({
         resourceId: item.id,
+        resourceType: item.type,
         sourcePath: item.source_path,
         status: item.status as 'approved' | 'draft',
         contentHash: item.content_hash,
@@ -127,20 +129,31 @@ export function selectFrozenKnowledgeReferences(contract: SkillExecutionContract
   return { references, resourceGaps };
 }
 
+function compiledStageInput(
+  stage: SkillExecutionStage,
+  originalInput: Record<string, unknown>,
+  expansion: Expansion,
+): Record<string, unknown> {
+  const dynamicToolInput = stage.actor_type === 'tool'
+    ? Object.fromEntries((stage.frozen_input_fields ?? []).flatMap((field) => (
+        Object.hasOwn(originalInput, field) ? [[field, structuredClone(originalInput[field])]] : []
+      )))
+    : {};
+  return {
+    ...structuredClone(stage.input),
+    ...dynamicToolInput,
+    ...(stage.actor_type === 'knowledge'
+      ? { references: structuredClone(expansion.references), contractHash: expansion.contractHash }
+      : {}),
+  };
+}
+
 function stageStep(
   stage: SkillExecutionStage,
   original: CurrentPlanStep,
   expansion: Expansion,
 ): CurrentPlanStep {
-  const input = {
-    ...structuredClone(stage.input),
-    ...(stage.actor_type === 'knowledge'
-      ? { references: structuredClone(expansion.references), contractHash: expansion.contractHash }
-      : {}),
-    ...(stage.stage_id === expansion.contract.output_stage_id
-      ? structuredClone(original.input)
-      : {}),
-  };
+  const input = compiledStageInput(stage, original.input, expansion);
   return {
     step_no: 0,
     step_name: stage.title,
@@ -199,6 +212,70 @@ function planDrift(message: string): never {
   throw new CompiledSkillPlanDriftError(message);
 }
 
+export function assertFrozenKnowledgeQueryMembership(
+  contract: SkillExecutionContract,
+  invocation: Pick<CurrentSkillInvocation, 'invocation_id' | 'knowledge_references' | 'resource_gaps'>,
+): void {
+  const knowledgeIndex = new Map(loadRuntimeKnowledgeIndex().map((item) => [item.id, item]));
+  const staticResourceIds = new Set(contract.resources.map(({ resource_id }) => resource_id));
+  if (new Set(invocation.knowledge_references.map(({ resourceId }) => resourceId)).size !== invocation.knowledge_references.length) {
+    planDrift(`Skill invocation ${invocation.invocation_id} has duplicate Knowledge resources`);
+  }
+  for (const resource of contract.resources) {
+    const reference = invocation.knowledge_references.find(({ resourceId }) => resourceId === resource.resource_id);
+    if (
+      !reference
+      || reference.queryId !== undefined
+      || reference.required !== resource.required
+      || reference.failurePolicy !== resource.failure_policy
+      || !resource.accepted_statuses.includes(reference.status)
+    ) planDrift(`Skill invocation ${invocation.invocation_id} Knowledge resource drift at ${resource.resource_id}`);
+  }
+  for (const reference of invocation.knowledge_references) {
+    if (staticResourceIds.has(reference.resourceId)) continue;
+    const query = reference.queryId
+      ? (contract.resource_queries ?? []).find(({ query_id }) => query_id === reference.queryId)
+      : undefined;
+    const item = knowledgeIndex.get(reference.resourceId);
+    if (
+      !query
+      || reference.required
+      || reference.failurePolicy !== query.failure_policy
+      || !query.accepted_statuses.includes(reference.status)
+      || !query.types.includes(reference.resourceType)
+      || (item !== undefined && (
+        item.type !== reference.resourceType
+        || !query.accepted_statuses.includes(item.status as 'approved' | 'draft')
+      ))
+    ) {
+      planDrift(`Skill invocation ${invocation.invocation_id} has invalid query membership for Knowledge ${reference.resourceId}`);
+    }
+  }
+  for (const query of contract.resource_queries ?? []) {
+    const selectedCount = invocation.knowledge_references.filter(({ queryId }) => queryId === query.query_id).length;
+    if (selectedCount > query.max_items) {
+      planDrift(`Skill invocation ${invocation.invocation_id} exceeds ${query.query_id} max_items`);
+    }
+    const gap = invocation.resource_gaps.find(({ query_id }) => query_id === query.query_id);
+    if (selectedCount < query.min_items) {
+      if (query.failure_policy === 'block' || !gap || gap.selected_items !== selectedCount) {
+        planDrift(`Skill invocation ${invocation.invocation_id} violates ${query.query_id} min_items`);
+      }
+    } else if (gap) {
+      planDrift(`Skill invocation ${invocation.invocation_id} has stale resource gap ${query.query_id}`);
+    }
+  }
+  for (const gap of invocation.resource_gaps) {
+    const query = (contract.resource_queries ?? []).find(({ query_id }) => query_id === gap.query_id);
+    if (
+      !query
+      || query.failure_policy !== 'gap'
+      || query.min_items !== gap.min_items
+      || gap.selected_items >= gap.min_items
+    ) planDrift(`Skill invocation ${invocation.invocation_id} has invalid resource gap ${gap.query_id}`);
+  }
+}
+
 export function assertCompiledSkillPlan(
   plan: CurrentExecutionPlan,
   skillLoader = new SkillLoader(),
@@ -213,7 +290,6 @@ export function assertCompiledSkillPlan(
     planDrift('CurrentExecutionPlan v2 requires Skill invocations');
   }
   const stepsByInvocation = new Map<string, CurrentPlanStep[]>();
-  const stepByNo = new Map(plan.steps.map((step) => [step.step_no, step]));
   for (const step of plan.steps) {
     if (!step.skill_invocation_id && !step.skill_stage_id) continue;
     if (!step.skill_invocation_id || !step.skill_stage_id) planDrift(`step ${step.step_no} has partial Skill metadata`);
@@ -235,59 +311,18 @@ export function assertCompiledSkillPlan(
     if (!loaded || loaded.hash !== invocation.contract_hash) {
       planDrift(`Skill invocation ${invocation.invocation_id} contract hash drift`);
     }
+    if (loaded.contract.degraded_policy !== invocation.degraded_policy) {
+      planDrift(`Skill invocation ${invocation.invocation_id} degraded policy drift`);
+    }
     const currentReferenceHashes = loadSkillReferenceDocuments({
       skillId: invocation.skill_id,
       skillLoader,
+      execution: loaded,
     }).map(({ path, hash }) => ({ path, hash }));
     if (!isDeepStrictEqual(currentReferenceHashes, invocation.skill_reference_hashes)) {
       planDrift(`Skill invocation ${invocation.invocation_id} reference hash drift`);
     }
-    const staticResourceIds = new Set(loaded.contract.resources.map(({ resource_id }) => resource_id));
-    if (new Set(invocation.knowledge_references.map(({ resourceId }) => resourceId)).size !== invocation.knowledge_references.length) {
-      planDrift(`Skill invocation ${invocation.invocation_id} has duplicate Knowledge resources`);
-    }
-    for (const resource of loaded.contract.resources) {
-      const reference = invocation.knowledge_references.find(({ resourceId }) => resourceId === resource.resource_id);
-      if (
-        !reference
-        || reference.queryId !== undefined
-        || reference.required !== resource.required
-        || reference.failurePolicy !== resource.failure_policy
-        || !resource.accepted_statuses.includes(reference.status)
-      ) planDrift(`Skill invocation ${invocation.invocation_id} Knowledge resource drift at ${resource.resource_id}`);
-    }
-    for (const reference of invocation.knowledge_references) {
-      if (staticResourceIds.has(reference.resourceId)) continue;
-      const query = reference.queryId
-        ? (loaded.contract.resource_queries ?? []).find(({ query_id }) => query_id === reference.queryId)
-        : undefined;
-      if (!query || reference.required || reference.failurePolicy !== query.failure_policy) {
-        planDrift(`Skill invocation ${invocation.invocation_id} has undeclared Knowledge ${reference.resourceId}`);
-      }
-    }
-    for (const query of loaded.contract.resource_queries ?? []) {
-      const selectedCount = invocation.knowledge_references.filter(({ queryId }) => queryId === query.query_id).length;
-      if (selectedCount > query.max_items) {
-        planDrift(`Skill invocation ${invocation.invocation_id} exceeds ${query.query_id} max_items`);
-      }
-      const gap = invocation.resource_gaps.find(({ query_id }) => query_id === query.query_id);
-      if (selectedCount < query.min_items) {
-        if (query.failure_policy === 'block' || !gap || gap.selected_items !== selectedCount) {
-          planDrift(`Skill invocation ${invocation.invocation_id} violates ${query.query_id} min_items`);
-        }
-      } else if (gap) {
-        planDrift(`Skill invocation ${invocation.invocation_id} has stale resource gap ${query.query_id}`);
-      }
-    }
-    for (const gap of invocation.resource_gaps) {
-      const query = (loaded.contract.resource_queries ?? []).find(({ query_id }) => query_id === gap.query_id);
-      if (
-        !query
-        || query.failure_policy !== 'gap'
-        || query.min_items !== gap.min_items
-        || gap.selected_items >= gap.min_items
-      ) planDrift(`Skill invocation ${invocation.invocation_id} has invalid resource gap ${gap.query_id}`);
-    }
+    assertFrozenKnowledgeQueryMembership(loaded.contract, invocation);
     const invocationSteps = (stepsByInvocation.get(invocation.invocation_id) ?? [])
       .sort((left, right) => left.step_no - right.step_no);
     if (!isDeepStrictEqual(invocationSteps.map(({ step_no }) => step_no), invocation.step_nos)) {
@@ -310,14 +345,38 @@ export function assertCompiledSkillPlan(
       if (!step || step.actor_type !== contractStage.actor_type || step.actor_id !== contractStage.actor_id) {
         planDrift(`Skill invocation ${invocation.invocation_id} stage actor drift at ${contractStage.stage_id}`);
       }
-      const actualInternalDependencies = step.depends_on
-        .map((stepNo) => stepByNo.get(stepNo))
-        .filter((dependency): dependency is CurrentPlanStep => dependency?.skill_invocation_id === invocation.invocation_id)
-        .map((dependency) => dependency.skill_stage_id!)
-        .sort();
-      const expectedInternalDependencies = [...contractStage.depends_on].sort();
-      if (!isDeepStrictEqual(actualInternalDependencies, expectedInternalDependencies)) {
+      const expectedDependencies = contractStage.depends_on
+        .map((stageId) => stageById.get(stageId)?.step_no)
+        .filter((stepNo): stepNo is number => stepNo !== undefined)
+        .sort((left, right) => left - right);
+      if (!isDeepStrictEqual([...step.depends_on].sort((left, right) => left - right), expectedDependencies)) {
         planDrift(`Skill invocation ${invocation.invocation_id} dependency drift at ${contractStage.stage_id}`);
+      }
+      const expectedBindings = contractStage.input_bindings.map((binding) => ({
+        target_pointer: binding.target_pointer,
+        source_step_no: stageById.get(binding.source_stage_id)?.step_no,
+        source_pointer: binding.source_pointer,
+      }));
+      if (
+        expectedBindings.some(({ source_step_no }) => source_step_no === undefined)
+        || !isDeepStrictEqual(step.input_bindings, expectedBindings)
+      ) planDrift(`Skill invocation ${invocation.invocation_id} input binding drift at ${contractStage.stage_id}`);
+      const expectedInput = compiledStageInput(contractStage, step.input, {
+        oldSkillStepNo: 0,
+        invocationId: invocation.invocation_id,
+        contract: loaded.contract,
+        contractHash: invocation.contract_hash,
+        stageKey: new Map(),
+        reusedOldStepByStage: new Map(),
+        references: invocation.knowledge_references,
+        skillReferenceHashes: invocation.skill_reference_hashes,
+        resourceGaps: invocation.resource_gaps,
+      });
+      if (!isDeepStrictEqual(step.input, expectedInput)) {
+        planDrift(`Skill invocation ${invocation.invocation_id} input drift at ${contractStage.stage_id}`);
+      }
+      if (!isDeepStrictEqual(step.acceptance_criteria, contractStage.acceptance_criteria)) {
+        planDrift(`Skill invocation ${invocation.invocation_id} acceptance drift at ${contractStage.stage_id}`);
       }
       if (!isDeepStrictEqual(step.expected_outputs, contractStage.expected_outputs)) {
         planDrift(`Skill invocation ${invocation.invocation_id} output drift at ${contractStage.stage_id}`);
@@ -408,9 +467,6 @@ export function compileSkillSteps(
         if (expansion.reusedOldStepByStage.has(stage.stage_id)) continue;
         const step = stageStep(stage, original, expansion);
         const dependencyKeys = stage.depends_on.map((id) => expansion.stageKey.get(id)!);
-        if (stage.stage_id === expansion.contract.output_stage_id) {
-          dependencyKeys.push(...original.depends_on.map((stepNo) => `old:${stepNo}`));
-        }
         const bindingSources = stage.input_bindings.map((binding) => ({
           binding: {
             target_pointer: binding.target_pointer,
@@ -419,12 +475,6 @@ export function compileSkillSteps(
           },
           sourceKey: expansion.stageKey.get(binding.source_stage_id)!,
         }));
-        if (stage.stage_id === expansion.contract.output_stage_id) {
-          bindingSources.push(...original.input_bindings.map((binding) => ({
-            binding: { ...binding, source_step_no: 0 },
-            sourceKey: `old:${binding.source_step_no}`,
-          })));
-        }
         drafts.push({
           key: expansion.stageKey.get(stage.stage_id)!,
           stage,
@@ -458,22 +508,16 @@ export function compileSkillSteps(
       step.step_name = reused.stage.title;
       step.expected_outputs = structuredClone(reused.stage.expected_outputs);
       step.acceptance_criteria = structuredClone(reused.stage.acceptance_criteria);
-      step.input = { ...structuredClone(reused.stage.input), ...step.input };
-      dependencyKeys = [...new Set([
-        ...dependencyKeys,
-        ...reused.stage.depends_on.map((stageId) => reused.expansion.stageKey.get(stageId)!),
-      ])];
-      bindingSources = [
-        ...bindingSources,
-        ...reused.stage.input_bindings.map((binding) => ({
-          binding: {
-            target_pointer: binding.target_pointer,
-            source_step_no: 0,
-            source_pointer: binding.source_pointer,
-          },
-          sourceKey: reused.expansion.stageKey.get(binding.source_stage_id)!,
-        })),
-      ];
+      step.input = compiledStageInput(reused.stage, original.input, reused.expansion);
+      dependencyKeys = reused.stage.depends_on.map((stageId) => reused.expansion.stageKey.get(stageId)!);
+      bindingSources = reused.stage.input_bindings.map((binding) => ({
+        binding: {
+          target_pointer: binding.target_pointer,
+          source_step_no: 0,
+          source_pointer: binding.source_pointer,
+        },
+        sourceKey: reused.expansion.stageKey.get(binding.source_stage_id)!,
+      }));
     }
     drafts.push({
       key: `old:${original.step_no}`,
@@ -507,6 +551,7 @@ export function compileSkillSteps(
     execution_mode: 'compiled',
     contract_version: expansion.contract.version,
     contract_hash: expansion.contractHash,
+    degraded_policy: expansion.contract.degraded_policy,
     skill_reference_hashes: structuredClone(expansion.skillReferenceHashes),
     knowledge_references: structuredClone(expansion.references),
     resource_gaps: structuredClone(expansion.resourceGaps),

@@ -77,7 +77,9 @@ stages:
       topic: general
       max_results: 6
       search_depth: basic
+      time_range: year
       include_answer: false
+    frozen_input_fields: [query, topic, max_results, search_depth, time_range, include_answer]
     input_bindings: []
     expected_outputs:
       - pointer: /results

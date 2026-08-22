@@ -43,7 +43,8 @@ export class SkillActorRunner implements ActorRunner {
     });
 
     this.validator.validateSchemaOrThrow(prepared.schemas.output, skillGen.data, `skill:${step.actor_id}`);
-    evaluateSkillOutputStatus(skillGen.data, prepared.degradedPolicy);
+    const skillOutcome = evaluateSkillOutputStatus(skillGen.data, prepared.degradedPolicy);
+    if (!skillOutcome) throw new Error(`skill ${step.actor_id} did not return skill-output-v2 status`);
 
     const outputRef = ctx.ws.writeToolOutput(step.step_no, skillGen.data);
 
@@ -53,6 +54,7 @@ export class SkillActorRunner implements ActorRunner {
       output: skillGen.data,
       outputRef,
       manifestHash: prepared.body.hash,
+      skillOutcome,
       tokens: skillGen.tokens,
     };
   }

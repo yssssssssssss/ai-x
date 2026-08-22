@@ -41,6 +41,8 @@ SkillPlanCompiler 只负责编译；LeaseExecutionEngine、ExecutionScheduler、
 
 ### 4. Knowledge 通过逻辑 ID 和不可变 Artifact 使用
 
+Skill Execution Contract 的路径必须通过配置根下的词法与物理 realpath containment；任何 symlink 路径组件或非普通文件都被拒绝。合同 hash、`degraded_policy` 与 Skill reference hashes 冻结进 invocation，并在每次真实 Skill 调用前再次加载比对，减少计划预检到调用之间的漂移窗口。
+
 Skill 不获得任意文件路径权限。
 
 规划阶段从 `knowledge-base/.index/knowledge.json` 选择资源并冻结 ID、status、source path 和 content hash；执行阶段验证并写入 Attempt 绑定的 `knowledge-bundle-v1` Artifact。
@@ -49,7 +51,7 @@ Skill 不获得任意文件路径权限。
 
 ### 5. Tool 使用冻结拓扑和受控动态输入
 
-Tool ID、调用次数和依赖在计划确认前固定。Tool参数可以通过前序步骤的 output binding 动态生成，但 Skill 不能在执行中任意增加Tool或无限循环。
+Tool ID、调用次数、依赖、input bindings、静态 input、acceptance 和 output 在计划确认前固定。Tool 参数只有合同 `frozen_input_fields` 显式列出的字段可以在规划期由候选输入覆盖；覆盖后的值仍作为 Plan 内容冻结，执行期不得变化。Skill 不能在执行中任意增加Tool或无限循环。
 
 所有调用继续经过Tool Registry、Schema、真实Adapter、Receipt、预算和审批。每个 Tool stage 还必须属于其 Skill invocation 自身的 required/available optional Tool 集合，不能借用同一计划中其他 Skill 的授权。
 
@@ -65,7 +67,7 @@ ReportDocument 是展示投影，不是研究内容的唯一载体。
 
 ### 7. 降级状态必须诚实传播
 
-`skill-output-v2.status=degraded` 产生Execution Gap，最终状态至少为 `completed_with_gaps`。必需Knowledge缺失或hash漂移时任务暂停，不允许用通用经验版冒充正常完成。
+`skill-output-v2.status=degraded` 按合同 `degraded_policy` 统一处理：`gap` 在 Current 与 legacy 编排路径都产生 Execution Gap，最终状态至少为 `completed_with_gaps`；`block` 阻断步骤。必需 Knowledge 临时缺失可重试，status/path/hash 漂移必须重新规划。
 
 ## 接口影响
 

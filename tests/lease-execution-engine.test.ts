@@ -3426,6 +3426,7 @@ test('executes frozen Knowledge before Skill and emits Knowledge Evidence', asyn
       contractHash: `sha256:${'a'.repeat(64)}`,
       references: [{
         resourceId: knowledge.id,
+        resourceType: knowledge.type,
         sourcePath: knowledge.source_path,
         status: knowledge.status,
         contentHash: knowledge.content_hash,
@@ -3587,6 +3588,68 @@ test('executes a compiled generate-research-plan invocation stage by stage', asy
   ))[0]?.failure;
   assert.deepEqual(preflightFailure?.allowedActions, ['replan', 'abort']);
   assert.equal(preflightFailure?.kind, 'skill_contract_drift');
+
+  class ResourceGapSkillLoader extends SkillLoader {
+    override loadSkillExecution(id: string) {
+      const loaded = super.loadSkillExecution(id);
+      if (!loaded || id !== 'generate-research-plan') return loaded;
+      return {
+        ...loaded,
+        contract: {
+          ...loaded.contract,
+          resource_queries: [
+            ...(loaded.contract.resource_queries ?? []),
+            {
+              query_id: 'unavailable-runtime-category',
+              types: ['not-a-real-type'],
+              min_items: 1,
+              max_items: 1,
+              accepted_statuses: ['approved'] as Array<'approved' | 'draft'>,
+              purpose: 'Exercise runtime gap propagation.',
+              failure_policy: 'gap' as const,
+            },
+          ],
+        },
+      };
+    }
+  }
+  const gapLoader = new ResourceGapSkillLoader();
+  const gapCompiled = compileSkillSteps(original, task, gapLoader);
+  assert.equal(gapCompiled.invocations[0]?.resource_gaps.length, 1);
+  const gapExecution = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    gapCompiled.steps,
+    {
+      deliverable_type: 'research_plan',
+      evidence_requirements: [{ id: 'public-market-evidence', acceptedClasses: ['public_source', 'knowledge'], minimumCount: 1, required: true }],
+      execution_contract_version: 'current-execution-plan-v2',
+      skill_invocations: gapCompiled.invocations,
+      capability_decisions: {
+        eligible: [{
+          skill: { id: 'generate-research-plan', required_tools: ['tavily-web-search'] },
+          optional_tool_decisions: [],
+        }],
+        excluded: [],
+      },
+    },
+    { task_type: 'competitive_research', research_goal: task.research_goal },
+  );
+  const gapDeliverables = new RecordingDeliverablesFake();
+  const gapResult = await buildEngine(
+    gapExecution.repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new CountingRealLLM(),
+    gapDeliverables,
+    undefined,
+    gapLoader,
+  ).execute({ lease: gapExecution.lease, expectedModel: 'pinned-model' });
+  assert.equal(gapResult.status, 'completed_with_gaps');
+  assert.equal(gapResult.gapCount, 1);
+  assert.match(gapDeliverables.calls[0]?.gaps[0] ?? '', /unavailable-runtime-category/u);
+  assert.deepEqual(gapDeliverables.calls[0]?.gapRefs, [{
+    key: 'skill:generate-research-plan:2:resource:unavailable-runtime-category',
+    stepNo: 2,
+  }]);
 });
 
 test('records a degraded Skill as a completed task with one visible gap', async () => {

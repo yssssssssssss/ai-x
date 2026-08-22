@@ -312,6 +312,15 @@ export function currentExecutionGapCount(input: {
       keys.add(`capability:${gap.capability_id}:${gap.code}`);
     }
   }
+  if (isRecord(input.plan) && Array.isArray(input.plan.skill_invocations)) {
+    for (const invocation of input.plan.skill_invocations) {
+      if (!isRecord(invocation) || typeof invocation.invocation_id !== 'string' || !Array.isArray(invocation.resource_gaps)) continue;
+      for (const gap of invocation.resource_gaps) {
+        if (!isRecord(gap) || typeof gap.query_id !== 'string' || gap.failure_policy !== 'gap') continue;
+        keys.add(`skill:${invocation.invocation_id}:resource:${gap.query_id}`);
+      }
+    }
+  }
   for (const step of input.executionSteps) {
     const skillProvenance = step.skillProvenance;
     if (isRecord(skillProvenance) && skillProvenance.status === 'degraded') {

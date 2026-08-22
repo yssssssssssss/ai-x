@@ -73,13 +73,14 @@
     "skillInvocation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["invocation_id", "skill_id", "execution_mode", "contract_version", "contract_hash", "skill_reference_hashes", "knowledge_references", "resource_gaps", "step_nos"],
+      "required": ["invocation_id", "skill_id", "execution_mode", "contract_version", "contract_hash", "degraded_policy", "skill_reference_hashes", "knowledge_references", "resource_gaps", "step_nos"],
       "properties": {
         "invocation_id": { "type": "string", "minLength": 1 },
         "skill_id": { "type": "string", "minLength": 1 },
         "execution_mode": { "const": "compiled" },
         "contract_version": { "const": "skill-execution-contract-v1" },
         "contract_hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "degraded_policy": { "enum": ["block", "gap"] },
         "skill_reference_hashes": {
           "type": "array",
           "uniqueItems": true,
@@ -119,9 +120,10 @@
     "knowledgeReference": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["resourceId", "sourcePath", "status", "contentHash", "required", "failurePolicy"],
+      "required": ["resourceId", "resourceType", "sourcePath", "status", "contentHash", "required", "failurePolicy"],
       "properties": {
         "resourceId": { "type": "string", "minLength": 1 },
+        "resourceType": { "type": "string", "minLength": 1 },
         "sourcePath": { "type": "string", "minLength": 1 },
         "status": { "enum": ["approved", "draft"] },
         "contentHash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },

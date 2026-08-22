@@ -954,6 +954,19 @@ test('currentExecutionGapCount counts every page in a valid multi-page gap summa
   assert.equal(count, 5);
 });
 
+test('currentExecutionGapCount includes frozen Skill resource gaps', async () => {
+  const { currentExecutionGapCount } = await loadCurrentFlowStateModule();
+  assert.equal(currentExecutionGapCount({
+    plan: {
+      skill_invocations: [{
+        invocation_id: 'skill:1',
+        resource_gaps: [{ query_id: 'scenario', failure_policy: 'gap' }],
+      }],
+    },
+    executionSteps: [],
+  }), 1);
+});
+
 test('currentExecutionGapCount counts degraded Skill outputs once', async () => {
   const { currentExecutionGapCount } = await loadCurrentFlowStateModule();
   assert.equal(currentExecutionGapCount({

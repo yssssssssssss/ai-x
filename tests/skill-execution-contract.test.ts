@@ -9,8 +9,15 @@ import {
 } from '../apps/orchestrator-runtime/src/planners/plan-compiler.ts';
 import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import { getConfigRoot, setConfigRoot } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
-import { loadSkillReferenceDocuments } from '../apps/orchestrator-runtime/src/skills/skill-runtime.ts';
 import {
+  loadSkillReferenceDocuments,
+  prepareSkillExecution,
+  SkillRuntimeDriftError,
+} from '../apps/orchestrator-runtime/src/skills/skill-runtime.ts';
+import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
+import {
+  assertCompiledSkillPlan,
+  assertFrozenKnowledgeQueryMembership,
   compileSkillSteps,
   selectFrozenKnowledgeReferences,
 } from '../apps/orchestrator-runtime/src/skills/skill-plan-compiler.ts';
@@ -62,7 +69,7 @@ test('execution contract rejects a mismatched Skill identity and absolute paths'
   );
   assert.throws(
     () => loadSkillExecutionContract('/tmp/contract.yaml', 'generate-research-plan'),
-    /must be relative/u,
+    /normalized relative path/u,
   );
 });
 
@@ -89,6 +96,38 @@ test('execution contract rejects missing output stages and dependency cycles', (
       '    depends_on: [load-standards]',
     ), 'utf8');
     assert.throws(() => loadSkillExecutionContract(path, 'generate-research-plan'), /cycle/u);
+  } finally {
+    setConfigRoot(originalRoot);
+  }
+});
+
+test('execution contract loader rejects symlink components and non-regular files', () => {
+  const originalRoot = getConfigRoot();
+  const root = mkdtempSync(join(tmpdir(), 'skill-contract-containment-'));
+  mkdirSync(join(root, 'orchestrator/skill-executions'), { recursive: true });
+  symlinkSync(
+    join(originalRoot, 'orchestrator/skill-executions/generate-research-plan.yaml'),
+    join(root, 'orchestrator/skill-executions/link.yaml'),
+  );
+  symlinkSync(
+    join(originalRoot, 'orchestrator'),
+    join(root, 'linked-orchestrator'),
+  );
+  mkdirSync(join(root, 'orchestrator/skill-executions/directory.yaml'));
+  setConfigRoot(root);
+  try {
+    assert.throws(
+      () => loadSkillExecutionContract('orchestrator/skill-executions/link.yaml', 'generate-research-plan'),
+      /symbolic link/u,
+    );
+    assert.throws(
+      () => loadSkillExecutionContract('linked-orchestrator/skill-executions/generate-research-plan.yaml', 'generate-research-plan'),
+      /symbolic link/u,
+    );
+    assert.throws(
+      () => loadSkillExecutionContract('orchestrator/skill-executions/directory.yaml', 'generate-research-plan'),
+      /not a regular file/u,
+    );
   } finally {
     setConfigRoot(originalRoot);
   }
@@ -155,7 +194,7 @@ test('compiled Skill expands one visible frozen seven-stage DAG', () => {
       actor_type: 'tool',
       actor_id: 'tavily-web-search',
       depends_on: [],
-      input: { query: 'pet brand study' },
+      input: { query: 'pet brand study', unexpected: 'must not enter compiled Tool input' },
       expected_outputs: [{ pointer: '/results', description: 'results' }],
     },
     {
@@ -195,6 +234,8 @@ test('compiled Skill expands one visible frozen seven-stage DAG', () => {
   assert.deepEqual(compiled.invocations[0]?.step_nos, [1, 2, 3, 4, 5, 6, 7]);
   assert.ok(Array.isArray(compiled.invocations[0]?.skill_reference_hashes));
   assert.deepEqual(compiled.invocations[0]?.resource_gaps, []);
+  assert.equal(compiled.steps[0]?.input.query, 'pet brand study');
+  assert.equal(Object.hasOwn(compiled.steps[0]?.input ?? {}, 'unexpected'), false);
   assert.equal(compiled.steps[1]?.actor_type, 'knowledge');
   const references = compiled.steps[1]?.input.references;
   assert.ok(Array.isArray(references) && references.length > 3, 'task-matched dynamic knowledge must be frozen');
@@ -219,6 +260,24 @@ test('compiled Skill expands one visible frozen seven-stage DAG', () => {
     resource_queries: [],
   }, task), /status is not accepted/u);
 
+  const dynamicStatusContract = {
+    ...contract,
+    resources: [],
+    resource_queries: [{
+      query_id: 'approved-methods-only',
+      types: ['method'],
+      min_items: 1,
+      max_items: 2,
+      accepted_statuses: ['approved'] as Array<'approved' | 'draft'>,
+      purpose: 'reject draft-only dynamic category',
+      failure_policy: 'block' as const,
+    }],
+  };
+  assert.throws(
+    () => selectFrozenKnowledgeReferences(dynamicStatusContract, task),
+    /below min_items/u,
+  );
+
   const withGap = selectFrozenKnowledgeReferences({
     ...contract,
     resources: [],
@@ -239,7 +298,7 @@ test('compiled Skill expands one visible frozen seven-stage DAG', () => {
     resource_queries: [{
       ...(contract.resource_queries?.[0] ?? {
         query_id: 'fallback', types: ['method'], min_items: 0, max_items: 1,
-        accepted_statuses: ['approved'] as const, purpose: 'fallback', failure_policy: 'gap' as const,
+        accepted_statuses: ['approved'] as Array<'approved' | 'draft'>, purpose: 'fallback', failure_policy: 'gap' as const,
       }),
       query_id: 'unavailable-kind',
       types: ['not-a-real-type'],
@@ -250,7 +309,7 @@ test('compiled Skill expands one visible frozen seven-stage DAG', () => {
   }, task), /below min_items/u);
 });
 
-test('PlanCompiler persists the compiled Skill invocation and seven visible stages', () => {
+test('PlanCompiler persists seven stages and rejects frozen actor, dependency, input, binding, output, and acceptance drift', () => {
   const loader = new SkillLoader();
   const skill = loader.listCapabilitySkills().find((candidate) => candidate.id === 'generate-research-plan');
   assert.ok(skill?.status === 'active');
@@ -317,6 +376,39 @@ test('PlanCompiler persists the compiled Skill invocation and seven visible stag
     'external-context', 'load-standards', 'align-brief', 'select-methods',
     'design-sampling-and-schedule', 'compose-plan', 'self-review',
   ]);
+  const invocation = compiled.plan.skill_invocations?.[0];
+  assert.ok(invocation);
+  const prepare = (frozenExecution: {
+    contractHash: string;
+    referenceHashes: Array<{ path: string; hash: string }>;
+    degradedPolicy: 'gap' | 'block';
+  }) => prepareSkillExecution({
+    skillId: 'generate-research-plan',
+    researchGoal: task.research_goal,
+    resolvedInput: compiled.plan.steps.find(({ actor_type }) => actor_type === 'skill')?.input ?? {},
+    priorOutputs: [],
+    skillLoader: loader,
+    validator: new SchemaValidator(),
+    frozenExecution,
+  });
+  const binding = {
+    contractHash: invocation.contract_hash,
+    referenceHashes: invocation.skill_reference_hashes,
+    degradedPolicy: invocation.degraded_policy,
+  };
+  assert.doesNotThrow(() => prepare(binding));
+  assert.throws(() => prepare({ ...binding, contractHash: `sha256:${'0'.repeat(64)}` }), SkillRuntimeDriftError);
+  assert.throws(() => prepare({
+    ...binding,
+    referenceHashes: binding.referenceHashes.map((reference, index) => (
+      index === 0 ? { ...reference, hash: `sha256:${'0'.repeat(64)}` } : reference
+    )),
+  }), SkillRuntimeDriftError);
+  assert.throws(() => prepare({
+    ...binding,
+    degradedPolicy: binding.degradedPolicy === 'gap' ? 'block' : 'gap',
+  }), SkillRuntimeDriftError);
+
   const frozen = { ...compiled.plan, task_id: 'task-compiled-plan-1' };
   assert.deepEqual(validateCurrentPlanRevision({
     plan: frozen,
@@ -332,6 +424,17 @@ test('PlanCompiler persists the compiled Skill invocation and seven visible stag
     ['Knowledge binding drift', (plan) => { plan.skill_invocations![0]!.knowledge_references.pop(); }],
     ['stage actor drift', (plan) => { plan.steps[0]!.actor_id = 'another-tool'; }],
     ['stage dependency drift', (plan) => { plan.steps[2]!.depends_on = []; }],
+    ['stage input binding drift', (plan) => { plan.steps[2]!.input_bindings.reverse(); }],
+    ['stage immutable input drift', (plan) => { plan.steps[2]!.input.unexpected = true; }],
+    ['stage acceptance drift', (plan) => { plan.steps[2]!.acceptance_criteria[0] = 'changed'; }],
+    ['dynamic Knowledge query swap', (plan) => {
+      const collection = plan.skill_invocations![0]!.knowledge_references.find(({ queryId }) => queryId === 'collection-methods');
+      const analysis = plan.skill_invocations![0]!.knowledge_references.find(({ queryId }) => queryId === 'analysis-methods');
+      if (!collection || !analysis) throw new Error('query fixtures missing');
+      [collection.queryId, analysis.queryId] = [analysis.queryId, collection.queryId];
+      const knowledgeStep = plan.steps.find(({ skill_stage_id }) => skill_stage_id === 'load-standards')!;
+      knowledgeStep.input.references = structuredClone(plan.skill_invocations![0]!.knowledge_references);
+    }],
     ['stage output drift', (plan) => { plan.steps[2]!.expected_outputs[0]!.pointer = '/other'; }],
     ['Tool ownership drift', (plan) => { plan.capability_decisions.eligible[0]!.skill.required_tools = []; }],
   ];
@@ -346,6 +449,72 @@ test('PlanCompiler persists the compiled Skill invocation and seven visible stag
       candidate_id: 'depth',
     }), label);
   }
+
+  class DisallowedDynamicStatusLoader extends SkillLoader {
+    override loadSkillExecution(id: string) {
+      const loaded = super.loadSkillExecution(id);
+      if (!loaded || id !== 'generate-research-plan') return loaded;
+      return {
+        ...loaded,
+        hash: invocation.contract_hash,
+        contract: {
+          ...loaded.contract,
+          resource_queries: (loaded.contract.resource_queries ?? []).map((query) => (
+            query.query_id === 'collection-methods'
+              ? { ...query, accepted_statuses: ['approved'] as Array<'approved' | 'draft'> }
+              : query
+          )),
+        },
+      };
+    }
+  }
+  assert.throws(
+    () => assertCompiledSkillPlan(frozen, new DisallowedDynamicStatusLoader()),
+    /invalid query membership/u,
+  );
+});
+
+test('dynamic Knowledge membership rejects query swaps that bind the wrong resource type', () => {
+  const loaded = new SkillLoader().loadSkillExecution('generate-research-plan');
+  assert.ok(loaded);
+  const task: ResearchTaskV2 = {
+    version: 'research-task-v2', task_type: 'user_research_planning', business_domain: 'pet services',
+    research_goal: 'plan customer interviews and thematic analysis', target_audience: ['researchers'],
+    scope: ['mobile app'], constraints: [], success_criteria: [{ id: 'SC-1', statement: 'usable' }],
+    expected_deliverables: ['research_plan'], assumptions: [], ambiguities: [], clarification_questions: [],
+    blocking_issues: [], sensitivity: 'internal', pii_detected: false,
+  };
+  const selected = selectFrozenKnowledgeReferences(loaded.contract, task);
+  const swapped = structuredClone(selected.references);
+  const collection = swapped.find(({ queryId }) => queryId === 'collection-methods');
+  const analysis = swapped.find(({ queryId }) => queryId === 'analysis-methods');
+  assert.ok(collection && analysis);
+  [collection.queryId, analysis.queryId] = [analysis.queryId, collection.queryId];
+  assert.throws(() => assertFrozenKnowledgeQueryMembership(loaded.contract, {
+    invocation_id: 'test-invocation', knowledge_references: swapped, resource_gaps: selected.resourceGaps,
+  }), /invalid query membership/u);
+});
+
+test('dynamic Knowledge membership rejects a status disallowed by its query', () => {
+  const loaded = new SkillLoader().loadSkillExecution('generate-research-plan');
+  assert.ok(loaded);
+  const task: ResearchTaskV2 = {
+    version: 'research-task-v2', task_type: 'user_research_planning', business_domain: 'pet services',
+    research_goal: 'plan customer interviews and thematic analysis', target_audience: ['researchers'],
+    scope: ['mobile app'], constraints: [], success_criteria: [{ id: 'SC-1', statement: 'usable' }],
+    expected_deliverables: ['research_plan'], assumptions: [], ambiguities: [], clarification_questions: [],
+    blocking_issues: [], sensitivity: 'internal', pii_detected: false,
+  };
+  const selected = selectFrozenKnowledgeReferences(loaded.contract, task);
+  const contract = structuredClone(loaded.contract);
+  const collectionQuery = contract.resource_queries?.find(({ query_id }) => query_id === 'collection-methods');
+  assert.ok(collectionQuery);
+  collectionQuery.accepted_statuses = ['approved'];
+  assert.throws(() => assertFrozenKnowledgeQueryMembership(contract, {
+    invocation_id: 'test-invocation',
+    knowledge_references: selected.references,
+    resource_gaps: selected.resourceGaps,
+  }), /invalid query membership/u);
 });
 
 test('legacy Skills do not expose an execution contract', () => {

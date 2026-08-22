@@ -13,6 +13,7 @@
 
 import type { RunWorkspace } from '../run-workspace.ts';
 import type { PlanStep } from '../plan-types.ts';
+import type { SkillOutputOutcome } from '../skills/skill-result-status.ts';
 
 // 执行累积上下文:runFrom / resume 一路带下来的跨步产物。
 // Runner 读它拿"迄今为止的检索数据 / 已用能力 / 复核意见",不直接改它。
@@ -32,6 +33,7 @@ export interface ExecCtx {
   toolOutputs: Array<{ toolId: string; output: unknown }>;
   reviewNotes: string[];
   stepFailures: StepFailure[];
+  executionGaps?: StepGap[];
   usedCapabilities: Array<{ id: string; type: string }>;
   toolOutputRefs: Array<{ stepNo: number; toolId: string }>;
 }
@@ -40,6 +42,13 @@ export interface StepFailure {
   stepNo: number;
   stepName: string;
   actorType: PlanStep['actor_type'];
+  actorId: string;
+  message: string;
+}
+
+export interface StepGap {
+  key: string;
+  stepNo: number;
   actorId: string;
   message: string;
 }
@@ -61,6 +70,7 @@ export type StepArtifact =
       output: unknown;
       outputRef: string;
       manifestHash: string;
+      skillOutcome: SkillOutputOutcome;
       tokens?: TokenUsage;
     }
   | {

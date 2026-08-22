@@ -4,7 +4,7 @@
 >
 > 架构决策：`docs/adr/0003-compile-skills-into-frozen-execution-dag.md`
 >
-> 状态：Phase 1–5、独立审查整改、自动化 Gate 7 与受影响浏览器回归已完成；真实 Gateway/Tavily 新任务验收未重跑；等待远端交付授权。
+> 状态：Phase 1–5 与第二轮独立审查整改已完成；自动化质量门禁和 Web build 通过；等待独立复核结论和远端交付授权。
 >
 > 规则：按 Gate 顺序执行。每个 Phase 独立提交、可构建、可回滚；当前工作区存在其他未提交改动，不在原 checkout 直接实现。
 
@@ -141,6 +141,7 @@ git diff --check
 - [x] Confirmation 只处理计划接受、审批和 pending inputs。
 - [x] 范围变化走 revise Requirement + replan，不修改冻结计划。
 - [x] API 对旧客户端提交的多余 confirmation answers 给出明确冲突错误。
+- [x] 后端 `confirm()` 拒绝仍含未解决 clarification questions 的 ResearchTaskV2。
 
 ## Phase 2 门禁
 
@@ -197,6 +198,7 @@ git diff --check
 - [x] Bundle与Task/Plan/Attempt绑定。
 - [x] Artifact字节和数据库hash一致。
 - [x] 任意绝对路径和目录逃逸被拒绝。
+- [x] Execution Contract 路径逐组件拒绝 symlink，并拒绝非普通文件。
 
 ## 3.4 Knowledge Bundle 实现
 
@@ -305,9 +307,11 @@ git diff --check
 - [x] `LeaseExecutionEngine`执行编译后的普通步骤。
 - [x] `SkillActorRunner`改为统一Skill Runtime Adapter或删除未使用路径。
 - [x] 两套Runner不再重复Prompt、Schema和status逻辑。
+- [x] Legacy SkillActorRunner 将 degraded 通过 StepArtifact 传播为 Gap 与 `completed_with_gaps`。
 - [x] Retry恢复到具体stage。
-- [x] Artifact和Receipt记录Skill Invocation与stage ID。
-- [x] Dynamic Tool输入仅通过冻结binding产生。
+- [x] Invocation/stage ID 保留在冻结 Plan；Artifact 与 Receipt 通过既有 `planVersionId + stepNo` 关联，不宣称在其 payload 中重复写入这两个 ID。
+- [x] Dynamic Tool 输入仅通过冻结 binding 或合同声明的 `frozen_input_fields` 产生。
+- [x] `resource_gaps` 进入 Runtime Gap、最终状态和 Web gapCount。
 
 ## 4.6 Web
 
@@ -465,8 +469,19 @@ git diff --check
 - [x] 审查Artifact不可变性。
 - [x] 审查日志、错误和下载包脱敏。
 - [x] 审查改动后补跑一次最终Gate。
+- [ ] 由独立 reviewer 确认第二轮整改并关闭 Gate 8。
 
-> 独立审查报告识别的 3 个 Blocker、3 个 High 和 3 个 Medium 均已整改。最终 `pnpm quality`：1606 tests，1591 pass，15 skip，0 fail；Web production build通过（仅保留既有大 chunk 警告）；受影响浏览器回归确认资源数量缺口与 Knowledge 漂移的“重新生成计划 / 终止任务”动作可见，且不显示 retry。
+### 第二轮审查整改
+
+- [x] Execution Contract 路径执行词法/realpath/lstat containment，并拒绝 symlink 与非普通文件。
+- [x] 编译阶段严格复验 input、input bindings、acceptance、Knowledge query membership；Tool 动态输入仅限合同声明字段。
+- [x] `resource_gaps` 进入 Runtime Gap、Web gapCount 与 `completed_with_gaps`。
+- [x] v2 Requirement 带未解决 clarification 时禁止确认；无 Plan confirmation contract 时拒绝任意 confirmation answers。
+- [x] Legacy SkillActorRunner 的 degraded 状态通过 StepArtifact 传播到 Orchestrator Gap 和最终状态。
+- [x] `researchPlanRequiredPointers()` 使用配置根，而非进程 cwd。
+- [x] 修正 Artifact/Receipt 不直接保存 invocation/stage ID 的文档表述。
+
+> 第一轮审查的 3 个 Blocker、3 个 High 和 3 个 Medium 已整改；第二轮复审的 2 个 High 和 3 个 Medium 已完成代码整改。复审定向命令：389 tests，388 pass，1 skip，0 fail；最终 `pnpm quality`：1613 tests，1598 pass，15 skip，0 fail；Web production build 通过（仅保留既有大 chunk 警告）；浏览器回归确认仅存在冻结 `resource_gaps` 时页面显示“部分完成 · 1 个数据缺口”。在新的独立复核给出通过结论前，Gate 8 保持未关闭。
 
 # Gate 9：交付
 
@@ -497,9 +512,9 @@ report document v2                done
 projection coverage gate          done
 legacy compatibility              done
 targeted tests                    done
-full quality gate                 done
+full quality gate                 done (1613 tests; 1598 pass, 15 skip)
 real runtime acceptance           not rerun (external quota); browser + sealed artifacts passed
-independent review                done (3 blocker, 3 high, 3 medium corrected)
+independent review                pending acceptance after second review corrections
 docs synchronized                 done
 remote delivery authorization     not authorized
 ```
