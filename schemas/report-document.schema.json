@@ -6,16 +6,39 @@
   "additionalProperties": false,
   "required": ["version", "title", "subtitle", "executiveSummary", "sections"],
   "properties": {
-    "version": { "const": "report-document-v1" },
+    "version": { "enum": ["report-document-v1", "report-document-v2"] },
     "title": { "$ref": "#/definitions/nonEmptyString" },
     "subtitle": { "$ref": "#/definitions/nonEmptyString" },
     "executiveSummary": { "$ref": "#/definitions/nonEmptyString" },
+    "sourceDeliverableArtifactId": { "$ref": "#/definitions/nonEmptyString" },
+    "projectionMode": { "enum": ["full", "summary"] },
+    "coveredPointers": { "$ref": "#/definitions/idList" },
+    "omittedPointers": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/omittedPointer" }
+    },
     "sections": {
       "type": "array",
       "minItems": 1,
       "items": { "$ref": "#/definitions/section" }
     }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "version": { "const": "report-document-v2" } }, "required": ["version"] },
+      "then": { "required": ["sourceDeliverableArtifactId", "projectionMode", "coveredPointers", "omittedPointers"] },
+      "else": {
+        "not": {
+          "anyOf": [
+            { "required": ["sourceDeliverableArtifactId"] },
+            { "required": ["projectionMode"] },
+            { "required": ["coveredPointers"] },
+            { "required": ["omittedPointers"] }
+          ]
+        }
+      }
+    }
+  ],
   "definitions": {
     "nonEmptyString": { "type": "string", "minLength": 1, "pattern": "\\S" },
     "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
@@ -29,6 +52,15 @@
       "minItems": 1,
       "uniqueItems": true,
       "items": { "$ref": "#/definitions/nonEmptyString" }
+    },
+    "omittedPointer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pointer", "reason"],
+      "properties": {
+        "pointer": { "type": "string", "pattern": "^/" },
+        "reason": { "$ref": "#/definitions/nonEmptyString" }
+      }
     },
     "assetRef": {
       "type": "object",
@@ -93,7 +125,10 @@
           "type": "array",
           "minItems": 1,
           "items": { "$ref": "#/definitions/nonEmptyString" }
-        }
+        },
+        "sourcePointers": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^/" } },
+        "sourceNodeIds": { "$ref": "#/definitions/idList" },
+        "summary": { "type": "boolean" }
       }
     },
     "imageBlock": {

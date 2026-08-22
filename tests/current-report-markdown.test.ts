@@ -328,7 +328,7 @@ test('currentResearchPlanToMarkdown renders a pass-reviewed current_text package
   assertIncludes(markdown, '宠物辅食竞品研究计划', 'current report title');
 });
 
-test('text Markdown renderer rejects a valid multimodal package delegated to Task19', async () => {
+test('full Markdown renderer preserves the canonical plan for a multimodal package', async () => {
   const { currentResearchPlanToMarkdown } = await loadCurrentReportMarkdownModule();
   const current = buildCurrentResponse();
   const assetId = 'asset-current-report-image';
@@ -377,10 +377,10 @@ test('text Markdown renderer rejects a valid multimodal package delegated to Tas
     visualAssetManifests: [visualAssetManifest],
   };
 
-  assert.throws(
-    () => currentResearchPlanToMarkdown(multimodal),
-    /multimodal|renderer/i,
-  );
+  const markdown = currentResearchPlanToMarkdown(multimodal);
+  assert.match(markdown, /宠物辅食竞品研究计划/u);
+  assert.match(markdown, /## 执行阶段/u);
+  assert.match(markdown, /## 采集模板/u);
 });
 
 test('currentResearchPlanToMarkdown omits the risk heading when risks are empty', async () => {

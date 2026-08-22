@@ -259,7 +259,10 @@ function assertNoMultimodalFields(value: Record<string, unknown>, mode: string):
 }
 
 function reportVisualReferences(document: Record<string, unknown>): Map<string, string> {
-  if (document.version !== 'report-document-v1' || !Array.isArray(document.sections)) {
+  if (
+    (document.version !== 'report-document-v1' && document.version !== 'report-document-v2')
+    || !Array.isArray(document.sections)
+  ) {
     throw new Error('multimodal report document is invalid');
   }
   const references = new Map<string, string>();

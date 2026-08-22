@@ -65,7 +65,13 @@ function assertCompleteMultimodalPackage(report: MultimodalReportPackage): void 
   if (report.presentationMode !== 'multimodal') {
     throw new Error('report bundle requires multimodal presentation mode');
   }
-  if (!report.reportDocument || report.reportDocument.version !== 'report-document-v1') {
+  if (
+    !report.reportDocument
+    || (
+      report.reportDocument.version !== 'report-document-v1'
+      && report.reportDocument.version !== 'report-document-v2'
+    )
+  ) {
     throw new Error('report bundle requires a complete ReportDocument');
   }
   if (!Array.isArray(report.visualAssetManifests)) {
@@ -180,6 +186,9 @@ function safeReportBlock(
       id: block.id,
       type: block.type,
       items: evidenceIndexItems ? [...evidenceIndexItems] : block.items,
+      ...(block.sourcePointers ? { sourcePointers: block.sourcePointers } : {}),
+      ...(block.sourceNodeIds ? { sourceNodeIds: block.sourceNodeIds } : {}),
+      ...(block.summary === undefined ? {} : { summary: block.summary }),
     };
   }
   if (block.type === 'image') {
@@ -233,6 +242,14 @@ function safeReportDocument(
     title: document.title,
     subtitle: document.subtitle,
     executiveSummary: document.executiveSummary,
+    ...(document.version === 'report-document-v2'
+      ? {
+          sourceDeliverableArtifactId: document.sourceDeliverableArtifactId,
+          projectionMode: document.projectionMode,
+          coveredPointers: document.coveredPointers,
+          omittedPointers: document.omittedPointers,
+        }
+      : {}),
     sections: document.sections.map((section) => ({
       id: section.id,
       title: section.title,

@@ -586,7 +586,7 @@ export class ReportCompositionService implements ReportCompositionPort {
       kind: 'report_document',
       relativePath: 'reports/report-document.json',
       value: document,
-      schemaVersion: 'report-document-v1',
+      schemaVersion: document.version,
       sensitivity: 'internal',
       redactionPolicyVersion: 'v1',
       activeLease: input.activeLease,
@@ -598,7 +598,7 @@ export class ReportCompositionService implements ReportCompositionPort {
       || artifact.planVersionId !== input.planVersionId
       || artifact.attemptId !== input.attemptId
       || artifact.kind !== 'report_document'
-      || artifact.schemaVersion !== 'report-document-v1'
+      || artifact.schemaVersion !== document.version
     ) {
       throw new Error('ReportDocument Artifact was not sealed with the active report binding');
     }

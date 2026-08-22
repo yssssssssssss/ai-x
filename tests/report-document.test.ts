@@ -90,6 +90,28 @@ const REQUIRED_SECTION_IDS = [
   'appendix',
 ] as const;
 
+const RESEARCH_PLAN_DETAIL_SECTION_IDS = [
+  'plan-definition',
+  'research-questions',
+  'comparison-framework',
+  'evidence-plan',
+  'execution-roadmap',
+  'collection-template',
+  'analysis-methods',
+  'deliverables',
+  'quality-assurance',
+] as const;
+
+function expectedResearchPlanSections(hasVisuals: boolean): string[] {
+  const base = REQUIRED_SECTION_IDS.filter((id) => hasVisuals || (id !== 'visual-evidence' && id !== 'comparison'));
+  const conclusionIndex = base.indexOf('conclusion');
+  return [
+    ...base.slice(0, conclusionIndex),
+    ...RESEARCH_PLAN_DETAIL_SECTION_IDS,
+    ...base.slice(conclusionIndex),
+  ];
+}
+
 function sha(character: string): string {
   return `sha256:${character.repeat(64)}`;
 }
@@ -1029,7 +1051,7 @@ test('composer omits visual blocks rather than generating placeholders when no v
 
   assert.equal(blocks.some(({ type }) => ['image', 'image-comparison', 'chart'].includes(type)), false);
   assert.equal(JSON.stringify(document).toLowerCase().includes('placeholder'), false);
-  assert.deepEqual(document.sections.map(({ id }) => id), [...REQUIRED_SECTION_IDS]);
+  assert.deepEqual(document.sections.map(({ id }) => id), expectedResearchPlanSections(false));
 });
 
 test('composer pairs an annotation with its original into a production-view image comparison', () => {
@@ -1081,7 +1103,13 @@ test('composer creates a schema-valid professional research-plan document with o
   assert.doesNotThrow(() => assertValidReportDocument(document, referenceContext()));
   assert.equal(document.title, input.deliverable.value.payload.title);
   assert.ok(document.executiveSummary.trim().length > 0);
-  assert.deepEqual(document.sections.map(({ id }) => id), [...REQUIRED_SECTION_IDS]);
+  assert.equal(document.version, 'report-document-v2');
+  assert.deepEqual(document.coveredPointers, [
+    '/title', '/researchGoal', '/scope', '/competitorSampling', '/researchQuestions',
+    '/comparisonDimensions', '/sourcePlan', '/executionPlan', '/collectionTemplate',
+    '/analysisMethods', '/deliverables', '/qualityChecks',
+  ]);
+  assert.deepEqual(document.sections.map(({ id }) => id), expectedResearchPlanSections(true));
   assert.ok(document.sections.some(({ questionIds }) => questionIds.includes('question-1')));
 
   const blocks = document.sections.flatMap(({ blocks }) => blocks);

@@ -4,6 +4,7 @@ import type { ReportReviewArtifact } from '../../../../packages/api-contract/con
 import type {
   ChartSpec,
   ResearchDeliverableEnvelope,
+  ResearchPlanPayload,
   VisualAssetManifest,
   VisualAssetReference,
 } from '../../../../packages/api-contract/research-deliverable.ts';
@@ -25,6 +26,7 @@ import {
   validateChartSpec,
   type ChartEvidenceResolver,
 } from './chart-spec-validator.ts';
+import { projectResearchPlan } from './report-projection.ts';
 import {
   assertCompetitiveWeightChartBinding,
   parseCompetitiveWeightChartData,
@@ -75,6 +77,9 @@ export interface ReportListBlock {
   id: string;
   type: 'list';
   items: string[];
+  sourcePointers?: string[];
+  sourceNodeIds?: string[];
+  summary?: boolean;
 }
 
 export interface ReportImageBlock {
@@ -124,11 +129,15 @@ export interface ReportSection {
 }
 
 export interface ReportDocument {
-  version: 'report-document-v1';
+  version: 'report-document-v1' | 'report-document-v2';
   title: string;
   subtitle: string;
   executiveSummary: string;
   sections: ReportSection[];
+  sourceDeliverableArtifactId?: string;
+  projectionMode?: 'full' | 'summary';
+  coveredPointers?: string[];
+  omittedPointers?: Array<{ pointer: string; reason: string }>;
 }
 
 interface ArtifactValue<T> {
@@ -1476,21 +1485,49 @@ export function composeReportDocument(input: ComposeReportDocumentInput): Report
   const { contract } = assertCompositionInput(input);
   const template = contract.reportTemplate;
   const executiveSummary = composeExecutiveSummary(input.deliverable.value);
+  const baseSections = template.sections.map((section): ReportSection => ({
+    id: section.id,
+    title: section.title,
+    questionIds: section.id === 'question-analysis' ? [...input.requiredQuestionIds] : [],
+    blocks: composeSectionBlocks(
+      section.id,
+      input,
+      executiveSummary,
+    ),
+  }));
+  const researchPlan = input.deliverable.value.deliverableType === 'research_plan'
+    ? projectResearchPlan({
+        payload: input.deliverable.value.payload as ResearchPlanPayload,
+        deliverableArtifactId: input.deliverable.artifact.id,
+      })
+    : null;
+  const visibleBaseSections = researchPlan
+    ? baseSections.filter((section) => section.blocks.length > 0)
+    : baseSections;
+  const conclusionIndex = visibleBaseSections.findIndex(({ id }) => id === 'conclusion');
+  const sections = researchPlan
+    ? conclusionIndex < 0
+      ? [...visibleBaseSections, ...researchPlan.sections]
+      : [
+          ...visibleBaseSections.slice(0, conclusionIndex),
+          ...researchPlan.sections,
+          ...visibleBaseSections.slice(conclusionIndex),
+        ]
+    : visibleBaseSections;
   const document: ReportDocument = {
-    version: 'report-document-v1',
+    version: researchPlan ? 'report-document-v2' : 'report-document-v1',
     title: reportTitle(input.deliverable.value),
     subtitle: template.subtitle,
     executiveSummary,
-    sections: template.sections.map((section): ReportSection => ({
-      id: section.id,
-      title: section.title,
-      questionIds: section.id === 'question-analysis' ? [...input.requiredQuestionIds] : [],
-      blocks: composeSectionBlocks(
-        section.id,
-        input,
-        executiveSummary,
-      ),
-    })),
+    sections,
+    ...(researchPlan
+      ? {
+          sourceDeliverableArtifactId: researchPlan.coverage.sourceDeliverableArtifactId,
+          projectionMode: researchPlan.coverage.projectionMode,
+          coveredPointers: researchPlan.coverage.coveredPointers,
+          omittedPointers: researchPlan.coverage.omittedPointers,
+        }
+      : {}),
   };
   assertValidReportDocument(document, {
     requiredQuestionIds: input.requiredQuestionIds,

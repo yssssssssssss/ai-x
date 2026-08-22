@@ -1403,7 +1403,7 @@ test('production control runtime returns the revised final deliverable ID for pa
   assert.equal(ownerDeliverableResponse.status, 200);
   const ownerDeliverableBody: unknown = await ownerDeliverableResponse.json();
   assertRecord(ownerDeliverableBody);
-  assert.equal(ownerDeliverableBody.presentationMode, 'multimodal');
+  assert.equal(ownerDeliverableBody.presentationMode, 'current_text');
   const envelope = ownerDeliverableBody.deliverable;
   assertRecord(envelope);
   assert.equal(envelope.taskId, planned.task.id);
@@ -1417,14 +1417,8 @@ test('production control runtime returns the revised final deliverable ID for pa
   assert.equal(reportReview.planVersionId, speed.planVersionId);
   assert.equal(reportReview.attemptId, execution.attemptId);
   assert.equal(reportReview.deliverableArtifactId, execution.deliverableArtifactId);
-  const reportDocument = ownerDeliverableBody.reportDocument;
-  assertRecord(reportDocument);
-  assert.equal(reportDocument.version, 'report-document-v1');
-  assert.equal(reportDocument.title, '宠物辅食竞品研究计划');
-  assert.ok(Array.isArray(reportDocument.sections));
-  assert.ok(reportDocument.sections.length > 0);
-  assert.doesNotMatch(JSON.stringify(reportDocument), /"type":"(?:image|image-comparison|chart)"/u);
-  assert.deepEqual(ownerDeliverableBody.visualAssetManifests, []);
+  assert.equal(Object.hasOwn(ownerDeliverableBody, 'reportDocument'), false);
+  assert.equal(Object.hasOwn(ownerDeliverableBody, 'visualAssetManifests'), false);
   assert.equal('visualAssetManifest' in ownerDeliverableBody, false);
   assert.match(JSON.stringify(ownerDeliverableBody), new RegExp(evidenceUrl.replaceAll('.', '\\.'), 'u'));
 
@@ -1560,7 +1554,6 @@ test('production control runtime returns the revised final deliverable ID for pa
         { kind: 'deliverable', state: 'SEALED' },
         { kind: 'deliverable', state: 'SEALED' },
         { kind: 'evidence_manifest', state: 'SEALED' },
-        { kind: 'report_document', state: 'SEALED' },
         { kind: 'report_package', state: 'SEALED' },
         { kind: 'report_review', state: 'SEALED' },
       ],
@@ -1585,13 +1578,6 @@ test('production control runtime returns the revised final deliverable ID for pa
       terminalArtifacts.rows.find((row) => row.kind === 'report_review')?.id,
       execution.reportReviewArtifactId,
     );
-    const reportDocumentArtifact = terminalArtifacts.rows.find((row) => row.kind === 'report_document');
-    assert.ok(reportDocumentArtifact);
-    assert.ok(typeof reportDocumentArtifact.id === 'string');
-    assert.equal(reportDocumentArtifact.schema_version, 'report-document-v1');
-    assert.match(String(reportDocumentArtifact.storage_uri), /\/reports\/report-document\.json$/u);
-    const verifiedReportDocument = await artifacts.readVerifiedJson<unknown>(reportDocumentArtifact.id);
-    assert.deepEqual(verifiedReportDocument.value, ownerDeliverableBody.reportDocument);
     const verifiedReportPackage = await new ReportPackageArtifactService(artifacts).verify({
       artifactId: execution.reportPackageArtifactId,
       attemptId: execution.attemptId,
@@ -1601,7 +1587,8 @@ test('production control runtime returns the revised final deliverable ID for pa
     assert.equal(verifiedReportPackage.value.deliverableArtifactId, execution.deliverableArtifactId);
     assert.equal(verifiedReportPackage.value.evidenceManifestArtifactId, execution.evidenceManifestArtifactId);
     assert.equal(verifiedReportPackage.value.reportReviewArtifactId, execution.reportReviewArtifactId);
-    assert.equal(verifiedReportPackage.value.reportDocumentArtifactId, reportDocumentArtifact.id);
+    assert.equal(verifiedReportPackage.value.presentationMode, 'current_text');
+    assert.equal(verifiedReportPackage.value.reportDocumentArtifactId, undefined);
     const reportPackageStorageUri = verifiedReportPackage.artifact.storageUri;
     const originalReportPackageContent = readFileSync(reportPackageStorageUri, 'utf8');
     try {

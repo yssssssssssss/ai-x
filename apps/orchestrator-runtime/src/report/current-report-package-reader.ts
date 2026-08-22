@@ -377,7 +377,10 @@ export class CurrentReportPackageReader {
         binding,
         'ReportDocument',
       );
-      if (verifiedDocument.artifact.schemaVersion !== 'report-document-v1') {
+      if (
+        verifiedDocument.artifact.schemaVersion !== 'report-document-v1'
+        && verifiedDocument.artifact.schemaVersion !== 'report-document-v2'
+      ) {
         throw new Error('ReportDocument Artifact schema version is invalid');
       }
       this.schemaValidator.validateOrThrow('report-document', verifiedDocument.value);
