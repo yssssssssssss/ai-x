@@ -292,7 +292,7 @@ test('explicit weighted scoring matrix overrides unrelated LLM comparison dimens
   assert.deepEqual(plannedRequirement?.comparison_dimensions, weightedDimensions);
 });
 
-test('non-blocking questions proceed to planning instead of creating an endless clarification loop', async () => {
+test('explicit clarification questions remain before planning even when ambiguities are non-blocking', async () => {
   const { RequirementRefinementService } = await loadModule();
   const nonBlocking = requirement({
     ambiguities: [{ id: 'format', statement: 'report format can be confirmed later', blocking: false }],
@@ -319,8 +319,8 @@ test('non-blocking questions proceed to planning instead of creating an endless 
     originalInput: 'compare competitors with screenshots',
   });
 
-  assert.equal(result.status, 'ready_to_plan');
-  assert.equal(plannerCalls, 1);
+  assert.equal(result.status, 'clarification_required');
+  assert.equal(plannerCalls, 0);
 });
 
 test('blocking issues proceed to planning and remain available for the approval gate', async () => {

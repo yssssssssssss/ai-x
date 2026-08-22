@@ -493,9 +493,9 @@ export function useTaskFlow(actorRole?: string) {
     setError('');
     try {
       const answers = buildConfirmationAnswers(
-        confirmationRequirements('confirmations' in candidatesResp.structuredTask
-          ? candidatesResp.structuredTask.confirmations
-          : candidatesResp.structuredTask.clarification_questions),
+        'confirmations' in candidatesResp.structuredTask
+          ? confirmationRequirements(candidatesResp.structuredTask.confirmations)
+          : [],
         userAnswers,
       );
       const uploadsByRole = new Map<string, Array<{ dataUrl: string }>>();

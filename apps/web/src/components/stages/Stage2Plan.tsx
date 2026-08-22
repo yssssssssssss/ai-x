@@ -22,9 +22,9 @@ export function Stage2Plan({
   ) => void;
   onRevise: (instruction: string) => void;
 }) {
-  const confirmations = confirmationRequirements('confirmations' in plan.task
-    ? plan.task.confirmations
-    : plan.task.clarification_questions);
+  const confirmations = 'confirmations' in plan.task
+    ? confirmationRequirements(plan.task.confirmations)
+    : [];
   const scoringWeights = extractCompetitiveScoringWeights(plan.plan);
   const [assumptions, setAssumptions] = useState(plan.task.assumptions);
   const [answers, setAnswers] = useState<Record<string, string>>({});

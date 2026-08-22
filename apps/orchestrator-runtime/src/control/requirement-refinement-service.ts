@@ -173,7 +173,7 @@ function hasBlockingAmbiguity(requirement: ResearchTaskV2): boolean {
 
 
 function needsClarification(requirement: ResearchTaskV2): boolean {
-  return hasBlockingAmbiguity(requirement);
+  return hasBlockingAmbiguity(requirement) || requirement.clarification_questions.length > 0;
 }
 
 function stableValue(value: unknown): unknown {
