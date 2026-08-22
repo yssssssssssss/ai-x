@@ -533,7 +533,8 @@ function CurrentTextReport({ report }: { report: ResearchPlanResponse }) {
         </div>
       </ReportSection>
 
-      <div style={{ marginTop: 16 }}>
+      <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+        <button type="button" className="btn-ghost" onClick={() => window.print()}>打印 / PDF</button>
         <button type="button" className="btn-secondary" onClick={download}>导出 Markdown</button>
       </div>
     </article>
