@@ -954,6 +954,19 @@ test('currentExecutionGapCount counts every page in a valid multi-page gap summa
   assert.equal(count, 5);
 });
 
+test('currentExecutionGapCount counts degraded Skill outputs once', async () => {
+  const { currentExecutionGapCount } = await loadCurrentFlowStateModule();
+  assert.equal(currentExecutionGapCount({
+    plan: {},
+    executionSteps: [{
+      stepNo: 6,
+      actorId: 'generate-research-plan',
+      state: 'succeeded',
+      skillProvenance: { status: 'degraded', limitations: ['knowledge unavailable'] },
+    }] as never,
+  }), 1);
+});
+
 test('currentExecutionGapCount does not reinterpret a present malformed gapSummary as a legacy skipped gap', async () => {
   const { currentExecutionGapCount } = await loadCurrentFlowStateModule();
   const pageSummary = {

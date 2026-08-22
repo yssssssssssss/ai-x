@@ -475,10 +475,13 @@ test('Markdown bundle contains the complete safe report package and only exporta
     'assets/asset-annotation.png',
     'assets/asset-chart.svg',
     'assets/asset-original.png',
+    'deliverable.json',
     'evidence-manifest.json',
+    'full-report.md',
     'report-document.json',
     'report-review.json',
     'report.md',
+    'summary-report.md',
     'visual-assets.json',
   ]);
   assert.deepEqual(reads.sort(), [annotationAssetId, chartAssetId, originalAssetId]);
@@ -494,6 +497,10 @@ test('Markdown bundle contains the complete safe report package and only exporta
   assert.equal(blockedAssetId in bundle.entries, false);
   assert.equal(reads.includes(blockedAssetId), false, 'blocked assets must be rejected before owner route reads');
   assert.deepEqual(bundle.entries['assets/asset-chart.svg'], CHART_SVG, 'bundle must carry the sealed SVG bytes');
+  assert.equal(bundle.text('report.md'), bundle.text('full-report.md'));
+  assert.match(bundle.text('summary-report.md'), /Verified market report/u);
+  const deliverable = JSON.parse(bundle.text('deliverable.json')) as Record<string, unknown>;
+  assert.equal(deliverable.secretToken, undefined, 'canonical export must whitelist reviewed Deliverable fields');
 });
 
 test('Markdown uses deterministic relative image paths, sealed SVG references, and Chart table alternatives', async () => {

@@ -377,6 +377,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+interface SkillOutputOutcome {
+  status: 'succeeded' | 'degraded';
+  limitations: string[];
+  summary: string;
+}
+
+function skillOutputOutcome(value: unknown): SkillOutputOutcome | null {
+  if (!isRecord(value) || value.version !== 'skill-output-v2') return null;
+  if (value.status !== 'succeeded' && value.status !== 'degraded') return null;
+  return {
+    status: value.status,
+    summary: typeof value.summary === 'string' ? value.summary : '',
+    limitations: Array.isArray(value.limitations)
+      ? value.limitations.filter((item): item is string => typeof item === 'string')
+      : [],
+  };
+}
+
+function skillDegradationMessage(step: EngineStep, outcome: SkillOutputOutcome): string {
+  const reason = outcome.limitations[0] ?? outcome.summary ?? 'Skill returned a degraded result';
+  return redactString(`Step ${step.step_no} (${step.actor_id}) degraded: ${reason}`);
+}
+
 function designAnnotationFindings(
   outputs: readonly EngineSealedStepOutput[],
 ): FindingBoundVisualAnnotation[] {
@@ -1409,6 +1432,7 @@ export class LeaseExecutionEngine {
         let producedSkillOutputHash: string | undefined;
         let toolAttemptReceipts: ToolRetryAttemptReceipt[] | undefined;
         let actorResult: StepResult | undefined;
+        let skillOutcome: SkillOutputOutcome | null = null;
         let unpublishedArtifactId: string | undefined;
         let publicationGroup: ArtifactPublicationGroup | undefined;
         const pendingBrowserCaptures: CommittedBrowserCapture[] = [];
@@ -1449,6 +1473,9 @@ export class LeaseExecutionEngine {
             };
             unpublishedArtifactId = resealed.id;
             const verified = await readVerifiedStepArtifact(sealedOutput, this.dependencies.artifacts);
+            const reusedSkillOutcome = step.actor_type === 'skill'
+              ? skillOutputOutcome(verified.output)
+              : null;
             await this.recordSucceededExecutionStep({
               ...input.lease,
               stepNo: step.step_no,
@@ -1457,8 +1484,30 @@ export class LeaseExecutionEngine {
               actorId: step.actor_id,
               state: 'succeeded',
               outputArtifactId: resealed.id,
-              toolProvenance: { ...checkpoint.provenance, outputArtifactId: resealed.id, sourceArtifactId: priorArtifact.id },
+              ...(step.actor_type === 'tool'
+                ? { toolProvenance: { ...checkpoint.provenance, outputArtifactId: resealed.id, sourceArtifactId: priorArtifact.id } }
+                : {}),
+              ...(step.actor_type === 'skill'
+                ? {
+                    skillProvenance: {
+                      ...checkpoint.provenance,
+                      outputArtifactId: resealed.id,
+                      sourceArtifactId: priorArtifact.id,
+                      status: reusedSkillOutcome?.status ?? 'succeeded',
+                      ...(reusedSkillOutcome?.status === 'degraded'
+                        ? { limitations: reusedSkillOutcome.limitations }
+                        : {}),
+                    },
+                  }
+                : {}),
             });
+            if (reusedSkillOutcome?.status === 'degraded') {
+              addGap({
+                key: `step:${step.step_no}:skill:${step.actor_id}:degraded`,
+                stepNo: step.step_no,
+                message: skillDegradationMessage(step, reusedSkillOutcome),
+              });
+            }
             unpublishedArtifactId = undefined;
             outputs.push({ ...sealedOutput, output: verified.output });
             if (step.actor_type === 'tool') {
@@ -1524,6 +1573,7 @@ export class LeaseExecutionEngine {
           if (typeof actorOutputHash === 'string') producedSkillOutputHash = actorOutputHash;
           toolAttemptReceipts = actorResult.toolAttemptReceipts;
           const result = sanitizeStepResult(actorResult);
+          skillOutcome = step.actor_type === 'skill' ? skillOutputOutcome(result.output) : null;
           const successfulPageFailureRows = step.actor_id === 'playwright-page-capture'
             && isRecord(result.output)
             ? userVisiblePageFailures(result.output)
@@ -1656,7 +1706,14 @@ export class LeaseExecutionEngine {
                 }
               : undefined,
             skillProvenance: result.skillProvenance
-              ? { ...result.skillProvenance, outputArtifactId: artifact.id, status: 'succeeded' }
+              ? {
+                  ...result.skillProvenance,
+                  outputArtifactId: artifact.id,
+                  status: skillOutcome?.status ?? 'succeeded',
+                  ...(skillOutcome?.status === 'degraded'
+                    ? { limitations: skillOutcome.limitations }
+                    : {}),
+                }
               : undefined,
             latencyMs: result.toolReceipt?.latencyMs,
             startedAt,
@@ -1672,6 +1729,13 @@ export class LeaseExecutionEngine {
               message: redactString(
                 `Step ${step.step_no} (${step.actor_id}) page ${pageFailure.sourceResultIndex}: ${pageFailure.message}`,
               ),
+            });
+          }
+          if (skillOutcome?.status === 'degraded') {
+            addGap({
+              key: `step:${step.step_no}:skill:${step.actor_id}:degraded`,
+              stepNo: step.step_no,
+              message: skillDegradationMessage(step, skillOutcome),
             });
           }
           if (step.actor_type === 'tool') {

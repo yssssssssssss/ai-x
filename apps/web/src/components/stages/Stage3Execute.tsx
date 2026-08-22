@@ -31,6 +31,7 @@ const STATUS_LABELS: Record<ExecutionFlowStatus, string> = {
   pending: '等待',
   running: '运行中',
   succeeded: '完成',
+  degraded: '降级完成',
   failed: '失败',
   skipped: '已跳过',
 };
@@ -156,7 +157,7 @@ export function Stage3Execute({
             aria-hidden="true"
           >
             <defs>
-              {(['pending', 'running', 'succeeded', 'failed', 'skipped'] as const).map((status) => (
+              {(['pending', 'running', 'succeeded', 'degraded', 'failed', 'skipped'] as const).map((status) => (
                 <marker
                   key={status}
                   id={`execution-flow-arrow-${status}`}
@@ -235,7 +236,7 @@ export function Stage3Execute({
       </ol>
 
       <div className="execution-flow-legend" aria-hidden="true">
-        {(['running', 'succeeded', 'failed', 'skipped', 'pending'] as const).map((status) => (
+        {(['running', 'succeeded', 'degraded', 'failed', 'skipped', 'pending'] as const).map((status) => (
           <span key={status}><StatusMark status={status} />{STATUS_LABELS[status]}</span>
         ))}
       </div>
@@ -246,6 +247,7 @@ export function Stage3Execute({
 function StatusMark({ status }: { status: ExecutionFlowStatus }) {
   if (status === 'running') return <span className="spinner execution-flow-node-spinner" />;
   if (status === 'succeeded') return <span className="execution-flow-status-mark status-succeeded">✓</span>;
+  if (status === 'degraded') return <span className="execution-flow-status-mark status-degraded">!</span>;
   if (status === 'failed') return <span className="execution-flow-status-mark status-failed">×</span>;
   if (status === 'skipped') return <span className="execution-flow-status-mark status-skipped">↷</span>;
   return <span className="execution-flow-status-mark status-pending">○</span>;

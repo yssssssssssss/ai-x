@@ -11,6 +11,7 @@ export type ExecutionFlowStatus =
   | 'pending'
   | 'running'
   | 'succeeded'
+  | 'degraded'
   | 'failed'
   | 'skipped';
 
@@ -25,6 +26,7 @@ export interface ExecutionFlowStepInput {
 export interface ExecutionFlowLogInput {
   step_no: number;
   status: string;
+  skillProvenance?: Record<string, unknown> | null;
 }
 
 export interface ExecutionFlowNode {
@@ -172,7 +174,10 @@ export function buildExecutionFlowGraph(input: {
   const usedSequentialFallback = !hasCurrentDependencies || validatedDependencies === null;
   const dependencies = validatedDependencies ?? sequentialDependencies(steps);
   const depths = dependencyDepths(steps, dependencies);
-  const statusByStep = new Map((input.log ?? []).map((row) => [row.step_no, normalizeStatus(row.status)]));
+  const statusByStep = new Map((input.log ?? []).map((row) => [
+    row.step_no,
+    row.skillProvenance?.status === 'degraded' ? 'degraded' as const : normalizeStatus(row.status),
+  ]));
   const maxExecutionDepth = steps.length === 0
     ? -1
     : Math.max(...steps.map((step) => depths.get(step.step_no) ?? 0));
@@ -253,7 +258,7 @@ export function buildExecutionFlowGraph(input: {
   }
 
   const summary = executionNodes.reduce<ExecutionFlowGraph['summary']>((current, node) => {
-    if (node.status === 'succeeded') current.completed += 1;
+    if (node.status === 'succeeded' || node.status === 'degraded') current.completed += 1;
     else if (node.status === 'running') current.running += 1;
     else if (node.status === 'failed') current.failed += 1;
     else if (node.status === 'skipped') current.skipped += 1;

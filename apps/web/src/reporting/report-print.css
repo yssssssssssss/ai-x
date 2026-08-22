@@ -2,6 +2,29 @@
   max-width: 1240px;
 }
 
+.report-view-toggle {
+  display: inline-flex;
+  gap: 4px;
+  margin: 0 0 16px;
+  padding: 4px;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--bg-card);
+}
+
+.report-view-toggle button {
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-dim);
+}
+
+.report-view-toggle button.is-active {
+  background: var(--primary-tint);
+  color: var(--text);
+}
+
 .report-document {
   --report-paper: #f6f4ee;
   --report-ink: #1c2230;

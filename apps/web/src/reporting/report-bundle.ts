@@ -11,6 +11,10 @@ import type {
 } from '../../../orchestrator-runtime/src/report/report-document-composer.ts';
 import type { ChartTableAlternative } from '../../../orchestrator-runtime/src/report/chart-renderer.ts';
 import { assertVisualAssetManifest } from '../report-package-response.ts';
+import {
+  currentResearchPlanToMarkdown,
+  type CurrentResearchPlanResponse,
+} from '../current-report-markdown.ts';
 
 interface BundleAssetReadResult {
   bytes: Uint8Array;
@@ -107,6 +111,24 @@ function deterministicAssetPath(manifest: VisualAssetManifest): string {
     ? stem.slice(0, stem.lastIndexOf('.'))
     : stem;
   return `assets/${withoutExtension}${extension}`;
+}
+
+function safeDeliverable(deliverable: MultimodalReportPackage['deliverable']): Record<string, unknown> {
+  return {
+    version: deliverable.version,
+    taskId: deliverable.taskId,
+    planVersionId: deliverable.planVersionId,
+    attemptId: deliverable.attemptId,
+    deliverableType: deliverable.deliverableType,
+    evidenceManifestArtifactId: deliverable.evidenceManifestArtifactId,
+    methodSummary: deliverable.methodSummary,
+    findingGraph: deliverable.findingGraph,
+    payload: deliverable.payload,
+    recommendations: deliverable.recommendations,
+    coverage: deliverable.coverage,
+    risksAndOpenIssues: deliverable.risksAndOpenIssues,
+    capabilityProvenance: deliverable.capabilityProvenance,
+  };
 }
 
 function safeEvidenceManifest(manifest: EvidenceManifest): Record<string, unknown> {
@@ -366,9 +388,19 @@ export async function createReportBundle({ report, readAsset }: CreateReportBund
   }));
   const evidenceIndexItems = report.evidenceManifest.entries.map((entry) =>
     `${entry.id}: ${entry.evidenceClass} Evidence.`);
+  const summaryMarkdown = reportMarkdown(
+    report.reportDocument,
+    manifestByAsset,
+    assetPaths,
+    evidenceIndexItems,
+  );
+  const fullMarkdown = report.deliverable.deliverableType === 'research_plan'
+    ? currentResearchPlanToMarkdown(report as unknown as CurrentResearchPlanResponse)
+    : summaryMarkdown;
   const entries = new Map<string, Uint8Array>([
     ['assets/', new Uint8Array()],
     ...readAssets.map(({ path, bytes }) => [path, bytes] as const),
+    ['deliverable.json', jsonBytes(safeDeliverable(report.deliverable))],
     ['evidence-manifest.json', jsonBytes(safeEvidenceManifest(report.evidenceManifest))],
     ['report-document.json', jsonBytes(safeReportDocument(
       report.reportDocument,
@@ -376,12 +408,9 @@ export async function createReportBundle({ report, readAsset }: CreateReportBund
       evidenceIndexItems,
     ))],
     ['report-review.json', jsonBytes(safeReview(report.reportReview))],
-    ['report.md', strToU8(reportMarkdown(
-      report.reportDocument,
-      manifestByAsset,
-      assetPaths,
-      evidenceIndexItems,
-    ))],
+    ['full-report.md', strToU8(fullMarkdown)],
+    ['summary-report.md', strToU8(summaryMarkdown)],
+    ['report.md', strToU8(fullMarkdown)],
     ['visual-assets.json', jsonBytes(visualAssets)],
   ]);
   const sortedEntries = Object.fromEntries([...entries].sort(([left], [right]) => left.localeCompare(right)));

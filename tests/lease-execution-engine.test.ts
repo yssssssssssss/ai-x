@@ -729,6 +729,22 @@ class CountingRealLLM implements LLMClient {
   }
 }
 
+class DegradedSkillLLM extends CountingRealLLM {
+  override async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
+    const result = await super.generateStructured<T>(options);
+    if (!options.schemaName.startsWith('skill:')) return result;
+    return {
+      ...result,
+      data: {
+        ...digitalHumanSkillOutput(),
+        status: 'degraded',
+        summary: 'Completed with a knowledge gap.',
+        limitations: ['research wiki was unavailable'],
+      } as T,
+    };
+  }
+}
+
 class ReverseCompletionLLM extends CountingRealLLM {
   override async generateText(options: TextLLMCallOptions): Promise<TextLLMResult> {
     const result = await super.generateText(options);
@@ -3392,6 +3408,40 @@ test('executes the current plan with real Tool provenance and complete model rec
   assert.equal(skillProvenance.status, 'succeeded');
   const attempts = await repository.listAttempts(lease.taskId);
   assert.equal(attempts[0]?.state, 'completed');
+});
+
+test('records a degraded Skill as a completed task with one visible gap', async () => {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    planSteps,
+    {
+      deliverable_type: 'competitive_analysis_report',
+      evidence_requirements: [{
+        id: 'competitive-analysis-report',
+        acceptedClasses: ['public_source'],
+        minimumCount: 1,
+        required: true,
+      }],
+    },
+  );
+  const deliverables = new RecordingDeliverablesFake();
+  const engine = buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new DegradedSkillLLM(),
+    deliverables,
+  );
+
+  const result = await engine.execute({ lease, expectedModel: 'pinned-model' });
+  assert.equal(result.status, 'completed_with_gaps');
+  assert.equal(result.gapCount, 1);
+  assert.equal(deliverables.calls[0]?.gaps.length, 1);
+  assert.match(deliverables.calls[0]?.gaps[0] ?? '', /research wiki was unavailable/u);
+
+  const skillStep = (await repository.listExecutionSteps(lease.attemptId))
+    .find(({ stepNo }) => stepNo === 2);
+  assert.equal(skillStep?.skillProvenance?.status, 'degraded');
+  assert.deepEqual(skillStep?.skillProvenance?.limitations, ['research wiki was unavailable']);
 });
 
 test('passes finalized success criteria and required ProblemGraph question IDs to report review', async () => {

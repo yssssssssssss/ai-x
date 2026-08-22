@@ -55,44 +55,44 @@ Web build 通过
 
 ## 1.1 失败测试
 
-- [ ] 在 `tests/lease-execution-engine.test.ts` 增加 Skill `degraded` fixture。
-- [ ] 断言旧实现错误地产生 `completed`，确认红灯。
-- [ ] 断言 degraded Skill 产生稳定 Gap key。
-- [ ] 断言 degraded 原因进入 Skill provenance。
-- [ ] 在 `tests/current-flow-state.test.ts` 增加 Skill degradation gap count。
-- [ ] 增加 research_plan multimodal fixture 的完整视图选择测试。
-- [ ] 断言历史 multimodal research_plan 仍可读取 Canonical Deliverable。
-- [ ] 在 `tests/report-bundle.test.ts` 断言 ZIP 包含 `deliverable.json`、`full-report.md` 和 `summary-report.md`。
+- [x] 在 `tests/lease-execution-engine.test.ts` 增加 Skill `degraded` fixture。
+- [x] 断言旧实现错误地产生 `completed`，确认红灯。
+- [x] 断言 degraded Skill 产生稳定 Gap key。
+- [x] 断言 degraded 原因进入 Skill provenance。
+- [x] 在 `tests/current-flow-state.test.ts` 增加 Skill degradation gap count。
+- [x] 增加 research_plan multimodal fixture 的完整视图选择测试。
+- [x] 断言历史 multimodal research_plan 仍可读取 Canonical Deliverable。
+- [x] 在 `tests/report-bundle.test.ts` 断言 ZIP 包含 `deliverable.json`、`full-report.md` 和 `summary-report.md`。
 
 ## 1.2 SkillOutcomePolicy
 
-- [ ] 新增统一 Skill output status 解析函数。
-- [ ] `succeeded` 保持普通成功。
-- [ ] `degraded` 在 provenance 中记录状态、限制摘要和 Artifact ID。
-- [ ] `degraded` 添加 `step:<stepNo>:skill:<skillId>:degraded` Gap。
-- [ ] 最终任务状态改为 `completed_with_gaps`。
-- [ ] 更新 `currentExecutionGapCount()` 识别 Skill degradation。
-- [ ] Stage3 Skill节点增加 warning tone 和“降级完成”文案。
-- [ ] 最终报告顶部显示降级原因。
+- [x] 新增统一 Skill output status 解析函数。
+- [x] `succeeded` 保持普通成功。
+- [x] `degraded` 在 provenance 中记录状态、限制摘要和 Artifact ID。
+- [x] `degraded` 添加 `step:<stepNo>:skill:<skillId>:degraded` Gap。
+- [x] 最终任务状态改为 `completed_with_gaps`。
+- [x] 更新 `currentExecutionGapCount()` 识别 Skill degradation。
+- [x] Stage3 Skill节点增加 warning tone 和“降级完成”文案。
+- [x] 最终报告顶部显示降级原因。
 
 ## 1.3 完整报告视图
 
-- [ ] 将 `CurrentTextReport` 提取为可接受任意 Current presentation mode 的 `ResearchPlanFullView`。
-- [ ] `research_plan` 默认展示完整 Deliverable。
-- [ ] 有 ReportDocument 时增加“完整方案 / 管理摘要”切换。
-- [ ] 完整方案展示全部 12 个 Payload 字段。
-- [ ] 历史 multimodal research_plan 不需要重新执行即可使用完整视图。
-- [ ] 无 ReportDocument 时只展示完整视图。
-- [ ] 保留 Evidence、FindingGraph、Recommendations 和 Risks 展示。
+- [x] 将 `CurrentTextReport` 提取为可接受任意 Current presentation mode 的 `ResearchPlanFullView`。
+- [x] `research_plan` 默认展示完整 Deliverable。
+- [x] 有 ReportDocument 时增加“完整方案 / 管理摘要”切换。
+- [x] 完整方案展示全部 12 个 Payload 字段。
+- [x] 历史 multimodal research_plan 不需要重新执行即可使用完整视图。
+- [x] 无 ReportDocument 时只展示完整视图。
+- [x] 保留 Evidence、FindingGraph、Recommendations 和 Risks 展示。
 
 ## 1.4 下载包
 
-- [ ] `report-bundle.ts` 加入 `deliverable.json`。
-- [ ] 生成 `full-report.md`。
-- [ ] 生成 `summary-report.md`。
-- [ ] `report.md` 与完整方案保持一致，维持兼容。
-- [ ] 保留 ReportDocument、Review、Evidence Manifest 和 Visual Assets。
-- [ ] 确认导出内容不包含未脱敏原始输入。
+- [x] `report-bundle.ts` 加入 `deliverable.json`。
+- [x] 生成 `full-report.md`。
+- [x] 生成 `summary-report.md`。
+- [x] `report.md` 与完整方案保持一致，维持兼容。
+- [x] 保留 ReportDocument、Review、Evidence Manifest 和 Visual Assets。
+- [x] 确认导出内容不包含未脱敏原始输入。
 
 ## Phase 1 门禁
 
@@ -107,12 +107,12 @@ pnpm exec tsx --test tests/task-history-ui.test.ts
 git diff --check
 ```
 
-- [ ] Phase 1 定向测试通过。
-- [ ] Typecheck 通过。
-- [ ] Web build 通过。
-- [ ] `git diff --check` 通过。
+- [x] Phase 1 定向测试通过。
+- [x] Typecheck 通过。
+- [x] Web build 通过。
+- [x] `git diff --check` 通过。
 - [ ] 浏览器确认历史宠物任务完整方案可见。
-- [ ] 独立提交 Phase 1。
+- [x] 独立提交 Phase 1。
 
 # Phase 2：Requirement 最终化
 

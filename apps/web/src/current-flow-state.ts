@@ -313,6 +313,10 @@ export function currentExecutionGapCount(input: {
     }
   }
   for (const step of input.executionSteps) {
+    const skillProvenance = step.skillProvenance;
+    if (isRecord(skillProvenance) && skillProvenance.status === 'degraded') {
+      keys.add(`step:${step.stepNo}:skill:${step.actorId}:degraded`);
+    }
     const provenance = step.toolProvenance;
     if (isRecord(provenance) && Object.prototype.hasOwnProperty.call(provenance, 'gapSummary')) {
       const summaryKeys = gapSummaryKeys(provenance.gapSummary);

@@ -26,10 +26,7 @@ type MultimodalReportResponse = Extract<
   ControlDeliverableResponse,
   { presentationMode: 'multimodal' }
 >;
-type TextResearchPlanResponse = Extract<
-  CurrentResearchPlanResponse,
-  { presentationMode: 'legacy_text' | 'current_text' }
->;
+type ResearchPlanResponse = CurrentResearchPlanResponse;
 type GenericTextReportResponse = Exclude<
   ControlDeliverableResponse,
   { presentationMode: 'multimodal' }
@@ -39,17 +36,6 @@ export function selectCurrentStage4Renderer(report: unknown): {
   component: 'CurrentTextReport' | 'GenericTextReport' | 'ReportDocumentView';
   reportDocument?: ReportDocument;
 } {
-  if (
-    report !== null
-    && typeof report === 'object'
-    && !Array.isArray(report)
-    && (report as Record<string, unknown>).presentationMode === 'multimodal'
-  ) {
-    const reportDocument = (report as Record<string, unknown>).reportDocument;
-    if (reportDocument !== null && typeof reportDocument === 'object' && !Array.isArray(reportDocument)) {
-      return { component: 'ReportDocumentView', reportDocument: reportDocument as ReportDocument };
-    }
-  }
   if (
     report !== null
     && typeof report === 'object'
@@ -65,6 +51,17 @@ export function selectCurrentStage4Renderer(report: unknown): {
       return { component: 'CurrentTextReport' };
     }
   }
+  if (
+    report !== null
+    && typeof report === 'object'
+    && !Array.isArray(report)
+    && (report as Record<string, unknown>).presentationMode === 'multimodal'
+  ) {
+    const reportDocument = (report as Record<string, unknown>).reportDocument;
+    if (reportDocument !== null && typeof reportDocument === 'object' && !Array.isArray(reportDocument)) {
+      return { component: 'ReportDocumentView', reportDocument: reportDocument as ReportDocument };
+    }
+  }
   return { component: 'GenericTextReport' };
 }
 
@@ -76,16 +73,43 @@ export function CurrentStage4Report({
   taskState: 'completed' | 'completed_with_gaps';
 }) {
   const selected = selectCurrentStage4Renderer(report);
+  if (selected.component === 'CurrentTextReport') {
+    return report.presentationMode === 'multimodal'
+      ? <MultimodalResearchPlanReport report={report as MultimodalReportResponse & ResearchPlanResponse} taskState={taskState} />
+      : <CurrentTextReport report={report as ResearchPlanResponse} />;
+  }
   if (selected.component === 'ReportDocumentView' && report.presentationMode === 'multimodal') {
     return <MultimodalCurrentReport report={report} taskState={taskState} />;
   }
   if (report.presentationMode === 'multimodal') {
     throw new Error('multimodal report package has no ReportDocument renderer');
   }
-  if (selected.component === 'CurrentTextReport') {
-    return <CurrentTextReport report={report as TextResearchPlanResponse} />;
-  }
   return <GenericTextReport report={report} />;
+}
+
+function MultimodalResearchPlanReport({
+  report,
+  taskState,
+}: {
+  report: MultimodalReportResponse & ResearchPlanResponse;
+  taskState: 'completed' | 'completed_with_gaps';
+}) {
+  const [view, setView] = useState<'full' | 'summary'>('full');
+  return (
+    <>
+      <nav className="report-view-toggle" aria-label="报告视图">
+        <button type="button" className={view === 'full' ? 'is-active' : ''} onClick={() => setView('full')}>
+          完整方案
+        </button>
+        <button type="button" className={view === 'summary' ? 'is-active' : ''} onClick={() => setView('summary')}>
+          管理摘要
+        </button>
+      </nav>
+      {view === 'full'
+        ? <CurrentTextReport report={report} />
+        : <MultimodalCurrentReport report={report} taskState={taskState} />}
+    </>
+  );
 }
 
 function MultimodalCurrentReport({
@@ -350,7 +374,7 @@ function MultimodalCurrentReport({
   );
 }
 
-function CurrentTextReport({ report }: { report: TextResearchPlanResponse }) {
+function CurrentTextReport({ report }: { report: ResearchPlanResponse }) {
   const { deliverable, evidenceManifest } = report;
   const { payload, findingGraph } = deliverable;
 
