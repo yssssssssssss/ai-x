@@ -24,6 +24,7 @@ export class SkillActorRunner implements ActorRunner {
       priorOutputs: ctx.toolOutputs,
       skillLoader: this.skillLoader,
       validator: this.validator,
+      captureSchemaHashes: false,
     });
 
     const skillGen = await this.llm.generateStructured<object>({

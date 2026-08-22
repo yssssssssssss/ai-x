@@ -26,6 +26,7 @@ export function prepareSkillExecution(input: {
   stepContract?: Record<string, unknown>;
   skillLoader: SkillLoader;
   validator: SchemaValidator;
+  captureSchemaHashes?: boolean;
 }): PreparedSkillExecution {
   const skill = input.skillLoader.getSkill(input.skillId);
   if (!skill) throw new Error(`skill ${input.skillId} is not active`);
@@ -44,9 +45,13 @@ export function prepareSkillExecution(input: {
     body,
     schemas,
     schemaHashes: {
-      inputSchemaHash: skill.input_schema ? hashFile(skill.input_schema) : null,
-      outputSchemaHash: hashFile(skill.output_schema),
-      payloadSchemaHash: skill.payload_schema ? hashFile(skill.payload_schema) : null,
+      inputSchemaHash: input.captureSchemaHashes === false || !skill.input_schema
+        ? null
+        : hashFile(skill.input_schema),
+      outputSchemaHash: input.captureSchemaHashes === false ? '' : hashFile(skill.output_schema),
+      payloadSchemaHash: input.captureSchemaHashes === false || !skill.payload_schema
+        ? null
+        : hashFile(skill.payload_schema),
     },
     prompt: `${SKILL_EXECUTION_PROMPT_PREFIX}\n${JSON.stringify(stepContract)}\n\n${body.body}`,
     context: {
