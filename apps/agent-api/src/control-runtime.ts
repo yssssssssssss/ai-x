@@ -430,9 +430,15 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
         input.requirement,
         input.originalInput,
         onProgress,
-        input.selectedScenarioId
-          ? { selectedScenarioId: input.selectedScenarioId }
-          : {},
+        {
+          ...(input.selectedScenarioId
+            ? { selectedScenarioId: input.selectedScenarioId }
+            : {}),
+          ...(input.requireExplicitScenarioSelection
+            ? { requireExplicitScenarioSelection: true }
+            : {}),
+          ...(input.requiredProfileId ? { requiredProfileId: input.requiredProfileId } : {}),
+        },
       );
     },
   };
@@ -447,7 +453,10 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
   };
   const refinementPlanning: RequirementPlanner = {
     plan(input, onProgress) {
-      return planningSource.plan(input, onProgress);
+      return planningSource.plan({
+        ...input,
+        requireExplicitScenarioSelection: true,
+      }, onProgress);
     },
   };
   const conversations = overrides.conversations ?? defaultConversations();
@@ -542,9 +551,24 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
 
       // The revision instruction comes first so an explicit `$skill` remains a
       // valid direct invocation. The frozen ResearchTask still owns the goal.
+      const frozenPlan = activePlan.plan as {
+        planning_provenance?: {
+          classification_method?: unknown;
+          primary_scenario_id?: unknown;
+        };
+      };
+      const classificationMethod = frozenPlan.planning_provenance?.classification_method;
+      const primaryScenarioId = frozenPlan.planning_provenance?.primary_scenario_id;
+      const hasConfirmedScenario = classificationMethod === 'clarification'
+        || classificationMethod === 'direct_skill_bypass';
+      const activeScenarioId = hasConfirmedScenario && typeof primaryScenarioId === 'string'
+        ? primaryScenarioId as NonNullable<ResearchPlanningInput['selectedScenarioId']>
+        : undefined;
       const planningResult = await planning.plan({
         originalInput: `${input.instruction.trim()}\n\nOriginal research goal: ${researchGoal}`,
         requirement: structuredTask,
+        ...(activeScenarioId ? { selectedScenarioId: activeScenarioId } : {}),
+        requiredProfileId: activePlan.candidateId,
       });
       const candidate = planningResult.candidates.find((item) => item.id === activePlan.candidateId);
       if (!candidate) {

@@ -185,9 +185,13 @@ test('validated dynamic policy maps real CapabilityResolution semantics through 
     },
     policy: dynamicPolicy,
   });
-  assert.deepEqual(resolved.profiles.map(({ id }) => id), ['speed', 'depth', 'breadth']);
+  assert.deepEqual(resolved.profiles.map(({ id }) => id), ['speed', 'depth', 'breadth', 'decision']);
   assert.equal(classifierCalls, 0);
-  assert.equal(resolved.planning_provenance.selected_profile_ids.at(-1), 'breadth');
+  assert.equal(resolved.profiles.find(({ recommended }) => recommended)?.id, 'breadth');
+  assert.deepEqual(
+    resolved.planning_provenance.selected_profile_ids,
+    ['speed', 'depth', 'breadth', 'decision'],
+  );
 });
 
 test('omitting a mode remains fixed even if specialty signals and active capabilities are present', async () => {

@@ -4,6 +4,7 @@ import type {
   ProblemGraph,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import type {
+  CandidateProfile,
   GuidanceRef,
   PlanCandidate,
   PlanProgress,
@@ -46,6 +47,8 @@ export interface ResearchPlanningInput {
   directSkillId?: string;
   requirement?: ResearchTaskV2;
   selectedScenarioId?: ScenarioId;
+  requireExplicitScenarioSelection?: boolean;
+  requiredProfileId?: CandidateProfile;
 }
 
 export interface ResearchPlanningResult {
@@ -73,6 +76,8 @@ export type CurrentResearchPlanningOutcome =
 
 export interface CurrentResearchPlanningOptions {
   selectedScenarioId?: ScenarioId;
+  requireExplicitScenarioSelection?: boolean;
+  requiredProfileId?: CandidateProfile;
 }
 
 export function isPlanningGuidanceClarification(
@@ -227,6 +232,10 @@ export class ResearchPlanningService {
       requirement: canonicalRequirement,
       guidanceRequirement: requirement,
       ...(options.selectedScenarioId ? { selectedScenarioId: options.selectedScenarioId } : {}),
+      ...(options.requireExplicitScenarioSelection
+        ? { requireExplicitScenarioSelection: true }
+        : {}),
+      ...(options.requiredProfileId ? { requiredProfileId: options.requiredProfileId } : {}),
       taskProvenance,
       emit,
     }, deliverableSelection.evidenceRequirements);

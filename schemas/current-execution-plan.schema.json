@@ -73,7 +73,7 @@
       ],
       "properties": {
         "version": { "const": "planning-guidance-provenance-v1" },
-        "resolver_version": { "const": "candidate-profile-resolver-v1" },
+        "resolver_version": { "enum": ["candidate-profile-resolver-v1", "candidate-profile-resolver-v2"] },
         "scenario_catalog_hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
         "signal_catalog_hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
         "profile_spec_hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },

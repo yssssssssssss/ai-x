@@ -1,4 +1,4 @@
-// RoutedPlanner —— 常规路由支路:节点激活 → 引导召回 → 状态判定 → 候选生成(depth/speed)+ 幻觉校验。
+// RoutedPlanner —— 常规路由支路:节点激活 → 引导召回 → 状态判定 → 方向驱动候选生成(2-4 张)+ 幻觉校验。
 // 大块 prompt 常量就近安放本文件;retrieveGuidance 纯函数移入此处(唯一使用者),
 // 由 orchestrator.ts re-export 保住 tests 的老 import 路径(D3)。planner 不反向依赖 orchestrator。
 
@@ -50,7 +50,11 @@ import {
 } from './plan-compiler.ts';
 import { loadSchemaText, resolveSchema } from '../runtime/schema-registry.ts';
 import { SchemaValidationError, type SchemaValidator } from '../schema/validator.ts';
-import { resolvePlannerGuidance, type ResolvedProfileSpec } from './planning-guidance-adapter.ts';
+import {
+  resolvePlannerDirectionGate,
+  resolvePlannerGuidance,
+  type ResolvedProfileSpec,
+} from './planning-guidance-adapter.ts';
 
 interface SchemaWithDefinitions {
   $defs: Record<string, object>;
@@ -614,6 +618,35 @@ export class RoutedPlanner implements PlanStrategy {
       ? []
       : decisionGraph.nodes.filter((node) => node.applies_to.includes(ctx.task.task_type));
     const activatedNodeKeys = activated.map((node) => node.key);
+
+    // Direction selection is a user decision, so stop before spending model calls on
+    // decision states, the Problem Graph, capabilities, or candidate generation.
+    if (ctx.requireExplicitScenarioSelection && !ctx.selectedScenarioId && !ctx.direct) {
+      const directionGate = await resolvePlannerDirectionGate({
+        rawInput: ctx.originalInput ?? ctx.requirement.research_goal,
+        task: ctx.guidanceRequirement ?? ctx.requirement,
+        ...(this.deps.planningPolicy === undefined
+          ? {}
+          : { policy: this.deps.planningPolicy }),
+      });
+      if (directionGate.clarification?.reason_code === 'scenario_selection_required') {
+        return {
+          kind: 'planning_guidance_clarification',
+          activatedNodes: activatedNodeKeys,
+          planningGuidance: {
+            reasonCode: 'scenario_selection_required',
+            options: structuredClone(directionGate.clarification.candidate_scenarios),
+          },
+        };
+      }
+      if (directionGate.status === 'clarification') {
+        throw new Error(`Planning Guidance requires clarification: ${directionGate.clarification?.reason_code ?? 'unknown'}`);
+      }
+      if (directionGate.status === 'blocked') {
+        throw new Error('Planning Guidance could not establish both baseline candidates');
+      }
+    }
+
     ctx.emit({
       phase: 'activate',
       status: 'done',
@@ -725,6 +758,10 @@ export class RoutedPlanner implements PlanStrategy {
       rawInput: ctx.originalInput ?? ctx.requirement.research_goal,
       task: ctx.guidanceRequirement ?? ctx.requirement,
       ...(ctx.selectedScenarioId ? { selectedScenarioId: ctx.selectedScenarioId } : {}),
+      ...(ctx.requireExplicitScenarioSelection
+        ? { requireExplicitScenarioSelection: true }
+        : {}),
+      ...(ctx.requiredProfileId ? { requiredProfileId: ctx.requiredProfileId } : {}),
       problemGraph: problemGraphResult.graph,
       capabilityResolution,
       ...(ctx.direct ? { directSkillId: ctx.direct.skillName } : {}),

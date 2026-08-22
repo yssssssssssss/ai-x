@@ -1386,29 +1386,29 @@ test('Current planning assembles Task8 graph and Task9 real-adapter capability s
   }
 });
 
-test('production dynamic policy drives exact 2/3/4 ProfileSpec order and canonical provenance', async () => {
+test('production dynamic policy keeps direction-owned Profile sets stable across user wording', async () => {
   const dynamicPolicy = loadPlanningPolicy();
   assert.equal(dynamicPolicy.candidate_generation_mode, 'dynamic');
   assert.equal(dynamicPolicy.activation_gate, 'gate-3-owner-waiver');
   const cases = [
     {
-      name: 'two',
+      name: 'plain wording',
       rawInput: '开展竞品研究',
       scope: ['单一对象'],
       expectedDeliverables: ['competitive analysis report'],
-      expectedProfiles: ['speed', 'depth'],
+      expectedProfiles: ['speed', 'depth', 'breadth', 'decision'],
       recommended: 'depth',
     },
     {
-      name: 'three',
+      name: 'breadth wording',
       rawInput: '开展竞品研究并覆盖多个竞品',
       scope: ['多个竞品'],
       expectedDeliverables: ['competitive analysis report'],
-      expectedProfiles: ['speed', 'depth', 'breadth'],
+      expectedProfiles: ['speed', 'depth', 'breadth', 'decision'],
       recommended: 'breadth',
     },
     {
-      name: 'four',
+      name: 'decision wording',
       rawInput: '开展竞品研究，覆盖多个竞品，并比较多种执行路径后给出决策建议',
       scope: ['方案 A', '方案 B', '多个竞品'],
       expectedDeliverables: ['competitive analysis report', '决策建议'],
@@ -1461,38 +1461,44 @@ test('dynamic routed ambiguity spends exactly one Scenario classifier call', asy
   assert.equal(result.planningProvenance.classifier_call_count, 1);
   assert.equal(result.planningProvenance.primary_scenario_id, 'competitor-benchmark-research');
   assert.deepEqual(result.planningProvenance.secondary_scenario_ids, ['priority-roadmap']);
-  assert.deepEqual(result.candidates.map(({ id }) => id), ['speed', 'depth', 'decision']);
+  assert.deepEqual(result.candidates.map(({ id }) => id), ['speed', 'depth', 'breadth', 'decision']);
 });
 
-test('Current routed planning returns a typed direction gate before candidate generation when Scenario signals are absent', async () => {
+test('Current routed planning requires a direction choice even when Scenario wording is explicit', async () => {
   const dynamicPolicy = {
     ...loadPlanningPolicy(),
     candidate_generation_mode: 'dynamic',
   } as const;
   const { llm, planning } = routedPlanningHarness('dynamic', dynamicPolicy);
-  const rawInput = '梳理宠物心智的设计表达策略全景';
+  const rawInput = '开展竞品研究';
   const requirement: ResearchTaskV2 = {
     ...structuredClone(task),
-    task_type: 'user_research_planning',
     research_goal: rawInput,
-    comparison_dimensions: undefined,
-    scope: ['宠物心智设计表达'],
-    expected_deliverables: ['research_plan'],
+    scope: ['单一对象'],
+    expected_deliverables: ['competitive analysis report'],
   };
 
-  const result = await planning.planCurrentFromRequirementOutcome(requirement, rawInput);
+  const result = await planning.planCurrentFromRequirementOutcome(
+    requirement,
+    rawInput,
+    undefined,
+    { requireExplicitScenarioSelection: true },
+  );
 
   assert.ok('kind' in result && result.kind === 'planning_guidance_clarification');
   if (!('kind' in result) || result.kind !== 'planning_guidance_clarification') return;
   assert.equal(result.planningGuidance.reasonCode, 'scenario_selection_required');
   assert.deepEqual(result.planningGuidance.options.map(({ id }) => id), [
-    'user-material-synthesis',
-    'user-segmentation',
-    'user-journey-insight',
-    'root-cause-analysis',
+    'trend-change-identification',
+    'competitor-benchmark-research',
+    'opportunity-direction-evaluation',
+    'strategy-synthesis',
+    'priority-roadmap',
     'metrics-validation',
   ]);
   assert.equal(llm.calls.filter(({ schemaName }) => schemaName === 'scenario-guidance').length, 0);
+  assert.equal(llm.calls.filter(({ schemaName }) => schemaName === 'decision-states').length, 0);
+  assert.equal(llm.calls.filter(({ schemaName }) => schemaName === 'problem-graph').length, 0);
   assert.equal(llm.calls.filter(({ schemaName }) => schemaName === 'current-plan-candidates').length, 0);
 });
 
@@ -1517,7 +1523,7 @@ test('Current routed planning generates candidates after an explicit direction s
 
   assert.equal('kind' in result, false);
   if ('kind' in result) return;
-  assert.deepEqual(result.candidates.map(({ id }) => id), ['speed', 'depth']);
+  assert.deepEqual(result.candidates.map(({ id }) => id), ['speed', 'depth', 'breadth', 'decision']);
   assert.equal(result.planningProvenance.primary_scenario_id, 'competitor-benchmark-research');
   assert.equal(result.planningProvenance.classification_method, 'clarification');
   assert.equal(result.planningProvenance.classifier_call_count, 0);
@@ -1540,9 +1546,9 @@ test('dynamic repair preserves passing baselines and drops a specialty after the
 
   const result = await planning.planCurrentFromRequirement(requirement, requirement.research_goal);
 
-  assert.deepEqual(result.candidates.map(({ id }) => id), ['speed', 'depth']);
+  assert.deepEqual(result.candidates.map(({ id }) => id), ['speed', 'depth', 'decision']);
   assert.equal(result.candidates.find(({ id }) => id === 'depth')?.recommended, true);
-  assert.deepEqual(result.planningProvenance.selected_profile_ids, ['speed', 'depth']);
+  assert.deepEqual(result.planningProvenance.selected_profile_ids, ['speed', 'depth', 'decision']);
   assert.ok(result.planningProvenance.degradations.some((degradation) => (
     degradation.code === 'specialty_candidate_validation_failed'
     && degradation.profile_id === 'breadth'
@@ -1551,7 +1557,7 @@ test('dynamic repair preserves passing baselines and drops a specialty after the
   assert.equal(candidateCalls.length, 2);
   assert.deepEqual(
     (candidateCalls[1]?.context as { passing_profile_ids_preserved?: string[] }).passing_profile_ids_preserved,
-    ['speed', 'depth'],
+    ['speed', 'depth', 'decision'],
   );
   assert.deepEqual(
     (candidateCalls[1]?.context as { failed_profile_ids_to_replace?: string[] }).failed_profile_ids_to_replace,

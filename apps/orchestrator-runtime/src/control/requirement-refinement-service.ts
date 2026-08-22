@@ -229,6 +229,22 @@ export function planningGuidanceFromStored(value: unknown): PlanningGuidanceClar
   return { reasonCode: 'scenario_selection_required', options };
 }
 
+function selectedScenarioFromStored(value: unknown): ScenarioId | null {
+  const guidance = planningGuidanceFromStored(value);
+  if (!guidance || !value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const selectedScenarioId = (value as { selectedScenarioId?: unknown }).selectedScenarioId;
+  return typeof selectedScenarioId === 'string'
+    && guidance.options.some(({ id }) => id === selectedScenarioId)
+    ? selectedScenarioId as ScenarioId
+    : null;
+}
+
+function withoutScenarioSelection(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const { selectedScenarioId: _selectedScenarioId, ...rest } = value as Record<string, unknown>;
+  return rest;
+}
+
 function storedScenarioSelection(
   planningGuidance: PlanningGuidanceClarification,
   selectedScenarioId: ScenarioId,
@@ -324,11 +340,31 @@ export class RequirementRefinementService {
         detail: selectedScenario.label,
       });
       const unchanged = hasNoClarificationChanges(input.answers, active.structuredTask);
+      const activeSelectedScenarioId = selectedScenarioFromStored(active.clarification);
       const storedSelection = storedScenarioSelection(
         activePlanningGuidance,
         selectedScenarioId,
         input.answers,
       );
+      if (
+        expectedVersion !== undefined
+        && task.stateVersion === expectedVersion
+        && matchesActiveRequirement
+        && activeSelectedScenarioId === selectedScenarioId
+        && unchanged
+      ) {
+        return this.finishRefinement({
+          taskId: input.taskId,
+          conversationId: input.conversationId,
+          ownerUserId: input.ownerUserId,
+          originalInput: task.originalInput,
+          requirement: active.structuredTask,
+          requirementVersionId: active.id,
+          stateVersion: task.stateVersion,
+          rawInputHash: active.rawInputHash,
+          selectedScenarioId,
+        }, onProgress);
+      }
       if (expectedVersion !== undefined && task.stateVersion !== expectedVersion) {
         const resumesActivatedSelection = matchesActiveRequirement
           && task.stateVersion === expectedVersion + 1
@@ -566,6 +602,23 @@ export class RequirementRefinementService {
       canonicalizeExpectedDeliverables(generated.data),
     );
     const task = await this.dependencies.repository.getTaskDetail?.(input.taskId);
+    const taskTypeBeforeRefinement = task?.structuredTask
+      && typeof task.structuredTask === 'object'
+      && 'task_type' in task.structuredTask
+      && typeof task.structuredTask.task_type === 'string'
+      ? task.structuredTask.task_type
+      : null;
+    const directionNeedsReselection = Boolean(
+      input.selectedScenarioId
+      && taskTypeBeforeRefinement
+      && taskTypeBeforeRefinement !== requirement.task_type,
+    );
+    const selectedScenarioId = directionNeedsReselection
+      ? undefined
+      : input.selectedScenarioId;
+    const persistedClarification = directionNeedsReselection
+      ? withoutScenarioSelection(input.clarification)
+      : input.persistedClarification ?? input.clarification;
     const expectedVersion = input.expectedVersion
       ?? input.expectedStateVersion
       ?? task?.stateVersion
@@ -575,7 +628,7 @@ export class RequirementRefinementService {
       ownerUserId: input.ownerUserId,
       expectedVersion,
       rawInputHash: hashPrompt(input.originalInput, context, 'research-task-v2'),
-      clarification: input.persistedClarification ?? input.clarification,
+      clarification: persistedClarification,
       structuredTask: requirement,
       modelCallId: null,
     });
@@ -588,7 +641,7 @@ export class RequirementRefinementService {
       requirementVersionId: activated.version.id,
       stateVersion: activated.task.stateVersion,
       rawInputHash: activated.version.rawInputHash,
-      ...(input.selectedScenarioId ? { selectedScenarioId: input.selectedScenarioId } : {}),
+      ...(selectedScenarioId ? { selectedScenarioId } : {}),
     }, onProgress);
   }
 }

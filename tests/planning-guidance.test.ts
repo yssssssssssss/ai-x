@@ -403,6 +403,23 @@ test('an explicit Scenario selection cannot cross the task-type boundary', async
   );
 });
 
+test('automatic Scenario signals cannot cross the finalized task-type boundary', async () => {
+  const result = await resolvePlanningGuidance(baseRequest({
+    raw_input: '用户旅程与需求洞察',
+    task: task({
+      task_type: 'competitive_research',
+      research_goal: '用户旅程与需求洞察',
+      target_audience: ['消费者'],
+      scope: ['购物助手'],
+      expected_deliverables: ['研究报告'],
+    }),
+  }), DYNAMIC_OPTIONS);
+
+  assert.equal(result.status, 'clarification');
+  assert.equal(result.clarification?.reason_code, 'scenario_selection_required');
+  assert.equal(result.scenario.primary_scenario_id, null);
+});
+
 test('medium confidence always requires clarification even when Profile sets match', async () => {
   const input = baseRequest({
     raw_input: '反馈问题聚类与策略提炼的主次需要判断',
@@ -472,7 +489,7 @@ test('classifier evidence must support every selected Scenario', async () => {
   assert.equal(result.clarification?.reason_code, 'classifier_invalid');
 });
 
-test('conflicting explicit Profile preferences require clarification', async () => {
+test('conflicting Profile keywords do not hide cards and only choose the recommendation', async () => {
   const result = await resolvePlanningGuidance(baseRequest({
     raw_input: '竞品研究既要速度优先又要深度研究',
     task: task({
@@ -483,29 +500,31 @@ test('conflicting explicit Profile preferences require clarification', async () 
       expected_deliverables: ['竞品分析'],
     }),
   }));
-  assert.equal(result.status, 'clarification');
-  assert.equal(result.clarification?.reason_code, 'conflicting_profile_preferences');
+  assert.equal(result.status, 'resolved');
+  assert.deepEqual(result.profiles.map(({ id }) => id), ['speed', 'depth']);
+  assert.equal(result.profiles.find(({ recommended }) => recommended)?.id, 'speed');
 });
 
-test('decision Profile requires an explicit deliverable and at least two viable options', async () => {
+test('decision Profile eligibility comes from the selected direction, not option keywords', async () => {
   const base = baseRequest({
-    raw_input: '开展竞品研究并给出决策建议',
+    raw_input: '开展竞品研究',
+    selected_scenario_id: 'competitor-benchmark-research',
     task: task({
       task_type: 'competitive_research',
-      research_goal: '开展竞品研究并给出决策建议',
+      research_goal: '开展竞品研究',
       target_audience: ['消费者'],
       scope: ['单一方案'],
-      expected_deliverables: ['决策建议'],
+      expected_deliverables: ['竞品分析'],
     }),
     capabilities: [capability({ id: 'decision-support', profile: 'decision', roles: ['decision_support'] })],
   });
   const oneOption = await resolvePlanningGuidance(base, DYNAMIC_OPTIONS);
-  assert.equal(oneOption.profiles.some(({ id }) => id === 'decision'), false);
+  assert.deepEqual(oneOption.profiles.map(({ id }) => id), ['speed', 'depth', 'decision']);
   const twoOptions = await resolvePlanningGuidance({
     ...base,
     task: { ...base.task, scope: ['方案 A', '方案 B'] },
   }, DYNAMIC_OPTIONS);
-  assert.equal(twoOptions.profiles.some(({ id }) => id === 'decision'), true);
+  assert.deepEqual(twoOptions.profiles.map(({ id }) => id), ['speed', 'depth', 'decision']);
 });
 
 test('invalid or failed classifiers are never retried and cannot invent input evidence', async () => {
@@ -586,10 +605,141 @@ test('fixed mode stays at the two baselines while dynamic mode selects determini
       expected_deliverables: ['多个竞品覆盖矩阵', '决策建议'],
     },
   }, DYNAMIC_OPTIONS);
-  assert.deepEqual(withoutPathComparison.profiles.map(({ id }) => id), ['speed', 'depth', 'breadth']);
+  assert.deepEqual(withoutPathComparison.profiles.map(({ id }) => id), ['speed', 'depth', 'breadth', 'decision']);
 });
 
-test('focused ProfileSpec is selected only with a traceable focus signal and active support', async () => {
+test('an explicit direction exposes supported cards even without Profile keywords', async () => {
+  const result = await resolvePlanningGuidance(baseRequest({
+    raw_input: '评估当前机会',
+    selected_scenario_id: 'opportunity-direction-evaluation',
+    task: task({
+      task_type: 'competitive_research',
+      research_goal: '评估当前机会',
+      target_audience: ['消费者'],
+      scope: ['重点机会'],
+      expected_deliverables: ['机会判断'],
+    }),
+    capabilities: [
+      capability({ id: 'focused-analysis', profile: 'focused', roles: ['focused_analysis'] }),
+      capability({ id: 'decision-analysis', profile: 'decision', roles: ['decision_support'] }),
+    ],
+  }), DYNAMIC_OPTIONS);
+
+  assert.deepEqual(result.profiles.map(({ id }) => id), ['speed', 'depth', 'focused', 'decision']);
+  assert.equal(result.profiles.find(({ recommended }) => recommended)?.id, 'depth');
+  assert.equal(result.planning_provenance.resolver_version, 'candidate-profile-resolver-v2');
+});
+
+test('every direction deterministically exposes up to two supported specialty cards', async () => {
+  const allCapabilities: PlanningGuidanceCapability[] = [
+    capability({ id: 'breadth', profile: 'breadth', roles: ['scope_expansion'] }),
+    capability({ id: 'focused', profile: 'focused', roles: ['focused_analysis'] }),
+    capability({ id: 'decision', profile: 'decision', roles: ['decision_support'] }),
+    capability({
+      id: 'mixed-qualitative',
+      profile: 'mixed_method',
+      roles: ['independent_method'],
+      methodFamily: 'qualitative',
+    }),
+    capability({
+      id: 'mixed-quantitative',
+      profile: 'mixed_method',
+      roles: ['independent_method'],
+      methodFamily: 'quantitative',
+    }),
+    capability({
+      id: 'remediation',
+      profile: 'remediation',
+      roles: ['issue_identification', 'retest'],
+    }),
+  ];
+  const cases: Array<{
+    scenarioId: ScenarioId;
+    taskType: ResearchTaskV2['task_type'];
+    profiles: CandidateProfileId[];
+  }> = [
+    { scenarioId: 'trend-change-identification', taskType: 'competitive_research', profiles: ['speed', 'depth', 'breadth'] },
+    { scenarioId: 'competitor-benchmark-research', taskType: 'competitive_research', profiles: ['speed', 'depth', 'breadth', 'decision'] },
+    { scenarioId: 'opportunity-direction-evaluation', taskType: 'competitive_research', profiles: ['speed', 'depth', 'focused', 'decision'] },
+    { scenarioId: 'user-material-synthesis', taskType: 'user_research_planning', profiles: ['speed', 'depth', 'focused'] },
+    { scenarioId: 'user-segmentation', taskType: 'user_research_planning', profiles: ['speed', 'depth', 'focused', 'breadth'] },
+    { scenarioId: 'user-journey-insight', taskType: 'user_research_planning', profiles: ['speed', 'depth', 'focused', 'mixed_method'] },
+    { scenarioId: 'experience-walkthrough', taskType: 'design_audit', profiles: ['speed', 'depth', 'remediation', 'focused'] },
+    { scenarioId: 'feedback-issue-clustering', taskType: 'voc_diagnosis', profiles: ['speed', 'depth', 'decision'] },
+    { scenarioId: 'data-behavior-diagnosis', taskType: 'voc_diagnosis', profiles: ['speed', 'depth', 'focused', 'mixed_method'] },
+    { scenarioId: 'root-cause-analysis', taskType: 'voc_diagnosis', profiles: ['speed', 'depth', 'focused', 'mixed_method'] },
+    { scenarioId: 'solution-generation', taskType: 'design_audit', profiles: ['speed', 'depth', 'breadth'] },
+    { scenarioId: 'solution-comparison', taskType: 'design_audit', profiles: ['speed', 'depth', 'focused'] },
+    { scenarioId: 'strategy-synthesis', taskType: 'competitive_research', profiles: ['speed', 'depth', 'decision'] },
+    { scenarioId: 'priority-roadmap', taskType: 'competitive_research', profiles: ['speed', 'depth', 'focused'] },
+    { scenarioId: 'metrics-validation', taskType: 'competitive_research', profiles: ['speed', 'depth', 'mixed_method', 'decision'] },
+  ];
+  const exposed = new Set<CandidateProfileId>();
+
+  for (const item of cases) {
+    const inputTask = task({
+      task_type: item.taskType,
+      research_goal: '普通任务描述',
+      target_audience: ['用户'],
+      scope: ['单一范围'],
+      expected_deliverables: ['研究报告'],
+    });
+    const result = await resolvePlanningGuidance(baseRequest({
+      raw_input: '普通任务描述',
+      task: inputTask,
+      selected_scenario_id: item.scenarioId,
+      capabilities: allCapabilities,
+    }), DYNAMIC_OPTIONS);
+
+    assert.deepEqual(result.profiles.map(({ id }) => id), item.profiles, item.scenarioId);
+    assert.ok(result.profiles.length >= 2 && result.profiles.length <= 4, item.scenarioId);
+    result.profiles.forEach(({ id }) => exposed.add(id));
+  }
+
+  assert.deepEqual([...exposed].sort(), [
+    'breadth',
+    'decision',
+    'depth',
+    'focused',
+    'mixed_method',
+    'remediation',
+    'speed',
+  ]);
+});
+
+test('revision keeps its active specialty inside the two-card specialty cap while eligible', async () => {
+  const allCapabilities: PlanningGuidanceCapability[] = [
+    capability({
+      id: 'remediation',
+      profile: 'remediation',
+      roles: ['issue_identification', 'retest'],
+    }),
+    capability({ id: 'focused', profile: 'focused', roles: ['focused_analysis'] }),
+    capability({ id: 'breadth', profile: 'breadth', roles: ['scope_expansion'] }),
+  ];
+  const result = await resolvePlanningGuidance(baseRequest({
+    raw_input: '复核现有体验走查计划',
+    selected_scenario_id: 'experience-walkthrough',
+    required_profile_id: 'breadth',
+    task: task({
+      task_type: 'design_audit',
+      research_goal: '复核现有体验走查计划',
+      target_audience: ['用户'],
+      scope: ['页面'],
+      expected_deliverables: ['体验走查报告'],
+    }),
+    capabilities: allCapabilities,
+  }), DYNAMIC_OPTIONS);
+
+  assert.deepEqual(result.profiles.map(({ id }) => id), [
+    'speed',
+    'depth',
+    'remediation',
+    'breadth',
+  ]);
+});
+
+test('Profile keywords change only the recommendation, not the direction-owned card set', async () => {
   const result = await resolvePlanningGuidance(baseRequest({
     raw_input: '完成机会方向判断，并采用聚焦方案研究关键人群',
     task: task({
@@ -609,6 +759,54 @@ test('focused ProfileSpec is selected only with a traceable focus signal and act
   assert.equal(focused?.max_steps, 6);
   assert.deepEqual(focused?.required_difference_dimensions, ['scope', 'evidence', 'output_emphasis']);
   assert.equal(focused?.recommended, true);
+});
+
+test('production direction gate requires an explicit choice even for an obvious Scenario', async () => {
+  let classifierCalls = 0;
+  const result = await resolvePlanningGuidance(baseRequest({
+    raw_input: '开展竞品研究',
+  }), {
+    ...DYNAMIC_OPTIONS,
+    requireExplicitScenarioSelection: true,
+    classifier: async () => {
+      classifierCalls += 1;
+      throw new Error('the explicit direction gate must not call the classifier');
+    },
+  });
+
+  assert.equal(result.status, 'clarification');
+  assert.equal(result.clarification?.reason_code, 'scenario_selection_required');
+  assert.deepEqual(result.clarification?.candidate_scenario_ids, [
+    'trend-change-identification',
+    'competitor-benchmark-research',
+    'opportunity-direction-evaluation',
+    'strategy-synthesis',
+    'priority-roadmap',
+    'metrics-validation',
+  ]);
+  assert.equal(classifierCalls, 0);
+});
+
+test('the explicit direction gate preserves direct-Skill and fixed-policy behavior', async () => {
+  const direct = await resolvePlanningGuidance(baseRequest({
+    direct_skill_id: 'competitive-web-research',
+    selected_scenario_id: 'competitor-benchmark-research',
+  }), {
+    ...DYNAMIC_OPTIONS,
+    requireExplicitScenarioSelection: true,
+  });
+  assert.equal(direct.status, 'bypassed');
+  assert.deepEqual(direct.profiles.map(({ id }) => id), ['depth', 'speed']);
+  assert.equal(direct.scenario.primary_scenario_id, 'competitor-benchmark-research');
+  assert.equal(direct.planning_provenance.classification_method, 'direct_skill_bypass');
+
+  const fixed = await resolvePlanningGuidance(baseRequest(), {
+    policy: { candidate_generation_mode: 'fixed', gate_3_activation_required: true },
+    requireExplicitScenarioSelection: true,
+    preserve_legacy_fixed_mode: true,
+  });
+  assert.equal(fixed.status, 'resolved');
+  assert.deepEqual(fixed.profiles.map(({ id }) => id), ['depth', 'speed']);
 });
 
 test('dynamic mode never treats draft, planned, deprecated, or rejected capabilities as eligible', async () => {

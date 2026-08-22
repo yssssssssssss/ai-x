@@ -21,7 +21,7 @@ import type {
   CurrentResearchPlanningResult,
   ResearchPlanningInput,
 } from '../apps/orchestrator-runtime/src/planners/research-planning-service.ts';
-import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
+import type { CandidateProfile, ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import {
   MockLLMClient,
   type LLMClient,
@@ -429,7 +429,28 @@ class PlanningModelFixtureLLM implements LLMClient {
         requires_approval: false,
         fallback_actor_ids: [],
       });
-      const candidateById = new Map([
+      const specialtyCandidate = (
+        id: Exclude<CandidateProfile, 'speed' | 'depth'>,
+        title: string,
+      ) => ({
+        id,
+        title,
+        rationale: `按${title}组织研究路径`,
+        tradeoffs: '针对性增强，需要对应能力可用',
+        steps: [{
+          ...systemStep('llm', 'research-synthesis', []),
+          input: { profile_contract: id },
+        }],
+        assumptions: [],
+      });
+      const candidateById = new Map<CandidateProfile, {
+        id: CandidateProfile;
+        title: string;
+        rationale: string;
+        tradeoffs: string;
+        steps: ReturnType<typeof systemStep>[];
+        assumptions: never[];
+      }>([
         ['depth', {
           id: 'depth',
           title: '深度研究',
@@ -449,9 +470,14 @@ class PlanningModelFixtureLLM implements LLMClient {
           steps: [systemStep('llm', 'research-synthesis', [])],
           assumptions: [],
         }],
+        ['breadth', specialtyCandidate('breadth', '广度扫描')],
+        ['focused', specialtyCandidate('focused', '聚焦关键链路')],
+        ['mixed_method', specialtyCandidate('mixed_method', '混合方法')],
+        ['decision', specialtyCandidate('decision', '决策收敛')],
+        ['remediation', specialtyCandidate('remediation', '整改复测')],
       ]);
       const profileSpecs = (options.context as {
-        profile_specs?: Array<{ id: 'speed' | 'depth'; display_name?: string }>;
+        profile_specs?: Array<{ id: CandidateProfile; display_name?: string }>;
       }).profile_specs ?? [{ id: 'depth' as const }, { id: 'speed' as const }];
       data = {
         candidates: profileSpecs.map(({ id, display_name }) => {
@@ -1747,7 +1773,7 @@ test('production control runtime returns the revised final deliverable ID for pa
   }
 });
 
-test('production plan stream forwards requirement-backed planning progress in order', async () => {
+test('production plan stream stops at the explicit direction gate before planning work', async () => {
   const { buildControlRuntime } = await loadControlRuntimeModule();
   const expectedModel = 'progress-planning-model';
   const controlRuntime = buildControlRuntime({
@@ -1775,31 +1801,14 @@ test('production plan stream forwards requirement-backed planning progress in or
     const events = parseSseEvents(await response.text());
     assert.deepEqual(events.map((event) => event.event), [
       'conversation',
-      'progress',
-      'progress',
-      'progress',
-      'progress',
-      'progress',
-      'progress',
       'result',
     ]);
-    assert.deepEqual(
-      events.slice(1, -1).map((event) => {
-        const progress = event.data as { phase: string; status: string };
-        return `${progress.phase}:${progress.status}`;
-      }),
-      [
-        'activate:done',
-        'guidance:done',
-        'states:start',
-        'states:done',
-        'candidates:start',
-        'candidates:done',
-      ],
-    );
-    const result = events.at(-1)?.data as ControlPlanCandidatesResponse;
-    assert.equal(result.task.state, 'awaiting_selection');
-    assert.deepEqual(result.candidates.map((candidate) => candidate.candidateId), ['speed', 'depth']);
+    const result = events.at(-1)?.data as CurrentPlanningResponse;
+    assert.equal(result.status, 'clarification_required');
+    if (result.status !== 'clarification_required') throw new Error('expected direction clarification');
+    assert.equal(result.task.state, 'awaiting_clarification');
+    assert.equal(result.planningGuidance?.reasonCode, 'scenario_selection_required');
+    assert.deepEqual(result.candidates, []);
   } finally {
     await closeLocalServer(app.server);
   }
@@ -1915,7 +1924,12 @@ test('production API persists Scenario selection guidance and resumes planning a
     assert.equal(selectedEvents.at(-1)?.event, 'result');
     const selected = selectedEvents.at(-1)?.data as ControlPlanCandidatesResponse;
     assert.equal(selected.task.state, 'awaiting_selection');
-    assert.deepEqual(selected.candidates.map(({ candidateId }) => candidateId), ['speed', 'depth']);
+    assert.deepEqual(selected.candidates.map(({ candidateId }) => candidateId), [
+      'speed',
+      'depth',
+      'focused',
+      'mixed_method',
+    ]);
     for (const candidate of selected.candidates) {
       const provenance = candidate.plan.planning_provenance;
       assert.ok(provenance);
@@ -2031,14 +2045,32 @@ test('production Current planning persists candidates only when every receipt ma
   );
   let planned: ControlPlanCandidatesResponse;
   try {
+    const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
     const response = await postJson(
       app.baseUrl,
       '/api/control-tasks/plan',
-      signToken({ userId: ownerUserId, email: 'owner@test.local' }),
+      token,
       { originalInput, conversationId },
     );
     assert.equal(response.status, 200, await response.clone().text());
-    planned = await response.json() as ControlPlanCandidatesResponse;
+    const direction = await response.json() as CurrentPlanningResponse;
+    assert.equal(direction.status, 'clarification_required');
+    if (direction.status !== 'clarification_required') throw new Error('expected direction clarification');
+
+    const selectedResponse = await postJson(
+      app.baseUrl,
+      `/api/control-tasks/${direction.task.id}/clarify`,
+      token,
+      {
+        expectedVersion: direction.task.stateVersion,
+        clarificationAnswers: {},
+        assumptionEdits: {},
+        selectedScenarioId: 'competitor-benchmark-research',
+      },
+      `model-match-direction-${randomUUID()}`,
+    );
+    assert.equal(selectedResponse.status, 200, await selectedResponse.clone().text());
+    planned = await selectedResponse.json() as ControlPlanCandidatesResponse;
   } finally {
     await closeLocalServer(app.server);
   }
@@ -2071,8 +2103,13 @@ test('production Current planning persists candidates only when every receipt ma
     );
 
     assert.equal(planned.task.state, 'awaiting_selection');
-    assert.deepEqual(planned.candidates.map((candidate) => candidate.candidateId), ['speed', 'depth']);
-    assert.deepEqual(persisted.rows[0], { tasks: 1, candidates: 2 });
+    assert.deepEqual(planned.candidates.map((candidate) => candidate.candidateId), [
+      'speed',
+      'depth',
+      'breadth',
+      'decision',
+    ]);
+    assert.deepEqual(persisted.rows[0], { tasks: 1, candidates: 4 });
     assert.deepEqual(
       receipts.rows.map((row) => ({
         stage: row.stage,
@@ -2091,7 +2128,7 @@ test('production Current planning persists candidates only when every receipt ma
     );
     const problemGraphReceipt = receipts.rows.find((row) => row.stage === 'problem_graph');
     assert.ok(problemGraphReceipt);
-    assert.equal(persistedPlans.rows.length, 2);
+    assert.equal(persistedPlans.rows.length, 4);
     for (const row of persistedPlans.rows) {
       assertRecord(row.plan_json);
       assertRecord(row.plan_json.problem_graph_provenance);

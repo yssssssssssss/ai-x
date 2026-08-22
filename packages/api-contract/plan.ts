@@ -34,7 +34,7 @@ export type PlanningSignalSourcePath =
 
 export interface PlanningProvenance {
   version: 'planning-guidance-provenance-v1';
-  resolver_version: 'candidate-profile-resolver-v1';
+  resolver_version: 'candidate-profile-resolver-v1' | 'candidate-profile-resolver-v2';
   scenario_catalog_hash: string;
   signal_catalog_hash: string;
   profile_spec_hash: string;

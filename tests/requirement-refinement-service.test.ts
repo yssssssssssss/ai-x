@@ -460,6 +460,70 @@ test('Planning Guidance direction selection is persisted and resumes planning wi
   });
 });
 
+test('a changed task type discards the stale Scenario and returns a fresh direction gate', async () => {
+  const { RequirementRefinementService } = await loadModule();
+  const initial = requirement({
+    task_type: 'user_research_planning',
+    research_goal: '规划用户研究',
+    expected_deliverables: ['research_plan'],
+  });
+  const changed = requirement({
+    task_type: 'design_audit',
+    research_goal: '走查现有页面',
+    expected_deliverables: ['design_audit_report'],
+  });
+  const oldGuidance = {
+    reasonCode: 'scenario_selection_required' as const,
+    options: [{ id: 'user-segmentation', label: '用户分层' }],
+  };
+  const newGuidance = {
+    reasonCode: 'scenario_selection_required' as const,
+    options: [{ id: 'experience-walkthrough', label: '页面与链路体验走查' }],
+  };
+  const llm = new FixtureLLM([initial, changed]);
+  const repository = makeRepository();
+  const plannedSelections: Array<string | undefined> = [];
+  const service = new RequirementRefinementService({
+    llm,
+    validator: new SchemaValidator(),
+    repository,
+    conversations: makeConversations(),
+    planner: {
+      async plan(input) {
+        plannedSelections.push(input.selectedScenarioId);
+        return {
+          kind: 'planning_guidance_clarification' as const,
+          activatedNodes: ['D1_research_goal'],
+          planningGuidance: plannedSelections.length === 1 ? oldGuidance : newGuidance,
+        };
+      },
+    },
+  });
+
+  const awaitingDirection = await service.understand({
+    taskId,
+    conversationId,
+    ownerUserId,
+    originalInput: initial.research_goal,
+  });
+  assert.equal(awaitingDirection.status, 'clarification_required');
+
+  const refreshedDirection = await service.clarify({
+    taskId,
+    conversationId,
+    ownerUserId,
+    answers: { actual_task: 'design audit' },
+    selectedScenarioId: 'user-segmentation',
+    expectedVersion: 3,
+  });
+
+  assert.equal(refreshedDirection.status, 'clarification_required');
+  assert.deepEqual(refreshedDirection.planningGuidance, newGuidance);
+  assert.deepEqual(plannedSelections, [undefined, undefined]);
+  assert.equal(repository.versions.at(-1)?.structuredTask.task_type, 'design_audit');
+  assert.deepEqual(repository.versions.at(-1)?.clarification, { planningGuidance: newGuidance });
+});
+
 test('Planning Guidance retries the same edited assumptions after post-activation planning failure', async () => {
   const { RequirementRefinementService } = await loadModule();
   const initial = requirement({
@@ -524,7 +588,7 @@ test('Planning Guidance retries the same edited assumptions after post-activatio
     ownerUserId,
     answers,
     selectedScenarioId: 'user-journey-insight',
-    expectedVersion: 3,
+    expectedVersion: 4,
   });
 
   assert.equal(retried.status, 'ready_to_plan');

@@ -106,6 +106,8 @@ export interface PlannerGuidanceAdapterInput {
   rawInput: string;
   task: ResearchTaskV2;
   selectedScenarioId?: ScenarioId;
+  requireExplicitScenarioSelection?: boolean;
+  requiredProfileId?: CandidateProfileId;
   problemGraph: ProblemGraph;
   capabilityResolution: CapabilityResolution;
   directSkillId?: string;
@@ -406,6 +408,28 @@ function assertPolicyContract(policy: PlanningPolicy, result: PlanningGuidanceRe
   }
 }
 
+export async function resolvePlannerDirectionGate(
+  input: Pick<PlannerGuidanceAdapterInput, 'rawInput' | 'task' | 'policy'>,
+): Promise<PlanningGuidanceResult> {
+  const policy = input.policy === undefined ? loadPlanningPolicy() : validatePlanningPolicy(input.policy);
+  const result = await resolvePlanningGuidance({
+    raw_input: input.rawInput,
+    task: input.task,
+    available_material_roles: availableMaterialRoles(input.task),
+    baseline_readiness: { speed: true, depth: true },
+    capabilities: [],
+  }, {
+    policy: {
+      candidate_generation_mode: policy.candidate_generation_mode,
+      gate_3_activation_required: true,
+    },
+    requireExplicitScenarioSelection: true,
+    preserve_legacy_fixed_mode: true,
+  });
+  assertPolicyContract(policy, result);
+  return result;
+}
+
 export async function resolvePlannerGuidance(
   input: PlannerGuidanceAdapterInput,
 ): Promise<PlanningGuidanceResult> {
@@ -418,6 +442,7 @@ export async function resolvePlannerGuidance(
     available_material_roles: availableMaterialRoles(input.task),
     problem_graph_signal_ids: problemGraphSignals(input.problemGraph),
     ...(input.directSkillId ? { direct_skill_id: input.directSkillId } : {}),
+    ...(input.requiredProfileId ? { required_profile_id: input.requiredProfileId } : {}),
     baseline_readiness: { speed: true, depth: true },
     capabilities,
   }, {
@@ -426,6 +451,7 @@ export async function resolvePlannerGuidance(
       gate_3_activation_required: true,
     },
     classifier: classifier(input.llm, input.expectedActualModel),
+    requireExplicitScenarioSelection: input.requireExplicitScenarioSelection,
     preserve_legacy_fixed_mode: true,
   });
   assertPolicyContract(policy, result);

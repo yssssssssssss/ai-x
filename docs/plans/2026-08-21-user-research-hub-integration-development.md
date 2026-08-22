@@ -299,12 +299,12 @@ Planning Guidance 通过单一深模块接口返回 Scenario 判定、ProfileSpe
 | 用户旅程与需求洞察 | `speed`, `depth`, `focused`, `mixed_method` |
 | 页面与链路体验走查 | `speed`, `depth`, `remediation`, `focused`, `breadth` |
 | 用户反馈问题聚类 | `speed`, `depth`, `decision` |
-| 数据与行为异常诊断 | `speed`, `depth`, `focused`, `mixed_method`, `decision` |
-| 问题根因拆解 | `speed`, `depth`, `focused`, `mixed_method` |
-| 解决方案生成 | `speed`, `depth`, `breadth`, `decision` |
-| 方案比较与风险评估 | `speed`, `depth`, `decision`, `focused` |
+| 数据与行为异常诊断 | `speed`, `depth`, `focused`, `mixed_method`, `decision`, `remediation` |
+| 问题根因拆解 | `speed`, `depth`, `focused`, `mixed_method`, `remediation` |
+| 解决方案生成 | `speed`, `depth`, `breadth` |
+| 方案比较与风险评估 | `speed`, `depth`, `focused` |
 | 结论整合与策略提炼 | `speed`, `depth`, `decision` |
-| 优先级与实施路径 | `speed`, `depth`, `decision`, `focused` |
+| 优先级与实施路径 | `speed`, `depth`, `focused` |
 | 指标与验证计划 | `speed`, `depth`, `mixed_method`, `decision`, `focused` |
 
 每个映射的前两项固定为 `speed/depth`，后续顺序是该 Scenario 的专项 Profile 默认优先级。主 Scenario 提供基础集合；次 Scenario 只能增加其允许且与用户最终交付目标直接相关的专项 Profile。Profile 所需 Skill 或 Tool 不在 eligible active capability 中时必须删除该专项 Profile，不能以 planned 能力补位。
@@ -312,27 +312,26 @@ Planning Guidance 通过单一深模块接口返回 Scenario 判定、ProfileSpe
 #### 7.2.4 动态数量、推荐与差异规则
 
 - `speed/depth` 是所有常规 routed task 的稳定基线，不要求各自绑定一项专用 Skill；它们只改变范围、复核和步骤预算，仍必须覆盖同一组 required questions、required evidence 和用户要求的全部 deliverables。若连这两张都无法独立编译，规划直接 fail closed。
-- 在基线之外，专项 Profile 只按下表的明确信号加入；“当前有某个 Skill”只能证明可执行，不能代替用户意图信号。
+- 在基线之外，专项 Profile 由用户确认的主 Scenario 映射决定；只有 active、eligible 且满足 Profile 能力条件的专项 Profile 才可生成。用户任务信号不再决定卡片是否可见，只用于推荐排序和 provenance。
 
-| 专项 Profile | 用户任务信号 | 能力通过条件 |
+| 专项 Profile | 方向适用性 | 能力通过条件 |
 |---|---|---|
-| `breadth` | 明确要求覆盖多个竞品、人群、场景、触点或趋势范围 | 扩大覆盖后仍能在 8 步内满足全部 required evidence |
-| `focused` | 明确指定关键人群、触点、链路或问题，需要收窄范围 | 收窄后仍覆盖全部 required questions，不得删掉强制问题 |
-| `mixed_method` | 明确要求定性+定量/行为等多方法，或问题图需要两类独立证据路径 | eligible capability 中至少存在两类独立方法/证据路径 |
-| `decision` | 交付目标明确要求比较、取舍、优先级、风险或实施路径 | expected deliverables 含决策输出，且其依据所需证据可达 |
-| `remediation` | 明确要求走查/诊断后的整改动作与复测 | eligible capability 同时覆盖问题识别与验证/复测 |
+| `breadth` | 所选 Scenario 需要扩大对象、人群、场景、触点或趋势范围 | 扩大覆盖后仍能在 8 步内满足全部 required evidence |
+| `focused` | 所选 Scenario 适合收窄到关键人群、触点、链路或问题 | 收窄后仍覆盖全部 required questions，不得删掉强制问题 |
+| `mixed_method` | 所选 Scenario 适合用独立方法或证据路径交叉验证 | eligible capability 中至少存在两类独立方法/证据路径 |
+| `decision` | 所选 Scenario 需要比较、取舍、优先级、风险或实施路径 | 决策依据所需证据可达 |
+| `remediation` | 所选 Scenario 包含问题识别、整改与复测闭环 | eligible capability 同时覆盖问题识别与验证/复测 |
 
-Profile 信号提取不增加模型调用：只读取用户原始表达，以及 finalized `ResearchTaskV2` 的 `research_goal`、`target_audience`、`scope`、`constraints`、`success_criteria` 和 `expected_deliverables`。每个命中必须记录受控词表命中的字段路径和 signal ID；没有可反查输入依据时该信号为 false。信号提取同时区分“任务内容命中”和“用户明确要求某种执行取舍”，后者只有在用户表达快速、深入、广泛、聚焦、多方法、决策收敛或整改复测偏好时才为 true，不能因研究对象很多就推断用户偏好广度。受控词表、字段规则和正反例在 Gate 2 使用 60 条 calibration 样本调整并冻结，30 条 holdout 标签在 Gate 3 前不得用于调整。
+Profile 信号提取不增加模型调用：只读取用户原始表达，以及 finalized `ResearchTaskV2` 的 `research_goal`、`target_audience`、`scope`、`constraints`、`success_criteria` 和 `expected_deliverables`。每个命中继续记录受控词表命中的字段路径和 signal ID，但只用于决定 `recommended`，不得再作为卡片可见性的门槛。没有 Profile 信号时仍按所选 Scenario 映射生成卡片，并默认推荐 `depth`。
 
-- 生成 2 张：默认只生成 `speed/depth`。
-- 生成 3 张：主/次 Scenario 对执行方法产生实质差异，任务同时要求研究结论与决策建议，或存在两类可用证据路径，并且至少 1 个专项 Profile 同时通过信号与能力条件。
-- 生成 4 张：用户明确要求比较多种研究方法或执行路径，且至少 2 个专项 Profile 同时通过信号与能力条件；否则最多 3 张。
-- 专项 Profile 按确定性元组排序：是否命中用户明确的执行取舍、是否直接满足 `expected_deliverables`、命中的主/次 Scenario 数量（降序）、主 Scenario 映射下标、所有次 Scenario 中的最小映射下标、7.2.2 表格下标；布尔命中优先，缺失下标视为无穷大，按顺序取所需数量。最终输出再按 7.2.2 表格顺序稳定排序，避免相同输入只因模型措辞变化而换位。
+- 动态生产流程在 Problem Graph、Capability Resolver 和候选生成之前要求用户明确选择一个主 Scenario；规则或模型识别只可辅助展示，不替代用户确认。
+- 生成 2 张：所选 Scenario 没有任何通过能力校验的专项 Profile，仅保留 `speed/depth`。
+- 生成 3–4 张：按主 Scenario 的 `candidate_profiles` 顺序，加入前 1–2 个通过能力校验的专项 Profile；输入措辞不得改变可见集合。
 - 硬上限为 4；专项 Profile 不足时保留 2 张基线，不得因前端可滑动而凑数。
-- 新计划恰好一张 `recommended: true`。用户明确表达时效或方法偏好时推荐对应 Profile；否则依次匹配 `remediation`、`decision`、`mixed_method`、`breadth`、`focused` 的任务信号；都未命中则推荐 `depth`。推荐只影响初始聚焦与标识，不自动替用户选择。
+- 新计划恰好一张 `recommended: true`。用户明确表达时效或方法偏好时，只在当前可见 Profile 中推荐对应项；无匹配时推荐 `depth`。推荐只影响初始聚焦与标识，不自动替用户选择。
 - Candidate Profile Resolver 先给出精确 Profile 列表和唯一推荐项，LLM 再按列表逐张填充步骤；LLM 返回的数量、ID、顺序不一致，或自行返回与 Resolver 冲突的推荐标记时即拒绝，最终推荐元数据由 Resolver 结果覆盖并冻结。
-- Candidate Profile Resolver 只在 Problem Graph 和 Capability Resolver 完成后运行，以 Planning Guidance、问题覆盖、eligible active capability 和用户约束为输入；它不能回写或改判 Scenario。
-- `orchestrator/planning-policy.yaml` 的 `candidate_generation_mode` 默认是 `fixed`。`fixed` 只生成 `speed/depth`；Gate 3 批准后才可切为 `dynamic`。关闭动态生成不影响历史 2–4 卡读取。
+- 用户确认主 Scenario 后，Candidate Profile Resolver 在 Problem Graph 和 Capability Resolver 完成后，以 Scenario 映射、问题覆盖和 eligible active capability 为输入选择卡片；它不能回写或改判 Scenario。
+- `orchestrator/planning-policy.yaml` 的 `candidate_generation_mode` 控制动态卡片开关。`fixed` 只生成 `speed/depth`；`dynamic` 使用方向驱动的 2–4 卡片。关闭动态生成不影响历史 2–4 卡读取。
 - 候选 ID 必须唯一；差异指纹必须覆盖 ordered actor sequence、问题/交付覆盖、证据路径，以及 ProfileSpec 的 `scope/method/evidence/review/output_emphasis`。两张候选未在各自 `required_difference_dimensions` 上形成差异，或仅标题、rationale、tradeoffs 不同时视为重复。
 - 每张候选独立通过 Schema、Capability Resolver 结果约束和 PlanCompiler。初次校验后保留所有已通过候选，只把全部失败候选 ID 与合并错误清单放进一次纠错调用，不重新生成已通过卡片。合并纠错结果后再做一次跨卡差异校验；仍失败的专项卡直接丢弃并记录降级原因，不再发起生成调用，任一基线失败则 fail closed。
 
@@ -478,7 +477,7 @@ Profile 信号提取不增加模型调用：只读取用户原始表达，以及
 - 新候选按 Profile Resolver 顺序持久化；前端初始聚焦 `recommended`，用户手动选择仍覆盖初始聚焦。旧计划没有推荐字段时聚焦第一项且不补写历史数据。
 - 前端 Profile 标签使用显式映射，未知值显示安全的通用标签并记录合同错误，禁止继续用“非 depth 即 speed”的二分逻辑。
 - revision 必须请求保留已选候选的 Profile；新指令使该 Profile 不再 eligible 时，后端返回 HTTP 409 和稳定错误码 `candidate_profile_no_longer_eligible`，前端重新展示候选选择并保留旧计划只读，不静默换 Profile。
-- `planning_provenance` 只包含受控 ID、字段路径和版本哈希，不返回完整用户输入；读取旧计划时缺失该字段不补写。
+- `planning_provenance` 只包含受控 ID、字段路径和版本哈希，不返回完整用户输入；方向驱动的新计划写入 `candidate-profile-resolver-v2`，reader 继续接受历史 `v1`，读取旧计划时缺失 provenance 不补写。
 - clarification replacement、历史恢复、重新生成和 revision 均接受 2–4 个候选；直呼 Skill 仍固定生成 `depth/speed`，默认标记含独立复核的 `depth` 为推荐项。
 
 ## 9. 接入工具与文件接口
@@ -796,8 +795,8 @@ Gate 3 通过后才允许把 Knowledge promotion set 晋级为 `approved` 并将
 | Registry | 22 个现有 active Skill 不减少、不重复；新 Skill 均非 active |
 | Knowledge | 104 条现有条目不重复；新增索引只来自 disposition |
 | Skill merge | 现有 schema/tool/task_types/status 不被 Hub 覆盖 |
-| Scenario guidance | 90 条冻结数据集的 calibration/holdout 隔离、主/次 Scenario、置信度、受控 signal、字段路径、同 Profile 歧义继续、异 Profile 歧义 clarification、最小 provenance |
-| Profile resolver | 15 个有序映射、完整 ProfileSpec、speed/depth 基线、必需交付覆盖、2/3/4 数量、4 卡显式请求约束、active capability 过滤、确定性 recommended、固定顺序、最多一次纠错、唯一规则路径零额外 LLM 调用 |
+| Scenario guidance | 90 条冻结数据集的 calibration/holdout 隔离、主/次 Scenario、置信度、受控 signal、字段路径、显式方向确认、最小 provenance |
+| Profile resolver | 15 个有序映射、完整 ProfileSpec、speed/depth 基线、必需交付覆盖、方向驱动的 2–4 数量、Profile 信号只影响推荐、active capability 过滤、固定顺序、最多一次纠错 |
 | Candidate contract | 旧 2 张和新 2–4 张 Schema、ID 唯一、ProfileSpec 差异、planning provenance、逐张 PlanCompiler、连续 plan version、无 DB migration |
 | Selection/revision | `planVersionId` 选择不变、revision 保持 Profile、Profile 失效返回稳定 409 并重选、clarification replacement 支持动态集合 |
 | Frontend/history | 2/3/4 张轮播、标签、推荐初始聚焦、键盘/圆点/箭头、刷新恢复、旧计划无 recommended 兼容 |
@@ -863,7 +862,7 @@ pnpm gold:run decide <batch_id>
 - 方法质量不足：保持 candidate，不影响生产。
 - Skill 无独立输出合同：保持 draft，不注册 active。
 - Scenario LLM 返回非法或无依据结果：若规则层已有 high-confidence 唯一结果则使用规则结果；否则进入现有 clarification，不生成卡片。
-- 专项 Profile 的任务信号缺失或所需能力不可用：删除该专项 Profile 并保留 `speed/depth` 基线，不制造替代卡；任一基线无法覆盖 required questions 或通过 PlanCompiler 时 fail closed。
+- 所选 Scenario 未映射专项 Profile 或所需能力不可用：保留 `speed/depth` 基线并记录能力降级，不依据关键词制造替代卡；任一基线无法覆盖 required questions 或通过 PlanCompiler 时 fail closed。
 - 动态候选一次纠错后仍不合格：若本轮 `speed/depth` 已分别通过全部校验，丢弃失败专项卡并降为两张，不再调用模型；任一基线不合格则 fail closed。
 - revision 时原 Profile 失效：保留旧计划可读，返回重新选择冲突，不静默换卡。
 - 真实评测失败：不晋级，现有 Runtime 继续使用原内容。

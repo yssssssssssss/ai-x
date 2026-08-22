@@ -100,6 +100,8 @@ export interface PlanningGuidanceRequest {
   available_material_roles: string[];
   problem_graph_signal_ids?: Array<'independent_evidence_paths_required'>;
   direct_skill_id?: string;
+  /** Revision-only continuity constraint; it never changes new-task card discovery. */
+  required_profile_id?: CandidateProfileId;
   baseline_readiness: {
     speed: boolean;
     depth: boolean;
@@ -114,6 +116,8 @@ export interface PlanningGuidancePolicy {
 export interface PlanningGuidanceOptions {
   classifier?: (request: ScenarioClassifierRequest) => Promise<unknown>;
   policy?: PlanningGuidancePolicy;
+  /** New routed tasks require an explicit user-selected Scenario before candidate generation. */
+  requireExplicitScenarioSelection?: boolean;
   /** Fixed production mode bypasses Scenario classification so adapter activation is output/call neutral. */
   preserve_legacy_fixed_mode?: boolean;
 }
@@ -146,7 +150,6 @@ export type GuidanceDegradationCode =
   | 'classifier_invalid'
   | 'low_confidence_classification'
   | 'medium_confidence_profile_conflict'
-  | 'conflicting_profile_preferences'
   | 'dynamic_generation_disabled'
   | 'specialty_capability_unavailable'
   | 'baseline_not_ready';
@@ -179,8 +182,7 @@ export interface PlanningGuidanceResult {
       | 'classifier_failed'
       | 'classifier_invalid'
       | 'low_confidence_classification'
-      | 'medium_confidence_profile_conflict'
-      | 'conflicting_profile_preferences';
+      | 'medium_confidence_profile_conflict';
     candidate_scenario_ids: ScenarioId[];
     candidate_scenarios: Array<{ id: ScenarioId; label: string }>;
   };
@@ -620,20 +622,6 @@ function profileSignalRefs(
   return signals.filter(({ signal_id }) => SIGNAL_BY_ID.get(signal_id)?.profile_id === profileId);
 }
 
-function conflictingProfilePreferences(signals: readonly ControlledSignalRef[]): boolean {
-  const explicit = new Set(signals.filter(({ signal_id }) => SIGNAL_BY_ID.get(signal_id)?.kind === 'profile_preference')
-    .map(({ signal_id }) => SIGNAL_BY_ID.get(signal_id)?.profile_id)
-    .filter((id): id is CandidateProfileId => id !== undefined));
-  return (explicit.has('speed') && explicit.has('depth'))
-    || (explicit.has('breadth') && explicit.has('focused'))
-    || (explicit.size > 1 && !signals.some(({ signal_id }) => signal_id === 'execution.compare-paths.explicit'));
-}
-function hasDecisionOptions(request: PlanningGuidanceRequest): boolean {
-  if (request.task.scope.length >= 2) return true;
-  const optionText = [request.raw_input, ...request.task.scope, ...request.task.expected_deliverables].join(' ');
-  return /(?:多个|两种|两套|两个|多方案|a\s*[\/对比vs]+\s*b|方案.{0,8}(?:比较|对比|取舍|选择))/iu.test(optionText);
-}
-
 function activeEligibleCapabilities(
   capabilities: readonly PlanningGuidanceCapability[],
 ): PlanningGuidanceCapability[] {
@@ -664,64 +652,6 @@ function capabilitySupportsProfile(
   }
   const roles = new Set(supporting.flatMap((capability) => capability.roles));
   return roles.has('issue_identification') && roles.has('retest');
-}
-
-function specialtyMapped(
-  profileId: CandidateProfileId,
-  primaryScenarioId: ScenarioId,
-  secondaryScenarioIds: readonly ScenarioId[],
-  signals: readonly ControlledSignalRef[],
-): boolean {
-  const primaryMapping = SCENARIO_BY_ID.get(primaryScenarioId)?.candidate_profiles ?? [];
-  if (primaryMapping.includes(profileId)) return true;
-  const directlyRequestedDeliverable = profileSignalRefs(signals, profileId)
-    .some(({ source_path }) => source_path === 'task.expected_deliverables');
-  return directlyRequestedDeliverable && secondaryScenarioIds.some((scenarioId) => (
-    SCENARIO_BY_ID.get(scenarioId)?.candidate_profiles.includes(profileId) === true
-  ));
-}
-
-interface SpecialtyRank {
-  id: Exclude<CandidateProfileId, 'speed' | 'depth'>;
-  explicitPreference: boolean;
-  directDeliverable: boolean;
-  scenarioCount: number;
-  primaryIndex: number;
-  secondaryIndex: number;
-  ordinal: number;
-}
-
-function specialtyRank(
-  profileId: SpecialtyRank['id'],
-  primaryScenarioId: ScenarioId,
-  secondaryScenarioIds: readonly ScenarioId[],
-  signals: readonly ControlledSignalRef[],
-): SpecialtyRank {
-  const refs = profileSignalRefs(signals, profileId);
-  const primaryProfiles = SCENARIO_BY_ID.get(primaryScenarioId)?.candidate_profiles ?? [];
-  const secondaryIndexes = secondaryScenarioIds
-    .map((scenarioId) => SCENARIO_BY_ID.get(scenarioId)?.candidate_profiles.indexOf(profileId) ?? -1)
-    .filter((index) => index >= 0);
-  return {
-    id: profileId,
-    explicitPreference: refs.some(({ signal_id }) => SIGNAL_BY_ID.get(signal_id)?.kind === 'profile_preference'),
-    directDeliverable: refs.some(({ source_path }) => source_path === 'task.expected_deliverables'),
-    scenarioCount: Number(primaryProfiles.includes(profileId)) + secondaryIndexes.length,
-    primaryIndex: primaryProfiles.includes(profileId)
-      ? primaryProfiles.indexOf(profileId)
-      : Number.POSITIVE_INFINITY,
-    secondaryIndex: secondaryIndexes.length > 0 ? Math.min(...secondaryIndexes) : Number.POSITIVE_INFINITY,
-    ordinal: PROFILE_BY_ID.get(profileId)?.ordinal ?? Number.POSITIVE_INFINITY,
-  };
-}
-
-function compareSpecialtyRank(left: SpecialtyRank, right: SpecialtyRank): number {
-  return Number(right.explicitPreference) - Number(left.explicitPreference)
-    || Number(right.directDeliverable) - Number(left.directDeliverable)
-    || right.scenarioCount - left.scenarioCount
-    || left.primaryIndex - right.primaryIndex
-    || left.secondaryIndex - right.secondaryIndex
-    || left.ordinal - right.ordinal;
 }
 
 function recommendedProfile(
@@ -764,7 +694,6 @@ function resolveProfiles(input: {
   request: PlanningGuidanceRequest;
   mode: CandidateGenerationMode;
   primaryScenarioId: ScenarioId;
-  secondaryScenarioIds: ScenarioId[];
   signals: ControlledSignalRef[];
 }): { profiles: ResolvedProfileSpec[]; degradations: PlanningGuidanceDegradation[] } {
   const mode = input.mode;
@@ -776,43 +705,40 @@ function resolveProfiles(input: {
   }
 
   const activeCapabilities = activeEligibleCapabilities(input.request.capabilities);
-  const specialtyIds = PROFILE_SPECS
-    .filter((profile): profile is ProfileSpecDefinition & { id: SpecialtyRank['id'] } => profile.kind === 'specialty')
-    .map(({ id }) => id);
-  const qualified: SpecialtyRank[] = [];
+  const specialtyIds = (SCENARIO_BY_ID.get(input.primaryScenarioId)?.candidate_profiles ?? [])
+    .filter((profileId): profileId is Exclude<CandidateProfileId, 'speed' | 'depth'> => (
+      profileId !== 'speed' && profileId !== 'depth'
+    ));
+  const qualified: Array<Exclude<CandidateProfileId, 'speed' | 'depth'>> = [];
   const degradations: PlanningGuidanceDegradation[] = [];
   for (const profileId of specialtyIds) {
-    if (!specialtyMapped(
-      profileId,
-      input.primaryScenarioId,
-      input.secondaryScenarioIds,
-      input.signals,
-    )) continue;
-    if (profileSignalRefs(input.signals, profileId).length === 0) continue;
-    if (profileId === 'decision' && !hasDecisionOptions(input.request)) continue;
     if (!capabilitySupportsProfile(profileId, activeCapabilities)) {
       degradations.push({ code: 'specialty_capability_unavailable', profile_id: profileId });
       continue;
     }
-    qualified.push(specialtyRank(
-      profileId,
-      input.primaryScenarioId,
-      input.secondaryScenarioIds,
-      input.signals,
-    ));
+    qualified.push(profileId);
   }
-  qualified.sort(compareSpecialtyRank);
-  const comparePaths = input.signals.some(({ signal_id }) => signal_id === 'execution.compare-paths.explicit');
-  const specialtyLimit = comparePaths ? 2 : 1;
-  const selected = [
+
+  const selectedSpecialties = qualified.slice(0, 2);
+  const requiredProfileId = input.request.required_profile_id;
+  if (
+    requiredProfileId
+    && requiredProfileId !== 'speed'
+    && requiredProfileId !== 'depth'
+    && qualified.includes(requiredProfileId)
+    && !selectedSpecialties.includes(requiredProfileId)
+  ) {
+    if (selectedSpecialties.length < 2) selectedSpecialties.push(requiredProfileId);
+    else selectedSpecialties[selectedSpecialties.length - 1] = requiredProfileId;
+    selectedSpecialties.sort((left, right) => specialtyIds.indexOf(left) - specialtyIds.indexOf(right));
+  }
+
+  // Direction mapping owns visibility. Profile keywords only affect the recommendation below.
+  const selected: CandidateProfileId[] = [
     'speed',
     'depth',
-    ...qualified.slice(0, specialtyLimit).map(({ id }) => id),
-  ] as CandidateProfileId[];
-  selected.sort((left, right) => (
-    (PROFILE_BY_ID.get(left)?.ordinal ?? Number.POSITIVE_INFINITY)
-    - (PROFILE_BY_ID.get(right)?.ordinal ?? Number.POSITIVE_INFINITY)
-  ));
+    ...selectedSpecialties,
+  ];
   const recommended = recommendedProfile(selected, input.signals);
   return { profiles: resolvedProfiles(selected, recommended), degradations };
 }
@@ -829,7 +755,7 @@ function provenance(input: {
 }): PlanningGuidanceProvenance {
   return {
     version: 'planning-guidance-provenance-v1',
-    resolver_version: 'candidate-profile-resolver-v1',
+    resolver_version: 'candidate-profile-resolver-v2',
     scenario_catalog_hash: SCENARIO_CATALOG_HASH,
     signal_catalog_hash: SIGNAL_CATALOG_HASH,
     profile_spec_hash: PROFILE_SPEC_HASH,
@@ -894,30 +820,42 @@ export async function resolvePlanningGuidance(
   request: PlanningGuidanceRequest,
   options: PlanningGuidanceOptions = {},
 ): Promise<PlanningGuidanceResult> {
-  const signals = recognizeSignals(request);
   const mode = options.policy?.candidate_generation_mode ?? 'fixed';
 
   if (request.direct_skill_id) {
+    const signals = request.selected_scenario_id ? recognizeSignals(request) : [];
+    const selectedScenarioId = request.selected_scenario_id ?? null;
+    if (
+      selectedScenarioId
+      && !TASK_TYPE_SCENARIOS[request.task.task_type].includes(selectedScenarioId)
+    ) {
+      throw new Error(
+        `Scenario ${selectedScenarioId} is not allowed for task type ${request.task.task_type}`,
+      );
+    }
+    const scenarioSignals = selectedScenarioId
+      ? relevantScenarioSignals(signals, [selectedScenarioId])
+      : [];
     const profiles = resolvedProfiles(['depth', 'speed'], 'depth');
     const degradations: PlanningGuidanceDegradation[] = [{ code: 'direct_skill_bypass' }];
     return {
       status: 'bypassed',
       scenario: {
-        primary_scenario_id: null,
+        primary_scenario_id: selectedScenarioId,
         secondary_scenarios: [],
-        confidence: null,
-        signals: [],
-        rationale_codes: [],
+        confidence: selectedScenarioId ? 'high' : null,
+        signals: scenarioSignals,
+        rationale_codes: selectedScenarioId ? ['semantic_disambiguation'] : [],
       },
       profiles,
       clarification: null,
       planning_provenance: provenance({
         method: 'direct_skill_bypass',
         classifierCalls: 0,
-        primaryScenarioId: null,
+        primaryScenarioId: selectedScenarioId,
         secondaryScenarioIds: [],
-        confidence: null,
-        signals: [],
+        confidence: selectedScenarioId ? 'high' : null,
+        signals: scenarioSignals,
         profiles,
         degradations,
       }),
@@ -954,20 +892,11 @@ export async function resolvePlanningGuidance(
     };
   }
 
-  if (conflictingProfilePreferences(signals)) {
-    return unresolvedResult({
-      reason: 'conflicting_profile_preferences',
-      candidateScenarioIds: [...TASK_TYPE_SCENARIOS[request.task.task_type]],
-      classifierCalls: 0,
-      signals,
-      degradation: 'conflicting_profile_preferences',
-    });
-  }
-
   if (
     request.task.blocking_issues.length > 0
     || request.task.ambiguities.some(({ blocking }) => blocking)
   ) {
+    const signals = recognizeSignals(request);
     return unresolvedResult({
       reason: 'task_blocking_ambiguity',
       candidateScenarioIds: [...TASK_TYPE_SCENARIOS[request.task.task_type]],
@@ -977,7 +906,24 @@ export async function resolvePlanningGuidance(
     });
   }
 
-  const ruleCandidates = scenarioCandidatesFromSignals(signals);
+  if (
+    mode === 'dynamic'
+    && options.requireExplicitScenarioSelection
+    && !request.selected_scenario_id
+  ) {
+    return unresolvedResult({
+      reason: 'scenario_selection_required',
+      candidateScenarioIds: [...TASK_TYPE_SCENARIOS[request.task.task_type]],
+      classifierCalls: 0,
+      signals: [],
+      degradation: 'scenario_selection_required',
+    });
+  }
+
+  const signals = recognizeSignals(request);
+  const allowedTaskScenarios = TASK_TYPE_SCENARIOS[request.task.task_type];
+  const ruleCandidates = scenarioCandidatesFromSignals(signals)
+    .filter((scenarioId) => allowedTaskScenarios.includes(scenarioId));
   let classification: ScenarioClassifierResult;
   let classificationMethod: PlanningGuidanceProvenance['classification_method'] = 'rule';
   let classifierCalls: 0 | 1 = 0;
@@ -1016,7 +962,7 @@ export async function resolvePlanningGuidance(
   } else {
     const allowedScenarioIds = ruleCandidates.length > 1
       ? ruleCandidates
-      : [...TASK_TYPE_SCENARIOS[request.task.task_type]];
+      : [...allowedTaskScenarios];
     if (!options.classifier) {
       return unresolvedResult({
         reason: 'classifier_unavailable',
@@ -1116,7 +1062,6 @@ export async function resolvePlanningGuidance(
     request,
     mode,
     primaryScenarioId: classification.primary_scenario_id,
-    secondaryScenarioIds,
     signals,
   });
   const provenanceSignals = [...classification.signals];

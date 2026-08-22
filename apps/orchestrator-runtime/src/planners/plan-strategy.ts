@@ -12,7 +12,7 @@ import type { LLMClient } from '../runtime/llm-client.ts';
 import type { SkillLoader } from '../runtime/skill-loader.ts';
 import type { SchemaValidator } from '../schema/validator.ts';
 import type { GuidanceRef, PlanCandidate, PlanProgress, ResearchTaskData } from '../plan-types.ts';
-import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
+import type { CandidateProfile, ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
 import type { CapabilityApprovalAuthority } from './capability-resolver.ts';
 import type { ToolRouter } from '../runtime/tool-adapter.ts';
 import type { ScenarioId } from './planning-guidance.ts';
@@ -66,6 +66,10 @@ export interface PlanContext {
   guidanceRequirement?: ResearchTaskV2;
   /** Explicit user choice returned by the Planning Guidance clarification gate. */
   selectedScenarioId?: ScenarioId;
+  /** New routed tasks stop at the direction gate until a Scenario is explicitly selected. */
+  requireExplicitScenarioSelection?: boolean;
+  /** Revisions keep the active Profile inside the direction's two-specialty cap when still eligible. */
+  requiredProfileId?: CandidateProfile;
   // 段1 taskGen 的溯源,direct 支路无路由 LLM,用它兜底 planProvenance。
   taskProvenance: PlanProvenance;
   emit: (ev: PlanProgress) => void;
