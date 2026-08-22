@@ -1,5 +1,7 @@
 # 将 Skill 编译为冻结执行 DAG，并以 Canonical Deliverable 作为报告真相源
 
+> 状态：Accepted；首个 compiled Skill `generate-research-plan` 已实现，Plan/Report v1 兼容保留。
+
 ## 背景
 
 当前 Current 执行链将一个 `skill` 步骤实现为：读取 `SKILL.md` 和输出 Schema，注入上游输出，然后执行一次结构化 LLM 调用。

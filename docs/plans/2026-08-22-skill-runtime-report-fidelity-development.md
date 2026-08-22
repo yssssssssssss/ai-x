@@ -1,6 +1,6 @@
 # Skill 可执行化、知识调用与报告保真开发文档
 
-> 状态：设计已确认，业务代码尚未开始实现。
+> 状态：Phase 1–5 实现完成；自动化质量门禁与浏览器验收通过；等待独立审查和远端交付授权。
 >
 > 架构决策：`docs/adr/0003-compile-skills-into-frozen-execution-dag.md`
 >
@@ -930,7 +930,22 @@ git diff --check
 
 每个新增实体都有当前明确使用方；不为未迁移 Skill 预建额外运行时能力。
 
-## 29. 完成定义
+## 29. 实施结果（2026-08-22）
+
+- `generate-research-plan` 已切换为 compiled execution contract。
+- PlanCompiler 将其展开为 7 个可见阶段，并冻结 Skill Invocation、知识资源和合同 hash。
+- Knowledge Runner 通过现有索引解析资源，写入 SEALED `knowledge-bundle-v1` Artifact，并生成 `knowledge_excerpt` Evidence。
+- Skill references 通过受限相对路径加载并记录 hash；不开放任意文件系统访问。
+- Skill `degraded` 会产生 Gap 和 `completed_with_gaps`。
+- 未完成 clarification questions 不再进入候选计划；计划后未绑定 confirmation answer 会被拒绝。
+- `research_plan` 无视觉资产时返回 `current_text`，有视觉资产时使用 ReportDocument v2。
+- ReportDocument v2 为 12 个 ResearchPlan 必填字段提供确定性 coverage，并移除空章节。
+- 页面默认展示完整方案，可切换管理摘要；ZIP 同时包含完整 Deliverable、完整 Markdown 和摘要 Markdown。
+- Plan v1、ReportDocument v1 和 legacy single-call Skill 保持兼容。
+- 全量 `pnpm quality` 通过：1579 pass、15 skip、0 fail。
+- Web production build 和浏览器验收通过。
+
+## 30. 完成定义
 
 ```text
 truthful skill status             done
