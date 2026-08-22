@@ -25,18 +25,20 @@
 
 ## Gate 0：冻结开发基线
 
-- [ ] 运行 `git status --short --branch -uall`，保存完整工作区清单。
-- [ ] 将当前未提交改动交由用户决定提交、保留或隔离。
-- [ ] 从明确的 `BASE_SHA` 创建 `feat/skill-runtime-report-fidelity`。
-- [ ] 为实现创建独立 worktree。
-- [ ] 确认 worktree clean。
-- [ ] 确认只有一个 writer 修改该 worktree。
-- [ ] 记录 Node 与 pnpm 版本。
-- [ ] 运行基线 `pnpm typecheck`。
-- [ ] 运行基线 `pnpm lint:registry`。
-- [ ] 运行基线 `pnpm lint:knowledge`。
-- [ ] 运行基线报告、计划和执行测试。
-- [ ] 运行基线 Web production build。
+> 基线：`fa278736f6d5de43084c4f36b936b2c52e6b3bb1`；分支：`feat/skill-runtime-report-fidelity`；worktree：`/Users/heyunshen/work/PROJECT/jdc/ai-x-skill-runtime`；Node `v22.22.1`；pnpm `9.12.1`。
+
+- [x] 运行 `git status --short --branch -uall`，保存完整工作区清单。
+- [x] 将当前未提交改动交由用户决定提交、保留或隔离。
+- [x] 从明确的 `BASE_SHA` 创建 `feat/skill-runtime-report-fidelity`。
+- [x] 为实现创建独立 worktree。
+- [x] 确认 worktree clean。
+- [x] 确认只有一个 writer 修改该 worktree。
+- [x] 记录 Node 与 pnpm 版本。
+- [x] 运行基线 `pnpm typecheck`。
+- [x] 运行基线 `pnpm lint:registry`。
+- [x] 运行基线 `pnpm lint:knowledge`。
+- [x] 运行基线报告、计划和执行测试（271 tests：270 pass，1 skip，0 fail）。
+- [x] 运行基线 Web production build。
 
 ### Gate 0 完成条件
 
