@@ -35,11 +35,22 @@ export interface SkillExecutionStage {
   failure_policy: SkillFailurePolicy;
 }
 
+export interface SkillExecutionResourceQuery {
+  query_id: string;
+  types: string[];
+  limit: number;
+  accepted_statuses: Array<'approved' | 'draft'>;
+  purpose: string;
+  failure_policy: SkillFailurePolicy;
+}
+
 export interface SkillExecutionContract {
   version: 'skill-execution-contract-v1';
   skill_id: string;
   required_requirement_fields: string[];
   resources: SkillExecutionResource[];
+  resource_queries?: SkillExecutionResourceQuery[];
+  skill_references?: string[];
   stages: SkillExecutionStage[];
   output_stage_id: string;
   output_pointer: string;

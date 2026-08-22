@@ -28,6 +28,27 @@
         }
       }
     },
+    "resource_queries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["query_id", "types", "limit", "accepted_statuses", "purpose", "failure_policy"],
+        "properties": {
+          "query_id": { "type": "string", "minLength": 1 },
+          "types": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 5 },
+          "accepted_statuses": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["approved", "draft"] } },
+          "purpose": { "type": "string", "minLength": 1 },
+          "failure_policy": { "enum": ["block", "gap"] }
+        }
+      }
+    },
+    "skill_references": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
     "stages": {
       "type": "array",
       "minItems": 1,

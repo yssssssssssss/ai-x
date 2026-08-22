@@ -1,4 +1,6 @@
-import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { getConfigRoot, hashFile, type SkillRegistryEntry } from '../runtime/config-loader.ts';
 import type { SkillLoader, LoadedSkillSchemas } from '../runtime/skill-loader.ts';
 import type { SchemaValidator } from '../schema/validator.ts';
@@ -16,6 +18,7 @@ export interface PreparedSkillExecution {
   };
   prompt: string;
   context: Record<string, unknown>;
+  referenceHashes: Array<{ path: string; hash: string }>;
 }
 
 export function prepareSkillExecution(input: {
@@ -40,6 +43,27 @@ export function prepareSkillExecution(input: {
     );
   }
   const stepContract = input.stepContract ?? {};
+  const contractLoader = input.skillLoader as SkillLoader & {
+    loadSkillExecution?: (id: string) => ReturnType<SkillLoader['loadSkillExecution']>;
+  };
+  const execution = typeof contractLoader.loadSkillExecution === 'function'
+    ? contractLoader.loadSkillExecution(input.skillId)
+    : null;
+  const skillRoot = dirname(resolve(getConfigRoot(), body.path));
+  const references = (execution?.contract.skill_references ?? []).map((referencePath) => {
+    if (isAbsolute(referencePath)) throw new Error('Skill reference path must be relative');
+    const full = resolve(skillRoot, referencePath);
+    if (relative(skillRoot, full).startsWith('..')) throw new Error('Skill reference path escapes the Skill root');
+    const content = readFileSync(full, 'utf8');
+    return {
+      path: referencePath,
+      content,
+      hash: `sha256:${createHash('sha256').update(content).digest('hex')}`,
+    };
+  });
+  const referenceText = references.length === 0
+    ? ''
+    : `\n\nVerified Skill references:\n${references.map(({ path, content }) => `--- ${path} ---\n${content}`).join('\n\n')}`;
   return {
     skill,
     body,
@@ -53,12 +77,14 @@ export function prepareSkillExecution(input: {
         ? null
         : hashFile(skill.payload_schema),
     },
-    prompt: `${SKILL_EXECUTION_PROMPT_PREFIX}\n${JSON.stringify(stepContract)}\n\n${body.body}`,
+    prompt: `${SKILL_EXECUTION_PROMPT_PREFIX}\n${JSON.stringify(stepContract)}\n\n${body.body}${referenceText}`,
     context: {
       research_goal: input.researchGoal,
       input: input.resolvedInput,
       prior_outputs: input.priorOutputs,
+      skill_references: references.map(({ path, content, hash }) => ({ path, content, hash })),
       ...stepContract,
     },
+    referenceHashes: references.map(({ path, hash }) => ({ path, hash })),
   };
 }

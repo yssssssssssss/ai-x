@@ -20,6 +20,35 @@ resources:
     accepted_statuses: [approved, draft]
     purpose: Bind sample sizes and quotas to the current sampling standard.
     failure_policy: block
+resource_queries:
+  - query_id: scenario-guides
+    types: [scenario-guide]
+    limit: 2
+    accepted_statuses: [approved, draft]
+    purpose: Select scenario guidance relevant to the finalized research scope.
+    failure_policy: gap
+  - query_id: collection-methods
+    types: [method]
+    limit: 3
+    accepted_statuses: [approved, draft]
+    purpose: Select evidence collection methods relevant to the research goal.
+    failure_policy: gap
+  - query_id: analysis-methods
+    types: [analysis]
+    limit: 5
+    accepted_statuses: [approved, draft]
+    purpose: Select analysis methods relevant to the research goal.
+    failure_policy: gap
+  - query_id: theory-model
+    types: [model]
+    limit: 1
+    accepted_statuses: [approved, draft]
+    purpose: Select one optional theory lens when the task language matches.
+    failure_policy: gap
+skill_references:
+  - references/brief-skeleton.md
+  - references/plan-skeleton.md
+  - references/run-notes-template.md
 stages:
   - stage_id: load-standards
     title: 加载研究规范

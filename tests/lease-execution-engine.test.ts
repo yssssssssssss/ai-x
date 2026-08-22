@@ -3539,6 +3539,12 @@ test('executes a compiled generate-research-plan invocation stage by stage', asy
     'tool', 'knowledge', 'llm', 'llm', 'llm', 'skill', 'reviewer',
   ]);
   assert.ok(deliverables.calls[0]?.evidenceManifest.value.entries.some(({ kind }) => kind === 'knowledge_excerpt'));
+  const skillProvenance = persisted.find(({ actorType }) => actorType === 'skill')?.skillProvenance;
+  assert.ok(Array.isArray(skillProvenance?.skillReferenceHashes));
+  assert.deepEqual(
+    (skillProvenance?.skillReferenceHashes as Array<{ path: string }>).map(({ path }) => path),
+    ['references/brief-skeleton.md', 'references/plan-skeleton.md', 'references/run-notes-template.md'],
+  );
 });
 
 test('records a degraded Skill as a completed task with one visible gap', async () => {

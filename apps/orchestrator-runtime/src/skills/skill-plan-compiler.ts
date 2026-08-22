@@ -41,9 +41,21 @@ function requiredPointerPresent(task: ResearchTaskV2, pointer: string): boolean 
   return typeof value === 'string' ? value.trim().length > 0 : value !== undefined && value !== null;
 }
 
-function frozenReferences(contract: SkillExecutionContract): CurrentKnowledgeReference[] {
-  const index = new Map(loadRuntimeKnowledgeIndex().map((item) => [item.id, item]));
-  return contract.resources.map((resource) => {
+function taskTerms(task: ResearchTaskV2): string[] {
+  return [...new Set([
+    task.business_domain,
+    task.research_goal,
+    ...task.scope,
+    ...task.target_audience,
+  ].flatMap((value) => value.toLowerCase().split(/[\s，。、“”‘’：:；;（）()\/×+-]+/u))
+    .map((value) => value.trim())
+    .filter((value) => value.length >= 2))];
+}
+
+function frozenReferences(contract: SkillExecutionContract, task: ResearchTaskV2): CurrentKnowledgeReference[] {
+  const runtimeIndex = loadRuntimeKnowledgeIndex();
+  const index = new Map(runtimeIndex.map((item) => [item.id, item]));
+  const references: CurrentKnowledgeReference[] = contract.resources.map((resource) => {
     const item = index.get(resource.resource_id);
     if (!item || (item.status !== 'approved' && item.status !== 'draft')) {
       throw new Error(`Skill ${contract.skill_id} knowledge ${resource.resource_id} is unavailable`);
@@ -60,6 +72,34 @@ function frozenReferences(contract: SkillExecutionContract): CurrentKnowledgeRef
       failurePolicy: resource.failure_policy,
     };
   });
+  const seen = new Set(references.map(({ resourceId }) => resourceId));
+  const terms = taskTerms(task);
+  for (const query of contract.resource_queries ?? []) {
+    const matches = runtimeIndex
+      .filter((item) => query.types.includes(item.type))
+      .filter((item) => query.accepted_statuses.includes(item.status as 'approved' | 'draft'))
+      .map((item) => {
+        const haystack = [item.title, item.summary, ...item.tags, ...item.domain, ...item.guide_tags]
+          .join(' ')
+          .toLowerCase();
+        return { item, score: terms.filter((term) => haystack.includes(term)).length };
+      })
+      .filter(({ item, score }) => score > 0 && !seen.has(item.id))
+      .sort((left, right) => right.score - left.score || left.item.id.localeCompare(right.item.id))
+      .slice(0, query.limit);
+    for (const { item } of matches) {
+      seen.add(item.id);
+      references.push({
+        resourceId: item.id,
+        sourcePath: item.source_path,
+        status: item.status as 'approved' | 'draft',
+        contentHash: item.content_hash,
+        required: false,
+        failurePolicy: query.failure_policy,
+      });
+    }
+  }
+  return references;
 }
 
 function stageStep(
@@ -160,7 +200,7 @@ export function compileSkillSteps(
       contractHash: loaded.hash,
       stageKey,
       reusedOldStepByStage,
-      references: frozenReferences(loaded.contract),
+      references: frozenReferences(loaded.contract, task),
     });
   }
   if (expansions.size === 0) return { steps: steps.map((step) => structuredClone(step)), invocations: [] };

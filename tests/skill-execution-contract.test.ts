@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { PlanCompiler } from '../apps/orchestrator-runtime/src/planners/plan-compiler.ts';
+import {
+  PlanCompiler,
+  validateCurrentPlanRevision,
+} from '../apps/orchestrator-runtime/src/planners/plan-compiler.ts';
 import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import { compileSkillSteps } from '../apps/orchestrator-runtime/src/skills/skill-plan-compiler.ts';
 import { loadSkillExecutionContract } from '../apps/orchestrator-runtime/src/skills/skill-execution-contract.ts';
@@ -23,6 +26,11 @@ test('compiled generate-research-plan loads one validated acyclic execution cont
     'self-review',
   ]);
   assert.equal(loaded.contract.output_stage_id, 'compose-plan');
+  assert.deepEqual(loaded.contract.skill_references, [
+    'references/brief-skeleton.md',
+    'references/plan-skeleton.md',
+    'references/run-notes-template.md',
+  ]);
 });
 
 test('execution contract rejects a mismatched Skill identity and absolute paths', () => {
@@ -43,10 +51,10 @@ test('compiled Skill expands one visible frozen seven-stage DAG', () => {
   const task: ResearchTaskV2 = {
     version: 'research-task-v2',
     task_type: 'user_research_planning',
-    business_domain: 'pet services',
-    research_goal: 'plan a pet-brand mindshare study',
-    target_audience: ['platform operations'],
-    scope: ['mobile app'],
+    business_domain: '宠物用户研究',
+    research_goal: '规划用户旅程、深度访谈与问卷分析',
+    target_audience: ['平台运营团队'],
+    scope: ['手机 App 用户旅程'],
     constraints: [],
     success_criteria: [{ id: 'SC-1', statement: 'plan is executable' }],
     expected_deliverables: ['research_plan'],
@@ -111,6 +119,8 @@ test('compiled Skill expands one visible frozen seven-stage DAG', () => {
   ]);
   assert.deepEqual(compiled.invocations[0]?.step_nos, [1, 2, 3, 4, 5, 6, 7]);
   assert.equal(compiled.steps[1]?.actor_type, 'knowledge');
+  const references = compiled.steps[1]?.input.references;
+  assert.ok(Array.isArray(references) && references.length > 3, 'task-matched dynamic knowledge must be frozen');
   assert.equal(compiled.steps[5]?.actor_type, 'skill');
   assert.equal(compiled.steps[6]?.depends_on.includes(6), true);
 });
@@ -182,6 +192,14 @@ test('PlanCompiler persists the compiled Skill invocation and seven visible stag
     'external-context', 'load-standards', 'align-brief', 'select-methods',
     'design-sampling-and-schedule', 'compose-plan', 'self-review',
   ]);
+  const frozen = { ...compiled.plan, task_id: 'task-compiled-plan-1' };
+  assert.deepEqual(validateCurrentPlanRevision({
+    plan: frozen,
+    task,
+    pending_inputs: compiled.pending_inputs,
+    task_id: frozen.task_id,
+    candidate_id: 'depth',
+  }), frozen);
 });
 
 test('legacy Skills do not expose an execution contract', () => {

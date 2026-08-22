@@ -3542,7 +3542,7 @@ export class LeaseExecutionEngine {
     } catch {
       throw new LLMInvocationError('schema', false, null, 'skill input failed schema validation');
     }
-    const { body, schemas, schemaHashes, context: skillContext, prompt } = prepared;
+    const { body, schemas, schemaHashes, context: skillContext, prompt, referenceHashes } = prepared;
     const result = await this.llm.generateStructured<object>({
       prompt,
       schema: schemas.output ?? {},
@@ -3580,6 +3580,7 @@ export class LeaseExecutionEngine {
         inputSchemaHash: schemaHashes.inputSchemaHash,
         outputSchemaHash: schemaHashes.outputSchemaHash,
         payloadSchemaHash: schemaHashes.payloadSchemaHash,
+        skillReferenceHashes: referenceHashes,
         inputHash: hashJson(input.resolvedInput),
         outputHash: hashJson(redactSensitiveValue(result.data)),
         promptHash: result.promptHash,
