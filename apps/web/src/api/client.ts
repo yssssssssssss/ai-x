@@ -169,12 +169,97 @@ export interface ClarifyControlTaskRequest {
   expectedVersion: number;
   clarificationAnswers: Record<string, unknown>;
   assumptionEdits: Record<string, string>;
+  selectedScenarioId?: string;
   idempotencyKey: string;
 }
 
 export interface ControlVisualAssetResponse {
   blob: Blob;
   mediaType: VisualAssetManifest['mediaType'];
+}
+
+interface PlanningStreamHandlers {
+  onConversation?: (conversationId: string) => void;
+  onProgress?: (event: PlanProgress) => void;
+}
+
+async function postPlanningStream(
+  path: string,
+  body: unknown,
+  handlers: PlanningStreamHandlers,
+  requestHeaders: Record<string, string> = {},
+): Promise<CurrentPlanningResponse> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...requestHeaders,
+  };
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetch(`/api${path}`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const failure = await response.json().catch(() => ({})) as { error?: unknown; code?: unknown };
+    throw new ApiError(
+      response.status,
+      typeof failure.error === 'string' ? failure.error : `HTTP ${response.status}`,
+      typeof failure.code === 'string' ? failure.code : undefined,
+    );
+  }
+  if (!response.body) throw new ApiError(502, '规划响应缺少流式内容');
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let result: CurrentPlanningResponse | null = null;
+  const consume = (block: string): void => {
+    let event = 'message';
+    let data = '';
+    for (const line of block.split('\n')) {
+      if (line.startsWith('event:')) event = line.slice(6).trim();
+      else if (line.startsWith('data:')) data += line.slice(5).trim();
+    }
+    if (!data) return;
+    const parsed: unknown = JSON.parse(data);
+    if (event === 'conversation') {
+      const conversation = parsed as { conversationId?: unknown };
+      if (typeof conversation.conversationId === 'string') {
+        handlers.onConversation?.(conversation.conversationId);
+      }
+    } else if (event === 'progress') {
+      handlers.onProgress?.(parsed as PlanProgress);
+    } else if (event === 'result') {
+      result = parsed as CurrentPlanningResponse;
+    } else if (event === 'error') {
+      const failure = parsed as { error?: unknown; status?: unknown; code?: unknown };
+      throw new ApiError(
+        typeof failure.status === 'number' ? failure.status : 502,
+        typeof failure.error === 'string' ? failure.error : '规划失败',
+        typeof failure.code === 'string' ? failure.code : undefined,
+      );
+    }
+  };
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      buffer = `${buffer}${decoder.decode(value, { stream: !done })}`.replaceAll('\r\n', '\n');
+      let separator = buffer.indexOf('\n\n');
+      while (separator >= 0) {
+        consume(buffer.slice(0, separator));
+        buffer = buffer.slice(separator + 2);
+        separator = buffer.indexOf('\n\n');
+      }
+      if (done) break;
+    }
+    if (buffer.trim()) consume(buffer);
+  } finally {
+    reader.releaseLock();
+  }
+  if (!result) throw new ApiError(502, '规划未返回结果');
+  return result;
 }
 
 export const api = {
@@ -188,62 +273,12 @@ export const api = {
   // Current 规划流:SSE conversation/progress/result/error 在 client 层收口。
   planControlStream: async (
     body: PlanControlTaskRequest,
-    handlers: {
-      onConversation?: (conversationId: string) => void;
-      onProgress?: (event: PlanProgress) => void;
-    } = {},
-  ): Promise<CurrentPlanningResponse> => {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    const token = getToken();
-    if (token) headers.Authorization = `Bearer ${token}`;
-    const response = await fetch('/api/control-tasks/plan/stream', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-    });
-    if (!response.ok || !response.body) throw new ApiError(response.status, `HTTP ${response.status}`);
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let result: CurrentPlanningResponse | null = null;
-    const consume = (block: string): void => {
-      let event = 'message';
-      let data = '';
-      for (const line of block.split('\n')) {
-        if (line.startsWith('event:')) event = line.slice(6).trim();
-        else if (line.startsWith('data:')) data += line.slice(5).trim();
-      }
-      if (!data) return;
-      const parsed: unknown = JSON.parse(data);
-      if (event === 'conversation') {
-        const conversation = parsed as { conversationId?: unknown };
-        if (typeof conversation.conversationId === 'string') handlers.onConversation?.(conversation.conversationId);
-      } else if (event === 'progress') {
-        handlers.onProgress?.(parsed as PlanProgress);
-      } else if (event === 'result') {
-        result = parsed as CurrentPlanningResponse;
-      } else if (event === 'error') {
-        const failure = parsed as { error?: unknown };
-        throw new ApiError(502, typeof failure.error === 'string' ? failure.error : '规划失败');
-      }
-    };
-
-    for (;;) {
-      const { done, value } = await reader.read();
-      buffer = `${buffer}${decoder.decode(value, { stream: !done })}`.replaceAll('\r\n', '\n');
-      let separator = buffer.indexOf('\n\n');
-      while (separator >= 0) {
-        consume(buffer.slice(0, separator));
-        buffer = buffer.slice(separator + 2);
-        separator = buffer.indexOf('\n\n');
-      }
-      if (done) break;
-    }
-    if (buffer.trim()) consume(buffer);
-    if (!result) throw new ApiError(502, '规划未返回结果');
-    return result;
-  },
+    handlers: PlanningStreamHandlers = {},
+  ): Promise<CurrentPlanningResponse> => postPlanningStream(
+    '/control-tasks/plan/stream',
+    body,
+    handlers,
+  ),
   clarifyControlTask: (
     taskId: string,
     body: ClarifyControlTaskRequest,
@@ -252,6 +287,16 @@ export const api = {
     body,
     headers: { 'Idempotency-Key': body.idempotencyKey },
   }),
+  clarifyControlTaskStream: (
+    taskId: string,
+    body: ClarifyControlTaskRequest,
+    handlers: Pick<PlanningStreamHandlers, 'onProgress'> = {},
+  ) => postPlanningStream(
+    `/control-tasks/${encodeURIComponent(taskId)}/clarify/stream`,
+    body,
+    handlers,
+    { 'Idempotency-Key': body.idempotencyKey },
+  ),
   listTasks: () => req<{ tasks: TaskSummary[] }>('/tasks'),
   listControlTasks: () => req<{
     kind: 'current';

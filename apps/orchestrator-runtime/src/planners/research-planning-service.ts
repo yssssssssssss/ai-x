@@ -29,7 +29,11 @@ import type {
   PlanProvenance,
   PlanStrategy,
 } from './plan-strategy.ts';
-import { RoutedPlanner } from './routed-planner.ts';
+import {
+  RoutedPlanner,
+  type CurrentPlanningGuidanceClarification,
+} from './routed-planner.ts';
+import type { ScenarioId } from './planning-guidance.ts';
 import type { CapabilityResolution } from './capability-resolver.ts';
 import type { ProblemGraphProvenance } from './problem-graph-planner.ts';
 import type {
@@ -41,6 +45,7 @@ export interface ResearchPlanningInput {
   originalInput: string;
   directSkillId?: string;
   requirement?: ResearchTaskV2;
+  selectedScenarioId?: ScenarioId;
 }
 
 export interface ResearchPlanningResult {
@@ -60,6 +65,25 @@ export interface CurrentResearchPlanningResult extends Omit<ResearchPlanningResu
   capabilityResolution: CapabilityResolution;
   problemGraphProvenance: ProblemGraphProvenance;
   planningProvenance: PlanningProvenance;
+}
+
+export type CurrentResearchPlanningOutcome =
+  | CurrentResearchPlanningResult
+  | CurrentPlanningGuidanceClarification;
+
+export interface CurrentResearchPlanningOptions {
+  selectedScenarioId?: ScenarioId;
+}
+
+export function isPlanningGuidanceClarification(
+  value: unknown,
+): value is CurrentPlanningGuidanceClarification {
+  return Boolean(
+    value
+    && typeof value === 'object'
+    && 'kind' in value
+    && value.kind === 'planning_guidance_clarification',
+  );
 }
 
 const TASK_UNDERSTANDING_PROMPT =
@@ -159,6 +183,23 @@ export class ResearchPlanningService {
     originalInput = requirement.research_goal,
     onProgress?: (event: PlanProgress) => void,
   ): Promise<CurrentResearchPlanningResult> {
+    const result = await this.planCurrentFromRequirementOutcome(
+      requirement,
+      originalInput,
+      onProgress,
+    );
+    if (isPlanningGuidanceClarification(result)) {
+      throw new Error(`Planning Guidance requires clarification: ${result.planningGuidance.reasonCode}`);
+    }
+    return result;
+  }
+
+  async planCurrentFromRequirementOutcome(
+    requirement: ResearchTaskV2,
+    originalInput = requirement.research_goal,
+    onProgress?: (event: PlanProgress) => void,
+    options: CurrentResearchPlanningOptions = {},
+  ): Promise<CurrentResearchPlanningOutcome> {
     const canonicalRequirement = canonicalizeExpectedDeliverables(requirement);
     const task: ResearchTaskData = {
       task_type: canonicalRequirement.task_type,
@@ -185,9 +226,11 @@ export class ResearchPlanningService {
       originalInput,
       requirement: canonicalRequirement,
       guidanceRequirement: requirement,
+      ...(options.selectedScenarioId ? { selectedScenarioId: options.selectedScenarioId } : {}),
       taskProvenance,
       emit,
     }, deliverableSelection.evidenceRequirements);
+    if (isPlanningGuidanceClarification(artifacts)) return artifacts;
     return {
       task,
       structuredTask: canonicalRequirement,

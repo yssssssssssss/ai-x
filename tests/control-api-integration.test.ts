@@ -375,6 +375,7 @@ class PlanningModelFixtureLLM implements LLMClient {
   constructor(
     requestedModel: string,
     private readonly actualModel: string,
+    private readonly requirement: ResearchTaskV2 = resolvedClarificationRequirement(),
   ) {
     this.identity = {
       provider: 'planning-model-fixture',
@@ -389,7 +390,7 @@ class PlanningModelFixtureLLM implements LLMClient {
   async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
     let data: unknown;
     if (options.schemaName === 'research-task-v2') {
-      data = resolvedClarificationRequirement();
+      data = this.requirement;
     } else if (options.schemaName === 'decision-states') {
       data = [];
     } else if (options.schemaName === 'problem-graph') {
@@ -981,6 +982,26 @@ function resolvedClarificationRequirement(): ResearchTaskV2 {
     target_audience: ['产品团队'],
     ambiguities: [],
     clarification_questions: [],
+  };
+}
+
+function scenarioSelectionRequirement(): ResearchTaskV2 {
+  return {
+    version: 'research-task-v2',
+    task_type: 'user_research_planning',
+    business_domain: '宠物心智设计表达',
+    research_goal: '形成宠物心智的设计表达策略全景',
+    target_audience: ['品牌与设计团队'],
+    scope: ['全链路业务品牌心智', '品类特色心智', '场域心智策略'],
+    constraints: [],
+    success_criteria: [{ id: 'strategy-landscape', statement: '形成可用于后续研究决策的完整视图' }],
+    expected_deliverables: ['research_plan'],
+    assumptions: [],
+    ambiguities: [],
+    clarification_questions: [],
+    blocking_issues: [],
+    sensitivity: 'public',
+    pii_detected: false,
   };
 }
 
@@ -1779,6 +1800,129 @@ test('production plan stream forwards requirement-backed planning progress in or
     const result = events.at(-1)?.data as ControlPlanCandidatesResponse;
     assert.equal(result.task.state, 'awaiting_selection');
     assert.deepEqual(result.candidates.map((candidate) => candidate.candidateId), ['speed', 'depth']);
+  } finally {
+    await closeLocalServer(app.server);
+  }
+});
+
+test('production API persists Scenario selection guidance and resumes planning after a valid choice', async () => {
+  const { buildControlRuntime } = await loadControlRuntimeModule();
+  const expectedModel = 'scenario-selection-model';
+  const runtime = buildControlRuntime({
+    repository,
+    conversations: conversationAdapter(),
+    tools: new ToolRouter(),
+    llm: new PlanningModelFixtureLLM(
+      expectedModel,
+      expectedModel,
+      scenarioSelectionRequirement(),
+    ),
+    validator: new SchemaValidator(),
+    skillLoader: new SkillLoader(),
+    artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
+    expectedActualModel: expectedModel,
+  });
+  const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+  const app = await listenLocalApp(
+    (createAgentApiApp as unknown as PlannedCreateAgentApiApp)({ controlRuntime: runtime }),
+  );
+  const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
+  const authorization = { authorization: `Bearer ${token}` };
+  const originalInput = '创建一个调研任务，核心解决“宠物心智的设计表达策略全景，包含：全链路业务品牌心智、品类特色心智、场域心智策略”';
+  const expectedGuidance = {
+    reasonCode: 'scenario_selection_required' as const,
+    options: [
+      { id: 'user-material-synthesis', label: '已有用户资料归纳' },
+      { id: 'user-segmentation', label: '用户分层' },
+      { id: 'user-journey-insight', label: '用户旅程与需求洞察' },
+      { id: 'root-cause-analysis', label: '问题根因拆解' },
+      { id: 'metrics-validation', label: '指标与验证计划' },
+    ],
+  };
+
+  try {
+    const plannedResponse = await postJson(app.baseUrl, '/api/control-tasks/plan', token, {
+      originalInput,
+      conversationId,
+    });
+    assert.equal(plannedResponse.status, 200, await plannedResponse.clone().text());
+    const planned = await plannedResponse.json() as CurrentPlanningResponse;
+    assert.equal(planned.status, 'clarification_required');
+    if (planned.status !== 'clarification_required') throw new Error('expected Scenario clarification');
+    assert.equal(planned.task.state, 'awaiting_clarification');
+    assert.deepEqual(planned.candidates, []);
+    assert.deepEqual(planned.planningGuidance, expectedGuidance);
+
+    const refreshedResponse = await fetch(
+      `${app.baseUrl}/api/control-tasks/${planned.task.id}`,
+      { headers: authorization },
+    );
+    assert.equal(refreshedResponse.status, 200, await refreshedResponse.clone().text());
+    const refreshed = await refreshedResponse.json() as CurrentTaskReadResponse;
+    assert.equal(refreshed.task.state, 'awaiting_clarification');
+    assert.equal(refreshed.task.stateVersion, planned.task.stateVersion);
+    assert.deepEqual(refreshed.planningGuidance, expectedGuidance);
+
+    const invalidResponse = await postJson(
+      app.baseUrl,
+      `/api/control-tasks/${planned.task.id}/clarify`,
+      token,
+      {
+        expectedVersion: planned.task.stateVersion,
+        clarificationAnswers: {},
+        assumptionEdits: {},
+        selectedScenarioId: 'competitor-benchmark-research',
+      },
+      `scenario-invalid-${randomUUID()}`,
+    );
+    assert.equal(invalidResponse.status, 400, await invalidResponse.clone().text());
+    assert.equal(
+      (await invalidResponse.json() as { code?: string }).code,
+      'invalid_scenario_selection',
+    );
+
+    const selectedResponse = await postJson(
+      app.baseUrl,
+      `/api/control-tasks/${planned.task.id}/clarify/stream`,
+      token,
+      {
+        expectedVersion: planned.task.stateVersion,
+        clarificationAnswers: {},
+        assumptionEdits: {},
+        selectedScenarioId: 'user-journey-insight',
+      },
+      `scenario-valid-${randomUUID()}`,
+    );
+    assert.equal(selectedResponse.status, 200, await selectedResponse.clone().text());
+    const selectedEvents = parseSseEvents(await selectedResponse.text());
+    assert.deepEqual(
+      selectedEvents.slice(0, -1).map((event) => {
+        const progress = event.data as { phase: string; status: string };
+        return `${progress.phase}:${progress.status}`;
+      }),
+      [
+        'understand:done',
+        'activate:done',
+        'guidance:done',
+        'states:start',
+        'states:done',
+        'candidates:start',
+        'candidates:done',
+        'persist:start',
+        'persist:done',
+      ],
+    );
+    assert.equal(selectedEvents.at(-1)?.event, 'result');
+    const selected = selectedEvents.at(-1)?.data as ControlPlanCandidatesResponse;
+    assert.equal(selected.task.state, 'awaiting_selection');
+    assert.deepEqual(selected.candidates.map(({ candidateId }) => candidateId), ['speed', 'depth']);
+    for (const candidate of selected.candidates) {
+      const provenance = candidate.plan.planning_provenance;
+      assert.ok(provenance);
+      assert.equal(provenance.classification_method, 'clarification');
+      assert.equal(provenance.classifier_call_count, 0);
+      assert.equal(provenance.primary_scenario_id, 'user-journey-insight');
+    }
   } finally {
     await closeLocalServer(app.server);
   }

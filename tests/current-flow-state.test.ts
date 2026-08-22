@@ -126,6 +126,10 @@ interface CurrentFlowStateModule {
     candidates?: unknown[];
     activatedNodes?: string[];
     activePlan?: unknown;
+    planningGuidance?: {
+      reasonCode: 'scenario_selection_required';
+      options: Array<{ id: string; label: string }>;
+    };
   }): {
     phase: string;
     stateVersion: number;
@@ -462,6 +466,10 @@ test('hydrates an awaiting clarification task with its questions and raw input',
       conversationId: 'conversation-refresh',
       structuredTask,
     },
+    planningGuidance: {
+      reasonCode: 'scenario_selection_required',
+      options: [{ id: 'user-journey-insight', label: '用户旅程与需求洞察' }],
+    },
   });
   assert.equal(hydrated.phase, 'clarifying');
   assert.equal(hydrated.stateVersion, 4);
@@ -480,6 +488,10 @@ test('hydrates an awaiting clarification task with its questions and raw input',
     structuredTask,
     activatedNodes: [],
     candidates: [],
+    planningGuidance: {
+      reasonCode: 'scenario_selection_required',
+      options: [{ id: 'user-journey-insight', label: '用户旅程与需求洞察' }],
+    },
   });
 });
 

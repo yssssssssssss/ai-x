@@ -34,7 +34,13 @@ export interface AgentApiDependencies {
 }
 
 function refinementResponse(
-  result: { status: 'clarification_required'; taskId: string; requirement: ClarificationRequiredResponse['structuredTask'] },
+  result: {
+    status: 'clarification_required';
+    taskId: string;
+    requirement: ClarificationRequiredResponse['structuredTask'];
+    planningGuidance?: ClarificationRequiredResponse['planningGuidance'];
+    activatedNodes?: string[];
+  },
   task: ControlTaskDetail | null,
 ): ClarificationRequiredResponse {
   if (!task) throw new Error(`task ${result.taskId} disappeared after refinement`);
@@ -50,8 +56,9 @@ function refinementResponse(
       currentAttemptId: task.currentAttemptId,
     },
     structuredTask: result.requirement,
-    activatedNodes: [],
+    activatedNodes: result.activatedNodes ?? [],
     candidates: [],
+    ...(result.planningGuidance ? { planningGuidance: result.planningGuidance } : {}),
   };
 }
 
@@ -128,6 +135,7 @@ function refinementClarificationPort(runtime: ControlRuntime): ControlClarificat
         conversationId: input.conversationId,
         ownerUserId: input.ownerUserId,
         answers: { ...input.answers, assumption_edits: input.assumptionEdits },
+        ...(input.selectedScenarioId ? { selectedScenarioId: input.selectedScenarioId } : {}),
         expectedVersion: input.expectedVersion,
       }, onProgress);
       if (result.status === 'clarification_required') {
@@ -136,7 +144,8 @@ function refinementClarificationPort(runtime: ControlRuntime): ControlClarificat
       const clarifiedTask = await runtime.repository.getTaskDetail(input.taskId);
       if (!clarifiedTask) throw new Error(`task ${input.taskId} disappeared after clarification`);
       if (!result.planningResult) throw new Error('clarification ready result has no finalized planning result');
-      return runtime.controlPlanning.planExistingTask({
+      onProgress?.({ phase: 'persist', status: 'start', label: '保存候选方案' });
+      const response = await runtime.controlPlanning.planExistingTask({
         taskId: clarifiedTask.id,
         conversationId: input.conversationId,
         ownerUserId: input.ownerUserId,
@@ -145,6 +154,13 @@ function refinementClarificationPort(runtime: ControlRuntime): ControlClarificat
         commandReservation: input.commandReservation,
         clarificationRecovery: result.clarificationRecovery,
       }, result.planningResult);
+      onProgress?.({
+        phase: 'persist',
+        status: 'done',
+        label: '保存候选方案',
+        detail: `${response.candidates.length} 份候选方案已就绪`,
+      });
+      return response;
     },
   };
 }

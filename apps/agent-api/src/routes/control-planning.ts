@@ -3,6 +3,7 @@ import { ControlPlaneAuthorizationError, ControlPlaneConflictError } from '../..
 import type {
   ControlPlanCandidatesResponse,
   ControlTaskResponse,
+  PlanningGuidanceClarification,
   PlanControlTaskRequest,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import type { ResearchTaskV2, PlanProgress } from '../../../../packages/api-contract/plan.ts';
@@ -20,6 +21,7 @@ export interface ClarificationRequiredResponse {
   structuredTask: ResearchTaskV2;
   activatedNodes: string[];
   candidates: [];
+  planningGuidance?: PlanningGuidanceClarification;
 }
 
 export type CurrentPlanningResponse = CurrentCandidatesResponse | ClarificationRequiredResponse;

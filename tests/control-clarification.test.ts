@@ -11,6 +11,7 @@ import { createUser } from '../database/repository.ts';
 import type { ControlTaskDetail } from '../database/control-plane.ts';
 import type { CurrentPlanningResponse } from '../apps/agent-api/src/routes/control-planning.ts';
 import { LLMInvocationError } from '../apps/orchestrator-runtime/src/runtime/llm-client.ts';
+import type { PlanProgress } from '../packages/api-contract/plan.ts';
 
 process.env.JWT_SECRET = 'clarification-test-secret';
 
@@ -95,6 +96,18 @@ async function post(baseUrl: string, path: string, token: string, body: unknown,
     method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...headers },
     body: JSON.stringify(body),
+  });
+}
+
+function parseSseEvents(body: string): Array<{ event: string; data: unknown }> {
+  return body.trim().split(/\r?\n\r?\n/u).map((block) => {
+    let event = 'message';
+    let data = '';
+    for (const line of block.split(/\r?\n/u)) {
+      if (line.startsWith('event:')) event = line.slice(6).trim();
+      if (line.startsWith('data:')) data += line.slice(5).trim();
+    }
+    return { event, data: JSON.parse(data) as unknown };
   });
 }
 
@@ -249,11 +262,13 @@ test('clarify keeps awaiting_clarification when a blocking answer is missing and
       clarify: async (input: {
         answers: Record<string, unknown>;
         assumptionEdits?: Record<string, string>;
+        selectedScenarioId?: string;
         commandReservation: { idempotencyKey: string; requestHash: string; reservationToken: string };
       }) => {
         calls += 1;
         assert.deepEqual(input.answers, calls === 1 ? {} : { audience: 'new users' });
         assert.deepEqual(input.assumptionEdits, { scope: 'mobile app' });
+        assert.equal(input.selectedScenarioId, calls === 1 ? undefined : 'user-journey-insight');
         const response = calls === 1 ? clarificationResult : candidatesResult;
         if (response.status !== 'clarification_required') {
           await repository.completeCommand({
@@ -278,9 +293,91 @@ test('clarify keeps awaiting_clarification when a blocking answer is missing and
     assert.equal((await incomplete.json() as { status?: unknown }).status, 'clarification_required');
 
     const complete = await post(baseUrl, `/api/control-tasks/${task.id}/clarify`, ownerToken, {
-      expectedVersion: 1, clarificationAnswers: { audience: 'new users' }, assumptionEdits: { scope: 'mobile app' }, idempotencyKey: 'clarify-2',
+      expectedVersion: 1,
+      clarificationAnswers: { audience: 'new users' },
+      assumptionEdits: { scope: 'mobile app' },
+      selectedScenarioId: 'user-journey-insight',
+      idempotencyKey: 'clarify-2',
     });
     assert.equal((await complete.json() as { status?: unknown }).status, 'current_candidates');
+  } finally {
+    server.close();
+  }
+});
+
+test('clarify stream forwards ordered progress and replays the completed command', async () => {
+  const repository = clarificationRepository(async () => task);
+  const progress: PlanProgress[] = [
+    { phase: 'understand', status: 'done', label: '确认研究方向' },
+    { phase: 'activate', status: 'done', label: '匹配规划节点' },
+    { phase: 'guidance', status: 'done', label: '召回研究方法' },
+    { phase: 'states', status: 'start', label: '构建问题与证据框架' },
+    { phase: 'states', status: 'done', label: '构建问题与证据框架' },
+    { phase: 'candidates', status: 'start', label: '生成候选方案' },
+    { phase: 'candidates', status: 'done', label: '生成候选方案' },
+    { phase: 'persist', status: 'start', label: '保存候选方案' },
+    { phase: 'persist', status: 'done', label: '保存候选方案' },
+  ];
+  let calls = 0;
+  const runtime = {
+    repository,
+    workflow: {},
+    getDeliverable: async () => null,
+    clarification: {
+      async clarify(
+        input: { commandReservation: { reservationToken: string } },
+        onProgress?: (event: PlanProgress) => void,
+      ) {
+        calls += 1;
+        for (const event of progress) onProgress?.(event);
+        await repository.completeCommand({
+          taskId: task.id,
+          commandType: 'clarification',
+          idempotencyKey: 'clarify-stream',
+          reservationToken: input.commandReservation.reservationToken,
+          response: candidatesResult,
+        });
+        return candidatesResult;
+      },
+    },
+  } as unknown as ControlTasksRuntime;
+  const app = express();
+  app.use(express.json());
+  app.use('/api/control-tasks', createControlTasksRouter(runtime));
+  const { server, baseUrl } = await listen(app);
+  const body = {
+    expectedVersion: 1,
+    clarificationAnswers: { audience: 'new users' },
+    assumptionEdits: {},
+    idempotencyKey: 'clarify-stream',
+  };
+  try {
+    const response = await post(
+      baseUrl,
+      `/api/control-tasks/${task.id}/clarify/stream`,
+      ownerToken,
+      body,
+    );
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type') ?? '', /^text\/event-stream/u);
+    const events = parseSseEvents(await response.text());
+    assert.deepEqual(events.map(({ event }) => event), [
+      ...progress.map(() => 'progress'),
+      'result',
+    ]);
+    assert.deepEqual(events.slice(0, -1).map(({ data }) => data), progress);
+    assert.deepEqual(events.at(-1)?.data, candidatesResult);
+
+    const replay = await post(
+      baseUrl,
+      `/api/control-tasks/${task.id}/clarify/stream`,
+      ownerToken,
+      body,
+    );
+    assert.deepEqual(parseSseEvents(await replay.text()), [
+      { event: 'result', data: candidatesResult },
+    ]);
+    assert.equal(calls, 1);
   } finally {
     server.close();
   }

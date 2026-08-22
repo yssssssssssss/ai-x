@@ -27,6 +27,11 @@ export type ControlWorkflowState =
 
 export type ControlWorkflowRole = 'owner' | 'legal' | 'security' | 'gold';
 
+export interface PlanningGuidanceClarification {
+  reasonCode: 'scenario_selection_required';
+  options: Array<{ id: string; label: string }>;
+}
+
 export interface ControlRequirementVersion {
   id: string;
   taskId: string;
@@ -320,6 +325,7 @@ export interface CurrentTaskReadResponse {
   activatedNodes: string[];
   candidates: CurrentPlanCandidate[];
   activePlan: CurrentPlanCandidate | null;
+  planningGuidance?: PlanningGuidanceClarification;
   approvalRequirements?: ControlApprovalRequirement[];
   planRecovery?: ControlPlanRecovery;
 }

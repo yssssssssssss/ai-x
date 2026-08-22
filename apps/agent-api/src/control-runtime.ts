@@ -16,11 +16,13 @@ import { ReportEvidenceValidator } from '../../orchestrator-runtime/src/evidence
 import {
   RequirementRefinementService,
   type ConversationAdapter,
+  type RequirementPlanner,
 } from '../../orchestrator-runtime/src/control/requirement-refinement-service.ts';
 import {
+  isPlanningGuidanceClarification,
   ResearchPlanningService,
   resolvePlanningDeliverableSelection,
-  type CurrentResearchPlanningResult,
+  type CurrentResearchPlanningOutcome,
   type ResearchPlanningInput,
 } from '../../orchestrator-runtime/src/planners/research-planning-service.ts';
 import { PlanCompiler } from '../../orchestrator-runtime/src/planners/plan-compiler.ts';
@@ -297,7 +299,7 @@ interface PlanningAdapter {
   plan(
     input: ResearchPlanningInput,
     onProgress?: (event: PlanProgress) => void,
-  ): Promise<CurrentResearchPlanningResult>;
+  ): Promise<CurrentResearchPlanningOutcome>;
 }
 
 export interface ControlRuntimeOverrides {
@@ -419,16 +421,33 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     ...(overrides.planningPolicy === undefined ? {} : { planningPolicy: overrides.planningPolicy }),
     expectedActualModel,
   });
-  const planning: PlanningAdapter = overrides.planning ?? {
+  const planningSource: PlanningAdapter = overrides.planning ?? {
     async plan(input, onProgress) {
       if (!input.requirement) {
         throw new Error('Current planning requires finalized ResearchTaskV2');
       }
-      return planningService!.planCurrentFromRequirement(
+      return planningService!.planCurrentFromRequirementOutcome(
         input.requirement,
         input.originalInput,
         onProgress,
+        input.selectedScenarioId
+          ? { selectedScenarioId: input.selectedScenarioId }
+          : {},
       );
+    },
+  };
+  const planning = {
+    async plan(input: ResearchPlanningInput, onProgress?: (event: PlanProgress) => void) {
+      const result = await planningSource.plan(input, onProgress);
+      if (isPlanningGuidanceClarification(result)) {
+        throw new Error(`Planning Guidance requires clarification: ${result.planningGuidance.reasonCode}`);
+      }
+      return result;
+    },
+  };
+  const refinementPlanning: RequirementPlanner = {
+    plan(input, onProgress) {
+      return planningSource.plan(input, onProgress);
     },
   };
   const conversations = overrides.conversations ?? defaultConversations();
@@ -452,7 +471,7 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     validator,
     repository,
     conversations: refinementConversations,
-    planner: planning,
+    planner: refinementPlanning,
     expectedActualModel,
   });
   const controlPlanning = new ControlPlanningService({

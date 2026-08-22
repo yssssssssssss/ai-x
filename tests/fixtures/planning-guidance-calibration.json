@@ -1860,7 +1860,7 @@
       "available_material_roles": [],
       "expected": {
         "status": "clarification",
-        "clarification_reason": "classifier_unavailable",
+        "clarification_reason": "scenario_selection_required",
         "classifier_call_count": 0
       }
     }

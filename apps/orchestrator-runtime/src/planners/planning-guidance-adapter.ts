@@ -14,6 +14,7 @@ import {
   type PlanningGuidanceCapability,
   type PlanningGuidanceResult,
   type ScenarioClassifierRequest,
+  type ScenarioId,
 } from './planning-guidance.ts';
 export type { ResolvedProfileSpec } from './planning-guidance.ts';
 
@@ -104,6 +105,7 @@ interface CapabilityCrosswalk {
 export interface PlannerGuidanceAdapterInput {
   rawInput: string;
   task: ResearchTaskV2;
+  selectedScenarioId?: ScenarioId;
   problemGraph: ProblemGraph;
   capabilityResolution: CapabilityResolution;
   directSkillId?: string;
@@ -412,6 +414,7 @@ export async function resolvePlannerGuidance(
   const result = await resolvePlanningGuidance({
     raw_input: input.rawInput,
     task: input.task,
+    ...(input.selectedScenarioId ? { selected_scenario_id: input.selectedScenarioId } : {}),
     available_material_roles: availableMaterialRoles(input.task),
     problem_graph_signal_ids: problemGraphSignals(input.problemGraph),
     ...(input.directSkillId ? { direct_skill_id: input.directSkillId } : {}),

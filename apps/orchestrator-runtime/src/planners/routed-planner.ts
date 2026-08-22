@@ -16,6 +16,7 @@ import { hashPrompt } from '../runtime/llm-client.ts';
 import { searchKnowledge } from '../knowledge/index.ts';
 import type { GuidanceRef, PlanCandidate } from '../plan-types.ts';
 import type { PlanningProvenance, ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
+import type { PlanningGuidanceClarification } from '../../../../packages/api-contract/control-workflow.ts';
 import type {
   CurrentPlanStep,
   EvidenceRequirement,
@@ -229,6 +230,14 @@ export interface CurrentPlanArtifacts {
   capabilityResolution: CapabilityResolution;
   planningProvenance: PlanningProvenance;
 }
+
+export interface CurrentPlanningGuidanceClarification {
+  kind: 'planning_guidance_clarification';
+  activatedNodes: string[];
+  planningGuidance: PlanningGuidanceClarification;
+}
+
+export type CurrentPlanResult = CurrentPlanArtifacts | CurrentPlanningGuidanceClarification;
 
 const ROUTED_STEP_LIMITS = {
   speed: 4,
@@ -596,7 +605,7 @@ export class RoutedPlanner implements PlanStrategy {
   async planCurrent(
     ctx: PlanContext & { requirement: ResearchTaskV2 },
     evidenceRequirements: EvidenceRequirement[],
-  ): Promise<CurrentPlanArtifacts> {
+  ): Promise<CurrentPlanResult> {
     const { llm, validator, skillLoader, tools } = this.deps;
     if (!tools) throw new Error('Current planning requires ToolRouter capability state');
     const explicitWeights = explicitCompetitiveScoringWeights(ctx.requirement);
@@ -621,7 +630,7 @@ export class RoutedPlanner implements PlanStrategy {
 
     let decisionStates: DecisionStateRec[] = [];
     if (!ctx.direct) {
-      ctx.emit({ phase: 'states', status: 'start', label: '判定节点状态' });
+      ctx.emit({ phase: 'states', status: 'start', label: '构建问题与证据框架' });
       const decisionContext = {
         activated: activatedNodeKeys,
         task: ctx.task,
@@ -642,12 +651,6 @@ export class RoutedPlanner implements PlanStrategy {
       const activatedKeys = new Set(activatedNodeKeys);
       decisionStates = statesGen.data.filter((state) => activatedKeys.has(state.node_key));
       for (const state of decisionStates) validator.validateOrThrow('decision-state', state);
-      ctx.emit({
-        phase: 'states',
-        status: 'done',
-        label: '判定节点状态',
-        detail: `${decisionStates.length} 个节点已判定`,
-      });
     }
 
     const problemGraphResult = await new ProblemGraphPlanner({
@@ -721,6 +724,7 @@ export class RoutedPlanner implements PlanStrategy {
     const planningGuidance = await resolvePlannerGuidance({
       rawInput: ctx.originalInput ?? ctx.requirement.research_goal,
       task: ctx.guidanceRequirement ?? ctx.requirement,
+      ...(ctx.selectedScenarioId ? { selectedScenarioId: ctx.selectedScenarioId } : {}),
       problemGraph: problemGraphResult.graph,
       capabilityResolution,
       ...(ctx.direct ? { directSkillId: ctx.direct.skillName } : {}),
@@ -730,7 +734,25 @@ export class RoutedPlanner implements PlanStrategy {
         ? {}
         : { policy: this.deps.planningPolicy }),
     });
+    if (!ctx.direct) {
+      ctx.emit({
+        phase: 'states',
+        status: 'done',
+        label: '构建问题与证据框架',
+        detail: `${decisionStates.length} 个节点已判定，证据框架已生成`,
+      });
+    }
     if (planningGuidance.status === 'clarification') {
+      if (planningGuidance.clarification?.reason_code === 'scenario_selection_required') {
+        return {
+          kind: 'planning_guidance_clarification',
+          activatedNodes: activatedNodeKeys,
+          planningGuidance: {
+            reasonCode: 'scenario_selection_required',
+            options: structuredClone(planningGuidance.clarification.candidate_scenarios),
+          },
+        };
+      }
       throw new Error(`Planning Guidance requires clarification: ${planningGuidance.clarification?.reason_code ?? 'unknown'}`);
     }
     if (planningGuidance.status === 'blocked') {

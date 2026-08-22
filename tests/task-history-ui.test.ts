@@ -23,6 +23,44 @@ test('workbench has one contained scroll chain and a non-scrolling bottom compos
   assert.match(composerSource, /className="composer"/u);
 });
 
+test('current conversation renders each user turn before assistant stages and isolates loading state', async () => {
+  const [source, css] = await Promise.all([
+    readFile(workbench, 'utf8'),
+    readFile(theme, 'utf8'),
+  ]);
+  const timelineStart = source.indexOf('<div className={`chat-column');
+  const timelineEnd = source.indexOf('<Composer', timelineStart);
+  assert.ok(timelineStart >= 0 && timelineEnd > timelineStart, 'current conversation timeline must exist');
+  const timeline = source.slice(timelineStart, timelineEnd);
+
+  assert.match(
+    timeline,
+    /phase === 'idle'\s*\?\s*\([\s\S]*?: phase === 'loading-task'\s*\?\s*\([\s\S]*?:\s*\(\s*<>\s*\{originalInput\s*\?\s*<UserBubble/u,
+    'idle, loading, and active conversation states must be mutually exclusive',
+  );
+
+  const userTurn = timeline.indexOf('{originalInput ? <UserBubble');
+  assert.ok(userTurn >= 0, 'active conversation must render the submitted user input');
+  for (const assistantTurn of [
+    "{clarification && phase === 'clarifying'",
+    '{candidatesResp && (',
+    "{phase === 'planning' && <PlanProgressCard",
+    "{phase === 'awaiting-approval' && (",
+    "{phase === 'ready' && <ReadyExecutionNotice",
+  ]) {
+    const assistantTurnIndex = timeline.indexOf(assistantTurn);
+    assert.ok(assistantTurnIndex > userTurn, `${assistantTurn} must follow the user turn`);
+  }
+  assert.match(
+    timeline,
+    /clarificationSubmitting\s*\?\s*\(\s*<PlanProgressCard steps=\{progress\} variant="clarification"/u,
+    'clarification submission must expose the live planning steps',
+  );
+
+  const chatColumnRule = css.match(/\.chat-column\s*\{[^}]*\}/u)?.[0] ?? '';
+  assert.doesNotMatch(chatColumnRule, /column-reverse|direction:\s*rtl/u);
+});
+
 test('sidebar exposes four status tabs and persistent item management actions', async () => {
   const source = await readFile(sidebar, 'utf8');
 

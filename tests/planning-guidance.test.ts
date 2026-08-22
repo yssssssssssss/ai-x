@@ -319,9 +319,88 @@ test('direct-Skill bypass and no-match calibration examples degrade deterministi
       assert.equal(result.profiles.filter(({ recommended }) => recommended).at(0)?.id, 'depth');
       assert.equal(result.planning_provenance.classification_method, 'direct_skill_bypass');
     } else {
-      assert.equal(result.clarification?.reason_code, 'classifier_unavailable');
+      assert.equal(result.clarification?.reason_code, example.expected?.clarification_reason);
     }
   }
+});
+
+test('zero Scenario signals ask the user to select a research direction without calling the classifier', async () => {
+  let classifierCalls = 0;
+  const rawInput = '创建一个调研任务，核心解决“宠物心智的设计表达策略全景，包含：全链路业务品牌心智、品类特色心智、场域心智策略”';
+  const result = await resolvePlanningGuidance(baseRequest({
+    raw_input: rawInput,
+    task: task({
+      task_type: 'user_research_planning',
+      research_goal: rawInput,
+      target_audience: ['产品团队'],
+      scope: ['宠物心智设计表达'],
+      expected_deliverables: ['research_plan'],
+    }),
+  }), {
+    classifier: async () => {
+      classifierCalls += 1;
+      throw new Error('zero-signal direction selection must not call the classifier');
+    },
+  });
+
+  assert.equal(result.status, 'clarification');
+  assert.equal(result.clarification?.reason_code, 'scenario_selection_required');
+  assert.deepEqual(result.clarification?.candidate_scenarios, [
+    { id: 'user-material-synthesis', label: '已有用户资料归纳' },
+    { id: 'user-segmentation', label: '用户分层' },
+    { id: 'user-journey-insight', label: '用户旅程与需求洞察' },
+    { id: 'root-cause-analysis', label: '问题根因拆解' },
+    { id: 'metrics-validation', label: '指标与验证计划' },
+  ]);
+  assert.equal(classifierCalls, 0);
+  assert.equal(result.planning_provenance.classifier_call_count, 0);
+  assert.equal(result.planning_provenance.classification_method, 'clarification');
+});
+
+test('an explicit Scenario selection resumes guidance without classifier inference', async () => {
+  let classifierCalls = 0;
+  const rawInput = '创建一个调研任务，核心解决“宠物心智的设计表达策略全景”';
+  const result = await resolvePlanningGuidance(baseRequest({
+    raw_input: rawInput,
+    task: task({
+      task_type: 'user_research_planning',
+      research_goal: rawInput,
+      target_audience: ['产品团队'],
+      scope: ['宠物心智设计表达'],
+      expected_deliverables: ['research_plan'],
+    }),
+    selected_scenario_id: 'user-journey-insight',
+  }), {
+    classifier: async () => {
+      classifierCalls += 1;
+      throw new Error('an explicit user selection must not call the classifier');
+    },
+  });
+
+  assert.equal(result.status, 'resolved');
+  assert.equal(result.scenario.primary_scenario_id, 'user-journey-insight');
+  assert.equal(result.scenario.confidence, 'high');
+  assert.equal(result.planning_provenance.classification_method, 'clarification');
+  assert.equal(result.planning_provenance.classifier_call_count, 0);
+  assert.equal(classifierCalls, 0);
+});
+
+test('an explicit Scenario selection cannot cross the task-type boundary', async () => {
+  const rawInput = '创建一个用户研究任务';
+  await assert.rejects(
+    () => resolvePlanningGuidance(baseRequest({
+      raw_input: rawInput,
+      task: task({
+        task_type: 'user_research_planning',
+        research_goal: rawInput,
+        target_audience: ['产品团队'],
+        scope: ['宠物心智设计表达'],
+        expected_deliverables: ['research_plan'],
+      }),
+      selected_scenario_id: 'competitor-benchmark-research',
+    })),
+    /not allowed for task type user_research_planning/u,
+  );
 });
 
 test('medium confidence always requires clarification even when Profile sets match', async () => {

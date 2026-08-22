@@ -3,10 +3,20 @@ import type {
   ControlTaskDetail,
 } from '../../../../database/control-plane.ts';
 import { ControlPlaneConflictError } from '../../../../database/control-plane.ts';
-import type { ControlRequirementVersion } from '../../../../packages/api-contract/control-workflow.ts';
+import type {
+  ControlRequirementVersion,
+  PlanningGuidanceClarification,
+} from '../../../../packages/api-contract/control-workflow.ts';
 import type { PlanProgress, ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
 import { canonicalizeExpectedDeliverables } from '../report/deliverable-registry.ts';
-import type { CurrentResearchPlanningResult } from '../planners/research-planning-service.ts';
+import {
+  isPlanningGuidanceClarification,
+  type CurrentResearchPlanningOutcome,
+  type CurrentResearchPlanningResult,
+} from '../planners/research-planning-service.ts';
+import type {
+  ScenarioId,
+} from '../planners/planning-guidance.ts';
 import type { LLMClient } from '../runtime/llm-client.ts';
 import { hashPrompt } from '../runtime/llm-client.ts';
 import { SchemaValidator } from '../schema/validator.ts';
@@ -35,7 +45,8 @@ export interface RequirementPlanner {
   plan(input: {
     originalInput: string;
     requirement: ResearchTaskV2;
-  }, onProgress?: (event: PlanProgress) => void): Promise<unknown>;
+    selectedScenarioId?: ScenarioId;
+  }, onProgress?: (event: PlanProgress) => void): Promise<CurrentResearchPlanningOutcome | void>;
 }
 
 export interface UnderstandInput {
@@ -52,6 +63,7 @@ export interface ClarifyInput {
   conversationId: string;
   ownerUserId: string;
   answers: Record<string, unknown>;
+  selectedScenarioId?: string;
   expectedVersion?: number;
   expectedStateVersion?: number;
 }
@@ -61,7 +73,13 @@ export interface ClarificationRecoveryContext {
 }
 
 export type RequirementRefinementResult =
-  | { status: 'clarification_required'; taskId: string; requirement: ResearchTaskV2 }
+  | {
+    status: 'clarification_required';
+    taskId: string;
+    requirement: ResearchTaskV2;
+    planningGuidance?: PlanningGuidanceClarification;
+    activatedNodes?: string[];
+  }
   | {
     status: 'ready_to_plan';
     taskId: string;
@@ -91,6 +109,15 @@ export interface RequirementRefinementDependencies {
   conversations: ConversationAdapter;
   planner?: RequirementPlanner;
   expectedActualModel?: string;
+}
+
+export class InvalidScenarioSelectionError extends Error {
+  readonly code = 'invalid_scenario_selection';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvalidScenarioSelectionError';
+  }
 }
 
 const REQUIREMENT_PROMPT = `把会话整理为 ResearchTaskV2。必须忠实保留用户目标、范围、成功标准和约束；竞品任务若明确列出对比维度，必须按原顺序写入 comparison_dimensions，未明确时不得自行补写；可安全推断的信息写入 assumptions；无法安全推断的信息写入 ambiguities 与 clarification_questions；敏感、授权或合规风险写入 blocking_issues。`;
@@ -180,6 +207,40 @@ function hasNoClarificationChanges(
   );
 }
 
+export function planningGuidanceFromStored(value: unknown): PlanningGuidanceClarification | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const guidance = (value as { planningGuidance?: unknown }).planningGuidance;
+  if (!guidance || typeof guidance !== 'object' || Array.isArray(guidance)) return null;
+  const candidate = guidance as Partial<PlanningGuidanceClarification>;
+  if (candidate.reasonCode !== 'scenario_selection_required' || !Array.isArray(candidate.options)) return null;
+  const options = candidate.options.flatMap((option) => (
+    option
+      && typeof option === 'object'
+      && !Array.isArray(option)
+      && typeof option.id === 'string'
+      && option.id.trim().length > 0
+      && typeof option.label === 'string'
+      && option.label.trim().length > 0
+      ? [{ id: option.id, label: option.label }]
+      : []
+  ));
+  if (options.length === 0 || options.length !== candidate.options.length) return null;
+  if (new Set(options.map(({ id }) => id)).size !== options.length) return null;
+  return { reasonCode: 'scenario_selection_required', options };
+}
+
+function storedScenarioSelection(
+  planningGuidance: PlanningGuidanceClarification,
+  selectedScenarioId: ScenarioId,
+  answers?: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    planningGuidance,
+    selectedScenarioId,
+    ...(answers ? { answers } : {}),
+  };
+}
+
 export class RequirementRefinementService {
   private readonly dependencies: RequirementRefinementDependencies;
 
@@ -242,6 +303,99 @@ export class RequirementRefinementService {
       && task.activeRequirementVersionId === active.id
       && active.taskId === task.id
       && sameStoredValue(active.structuredTask, task.structuredTask);
+    const activePlanningGuidance = planningGuidanceFromStored(active.clarification);
+    if (activePlanningGuidance) {
+      if (!input.selectedScenarioId) {
+        throw new InvalidScenarioSelectionError('请选择一个研究方向');
+      }
+      const selectedScenario = activePlanningGuidance.options.find(
+        ({ id }) => id === input.selectedScenarioId,
+      );
+      if (!selectedScenario) {
+        throw new InvalidScenarioSelectionError(
+          `研究方向 ${input.selectedScenarioId} 不属于当前任务的可选范围`,
+        );
+      }
+      const selectedScenarioId = input.selectedScenarioId as ScenarioId;
+      onProgress?.({
+        phase: 'understand',
+        status: 'done',
+        label: '确认研究方向',
+        detail: selectedScenario.label,
+      });
+      const unchanged = hasNoClarificationChanges(input.answers, active.structuredTask);
+      const storedSelection = storedScenarioSelection(
+        activePlanningGuidance,
+        selectedScenarioId,
+        input.answers,
+      );
+      if (expectedVersion !== undefined && task.stateVersion !== expectedVersion) {
+        const resumesActivatedSelection = matchesActiveRequirement
+          && task.stateVersion === expectedVersion + 1
+          && (
+            sameStoredValue(active.clarification, storedSelection)
+            || (
+              unchanged
+              && sameStoredValue(
+                active.clarification,
+                storedScenarioSelection(activePlanningGuidance, selectedScenarioId),
+              )
+            )
+          );
+        if (!resumesActivatedSelection) {
+          throw new ControlPlaneConflictError(
+            `task ${input.taskId} has no matching activated Scenario selection at version ${expectedVersion + 1}`,
+          );
+        }
+        return this.finishRefinement({
+          taskId: input.taskId,
+          conversationId: input.conversationId,
+          ownerUserId: input.ownerUserId,
+          originalInput: task.originalInput,
+          requirement: active.structuredTask,
+          requirementVersionId: active.id,
+          stateVersion: task.stateVersion,
+          rawInputHash: active.rawInputHash,
+          selectedScenarioId,
+        }, onProgress);
+      }
+      if (unchanged) {
+        const activated = await this.dependencies.repository.createAndActivateRequirementVersion({
+          taskId: input.taskId,
+          ownerUserId: input.ownerUserId,
+          expectedVersion: expectedVersion ?? task.stateVersion,
+          rawInputHash: active.rawInputHash,
+          clarification: storedSelection,
+          structuredTask: active.structuredTask,
+          modelCallId: null,
+        });
+        return this.finishRefinement({
+          taskId: input.taskId,
+          conversationId: input.conversationId,
+          ownerUserId: input.ownerUserId,
+          originalInput: task.originalInput,
+          requirement: active.structuredTask,
+          requirementVersionId: activated.version.id,
+          stateVersion: activated.task.stateVersion,
+          rawInputHash: active.rawInputHash,
+          selectedScenarioId,
+        }, onProgress);
+      }
+      return this.refine({
+        taskId: input.taskId,
+        conversationId: input.conversationId,
+        ownerUserId: input.ownerUserId,
+        originalInput: task.originalInput,
+        clarification: { ...input.answers, selectedScenarioId },
+        persistedClarification: storedSelection,
+        selectedScenarioId,
+        expectedVersion: input.expectedVersion,
+        expectedStateVersion: input.expectedStateVersion,
+      }, onProgress);
+    }
+    if (input.selectedScenarioId !== undefined) {
+      throw new InvalidScenarioSelectionError('当前任务不接受研究方向选择');
+    }
     const unchangedClarification = hasNoClarificationChanges(
       input.answers,
       active.structuredTask,
@@ -256,9 +410,12 @@ export class RequirementRefinementService {
       return this.finishRefinement({
         taskId: input.taskId,
         conversationId: input.conversationId,
+        ownerUserId: input.ownerUserId,
         originalInput: task.originalInput,
         requirement: active.structuredTask,
         requirementVersionId: active.id,
+        stateVersion: task.stateVersion,
+        rawInputHash: active.rawInputHash,
         clarificationRecovery: {
           mode: 'latest_finalized_requirement',
           activeRequirementVersionId: active.id,
@@ -277,9 +434,12 @@ export class RequirementRefinementService {
       return this.finishRefinement({
         taskId: input.taskId,
         conversationId: input.conversationId,
+        ownerUserId: input.ownerUserId,
         originalInput: task.originalInput,
         requirement: active.structuredTask,
         requirementVersionId: active.id,
+        stateVersion: task.stateVersion,
+        rawInputHash: active.rawInputHash,
       }, onProgress);
     }
     return this.refine({
@@ -296,38 +456,77 @@ export class RequirementRefinementService {
   private async finishRefinement(input: {
     taskId: string;
     conversationId: string;
+    ownerUserId: string;
     originalInput: string;
     requirement: ResearchTaskV2;
     requirementVersionId: string;
+    stateVersion: number;
+    rawInputHash: string;
+    selectedScenarioId?: ScenarioId;
     clarificationRecovery?: ClarificationRecoveryContext;
   }, onProgress?: (event: PlanProgress) => void): Promise<RequirementRefinementResult> {
     const status = needsClarification(input.requirement)
       ? 'clarification_required'
       : 'ready_to_plan';
+    if (status === 'clarification_required') {
+      await this.appendMessage({
+        conversationId: input.conversationId,
+        role: 'assistant',
+        content: JSON.stringify({ status, requirement: input.requirement }),
+        idempotencyKey: `requirement:${input.requirementVersionId}:assistant`,
+      });
+      return { status, taskId: input.taskId, requirement: input.requirement };
+    }
+    const planningOutcome = this.dependencies.planner
+      ? await this.dependencies.planner.plan({
+          originalInput: input.originalInput,
+          requirement: input.requirement,
+          ...(input.selectedScenarioId ? { selectedScenarioId: input.selectedScenarioId } : {}),
+        }, onProgress)
+      : undefined;
+    if (isPlanningGuidanceClarification(planningOutcome)) {
+      const activated = await this.dependencies.repository.createAndActivateRequirementVersion({
+        taskId: input.taskId,
+        ownerUserId: input.ownerUserId,
+        expectedVersion: input.stateVersion,
+        rawInputHash: input.rawInputHash,
+        clarification: { planningGuidance: planningOutcome.planningGuidance },
+        structuredTask: input.requirement,
+        modelCallId: null,
+      });
+      await this.appendMessage({
+        conversationId: input.conversationId,
+        role: 'assistant',
+        content: JSON.stringify({
+          status: 'clarification_required',
+          requirement: input.requirement,
+          planningGuidance: planningOutcome.planningGuidance,
+        }),
+        idempotencyKey: `requirement:${activated.version.id}:assistant`,
+      });
+      return {
+        status: 'clarification_required',
+        taskId: input.taskId,
+        requirement: input.requirement,
+        planningGuidance: planningOutcome.planningGuidance,
+        activatedNodes: planningOutcome.activatedNodes,
+      };
+    }
     await this.appendMessage({
       conversationId: input.conversationId,
       role: 'assistant',
       content: JSON.stringify({ status, requirement: input.requirement }),
       idempotencyKey: `requirement:${input.requirementVersionId}:assistant`,
     });
-    const planningResult = status === 'ready_to_plan' && this.dependencies.planner
-      ? await this.dependencies.planner.plan({
-          originalInput: input.originalInput,
-          requirement: input.requirement,
-        }, onProgress) as CurrentResearchPlanningResult
-      : undefined;
-    if (status === 'ready_to_plan') {
-      return {
-        status,
-        taskId: input.taskId,
-        requirement: input.requirement,
-        ...(planningResult ? { planningResult } : {}),
-        ...(input.clarificationRecovery
-          ? { clarificationRecovery: input.clarificationRecovery }
-          : {}),
-      };
-    }
-    return { status, taskId: input.taskId, requirement: input.requirement };
+    return {
+      status,
+      taskId: input.taskId,
+      requirement: input.requirement,
+      ...(planningOutcome ? { planningResult: planningOutcome } : {}),
+      ...(input.clarificationRecovery
+        ? { clarificationRecovery: input.clarificationRecovery }
+        : {}),
+    };
   }
 
   private async refine(input: {
@@ -336,6 +535,8 @@ export class RequirementRefinementService {
     ownerUserId: string;
     originalInput: string;
     clarification: unknown;
+    persistedClarification?: unknown;
+    selectedScenarioId?: ScenarioId;
     expectedVersion?: number;
     expectedStateVersion?: number;
   }, onProgress?: (event: PlanProgress) => void): Promise<RequirementRefinementResult> {
@@ -374,16 +575,20 @@ export class RequirementRefinementService {
       ownerUserId: input.ownerUserId,
       expectedVersion,
       rawInputHash: hashPrompt(input.originalInput, context, 'research-task-v2'),
-      clarification: input.clarification,
+      clarification: input.persistedClarification ?? input.clarification,
       structuredTask: requirement,
       modelCallId: null,
     });
     return this.finishRefinement({
       taskId: input.taskId,
       conversationId: input.conversationId,
+      ownerUserId: input.ownerUserId,
       originalInput: input.originalInput,
       requirement,
       requirementVersionId: activated.version.id,
+      stateVersion: activated.task.stateVersion,
+      rawInputHash: activated.version.rawInputHash,
+      ...(input.selectedScenarioId ? { selectedScenarioId: input.selectedScenarioId } : {}),
     }, onProgress);
   }
 }

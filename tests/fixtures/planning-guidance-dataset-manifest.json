@@ -7,7 +7,7 @@
     "calibration": {
       "count": 60,
       "file": "tests/fixtures/planning-guidance-calibration.json",
-      "sha256": "sha256:ad1056271ca192ede0ced05c35c3834ba4278b8a044e7eb1c607aa1f9ea09fd9"
+      "sha256": "sha256:f780aeb2a842712ed86d490e2f59097a6bf94519ca56cbfc0f9127afa37f5609"
     },
     "holdout": {
       "count": 30,

@@ -15,6 +15,10 @@ import {
 import { assertVisualAssetManifestSchema } from '../../../orchestrator-runtime/src/report/visual-asset-service.ts';
 import { LLMInvocationError } from '../../../orchestrator-runtime/src/runtime/llm-client.ts';
 import { SchemaValidator } from '../../../orchestrator-runtime/src/schema/validator.ts';
+import {
+  InvalidScenarioSelectionError,
+  planningGuidanceFromStored,
+} from '../../../orchestrator-runtime/src/control/requirement-refinement-service.ts';
 import type { CurrentPlanningResponse } from './control-planning.ts';
 import { requireAuth } from '../middleware.ts';
 
@@ -27,6 +31,7 @@ export interface ControlClarificationPort {
     ownerUserId: string;
     answers: Record<string, unknown>;
     assumptionEdits: Record<string, string>;
+    selectedScenarioId?: string;
     expectedVersion: number;
     commandReservation: {
       commandType: 'clarification';
@@ -128,32 +133,41 @@ async function readApprovalRequirements(
   });
 }
 
-function responseError(res: Response, error: unknown): void {
+function publicError(error: unknown): {
+  status: number;
+  body: { error: string; code?: string; kind?: string; retryable?: boolean; unresolved?: unknown };
+} {
   if (error instanceof TaskWorkflowGateError) {
-    res.status(422).json({ error: error.message, unresolved: error.unresolved });
-    return;
+    return { status: 422, body: { error: error.message, unresolved: error.unresolved } };
   }
   if (error instanceof TaskWorkflowAuthorizationError) {
-    res.status(403).json({ error: error.message });
-    return;
+    return { status: 403, body: { error: error.message } };
   }
   if (error instanceof LLMInvocationError && error.providerStatus === 429) {
-    res.status(429).json({
-      error: error.sanitizedMessage,
-      kind: error.kind,
-      retryable: error.retryable,
-    });
-    return;
+    return {
+      status: 429,
+      body: {
+        error: error.sanitizedMessage,
+        kind: error.kind,
+        retryable: error.retryable,
+      },
+    };
   }
   if (error instanceof CandidateProfileNoLongerEligibleError) {
-    res.status(409).json({ error: error.message, code: error.code });
-    return;
+    return { status: 409, body: { error: error.message, code: error.code } };
+  }
+  if (error instanceof InvalidScenarioSelectionError) {
+    return { status: 400, body: { error: error.message, code: error.code } };
   }
   if (error instanceof ControlPlaneConflictError) {
-    res.status(409).json({ error: error.message });
-    return;
+    return { status: 409, body: { error: error.message } };
   }
-  res.status(500).json({ error: 'control workflow failed' });
+  return { status: 500, body: { error: 'control workflow failed' } };
+}
+
+function responseError(res: Response, error: unknown): void {
+  const failure = publicError(error);
+  res.status(failure.status).json(failure.body);
 }
 
 async function authenticatedActor(req: Request, res: Response): Promise<WorkflowActor | null> {
@@ -207,6 +221,158 @@ async function ensureApprovalTaskAccess(
   return true;
 }
 
+interface PreparedClarification {
+  clarification: ControlClarificationPort;
+  actor: WorkflowActor;
+  task: NonNullable<Awaited<ReturnType<ControlPlaneRepository['getTaskDetail']>>>;
+  expectedVersion: number;
+  clarificationAnswers: Record<string, unknown>;
+  assumptionEdits: Record<string, string>;
+  selectedScenarioId?: string;
+  idempotencyKey: string;
+  requestHash: string;
+}
+
+async function prepareClarification(
+  runtime: ControlTasksRuntime,
+  req: Request,
+  res: Response,
+): Promise<PreparedClarification | null> {
+  const body = record(req.body);
+  const actor = await authenticatedActor(req, res);
+  if (!actor) return null;
+  if (!runtime.clarification) {
+    res.status(501).json({ error: '澄清服务不可用' });
+    return null;
+  }
+  const forbidden = ['plan', 'planHash', 'structuredTask'];
+  if (body && forbidden.some((field) => field in body)) {
+    res.status(400).json({ error: 'plan、planHash、structuredTask 由服务端生成，不接受客户端提交' });
+    return null;
+  }
+  const expectedVersion = version(body?.expectedVersion);
+  const clarificationAnswers = record(body?.clarificationAnswers);
+  const assumptionEdits = record(body?.assumptionEdits);
+  const hasSelectedScenarioId = body !== null && Object.hasOwn(body, 'selectedScenarioId');
+  const selectedScenarioId = string(body?.selectedScenarioId);
+  const key = idempotencyKey(req);
+  if (
+    expectedVersion == null
+    || !clarificationAnswers
+    || !assumptionEdits
+    || !key
+    || (hasSelectedScenarioId && !selectedScenarioId)
+    || Object.values(assumptionEdits).some((value) => typeof value !== 'string')
+  ) {
+    res.status(400).json({ error: 'expectedVersion、clarificationAnswers、assumptionEdits、Idempotency-Key 必填' });
+    return null;
+  }
+
+  const taskId = typeof req.params.id === 'string' ? req.params.id : req.params.id[0] ?? '';
+  const task = await runtime.repository.getTaskDetail(taskId);
+  if (!task || task.ownerUserId !== actor.userId || task.conversationOwnerUserId !== actor.userId) {
+    res.status(404).json({ error: '任务不存在' });
+    return null;
+  }
+  const requestHash = clarificationRequestHash({
+    expectedVersion,
+    clarificationAnswers,
+    assumptionEdits,
+    ...(selectedScenarioId ? { selectedScenarioId } : {}),
+  });
+  if (task.state !== 'awaiting_clarification') {
+    const existing = await runtime.repository.getCommand(task.id, 'clarification', key);
+    if (!existing || existing.requestHash !== requestHash) {
+      res.status(409).json({ error: `task ${task.id} is not awaiting_clarification` });
+      return null;
+    }
+  }
+  return {
+    clarification: runtime.clarification,
+    actor,
+    task,
+    expectedVersion,
+    clarificationAnswers,
+    assumptionEdits: Object.fromEntries(
+      Object.entries(assumptionEdits).map(([field, value]) => [field, value as string]),
+    ),
+    ...(selectedScenarioId ? { selectedScenarioId } : {}),
+    idempotencyKey: key,
+    requestHash,
+  };
+}
+
+async function runClarification(
+  runtime: ControlTasksRuntime,
+  prepared: PreparedClarification,
+  onProgress?: (event: PlanProgress) => void,
+): Promise<CurrentPlanningResponse> {
+  const command = {
+    taskId: prepared.task.id,
+    commandType: 'clarification' as const,
+    idempotencyKey: prepared.idempotencyKey,
+    requestHash: prepared.requestHash,
+    expectedVersion: prepared.expectedVersion,
+  };
+  let reservationToken: string | null = null;
+  while (!reservationToken) {
+    const reservation = await runtime.repository.reserveCommand({
+      ...command,
+      actorUserId: prepared.actor.userId,
+    });
+    if (reservation.status === 'conflict') {
+      throw new ControlPlaneConflictError(
+        `idempotency key ${prepared.idempotencyKey} was reused with a different request`,
+      );
+    }
+    if (reservation.status === 'replay') {
+      return reservation.response as CurrentPlanningResponse;
+    }
+    if (reservation.status === 'pending') {
+      const waited = await runtime.repository.waitForCommand(command);
+      if (waited.status === 'conflict') {
+        throw new ControlPlaneConflictError(
+          `idempotency key ${prepared.idempotencyKey} was reused with a different request`,
+        );
+      }
+      if (waited.status === 'replay') {
+        return waited.response as CurrentPlanningResponse;
+      }
+      continue;
+    }
+    reservationToken = reservation.reservationToken;
+  }
+
+  try {
+    const response = await prepared.clarification.clarify({
+      taskId: prepared.task.id,
+      conversationId: prepared.task.conversationId,
+      ownerUserId: prepared.actor.userId,
+      answers: prepared.clarificationAnswers,
+      assumptionEdits: prepared.assumptionEdits,
+      ...(prepared.selectedScenarioId ? { selectedScenarioId: prepared.selectedScenarioId } : {}),
+      expectedVersion: prepared.expectedVersion,
+      commandReservation: {
+        ...command,
+        reservationToken,
+        actorUserId: prepared.actor.userId,
+      },
+    }, onProgress);
+    if (response.status === 'clarification_required') {
+      await runtime.repository.completeCommand({
+        ...command,
+        reservationToken,
+        stateAfter: response.task.state,
+        response,
+      });
+    }
+    return response;
+  } catch (error) {
+    await runtime.repository.recoverCommandAfterFailure({ ...command, reservationToken });
+    throw error;
+  }
+}
+
 export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
   const router = Router();
   router.use(requireAuth);
@@ -222,120 +388,49 @@ export function createControlTasksRouter(runtime: ControlTasksRuntime): Router {
     }
   });
 
-  router.post('/:id/clarify', async (req, res) => {
-    const body = record(req.body);
-    const actor = await authenticatedActor(req, res);
-    if (!actor) return;
-    if (!runtime.clarification) {
-      res.status(501).json({ error: '澄清服务不可用' });
-      return;
-    }
-    const forbidden = ['plan', 'planHash', 'structuredTask'];
-    if (body && forbidden.some((field) => field in body)) {
-      res.status(400).json({ error: 'plan、planHash、structuredTask 由服务端生成，不接受客户端提交' });
-      return;
-    }
-    const expectedVersion = version(body?.expectedVersion);
-    const clarificationAnswers = record(body?.clarificationAnswers);
-    const assumptionEdits = record(body?.assumptionEdits);
-    const key = idempotencyKey(req);
-    if (
-      expectedVersion == null
-      || !clarificationAnswers
-      || !assumptionEdits
-      || !key
-      || Object.values(assumptionEdits).some((value) => typeof value !== 'string')
-    ) {
-      res.status(400).json({ error: 'expectedVersion、clarificationAnswers、assumptionEdits、Idempotency-Key 必填' });
-      return;
-    }
-
-    const task = await repository.getTaskDetail(req.params.id);
-    if (!task || task.ownerUserId !== actor.userId || task.conversationOwnerUserId !== actor.userId) {
-      res.status(404).json({ error: '任务不存在' });
-      return;
-    }
-    const requestHash = clarificationRequestHash({
-      expectedVersion,
-      clarificationAnswers,
-      assumptionEdits,
-    });
-    if (task.state !== 'awaiting_clarification') {
-      const existing = await repository.getCommand(task.id, 'clarification', key);
-      if (!existing || existing.requestHash !== requestHash) {
-        res.status(409).json({ error: `task ${task.id} is not awaiting_clarification` });
-        return;
-      }
-    }
-
-    const command = {
-      taskId: task.id,
-      commandType: 'clarification' as const,
-      idempotencyKey: key,
-      requestHash,
-      expectedVersion,
-    };
+  router.post('/:id/clarify/stream', async (req, res) => {
     try {
-      let reservationToken: string | null = null;
-      while (!reservationToken) {
-        const reservation = await repository.reserveCommand({
-          ...command,
-          actorUserId: actor.userId,
-        });
-        if (reservation.status === 'conflict') {
-          throw new ControlPlaneConflictError(
-            `idempotency key ${key} was reused with a different request`,
-          );
-        }
-        if (reservation.status === 'replay') {
-          res.json(reservation.response);
-          return;
-        }
-        if (reservation.status === 'pending') {
-          const waited = await repository.waitForCommand(command);
-          if (waited.status === 'conflict') {
-            throw new ControlPlaneConflictError(
-              `idempotency key ${key} was reused with a different request`,
-            );
-          }
-          if (waited.status === 'replay') {
-            res.json(waited.response);
-            return;
-          }
-          continue;
-        }
-        reservationToken = reservation.reservationToken;
-      }
+      const prepared = await prepareClarification(runtime, req, res);
+      if (!prepared) return;
+
+      res.status(200);
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders();
+      const send = (event: string, data: unknown): void => {
+        if (res.destroyed || res.writableEnded) return;
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      };
+      const heartbeat = setInterval(() => {
+        if (!res.destroyed && !res.writableEnded) res.write(': keep-alive\n\n');
+      }, 15_000);
+      heartbeat.unref();
 
       try {
-        const response = await runtime.clarification.clarify({
-          taskId: task.id,
-          conversationId: task.conversationId,
-          ownerUserId: actor.userId,
-          answers: clarificationAnswers,
-          assumptionEdits: Object.fromEntries(
-            Object.entries(assumptionEdits).map(([field, value]) => [field, value as string]),
-          ),
-          expectedVersion,
-          commandReservation: {
-            ...command,
-            reservationToken,
-            actorUserId: actor.userId,
-          },
+        const response = await runClarification(runtime, prepared, (event) => {
+          send('progress', event);
         });
-        if (response.status === 'clarification_required') {
-          await repository.completeCommand({
-            ...command,
-            reservationToken,
-            stateAfter: response.task.state,
-            response,
-          });
-        }
-        res.json(response);
+        send('result', response);
       } catch (error) {
-        await repository.recoverCommandAfterFailure({ ...command, reservationToken });
-        throw error;
+        const failure = publicError(error);
+        send('error', { ...failure.body, status: failure.status });
+      } finally {
+        clearInterval(heartbeat);
+        if (!res.writableEnded) res.end();
       }
+    } catch (error) {
+      if (!res.headersSent) responseError(res, error);
+      else if (!res.writableEnded) res.end();
+    }
+  });
+
+  router.post('/:id/clarify', async (req, res) => {
+    try {
+      const prepared = await prepareClarification(runtime, req, res);
+      if (!prepared) return;
+      res.json(await runClarification(runtime, prepared));
     } catch (error) {
       responseError(res, error);
     }
@@ -436,7 +531,7 @@ router.get('/:id', async (req, res) => {
         );
       }
     }
-    const [recovered, activePlan, executionSteps, pendingInputQuarantined] = await Promise.all([
+    const [recovered, activePlan, executionSteps, pendingInputQuarantined, activeRequirement] = await Promise.all([
       task.state === 'awaiting_selection'
         ? isOwner
           ? repository.listCandidatePlanVersionsForOwner({
@@ -456,11 +551,15 @@ router.get('/:id', async (req, res) => {
       task.activePlanVersionId && isOwner
         ? repository.isPlanPendingInputQuarantined(task.activePlanVersionId)
         : Promise.resolve(false),
+      task.state === 'awaiting_clarification' && isOwner
+        ? repository.getActiveRequirementVersion(task.id)
+        : Promise.resolve(null),
     ]);
     if (!recovered) {
       res.status(404).json({ error: '任务不存在' });
       return;
     }
+    const planningGuidance = planningGuidanceFromStored(activeRequirement?.clarification);
     res.json({
       kind: 'current',
       task,
@@ -477,6 +576,7 @@ router.get('/:id', async (req, res) => {
         latencyMs: step.latencyMs,
       })),
       approvalRequirements,
+      ...(planningGuidance ? { planningGuidance } : {}),
       ...(pendingInputQuarantined
         ? { planRecovery: { kind: 'plan_revision_required' as const, reason: 'legacy_pending_inputs' as const } }
         : {}),

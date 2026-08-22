@@ -378,6 +378,167 @@ test('ambiguous requirements return clarification_required without invoking plan
   assert.equal(plannerCalls, 0);
 });
 
+test('Planning Guidance direction selection is persisted and resumes planning without another requirement LLM call', async () => {
+  const { InvalidScenarioSelectionError, RequirementRefinementService } = await loadModule();
+  const finalized = requirement({
+    task_type: 'user_research_planning',
+    research_goal: '梳理宠物心智的设计表达策略全景',
+    expected_deliverables: ['research_plan'],
+  });
+  const llm = new FixtureLLM([finalized]);
+  const repository = makeRepository();
+  const planningGuidance = {
+    reasonCode: 'scenario_selection_required' as const,
+    options: [
+      { id: 'user-material-synthesis', label: '已有用户资料归纳' },
+      { id: 'user-segmentation', label: '用户分层' },
+      { id: 'user-journey-insight', label: '用户旅程与需求洞察' },
+      { id: 'root-cause-analysis', label: '问题根因拆解' },
+      { id: 'metrics-validation', label: '指标与验证计划' },
+    ],
+  };
+  const plannedSelections: Array<string | undefined> = [];
+  const service = new RequirementRefinementService({
+    llm,
+    validator: new SchemaValidator(),
+    repository,
+    conversations: makeConversations(),
+    planner: {
+      async plan(input) {
+        plannedSelections.push(input.selectedScenarioId);
+        if (plannedSelections.length === 1) {
+          return {
+            kind: 'planning_guidance_clarification' as const,
+            activatedNodes: ['D1_research_goal'],
+            planningGuidance,
+          };
+        }
+      },
+    },
+  });
+
+  const awaitingDirection = await service.understand({
+    taskId,
+    conversationId,
+    ownerUserId,
+    originalInput: finalized.research_goal,
+  });
+
+  assert.equal(awaitingDirection.status, 'clarification_required');
+  assert.deepEqual(awaitingDirection.planningGuidance, planningGuidance);
+  assert.deepEqual(awaitingDirection.activatedNodes, ['D1_research_goal']);
+  assert.deepEqual(repository.versions[1]?.clarification, { planningGuidance });
+
+  await assert.rejects(
+    () => service.clarify({
+      taskId,
+      conversationId,
+      ownerUserId,
+      answers: { assumption_edits: {} },
+      selectedScenarioId: 'competitor-benchmark-research',
+      expectedVersion: 3,
+    }),
+    (error: unknown) => error instanceof InvalidScenarioSelectionError,
+  );
+
+  const resumed = await service.clarify({
+    taskId,
+    conversationId,
+    ownerUserId,
+    answers: { assumption_edits: {} },
+    selectedScenarioId: 'user-journey-insight',
+    expectedVersion: 3,
+  });
+
+  assert.equal(resumed.status, 'ready_to_plan');
+  assert.deepEqual(plannedSelections, [undefined, 'user-journey-insight']);
+  assert.equal(llm.calls.length, 1);
+  assert.deepEqual(repository.versions[2]?.clarification, {
+    planningGuidance,
+    selectedScenarioId: 'user-journey-insight',
+    answers: { assumption_edits: {} },
+  });
+});
+
+test('Planning Guidance retries the same edited assumptions after post-activation planning failure', async () => {
+  const { RequirementRefinementService } = await loadModule();
+  const initial = requirement({
+    task_type: 'user_research_planning',
+    research_goal: '梳理宠物心智的设计表达策略全景',
+    expected_deliverables: ['research_plan'],
+    assumptions: [{ key: 'scope', value: 'public web sources', editable: true }],
+  });
+  const edited = requirement({
+    ...initial,
+    assumptions: [{ key: 'scope', value: 'customer interviews', editable: true }],
+  });
+  const llm = new FixtureLLM([initial, edited]);
+  const repository = makeRepository();
+  const planningGuidance = {
+    reasonCode: 'scenario_selection_required' as const,
+    options: [{ id: 'user-journey-insight', label: '用户旅程与需求洞察' }],
+  };
+  let plannerCalls = 0;
+  const service = new RequirementRefinementService({
+    llm,
+    validator: new SchemaValidator(),
+    repository,
+    conversations: makeConversations(),
+    planner: {
+      async plan() {
+        plannerCalls += 1;
+        if (plannerCalls === 1) {
+          return {
+            kind: 'planning_guidance_clarification' as const,
+            activatedNodes: ['D1_research_goal'],
+            planningGuidance,
+          };
+        }
+        if (plannerCalls === 2) throw new Error('simulated planning failure after Scenario activation');
+      },
+    },
+  });
+
+  await service.understand({
+    taskId,
+    conversationId,
+    ownerUserId,
+    originalInput: initial.research_goal,
+  });
+  const answers = { assumption_edits: { scope: 'customer interviews' } };
+  await assert.rejects(
+    () => service.clarify({
+      taskId,
+      conversationId,
+      ownerUserId,
+      answers,
+      selectedScenarioId: 'user-journey-insight',
+      expectedVersion: 3,
+    }),
+    /simulated planning failure after Scenario activation/,
+  );
+
+  const retried = await service.clarify({
+    taskId,
+    conversationId,
+    ownerUserId,
+    answers,
+    selectedScenarioId: 'user-journey-insight',
+    expectedVersion: 3,
+  });
+
+  assert.equal(retried.status, 'ready_to_plan');
+  assert.deepEqual(retried.requirement, edited);
+  assert.deepEqual(repository.versions[2]?.clarification, {
+    planningGuidance,
+    selectedScenarioId: 'user-journey-insight',
+    answers,
+  });
+  assert.equal(repository.versions.length, 3, 'retry must reuse the activated Requirement');
+  assert.equal(llm.calls.length, 2, 'retry must not call requirement clarification again');
+  assert.equal(plannerCalls, 3);
+});
+
 test('clarification answers persist a new v2 and clear blocking ambiguity before planning', async () => {
   const { RequirementRefinementService } = await loadModule();
   const clearRequirement = requirement({ target_audience: ['enterprise buyers'] });
@@ -425,7 +586,7 @@ test('clarification answers persist a new v2 and clear blocking ambiguity before
   assert.deepEqual(progress, [planningProgress]);
 });
 
-test('post-activation retry reuses one requirement-version assistant message key', async () => {
+test('post-activation retry emits the ready message only after planning succeeds', async () => {
   const { RequirementRefinementService } = await loadModule();
   const clearRequirement = requirement({ target_audience: ['enterprise buyers'] });
   const llm = new FixtureLLM([ambiguousRequirement, clearRequirement]);
@@ -476,7 +637,7 @@ test('post-activation retry reuses one requirement-version assistant message key
   );
   assert.deepEqual(
     readyAttempts.map((message) => message.idempotencyKey),
-    ['requirement:requirement-2:assistant', 'requirement:requirement-2:assistant'],
+    ['requirement:requirement-2:assistant'],
   );
   assert.equal(
     conversations.appended.filter((message) => message.content.includes('ready_to_plan')).length,

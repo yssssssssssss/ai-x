@@ -4,6 +4,7 @@ import type {
   ControlPlanCandidatesResponse,
   ControlWorkflowState,
   CurrentPlanCandidate,
+  PlanningGuidanceClarification,
 } from '../../../packages/api-contract/control-workflow.ts';
 export {
   executionFailureAllowsAction,
@@ -548,6 +549,7 @@ export interface CurrentTaskHydrationInput {
   candidates?: CurrentPlanCandidate[];
   activatedNodes?: string[];
   activePlan?: CurrentPlanCandidate | null;
+  planningGuidance?: PlanningGuidanceClarification;
 }
 
 export type RestoredCurrentTaskPhase =
@@ -640,6 +642,7 @@ export function hydrateCurrentTask(input: CurrentTaskHydrationInput): {
         structuredTask: task.structuredTask,
         activatedNodes: [],
         candidates: [],
+        ...(input.planningGuidance ? { planningGuidance: input.planningGuidance } : {}),
       },
       candidatesResp: null,
       selectedCandidate: null,

@@ -96,6 +96,7 @@ export interface PlanningGuidanceCapability {
 export interface PlanningGuidanceRequest {
   raw_input: string;
   task: ResearchTaskV2;
+  selected_scenario_id?: ScenarioId;
   available_material_roles: string[];
   problem_graph_signal_ids?: Array<'independent_evidence_paths_required'>;
   direct_skill_id?: string;
@@ -139,6 +140,7 @@ export type GuidanceDegradationCode =
   | 'direct_skill_bypass'
   | 'fixed_policy_bypass'
   | 'task_blocking_ambiguity'
+  | 'scenario_selection_required'
   | 'classifier_unavailable'
   | 'classifier_failed'
   | 'classifier_invalid'
@@ -172,6 +174,7 @@ export interface PlanningGuidanceResult {
   clarification: null | {
     reason_code:
       | 'task_blocking_ambiguity'
+      | 'scenario_selection_required'
       | 'classifier_unavailable'
       | 'classifier_failed'
       | 'classifier_invalid'
@@ -179,6 +182,7 @@ export interface PlanningGuidanceResult {
       | 'medium_confidence_profile_conflict'
       | 'conflicting_profile_preferences';
     candidate_scenario_ids: ScenarioId[];
+    candidate_scenarios: Array<{ id: ScenarioId; label: string }>;
   };
   planning_provenance: PlanningGuidanceProvenance;
 }
@@ -187,6 +191,7 @@ interface ProfileSpecDefinition extends Omit<ResolvedProfileSpec, 'recommended' 
 
 interface ScenarioDefinition {
   id: ScenarioId;
+  display_name: string;
   parent_task_id: 'find-direction' | 'understand-users' | 'find-problems' | 'solve-problems' | 'define-strategy';
   candidate_profiles: readonly CandidateProfileId[];
 }
@@ -295,21 +300,21 @@ const PROFILE_SPECS: readonly ProfileSpecDefinition[] = [
 ];
 
 const SCENARIOS: readonly ScenarioDefinition[] = [
-  { id: 'trend-change-identification', parent_task_id: 'find-direction', candidate_profiles: ['speed', 'depth', 'breadth'] },
-  { id: 'competitor-benchmark-research', parent_task_id: 'find-direction', candidate_profiles: ['speed', 'depth', 'breadth', 'decision'] },
-  { id: 'opportunity-direction-evaluation', parent_task_id: 'find-direction', candidate_profiles: ['speed', 'depth', 'focused', 'decision'] },
-  { id: 'user-material-synthesis', parent_task_id: 'understand-users', candidate_profiles: ['speed', 'depth', 'focused'] },
-  { id: 'user-segmentation', parent_task_id: 'understand-users', candidate_profiles: ['speed', 'depth', 'focused', 'breadth', 'mixed_method'] },
-  { id: 'user-journey-insight', parent_task_id: 'understand-users', candidate_profiles: ['speed', 'depth', 'focused', 'mixed_method'] },
-  { id: 'experience-walkthrough', parent_task_id: 'find-problems', candidate_profiles: ['speed', 'depth', 'remediation', 'focused', 'breadth'] },
-  { id: 'feedback-issue-clustering', parent_task_id: 'find-problems', candidate_profiles: ['speed', 'depth', 'decision'] },
-  { id: 'data-behavior-diagnosis', parent_task_id: 'find-problems', candidate_profiles: ['speed', 'depth', 'focused', 'mixed_method', 'decision', 'remediation'] },
-  { id: 'root-cause-analysis', parent_task_id: 'solve-problems', candidate_profiles: ['speed', 'depth', 'focused', 'mixed_method', 'remediation'] },
-  { id: 'solution-generation', parent_task_id: 'solve-problems', candidate_profiles: ['speed', 'depth', 'breadth'] },
-  { id: 'solution-comparison', parent_task_id: 'solve-problems', candidate_profiles: ['speed', 'depth', 'focused'] },
-  { id: 'strategy-synthesis', parent_task_id: 'define-strategy', candidate_profiles: ['speed', 'depth', 'decision'] },
-  { id: 'priority-roadmap', parent_task_id: 'define-strategy', candidate_profiles: ['speed', 'depth', 'focused'] },
-  { id: 'metrics-validation', parent_task_id: 'define-strategy', candidate_profiles: ['speed', 'depth', 'mixed_method', 'decision', 'focused'] },
+  { id: 'trend-change-identification', display_name: '趋势与变化识别', parent_task_id: 'find-direction', candidate_profiles: ['speed', 'depth', 'breadth'] },
+  { id: 'competitor-benchmark-research', display_name: '竞品与标杆研究', parent_task_id: 'find-direction', candidate_profiles: ['speed', 'depth', 'breadth', 'decision'] },
+  { id: 'opportunity-direction-evaluation', display_name: '机会方向判断', parent_task_id: 'find-direction', candidate_profiles: ['speed', 'depth', 'focused', 'decision'] },
+  { id: 'user-material-synthesis', display_name: '已有用户资料归纳', parent_task_id: 'understand-users', candidate_profiles: ['speed', 'depth', 'focused'] },
+  { id: 'user-segmentation', display_name: '用户分层', parent_task_id: 'understand-users', candidate_profiles: ['speed', 'depth', 'focused', 'breadth', 'mixed_method'] },
+  { id: 'user-journey-insight', display_name: '用户旅程与需求洞察', parent_task_id: 'understand-users', candidate_profiles: ['speed', 'depth', 'focused', 'mixed_method'] },
+  { id: 'experience-walkthrough', display_name: '页面与链路体验走查', parent_task_id: 'find-problems', candidate_profiles: ['speed', 'depth', 'remediation', 'focused', 'breadth'] },
+  { id: 'feedback-issue-clustering', display_name: '用户反馈问题聚类', parent_task_id: 'find-problems', candidate_profiles: ['speed', 'depth', 'decision'] },
+  { id: 'data-behavior-diagnosis', display_name: '数据与行为异常诊断', parent_task_id: 'find-problems', candidate_profiles: ['speed', 'depth', 'focused', 'mixed_method', 'decision', 'remediation'] },
+  { id: 'root-cause-analysis', display_name: '问题根因拆解', parent_task_id: 'solve-problems', candidate_profiles: ['speed', 'depth', 'focused', 'mixed_method', 'remediation'] },
+  { id: 'solution-generation', display_name: '解决方案生成', parent_task_id: 'solve-problems', candidate_profiles: ['speed', 'depth', 'breadth'] },
+  { id: 'solution-comparison', display_name: '方案比较与风险评估', parent_task_id: 'solve-problems', candidate_profiles: ['speed', 'depth', 'focused'] },
+  { id: 'strategy-synthesis', display_name: '结论整合与策略提炼', parent_task_id: 'define-strategy', candidate_profiles: ['speed', 'depth', 'decision'] },
+  { id: 'priority-roadmap', display_name: '优先级与实施路径', parent_task_id: 'define-strategy', candidate_profiles: ['speed', 'depth', 'focused'] },
+  { id: 'metrics-validation', display_name: '指标与验证计划', parent_task_id: 'define-strategy', candidate_profiles: ['speed', 'depth', 'mixed_method', 'decision', 'focused'] },
 ];
 
 const SCENARIO_SIGNAL_PATHS = [
@@ -862,6 +867,10 @@ function unresolvedResult(input: {
     clarification: {
       reason_code: input.reason,
       candidate_scenario_ids: [...input.candidateScenarioIds],
+      candidate_scenarios: input.candidateScenarioIds.map((id) => ({
+        id,
+        label: SCENARIO_BY_ID.get(id)!.display_name,
+      })),
     },
     planning_provenance: provenance({
       method: 'clarification',
@@ -973,7 +982,29 @@ export async function resolvePlanningGuidance(
   let classificationMethod: PlanningGuidanceProvenance['classification_method'] = 'rule';
   let classifierCalls: 0 | 1 = 0;
 
-  if (ruleCandidates.length === 1) {
+  if (request.selected_scenario_id) {
+    if (!TASK_TYPE_SCENARIOS[request.task.task_type].includes(request.selected_scenario_id)) {
+      throw new Error(
+        `Scenario ${request.selected_scenario_id} is not allowed for task type ${request.task.task_type}`,
+      );
+    }
+    classificationMethod = 'clarification';
+    classification = {
+      primary_scenario_id: request.selected_scenario_id,
+      secondary_scenarios: [],
+      confidence: 'high',
+      signals: relevantScenarioSignals(signals, [request.selected_scenario_id]),
+      rationale_codes: ['semantic_disambiguation'],
+    };
+  } else if (ruleCandidates.length === 0) {
+    return unresolvedResult({
+      reason: 'scenario_selection_required',
+      candidateScenarioIds: [...TASK_TYPE_SCENARIOS[request.task.task_type]],
+      classifierCalls: 0,
+      signals,
+      degradation: 'scenario_selection_required',
+    });
+  } else if (ruleCandidates.length === 1) {
     const ruleSignals = relevantScenarioSignals(signals, ruleCandidates);
     classification = {
       primary_scenario_id: ruleCandidates[0]!,

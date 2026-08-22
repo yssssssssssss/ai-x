@@ -113,6 +113,173 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+.plan-progress-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.plan-progress-title {
+  position: relative;
+  display: inline-block;
+  flex: 0 0 auto;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.plan-progress-title::after {
+  position: absolute;
+  inset: 0;
+  color: #fff;
+  content: attr(data-text);
+  opacity: 0;
+  pointer-events: none;
+  clip-path: polygon(-30% 0, -12% 0, -2% 100%, -20% 100%);
+  filter: drop-shadow(0 0 3px rgba(182, 185, 255, 0.55));
+  animation: plan-progress-sheen 2.4s ease-in-out infinite;
+}
+.plan-progress-subtitle {
+  min-width: 0;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.plan-progress-card {
+  overflow: hidden;
+}
+.plan-progress-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: -5px 0 18px;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.plan-progress-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.plan-progress-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  gap: 10px;
+  min-height: 34px;
+  padding-bottom: 12px;
+}
+.plan-progress-step:last-child { min-height: 20px; padding-bottom: 0; }
+.plan-progress-step:not(:last-child)::after {
+  position: absolute;
+  top: 19px;
+  bottom: 0;
+  left: 9px;
+  width: 1px;
+  background: var(--border);
+  content: '';
+}
+.plan-progress-step-done:not(:last-child)::after {
+  background: rgba(52, 211, 153, 0.42);
+}
+.plan-progress-node {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 19px;
+  height: 19px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--bg-card);
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+.plan-progress-node-done {
+  border-color: rgba(52, 211, 153, 0.56);
+  background: rgba(52, 211, 153, 0.13);
+  color: var(--ok);
+}
+.plan-progress-node-active {
+  border-color: var(--primary-strong);
+  background: var(--primary);
+  box-shadow: 0 0 0 3px rgba(124, 124, 240, 0.12);
+}
+.plan-progress-node-active::after {
+  position: absolute;
+  inset: -5px;
+  border: 1px solid rgba(158, 160, 255, 0.48);
+  border-radius: 50%;
+  content: '';
+  animation: plan-progress-pulse 1.8s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+.plan-progress-copy {
+  display: grid;
+  min-width: 0;
+  padding-top: 1px;
+}
+.plan-progress-step-label {
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+.plan-progress-step-active .plan-progress-step-label {
+  color: var(--text);
+  font-weight: 650;
+}
+.plan-progress-step-done .plan-progress-step-label { color: var(--text-dim); }
+.plan-progress-detail {
+  overflow-wrap: anywhere;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.plan-progress-state {
+  padding-top: 2px;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: nowrap;
+}
+.plan-progress-step-active .plan-progress-state { color: var(--primary-strong); }
+.plan-progress-step-done .plan-progress-state { color: var(--ok); }
+@keyframes plan-progress-sheen {
+  0%, 18% {
+    clip-path: polygon(-30% 0, -12% 0, -2% 100%, -20% 100%);
+    opacity: 0;
+  }
+  24% { opacity: 0.8; }
+  62% {
+    clip-path: polygon(102% 0, 120% 0, 110% 100%, 92% 100%);
+    opacity: 0.8;
+  }
+  70%, 100% {
+    clip-path: polygon(102% 0, 120% 0, 110% 100%, 92% 100%);
+    opacity: 0;
+  }
+}
+@keyframes plan-progress-pulse {
+  0% { opacity: 0.55; transform: scale(0.72); }
+  70%, 100% { opacity: 0; transform: scale(1.25); }
+}
+
+@media (max-width: 520px) {
+  .plan-progress-heading {
+    display: grid;
+    gap: 2px;
+  }
+  .plan-progress-step { grid-template-columns: 20px minmax(0, 1fr); }
+  .plan-progress-state { display: none; }
+}
+
 /* ---- App Shell:唯一主滚动区 + 吸底输入区 ---- */
 .workbench {
   position: fixed;

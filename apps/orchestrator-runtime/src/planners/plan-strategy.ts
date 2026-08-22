@@ -15,6 +15,7 @@ import type { GuidanceRef, PlanCandidate, PlanProgress, ResearchTaskData } from 
 import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
 import type { CapabilityApprovalAuthority } from './capability-resolver.ts';
 import type { ToolRouter } from '../runtime/tool-adapter.ts';
+import type { ScenarioId } from './planning-guidance.ts';
 
 // $<skill> 直呼解析结果(parseDirectInvoke 的非空返回)。命中直呼支路时非 null。
 export interface DirectInvoke {
@@ -63,6 +64,8 @@ export interface PlanContext {
   requirement?: ResearchTaskV2;
   /** Finalized user requirement before deliverable labels are canonicalized for execution. */
   guidanceRequirement?: ResearchTaskV2;
+  /** Explicit user choice returned by the Planning Guidance clarification gate. */
+  selectedScenarioId?: ScenarioId;
   // 段1 taskGen 的溯源,direct 支路无路由 LLM,用它兜底 planProvenance。
   taskProvenance: PlanProvenance;
   emit: (ev: PlanProgress) => void;

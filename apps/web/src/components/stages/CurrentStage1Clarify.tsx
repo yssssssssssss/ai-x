@@ -13,6 +13,7 @@ export function CurrentStage1Clarify({
   disabled?: boolean;
 }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [selectedScenarioId, setSelectedScenarioId] = useState('');
   const [assumptionEdits, setAssumptionEdits] = useState<Record<string, string>>(
     Object.fromEntries(response.structuredTask.assumptions.map((assumption) => [assumption.key, assumption.value])),
   );
@@ -21,10 +22,26 @@ export function CurrentStage1Clarify({
     [answers, response.structuredTask],
   );
   const submission = buildClarificationSubmission(response.structuredTask, answers, assumptionEdits);
+  const requiresScenarioSelection = response.planningGuidance?.reasonCode === 'scenario_selection_required';
+  const scenarioSelectionMissing = requiresScenarioSelection && selectedScenarioId.length === 0;
+  const submittingLabel = requiresScenarioSelection
+    ? '正在生成候选方案…'
+    : '正在提交澄清…';
+  let submitButtonLabel = '提交澄清并更新候选方案';
+  if (disabled) submitButtonLabel = submittingLabel;
+  else if (missing.length > 0) submitButtonLabel = `请回答全部必答问题（还缺 ${missing.length} 项）`;
+  else if (scenarioSelectionMissing) submitButtonLabel = '请选择一个研究方向';
+  else if (requiresScenarioSelection) submitButtonLabel = '确认方向并生成候选方案';
 
   return (
     <section className="stage-card" aria-labelledby="current-clarify-title">
-      <Header n="1" title="澄清需求" note="先确认系统缺少的信息，再生成候选方案" />
+      <Header
+        n="1"
+        title={requiresScenarioSelection ? '选择研究方向' : '澄清需求'}
+        note={requiresScenarioSelection
+          ? '请选择最符合本次目标的方向，再生成候选方案'
+          : '先确认系统缺少的信息，再生成候选方案'}
+      />
       <div id="current-clarify-title" style={{ fontSize: 13, marginBottom: 14 }}>
         <b>当前理解</b>
         <p style={{ margin: '6px 0', color: 'var(--text-dim)' }}>{response.structuredTask.research_goal}</p>
@@ -60,6 +77,37 @@ export function CurrentStage1Clarify({
         </label>
       ))}
 
+      {response.planningGuidance && (
+        <fieldset disabled={disabled} style={{ border: 0, padding: 0, margin: '0 0 14px' }}>
+          <legend style={{ marginBottom: 8, fontSize: 13, fontWeight: 600 }}>本次研究更接近哪个方向？</legend>
+          <div style={{ display: 'grid', gap: 8 }}>
+            {response.planningGuidance.options.map((option) => (
+              <label
+                key={option.id}
+                style={{
+                  display: 'flex',
+                  gap: 8,
+                  alignItems: 'center',
+                  padding: '10px 12px',
+                  border: `1px solid ${selectedScenarioId === option.id ? 'var(--primary)' : 'var(--border)'}`,
+                  borderRadius: 8,
+                  cursor: disabled ? 'default' : 'pointer',
+                }}
+              >
+                <input
+                  type="radio"
+                  name={`scenario-${response.task.id}`}
+                  value={option.id}
+                  checked={selectedScenarioId === option.id}
+                  onChange={(event) => setSelectedScenarioId(event.target.value)}
+                />
+                <span style={{ fontSize: 13 }}>{option.label}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      )}
+
       {response.structuredTask.assumptions.length > 0 && (
         <div style={{ marginBottom: 14 }}>
           <b style={{ fontSize: 13 }}>系统假设（可编辑）</b>
@@ -78,15 +126,24 @@ export function CurrentStage1Clarify({
           ))}
         </div>
       )}
+      {disabled && (
+        <p role="status" aria-live="polite" style={{ margin: '0 0 10px', color: 'var(--text-dim)', fontSize: 13 }}>
+          {requiresScenarioSelection
+            ? '已确认研究方向，正在生成候选方案，通常需要几分钟，请稍候。'
+            : '正在提交澄清内容，请稍候。'}
+        </p>
+      )}
       <button
         type="button"
-        disabled={disabled || missing.length > 0}
+        disabled={disabled || missing.length > 0 || scenarioSelectionMissing}
+        aria-busy={disabled}
         onClick={() => onSubmit({
           expectedVersion: response.task.stateVersion,
           ...submission,
+          ...(selectedScenarioId ? { selectedScenarioId } : {}),
         })}
       >
-        {missing.length > 0 ? `请回答全部必答问题（还缺 ${missing.length} 项）` : '提交澄清并更新候选方案'}
+        {submitButtonLabel}
       </button>
     </section>
   );

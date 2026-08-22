@@ -3,7 +3,6 @@ import {
   api,
   type User,
   type TaskDetail,
-  type PlanProgress,
   type ExecLogRow,
   type ControlApprovalRequirement,
   type TaskHistoryPreferencePatch,
@@ -25,6 +24,7 @@ import { Stage2Plan } from '../components/stages/Stage2Plan.tsx';
 import { Stage3Execute } from '../components/stages/Stage3Execute.tsx';
 import { Stage4Report } from '../components/stages/Stage4Report.tsx';
 import { CurrentStage4Report } from '../components/stages/CurrentStage4Report.tsx';
+import { PlanProgressCard } from '../components/PlanningProgressCard.tsx';
 import { Labs } from './Labs.tsx';
 
 type View = 'task' | 'labs' | 'history';
@@ -165,127 +165,137 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
       <main className="workbench-main">
         <div className="workbench-scroll">
           <div className={`chat-column${deliverable?.presentationMode === 'multimodal' ? ' chat-column-report' : ''}`} aria-live="polite">
-            {phase === 'idle' && <Welcome onPick={flow.submitInput} />}
-            {phase === 'loading-task' && <Loading text="正在读取任务状态…" />}
-            {clarification && phase === 'clarifying' && (
+            {phase === 'idle' ? (
+              <Welcome onPick={flow.submitInput} />
+            ) : phase === 'loading-task' ? (
+              <Loading text="正在读取任务状态…" />
+            ) : (
               <>
-                {error && <ErrorCard msg={error} />}
-                <CurrentStage1Clarify
-                  response={clarification}
-                  onSubmit={submitClarification}
-                  disabled={clarificationSubmitting}
-                />
-              </>
-            )}
+                {originalInput ? <UserBubble text={originalInput} /> : null}
 
-            {originalInput && phase !== 'idle' && <UserBubble text={originalInput} />}
-
-            {candidatesResp && (
-              <>
-                <Stage1Understand task={candidatesResp.structuredTask} activatedNodes={candidatesResp.activatedNodes} />
-                {(phase === 'picking' || phase === 'selecting') && (
+                {clarification && phase === 'clarifying' && (
                   <>
-                    {error && phase === 'picking' && <InlineError msg={error} />}
-                    <Stage2Candidates
-                      candidates={candidatesResp.candidates}
-                      onSelect={flow.pickCandidate}
-                      selectedId={selectedCandidateId ?? undefined}
-                      loading={phase === 'selecting'}
-                      readOnly={false}
+                    {error && <ErrorCard msg={error} />}
+                    <CurrentStage1Clarify
+                      key={`${clarification.task.id}:${clarification.task.stateVersion}`}
+                      response={clarification}
+                      onSubmit={submitClarification}
+                      disabled={clarificationSubmitting}
+                    />
+                    {clarificationSubmitting ? (
+                      <PlanProgressCard steps={progress} variant="clarification" />
+                    ) : null}
+                  </>
+                )}
+
+                {candidatesResp && (
+                  <>
+                    <Stage1Understand task={candidatesResp.structuredTask} activatedNodes={candidatesResp.activatedNodes} />
+                    {(phase === 'picking' || phase === 'selecting') && (
+                      <>
+                        {error && phase === 'picking' && <InlineError msg={error} />}
+                        <Stage2Candidates
+                          candidates={candidatesResp.candidates}
+                          onSelect={flow.pickCandidate}
+                          selectedId={selectedCandidateId ?? undefined}
+                          loading={phase === 'selecting'}
+                          readOnly={false}
+                        />
+                      </>
+                    )}
+                  </>
+                )}
+
+                {planRecovery && (phase === 'planned' || phase === 'error') && (
+                  <PlanRecoveryNotice submitting={revisionSubmitting} onRevise={flow.revisePlan} />
+                )}
+                {plan && !planRecovery && phase !== 'picking' && phase !== 'selecting' && phase !== 'error' && (
+                  <Stage2Plan
+                    plan={plan}
+                    locked={phase !== 'planned'}
+                    revising={revisionSubmitting}
+                    onConfirm={flow.confirmPlan}
+                    onRevise={flow.revisePlan}
+                  />
+                )}
+
+                {phase === 'planning' && <PlanProgressCard steps={progress} />}
+                {phase === 'awaiting-approval' && (
+                  <AwaitingApprovalNotice
+                    requirements={approvalRequirements}
+                    submitting={approvalSubmitting}
+                    onApprove={flow.approveTask}
+                  />
+                )}
+                {phase === 'ready' && <ReadyExecutionNotice onStart={flow.startExecution} />}
+                {(phase === 'executing' || phase === 'reviewing' || phase === 'composing-report') && (
+                  <>
+                    {executionPlanSteps.length > 0 && (
+                      <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase={phase} />
+                    )}
+                    <RunningTaskNotice phase={phase} />
+                    {error && <ErrorCard msg={error} />}
+                  </>
+                )}
+                {phase === 'paused' && exec && (
+                  <>
+                    {executionPlanSteps.length > 0 && (
+                      <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase="paused" />
+                    )}
+                    <FailureActionCard
+                      stepNo={exec.failedStepNo}
+                      stepName={executionPlanSteps.find((step) => step.step_no === exec.failedStepNo)?.step_name}
+                      failure={exec.failure}
+                      onRetry={() => flow.resumeStep('retry')}
+                      onAbort={() => flow.resumeStep('abort')}
                     />
                   </>
                 )}
+                {phase === 'done' && exec && (
+                  <>
+                    {executionPlanSteps.length > 0 && (
+                      <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase="done" />
+                    )}
+                    {error && <ErrorCard msg={error} />}
+                    {exec.status === 'completed_with_gaps' && (
+                      <GapNotice count={exec.gapCount ?? executionSteps.filter((step) => step.status === 'skipped').length} />
+                    )}
+                    {reportState === 'loading' && <Loading text="正在读取研究报告…" />}
+                    {reportState === 'report-loading-error' && (
+                      <ErrorCard msg={deliverableError} onRetry={flow.retryDeliverable} retryLabel="重取报告" />
+                    )}
+                    {deliverable && (
+                      <CurrentStage4Report
+                        report={deliverable}
+                        taskState={exec.status === 'completed_with_gaps' ? 'completed_with_gaps' : 'completed'}
+                      />
+                    )}
+                  </>
+                )}
+                {phase === 'failed' && (
+                  <>
+                    {executionPlanSteps.length > 0 && (
+                      <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase="failed" />
+                    )}
+                    <TerminalTaskNotice
+                      state="failed"
+                      failure={[...executionSteps].reverse().find((step) => step.status === 'failed')}
+                    />
+                  </>
+                )}
+                {phase === 'cancelled' && (
+                  <>
+                    {executionPlanSteps.length > 0 && (
+                      <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase="cancelled" />
+                    )}
+                    <AbortedNotice />
+                  </>
+                )}
+                {phase === 'rejected' && <TerminalTaskNotice state="rejected" />}
+                {phase === 'error' && <ErrorCard msg={error} />}
+                {currentTaskId && <CurrentHistoryNotice />}
               </>
             )}
-
-            {planRecovery && (phase === 'planned' || phase === 'error') && (
-              <PlanRecoveryNotice submitting={revisionSubmitting} onRevise={flow.revisePlan} />
-            )}
-            {plan && !planRecovery && phase !== 'picking' && phase !== 'selecting' && phase !== 'error' && (
-              <Stage2Plan
-                plan={plan}
-                locked={phase !== 'planned'}
-                revising={revisionSubmitting}
-                onConfirm={flow.confirmPlan}
-                onRevise={flow.revisePlan}
-              />
-            )}
-
-            {phase === 'planning' && <PlanProgressCard steps={progress} />}
-            {phase === 'awaiting-approval' && (
-              <AwaitingApprovalNotice
-                requirements={approvalRequirements}
-                submitting={approvalSubmitting}
-                onApprove={flow.approveTask}
-              />
-            )}
-            {phase === 'ready' && <ReadyExecutionNotice onStart={flow.startExecution} />}
-            {(phase === 'executing' || phase === 'reviewing' || phase === 'composing-report') && (
-              <>
-                {executionPlanSteps.length > 0 && (
-                  <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase={phase} />
-                )}
-                <RunningTaskNotice phase={phase} />
-                {error && <ErrorCard msg={error} />}
-              </>
-            )}
-            {phase === 'paused' && exec && (
-              <>
-                {executionPlanSteps.length > 0 && (
-                  <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase="paused" />
-                )}
-                <FailureActionCard
-                  stepNo={exec.failedStepNo}
-                  stepName={executionPlanSteps.find((step) => step.step_no === exec.failedStepNo)?.step_name}
-                  failure={exec.failure}
-                  onRetry={() => flow.resumeStep('retry')}
-                  onAbort={() => flow.resumeStep('abort')}
-                />
-              </>
-            )}
-            {phase === 'done' && exec && (
-              <>
-                {executionPlanSteps.length > 0 && (
-                  <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase="done" />
-                )}
-                {error && <ErrorCard msg={error} />}
-                {exec.status === 'completed_with_gaps' && (
-                  <GapNotice count={exec.gapCount ?? executionSteps.filter((step) => step.status === 'skipped').length} />
-                )}
-                {reportState === 'loading' && <Loading text="正在读取研究报告…" />}
-                {reportState === 'report-loading-error' && (
-                  <ErrorCard msg={deliverableError} onRetry={flow.retryDeliverable} retryLabel="重取报告" />
-                )}
-                {deliverable && (
-                  <CurrentStage4Report
-                    report={deliverable}
-                    taskState={exec.status === 'completed_with_gaps' ? 'completed_with_gaps' : 'completed'}
-                  />
-                )}
-              </>
-            )}
-            {phase === 'failed' && (
-              <>
-                {executionPlanSteps.length > 0 && (
-                  <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase="failed" />
-                )}
-                <TerminalTaskNotice
-                  state="failed"
-                  failure={[...executionSteps].reverse().find((step) => step.status === 'failed')}
-                />
-              </>
-            )}
-            {phase === 'cancelled' && (
-              <>
-                {executionPlanSteps.length > 0 && (
-                  <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase="cancelled" />
-                )}
-                <AbortedNotice />
-              </>
-            )}
-            {phase === 'rejected' && <TerminalTaskNotice state="rejected" />}
-            {phase === 'error' && <ErrorCard msg={error} />}
-            {currentTaskId && <CurrentHistoryNotice />}
           </div>
         </div>
         <Composer
@@ -369,51 +379,6 @@ function ErrorCard({
       <div style={{ color: 'var(--text-dim)', fontSize: 13, margin: '6px 0' }}>{msg}</div>
       {onRetry && <button className="btn-ghost" onClick={onRetry}>{retryLabel}</button>}
     </div>
-  );
-}
-
-// 规划阶段流式进度卡:逐条阶段出现,完成打勾、进行中转圈,detail 灰字。
-function PlanProgressCard({ steps }: { steps: PlanProgress[] }) {
-  const ALL: Array<{ phase: PlanProgress['phase']; label: string }> = [
-    { phase: 'understand', label: '理解任务需求' },
-    { phase: 'activate', label: '激活决策节点' },
-    { phase: 'guidance', label: '召回方法论知识' },
-    { phase: 'states', label: '判定节点状态' },
-    { phase: 'candidates', label: '生成候选方案' },
-    { phase: 'persist', label: '归档计划' },
-  ];
-  const byPhase = new Map(steps.map((s) => [s.phase, s]));
-  // 直呼支路只有 understand/candidates/persist;已出现的阶段才展示,避免误显示不会发生的阶段
-  const seen = ALL.filter((a) => byPhase.has(a.phase) || a.phase === 'understand');
-  // 最后一条是否 done:决定当前"进行中"的阶段
-  const lastDoneIdx = seen.reduce((acc, a, i) => (byPhase.get(a.phase)?.status === 'done' ? i : acc), -1);
-
-  return (
-    <section className="stage-card" aria-live="polite">
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-        <span className="spinner" />
-        <b style={{ fontSize: 15 }}>AI 规划中</b>
-        <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>· 正在分步处理,请稍候</span>
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {seen.map((a, i) => {
-          const ev = byPhase.get(a.phase);
-          const done = ev?.status === 'done';
-          const active = !done && i === lastDoneIdx + 1;
-          return (
-            <div key={a.phase} style={{ display: 'flex', gap: 10, alignItems: 'baseline', opacity: done || active ? 1 : 0.4 }}>
-              <span style={{ width: 16, flexShrink: 0, textAlign: 'center' }}>
-                {done ? <span style={{ color: 'var(--ok)' }}>✓</span> : active ? <span className="spinner" style={{ width: 12, height: 12 }} /> : <span style={{ color: 'var(--text-faint)' }}>○</span>}
-              </span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ fontSize: 14, color: done || active ? 'var(--text)' : 'var(--text-dim)' }}>{ev?.label ?? a.label}</span>
-                {ev?.detail && <span style={{ fontSize: 12, color: 'var(--text-faint)', marginLeft: 8 }}>{ev.detail}</span>}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </section>
   );
 }
 

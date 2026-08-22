@@ -1464,6 +1464,67 @@ test('dynamic routed ambiguity spends exactly one Scenario classifier call', asy
   assert.deepEqual(result.candidates.map(({ id }) => id), ['speed', 'depth', 'decision']);
 });
 
+test('Current routed planning returns a typed direction gate before candidate generation when Scenario signals are absent', async () => {
+  const dynamicPolicy = {
+    ...loadPlanningPolicy(),
+    candidate_generation_mode: 'dynamic',
+  } as const;
+  const { llm, planning } = routedPlanningHarness('dynamic', dynamicPolicy);
+  const rawInput = '梳理宠物心智的设计表达策略全景';
+  const requirement: ResearchTaskV2 = {
+    ...structuredClone(task),
+    task_type: 'user_research_planning',
+    research_goal: rawInput,
+    comparison_dimensions: undefined,
+    scope: ['宠物心智设计表达'],
+    expected_deliverables: ['research_plan'],
+  };
+
+  const result = await planning.planCurrentFromRequirementOutcome(requirement, rawInput);
+
+  assert.ok('kind' in result && result.kind === 'planning_guidance_clarification');
+  if (!('kind' in result) || result.kind !== 'planning_guidance_clarification') return;
+  assert.equal(result.planningGuidance.reasonCode, 'scenario_selection_required');
+  assert.deepEqual(result.planningGuidance.options.map(({ id }) => id), [
+    'user-material-synthesis',
+    'user-segmentation',
+    'user-journey-insight',
+    'root-cause-analysis',
+    'metrics-validation',
+  ]);
+  assert.equal(llm.calls.filter(({ schemaName }) => schemaName === 'scenario-guidance').length, 0);
+  assert.equal(llm.calls.filter(({ schemaName }) => schemaName === 'current-plan-candidates').length, 0);
+});
+
+test('Current routed planning generates candidates after an explicit direction selection', async () => {
+  const dynamicPolicy = {
+    ...loadPlanningPolicy(),
+    candidate_generation_mode: 'dynamic',
+  } as const;
+  const { llm, planning } = routedPlanningHarness('dynamic', dynamicPolicy);
+  const rawInput = '梳理宠物心智的设计表达策略全景';
+  const requirement: ResearchTaskV2 = {
+    ...structuredClone(task),
+    research_goal: rawInput,
+  };
+
+  const result = await planning.planCurrentFromRequirementOutcome(
+    requirement,
+    rawInput,
+    undefined,
+    { selectedScenarioId: 'competitor-benchmark-research' },
+  );
+
+  assert.equal('kind' in result, false);
+  if ('kind' in result) return;
+  assert.deepEqual(result.candidates.map(({ id }) => id), ['speed', 'depth']);
+  assert.equal(result.planningProvenance.primary_scenario_id, 'competitor-benchmark-research');
+  assert.equal(result.planningProvenance.classification_method, 'clarification');
+  assert.equal(result.planningProvenance.classifier_call_count, 0);
+  assert.equal(llm.calls.filter(({ schemaName }) => schemaName === 'scenario-guidance').length, 0);
+  assert.equal(llm.calls.filter(({ schemaName }) => schemaName === 'current-plan-candidates').length, 1);
+});
+
 test('dynamic repair preserves passing baselines and drops a specialty after the single merged correction', async () => {
   const dynamicPolicy = {
     ...loadPlanningPolicy(),

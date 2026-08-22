@@ -98,6 +98,17 @@ function message(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
+function upsertPlanningProgress(
+  previous: PlanProgress[],
+  event: PlanProgress,
+): PlanProgress[] {
+  const index = previous.findIndex((item) => item.phase === event.phase);
+  if (index < 0) return [...previous, event];
+  const next = [...previous];
+  next[index] = event;
+  return next;
+}
+
 export function useTaskFlow(actorRole?: string) {
   const [clarification, setClarification] = useState<ClarificationRequiredResponse | null>(null);
   const [phase, setPhase] = useState<Phase>('idle');
@@ -316,13 +327,7 @@ export function useTaskFlow(actorRole?: string) {
         { originalInput: text },
         {
           onProgress: (event) => {
-            setProgress((previous) => {
-              const index = previous.findIndex((item) => item.phase === event.phase);
-              if (index < 0) return [...previous, event];
-              const next = [...previous];
-              next[index] = event;
-              return next;
-            });
+            setProgress((previous) => upsertPlanningProgress(previous, event));
           },
         },
       );
@@ -356,11 +361,17 @@ export function useTaskFlow(actorRole?: string) {
     setClarificationSubmitting(true);
     setPhase('clarifying');
     setError('');
+    setProgress([]);
     try {
-      const response = await api.clarifyControlTask(clarification.task.id, {
-        ...input,
-        idempotencyKey,
-      });
+      const response = await api.clarifyControlTaskStream(
+        clarification.task.id,
+        { ...input, idempotencyKey },
+        {
+          onProgress: (event) => {
+            setProgress((previous) => upsertPlanningProgress(previous, event));
+          },
+        },
+      );
       const settled = settleClarificationSubmission(
         clarificationSubmission.current,
         requestId,
