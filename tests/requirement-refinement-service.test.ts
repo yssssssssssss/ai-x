@@ -605,7 +605,10 @@ test('Planning Guidance retries the same edited assumptions after post-activatio
 
 test('clarification answers persist a new v2 and clear blocking ambiguity before planning', async () => {
   const { RequirementRefinementService } = await loadModule();
-  const clearRequirement = requirement({ target_audience: ['enterprise buyers'] });
+  const clearRequirement = requirement({
+    target_audience: ['enterprise buyers'],
+    scope: ['global market including overseas'],
+  });
   const llm = new FixtureLLM([ambiguousRequirement, clearRequirement]);
   const repository = makeRepository();
   const conversations = makeConversations();
@@ -636,13 +639,18 @@ test('clarification answers persist a new v2 and clear blocking ambiguity before
     taskId,
     conversationId,
     ownerUserId,
-    answers: { audience: 'enterprise buyers' },
+    answers: { audience: 'enterprise buyers', geo_scope: 'include overseas markets' },
   }, (event) => progress.push(event));
 
   assert.equal(result.status, 'ready_to_plan');
   assert.equal(result.requirement.version, 'research-task-v2');
   assert.equal(result.requirement.ambiguities.some((item) => item.blocking), false);
   assert.equal(result.requirement.clarification_questions.length, 0);
+  assert.deepEqual(result.requirement.scope, ['global market including overseas']);
+  assert.deepEqual(
+    (llm.calls[1]?.context as { clarification?: unknown } | undefined)?.clarification,
+    { audience: 'enterprise buyers', geo_scope: 'include overseas markets' },
+  );
   assert.deepEqual(repository.versions.map((version) => version.version), [1, 2]);
   assert.deepEqual(events.slice(-2), ['persist_activate', 'plan']);
   assert.equal(plannedInput, 'raw original input from task');
