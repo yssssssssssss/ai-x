@@ -27,6 +27,9 @@ export function Stage2Plan({
     ? confirmationRequirements(plan.task.confirmations)
     : [];
   const scoringWeights = extractCompetitiveScoringWeights(plan.plan);
+  const resourceGaps = plan.plan.skill_invocations?.flatMap(({ skill_id, resource_gaps }) => (
+    resource_gaps.map((gap) => ({ ...gap, skillId: skill_id }))
+  )) ?? [];
   const [assumptions, setAssumptions] = useState(plan.task.assumptions);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [confirmed, setConfirmed] = useState(false);
@@ -102,6 +105,17 @@ export function Stage2Plan({
               </div>
             ))}
           </dl>
+        </div>
+      )}
+
+      {resourceGaps.length > 0 && (
+        <div style={{ marginTop: 16, padding: '10px 12px', border: '1px solid rgba(251,191,36,.3)', borderRadius: 8, color: 'var(--warn)', fontSize: 12 }}>
+          <strong>知识资源缺口</strong>
+          {resourceGaps.map((gap) => (
+            <div key={`${gap.skillId}:${gap.query_id}`}>
+              {gap.skillId} · {gap.query_id}：已选 {gap.selected_items}，最低 {gap.min_items}。{gap.reason}
+            </div>
+          ))}
         </div>
       )}
 

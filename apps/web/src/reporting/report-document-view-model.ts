@@ -138,7 +138,7 @@ export function createReportDocumentViewModel({
             value: block.value,
             evidenceIds: block.evidenceIds,
           });
-        } else if (block.type === 'list') {
+        } else if (block.type === 'list' || block.type === 'projection-list') {
           blocks.push({
             id: block.id,
             kind: section.id === 'appendix' ? 'evidence' : 'list',

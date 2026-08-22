@@ -1686,6 +1686,7 @@ export class ControlPlaneRepository {
     plan: unknown;
     candidateId?: string;
     pendingInputs?: unknown;
+    clearCurrentAttempt?: boolean;
   }): Promise<{ plan: ControlPlanVersion; task: ControlTask }> {
     const candidateId = input.candidateId;
     if (!isCandidateProfile(candidateId)) {
@@ -1743,10 +1744,12 @@ export class ControlPlaneRepository {
       const updated = await connection.query(
         `UPDATE control_tasks
          SET state = $3, state_version = state_version + 1,
-             active_plan_version_id = $4, updated_at = now()
+             active_plan_version_id = $4,
+             current_attempt_id = CASE WHEN $6::boolean THEN NULL ELSE current_attempt_id END,
+             updated_at = now()
          WHERE id = $1 AND state_version = $2 AND state = ANY($5::text[])
          RETURNING id, state, state_version, active_plan_version_id, current_attempt_id`,
-        [input.taskId, input.expectedVersion, input.to, plan.id, fromStates],
+        [input.taskId, input.expectedVersion, input.to, plan.id, fromStates, input.clearCurrentAttempt ?? false],
       );
       const row = updated.rows[0];
       if (!row) throw new ControlPlaneConflictError(`task ${input.taskId} lost revision CAS`);

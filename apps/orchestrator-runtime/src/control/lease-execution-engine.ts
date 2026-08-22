@@ -13,6 +13,7 @@ import type {
 } from '../../../../database/control-plane.ts';
 import type {
   ChartSpec,
+  CurrentExecutionPlan,
   CurrentPlanStep,
   EvidenceClass,
   EvidenceManifest,
@@ -64,6 +65,15 @@ import {
   redactToolOutput,
 } from '../runtime/redaction.ts';
 import { compactLlmInput } from '../runtime/llm-input-compactor.ts';
+import {
+  assertCompiledSkillPlan,
+  CompiledSkillPlanDriftError,
+} from '../skills/skill-plan-compiler.ts';
+import {
+  evaluateSkillOutputStatus,
+  SkillDegradedPolicyError,
+  type SkillOutputOutcome,
+} from '../skills/skill-result-status.ts';
 import {
   prepareSkillExecution,
   SKILL_EXECUTION_PROMPT_PREFIX,
@@ -385,24 +395,6 @@ class SkillOutputSchemaError extends LLMInvocationError {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-interface SkillOutputOutcome {
-  status: 'succeeded' | 'degraded';
-  limitations: string[];
-  summary: string;
-}
-
-function skillOutputOutcome(value: unknown): SkillOutputOutcome | null {
-  if (!isRecord(value) || value.version !== 'skill-output-v2') return null;
-  if (value.status !== 'succeeded' && value.status !== 'degraded') return null;
-  return {
-    status: value.status,
-    summary: typeof value.summary === 'string' ? value.summary : '',
-    limitations: Array.isArray(value.limitations)
-      ? value.limitations.filter((item): item is string => typeof item === 'string')
-      : [],
-  };
 }
 
 function skillDegradationMessage(step: EngineStep, outcome: SkillOutputOutcome): string {
@@ -1145,7 +1137,7 @@ function leaseLostWithRetry(
   return error;
 }
 
-function failureFrom(error: unknown): Record<string, unknown> {
+export function failureFrom(error: unknown): Record<string, unknown> {
   if (error instanceof ArtifactInvalidationError) {
     return {
       kind: 'artifact_invalidation',
@@ -1172,11 +1164,31 @@ function failureFrom(error: unknown): Record<string, unknown> {
       message: error.sanitizedMessage,
     };
   }
-  if (error instanceof RequiredKnowledgeUnavailableError) {
+  if (error instanceof CompiledSkillPlanDriftError) {
     return {
-      kind: 'required_knowledge_unavailable',
+      kind: 'skill_contract_drift',
       retryable: false,
+      requiresReplan: true,
+      allowedActions: ['replan', 'abort'],
+      message: error.message,
+    };
+  }
+  if (error instanceof SkillDegradedPolicyError) {
+    return {
+      kind: 'skill_degraded_blocked',
+      retryable: false,
+      message: error.message,
+    };
+  }
+  if (error instanceof RequiredKnowledgeUnavailableError) {
+    const drift = error.code !== 'missing';
+    return {
+      kind: drift ? 'knowledge_configuration_drift' : 'required_knowledge_unavailable',
+      retryable: !drift,
       resourceId: error.resourceId,
+      knowledgeFailureCode: error.code,
+      requiresReplan: drift,
+      allowedActions: drift ? ['replan', 'abort'] : ['retry', 'abort'],
       message: error.message,
     };
   }
@@ -1323,6 +1335,9 @@ export class LeaseExecutionEngine {
         input.lease.planVersionId,
       );
       const deliverableContract = resolvePlanDeliverableContract(task.structuredTask, planVersion.plan);
+      if (isRecord(planVersion.plan) && planVersion.plan.execution_contract_version === 'current-execution-plan-v2') {
+        assertCompiledSkillPlan(planVersion.plan as unknown as CurrentExecutionPlan, this.dependencies.skillLoader);
+      }
       deliverableId = deliverableContract.entry.id;
       const parsedPlan = parsePlan(task.id, planVersion.plan, deliverableContract);
       const pendingInputs = parsePendingInputs(planVersion.pendingInputs);
@@ -1360,7 +1375,9 @@ export class LeaseExecutionEngine {
       }
     } catch (error) {
       const failure = failureFrom(error);
-      failure.allowedActions = failure.retryable === true ? ['retry', 'abort'] : ['abort'];
+      failure.allowedActions = failure.requiresReplan === true
+        ? ['replan', 'abort']
+        : failure.retryable === true ? ['retry', 'abort'] : ['abort'];
       await this.recordFailedExecutionStep({
         ...input.lease,
         stepNo: 1,
@@ -1456,7 +1473,11 @@ export class LeaseExecutionEngine {
         const pendingBrowserCaptures: CommittedBrowserCapture[] = [];
         let toolScope: ToolExecutionScope | undefined;
         let toolHeartbeat: LeaseHeartbeatHandle | undefined;
+        let skillDegradedPolicy: 'gap' | 'block' | undefined;
         try {
+          skillDegradedPolicy = step.actor_type === 'skill'
+            ? this.dependencies.skillLoader.loadSkillExecution(step.actor_id)?.contract.degraded_policy
+            : undefined;
           const checkpoint = reusable.get(step.step_no);
           if (checkpoint) {
             active = await this.refreshLease(input.lease);
@@ -1492,7 +1513,7 @@ export class LeaseExecutionEngine {
             unpublishedArtifactId = resealed.id;
             const verified = await readVerifiedStepArtifact(sealedOutput, this.dependencies.artifacts);
             const reusedSkillOutcome = step.actor_type === 'skill'
-              ? skillOutputOutcome(verified.output)
+              ? evaluateSkillOutputStatus(verified.output, skillDegradedPolicy)
               : null;
             await this.recordSucceededExecutionStep({
               ...input.lease,
@@ -1591,7 +1612,9 @@ export class LeaseExecutionEngine {
           if (typeof actorOutputHash === 'string') producedSkillOutputHash = actorOutputHash;
           toolAttemptReceipts = actorResult.toolAttemptReceipts;
           const result = sanitizeStepResult(actorResult);
-          skillOutcome = step.actor_type === 'skill' ? skillOutputOutcome(result.output) : null;
+          skillOutcome = step.actor_type === 'skill'
+            ? evaluateSkillOutputStatus(result.output, skillDegradedPolicy)
+            : null;
           const successfulPageFailureRows = step.actor_id === 'playwright-page-capture'
             && isRecord(result.output)
             ? userVisiblePageFailures(result.output)
@@ -1913,7 +1936,9 @@ export class LeaseExecutionEngine {
               ? ['abort']
               : ['retry', 'abort'];
           } else {
-            failure.allowedActions = failure.retryable === true ? ['retry', 'abort'] : ['abort'];
+            failure.allowedActions = failure.requiresReplan === true
+              ? ['replan', 'abort']
+              : failure.retryable === true ? ['retry', 'abort'] : ['abort'];
           }
           if (step.actor_type === 'skill') {
             failedSkillProvenance = await this.failedSkillProvenance({

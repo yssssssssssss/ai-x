@@ -23,25 +23,29 @@ resources:
 resource_queries:
   - query_id: scenario-guides
     types: [scenario-guide]
-    limit: 2
+    min_items: 1
+    max_items: 2
     accepted_statuses: [approved, draft]
     purpose: Select scenario guidance relevant to the finalized research scope.
-    failure_policy: gap
+    failure_policy: block
   - query_id: collection-methods
     types: [method]
-    limit: 3
+    min_items: 2
+    max_items: 3
     accepted_statuses: [approved, draft]
     purpose: Select evidence collection methods relevant to the research goal.
-    failure_policy: gap
+    failure_policy: block
   - query_id: analysis-methods
     types: [analysis]
-    limit: 5
+    min_items: 3
+    max_items: 5
     accepted_statuses: [approved, draft]
     purpose: Select analysis methods relevant to the research goal.
-    failure_policy: gap
+    failure_policy: block
   - query_id: theory-model
     types: [model]
-    limit: 1
+    min_items: 0
+    max_items: 1
     accepted_statuses: [approved, draft]
     purpose: Select one optional theory lens when the task language matches.
     failure_policy: gap

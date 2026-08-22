@@ -4,7 +4,7 @@
 >
 > 架构决策：`docs/adr/0003-compile-skills-into-frozen-execution-dag.md`
 >
-> 状态：Phase 1–5 与自动化 Gate 7 已完成；浏览器验收通过；等待独立审查与远端交付授权。
+> 状态：Phase 1–5、独立审查整改、自动化 Gate 7 与受影响浏览器回归已完成；真实 Gateway/Tavily 新任务验收未重跑；等待远端交付授权。
 >
 > 规则：按 Gate 顺序执行。每个 Phase 独立提交、可构建、可回滚；当前工作区存在其他未提交改动，不在原 checkout 直接实现。
 
@@ -354,7 +354,7 @@ git diff --check
 ## 5.2 ReportProjection Module
 
 - [x] 创建 `report-projection.ts`。
-- [x] 创建 `research-plan-projection.ts`。
+- [x] ResearchPlanProjection 集中实现于 `report-projection.ts`（未另建重复模块）。
 - [x] 定义Projection Adapter Interface。
 - [x] 将ResearchPlan 12字段映射到冻结章节。
 - [x] 保留FindingGraph、Recommendations、Risks和Evidence章节。
@@ -414,23 +414,23 @@ git diff --check
 # Gate 6：真实端到端验收
 
 - [ ] 使用真实Gateway和真实Tavily创建研究规划任务。
-- [x] Requirement不完整时停在澄清。
-- [x] 输入海外市场并验证Requirement与Plan。
-- [x] 查看compiled Skill卡片及7个内部阶段。
-- [ ] 选择并确认计划。
-- [ ] 执行完成。
-- [x] 对比Plan步骤和Execution步骤一一对应。
-- [x] 验证Knowledge Bundle Artifact及hash。
-- [x] 验证Tool Receipt。
-- [x] 验证Skill stage provenance。
-- [x] 验证完整方案默认可见。
-- [x] 验证管理摘要可切换。
-- [x] 验证下载包完整。
-- [x] 模拟optional knowledge缺失并验证completed_with_gaps。
-- [x] 模拟required knowledge缺失并验证paused。
-- [x] 验证没有敏感路径、Token或原始Prompt泄露。
+- [ ] 在该真实新建任务中验证 Requirement 不完整时停在澄清。
+- [ ] 在该真实新建任务中输入海外市场并验证 Requirement 与 Plan。
+- [ ] 在该真实新建任务中查看 compiled Skill 卡片及 7 个内部阶段。
+- [ ] 在该真实新建任务中选择并确认计划。
+- [ ] 在该真实新建任务中执行完成。
+- [ ] 在该真实新建任务中对比 Plan 步骤和 Execution 步骤一一对应。
+- [ ] 在该真实新建任务中验证 Knowledge Bundle Artifact 及 hash。
+- [ ] 在该真实新建任务中验证 Tool Receipt。
+- [ ] 在该真实新建任务中验证 Skill stage provenance。
+- [x] 使用生产构建 + 已封存生产报告 Artifact + mock API 验证完整方案默认可见。
+- [x] 使用生产构建 + 已封存生产报告 Artifact + mock API 验证管理摘要可切换。
+- [x] 使用自动化测试验证下载包完整。
+- [x] 使用自动化测试模拟 optional knowledge 缺失并验证 `completed_with_gaps`。
+- [x] 使用自动化测试模拟 required knowledge 缺失并验证 `paused`。
+- [x] 使用自动化测试验证没有敏感路径、Token 或原始 Prompt 泄露。
 
-> 浏览器验收使用生产构建、真实已封存报告 Artifact 与本地 mock API；真实 Gateway/Tavily 新建任务未重复消耗外部配额。
+> 浏览器验收使用生产构建、真实已封存报告 Artifact 与本地 mock API；未把它记作“新建真实 Gateway/Tavily 任务”的替代证据，以避免外部配额消耗。
 
 # Gate 7：全量验证
 
@@ -454,17 +454,19 @@ git diff --check
 
 # Gate 8：独立审查
 
-- [ ] 审查Skill合同与SKILL.md漂移风险。
-- [ ] 审查Knowledge路径与目录逃逸。
-- [ ] 审查Tool白名单、预算和审批。
-- [ ] 审查Plan/Card/Execution一致性。
-- [ ] 审查degraded与gap语义。
-- [ ] 审查Requirement答案传播。
-- [ ] 审查Report字段覆盖。
-- [ ] 审查v1/v2兼容。
-- [ ] 审查Artifact不可变性。
-- [ ] 审查日志、错误和下载包脱敏。
-- [ ] 审查改动后补跑一次最终Gate。
+- [x] 审查Skill合同与SKILL.md漂移风险。
+- [x] 审查Knowledge路径与目录逃逸。
+- [x] 审查Tool白名单、预算和审批。
+- [x] 审查Plan/Card/Execution一致性。
+- [x] 审查degraded与gap语义。
+- [x] 审查Requirement答案传播。
+- [x] 审查Report字段覆盖。
+- [x] 审查v1/v2兼容。
+- [x] 审查Artifact不可变性。
+- [x] 审查日志、错误和下载包脱敏。
+- [x] 审查改动后补跑一次最终Gate。
+
+> 独立审查报告识别的 3 个 Blocker、3 个 High 和 3 个 Medium 均已整改。最终 `pnpm quality`：1606 tests，1591 pass，15 skip，0 fail；Web production build通过（仅保留既有大 chunk 警告）；受影响浏览器回归确认资源数量缺口与 Knowledge 漂移的“重新生成计划 / 终止任务”动作可见，且不显示 retry。
 
 # Gate 9：交付
 
@@ -496,8 +498,8 @@ projection coverage gate          done
 legacy compatibility              done
 targeted tests                    done
 full quality gate                 done
-real runtime acceptance           done (browser + sealed artifact fixture)
-independent review                pending
+real runtime acceptance           not rerun (external quota); browser + sealed artifacts passed
+independent review                done (3 blocker, 3 high, 3 medium corrected)
 docs synchronized                 done
 remote delivery authorization     not authorized
 ```

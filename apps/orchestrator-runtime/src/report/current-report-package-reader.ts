@@ -31,6 +31,10 @@ import {
   assertValidReportDocument,
   type ReportDocument,
 } from './report-document-composer.ts';
+import {
+  assertReportProjectionIntegrity,
+  researchPlanRequiredPointers,
+} from './report-projection.ts';
 import type { VerifiedVisualAsset, VisualAssetService } from './visual-asset-service.ts';
 import {
   type ReportPackageArtifactValue,
@@ -385,6 +389,12 @@ export class CurrentReportPackageReader {
       }
       this.schemaValidator.validateOrThrow('report-document', verifiedDocument.value);
       const reportDocument = verifiedDocument.value as ReportDocument;
+      assertReportProjectionIntegrity({
+        document: reportDocument,
+        deliverableArtifactId,
+        payload: deliverable.payload,
+        requiredPointers: researchPlanRequiredPointers(),
+      });
       const references = reportAssetReferences(reportDocument);
       if (references.length > 0 && !this.dependencies.visualAssets) {
         throw new Error('multimodal ReportDocument requires a verified visual Asset reader');

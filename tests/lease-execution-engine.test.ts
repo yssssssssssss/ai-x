@@ -3521,6 +3521,13 @@ test('executes a compiled generate-research-plan invocation stage by stage', asy
       evidence_requirements: [{ id: 'public-market-evidence', acceptedClasses: ['public_source', 'knowledge'], minimumCount: 1, required: true }],
       execution_contract_version: 'current-execution-plan-v2',
       skill_invocations: compiled.invocations,
+      capability_decisions: {
+        eligible: [{
+          skill: { id: 'generate-research-plan', required_tools: ['tavily-web-search'] },
+          optional_tool_decisions: [],
+        }],
+        excluded: [],
+      },
     },
     { task_type: 'competitive_research', research_goal: task.research_goal },
   );
@@ -3545,6 +3552,41 @@ test('executes a compiled generate-research-plan invocation stage by stage', asy
     (skillProvenance?.skillReferenceHashes as Array<{ path: string }>).map(({ path }) => path),
     ['references/brief-skeleton.md', 'references/plan-skeleton.md', 'references/run-notes-template.md'],
   );
+
+  const tamperedInvocations = structuredClone(compiled.invocations);
+  tamperedInvocations[0]!.contract_hash = `sha256:${'0'.repeat(64)}`;
+  const tamperedExecution = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    compiled.steps,
+    {
+      deliverable_type: 'research_plan',
+      evidence_requirements: [{ id: 'public-market-evidence', acceptedClasses: ['public_source', 'knowledge'], minimumCount: 1, required: true }],
+      execution_contract_version: 'current-execution-plan-v2',
+      skill_invocations: tamperedInvocations,
+      capability_decisions: {
+        eligible: [{
+          skill: { id: 'generate-research-plan', required_tools: ['tavily-web-search'] },
+          optional_tool_decisions: [],
+        }],
+        excluded: [],
+      },
+    },
+    { task_type: 'competitive_research', research_goal: task.research_goal },
+  );
+  const tamperedTool = new CountingRealTavilyAdapter();
+  const tamperedLlm = new CountingRealLLM();
+  await assert.rejects(() => buildEngine(
+    tamperedExecution.repository,
+    new ToolRouter().register(tamperedTool),
+    tamperedLlm,
+  ).execute({ lease: tamperedExecution.lease, expectedModel: 'pinned-model' }), /contract hash drift/u);
+  assert.equal(tamperedTool.calls, 0);
+  assert.equal(tamperedLlm.calls, 0);
+  const preflightFailure = (await tamperedExecution.repository.listExecutionSteps(
+    tamperedExecution.lease.attemptId,
+  ))[0]?.failure;
+  assert.deepEqual(preflightFailure?.allowedActions, ['replan', 'abort']);
+  assert.equal(preflightFailure?.kind, 'skill_contract_drift');
 });
 
 test('records a degraded Skill as a completed task with one visible gap', async () => {

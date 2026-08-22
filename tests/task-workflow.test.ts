@@ -2500,6 +2500,40 @@ async function createPausedTask(input: {
   return { task, plan, paused };
 }
 
+test('paused Knowledge drift can replan and clears the obsolete execution attempt', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const paused = await createPausedTask({
+    repository,
+    suffix: 'knowledge-drift-replan',
+    failedStepNo: 1,
+    steps: [currentStep({ actor_type: 'tool', actor_id: 'tavily-web-search' })],
+    allowedActions: ['replan', 'abort'],
+    failureKind: 'knowledge_configuration_drift',
+  });
+  const workflow = new TaskWorkflowService(repository, undefined, {
+    revise: async ({ activePlanVersionId }) => {
+      const active = await repository.getPlanVersionDetail(activePlanVersionId);
+      if (!active) throw new Error('active plan missing');
+      return {
+        plan: active.plan,
+        pendingInputs: Array.isArray(active.pendingInputs) ? active.pendingInputs : [],
+      };
+    },
+  });
+
+  const replanned = await workflow.revise({
+    taskId: paused.task.id,
+    expectedVersion: paused.paused.stateVersion,
+    idempotencyKey: 'knowledge-drift-replan-command',
+    actor: { userId: ownerId, role: 'owner' },
+    revisionInstruction: 'Refresh frozen Knowledge resources',
+  });
+  assert.equal(replanned.state, 'awaiting_confirmation');
+  const task = await repository.getTaskDetail(paused.task.id);
+  assert.equal(task?.currentAttemptId, null);
+  assert.notEqual(task?.activePlanVersionId, paused.plan.id);
+});
+
 test('worker-loss retry without failedStepNo validates recovery before accepting recovered state', async () => {
   const repository = new ControlPlaneRepository(scopedDatabase);
   const workflow = new TaskWorkflowService(repository);

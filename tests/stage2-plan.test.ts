@@ -19,6 +19,14 @@ test('Stage2Plan renders frozen competitive weights as read-only definition data
   assert.doesNotMatch(weightBlock, /<input|<textarea|onChange|setScoring/u);
 });
 
+test('Stage2Plan renders frozen resource cardinality gaps before confirmation', async () => {
+  const source = await readFile(component, 'utf8');
+  assert.match(source, /skill_invocations\?\.flatMap/u);
+  assert.match(source, /知识资源缺口/u);
+  assert.match(source, /gap\.selected_items/u);
+  assert.match(source, /gap\.min_items/u);
+});
+
 test('Stage2 confirmation payload includes only declared pending inputs and no weight copy', () => {
   const payload = buildPlanConfirmationPayload({
     confirmationAnswers: { scope: '中国主流平台' },

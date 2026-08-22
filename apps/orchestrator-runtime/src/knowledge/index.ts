@@ -1,7 +1,9 @@
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, lstatSync, realpathSync, statSync } from 'node:fs';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { kbPath } from './taxonomy.ts';
 import { parseFrontmatter } from './frontmatter.ts';
+import { contentHash } from './normalizer.ts';
 import type { KnowledgeIndexItem } from './indexer.ts';
 import type { SkillRegistryEntry } from '../runtime/config-loader.ts';
 
@@ -74,24 +76,86 @@ export function searchEvaluationKnowledge(opts: SearchOpts): KnowledgeIndexItem[
   return applySearchFilters(loadEvaluationKnowledgeIndex(), opts);
 }
 
+export class KnowledgeSourceAccessError extends Error {
+  constructor(
+    readonly code: 'missing' | 'path_drift',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'KnowledgeSourceAccessError';
+  }
+}
+
+export function resolveKnowledgeSourcePath(
+  sourcePath: string,
+  knowledgeRoot = kbPath('knowledge-base'),
+): string {
+  if (
+    !sourcePath
+    || isAbsolute(sourcePath)
+    || sourcePath.includes('\\')
+    || sourcePath.split('/').some((segment) => segment === '' || segment === '.' || segment === '..')
+  ) {
+    throw new KnowledgeSourceAccessError('path_drift', `Knowledge source path is not a normalized relative path: ${sourcePath}`);
+  }
+  const root = resolve(knowledgeRoot);
+  let rootReal: string;
+  try {
+    rootReal = realpathSync(root);
+  } catch {
+    throw new KnowledgeSourceAccessError('missing', 'Knowledge root is unavailable');
+  }
+  const full = resolve(root, sourcePath);
+  const lexicalRelative = relative(root, full);
+  if (lexicalRelative === '..' || lexicalRelative.startsWith(`..${sep}`)) {
+    throw new KnowledgeSourceAccessError('path_drift', `Knowledge source path escapes the Knowledge root: ${sourcePath}`);
+  }
+  let cursor = root;
+  for (const segment of sourcePath.split('/')) {
+    cursor = resolve(cursor, segment);
+    let metadata;
+    try {
+      metadata = lstatSync(cursor);
+    } catch {
+      throw new KnowledgeSourceAccessError('missing', `Knowledge source is missing: ${sourcePath}`);
+    }
+    if (metadata.isSymbolicLink()) {
+      throw new KnowledgeSourceAccessError('path_drift', `Knowledge source path contains a symlink: ${sourcePath}`);
+    }
+  }
+  const fullReal = realpathSync(full);
+  const physicalRelative = relative(rootReal, fullReal);
+  if (physicalRelative === '..' || physicalRelative.startsWith(`..${sep}`)) {
+    throw new KnowledgeSourceAccessError('path_drift', `Knowledge source path physically escapes the Knowledge root: ${sourcePath}`);
+  }
+  if (!statSync(fullReal).isFile()) {
+    throw new KnowledgeSourceAccessError('path_drift', `Knowledge source is not a regular file: ${sourcePath}`);
+  }
+  return fullReal;
+}
+
+function readVerifiedKnowledgeEntry(item: KnowledgeIndexItem): { frontmatter: Record<string, unknown>; content: string } {
+  const full = resolveKnowledgeSourcePath(item.source_path);
+  const parsed = parseFrontmatter(readFileSync(full, 'utf8'));
+  if (parsed.frontmatter.id !== item.id) throw new Error(`Knowledge source/index path identity drift for ${item.id}`);
+  if (parsed.frontmatter.status !== item.status) throw new Error(`Knowledge source/index status drift for ${item.id}`);
+  if (parsed.frontmatter.source_path !== item.source_path) throw new Error(`Knowledge source/index path drift for ${item.id}`);
+  if (parsed.frontmatter.content_hash !== item.content_hash || contentHash(parsed.content) !== item.content_hash) {
+    throw new Error(`Knowledge source/index content hash drift for ${item.id}`);
+  }
+  return parsed;
+}
+
 export function getEntry(id: string): { frontmatter: Record<string, unknown>; content: string } | null {
   const item = loadRuntimeKnowledgeIndex().find((candidate) => candidate.id === id);
   if (!item) return null;
-  const full = kbPath('knowledge-base', item.source_path);
-  if (!existsSync(full)) return null;
-  const parsed = parseFrontmatter(readFileSync(full, 'utf8'));
-  if (parsed.frontmatter.status !== item.status) throw new Error(`Knowledge source/index status drift for ${id}`);
-  return parsed;
+  return readVerifiedKnowledgeEntry(item);
 }
 
 export function getEvaluationEntry(id: string): { frontmatter: Record<string, unknown>; content: string } | null {
   const item = loadEvaluationKnowledgeIndex().find((candidate) => candidate.id === id);
   if (!item) return null;
-  const full = kbPath('knowledge-base', item.source_path);
-  if (!existsSync(full)) return null;
-  const parsed = parseFrontmatter(readFileSync(full, 'utf8'));
-  if (parsed.frontmatter.status !== item.status) throw new Error(`Knowledge source/index status drift for ${id}`);
-  return parsed;
+  return readVerifiedKnowledgeEntry(item);
 }
 
 function loadSkills(): SkillRegistryEntry[] {

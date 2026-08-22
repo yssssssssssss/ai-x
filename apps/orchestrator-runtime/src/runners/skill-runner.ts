@@ -3,6 +3,7 @@ import type { SkillLoader } from '../runtime/skill-loader.ts';
 import type { SchemaValidator } from '../schema/validator.ts';
 import type { PlanStep } from '../plan-types.ts';
 import { prepareSkillExecution } from '../skills/skill-runtime.ts';
+import { evaluateSkillOutputStatus } from '../skills/skill-result-status.ts';
 import type { ActorRunner, ExecCtx, StepArtifact } from './actor-runner.ts';
 
 // skill 步:加载 SKILL.md 全文 + output schema,调 LLM 按工作流基于 tool_outputs 产出结构化结果。
@@ -42,6 +43,7 @@ export class SkillActorRunner implements ActorRunner {
     });
 
     this.validator.validateSchemaOrThrow(prepared.schemas.output, skillGen.data, `skill:${step.actor_id}`);
+    evaluateSkillOutputStatus(skillGen.data, prepared.degradedPolicy);
 
     const outputRef = ctx.ws.writeToolOutput(step.step_no, skillGen.data);
 

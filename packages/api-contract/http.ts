@@ -3,7 +3,10 @@
 // route 的 res.json(dbRow) 靠 TS 结构化子类型兼容这些窄壳(多余字段允许),
 // 从而 route 与前端共享同一份响应契约,漂移在编译期就炸。
 
-import type { CurrentPlanStep } from './research-deliverable.ts';
+import type {
+  CurrentPlanStep,
+  CurrentSkillInvocation,
+} from './research-deliverable.ts';
 import type {
   CandidateProfile,
   ResearchTaskData,
@@ -72,6 +75,7 @@ export interface FinalizedPlan {
   steps: Array<PlanStep | CurrentPlanStep>;
   activated_nodes: string[];
   assumptions: Assumption[];
+  skill_invocations?: CurrentSkillInvocation[];
 }
 
 export interface PlanCandidatesResponse {

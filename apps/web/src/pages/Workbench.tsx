@@ -247,6 +247,7 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
                       stepName={executionPlanSteps.find((step) => step.step_no === exec.failedStepNo)?.step_name}
                       failure={exec.failure}
                       onRetry={() => flow.resumeStep('retry')}
+                      onReplan={() => flow.revisePlan('知识或 Skill 合同已变化，请基于当前 Requirement 重新生成计划。')}
                       onAbort={() => flow.resumeStep('abort')}
                     />
                   </>
@@ -397,15 +398,18 @@ function FailureActionCard({
   stepName,
   failure,
   onRetry,
+  onReplan,
   onAbort,
 }: {
   stepNo?: number;
   stepName?: string;
   failure?: Record<string, unknown>;
   onRetry: () => void;
+  onReplan: () => void;
   onAbort: () => void;
 }) {
   const canRetry = failure == null || executionFailureAllowsAction(failure, 'retry');
+  const canReplan = failure != null && executionFailureAllowsAction(failure, 'replan');
   const canAbort = failure == null || executionFailureAllowsAction(failure, 'abort');
   return (
     <section style={{ background: 'rgba(251,191,36,.08)', border: '1px solid rgba(251,191,36,.3)', borderRadius: 16, padding: 18, marginTop: 16 }}>
@@ -418,12 +422,15 @@ function FailureActionCard({
         </pre>
       )}
       <p style={{ color: 'var(--text-dim)', fontSize: 13, margin: '6px 0 12px' }}>
-        {canRetry
-          ? '重试会通过 Current resume 将任务恢复到 ready，再以同一 planVersionId 重新执行；终止不会生成交付物。'
-          : '该失败不可重试；终止任务后不会生成交付物。'}
+        {canReplan
+          ? '当前计划绑定的知识或 Skill 合同已变化，必须重新生成并再次确认计划；终止不会生成交付物。'
+          : canRetry
+            ? '重试会通过 Current resume 将任务恢复到 ready，再以同一 planVersionId 重新执行；终止不会生成交付物。'
+            : '该失败不可重试；终止任务后不会生成交付物。'}
       </p>
       <div style={{ display: 'flex', gap: 10 }}>
         {canRetry && <button type="button" className="btn-primary" onClick={onRetry}>重试失败执行</button>}
+        {canReplan && <button type="button" className="btn-primary" onClick={onReplan}>重新生成计划</button>}
         {canAbort && <button type="button" className="btn-ghost" onClick={onAbort}>终止任务</button>}
       </div>
     </section>

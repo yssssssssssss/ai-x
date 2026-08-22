@@ -26,7 +26,11 @@ import {
   validateChartSpec,
   type ChartEvidenceResolver,
 } from './chart-spec-validator.ts';
-import { projectResearchPlan } from './report-projection.ts';
+import {
+  assertReportProjectionIntegrity,
+  projectResearchPlan,
+  requiredPayloadPointers,
+} from './report-projection.ts';
 import {
   assertCompetitiveWeightChartBinding,
   parseCompetitiveWeightChartData,
@@ -77,9 +81,15 @@ export interface ReportListBlock {
   id: string;
   type: 'list';
   items: string[];
-  sourcePointers?: string[];
+}
+
+export interface ReportProjectionListBlock {
+  id: string;
+  type: 'projection-list';
+  items: string[];
+  sourcePointers: string[];
   sourceNodeIds?: string[];
-  summary?: boolean;
+  summary: boolean;
 }
 
 export interface ReportImageBlock {
@@ -117,6 +127,7 @@ export type ReportBlock =
   | ReportFactBlock
   | ReportMetricBlock
   | ReportListBlock
+  | ReportProjectionListBlock
   | ReportImageBlock
   | ReportImageComparisonBlock
   | ReportChartBlock;
@@ -1499,6 +1510,7 @@ export function composeReportDocument(input: ComposeReportDocumentInput): Report
     ? projectResearchPlan({
         payload: input.deliverable.value.payload as ResearchPlanPayload,
         deliverableArtifactId: input.deliverable.artifact.id,
+        requiredPointers: requiredPayloadPointers(contract.payloadSchema),
       })
     : null;
   const visibleBaseSections = researchPlan
@@ -1529,6 +1541,14 @@ export function composeReportDocument(input: ComposeReportDocumentInput): Report
         }
       : {}),
   };
+  if (researchPlan) {
+    assertReportProjectionIntegrity({
+      document,
+      deliverableArtifactId: input.deliverable.artifact.id,
+      payload: input.deliverable.value.payload,
+      requiredPointers: requiredPayloadPointers(contract.payloadSchema),
+    });
+  }
   assertValidReportDocument(document, {
     requiredQuestionIds: input.requiredQuestionIds,
     evidenceIds: input.evidenceManifest.value.entries.map(({ id }) => id),

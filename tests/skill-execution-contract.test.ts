@@ -1,11 +1,19 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import {
   PlanCompiler,
   validateCurrentPlanRevision,
 } from '../apps/orchestrator-runtime/src/planners/plan-compiler.ts';
 import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
-import { compileSkillSteps } from '../apps/orchestrator-runtime/src/skills/skill-plan-compiler.ts';
+import { getConfigRoot, setConfigRoot } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
+import { loadSkillReferenceDocuments } from '../apps/orchestrator-runtime/src/skills/skill-runtime.ts';
+import {
+  compileSkillSteps,
+  selectFrozenKnowledgeReferences,
+} from '../apps/orchestrator-runtime/src/skills/skill-plan-compiler.ts';
 import { loadSkillExecutionContract } from '../apps/orchestrator-runtime/src/skills/skill-execution-contract.ts';
 import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import type { CurrentPlanStep } from '../packages/api-contract/research-deliverable.ts';
@@ -31,6 +39,17 @@ test('compiled generate-research-plan loads one validated acyclic execution cont
     'references/plan-skeleton.md',
     'references/run-notes-template.md',
   ]);
+  assert.deepEqual(
+    (loaded.contract.resource_queries ?? []).map(({ query_id, min_items, max_items, failure_policy }) => ({
+      query_id, min_items, max_items, failure_policy,
+    })),
+    [
+      { query_id: 'scenario-guides', min_items: 1, max_items: 2, failure_policy: 'block' },
+      { query_id: 'collection-methods', min_items: 2, max_items: 3, failure_policy: 'block' },
+      { query_id: 'analysis-methods', min_items: 3, max_items: 5, failure_policy: 'block' },
+      { query_id: 'theory-model', min_items: 0, max_items: 1, failure_policy: 'gap' },
+    ],
+  );
 });
 
 test('execution contract rejects a mismatched Skill identity and absolute paths', () => {
@@ -45,6 +64,62 @@ test('execution contract rejects a mismatched Skill identity and absolute paths'
     () => loadSkillExecutionContract('/tmp/contract.yaml', 'generate-research-plan'),
     /must be relative/u,
   );
+});
+
+test('execution contract rejects missing output stages and dependency cycles', () => {
+  const originalRoot = getConfigRoot();
+  const root = mkdtempSync(join(tmpdir(), 'skill-contract-graph-'));
+  const contractDir = join(root, 'orchestrator/skill-executions');
+  mkdirSync(contractDir, { recursive: true });
+  const source = readFileSync(
+    join(originalRoot, 'orchestrator/skill-executions/generate-research-plan.yaml'),
+    'utf8',
+  );
+  const path = 'orchestrator/skill-executions/generate-research-plan.yaml';
+  setConfigRoot(root);
+  try {
+    writeFileSync(join(root, path), source.replace(
+      'output_stage_id: compose-plan',
+      'output_stage_id: missing-stage',
+    ), 'utf8');
+    assert.throws(() => loadSkillExecutionContract(path, 'generate-research-plan'), /does not exist/u);
+
+    writeFileSync(join(root, path), source.replace(
+      '    depends_on: []',
+      '    depends_on: [load-standards]',
+    ), 'utf8');
+    assert.throws(() => loadSkillExecutionContract(path, 'generate-research-plan'), /cycle/u);
+  } finally {
+    setConfigRoot(originalRoot);
+  }
+});
+
+test('Skill reference loading rejects traversal and symlink escapes before hashing', () => {
+  const originalRoot = getConfigRoot();
+  const root = mkdtempSync(join(tmpdir(), 'skill-reference-containment-'));
+  const skillRoot = join(root, 'knowledge-base/skills/test-skill');
+  mkdirSync(join(skillRoot, 'references'), { recursive: true });
+  writeFileSync(join(skillRoot, 'SKILL.md'), '# Skill', 'utf8');
+  const outside = join(root, 'outside.md');
+  writeFileSync(outside, 'outside', 'utf8');
+  symlinkSync(outside, join(skillRoot, 'references/link.md'));
+  const loader = (referencePath: string) => ({
+    loadSkillExecution: () => ({ contract: { skill_references: [referencePath] } }),
+    loadSkillBody: () => ({ path: 'knowledge-base/skills/test-skill/SKILL.md', body: '# Skill', hash: 'hash' }),
+  }) as unknown as SkillLoader;
+  setConfigRoot(root);
+  try {
+    assert.throws(
+      () => loadSkillReferenceDocuments({ skillId: 'test-skill', skillLoader: loader('../outside.md') }),
+      /normalized relative path/u,
+    );
+    assert.throws(
+      () => loadSkillReferenceDocuments({ skillId: 'test-skill', skillLoader: loader('references/link.md') }),
+      /symlink/u,
+    );
+  } finally {
+    setConfigRoot(originalRoot);
+  }
 });
 
 test('compiled Skill expands one visible frozen seven-stage DAG', () => {
@@ -118,11 +193,61 @@ test('compiled Skill expands one visible frozen seven-stage DAG', () => {
     'self-review',
   ]);
   assert.deepEqual(compiled.invocations[0]?.step_nos, [1, 2, 3, 4, 5, 6, 7]);
+  assert.ok(Array.isArray(compiled.invocations[0]?.skill_reference_hashes));
+  assert.deepEqual(compiled.invocations[0]?.resource_gaps, []);
   assert.equal(compiled.steps[1]?.actor_type, 'knowledge');
   const references = compiled.steps[1]?.input.references;
   assert.ok(Array.isArray(references) && references.length > 3, 'task-matched dynamic knowledge must be frozen');
   assert.equal(compiled.steps[5]?.actor_type, 'skill');
   assert.equal(compiled.steps[6]?.depends_on.includes(6), true);
+
+  const contract = new SkillLoader().loadSkillExecution('generate-research-plan')!.contract;
+  assert.throws(() => selectFrozenKnowledgeReferences({
+    ...contract,
+    resources: [{
+      resource_id: 'knowledge_does_not_exist', required: true, accepted_statuses: ['approved'],
+      purpose: 'negative test', failure_policy: 'block',
+    }],
+    resource_queries: [],
+  }, task), /is unavailable/u);
+  assert.throws(() => selectFrozenKnowledgeReferences({
+    ...contract,
+    resources: [{
+      ...contract.resources[0]!,
+      accepted_statuses: ['approved'],
+    }],
+    resource_queries: [],
+  }, task), /status is not accepted/u);
+
+  const withGap = selectFrozenKnowledgeReferences({
+    ...contract,
+    resources: [],
+    resource_queries: [{
+      query_id: 'unavailable-kind',
+      types: ['not-a-real-type'],
+      min_items: 1,
+      max_items: 2,
+      accepted_statuses: ['approved'],
+      purpose: 'exercise cardinality policy',
+      failure_policy: 'gap',
+    }],
+  }, task);
+  assert.equal(withGap.resourceGaps[0]?.query_id, 'unavailable-kind');
+  assert.throws(() => selectFrozenKnowledgeReferences({
+    ...contract,
+    resources: [],
+    resource_queries: [{
+      ...(contract.resource_queries?.[0] ?? {
+        query_id: 'fallback', types: ['method'], min_items: 0, max_items: 1,
+        accepted_statuses: ['approved'] as const, purpose: 'fallback', failure_policy: 'gap' as const,
+      }),
+      query_id: 'unavailable-kind',
+      types: ['not-a-real-type'],
+      min_items: 1,
+      max_items: 2,
+      failure_policy: 'block',
+    }],
+  }, task), /below min_items/u);
 });
 
 test('PlanCompiler persists the compiled Skill invocation and seven visible stages', () => {
@@ -200,6 +325,27 @@ test('PlanCompiler persists the compiled Skill invocation and seven visible stag
     task_id: frozen.task_id,
     candidate_id: 'depth',
   }), frozen);
+
+  const tamperCases: Array<[string, (plan: typeof frozen) => void]> = [
+    ['contract hash drift', (plan) => { plan.skill_invocations![0]!.contract_hash = `sha256:${'0'.repeat(64)}`; }],
+    ['reference hash drift', (plan) => { plan.skill_invocations![0]!.skill_reference_hashes[0]!.hash = `sha256:${'0'.repeat(64)}`; }],
+    ['Knowledge binding drift', (plan) => { plan.skill_invocations![0]!.knowledge_references.pop(); }],
+    ['stage actor drift', (plan) => { plan.steps[0]!.actor_id = 'another-tool'; }],
+    ['stage dependency drift', (plan) => { plan.steps[2]!.depends_on = []; }],
+    ['stage output drift', (plan) => { plan.steps[2]!.expected_outputs[0]!.pointer = '/other'; }],
+    ['Tool ownership drift', (plan) => { plan.capability_decisions.eligible[0]!.skill.required_tools = []; }],
+  ];
+  for (const [label, mutate] of tamperCases) {
+    const tampered = structuredClone(frozen);
+    mutate(tampered);
+    assert.throws(() => validateCurrentPlanRevision({
+      plan: tampered,
+      task,
+      pending_inputs: compiled.pending_inputs,
+      task_id: frozen.task_id,
+      candidate_id: 'depth',
+    }), label);
+  }
 });
 
 test('legacy Skills do not expose an execution contract', () => {

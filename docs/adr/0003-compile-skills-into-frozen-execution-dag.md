@@ -45,13 +45,13 @@ Skill 不获得任意文件路径权限。
 
 规划阶段从 `knowledge-base/.index/knowledge.json` 选择资源并冻结 ID、status、source path 和 content hash；执行阶段验证并写入 Attempt 绑定的 `knowledge-bundle-v1` Artifact。
 
-资源漂移时 fail closed，并要求重新生成计划。
+资源漂移时 fail closed，并要求重新生成计划。资源查询同时声明 `min_items`/`max_items`；低于最小数量必须按可见 `block` 或 `resource_gaps` 策略处理。Skill 自有 references 的路径与内容哈希也冻结进 invocation，并在修订与执行前复验。
 
 ### 5. Tool 使用冻结拓扑和受控动态输入
 
 Tool ID、调用次数和依赖在计划确认前固定。Tool参数可以通过前序步骤的 output binding 动态生成，但 Skill 不能在执行中任意增加Tool或无限循环。
 
-所有调用继续经过Tool Registry、Schema、真实Adapter、Receipt、预算和审批。
+所有调用继续经过Tool Registry、Schema、真实Adapter、Receipt、预算和审批。每个 Tool stage 还必须属于其 Skill invocation 自身的 required/available optional Tool 集合，不能借用同一计划中其他 Skill 的授权。
 
 ### 6. Canonical Deliverable 是报告真相源
 
@@ -60,7 +60,7 @@ ReportDocument 是展示投影，不是研究内容的唯一载体。
 - 完整方案直接由Canonical Deliverable渲染。
 - ReportDocument用于摘要、打印和发布。
 - 页面默认展示完整方案。
-- ReportDocument投影必须记录字段来源和省略原因。
+- ReportDocument v2 仅允许 `projection-list` Block 声明 payload `sourcePointers`；覆盖门禁只信任该受限 Block，且在合成和读取时校验来源 Deliverable Artifact ID、Schema required 字段、指针存在性及文档级 coveredPointers 的逐项一致。其他展示 Block 不得冒充 payload 投影来源。
 - 下载包必须包含Canonical Deliverable和完整Markdown。
 
 ### 7. 降级状态必须诚实传播

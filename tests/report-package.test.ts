@@ -8,10 +8,15 @@ import type {
 import type {
   ChartSpec,
   ResearchDeliverableEnvelope,
+  ResearchPlanPayload,
   VisualAssetManifest,
   VisualAssetManifestV2,
 } from '../packages/api-contract/research-deliverable.ts';
 import type { ReportDocument } from '../apps/orchestrator-runtime/src/report/report-document-composer.ts';
+import {
+  projectResearchPlan,
+  researchPlanRequiredPointers,
+} from '../apps/orchestrator-runtime/src/report/report-projection.ts';
 import { ReportCompositionService } from '../apps/orchestrator-runtime/src/report/report-composition-service.ts';
 import { ArtifactIntegrityError } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
 import {
@@ -147,6 +152,28 @@ function manifest(): EvidenceManifest {
   }, {
     resolveArtifact: (artifactId) => artifactId === evidenceArtifactId ? resolved : null,
   });
+}
+
+function researchPlanPayload(): ResearchPlanPayload {
+  return {
+    title: 'Verified report',
+    researchGoal: 'Answer the decision question',
+    scope: { market: 'global', subjects: ['cat'], timeWindow: 'five weeks' },
+    competitorSampling: {
+      strategy: 'stratified',
+      targetCount: 6,
+      inclusionCriteria: ['public evidence'],
+      exclusionCriteria: ['no evidence'],
+    },
+    researchQuestions: ['Q1'],
+    comparisonDimensions: [{ id: 'd1', name: 'Trust', purpose: 'compare trust', collectionFields: ['proof'] }],
+    sourcePlan: [{ evidenceClass: 'knowledge', sourceTypes: ['standard'], purpose: 'method basis' }],
+    executionPlan: [{ phase: 'week 1', activities: ['desk research'], duration: '1 week', outputs: ['matrix'] }],
+    collectionTemplate: [{ field: 'proof', description: 'source proof', evidenceRequired: true }],
+    analysisMethods: ['thematic analysis'],
+    deliverables: ['strategy map'],
+    qualityChecks: ['source traceability'],
+  };
 }
 
 function deliverable(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -503,6 +530,7 @@ class FixtureRepository {
 
 function setup(options: {
   deliverableSchemaVersion?: string;
+  deliverable?: Record<string, unknown>;
   review?: ReportReviewArtifact | null;
   reviewArtifact?: ControlArtifact;
   reportDocument?: ReportDocument | null;
@@ -530,7 +558,7 @@ function setup(options: {
   );
   artifacts.add(evidenceArtifact, evidenceValue());
   artifacts.add(evidenceManifestArtifact, manifest());
-  artifacts.add(deliverableArtifact, deliverable());
+  artifacts.add(deliverableArtifact, options.deliverable ?? deliverable());
   repository.byKind.set('deliverable', deliverableArtifact);
   if (options.review !== null) {
     const reviewArtifact = options.reviewArtifact ?? artifact(reviewArtifactId, 'report_review', 'report-review-v1', {
@@ -834,15 +862,20 @@ test('returns multimodal only from a sealed ReportDocument and its exact verifie
 test('reads a schema-valid ReportDocument v2 without breaking v1 packages', async () => {
   const image = packageVerifiedVisualAsset(imageAssetId, imageManifestArtifactId, 'image/png');
   const chart = packageVerifiedVisualAsset(chartAssetId, chartManifestArtifactId, 'image/svg+xml');
+  const payload = researchPlanPayload();
+  const projection = projectResearchPlan({
+    payload,
+    deliverableArtifactId,
+    requiredPointers: researchPlanRequiredPointers(),
+  });
   const document: ReportDocument = {
     ...packageReportDocument(),
     version: 'report-document-v2',
-    sourceDeliverableArtifactId: deliverableArtifactId,
-    projectionMode: 'full',
-    coveredPointers: ['/title'],
-    omittedPointers: [],
+    sections: [...packageReportDocument().sections, ...projection.sections],
+    ...projection.coverage,
   };
   const fixture = setup({
+    deliverable: deliverable({ payload }),
     reportDocument: document,
     reportDocumentSchemaVersion: 'report-document-v2',
     visualAssets: [image, chart],
@@ -853,6 +886,38 @@ test('reads a schema-valid ReportDocument v2 without breaking v1 packages', asyn
   if (result?.presentationMode !== 'multimodal') assert.fail('expected a multimodal package');
   assert.equal(result.reportDocument.version, 'report-document-v2');
   assert.equal(parseControlDeliverableResponse(result).presentationMode, 'multimodal');
+});
+
+test('reader rejects v2 projection identity and coverage metadata drift', async () => {
+  const image = packageVerifiedVisualAsset(imageAssetId, imageManifestArtifactId, 'image/png');
+  const chart = packageVerifiedVisualAsset(chartAssetId, chartManifestArtifactId, 'image/svg+xml');
+  const payload = researchPlanPayload();
+  const projection = projectResearchPlan({
+    payload,
+    deliverableArtifactId,
+    requiredPointers: researchPlanRequiredPointers(),
+  });
+  const baseDocument: ReportDocument = {
+    ...packageReportDocument(),
+    version: 'report-document-v2',
+    sections: [...packageReportDocument().sections, ...projection.sections],
+    ...projection.coverage,
+  };
+  const wrongSource = setup({
+    deliverable: deliverable({ payload }),
+    reportDocument: { ...baseDocument, sourceDeliverableArtifactId: 'wrong-deliverable' },
+    reportDocumentSchemaVersion: 'report-document-v2',
+    visualAssets: [image, chart],
+  });
+  await assert.rejects(wrongSource.reader.read(binding), /identity mismatch/u);
+
+  const falseCoverage = setup({
+    deliverable: deliverable({ payload }),
+    reportDocument: { ...baseDocument, coveredPointers: baseDocument.coveredPointers?.slice(1) },
+    reportDocumentSchemaVersion: 'report-document-v2',
+    visualAssets: [image, chart],
+  });
+  await assert.rejects(falseCoverage.reader.read(binding), /do not match projection block provenance/u);
 });
 
 test('reads a mixed V2 browser image and V1 Chart package without rewriting either Manifest', async () => {

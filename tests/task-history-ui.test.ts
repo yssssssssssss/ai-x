@@ -61,6 +61,13 @@ test('current conversation renders each user turn before assistant stages and is
   assert.doesNotMatch(chatColumnRule, /column-reverse|direction:\s*rtl/u);
 });
 
+test('Knowledge configuration drift exposes replan and abort instead of retry', async () => {
+  const source = await readFile(workbench, 'utf8');
+  assert.match(source, /executionFailureAllowsAction\(failure, 'replan'\)/u);
+  assert.match(source, /onReplan=\{\(\) => flow\.revisePlan/u);
+  assert.match(source, /重新生成计划/u);
+});
+
 test('sidebar exposes four status tabs and persistent item management actions', async () => {
   const source = await readFile(sidebar, 'utf8');
 

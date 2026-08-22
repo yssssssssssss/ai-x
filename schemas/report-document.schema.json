@@ -125,6 +125,20 @@
           "type": "array",
           "minItems": 1,
           "items": { "$ref": "#/definitions/nonEmptyString" }
+        }
+      }
+    },
+    "projectionListBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "items", "sourcePointers", "summary"],
+      "properties": {
+        "id": { "$ref": "#/definitions/nonEmptyString" },
+        "type": { "const": "projection-list" },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/nonEmptyString" }
         },
         "sourcePointers": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^/" } },
         "sourceNodeIds": { "$ref": "#/definitions/idList" },
@@ -269,6 +283,7 @@
         { "$ref": "#/definitions/factBlock" },
         { "$ref": "#/definitions/metricBlock" },
         { "$ref": "#/definitions/listBlock" },
+        { "$ref": "#/definitions/projectionListBlock" },
         { "$ref": "#/definitions/imageBlock" },
         { "$ref": "#/definitions/imageComparisonBlock" },
         { "$ref": "#/definitions/chartBlock" }

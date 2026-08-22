@@ -38,7 +38,8 @@ export interface SkillExecutionStage {
 export interface SkillExecutionResourceQuery {
   query_id: string;
   types: string[];
-  limit: number;
+  min_items: number;
+  max_items: number;
   accepted_statuses: Array<'approved' | 'draft'>;
   purpose: string;
   failure_policy: SkillFailurePolicy;
@@ -74,6 +75,11 @@ function contractPath(relativePath: string): string {
 }
 
 function validateGraph(contract: SkillExecutionContract): void {
+  for (const query of contract.resource_queries ?? []) {
+    if (query.min_items > query.max_items) {
+      throw new Error(`Skill resource query ${query.query_id} has min_items greater than max_items`);
+    }
+  }
   const stages = new Map<string, SkillExecutionStage>();
   for (const stage of contract.stages) {
     if (stages.has(stage.stage_id)) throw new Error(`duplicate Skill stage ${stage.stage_id}`);
@@ -81,6 +87,9 @@ function validateGraph(contract: SkillExecutionContract): void {
   }
   if (!stages.has(contract.output_stage_id)) {
     throw new Error(`Skill output stage ${contract.output_stage_id} does not exist`);
+  }
+  if (!stages.get(contract.output_stage_id)!.expected_outputs.some(({ pointer }) => pointer === contract.output_pointer)) {
+    throw new Error(`Skill output pointer ${contract.output_pointer} is not declared by ${contract.output_stage_id}`);
   }
   const complete = new Set<string>();
   const active = new Set<string>();

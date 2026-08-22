@@ -787,7 +787,7 @@ export class TaskWorkflowService {
     if (replay) return replay;
     const task = await this.requireTask(input.taskId);
     this.requireOwner(task, input.actor);
-    const revisableStates: ControlTaskState[] = ['awaiting_confirmation', 'awaiting_approval', 'ready'];
+    const revisableStates: ControlTaskState[] = ['awaiting_confirmation', 'awaiting_approval', 'ready', 'paused'];
     if (!revisableStates.includes(task.state) || task.stateVersion !== input.expectedVersion) {
       throw new ControlPlaneConflictError(`task ${task.id} cannot be revised at version ${input.expectedVersion}`);
     }
@@ -820,6 +820,7 @@ export class TaskWorkflowService {
       candidateId: activePlan.candidateId,
       plan: generated.plan,
       pendingInputs: generated.pendingInputs,
+      clearCurrentAttempt: task.state === 'paused',
     });
     const plan = revision.plan;
     const transitioned = revision.task;

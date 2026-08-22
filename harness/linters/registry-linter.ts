@@ -110,7 +110,17 @@ function lintSkills(issues: LintIssue[]): void {
         issues.push({ level: 'error', target: tgt, message: `execution_contract 不存在: ${s.execution_contract}` });
       } else {
         try {
-          loadSkillExecutionContract(s.execution_contract, s.id);
+          const loaded = loadSkillExecutionContract(s.execution_contract, s.id);
+          const allowedTools = new Set([...(s.required_tools ?? []), ...(s.optional_tools ?? [])]);
+          for (const stage of loaded.contract.stages) {
+            if (stage.actor_type === 'tool' && !allowedTools.has(stage.actor_id)) {
+              issues.push({
+                level: 'error',
+                target: tgt,
+                message: `execution_contract Tool 不属于该 Skill: ${stage.actor_id}`,
+              });
+            }
+          }
         } catch (error) {
           issues.push({ level: 'error', target: tgt, message: error instanceof Error ? error.message : String(error) });
         }

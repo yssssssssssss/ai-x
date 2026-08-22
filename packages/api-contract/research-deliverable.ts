@@ -73,12 +73,23 @@ export interface CurrentPlanStep {
   skill_stage_id?: string;
 }
 
+export interface CurrentSkillResourceGap {
+  query_id: string;
+  min_items: number;
+  selected_items: number;
+  failure_policy: 'gap';
+  reason: string;
+}
+
 export interface CurrentSkillInvocation {
   invocation_id: string;
   skill_id: string;
   execution_mode: 'compiled';
   contract_version: 'skill-execution-contract-v1';
   contract_hash: string;
+  skill_reference_hashes: Array<{ path: string; hash: string }>;
+  knowledge_references: CurrentKnowledgeReference[];
+  resource_gaps: CurrentSkillResourceGap[];
   step_nos: number[];
 }
 
@@ -89,6 +100,7 @@ export interface CurrentKnowledgeReference {
   contentHash: string;
   required: boolean;
   failurePolicy: 'block' | 'gap';
+  queryId?: string;
 }
 
 export interface CurrentCapabilitySkill {

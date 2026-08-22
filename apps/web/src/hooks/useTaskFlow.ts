@@ -76,6 +76,9 @@ function planView(
       steps: candidate.plan.steps,
       activated_nodes: response.activatedNodes,
       assumptions: response.structuredTask.assumptions,
+      ...(candidate.plan.skill_invocations
+        ? { skill_invocations: candidate.plan.skill_invocations }
+        : {}),
     },
     pendingUploads: candidate.pendingInputs,
   };

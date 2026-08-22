@@ -111,6 +111,7 @@ function renderBlock(
     case 'paragraph':
       return `<p class="paragraph" data-ai-alt="${escape(block.id)}">${escape(block.text)}</p>`;
     case 'list':
+    case 'projection-list':
       return `<ul class="list" data-ai-alt="${escape(block.id)}">${block.items.map((item) => `<li>${escape(item)}</li>`).join('')}</ul>`;
     case 'metric':
       return `<article class="metric" data-ai-alt="${escape(block.id)}"><span>${escape(block.label)}</span><strong>${escape(block.value)}</strong></article>`;

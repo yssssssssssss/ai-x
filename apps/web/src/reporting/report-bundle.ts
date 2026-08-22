@@ -181,14 +181,16 @@ function safeReportBlock(
   if (block.type === 'metric') {
     return { id: block.id, type: block.type, label: block.label, value: block.value, evidenceIds: block.evidenceIds };
   }
-  if (block.type === 'list') {
+  if (block.type === 'list' || block.type === 'projection-list') {
     return {
       id: block.id,
       type: block.type,
       items: evidenceIndexItems ? [...evidenceIndexItems] : block.items,
-      ...(block.sourcePointers ? { sourcePointers: block.sourcePointers } : {}),
-      ...(block.sourceNodeIds ? { sourceNodeIds: block.sourceNodeIds } : {}),
-      ...(block.summary === undefined ? {} : { summary: block.summary }),
+      ...(block.type === 'projection-list' ? {
+        sourcePointers: block.sourcePointers,
+        ...(block.sourceNodeIds ? { sourceNodeIds: block.sourceNodeIds } : {}),
+        summary: block.summary,
+      } : {}),
     };
   }
   if (block.type === 'image') {
@@ -328,7 +330,7 @@ function reportMarkdown(
       if (block.type === 'metric') {
         sectionLines.push(`**${block.label}: ${block.value}**`, '', `Evidence: ${block.evidenceIds.join(', ')}`, '');
       }
-      if (block.type === 'list') {
+      if (block.type === 'list' || block.type === 'projection-list') {
         const items = section.id === 'appendix' && block.id === 'evidence-index'
           ? evidenceIndexItems
           : block.items;

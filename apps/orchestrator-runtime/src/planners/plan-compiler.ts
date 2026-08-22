@@ -33,7 +33,10 @@ import {
 } from '../runtime/config-loader.ts';
 import { SchemaValidator } from '../schema/validator.ts';
 import { resolveCompetitiveScoringWeights } from '../report/competitive-weight-chart.ts';
-import { compileSkillSteps } from '../skills/skill-plan-compiler.ts';
+import {
+  assertCompiledSkillPlan,
+  compileSkillSteps,
+} from '../skills/skill-plan-compiler.ts';
 
 export interface CurrentPlanCandidateProposal extends Omit<PlanCandidate, 'steps'> {
   steps: CurrentPlanStep[];
@@ -1071,6 +1074,7 @@ export class PlanCompiler {
       activated_nodes: [...input.activated_nodes],
     };
     this.validator.validateOrThrow('current-execution-plan', plan);
+    assertCompiledSkillPlan(plan);
     return { plan, pending_inputs: derivePendingInputs(steps, eligibleSkills, toolsById) };
   }
 }

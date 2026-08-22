@@ -277,6 +277,9 @@ skill_id
 execution_mode
 contract_version
 contract_hash
+skill_reference_hashes
+knowledge_references
+resource_gaps
 step_nos
 ```
 
@@ -325,8 +328,8 @@ apps/orchestrator-runtime/src/skills/skill-plan-compiler.ts
 7. 将 stage ID 解析成最终 step number。
 8. 将 stage 依赖转换成 `depends_on`。
 9. 为每个步骤写 `skill_invocation_id` 和 `skill_stage_id`。
-10. 将合同 hash 写入 `skill_invocations`。
-11. 把编译后的普通步骤交给现有 PlanCompiler 做统一 DAG、Evidence、InputBinding 和 Approval 校验。
+10. 将合同 hash 与 Skill reference hashes 写入 `skill_invocations`，并记录可继续执行的资源数量缺口。
+11. 把编译后的普通步骤交给现有 PlanCompiler 做统一 DAG、Evidence、InputBinding 和 Approval 校验；修订和执行入口再次校验冻结合同、reference、actor、依赖、output 及每个 invocation 的 Tool 所有权。
 
 不新建第二套调度器。SkillPlanCompiler 只负责计划编译，不参与运行时执行。
 
@@ -388,7 +391,8 @@ evidenceClass: knowledge
 
 ### 11.4 失败策略
 
-- 必需资源缺失或 hash 漂移：暂停任务，失败类型 `required_knowledge_unavailable`，要求重生成计划或终止。
+- 必需资源临时缺失：暂停任务，失败类型 `required_knowledge_unavailable`，允许 `retry` 或 `abort`。
+- 已冻结资源的 status、path 或正文 hash 漂移：暂停任务，失败类型 `knowledge_configuration_drift`，只允许重新生成计划或终止。
 - 可选资源缺失：记录 Gap，继续执行，最终为 `completed_with_gaps`。
 - draft 资源允许读取，但必须在 Skill 输出运行说明和 provenance 中记录 draft 状态。
 
@@ -437,9 +441,9 @@ evidenceClass: knowledge
 
 - Execution step：`failed`。
 - Task：`paused`。
-- failure kind：`required_knowledge_unavailable`。
-- allowed actions：`retry`、`abort`。
-- 资源 hash 漂移时 retry 不能继续使用旧计划，必须重新生成 Plan Version。
+- failure kind：临时缺失为 `required_knowledge_unavailable`；状态、路径或正文漂移为 `knowledge_configuration_drift`。
+- allowed actions：临时缺失为 `retry`、`abort`；漂移为 `replan`、`abort`。
+- 资源漂移时旧计划不可重试，必须重新生成 Plan Version 并再次确认。
 
 ### 13.4 Runner 收敛
 
@@ -576,20 +580,21 @@ assets/
 
 ```text
 apps/orchestrator-runtime/src/report/report-projection.ts
-apps/orchestrator-runtime/src/report/research-plan-projection.ts
 ```
 
-现有 competitive、VOC、design audit 和 accessibility 的专用投影逻辑逐步迁移为 Adapter；首批必须完成 ResearchPlanProjection，其他类型行为保持不变。
+ResearchPlanProjection 与 coverage validator 集中在同一模块中；现有 competitive、VOC、design audit 和 accessibility 的专用投影逻辑保持不变。
 
 ### 17.2 ReportDocument v2
 
-每个 Block 增加：
+仅 payload 投影专用的 `projection-list` Block 增加并强制：
 
 ```text
 sourcePointers
-sourceNodeIds
+sourceNodeIds（可选，仅在存在稳定源节点时）
 summary
 ```
+
+普通 paragraph/fact/metric/list/image/chart Block 不得冒充 payload 字段覆盖来源。
 
 文档增加：
 
@@ -637,7 +642,8 @@ FindingGraph、recommendations、risks 和 evidence index 保持单独章节。
 
 - full 投影全部被 `coveredPointers` 覆盖。
 - summary 投影中的未覆盖字段全部出现在 `omittedPointers`。
-- source pointer 唯一且存在。
+- 每个 `projection-list.sourcePointers` 在源 Deliverable payload 中真实存在。
+- 文档级 `coveredPointers` 与所有 `projection-list` 的来源指针逐项一致。
 - 空章节不进入目录。
 - Evidence ID、Finding ID 和 Asset reference 全部有效。
 
@@ -673,8 +679,7 @@ ControlArtifactStore 已支持通用 kind 和 schemaVersion。
 
 ## 19. 安全与审计
 
-- Knowledge 只允许索引 ID，不允许任意路径。
-- 路径解析必须留在配置根和 knowledge-base 内。
+- Knowledge 只允许索引 ID，不允许任意路径；词法与物理 realpath 必须都位于 knowledge-base，且路径链不得包含 symlink。
 - Tool 只能来自 Registry 和冻结合同。
 - Tool input/output 必须经过 Schema。
 - LLM 不获得 Shell、数据库或文件系统句柄。
@@ -687,8 +692,8 @@ ControlArtifactStore 已支持通用 kind 和 schemaVersion。
 
 | 情况 | 步骤 | Task | 用户操作 |
 |---|---|---|---|
-| 必需知识缺失 | failed | paused | 重新生成计划 / 终止 |
-| 知识 hash 漂移 | failed | paused | 重新生成计划 / 终止 |
+| 必需知识临时缺失 | failed | paused | retry / abort |
+| 知识 status/path/hash 漂移 | failed | paused | replan / abort |
 | 可选知识缺失 | succeeded + gap | completed_with_gaps | 查看缺口 |
 | Skill degraded | succeeded + gap | completed_with_gaps | 查看局限 |
 | Core Tool 失败 | failed | paused | retry / abort |
@@ -707,7 +712,7 @@ apps/orchestrator-runtime/src/skills/skill-execution-contract.ts
 apps/orchestrator-runtime/src/skills/skill-plan-compiler.ts
 apps/orchestrator-runtime/src/knowledge/knowledge-bundle-resolver.ts
 apps/orchestrator-runtime/src/report/report-projection.ts
-apps/orchestrator-runtime/src/report/research-plan-projection.ts
+apps/orchestrator-runtime/src/skills/skill-result-status.ts
 orchestrator/skill-executions/generate-research-plan.yaml
 tests/skill-execution-contract.test.ts
 tests/knowledge-bundle-resolver.test.ts

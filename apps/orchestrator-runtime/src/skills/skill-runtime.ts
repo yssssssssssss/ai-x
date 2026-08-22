@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, lstatSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { getConfigRoot, hashFile, type SkillRegistryEntry } from '../runtime/config-loader.ts';
 import type { SkillLoader, LoadedSkillSchemas } from '../runtime/skill-loader.ts';
@@ -19,6 +19,50 @@ export interface PreparedSkillExecution {
   prompt: string;
   context: Record<string, unknown>;
   referenceHashes: Array<{ path: string; hash: string }>;
+  degradedPolicy: 'gap' | 'block';
+}
+
+export interface SkillReferenceDocument {
+  path: string;
+  content: string;
+  hash: string;
+}
+
+export function loadSkillReferenceDocuments(input: {
+  skillId: string;
+  skillLoader: SkillLoader;
+}): SkillReferenceDocument[] {
+  const contractLoader = input.skillLoader as SkillLoader & {
+    loadSkillExecution?: (id: string) => ReturnType<SkillLoader['loadSkillExecution']>;
+  };
+  const execution = typeof contractLoader.loadSkillExecution === 'function'
+    ? contractLoader.loadSkillExecution(input.skillId)
+    : null;
+  if (!execution) return [];
+  const body = input.skillLoader.loadSkillBody(input.skillId);
+  const skillRoot = realpathSync(dirname(resolve(getConfigRoot(), body.path)));
+  return (execution.contract.skill_references ?? []).map((referencePath) => {
+    if (
+      isAbsolute(referencePath)
+      || referencePath.includes('\\')
+      || referencePath.split('/').some((segment) => segment === '' || segment === '.' || segment === '..')
+    ) throw new Error('Skill reference path must be a normalized relative path');
+    let cursor = skillRoot;
+    for (const segment of referencePath.split('/')) {
+      cursor = resolve(cursor, segment);
+      if (lstatSync(cursor).isSymbolicLink()) throw new Error('Skill reference path contains a symlink');
+    }
+    const full = realpathSync(cursor);
+    if (relative(skillRoot, full).startsWith('..') || !statSync(full).isFile()) {
+      throw new Error('Skill reference path escapes the Skill root');
+    }
+    const content = readFileSync(full, 'utf8');
+    return {
+      path: referencePath,
+      content,
+      hash: `sha256:${createHash('sha256').update(content).digest('hex')}`,
+    };
+  });
 }
 
 export function prepareSkillExecution(input: {
@@ -49,18 +93,7 @@ export function prepareSkillExecution(input: {
   const execution = typeof contractLoader.loadSkillExecution === 'function'
     ? contractLoader.loadSkillExecution(input.skillId)
     : null;
-  const skillRoot = dirname(resolve(getConfigRoot(), body.path));
-  const references = (execution?.contract.skill_references ?? []).map((referencePath) => {
-    if (isAbsolute(referencePath)) throw new Error('Skill reference path must be relative');
-    const full = resolve(skillRoot, referencePath);
-    if (relative(skillRoot, full).startsWith('..')) throw new Error('Skill reference path escapes the Skill root');
-    const content = readFileSync(full, 'utf8');
-    return {
-      path: referencePath,
-      content,
-      hash: `sha256:${createHash('sha256').update(content).digest('hex')}`,
-    };
-  });
+  const references = loadSkillReferenceDocuments({ skillId: input.skillId, skillLoader: input.skillLoader });
   const referenceText = references.length === 0
     ? ''
     : `\n\nVerified Skill references:\n${references.map(({ path, content }) => `--- ${path} ---\n${content}`).join('\n\n')}`;
@@ -86,5 +119,6 @@ export function prepareSkillExecution(input: {
       ...stepContract,
     },
     referenceHashes: references.map(({ path, hash }) => ({ path, hash })),
+    degradedPolicy: execution?.contract.degraded_policy ?? 'gap',
   };
 }
