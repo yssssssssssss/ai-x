@@ -240,6 +240,34 @@ test('explicit requirements return ready_to_plan and invoke planner with finaliz
   assert.deepEqual(repository.events, ['persist_activate']);
 });
 
+test('retries one structurally valid but semantically invalid Requirement with validation feedback', async () => {
+  const { RequirementRefinementService } = await loadModule();
+  const invalid = requirement({ expected_deliverables: ['unregistered_report'] });
+  const valid = requirement();
+  const llm = new FixtureLLM([invalid, valid]);
+  const repository = makeRepository();
+  const service = new RequirementRefinementService({
+    llm,
+    validator: new SchemaValidator(),
+    repository,
+    conversations: makeConversations(),
+    planner: { async plan() {} },
+  });
+
+  const result = await service.understand({
+    taskId,
+    conversationId,
+    ownerUserId,
+    originalInput: 'compare live-commerce competitors',
+  });
+
+  assert.equal(result.status, 'ready_to_plan');
+  assert.equal(llm.calls.length, 2);
+  assert.match(llm.calls[1]?.prompt ?? '', /上一次结构化需求未通过校验/u);
+  assert.match(JSON.stringify(llm.calls[1]?.context), /validation_feedback/u);
+  assert.equal(repository.versions.length, 1);
+});
+
 test('explicit weighted scoring matrix overrides unrelated LLM comparison dimensions before persistence', async () => {
   const { RequirementRefinementService } = await loadModule();
   const weightedDimensions = [

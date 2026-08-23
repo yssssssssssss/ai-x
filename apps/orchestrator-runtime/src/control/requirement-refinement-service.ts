@@ -22,7 +22,12 @@ import type {
 import type { LLMClient } from '../runtime/llm-client.ts';
 import { hashPrompt } from '../runtime/llm-client.ts';
 import { getConfigRoot } from '../runtime/config-loader.ts';
+import { redactString } from '../runtime/redaction.ts';
 import { SchemaValidator } from '../schema/validator.ts';
+
+function redactRequirementValidationError(error: unknown): string {
+  return redactString(error instanceof Error ? error.message : String(error)).replace(/\s+/gu, ' ').slice(0, 1000);
+}
 
 function researchTaskSchema(): object {
   return JSON.parse(
@@ -685,25 +690,43 @@ export class RequirementRefinementService {
       original_input: input.originalInput,
       clarification: input.clarification,
     };
-    const generated = await this.dependencies.llm.generateStructured<ResearchTaskV2>({
-      prompt: `${REQUIREMENT_PROMPT}\n用户当前输入:${input.originalInput}`,
-      schema: researchTaskSchema(),
-      schemaName: 'research-task-v2',
-      context,
-      receipt: {
-        stage: input.clarification === null ? 'requirement_understanding' : 'requirement_clarification',
-        contextManifestHash: hashPrompt('', context),
-        expectedModel: this.dependencies.expectedActualModel
-          ?? this.dependencies.llm.identity.requestedModel,
-      },
-    });
-    this.dependencies.validator.validateOrThrow('research-task-v2', generated.data);
-    const requirement = normalizeOutcomeRequirement(
-      normalizeExplicitWeightedMatrix(generated.data),
-      input.originalInput,
-      input.clarification,
-    );
-    const canonicalRequirement = canonicalizeExpectedDeliverables(requirement);
+    let requirement: ResearchTaskV2 | null = null;
+    let canonicalRequirement: ResearchTaskV2 | null = null;
+    let validationFeedback: string | null = null;
+    for (let round = 0; round < 2; round += 1) {
+      const attemptContext = validationFeedback
+        ? { ...context, validation_feedback: validationFeedback }
+        : context;
+      const generated = await this.dependencies.llm.generateStructured<ResearchTaskV2>({
+        prompt: `${REQUIREMENT_PROMPT}\n用户当前输入:${input.originalInput}`
+          + (validationFeedback ? `\n上一次结构化需求未通过校验，请只修正以下问题：${validationFeedback}` : ''),
+        schema: researchTaskSchema(),
+        schemaName: 'research-task-v2',
+        context: attemptContext,
+        receipt: {
+          stage: input.clarification === null ? 'requirement_understanding' : 'requirement_clarification',
+          contextManifestHash: hashPrompt('', attemptContext),
+          expectedModel: this.dependencies.expectedActualModel
+            ?? this.dependencies.llm.identity.requestedModel,
+        },
+      });
+      try {
+        this.dependencies.validator.validateOrThrow('research-task-v2', generated.data);
+        requirement = normalizeOutcomeRequirement(
+          normalizeExplicitWeightedMatrix(generated.data),
+          input.originalInput,
+          input.clarification,
+        );
+        canonicalRequirement = canonicalizeExpectedDeliverables(requirement);
+        break;
+      } catch (error) {
+        if (round === 1) throw error;
+        validationFeedback = redactRequirementValidationError(error);
+      }
+    }
+    if (!requirement || !canonicalRequirement) {
+      throw new Error('requirement refinement exhausted without a valid requirement');
+    }
     const task = await this.dependencies.repository.getTaskDetail?.(input.taskId);
     const taskTypeBeforeRefinement = task?.structuredTask
       && typeof task.structuredTask === 'object'
