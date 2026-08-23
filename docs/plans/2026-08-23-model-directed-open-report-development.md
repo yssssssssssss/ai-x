@@ -1,6 +1,6 @@
 # 模型编排的开放式动态报告开发方案
 
-> 状态：Phase 1–7 源码已实现；本地全量门禁通过；五次无20分钟总限制的真实运行已逐步暴露并修复内容边界，最近一次在 Requirement 持久化前遇到结构化输出校验失败，现已增加一次受限 Requirement 修复；完整真实闭环待再次授权复跑。
+> 状态：Phase 1–7 源码已实现；本地全量门禁通过；六次无20分钟总限制的真实运行已逐步验证到最终语义 Review，当前已增加一次受限 Content Draft 语义修订；完整真实闭环待再次授权复跑。
 >
 > 日期：2026-08-23
 >
@@ -834,8 +834,9 @@ git diff --check
 - `1000e959-e970-4f40-aa1a-60e2026f7615`：发现 `E2-3/E2-5` 与 Knowledge `K2-3/K2-5` 的来源前缀漂移，已确定性映射并将 Knowledge-only finding 降为 provisional；该任务的真实 Artifact 已离线重放通过 Canonical Assembly、ReportDocument Schema、Projection Integrity 和引用校验；
 - `8b1956ee-4308-4974-ba0c-484a0841396b`：模型引用不存在的 `E1-13`；该引用不能被安全猜测，已新增一次受限 `deliverable_repair`，只允许从精确 Question/Evidence 白名单修正 Content Draft，仍不恢复完整报告重写；
 - `9e5b3a75-6989-48d9-8b89-fb2655ef5e64`：Requirement 模型调用成功但输出未通过后续结构/语义校验，未写 Requirement Version，也未进入 Tool；Requirement 现允许一次携带脱敏校验反馈的受限重试；
-- 最新本地门禁为 1670 tests、1655 pass、15 skip、0 fail；
-- 按真实配额约束，最新两条受限修复路径尚未再次执行完整真实闭环。
+- `ee5ba760-39ea-42f0-aa1a-60e2026f7615`：Canonical Deliverable v2 已成功 SEALED，证明重复全文生成已经移除且组装门禁通过；最终 `report-review-v2` 返回 `revise`，指出部分 provisional 策略措辞仍偏强；现已实现一次只修改 Content Draft、并重新执行确定性组装与最终 Review 的受限语义修订；
+- 最新本地门禁为 1671 tests、1656 pass、15 skip、0 fail；
+- 按真实配额约束，受限语义修订后的完整真实闭环尚未再次运行。
 
 ## 23. 完成定义
 

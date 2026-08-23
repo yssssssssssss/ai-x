@@ -38,6 +38,7 @@ import {
   assembleResearchStrategyDeliverable,
   extractResearchStrategyContentDraft,
   isResearchStrategyPayloadV2,
+  researchStrategyContentDraftFromPayload,
   ResearchStrategyAssemblyError,
 } from './research-strategy-deliverable-assembler.ts';
 import { createDeliverableValidationDiagnostic } from './deliverable-validation-diagnostic.ts';
@@ -293,14 +294,17 @@ export interface CurrentDeliverableGenerateInput {
   activeLease?: ControlExecutionLease;
   visualAssets?: readonly VerifiedVisualAsset[];
   visualAnnotationBindings?: readonly VerifiedVisualAnnotationBinding[];
+  strategyDraftOverride?: ResearchStrategyContentDraftV2;
 }
 
 export interface CurrentDeliverableGenerateResult {
   deliverable: DeliverableEnvelope;
   deliverableArtifactId: string;
 }
+
 export interface CurrentDeliverableRevisionInput extends CurrentDeliverableGenerateInput {
   review: ReportReviewArtifact;
+  currentDeliverable?: ResearchDeliverableEnvelope<unknown>;
 }
 
 function unknownRecord(value: unknown): Record<string, unknown> | null {
@@ -1254,8 +1258,9 @@ export class CurrentDeliverableService {
         throw new Error('reviewed Skill assembly requires a finalized research strategy requirement');
       }
       let deliverable: ResearchDeliverableEnvelope<ResearchStrategyReportPayloadV2> | null = null;
-      let draftOverride: ResearchStrategyContentDraftV2 | undefined;
-      for (let assemblyRound = 0; assemblyRound < 2; assemblyRound += 1) {
+      let draftOverride = input.strategyDraftOverride;
+      const assemblyAttempts = draftOverride ? 1 : 2;
+      for (let assemblyRound = 0; assemblyRound < assemblyAttempts; assemblyRound += 1) {
         try {
           deliverable = assembleResearchStrategyDeliverable({
             taskId: input.task.id,
@@ -1285,6 +1290,7 @@ export class CurrentDeliverableService {
           break;
         } catch (error) {
           const repairable = assemblyRound === 0
+            && draftOverride === undefined
             && error instanceof ResearchStrategyAssemblyError
             && !/Reviewer verdict|no final Reviewer/u.test(error.message);
           if (repairable) {
@@ -1579,15 +1585,49 @@ export class CurrentDeliverableService {
     };
   }
   async revise(input: CurrentDeliverableRevisionInput): Promise<CurrentDeliverableGenerateResult> {
-    if (input.plan.plan.deliverable_type === 'research_strategy_report') {
-      throw new Error('research strategy revisions require a new reviewed Content Draft');
-    }
     if (input.review.revisionRound !== 0) {
       throw new Error('deliverable revision requires a round 0 Review');
     }
     const revisionInstruction = input.review.dimensions
       .flatMap((dimension) => dimension.issues)
       .join('; ');
+    if (input.plan.plan.deliverable_type === 'research_strategy_report') {
+      if (!input.currentDeliverable || !isResearchStrategyPayloadV2(input.currentDeliverable.payload)) {
+        throw new Error('research strategy revision requires the current v2 Canonical Deliverable');
+      }
+      const currentDraft = researchStrategyContentDraftFromPayload(
+        input.currentDeliverable.payload,
+        input.currentDeliverable.methodSummary,
+      );
+      const repaired = await this.dependencies.llm.generateStructured<ResearchStrategyContentDraftV2>({
+        prompt: [
+          'Revise the research-strategy-content-draft-v2 only enough to resolve the final review issues.',
+          'Preserve supported conclusions and exact Evidence IDs. Weaken unsupported wording, update status or validationNeeded where required, and keep every requested typed content Block.',
+          'Do not output Canonical IDs, Coverage, FindingGraph, risk identities, source pointers, or requestedArtifactBindings.',
+          `Review issues: ${redactString(revisionInstruction)}`,
+        ].join('\n'),
+        schema: researchStrategyDraftSchema(),
+        schemaName: 'research-strategy-content-draft-v2',
+        context: {
+          draft: redactSensitiveValue(currentDraft),
+          allowedQuestionIds: (input.problemGraph as ProblemGraph).questions.map(({ id }) => id),
+          allowedEvidence: input.evidenceManifest.value.entries.map(({ id, evidenceClass }) => ({ id, evidenceClass })),
+          requestedArtifacts: (input.finalizedRequirement as ResearchTaskV2).requested_artifacts ?? [],
+        },
+        receipt: {
+          stage: 'deliverable_repair',
+          attemptId: input.attempt.id,
+          stepNo: input.stepNo,
+          expectedModel: input.expectedModel,
+        },
+      });
+      return this.generate({
+        ...input,
+        strategyDraftOverride: repaired.data,
+        revisionInstruction,
+        revisionRound: 1,
+      });
+    }
     return this.generate({
       ...input,
       revisionInstruction,

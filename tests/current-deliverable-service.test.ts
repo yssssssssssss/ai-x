@@ -83,6 +83,7 @@ interface DeliverableGenerateResult {
 
 interface DeliverableRevisionInput extends DeliverableGenerateInput {
   review: ReportReviewArtifact;
+  currentDeliverable?: ResearchDeliverableEnvelope<unknown>;
 }
 
 interface CurrentDeliverableServiceLike {
@@ -1308,6 +1309,33 @@ test('assembles a research strategy deliverable from the reviewed Skill output w
   assert.equal(llm.structuredCalls.length, 0);
   assert.equal((result.deliverable.payload as { schemaVersion?: string }).schemaVersion, 'research-strategy-content-v2');
   assert.deepEqual(result.deliverable.coverage.questionBindings, [{ questionId: 'q1', summaryIds: ['summary-q1'] }]);
+});
+
+test('revises an open strategy report through one bounded Content Draft repair', async () => {
+  const content = openStrategyDraft();
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(content); } };
+  const { service, llm, writes } = await createHarness(content, materializer);
+  const strategyInput = generateInput(openStrategyInput());
+  const initial = await service.generate(strategyInput);
+  const revised = await service.revise({
+    ...strategyInput,
+    currentDeliverable: initial.deliverable,
+    review: {
+      version: 'report-review-v2', taskId, planVersionId, attemptId,
+      deliverableArtifactId: initial.deliverableArtifactId,
+      verdict: 'revise',
+      dimensions: [{ id: 'reasoning_quality', passed: false, issues: ['Weaken one unsupported claim.'] }],
+      revisionRound: 0,
+    },
+  });
+
+  assert.equal(llm.structuredCalls.length, 1);
+  assert.equal(llm.structuredCalls[0]?.receipt.stage, 'deliverable_repair');
+  assert.equal(revised.deliverableArtifactId, deliverableArtifactId);
+  assert.deepEqual(writes.map(({ relativePath }) => relativePath), [
+    'deliverables/final-r0.json',
+    'deliverables/final-r1.json',
+  ]);
 });
 
 test('repairs one invalid reviewed Content Draft without returning to full Deliverable synthesis', async () => {

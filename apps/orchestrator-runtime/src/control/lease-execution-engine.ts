@@ -2647,10 +2647,13 @@ export class LeaseExecutionEngine {
           to: 'reviewing',
         });
         active = { ...active, stateVersion: reviewingTask.stateVersion };
-        const composer: DeliverableComposer | undefined = deliverableId !== 'research_strategy_report'
-          && this.dependencies.deliverables.revise
+        const composer: DeliverableComposer | undefined = this.dependencies.deliverables.revise
           ? {
-              revise: (revision) => this.dependencies.deliverables.revise!({ ...deliverableInput, review: revision.review }),
+              revise: (revision) => this.dependencies.deliverables.revise!({
+                ...deliverableInput,
+                review: revision.review,
+                currentDeliverable: revision.deliverable as ResearchDeliverableEnvelope<unknown>,
+              }),
             }
           : undefined;
         if (!reviewCoverage) {

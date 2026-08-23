@@ -552,6 +552,53 @@ export function assembleResearchStrategyDeliverable(input: {
   };
 }
 
+export function researchStrategyContentDraftFromPayload(
+  payload: ResearchStrategyReportPayloadV2,
+  methodSummary: string,
+): ResearchStrategyContentDraftV2 {
+  const contentBlocks: ResearchStrategyContentBlockDraftV2[] = payload.contentBlocks.map((block) => {
+    if (block.kind === 'narrative') {
+      const { id, ...content } = block;
+      return { ...content, key: id };
+    }
+    if (block.kind === 'comparison_matrix' || block.kind === 'strategy_map') {
+      const { id, cells, ...content } = block;
+      return {
+        ...content,
+        key: id,
+        cells: cells.map(({ id: cellId, ...cell }) => ({ ...cell, key: cellId })),
+      };
+    }
+    if (block.kind === 'mind_model') {
+      const { id, nodes, ...content } = block;
+      return {
+        ...content,
+        key: id,
+        nodes: nodes.map(({ id: nodeId, ...node }) => ({ ...node, key: nodeId })),
+      };
+    }
+    if (!('items' in block)) fail(`unsupported content block kind ${(block as { kind?: unknown }).kind as string}`);
+    const { id, items, ...content } = block;
+    return {
+      ...content,
+      key: id,
+      items: items.map(({ id: itemId, ...item }) => ({ ...item, key: itemId })),
+    } as ResearchStrategyContentBlockDraftV2;
+  });
+  return {
+    schemaVersion: 'research-strategy-content-draft-v2',
+    title: payload.title,
+    decisionContext: payload.decisionContext,
+    executiveAnswer: payload.executiveAnswer,
+    methodSummary,
+    directAnswers: structuredClone(payload.directAnswers),
+    evidenceFindings: payload.evidenceFindings.map(({ id, ...finding }) => ({ ...finding, key: id })),
+    contentBlocks,
+    limitations: [...payload.limitations],
+    openQuestions: [...payload.openQuestions],
+  };
+}
+
 export function isResearchStrategyPayloadV2(value: unknown): value is ResearchStrategyReportPayloadV2 {
   return record(value)?.schemaVersion === 'research-strategy-content-v2';
 }
