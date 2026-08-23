@@ -55,7 +55,7 @@ const ambiguousRequirement = requirement({
 });
 
 class FixtureLLM implements LLMClient {
-  readonly calls: Array<{ context?: object; schemaName: string; prompt: string }> = [];
+  readonly calls: Array<{ context?: object; schemaName: string; prompt: string; schema: object }> = [];
   constructor(
     private readonly fixtures: ResearchTaskV2[],
     private readonly modelName = 'pinned-model',
@@ -67,7 +67,7 @@ class FixtureLLM implements LLMClient {
     };
   }
   async generateStructured<T>(opts: { context?: object; schemaName: string; prompt: string; schema: object; receipt: { expectedModel?: string } }): Promise<LLMResult<T>> {
-    this.calls.push({ context: opts.context, schemaName: opts.schemaName, prompt: opts.prompt });
+    this.calls.push({ context: opts.context, schemaName: opts.schemaName, prompt: opts.prompt, schema: opts.schema });
     const data = this.fixtures.shift();
     if (!data) throw new Error('fixture exhausted');
     return {
@@ -235,6 +235,7 @@ test('explicit requirements return ready_to_plan and invoke planner with finaliz
   assert.deepEqual(result.requirement, finalized);
   assert.deepEqual(planned, { originalInput: 'compare live-commerce competitors', requirement: finalized });
   assert.match(llm.calls[0]?.prompt ?? '', /原顺序.*comparison_dimensions/u);
+  assert.ok(Object.keys(llm.calls[0]?.schema ?? {}).length > 0, 'Gateway call must receive the current local ResearchTaskV2 schema');
   assert.deepEqual(progress, [planningProgress]);
   assert.deepEqual(repository.events, ['persist_activate']);
 });

@@ -29,7 +29,10 @@ import {
 import { sameBrowserSourceUrl } from '../runtime/public-web-access-policy.ts';
 import type { VerifiedVisualAnnotationBinding } from './report-composition-service.ts';
 import type { VerifiedVisualAsset } from './visual-asset-service.ts';
-import { validateResearchStrategyAnswer } from './answer-quality-validator.ts';
+import {
+  canonicalizeRequestedArtifactBindings,
+  validateResearchStrategyAnswer,
+} from './answer-quality-validator.ts';
 function createDeliverableDraftSchema(payloadSchema: object, strictContract: boolean) {
   return {
     type: 'object',
@@ -1350,7 +1353,18 @@ export class CurrentDeliverableService {
         : generatedDraft;
       try {
         this.dependencies.validator.validateSchemaOrThrow(draftSchema, contentDraft, schemaName);
-        const draft = contentDraft as DeliverableDraft;
+        const validatedDraft = contentDraft as DeliverableDraft;
+        let draft = validatedDraft;
+        if (strategyRequirement) {
+          draft = {
+            ...validatedDraft,
+            payload: canonicalizeRequestedArtifactBindings(
+              validatedDraft.payload as ResearchStrategyReportPayload,
+              strategyRequirement,
+            ),
+          };
+          this.dependencies.validator.validateSchemaOrThrow(draftSchema, draft, schemaName);
+        }
         if (strictV2 && requiredCoverage) assertRequiredCoverage(draft.coverage, requiredCoverage);
         if (strictV2) {
           assertPayloadVisualReferences(

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type {
   ControlPlaneRepository,
   ControlTaskDetail,
@@ -19,7 +21,14 @@ import type {
 } from '../planners/planning-guidance.ts';
 import type { LLMClient } from '../runtime/llm-client.ts';
 import { hashPrompt } from '../runtime/llm-client.ts';
+import { getConfigRoot } from '../runtime/config-loader.ts';
 import { SchemaValidator } from '../schema/validator.ts';
+
+function researchTaskSchema(): object {
+  return JSON.parse(
+    readFileSync(join(getConfigRoot(), 'schemas', 'research-task-v2.schema.json'), 'utf8'),
+  ) as object;
+}
 
 export interface ConversationMessage {
   role: string;
@@ -678,7 +687,7 @@ export class RequirementRefinementService {
     };
     const generated = await this.dependencies.llm.generateStructured<ResearchTaskV2>({
       prompt: `${REQUIREMENT_PROMPT}\n用户当前输入:${input.originalInput}`,
-      schema: {},
+      schema: researchTaskSchema(),
       schemaName: 'research-task-v2',
       context,
       receipt: {

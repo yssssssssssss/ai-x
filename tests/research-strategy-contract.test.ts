@@ -3,7 +3,10 @@ import { test } from 'node:test';
 import type { ResearchStrategyReportPayload } from '../packages/api-contract/research-deliverable.ts';
 import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
-import { validateResearchStrategyAnswer } from '../apps/orchestrator-runtime/src/report/answer-quality-validator.ts';
+import {
+  canonicalizeRequestedArtifactBindings,
+  validateResearchStrategyAnswer,
+} from '../apps/orchestrator-runtime/src/report/answer-quality-validator.ts';
 import { collectRequiredRiskDisclosures } from '../apps/orchestrator-runtime/src/report/current-deliverable-service.ts';
 import { REVIEWER_STEP_OUTPUT_SCHEMA } from '../apps/orchestrator-runtime/src/control/lease-execution-engine.ts';
 import { resolveDeliverable } from '../apps/orchestrator-runtime/src/report/deliverable-registry.ts';
@@ -153,6 +156,31 @@ test('structured reviewer schema rejects whitespace-only prose and conditions', 
       /schema/u,
     );
   }
+});
+
+test('requested artifact bindings are deterministically rebuilt from canonical payload content', () => {
+  const payload = strategyPayload();
+  payload.requestedArtifactBindings[0]!.blockIds = ['model-invented-id'];
+  payload.requestedArtifactBindings[0]!.questionIds = ['model-invented-question'];
+  payload.requestedArtifactBindings[0]!.evidenceIds = [];
+  const normalized = canonicalizeRequestedArtifactBindings(payload, requirement);
+  const strategyMap = normalized.requestedArtifactBindings.find(({ artifactType }) => artifactType === 'strategy_map');
+  assert.deepEqual(strategyMap, {
+    artifactType: 'strategy_map',
+    sourceField: '/strategyMap',
+    blockIds: ['C1'],
+    questionIds: ['Q1'],
+    evidenceIds: ['E1'],
+    status: 'complete',
+  });
+  assert.equal(normalized.requestedArtifactBindings.length, requirement.requested_artifacts?.length);
+  assert.doesNotThrow(() => validateResearchStrategyAnswer({
+    payload: normalized,
+    requirement,
+    problemGraph: graph,
+    evidenceIds: ['E1'],
+    risksAndOpenIssues: [],
+  }));
 });
 
 test('research strategy payload satisfies its closed schema and answer-quality gate', () => {

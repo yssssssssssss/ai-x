@@ -135,6 +135,36 @@ function artifactProjection(
   }
 }
 
+export function canonicalizeRequestedArtifactBindings(
+  payload: ResearchStrategyReportPayload,
+  requirement: ResearchTaskV2,
+): ResearchStrategyReportPayload {
+  const priorByType = new Map(
+    payload.requestedArtifactBindings.map((binding) => [binding.artifactType, binding]),
+  );
+  const knownQuestionIds = new Set(payload.directAnswers.map(({ questionId }) => questionId));
+  const fallbackQuestionIds = [...knownQuestionIds];
+  const requested = [...new Set(requirement.requested_artifacts ?? [])];
+  return {
+    ...payload,
+    requestedArtifactBindings: requested.map((artifactType) => {
+      const projection = artifactProjection(artifactType, payload);
+      const priorQuestionIds = (priorByType.get(artifactType)?.questionIds ?? [])
+        .filter((questionId) => knownQuestionIds.has(questionId));
+      return {
+        artifactType,
+        sourceField: projection.sourceField,
+        blockIds: [...new Set(projection.blockIds)],
+        questionIds: [...new Set(projection.questionIds.length > 0
+          ? projection.questionIds
+          : (priorQuestionIds.length > 0 ? priorQuestionIds : fallbackQuestionIds))],
+        evidenceIds: [...new Set(projection.evidenceIds)],
+        status: 'complete' as const,
+      };
+    }),
+  };
+}
+
 export function validateResearchStrategyAnswer(input: {
   payload: ResearchStrategyReportPayload;
   requirement: ResearchTaskV2;
