@@ -358,11 +358,30 @@ function canonicalizeEvidenceAliases(
   const known = new Set(manifest.entries.map(({ id }) => id));
   const factual = manifest.entries.filter(({ evidenceClass }) => FACTUAL_EVIDENCE_CLASSES.has(evidenceClass));
   const aliases = new Map(factual.map((entry, index) => [`E${index + 1}`, entry.id]));
+  for (const entry of manifest.entries) {
+    const match = /^([EK])(\d+-\d+)$/u.exec(entry.id);
+    if (!match) continue;
+    aliases.set(`${match[1] === 'E' ? 'K' : 'E'}${match[2]}`, entry.id);
+  }
   const normalize = (ids: string[]): string[] => unique(ids.map((id) => (
     known.has(id) ? id : aliases.get(id) ?? id
   )));
   for (const answer of draft.directAnswers) answer.evidenceIds = normalize(answer.evidenceIds);
-  for (const finding of draft.evidenceFindings) finding.support.evidenceIds = normalize(finding.support.evidenceIds);
+  for (const finding of draft.evidenceFindings) {
+    finding.support.evidenceIds = normalize(finding.support.evidenceIds);
+    if (
+      finding.support.status === 'supported'
+      && !finding.support.evidenceIds.some((evidenceId) => {
+        const entry = manifest.entries.find(({ id }) => id === evidenceId);
+        return Boolean(entry && FACTUAL_EVIDENCE_CLASSES.has(entry.evidenceClass));
+      })
+    ) {
+      finding.support.status = 'provisional';
+      if (!finding.support.validationNeeded.trim() || finding.support.validationNeeded === 'not_applicable') {
+        finding.support.validationNeeded = 'This method-grounded statement requires factual validation.';
+      }
+    }
+  }
   for (const block of draft.contentBlocks) {
     if (block.kind === 'narrative') block.support.evidenceIds = normalize(block.support.evidenceIds);
     else if (block.kind === 'comparison_matrix' || block.kind === 'strategy_map') {

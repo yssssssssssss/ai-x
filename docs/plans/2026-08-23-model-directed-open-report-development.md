@@ -1,8 +1,10 @@
 # 模型编排的开放式动态报告开发方案
 
-> 状态：Proposed，待用户批准后实施。
+> 状态：Phase 1–7 源码已实现；本地全量门禁通过；无整任务时限的真实运行已验证到最终组装边界，最新真实 Artifact 的修复后离线重放通过，完整真实闭环待再次授权复跑。
 >
 > 日期：2026-08-23
+>
+> 实现提交序列：`118c13f`、`6c2d3ce`、`f8f409d` 及本状态更新提交
 >
 > 当前基线：`feat/research-answer-dynamic-reports@affb2cc5389ee19633684f0e4b1ded4f15398bcd`
 >
@@ -810,24 +812,47 @@ git diff --check
 
 如果该假设不成立，Content Gate 仍会失败，但失败会被精确记录，且不会再混入 Layout 错误。此时应改为让现有多个分析步骤分别输出统一 Content Node，再由 Assembler 汇总；不得退回“大模型一次性重写完整报告”的旧方案。
 
-## 22. 完成定义
+## 22. 实施结果（2026-08-23）
+
+已实现：
+
+- 新增严格分离的 Skill Content Draft v2 与 Canonical Payload v2 Schema；
+- Deliverable Registry 分离当前 writer 与历史 reader，并以 Payload 版本选择读取 Schema；
+- `research_strategy_report` 使用 reviewed Skill assembly，不再进行第二次完整 Deliverable LLM 重写；
+- Assembler 确定性生成全局 ID、FindingGraph、Recommendations、Coverage、风险身份和 requested artifact bindings；
+- 对模型的 Evidence 简写、来源步骤前缀和矩阵轴漂移做确定性规范化；Knowledge-only 结论自动降为 provisional；
+- 新增引用式 Layout Blueprint、严格引用校验和 deterministic fallback；
+- ReportDocument v2、Web、Markdown、ZIP 与 Zero 使用动态 Section 顺序；
+- Blueprint 和布局诊断进入 Report Package 的绑定 Artifact 集；
+- 真实 Smoke 取消20分钟整任务限制，并每30秒输出脱敏阶段进度；
+- 历史 Strategy Payload v1、ReportDocument v1/v2 和其他 Deliverable 路径保持兼容。
+
+真实环境记录：
+
+- `38762147-f639-4043-ad3d-4b5ae45af19a`：首次无总时限运行在组装阶段发现 `E1` Evidence 简写，已修复；
+- `e9e596c2-d772-471c-96f2-788d2efe101e`：发现 provisional finding 缺少事实根，已改为由真实公开 Evidence 生成来源锚点；
+- `1000e959-e970-4f40-aa1a-60e2026f7615`：发现 `E2-3/E2-5` 与 Knowledge `K2-3/K2-5` 的来源前缀漂移，已确定性映射并将 Knowledge-only finding 降为 provisional；
+- 对最新一轮真实 Step 8/9、Requirement、ProblemGraph 和 Evidence Manifest 的离线重放已经通过 Canonical Assembly、ReportDocument Schema、Projection Integrity 和 ReportDocument 引用校验；
+- 按“真实失败后停止重复消耗”的约定，修复后的完整真实闭环尚未再次运行。
+
+## 23. 完成定义
 
 ```text
-20-minute whole-run timeout removed                 pending
-per-call safety timeout retained                    pending
-research strategy content v2 contract               pending
-model/machine-owned fields separated                pending
-reviewed Skill output assembled without rewrite     pending
-mechanical IDs/graph/coverage/risk/bindings derived pending
-model-directed layout blueprint                     pending
-invalid layout deterministic fallback               pending
-hard-coded business sections removed                pending
-ReportDocument v2 retained                           pending
-Web/Markdown/ZIP/Zero order aligned                  pending
-v1/v2 historical compatibility                      pending
-sanitized validation diagnostics                    pending
-full source quality gate                             pending
-real Gateway/DB/Tavily no-total-timeout gate         pending
+20-minute whole-run timeout removed                 done
+per-call safety timeout retained                    done
+research strategy content v2 contract               done
+model/machine-owned fields separated                done
+reviewed Skill output assembled without rewrite     done
+mechanical IDs/graph/coverage/risk/bindings derived done
+model-directed layout blueprint                     done
+invalid layout deterministic fallback               done
+hard-coded business sections removed for v2         done
+ReportDocument v2 retained                           done
+Web/Markdown/ZIP/Zero source paths aligned           done
+v1/v2 historical compatibility                      done
+sanitized validation diagnostics                    done
+full source quality gate                             done
+real Gateway/DB/Tavily no-total-timeout gate         pending final rerun
 live Zero gate or explicit exception                 pending
 single merge/restart authorization                   withheld
 push authorization                                   withheld

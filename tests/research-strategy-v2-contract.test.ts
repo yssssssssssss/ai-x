@@ -273,6 +273,32 @@ test('assembler canonicalizes documented ordinal Evidence aliases to Manifest ID
   assert.ok(result.payload.contentBlocks.every((block) => JSON.stringify(block).includes('E1-1')));
 });
 
+test('assembler maps source-step Evidence aliases and downgrades Knowledge-only findings', () => {
+  const value = draft();
+  value.evidenceFindings.push({
+    key: 'method',
+    statement: 'The method provides a useful strategy frame.',
+    support: { ...support(), evidenceIds: ['E2-1'] },
+  });
+  const mixedManifest = structuredClone(manifest);
+  mixedManifest.entries.push({
+    id: 'K2-1',
+    kind: 'knowledge_excerpt',
+    evidenceClass: 'knowledge',
+    artifactId: 'knowledge-1',
+    artifactContentSha256: `sha256:${'6'.repeat(64)}`,
+    jsonPointer: '/resources/0/content',
+    stepNo: 2,
+    sensitivity: 'internal',
+    redaction: 'none',
+  });
+  const result = assemble({ evidenceManifest: mixedManifest, materials: materials(value) });
+  const method = result.payload.evidenceFindings[1]!;
+  assert.deepEqual(method.support.evidenceIds, ['K2-1']);
+  assert.equal(method.support.status, 'provisional');
+  assert.match(method.support.validationNeeded, /factual validation/);
+});
+
 test('assembler roots provisional findings in verified source-anchor facts without promoting the claim', () => {
   const value = draft();
   value.evidenceFindings[0]!.support.status = 'provisional';

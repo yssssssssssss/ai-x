@@ -4,7 +4,7 @@
 >
 > 当前基线：`feat/research-answer-dynamic-reports@affb2cc5389ee19633684f0e4b1ded4f15398bcd`
 >
-> 状态：Proposed，待用户批准后实施。
+> 状态：Phase 1–7 源码已实现并通过本地门禁；三次无20分钟总限制的真实运行均完成步骤1–9并暴露确定性组装边界，最新失败已通过真实Artifact离线重放修复；完整真实闭环待再次授权复跑。
 >
 > 发布规则：所有改动进入同一集成分支；每个 Phase 独立提交、可构建、可回滚；所有源码和外部门禁通过后只合并一次；未经授权不 push。
 
@@ -24,6 +24,21 @@
 - [x] 当前分支 `feat/research-answer-dynamic-reports@affb2cc` 干净。
 - [x] 当前全量质量门禁为 1647 tests、1632 passed、15 skipped、0 failed。
 - [x] 已建立完整方案和本 TodoList。
+
+# 当前实施证据
+
+- [x] Content Draft v2 与 Canonical Payload v2 已分离。
+- [x] `research_strategy_report` 已切换为 reviewed Skill assembly，不再调用完整 Deliverable 重写模型。
+- [x] FindingGraph、Coverage、风险身份、requested artifact bindings 与稳定 ID 已由系统生成。
+- [x] Layout Blueprint 只引用 Canonical Block，并支持确定性 fallback。
+- [x] ReportDocument v2、Web、Markdown、ZIP 和 Zero 源码路径已支持动态 Section。
+- [x] Deliverable/Layout 诊断使用脱敏 Artifact 或 ReportDocument metadata 持久化。
+- [x] 真实 Smoke 已移除20分钟整任务限制并输出30秒进度。
+- [x] 本地全量测试、TypeScript、Registry/Knowledge lint、Web build 与 diff check 已通过。
+- [x] 最新真实失败 Artifact 已离线重放通过 Assembly 与 ReportDocument 全链路校验。
+- [ ] 修复后的完整真实 Gateway/DB 闭环尚未再次运行。
+- [ ] live Zero 尚未验收。
+- [ ] 尚未获得 merge/restart/push 授权。
 
 # Gate 0：批准、冻结与失败基线
 
@@ -573,27 +588,27 @@ Report Review与Package成功
 # 完成账本
 
 ```text
-plan approved                                      pending
-baseline frozen                                    pending
-ADR and domain terms                               pending
-content v2 schema                                  pending
-model draft / machine metadata split               pending
-requested artifact to block mapping                pending
-reviewed Skill assembly                            pending
-duplicate full-report LLM removed                  pending
-canonical IDs/FindingGraph/Coverage/Risk derived   pending
-layout blueprint                                   pending
-layout fallback                                    pending
-hard-coded business sections removed               pending
-ReportDocument v2 retained                         pending
-Web/Markdown/ZIP/Zero aligned                      pending
-legacy v1/v2 compatibility                         pending
-sanitized diagnostics                              pending
-20-minute whole-run timeout removed                pending
-per-call safety timeout retained                   pending
-full quality gate                                  pending
+plan approved                                      done
+baseline frozen                                    done
+ADR and domain terms                               done
+content v2 schema                                  done
+model draft / machine metadata split               done
+requested artifact to block mapping                done
+reviewed Skill assembly                            done
+duplicate full-report LLM removed                  done
+canonical IDs/FindingGraph/Coverage/Risk derived   done
+layout blueprint                                   done
+layout fallback                                    done
+hard-coded business sections removed for v2        done
+ReportDocument v2 retained                         done
+Web/Markdown/ZIP/Zero source paths aligned          done
+legacy v1/v2 compatibility                         done
+sanitized diagnostics                              done
+20-minute whole-run timeout removed                done
+per-call safety timeout retained                   done
+full quality gate                                  done
 independent source review                          pending
-real Gateway/DB/Tavily acceptance                  pending
+real Gateway/DB/Tavily acceptance                  pending final rerun
 live Zero acceptance or explicit exception         pending
 single merge/restart authorization                 withheld
 push authorization                                 withheld
