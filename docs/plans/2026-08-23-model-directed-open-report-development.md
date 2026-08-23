@@ -1,6 +1,6 @@
 # 模型编排的开放式动态报告开发方案
 
-> 状态：Phase 1–7 源码已实现；本地全量门禁通过；八次无20分钟总限制的真实运行已验证到最终语义 Review；最新 Planning 误将纯公开资料任务送入审批，现已确定性移除假设性隐私/授权阻断；完整真实闭环待再次授权复跑。
+> 状态：Phase 1–7 源码已实现；本地全量门禁通过；九次无20分钟总限制的真实运行已验证两轮 Canonical Deliverable 与两轮最终 Review；当前已收紧 Review 的机器/语义职责，完整真实闭环待再次授权复跑。
 >
 > 日期：2026-08-23
 >
@@ -837,8 +837,9 @@ git diff --check
 - `ee5ba760-39ea-42f0-aa1a-60e2026f7615`：Canonical Deliverable v2 已成功 SEALED，证明重复全文生成已经移除且组装门禁通过；最终 `report-review-v2` 返回 `revise`，指出部分 provisional 策略措辞仍偏强；现已实现一次只修改 Content Draft、并重新执行确定性组装与最终 Review 的受限语义修订；
 - `70ca280d-007d-4cdb-810f-6010060f538f`：Requirement 两次 Gateway 调用均成功，但未生成 Requirement Version；现已对完整嵌套对象进行安全解包、删除未声明根字段，并让 Smoke 仅公开错误类型与消息哈希；
 - `3efb0f98-6d1f-4873-9062-443bbc467fc3`：Requirement 与两个候选 Plan 已成功持久化，但模型把“若使用私有数据”的假设性提醒写成 Blocking Issue，使纯公开资料任务进入 `awaiting_approval`；现已在明确 public-only、无PII且用户未请求私有数据时移除这类假设性阻断，真实权限需求仍保留；
-- 最新本地门禁为 1673 tests、1658 pass、15 skip、0 fail；
-- 按真实配额约束，假设性阻断修复与受限语义修订尚未再次执行完整真实闭环。
+- `9a3bdac9-3b68-4800-a5e5-4441c6330e0a`：真实生成 `final-r0` 和受限修订后的 `final-r1`，两者均 SEALED；第二轮 Reviewer 仍以未请求的视觉稿、预算、统计功效等增强项和已经披露的 provisional 缺口判定全部维度失败。现已锁定机器可验证维度不允许语义 Reviewer 反转，并明确“诚实披露的最佳可用答案”可以通过；仅保留推理、建议、证据强度、决策可用性和假设边界为语义维度；
+- 最新本地门禁为 1675 tests、1660 pass、15 skip、0 fail；
+- 按真实配额约束，Review 职责修正后的完整真实闭环尚未再次执行。
 
 ## 23. 完成定义
 

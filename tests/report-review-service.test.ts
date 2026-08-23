@@ -277,6 +277,50 @@ test('answer review reads actionable items from open strategy content blocks', a
   assert.equal(llm.calls.length, 1);
 });
 
+test('answer review cannot overturn deterministic requested-artifact coverage', async () => {
+  const dimensions = passingAnswerReviewDimensions().map((dimension) => (
+    dimension.id === 'requested_artifact_presence'
+      ? { ...dimension, passed: false, issues: ['Optional extra visualization requested by reviewer'] }
+      : dimension
+  ));
+  const review: ReportReviewArtifact = {
+    ...semantic('pass'),
+    version: 'report-review-v2',
+    dimensions,
+  };
+  const result = await service(new RecordingLlm([review]), new RecordingArtifacts()).review(input({
+    deliverable: strategyReport(),
+    requirement: {
+      version: 'research-task-v2', task_type: 'research_synthesis', outcome_mode: 'answer', requested_artifacts: ['strategy_map'],
+      business_domain: 'test', research_goal: 'answer q-1', target_audience: ['team'], scope: ['test'], constraints: [],
+      success_criteria: [{ id: 'req-1', statement: 'usable' }], expected_deliverables: ['research_strategy_report'],
+      assumptions: [], ambiguities: [], clarification_questions: [], blocking_issues: [], sensitivity: 'internal', pii_detected: false,
+    },
+  }));
+  assert.equal(result.verdict, 'pass');
+  assert.equal(result.dimensions.find(({ id }) => id === 'requested_artifact_presence')?.passed, true);
+});
+
+test('a bounded final revision passes when every normalized dimension passes', async () => {
+  const review: ReportReviewArtifact = {
+    ...semantic('revise', 1),
+    version: 'report-review-v2',
+    dimensions: passingAnswerReviewDimensions(),
+  };
+  const result = await service(new RecordingLlm([review]), new RecordingArtifacts()).review(input({
+    deliverable: strategyReport(),
+    revisionRound: 1,
+    requirement: {
+      version: 'research-task-v2', task_type: 'research_synthesis', outcome_mode: 'answer', requested_artifacts: ['strategy_map'],
+      business_domain: 'test', research_goal: 'answer q-1', target_audience: ['team'], scope: ['test'], constraints: [],
+      success_criteria: [{ id: 'req-1', statement: 'usable' }], expected_deliverables: ['research_strategy_report'],
+      assumptions: [], ambiguities: [], clarification_questions: [], blocking_issues: [], sensitivity: 'internal', pii_detected: false,
+    },
+  }));
+  assert.equal(result.verdict, 'pass');
+  assert.equal(result.status, 'completed');
+});
+
 test('answer-quality dimensions deterministically block missing direct answers before semantic review', async () => {
   const llm = new RecordingLlm([]);
   const artifacts = new RecordingArtifacts();

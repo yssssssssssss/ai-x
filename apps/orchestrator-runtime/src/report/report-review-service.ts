@@ -121,6 +121,13 @@ function activeDeliverableContract(deliverable: unknown): DeliverableContractRes
 const REPORT_REVIEW_DIMENSION_ID_SET: ReadonlySet<string> = new Set(
   REPORT_REVIEW_V2_DIMENSION_IDS,
 );
+const MODEL_SEMANTIC_ANSWER_DIMENSION_IDS: ReadonlySet<ReportReviewDimensionId> = new Set([
+  'reasoning_quality',
+  'recommendation_quality',
+  'answer_evidence_strength',
+  'decision_usefulness',
+  'hypothesis_conclusion_clarity',
+]);
 
 function reviewDimensionIds(version: ReportReviewArtifact['version']): readonly ReportReviewDimensionId[] {
   return version === 'report-review-v2' ? REPORT_REVIEW_V2_DIMENSION_IDS : REPORT_REVIEW_DIMENSION_IDS;
@@ -418,7 +425,14 @@ export class ReportReviewService {
     requiredDimensionIds: readonly ReportReviewDimensionId[],
   ): Promise<ReportReviewArtifact> {
     const generated = await this.dependencies.llm.generateStructured<Partial<ReportReviewArtifact>>({
-      prompt: `Review the current deliverable against the selected Registry review rubric. Return only a ${reviewVersion} artifact with every required dimension exactly once.`,
+      prompt: [
+        `Review the current deliverable against the selected Registry review rubric. Return only a ${reviewVersion} artifact with every required dimension exactly once.`,
+        'Treat deterministicDimensions as authoritative for machine-checkable coverage, identity, requested-artifact, visual-presence, and risk-consistency gates.',
+        'A best-available answer may pass with evidence gaps when it is explicitly provisional, states validationNeeded, and discloses the limitation; do not fail it merely for lacking future primary research.',
+        'Do not require unrequested visuals, budgets, statistical-power calculations, owners for open questions, or other enhancements absent from the Requirement success criteria.',
+        'Report only concrete must-fix contract or decision-safety failures as issues; optional improvements must not fail a dimension.',
+        revisionRound === 1 ? 'This is the single bounded final revision. Return revise only when a concrete must-fix violation still remains.' : '',
+      ].filter(Boolean).join('\n'),
       // An empty override makes the gateway load the canonical registry schema.
       schema: {},
       schemaName: 'report-review',
@@ -439,6 +453,13 @@ export class ReportReviewService {
       const baseline = typeof candidate.id === 'string'
         ? deterministicById.get(candidate.id as ReportReviewDimensionId)
         : undefined;
+      if (
+        reviewVersion === 'report-review-v2'
+        && baseline?.passed
+        && !MODEL_SEMANTIC_ANSWER_DIMENSION_IDS.has(baseline.id)
+      ) {
+        return baseline;
+      }
       const providedIssues = Array.isArray(candidate.issues) ? candidate.issues.map(issueText) : null;
       const proposedPassed = typeof candidate.passed === 'boolean'
         ? candidate.passed
@@ -455,7 +476,9 @@ export class ReportReviewService {
       && projectedDimensions.every((dimension) => dimension.passed && dimension.issues.length === 0);
     const normalizedVerdict = value.verdict === 'pass' && !allDimensionsPass
       ? 'revise'
-      : value.verdict;
+      : value.verdict === 'revise' && revisionRound === 1 && allDimensionsPass
+        ? 'pass'
+        : value.verdict;
     const artifact: ReportReviewArtifact = {
       version: reviewVersion, taskId: input.task.id, planVersionId: input.plan.id,
       attemptId: input.attempt.id, deliverableArtifactId: input.deliverableArtifactId,
