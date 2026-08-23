@@ -262,6 +262,36 @@ test('unwraps and projects a complete Requirement without accepting undeclared r
   assert.equal(repository.versions.length, 1);
 });
 
+test('answer mode removes hypothetical private-data blockers when the user explicitly requires public sources', async () => {
+  const { normalizeOutcomeRequirement } = await loadModule();
+  const generated = requirement({
+    task_type: 'research_synthesis',
+    outcome_mode: 'answer',
+    expected_deliverables: ['research_strategy_report'],
+    requested_artifacts: ['strategy_map'],
+    pii_detected: false,
+    blocking_issues: [{
+      key: 'private-data',
+      kind: 'compliance_access',
+      reason: '若需要使用非公开销量数据，则需要额外授权。',
+    }],
+  });
+
+  const normalized = normalizeOutcomeRequirement(
+    generated,
+    '请直接基于公开可访问资料回答问题并输出策略地图。',
+    null,
+  );
+  assert.deepEqual(normalized.blocking_issues, []);
+
+  const privateRequest = normalizeOutcomeRequirement(
+    generated,
+    '请直接结合平台后台数据和公开资料回答问题。',
+    null,
+  );
+  assert.equal(privateRequest.blocking_issues.length, 1);
+});
+
 test('retries one structurally valid but semantically invalid Requirement with validation feedback', async () => {
   const { RequirementRefinementService } = await loadModule();
   const invalid = requirement({ expected_deliverables: ['unregistered_report'] });

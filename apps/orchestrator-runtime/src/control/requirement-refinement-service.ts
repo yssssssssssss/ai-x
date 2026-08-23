@@ -201,6 +201,21 @@ function clarificationOutcomeMode(clarification: unknown): 'plan' | 'answer' | n
   return null;
 }
 
+function actionableBlockingIssues(
+  requirement: ResearchTaskV2,
+  originalInput: string,
+  mode: 'plan' | 'answer',
+): ResearchTaskV2['blocking_issues'] {
+  if (mode !== 'answer' || requirement.pii_detected) return requirement.blocking_issues;
+  const publicOnly = /(?:公开可访问|公开资料|公开来源|publicly accessible|public sources?)/iu.test(originalInput);
+  const requestsRestrictedData = /(?:平台后台数据|私域用户数据|非公开销量数据|个人身份信息|登录后数据|private data|personal data)/iu.test(originalInput);
+  if (!publicOnly || requestsRestrictedData) return requirement.blocking_issues;
+  return requirement.blocking_issues.filter((issue) => !(
+    (issue.kind === 'privacy' || issue.kind === 'compliance_access')
+    && /^(?:若|如|如果|when\b|if\b)/iu.test(issue.reason.trim())
+  ));
+}
+
 export function normalizeOutcomeRequirement(
   requirement: ResearchTaskV2,
   originalInput: string,
@@ -250,6 +265,7 @@ export function normalizeOutcomeRequirement(
         ? ['executive_answers', 'research_report', 'prioritized_actions']
         : ['research_report'],
     expected_deliverables: [mode === 'answer' ? 'research_strategy_report' : 'research_plan'],
+    blocking_issues: actionableBlockingIssues(requirement, originalInput, mode),
     ambiguities: mode === 'answer'
       ? requirement.ambiguities.map((ambiguity) => ({ ...ambiguity, blocking: false }))
       : requirement.ambiguities,
