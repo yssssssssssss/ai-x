@@ -1073,7 +1073,10 @@ function reviewerConditionStatements(materials: readonly SynthesisMaterial[]): A
   }> = [];
   for (const material of materials.filter(({ semanticRole }) => semanticRole === 'review')) {
     const review = unknownRecord(material.value);
-    if (review?.version !== 'reviewer-step-output-v1' || !Array.isArray(review.conditions)) continue;
+    if (review?.version !== 'reviewer-step-output-v1') continue;
+    if (!Array.isArray(review.conditions)) {
+      throw new Error(`structured reviewer Artifact ${material.artifactId} has no conditions array`);
+    }
     for (const value of review.conditions) {
       const condition = unknownRecord(value);
       if (
@@ -1083,7 +1086,9 @@ function reviewerConditionStatements(materials: readonly SynthesisMaterial[]): A
         || typeof condition.statement !== 'string'
         || !condition.statement.trim()
         || (condition.disposition !== 'limitation' && condition.disposition !== 'open_question')
-      ) continue;
+      ) {
+        throw new Error(`structured reviewer Artifact ${material.artifactId} has a malformed condition`);
+      }
       result.push({
         sourceId: material.artifactId,
         conditionId: condition.id,

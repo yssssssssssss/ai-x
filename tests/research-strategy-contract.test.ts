@@ -5,6 +5,7 @@ import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 import { validateResearchStrategyAnswer } from '../apps/orchestrator-runtime/src/report/answer-quality-validator.ts';
 import { collectRequiredRiskDisclosures } from '../apps/orchestrator-runtime/src/report/current-deliverable-service.ts';
+import { REVIEWER_STEP_OUTPUT_SCHEMA } from '../apps/orchestrator-runtime/src/control/lease-execution-engine.ts';
 import { resolveDeliverable } from '../apps/orchestrator-runtime/src/report/deliverable-registry.ts';
 
 export function strategyPayload(): ResearchStrategyReportPayload {
@@ -113,6 +114,45 @@ test('reviewer risk collection uses structured conditions without keyword heuris
     envelopeRisks: [],
   });
   assert.deepEqual(clean, []);
+
+  assert.throws(() => collectRequiredRiskDisclosures({
+    requirement,
+    gaps: [],
+    materials: materials({
+      version: 'reviewer-step-output-v1',
+      review: 'Conditional pass',
+      verdict: 'pass_with_conditions',
+      conditions: [{
+        id: 'blank-condition',
+        statement: '   ',
+        disposition: 'open_question',
+      }],
+    }),
+    envelopeRisks: [],
+  }), /malformed condition/u);
+});
+
+test('structured reviewer schema rejects whitespace-only prose and conditions', () => {
+  const validator = new SchemaValidator();
+  for (const value of [
+    {
+      version: 'reviewer-step-output-v1',
+      review: ' ',
+      verdict: 'pass',
+      conditions: [],
+    },
+    {
+      version: 'reviewer-step-output-v1',
+      review: 'Conditional pass',
+      verdict: 'pass_with_conditions',
+      conditions: [{ id: 'q1', statement: ' ', disposition: 'open_question' }],
+    },
+  ]) {
+    assert.throws(
+      () => validator.validateSchemaOrThrow(REVIEWER_STEP_OUTPUT_SCHEMA, value, 'reviewer-step-output'),
+      /schema/u,
+    );
+  }
 });
 
 test('research strategy payload satisfies its closed schema and answer-quality gate', () => {

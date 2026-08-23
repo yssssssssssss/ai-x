@@ -230,13 +230,13 @@ interface ReviewerStepOutput {
   conditions: ReviewerStepCondition[];
 }
 
-const REVIEWER_STEP_OUTPUT_SCHEMA = {
+export const REVIEWER_STEP_OUTPUT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   required: ['version', 'review', 'verdict', 'conditions'],
   properties: {
     version: { const: 'reviewer-step-output-v1' },
-    review: { type: 'string', minLength: 1 },
+    review: { type: 'string', minLength: 1, pattern: '\\S' },
     verdict: { enum: ['pass', 'pass_with_conditions', 'revise', 'block'] },
     conditions: {
       type: 'array',
@@ -246,7 +246,7 @@ const REVIEWER_STEP_OUTPUT_SCHEMA = {
         required: ['id', 'statement', 'disposition'],
         properties: {
           id: { type: 'string', minLength: 1, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]*$' },
-          statement: { type: 'string', minLength: 1 },
+          statement: { type: 'string', minLength: 1, pattern: '\\S' },
           disposition: { enum: ['limitation', 'open_question'] },
         },
       },
