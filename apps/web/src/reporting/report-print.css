@@ -211,6 +211,28 @@
   color: var(--report-ink);
 }
 
+.report-answer {
+  margin: 0 0 18px;
+  padding: 20px 22px;
+  border: 1px solid color-mix(in srgb, var(--primary) 38%, var(--border-soft));
+  border-left: 4px solid var(--primary);
+  border-radius: 14px;
+  background: var(--bg-card);
+}
+.report-answer h3 { margin: 0 0 8px; font-size: 17px; }
+.report-answer p { margin: 0 0 10px; line-height: 1.75; }
+.report-answer-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
 .report-body {
   min-width: 0;
   max-width: 800px;

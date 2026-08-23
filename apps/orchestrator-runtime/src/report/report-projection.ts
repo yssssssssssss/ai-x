@@ -84,13 +84,17 @@ export function assertReportProjectionIntegrity(input: {
     throw new Error('report projection source Deliverable Artifact identity mismatch');
   }
   const requiredPointers = input.requiredPointers ?? researchPlanRequiredPointers();
-  const blockPointers = input.document.sections.flatMap(({ blocks }) => blocks.flatMap((block) => (
+  const projectionPointers = input.document.sections.flatMap(({ blocks }) => blocks.flatMap((block) => (
     block.type === 'projection-list' ? block.sourcePointers : []
   )));
-  if (new Set(blockPointers).size !== blockPointers.length) {
+  if (new Set(projectionPointers).size !== projectionPointers.length) {
     throw new Error('report projection source pointers must be uniquely owned by projection blocks');
   }
-  if (JSON.stringify(blockPointers) !== JSON.stringify(input.document.coveredPointers ?? [])) {
+  const blockPointers = input.document.sections.flatMap(({ blocks }) => blocks.flatMap((block) => (
+    block.type === 'projection-list' || block.type === 'answer' ? block.sourcePointers : []
+  )));
+  const uniqueBlockPointers = [...new Set(blockPointers)];
+  if (JSON.stringify(uniqueBlockPointers) !== JSON.stringify(input.document.coveredPointers ?? [])) {
     throw new Error('report projection coveredPointers do not match projection block provenance');
   }
   for (const pointer of blockPointers) {

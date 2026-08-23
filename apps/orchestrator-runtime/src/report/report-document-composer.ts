@@ -5,6 +5,7 @@ import type {
   ChartSpec,
   ResearchDeliverableEnvelope,
   ResearchPlanPayload,
+  ResearchStrategyReportPayload,
   VisualAssetManifest,
   VisualAssetReference,
 } from '../../../../packages/api-contract/research-deliverable.ts';
@@ -31,6 +32,7 @@ import {
   projectResearchPlan,
   requiredPayloadPointers,
 } from './report-projection.ts';
+import { composeResearchStrategyDocument } from './dynamic-report-composer.ts';
 import {
   assertCompetitiveWeightChartBinding,
   parseCompetitiveWeightChartData,
@@ -92,6 +94,21 @@ export interface ReportProjectionListBlock {
   summary: boolean;
 }
 
+export interface ReportAnswerBlock {
+  id: string;
+  type: 'answer';
+  kind: 'direct_answer' | 'evidence_finding' | 'strategy_map' | 'mind_model' | 'comparison_matrix' | 'design_principle' | 'opportunity' | 'priority_matrix' | 'action_plan' | 'risk';
+  title: string;
+  text: string;
+  items: string[];
+  questionIds: string[];
+  evidenceIds: string[];
+  confidence: number;
+  sourcePointers: string[];
+  sourceNodeIds?: string[];
+  summary: boolean;
+}
+
 export interface ReportImageBlock {
   id: string;
   type: 'image';
@@ -128,6 +145,7 @@ export type ReportBlock =
   | ReportMetricBlock
   | ReportListBlock
   | ReportProjectionListBlock
+  | ReportAnswerBlock
   | ReportImageBlock
   | ReportImageComparisonBlock
   | ReportChartBlock;
@@ -1445,7 +1463,7 @@ export function assertValidReportDocument(
   for (const section of document.sections) {
     assertUnique(section.questionIds, `question id in section ${section.id}`);
     for (const block of section.blocks) {
-      if (block.type === 'fact' || block.type === 'metric') {
+      if (block.type === 'fact' || block.type === 'metric' || block.type === 'answer') {
         for (const evidenceId of block.evidenceIds) {
           if (!evidenceIds.has(evidenceId)) fail(`${block.type} block ${block.id} references dangling Evidence ${evidenceId}`);
         }
@@ -1494,6 +1512,32 @@ export function assertValidReportDocument(
 
 export function composeReportDocument(input: ComposeReportDocumentInput): ReportDocument {
   const { contract } = assertCompositionInput(input);
+  if (input.deliverable.value.deliverableType === 'research_strategy_report') {
+    const document = composeResearchStrategyDocument({
+      payload: input.deliverable.value.payload as ResearchStrategyReportPayload,
+      deliverableArtifactId: input.deliverable.artifact.id,
+      payloadSchema: contract.payloadSchema,
+      evidenceIndex: input.evidenceManifest.value.entries.map((entry) => `${entry.id}: ${entry.evidenceClass}`),
+      evidenceIds: input.evidenceManifest.value.entries.map(({ id }) => id),
+    });
+    assertReportProjectionIntegrity({
+      document,
+      deliverableArtifactId: input.deliverable.artifact.id,
+      payload: input.deliverable.value.payload,
+      requiredPointers: requiredPayloadPointers(contract.payloadSchema),
+    });
+    assertValidReportDocument(document, {
+      requiredQuestionIds: input.requiredQuestionIds,
+      evidenceIds: input.evidenceManifest.value.entries.map(({ id }) => id),
+      visualAssets: input.visualAssets.map(assetReference),
+      charts: input.charts.map(({ spec, asset }) => ({
+        chartId: spec.chartId,
+        ...assetReference(asset),
+        specHash: chartManifestSpecHash(asset),
+      })),
+    });
+    return document;
+  }
   const template = contract.reportTemplate;
   const executiveSummary = composeExecutiveSummary(input.deliverable.value);
   const baseSections = template.sections.map((section): ReportSection => ({

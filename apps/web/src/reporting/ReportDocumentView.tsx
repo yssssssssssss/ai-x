@@ -164,6 +164,24 @@ function ReportBlockView({
     );
   }
   if (block.kind === 'list') return <ul className="report-list">{block.items?.map((item) => <li key={item}>{item}</li>)}</ul>;
+  if (block.kind === 'answer') {
+    return (
+      <article className={`report-answer report-answer-${block.answerKind ?? 'content'}`} data-block-id={block.id}>
+        <div className="report-answer-meta">
+          <span>{(block.answerKind ?? 'answer').replaceAll('_', ' ')}</span>
+          {typeof block.confidence === 'number' ? <span>置信度 {Math.round(block.confidence * 100)}%</span> : null}
+        </div>
+        <h3>{block.label}</h3>
+        <p>{block.text}</p>
+        {block.items && block.items.length > 0 ? <ul className="report-list">{block.items.map((item) => <li key={item}>{item}</li>)}</ul> : null}
+        <EvidenceDisclosure
+          evidenceIds={block.evidenceIds}
+          expanded={interaction.expandedEvidence.has(block.id)}
+          onToggle={() => dispatch({ type: 'toggle-evidence', blockId: block.id })}
+        />
+      </article>
+    );
+  }
   if (block.kind === 'image' && block.assetId && block.altText && block.caption) {
     return (
       <div className="report-visual-evidence">

@@ -18,6 +18,7 @@ export type ReportViewBlockKind =
   | 'evidence'
   | 'recommendation'
   | 'risk'
+  | 'answer'
   | 'list';
 
 export interface ReportViewBlock {
@@ -28,6 +29,8 @@ export interface ReportViewBlock {
   value?: number;
   items?: string[];
   evidenceIds?: string[];
+  answerKind?: 'direct_answer' | 'evidence_finding' | 'strategy_map' | 'mind_model' | 'comparison_matrix' | 'design_principle' | 'opportunity' | 'priority_matrix' | 'action_plan' | 'risk';
+  confidence?: number;
   spec?: ChartSpec;
   table?: ChartTableAlternative;
   assetId?: string;
@@ -143,6 +146,17 @@ export function createReportDocumentViewModel({
             id: block.id,
             kind: section.id === 'appendix' ? 'evidence' : 'list',
             items: block.items,
+          });
+        } else if (block.type === 'answer') {
+          blocks.push({
+            id: block.id,
+            kind: 'answer',
+            label: block.title,
+            text: block.text,
+            items: block.items,
+            evidenceIds: block.evidenceIds,
+            answerKind: block.kind,
+            confidence: block.confidence,
           });
         } else if (block.type === 'image') {
           blocks.push({

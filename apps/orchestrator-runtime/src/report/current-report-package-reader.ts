@@ -33,8 +33,9 @@ import {
 } from './report-document-composer.ts';
 import {
   assertReportProjectionIntegrity,
-  researchPlanRequiredPointers,
+  requiredPayloadPointers,
 } from './report-projection.ts';
+import { resolveDeliverableContractById } from './deliverable-registry.ts';
 import type { VerifiedVisualAsset, VisualAssetService } from './visual-asset-service.ts';
 import {
   type ReportPackageArtifactValue,
@@ -393,7 +394,9 @@ export class CurrentReportPackageReader {
         document: reportDocument,
         deliverableArtifactId,
         payload: deliverable.payload,
-        requiredPointers: researchPlanRequiredPointers(),
+        requiredPointers: requiredPayloadPointers(
+          resolveDeliverableContractById(String(deliverable.deliverableType)).payloadSchema,
+        ),
       });
       const references = reportAssetReferences(reportDocument);
       if (references.length > 0 && !this.dependencies.visualAssets) {

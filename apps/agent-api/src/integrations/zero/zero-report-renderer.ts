@@ -117,6 +117,8 @@ function renderBlock(
       return `<article class="metric" data-ai-alt="${escape(block.id)}"><span>${escape(block.label)}</span><strong>${escape(block.value)}</strong></article>`;
     case 'fact':
       return `<article class="fact" data-ai-alt="${escape(block.id)}"><span>FACT</span><p>${escape(block.text)}</p></article>`;
+    case 'answer':
+      return `<article class="fact" data-ai-alt="${escape(block.id)}"><span>${escape(block.kind.replaceAll('_', ' ').toUpperCase())}</span><h3>${escape(block.title)}</h3><p>${escape(block.text)}</p>${block.items.length > 0 ? `<ul>${block.items.map((item) => `<li>${escape(item)}</li>`).join('')}</ul>` : ''}<p class="caption">Confidence ${Math.round(block.confidence * 100)}%${block.evidenceIds.length > 0 ? ` · Evidence ${block.evidenceIds.map(escape).join(', ')}` : ''}</p></article>`;
     case 'image':
       return `<article class="visual-block" data-ai-alt="${escape(block.id)}"><h3>${escape(block.caption)}</h3>${visualGroup(visualByBlock.get(block.id) ?? [])}<p class="caption">${escape(block.altText)}</p></article>`;
     case 'image-comparison':

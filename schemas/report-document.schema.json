@@ -145,6 +145,25 @@
         "summary": { "type": "boolean" }
       }
     },
+    "answerBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "kind", "title", "text", "items", "questionIds", "evidenceIds", "confidence", "sourcePointers", "summary"],
+      "properties": {
+        "id": { "$ref": "#/definitions/nonEmptyString" },
+        "type": { "const": "answer" },
+        "kind": { "enum": ["direct_answer", "evidence_finding", "strategy_map", "mind_model", "comparison_matrix", "design_principle", "opportunity", "priority_matrix", "action_plan", "risk"] },
+        "title": { "$ref": "#/definitions/nonEmptyString" },
+        "text": { "$ref": "#/definitions/nonEmptyString" },
+        "items": { "type": "array", "items": { "$ref": "#/definitions/nonEmptyString" } },
+        "questionIds": { "$ref": "#/definitions/idList" },
+        "evidenceIds": { "$ref": "#/definitions/idList" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "sourcePointers": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^/" } },
+        "sourceNodeIds": { "$ref": "#/definitions/idList" },
+        "summary": { "type": "boolean" }
+      }
+    },
     "imageBlock": {
       "type": "object",
       "additionalProperties": false,
@@ -284,6 +303,7 @@
         { "$ref": "#/definitions/metricBlock" },
         { "$ref": "#/definitions/listBlock" },
         { "$ref": "#/definitions/projectionListBlock" },
+        { "$ref": "#/definitions/answerBlock" },
         { "$ref": "#/definitions/imageBlock" },
         { "$ref": "#/definitions/imageComparisonBlock" },
         { "$ref": "#/definitions/chartBlock" }

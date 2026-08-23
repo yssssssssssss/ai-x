@@ -193,6 +193,22 @@ function safeReportBlock(
       } : {}),
     };
   }
+  if (block.type === 'answer') {
+    return {
+      id: block.id,
+      type: block.type,
+      kind: block.kind,
+      title: block.title,
+      text: block.text,
+      items: block.items,
+      questionIds: block.questionIds,
+      evidenceIds: block.evidenceIds,
+      confidence: block.confidence,
+      sourcePointers: block.sourcePointers,
+      ...(block.sourceNodeIds ? { sourceNodeIds: block.sourceNodeIds } : {}),
+      summary: block.summary,
+    };
+  }
   if (block.type === 'image') {
     return {
       id: block.id,
@@ -336,6 +352,12 @@ function reportMarkdown(
           : block.items;
         sectionLines.push(...items.map((item) => `- ${item}`), '');
       }
+      if (block.type === 'answer') {
+        sectionLines.push(`### ${block.title}`, '', block.text, '');
+        if (block.items.length > 0) sectionLines.push(...block.items.map((item) => `- ${item}`), '');
+        if (block.evidenceIds.length > 0) sectionLines.push(`Evidence: ${block.evidenceIds.join(', ')}`, '');
+        sectionLines.push(`Confidence: ${Math.round(block.confidence * 100)}%`, '');
+      }
       if (block.type === 'image' && exportable(block.assetRef.assetId)) {
         sectionLines.push(
           `![${block.altText}](${assetPaths.get(block.assetRef.assetId)})`,
@@ -369,6 +391,27 @@ function reportMarkdown(
       }
     }
     if (sectionLines.length > 0) lines.push(`## ${section.title}`, '', ...sectionLines);
+  }
+  return `${lines.join('\n').trim()}\n`;
+}
+
+function answerBlocksMarkdown(document: ReportDocument, includeAnalysis: boolean): string {
+  const lines = [`# ${document.title}`, ''];
+  for (const section of document.sections) {
+    const blocks = section.blocks.filter((block) => block.type === 'answer' && (
+      includeAnalysis
+        ? block.kind === 'evidence_finding' || block.kind === 'risk'
+        : block.kind !== 'evidence_finding' && block.kind !== 'risk'
+    ));
+    if (blocks.length === 0) continue;
+    lines.push(`## ${section.title}`, '');
+    for (const block of blocks) {
+      if (block.type !== 'answer') continue;
+      lines.push(`### ${block.title}`, '', block.text, '');
+      lines.push(...block.items.map((item) => `- ${item}`), '');
+      if (block.evidenceIds.length > 0) lines.push(`Evidence: ${block.evidenceIds.join(', ')}`, '');
+      lines.push(`Confidence: ${Math.round(block.confidence * 100)}%`, '');
+    }
   }
   return `${lines.join('\n').trim()}\n`;
 }
@@ -428,6 +471,12 @@ export async function createReportBundle({ report, readAsset }: CreateReportBund
     ))],
     ['report-review.json', jsonBytes(safeReview(report.reportReview))],
     ['full-report.md', strToU8(fullMarkdown)],
+    ...(report.deliverable.deliverableType === 'research_strategy_report'
+      ? [
+          ['direct-answers.md', strToU8(answerBlocksMarkdown(report.reportDocument, false))] as const,
+          ['analysis-notes.md', strToU8(answerBlocksMarkdown(report.reportDocument, true))] as const,
+        ]
+      : []),
     ['summary-report.md', strToU8(summaryMarkdown)],
     ['report.md', strToU8(fullMarkdown)],
     ['visual-assets.json', jsonBytes(visualAssets)],
