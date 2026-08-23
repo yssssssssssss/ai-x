@@ -104,9 +104,25 @@ export interface ResearchTaskV2BlockingIssue {
   kind: string;
 }
 
+export const REQUESTED_ARTIFACTS = [
+  'executive_answers',
+  'research_report',
+  'strategy_map',
+  'mind_model',
+  'design_principles',
+  'opportunity_backlog',
+  'prioritized_actions',
+  'channel_strategies',
+  'action_plan',
+] as const;
+export type RequestedArtifact = typeof REQUESTED_ARTIFACTS[number];
+export type ResearchOutcomeMode = 'plan' | 'answer';
+
 export interface ResearchTaskV2 {
   version: 'research-task-v2';
-  task_type: 'competitive_research' | 'user_research_planning' | 'voc_diagnosis' | 'design_audit' | 'a11y_audit';
+  task_type: 'competitive_research' | 'user_research_planning' | 'research_synthesis' | 'voc_diagnosis' | 'design_audit' | 'a11y_audit';
+  outcome_mode?: ResearchOutcomeMode;
+  requested_artifacts?: RequestedArtifact[];
   business_domain: string;
   research_goal: string;
   comparison_dimensions?: string[];

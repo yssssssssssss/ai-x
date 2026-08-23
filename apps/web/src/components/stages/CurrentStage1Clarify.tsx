@@ -61,7 +61,23 @@ export function CurrentStage1Clarify({
         </div>
       )}
 
-      {response.structuredTask.clarification_questions.map((question) => (
+      {response.structuredTask.clarification_questions.map((question) => question.key === 'outcome_mode' ? (
+        <fieldset key={question.key} disabled={disabled} style={{ border: 0, padding: 0, margin: '0 0 14px' }}>
+          <legend style={{ display: 'block', marginBottom: 4, fontWeight: 600, fontSize: 13 }}>{question.question}</legend>
+          <span style={{ display: 'block', marginBottom: 8, color: 'var(--text-faint)', fontSize: 12 }}>为什么要问：{question.rationale}</span>
+          <div style={{ display: 'grid', gap: 8 }}>
+            {[
+              { value: 'plan', label: '研究方案', description: '告诉我后续如何开展研究' },
+              { value: 'answer', label: '直接策略答案', description: '基于当前资料给出结论、策略与行动' },
+            ].map((option) => (
+              <label key={option.value} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '10px 12px', border: `1px solid ${answers[question.key] === option.value ? 'var(--primary)' : 'var(--border)'}`, borderRadius: 8 }}>
+                <input type="radio" name={`outcome-${response.task.id}`} value={option.value} checked={answers[question.key] === option.value} onChange={(event) => setAnswers((previous) => ({ ...previous, [question.key]: event.target.value }))} />
+                <span><b>{option.label}</b><span style={{ color: 'var(--text-faint)', marginLeft: 6 }}>{option.description}</span></span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      ) : (
         <label key={question.key} style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
           <span style={{ display: 'block', marginBottom: 4, fontWeight: 600 }}>{question.question}</span>
           <span style={{ display: 'block', marginBottom: 5, color: 'var(--text-faint)', fontSize: 12 }}>为什么要问：{question.rationale}</span>

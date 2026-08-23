@@ -7,7 +7,7 @@ import type {
   ControlRequirementVersion,
   PlanningGuidanceClarification,
 } from '../../../../packages/api-contract/control-workflow.ts';
-import type { PlanProgress, ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
+import type { PlanProgress, RequestedArtifact, ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
 import { canonicalizeExpectedDeliverables } from '../report/deliverable-registry.ts';
 import {
   isPlanningGuidanceClarification,
@@ -120,7 +120,81 @@ export class InvalidScenarioSelectionError extends Error {
   }
 }
 
-const REQUIREMENT_PROMPT = `把会话整理为 ResearchTaskV2。必须忠实保留用户目标、范围、成功标准和约束；竞品任务若明确列出对比维度，必须按原顺序写入 comparison_dimensions，未明确时不得自行补写；可安全推断的信息写入 assumptions；无法安全推断的信息写入 ambiguities 与 clarification_questions；敏感、授权或合规风险写入 blocking_issues。`;
+const REQUIREMENT_PROMPT = `把会话整理为 ResearchTaskV2。必须忠实保留用户目标、范围、成功标准和约束；区分研究规划(plan)与直接研究回答(answer)：规划回答如何研究，回答模式必须基于可用证据给出结论、策略与行动；无法判断时增加 key=outcome_mode 的澄清问题；竞品任务若明确列出对比维度，必须按原顺序写入 comparison_dimensions，未明确时不得自行补写；可安全推断的信息写入 assumptions；无法安全推断的信息写入 ambiguities 与 clarification_questions；敏感、授权或合规风险写入 blocking_issues。`;
+
+const PLAN_OUTCOME_SIGNAL = /(?:创建|制定|设计|规划|生成|给出).{0,12}(?:调研任务|研究方案|调研方案|访谈|问卷|样本|排期)|(?:如何|怎么).{0,8}(?:开展|研究)/u;
+const ANSWER_OUTCOME_SIGNAL = /(?:直接|完成).{0,8}(?:研究|分析|回答|结论)|(?:给出|输出|提出).{0,10}(?:结论|策略地图|心智模型|设计原则|机会点|优先级|行动建议)|(?:应该|应当).{0,6}(?:怎么|如何)/u;
+const REQUESTED_ARTIFACT_SIGNALS: Array<[RegExp, RequestedArtifact]> = [
+  [/研究报告/u, 'research_report'],
+  [/策略地图/u, 'strategy_map'],
+  [/心智模型/u, 'mind_model'],
+  [/设计原则/u, 'design_principles'],
+  [/机会点/u, 'opportunity_backlog'],
+  [/优先级/u, 'prioritized_actions'],
+  [/(?:渠道|场域).{0,6}策略/u, 'channel_strategies'],
+  [/(?:行动|落地).{0,6}(?:计划|路线)/u, 'action_plan'],
+];
+
+function clarificationOutcomeMode(clarification: unknown): 'plan' | 'answer' | null {
+  if (!clarification || typeof clarification !== 'object' || Array.isArray(clarification)) return null;
+  const value = (clarification as Record<string, unknown>).outcome_mode;
+  if (value === 'plan' || /研究方案|如何研究|规划/u.test(String(value ?? ''))) return 'plan';
+  if (value === 'answer' || /直接|策略答案|研究答案|给结论/u.test(String(value ?? ''))) return 'answer';
+  return null;
+}
+
+export function normalizeOutcomeRequirement(
+  requirement: ResearchTaskV2,
+  originalInput: string,
+  clarification: unknown,
+): ResearchTaskV2 {
+  const selectedByUser = clarificationOutcomeMode(clarification);
+  const inferred = requirement.outcome_mode ?? null;
+  const planSignal = PLAN_OUTCOME_SIGNAL.test(originalInput);
+  const answerSignal = ANSWER_OUTCOME_SIGNAL.test(originalInput)
+    || (requirement.requested_artifacts?.some((item) => item !== 'research_report') ?? false);
+  const ambiguous = selectedByUser === null && planSignal && answerSignal;
+  const requested = [...new Set([
+    ...(requirement.requested_artifacts ?? []),
+    ...REQUESTED_ARTIFACT_SIGNALS.flatMap(([pattern, artifact]) => pattern.test(originalInput) ? [artifact] : []),
+  ])];
+  const supportsOutcomeMode = requirement.task_type === 'user_research_planning'
+    || requirement.task_type === 'research_synthesis';
+  if (!supportsOutcomeMode && selectedByUser === null) return requirement;
+  if (selectedByUser === null && inferred === null && !planSignal && !answerSignal && requested.length === 0) {
+    return requirement;
+  }
+  if (ambiguous) {
+    const question = {
+      key: 'outcome_mode',
+      question: '你需要“研究方案（如何开展研究）”，还是“直接策略答案（基于当前资料给出结论与行动）”？',
+      rationale: '两种结果使用不同的研究问题、能力编排、交付合同和验收标准。',
+    };
+    return {
+      ...requirement,
+      outcome_mode: undefined,
+      requested_artifacts: requested,
+      clarification_questions: [
+        question,
+        ...requirement.clarification_questions.filter(({ key }) => key !== 'outcome_mode'),
+      ],
+    };
+  }
+  const mode = selectedByUser ?? inferred ?? (answerSignal && !planSignal ? 'answer' : 'plan');
+  return {
+    ...requirement,
+    task_type: mode === 'answer' ? 'research_synthesis' : requirement.task_type === 'research_synthesis' ? 'user_research_planning' : requirement.task_type,
+    outcome_mode: mode,
+    requested_artifacts: requested.length > 0
+      ? requested
+      : mode === 'answer'
+        ? ['executive_answers', 'research_report', 'prioritized_actions']
+        : ['research_report'],
+    expected_deliverables: [mode === 'answer' ? 'research_strategy_report' : 'research_plan'],
+    clarification_questions: requirement.clarification_questions.filter(({ key }) => key !== 'outcome_mode'),
+  };
+}
+
 
 const SCORING_MATRIX_MARKER = /(?:矩阵\s*采用[^。；;\n]{0,40}(?:分制|权重)|(?:评分|评价)(?:维度|矩阵)?\s*(?:及|与|和)?\s*权重|(?:评分|评价)?矩阵(?:维度)?\s*(?:及|与|和)?\s*权重|\b(?:scoring|evaluation)\s+(?:matrix|dimensions?)\b)/iu;
 const PERCENTAGE_ITEM = /(?:^|[、,，;；\n])\s*([^、,，;；\n]*?\S)\s*(\d+(?:\.\d+)?)\s*[%％]\s*[)）]?/gu;
@@ -598,9 +672,12 @@ export class RequirementRefinementService {
       },
     });
     this.dependencies.validator.validateOrThrow('research-task-v2', generated.data);
-    const requirement = normalizeExplicitWeightedMatrix(
-      canonicalizeExpectedDeliverables(generated.data),
+    const requirement = normalizeOutcomeRequirement(
+      normalizeExplicitWeightedMatrix(generated.data),
+      input.originalInput,
+      input.clarification,
     );
+    const canonicalRequirement = canonicalizeExpectedDeliverables(requirement);
     const task = await this.dependencies.repository.getTaskDetail?.(input.taskId);
     const taskTypeBeforeRefinement = task?.structuredTask
       && typeof task.structuredTask === 'object'
@@ -629,7 +706,7 @@ export class RequirementRefinementService {
       expectedVersion,
       rawInputHash: hashPrompt(input.originalInput, context, 'research-task-v2'),
       clarification: persistedClarification,
-      structuredTask: requirement,
+      structuredTask: canonicalRequirement,
       modelCallId: null,
     });
     return this.finishRefinement({
@@ -637,7 +714,7 @@ export class RequirementRefinementService {
       conversationId: input.conversationId,
       ownerUserId: input.ownerUserId,
       originalInput: input.originalInput,
-      requirement,
+      requirement: canonicalRequirement,
       requirementVersionId: activated.version.id,
       stateVersion: activated.task.stateVersion,
       rawInputHash: activated.version.rawInputHash,

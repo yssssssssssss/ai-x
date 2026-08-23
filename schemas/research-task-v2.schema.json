@@ -26,7 +26,15 @@
     "version": { "const": "research-task-v2" },
     "task_type": {
       "type": "string",
-      "enum": ["competitive_research", "user_research_planning", "voc_diagnosis", "design_audit", "a11y_audit"]
+      "enum": ["competitive_research", "user_research_planning", "research_synthesis", "voc_diagnosis", "design_audit", "a11y_audit"]
+    },
+    "outcome_mode": { "type": "string", "enum": ["plan", "answer"] },
+    "requested_artifacts": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": ["executive_answers", "research_report", "strategy_map", "mind_model", "design_principles", "opportunity_backlog", "prioritized_actions", "channel_strategies", "action_plan"]
+      }
     },
     "business_domain": { "type": "string", "minLength": 1 },
     "research_goal": { "type": "string", "minLength": 1 },
