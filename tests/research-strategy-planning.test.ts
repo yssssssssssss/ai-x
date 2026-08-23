@@ -14,6 +14,16 @@ test('research strategy Skill compiles into one frozen answer-oriented DAG', () 
   const compiled = compileSkillSteps([tool, skill], task);
   assert.equal(compiled.invocations.length, 1);
   assert.equal(compiled.invocations[0]?.skill_id, 'research-strategy-synthesis');
-  assert.deepEqual(compiled.steps.map(({ actor_type }) => actor_type), ['tool', 'knowledge', 'skill', 'reviewer']);
-  assert.deepEqual(compiled.steps.map(({ skill_stage_id }) => skill_stage_id), ['collect-public-evidence', 'load-evidence-standards', 'synthesize-direct-answers', 'challenge-answers']);
+  assert.deepEqual(compiled.steps.map(({ actor_type }) => actor_type), ['tool', 'knowledge', 'llm', 'llm', 'reviewer', 'llm', 'llm', 'skill', 'reviewer']);
+  assert.deepEqual(compiled.steps.map(({ skill_stage_id }) => skill_stage_id), [
+    'collect-public-evidence',
+    'load-evidence-standards',
+    'inventory-evidence',
+    'synthesize-direct-answers',
+    'challenge-answer-claims',
+    'materialize-strategy',
+    'prioritize-actions',
+    'compose-strategy-report',
+    'self-review',
+  ]);
 });

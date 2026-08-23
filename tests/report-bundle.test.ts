@@ -103,6 +103,7 @@ interface Stage4Module {
     component: 'CurrentTextReport' | 'GenericTextReport' | 'ReportDocumentView';
     reportDocument?: ReportDocument;
   };
+  strategyReportSectionIds(document: ReportDocument, view: 'answers' | 'artifacts' | 'evidence' | 'analysis'): string[];
 }
 
 const reportBundleModulePath: string = '../apps/web/src/reporting/report-bundle.ts';
@@ -138,6 +139,7 @@ async function loadStage4Module(): Promise<Stage4Module> {
     'Stage4 must expose its presentation-mode dispatch decision',
   );
   assert.equal(typeof exports.CurrentStage4Report, 'function');
+  assert.equal(typeof exports.strategyReportSectionIds, 'function');
   return exports as unknown as Stage4Module;
 }
 
@@ -822,6 +824,23 @@ test('print stylesheet covers A4, cover and TOC, fixed chrome, page breaks, SVG,
   assert.match(css, /svg[^\{]*\{[^}]*(?:break-inside|page-break-inside)\s*:\s*avoid/isu);
   assert.match(css, /thead[^\{]*\{[^}]*display\s*:\s*table-header-group/isu);
   assert.match(css, /(?:monochrome|grayscale|print-color-adjust|border-style|text-decoration)/iu);
+});
+
+test('strategy report tabs expose answer-first, artifact, evidence, and analysis section groups', async () => {
+  const { strategyReportSectionIds } = await loadStage4Module();
+  const document = reportDocument();
+  document.sections = [
+    'executive-answers', 'priority-actions', 'topic-journey', 'strategy-map', 'mind-model',
+    'design-principles', 'opportunities', 'channel-strategies', 'evidence-confidence',
+    'limitations', 'analysis-notes', 'evidence-appendix',
+  ].map((id, index) => ({ ...document.sections[0]!, id, title: id, blocks: [{ id: `block-${index}`, type: 'paragraph' as const, text: id }] }));
+
+  assert.deepEqual(strategyReportSectionIds(document, 'answers'), ['executive-answers', 'priority-actions']);
+  assert.deepEqual(strategyReportSectionIds(document, 'artifacts'), [
+    'topic-journey', 'strategy-map', 'mind-model', 'design-principles', 'opportunities', 'channel-strategies',
+  ]);
+  assert.deepEqual(strategyReportSectionIds(document, 'evidence'), ['evidence-confidence', 'limitations', 'evidence-appendix']);
+  assert.deepEqual(strategyReportSectionIds(document, 'analysis'), ['analysis-notes']);
 });
 
 test('Stage4 dispatches multimodal, research-plan text, and generic historical text reports', async () => {

@@ -1,24 +1,8 @@
 ---
 name: research-strategy-synthesis
 description: 基于已验证公开资料、Knowledge、用户材料与数据，逐项回答业务研究问题，输出证据约束的策略地图、心智模型、设计原则、机会点和优先行动；证据不足时给出 provisional 答案而不是退化为研究计划。
-id: skill_research_strategy_synthesis
-source: xingyun_wiki
-source_path: skills/research-strategy-synthesis/SKILL.md
-content_hash: sha256:d6a79f93dfb56982e46c36d663eec847a1cd921ddc25a7670a797fbb832286bc
-guide_tags: []
-guide_stage: []
-type: skill
-domain: general
-title: Research Strategy Synthesis — evidence to direct answers and actions
+when_to_use: 用户要求基于当前证据直接给出研究结论、策略产物和优先行动时使用。
 owner: 用研团队
-risk_level: low
-task_types:
-  - research_synthesis
-required_tools:
-  - tavily-web-search
-status: approved
-execution_mode: compiled
-execution_contract: orchestrator/skill-executions/research-strategy-synthesis.yaml
 ---
 
 # Research Strategy Synthesis

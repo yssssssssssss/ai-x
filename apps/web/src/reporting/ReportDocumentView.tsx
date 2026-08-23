@@ -60,6 +60,7 @@ export interface ReportDocumentViewProps {
   taskId: string;
   assetUrl?: (input: { assetId: string }) => string;
   loadAsset?: ReportAssetLoader;
+  visibleSectionIds?: readonly string[];
   actions?: React.ReactNode;
 }
 
@@ -262,12 +263,19 @@ export function ReportDocumentView({
   taskId,
   assetUrl = ({ assetId }) => `/api/control-tasks/${encodeURIComponent(taskId)}/assets/${encodeURIComponent(assetId)}`,
   loadAsset,
+  visibleSectionIds,
   actions,
 }: ReportDocumentViewProps) {
   const model = useMemo(
     () => createReportDocumentViewModel({ document, visualAssetManifests, assetUrl }),
     [assetUrl, document, visualAssetManifests],
   );
+  const visibleSections = useMemo(() => {
+    if (!visibleSectionIds) return model.sections;
+    const visible = new Set(visibleSectionIds);
+    return model.sections.filter(({ id }) => visible.has(id));
+  }, [model.sections, visibleSectionIds]);
+  const navigation = useMemo(() => visibleSections.map(({ id, title }) => ({ id, title })), [visibleSections]);
   const [interaction, dispatch] = useReducer(
     reduceReportDocumentInteraction,
     undefined,
@@ -288,10 +296,10 @@ export function ReportDocumentView({
       <div className="report-layout">
         <nav className="report-toc" data-print-role="toc" aria-label="报告章节">
           <h2>目录 / Contents</h2>
-          <ol>{model.navigation.map((item) => <li key={item.id}><a href={`#${item.id}`}>{item.title}</a></li>)}</ol>
+          <ol>{navigation.map((item) => <li key={item.id}><a href={`#${item.id}`}>{item.title}</a></li>)}</ol>
         </nav>
         <div className="report-body">
-          {model.sections.map((section) => (
+          {visibleSections.map((section) => (
             <section className="report-section" id={section.id} key={section.id}>
               <h2>{section.title}</h2>
               {section.questionIds.length > 0 ? <p className="report-question-binding">覆盖问题：{section.questionIds.join('、')}</p> : null}

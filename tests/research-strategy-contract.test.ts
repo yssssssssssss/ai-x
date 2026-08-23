@@ -42,6 +42,24 @@ test('research strategy payload satisfies its closed schema and answer-quality g
   assert.doesNotThrow(() => validateResearchStrategyAnswer({ payload, requirement, problemGraph: graph, evidenceIds: ['E1'], risksAndOpenIssues: [] }));
 });
 
+test('research strategy schema rejects missing IDs and empty requested structures', () => {
+  const validator = new SchemaValidator();
+  const missingQuestionId = strategyPayload();
+  delete (missingQuestionId.directAnswers[0] as unknown as Record<string, unknown>).questionId;
+  assert.throws(() => validator.validateFileOrThrow('schemas/deliverables/research-strategy-report.schema.json', missingQuestionId));
+
+  for (const field of ['cells', 'nodes'] as const) {
+    const empty = strategyPayload();
+    if (field === 'cells') empty.strategyMap.cells = [];
+    else empty.mindModel.nodes = [];
+    assert.throws(() => validator.validateFileOrThrow('schemas/deliverables/research-strategy-report.schema.json', empty));
+  }
+
+  const invalidAction = strategyPayload();
+  delete (invalidAction.prioritizedActions[0] as unknown as Record<string, unknown>).validationMethod;
+  assert.throws(() => validator.validateFileOrThrow('schemas/deliverables/research-strategy-report.schema.json', invalidAction));
+});
+
 test('answer quality rejects missing answers, unsupported claims, and missing requested artifacts', () => {
   const missing = strategyPayload();
   missing.directAnswers = [];
@@ -75,5 +93,18 @@ test('answer quality rejects dangling strategy evidence, incomplete bindings, an
   assert.throws(
     () => validateResearchStrategyAnswer({ payload: provisional, requirement, problemGraph: graph, evidenceIds: ['E1'], risksAndOpenIssues: [] }),
     /limitations are empty/u,
+  );
+
+  const reviewerCondition = strategyPayload();
+  assert.throws(
+    () => validateResearchStrategyAnswer({ payload: reviewerCondition, requirement, problemGraph: graph, evidenceIds: ['E1'], risksAndOpenIssues: ['Reviewer condition: validate the priority externally'] }),
+    /limitations are empty/u,
+  );
+
+  const deferred = strategyPayload();
+  deferred.directAnswers[0]!.answer = '建议进一步研究';
+  assert.throws(
+    () => validateResearchStrategyAnswer({ payload: deferred, requirement, problemGraph: graph, evidenceIds: ['E1'], risksAndOpenIssues: [] }),
+    /defers to future research/u,
   );
 });

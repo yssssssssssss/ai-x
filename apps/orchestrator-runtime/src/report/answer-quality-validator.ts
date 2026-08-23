@@ -46,6 +46,11 @@ function sameIds(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((id) => new Set(right).has(id));
 }
 
+function isResearchDeferralOnly(answer: string): boolean {
+  const normalized = answer.trim().replace(/[。.!！?？]+$/gu, '');
+  return /^(?:(?:建议|需要|应当|必须)(?:先|后续|进一步)?(?:开展|进行|补充)?(?:用户)?(?:研究|调研|访谈|问卷)|(?:further|additional) research (?:is )?(?:needed|required|recommended))$/iu.test(normalized);
+}
+
 interface ArtifactProjection {
   sourceField: string;
   blockIds: string[];
@@ -134,6 +139,7 @@ export function validateResearchStrategyAnswer(input: {
 
   for (const answer of payload.directAnswers) {
     assertKnownQuestions([answer.questionId], knownQuestions, `direct answer ${answer.questionId}`);
+    if (isResearchDeferralOnly(answer.answer)) fail(`direct answer ${answer.questionId} defers to future research without an answer`);
     if (answer.answerStatus === 'supported') {
       assertKnownEvidence(answer.evidenceIds, evidence, `supported answer ${answer.questionId}`);
     } else {

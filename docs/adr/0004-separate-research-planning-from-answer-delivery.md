@@ -143,6 +143,19 @@ Dynamic Report Composer只能对Review通过的Deliverable做无损结构转换�
 
 如果产品要求“没有一手用户研究绝不提供策略结论”，则 `research_synthesis` 必须改名为 Desk Research / Hypothesis Report，所有非事实策略只能为provisional，页面和历史状态不得使用“研究答案已完成”。Activation前默认采用“允许最佳可用答案，但严格标注Evidence与置信度”。
 
+## 实施状态（2026-08-23）
+
+本决策已在`feat/research-answer-dynamic-reports`实现并完成Activation：
+
+- `research_synthesis`、`research_strategy_report`与`research-strategy-synthesis`已进入active Registry。
+- Requirement持久化`outcome_mode`与`requested_artifacts`；混合意图在ProblemGraph和Tool调用前进入显式澄清。
+- 答案型ProblemGraph、compiled Skill合同、Answer Quality Validator与ReportDocument v2 answer blocks均已落地。
+- Dynamic Report只投影Review通过的Canonical Deliverable；Web、Markdown bundle与Zero renderer共享同一ReportDocument。
+- Plan v1、Current Plan v2、ReportDocument v1/v2及历史`research_plan`读取回归通过。
+- 自动化全量质量门禁和Playwright浏览器fixture已通过；真实Tavily单独调用通过。
+- 真实Gateway全链路和真实Zero发布因当前环境缺少Gateway/数据库配置及Zero桌面端而未执行；独立审查仍由父级review gate完成。
+- 未push、未创建PR、未合并、未部署。
+
 ## 关联文档
 
 - 开发方案：`docs/plans/2026-08-23-answer-oriented-research-dynamic-report-development.md`

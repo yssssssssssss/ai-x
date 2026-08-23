@@ -57,17 +57,17 @@ stages:
     input_bindings: []
     expected_outputs:
       - pointer: /results
-        description: Traceable public evidence for required research questions.
+        description: Traceable public evidence for required questions.
     acceptance_criteria:
       - Results include traceable URLs relevant to required questions.
     failure_policy: block
-  - stage_id: synthesize-direct-answers
-    title: 合成直接答案与策略产物
-    actor_type: skill
-    actor_id: research-strategy-synthesis
+  - stage_id: inventory-evidence
+    title: 按必答问题盘点证据
+    actor_type: llm
+    actor_id: llm.openai.gpt-4o
     depends_on: [load-evidence-standards, collect-public-evidence]
     input:
-      instruction: Inventory evidence by required question, resolve conflicts, then produce direct answers and every requested artifact.
+      instruction: Inventory verified evidence by required question; identify conflicts and unsupported gaps without drafting recommendations.
       knowledge: null
       public_evidence: null
     input_bindings:
@@ -78,30 +78,157 @@ stages:
         source_stage_id: collect-public-evidence
         source_pointer: /results
     expected_outputs:
+      - pointer: /text
+        description: Question-indexed evidence inventory and gaps.
+    acceptance_criteria:
+      - Every required question has supported evidence or an explicit gap.
+    failure_policy: block
+  - stage_id: synthesize-direct-answers
+    title: 合成逐问题直接答案
+    actor_type: llm
+    actor_id: llm.openai.gpt-4o
+    depends_on: [inventory-evidence]
+    input:
+      instruction: Draft a direct supported, provisional, or unanswered response for each required question with confidence, implication, action, and validation need.
+      evidence_inventory: null
+    input_bindings:
+      - target_pointer: /evidence_inventory
+        source_stage_id: inventory-evidence
+        source_pointer: /text
+    expected_outputs:
+      - pointer: /text
+        description: Evidence-bound direct-answer draft.
+    acceptance_criteria:
+      - No required question is replaced by a future-research recommendation.
+    failure_policy: block
+  - stage_id: challenge-answer-claims
+    title: 反证答案与证据边界
+    actor_type: reviewer
+    actor_id: reviewer.research-lead
+    depends_on: [inventory-evidence, synthesize-direct-answers]
+    input:
+      instruction: Challenge unsupported claims, conflicts, uncertainty labels, and missing question coverage.
+      evidence_inventory: null
+      direct_answers: null
+    input_bindings:
+      - target_pointer: /evidence_inventory
+        source_stage_id: inventory-evidence
+        source_pointer: /text
+      - target_pointer: /direct_answers
+        source_stage_id: synthesize-direct-answers
+        source_pointer: /text
+    expected_outputs:
+      - pointer: /review
+        description: Conflict and claim-strength review.
+    acceptance_criteria:
+      - Unsupported claims and reviewer conditions are explicit.
+    failure_policy: block
+  - stage_id: materialize-strategy
+    title: 实体化策略地图与机会对象
+    actor_type: llm
+    actor_id: llm.openai.gpt-4o
+    depends_on: [inventory-evidence, synthesize-direct-answers, challenge-answer-claims]
+    input:
+      instruction: Materialize every requested strategy object and bind it to questions and verified Evidence.
+      evidence_inventory: null
+      direct_answers: null
+      conflict_review: null
+    input_bindings:
+      - target_pointer: /evidence_inventory
+        source_stage_id: inventory-evidence
+        source_pointer: /text
+      - target_pointer: /direct_answers
+        source_stage_id: synthesize-direct-answers
+        source_pointer: /text
+      - target_pointer: /conflict_review
+        source_stage_id: challenge-answer-claims
+        source_pointer: /review
+    expected_outputs:
+      - pointer: /text
+        description: Strategy map, mind model, principles, opportunities, and channel strategies.
+    acceptance_criteria:
+      - Every requested artifact has non-empty structured content and traceable Evidence.
+    failure_policy: block
+  - stage_id: prioritize-actions
+    title: 排定行动优先级与验证方式
+    actor_type: llm
+    actor_id: llm.openai.gpt-4o
+    depends_on: [synthesize-direct-answers, materialize-strategy]
+    input:
+      instruction: Prioritize actions as P0, P1, or P2 with owner type, rationale, Evidence, and validation method.
+      direct_answers: null
+      strategy_objects: null
+    input_bindings:
+      - target_pointer: /direct_answers
+        source_stage_id: synthesize-direct-answers
+        source_pointer: /text
+      - target_pointer: /strategy_objects
+        source_stage_id: materialize-strategy
+        source_pointer: /text
+    expected_outputs:
+      - pointer: /text
+        description: Evidence-bound prioritized action plan.
+    acceptance_criteria:
+      - Every action has priority, owner type, rationale, Evidence, and validation method.
+    failure_policy: block
+  - stage_id: compose-strategy-report
+    title: 合成结构化研究策略报告
+    actor_type: skill
+    actor_id: research-strategy-synthesis
+    depends_on: [load-evidence-standards, inventory-evidence, synthesize-direct-answers, challenge-answer-claims, materialize-strategy, prioritize-actions]
+    input:
+      instruction: Compose the final research_strategy_report payload without dropping reviewer conditions or requested artifacts.
+      knowledge: null
+      evidence_inventory: null
+      direct_answers: null
+      conflict_review: null
+      strategy_objects: null
+      prioritized_actions: null
+    input_bindings:
+      - target_pointer: /knowledge
+        source_stage_id: load-evidence-standards
+        source_pointer: /resources
+      - target_pointer: /evidence_inventory
+        source_stage_id: inventory-evidence
+        source_pointer: /text
+      - target_pointer: /direct_answers
+        source_stage_id: synthesize-direct-answers
+        source_pointer: /text
+      - target_pointer: /conflict_review
+        source_stage_id: challenge-answer-claims
+        source_pointer: /review
+      - target_pointer: /strategy_objects
+        source_stage_id: materialize-strategy
+        source_pointer: /text
+      - target_pointer: /prioritized_actions
+        source_stage_id: prioritize-actions
+        source_pointer: /text
+    expected_outputs:
       - pointer: /payload
         description: Structured research strategy report payload.
     acceptance_criteria:
       - Required questions have direct evidence-bound or provisional answers.
       - Requested artifacts are materialized as structured content.
+      - Reviewer conditions and degraded capability gaps are disclosed.
     failure_policy: block
-  - stage_id: challenge-answers
-    title: 反证直接答案与行动优先级
+  - stage_id: self-review
+    title: 审校答案完整性与行动可用性
     actor_type: reviewer
     actor_id: reviewer.research-lead
-    depends_on: [synthesize-direct-answers]
+    depends_on: [compose-strategy-report]
     input:
-      instruction: Challenge unsupported conclusions, missing requested artifacts, priorities, conflicts, and risk disclosure.
+      instruction: Review direct-answer coverage, requested artifacts, evidence strength, uncertainty, priorities, and limitations.
       report: null
     input_bindings:
       - target_pointer: /report
-        source_stage_id: synthesize-direct-answers
+        source_stage_id: compose-strategy-report
         source_pointer: /payload
     expected_outputs:
       - pointer: /review
-        description: Answer-quality review and required corrections.
+        description: Final answer-quality review.
     acceptance_criteria:
-      - Unsupported conclusions and missing artifacts are explicit.
+      - Missing answers, unsupported claims, incomplete artifacts, and undisclosed risks are explicit.
     failure_policy: block
-output_stage_id: synthesize-direct-answers
+output_stage_id: compose-strategy-report
 output_pointer: /payload
 degraded_policy: gap

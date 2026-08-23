@@ -296,6 +296,31 @@ test('planner never returns a structurally valid graph that fails coverage valid
   );
 });
 
+test('answer-oriented graph repairs missing requested-artifact coverage before returning', async () => {
+  const answerTask: ResearchTaskV2 = {
+    ...structuredClone(task),
+    task_type: 'research_synthesis',
+    outcome_mode: 'answer',
+    requested_artifacts: ['strategy_map'],
+    expected_deliverables: ['research_strategy_report'],
+  };
+  const answerGraph = validGraph();
+  for (const question of answerGraph.questions) {
+    question.acceptance_criteria = ['直接答案；证据或 provisional 状态；置信度；业务含义；行动'];
+  }
+  const repaired = structuredClone(answerGraph);
+  repaired.questions[0]!.acceptance_criteria.push('materialize strategy_map');
+  const { provider, planner } = buildPlanner((callNumber: number) => callNumber === 0 ? answerGraph : repaired);
+
+  const result = await planner.build(answerTask);
+
+  assert.deepEqual(result.graph, repaired);
+  assert.equal(provider.calls.length, 2);
+  assert.deepEqual((provider.calls[1]?.context as Record<string, unknown>)?.validation_feedback, [
+    'problem graph uncovered_success_criterion: strategy_map, requested artifact',
+  ]);
+});
+
 test('planner repairs a graph that omits a required success criterion', async () => {
   const uncovered = validGraph();
   uncovered.questions[1].success_criterion_ids = ['criterion-market'];

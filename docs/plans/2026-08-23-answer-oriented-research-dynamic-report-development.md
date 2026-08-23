@@ -1,6 +1,6 @@
 # 答案型研究闭环与动态报告开发文档
 
-> 状态：设计已确认，业务代码尚未开始实现。
+> 状态：Phase 1–6 已实现并提交；自动化与浏览器 fixture 已通过；真实 Tavily 单独验证通过；真实 Gateway 端到端与独立审查因当前环境条件尚未完成。
 >
 > 基线分支：`feat/skill-runtime-report-fidelity@b1e5c7aafd22177ad224a8f62e367da6533fdf0f`
 >
@@ -863,10 +863,32 @@ full/analysis bundle                     done
 Answer Quality Review                    done
 risk consistency                         done
 legacy compatibility                     done
-real Gateway/Tavily acceptance           done
-browser and Zero acceptance              done
+real Gateway/Tavily acceptance           blocked: Gateway/DB credentials unavailable; standalone Tavily passed
+browser and Zero acceptance              browser fixture done; real Zero unavailable
 full quality gate                        done
-independent review READY                 done
+independent review READY                 pending parent review
 single final merge prepared              done
-remote delivery explicitly authorized    done or explicitly withheld
+remote delivery explicitly authorized    withheld
 ```
+
+## 27. 实施结果（2026-08-23）
+
+实现分为六个独立提交：运行能力指纹、Plan/Answer意图、答案型Deliverable、答案型执行DAG、动态报告、Activation。最终生产配置激活`research_synthesis`、`research_strategy_report`与compiled `research-strategy-synthesis`，并保持历史Plan/Report读取路径不变。
+
+关键落点：
+
+- `GET /api/system/capabilities`从当前Schema、Deliverable Registry、Skill Registry、Knowledge Index与Tool Registry生成运行能力指纹；Web侧只读展示当前合同版本。
+- Requirement规范化会识别plan/answer混合信号并生成`outcome_mode`澄清；answer选择冻结`research_synthesis`、`research_strategy_report`与结构化`requested_artifacts`。
+- `research_strategy_report`使用关闭的Payload Schema与确定性Answer Quality Validator；Required Question、supported/provisional语义、Evidence、请求产物绑定、优先行动及风险披露均fail closed。
+- 答案型ProblemGraph要求直接答案、证据/暂定状态、置信度、业务含义、行动，并确定性检查requested artifact覆盖；compiled Skill冻结Knowledge、Tavily、Synthesis与Reviewer阶段。
+- ReportDocument v2增加受控answer block，固定将Executive Answers与Priority Actions置前；动态专题、策略对象、Evidence、局限、分析底稿与附录均从Review通过的Canonical Deliverable投影。
+- Web、Markdown bundle与Zero renderer支持answer blocks；策略报告导出`direct-answers.md`与`analysis-notes.md`；历史状态区分“研究方案已生成”和“研究答案已完成”。
+
+验证结果：
+
+- `pnpm quality`：1630 tests，1615 pass，15 skip，0 fail。
+- Web production build通过；`git diff --check`通过。
+- Playwright Chromium fixture验证12个非空动态章节与14个answer blocks，默认答案页签只显示Executive Answers与Priority Actions。
+- 真实Tavily检索通过并返回3条Schema合法结果。
+- 当前环境缺少Gateway、数据库和运行开关配置，无法诚实完成真实Gateway全链路；真实Zero桌面端亦不可用。两项保持未验收，不视为fixture替代。
+- 尚未获得push、PR、merge或deployment授权，未执行任何远端或部署操作。

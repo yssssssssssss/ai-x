@@ -167,7 +167,16 @@ const schemaText = loadSchemaText(resolveSchema('problem-graph'));
 if (!schemaText) throw new Error('problem-graph schema is not registered');
 const problemGraphSchema = JSON.parse(schemaText) as object;
 
-const PROBLEM_GRAPH_PROMPT = `Build a ProblemGraph for the finalized research task. Organize the work as questions, not tool calls. Every question must reference only supplied success criteria and dependencies. Required questions must include required evidence from the supplied Evidence Policy. Every required Evidence Policy requirement id must appear on at least one required question with matching accepted classes and minimum count. For task_type=research_synthesis, questions must ask what is true, why it matters, what to do, and what remains provisional; every required acceptance criteria set must demand a direct answer, Evidence or an explicit provisional status, confidence, business implication, and recommended action. Do not replace an answer with a proposal for future research.`;
+const PROBLEM_GRAPH_PROMPT = `Build a ProblemGraph for the finalized research task. Organize the work as questions, not tool calls. Every question must reference only supplied success criteria and dependencies. Required questions must include required evidence from the supplied Evidence Policy. Every required Evidence Policy requirement id must appear on at least one required question with matching accepted classes and minimum count. For task_type=research_synthesis, questions must ask what is true, why it matters, what to do, and what remains provisional; every required acceptance criteria set must demand a direct answer, Evidence or an explicit provisional status, confidence, business implication, and recommended action. Every requested_artifacts value must appear verbatim in the acceptance criteria of at least one required question. Do not replace an answer with a proposal for future research.`;
+const ANSWER_ARTIFACT_MARKERS: Partial<Record<NonNullable<ResearchTaskV2['requested_artifacts']>[number], readonly string[]>> = {
+  strategy_map: ['strategy_map', '策略地图'],
+  mind_model: ['mind_model', '心智模型'],
+  design_principles: ['design_principles', '设计原则'],
+  opportunity_backlog: ['opportunity_backlog', '机会点'],
+  prioritized_actions: ['prioritized_actions', '优先行动'],
+  channel_strategies: ['channel_strategies', '渠道策略', '场域策略'],
+  action_plan: ['action_plan', '行动计划'],
+};
 const MAX_GRAPH_REPAIRS = 2;
 const REPAIRABLE_GRAPH_ERRORS = new Set<ProblemGraphValidationKind>([
   'uncovered_success_criterion',
@@ -194,6 +203,16 @@ export class ProblemGraphPlanner {
           if (!acceptance.includes(marker)) {
             throw new ProblemGraphValidationError('uncovered_success_criterion', [question.id, marker]);
           }
+        }
+      }
+      const requiredAcceptance = graph.questions
+        .filter(({ priority }) => priority === 'required')
+        .flatMap(({ acceptance_criteria }) => acceptance_criteria)
+        .join(' ');
+      for (const artifact of task.requested_artifacts ?? []) {
+        const markers = ANSWER_ARTIFACT_MARKERS[artifact];
+        if (markers && !markers.some((marker) => requiredAcceptance.includes(marker))) {
+          throw new ProblemGraphValidationError('uncovered_success_criterion', [artifact, 'requested artifact']);
         }
       }
     }

@@ -32,6 +32,20 @@ type GenericTextReportResponse = Exclude<
   { presentationMode: 'multimodal' }
 >;
 
+type StrategyReportView = 'answers' | 'artifacts' | 'evidence' | 'analysis';
+
+const STRATEGY_FIXED_SECTIONS: Record<Exclude<StrategyReportView, 'artifacts'>, readonly string[]> = {
+  answers: ['executive-answers', 'priority-actions'],
+  evidence: ['evidence-confidence', 'limitations', 'evidence-appendix'],
+  analysis: ['analysis-notes'],
+};
+
+export function strategyReportSectionIds(document: ReportDocument, view: StrategyReportView): string[] {
+  if (view !== 'artifacts') return [...STRATEGY_FIXED_SECTIONS[view]];
+  const excluded = new Set(Object.values(STRATEGY_FIXED_SECTIONS).flat());
+  return document.sections.map(({ id }) => id).filter((id) => !excluded.has(id));
+}
+
 export function selectCurrentStage4Renderer(report: unknown): {
   component: 'CurrentTextReport' | 'GenericTextReport' | 'ReportDocumentView';
   reportDocument?: ReportDocument;
@@ -120,6 +134,7 @@ function MultimodalCurrentReport({
   taskState: 'completed' | 'completed_with_gaps';
 }) {
   const [bundleStatus, setBundleStatus] = useState<'idle' | 'working' | 'error'>('idle');
+  const [strategyView, setStrategyView] = useState<StrategyReportView>('answers');
   const [zeroStatus, setZeroStatus] = useState<ZeroIntegrationStatusResponse | null>(null);
   const [zeroPublication, setZeroPublication] = useState<ZeroPublicationResponse | null>(null);
   const [zeroUiState, setZeroUiState] = useState<ZeroPublicationUiState>('idle');
@@ -128,6 +143,9 @@ function MultimodalCurrentReport({
   const [zeroError, setZeroError] = useState<string | null>(null);
   const zeroPublishButtonRef = useRef<HTMLButtonElement>(null);
   const taskId = report.deliverable.taskId;
+  useEffect(() => {
+    setStrategyView('answers');
+  }, [taskId]);
   const loadVisualAsset = useMemo(() => {
     const cache = new Map<string, Promise<ControlVisualAssetResponse>>();
     return (assetId: string) => {
@@ -289,9 +307,31 @@ function MultimodalCurrentReport({
     }
   }
 
+  const isStrategyReport = report.deliverable.deliverableType === 'research_strategy_report';
+  const visibleSectionIds = useMemo(
+    () => isStrategyReport ? strategyReportSectionIds(report.reportDocument, strategyView) : undefined,
+    [isStrategyReport, report.reportDocument, strategyView],
+  );
+
   return (
-    <ReportDocumentView
+    <>
+      {isStrategyReport ? (
+        <nav className="report-view-toggle" aria-label="研究答案视图">
+          {([
+            ['answers', '直接答案'],
+            ['artifacts', '策略产物'],
+            ['evidence', '证据与局限'],
+            ['analysis', '分析底稿'],
+          ] as const).map(([id, label]) => (
+            <button key={id} type="button" className={strategyView === id ? 'is-active' : ''} aria-pressed={strategyView === id} onClick={() => setStrategyView(id)}>
+              {label}
+            </button>
+          ))}
+        </nav>
+      ) : null}
+      <ReportDocumentView
       document={report.reportDocument}
+      visibleSectionIds={visibleSectionIds}
       visualAssetManifests={report.visualAssetManifests}
       taskId={taskId}
       assetUrl={assetUrl}
@@ -371,6 +411,7 @@ function MultimodalCurrentReport({
         </>
       )}
     />
+    </>
   );
 }
 
