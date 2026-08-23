@@ -67,7 +67,7 @@ stages:
     actor_id: llm.openai.gpt-4o
     depends_on: [load-evidence-standards, collect-public-evidence]
     input:
-      instruction: Inventory verified evidence by required question; identify conflicts and unsupported gaps without drafting recommendations.
+      instruction: Inventory verified evidence by required question; identify conflicts and unsupported gaps without drafting recommendations. Cite result N from source step S with the exact deterministic Evidence ID E{S}-{N} (for example E1-1), never shorten it to E1.
       knowledge: null
       public_evidence: null
     input_bindings:

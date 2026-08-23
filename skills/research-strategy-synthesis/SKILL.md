@@ -15,6 +15,7 @@ owner: 用研团队
 
 - 输出 `research-strategy-content-draft-v2`，只包含语义内容；不要生成全局ID、Coverage、FindingGraph、风险来源身份、source pointer或requestedArtifactBindings，这些由运行时确定性生成。
 - `input.requirement_context.requested_artifacts` 是本次必须实体化的唯一请求产物清单；只生成有内容的对应 Block，不用固定模板补齐未请求对象。
+- Evidence ID 必须使用运行时的完整确定性格式：来源步骤 S 的第 N 条结果写为 `E{S}-{N}`（例如 `E1-1`），不得缩写为 `E1`；Knowledge 使用其完整 `K{S}-{N}` ID。
 - 只能把 Evidence 绑定的陈述标为 supported。
 - 证据不足但可形成方向判断时标为 provisional，并写明验证方法。
 - 不得用“建议进一步研究”替代直接答案。

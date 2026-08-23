@@ -79,13 +79,10 @@ function normalizeBlock(
   }
   if (block.kind === 'comparison_matrix' || block.kind === 'strategy_map') {
     const { key: _key, cells, ...content } = block;
-    for (const cell of cells) {
-      if (!block.rows.includes(cell.row) || !block.columns.includes(cell.column)) {
-        fail(`${block.kind} block ${block.key} contains a cell outside its declared rows or columns`);
-      }
-    }
     return {
       ...content,
+      rows: unique([...block.rows, ...cells.map(({ row }) => row)]),
+      columns: unique([...block.columns, ...cells.map(({ column }) => column)]),
       id,
       cells: cells.map(({ key: _cellKey, ...cell }, itemIndex) => ({
         ...cell,
@@ -159,7 +156,7 @@ function validateSupportBindings(input: {
 
   for (const [index, finding] of input.draft.evidenceFindings.entries()) {
     validate(finding.support, `evidence finding ${index + 1}`);
-    if (finding.support.status !== 'supported') fail(`evidence finding ${index + 1} must be supported`);
+    if (finding.support.status !== 'supported') continue;
     for (const evidenceId of finding.support.evidenceIds) {
       const entry = input.evidenceManifest.entries.find(({ id }) => id === evidenceId);
       if (!entry || !FACTUAL_EVIDENCE_CLASSES.has(entry.evidenceClass)) {
@@ -202,26 +199,44 @@ function graphAndCoverage(input: {
   coverage: ResearchDeliverableCoverage;
 } {
   const factIdsByQuestion = new Map<string, string[]>();
-  const facts = input.findings.map((finding) => {
-    for (const questionId of finding.support.questionIds) {
-      factIdsByQuestion.set(questionId, [...(factIdsByQuestion.get(questionId) ?? []), finding.id]);
-    }
-    return {
-      id: finding.id,
-      kind: 'fact' as const,
-      evidenceIds: finding.support.evidenceIds,
-      statement: finding.statement,
-    };
-  });
-  if (facts.length === 0) fail('at least one evidence finding is required');
+  const facts = input.findings
+    .filter(({ support }) => support.status === 'supported')
+    .map((finding) => {
+      for (const questionId of finding.support.questionIds) {
+        factIdsByQuestion.set(questionId, [...(factIdsByQuestion.get(questionId) ?? []), finding.id]);
+      }
+      return {
+        id: finding.id,
+        kind: 'fact' as const,
+        evidenceIds: finding.support.evidenceIds,
+        statement: finding.statement,
+      };
+    });
+  if (facts.length === 0) fail('at least one supported evidence finding is required');
 
-  const analyses = input.blocks.map((block) => {
+  const provisionalAnalyses = input.findings
+    .filter(({ support }) => support.status === 'provisional')
+    .map((finding) => {
+      const relatedFacts = unique(finding.support.questionIds.flatMap((questionId) => factIdsByQuestion.get(questionId) ?? []));
+      if (relatedFacts.length === 0) fail(`provisional evidence finding ${finding.id} has no supported factual root`);
+      return {
+        id: `analysis-${finding.id}`,
+        findingIds: relatedFacts,
+        statement: finding.statement,
+        questionIds: finding.support.questionIds,
+      };
+    });
+
+  const blockAnalyses = input.blocks.map((block) => {
     const supports = supportForBlock(block);
     const questionIds = unique(supports.flatMap(({ questionIds }) => questionIds));
     const evidenceIds = new Set(supports.flatMap(({ evidenceIds }) => evidenceIds));
     const relatedFacts = input.findings.filter((finding) => (
-      finding.support.questionIds.some((questionId) => questionIds.includes(questionId))
-      || finding.support.evidenceIds.some((evidenceId) => evidenceIds.has(evidenceId))
+      finding.support.status === 'supported'
+      && (
+        finding.support.questionIds.some((questionId) => questionIds.includes(questionId))
+        || finding.support.evidenceIds.some((evidenceId) => evidenceIds.has(evidenceId))
+      )
     )).map(({ id }) => id);
     if (relatedFacts.length === 0) fail(`content block ${block.id} has no related evidence finding`);
     return {
@@ -230,14 +245,23 @@ function graphAndCoverage(input: {
       statement: block.kind === 'narrative' ? block.content : block.title,
     };
   });
+  const analyses = [
+    ...provisionalAnalyses.map(({ questionIds: _questionIds, ...analysis }) => analysis),
+    ...blockAnalyses,
+  ];
 
   const answerByQuestion = new Map(input.draft.directAnswers.map((answer) => [answer.questionId, answer]));
   const analysisIdsByQuestion = new Map<string, string[]>();
+  for (const analysis of provisionalAnalyses) {
+    for (const questionId of analysis.questionIds) {
+      analysisIdsByQuestion.set(questionId, [...(analysisIdsByQuestion.get(questionId) ?? []), analysis.id]);
+    }
+  }
   input.blocks.forEach((block, index) => {
     for (const questionId of unique(supportForBlock(block).flatMap(({ questionIds }) => questionIds))) {
       analysisIdsByQuestion.set(questionId, [
         ...(analysisIdsByQuestion.get(questionId) ?? []),
-        analyses[index]!.id,
+        blockAnalyses[index]!.id,
       ]);
     }
   });
@@ -297,6 +321,34 @@ function graphAndCoverage(input: {
   };
 }
 
+function canonicalizeEvidenceAliases(
+  source: ResearchStrategyContentDraftV2,
+  manifest: EvidenceManifest,
+): ResearchStrategyContentDraftV2 {
+  const draft = structuredClone(source);
+  const known = new Set(manifest.entries.map(({ id }) => id));
+  const factual = manifest.entries.filter(({ evidenceClass }) => FACTUAL_EVIDENCE_CLASSES.has(evidenceClass));
+  const aliases = new Map(factual.map((entry, index) => [`E${index + 1}`, entry.id]));
+  const normalize = (ids: string[]): string[] => unique(ids.map((id) => (
+    known.has(id) ? id : aliases.get(id) ?? id
+  )));
+  for (const answer of draft.directAnswers) answer.evidenceIds = normalize(answer.evidenceIds);
+  for (const finding of draft.evidenceFindings) finding.support.evidenceIds = normalize(finding.support.evidenceIds);
+  for (const block of draft.contentBlocks) {
+    if (block.kind === 'narrative') block.support.evidenceIds = normalize(block.support.evidenceIds);
+    else if (block.kind === 'comparison_matrix' || block.kind === 'strategy_map') {
+      for (const cell of block.cells) cell.support.evidenceIds = normalize(cell.support.evidenceIds);
+    } else if (block.kind === 'mind_model') {
+      for (const node of block.nodes) node.support.evidenceIds = normalize(node.support.evidenceIds);
+    } else if ('items' in block) {
+      for (const item of block.items) item.support.evidenceIds = normalize(item.support.evidenceIds);
+    } else {
+      fail(`unsupported content block kind ${(block as { kind?: unknown }).kind as string}`);
+    }
+  }
+  return draft;
+}
+
 function skillDraft(materials: readonly SynthesisMaterial[]): ResearchStrategyContentDraftV2 {
   const matches = materials.filter(({ actorType, actorId }) => (
     actorType === 'skill' && actorId === 'research-strategy-synthesis'
@@ -333,7 +385,7 @@ export function assembleResearchStrategyDeliverable(input: {
   validator?: Pick<SchemaValidator, 'validateFileOrThrow'>;
 }): ResearchDeliverableEnvelope<ResearchStrategyReportPayloadV2> {
   const validator = input.validator ?? new SchemaValidator();
-  const draft = skillDraft(input.materials);
+  const draft = canonicalizeEvidenceAliases(skillDraft(input.materials), input.evidenceManifest);
   validator.validateFileOrThrow(DRAFT_SCHEMA, draft);
   validateSupportBindings({ draft, problemGraph: input.problemGraph, evidenceManifest: input.evidenceManifest });
 

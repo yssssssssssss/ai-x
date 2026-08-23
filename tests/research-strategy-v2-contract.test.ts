@@ -264,6 +264,26 @@ test('assembler deterministically creates canonical graph, coverage, risks, and 
   ));
 });
 
+test('assembler canonicalizes documented ordinal Evidence aliases to Manifest IDs', () => {
+  const numberedManifest = structuredClone(manifest);
+  numberedManifest.entries[0]!.id = 'E1-1';
+  const result = assemble({ evidenceManifest: numberedManifest });
+  assert.deepEqual(result.payload.directAnswers[0]?.evidenceIds, ['E1-1']);
+  assert.deepEqual(result.payload.evidenceFindings[0]?.support.evidenceIds, ['E1-1']);
+  assert.ok(result.payload.contentBlocks.every((block) => JSON.stringify(block).includes('E1-1')));
+});
+
+test('assembler expands matrix axes from canonical cell content instead of rejecting layout drift', () => {
+  const value = draft();
+  const map = value.contentBlocks.find((block) => block.kind === 'strategy_map');
+  assert.ok(map && map.kind === 'strategy_map');
+  map.cells[0]!.row = 'Cross journey';
+  const result = assemble({ materials: materials(value) });
+  const canonical = result.payload.contentBlocks.find((block) => block.kind === 'strategy_map');
+  assert.ok(canonical && canonical.kind === 'strategy_map');
+  assert.deepEqual(canonical.rows, ['Trust', 'Cross journey']);
+});
+
 test('assembler rejects unknown Evidence before creating a canonical deliverable', () => {
   const invalid = draft();
   invalid.contentBlocks[0] = {
