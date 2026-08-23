@@ -50,7 +50,16 @@ test('risk disclosures preserve requirement, degraded Skill, reviewer, and envel
       questionIds: ['Q1'],
       artifactId: 'review-output-1',
       artifactContentSha256: `sha256:${'a'.repeat(64)}`,
-      value: { issues: ['Reviewer condition: validate channel transfer'] },
+      value: {
+        version: 'reviewer-step-output-v1',
+        review: 'Channel transfer remains lower confidence.',
+        verdict: 'pass_with_conditions',
+        conditions: [{
+          id: 'channel-transfer-triangulation',
+          statement: 'Lower confidence for Q1 pending triangulation',
+          disposition: 'limitation',
+        }],
+      },
       semanticRole: 'review',
     }],
     envelopeRisks: ['Envelope-specific risk'],
@@ -59,6 +68,51 @@ test('risk disclosures preserve requirement, degraded Skill, reviewer, and envel
     'requirement_ambiguity', 'skill_degraded_gap', 'reviewer_condition', 'envelope_risk',
   ]);
   assert.equal(new Set(disclosures.map(({ sourceId }) => sourceId)).size, 4);
+});
+
+test('reviewer risk collection uses structured conditions without keyword heuristics', () => {
+  const materials = (value: unknown) => [{
+    stepNo: 3,
+    actorType: 'reviewer' as const,
+    actorId: 'reviewer.research-lead',
+    questionIds: ['Q1'],
+    artifactId: 'review-output-structured',
+    artifactContentSha256: `sha256:${'b'.repeat(64)}`,
+    value,
+    semanticRole: 'review' as const,
+  }];
+  const keywordless = collectRequiredRiskDisclosures({
+    requirement,
+    gaps: [],
+    materials: materials({
+      version: 'reviewer-step-output-v1',
+      review: 'One delivery condition remains.',
+      verdict: 'pass_with_conditions',
+      conditions: [{
+        id: 'triangulate-q1',
+        statement: 'Lower confidence for Q1 pending triangulation',
+        disposition: 'open_question',
+      }],
+    }),
+    envelopeRisks: [],
+  });
+  assert.deepEqual(keywordless.map(({ statement, disposition }) => ({ statement, disposition })), [{
+    statement: 'Lower confidence for Q1 pending triangulation',
+    disposition: 'open_question',
+  }]);
+
+  const clean = collectRequiredRiskDisclosures({
+    requirement,
+    gaps: [],
+    materials: materials({
+      version: 'reviewer-step-output-v1',
+      review: 'No unsupported claims remain',
+      verdict: 'pass',
+      conditions: [],
+    }),
+    envelopeRisks: [],
+  });
+  assert.deepEqual(clean, []);
 });
 
 test('research strategy payload satisfies its closed schema and answer-quality gate', () => {

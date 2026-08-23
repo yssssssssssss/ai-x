@@ -217,6 +217,43 @@ const STEP_ARTIFACT_SCHEMA_VERSIONS: Record<StepArtifactKind, string> = {
   review_output: 'review-output-v1',
 };
 
+interface ReviewerStepCondition {
+  id: string;
+  statement: string;
+  disposition: 'limitation' | 'open_question';
+}
+
+interface ReviewerStepOutput {
+  version: 'reviewer-step-output-v1';
+  review: string;
+  verdict: 'pass' | 'pass_with_conditions' | 'revise' | 'block';
+  conditions: ReviewerStepCondition[];
+}
+
+const REVIEWER_STEP_OUTPUT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['version', 'review', 'verdict', 'conditions'],
+  properties: {
+    version: { const: 'reviewer-step-output-v1' },
+    review: { type: 'string', minLength: 1 },
+    verdict: { enum: ['pass', 'pass_with_conditions', 'revise', 'block'] },
+    conditions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'statement', 'disposition'],
+        properties: {
+          id: { type: 'string', minLength: 1, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]*$' },
+          statement: { type: 'string', minLength: 1 },
+          disposition: { enum: ['limitation', 'open_question'] },
+        },
+      },
+    },
+  },
+} as const;
+
 interface StepResult {
   output: unknown;
   kind: StepArtifactKind;
@@ -3732,8 +3769,10 @@ export class LeaseExecutionEngine {
       prior_outputs: verifiedPriorOutputs(input.outputs, input.step),
       ...stepContract(input.step),
     };
-    const result = await this.llm.generateText({
-      prompt: `Review completed outputs for source support and gaps: ${input.step.step_name}. Contract: ${JSON.stringify(stepContract(input.step))}`, 
+    const result = await this.llm.generateStructured<ReviewerStepOutput>({
+      prompt: `Review completed outputs for source support and gaps: ${input.step.step_name}. Return one reviewer-step-output-v1 object. Use verdict=pass with an empty conditions array only when no condition remains. Every limitation, unresolved question, lower-confidence dependency, requested revision, or delivery condition must be a separate conditions item, even when its wording does not contain words such as risk, gap, or missing. Contract: ${JSON.stringify(stepContract(input.step))}`,
+      schema: REVIEWER_STEP_OUTPUT_SCHEMA,
+      schemaName: 'reviewer-step-output',
       context: reviewerContext,
       receipt: {
         stage: 'reviewer',
@@ -3743,6 +3782,23 @@ export class LeaseExecutionEngine {
         expectedModel: input.expectedModel,
       },
     });
-    return { output: { review: result.text }, kind: 'review_output' };
+    this.dependencies.validator.validateSchemaOrThrow(
+      REVIEWER_STEP_OUTPUT_SCHEMA,
+      result.data,
+      'reviewer-step-output',
+    );
+    const hasConditions = result.data.conditions.length > 0;
+    if ((result.data.verdict === 'pass') === hasConditions) {
+      throw new LLMInvocationError(
+        'schema',
+        false,
+        null,
+        'reviewer output verdict and conditions are inconsistent',
+      );
+    }
+    if (new Set(result.data.conditions.map(({ id }) => id)).size !== result.data.conditions.length) {
+      throw new LLMInvocationError('schema', false, null, 'reviewer output condition ids are duplicated');
+    }
+    return { output: result.data, kind: 'review_output' };
   }
 }

@@ -706,7 +706,14 @@ class CountingRealLLM implements LLMClient {
     this.calls += 1;
     const data = options.schemaName.startsWith('skill:')
       ? digitalHumanSkillOutput()
-      : { ok: true };
+      : options.schemaName === 'reviewer-step-output'
+        ? {
+            version: 'reviewer-step-output-v1',
+            review: 'No conditions remain.',
+            verdict: 'pass',
+            conditions: [],
+          }
+        : { ok: true };
     return {
       data: data as T,
       promptHash: `sha256:${createHash('sha256').update(options.prompt).digest('hex')}`,
@@ -766,6 +773,17 @@ const echoedSecrets = {
 class EchoingSensitiveRealLLM extends CountingRealLLM {
   override async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
     const result = await super.generateStructured<T>(options);
+    if (options.schemaName === 'reviewer-step-output') {
+      return {
+        ...result,
+        data: {
+          version: 'reviewer-step-output-v1',
+          review: echoedSecrets.reviewer,
+          verdict: 'pass',
+          conditions: [],
+        } as T,
+      };
+    }
     if (!options.schemaName.startsWith('skill:')) return result;
     return {
       ...result,
@@ -784,8 +802,7 @@ class EchoingSensitiveRealLLM extends CountingRealLLM {
 
   override async generateText(options: TextLLMCallOptions): Promise<TextLLMResult> {
     const result = await super.generateText(options);
-    const stage = options.receipt.stage === 'reviewer' ? 'reviewer' : 'llm';
-    return { ...result, text: echoedSecrets[stage] };
+    return { ...result, text: echoedSecrets.llm };
   }
 }
 
@@ -796,6 +813,17 @@ class BlockedSensitiveStageLLM extends CountingRealLLM {
 
   override async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
     const result = await super.generateStructured<T>(options);
+    if (this.blockedStage === 'reviewer' && options.schemaName === 'reviewer-step-output') {
+      return {
+        ...result,
+        data: {
+          version: 'reviewer-step-output-v1',
+          review: 'confidential internal-only roadmap',
+          verdict: 'pass',
+          conditions: [],
+        } as T,
+      };
+    }
     if (this.blockedStage !== 'skill' || !options.schemaName.startsWith('skill:')) return result;
     return {
       ...result,

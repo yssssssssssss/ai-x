@@ -291,6 +291,13 @@ class OfflineEligibleRealLLM implements LLMClient {
         deliverableContext?.verifiedEvidence?.[0]?.evidenceId,
         deliverableContext?.coverageRequirements,
       );
+    } else if (options.schemaName === 'reviewer-step-output') {
+      data = {
+        version: 'reviewer-step-output-v1',
+        review: 'No conditions remain.',
+        verdict: 'pass',
+        conditions: [],
+      };
     } else if (options.schemaName === 'report-review') {
       const verdict = this.reviewVerdicts[this.reviewCall]
         ?? this.reviewVerdicts[this.reviewVerdicts.length - 1]

@@ -1059,25 +1059,38 @@ function riskKey(value: string): string {
   return createHash('sha256').update(value.normalize('NFKC').trim()).digest('hex').slice(0, 16);
 }
 
-function reviewerConditionStatements(materials: readonly SynthesisMaterial[]): Array<{ sourceId: string; statement: string }> {
-  const result: Array<{ sourceId: string; statement: string }> = [];
-  const conditionKey = /^(?:conditions?|issues?|risks?|gaps?|limitations?|openQuestions|review)$/iu;
-  const issueText = /(?:风险|缺口|缺失|不足|冲突|条件|待验证|未支持|unsupported|missing|risk|gap|condition|conflict)/iu;
-  function collect(value: unknown, sourceId: string, key = ''): void {
-    if (typeof value === 'string') {
-      if (conditionKey.test(key) && issueText.test(value)) result.push({ sourceId, statement: value.trim() });
-      return;
-    }
-    if (Array.isArray(value)) {
-      for (const item of value) collect(item, sourceId, key);
-      return;
-    }
-    const entry = unknownRecord(value);
-    if (!entry) return;
-    for (const [childKey, child] of Object.entries(entry)) collect(child, sourceId, childKey);
-  }
+function reviewerConditionStatements(materials: readonly SynthesisMaterial[]): Array<{
+  sourceId: string;
+  conditionId: string;
+  statement: string;
+  disposition: 'limitation' | 'open_question';
+}> {
+  const result: Array<{
+    sourceId: string;
+    conditionId: string;
+    statement: string;
+    disposition: 'limitation' | 'open_question';
+  }> = [];
   for (const material of materials.filter(({ semanticRole }) => semanticRole === 'review')) {
-    collect(material.value, material.artifactId);
+    const review = unknownRecord(material.value);
+    if (review?.version !== 'reviewer-step-output-v1' || !Array.isArray(review.conditions)) continue;
+    for (const value of review.conditions) {
+      const condition = unknownRecord(value);
+      if (
+        !condition
+        || typeof condition.id !== 'string'
+        || !condition.id.trim()
+        || typeof condition.statement !== 'string'
+        || !condition.statement.trim()
+        || (condition.disposition !== 'limitation' && condition.disposition !== 'open_question')
+      ) continue;
+      result.push({
+        sourceId: material.artifactId,
+        conditionId: condition.id,
+        statement: condition.statement.trim(),
+        disposition: condition.disposition,
+      });
+    }
   }
   return result;
 }
@@ -1103,13 +1116,13 @@ export function collectRequiredRiskDisclosures(input: {
     const sourceId = riskKey(gap);
     disclosures.push({ id: `risk-gap-${sourceId}`, sourceType: 'skill_degraded_gap', sourceId, statement: gap, disposition: 'limitation' });
   }
-  for (const [index, condition] of reviewerConditionStatements(input.materials).entries()) {
+  for (const condition of reviewerConditionStatements(input.materials)) {
     disclosures.push({
-      id: `risk-reviewer-${riskKey(`${condition.sourceId}:${index}:${condition.statement}`)}`,
+      id: `risk-reviewer-${riskKey(`${condition.sourceId}:${condition.conditionId}:${condition.statement}`)}`,
       sourceType: 'reviewer_condition',
-      sourceId: `${condition.sourceId}:${index + 1}`,
+      sourceId: `${condition.sourceId}:${condition.conditionId}`,
       statement: condition.statement,
-      disposition: 'limitation',
+      disposition: condition.disposition,
     });
   }
   if (input.revisionInstruction?.trim()) {

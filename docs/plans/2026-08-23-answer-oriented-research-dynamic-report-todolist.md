@@ -389,7 +389,6 @@ git diff --check
 ```bash
 pnpm exec tsx --test \
   tests/report-review-service.test.ts \
-  tests/report-review-service.test.ts \
   tests/research-strategy-planning.test.ts \
   tests/control-api-integration.test.ts \
   tests/current-flow-state.test.ts
@@ -428,14 +427,14 @@ git diff --check
 
 ## 7.2 浏览器Fixture验收
 
-- [ ] 模糊任务显示plan/answer选择。
-- [ ] Plan模式进入Research Plan。
-- [ ] Answer模式进入Strategy Report。
+- [x] 模糊任务显示plan/answer选择。
+- [x] Plan模式进入Research Plan。
+- [x] Answer模式进入Strategy Report。
 - [x] 直接答案默认可见。
 - [x] 动态专题与requested artifacts存在。
 - [x] 无空章节。
 - [x] Evidence、分析底稿和打印可用。
-- [ ] History标签正确。
+- [x] History标签正确。
 
 ## 7.3 真实Gateway/Tavily验收
 
@@ -460,12 +459,12 @@ git diff --check
 
 ## Gate 7 实际证据（2026-08-23）
 
-- `pnpm quality`：1630 tests，1615 pass，15 skip，0 fail。
+- `pnpm quality`：1643 tests，1628 pass，15 skip，0 fail。
 - `pnpm --dir apps/web build`：production build通过；仅保留既有chunk-size warning。
 - `git diff --check`：通过。
-- Playwright Chromium浏览器fixture：12个非空动态章节、14个answer blocks；默认答案页签只显示Executive Answers与Priority Actions；截图写入`/tmp/answer-report-browser.png`，未进入仓库。
+- Playwright Chromium浏览器fixture：ambiguity、plan、answer、history四流程通过；12个非空动态章节、14个answer blocks；默认答案页签只显示Executive Answers与Priority Actions；截图写入`/tmp/answer-report-browser-flows.png`，未进入仓库。
 - 真实Tavily：`TAVILY_TEST=1 ... --test-name-pattern='TavilyAdapter 能检索公开网页'`通过，3条真实结果，约2.1秒。
-- 真实Gateway完整答案任务：未运行；当前worktree环境缺少`ALLOW_REAL_PROVIDER`、`LLM_PROVIDER`、`TOOL_ADAPTER`、`DATABASE_URL`、`JWT_SECRET`、`LLM_GATEWAY_BASE_URL`、`LLM_GATEWAY_API_KEY`、`LLM_MODEL_NAME`、`LLM_EXPECTED_ACTUAL_MODEL`。因此7.3保持未勾选。
+- 真实Gateway完整答案任务：使用原项目环境启动后已真实创建`research_synthesis`任务，但Requirement继续生成4个执行细节问题并停在`awaiting_clarification`；该问题已加入“答案模式将未决范围转为provisional obligation”的修正和回归测试。修正后的完整Gateway/DB闭环未复跑，因此7.3保持未勾选。
 - Zero：自动化渲染、发布与安全测试通过；未连接真实Zero桌面端，因此真实发布项保持未勾选。
 
 # Gate 8：独立审查
@@ -518,8 +517,8 @@ Answer Quality Review                      done
 risk consistency                           done
 planning compatibility                     done
 historical report compatibility            done
-real Gateway/Tavily acceptance             blocked: Gateway/DB credentials unavailable; standalone Tavily passed
-browser/Zero acceptance                    browser fixture done; real Zero unavailable
+real Gateway/Tavily acceptance             partial: standalone Tavily passed; first Gateway/DB attempt exposed clarification loop, fixed but full rerun pending
+browser/Zero acceptance                    four browser flows done; real Zero unavailable
 full quality gate                          done
 independent review READY                   pending parent review
 single final merge                         not authorized

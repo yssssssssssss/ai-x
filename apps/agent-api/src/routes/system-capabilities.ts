@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import type { SystemCapabilitiesResponse } from '../../../../packages/api-contract/system-capabilities.ts';
@@ -40,27 +40,48 @@ function planContractVersions(): string[] {
 }
 
 function sourceRevision(): string | null {
+  const environmentRevision = process.env.GIT_COMMIT_SHA ?? process.env.VERCEL_GIT_COMMIT_SHA ?? null;
   const root = getConfigRoot();
   const dotGit = join(root, '.git');
-  if (!existsSync(dotGit)) return process.env.GIT_COMMIT_SHA ?? process.env.VERCEL_GIT_COMMIT_SHA ?? null;
+  if (!existsSync(dotGit)) return environmentRevision;
   try {
-    const dotGitText = readFileSync(dotGit, 'utf8').trim();
-    const gitDir = dotGitText.startsWith('gitdir: ')
-      ? resolve(root, dotGitText.slice('gitdir: '.length))
-      : dotGit;
+    const dotGitStat = lstatSync(dotGit);
+    const gitDir = dotGitStat.isDirectory()
+      ? dotGit
+      : (() => {
+          if (!dotGitStat.isFile()) return null;
+          const dotGitText = readFileSync(dotGit, 'utf8').trim();
+          return dotGitText.startsWith('gitdir: ')
+            ? resolve(root, dotGitText.slice('gitdir: '.length))
+            : null;
+        })();
+    if (!gitDir) return environmentRevision;
     const head = readFileSync(join(gitDir, 'HEAD'), 'utf8').trim();
     if (/^[0-9a-f]{40,64}$/u.test(head)) return head;
-    if (!head.startsWith('ref: ')) return null;
+    if (!head.startsWith('ref: ')) return environmentRevision;
     const ref = head.slice('ref: '.length);
-    const directRef = join(gitDir, ref);
-    if (existsSync(directRef)) return readFileSync(directRef, 'utf8').trim();
     const commonDirPath = join(gitDir, 'commondir');
-    if (!existsSync(commonDirPath)) return null;
-    const commonDir = resolve(dirname(commonDirPath), readFileSync(commonDirPath, 'utf8').trim());
-    const revision = readFileSync(join(commonDir, ref), 'utf8').trim();
-    return /^[0-9a-f]{40,64}$/u.test(revision) ? revision : null;
+    const commonDir = existsSync(commonDirPath)
+      ? resolve(dirname(commonDirPath), readFileSync(commonDirPath, 'utf8').trim())
+      : gitDir;
+    for (const refRoot of [gitDir, commonDir]) {
+      const directRef = join(refRoot, ref);
+      if (existsSync(directRef)) {
+        const revision = readFileSync(directRef, 'utf8').trim();
+        if (/^[0-9a-f]{40,64}$/u.test(revision)) return revision;
+      }
+    }
+    const packedRefs = join(commonDir, 'packed-refs');
+    if (existsSync(packedRefs)) {
+      const match = readFileSync(packedRefs, 'utf8')
+        .split('\n')
+        .map((line) => line.trim().split(' '))
+        .find(([revision, name]) => name === ref && /^[0-9a-f]{40,64}$/u.test(revision ?? ''));
+      if (match?.[0]) return match[0];
+    }
+    return environmentRevision;
   } catch {
-    return null;
+    return environmentRevision;
   }
 }
 
