@@ -96,7 +96,7 @@ export function PlanProgressCard({
               data-phase={definition.phase}
             >
               <span className={`plan-progress-node plan-progress-node-${state}`} aria-hidden="true">
-                {done ? '✓' : ''}
+                {done ? '✓' : active ? <span className="plan-progress-node-loader" /> : null}
               </span>
               <div className="plan-progress-copy">
                 <span className="plan-progress-step-label">{label}</span>
