@@ -15,6 +15,7 @@ import { tasksRouter } from './routes/tasks.ts';
 import { feedbackRouter } from './routes/feedback.ts';
 import { skillsRouter } from './routes/skills.ts';
 import { taskHistoryRouter } from './routes/task-history.ts';
+import { systemCapabilitiesRouter } from './routes/system-capabilities.ts';
 import { createControlTasksRouter, type ControlClarificationPort } from './routes/control-tasks.ts';
 import {
   createControlPlanningRouter,
@@ -172,6 +173,7 @@ export function createAgentApiApp(deps: AgentApiDependencies = {}) {
   app.use(express.json({ limit: '12mb' })); // execute 可携带设计稿 base64(图像工具 upload 上限 10MB + base64 膨胀)
 
   app.get('/api/healthz', (_req, res) => res.json({ ok: true }));
+  app.use('/api/system/capabilities', systemCapabilitiesRouter);
   app.use('/api/auth', authRouter);
   app.use('/api/conversations', conversationsRouter);
   app.use('/api/tasks', tasksRouter);

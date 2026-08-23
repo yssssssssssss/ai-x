@@ -124,6 +124,9 @@ export type {
 } from '../../../../packages/api-contract/research-deliverable.ts';
 export type { ClarificationRequiredResponse, CurrentPlanningResponse } from '../../../agent-api/src/routes/control-planning.ts';
 export type {
+  SystemCapabilitiesResponse,
+} from '../../../../packages/api-contract/system-capabilities.ts';
+export type {
   ZeroIntegrationStatusResponse,
   ZeroPublicationResponse,
   ZeroPublicationStage,
@@ -147,6 +150,7 @@ import type {
 } from '../../../../packages/api-contract/control-workflow.ts';
 import type { PlanProgress } from '../../../../packages/api-contract/plan.ts';
 import type { VisualAssetManifest } from '../../../../packages/api-contract/research-deliverable.ts';
+import type { SystemCapabilitiesResponse } from '../../../../packages/api-contract/system-capabilities.ts';
 import type {
   CreateZeroPublicationRequest,
   ZeroIntegrationStatusResponse,
@@ -263,6 +267,7 @@ async function postPlanningStream(
 }
 
 export const api = {
+  systemCapabilities: () => req<SystemCapabilitiesResponse>('/system/capabilities'),
   authMethods: () => req<{ quickLogin: boolean }>('/auth/methods'),
   quickLogin: () => req<{ token: string; user: User }>('/auth/quick-login', { method: 'POST' }),
   register: (b: { email: string; password: string; displayName: string }) =>
