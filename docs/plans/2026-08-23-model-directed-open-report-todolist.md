@@ -4,7 +4,7 @@
 >
 > 当前基线：`feat/research-answer-dynamic-reports@affb2cc5389ee19633684f0e4b1ded4f15398bcd`
 >
-> 状态：Phase 1–7 源码已实现并通过本地门禁；六次无20分钟总限制的真实运行已验证到最终语义 Review；当前已增加一次受限 Content Draft 语义修订，完整真实闭环待再次授权复跑。
+> 状态：Phase 1–7 源码已实现并通过本地门禁；七次无20分钟总限制的真实运行已验证到最终语义 Review；最新 Requirement 双次输出未落库，现已增加安全解包/投影和可识别错误类型；完整真实闭环待再次授权复跑。
 >
 > 发布规则：所有改动进入同一集成分支；每个 Phase 独立提交、可构建、可回滚；所有源码和外部门禁通过后只合并一次；未经授权不 push。
 
@@ -39,7 +39,8 @@
 - [x] `8b1956ee-4308-4974-ba0c-484a0841396b` 暴露不存在的 `E1-13` 引用；已实现一次只允许精确 Question/Evidence 白名单的 `deliverable_repair`，失败仍会阻断并留诊断。
 - [x] `9e5b3a75-6989-48d9-8b89-fb2655ef5e64` 在 Requirement 持久化前暴露结构化输出校验失败；已实现一次携带脱敏反馈的 Requirement 重试。
 - [x] `ee5ba760-39ea-42f0-aa1a-60e2026f7615` 已成功 SEALED Canonical Deliverable v2，并进入最终 Report Review；Reviewer 返回 `revise` 后，已实现一次受限 Content Draft 语义修订并重新执行全部确定性门禁。
-- [ ] 受限语义修订后的完整真实 Gateway/DB 闭环尚未再次运行。
+- [x] `70ca280d-007d-4cdb-810f-6010060f538f` 的两次 Requirement 调用均成功返回但未落版本；已增加完整对象安全解包、未声明字段投影和安全错误类型。
+- [ ] Requirement 安全解包与受限语义修订后的完整真实 Gateway/DB 闭环尚未再次运行。
 - [ ] live Zero 尚未验收。
 - [ ] 尚未获得 merge/restart/push 授权。
 

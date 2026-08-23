@@ -29,6 +29,39 @@ function redactRequirementValidationError(error: unknown): string {
   return redactString(error instanceof Error ? error.message : String(error)).replace(/\s+/gu, ' ').slice(0, 1000);
 }
 
+const RESEARCH_TASK_FIELDS = [
+  'version', 'task_type', 'outcome_mode', 'requested_artifacts', 'business_domain',
+  'research_goal', 'comparison_dimensions', 'target_audience', 'scope', 'constraints',
+  'success_criteria', 'expected_deliverables', 'assumptions', 'ambiguities',
+  'clarification_questions', 'blocking_issues', 'sensitivity', 'pii_detected',
+] as const;
+const RESEARCH_TASK_REQUIRED_FIELDS = RESEARCH_TASK_FIELDS.filter((field) => (
+  field !== 'outcome_mode' && field !== 'requested_artifacts' && field !== 'comparison_dimensions'
+));
+
+function researchTaskCandidate(value: unknown): unknown {
+  const queue: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }];
+  const seen = new Set<object>();
+  for (let index = 0; index < queue.length && index < 64; index += 1) {
+    const current = queue[index]!;
+    let candidate = current.value;
+    if (typeof candidate === 'string' && candidate.trim().startsWith('{')) {
+      try { candidate = JSON.parse(candidate) as unknown; } catch { /* validated below */ }
+    }
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) || seen.has(candidate)) continue;
+    seen.add(candidate);
+    const record = candidate as Record<string, unknown>;
+    if (RESEARCH_TASK_REQUIRED_FIELDS.every((field) => Object.hasOwn(record, field))) {
+      return Object.fromEntries(
+        Object.entries(record).filter(([field]) => RESEARCH_TASK_FIELDS.includes(field as typeof RESEARCH_TASK_FIELDS[number])),
+      );
+    }
+    if (current.depth >= 4) continue;
+    for (const child of Object.values(record)) queue.push({ value: child, depth: current.depth + 1 });
+  }
+  return value;
+}
+
 function researchTaskSchema(): object {
   return JSON.parse(
     readFileSync(join(getConfigRoot(), 'schemas', 'research-task-v2.schema.json'), 'utf8'),
@@ -711,9 +744,10 @@ export class RequirementRefinementService {
         },
       });
       try {
-        this.dependencies.validator.validateOrThrow('research-task-v2', generated.data);
+        const candidate = researchTaskCandidate(generated.data);
+        this.dependencies.validator.validateOrThrow('research-task-v2', candidate);
         requirement = normalizeOutcomeRequirement(
-          normalizeExplicitWeightedMatrix(generated.data),
+          normalizeExplicitWeightedMatrix(candidate as ResearchTaskV2),
           input.originalInput,
           input.clarification,
         );

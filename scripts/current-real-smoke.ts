@@ -1418,8 +1418,11 @@ export async function runCurrentRealSmoke(input: SmokeRunInput): Promise<SmokeRe
 
 export function safeSmokeErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
+  const errorType = error instanceof Error && /^[A-Za-z][A-Za-z0-9]*$/u.test(error.name)
+    ? error.name
+    : 'UnknownError';
   const messageHash = createHash('sha256').update(message).digest('hex').slice(0, 16);
-  return `Current real smoke failed message_hash=${messageHash}`;
+  return `Current real smoke failed error_type=${errorType} message_hash=${messageHash}`;
 }
 
 async function main(): Promise<void> {

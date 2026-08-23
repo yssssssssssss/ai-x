@@ -701,7 +701,7 @@ test('gateway model receipts validate every configured route independently', () 
 test('real smoke CLI failures expose only a stable message hash', () => {
   const credential = 'postgres://operator:secret-value@localhost:5432/smoke';
   const message = safeSmokeErrorMessage(new Error(`connection failed: ${credential}`));
-  assert.match(message, /^Current real smoke failed message_hash=[a-f0-9]{16}$/u);
+  assert.match(message, /^Current real smoke failed error_type=Error message_hash=[a-f0-9]{16}$/u);
   assert.doesNotMatch(message, /operator|secret-value|postgres:/u);
   assert.equal(message, safeSmokeErrorMessage(new Error(`connection failed: ${credential}`)));
 });

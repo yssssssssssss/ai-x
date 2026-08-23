@@ -240,6 +240,28 @@ test('explicit requirements return ready_to_plan and invoke planner with finaliz
   assert.deepEqual(repository.events, ['persist_activate']);
 });
 
+test('unwraps and projects a complete Requirement without accepting undeclared root fields', async () => {
+  const { RequirementRefinementService } = await loadModule();
+  const valid = requirement();
+  const wrapped = { result: { ...valid, provider_note: 'drop me' } } as unknown as ResearchTaskV2;
+  const llm = new FixtureLLM([wrapped]);
+  const repository = makeRepository();
+  const service = new RequirementRefinementService({
+    llm,
+    validator: new SchemaValidator(),
+    repository,
+    conversations: makeConversations(),
+    planner: { async plan() {} },
+  });
+
+  const result = await service.understand({ taskId, conversationId, ownerUserId, originalInput: 'compare live-commerce competitors' });
+
+  assert.equal(result.status, 'ready_to_plan');
+  assert.equal(llm.calls.length, 1);
+  assert.equal('provider_note' in result.requirement, false);
+  assert.equal(repository.versions.length, 1);
+});
+
 test('retries one structurally valid but semantically invalid Requirement with validation feedback', async () => {
   const { RequirementRefinementService } = await loadModule();
   const invalid = requirement({ expected_deliverables: ['unregistered_report'] });

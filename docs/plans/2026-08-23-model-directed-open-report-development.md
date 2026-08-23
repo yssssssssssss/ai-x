@@ -1,6 +1,6 @@
 # 模型编排的开放式动态报告开发方案
 
-> 状态：Phase 1–7 源码已实现；本地全量门禁通过；六次无20分钟总限制的真实运行已逐步验证到最终语义 Review，当前已增加一次受限 Content Draft 语义修订；完整真实闭环待再次授权复跑。
+> 状态：Phase 1–7 源码已实现；本地全量门禁通过；七次无20分钟总限制的真实运行已验证到最终语义 Review；最新 Requirement 双次输出未落库，现已增加安全解包/投影和可识别错误类型；完整真实闭环待再次授权复跑。
 >
 > 日期：2026-08-23
 >
@@ -835,8 +835,9 @@ git diff --check
 - `8b1956ee-4308-4974-ba0c-484a0841396b`：模型引用不存在的 `E1-13`；该引用不能被安全猜测，已新增一次受限 `deliverable_repair`，只允许从精确 Question/Evidence 白名单修正 Content Draft，仍不恢复完整报告重写；
 - `9e5b3a75-6989-48d9-8b89-fb2655ef5e64`：Requirement 模型调用成功但输出未通过后续结构/语义校验，未写 Requirement Version，也未进入 Tool；Requirement 现允许一次携带脱敏校验反馈的受限重试；
 - `ee5ba760-39ea-42f0-aa1a-60e2026f7615`：Canonical Deliverable v2 已成功 SEALED，证明重复全文生成已经移除且组装门禁通过；最终 `report-review-v2` 返回 `revise`，指出部分 provisional 策略措辞仍偏强；现已实现一次只修改 Content Draft、并重新执行确定性组装与最终 Review 的受限语义修订；
+- `70ca280d-007d-4cdb-810f-6010060f538f`：Requirement 两次 Gateway 调用均成功，但未生成 Requirement Version；现已对完整嵌套对象进行安全解包、删除未声明根字段，并让 Smoke 仅公开错误类型与消息哈希；
 - 最新本地门禁为 1671 tests、1656 pass、15 skip、0 fail；
-- 按真实配额约束，受限语义修订后的完整真实闭环尚未再次运行。
+- 按真实配额约束，Requirement 安全解包与受限语义修订尚未再次执行完整真实闭环。
 
 ## 23. 完成定义
 
