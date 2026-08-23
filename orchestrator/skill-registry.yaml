@@ -338,6 +338,25 @@ skills:
     required_tools:
       - tavily-web-search
     status: active
+  - id: research-strategy-synthesis
+    name: 研究策略综合
+    path: skills/research-strategy-synthesis/SKILL.md
+    when_to_use: 基于已验证公开资料、Knowledge、用户材料与数据直接回答研究问题，输出证据约束的策略地图、心智模型、设计原则、机会点与优先行动。
+    owner: 用研团队
+    status: draft
+    task_types:
+      - research_synthesis
+    inputs:
+      - research_goal
+    outputs:
+      - research_strategy_report
+    output_schema: schemas/skill-result-envelope.schema.json
+    payload_schema: schemas/deliverables/research-strategy-report.schema.json
+    required_tools:
+      - tavily-web-search
+    execution_mode: compiled
+    execution_contract: orchestrator/skill-executions/research-strategy-synthesis.yaml
+    risk_level: low
   - id: generate-survey
     name: generate-survey
     path: knowledge-base/skills/generate-survey

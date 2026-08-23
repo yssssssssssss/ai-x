@@ -1,0 +1,107 @@
+version: skill-execution-contract-v1
+skill_id: research-strategy-synthesis
+required_requirement_fields: [/research_goal, /success_criteria]
+resources:
+  - resource_id: standard_research_question_definition
+    required: true
+    accepted_statuses: [approved, draft]
+    purpose: Keep business questions and research questions distinct.
+    failure_policy: block
+  - resource_id: standard_research_report_writing
+    required: true
+    accepted_statuses: [approved, draft]
+    purpose: Apply the canonical research-report evidence and writing standard.
+    failure_policy: block
+resource_queries:
+  - query_id: relevant-analysis-methods
+    types: [analysis]
+    min_items: 2
+    max_items: 4
+    accepted_statuses: [approved, draft]
+    purpose: Select analysis methods relevant to the answer questions.
+    failure_policy: block
+  - query_id: relevant-scenario-guides
+    types: [scenario-guide]
+    min_items: 0
+    max_items: 2
+    accepted_statuses: [approved, draft]
+    purpose: Select optional domain-specific synthesis guidance.
+    failure_policy: gap
+skill_references: []
+stages:
+  - stage_id: load-evidence-standards
+    title: 加载答案与证据规范
+    actor_type: knowledge
+    actor_id: knowledge.index
+    depends_on: []
+    input: {}
+    input_bindings: []
+    expected_outputs:
+      - pointer: /resources
+        description: Frozen verified knowledge resources.
+    acceptance_criteria:
+      - Every required resource matches its frozen identity and hash.
+    failure_policy: block
+  - stage_id: collect-public-evidence
+    title: 检索直接回答所需公开证据
+    actor_type: tool
+    actor_id: tavily-web-search
+    depends_on: []
+    input:
+      query: research goal direct answers official evidence
+      topic: general
+      max_results: 12
+      search_depth: advanced
+      include_answer: advanced
+    frozen_input_fields: [query, topic, max_results, search_depth, include_answer]
+    input_bindings: []
+    expected_outputs:
+      - pointer: /results
+        description: Traceable public evidence for required research questions.
+    acceptance_criteria:
+      - Results include traceable URLs relevant to required questions.
+    failure_policy: block
+  - stage_id: synthesize-direct-answers
+    title: 合成直接答案与策略产物
+    actor_type: skill
+    actor_id: research-strategy-synthesis
+    depends_on: [load-evidence-standards, collect-public-evidence]
+    input:
+      instruction: Inventory evidence by required question, resolve conflicts, then produce direct answers and every requested artifact.
+      knowledge: null
+      public_evidence: null
+    input_bindings:
+      - target_pointer: /knowledge
+        source_stage_id: load-evidence-standards
+        source_pointer: /resources
+      - target_pointer: /public_evidence
+        source_stage_id: collect-public-evidence
+        source_pointer: /results
+    expected_outputs:
+      - pointer: /payload
+        description: Structured research strategy report payload.
+    acceptance_criteria:
+      - Required questions have direct evidence-bound or provisional answers.
+      - Requested artifacts are materialized as structured content.
+    failure_policy: block
+  - stage_id: challenge-answers
+    title: 反证直接答案与行动优先级
+    actor_type: reviewer
+    actor_id: reviewer.research-lead
+    depends_on: [synthesize-direct-answers]
+    input:
+      instruction: Challenge unsupported conclusions, missing requested artifacts, priorities, conflicts, and risk disclosure.
+      report: null
+    input_bindings:
+      - target_pointer: /report
+        source_stage_id: synthesize-direct-answers
+        source_pointer: /payload
+    expected_outputs:
+      - pointer: /review
+        description: Answer-quality review and required corrections.
+    acceptance_criteria:
+      - Unsupported conclusions and missing artifacts are explicit.
+    failure_policy: block
+output_stage_id: synthesize-direct-answers
+output_pointer: /payload
+degraded_policy: gap

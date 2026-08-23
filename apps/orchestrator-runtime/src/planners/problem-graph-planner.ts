@@ -167,7 +167,7 @@ const schemaText = loadSchemaText(resolveSchema('problem-graph'));
 if (!schemaText) throw new Error('problem-graph schema is not registered');
 const problemGraphSchema = JSON.parse(schemaText) as object;
 
-const PROBLEM_GRAPH_PROMPT = `Build a ProblemGraph for the finalized research task. Organize the work as questions, not tool calls. Every question must reference only supplied success criteria and dependencies. Required questions must include required evidence from the supplied Evidence Policy. Every required Evidence Policy requirement id must appear on at least one required question with matching accepted classes and minimum count.`;
+const PROBLEM_GRAPH_PROMPT = `Build a ProblemGraph for the finalized research task. Organize the work as questions, not tool calls. Every question must reference only supplied success criteria and dependencies. Required questions must include required evidence from the supplied Evidence Policy. Every required Evidence Policy requirement id must appear on at least one required question with matching accepted classes and minimum count. For task_type=research_synthesis, questions must ask what is true, why it matters, what to do, and what remains provisional; every required acceptance criteria set must demand a direct answer, Evidence or an explicit provisional status, confidence, business implication, and recommended action. Do not replace an answer with a proposal for future research.`;
 const MAX_GRAPH_REPAIRS = 2;
 const REPAIRABLE_GRAPH_ERRORS = new Set<ProblemGraphValidationKind>([
   'uncovered_success_criterion',
@@ -184,6 +184,19 @@ export class ProblemGraphPlanner {
   constructor(private readonly dependencies: ProblemGraphPlannerDependencies) {}
 
   private validateGeneratedGraph(task: ResearchTaskV2, graph: ProblemGraph): void {
+    if (task.task_type === 'research_synthesis') {
+      for (const question of graph.questions.filter(({ priority }) => priority === 'required')) {
+        const acceptance = question.acceptance_criteria.join(' ');
+        if (/如何(?:构建|开展|设计)研究/u.test(question.statement)) {
+          throw new ProblemGraphValidationError('uncovered_success_criterion', [question.id, 'answer-oriented wording']);
+        }
+        for (const marker of ['直接答案', '证据', '置信度', '业务含义', '行动']) {
+          if (!acceptance.includes(marker)) {
+            throw new ProblemGraphValidationError('uncovered_success_criterion', [question.id, marker]);
+          }
+        }
+      }
+    }
     try {
       validateProblemGraphCoverage(task, graph);
     } catch (error) {

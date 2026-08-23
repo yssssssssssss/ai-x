@@ -97,6 +97,7 @@ const TASK_UNDERSTANDING_PROMPT =
   `- design_audit:对已有设计稿/页面/界面做走查·评估·审查(美学/视觉/注意力/品牌一致性/可用性)。信号:"走查/评估设计稿/看这个页面/UI 审查/视觉评估"。\n` +
   `- competitive_research:分析对标竞品、比较各家能力差异。信号:"竞品/对标/各家/横评/差异化"。\n` +
   `- user_research_planning:规划一次用户研究(找谁/用什么方法/问什么)。信号:"规划研究/研究方案/怎么调研/招募"。\n` +
+  `- research_synthesis:基于当前证据直接回答研究问题并给出策略、优先级和行动。信号:"直接结论/完成研究/策略地图/心智模型/设计原则/机会点"。\n` +
   `- voc_diagnosis:分析用户反馈/评论/舆情。信号:"用户之声/差评/反馈/VOC"。\n` +
   `- a11y_audit:无障碍/可访问性审查。\n` +
   `【硬规则】用户明确说"不做竞品/对设计稿评估"时绝不选 competitive_research;有设计稿评估诉求优先 design_audit。\n` +
@@ -217,7 +218,10 @@ export class ResearchPlanningService {
       pii_detected: canonicalRequirement.pii_detected,
     };
     const emit = onProgress ?? (() => {});
-    const direct = parseDirectInvoke(originalInput);
+    const direct = parseDirectInvoke(originalInput)
+      ?? (canonicalRequirement.task_type === 'research_synthesis'
+        ? { skillName: 'research-strategy-synthesis', rest: originalInput }
+        : null);
     const taskProvenance: PlanProvenance = {
       modelName: this.dependencies.llm.identity.requestedModel,
       modelVersion: 'research-task-v2',
