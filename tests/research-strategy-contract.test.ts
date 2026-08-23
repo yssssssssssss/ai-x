@@ -4,7 +4,7 @@ import type { ResearchStrategyReportPayload } from '../packages/api-contract/res
 import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 import { validateResearchStrategyAnswer } from '../apps/orchestrator-runtime/src/report/answer-quality-validator.ts';
-import { inspectDeliverableRegistry } from '../apps/orchestrator-runtime/src/report/deliverable-registry.ts';
+import { resolveDeliverable } from '../apps/orchestrator-runtime/src/report/deliverable-registry.ts';
 
 export function strategyPayload(): ResearchStrategyReportPayload {
   return {
@@ -35,8 +35,8 @@ const requirement: ResearchTaskV2 = {
 const graph = { version: 'problem-graph-v1' as const, questions: [{ id: 'Q1', statement: 'What should change?', rationale: 'Decision', priority: 'required' as const, success_criterion_ids: ['SC1'], evidence_requirements: [{ id: 'research-strategy-report', acceptedClasses: ['public_source' as const], minimumCount: 1, required: true }], acceptance_criteria: ['直接答案', '证据', '置信度', '业务含义', '行动'], depends_on: [] }] };
 
 test('research strategy payload satisfies its closed schema and answer-quality gate', () => {
-  const inspection = inspectDeliverableRegistry();
-  assert.equal(inspection.entries.find(({ id }) => id === 'research_strategy_report')?.status, 'inactive');
+  const contract = resolveDeliverable('research_synthesis', ['research_strategy_report']);
+  assert.equal(contract.id, 'research_strategy_report');
   const payload = strategyPayload();
   new SchemaValidator().validateFileOrThrow('schemas/deliverables/research-strategy-report.schema.json', payload);
   assert.doesNotThrow(() => validateResearchStrategyAnswer({ payload, requirement, problemGraph: graph, evidenceIds: ['E1'], risksAndOpenIssues: [] }));

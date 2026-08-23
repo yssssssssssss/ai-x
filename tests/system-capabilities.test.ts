@@ -18,7 +18,10 @@ test('system capabilities expose live contract and registry identities without l
     assert.deepEqual(body.planContractVersions, ['current-execution-plan-v1', 'current-execution-plan-v2']);
     assert.deepEqual(body.reportDocumentVersions, ['report-document-v1', 'report-document-v2']);
     assert.ok((body.activeDeliverables as string[]).includes('research_plan'));
+    assert.ok((body.activeDeliverables as string[]).includes('research_strategy_report'));
+    assert.ok((body.activeTaskTypes as string[]).includes('research_synthesis'));
     assert.ok((body.compiledSkills as string[]).includes('generate-research-plan'));
+    assert.ok((body.compiledSkills as string[]).includes('research-strategy-synthesis'));
     assert.match(String(body.toolRegistryHash), /^sha256:[a-f0-9]{64}$/u);
     assert.doesNotMatch(JSON.stringify(body), /Users\/|storage_uri|DATABASE_URL/u);
   } finally {

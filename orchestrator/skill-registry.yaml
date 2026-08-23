@@ -343,7 +343,7 @@ skills:
     path: skills/research-strategy-synthesis/SKILL.md
     when_to_use: 基于已验证公开资料、Knowledge、用户材料与数据直接回答研究问题，输出证据约束的策略地图、心智模型、设计原则、机会点与优先行动。
     owner: 用研团队
-    status: draft
+    status: active
     task_types:
       - research_synthesis
     inputs:

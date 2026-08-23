@@ -626,6 +626,7 @@ for (const contract of PROFESSIONAL_CONTRACTS) {
 
 const LOCALIZED_DELIVERABLES: Record<ResearchTaskV2['task_type'], string> = {
   user_research_planning: '用户研究计划',
+  research_synthesis: 'research strategy report',
   competitive_research: '竞品分析报告',
   voc_diagnosis: '用户之声诊断报告',
   design_audit: '设计走查报告',

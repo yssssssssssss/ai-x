@@ -627,6 +627,31 @@
     ]
   },
   {
+    "skill_id": "research-strategy-synthesis",
+    "kb_mode": "required",
+    "required_sources": [
+      {
+        "path": "methods/standards/research-question-definition.md",
+        "role": "standard",
+        "status": "draft"
+      },
+      {
+        "path": "methods/standards/research-report-writing.md",
+        "role": "standard",
+        "status": "draft"
+      }
+    ],
+    "conditional_sources": [],
+    "optional_sources": [],
+    "retrieval_tags": [
+      "research_goal",
+      "report",
+      "output"
+    ],
+    "source_status_policy": "draft_allowed_with_warning",
+    "unresolved_items": []
+  },
+  {
     "skill_id": "generate-survey",
     "kb_mode": "required",
     "required_sources": [

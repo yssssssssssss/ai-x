@@ -5,6 +5,7 @@ import {
   type TaskDetail,
   type ExecLogRow,
   type ControlApprovalRequirement,
+  type SystemCapabilitiesResponse,
   type TaskHistoryPreferencePatch,
   ApiError,
 } from '../api/client.ts';
@@ -29,7 +30,7 @@ import { Labs } from './Labs.tsx';
 
 type View = 'task' | 'labs' | 'history';
 
-export function Workbench({ user, onLogout }: { user: User; onLogout: () => void }) {
+export function Workbench({ user, capabilities, onLogout }: { user: User; capabilities: SystemCapabilitiesResponse | null; onLogout: () => void }) {
   const [view, setView] = useState<View>('task');
   const [history, setHistory] = useState<HistoryTaskSummary[]>([]);
   const [detail, setDetail] = useState<TaskDetail | null>(null);
@@ -139,6 +140,7 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
     <div className="workbench">
       <Sidebar
         user={user}
+        capabilities={capabilities}
         history={history}
         activeTaskId={currentTaskId}
         onNewTask={newTask}

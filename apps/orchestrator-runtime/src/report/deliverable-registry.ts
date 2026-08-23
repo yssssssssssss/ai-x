@@ -426,6 +426,16 @@ export function canonicalizeExpectedDeliverables(requirement: ResearchTaskV2): R
   if (requirement.expected_deliverables.some((label) => typeof label !== 'string' || !label.trim())) {
     throw new Error(`deliverable ${selected.id} is incompatible with expectedDeliverables`);
   }
+  const declared = requirement.expected_deliverables.map((label) => label.trim());
+  const compatible = new Set([selected.id, ...(selected.aliases ?? [])]);
+  const answerOrPlanTask = requirement.task_type === 'user_research_planning'
+    || requirement.task_type === 'research_synthesis';
+  if (
+    !declared.some((label) => compatible.has(label))
+    || (answerOrPlanTask && (declared.length !== 1 || !compatible.has(declared[0]!)))
+  ) {
+    throw new Error(`deliverable ${selected.id} is incompatible with expectedDeliverables`);
+  }
   return {
     ...requirement,
     expected_deliverables: [selected.id],

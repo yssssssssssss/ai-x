@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type {
   TaskHistoryPreferencePatch,
+  SystemCapabilitiesResponse,
   User,
 } from '../api/client.ts';
 import {
@@ -27,6 +28,7 @@ function taskTitle(task: HistoryTaskSummary): string {
 // 左侧栏:新建任务 + 状态化历史 + 资源库入口 + 用户/登出。
 export function Sidebar({
   user,
+  capabilities,
   history,
   activeTaskId,
   onNewTask,
@@ -36,6 +38,7 @@ export function Sidebar({
   onLogout,
 }: {
   user: User;
+  capabilities: SystemCapabilitiesResponse | null;
   history: HistoryTaskSummary[];
   activeTaskId: string | null;
   onNewTask: () => void;
@@ -120,6 +123,14 @@ export function Sidebar({
 
       <div className="sidebar-account">
         <div>{user.display_name}</div>
+        {capabilities ? (
+          <details className="sidebar-capabilities">
+            <summary>运行能力</summary>
+            <span>Plan {capabilities.planContractVersions.at(-1)}</span>
+            <span>Report {capabilities.reportDocumentVersions.at(-1)}</span>
+            <span>{capabilities.activeTaskTypes.length} task types · {capabilities.compiledSkills.length} compiled skills</span>
+          </details>
+        ) : null}
         <button className="btn-ghost" type="button" onClick={onLogout}>登出</button>
       </div>
     </aside>

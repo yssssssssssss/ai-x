@@ -3,7 +3,7 @@ deliverables:
   - id: research_plan
     status: active
     task_types: [user_research_planning]
-    aliases: [research plan]
+    aliases: [research plan, 用户研究计划, 研究方案, 调研方案]
     envelope_version: research-deliverable-v1
     payload_schema: schemas/deliverables/research-plan.schema.json
     synthesis_prompt: orchestrator/prompts/deliverables/research-plan.md
@@ -11,9 +11,9 @@ deliverables:
     evidence_policy: research-plan
     report_template: research-plan
   - id: research_strategy_report
-    status: inactive
+    status: active
     task_types: [research_synthesis]
-    aliases: [research strategy report]
+    aliases: [research strategy report, 研究策略报告, 研究答案, 策略答案]
     envelope_version: research-deliverable-v1
     payload_schema: schemas/deliverables/research-strategy-report.schema.json
     synthesis_prompt: orchestrator/prompts/deliverables/research-strategy-report.md
@@ -23,7 +23,7 @@ deliverables:
   - id: competitive_analysis_report
     status: active
     task_types: [competitive_research]
-    aliases: [competitive analysis report]
+    aliases: [competitive analysis report, 竞品分析报告]
     envelope_version: research-deliverable-v1
     payload_schema: schemas/deliverables/competitive-analysis-report.schema.json
     synthesis_prompt: orchestrator/prompts/deliverables/competitive-analysis-report.md
@@ -33,7 +33,7 @@ deliverables:
   - id: voc_diagnosis_report
     status: active
     task_types: [voc_diagnosis]
-    aliases: [voc diagnosis report]
+    aliases: [voc diagnosis report, 用户之声诊断报告]
     envelope_version: research-deliverable-v1
     payload_schema: schemas/deliverables/voc-diagnosis-report.schema.json
     synthesis_prompt: orchestrator/prompts/deliverables/voc-diagnosis-report.md
@@ -43,7 +43,7 @@ deliverables:
   - id: design_audit_report
     status: active
     task_types: [design_audit]
-    aliases: [design audit report]
+    aliases: [design audit report, 设计走查报告]
     envelope_version: research-deliverable-v1
     payload_schema: schemas/deliverables/design-audit-report.schema.json
     synthesis_prompt: orchestrator/prompts/deliverables/design-audit-report.md
@@ -53,7 +53,7 @@ deliverables:
   - id: accessibility_audit_report
     status: active
     task_types: [a11y_audit]
-    aliases: [accessibility audit report]
+    aliases: [accessibility audit report, 无障碍审计报告]
     envelope_version: research-deliverable-v1
     payload_schema: schemas/deliverables/accessibility-audit-report.schema.json
     synthesis_prompt: orchestrator/prompts/deliverables/accessibility-audit-report.md

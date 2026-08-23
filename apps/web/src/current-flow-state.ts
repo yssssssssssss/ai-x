@@ -82,6 +82,22 @@ export function historyTaskPresentation(task: HistoryTaskSummary): TaskStatePres
     if (task.status === 'awaiting_approval' && task.requiresAction) {
       return { label: '待审批', group: 'pending', tone: 'action' };
     }
+    if (task.status === 'completed' || task.status === 'completed_with_gaps') {
+      if (task.task_type === 'research_synthesis') {
+        return {
+          label: task.status === 'completed_with_gaps' ? '研究答案已完成·有缺口' : '研究答案已完成',
+          group: 'completed',
+          tone: task.status === 'completed_with_gaps' ? 'warning' : 'success',
+        };
+      }
+      if (task.task_type === 'user_research_planning') {
+        return {
+          label: task.status === 'completed_with_gaps' ? '研究方案已生成·有缺口' : '研究方案已生成',
+          group: 'completed',
+          tone: task.status === 'completed_with_gaps' ? 'warning' : 'success',
+        };
+      }
+    }
     try {
       return taskStatePresentation(task.status);
     } catch {
