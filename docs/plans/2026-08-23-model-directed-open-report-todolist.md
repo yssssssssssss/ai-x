@@ -4,7 +4,7 @@
 >
 > 当前基线：`feat/research-answer-dynamic-reports@affb2cc5389ee19633684f0e4b1ded4f15398bcd`
 >
-> 状态：Phase 1–7 源码已实现并通过本地门禁；七次无20分钟总限制的真实运行已验证到最终语义 Review；最新 Requirement 双次输出未落库，现已增加安全解包/投影和可识别错误类型；完整真实闭环待再次授权复跑。
+> 状态：Phase 1–7 源码已实现并通过本地门禁；八次无20分钟总限制的真实运行已验证到最终语义 Review；最新 Planning 误将纯公开资料任务送入审批，现已确定性移除假设性隐私/授权阻断；完整真实闭环待再次授权复跑。
 >
 > 发布规则：所有改动进入同一集成分支；每个 Phase 独立提交、可构建、可回滚；所有源码和外部门禁通过后只合并一次；未经授权不 push。
 
@@ -22,7 +22,7 @@
 - [x] 本次 20 分钟终止来自外层验收命令，不是仓库内的整任务业务限制。
 - [x] 超时任务已由 Lease 回收为 `paused / worker_loss`，没有生成最终 Deliverable。
 - [x] 当前分支 `feat/research-answer-dynamic-reports@affb2cc` 干净。
-- [x] 当前全量质量门禁为 1671 tests、1656 passed、15 skipped、0 failed。
+- [x] 当前全量质量门禁为 1673 tests、1658 passed、15 skipped、0 failed。
 - [x] 已建立完整方案和本 TodoList。
 
 # 当前实施证据
@@ -40,7 +40,8 @@
 - [x] `9e5b3a75-6989-48d9-8b89-fb2655ef5e64` 在 Requirement 持久化前暴露结构化输出校验失败；已实现一次携带脱敏反馈的 Requirement 重试。
 - [x] `ee5ba760-39ea-42f0-aa1a-60e2026f7615` 已成功 SEALED Canonical Deliverable v2，并进入最终 Report Review；Reviewer 返回 `revise` 后，已实现一次受限 Content Draft 语义修订并重新执行全部确定性门禁。
 - [x] `70ca280d-007d-4cdb-810f-6010060f538f` 的两次 Requirement 调用均成功返回但未落版本；已增加完整对象安全解包、未声明字段投影和安全错误类型。
-- [ ] Requirement 安全解包与受限语义修订后的完整真实 Gateway/DB 闭环尚未再次运行。
+- [x] `3efb0f98-6d1f-4873-9062-443bbc467fc3` 已持久化 Requirement 与候选 Plan，但纯公开资料任务因假设性隐私/授权提醒进入 `awaiting_approval`；现已只在明确 public-only、无PII且未请求私有数据时移除此类假设性阻断。
+- [ ] 假设性阻断修复与受限语义修订后的完整真实 Gateway/DB 闭环尚未再次运行。
 - [ ] live Zero 尚未验收。
 - [ ] 尚未获得 merge/restart/push 授权。
 
