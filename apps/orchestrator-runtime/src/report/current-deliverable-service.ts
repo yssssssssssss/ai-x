@@ -3,7 +3,10 @@ import type {
   EvidenceEntry,
   CurrentExecutionPlan,
   ResearchDeliverableEnvelope,
+  ProblemGraph,
+  ResearchStrategyReportPayload,
 } from '../../../../packages/api-contract/research-deliverable.ts';
+import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
 import type {
   EvidenceArtifactResolver,
   EvidenceManifest,
@@ -24,6 +27,7 @@ import {
 import { sameBrowserSourceUrl } from '../runtime/public-web-access-policy.ts';
 import type { VerifiedVisualAnnotationBinding } from './report-composition-service.ts';
 import type { VerifiedVisualAsset } from './visual-asset-service.ts';
+import { validateResearchStrategyAnswer } from './answer-quality-validator.ts';
 function createDeliverableDraftSchema(payloadSchema: object, strictContract: boolean) {
   return {
     type: 'object',
@@ -1277,6 +1281,15 @@ export class CurrentDeliverableService {
           capabilityProvenance: outputData.provenance,
         };
         if (strictV2) this.dependencies.validator.validateFileOrThrow(contract.payloadSchemaPath, candidate.payload);
+        if (contract.entry.id === 'research_strategy_report') {
+          validateResearchStrategyAnswer({
+            payload: candidate.payload as ResearchStrategyReportPayload,
+            requirement: input.finalizedRequirement as ResearchTaskV2,
+            problemGraph: input.problemGraph as ProblemGraph,
+            evidenceIds: evidenceManifest.entries.map(({ id }) => id),
+            risksAndOpenIssues,
+          });
+        }
         this.reportValidator.validate({
           manifest: evidenceManifest,
           report: candidate,

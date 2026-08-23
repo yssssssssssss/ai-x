@@ -1,0 +1,96 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "research-strategy-report.schema.json",
+  "title": "ResearchStrategyReportPayload",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["title", "decisionContext", "executiveAnswer", "directAnswers", "evidenceBackedFindings", "dynamicSections", "strategyMap", "mindModel", "designPrinciples", "opportunities", "prioritizedActions", "channelStrategies", "recommendations", "limitations", "openQuestions", "requestedArtifactBindings"],
+  "properties": {
+    "title": { "$ref": "#/$defs/text" },
+    "decisionContext": { "$ref": "#/$defs/text" },
+    "executiveAnswer": { "$ref": "#/$defs/text" },
+    "directAnswers": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/directAnswer" } },
+    "evidenceBackedFindings": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/finding" } },
+    "dynamicSections": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/dynamicSection" } },
+    "strategyMap": { "$ref": "#/$defs/strategyMap" },
+    "mindModel": { "$ref": "#/$defs/mindModel" },
+    "designPrinciples": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/principle" } },
+    "opportunities": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/opportunity" } },
+    "prioritizedActions": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/action" } },
+    "channelStrategies": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/channel" } },
+    "recommendations": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/text" } },
+    "limitations": { "type": "array", "items": { "$ref": "#/$defs/text" } },
+    "openQuestions": { "type": "array", "items": { "$ref": "#/$defs/text" } },
+    "requestedArtifactBindings": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/artifactBinding" } }
+  },
+  "$defs": {
+    "text": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "ids": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/text" } },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "directAnswer": {
+      "type": "object", "additionalProperties": false,
+      "required": ["questionId", "question", "answer", "answerStatus", "evidenceIds", "confidence", "businessImplication", "recommendedAction", "validationNeeded"],
+      "properties": {
+        "questionId": { "$ref": "#/$defs/text" }, "question": { "$ref": "#/$defs/text" }, "answer": { "$ref": "#/$defs/text" },
+        "answerStatus": { "enum": ["supported", "provisional", "unanswered"] }, "evidenceIds": { "$ref": "#/$defs/ids" },
+        "confidence": { "$ref": "#/$defs/confidence" }, "businessImplication": { "$ref": "#/$defs/text" },
+        "recommendedAction": { "$ref": "#/$defs/text" }, "validationNeeded": { "type": "string" }
+      }
+    },
+    "finding": {
+      "type": "object", "additionalProperties": false, "required": ["id", "statement", "evidenceIds", "confidence"],
+      "properties": { "id": { "$ref": "#/$defs/text" }, "statement": { "$ref": "#/$defs/text" }, "evidenceIds": { "$ref": "#/$defs/ids" }, "confidence": { "$ref": "#/$defs/confidence" } }
+    },
+    "dynamicBlock": {
+      "type": "object", "additionalProperties": false, "required": ["id", "type", "title", "content", "questionIds", "evidenceIds", "confidence"],
+      "properties": {
+        "id": { "$ref": "#/$defs/text" }, "type": { "enum": ["narrative", "comparison_matrix", "strategy_map", "mind_model", "design_principles", "opportunity_backlog", "priority_matrix", "action_plan"] },
+        "title": { "$ref": "#/$defs/text" }, "content": { "$ref": "#/$defs/text" }, "questionIds": { "$ref": "#/$defs/ids" }, "evidenceIds": { "$ref": "#/$defs/ids" }, "confidence": { "$ref": "#/$defs/confidence" }
+      }
+    },
+    "dynamicSection": {
+      "type": "object", "additionalProperties": false, "required": ["id", "title", "purpose", "blocks"],
+      "properties": { "id": { "$ref": "#/$defs/text" }, "title": { "$ref": "#/$defs/text" }, "purpose": { "$ref": "#/$defs/text" }, "blocks": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/dynamicBlock" } } }
+    },
+    "strategyCell": {
+      "type": "object", "additionalProperties": false, "required": ["id", "row", "column", "statement", "evidenceIds", "confidence"],
+      "properties": { "id": { "$ref": "#/$defs/text" }, "row": { "$ref": "#/$defs/text" }, "column": { "$ref": "#/$defs/text" }, "statement": { "$ref": "#/$defs/text" }, "evidenceIds": { "$ref": "#/$defs/ids" }, "confidence": { "$ref": "#/$defs/confidence" } }
+    },
+    "strategyMap": {
+      "type": "object", "additionalProperties": false, "required": ["title", "rows", "columns", "cells"],
+      "properties": { "title": { "$ref": "#/$defs/text" }, "rows": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/text" } }, "columns": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/text" } }, "cells": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/strategyCell" } } }
+    },
+    "mindNode": {
+      "type": "object", "additionalProperties": false, "required": ["id", "label", "description", "evidenceIds"],
+      "properties": { "id": { "$ref": "#/$defs/text" }, "label": { "$ref": "#/$defs/text" }, "description": { "$ref": "#/$defs/text" }, "evidenceIds": { "$ref": "#/$defs/ids" } }
+    },
+    "mindEdge": {
+      "type": "object", "additionalProperties": false, "required": ["from", "to", "relationship"],
+      "properties": { "from": { "$ref": "#/$defs/text" }, "to": { "$ref": "#/$defs/text" }, "relationship": { "$ref": "#/$defs/text" } }
+    },
+    "mindModel": {
+      "type": "object", "additionalProperties": false, "required": ["title", "nodes", "edges"],
+      "properties": { "title": { "$ref": "#/$defs/text" }, "nodes": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/mindNode" } }, "edges": { "type": "array", "items": { "$ref": "#/$defs/mindEdge" } } }
+    },
+    "principle": {
+      "type": "object", "additionalProperties": false, "required": ["id", "title", "statement", "evidenceIds", "confidence"],
+      "properties": { "id": { "$ref": "#/$defs/text" }, "title": { "$ref": "#/$defs/text" }, "statement": { "$ref": "#/$defs/text" }, "evidenceIds": { "$ref": "#/$defs/ids" }, "confidence": { "$ref": "#/$defs/confidence" } }
+    },
+    "opportunity": {
+      "type": "object", "additionalProperties": false, "required": ["id", "title", "statement", "evidenceIds", "confidence", "impact"],
+      "properties": { "id": { "$ref": "#/$defs/text" }, "title": { "$ref": "#/$defs/text" }, "statement": { "$ref": "#/$defs/text" }, "evidenceIds": { "$ref": "#/$defs/ids" }, "confidence": { "$ref": "#/$defs/confidence" }, "impact": { "$ref": "#/$defs/text" } }
+    },
+    "action": {
+      "type": "object", "additionalProperties": false, "required": ["id", "priority", "action", "ownerType", "rationale", "evidenceIds", "validationMethod"],
+      "properties": { "id": { "$ref": "#/$defs/text" }, "priority": { "enum": ["P0", "P1", "P2"] }, "action": { "$ref": "#/$defs/text" }, "ownerType": { "$ref": "#/$defs/text" }, "rationale": { "$ref": "#/$defs/text" }, "evidenceIds": { "$ref": "#/$defs/ids" }, "validationMethod": { "$ref": "#/$defs/text" } }
+    },
+    "channel": {
+      "type": "object", "additionalProperties": false, "required": ["id", "channel", "role", "strategies", "evidenceIds"],
+      "properties": { "id": { "$ref": "#/$defs/text" }, "channel": { "$ref": "#/$defs/text" }, "role": { "$ref": "#/$defs/text" }, "strategies": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/text" } }, "evidenceIds": { "$ref": "#/$defs/ids" } }
+    },
+    "artifactBinding": {
+      "type": "object", "additionalProperties": false, "required": ["artifactType", "sourceField", "blockIds", "questionIds", "evidenceIds", "status"],
+      "properties": { "artifactType": { "enum": ["executive_answers", "research_report", "strategy_map", "mind_model", "design_principles", "opportunity_backlog", "prioritized_actions", "channel_strategies", "action_plan"] }, "sourceField": { "type": "string", "pattern": "^/" }, "blockIds": { "$ref": "#/$defs/ids" }, "questionIds": { "$ref": "#/$defs/ids" }, "evidenceIds": { "$ref": "#/$defs/ids" }, "status": { "enum": ["complete", "partial"] } }
+    }
+  }
+}

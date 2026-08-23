@@ -1,0 +1,15 @@
+version: 1
+id: research-strategy-report
+dimensions:
+  - id: direct-answer-coverage
+    required: true
+  - id: requested-artifact-presence
+    required: true
+  - id: answer-evidence-strength
+    required: true
+  - id: decision-usefulness
+    required: true
+  - id: hypothesis-conclusion-clarity
+    required: true
+  - id: risk-consistency
+    required: true

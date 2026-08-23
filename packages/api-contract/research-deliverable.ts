@@ -496,3 +496,69 @@ export interface ResearchPlanPayload {
   deliverables: string[];
   qualityChecks: string[];
 }
+
+export type ResearchAnswerStatus = 'supported' | 'provisional' | 'unanswered';
+export type RequestedResearchArtifact =
+  | 'executive_answers' | 'research_report' | 'strategy_map' | 'mind_model'
+  | 'design_principles' | 'opportunity_backlog' | 'prioritized_actions'
+  | 'channel_strategies' | 'action_plan';
+
+export interface ResearchStrategyDirectAnswer {
+  questionId: string;
+  question: string;
+  answer: string;
+  answerStatus: ResearchAnswerStatus;
+  evidenceIds: string[];
+  confidence: number;
+  businessImplication: string;
+  recommendedAction: string;
+  validationNeeded: string;
+}
+
+export interface ResearchStrategyReportPayload {
+  title: string;
+  decisionContext: string;
+  executiveAnswer: string;
+  directAnswers: ResearchStrategyDirectAnswer[];
+  evidenceBackedFindings: Array<{ id: string; statement: string; evidenceIds: string[]; confidence: number }>;
+  dynamicSections: Array<{
+    id: string;
+    title: string;
+    purpose: string;
+    blocks: Array<{
+      id: string;
+      type: 'narrative' | 'comparison_matrix' | 'strategy_map' | 'mind_model' | 'design_principles' | 'opportunity_backlog' | 'priority_matrix' | 'action_plan';
+      title: string;
+      content: string;
+      questionIds: string[];
+      evidenceIds: string[];
+      confidence: number;
+    }>;
+  }>;
+  strategyMap: {
+    title: string;
+    rows: string[];
+    columns: string[];
+    cells: Array<{ id: string; row: string; column: string; statement: string; evidenceIds: string[]; confidence: number }>;
+  };
+  mindModel: {
+    title: string;
+    nodes: Array<{ id: string; label: string; description: string; evidenceIds: string[] }>;
+    edges: Array<{ from: string; to: string; relationship: string }>;
+  };
+  designPrinciples: Array<{ id: string; title: string; statement: string; evidenceIds: string[]; confidence: number }>;
+  opportunities: Array<{ id: string; title: string; statement: string; evidenceIds: string[]; confidence: number; impact: string }>;
+  prioritizedActions: Array<{ id: string; priority: 'P0' | 'P1' | 'P2'; action: string; ownerType: string; rationale: string; evidenceIds: string[]; validationMethod: string }>;
+  channelStrategies: Array<{ id: string; channel: string; role: string; strategies: string[]; evidenceIds: string[] }>;
+  recommendations: string[];
+  limitations: string[];
+  openQuestions: string[];
+  requestedArtifactBindings: Array<{
+    artifactType: RequestedResearchArtifact;
+    sourceField: string;
+    blockIds: string[];
+    questionIds: string[];
+    evidenceIds: string[];
+    status: 'complete' | 'partial';
+  }>;
+}

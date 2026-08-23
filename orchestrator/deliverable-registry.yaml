@@ -10,6 +10,16 @@ deliverables:
     review_rubric: orchestrator/report-rubrics/research-plan.yaml
     evidence_policy: research-plan
     report_template: research-plan
+  - id: research_strategy_report
+    status: inactive
+    task_types: [research_synthesis]
+    aliases: [research strategy report]
+    envelope_version: research-deliverable-v1
+    payload_schema: schemas/deliverables/research-strategy-report.schema.json
+    synthesis_prompt: orchestrator/prompts/deliverables/research-strategy-report.md
+    review_rubric: orchestrator/report-rubrics/research-strategy-report.yaml
+    evidence_policy: research-strategy-report
+    report_template: research-plan
   - id: competitive_analysis_report
     status: active
     task_types: [competitive_research]

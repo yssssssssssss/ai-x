@@ -14,6 +14,13 @@ policies:
         accepted_classes: [user_input, knowledge, public_source]
         minimum_count: 1
         required: true
+  - task_type: research_synthesis
+    deliverable_type: research_strategy_report
+    requirements:
+      - id: research-strategy-report
+        accepted_classes: [public_source, knowledge, user_input, dataset]
+        minimum_count: 1
+        required: true
   - task_type: competitive_research
     deliverable_type: competitive_analysis_report
     requirements:
