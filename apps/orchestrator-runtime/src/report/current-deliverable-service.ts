@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { ControlExecutionLease } from '../../../../database/control-plane.ts';
 import type {
   EvidenceEntry,
@@ -7,6 +9,7 @@ import type {
   ProblemGraph,
   ResearchStrategyReportPayload,
   ResearchStrategyReportPayloadV2,
+  ResearchStrategyContentDraftV2,
   ResearchStrategyRiskDisclosure,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
@@ -22,6 +25,7 @@ import {
   type SynthesisMaterializerLike,
 } from './synthesis-materializer.ts';
 import { redactSensitiveValue, redactString } from '../runtime/redaction.ts';
+import { getConfigRoot } from '../runtime/config-loader.ts';
 import type { ReportReviewArtifact } from './report-review-service.ts';
 import {
   resolveDeliverableContractById,
@@ -32,13 +36,22 @@ import type { VerifiedVisualAnnotationBinding } from './report-composition-servi
 import type { VerifiedVisualAsset } from './visual-asset-service.ts';
 import {
   assembleResearchStrategyDeliverable,
+  extractResearchStrategyContentDraft,
   isResearchStrategyPayloadV2,
+  ResearchStrategyAssemblyError,
 } from './research-strategy-deliverable-assembler.ts';
 import { createDeliverableValidationDiagnostic } from './deliverable-validation-diagnostic.ts';
 import {
   canonicalizeRequestedArtifactBindings,
   validateResearchStrategyAnswer,
 } from './answer-quality-validator.ts';
+function researchStrategyDraftSchema(): object {
+  return JSON.parse(readFileSync(
+    join(getConfigRoot(), 'schemas/skills/research-strategy-content-draft-v2.schema.json'),
+    'utf8',
+  )) as object;
+}
+
 function createDeliverableDraftSchema(payloadSchema: object, strictContract: boolean) {
   return {
     type: 'object',
@@ -1240,63 +1253,99 @@ export class CurrentDeliverableService {
       if (!strategyRequirement || !requiredCoverage) {
         throw new Error('reviewed Skill assembly requires a finalized research strategy requirement');
       }
-      let deliverable: ResearchDeliverableEnvelope<ResearchStrategyReportPayloadV2>;
-      try {
-        deliverable = assembleResearchStrategyDeliverable({
-          taskId: input.task.id,
-          planVersionId: input.plan.id,
-          attemptId: input.attempt.id,
-          evidenceManifestArtifactId: input.evidenceManifest.artifact.id,
-          requirement: strategyRequirement,
-          problemGraph: input.problemGraph as ProblemGraph,
-          evidenceManifest,
-          materials: synthesisMaterials,
-          requiredRiskDisclosures: preSynthesisRiskDisclosures,
-          capabilityProvenance: outputData.provenance,
-          validator: this.dependencies.validator,
-        });
-        if (!isResearchStrategyPayloadV2(deliverable.payload)) {
-          throw new Error('reviewed Skill assembly did not produce research strategy payload v2');
-        }
-        assertRequiredCoverage(deliverable.coverage, requiredCoverage);
-        this.reportValidator.validate({
-          manifest: evidenceManifest,
-          report: deliverable,
-          resolver: input.evidenceResolver,
-          requireCoverage: true,
-          validatePayloadSchema: true,
-        });
-      } catch (error) {
-        const diagnostic = createDeliverableValidationDiagnostic({
-          taskId: input.task.id,
-          planVersionId: input.plan.id,
-          attemptId: input.attempt.id,
-          stage: 'canonical_assembly',
-          round: input.revisionRound ?? 0,
-          error,
-        });
-        this.dependencies.validator.validateFileOrThrow(
-          'schemas/deliverable-validation-diagnostic.schema.json',
-          diagnostic,
-        );
+      let deliverable: ResearchDeliverableEnvelope<ResearchStrategyReportPayloadV2> | null = null;
+      let draftOverride: ResearchStrategyContentDraftV2 | undefined;
+      for (let assemblyRound = 0; assemblyRound < 2; assemblyRound += 1) {
         try {
-          await this.dependencies.artifacts.writeJson({
+          deliverable = assembleResearchStrategyDeliverable({
             taskId: input.task.id,
             planVersionId: input.plan.id,
             attemptId: input.attempt.id,
-            kind: 'deliverable_validation_diagnostic',
-            relativePath: `diagnostics/deliverable-validation-r${input.revisionRound ?? 0}.json`,
-            schemaVersion: diagnostic.version,
-            sensitivity: 'internal',
-            redactionPolicyVersion: 'v1',
-            activeLease: input.activeLease,
-            value: diagnostic,
+            evidenceManifestArtifactId: input.evidenceManifest.artifact.id,
+            requirement: strategyRequirement,
+            problemGraph: input.problemGraph as ProblemGraph,
+            evidenceManifest,
+            materials: synthesisMaterials,
+            ...(draftOverride ? { draftOverride } : {}),
+            requiredRiskDisclosures: preSynthesisRiskDisclosures,
+            capabilityProvenance: outputData.provenance,
+            validator: this.dependencies.validator,
           });
-        } catch {
-          // Diagnostics are best-effort and must not hide the authoritative validation failure.
+          if (!isResearchStrategyPayloadV2(deliverable.payload)) {
+            throw new Error('reviewed Skill assembly did not produce research strategy payload v2');
+          }
+          assertRequiredCoverage(deliverable.coverage, requiredCoverage);
+          this.reportValidator.validate({
+            manifest: evidenceManifest,
+            report: deliverable,
+            resolver: input.evidenceResolver,
+            requireCoverage: true,
+            validatePayloadSchema: true,
+          });
+          break;
+        } catch (error) {
+          const repairable = assemblyRound === 0
+            && error instanceof ResearchStrategyAssemblyError
+            && !/Reviewer verdict|no final Reviewer/u.test(error.message);
+          if (repairable) {
+            const originalDraft = extractResearchStrategyContentDraft(synthesisMaterials);
+            const repaired = await this.dependencies.llm.generateStructured<ResearchStrategyContentDraftV2>({
+              prompt: [
+                'Repair the reviewed research-strategy-content-draft-v2 without changing its substantive conclusions.',
+                'Use only the exact allowed Question and Evidence IDs supplied in context.',
+                'Remove unsupported references, downgrade claims to provisional when necessary, and preserve every requested artifact as a typed content Block.',
+                `Correct this validation failure: ${redactString(error.message)}`,
+              ].join('\n'),
+              schema: researchStrategyDraftSchema(),
+              schemaName: 'research-strategy-content-draft-v2',
+              context: {
+                draft: redactSensitiveValue(originalDraft),
+                allowedQuestionIds: (input.problemGraph as ProblemGraph).questions.map(({ id }) => id),
+                allowedEvidence: evidenceManifest.entries.map(({ id, evidenceClass }) => ({ id, evidenceClass })),
+                requestedArtifacts: strategyRequirement.requested_artifacts ?? [],
+              },
+              receipt: {
+                stage: 'deliverable_repair',
+                attemptId: input.attempt.id,
+                stepNo: input.stepNo ?? (input.plan.plan.steps?.length ?? 0) + 1,
+                expectedModel: input.expectedModel,
+              },
+            });
+            draftOverride = repaired.data;
+            continue;
+          }
+          const diagnostic = createDeliverableValidationDiagnostic({
+            taskId: input.task.id,
+            planVersionId: input.plan.id,
+            attemptId: input.attempt.id,
+            stage: 'canonical_assembly',
+            round: assemblyRound,
+            error,
+          });
+          this.dependencies.validator.validateFileOrThrow(
+            'schemas/deliverable-validation-diagnostic.schema.json',
+            diagnostic,
+          );
+          try {
+            await this.dependencies.artifacts.writeJson({
+              taskId: input.task.id,
+              planVersionId: input.plan.id,
+              attemptId: input.attempt.id,
+              kind: 'deliverable_validation_diagnostic',
+              relativePath: `diagnostics/deliverable-validation-r${assemblyRound}.json`,
+              schemaVersion: diagnostic.version,
+              sensitivity: 'internal',
+              redactionPolicyVersion: 'v1',
+              activeLease: input.activeLease,
+              value: diagnostic,
+            });
+          } catch {
+            // Diagnostics are best-effort and must not hide the authoritative validation failure.
+          }
+          throw error;
         }
-        throw error;
       }
+      if (!deliverable) throw new Error('research strategy assembly exhausted without a validated result');
       const artifact = await this.dependencies.artifacts.writeJson({
         taskId: input.task.id,
         planVersionId: input.plan.id,

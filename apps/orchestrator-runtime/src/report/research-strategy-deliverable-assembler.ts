@@ -397,7 +397,9 @@ function canonicalizeEvidenceAliases(
   return draft;
 }
 
-function skillDraft(materials: readonly SynthesisMaterial[]): ResearchStrategyContentDraftV2 {
+export function extractResearchStrategyContentDraft(
+  materials: readonly SynthesisMaterial[],
+): ResearchStrategyContentDraftV2 {
   const matches = materials.filter(({ actorType, actorId }) => (
     actorType === 'skill' && actorId === 'research-strategy-synthesis'
   ));
@@ -428,12 +430,16 @@ export function assembleResearchStrategyDeliverable(input: {
   problemGraph: ProblemGraph;
   evidenceManifest: EvidenceManifest;
   materials: readonly SynthesisMaterial[];
+  draftOverride?: ResearchStrategyContentDraftV2;
   requiredRiskDisclosures: readonly ResearchStrategyRiskDisclosure[];
   capabilityProvenance: CapabilityProvenance[];
   validator?: Pick<SchemaValidator, 'validateFileOrThrow'>;
 }): ResearchDeliverableEnvelope<ResearchStrategyReportPayloadV2> {
   const validator = input.validator ?? new SchemaValidator();
-  const draft = canonicalizeEvidenceAliases(skillDraft(input.materials), input.evidenceManifest);
+  const draft = canonicalizeEvidenceAliases(
+    input.draftOverride ?? extractResearchStrategyContentDraft(input.materials),
+    input.evidenceManifest,
+  );
   validator.validateFileOrThrow(DRAFT_SCHEMA, draft);
   validateSupportBindings({ draft, problemGraph: input.problemGraph, evidenceManifest: input.evidenceManifest });
 

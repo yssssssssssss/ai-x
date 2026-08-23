@@ -1249,36 +1249,33 @@ function openStrategyDraft(): ResearchStrategyContentDraftV2 {
   };
 }
 
-test('assembles a research strategy deliverable from the reviewed Skill output without another full-report LLM call', async () => {
-  const content = openStrategyDraft();
-  const materializer = {
-    async materialize(): Promise<SynthesisMaterial[]> {
-      return [{
-        stepNo: 8,
-        actorType: 'skill',
-        actorId: 'research-strategy-synthesis',
-        questionIds: ['q1'],
-        artifactId: 'skill-output-1',
-        artifactContentSha256: `sha256:${'8'.repeat(64)}`,
-        semanticRole: 'analysis',
-        value: {
-          version: 'skill-output-v2', status: 'succeeded', summary: 'Complete',
-          findings: [], assumptions: [], limitations: [], recommendations: [], payload: content,
-        },
-      }, {
-        stepNo: 9,
-        actorType: 'reviewer',
-        actorId: 'reviewer.research-lead',
-        questionIds: ['q1'],
-        artifactId: 'review-output-1',
-        artifactContentSha256: `sha256:${'a'.repeat(64)}`,
-        semanticRole: 'review',
-        value: { version: 'reviewer-step-output-v1', review: 'Pass.', verdict: 'pass', conditions: [] },
-      }];
+function openStrategyMaterials(content: ResearchStrategyContentDraftV2): SynthesisMaterial[] {
+  return [{
+    stepNo: 8,
+    actorType: 'skill',
+    actorId: 'research-strategy-synthesis',
+    questionIds: ['q1'],
+    artifactId: 'skill-output-1',
+    artifactContentSha256: `sha256:${'8'.repeat(64)}`,
+    semanticRole: 'analysis',
+    value: {
+      version: 'skill-output-v2', status: 'succeeded', summary: 'Complete',
+      findings: [], assumptions: [], limitations: [], recommendations: [], payload: content,
     },
-  };
-  const { service, llm } = await createHarness(validDeliverableDraft(), materializer);
-  const result = await service.generate(generateInput({
+  }, {
+    stepNo: 9,
+    actorType: 'reviewer',
+    actorId: 'reviewer.research-lead',
+    questionIds: ['q1'],
+    artifactId: 'review-output-1',
+    artifactContentSha256: `sha256:${'a'.repeat(64)}`,
+    semanticRole: 'review',
+    value: { version: 'reviewer-step-output-v1', review: 'Pass.', verdict: 'pass', conditions: [] },
+  }];
+}
+
+function openStrategyInput(): Partial<DeliverableGenerateInput> {
+  return {
     plan: { id: planVersionId, plan: { deliverable_type: 'research_strategy_report' } },
     finalizedRequirement: {
       version: 'research-task-v2', task_type: 'research_synthesis', outcome_mode: 'answer',
@@ -1299,54 +1296,43 @@ test('assembles a research strategy deliverable from the reviewed Skill output w
       taskId, planVersionId, attemptId,
       artifact: { id: 'skill-output-1', contentSha256: `sha256:${'8'.repeat(64)}`, state: 'SEALED' },
     }],
-  }));
+  };
+}
+
+test('assembles a research strategy deliverable from the reviewed Skill output without another full-report LLM call', async () => {
+  const content = openStrategyDraft();
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(content); } };
+  const { service, llm } = await createHarness(validDeliverableDraft(), materializer);
+  const result = await service.generate(generateInput(openStrategyInput()));
 
   assert.equal(llm.structuredCalls.length, 0);
   assert.equal((result.deliverable.payload as { schemaVersion?: string }).schemaVersion, 'research-strategy-content-v2');
   assert.deepEqual(result.deliverable.coverage.questionBindings, [{ questionId: 'q1', summaryIds: ['summary-q1'] }]);
 });
 
-test('persists a sanitized diagnostic when reviewed Skill assembly fails', async () => {
+test('repairs one invalid reviewed Content Draft without returning to full Deliverable synthesis', async () => {
   const invalid = openStrategyDraft();
   invalid.directAnswers[0]!.evidenceIds = ['unknown-evidence'];
-  const materializer = {
-    async materialize(): Promise<SynthesisMaterial[]> {
-      return [{
-        stepNo: 8, actorType: 'skill', actorId: 'research-strategy-synthesis', questionIds: ['q1'],
-        artifactId: 'skill-output-invalid', artifactContentSha256: `sha256:${'9'.repeat(64)}`, semanticRole: 'analysis',
-        value: {
-          version: 'skill-output-v2', status: 'succeeded', summary: 'Complete', findings: [], assumptions: [],
-          limitations: [], recommendations: [], payload: invalid,
-        },
-      }, {
-        stepNo: 9,
-        actorType: 'reviewer',
-        actorId: 'reviewer.research-lead',
-        questionIds: ['q1'],
-        artifactId: 'review-output-invalid',
-        artifactContentSha256: `sha256:${'b'.repeat(64)}`,
-        semanticRole: 'review',
-        value: { version: 'reviewer-step-output-v1', review: 'Pass.', verdict: 'pass', conditions: [] },
-      }];
-    },
-  };
-  const { service, llm, writes } = await createHarness(validDeliverableDraft(), materializer);
-  await assert.rejects(() => service.generate(generateInput({
-    plan: { id: planVersionId, plan: { deliverable_type: 'research_strategy_report' } },
-    finalizedRequirement: {
-      version: 'research-task-v2', task_type: 'research_synthesis', outcome_mode: 'answer',
-      business_domain: 'test', research_goal: 'answer q1', target_audience: ['team'], scope: ['test'], constraints: [],
-      success_criteria: [{ id: 'criterion1', statement: 'Answer q1' }],
-      expected_deliverables: ['research_strategy_report'], requested_artifacts: ['executive_answers', 'research_report'],
-      assumptions: [], ambiguities: [], clarification_questions: [], blocking_issues: [], sensitivity: 'public', pii_detected: false,
-    },
-    problemGraph: {
-      version: 'problem-graph-v1',
-      questions: [{ id: 'q1', statement: 'What?', rationale: 'Decision', priority: 'required', success_criterion_ids: ['criterion1'], evidence_requirements: [], acceptance_criteria: ['Answer'], depends_on: [] }],
-    },
-  })), /unknown Evidence/);
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(invalid); } };
+  const { service, llm, writes } = await createHarness(openStrategyDraft(), materializer);
 
-  assert.equal(llm.structuredCalls.length, 0);
+  const result = await service.generate(generateInput(openStrategyInput()));
+
+  assert.equal(llm.structuredCalls.length, 1);
+  assert.equal(llm.structuredCalls[0]?.receipt.stage, 'deliverable_repair');
+  assert.equal((result.deliverable.payload as { schemaVersion?: string }).schemaVersion, 'research-strategy-content-v2');
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0]?.kind, 'deliverable');
+});
+
+test('persists a sanitized diagnostic when reviewed Skill assembly and its bounded repair fail', async () => {
+  const invalid = openStrategyDraft();
+  invalid.directAnswers[0]!.evidenceIds = ['unknown-evidence'];
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(invalid); } };
+  const { service, llm, writes } = await createHarness(invalid, materializer);
+  await assert.rejects(() => service.generate(generateInput(openStrategyInput())), /unknown Evidence/);
+
+  assert.equal(llm.structuredCalls.length, 1);
   assert.equal(writes.length, 1);
   assert.equal(writes[0]?.kind, 'deliverable_validation_diagnostic');
   assert.equal(writes[0]?.schemaVersion, 'deliverable-validation-diagnostic-v1');

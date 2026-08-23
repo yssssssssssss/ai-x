@@ -1156,6 +1156,7 @@ function verifiedPriorOutputs(
   kind: StepArtifactKind;
   output: unknown;
   artifact: EngineSealedStepOutput['artifact'];
+  evidenceIds?: string[];
 }> {
   const allowed = step
     ? new Set([
@@ -1166,13 +1167,25 @@ function verifiedPriorOutputs(
   return [...outputs]
     .filter(({ stepNo }) => allowed === null || allowed.has(stepNo))
     .sort((left, right) => left.stepNo - right.stepNo)
-    .map(({ stepNo, actorId, kind, output, artifact }) => ({
-      stepNo,
-      actorId,
-      kind,
-      output,
-      artifact,
-    }));
+    .map(({ stepNo, actorId, kind, output, artifact }) => {
+      const value = isRecord(output) ? output : null;
+      const evidenceCount = kind === 'tool_output' && Array.isArray(value?.results)
+        ? value.results.length
+        : kind === 'knowledge_output' && Array.isArray(value?.resources)
+          ? value.resources.length
+          : 0;
+      const prefix = kind === 'knowledge_output' ? 'K' : 'E';
+      return {
+        stepNo,
+        actorId,
+        kind,
+        output,
+        artifact,
+        ...(evidenceCount > 0
+          ? { evidenceIds: Array.from({ length: evidenceCount }, (_, index) => `${prefix}${stepNo}-${index + 1}`) }
+          : {}),
+      };
+    });
 }
 
 function stepContract(step: EngineStep): Record<string, unknown> {
