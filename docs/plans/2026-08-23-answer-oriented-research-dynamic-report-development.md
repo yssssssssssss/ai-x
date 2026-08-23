@@ -1,6 +1,6 @@
 # 答案型研究闭环与动态报告开发文档
 
-> 状态：Phase 1–6 已实现并提交；自动化与浏览器 fixture 已通过；真实 Tavily 单独验证通过；真实 Gateway 端到端与独立审查因当前环境条件尚未完成。
+> 状态：Phase 1–6 已实现并提交；自动化、Web build、浏览器四流程与独立 Gate 8 源码审查通过；真实 Tavily 单独验证通过；修正后的完整 Gateway/数据库闭环与 live Zero 发布仍待外部验收。
 >
 > 基线分支：`feat/skill-runtime-report-fidelity@b1e5c7aafd22177ad224a8f62e367da6533fdf0f`
 >

@@ -469,18 +469,27 @@ git diff --check
 
 # Gate 8：独立审查
 
-- [ ] 审查Plan/Answer语义边界。
-- [ ] 审查Deliverable选择与Canonicalization。
-- [ ] 审查Direct Answer真实性。
-- [ ] 审查Requested Artifact实体化。
-- [ ] 审查Evidence与Provisional边界。
-- [ ] 审查Dynamic Report来源绑定。
-- [ ] 审查Answer Review阻断逻辑。
-- [ ] 审查Skill Runtime安全无回归。
-- [ ] 审查历史兼容。
-- [ ] 审查Browser/Bundle/Zero。
-- [ ] 修正后再次运行最终Gate。
-- [ ] 独立Reviewer给出READY。
+- [x] 审查Plan/Answer语义边界。
+- [x] 审查Deliverable选择与Canonicalization。
+- [x] 审查Direct Answer真实性。
+- [x] 审查Requested Artifact实体化。
+- [x] 审查Evidence与Provisional边界。
+- [x] 审查Dynamic Report来源绑定。
+- [x] 审查Answer Review阻断逻辑。
+- [x] 审查Skill Runtime安全无回归。
+- [x] 审查历史兼容。
+- [x] 审查Browser/Bundle/Zero。
+- [x] 修正后再次运行最终Gate。
+- [x] 独立Reviewer给出READY。
+
+## Gate 8 实际结果（2026-08-23）
+
+- 第一轮审查：1个发布门禁Blocker、3个High、6个Medium、1个Low；源代码问题已由`69f006a`修正。
+- 第二轮聚焦复审：剩余1个Medium（Reviewer条件依赖关键词启发式）；由`8c818f0`改为结构化Reviewer输出。
+- 第三轮复审：剩余1个Medium（空白条件可通过Schema）；由`3bebccc`增加非空白Schema和fail-closed收集器。
+- 最终独立复审结论：**READY**，无Blocker、High或Medium遗留。
+- 最终父级门禁：`pnpm quality`为1643 tests、1628 pass、15 skip、0 fail；定向测试142 pass、1 skip、0 fail；Web production build和`git diff --check`通过。
+- 真实Gateway/数据库修正后闭环与live Zero属于外部发布Gate，未被源码READY结论替代。
 
 # Gate 9：一次性合并与部署
 
@@ -520,7 +529,7 @@ historical report compatibility            done
 real Gateway/Tavily acceptance             partial: standalone Tavily passed; first Gateway/DB attempt exposed clarification loop, fixed but full rerun pending
 browser/Zero acceptance                    four browser flows done; real Zero unavailable
 full quality gate                          done
-independent review READY                   pending parent review
+independent review READY                   done (final source review: no blocker/high/medium)
 single final merge                         not authorized
 remote delivery authorization              withheld
 ```
