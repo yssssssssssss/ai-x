@@ -193,17 +193,22 @@ function graphAndCoverage(input: {
   blocks: ResearchStrategyContentBlockV2[];
   problemGraph: ProblemGraph;
   requirement: ResearchTaskV2;
+  evidenceManifest: EvidenceManifest;
 }): {
   findingGraph: FindingGraph;
   recommendations: CurrentRecommendation[];
   coverage: ResearchDeliverableCoverage;
 } {
   const factIdsByQuestion = new Map<string, string[]>();
+  const factIdsByEvidence = new Map<string, string[]>();
   const facts = input.findings
     .filter(({ support }) => support.status === 'supported')
     .map((finding) => {
       for (const questionId of finding.support.questionIds) {
         factIdsByQuestion.set(questionId, [...(factIdsByQuestion.get(questionId) ?? []), finding.id]);
+      }
+      for (const evidenceId of finding.support.evidenceIds) {
+        factIdsByEvidence.set(evidenceId, [...(factIdsByEvidence.get(evidenceId) ?? []), finding.id]);
       }
       return {
         id: finding.id,
@@ -212,13 +217,36 @@ function graphAndCoverage(input: {
         statement: finding.statement,
       };
     });
-  if (facts.length === 0) fail('at least one supported evidence finding is required');
-
+  const evidenceById = new Map(input.evidenceManifest.entries.map((entry) => [entry.id, entry]));
   const provisionalAnalyses = input.findings
     .filter(({ support }) => support.status === 'provisional')
     .map((finding) => {
-      const relatedFacts = unique(finding.support.questionIds.flatMap((questionId) => factIdsByQuestion.get(questionId) ?? []));
-      if (relatedFacts.length === 0) fail(`provisional evidence finding ${finding.id} has no supported factual root`);
+      let relatedFacts = unique([
+        ...finding.support.questionIds.flatMap((questionId) => factIdsByQuestion.get(questionId) ?? []),
+        ...finding.support.evidenceIds.flatMap((evidenceId) => factIdsByEvidence.get(evidenceId) ?? []),
+      ]);
+      if (relatedFacts.length === 0) {
+        for (const evidenceId of finding.support.evidenceIds) {
+          const evidence = evidenceById.get(evidenceId);
+          if (!evidence || !FACTUAL_EVIDENCE_CLASSES.has(evidence.evidenceClass)) continue;
+          const anchorId = `evidence-anchor-${evidenceId}`;
+          if (!facts.some(({ id }) => id === anchorId)) {
+            facts.push({
+              id: anchorId,
+              kind: 'fact',
+              evidenceIds: [evidenceId],
+              statement: `Verified ${evidence.evidenceClass} Evidence ${evidenceId} was collected for this analysis.`,
+            });
+          }
+          relatedFacts.push(anchorId);
+          factIdsByEvidence.set(evidenceId, unique([...(factIdsByEvidence.get(evidenceId) ?? []), anchorId]));
+          for (const questionId of finding.support.questionIds) {
+            factIdsByQuestion.set(questionId, unique([...(factIdsByQuestion.get(questionId) ?? []), anchorId]));
+          }
+        }
+        relatedFacts = unique(relatedFacts);
+      }
+      if (relatedFacts.length === 0) fail(`provisional evidence finding ${finding.id} has no factual Evidence root`);
       return {
         id: `analysis-${finding.id}`,
         findingIds: relatedFacts,
@@ -226,18 +254,16 @@ function graphAndCoverage(input: {
         questionIds: finding.support.questionIds,
       };
     });
+  if (facts.length === 0) fail('at least one factual Evidence root is required');
 
   const blockAnalyses = input.blocks.map((block) => {
     const supports = supportForBlock(block);
     const questionIds = unique(supports.flatMap(({ questionIds }) => questionIds));
     const evidenceIds = new Set(supports.flatMap(({ evidenceIds }) => evidenceIds));
-    const relatedFacts = input.findings.filter((finding) => (
-      finding.support.status === 'supported'
-      && (
-        finding.support.questionIds.some((questionId) => questionIds.includes(questionId))
-        || finding.support.evidenceIds.some((evidenceId) => evidenceIds.has(evidenceId))
-      )
-    )).map(({ id }) => id);
+    const relatedFacts = unique([
+      ...questionIds.flatMap((questionId) => factIdsByQuestion.get(questionId) ?? []),
+      ...[...evidenceIds].flatMap((evidenceId) => factIdsByEvidence.get(evidenceId) ?? []),
+    ]);
     if (relatedFacts.length === 0) fail(`content block ${block.id} has no related evidence finding`);
     return {
       id: `analysis-${block.id}`,
@@ -273,8 +299,11 @@ function graphAndCoverage(input: {
   const answeredQuestions = input.problemGraph.questions.filter(({ id }) => answerByQuestion.has(id));
   const summaries = answeredQuestions.map((question) => {
     const answer = answerByQuestion.get(question.id)!;
-    const findingIds = unique(factIdsByQuestion.get(question.id) ?? []);
     const analysisIds = unique(analysisIdsByQuestion.get(question.id) ?? []);
+    const findingIds = unique([
+      ...(factIdsByQuestion.get(question.id) ?? []),
+      ...analysisIds.flatMap((analysisId) => analyses.find(({ id }) => id === analysisId)?.findingIds ?? []),
+    ]);
     if (findingIds.length + analysisIds.length === 0) fail(`answered question ${question.id} has no content roots`);
     return {
       id: `summary-${question.id}`,
@@ -470,7 +499,14 @@ export function assembleResearchStrategyDeliverable(input: {
     requestedArtifactBindings,
   };
   validator.validateFileOrThrow(PAYLOAD_SCHEMA, payload);
-  const graph = graphAndCoverage({ draft, findings, blocks, problemGraph: input.problemGraph, requirement: input.requirement });
+  const graph = graphAndCoverage({
+    draft,
+    findings,
+    blocks,
+    problemGraph: input.problemGraph,
+    requirement: input.requirement,
+    evidenceManifest: input.evidenceManifest,
+  });
   const risksAndOpenIssues = unique(uniqueRisks
     .filter(({ sourceType }) => sourceType === 'envelope_risk')
     .map(({ statement }) => statement));

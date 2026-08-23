@@ -273,6 +273,15 @@ test('assembler canonicalizes documented ordinal Evidence aliases to Manifest ID
   assert.ok(result.payload.contentBlocks.every((block) => JSON.stringify(block).includes('E1-1')));
 });
 
+test('assembler roots provisional findings in verified source-anchor facts without promoting the claim', () => {
+  const value = draft();
+  value.evidenceFindings[0]!.support.status = 'provisional';
+  value.evidenceFindings[0]!.support.validationNeeded = 'Validate the interpretation with primary research.';
+  const result = assemble({ materials: materials(value) });
+  assert.ok(result.findingGraph.findings.some(({ id, kind }) => id === 'evidence-anchor-E1' && kind === 'fact'));
+  assert.ok(result.findingGraph.analyses.some(({ id }) => id === 'analysis-evidence-finding-001'));
+});
+
 test('assembler expands matrix axes from canonical cell content instead of rejecting layout drift', () => {
   const value = draft();
   const map = value.contentBlocks.find((block) => block.kind === 'strategy_map');
