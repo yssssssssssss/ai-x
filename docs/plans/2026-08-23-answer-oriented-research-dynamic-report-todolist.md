@@ -26,18 +26,18 @@
 
 ## Gate 0：冻结统一集成基线
 
-> 基线：`b1e5c7aafd22177ad224a8f62e367da6533fdf0f`；分支：`feat/research-answer-dynamic-reports`；worktree：`/Users/heyunshen/work/PROJECT/jdc/ai-x-answer-reports`。
+> 基线：`b1e5c7aafd22177ad224a8f62e367da6533fdf0f`；分支：`feat/research-answer-dynamic-reports`；worktree：`/Users/heyunshen/work/PROJECT/jdc/ai-x-answer-reports`；Node `v22.22.1`；pnpm `9.12.1`。
 
 - [x] 记录 `b1e5c7aafd22177ad224a8f62e367da6533fdf0f` 为 `BASE_SHA`。
 - [x] 确认 `feat/skill-runtime-report-fidelity` 不单独合入main。
 - [x] 确认 `feat/research-answer-dynamic-reports` worktree clean。
-- [ ] 安装root与Web依赖。
-- [ ] 记录Node与pnpm版本。
-- [ ] 运行基线typecheck。
-- [ ] 运行Registry与Knowledge lint。
-- [ ] 运行Skill Runtime、Requirement、Report定向测试。
-- [ ] 运行Web production build。
-- [ ] 运行基线full quality。
+- [x] 安装root与Web依赖。
+- [x] 记录Node与pnpm版本。
+- [x] 运行基线typecheck。
+- [x] 运行Registry与Knowledge lint。
+- [x] 运行Skill Runtime、Requirement、Report定向测试（并行门禁中1个时序用例受资源竞争失败，单独复跑 `tests/lease-execution-engine.test.ts` 为115 pass、1 skip、0 fail）。
+- [x] 运行Web production build。
+- [x] 运行基线full quality（1613 tests：1598 pass，15 skip，0 fail）。
 - [x] 确认只有一个writer修改该worktree。
 
 ### Gate 0完成条件
