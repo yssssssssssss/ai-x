@@ -572,3 +572,210 @@ export interface ResearchStrategyReportPayload {
     status: 'complete' | 'partial';
   }>;
 }
+
+export type ResearchStrategySupportStatus = 'supported' | 'provisional';
+
+export interface ResearchStrategySupportBindingV2 {
+  questionIds: string[];
+  evidenceIds: string[];
+  confidence: number;
+  status: ResearchStrategySupportStatus;
+  validationNeeded: string;
+}
+
+export interface ResearchStrategyEvidenceFindingDraftV2 {
+  key: string;
+  statement: string;
+  support: ResearchStrategySupportBindingV2;
+}
+
+export interface ResearchStrategyEvidenceFindingV2 {
+  id: string;
+  statement: string;
+  support: ResearchStrategySupportBindingV2;
+}
+
+export interface ResearchStrategyNarrativeBlockDraftV2 {
+  key: string;
+  kind: 'narrative';
+  title: string;
+  content: string;
+  support: ResearchStrategySupportBindingV2;
+}
+
+export interface ResearchStrategyMatrixCellDraftV2 {
+  key: string;
+  row: string;
+  column: string;
+  statement: string;
+  support: ResearchStrategySupportBindingV2;
+}
+
+export interface ResearchStrategyMatrixBlockDraftV2 {
+  key: string;
+  kind: 'comparison_matrix' | 'strategy_map';
+  title: string;
+  rows: string[];
+  columns: string[];
+  cells: ResearchStrategyMatrixCellDraftV2[];
+}
+
+export interface ResearchStrategyMindNodeDraftV2 {
+  key: string;
+  label: string;
+  description: string;
+  support: ResearchStrategySupportBindingV2;
+}
+
+export interface ResearchStrategyMindModelBlockDraftV2 {
+  key: string;
+  kind: 'mind_model';
+  title: string;
+  nodes: ResearchStrategyMindNodeDraftV2[];
+  edges: Array<{ from: string; to: string; relationship: string }>;
+}
+
+export interface ResearchStrategyPrincipleDraftV2 {
+  key: string;
+  title: string;
+  statement: string;
+  support: ResearchStrategySupportBindingV2;
+}
+
+export interface ResearchStrategyPrinciplesBlockDraftV2 {
+  key: string;
+  kind: 'design_principles';
+  title: string;
+  items: ResearchStrategyPrincipleDraftV2[];
+}
+
+export interface ResearchStrategyOpportunityDraftV2 {
+  key: string;
+  title: string;
+  statement: string;
+  impact: string;
+  support: ResearchStrategySupportBindingV2;
+}
+
+export interface ResearchStrategyOpportunityBlockDraftV2 {
+  key: string;
+  kind: 'opportunity_backlog';
+  title: string;
+  items: ResearchStrategyOpportunityDraftV2[];
+}
+
+export interface ResearchStrategyActionDraftV2 {
+  key: string;
+  priority: 'P0' | 'P1' | 'P2';
+  action: string;
+  ownerType: string;
+  rationale: string;
+  validationMethod: string;
+  support: ResearchStrategySupportBindingV2;
+}
+
+export interface ResearchStrategyActionBlockDraftV2 {
+  key: string;
+  kind: 'prioritized_actions' | 'action_plan';
+  title: string;
+  items: ResearchStrategyActionDraftV2[];
+}
+
+export interface ResearchStrategyChannelDraftV2 {
+  key: string;
+  channel: string;
+  role: string;
+  strategies: string[];
+  support: ResearchStrategySupportBindingV2;
+}
+
+export interface ResearchStrategyChannelBlockDraftV2 {
+  key: string;
+  kind: 'channel_strategies';
+  title: string;
+  items: ResearchStrategyChannelDraftV2[];
+}
+
+export type ResearchStrategyContentBlockDraftV2 =
+  | ResearchStrategyNarrativeBlockDraftV2
+  | ResearchStrategyMatrixBlockDraftV2
+  | ResearchStrategyMindModelBlockDraftV2
+  | ResearchStrategyPrinciplesBlockDraftV2
+  | ResearchStrategyOpportunityBlockDraftV2
+  | ResearchStrategyActionBlockDraftV2
+  | ResearchStrategyChannelBlockDraftV2;
+
+export interface ResearchStrategyContentDraftV2 {
+  schemaVersion: 'research-strategy-content-draft-v2';
+  title: string;
+  decisionContext: string;
+  executiveAnswer: string;
+  methodSummary: string;
+  directAnswers: ResearchStrategyDirectAnswer[];
+  evidenceFindings: ResearchStrategyEvidenceFindingDraftV2[];
+  contentBlocks: ResearchStrategyContentBlockDraftV2[];
+  limitations: string[];
+  openQuestions: string[];
+}
+
+export type ResearchStrategyContentBlockV2 =
+  | (Omit<ResearchStrategyNarrativeBlockDraftV2, 'key'> & { id: string })
+  | (Omit<ResearchStrategyMatrixBlockDraftV2, 'key' | 'cells'> & {
+      id: string;
+      cells: Array<Omit<ResearchStrategyMatrixCellDraftV2, 'key'> & { id: string }>;
+    })
+  | (Omit<ResearchStrategyMindModelBlockDraftV2, 'key' | 'nodes'> & {
+      id: string;
+      nodes: Array<Omit<ResearchStrategyMindNodeDraftV2, 'key'> & { id: string }>;
+    })
+  | (Omit<ResearchStrategyPrinciplesBlockDraftV2, 'key' | 'items'> & {
+      id: string;
+      items: Array<Omit<ResearchStrategyPrincipleDraftV2, 'key'> & { id: string }>;
+    })
+  | (Omit<ResearchStrategyOpportunityBlockDraftV2, 'key' | 'items'> & {
+      id: string;
+      items: Array<Omit<ResearchStrategyOpportunityDraftV2, 'key'> & { id: string }>;
+    })
+  | (Omit<ResearchStrategyActionBlockDraftV2, 'key' | 'items'> & {
+      id: string;
+      items: Array<Omit<ResearchStrategyActionDraftV2, 'key'> & { id: string }>;
+    })
+  | (Omit<ResearchStrategyChannelBlockDraftV2, 'key' | 'items'> & {
+      id: string;
+      items: Array<Omit<ResearchStrategyChannelDraftV2, 'key'> & { id: string }>;
+    });
+
+export interface ResearchStrategyReportPayloadV2 {
+  schemaVersion: 'research-strategy-content-v2';
+  title: string;
+  decisionContext: string;
+  executiveAnswer: string;
+  directAnswers: ResearchStrategyDirectAnswer[];
+  evidenceFindings: ResearchStrategyEvidenceFindingV2[];
+  contentBlocks: ResearchStrategyContentBlockV2[];
+  limitations: string[];
+  openQuestions: string[];
+  riskDisclosures: ResearchStrategyRiskDisclosure[];
+  requestedArtifactBindings: Array<{
+    artifactType: RequestedResearchArtifact;
+    sourceField: '/directAnswers' | '/contentBlocks';
+    blockIds: string[];
+    questionIds: string[];
+    evidenceIds: string[];
+    status: 'complete';
+  }>;
+}
+
+export type AnyResearchStrategyReportPayload =
+  | ResearchStrategyReportPayload
+  | ResearchStrategyReportPayloadV2;
+
+export interface ReportLayoutBlueprintV1 {
+  version: 'report-layout-blueprint-v1';
+  sections: Array<{
+    title: string;
+    purpose: string;
+    prominence: 'primary' | 'supporting' | 'appendix';
+    blockRefs: string[];
+  }>;
+}

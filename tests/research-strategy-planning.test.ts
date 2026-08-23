@@ -27,4 +27,10 @@ test('research strategy Skill compiles into one frozen answer-oriented DAG witho
     'compose-strategy-report',
     'self-review',
   ]);
+  const output = compiled.steps.find(({ skill_stage_id }) => skill_stage_id === 'compose-strategy-report');
+  assert.deepEqual(output?.input.requirement_context, {
+    outcome_mode: 'answer',
+    requested_artifacts: task.requested_artifacts,
+    success_criteria: task.success_criteria,
+  });
 });

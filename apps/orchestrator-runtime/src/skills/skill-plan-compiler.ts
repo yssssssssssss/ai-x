@@ -133,6 +133,7 @@ function compiledStageInput(
   stage: SkillExecutionStage,
   originalInput: Record<string, unknown>,
   expansion: Expansion,
+  task?: ResearchTaskV2,
 ): Record<string, unknown> {
   const dynamicToolInput = stage.actor_type === 'tool'
     ? Object.fromEntries((stage.frozen_input_fields ?? []).flatMap((field) => (
@@ -145,6 +146,20 @@ function compiledStageInput(
     ...(stage.actor_type === 'knowledge'
       ? { references: structuredClone(expansion.references), contractHash: expansion.contractHash }
       : {}),
+    ...(expansion.contract.skill_id === 'research-strategy-synthesis'
+      && stage.stage_id === expansion.contract.output_stage_id
+      ? task
+        ? {
+            requirement_context: {
+              outcome_mode: task.outcome_mode,
+              requested_artifacts: [...(task.requested_artifacts ?? [])],
+              success_criteria: task.success_criteria.map(({ id, statement }) => ({ id, statement })),
+            },
+          }
+        : Object.hasOwn(originalInput, 'requirement_context')
+          ? { requirement_context: structuredClone(originalInput.requirement_context) }
+          : {}
+      : {}),
   };
 }
 
@@ -152,8 +167,9 @@ function stageStep(
   stage: SkillExecutionStage,
   original: CurrentPlanStep,
   expansion: Expansion,
+  task: ResearchTaskV2,
 ): CurrentPlanStep {
-  const input = compiledStageInput(stage, original.input, expansion);
+  const input = compiledStageInput(stage, original.input, expansion, task);
   return {
     step_no: 0,
     step_name: stage.title,
@@ -281,6 +297,7 @@ export function assertFrozenKnowledgeQueryMembership(
 export function assertCompiledSkillPlan(
   plan: CurrentExecutionPlan,
   skillLoader = new SkillLoader(),
+  task?: ResearchTaskV2,
 ): void {
   if (plan.execution_contract_version !== 'current-execution-plan-v2') {
     if (plan.skill_invocations || plan.steps.some((step) => step.skill_invocation_id || step.skill_stage_id)) {
@@ -373,7 +390,7 @@ export function assertCompiledSkillPlan(
         references: invocation.knowledge_references,
         skillReferenceHashes: invocation.skill_reference_hashes,
         resourceGaps: invocation.resource_gaps,
-      });
+      }, task);
       if (!isDeepStrictEqual(step.input, expectedInput)) {
         planDrift(`Skill invocation ${invocation.invocation_id} input drift at ${contractStage.stage_id}`);
       }
@@ -467,7 +484,7 @@ export function compileSkillSteps(
     if (expansion) {
       for (const stage of expansion.contract.stages) {
         if (expansion.reusedOldStepByStage.has(stage.stage_id)) continue;
-        const step = stageStep(stage, original, expansion);
+        const step = stageStep(stage, original, expansion, task);
         const dependencyKeys = stage.depends_on.map((id) => expansion.stageKey.get(id)!);
         const bindingSources = stage.input_bindings.map((binding) => ({
           binding: {
@@ -510,7 +527,7 @@ export function compileSkillSteps(
       step.step_name = reused.stage.title;
       step.expected_outputs = structuredClone(reused.stage.expected_outputs);
       step.acceptance_criteria = structuredClone(reused.stage.acceptance_criteria);
-      step.input = compiledStageInput(reused.stage, original.input, reused.expansion);
+      step.input = compiledStageInput(reused.stage, original.input, reused.expansion, task);
       dependencyKeys = reused.stage.depends_on.map((stageId) => reused.expansion.stageKey.get(stageId)!);
       bindingSources = reused.stage.input_bindings.map((binding) => ({
         binding: {

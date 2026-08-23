@@ -223,7 +223,7 @@ test('Deliverable Registry 将六类 active deliverable 绑定到冻结 payload 
       id: 'research_strategy_report',
       status: 'active',
       envelope_version: 'research-deliverable-v1',
-      payload_schema: 'schemas/deliverables/research-strategy-report.schema.json',
+      payload_schema: 'schemas/deliverables/research-strategy-report-v2.schema.json',
     },
     {
       id: 'competitive_analysis_report',

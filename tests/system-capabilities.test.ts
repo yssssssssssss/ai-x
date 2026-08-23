@@ -20,6 +20,18 @@ test('system capabilities expose live contract and registry identities without l
     assert.ok((body.activeDeliverables as string[]).includes('research_plan'));
     assert.ok((body.activeDeliverables as string[]).includes('research_strategy_report'));
     assert.ok((body.activeTaskTypes as string[]).includes('research_synthesis'));
+    assert.deepEqual(body.reportLayoutVersions, ['report-layout-blueprint-v1']);
+    const contracts = body.deliverableContracts as Array<Record<string, unknown>>;
+    const strategy = contracts.find(({ id }) => id === 'research_strategy_report');
+    assert.deepEqual(strategy, {
+      id: 'research_strategy_report',
+      writePayloadSchema: 'research-strategy-report-v2.schema.json',
+      readablePayloadSchemas: [
+        'research-strategy-report.schema.json',
+        'research-strategy-report-v2.schema.json',
+      ],
+      synthesisMode: 'reviewed_skill_assembly',
+    });
     assert.ok((body.compiledSkills as string[]).includes('generate-research-plan'));
     assert.ok((body.compiledSkills as string[]).includes('research-strategy-synthesis'));
     const build = body.build as Record<string, unknown>;

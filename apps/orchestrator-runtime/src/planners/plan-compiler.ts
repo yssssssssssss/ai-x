@@ -1074,7 +1074,7 @@ export class PlanCompiler {
       activated_nodes: [...input.activated_nodes],
     };
     this.validator.validateOrThrow('current-execution-plan', plan);
-    assertCompiledSkillPlan(plan);
+    assertCompiledSkillPlan(plan, undefined, input.task);
     return { plan, pending_inputs: derivePendingInputs(steps, eligibleSkills, toolsById) };
   }
 }

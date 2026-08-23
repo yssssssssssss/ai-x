@@ -6,6 +6,7 @@ import type {
   ResearchDeliverableEnvelope,
   ProblemGraph,
   ResearchStrategyReportPayload,
+  ResearchStrategyReportPayloadV2,
   ResearchStrategyRiskDisclosure,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
@@ -29,6 +30,11 @@ import {
 import { sameBrowserSourceUrl } from '../runtime/public-web-access-policy.ts';
 import type { VerifiedVisualAnnotationBinding } from './report-composition-service.ts';
 import type { VerifiedVisualAsset } from './visual-asset-service.ts';
+import {
+  assembleResearchStrategyDeliverable,
+  isResearchStrategyPayloadV2,
+} from './research-strategy-deliverable-assembler.ts';
+import { createDeliverableValidationDiagnostic } from './deliverable-validation-diagnostic.ts';
 import {
   canonicalizeRequestedArtifactBindings,
   validateResearchStrategyAnswer,
@@ -1230,6 +1236,81 @@ export class CurrentDeliverableService {
     const requiredCoverage = strictV2
       ? coverageRequirements(input.finalizedRequirement, input.problemGraph)
       : undefined;
+    if (contract.synthesisMode === 'reviewed_skill_assembly') {
+      if (!strategyRequirement || !requiredCoverage) {
+        throw new Error('reviewed Skill assembly requires a finalized research strategy requirement');
+      }
+      let deliverable: ResearchDeliverableEnvelope<ResearchStrategyReportPayloadV2>;
+      try {
+        deliverable = assembleResearchStrategyDeliverable({
+          taskId: input.task.id,
+          planVersionId: input.plan.id,
+          attemptId: input.attempt.id,
+          evidenceManifestArtifactId: input.evidenceManifest.artifact.id,
+          requirement: strategyRequirement,
+          problemGraph: input.problemGraph as ProblemGraph,
+          evidenceManifest,
+          materials: synthesisMaterials,
+          requiredRiskDisclosures: preSynthesisRiskDisclosures,
+          capabilityProvenance: outputData.provenance,
+          validator: this.dependencies.validator,
+        });
+        if (!isResearchStrategyPayloadV2(deliverable.payload)) {
+          throw new Error('reviewed Skill assembly did not produce research strategy payload v2');
+        }
+        assertRequiredCoverage(deliverable.coverage, requiredCoverage);
+        this.reportValidator.validate({
+          manifest: evidenceManifest,
+          report: deliverable,
+          resolver: input.evidenceResolver,
+          requireCoverage: true,
+          validatePayloadSchema: true,
+        });
+      } catch (error) {
+        const diagnostic = createDeliverableValidationDiagnostic({
+          taskId: input.task.id,
+          planVersionId: input.plan.id,
+          attemptId: input.attempt.id,
+          stage: 'canonical_assembly',
+          round: input.revisionRound ?? 0,
+          error,
+        });
+        this.dependencies.validator.validateFileOrThrow(
+          'schemas/deliverable-validation-diagnostic.schema.json',
+          diagnostic,
+        );
+        try {
+          await this.dependencies.artifacts.writeJson({
+            taskId: input.task.id,
+            planVersionId: input.plan.id,
+            attemptId: input.attempt.id,
+            kind: 'deliverable_validation_diagnostic',
+            relativePath: `diagnostics/deliverable-validation-r${input.revisionRound ?? 0}.json`,
+            schemaVersion: diagnostic.version,
+            sensitivity: 'internal',
+            redactionPolicyVersion: 'v1',
+            activeLease: input.activeLease,
+            value: diagnostic,
+          });
+        } catch {
+          // Diagnostics are best-effort and must not hide the authoritative validation failure.
+        }
+        throw error;
+      }
+      const artifact = await this.dependencies.artifacts.writeJson({
+        taskId: input.task.id,
+        planVersionId: input.plan.id,
+        attemptId: input.attempt.id,
+        kind: 'deliverable',
+        relativePath: `deliverables/final-r${input.revisionRound ?? 0}.json`,
+        schemaVersion: `${contract.entry.envelope_version}-review-gated`,
+        sensitivity: 'internal',
+        redactionPolicyVersion: 'v1',
+        activeLease: input.activeLease,
+        value: deliverable,
+      });
+      return { deliverable, deliverableArtifactId: artifact.id };
+    }
     const producerVisualInventory = visualInventory?.assets.map((asset) => ({
       assetId: asset.artifact.id,
       role: visualInventory?.roles.get(asset.artifact.id),
@@ -1449,6 +1530,9 @@ export class CurrentDeliverableService {
     };
   }
   async revise(input: CurrentDeliverableRevisionInput): Promise<CurrentDeliverableGenerateResult> {
+    if (input.plan.plan.deliverable_type === 'research_strategy_report') {
+      throw new Error('research strategy revisions require a new reviewed Content Draft');
+    }
     if (input.review.revisionRound !== 0) {
       throw new Error('deliverable revision requires a round 0 Review');
     }

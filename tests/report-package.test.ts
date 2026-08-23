@@ -18,6 +18,7 @@ import {
   researchPlanRequiredPointers,
 } from '../apps/orchestrator-runtime/src/report/report-projection.ts';
 import { ReportCompositionService } from '../apps/orchestrator-runtime/src/report/report-composition-service.ts';
+import { parseReportPackageArtifactValue } from '../apps/orchestrator-runtime/src/report/report-package-artifact.ts';
 import { ArtifactIntegrityError } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
 import {
   EvidenceService,
@@ -645,6 +646,27 @@ function installV2ChartEvidence(
   fixture.artifacts.artifacts.get(manifestArtifactId)!.value = evidenceManifest;
   return evidenceManifest;
 }
+
+test('Report Package preserves optional model-layout artifacts only with a ReportDocument', () => {
+  const value = parseReportPackageArtifactValue({
+    version: 'report-package-v1',
+    ...binding,
+    presentationMode: 'multimodal',
+    deliverableArtifactId,
+    evidenceManifestArtifactId: manifestArtifactId,
+    reportReviewArtifactId: reviewArtifactId,
+    reportDocumentArtifactId,
+    reportLayoutBlueprintArtifactId: 'layout-blueprint-1',
+    reportLayoutDiagnosticArtifactId: 'layout-diagnostic-1',
+  });
+  assert.equal(value.reportLayoutBlueprintArtifactId, 'layout-blueprint-1');
+  assert.equal(value.reportLayoutDiagnosticArtifactId, 'layout-diagnostic-1');
+  assert.throws(() => parseReportPackageArtifactValue({
+    ...value,
+    presentationMode: 'current_text',
+    reportDocumentArtifactId: undefined,
+  }), /layout artifacts without a ReportDocument|current text Report Package/);
+});
 
 test('returns a verified review-gated current_text package and reads every JSON Artifact', async () => {
   const fixture = setup();

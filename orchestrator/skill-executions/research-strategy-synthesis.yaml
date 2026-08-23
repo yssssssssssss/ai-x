@@ -177,7 +177,7 @@ stages:
     actor_id: research-strategy-synthesis
     depends_on: [load-evidence-standards, inventory-evidence, synthesize-direct-answers, challenge-answer-claims, materialize-strategy, prioritize-actions]
     input:
-      instruction: Compose the final research_strategy_report payload without dropping reviewer conditions or requested artifacts.
+      instruction: Compose one research-strategy-content-draft-v2 with direct answers, evidence findings, and only useful typed content blocks. Choose content blocks from the requested artifacts and evidence; do not generate machine-owned IDs, coverage, risk identities, source pointers, or requestedArtifactBindings.
       knowledge: null
       evidence_inventory: null
       direct_answers: null
@@ -205,7 +205,7 @@ stages:
         source_pointer: /text
     expected_outputs:
       - pointer: /payload
-        description: Structured research strategy report payload.
+        description: Open typed research strategy content draft; the runtime creates the Canonical Deliverable metadata.
     acceptance_criteria:
       - Required questions have direct evidence-bound or provisional answers.
       - Requested artifacts are materialized as structured content.

@@ -46,6 +46,7 @@ import { ReportReviewService } from '../../orchestrator-runtime/src/report/repor
 import { CurrentReportPackageReader } from '../../orchestrator-runtime/src/report/current-report-package-reader.ts';
 import { ReportPackageArtifactService } from '../../orchestrator-runtime/src/report/report-package-artifact.ts';
 import { ReportCompositionService } from '../../orchestrator-runtime/src/report/report-composition-service.ts';
+import { ReportLayoutPlanner } from '../../orchestrator-runtime/src/report/report-layout-planner.ts';
 import {
   ImageAnnotationService,
   type ImageAnnotationInput,
@@ -490,7 +491,15 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
   });
   const evidence = new EvidenceService();
   const reportValidator: ReportEvidenceValidator = new ReportEvidenceValidator(evidence);
-  const reportComposition = new ReportCompositionService({ artifacts, visualAssets, repository });
+  const reportComposition = new ReportCompositionService({
+    artifacts,
+    visualAssets,
+    repository,
+    layoutPlanner: new ReportLayoutPlanner({
+      llm: new ReceiptLLMClient(llm, repository),
+      validator,
+    }),
+  });
   const reportPackageReader = new CurrentReportPackageReader({
     artifacts,
     repository,

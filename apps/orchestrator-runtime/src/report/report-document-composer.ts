@@ -6,6 +6,7 @@ import type {
   ResearchDeliverableEnvelope,
   ResearchPlanPayload,
   ResearchStrategyReportPayload,
+  ResearchStrategyReportPayloadV2,
   VisualAssetManifest,
   VisualAssetReference,
 } from '../../../../packages/api-contract/research-deliverable.ts';
@@ -33,6 +34,12 @@ import {
   requiredPayloadPointers,
 } from './report-projection.ts';
 import { composeResearchStrategyDocument } from './dynamic-report-composer.ts';
+import { isResearchStrategyPayloadV2 } from './research-strategy-deliverable-assembler.ts';
+import {
+  deterministicReportLayout,
+  type ReportLayoutPlanResult,
+} from './report-layout-planner.ts';
+import { projectResearchStrategyReportV2 } from './research-strategy-report-projector.ts';
 import {
   assertCompetitiveWeightChartBinding,
   parseCompetitiveWeightChartData,
@@ -41,6 +48,7 @@ import {
 import { assertValidReportReviewArtifact } from './report-review-service.ts';
 import {
   resolveDeliverableContractById,
+  selectReadablePayloadSchema,
   type DeliverableContractResources,
 } from './deliverable-registry.ts';
 import {
@@ -158,6 +166,7 @@ export interface ReportSection {
   title: string;
   questionIds: string[];
   blocks: ReportBlock[];
+  prominence?: 'primary' | 'supporting' | 'appendix';
 }
 
 export interface ReportDocument {
@@ -170,6 +179,8 @@ export interface ReportDocument {
   projectionMode?: 'full' | 'summary';
   coveredPointers?: string[];
   omittedPointers?: Array<{ pointer: string; reason: string }>;
+  layoutMode?: 'model' | 'fallback';
+  layoutWarnings?: string[];
 }
 
 interface ArtifactValue<T> {
@@ -200,6 +211,7 @@ export interface ComposeReportDocumentInput {
   review: ArtifactValue<ReportReviewArtifact>;
   visualAssets: VerifiedVisualAsset[];
   charts: VerifiedChart[];
+  layout?: ReportLayoutPlanResult;
 }
 
 export interface ReportDocumentReferenceContext {
@@ -425,8 +437,9 @@ function assertCompositionInput(input: ComposeReportDocumentInput): {
   );
   assertSealedJsonValue(input.deliverable.artifact, deliverable, 'Deliverable');
   assertValueBinding(deliverable, binding, 'Deliverable');
+  const readablePayload = selectReadablePayloadSchema(contract, deliverable.payload);
   const payloadSchema = Object.fromEntries(
-    Object.entries(contract.payloadSchema)
+    Object.entries(readablePayload.schema)
       .filter(([key]) => key !== '$schema' && key !== '$id'),
   );
   DOCUMENT_SCHEMA.validateSchemaOrThrow(
@@ -1544,21 +1557,37 @@ export function assertValidReportDocument(
 export function composeReportDocument(input: ComposeReportDocumentInput): ReportDocument {
   const { contract } = assertCompositionInput(input);
   if (input.deliverable.value.deliverableType === 'research_strategy_report') {
-    const document = composeResearchStrategyDocument({
-      payload: input.deliverable.value.payload as ResearchStrategyReportPayload,
+    const payload = input.deliverable.value.payload;
+    const readablePayload = selectReadablePayloadSchema(contract, payload);
+    const common = {
       deliverableArtifactId: input.deliverable.artifact.id,
-      payloadSchema: contract.payloadSchema,
+      payloadSchema: readablePayload.schema,
       evidenceIndex: input.evidenceManifest.value.entries.map((entry) => `${entry.id}: ${entry.evidenceClass}`),
       evidenceIds: input.evidenceManifest.value.entries.map(({ id }) => id),
       findingGraph: input.deliverable.value.findingGraph,
       coverage: input.deliverable.value.coverage!,
-      envelopeRisksAndOpenIssues: input.deliverable.value.risksAndOpenIssues,
-    });
+    };
+    const layout = isResearchStrategyPayloadV2(payload)
+      ? input.layout ?? deterministicReportLayout(payload as ResearchStrategyReportPayloadV2)
+      : null;
+    const document = isResearchStrategyPayloadV2(payload)
+      ? projectResearchStrategyReportV2({
+          ...common,
+          payload: payload as ResearchStrategyReportPayloadV2,
+          blueprint: layout!.blueprint,
+          layoutMode: layout!.mode,
+          layoutWarnings: layout!.warnings,
+        })
+      : composeResearchStrategyDocument({
+          ...common,
+          payload: payload as ResearchStrategyReportPayload,
+          envelopeRisksAndOpenIssues: input.deliverable.value.risksAndOpenIssues,
+        });
     assertReportProjectionIntegrity({
       document,
       deliverableArtifactId: input.deliverable.artifact.id,
-      payload: input.deliverable.value.payload,
-      requiredPointers: requiredPayloadPointers(contract.payloadSchema),
+      payload,
+      requiredPointers: requiredPayloadPointers(readablePayload.schema),
     });
     assertValidReportDocument(document, {
       requiredQuestionIds: input.requiredQuestionIds,

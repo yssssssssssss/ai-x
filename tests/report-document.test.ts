@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import type { ControlArtifact } from '../database/control-plane.ts';
 import {
   REPORT_REVIEW_DIMENSION_IDS,
+  REPORT_REVIEW_V2_DIMENSION_IDS,
   type ReportReviewArtifact,
 } from '../packages/api-contract/control-workflow.ts';
 import type {
@@ -36,6 +37,12 @@ import {
   SchemaValidator,
 } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 import { createReportDocumentViewModel } from '../apps/web/src/reporting/report-document-view-model.ts';
+import {
+  researchStrategyCoverageV2,
+  researchStrategyFindingGraphV2,
+  researchStrategyLayoutV1,
+  researchStrategyPayloadV2,
+} from './fixtures/research-strategy-v2.ts';
 import {
   COMPETITIVE_WEIGHT_CHART_DATA_VERSION,
   COMPETITIVE_WEIGHT_CHART_ID,
@@ -1133,6 +1140,63 @@ test('composer creates a schema-valid professional research-plan document with o
     assetId: chartAssetId,
     manifestArtifactId: chartManifestArtifactId,
   });
+});
+
+test('composer validates and projects an open strategy payload with model-directed section order', () => {
+  const payload = researchStrategyPayloadV2();
+  const strategyDeliverable: ResearchDeliverableEnvelope<typeof payload> = {
+    version: 'research-deliverable-v1',
+    ...binding,
+    deliverableType: 'research_strategy_report',
+    evidenceManifestArtifactId,
+    methodSummary: 'Verified strategy synthesis.',
+    findingGraph: researchStrategyFindingGraphV2(),
+    payload,
+    recommendations: [{ id: 'recommendation-Q1', statement: 'Ship a source-backed trust card.', summaryIds: ['summary-Q1'] }],
+    coverage: researchStrategyCoverageV2(),
+    risksAndOpenIssues: [],
+    capabilityProvenance: [],
+  };
+  const strategyEvidence = new EvidenceService().createManifest({
+    ...binding,
+    collectedAt: '2026-08-23T00:00:00.000Z',
+    entries: [{
+      id: 'E1', kind: 'tool_output', evidenceClass: 'dataset', artifactId: evidenceArtifactId,
+      artifactContentSha256: sha('e'), jsonPointer: '/metrics/competitorScore', sensitivity: 'internal', redaction: 'none',
+    }],
+  }, evidenceArtifactResolver);
+  const strategyReview: ReportReviewArtifact = {
+    version: 'report-review-v2',
+    ...binding,
+    deliverableArtifactId,
+    verdict: 'pass',
+    dimensions: REPORT_REVIEW_V2_DIMENSION_IDS.map((id) => ({ id, passed: true, issues: [] })),
+    revisionRound: 0,
+  };
+  const document = composeReportDocument({
+    templateId: 'research-plan',
+    requiredQuestionIds: ['Q1'],
+    deliverable: {
+      artifact: sealedJsonArtifact(deliverableArtifactId, 'deliverable', 'research-deliverable-v1-review-gated', strategyDeliverable),
+      value: strategyDeliverable,
+    },
+    evidenceManifest: {
+      artifact: sealedJsonArtifact(evidenceManifestArtifactId, 'evidence_manifest', 'evidence-v1', strategyEvidence),
+      value: strategyEvidence,
+    },
+    evidenceArtifactResolver,
+    review: {
+      artifact: sealedJsonArtifact(reviewArtifactId, 'report_review', 'report-review-v2', strategyReview),
+      value: strategyReview,
+    },
+    visualAssets: [],
+    charts: [],
+    layout: { blueprint: researchStrategyLayoutV1(), mode: 'model', warnings: [] },
+  });
+
+  assert.equal(document.layoutMode, 'model');
+  assert.deepEqual(document.sections.slice(1, 3).map(({ title }) => title), ['Act first', 'Why it works']);
+  assert.doesNotThrow(() => schemaValidator.validateOrThrow('report-document', document));
 });
 
 test('report-document-v2 schema and reader validation reject empty sections', () => {

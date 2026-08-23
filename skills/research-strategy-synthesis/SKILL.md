@@ -13,9 +13,11 @@ owner: 用研团队
 
 ## 规则
 
+- 输出 `research-strategy-content-draft-v2`，只包含语义内容；不要生成全局ID、Coverage、FindingGraph、风险来源身份、source pointer或requestedArtifactBindings，这些由运行时确定性生成。
+- `input.requirement_context.requested_artifacts` 是本次必须实体化的唯一请求产物清单；只生成有内容的对应 Block，不用固定模板补齐未请求对象。
 - 只能把 Evidence 绑定的陈述标为 supported。
 - 证据不足但可形成方向判断时标为 provisional，并写明验证方法。
 - 不得用“建议进一步研究”替代直接答案。
-- 用户请求的策略地图、心智模型、设计原则、机会点和优先行动必须生成结构化对象。
+- 用户请求的策略地图、心智模型、设计原则、机会点和优先行动必须用对应的类型化 content block 生成；未请求的产物不需要创建空对象。
 - 所有渠道、品类、人群和因果结论必须限制在 Evidence 支持范围内。
 - 冲突证据和能力降级必须进入 limitations/openQuestions。

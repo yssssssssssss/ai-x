@@ -8,6 +8,7 @@ import { afterEach, test } from 'node:test';
 import type {
   ResearchDeliverableEnvelope,
   ResearchPlanPayload,
+  ResearchStrategyContentDraftV2,
 } from '../packages/api-contract/research-deliverable.ts';
 import { ArtifactNotSealedError, type ControlArtifact } from '../database/control-plane.ts';
 import { ControlArtifactStore, type ArtifactWriteInput } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
@@ -1224,3 +1225,130 @@ for (const invalid of invalidDraftCases) {
     assert.equal(writes.length, 0);
   });
 }
+
+function openStrategyDraft(): ResearchStrategyContentDraftV2 {
+  const support = {
+    questionIds: ['q1'], evidenceIds: ['E1'], confidence: 0.8,
+    status: 'supported' as const, validationNeeded: '',
+  };
+  return {
+    schemaVersion: 'research-strategy-content-draft-v2',
+    title: 'Open answer',
+    decisionContext: 'Choose the next action.',
+    executiveAnswer: 'Lead with verified evidence.',
+    methodSummary: 'Synthesized the verified evidence.',
+    directAnswers: [{
+      questionId: 'q1', question: 'What should change?', answer: 'Lead with verified evidence.',
+      answerStatus: 'supported', evidenceIds: ['E1'], confidence: 0.8,
+      businessImplication: 'Reduce uncertainty.', recommendedAction: 'Ship the evidence card.', validationNeeded: '',
+    }],
+    evidenceFindings: [{ key: 'fact', statement: 'The public source supports the decision.', support }],
+    contentBlocks: [{ key: 'narrative', kind: 'narrative', title: 'Why this works', content: 'The evidence supports the proposed direction.', support }],
+    limitations: [],
+    openQuestions: [],
+  };
+}
+
+test('assembles a research strategy deliverable from the reviewed Skill output without another full-report LLM call', async () => {
+  const content = openStrategyDraft();
+  const materializer = {
+    async materialize(): Promise<SynthesisMaterial[]> {
+      return [{
+        stepNo: 8,
+        actorType: 'skill',
+        actorId: 'research-strategy-synthesis',
+        questionIds: ['q1'],
+        artifactId: 'skill-output-1',
+        artifactContentSha256: `sha256:${'8'.repeat(64)}`,
+        semanticRole: 'analysis',
+        value: {
+          version: 'skill-output-v2', status: 'succeeded', summary: 'Complete',
+          findings: [], assumptions: [], limitations: [], recommendations: [], payload: content,
+        },
+      }, {
+        stepNo: 9,
+        actorType: 'reviewer',
+        actorId: 'reviewer.research-lead',
+        questionIds: ['q1'],
+        artifactId: 'review-output-1',
+        artifactContentSha256: `sha256:${'a'.repeat(64)}`,
+        semanticRole: 'review',
+        value: { version: 'reviewer-step-output-v1', review: 'Pass.', verdict: 'pass', conditions: [] },
+      }];
+    },
+  };
+  const { service, llm } = await createHarness(validDeliverableDraft(), materializer);
+  const result = await service.generate(generateInput({
+    plan: { id: planVersionId, plan: { deliverable_type: 'research_strategy_report' } },
+    finalizedRequirement: {
+      version: 'research-task-v2', task_type: 'research_synthesis', outcome_mode: 'answer',
+      business_domain: 'test', research_goal: 'answer q1', target_audience: ['team'], scope: ['test'], constraints: [],
+      success_criteria: [{ id: 'criterion1', statement: 'Answer q1' }],
+      expected_deliverables: ['research_strategy_report'], requested_artifacts: ['executive_answers', 'research_report'],
+      assumptions: [], ambiguities: [], clarification_questions: [], blocking_issues: [], sensitivity: 'public', pii_detected: false,
+    },
+    problemGraph: {
+      version: 'problem-graph-v1',
+      questions: [{
+        id: 'q1', statement: 'What should change?', rationale: 'Decision', priority: 'required',
+        success_criterion_ids: ['criterion1'], evidence_requirements: [], acceptance_criteria: ['Direct answer'], depends_on: [],
+      }],
+    },
+    outputs: [{
+      stepNo: 8, actorType: 'skill', actorId: 'research-strategy-synthesis', kind: 'skill_output', state: 'succeeded',
+      taskId, planVersionId, attemptId,
+      artifact: { id: 'skill-output-1', contentSha256: `sha256:${'8'.repeat(64)}`, state: 'SEALED' },
+    }],
+  }));
+
+  assert.equal(llm.structuredCalls.length, 0);
+  assert.equal((result.deliverable.payload as { schemaVersion?: string }).schemaVersion, 'research-strategy-content-v2');
+  assert.deepEqual(result.deliverable.coverage.questionBindings, [{ questionId: 'q1', summaryIds: ['summary-q1'] }]);
+});
+
+test('persists a sanitized diagnostic when reviewed Skill assembly fails', async () => {
+  const invalid = openStrategyDraft();
+  invalid.directAnswers[0]!.evidenceIds = ['unknown-evidence'];
+  const materializer = {
+    async materialize(): Promise<SynthesisMaterial[]> {
+      return [{
+        stepNo: 8, actorType: 'skill', actorId: 'research-strategy-synthesis', questionIds: ['q1'],
+        artifactId: 'skill-output-invalid', artifactContentSha256: `sha256:${'9'.repeat(64)}`, semanticRole: 'analysis',
+        value: {
+          version: 'skill-output-v2', status: 'succeeded', summary: 'Complete', findings: [], assumptions: [],
+          limitations: [], recommendations: [], payload: invalid,
+        },
+      }, {
+        stepNo: 9,
+        actorType: 'reviewer',
+        actorId: 'reviewer.research-lead',
+        questionIds: ['q1'],
+        artifactId: 'review-output-invalid',
+        artifactContentSha256: `sha256:${'b'.repeat(64)}`,
+        semanticRole: 'review',
+        value: { version: 'reviewer-step-output-v1', review: 'Pass.', verdict: 'pass', conditions: [] },
+      }];
+    },
+  };
+  const { service, llm, writes } = await createHarness(validDeliverableDraft(), materializer);
+  await assert.rejects(() => service.generate(generateInput({
+    plan: { id: planVersionId, plan: { deliverable_type: 'research_strategy_report' } },
+    finalizedRequirement: {
+      version: 'research-task-v2', task_type: 'research_synthesis', outcome_mode: 'answer',
+      business_domain: 'test', research_goal: 'answer q1', target_audience: ['team'], scope: ['test'], constraints: [],
+      success_criteria: [{ id: 'criterion1', statement: 'Answer q1' }],
+      expected_deliverables: ['research_strategy_report'], requested_artifacts: ['executive_answers', 'research_report'],
+      assumptions: [], ambiguities: [], clarification_questions: [], blocking_issues: [], sensitivity: 'public', pii_detected: false,
+    },
+    problemGraph: {
+      version: 'problem-graph-v1',
+      questions: [{ id: 'q1', statement: 'What?', rationale: 'Decision', priority: 'required', success_criterion_ids: ['criterion1'], evidence_requirements: [], acceptance_criteria: ['Answer'], depends_on: [] }],
+    },
+  })), /unknown Evidence/);
+
+  assert.equal(llm.structuredCalls.length, 0);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0]?.kind, 'deliverable_validation_diagnostic');
+  assert.equal(writes[0]?.schemaVersion, 'deliverable-validation-diagnostic-v1');
+  assert.doesNotMatch(JSON.stringify(writes[0]?.value), /api[_-]?key|authorization|bearer/iu);
+});

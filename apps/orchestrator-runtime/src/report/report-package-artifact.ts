@@ -3,8 +3,10 @@ import type {
   ControlExecutionLease,
 } from '../../../../database/control-plane.ts';
 import type { ControlArtifactStore } from '../control/artifact-store.ts';
+import { SchemaValidator } from '../schema/validator.ts';
 
 export const REPORT_PACKAGE_SCHEMA_VERSION = 'report-package-v1';
+const PACKAGE_COMPONENT_VALIDATOR = new SchemaValidator();
 
 export interface ReportPackageArtifactValue {
   version: typeof REPORT_PACKAGE_SCHEMA_VERSION;
@@ -16,6 +18,8 @@ export interface ReportPackageArtifactValue {
   evidenceManifestArtifactId: string;
   reportReviewArtifactId?: string;
   reportDocumentArtifactId?: string;
+  reportLayoutBlueprintArtifactId?: string;
+  reportLayoutDiagnosticArtifactId?: string;
 }
 
 type ReportPackageArtifactStore = Pick<
@@ -66,10 +70,18 @@ export function parseReportPackageArtifactValue(value: unknown): ReportPackageAr
     ...(candidate.reportDocumentArtifactId === undefined
       ? {}
       : { reportDocumentArtifactId: nonBlank(candidate.reportDocumentArtifactId, 'reportDocumentArtifactId') }),
+    ...(candidate.reportLayoutBlueprintArtifactId === undefined
+      ? {}
+      : { reportLayoutBlueprintArtifactId: nonBlank(candidate.reportLayoutBlueprintArtifactId, 'reportLayoutBlueprintArtifactId') }),
+    ...(candidate.reportLayoutDiagnosticArtifactId === undefined
+      ? {}
+      : { reportLayoutDiagnosticArtifactId: nonBlank(candidate.reportLayoutDiagnosticArtifactId, 'reportLayoutDiagnosticArtifactId') }),
   };
   if (presentationMode === 'legacy_text' && (
     parsed.reportReviewArtifactId !== undefined
     || parsed.reportDocumentArtifactId !== undefined
+    || parsed.reportLayoutBlueprintArtifactId !== undefined
+    || parsed.reportLayoutDiagnosticArtifactId !== undefined
   )) {
     throw new Error('legacy Report Package must not reference review-gated components');
   }
@@ -84,6 +96,12 @@ export function parseReportPackageArtifactValue(value: unknown): ReportPackageAr
     || parsed.reportDocumentArtifactId === undefined
   )) {
     throw new Error('multimodal Report Package component set is invalid');
+  }
+  if (
+    (parsed.reportLayoutBlueprintArtifactId !== undefined || parsed.reportLayoutDiagnosticArtifactId !== undefined)
+    && parsed.reportDocumentArtifactId === undefined
+  ) {
+    throw new Error('Report Package cannot reference layout artifacts without a ReportDocument');
   }
   return parsed;
 }
@@ -118,6 +136,8 @@ export class ReportPackageArtifactService {
     evidenceManifestArtifactId: string;
     reportReviewArtifactId?: string;
     reportDocumentArtifactId?: string;
+    reportLayoutBlueprintArtifactId?: string;
+    reportLayoutDiagnosticArtifactId?: string;
   }): Promise<ControlArtifact> {
     const value = parseReportPackageArtifactValue({
       version: REPORT_PACKAGE_SCHEMA_VERSION,
@@ -133,6 +153,12 @@ export class ReportPackageArtifactService {
       ...(input.reportDocumentArtifactId === undefined
         ? {}
         : { reportDocumentArtifactId: input.reportDocumentArtifactId }),
+      ...(input.reportLayoutBlueprintArtifactId === undefined
+        ? {}
+        : { reportLayoutBlueprintArtifactId: input.reportLayoutBlueprintArtifactId }),
+      ...(input.reportLayoutDiagnosticArtifactId === undefined
+        ? {}
+        : { reportLayoutDiagnosticArtifactId: input.reportLayoutDiagnosticArtifactId }),
     });
     const artifact = await this.artifacts.writeJson({
       taskId: input.activeLease.taskId,
@@ -176,6 +202,12 @@ export class ReportPackageArtifactService {
       ...(value.reportDocumentArtifactId === undefined
         ? []
         : [{ artifactId: value.reportDocumentArtifactId, kind: 'report_document' }]),
+      ...(value.reportLayoutBlueprintArtifactId === undefined
+        ? []
+        : [{ artifactId: value.reportLayoutBlueprintArtifactId, kind: 'report_layout_blueprint' }]),
+      ...(value.reportLayoutDiagnosticArtifactId === undefined
+        ? []
+        : [{ artifactId: value.reportLayoutDiagnosticArtifactId, kind: 'deliverable_validation_diagnostic' }]),
     ];
     const verifiedComponents = await Promise.all(
       components.map(({ artifactId }) => this.artifacts.readVerifiedBoundJson<unknown>(artifactId)),
@@ -188,6 +220,24 @@ export class ReportPackageArtifactService {
         kind: expected.kind,
         binding: value,
       });
+      if (expected.kind === 'report_layout_blueprint') {
+        if (component.artifact.schemaVersion !== 'report-layout-blueprint-v1') {
+          throw new Error('Report Package layout Blueprint schema version is invalid');
+        }
+        PACKAGE_COMPONENT_VALIDATOR.validateFileOrThrow(
+          'schemas/report-layout-blueprint.schema.json',
+          component.value,
+        );
+      }
+      if (expected.kind === 'deliverable_validation_diagnostic') {
+        if (component.artifact.schemaVersion !== 'deliverable-validation-diagnostic-v1') {
+          throw new Error('Report Package layout diagnostic schema version is invalid');
+        }
+        PACKAGE_COMPONENT_VALIDATOR.validateFileOrThrow(
+          'schemas/deliverable-validation-diagnostic.schema.json',
+          component.value,
+        );
+      }
     });
     return { artifact: verified.artifact, value };
   }

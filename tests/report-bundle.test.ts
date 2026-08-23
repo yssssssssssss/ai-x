@@ -844,6 +844,35 @@ test('strategy report tabs expose answer-first, dynamic-topic, artifact, evidenc
   assert.deepEqual(strategyReportSectionIds(document, 'analysis'), ['analysis-notes']);
 });
 
+test('strategy report tabs classify model-directed sections by content instead of fixed ids', async () => {
+  const { strategyReportSectionIds } = await loadStage4Module();
+  const document = reportDocument();
+  const answer = {
+    id: 'answer-Q1', type: 'answer' as const, kind: 'direct_answer' as const, title: 'Q1', text: 'Answer', items: [],
+    questionIds: ['Q1'], evidenceIds: ['evidence-1'], findingIds: ['finding-1'], summaryIds: ['summary-1'],
+    confidence: 0.8, answerStatus: 'supported' as const, sourcePointers: ['/directAnswers'], summary: true,
+  };
+  const strategy = { ...answer, id: 'strategy', kind: 'strategy_map' as const, title: 'Map', answerStatus: undefined };
+  const narrative = { ...answer, id: 'narrative', kind: 'evidence_finding' as const, title: 'Why', answerStatus: undefined };
+  document.sections = [{ id: 'executive-answers', title: 'Answers', questionIds: ['Q1'], prominence: 'primary', blocks: [answer] }, {
+    id: 'model-section-001', title: 'Custom strategy', questionIds: ['Q1'], prominence: 'primary', blocks: [strategy],
+  }, {
+    id: 'model-section-002', title: 'Custom analysis', questionIds: ['Q1'], prominence: 'supporting', blocks: [narrative],
+  }, {
+    id: 'evidence-confidence', title: 'Evidence', questionIds: ['Q1'], prominence: 'supporting', blocks: [narrative],
+  }, {
+    id: 'limitations', title: 'Limits', questionIds: [], prominence: 'supporting', blocks: [{ ...narrative, id: 'risk', kind: 'risk' as const, questionIds: [], evidenceIds: [], findingIds: [], summaryIds: [] }],
+  }, {
+    id: 'evidence-appendix', title: 'Appendix', questionIds: [], prominence: 'appendix', blocks: [{ ...narrative, id: 'appendix', questionIds: [], evidenceIds: [], findingIds: [], summaryIds: [] }],
+  }];
+
+  assert.deepEqual(strategyReportSectionIds(document, 'answers'), ['executive-answers']);
+  assert.deepEqual(strategyReportSectionIds(document, 'topics'), ['model-section-001', 'model-section-002']);
+  assert.deepEqual(strategyReportSectionIds(document, 'artifacts'), ['model-section-001']);
+  assert.deepEqual(strategyReportSectionIds(document, 'evidence'), ['evidence-confidence', 'limitations', 'evidence-appendix']);
+  assert.deepEqual(strategyReportSectionIds(document, 'analysis'), ['model-section-002']);
+});
+
 test('Stage4 dispatches multimodal, research-plan text, and generic historical text reports', async () => {
   const { CurrentStage4Report, selectCurrentStage4Renderer } = await loadStage4Module();
   const multimodal = multimodalReport();

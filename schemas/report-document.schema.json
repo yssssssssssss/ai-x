@@ -17,6 +17,11 @@
       "type": "array",
       "items": { "$ref": "#/definitions/omittedPointer" }
     },
+    "layoutMode": { "enum": ["model", "fallback"] },
+    "layoutWarnings": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/nonEmptyString" }
+    },
     "sections": {
       "type": "array",
       "minItems": 1,
@@ -33,7 +38,9 @@
             { "required": ["sourceDeliverableArtifactId"] },
             { "required": ["projectionMode"] },
             { "required": ["coveredPointers"] },
-            { "required": ["omittedPointers"] }
+            { "required": ["omittedPointers"] },
+            { "required": ["layoutMode"] },
+            { "required": ["layoutWarnings"] }
           ]
         }
       }
@@ -338,6 +345,7 @@
         "id": { "$ref": "#/definitions/nonEmptyString" },
         "title": { "$ref": "#/definitions/nonEmptyString" },
         "questionIds": { "$ref": "#/definitions/idList" },
+        "prominence": { "enum": ["primary", "supporting", "appendix"] },
         "blocks": {
           "type": "array",
           "items": { "$ref": "#/definitions/block" }

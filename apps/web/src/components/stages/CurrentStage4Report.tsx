@@ -34,24 +34,59 @@ type GenericTextReportResponse = Exclude<
 
 type StrategyReportView = 'answers' | 'topics' | 'artifacts' | 'evidence' | 'analysis';
 
-const STRATEGY_FIXED_SECTIONS: Record<'answers' | 'evidence' | 'analysis', readonly string[]> = {
-  answers: ['executive-answers', 'priority-actions'],
-  evidence: ['evidence-confidence', 'limitations', 'evidence-appendix'],
-  analysis: ['analysis-notes'],
-};
+const STRATEGY_ARTIFACT_SECTION_IDS = new Set([
+  'strategy-map',
+  'mind-model',
+  'design-principles',
+  'opportunities',
+  'channel-strategies',
+]);
+
+const STRATEGY_ARTIFACT_KINDS = new Set([
+  'strategy_map',
+  'mind_model',
+  'design_principle',
+  'opportunity',
+  'priority_matrix',
+  'action_plan',
+]);
+
+function sectionAnswerKinds(section: ReportDocument['sections'][number]): string[] {
+  return section.blocks.flatMap((block) => block.type === 'answer' ? [block.kind] : []);
+}
 
 export function strategyReportSectionIds(document: ReportDocument, view: StrategyReportView): string[] {
-  if (view === 'topics') return document.sections.map(({ id }) => id).filter((id) => id.startsWith('topic-'));
-  if (view === 'artifacts') {
-    return document.sections.map(({ id }) => id).filter((id) => [
-      'strategy-map',
-      'mind-model',
-      'design-principles',
-      'opportunities',
-      'channel-strategies',
-    ].includes(id));
-  }
-  return [...STRATEGY_FIXED_SECTIONS[view]];
+  return document.sections.flatMap((section) => {
+    const kinds = sectionAnswerKinds(section);
+    if (view === 'answers') {
+      return section.id === 'executive-answers'
+        || section.id === 'priority-actions'
+        || kinds.includes('direct_answer')
+        || kinds.some((kind) => (kind === 'priority_matrix' || kind === 'action_plan') && section.prominence === 'primary')
+        ? [section.id]
+        : [];
+    }
+    if (view === 'topics') {
+      return section.id.startsWith('topic-') || section.id.startsWith('model-section-') ? [section.id] : [];
+    }
+    if (view === 'artifacts') {
+      return STRATEGY_ARTIFACT_SECTION_IDS.has(section.id)
+        || kinds.some((kind) => STRATEGY_ARTIFACT_KINDS.has(kind))
+        ? [section.id]
+        : [];
+    }
+    if (view === 'evidence') {
+      return ['evidence-confidence', 'limitations', 'evidence-appendix'].includes(section.id)
+        || kinds.includes('risk')
+        ? [section.id]
+        : [];
+    }
+    return section.id === 'analysis-notes'
+      || (section.id.startsWith('model-section-')
+        && kinds.some((kind) => kind === 'evidence_finding' || kind === 'comparison_matrix'))
+      ? [section.id]
+      : [];
+  });
 }
 
 export function selectCurrentStage4Renderer(report: unknown): {

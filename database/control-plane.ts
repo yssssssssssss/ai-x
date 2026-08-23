@@ -2372,6 +2372,7 @@ export class ControlPlaneRepository {
            AND attempt_id = $3
            AND kind IN (
              'evidence_manifest', 'deliverable', 'report_document', 'report_review', 'report_package',
+             'report_layout_blueprint', 'deliverable_validation_diagnostic',
              'visual_asset', 'visual_asset_manifest', 'image_annotation', 'chart_spec', 'chart_data'
            )
            AND state IN ('STAGING', 'SEALED')`,

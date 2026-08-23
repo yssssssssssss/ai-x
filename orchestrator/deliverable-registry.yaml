@@ -15,7 +15,11 @@ deliverables:
     task_types: [research_synthesis]
     aliases: [research strategy report, 研究策略报告, 研究答案, 策略答案]
     envelope_version: research-deliverable-v1
-    payload_schema: schemas/deliverables/research-strategy-report.schema.json
+    payload_schema: schemas/deliverables/research-strategy-report-v2.schema.json
+    read_payload_schemas:
+      - schemas/deliverables/research-strategy-report.schema.json
+      - schemas/deliverables/research-strategy-report-v2.schema.json
+    synthesis_mode: reviewed_skill_assembly
     synthesis_prompt: orchestrator/prompts/deliverables/research-strategy-report.md
     review_rubric: orchestrator/report-rubrics/research-strategy-report.yaml
     evidence_policy: research-strategy-report

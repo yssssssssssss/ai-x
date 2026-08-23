@@ -1,0 +1,444 @@
+import type {
+  CapabilityProvenance,
+  CurrentRecommendation,
+  FindingGraph,
+  ProblemGraph,
+  ResearchDeliverableCoverage,
+  ResearchDeliverableEnvelope,
+  ResearchStrategyContentBlockDraftV2,
+  ResearchStrategyContentBlockV2,
+  ResearchStrategyContentDraftV2,
+  ResearchStrategyEvidenceFindingV2,
+  ResearchStrategyReportPayloadV2,
+  ResearchStrategyRiskDisclosure,
+} from '../../../../packages/api-contract/research-deliverable.ts';
+import type { ResearchTaskV2, RequestedArtifact } from '../../../../packages/api-contract/plan.ts';
+import type { EvidenceManifest } from '../evidence/evidence-service.ts';
+import { SchemaValidator } from '../schema/validator.ts';
+import type { SynthesisMaterial } from './synthesis-materializer.ts';
+
+const DRAFT_SCHEMA = 'schemas/skills/research-strategy-content-draft-v2.schema.json';
+const PAYLOAD_SCHEMA = 'schemas/deliverables/research-strategy-report-v2.schema.json';
+const FACTUAL_EVIDENCE_CLASSES = new Set(['public_source', 'screenshot', 'dataset']);
+
+export class ResearchStrategyAssemblyError extends Error {
+  constructor(message: string) {
+    super(`Research strategy assembly failed: ${message}`);
+    this.name = 'ResearchStrategyAssemblyError';
+  }
+}
+
+function fail(message: string): never {
+  throw new ResearchStrategyAssemblyError(message);
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function unique<T>(values: readonly T[]): T[] {
+  return [...new Set(values)];
+}
+
+function normalizeText(value: string): string {
+  return value.normalize('NFKC').replace(/\s+/gu, ' ').trim();
+}
+
+function appendUniqueText(values: string[], value: string): void {
+  const normalized = normalizeText(value);
+  if (!normalized || values.some((candidate) => normalizeText(candidate) === normalized)) return;
+  values.push(value.trim());
+}
+
+function supportForBlock(block: ResearchStrategyContentBlockV2): Array<{
+  questionIds: string[];
+  evidenceIds: string[];
+  confidence: number;
+  status: 'supported' | 'provisional';
+  validationNeeded: string;
+}> {
+  if (block.kind === 'narrative') return [block.support];
+  if (block.kind === 'comparison_matrix' || block.kind === 'strategy_map') {
+    return block.cells.map(({ support }) => support);
+  }
+  if (block.kind === 'mind_model') return block.nodes.map(({ support }) => support);
+  if ('items' in block) return block.items.map(({ support }) => support);
+  return fail(`unsupported content block kind ${(block as { kind?: unknown }).kind as string}`);
+}
+
+function normalizeBlock(
+  block: ResearchStrategyContentBlockDraftV2,
+  blockIndex: number,
+): ResearchStrategyContentBlockV2 {
+  const id = `content-block-${String(blockIndex + 1).padStart(3, '0')}`;
+  if (block.kind === 'narrative') {
+    const { key: _key, ...content } = block;
+    return { ...content, id };
+  }
+  if (block.kind === 'comparison_matrix' || block.kind === 'strategy_map') {
+    const { key: _key, cells, ...content } = block;
+    for (const cell of cells) {
+      if (!block.rows.includes(cell.row) || !block.columns.includes(cell.column)) {
+        fail(`${block.kind} block ${block.key} contains a cell outside its declared rows or columns`);
+      }
+    }
+    return {
+      ...content,
+      id,
+      cells: cells.map(({ key: _cellKey, ...cell }, itemIndex) => ({
+        ...cell,
+        id: `${id}-item-${String(itemIndex + 1).padStart(3, '0')}`,
+      })),
+    };
+  }
+  if (block.kind === 'mind_model') {
+    const { key: _key, nodes, edges, ...content } = block;
+    const idsByKey = new Map<string, string>();
+    const normalizedNodes = nodes.map(({ key, ...node }, itemIndex) => {
+      if (idsByKey.has(key)) fail(`mind model block ${block.key} duplicates node key ${key}`);
+      const nodeId = `${id}-node-${String(itemIndex + 1).padStart(3, '0')}`;
+      idsByKey.set(key, nodeId);
+      return { ...node, id: nodeId };
+    });
+    return {
+      ...content,
+      id,
+      nodes: normalizedNodes,
+      edges: edges.map((edge) => {
+        const from = idsByKey.get(edge.from);
+        const to = idsByKey.get(edge.to);
+        if (!from || !to) fail(`mind model block ${block.key} references an unknown node key`);
+        return { ...edge, from, to };
+      }),
+    };
+  }
+  if (!('items' in block)) return fail(`unsupported content block kind ${(block as { kind?: unknown }).kind as string}`);
+  const { key: _key, items, ...content } = block;
+  return {
+    ...content,
+    id,
+    items: items.map(({ key: _itemKey, ...item }, itemIndex) => ({
+      ...item,
+      id: `${id}-item-${String(itemIndex + 1).padStart(3, '0')}`,
+    })),
+  } as ResearchStrategyContentBlockV2;
+}
+
+function validateSupportBindings(input: {
+  draft: ResearchStrategyContentDraftV2;
+  problemGraph: ProblemGraph;
+  evidenceManifest: EvidenceManifest;
+}): void {
+  const knownQuestions = new Set(input.problemGraph.questions.map(({ id }) => id));
+  const knownEvidence = new Set(input.evidenceManifest.entries.map(({ id }) => id));
+  if (new Set(input.draft.directAnswers.map(({ questionId }) => questionId)).size !== input.draft.directAnswers.length) {
+    fail('direct answer question IDs must be unique');
+  }
+  const validate = (binding: {
+    questionIds: string[];
+    evidenceIds: string[];
+    status: 'supported' | 'provisional';
+    validationNeeded: string;
+  }, label: string): void => {
+    if (binding.questionIds.length === 0) fail(`${label} has no question binding`);
+    for (const questionId of binding.questionIds) {
+      if (!knownQuestions.has(questionId)) fail(`${label} references unknown question ${questionId}`);
+    }
+    for (const evidenceId of binding.evidenceIds) {
+      if (!knownEvidence.has(evidenceId)) fail(`${label} references unknown Evidence ${evidenceId}`);
+    }
+    if (binding.status === 'supported' && binding.evidenceIds.length === 0) {
+      fail(`${label} is supported without Evidence`);
+    }
+    if (binding.status === 'provisional' && !binding.validationNeeded.trim()) {
+      fail(`${label} is provisional without a validation need`);
+    }
+  };
+
+  for (const [index, finding] of input.draft.evidenceFindings.entries()) {
+    validate(finding.support, `evidence finding ${index + 1}`);
+    if (finding.support.status !== 'supported') fail(`evidence finding ${index + 1} must be supported`);
+    for (const evidenceId of finding.support.evidenceIds) {
+      const entry = input.evidenceManifest.entries.find(({ id }) => id === evidenceId);
+      if (!entry || !FACTUAL_EVIDENCE_CLASSES.has(entry.evidenceClass)) {
+        fail(`evidence finding ${index + 1} is rooted in non-factual Evidence ${evidenceId}`);
+      }
+    }
+  }
+  for (const [index, block] of input.draft.contentBlocks.entries()) {
+    for (const [supportIndex, support] of supportForBlock(normalizeBlock(block, index)).entries()) {
+      validate(support, `content block ${index + 1} support ${supportIndex + 1}`);
+    }
+  }
+}
+
+function contentBlockIdsForArtifact(
+  artifact: RequestedArtifact,
+  blocks: readonly ResearchStrategyContentBlockV2[],
+): string[] {
+  if (artifact === 'research_report') return blocks.map(({ id }) => id);
+  const kind = artifact === 'strategy_map' ? 'strategy_map'
+    : artifact === 'mind_model' ? 'mind_model'
+      : artifact === 'design_principles' ? 'design_principles'
+        : artifact === 'opportunity_backlog' ? 'opportunity_backlog'
+          : artifact === 'prioritized_actions' ? 'prioritized_actions'
+            : artifact === 'channel_strategies' ? 'channel_strategies'
+              : artifact === 'action_plan' ? 'action_plan'
+                : null;
+  return kind ? blocks.filter((block) => block.kind === kind).map(({ id }) => id) : [];
+}
+
+function graphAndCoverage(input: {
+  draft: ResearchStrategyContentDraftV2;
+  findings: ResearchStrategyEvidenceFindingV2[];
+  blocks: ResearchStrategyContentBlockV2[];
+  problemGraph: ProblemGraph;
+  requirement: ResearchTaskV2;
+}): {
+  findingGraph: FindingGraph;
+  recommendations: CurrentRecommendation[];
+  coverage: ResearchDeliverableCoverage;
+} {
+  const factIdsByQuestion = new Map<string, string[]>();
+  const facts = input.findings.map((finding) => {
+    for (const questionId of finding.support.questionIds) {
+      factIdsByQuestion.set(questionId, [...(factIdsByQuestion.get(questionId) ?? []), finding.id]);
+    }
+    return {
+      id: finding.id,
+      kind: 'fact' as const,
+      evidenceIds: finding.support.evidenceIds,
+      statement: finding.statement,
+    };
+  });
+  if (facts.length === 0) fail('at least one evidence finding is required');
+
+  const analyses = input.blocks.map((block) => {
+    const supports = supportForBlock(block);
+    const questionIds = unique(supports.flatMap(({ questionIds }) => questionIds));
+    const evidenceIds = new Set(supports.flatMap(({ evidenceIds }) => evidenceIds));
+    const relatedFacts = input.findings.filter((finding) => (
+      finding.support.questionIds.some((questionId) => questionIds.includes(questionId))
+      || finding.support.evidenceIds.some((evidenceId) => evidenceIds.has(evidenceId))
+    )).map(({ id }) => id);
+    if (relatedFacts.length === 0) fail(`content block ${block.id} has no related evidence finding`);
+    return {
+      id: `analysis-${block.id}`,
+      findingIds: unique(relatedFacts),
+      statement: block.kind === 'narrative' ? block.content : block.title,
+    };
+  });
+
+  const answerByQuestion = new Map(input.draft.directAnswers.map((answer) => [answer.questionId, answer]));
+  const analysisIdsByQuestion = new Map<string, string[]>();
+  input.blocks.forEach((block, index) => {
+    for (const questionId of unique(supportForBlock(block).flatMap(({ questionIds }) => questionIds))) {
+      analysisIdsByQuestion.set(questionId, [
+        ...(analysisIdsByQuestion.get(questionId) ?? []),
+        analyses[index]!.id,
+      ]);
+    }
+  });
+  const requiredQuestions = input.problemGraph.questions.filter(({ priority }) => priority === 'required');
+  for (const question of requiredQuestions) {
+    const answer = answerByQuestion.get(question.id);
+    if (!answer || answer.answerStatus === 'unanswered') fail(`required question ${question.id} has no usable direct answer`);
+  }
+  const answeredQuestions = input.problemGraph.questions.filter(({ id }) => answerByQuestion.has(id));
+  const summaries = answeredQuestions.map((question) => {
+    const answer = answerByQuestion.get(question.id)!;
+    const findingIds = unique(factIdsByQuestion.get(question.id) ?? []);
+    const analysisIds = unique(analysisIdsByQuestion.get(question.id) ?? []);
+    if (findingIds.length + analysisIds.length === 0) fail(`answered question ${question.id} has no content roots`);
+    return {
+      id: `summary-${question.id}`,
+      findingIds,
+      analysisIds,
+      summary: answer.answer,
+    };
+  });
+  const summaryByQuestion = new Map(answeredQuestions.map((question, index) => [question.id, summaries[index]!.id]));
+  const conclusions = answeredQuestions.map((question) => ({
+    id: `conclusion-${question.id}`,
+    summaryIds: [summaryByQuestion.get(question.id)!],
+    statement: answerByQuestion.get(question.id)!.answer,
+  }));
+  const recommendations = answeredQuestions.map((question) => ({
+    id: `recommendation-${question.id}`,
+    summaryIds: [summaryByQuestion.get(question.id)!],
+    statement: answerByQuestion.get(question.id)!.recommendedAction,
+  }));
+  const conclusionByQuestion = new Map(answeredQuestions.map((question, index) => [question.id, conclusions[index]!.id]));
+  const recommendationByQuestion = new Map(answeredQuestions.map((question, index) => [question.id, recommendations[index]!.id]));
+  const successCriterionIds = input.requirement.success_criteria.map(({ id }) => id);
+  const successCriterionBindings = successCriterionIds.map((successCriterionId) => {
+    const questions = answeredQuestions.filter(({ success_criterion_ids }) => success_criterion_ids.includes(successCriterionId));
+    if (questions.length === 0) fail(`success criterion ${successCriterionId} has no required question mapping`);
+    return {
+      successCriterionId,
+      conclusionIds: questions.map(({ id }) => conclusionByQuestion.get(id)!),
+      recommendationIds: questions.map(({ id }) => recommendationByQuestion.get(id)!),
+    };
+  });
+  return {
+    findingGraph: {
+      findings: facts,
+      analyses,
+      subQuestionSummaries: summaries,
+      overallConclusions: conclusions,
+    },
+    recommendations,
+    coverage: {
+      questionBindings: answeredQuestions.map(({ id }) => ({ questionId: id, summaryIds: [summaryByQuestion.get(id)!] })),
+      successCriterionBindings,
+    },
+  };
+}
+
+function skillDraft(materials: readonly SynthesisMaterial[]): ResearchStrategyContentDraftV2 {
+  const matches = materials.filter(({ actorType, actorId }) => (
+    actorType === 'skill' && actorId === 'research-strategy-synthesis'
+  ));
+  if (matches.length !== 1) fail(`expected exactly one research-strategy-synthesis material, received ${matches.length}`);
+  const skill = matches[0]!;
+  const envelope = record(skill.value);
+  if (envelope?.version !== 'skill-output-v2') fail('research strategy Skill output version is invalid');
+  const finalReviews = materials
+    .filter(({ actorType, stepNo }) => actorType === 'reviewer' && stepNo > skill.stepNo)
+    .sort((left, right) => right.stepNo - left.stepNo);
+  if (finalReviews.length === 0) fail('research strategy Skill output has no final Reviewer material');
+  const review = record(finalReviews[0]!.value);
+  if (review?.version !== 'reviewer-step-output-v1') fail('final research strategy Reviewer output is invalid');
+  if (review.verdict !== 'pass' && review.verdict !== 'pass_with_conditions') {
+    fail(`final research strategy Reviewer verdict ${String(review.verdict)} does not permit assembly`);
+  }
+  const payload = envelope.payload;
+  if (!record(payload)) fail('research strategy Skill output has no payload');
+  return payload as unknown as ResearchStrategyContentDraftV2;
+}
+
+export function assembleResearchStrategyDeliverable(input: {
+  taskId: string;
+  planVersionId: string;
+  attemptId: string;
+  evidenceManifestArtifactId: string;
+  requirement: ResearchTaskV2;
+  problemGraph: ProblemGraph;
+  evidenceManifest: EvidenceManifest;
+  materials: readonly SynthesisMaterial[];
+  requiredRiskDisclosures: readonly ResearchStrategyRiskDisclosure[];
+  capabilityProvenance: CapabilityProvenance[];
+  validator?: Pick<SchemaValidator, 'validateFileOrThrow'>;
+}): ResearchDeliverableEnvelope<ResearchStrategyReportPayloadV2> {
+  const validator = input.validator ?? new SchemaValidator();
+  const draft = skillDraft(input.materials);
+  validator.validateFileOrThrow(DRAFT_SCHEMA, draft);
+  validateSupportBindings({ draft, problemGraph: input.problemGraph, evidenceManifest: input.evidenceManifest });
+
+  const findings: ResearchStrategyEvidenceFindingV2[] = draft.evidenceFindings.map(({ key: _key, ...finding }, index) => ({
+    ...finding,
+    id: `evidence-finding-${String(index + 1).padStart(3, '0')}`,
+  }));
+  const blocks = draft.contentBlocks.map(normalizeBlock);
+  const knownQuestions = new Set(input.problemGraph.questions.map(({ id }) => id));
+  const knownEvidence = new Set(input.evidenceManifest.entries.map(({ id }) => id));
+  for (const answer of draft.directAnswers) {
+    if (!knownQuestions.has(answer.questionId)) fail(`direct answer references unknown question ${answer.questionId}`);
+    for (const evidenceId of answer.evidenceIds) {
+      if (!knownEvidence.has(evidenceId)) fail(`direct answer ${answer.questionId} references unknown Evidence ${evidenceId}`);
+    }
+    if (answer.answerStatus === 'supported' && answer.evidenceIds.length === 0) {
+      fail(`supported answer ${answer.questionId} has no Evidence`);
+    }
+    if (answer.answerStatus !== 'supported' && !answer.validationNeeded.trim()) {
+      fail(`${answer.answerStatus} answer ${answer.questionId} has no validation need`);
+    }
+  }
+
+  const riskDisclosures = [...input.requiredRiskDisclosures];
+  for (const answer of draft.directAnswers) {
+    if (answer.answerStatus === 'supported') continue;
+    riskDisclosures.push({
+      id: `answer-uncertainty:${answer.questionId}`,
+      sourceType: 'answer_uncertainty',
+      sourceId: answer.questionId,
+      statement: answer.validationNeeded,
+      disposition: 'open_question',
+    });
+  }
+  const uniqueRisks = [...new Map(riskDisclosures.map((risk) => [`${risk.sourceType}:${risk.sourceId}`, risk])).values()];
+  const limitations = [...draft.limitations];
+  const openQuestions = [...draft.openQuestions];
+  for (const risk of uniqueRisks) {
+    appendUniqueText(risk.disposition === 'limitation' ? limitations : openQuestions, risk.statement);
+  }
+
+  const requestedArtifactBindings = unique(input.requirement.requested_artifacts ?? []).map((artifactType) => {
+    if (artifactType === 'executive_answers') {
+      const evidenceIds = unique(draft.directAnswers.flatMap((answer) => answer.evidenceIds));
+      if (draft.directAnswers.length === 0) fail('requested artifact executive_answers is not materialized');
+      return {
+        artifactType,
+        sourceField: '/directAnswers' as const,
+        blockIds: draft.directAnswers.map(({ questionId }) => `answer-${questionId}`),
+        questionIds: unique(draft.directAnswers.map(({ questionId }) => questionId)),
+        evidenceIds,
+        status: 'complete' as const,
+      };
+    }
+    const blockIds = contentBlockIdsForArtifact(artifactType, blocks);
+    if (blockIds.length === 0) fail(`requested artifact ${artifactType} is not materialized`);
+    const selected = blocks.filter(({ id }) => blockIds.includes(id));
+    const supports = selected.flatMap(supportForBlock);
+    const evidenceIds = unique(supports.flatMap(({ evidenceIds }) => evidenceIds));
+    if (evidenceIds.length === 0) fail(`requested artifact ${artifactType} has no Evidence`);
+    return {
+      artifactType,
+      sourceField: '/contentBlocks' as const,
+      blockIds,
+      questionIds: unique(supports.flatMap(({ questionIds }) => questionIds)),
+      evidenceIds,
+      status: 'complete' as const,
+    };
+  });
+
+  const payload: ResearchStrategyReportPayloadV2 = {
+    schemaVersion: 'research-strategy-content-v2',
+    title: draft.title,
+    decisionContext: draft.decisionContext,
+    executiveAnswer: draft.executiveAnswer,
+    directAnswers: draft.directAnswers,
+    evidenceFindings: findings,
+    contentBlocks: blocks,
+    limitations,
+    openQuestions,
+    riskDisclosures: uniqueRisks,
+    requestedArtifactBindings,
+  };
+  validator.validateFileOrThrow(PAYLOAD_SCHEMA, payload);
+  const graph = graphAndCoverage({ draft, findings, blocks, problemGraph: input.problemGraph, requirement: input.requirement });
+  const risksAndOpenIssues = unique(uniqueRisks
+    .filter(({ sourceType }) => sourceType === 'envelope_risk')
+    .map(({ statement }) => statement));
+  return {
+    version: 'research-deliverable-v1',
+    taskId: input.taskId,
+    planVersionId: input.planVersionId,
+    attemptId: input.attemptId,
+    deliverableType: 'research_strategy_report',
+    evidenceManifestArtifactId: input.evidenceManifestArtifactId,
+    methodSummary: draft.methodSummary,
+    findingGraph: graph.findingGraph,
+    payload,
+    recommendations: graph.recommendations,
+    coverage: graph.coverage,
+    risksAndOpenIssues,
+    capabilityProvenance: input.capabilityProvenance,
+  };
+}
+
+export function isResearchStrategyPayloadV2(value: unknown): value is ResearchStrategyReportPayloadV2 {
+  return record(value)?.schemaVersion === 'research-strategy-content-v2';
+}

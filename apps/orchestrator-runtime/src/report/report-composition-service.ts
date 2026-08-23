@@ -9,6 +9,7 @@ import type {
   ChartSpec,
   EvidenceManifest,
   ResearchDeliverableEnvelope,
+  ResearchStrategyReportPayloadV2,
   VisualAssetManifest,
   VisualAssetReference,
 } from '../../../../packages/api-contract/research-deliverable.ts';
@@ -31,6 +32,12 @@ import {
   type VerifiedChart,
 } from './report-document-composer.ts';
 import { resolveDeliverableContractById } from './deliverable-registry.ts';
+import { isResearchStrategyPayloadV2 } from './research-strategy-deliverable-assembler.ts';
+import { createDeliverableValidationDiagnostic } from './deliverable-validation-diagnostic.ts';
+import {
+  deterministicReportLayout,
+  type ReportLayoutPlanner,
+} from './report-layout-planner.ts';
 import type {
   VerifiedVisualAsset,
   VisualAssetService,
@@ -99,11 +106,15 @@ export interface ReportCompositionInput extends ReportBinding {
   visualAssets: VerifiedVisualAsset[];
   charts: CompositionVerifiedChart[];
   activeLease: ControlExecutionLease;
+  expectedModel?: string;
+  layoutStepNo?: number;
 }
 
 export interface ReportCompositionResult {
   artifact: ControlArtifact;
   document: ReportDocument;
+  layoutBlueprintArtifactId?: string;
+  layoutDiagnosticArtifactId?: string;
 }
 
 export interface ReportCompositionPort {
@@ -225,6 +236,7 @@ export class ReportCompositionService implements ReportCompositionPort {
     artifacts: Pick<ControlArtifactStore, 'readVerifiedJson' | 'writeJson'>;
     visualAssets: Pick<VisualAssetService, 'readVerified'>;
     repository: Pick<ControlPlaneRepository, 'listArtifactsForAttempt'>;
+    layoutPlanner?: Pick<ReportLayoutPlanner, 'plan'>;
   }) {}
 
   async discoverAttemptMaterials(input: ReportMaterialDiscoveryInput): Promise<ReportAttemptMaterials> {
@@ -569,6 +581,65 @@ export class ReportCompositionService implements ReportCompositionPort {
         manifestArtifactId: asset.manifestArtifact.id,
       })));
     const charts = refreshedCharts;
+    const strategyPayload = isResearchStrategyPayloadV2(input.deliverable.value.payload)
+      ? input.deliverable.value.payload as ResearchStrategyReportPayloadV2
+      : null;
+    const layout = strategyPayload
+      ? this.dependencies.layoutPlanner && input.expectedModel
+        ? await this.dependencies.layoutPlanner.plan({
+            payload: strategyPayload,
+            attemptId: input.attemptId,
+            stepNo: input.layoutStepNo ?? 0,
+            expectedModel: input.expectedModel,
+          })
+        : deterministicReportLayout(strategyPayload)
+      : undefined;
+    const layoutBlueprintArtifact = layout
+      ? await this.dependencies.artifacts.writeJson({
+          taskId: input.taskId,
+          planVersionId: input.planVersionId,
+          attemptId: input.attemptId,
+          kind: 'report_layout_blueprint',
+          relativePath: 'reports/report-layout-blueprint.json',
+          value: layout.blueprint,
+          schemaVersion: layout.blueprint.version,
+          sensitivity: 'internal',
+          redactionPolicyVersion: 'v1',
+          activeLease: input.activeLease,
+        })
+      : undefined;
+    if (layoutBlueprintArtifact && (
+      layoutBlueprintArtifact.state !== 'SEALED'
+      || layoutBlueprintArtifact.taskId !== input.taskId
+      || layoutBlueprintArtifact.planVersionId !== input.planVersionId
+      || layoutBlueprintArtifact.attemptId !== input.attemptId
+      || layoutBlueprintArtifact.kind !== 'report_layout_blueprint'
+      || layoutBlueprintArtifact.schemaVersion !== 'report-layout-blueprint-v1'
+    )) {
+      throw new Error('Report Layout Blueprint Artifact was not sealed with the active report binding');
+    }
+    const layoutDiagnosticArtifact = layout?.mode === 'fallback' && layout.warnings.length > 0
+      ? await this.dependencies.artifacts.writeJson({
+          taskId: input.taskId,
+          planVersionId: input.planVersionId,
+          attemptId: input.attemptId,
+          kind: 'deliverable_validation_diagnostic',
+          relativePath: 'diagnostics/report-layout.json',
+          value: createDeliverableValidationDiagnostic({
+            taskId: input.taskId,
+            planVersionId: input.planVersionId,
+            attemptId: input.attemptId,
+            stage: 'layout_blueprint',
+            round: 0,
+            error: new Error(layout.warnings.join('; ')),
+            fallbackApplied: true,
+          }),
+          schemaVersion: 'deliverable-validation-diagnostic-v1',
+          sensitivity: 'internal',
+          redactionPolicyVersion: 'v1',
+          activeLease: input.activeLease,
+        })
+      : undefined;
     const document = composeReportDocument({
       templateId: contract.entry.report_template,
       requiredQuestionIds: input.requiredQuestionIds,
@@ -578,6 +649,7 @@ export class ReportCompositionService implements ReportCompositionPort {
       review: input.review,
       visualAssets,
       charts,
+      ...(layout ? { layout } : {}),
     });
     const artifact = await this.dependencies.artifacts.writeJson({
       taskId: input.taskId,
@@ -602,6 +674,11 @@ export class ReportCompositionService implements ReportCompositionPort {
     ) {
       throw new Error('ReportDocument Artifact was not sealed with the active report binding');
     }
-    return { artifact, document };
+    return {
+      artifact,
+      document,
+      ...(layoutBlueprintArtifact ? { layoutBlueprintArtifactId: layoutBlueprintArtifact.id } : {}),
+      ...(layoutDiagnosticArtifact ? { layoutDiagnosticArtifactId: layoutDiagnosticArtifact.id } : {}),
+    };
   }
 }

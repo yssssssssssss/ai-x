@@ -14,6 +14,11 @@ import {
   type ReportReviewInput,
 } from '../apps/orchestrator-runtime/src/report/report-review-service.ts';
 import { SchemaValidationError, SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
+import {
+  researchStrategyCoverageV2,
+  researchStrategyFindingGraphV2,
+  researchStrategyPayloadV2,
+} from './fixtures/research-strategy-v2.ts';
 
 const lease: ControlExecutionLease = {
   taskId: 'task-1',
@@ -237,6 +242,39 @@ test('report-review-v2 requires all six answer-quality dimensions in addition to
   assert.equal(result.version, 'report-review-v2');
   assert.deepEqual(result.dimensions.map(({ id }) => id), [...REPORT_REVIEW_V2_DIMENSION_IDS]);
   assert.equal(artifacts.writes[0]?.schemaVersion, 'report-review-v2');
+});
+
+test('answer review reads actionable items from open strategy content blocks', async () => {
+  const answerReview: ReportReviewArtifact = {
+    ...semantic('pass'),
+    version: 'report-review-v2',
+    dimensions: passingAnswerReviewDimensions(),
+  };
+  const llm = new RecordingLlm([answerReview]);
+  const artifacts = new RecordingArtifacts();
+  const result = await service(llm, artifacts).review(input({
+    deliverable: report({
+      deliverableType: 'research_strategy_report',
+      payload: researchStrategyPayloadV2(),
+      findingGraph: researchStrategyFindingGraphV2(),
+      recommendations: [{ id: 'recommendation-Q1', statement: 'Ship a source-backed trust card.', summaryIds: ['summary-Q1'] }],
+      coverage: researchStrategyCoverageV2(),
+    }),
+    questionIds: ['Q1'],
+    successCriterionIds: ['SC1'],
+    evidenceIds: ['E1'],
+    requirement: {
+      version: 'research-task-v2', task_type: 'research_synthesis', outcome_mode: 'answer',
+      requested_artifacts: ['strategy_map', 'prioritized_actions'], business_domain: 'test',
+      research_goal: 'answer Q1', target_audience: ['team'], scope: ['test'], constraints: [],
+      success_criteria: [{ id: 'SC1', statement: 'usable' }], expected_deliverables: ['research_strategy_report'],
+      assumptions: [], ambiguities: [], clarification_questions: [], blocking_issues: [], sensitivity: 'internal', pii_detected: false,
+    },
+  }));
+
+  assert.equal(result.verdict, 'pass');
+  assert.equal(result.status, 'completed');
+  assert.equal(llm.calls.length, 1);
 });
 
 test('answer-quality dimensions deterministically block missing direct answers before semantic review', async () => {

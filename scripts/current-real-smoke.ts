@@ -114,12 +114,21 @@ interface SmokeEvidenceStep {
 
 export type ApprovalMode = 'allow_owner' | 'forbid';
 
+export interface SmokeProgressEvent {
+  stage: 'starting' | 'requirement' | 'planning' | 'confirmation' | 'execution' | 'verification' | 'completed';
+  message: string;
+  taskId?: string;
+  attemptId?: string;
+  elapsedMs: number;
+}
+
 export interface SmokeRunInput {
   fixturePath: string;
   profiles: string[];
   scenarioId: string;
   designImagePath?: string;
   approvalMode?: ApprovalMode;
+  progress?: (event: SmokeProgressEvent) => void;
 }
 
 const REQUIRED_NON_BLANK_FIELDS = [
@@ -881,7 +890,14 @@ async function executeRealSmoke(
   designImagePath?: string,
   requireBrowserEvidence = false,
   approvalMode: ApprovalMode = 'allow_owner',
+  progress: (event: SmokeProgressEvent) => void = () => {},
 ): Promise<SmokeReceipt> {
+  const startedAt = Date.now();
+  const reportProgress = (event: Omit<SmokeProgressEvent, 'elapsedMs'>) => progress({
+    ...event,
+    elapsedMs: Date.now() - startedAt,
+  });
+  reportProgress({ stage: 'starting', message: `starting ${scenario.profile}` });
   const [repositoryModule, seedModule, runtimeModule] = await Promise.all([
     import('../database/repository.ts'),
     import('../database/development-seed.ts'),
@@ -911,6 +927,7 @@ async function executeRealSmoke(
     sensitivity: scenario.sensitivity,
     piiDetected: scenario.piiDetected,
   });
+  reportProgress({ stage: 'requirement', message: 'task created; refining requirement', taskId: created.id });
   const refined = await runtime.requirementRefinement.understand({
     taskId: created.id,
     conversationId: conversation.id,
@@ -931,6 +948,7 @@ async function executeRealSmoke(
   if (finalized.requirement.task_type !== scenario.taskType) {
     throw new Error(`real smoke task type drifted for ${scenario.profile}`);
   }
+  reportProgress({ stage: 'planning', message: 'requirement finalized; planning execution', taskId: created.id });
   const finalizedTask = await runtime.repository.getTaskDetail(created.id);
   if (!finalizedTask) throw new Error(`real smoke task disappeared for ${scenario.profile}`);
   const planned = await runtime.controlPlanning.planExistingTask({
@@ -994,13 +1012,47 @@ async function executeRealSmoke(
   if (confirmed.state !== 'ready') {
     throw new Error(`confirmed task must be ready, received ${confirmed.state}`);
   }
+  reportProgress({ stage: 'confirmation', message: 'plan confirmed; starting execution', taskId });
 
-  const execution = await runtime.workflow.execute({
+  let progressBusy = false;
+  const executionProgress = setInterval(() => {
+    if (progressBusy) return;
+    progressBusy = true;
+    void runtime.repository.getTaskDetail(taskId).then(async (currentTask) => {
+      const currentAttemptId = currentTask?.currentAttemptId ?? undefined;
+      const steps = currentAttemptId ? await runtime.repository.listExecutionSteps(currentAttemptId) : [];
+      const succeeded = steps.filter(({ state }) => state === 'succeeded').length;
+      reportProgress({
+        stage: 'execution',
+        message: `state=${currentTask?.state ?? 'unknown'} succeeded_steps=${succeeded}/${steps.length}`,
+        taskId,
+        ...(currentAttemptId ? { attemptId: currentAttemptId } : {}),
+      });
+    }).catch(() => {
+      // Progress reporting is observational and must not interrupt the real execution.
+    }).finally(() => {
+      progressBusy = false;
+    });
+  }, 30_000);
+  executionProgress.unref();
+
+  let execution;
+  try {
+    execution = await runtime.workflow.execute({
     taskId,
     planVersionId: selected.planVersionId,
     expectedVersion: confirmed.stateVersion,
     idempotencyKey: `current-real-smoke:execute:${scenario.profile}:${taskId}`,
     actor,
+  });
+  } finally {
+    clearInterval(executionProgress);
+  }
+  reportProgress({
+    stage: 'verification',
+    message: `execution returned ${'status' in execution ? execution.status : execution.state}`,
+    taskId,
+    attemptId: execution.attemptId,
   });
   if (
     execution.executionDisabled
@@ -1033,6 +1085,7 @@ async function executeRealSmoke(
     || verifiedReportPackage.value.deliverableArtifactId !== deliverableArtifactId
     || verifiedReportPackage.value.evidenceManifestArtifactId !== evidenceManifestArtifactId
     || verifiedReportPackage.value.reportReviewArtifactId !== reportReviewArtifactId
+    || (scenario.profile === 'research_synthesis' && !verifiedReportPackage.value.reportLayoutBlueprintArtifactId)
   ) {
     throw new Error('Report Package does not match the executed task components');
   }
@@ -1080,21 +1133,36 @@ async function executeRealSmoke(
       || !Array.isArray(answer.evidenceIds)
       || typeof answer.validationNeeded !== 'string'
     ))) throw new Error('research strategy direct answers are incomplete');
-    const strategyMap = record(payload.strategyMap, 'deliverable.payload.strategyMap');
-    const mindModel = record(payload.mindModel, 'deliverable.payload.mindModel');
-    if (array(strategyMap.cells, 'strategyMap.cells').length === 0 || array(mindModel.nodes, 'mindModel.nodes').length === 0) {
+    if (payload.schemaVersion !== 'research-strategy-content-v2') {
+      throw new Error('research strategy requires open content payload v2');
+    }
+    const contentBlocks = array(payload.contentBlocks, 'deliverable.payload.contentBlocks').map((value, index) => record(value, `contentBlocks[${index}]`));
+    const blocksByKind = new Map(contentBlocks.map((block) => [nonBlankString(block.kind, 'contentBlock.kind'), block]));
+    const strategyMap = blocksByKind.get('strategy_map');
+    const mindModel = blocksByKind.get('mind_model');
+    if (!strategyMap || array(strategyMap.cells, 'strategyMap.cells').length === 0 || !mindModel || array(mindModel.nodes, 'mindModel.nodes').length === 0) {
       throw new Error('research strategy map or mind model is empty');
     }
-    if (array(payload.designPrinciples, 'designPrinciples').length < 5) {
+    const principles = blocksByKind.get('design_principles');
+    if (!principles || array(principles.items, 'designPrinciples.items').length < 5) {
       throw new Error('research strategy requires at least five design principles for the Gold scenario');
     }
-    if (array(payload.opportunities, 'opportunities').length === 0) throw new Error('research strategy opportunities are empty');
-    const priorities = new Set(array(payload.prioritizedActions, 'prioritizedActions').map((value, index) => (
-      nonBlankString(record(value, `prioritizedActions[${index}]`).priority, `prioritizedActions[${index}].priority`)
+    const opportunities = blocksByKind.get('opportunity_backlog');
+    if (!opportunities || array(opportunities.items, 'opportunityBacklog.items').length === 0) {
+      throw new Error('research strategy opportunities are empty');
+    }
+    const actionBlocks = contentBlocks.filter((block) => block.kind === 'prioritized_actions' || block.kind === 'action_plan');
+    const priorities = new Set(actionBlocks.flatMap((block, blockIndex) => (
+      array(block.items, `actionBlocks[${blockIndex}].items`).map((value, index) => (
+        nonBlankString(record(value, `actionItems[${index}]`).priority, `actionItems[${index}].priority`)
+      ))
     )));
     for (const priority of ['P0', 'P1', 'P2']) if (!priorities.has(priority)) throw new Error(`research strategy is missing ${priority} action`);
     const reportDocument = record(delivered.reportDocument, 'reportDocument');
     if (reportDocument.version !== 'report-document-v2') throw new Error('research strategy requires ReportDocument v2');
+    if (reportDocument.layoutMode !== 'model' && reportDocument.layoutMode !== 'fallback') {
+      throw new Error('research strategy requires an explicit model or fallback layout mode');
+    }
     const answerReview = record(delivered.reportReview, 'reportReview');
     if (answerReview.version !== 'report-review-v2') throw new Error('research strategy requires ReportReview v2');
   }
@@ -1125,8 +1193,12 @@ async function executeRealSmoke(
     expectedActualModel,
   );
   const modelCalls = await runtime.repository.listModelCalls(attemptId);
-  assertGatewayModelReceipts({ modelRoutes, modelCalls });
-  const representativeModelCall = modelCalls[0]!;
+  const requiredModelCalls = modelCalls.filter((call) => call.stage !== 'report_layout' || call.status === 'succeeded');
+  assertGatewayModelReceipts({ modelRoutes, modelCalls: requiredModelCalls });
+  if (scenario.profile === 'research_synthesis' && modelCalls.some(({ stage }) => stage === 'deliverable')) {
+    throw new Error('research strategy execution must not rewrite the reviewed Skill output in a deliverable LLM stage');
+  }
+  const representativeModelCall = requiredModelCalls[0]!;
 
   const entries = array(manifest.entries, 'evidenceManifest.entries').map((entry, index) => (
     record(entry, `evidenceManifest.entries[${index}]`)
@@ -1252,6 +1324,12 @@ async function executeRealSmoke(
     throw new Error('historical task state does not match its gapCount');
   }
   const provenance = realToolStep.toolProvenance;
+  reportProgress({
+    stage: 'completed',
+    message: 'real smoke completed and verified',
+    taskId,
+    attemptId,
+  });
   return formatSmokeReceipt({
     scenarioId: scenario.id,
     profile: scenario.profile,
@@ -1329,6 +1407,7 @@ export async function runCurrentRealSmoke(input: SmokeRunInput): Promise<SmokeRe
       input.designImagePath ?? process.env.CURRENT_DESIGN_SMOKE_IMAGE_PATH,
       browserEvidenceRequired,
       resolveApprovalMode(input.approvalMode),
+      (event) => input.progress?.(event),
     );
     assertSmokeReceiptMinimums(receipt, scenario);
     return [receipt];
@@ -1349,7 +1428,12 @@ async function main(): Promise<void> {
       ?? 'tests/fixtures/current-semantic-gold.json';
     const profile = process.env.CURRENT_SMOKE_PROFILE ?? CURRENT_REAL_SMOKE_PROFILES[0];
     const scenarioId = nonBlankString(process.env.CURRENT_SMOKE_SCENARIO, 'CURRENT_SMOKE_SCENARIO');
-    console.log(JSON.stringify(await runCurrentRealSmoke({ fixturePath, profiles: [profile], scenarioId })));
+    console.log(JSON.stringify(await runCurrentRealSmoke({
+      fixturePath,
+      profiles: [profile],
+      scenarioId,
+      progress: (event) => console.error(JSON.stringify({ type: 'current-real-smoke-progress', ...event })),
+    })));
   } catch (error) {
     console.error(safeSmokeErrorMessage(error));
     process.exitCode = 1;

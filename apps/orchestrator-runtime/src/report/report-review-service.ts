@@ -206,8 +206,18 @@ function answerQualityDimensionIssues(
       issues.hypothesis_conclusion_clarity.push(`answer ${questionId} has an invalid status or validation need`);
     }
   }
-  const actions = Array.isArray(payload.prioritizedActions) ? payload.prioritizedActions.map(record).filter(Boolean) as Record<string, unknown>[] : [];
-  if (actions.length === 0) issues.decision_usefulness.push('prioritized actions are missing');
+  const actions = payload.schemaVersion === 'research-strategy-content-v2'
+    ? (Array.isArray(payload.contentBlocks) ? payload.contentBlocks : [])
+      .map(record)
+      .filter((block): block is Record<string, unknown> => Boolean(block))
+      .filter((block) => block.kind === 'prioritized_actions' || block.kind === 'action_plan')
+      .flatMap((block) => Array.isArray(block.items) ? block.items.map(record).filter(Boolean) as Record<string, unknown>[] : [])
+    : Array.isArray(payload.prioritizedActions)
+      ? payload.prioritizedActions.map(record).filter(Boolean) as Record<string, unknown>[]
+      : [];
+  const requiresActionBlock = payload.schemaVersion !== 'research-strategy-content-v2'
+    || input.requirement?.requested_artifacts?.some((artifact) => artifact === 'prioritized_actions' || artifact === 'action_plan') === true;
+  if (requiresActionBlock && actions.length === 0) issues.decision_usefulness.push('prioritized actions are missing');
   for (const action of actions) {
     if (!nonEmptyString(action.action) || !nonEmptyString(action.ownerType) || !nonEmptyString(action.validationMethod)) {
       issues.decision_usefulness.push(`prioritized action ${String(action.id ?? '')} is not actionable`);

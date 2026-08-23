@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import type { SystemCapabilitiesResponse } from '../../../../packages/api-contract/system-capabilities.ts';
 import { inspectDeliverableRegistry } from '../../../orchestrator-runtime/src/report/deliverable-registry.ts';
 import {
@@ -85,6 +85,13 @@ function sourceRevision(): string | null {
   }
 }
 
+function schemaIdentity(relativePath: string): string {
+  const schema = readJson(relativePath);
+  return typeof schema.$id === 'string' && schema.$id.trim()
+    ? schema.$id
+    : basename(relativePath);
+}
+
 function configurationHash(parts: readonly (string | null)[]): string {
   return `sha256:${createHash('sha256').update(JSON.stringify(parts)).digest('hex')}`;
 }
@@ -107,6 +114,13 @@ systemCapabilitiesRouter.get('/', (_req, res) => {
     const skillRegistryHash = hashFile('orchestrator/skill-registry.yaml');
     const planSchemaHash = hashFile('schemas/current-execution-plan.schema.json');
     const reportSchemaHash = hashFile('schemas/report-document.schema.json');
+    const layoutSchemaHash = hashFile('schemas/report-layout-blueprint.schema.json');
+    const diagnosticSchemaHash = hashFile('schemas/deliverable-validation-diagnostic.schema.json');
+    const strategyDraftSchemaHash = hashFile('schemas/skills/research-strategy-content-draft-v2.schema.json');
+    const payloadSchemaHashes = [...new Set(activeDeliverables.flatMap((entry) => [
+      entry.payload_schema,
+      ...(entry.read_payload_schemas ?? []),
+    ]))].sort().map(hashFile);
     const configHash = configurationHash([
       deliverableRegistryHash,
       skillRegistryHash,
@@ -114,6 +128,10 @@ systemCapabilitiesRouter.get('/', (_req, res) => {
       toolRegistryHash,
       planSchemaHash,
       reportSchemaHash,
+      layoutSchemaHash,
+      diagnosticSchemaHash,
+      strategyDraftSchemaHash,
+      ...payloadSchemaHashes,
     ]);
     const revision = sourceRevision();
     const response: SystemCapabilitiesResponse = {
@@ -128,6 +146,13 @@ systemCapabilitiesRouter.get('/', (_req, res) => {
       reportDocumentVersions: reportDocumentVersions(),
       activeTaskTypes: [...new Set(activeDeliverables.flatMap(({ task_types }) => task_types))].sort(),
       activeDeliverables: activeDeliverables.map(({ id }) => id).sort(),
+      deliverableContracts: activeDeliverables.map((entry) => ({
+        id: entry.id,
+        writePayloadSchema: schemaIdentity(entry.payload_schema),
+        readablePayloadSchemas: (entry.read_payload_schemas ?? [entry.payload_schema]).map(schemaIdentity),
+        synthesisMode: entry.synthesis_mode ?? 'model_synthesis',
+      })).sort((left, right) => left.id.localeCompare(right.id)),
+      reportLayoutVersions: ['report-layout-blueprint-v1'],
       compiledSkills: loadSkillRegistry().skills
         .filter(({ status, execution_mode }) => status === 'active' && execution_mode === 'compiled')
         .map(({ id }) => id)

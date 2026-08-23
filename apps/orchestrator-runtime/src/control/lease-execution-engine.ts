@@ -1432,7 +1432,11 @@ export class LeaseExecutionEngine {
       );
       const deliverableContract = resolvePlanDeliverableContract(task.structuredTask, planVersion.plan);
       if (isRecord(planVersion.plan) && planVersion.plan.execution_contract_version === 'current-execution-plan-v2') {
-        assertCompiledSkillPlan(planVersion.plan as unknown as CurrentExecutionPlan, this.dependencies.skillLoader);
+        assertCompiledSkillPlan(
+        planVersion.plan as unknown as CurrentExecutionPlan,
+        this.dependencies.skillLoader,
+        task.structuredTask as ResearchTaskV2,
+      );
       }
       deliverableId = deliverableContract.entry.id;
       const parsedPlan = parsePlan(task.id, planVersion.plan, deliverableContract);
@@ -2619,6 +2623,8 @@ export class LeaseExecutionEngine {
       let deliverableArtifactId = deliverable.deliverableArtifactId;
       let reportReviewArtifactId: string | undefined;
       let reportDocumentArtifactId: string | undefined;
+      let reportLayoutBlueprintArtifactId: string | undefined;
+      let reportLayoutDiagnosticArtifactId: string | undefined;
       let reviewStatus: ReportReviewResult['status'] | undefined;
       if (this.dependencies.reportReview) {
         const reviewingTask = await this.dependencies.repository.transitionTask({
@@ -2628,7 +2634,8 @@ export class LeaseExecutionEngine {
           to: 'reviewing',
         });
         active = { ...active, stateVersion: reviewingTask.stateVersion };
-        const composer: DeliverableComposer | undefined = this.dependencies.deliverables.revise
+        const composer: DeliverableComposer | undefined = deliverableId !== 'research_strategy_report'
+          && this.dependencies.deliverables.revise
           ? {
               revise: (revision) => this.dependencies.deliverables.revise!({ ...deliverableInput, review: revision.review }),
             }
@@ -2730,6 +2737,8 @@ export class LeaseExecutionEngine {
               review: verifiedReview,
               visualAssets: materials.visualAssets,
               charts: materials.charts,
+              expectedModel: input.expectedModel,
+              layoutStepNo: plan.steps.length + 3,
               activeLease: input.lease,
             }));
           if (
@@ -2746,6 +2755,8 @@ export class LeaseExecutionEngine {
             throw new ExecutionAuthenticityError('ReportDocument composition did not return a sealed bound Artifact');
           }
           reportDocumentArtifactId = composition.artifact.id;
+          reportLayoutBlueprintArtifactId = composition.layoutBlueprintArtifactId;
+          reportLayoutDiagnosticArtifactId = composition.layoutDiagnosticArtifactId;
         }
       }
       await this.dependencies.repository.requireActiveLease(input.lease);
@@ -2766,6 +2777,8 @@ export class LeaseExecutionEngine {
             evidenceManifestArtifactId: sealedEvidenceManifest.artifact.id,
             reportReviewArtifactId: finalReviewArtifactId,
             ...(reportDocumentArtifactId === undefined ? {} : { reportDocumentArtifactId }),
+            ...(reportLayoutBlueprintArtifactId === undefined ? {} : { reportLayoutBlueprintArtifactId }),
+            ...(reportLayoutDiagnosticArtifactId === undefined ? {} : { reportLayoutDiagnosticArtifactId }),
           });
       await this.dependencies.repository.requireActiveLease(input.lease);
       const status = gaps.size > 0 ? 'completed_with_gaps' : 'completed';

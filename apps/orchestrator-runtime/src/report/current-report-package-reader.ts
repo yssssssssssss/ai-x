@@ -35,7 +35,10 @@ import {
   assertReportProjectionIntegrity,
   requiredPayloadPointers,
 } from './report-projection.ts';
-import { resolveDeliverableContractById } from './deliverable-registry.ts';
+import {
+  resolveDeliverableContractById,
+  selectReadablePayloadSchema,
+} from './deliverable-registry.ts';
 import type { VerifiedVisualAsset, VisualAssetService } from './visual-asset-service.ts';
 import {
   type ReportPackageArtifactValue,
@@ -409,7 +412,10 @@ export class CurrentReportPackageReader {
         deliverableArtifactId,
         payload: deliverable.payload,
         requiredPointers: requiredPayloadPointers(
-          resolveDeliverableContractById(String(deliverable.deliverableType)).payloadSchema,
+          selectReadablePayloadSchema(
+            resolveDeliverableContractById(String(deliverable.deliverableType)),
+            deliverable.payload,
+          ).schema,
         ),
       });
       const references = reportAssetReferences(reportDocument);

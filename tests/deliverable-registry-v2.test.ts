@@ -43,6 +43,8 @@ interface DeliverableRegistryEntry {
   task_types: string[];
   envelope_version: string;
   payload_schema: string;
+  read_payload_schemas?: string[];
+  synthesis_mode?: 'model_synthesis' | 'reviewed_skill_assembly';
   synthesis_prompt: string;
   review_rubric: string;
   evidence_policy: string;
@@ -57,6 +59,14 @@ interface DeliverableRegistryModule {
     expectedDeliverables: readonly string[],
     declaredDeliverableId: string,
   ): DeliverableRegistryEntry;
+  resolveDeliverableContractById(deliverableId: string): {
+    entry: DeliverableRegistryEntry;
+    readablePayloadSchemas: Array<{ path: string; schema: object }>;
+  };
+  selectReadablePayloadSchema(
+    contract: { entry: DeliverableRegistryEntry; readablePayloadSchemas: Array<{ path: string; schema: object }> },
+    payload: unknown,
+  ): { path: string; schema: object };
 }
 
 const registryModulePath: string = '../apps/orchestrator-runtime/src/report/deliverable-registry.ts';
@@ -110,6 +120,8 @@ async function loadRegistryModule(): Promise<DeliverableRegistryModule> {
   );
   const exports = await import(registryModulePath) as unknown as Record<string, unknown>;
   assert.equal(typeof exports.resolveDeliverable, 'function');
+  assert.equal(typeof exports.resolveDeliverableContractById, 'function');
+  assert.equal(typeof exports.selectReadablePayloadSchema, 'function');
   return exports as unknown as DeliverableRegistryModule;
 }
 
@@ -345,6 +357,22 @@ test('resolves the production research_plan contract for user research planning'
     evidence_policy: resolved.evidence_policy,
     report_template: resolved.report_template,
   }, RESEARCH_PLAN_ENTRY);
+});
+
+test('selects the exact readable research strategy schema from the payload version', async () => {
+  setConfigRoot(originalConfigRoot);
+  const { resolveDeliverableContractById, selectReadablePayloadSchema } = await loadRegistryModule();
+  const contract = resolveDeliverableContractById('research_strategy_report');
+  assert.equal(contract.entry.synthesis_mode, 'reviewed_skill_assembly');
+  assert.match(selectReadablePayloadSchema(contract, {}).path, /research-strategy-report\.schema\.json$/u);
+  assert.match(
+    selectReadablePayloadSchema(contract, { schemaVersion: 'research-strategy-content-v2' }).path,
+    /research-strategy-report-v2\.schema\.json$/u,
+  );
+  assert.throws(
+    () => selectReadablePayloadSchema(contract, { schemaVersion: 'unknown-v9' }),
+    /does not support payload schema version unknown-v9/,
+  );
 });
 
 test('resolveDeliverable is deterministic and does not mutate expected deliverables', async () => {
