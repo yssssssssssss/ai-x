@@ -11,6 +11,7 @@ import type {
   ControlExecutionLease,
   ControlPlaneRepository,
 } from '../../../../database/control-plane.ts';
+import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
 import type {
   ChartSpec,
   CurrentExecutionPlan,
@@ -2608,6 +2609,7 @@ export class LeaseExecutionEngine {
           successCriterionIds: finalReviewCoverage.successCriterionIds,
           questionIds: finalReviewCoverage.questionIds,
           evidenceIds: sealedEvidenceManifest.value.entries.map((entry) => entry.id),
+          requirement: deliverableInput.finalizedRequirement as ResearchTaskV2,
           expectedModel: input.expectedModel,
           activeLease: input.lease,
         }, composer));

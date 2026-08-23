@@ -14,6 +14,44 @@ test('ambiguous plan plus answer request requires an explicit outcome choice', (
   assert.deepEqual(value.requested_artifacts, ['strategy_map', 'mind_model', 'opportunity_backlog']);
 });
 
+test('mixed intent is gated independently of an incorrect model task type', () => {
+  const misclassified: ResearchTaskV2 = {
+    ...requirement(),
+    task_type: 'competitive_research',
+    expected_deliverables: ['competitive_analysis_report'],
+  };
+  const value = normalizeOutcomeRequirement(
+    misclassified,
+    'Create a research plan and give direct answers with a strategy map.',
+    null,
+  );
+  assert.equal(value.outcome_mode, undefined);
+  assert.equal(value.clarification_questions[0]?.key, 'outcome_mode');
+
+  const selected = normalizeOutcomeRequirement(misclassified, '创建调研任务并给出策略地图', { outcome_mode: 'plan' });
+  assert.equal(selected.task_type, 'user_research_planning');
+  assert.deepEqual(selected.expected_deliverables, ['research_plan']);
+});
+
+test('English plan and direct-answer signals normalize deterministically', () => {
+  const plan = normalizeOutcomeRequirement(requirement(), 'Design a research plan and interview schedule.', null);
+  assert.equal(plan.outcome_mode, 'plan');
+  const answer = normalizeOutcomeRequirement(requirement(), 'Give a direct answer, strategy map, and prioritized actions.', null);
+  assert.equal(answer.outcome_mode, 'answer');
+  assert.equal(answer.task_type, 'research_synthesis');
+  assert.deepEqual(answer.requested_artifacts, ['strategy_map', 'prioritized_actions']);
+});
+
+test('answer mode converts unresolved scope questions into provisional-answer obligations', () => {
+  const unresolved = requirement();
+  unresolved.ambiguities = [{ id: 'audience', statement: 'Audience detail is unavailable', blocking: true }];
+  unresolved.clarification_questions = [{ key: 'audience', question: 'Which audience?', rationale: 'Scope precision' }];
+  const answer = normalizeOutcomeRequirement(unresolved, 'Give direct findings and prioritized actions.', null);
+  assert.equal(answer.outcome_mode, 'answer');
+  assert.deepEqual(answer.clarification_questions, []);
+  assert.deepEqual(answer.ambiguities, [{ id: 'audience', statement: 'Audience detail is unavailable', blocking: false }]);
+});
+
 test('answer selection freezes research_synthesis and strategy-report artifacts', () => {
   const value = normalizeOutcomeRequirement(requirement(), '创建一个调研任务，输出策略地图和设计原则', { outcome_mode: 'answer' });
   assert.equal(value.task_type, 'research_synthesis');

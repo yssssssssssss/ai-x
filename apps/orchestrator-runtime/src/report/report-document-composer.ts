@@ -103,7 +103,10 @@ export interface ReportAnswerBlock {
   items: string[];
   questionIds: string[];
   evidenceIds: string[];
-  confidence: number;
+  findingIds: string[];
+  summaryIds: string[];
+  confidence?: number;
+  answerStatus?: 'supported' | 'provisional' | 'unanswered';
   sourcePointers: string[];
   sourceNodeIds?: string[];
   summary: boolean;
@@ -202,6 +205,8 @@ export interface ComposeReportDocumentInput {
 export interface ReportDocumentReferenceContext {
   requiredQuestionIds: string[];
   evidenceIds: string[];
+  findingIds?: string[];
+  summaryIds?: string[];
   visualAssets: ReportAssetReference[];
   charts: ReportVerifiedChartReference[];
 }
@@ -452,11 +457,17 @@ function assertCompositionInput(input: ComposeReportDocumentInput): {
     requireCoverage: true,
   });
 
-  assertSealedArtifact(input.review.artifact, binding, 'Review', 'report_review', ['report-review-v1']);
+  assertSealedArtifact(input.review.artifact, binding, 'Review', 'report_review', ['report-review-v1', 'report-review-v2']);
   assertSealedJsonValue(input.review.artifact, input.review.value, 'Review');
   assertValueBinding(input.review.value, binding, 'Review');
   assertValidReportReviewArtifact(input.review.value, DOCUMENT_SCHEMA);
-  if (input.review.value.version !== 'report-review-v1') fail('Review value version must be report-review-v1');
+  const expectedReviewVersion = contract.entry.id === 'research_strategy_report'
+    ? 'report-review-v2'
+    : 'report-review-v1';
+  if (input.review.value.version !== expectedReviewVersion) {
+    fail(`Review value version must be ${expectedReviewVersion} for ${contract.entry.id}`);
+  }
+  if (input.review.artifact.schemaVersion !== input.review.value.version) fail('Review Artifact schema version does not match its value');
   if (input.review.value.verdict !== 'pass') {
     fail(`Review verdict must be pass, received ${input.review.value.verdict}`);
   }
@@ -1458,14 +1469,34 @@ export function assertValidReportDocument(
   }
 
   const evidenceIds = new Set(references.evidenceIds);
+  const findingIds = new Set(references.findingIds ?? []);
+  const summaryIds = new Set(references.summaryIds ?? []);
   const visualReferences = new Set(references.visualAssets.map(assetReferenceKey));
   const chartReferences = new Set(references.charts.map(chartReferenceKey));
   for (const section of document.sections) {
+    if (document.version === 'report-document-v2' && section.blocks.length === 0) {
+      fail(`report-document-v2 section ${section.id} must contain at least one block`);
+    }
     assertUnique(section.questionIds, `question id in section ${section.id}`);
     for (const block of section.blocks) {
       if (block.type === 'fact' || block.type === 'metric' || block.type === 'answer') {
         for (const evidenceId of block.evidenceIds) {
           if (!evidenceIds.has(evidenceId)) fail(`${block.type} block ${block.id} references dangling Evidence ${evidenceId}`);
+        }
+        if (block.type === 'answer') {
+          for (const findingId of block.findingIds) {
+            if (!findingIds.has(findingId)) fail(`answer block ${block.id} references dangling Finding ${findingId}`);
+          }
+          for (const summaryId of block.summaryIds) {
+            if (!summaryIds.has(summaryId)) fail(`answer block ${block.id} references dangling Summary ${summaryId}`);
+          }
+          if (block.kind === 'direct_answer') {
+            if (!block.answerStatus) fail(`direct answer block ${block.id} has no typed answerStatus`);
+            if (block.summaryIds.length === 0) fail(`direct answer block ${block.id} has no Summary provenance`);
+          }
+          if (block.evidenceIds.length > 0 && block.findingIds.length === 0) {
+            fail(`answer block ${block.id} has Evidence without Finding provenance`);
+          }
         }
       } else if (block.type === 'image') {
         if (!visualReferences.has(assetReferenceKey(block.assetRef))) {
@@ -1519,6 +1550,9 @@ export function composeReportDocument(input: ComposeReportDocumentInput): Report
       payloadSchema: contract.payloadSchema,
       evidenceIndex: input.evidenceManifest.value.entries.map((entry) => `${entry.id}: ${entry.evidenceClass}`),
       evidenceIds: input.evidenceManifest.value.entries.map(({ id }) => id),
+      findingGraph: input.deliverable.value.findingGraph,
+      coverage: input.deliverable.value.coverage!,
+      envelopeRisksAndOpenIssues: input.deliverable.value.risksAndOpenIssues,
     });
     assertReportProjectionIntegrity({
       document,
@@ -1529,6 +1563,8 @@ export function composeReportDocument(input: ComposeReportDocumentInput): Report
     assertValidReportDocument(document, {
       requiredQuestionIds: input.requiredQuestionIds,
       evidenceIds: input.evidenceManifest.value.entries.map(({ id }) => id),
+      findingIds: input.deliverable.value.findingGraph.findings.map(({ id }) => id),
+      summaryIds: input.deliverable.value.findingGraph.subQuestionSummaries.map(({ id }) => id),
       visualAssets: input.visualAssets.map(assetReference),
       charts: input.charts.map(({ spec, asset }) => ({
         chartId: spec.chartId,

@@ -4,6 +4,7 @@ import type { ResearchStrategyReportPayload } from '../packages/api-contract/res
 import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 import { validateResearchStrategyAnswer } from '../apps/orchestrator-runtime/src/report/answer-quality-validator.ts';
+import { collectRequiredRiskDisclosures } from '../apps/orchestrator-runtime/src/report/current-deliverable-service.ts';
 import { resolveDeliverable } from '../apps/orchestrator-runtime/src/report/deliverable-registry.ts';
 
 export function strategyPayload(): ResearchStrategyReportPayload {
@@ -13,12 +14,12 @@ export function strategyPayload(): ResearchStrategyReportPayload {
     evidenceBackedFindings: [{ id: 'F1', statement: 'Proof improves confidence.', evidenceIds: ['E1'], confidence: 0.8 }],
     dynamicSections: [{ id: 'journey', title: 'Journey strategy', purpose: 'Answer the journey question', blocks: [{ id: 'B1', type: 'narrative', title: 'Purchase', content: 'Lead with fit.', questionIds: ['Q1'], evidenceIds: ['E1'], confidence: 0.8 }] }],
     strategyMap: { title: 'Map', rows: ['Purchase'], columns: ['Trust'], cells: [{ id: 'C1', row: 'Purchase', column: 'Trust', statement: 'Show proof.', evidenceIds: ['E1'], confidence: 0.8 }] },
-    mindModel: { title: 'Model', nodes: [{ id: 'N1', label: 'Understand', description: 'Know fit', evidenceIds: ['E1'] }], edges: [] },
+    mindModel: { title: 'Model', confidence: 0.8, nodes: [{ id: 'N1', label: 'Understand', description: 'Know fit', evidenceIds: ['E1'] }], edges: [] },
     designPrinciples: [{ id: 'P1', title: 'Proof first', statement: 'Show fit and proof before promotion.', evidenceIds: ['E1'], confidence: 0.8 }],
     opportunities: [{ id: 'O1', title: 'Fit card', statement: 'Add a fit card.', evidenceIds: ['E1'], confidence: 0.8, impact: 'Higher confidence' }],
-    prioritizedActions: [{ id: 'A1', priority: 'P0', action: 'Ship fit card', ownerType: 'product', rationale: 'Directly addresses uncertainty', evidenceIds: ['E1'], validationMethod: 'Task test' }],
-    channelStrategies: [{ id: 'CH1', channel: 'JD', role: 'Purchase proof', strategies: ['Lead with fit'], evidenceIds: ['E1'] }],
-    recommendations: ['Ship the fit card.'], limitations: [], openQuestions: [],
+    prioritizedActions: [{ id: 'A1', priority: 'P0', action: 'Ship fit card', ownerType: 'product', rationale: 'Directly addresses uncertainty', evidenceIds: ['E1'], confidence: 0.8, validationMethod: 'Task test' }],
+    channelStrategies: [{ id: 'CH1', channel: 'JD', role: 'Purchase proof', strategies: ['Lead with fit'], evidenceIds: ['E1'], confidence: 0.8 }],
+    recommendations: ['Ship the fit card.'], limitations: [], openQuestions: [], riskDisclosures: [],
     requestedArtifactBindings: [
       { artifactType: 'strategy_map', sourceField: '/strategyMap', blockIds: ['C1'], questionIds: ['Q1'], evidenceIds: ['E1'], status: 'complete' },
       { artifactType: 'mind_model', sourceField: '/mindModel', blockIds: ['N1'], questionIds: ['Q1'], evidenceIds: ['E1'], status: 'complete' },
@@ -33,6 +34,32 @@ const requirement: ResearchTaskV2 = {
   version: 'research-task-v2', task_type: 'research_synthesis', outcome_mode: 'answer', business_domain: 'pets', research_goal: 'answer strategy', target_audience: ['team'], scope: ['PDP'], constraints: [], success_criteria: [{ id: 'SC1', statement: 'Answer Q1' }], expected_deliverables: ['research_strategy_report'], requested_artifacts: ['strategy_map', 'mind_model', 'design_principles', 'opportunity_backlog', 'prioritized_actions'], assumptions: [], ambiguities: [], clarification_questions: [], blocking_issues: [], sensitivity: 'internal', pii_detected: false,
 };
 const graph = { version: 'problem-graph-v1' as const, questions: [{ id: 'Q1', statement: 'What should change?', rationale: 'Decision', priority: 'required' as const, success_criterion_ids: ['SC1'], evidence_requirements: [{ id: 'research-strategy-report', acceptedClasses: ['public_source' as const], minimumCount: 1, required: true }], acceptance_criteria: ['直接答案', '证据', '置信度', '业务含义', '行动'], depends_on: [] }] };
+
+test('risk disclosures preserve requirement, degraded Skill, reviewer, and envelope identities', () => {
+  const ambiguousRequirement: ResearchTaskV2 = {
+    ...requirement,
+    ambiguities: [{ id: 'audience', statement: 'Audience remains uncertain', blocking: false }],
+  };
+  const disclosures = collectRequiredRiskDisclosures({
+    requirement: ambiguousRequirement,
+    gaps: ['Skill degraded: missing behavioral data'],
+    materials: [{
+      stepNo: 3,
+      actorType: 'reviewer',
+      actorId: 'reviewer.research-lead',
+      questionIds: ['Q1'],
+      artifactId: 'review-output-1',
+      artifactContentSha256: `sha256:${'a'.repeat(64)}`,
+      value: { issues: ['Reviewer condition: validate channel transfer'] },
+      semanticRole: 'review',
+    }],
+    envelopeRisks: ['Envelope-specific risk'],
+  });
+  assert.deepEqual(disclosures.map(({ sourceType }) => sourceType), [
+    'requirement_ambiguity', 'skill_degraded_gap', 'reviewer_condition', 'envelope_risk',
+  ]);
+  assert.equal(new Set(disclosures.map(({ sourceId }) => sourceId)).size, 4);
+});
 
 test('research strategy payload satisfies its closed schema and answer-quality gate', () => {
   const contract = resolveDeliverable('research_synthesis', ['research_strategy_report']);
@@ -58,6 +85,16 @@ test('research strategy schema rejects missing IDs and empty requested structure
   const invalidAction = strategyPayload();
   delete (invalidAction.prioritizedActions[0] as unknown as Record<string, unknown>).validationMethod;
   assert.throws(() => validator.validateFileOrThrow('schemas/deliverables/research-strategy-report.schema.json', invalidAction));
+
+  for (const mutate of [
+    (payload: ResearchStrategyReportPayload) => { delete (payload.mindModel as unknown as Record<string, unknown>).confidence; },
+    (payload: ResearchStrategyReportPayload) => { delete (payload.prioritizedActions[0] as unknown as Record<string, unknown>).confidence; },
+    (payload: ResearchStrategyReportPayload) => { delete (payload.channelStrategies[0] as unknown as Record<string, unknown>).confidence; },
+  ]) {
+    const missingConfidence = strategyPayload();
+    mutate(missingConfidence);
+    assert.throws(() => validator.validateFileOrThrow('schemas/deliverables/research-strategy-report.schema.json', missingConfidence));
+  }
 });
 
 test('answer quality rejects missing answers, unsupported claims, and missing requested artifacts', () => {
@@ -92,13 +129,29 @@ test('answer quality rejects dangling strategy evidence, incomplete bindings, an
   provisional.directAnswers[0]!.validationNeeded = 'Interview affected users';
   assert.throws(
     () => validateResearchStrategyAnswer({ payload: provisional, requirement, problemGraph: graph, evidenceIds: ['E1'], risksAndOpenIssues: [] }),
-    /limitations are empty/u,
+    /risk disclosures do not exactly match|required sources/u,
   );
 
   const reviewerCondition = strategyPayload();
   assert.throws(
     () => validateResearchStrategyAnswer({ payload: reviewerCondition, requirement, problemGraph: graph, evidenceIds: ['E1'], risksAndOpenIssues: ['Reviewer condition: validate the priority externally'] }),
-    /limitations are empty/u,
+    /envelope risk is not disclosed/u,
+  );
+
+  const exactRisk = strategyPayload();
+  const requiredRisk = {
+    id: 'risk-gap-gap-1', sourceType: 'skill_degraded_gap' as const, sourceId: 'gap-1',
+    statement: 'Knowledge coverage degraded', disposition: 'limitation' as const,
+  };
+  exactRisk.riskDisclosures = [requiredRisk];
+  exactRisk.limitations = ['generic limitation'];
+  assert.throws(
+    () => validateResearchStrategyAnswer({ payload: exactRisk, requirement, problemGraph: graph, evidenceIds: ['E1'], risksAndOpenIssues: ['Knowledge coverage degraded'], requiredRiskDisclosures: [requiredRisk] }),
+    /absent from limitation/u,
+  );
+  exactRisk.limitations = ['Knowledge coverage degraded'];
+  assert.doesNotThrow(
+    () => validateResearchStrategyAnswer({ payload: exactRisk, requirement, problemGraph: graph, evidenceIds: ['E1'], risksAndOpenIssues: ['Knowledge coverage degraded'], requiredRiskDisclosures: [requiredRisk] }),
   );
 
   const deferred = strategyPayload();

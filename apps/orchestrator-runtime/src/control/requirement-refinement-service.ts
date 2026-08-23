@@ -122,24 +122,35 @@ export class InvalidScenarioSelectionError extends Error {
 
 const REQUIREMENT_PROMPT = `把会话整理为 ResearchTaskV2。必须忠实保留用户目标、范围、成功标准和约束；区分研究规划(plan)与直接研究回答(answer)：规划回答如何研究，回答模式必须基于可用证据给出结论、策略与行动；无法判断时增加 key=outcome_mode 的澄清问题；竞品任务若明确列出对比维度，必须按原顺序写入 comparison_dimensions，未明确时不得自行补写；可安全推断的信息写入 assumptions；无法安全推断的信息写入 ambiguities 与 clarification_questions；敏感、授权或合规风险写入 blocking_issues。`;
 
-const PLAN_OUTCOME_SIGNAL = /(?:创建|制定|设计|规划|生成|给出).{0,12}(?:调研任务|研究方案|调研方案|访谈|问卷|样本|排期)|(?:如何|怎么).{0,8}(?:开展|研究)/u;
-const ANSWER_OUTCOME_SIGNAL = /(?:直接|完成).{0,8}(?:研究|分析|回答|结论)|(?:给出|输出|提出).{0,10}(?:结论|策略地图|心智模型|设计原则|机会点|优先级|行动建议)|(?:应该|应当).{0,6}(?:怎么|如何)/u;
+const PLAN_OUTCOME_SIGNALS = [
+  /(?:创建|制定|设计|规划|生成|给出).{0,12}(?:调研任务|研究方案|调研方案|访谈方案|问卷方案|样本方案|研究排期)/u,
+  /(?:如何|怎么|怎样).{0,8}(?:开展|进行|设计|规划).{0,6}(?:研究|调研)/u,
+  /\b(?:research|study|interview|survey)\s+(?:plan|design|protocol|schedule)\b/iu,
+  /\bhow\s+(?:should\s+we\s+|do\s+we\s+|to\s+)?(?:conduct|run|design|plan)\s+(?:the\s+)?(?:research|study)\b/iu,
+] as const;
+const ANSWER_OUTCOME_SIGNALS = [
+  /(?:直接|完成).{0,8}(?:研究|分析|回答|结论)/u,
+  /(?:给出|输出|提出).{0,10}(?:结论|策略地图|心智模型|设计原则|机会点|优先级|行动建议)/u,
+  /(?:应该|应当).{0,6}(?:怎么|如何)/u,
+  /\b(?:direct\s+answer|answer\s+(?:the\s+)?questions?|findings?|conclusions?|strategy\s+map|mental\s+model|design\s+principles?|opportunities|prioriti[sz]ed\s+actions?)\b/iu,
+  /\bwhat\s+should\s+(?:we|the\s+(?:business|product|team))\s+do\b/iu,
+] as const;
 const REQUESTED_ARTIFACT_SIGNALS: Array<[RegExp, RequestedArtifact]> = [
-  [/研究报告/u, 'research_report'],
-  [/策略地图/u, 'strategy_map'],
-  [/心智模型/u, 'mind_model'],
-  [/设计原则/u, 'design_principles'],
-  [/机会点/u, 'opportunity_backlog'],
-  [/优先级/u, 'prioritized_actions'],
-  [/(?:渠道|场域).{0,6}策略/u, 'channel_strategies'],
-  [/(?:行动|落地).{0,6}(?:计划|路线)/u, 'action_plan'],
+  [/(?:研究报告|\bresearch report\b)/iu, 'research_report'],
+  [/(?:策略地图|\bstrategy map\b)/iu, 'strategy_map'],
+  [/(?:心智模型|\b(?:mental|mind) model\b)/iu, 'mind_model'],
+  [/(?:设计原则|\bdesign principles?\b)/iu, 'design_principles'],
+  [/(?:机会点|\bopportunit(?:y|ies)(?: backlog)?\b)/iu, 'opportunity_backlog'],
+  [/(?:优先级|\bprioriti[sz]ed actions?\b)/iu, 'prioritized_actions'],
+  [/(?:(?:渠道|场域).{0,6}策略|\bchannel strateg(?:y|ies)\b)/iu, 'channel_strategies'],
+  [/(?:(?:行动|落地).{0,6}(?:计划|路线)|\baction plan\b)/iu, 'action_plan'],
 ];
 
 function clarificationOutcomeMode(clarification: unknown): 'plan' | 'answer' | null {
   if (!clarification || typeof clarification !== 'object' || Array.isArray(clarification)) return null;
   const value = (clarification as Record<string, unknown>).outcome_mode;
-  if (value === 'plan' || /研究方案|如何研究|规划/u.test(String(value ?? ''))) return 'plan';
-  if (value === 'answer' || /直接|策略答案|研究答案|给结论/u.test(String(value ?? ''))) return 'answer';
+  if (value === 'plan' || /研究方案|如何研究|规划|research plan|study plan/iu.test(String(value ?? ''))) return 'plan';
+  if (value === 'answer' || /直接|策略答案|研究答案|给结论|direct answer|strategy answer/iu.test(String(value ?? ''))) return 'answer';
   return null;
 }
 
@@ -150,8 +161,8 @@ export function normalizeOutcomeRequirement(
 ): ResearchTaskV2 {
   const selectedByUser = clarificationOutcomeMode(clarification);
   const inferred = requirement.outcome_mode ?? null;
-  const planSignal = PLAN_OUTCOME_SIGNAL.test(originalInput);
-  const answerSignal = ANSWER_OUTCOME_SIGNAL.test(originalInput)
+  const planSignal = PLAN_OUTCOME_SIGNALS.some((pattern) => pattern.test(originalInput));
+  const answerSignal = ANSWER_OUTCOME_SIGNALS.some((pattern) => pattern.test(originalInput))
     || (requirement.requested_artifacts?.some((item) => item !== 'research_report') ?? false);
   const ambiguous = selectedByUser === null && planSignal && answerSignal;
   const requested = [...new Set([
@@ -160,7 +171,8 @@ export function normalizeOutcomeRequirement(
   ])];
   const supportsOutcomeMode = requirement.task_type === 'user_research_planning'
     || requirement.task_type === 'research_synthesis';
-  if (!supportsOutcomeMode && selectedByUser === null) return requirement;
+  const appliesToOutcomeMode = supportsOutcomeMode || selectedByUser !== null || ambiguous;
+  if (!appliesToOutcomeMode) return requirement;
   if (selectedByUser === null && inferred === null && !planSignal && !answerSignal && requested.length === 0) {
     return requirement;
   }
@@ -183,7 +195,7 @@ export function normalizeOutcomeRequirement(
   const mode = selectedByUser ?? inferred ?? (answerSignal && !planSignal ? 'answer' : 'plan');
   return {
     ...requirement,
-    task_type: mode === 'answer' ? 'research_synthesis' : requirement.task_type === 'research_synthesis' ? 'user_research_planning' : requirement.task_type,
+    task_type: mode === 'answer' ? 'research_synthesis' : 'user_research_planning',
     outcome_mode: mode,
     requested_artifacts: requested.length > 0
       ? requested
@@ -191,7 +203,12 @@ export function normalizeOutcomeRequirement(
         ? ['executive_answers', 'research_report', 'prioritized_actions']
         : ['research_report'],
     expected_deliverables: [mode === 'answer' ? 'research_strategy_report' : 'research_plan'],
-    clarification_questions: requirement.clarification_questions.filter(({ key }) => key !== 'outcome_mode'),
+    ambiguities: mode === 'answer'
+      ? requirement.ambiguities.map((ambiguity) => ({ ...ambiguity, blocking: false }))
+      : requirement.ambiguities,
+    clarification_questions: mode === 'answer'
+      ? []
+      : requirement.clarification_questions.filter(({ key }) => key !== 'outcome_mode'),
   };
 }
 

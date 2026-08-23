@@ -46,6 +46,7 @@ const realSmokeOptions = { skip: !realProviderConfigured };
 const realSmokeScenarios = [
   { profile: 'competitive_research', scenarioId: 'competitive-ai-shopping-assistant' },
   { profile: 'user_research_planning', scenarioId: 'planning-checkout-abandonment' },
+  { profile: 'research_synthesis', scenarioId: 'answer-pet-food-mindshare' },
   { profile: 'voc_diagnosis', scenarioId: 'voc-checkout' },
   { profile: 'design_audit', scenarioId: 'design-product-detail' },
   { profile: 'a11y_audit', scenarioId: 'a11y-mobile-checkout' },
@@ -99,7 +100,12 @@ async function runConfiguredRealSmokes(run: RealSmokeRunner): Promise<SmokeRecei
   const receipts: SmokeReceipt[] = [];
   for (const { profile, scenarioId } of realSmokeScenarios) {
     receipts.push(...await run({
-      fixturePath: join(process.cwd(), 'tests/fixtures/current-semantic-gold.json'),
+      fixturePath: join(
+        process.cwd(),
+        profile === 'research_synthesis'
+          ? 'tests/fixtures/research-synthesis-real-smoke.json'
+          : 'tests/fixtures/current-semantic-gold.json',
+      ),
       profiles: [profile],
       scenarioId,
     }));
@@ -248,10 +254,11 @@ test('formatted receipt rejects non-real or non-Tavily Tool proof', () => {
   }
 });
 
-test('current real smoke covers all five Current profiles', () => {
+test('current real smoke covers all six Current profiles', () => {
   assert.deepEqual(realProfiles, [
     'competitive_research',
     'user_research_planning',
+    'research_synthesis',
     'voc_diagnosis',
     'design_audit',
     'a11y_audit',

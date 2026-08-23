@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ControlExecutionLease } from '../database/control-plane.ts';
+import {
+  ANSWER_QUALITY_REVIEW_DIMENSION_IDS,
+  REPORT_REVIEW_V2_DIMENSION_IDS,
+} from '../packages/api-contract/control-workflow.ts';
 import type { ArtifactWriteInput } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
 import { ModelDriftError, MissingModelReceiptError } from '../apps/orchestrator-runtime/src/runtime/receipt-llm-client.ts';
 import type { LLMResult, StructuredLLMCallOptions } from '../apps/orchestrator-runtime/src/runtime/llm-client.ts';
@@ -30,6 +34,10 @@ const REQUIRED_REVIEW_DIMENSIONS = [
 
 function passingReviewDimensions(): ReportReviewArtifact['dimensions'] {
   return REQUIRED_REVIEW_DIMENSIONS.map((id) => ({ id, passed: true, issues: [] }));
+}
+
+function passingAnswerReviewDimensions(): ReportReviewArtifact['dimensions'] {
+  return REPORT_REVIEW_V2_DIMENSION_IDS.map((id) => ({ id, passed: true, issues: [] }));
 }
 
 const INVALID_PASS_DIMENSION_CASES: Array<{
@@ -90,6 +98,22 @@ function report(overrides: Record<string, unknown> = {}): Record<string, unknown
     capabilityProvenance: [],
     ...overrides,
   };
+}
+
+function strategyReport(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return report({
+    deliverableType: 'research_strategy_report',
+    payload: {
+      directAnswers: [{
+        questionId: 'q-1', answer: 'Lead with verified fit evidence.', answerStatus: 'supported',
+        evidenceIds: ['e-1'], businessImplication: 'Reduce uncertainty', recommendedAction: 'Ship the fit card', validationNeeded: '',
+      }],
+      prioritizedActions: [{ id: 'action-1', action: 'Ship the fit card', ownerType: 'product', validationMethod: 'Task test' }],
+      requestedArtifactBindings: [{ artifactType: 'strategy_map', status: 'complete', blockIds: ['cell-1'] }],
+      riskDisclosures: [], limitations: [], openQuestions: [],
+    },
+    ...overrides,
+  });
 }
 
 function input(overrides: Partial<ReportReviewInput> = {}): ReportReviewInput {
@@ -186,6 +210,72 @@ for (const invalid of INVALID_PASS_DIMENSION_CASES) {
     );
   });
 }
+
+test('report-review-v2 requires all six answer-quality dimensions in addition to legacy dimensions', async () => {
+  const answerReview: ReportReviewArtifact = {
+    ...semantic('pass'),
+    version: 'report-review-v2',
+    dimensions: passingAnswerReviewDimensions(),
+  };
+  assert.doesNotThrow(() => new SchemaValidator().validateOrThrow('report-review', answerReview));
+  assert.deepEqual(
+    answerReview.dimensions.slice(REQUIRED_REVIEW_DIMENSIONS.length).map(({ id }) => id),
+    [...ANSWER_QUALITY_REVIEW_DIMENSION_IDS],
+  );
+
+  const llm = new RecordingLlm([answerReview]);
+  const artifacts = new RecordingArtifacts();
+  const result = await service(llm, artifacts).review(input({
+    deliverable: strategyReport(),
+    requirement: {
+      version: 'research-task-v2', task_type: 'research_synthesis', outcome_mode: 'answer', requested_artifacts: ['strategy_map'],
+      business_domain: 'test', research_goal: 'answer q-1', target_audience: ['team'], scope: ['test'], constraints: [],
+      success_criteria: [{ id: 'req-1', statement: 'usable' }], expected_deliverables: ['research_strategy_report'],
+      assumptions: [], ambiguities: [], clarification_questions: [], blocking_issues: [], sensitivity: 'internal', pii_detected: false,
+    },
+  }));
+  assert.equal(result.version, 'report-review-v2');
+  assert.deepEqual(result.dimensions.map(({ id }) => id), [...REPORT_REVIEW_V2_DIMENSION_IDS]);
+  assert.equal(artifacts.writes[0]?.schemaVersion, 'report-review-v2');
+});
+
+test('answer-quality dimensions deterministically block missing direct answers before semantic review', async () => {
+  const llm = new RecordingLlm([]);
+  const artifacts = new RecordingArtifacts();
+  const missingAnswerReport = strategyReport();
+  (missingAnswerReport.payload as Record<string, unknown>).directAnswers = [];
+  const result = await service(llm, artifacts).review(input({
+    deliverable: missingAnswerReport,
+    requirement: {
+      version: 'research-task-v2', task_type: 'research_synthesis', outcome_mode: 'answer', requested_artifacts: [],
+      business_domain: 'test', research_goal: 'answer q-1', target_audience: ['team'], scope: ['test'], constraints: [],
+      success_criteria: [{ id: 'req-1', statement: 'usable' }], expected_deliverables: ['research_strategy_report'],
+      assumptions: [], ambiguities: [], clarification_questions: [], blocking_issues: [], sensitivity: 'internal', pii_detected: false,
+    },
+  }));
+  assert.equal(result.version, 'report-review-v2');
+  assert.equal(result.verdict, 'block');
+  assert.equal(result.dimensions.find(({ id }) => id === 'direct_answer_coverage')?.passed, false);
+  assert.equal(llm.calls.length, 0);
+});
+
+test('answer risk-consistency dimension blocks an undisclosed envelope risk', async () => {
+  const llm = new RecordingLlm([]);
+  const artifacts = new RecordingArtifacts();
+  const riskyReport = strategyReport({ risksAndOpenIssues: ['Skill degraded: missing behavioral data'] });
+  const result = await service(llm, artifacts).review(input({
+    deliverable: riskyReport,
+    requirement: {
+      version: 'research-task-v2', task_type: 'research_synthesis', outcome_mode: 'answer', requested_artifacts: [],
+      business_domain: 'test', research_goal: 'answer q-1', target_audience: ['team'], scope: ['test'], constraints: [],
+      success_criteria: [{ id: 'req-1', statement: 'usable' }], expected_deliverables: ['research_strategy_report'],
+      assumptions: [], ambiguities: [], clarification_questions: [], blocking_issues: [], sensitivity: 'internal', pii_detected: false,
+    },
+  }));
+  assert.equal(result.verdict, 'block');
+  assert.equal(result.dimensions.find(({ id }) => id === 'risk_consistency')?.passed, false);
+  assert.equal(llm.calls.length, 0);
+});
 
 test('passes a deliverable after deterministic gates and semantic review', async () => {
   const llm = new RecordingLlm([semantic('pass')]);

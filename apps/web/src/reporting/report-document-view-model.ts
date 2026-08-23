@@ -29,8 +29,11 @@ export interface ReportViewBlock {
   value?: number;
   items?: string[];
   evidenceIds?: string[];
+  findingIds?: string[];
+  summaryIds?: string[];
   answerKind?: 'direct_answer' | 'evidence_finding' | 'strategy_map' | 'mind_model' | 'comparison_matrix' | 'design_principle' | 'opportunity' | 'priority_matrix' | 'action_plan' | 'risk';
   confidence?: number;
+  answerStatus?: 'supported' | 'provisional' | 'unanswered';
   spec?: ChartSpec;
   table?: ChartTableAlternative;
   assetId?: string;
@@ -155,7 +158,10 @@ export function createReportDocumentViewModel({
             text: block.text,
             items: block.items,
             evidenceIds: block.evidenceIds,
+            findingIds: block.findingIds,
+            summaryIds: block.summaryIds,
             answerKind: block.kind,
+            answerStatus: block.answerStatus,
             confidence: block.confidence,
           });
         } else if (block.type === 'image') {

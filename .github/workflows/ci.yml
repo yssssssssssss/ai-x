@@ -182,3 +182,8 @@ jobs:
               CURRENT_REQUIRE_BROWSER_EVIDENCE=0 \
               pnpm smoke:current:real
           done
+          CURRENT_REAL_SMOKE_FIXTURE=tests/fixtures/research-synthesis-real-smoke.json \
+            CURRENT_SMOKE_PROFILE=research_synthesis \
+            CURRENT_SMOKE_SCENARIO=answer-pet-food-mindshare \
+            CURRENT_REQUIRE_BROWSER_EVIDENCE=0 \
+            pnpm smoke:current:real

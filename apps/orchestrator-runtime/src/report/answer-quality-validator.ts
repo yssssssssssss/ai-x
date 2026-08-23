@@ -1,5 +1,9 @@
 import type { RequestedArtifact, ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
-import type { ProblemGraph, ResearchStrategyReportPayload } from '../../../../packages/api-contract/research-deliverable.ts';
+import type {
+  ProblemGraph,
+  ResearchStrategyReportPayload,
+  ResearchStrategyRiskDisclosure,
+} from '../../../../packages/api-contract/research-deliverable.ts';
 
 export class AnswerQualityValidationError extends Error {
   constructor(message: string) {
@@ -49,6 +53,14 @@ function sameIds(left: readonly string[], right: readonly string[]): boolean {
 function isResearchDeferralOnly(answer: string): boolean {
   const normalized = answer.trim().replace(/[。.!！?？]+$/gu, '');
   return /^(?:(?:建议|需要|应当|必须)(?:先|后续|进一步)?(?:开展|进行|补充)?(?:用户)?(?:研究|调研|访谈|问卷)|(?:further|additional) research (?:is )?(?:needed|required|recommended))$/iu.test(normalized);
+}
+
+function normalizedRisk(value: string): string {
+  return value.normalize('NFKC').replace(/\s+/gu, ' ').trim().toLocaleLowerCase('en-US');
+}
+
+function disclosureIdentity(disclosure: ResearchStrategyRiskDisclosure): string {
+  return `${disclosure.sourceType}:${disclosure.sourceId}`;
 }
 
 interface ArtifactProjection {
@@ -129,6 +141,7 @@ export function validateResearchStrategyAnswer(input: {
   problemGraph: ProblemGraph;
   evidenceIds: readonly string[];
   risksAndOpenIssues: readonly string[];
+  requiredRiskDisclosures?: readonly ResearchStrategyRiskDisclosure[];
 }): void {
   const { payload, requirement, problemGraph } = input;
   const evidence = new Set(input.evidenceIds);
@@ -214,11 +227,43 @@ export function validateResearchStrategyAnswer(input: {
     }
   }
 
-  const hasUncertainty = requirement.ambiguities.length > 0
-    || input.risksAndOpenIssues.length > 0
-    || payload.directAnswers.some(({ answerStatus }) => answerStatus !== 'supported')
-    || payload.requestedArtifactBindings.some(({ status }) => status === 'partial');
-  if (hasUncertainty && payload.limitations.length === 0) {
-    fail('uncertainty exists but limitations are empty');
+  const expectedRiskDisclosures: ResearchStrategyRiskDisclosure[] = [
+    ...(input.requiredRiskDisclosures ?? []),
+    ...payload.directAnswers.flatMap((answer): ResearchStrategyRiskDisclosure[] => (
+      answer.answerStatus === 'supported'
+        ? []
+        : [{
+            id: `answer-uncertainty:${answer.questionId}`,
+            sourceType: 'answer_uncertainty',
+            sourceId: answer.questionId,
+            statement: answer.validationNeeded,
+            disposition: 'open_question',
+          }]
+    )),
+  ];
+  const disclosuresByIdentity = new Map(payload.riskDisclosures.map((item) => [disclosureIdentity(item), item]));
+  if (disclosuresByIdentity.size !== payload.riskDisclosures.length) fail('risk disclosure identities must be unique');
+  const expectedByIdentity = new Map(expectedRiskDisclosures.map((item) => [disclosureIdentity(item), item]));
+  if (expectedByIdentity.size !== expectedRiskDisclosures.length) fail('required risk disclosure identities must be unique');
+  if (disclosuresByIdentity.size !== expectedByIdentity.size) {
+    fail(`risk disclosures do not exactly match required sources: ${JSON.stringify(expectedRiskDisclosures)}`);
+  }
+  for (const [identity, expected] of expectedByIdentity) {
+    const disclosure = disclosuresByIdentity.get(identity);
+    if (!disclosure) fail(`risk disclosure ${identity} is missing; expected ${JSON.stringify(expected)}`);
+    if (
+      disclosure.id !== expected.id
+      || normalizedRisk(disclosure.statement) !== normalizedRisk(expected.statement)
+      || disclosure.disposition !== expected.disposition
+    ) fail(`risk disclosure ${identity} does not preserve its source identity and content`);
+    const destination = disclosure.disposition === 'limitation' ? payload.limitations : payload.openQuestions;
+    if (!destination.some((statement) => normalizedRisk(statement) === normalizedRisk(disclosure.statement))) {
+      fail(`risk disclosure ${identity} is absent from ${disclosure.disposition}`);
+    }
+  }
+  for (const risk of input.risksAndOpenIssues) {
+    if (!payload.riskDisclosures.some(({ statement }) => normalizedRisk(statement) === normalizedRisk(risk))) {
+      fail(`envelope risk is not disclosed: ${risk}`);
+    }
   }
 }

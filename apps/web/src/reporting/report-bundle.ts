@@ -203,7 +203,10 @@ function safeReportBlock(
       items: block.items,
       questionIds: block.questionIds,
       evidenceIds: block.evidenceIds,
-      confidence: block.confidence,
+      findingIds: block.findingIds,
+      summaryIds: block.summaryIds,
+      ...(typeof block.confidence === 'number' ? { confidence: block.confidence } : {}),
+      ...(block.answerStatus ? { answerStatus: block.answerStatus } : {}),
       sourcePointers: block.sourcePointers,
       ...(block.sourceNodeIds ? { sourceNodeIds: block.sourceNodeIds } : {}),
       summary: block.summary,
@@ -355,8 +358,11 @@ function reportMarkdown(
       if (block.type === 'answer') {
         sectionLines.push(`### ${block.title}`, '', block.text, '');
         if (block.items.length > 0) sectionLines.push(...block.items.map((item) => `- ${item}`), '');
+        if (block.answerStatus) sectionLines.push(`Status: ${block.answerStatus}`, '');
         if (block.evidenceIds.length > 0) sectionLines.push(`Evidence: ${block.evidenceIds.join(', ')}`, '');
-        sectionLines.push(`Confidence: ${Math.round(block.confidence * 100)}%`, '');
+        if (block.findingIds.length > 0) sectionLines.push(`Findings: ${block.findingIds.join(', ')}`, '');
+        if (block.summaryIds.length > 0) sectionLines.push(`Summaries: ${block.summaryIds.join(', ')}`, '');
+        if (typeof block.confidence === 'number') sectionLines.push(`Confidence: ${Math.round(block.confidence * 100)}%`, '');
       }
       if (block.type === 'image' && exportable(block.assetRef.assetId)) {
         sectionLines.push(
@@ -409,8 +415,11 @@ function answerBlocksMarkdown(document: ReportDocument, includeAnalysis: boolean
       if (block.type !== 'answer') continue;
       lines.push(`### ${block.title}`, '', block.text, '');
       lines.push(...block.items.map((item) => `- ${item}`), '');
+      if (block.answerStatus) lines.push(`Status: ${block.answerStatus}`, '');
       if (block.evidenceIds.length > 0) lines.push(`Evidence: ${block.evidenceIds.join(', ')}`, '');
-      lines.push(`Confidence: ${Math.round(block.confidence * 100)}%`, '');
+      if (block.findingIds.length > 0) lines.push(`Findings: ${block.findingIds.join(', ')}`, '');
+      if (block.summaryIds.length > 0) lines.push(`Summaries: ${block.summaryIds.join(', ')}`, '');
+      if (typeof block.confidence === 'number') lines.push(`Confidence: ${Math.round(block.confidence * 100)}%`, '');
     }
   }
   return `${lines.join('\n').trim()}\n`;

@@ -655,7 +655,7 @@ apps/orchestrator-runtime/src/report/answer-quality-validator.ts
 tests/research-strategy-contract.test.ts
 tests/research-strategy-planning.test.ts
 tests/dynamic-report-composer.test.ts
-tests/answer-quality-review.test.ts
+tests/report-review-service.test.ts
 ```
 
 主要修改：
@@ -814,7 +814,7 @@ pnpm exec tsx --test \
   tests/research-strategy-contract.test.ts \
   tests/research-strategy-planning.test.ts \
   tests/dynamic-report-composer.test.ts \
-  tests/answer-quality-review.test.ts \
+  tests/report-review-service.test.ts \
   tests/requirement-refinement-service.test.ts \
   tests/plan-compiler.test.ts \
   tests/lease-execution-engine.test.ts \

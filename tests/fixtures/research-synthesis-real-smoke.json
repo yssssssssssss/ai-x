@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "name": "research-synthesis-real-smoke",
+  "profiles": [
+    "research_synthesis"
+  ],
+  "scenarios": [
+    {
+      "id": "answer-pet-food-mindshare",
+      "profile": "research_synthesis",
+      "taskType": "research_synthesis",
+      "businessDomain": "pet_food",
+      "input": "请直接基于2025—2026年公开可访问资料回答宠物主粮在认知、种草、搜索、购买链路中的用户心智与设计表达策略。范围包含品牌自有App、垂直宠物App、淘宝、京东和抖音；覆盖干粮、湿粮、鲜粮、冻干和烘焙主粮；代表品牌按头部销量选择并兼顾国产、进口及中高价格带；价格统一按每公斤比较；关键结论按supported、provisional、unanswered标注0到1置信度。输出策略地图、心智模型、至少5条设计原则、机会点清单和含P0/P1/P2的优先行动。所有关键结论必须附可追溯来源和待验证内容。",
+      "researchGoal": "直接回答宠物主粮全链路心智与设计表达策略并形成优先行动",
+      "sensitivity": "public",
+      "piiDetected": false,
+      "requiredCoreTool": "tavily-web-search",
+      "expectedDeliverableType": "research_strategy_report",
+      "minPublicSources": 3,
+      "minVisualAssets": 0,
+      "variant": "clear",
+      "expectedTaskType": "research_synthesis",
+      "expectedDeliverableIds": [
+        "research_strategy_report"
+      ],
+      "clarificationKeys": [],
+      "clarificationThemes": [],
+      "forbiddenCapabilities": [
+        "private_data_access",
+        "external_side_effects"
+      ],
+      "reportSections": [
+        "executive-answers",
+        "priority-actions",
+        "strategy-map",
+        "mind-model",
+        "design-principles",
+        "opportunities",
+        "channel-strategies",
+        "evidence-confidence",
+        "limitations",
+        "analysis-notes",
+        "evidence-appendix"
+      ]
+    }
+  ]
+}

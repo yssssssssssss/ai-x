@@ -4,7 +4,7 @@
   "title": "ResearchStrategyReportPayload",
   "type": "object",
   "additionalProperties": false,
-  "required": ["title", "decisionContext", "executiveAnswer", "directAnswers", "evidenceBackedFindings", "dynamicSections", "strategyMap", "mindModel", "designPrinciples", "opportunities", "prioritizedActions", "channelStrategies", "recommendations", "limitations", "openQuestions", "requestedArtifactBindings"],
+  "required": ["title", "decisionContext", "executiveAnswer", "directAnswers", "evidenceBackedFindings", "dynamicSections", "strategyMap", "mindModel", "designPrinciples", "opportunities", "prioritizedActions", "channelStrategies", "recommendations", "limitations", "openQuestions", "riskDisclosures", "requestedArtifactBindings"],
   "properties": {
     "title": { "$ref": "#/$defs/text" },
     "decisionContext": { "$ref": "#/$defs/text" },
@@ -21,6 +21,7 @@
     "recommendations": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/text" } },
     "limitations": { "type": "array", "items": { "$ref": "#/$defs/text" } },
     "openQuestions": { "type": "array", "items": { "$ref": "#/$defs/text" } },
+    "riskDisclosures": { "type": "array", "items": { "$ref": "#/$defs/riskDisclosure" } },
     "requestedArtifactBindings": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/artifactBinding" } }
   },
   "$defs": {
@@ -69,8 +70,8 @@
       "properties": { "from": { "$ref": "#/$defs/text" }, "to": { "$ref": "#/$defs/text" }, "relationship": { "$ref": "#/$defs/text" } }
     },
     "mindModel": {
-      "type": "object", "additionalProperties": false, "required": ["title", "nodes", "edges"],
-      "properties": { "title": { "$ref": "#/$defs/text" }, "nodes": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/mindNode" } }, "edges": { "type": "array", "items": { "$ref": "#/$defs/mindEdge" } } }
+      "type": "object", "additionalProperties": false, "required": ["title", "confidence", "nodes", "edges"],
+      "properties": { "title": { "$ref": "#/$defs/text" }, "confidence": { "$ref": "#/$defs/confidence" }, "nodes": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/mindNode" } }, "edges": { "type": "array", "items": { "$ref": "#/$defs/mindEdge" } } }
     },
     "principle": {
       "type": "object", "additionalProperties": false, "required": ["id", "title", "statement", "evidenceIds", "confidence"],
@@ -81,12 +82,23 @@
       "properties": { "id": { "$ref": "#/$defs/text" }, "title": { "$ref": "#/$defs/text" }, "statement": { "$ref": "#/$defs/text" }, "evidenceIds": { "$ref": "#/$defs/ids" }, "confidence": { "$ref": "#/$defs/confidence" }, "impact": { "$ref": "#/$defs/text" } }
     },
     "action": {
-      "type": "object", "additionalProperties": false, "required": ["id", "priority", "action", "ownerType", "rationale", "evidenceIds", "validationMethod"],
-      "properties": { "id": { "$ref": "#/$defs/text" }, "priority": { "enum": ["P0", "P1", "P2"] }, "action": { "$ref": "#/$defs/text" }, "ownerType": { "$ref": "#/$defs/text" }, "rationale": { "$ref": "#/$defs/text" }, "evidenceIds": { "$ref": "#/$defs/ids" }, "validationMethod": { "$ref": "#/$defs/text" } }
+      "type": "object", "additionalProperties": false, "required": ["id", "priority", "action", "ownerType", "rationale", "evidenceIds", "confidence", "validationMethod"],
+      "properties": { "id": { "$ref": "#/$defs/text" }, "priority": { "enum": ["P0", "P1", "P2"] }, "action": { "$ref": "#/$defs/text" }, "ownerType": { "$ref": "#/$defs/text" }, "rationale": { "$ref": "#/$defs/text" }, "evidenceIds": { "$ref": "#/$defs/ids" }, "confidence": { "$ref": "#/$defs/confidence" }, "validationMethod": { "$ref": "#/$defs/text" } }
     },
     "channel": {
-      "type": "object", "additionalProperties": false, "required": ["id", "channel", "role", "strategies", "evidenceIds"],
-      "properties": { "id": { "$ref": "#/$defs/text" }, "channel": { "$ref": "#/$defs/text" }, "role": { "$ref": "#/$defs/text" }, "strategies": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/text" } }, "evidenceIds": { "$ref": "#/$defs/ids" } }
+      "type": "object", "additionalProperties": false, "required": ["id", "channel", "role", "strategies", "evidenceIds", "confidence"],
+      "properties": { "id": { "$ref": "#/$defs/text" }, "channel": { "$ref": "#/$defs/text" }, "role": { "$ref": "#/$defs/text" }, "strategies": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/text" } }, "evidenceIds": { "$ref": "#/$defs/ids" }, "confidence": { "$ref": "#/$defs/confidence" } }
+    },
+    "riskDisclosure": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "sourceType", "sourceId", "statement", "disposition"],
+      "properties": {
+        "id": { "$ref": "#/$defs/text" },
+        "sourceType": { "enum": ["requirement_ambiguity", "skill_degraded_gap", "reviewer_condition", "envelope_risk", "answer_uncertainty"] },
+        "sourceId": { "$ref": "#/$defs/text" },
+        "statement": { "$ref": "#/$defs/text" },
+        "disposition": { "enum": ["limitation", "open_question"] }
+      }
     },
     "artifactBinding": {
       "type": "object", "additionalProperties": false, "required": ["artifactType", "sourceField", "blockIds", "questionIds", "evidenceIds", "status"],

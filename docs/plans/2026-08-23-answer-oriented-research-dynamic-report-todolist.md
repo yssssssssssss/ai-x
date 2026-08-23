@@ -202,7 +202,7 @@ git diff --check
 ```bash
 pnpm exec tsx --test \
   tests/research-strategy-contract.test.ts \
-  tests/answer-quality-review.test.ts \
+  tests/report-review-service.test.ts \
   tests/multi-deliverable-contract.test.ts
 pnpm typecheck
 pnpm lint:registry
@@ -388,7 +388,7 @@ git diff --check
 
 ```bash
 pnpm exec tsx --test \
-  tests/answer-quality-review.test.ts \
+  tests/report-review-service.test.ts \
   tests/report-review-service.test.ts \
   tests/research-strategy-planning.test.ts \
   tests/control-api-integration.test.ts \

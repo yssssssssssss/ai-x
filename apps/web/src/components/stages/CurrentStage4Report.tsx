@@ -32,18 +32,26 @@ type GenericTextReportResponse = Exclude<
   { presentationMode: 'multimodal' }
 >;
 
-type StrategyReportView = 'answers' | 'artifacts' | 'evidence' | 'analysis';
+type StrategyReportView = 'answers' | 'topics' | 'artifacts' | 'evidence' | 'analysis';
 
-const STRATEGY_FIXED_SECTIONS: Record<Exclude<StrategyReportView, 'artifacts'>, readonly string[]> = {
+const STRATEGY_FIXED_SECTIONS: Record<'answers' | 'evidence' | 'analysis', readonly string[]> = {
   answers: ['executive-answers', 'priority-actions'],
   evidence: ['evidence-confidence', 'limitations', 'evidence-appendix'],
   analysis: ['analysis-notes'],
 };
 
 export function strategyReportSectionIds(document: ReportDocument, view: StrategyReportView): string[] {
-  if (view !== 'artifacts') return [...STRATEGY_FIXED_SECTIONS[view]];
-  const excluded = new Set(Object.values(STRATEGY_FIXED_SECTIONS).flat());
-  return document.sections.map(({ id }) => id).filter((id) => !excluded.has(id));
+  if (view === 'topics') return document.sections.map(({ id }) => id).filter((id) => id.startsWith('topic-'));
+  if (view === 'artifacts') {
+    return document.sections.map(({ id }) => id).filter((id) => [
+      'strategy-map',
+      'mind-model',
+      'design-principles',
+      'opportunities',
+      'channel-strategies',
+    ].includes(id));
+  }
+  return [...STRATEGY_FIXED_SECTIONS[view]];
 }
 
 export function selectCurrentStage4Renderer(report: unknown): {
@@ -319,6 +327,7 @@ function MultimodalCurrentReport({
         <nav className="report-view-toggle" aria-label="研究答案视图">
           {([
             ['answers', '直接答案'],
+            ['topics', '动态专题'],
             ['artifacts', '策略产物'],
             ['evidence', '证据与局限'],
             ['analysis', '分析底稿'],

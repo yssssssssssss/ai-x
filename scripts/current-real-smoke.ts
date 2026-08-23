@@ -167,6 +167,7 @@ const REQUIRED_CAPABILITY_DESCRIPTION = [
 export const CURRENT_REAL_SMOKE_PROFILES = [
   'competitive_research',
   'user_research_planning',
+  'research_synthesis',
   'voc_diagnosis',
   'design_audit',
   'a11y_audit',
@@ -765,6 +766,13 @@ const CONTROLLED_SMOKE_DECISION = [
 ].join(' ');
 
 function explicitSmokeConfirmationAnswers(confirmations: unknown[]): Record<string, unknown> {
+  const answers: Record<string, string> = {
+    outcome_mode: 'answer',
+    app_definition: '包含品牌自有 App、垂直宠物 App 和综合电商平台 App，分别给出策略。',
+    product_scope: '覆盖干粮、湿粮、鲜粮、冻干和烘焙主粮，并明确共同点与差异。',
+    brand_price_segment: '覆盖国产与进口、中端与高端价格带，优先新手与精养宠物主人。',
+    key_findings_definition: '每个必答问题至少给出一条关键结论，置信度使用 0 到 1，设计原则至少五条。',
+  };
   return Object.fromEntries(confirmations.map((candidate, index) => {
     const confirmation = record(candidate, `structuredTask.clarification_questions[${index}]`);
     const key = nonBlankString(confirmation.key, `structuredTask.clarification_questions[${index}].key`);
@@ -772,7 +780,7 @@ function explicitSmokeConfirmationAnswers(confirmations: unknown[]): Record<stri
       confirmation.question,
       `structuredTask.clarification_questions[${index}].question`,
     );
-    return [key, `${CONTROLLED_SMOKE_DECISION} Resolved question: ${question}`];
+    return [key, answers[key] ?? `${CONTROLLED_SMOKE_DECISION} Resolved question: ${question}`];
   }));
 }
 
@@ -1061,6 +1069,34 @@ async function executeRealSmoke(
     !== evidenceManifestArtifactId
   ) {
     throw new Error('deliverable evidence manifest does not match the execution receipt');
+  }
+  if (scenario.profile === 'research_synthesis') {
+    const payload = record(deliverable.payload, 'deliverable.payload');
+    const directAnswers = array(payload.directAnswers, 'deliverable.payload.directAnswers').map((value, index) => record(value, `directAnswers[${index}]`));
+    if (directAnswers.length === 0 || directAnswers.some((answer) => (
+      !nonBlankString(answer.questionId, 'directAnswer.questionId')
+      || !nonBlankString(answer.answer, 'directAnswer.answer')
+      || typeof answer.confidence !== 'number'
+      || !Array.isArray(answer.evidenceIds)
+      || typeof answer.validationNeeded !== 'string'
+    ))) throw new Error('research strategy direct answers are incomplete');
+    const strategyMap = record(payload.strategyMap, 'deliverable.payload.strategyMap');
+    const mindModel = record(payload.mindModel, 'deliverable.payload.mindModel');
+    if (array(strategyMap.cells, 'strategyMap.cells').length === 0 || array(mindModel.nodes, 'mindModel.nodes').length === 0) {
+      throw new Error('research strategy map or mind model is empty');
+    }
+    if (array(payload.designPrinciples, 'designPrinciples').length < 5) {
+      throw new Error('research strategy requires at least five design principles for the Gold scenario');
+    }
+    if (array(payload.opportunities, 'opportunities').length === 0) throw new Error('research strategy opportunities are empty');
+    const priorities = new Set(array(payload.prioritizedActions, 'prioritizedActions').map((value, index) => (
+      nonBlankString(record(value, `prioritizedActions[${index}]`).priority, `prioritizedActions[${index}].priority`)
+    )));
+    for (const priority of ['P0', 'P1', 'P2']) if (!priorities.has(priority)) throw new Error(`research strategy is missing ${priority} action`);
+    const reportDocument = record(delivered.reportDocument, 'reportDocument');
+    if (reportDocument.version !== 'report-document-v2') throw new Error('research strategy requires ReportDocument v2');
+    const answerReview = record(delivered.reportReview, 'reportReview');
+    if (answerReview.version !== 'report-review-v2') throw new Error('research strategy requires ReportReview v2');
   }
 
   const steps = await runtime.repository.listExecutionSteps(attemptId);

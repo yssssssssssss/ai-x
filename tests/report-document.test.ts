@@ -1135,6 +1135,13 @@ test('composer creates a schema-valid professional research-plan document with o
   });
 });
 
+test('report-document-v2 schema and reader validation reject empty sections', () => {
+  const document = composeReportDocument(composeInput());
+  document.sections[0]!.blocks = [];
+  assert.throws(() => schemaValidator.validateOrThrow('report-document', document), /blocks|fewer than 1/u);
+  assert.throws(() => assertValidReportDocument(document, referenceContext()), /must contain at least one block|blocks/u);
+});
+
 test('composer accepts production-realistic Manifest Artifact serialization distinct from canonical manifestHash', () => {
   const valid = composeInput();
   for (const asset of [valid.visualAssets[0]!, valid.charts[0]!.asset]) {

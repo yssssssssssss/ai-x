@@ -3,56 +3,395 @@
   "title": "ReportReviewArtifact",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "taskId", "planVersionId", "attemptId", "deliverableArtifactId", "verdict", "dimensions", "revisionRound"],
+  "required": [
+    "version",
+    "taskId",
+    "planVersionId",
+    "attemptId",
+    "deliverableArtifactId",
+    "verdict",
+    "dimensions",
+    "revisionRound"
+  ],
   "properties": {
-    "version": { "const": "report-review-v1" },
-    "taskId": { "type": "string", "minLength": 1 },
-    "planVersionId": { "type": "string", "minLength": 1 },
-    "attemptId": { "type": "string", "minLength": 1 },
-    "deliverableArtifactId": { "type": "string", "minLength": 1 },
-    "verdict": { "enum": ["pass", "revise", "block"] },
+    "version": {
+      "enum": [
+        "report-review-v1",
+        "report-review-v2"
+      ]
+    },
+    "taskId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "planVersionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "attemptId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "deliverableArtifactId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "verdict": {
+      "enum": [
+        "pass",
+        "revise",
+        "block"
+      ]
+    },
     "dimensions": {
       "type": "array",
       "minItems": 7,
-      "maxItems": 7,
+      "maxItems": 13,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "passed", "issues"],
+        "required": [
+          "id",
+          "passed",
+          "issues"
+        ],
         "properties": {
-          "id": { "enum": ["requirement_coverage", "question_coverage", "evidence_coverage", "reasoning_quality", "recommendation_quality", "visual_quality", "risk_disclosure"] },
-          "passed": { "type": "boolean" },
-          "issues": { "type": "array", "items": { "type": "string" } }
+          "id": {
+            "enum": [
+              "requirement_coverage",
+              "question_coverage",
+              "evidence_coverage",
+              "reasoning_quality",
+              "recommendation_quality",
+              "visual_quality",
+              "risk_disclosure",
+              "direct_answer_coverage",
+              "requested_artifact_presence",
+              "answer_evidence_strength",
+              "decision_usefulness",
+              "hypothesis_conclusion_clarity",
+              "risk_consistency"
+            ]
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "revisionRound": {
+      "enum": [
+        0,
+        1
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "version": {
+            "const": "report-review-v1"
+          }
+        },
+        "required": [
+          "version"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dimensions": {
+            "minItems": 7,
+            "maxItems": 7,
+            "allOf": [
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "requirement_coverage"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "question_coverage"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "evidence_coverage"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "reasoning_quality"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "recommendation_quality"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "visual_quality"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "risk_disclosure"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              }
+            ]
+          }
         }
       },
-      "allOf": [
-        { "contains": { "properties": { "id": { "const": "requirement_coverage" } }, "required": ["id"] } },
-        { "contains": { "properties": { "id": { "const": "question_coverage" } }, "required": ["id"] } },
-        { "contains": { "properties": { "id": { "const": "evidence_coverage" } }, "required": ["id"] } },
-        { "contains": { "properties": { "id": { "const": "reasoning_quality" } }, "required": ["id"] } },
-        { "contains": { "properties": { "id": { "const": "recommendation_quality" } }, "required": ["id"] } },
-        { "contains": { "properties": { "id": { "const": "visual_quality" } }, "required": ["id"] } },
-        { "contains": { "properties": { "id": { "const": "risk_disclosure" } }, "required": ["id"] } }
-      ]
+      "else": {
+        "properties": {
+          "dimensions": {
+            "minItems": 13,
+            "maxItems": 13,
+            "allOf": [
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "requirement_coverage"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "question_coverage"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "evidence_coverage"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "reasoning_quality"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "recommendation_quality"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "visual_quality"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "risk_disclosure"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "direct_answer_coverage"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "requested_artifact_presence"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "answer_evidence_strength"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "decision_usefulness"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "hypothesis_conclusion_clarity"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "id": {
+                      "const": "risk_consistency"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
     },
-    "revisionRound": { "enum": [0, 1] }
-  },
-  "allOf": [{
-    "if": {
-      "properties": { "verdict": { "const": "pass" } },
-      "required": ["verdict"]
-    },
-    "then": {
-      "properties": {
-        "dimensions": {
-          "items": {
-            "properties": {
-              "passed": { "const": true },
-              "issues": { "maxItems": 0 }
+    {
+      "if": {
+        "properties": {
+          "verdict": {
+            "const": "pass"
+          }
+        },
+        "required": [
+          "verdict"
+        ]
+      },
+      "then": {
+        "properties": {
+          "dimensions": {
+            "items": {
+              "properties": {
+                "passed": {
+                  "const": true
+                },
+                "issues": {
+                  "maxItems": 0
+                }
+              }
             }
           }
         }
       }
     }
-  }]
+  ]
 }

@@ -210,7 +210,19 @@ export const REPORT_REVIEW_DIMENSION_IDS = [
   'visual_quality',
   'risk_disclosure',
 ] as const;
-export type ReportReviewDimensionId = typeof REPORT_REVIEW_DIMENSION_IDS[number];
+export const ANSWER_QUALITY_REVIEW_DIMENSION_IDS = [
+  'direct_answer_coverage',
+  'requested_artifact_presence',
+  'answer_evidence_strength',
+  'decision_usefulness',
+  'hypothesis_conclusion_clarity',
+  'risk_consistency',
+] as const;
+export const REPORT_REVIEW_V2_DIMENSION_IDS = [
+  ...REPORT_REVIEW_DIMENSION_IDS,
+  ...ANSWER_QUALITY_REVIEW_DIMENSION_IDS,
+] as const;
+export type ReportReviewDimensionId = typeof REPORT_REVIEW_V2_DIMENSION_IDS[number];
 
 export interface ReportReviewDimension {
   id: ReportReviewDimensionId;
@@ -219,7 +231,7 @@ export interface ReportReviewDimension {
 }
 
 export interface ReportReviewArtifact {
-  version: 'report-review-v1';
+  version: 'report-review-v1' | 'report-review-v2';
   taskId: string;
   planVersionId: string;
   attemptId: string;

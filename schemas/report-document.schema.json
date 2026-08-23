@@ -37,6 +37,20 @@
           ]
         }
       }
+    },
+    {
+      "if": { "properties": { "version": { "const": "report-document-v2" } }, "required": ["version"] },
+      "then": {
+        "properties": {
+          "sections": {
+            "items": {
+              "properties": {
+                "blocks": { "minItems": 1 }
+              }
+            }
+          }
+        }
+      }
     }
   ],
   "definitions": {
@@ -148,7 +162,7 @@
     "answerBlock": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "type", "kind", "title", "text", "items", "questionIds", "evidenceIds", "confidence", "sourcePointers", "summary"],
+      "required": ["id", "type", "kind", "title", "text", "items", "questionIds", "evidenceIds", "findingIds", "summaryIds", "sourcePointers", "summary"],
       "properties": {
         "id": { "$ref": "#/definitions/nonEmptyString" },
         "type": { "const": "answer" },
@@ -158,11 +172,18 @@
         "items": { "type": "array", "items": { "$ref": "#/definitions/nonEmptyString" } },
         "questionIds": { "$ref": "#/definitions/idList" },
         "evidenceIds": { "$ref": "#/definitions/idList" },
+        "findingIds": { "$ref": "#/definitions/idList" },
+        "summaryIds": { "$ref": "#/definitions/idList" },
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "answerStatus": { "enum": ["supported", "provisional", "unanswered"] },
         "sourcePointers": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^/" } },
         "sourceNodeIds": { "$ref": "#/definitions/idList" },
         "summary": { "type": "boolean" }
-      }
+      },
+      "allOf": [{
+        "if": { "properties": { "kind": { "const": "direct_answer" } }, "required": ["kind"] },
+        "then": { "required": ["answerStatus", "confidence"] }
+      }]
     },
     "imageBlock": {
       "type": "object",

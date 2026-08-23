@@ -515,6 +515,14 @@ export interface ResearchStrategyDirectAnswer {
   validationNeeded: string;
 }
 
+export interface ResearchStrategyRiskDisclosure {
+  id: string;
+  sourceType: 'requirement_ambiguity' | 'skill_degraded_gap' | 'reviewer_condition' | 'envelope_risk' | 'answer_uncertainty';
+  sourceId: string;
+  statement: string;
+  disposition: 'limitation' | 'open_question';
+}
+
 export interface ResearchStrategyReportPayload {
   title: string;
   decisionContext: string;
@@ -543,16 +551,18 @@ export interface ResearchStrategyReportPayload {
   };
   mindModel: {
     title: string;
+    confidence: number;
     nodes: Array<{ id: string; label: string; description: string; evidenceIds: string[] }>;
     edges: Array<{ from: string; to: string; relationship: string }>;
   };
   designPrinciples: Array<{ id: string; title: string; statement: string; evidenceIds: string[]; confidence: number }>;
   opportunities: Array<{ id: string; title: string; statement: string; evidenceIds: string[]; confidence: number; impact: string }>;
-  prioritizedActions: Array<{ id: string; priority: 'P0' | 'P1' | 'P2'; action: string; ownerType: string; rationale: string; evidenceIds: string[]; validationMethod: string }>;
-  channelStrategies: Array<{ id: string; channel: string; role: string; strategies: string[]; evidenceIds: string[] }>;
+  prioritizedActions: Array<{ id: string; priority: 'P0' | 'P1' | 'P2'; action: string; ownerType: string; rationale: string; evidenceIds: string[]; confidence: number; validationMethod: string }>;
+  channelStrategies: Array<{ id: string; channel: string; role: string; strategies: string[]; evidenceIds: string[]; confidence: number }>;
   recommendations: string[];
   limitations: string[];
   openQuestions: string[];
+  riskDisclosures: ResearchStrategyRiskDisclosure[];
   requestedArtifactBindings: Array<{
     artifactType: RequestedResearchArtifact;
     sourceField: string;

@@ -22,6 +22,10 @@ test('system capabilities expose live contract and registry identities without l
     assert.ok((body.activeTaskTypes as string[]).includes('research_synthesis'));
     assert.ok((body.compiledSkills as string[]).includes('generate-research-plan'));
     assert.ok((body.compiledSkills as string[]).includes('research-strategy-synthesis'));
+    const build = body.build as Record<string, unknown>;
+    assert.match(String(build.id), /\S/u);
+    assert.match(String(build.configurationHash), /^sha256:[a-f0-9]{64}$/u);
+    assert.ok(build.sourceRevision === null || /^[a-f0-9]{40,64}$/u.test(String(build.sourceRevision)));
     assert.match(String(body.toolRegistryHash), /^sha256:[a-f0-9]{64}$/u);
     assert.doesNotMatch(JSON.stringify(body), /Users\/|storage_uri|DATABASE_URL/u);
   } finally {

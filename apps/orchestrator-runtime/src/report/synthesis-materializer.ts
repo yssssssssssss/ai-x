@@ -3,8 +3,8 @@ import type { EvidenceEntry } from '../../../../packages/api-contract/research-d
 import { EvidenceService } from '../evidence/evidence-service.ts';
 import { containsBlockedSensitiveData, redactSensitiveValue } from '../runtime/redaction.ts';
 
-export type SynthesisSemanticRole = 'fact_source' | 'analysis' | 'inference' | 'review';
-export type SynthesisActorType = 'tool' | 'skill' | 'llm' | 'reviewer';
+export type SynthesisSemanticRole = 'fact_source' | 'knowledge' | 'analysis' | 'inference' | 'review';
+export type SynthesisActorType = 'knowledge' | 'tool' | 'skill' | 'llm' | 'reviewer';
 
 export interface SynthesisMaterial {
   stepNo: number;
@@ -74,6 +74,7 @@ export class SynthesisMaterializationError extends Error {
 }
 
 const KIND_BY_ACTOR: Record<SynthesisActorType, string> = {
+  knowledge: 'knowledge_output',
   tool: 'tool_output',
   skill: 'skill_output',
   llm: 'llm_output',
@@ -81,6 +82,7 @@ const KIND_BY_ACTOR: Record<SynthesisActorType, string> = {
 };
 
 const SCHEMAS_BY_KIND: Record<string, readonly string[]> = {
+  knowledge_output: ['knowledge-bundle-v1'],
   tool_output: ['tool-output-v1'],
   skill_output: ['skill-output-v1', 'skill-output-v2'],
   llm_output: ['llm-output-v1'],
@@ -103,6 +105,7 @@ function roleFor(
   selectedToolEvidence: readonly EvidenceEntry[],
 ): SynthesisSemanticRole | null {
   if (output.actorType === 'tool') return selectedToolEvidence.length > 0 ? 'fact_source' : null;
+  if (output.actorType === 'knowledge') return 'knowledge';
   if (output.actorType === 'skill') return 'analysis';
   if (output.actorType === 'llm') return 'inference';
   return 'review';

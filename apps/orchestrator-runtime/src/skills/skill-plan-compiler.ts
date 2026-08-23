@@ -181,6 +181,7 @@ function matchingReusableStages(
   contract: SkillExecutionContract,
 ): Map<string, number> {
   const result = new Map<string, number>();
+  const reusableReviewerStageId = [...contract.stages].reverse().find(({ actor_type }) => actor_type === 'reviewer')?.stage_id;
   for (const stage of contract.stages) {
     if (stage.stage_id === contract.output_stage_id || stage.actor_type === 'knowledge') continue;
     const match = stage.actor_type === 'tool'
@@ -189,10 +190,11 @@ function matchingReusableStages(
           && step.actor_type === 'tool'
           && step.actor_id === stage.actor_id
         ))
-      : stage.actor_type === 'reviewer'
+      : stage.actor_type === 'reviewer' && stage.stage_id === reusableReviewerStageId
         ? steps.find((step) => (
             step.step_no > skillStep.step_no
             && step.actor_type === 'reviewer'
+            && step.actor_id === stage.actor_id
             && step.depends_on.includes(skillStep.step_no)
           ))
         : undefined;

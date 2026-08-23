@@ -170,11 +170,17 @@ function ReportBlockView({
       <article className={`report-answer report-answer-${block.answerKind ?? 'content'}`} data-block-id={block.id}>
         <div className="report-answer-meta">
           <span>{(block.answerKind ?? 'answer').replaceAll('_', ' ')}</span>
+          {block.answerStatus ? <span>{block.answerStatus}</span> : null}
           {typeof block.confidence === 'number' ? <span>置信度 {Math.round(block.confidence * 100)}%</span> : null}
         </div>
         <h3>{block.label}</h3>
         <p>{block.text}</p>
         {block.items && block.items.length > 0 ? <ul className="report-list">{block.items.map((item) => <li key={item}>{item}</li>)}</ul> : null}
+        {(block.findingIds?.length ?? 0) > 0 || (block.summaryIds?.length ?? 0) > 0 ? (
+          <p className="report-answer-provenance">
+            Finding：{block.findingIds?.join('、') || '—'} · Summary：{block.summaryIds?.join('、') || '—'}
+          </p>
+        ) : null}
         <EvidenceDisclosure
           evidenceIds={block.evidenceIds}
           expanded={interaction.expandedEvidence.has(block.id)}

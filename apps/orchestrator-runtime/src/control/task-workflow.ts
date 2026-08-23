@@ -382,7 +382,10 @@ export class TaskWorkflowService {
       || verifiedReview.artifact.state !== 'SEALED'
       || !verifiedReview.artifact.contentSha256
       || verifiedReview.artifact.kind !== 'report_review'
-      || verifiedReview.artifact.schemaVersion !== 'report-review-v1'
+      || (
+        verifiedReview.artifact.schemaVersion !== 'report-review-v1'
+        && verifiedReview.artifact.schemaVersion !== 'report-review-v2'
+      )
       || verifiedReview.artifact.taskId !== input.taskId
       || verifiedReview.artifact.planVersionId !== input.planVersionId
       || verifiedReview.artifact.attemptId !== input.attemptId
@@ -396,7 +399,8 @@ export class TaskWorkflowService {
     }
     const reviewValue = verifiedReview.value;
     if (
-      reviewValue.taskId !== input.taskId
+      verifiedReview.artifact.schemaVersion !== reviewValue.version
+      || reviewValue.taskId !== input.taskId
       || reviewValue.planVersionId !== input.planVersionId
       || reviewValue.attemptId !== input.attemptId
       || basename(verifiedReview.artifact.storageUri) !== `review-r${reviewValue.revisionRound}.json`

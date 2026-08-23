@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { ControlExecutionLease } from '../../../../database/control-plane.ts';
 import type {
   EvidenceEntry,
@@ -5,6 +6,7 @@ import type {
   ResearchDeliverableEnvelope,
   ProblemGraph,
   ResearchStrategyReportPayload,
+  ResearchStrategyRiskDisclosure,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
 import type {
@@ -1053,6 +1055,76 @@ function sealedOutputData(outputs: unknown[]): {
   return { references, provenance };
 }
 
+function riskKey(value: string): string {
+  return createHash('sha256').update(value.normalize('NFKC').trim()).digest('hex').slice(0, 16);
+}
+
+function reviewerConditionStatements(materials: readonly SynthesisMaterial[]): Array<{ sourceId: string; statement: string }> {
+  const result: Array<{ sourceId: string; statement: string }> = [];
+  const conditionKey = /^(?:conditions?|issues?|risks?|gaps?|limitations?|openQuestions|review)$/iu;
+  const issueText = /(?:风险|缺口|缺失|不足|冲突|条件|待验证|未支持|unsupported|missing|risk|gap|condition|conflict)/iu;
+  function collect(value: unknown, sourceId: string, key = ''): void {
+    if (typeof value === 'string') {
+      if (conditionKey.test(key) && issueText.test(value)) result.push({ sourceId, statement: value.trim() });
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) collect(item, sourceId, key);
+      return;
+    }
+    const entry = unknownRecord(value);
+    if (!entry) return;
+    for (const [childKey, child] of Object.entries(entry)) collect(child, sourceId, childKey);
+  }
+  for (const material of materials.filter(({ semanticRole }) => semanticRole === 'review')) {
+    collect(material.value, material.artifactId);
+  }
+  return result;
+}
+
+export function collectRequiredRiskDisclosures(input: {
+  requirement: ResearchTaskV2;
+  gaps: readonly string[];
+  materials: readonly SynthesisMaterial[];
+  envelopeRisks: readonly string[];
+  revisionInstruction?: string;
+}): ResearchStrategyRiskDisclosure[] {
+  const disclosures: ResearchStrategyRiskDisclosure[] = [];
+  for (const ambiguity of input.requirement.ambiguities) {
+    disclosures.push({
+      id: `risk-requirement-${ambiguity.id}`,
+      sourceType: 'requirement_ambiguity',
+      sourceId: ambiguity.id,
+      statement: ambiguity.statement,
+      disposition: ambiguity.blocking ? 'open_question' : 'limitation',
+    });
+  }
+  for (const gap of input.gaps) {
+    const sourceId = riskKey(gap);
+    disclosures.push({ id: `risk-gap-${sourceId}`, sourceType: 'skill_degraded_gap', sourceId, statement: gap, disposition: 'limitation' });
+  }
+  for (const [index, condition] of reviewerConditionStatements(input.materials).entries()) {
+    disclosures.push({
+      id: `risk-reviewer-${riskKey(`${condition.sourceId}:${index}:${condition.statement}`)}`,
+      sourceType: 'reviewer_condition',
+      sourceId: `${condition.sourceId}:${index + 1}`,
+      statement: condition.statement,
+      disposition: 'limitation',
+    });
+  }
+  if (input.revisionInstruction?.trim()) {
+    const statement = input.revisionInstruction.trim();
+    const sourceId = riskKey(statement);
+    disclosures.push({ id: `risk-review-${sourceId}`, sourceType: 'reviewer_condition', sourceId, statement, disposition: 'limitation' });
+  }
+  for (const risk of input.envelopeRisks) {
+    const sourceId = riskKey(risk);
+    disclosures.push({ id: `risk-envelope-${sourceId}`, sourceType: 'envelope_risk', sourceId, statement: risk, disposition: 'limitation' });
+  }
+  const unique = new Map(disclosures.map((item) => [`${item.sourceType}:${item.sourceId}`, item]));
+  return [...unique.values()];
+}
+
 export class CurrentDeliverableService {
   private readonly reportValidator: ReportEvidenceValidator;
 
@@ -1109,6 +1181,18 @@ export class CurrentDeliverableService {
           attemptId: input.attempt.id,
           outputs: input.outputs as MaterializeStepOutput[],
           evidenceEntries: evidenceManifest.entries,
+        })
+      : [];
+    const strategyRequirement = contract.entry.id === 'research_strategy_report'
+      ? input.finalizedRequirement as ResearchTaskV2
+      : null;
+    const preSynthesisRiskDisclosures = strategyRequirement
+      ? collectRequiredRiskDisclosures({
+          requirement: strategyRequirement,
+          gaps: sanitizedGaps,
+          materials: synthesisMaterials,
+          envelopeRisks: sanitizedGaps,
+          revisionInstruction: input.revisionInstruction,
         })
       : [];
     const matrixContract = strictV2 && contract.entry.id === 'competitive_analysis_report'
@@ -1178,6 +1262,7 @@ export class CurrentDeliverableService {
       verifiedEvidence,
       synthesisMaterials,
       gaps: sanitizedGaps,
+      requiredRiskDisclosures: preSynthesisRiskDisclosures,
     };
     const lastEvidenceStep = evidenceManifest.entries.reduce(
       (maximum, entry) => Math.max(maximum, entry.stepNo ?? 0),
@@ -1282,12 +1367,20 @@ export class CurrentDeliverableService {
         };
         if (strictV2) this.dependencies.validator.validateFileOrThrow(contract.payloadSchemaPath, candidate.payload);
         if (contract.entry.id === 'research_strategy_report') {
+          const expectedRiskDisclosures = collectRequiredRiskDisclosures({
+            requirement: input.finalizedRequirement as ResearchTaskV2,
+            gaps: sanitizedGaps,
+            materials: synthesisMaterials,
+            envelopeRisks: risksAndOpenIssues,
+            revisionInstruction: input.revisionInstruction,
+          });
           validateResearchStrategyAnswer({
             payload: candidate.payload as ResearchStrategyReportPayload,
             requirement: input.finalizedRequirement as ResearchTaskV2,
             problemGraph: input.problemGraph as ProblemGraph,
             evidenceIds: evidenceManifest.entries.map(({ id }) => id),
             risksAndOpenIssues,
+            requiredRiskDisclosures: expectedRiskDisclosures,
           });
         }
         this.reportValidator.validate({

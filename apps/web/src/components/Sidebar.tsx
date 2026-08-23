@@ -126,9 +126,16 @@ export function Sidebar({
         {capabilities ? (
           <details className="sidebar-capabilities">
             <summary>运行能力</summary>
-            <span>Plan {capabilities.planContractVersions.at(-1)}</span>
-            <span>Report {capabilities.reportDocumentVersions.at(-1)}</span>
-            <span>{capabilities.activeTaskTypes.length} task types · {capabilities.compiledSkills.length} compiled skills</span>
+            <span>App {capabilities.applicationVersion} · Build {capabilities.build.id}</span>
+            <span>Source {capabilities.build.sourceRevision?.slice(0, 12) ?? 'unavailable'}</span>
+            <span>Plan {capabilities.planContractVersions.join(', ')}</span>
+            <span>Report {capabilities.reportDocumentVersions.join(', ')}</span>
+            <span>Task types: {capabilities.activeTaskTypes.join(', ')}</span>
+            <span>Deliverables: {capabilities.activeDeliverables.join(', ')}</span>
+            <span>Compiled Skills: {capabilities.compiledSkills.join(', ')}</span>
+            <span>Config {capabilities.build.configurationHash.slice(0, 19)}…</span>
+            <span>Knowledge {capabilities.knowledgeIndexHash?.slice(0, 19) ?? 'unavailable'}…</span>
+            <span>Tools {capabilities.toolRegistryHash.slice(0, 19)}…</span>
           </details>
         ) : null}
         <button className="btn-ghost" type="button" onClick={onLogout}>登出</button>

@@ -72,7 +72,7 @@ function evidenceFor(id: string, contentSha256: string): EvidenceEntry {
     artifactContentSha256: contentSha256,
     jsonPointer: '/output/results/0',
     sourceUrl: defaultToolResult.url,
-    stepNo: 1,
+    stepNo: 2,
     toolProof: {
       implementationId: 'tavily',
       executionMode: 'real',
@@ -85,6 +85,7 @@ function evidenceFor(id: string, contentSha256: string): EvidenceEntry {
 
 function input(reader: Reader, overrides: Partial<MaterializeInput> = {}): MaterializeInput {
   const toolValue = { output: defaultToolOutput, redactedOutputHash: hash(defaultToolOutput) };
+  const knowledge = artifact('artifact-knowledge', 'knowledge_output', { resources: [{ id: 'standard-1' }] }, { schemaVersion: 'knowledge-bundle-v1' });
   const tool = artifact('artifact-tool', 'tool_output', toolValue);
   const skill = artifact('artifact-skill', 'skill_output', {
     conclusion: '分析结论',
@@ -100,16 +101,18 @@ function input(reader: Reader, overrides: Partial<MaterializeInput> = {}): Mater
     phone: '13800138000',
   });
   reader.values = new Map([
+    [knowledge.artifact.id, knowledge],
     [tool.artifact.id, tool],
     [skill.artifact.id, skill],
     [llm.artifact.id, llm],
     [reviewer.artifact.id, reviewer],
   ]);
   const outputs = [
-    { stepNo: 1, actorType: 'tool' as const, actorId: 'tavily', questionIds: ['q1'], kind: 'tool_output' as const, state: 'succeeded' as const, taskId, planVersionId, attemptId, artifact: { id: tool.artifact.id, contentSha256: tool.artifact.contentSha256, state: 'SEALED' as const } },
-    { stepNo: 2, actorType: 'skill' as const, actorId: 'analyst', questionIds: ['q1'], kind: 'skill_output' as const, state: 'succeeded' as const, taskId, planVersionId, attemptId, artifact: { id: skill.artifact.id, contentSha256: skill.artifact.contentSha256, state: 'SEALED' as const } },
-    { stepNo: 3, actorType: 'llm' as const, actorId: 'summarizer', questionIds: ['q2'], kind: 'llm_output' as const, state: 'succeeded' as const, taskId, planVersionId, attemptId, artifact: { id: llm.artifact.id, contentSha256: llm.artifact.contentSha256, state: 'SEALED' as const } },
-    { stepNo: 4, actorType: 'reviewer' as const, actorId: 'review', questionIds: ['q1', 'q2'], kind: 'review_output' as const, state: 'succeeded' as const, taskId, planVersionId, attemptId, artifact: { id: reviewer.artifact.id, contentSha256: reviewer.artifact.contentSha256, state: 'SEALED' as const } },
+    { stepNo: 1, actorType: 'knowledge' as const, actorId: 'knowledge.index', questionIds: ['q1'], kind: 'knowledge_output' as const, state: 'succeeded' as const, taskId, planVersionId, attemptId, artifact: { id: knowledge.artifact.id, contentSha256: knowledge.artifact.contentSha256, state: 'SEALED' as const } },
+    { stepNo: 2, actorType: 'tool' as const, actorId: 'tavily', questionIds: ['q1'], kind: 'tool_output' as const, state: 'succeeded' as const, taskId, planVersionId, attemptId, artifact: { id: tool.artifact.id, contentSha256: tool.artifact.contentSha256, state: 'SEALED' as const } },
+    { stepNo: 3, actorType: 'skill' as const, actorId: 'analyst', questionIds: ['q1'], kind: 'skill_output' as const, state: 'succeeded' as const, taskId, planVersionId, attemptId, artifact: { id: skill.artifact.id, contentSha256: skill.artifact.contentSha256, state: 'SEALED' as const } },
+    { stepNo: 4, actorType: 'llm' as const, actorId: 'summarizer', questionIds: ['q2'], kind: 'llm_output' as const, state: 'succeeded' as const, taskId, planVersionId, attemptId, artifact: { id: llm.artifact.id, contentSha256: llm.artifact.contentSha256, state: 'SEALED' as const } },
+    { stepNo: 5, actorType: 'reviewer' as const, actorId: 'review', questionIds: ['q1', 'q2'], kind: 'review_output' as const, state: 'succeeded' as const, taskId, planVersionId, attemptId, artifact: { id: reviewer.artifact.id, contentSha256: reviewer.artifact.contentSha256, state: 'SEALED' as const } },
   ];
   return {
     taskId,
@@ -160,7 +163,7 @@ function realEvidenceEntries(
         artifactContentSha256,
         jsonPointer: `/output/results/${resultIndex}`,
         sourceUrl: selected.url,
-        stepNo: 1,
+        stepNo: 2,
         toolProof: {
           implementationId: 'tavily',
           executionMode: 'real',
@@ -179,7 +182,7 @@ function toolOnlyInput(
   evidenceEntries: readonly EvidenceEntry[],
 ): MaterializeInput {
   const source = input(reader);
-  const toolOutput = source.outputs[0];
+  const toolOutput = source.outputs.find(({ actorType }) => actorType === 'tool');
   assert.ok(toolOutput);
   reader.values = new Map([[tool.artifact.id, tool]]);
   return {
@@ -199,10 +202,10 @@ function toolOnlyInput(
 test('materializes all actor roles from verified sealed JSON and preserves bindings', async () => {
   const reader = new Reader(new Map());
   const materials = await new SynthesisMaterializer(reader).materialize(input(reader));
-  assert.deepEqual(materials.map((item) => item.semanticRole), ['fact_source', 'analysis', 'inference', 'review']);
-  assert.deepEqual(materials.map((item) => item.artifactId), ['artifact-tool', 'artifact-skill', 'artifact-llm', 'artifact-reviewer']);
-  assert.equal(materials[0]?.artifactContentSha256, hash({ output: defaultToolOutput, redactedOutputHash: hash(defaultToolOutput) }));
-  assert.deepEqual(materials[0]?.value, {
+  assert.deepEqual(materials.map((item) => item.semanticRole), ['knowledge', 'fact_source', 'analysis', 'inference', 'review']);
+  assert.deepEqual(materials.map((item) => item.artifactId), ['artifact-knowledge', 'artifact-tool', 'artifact-skill', 'artifact-llm', 'artifact-reviewer']);
+  assert.equal(materials[1]?.artifactContentSha256, hash({ output: defaultToolOutput, redactedOutputHash: hash(defaultToolOutput) }));
+  assert.deepEqual(materials[1]?.value, {
     evidence: [{
       evidenceId: 'E-artifact-tool',
       jsonPointer: '/output/results/0',
@@ -210,7 +213,7 @@ test('materializes all actor roles from verified sealed JSON and preserves bindi
       value: defaultToolResult,
     }],
   });
-  assert.equal(reader.reads.length, 4);
+  assert.equal(reader.reads.length, 5);
 });
 
 test('accepts legacy and current Skill output artifacts but rejects unknown schema versions', async () => {
@@ -283,7 +286,7 @@ test('consumes material content, not only artifact metadata', async () => {
   assert.ok(skillOutput);
   skillOutput.value = { conclusion: 'different analysis' };
   skillOutput.artifact.contentSha256 = hash(skillOutput.value);
-  const skillStep = source.outputs[1];
+  const skillStep = source.outputs.find(({ actorType }) => actorType === 'skill');
   assert.ok(skillStep);
   skillStep.artifact.contentSha256 = skillOutput.artifact.contentSha256;
   const second = await new SynthesisMaterializer(reader).materialize(source);

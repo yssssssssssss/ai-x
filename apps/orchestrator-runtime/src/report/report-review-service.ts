@@ -1,10 +1,13 @@
 import type { ControlExecutionLease } from '../../../../database/control-plane.ts';
 import {
+  ANSWER_QUALITY_REVIEW_DIMENSION_IDS,
   REPORT_REVIEW_DIMENSION_IDS,
+  REPORT_REVIEW_V2_DIMENSION_IDS,
   type ReportReviewArtifact,
   type ReportReviewDimension,
   type ReportReviewDimensionId,
 } from '../../../../packages/api-contract/control-workflow.ts';
+import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
 export type {
   ReportReviewArtifact,
   ReportReviewDimension,
@@ -65,6 +68,7 @@ export interface ReportReviewInput {
   successCriterionIds: readonly string[];
   questionIds: readonly string[];
   evidenceIds: readonly string[];
+  requirement?: ResearchTaskV2;
   expectedModel: string;
   activeLease: ControlExecutionLease;
   revisionRound?: 0 | 1;
@@ -115,18 +119,23 @@ function activeDeliverableContract(deliverable: unknown): DeliverableContractRes
 }
 
 const REPORT_REVIEW_DIMENSION_ID_SET: ReadonlySet<string> = new Set(
-  REPORT_REVIEW_DIMENSION_IDS,
+  REPORT_REVIEW_V2_DIMENSION_IDS,
 );
 
+function reviewDimensionIds(version: ReportReviewArtifact['version']): readonly ReportReviewDimensionId[] {
+  return version === 'report-review-v2' ? REPORT_REVIEW_V2_DIMENSION_IDS : REPORT_REVIEW_DIMENSION_IDS;
+}
+
 export function assertReportReviewInvariant(
-  review: Pick<ReportReviewArtifact, 'verdict' | 'dimensions'>,
+  review: Pick<ReportReviewArtifact, 'version' | 'verdict' | 'dimensions'>,
 ): void {
-  if (review.dimensions.length !== REPORT_REVIEW_DIMENSION_IDS.length) {
+  const requiredDimensionIds = reviewDimensionIds(review.version);
+  if (review.dimensions.length !== requiredDimensionIds.length) {
     throw new Error('Review dimensions must contain every required dimension exactly once');
   }
   const seen = new Set<ReportReviewDimensionId>();
   for (const dimension of review.dimensions) {
-    if (!REPORT_REVIEW_DIMENSION_ID_SET.has(dimension.id) || seen.has(dimension.id)) {
+    if (!requiredDimensionIds.includes(dimension.id) || !REPORT_REVIEW_DIMENSION_ID_SET.has(dimension.id) || seen.has(dimension.id)) {
       throw new Error('Review dimensions must contain every required dimension exactly once');
     }
     seen.add(dimension.id);
@@ -149,20 +158,125 @@ function issueDimension(id: ReportReviewDimensionId, issues: string[]): ReportRe
   return { id, passed: issues.length === 0, issues };
 }
 
-function deterministicDimensions(input: ReportReviewInput, deliverable: unknown): ReportReviewDimension[] {
-  const issues: Record<ReportReviewDimensionId, string[]> = {
-    requirement_coverage: [],
-    question_coverage: [],
-    evidence_coverage: [],
-    reasoning_quality: [],
-    recommendation_quality: [],
-    visual_quality: [],
-    risk_disclosure: [],
-  };
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function normalizedText(value: string): string {
+  return value.normalize('NFKC').replace(/\s+/gu, ' ').trim().toLocaleLowerCase('en-US');
+}
+
+function answerQualityDimensionIssues(
+  input: ReportReviewInput,
+  report: Record<string, unknown>,
+  issues: Record<ReportReviewDimensionId, string[]>,
+): void {
+  const payload = record(report.payload);
+  if (!payload) {
+    for (const id of ANSWER_QUALITY_REVIEW_DIMENSION_IDS) issues[id].push('research strategy payload must be an object');
+    return;
+  }
+  const answers = Array.isArray(payload.directAnswers) ? payload.directAnswers.map(record).filter(Boolean) as Record<string, unknown>[] : [];
+  const answersByQuestion = new Map(answers.map((answer) => [String(answer.questionId ?? ''), answer]));
+  for (const questionId of input.questionIds) {
+    const answer = answersByQuestion.get(questionId);
+    if (!answer || answer.answerStatus === 'unanswered' || !nonEmptyString(answer.answer)) {
+      issues.direct_answer_coverage.push(`required question ${questionId} has no direct answer`);
+    }
+  }
+  const knownEvidence = new Set(input.evidenceIds);
+  for (const answer of answers) {
+    const questionId = String(answer.questionId ?? '');
+    const evidenceIds = Array.isArray(answer.evidenceIds) ? answer.evidenceIds : [];
+    if (answer.answerStatus === 'supported' && evidenceIds.length === 0) {
+      issues.answer_evidence_strength.push(`supported answer ${questionId} has no evidence`);
+    }
+    for (const evidenceId of evidenceIds) {
+      if (typeof evidenceId !== 'string' || !knownEvidence.has(evidenceId)) {
+        issues.answer_evidence_strength.push(`answer ${questionId} references unknown evidence`);
+      }
+    }
+    if (!nonEmptyString(answer.businessImplication) || !nonEmptyString(answer.recommendedAction)) {
+      issues.decision_usefulness.push(`answer ${questionId} lacks a business implication or action`);
+    }
+    if (
+      (answer.answerStatus !== 'supported' && answer.answerStatus !== 'provisional' && answer.answerStatus !== 'unanswered')
+      || (answer.answerStatus !== 'supported' && !nonEmptyString(answer.validationNeeded))
+    ) {
+      issues.hypothesis_conclusion_clarity.push(`answer ${questionId} has an invalid status or validation need`);
+    }
+  }
+  const actions = Array.isArray(payload.prioritizedActions) ? payload.prioritizedActions.map(record).filter(Boolean) as Record<string, unknown>[] : [];
+  if (actions.length === 0) issues.decision_usefulness.push('prioritized actions are missing');
+  for (const action of actions) {
+    if (!nonEmptyString(action.action) || !nonEmptyString(action.ownerType) || !nonEmptyString(action.validationMethod)) {
+      issues.decision_usefulness.push(`prioritized action ${String(action.id ?? '')} is not actionable`);
+    }
+  }
+  const bindings = Array.isArray(payload.requestedArtifactBindings)
+    ? payload.requestedArtifactBindings.map(record).filter(Boolean) as Record<string, unknown>[]
+    : [];
+  const bindingByType = new Map(bindings.map((binding) => [String(binding.artifactType ?? ''), binding]));
+  if (!input.requirement) {
+    issues.requested_artifact_presence.push('finalized requirement is required for answer review');
+  } else {
+    for (const artifact of input.requirement.requested_artifacts ?? []) {
+      const binding = bindingByType.get(artifact);
+      if (!binding || binding.status !== 'complete' || !Array.isArray(binding.blockIds) || binding.blockIds.length === 0) {
+        issues.requested_artifact_presence.push(`requested artifact ${artifact} is missing or incomplete`);
+      }
+    }
+  }
+
+  const disclosures = Array.isArray(payload.riskDisclosures)
+    ? payload.riskDisclosures.map(record).filter(Boolean) as Record<string, unknown>[]
+    : [];
+  const limitations = Array.isArray(payload.limitations) ? payload.limitations.filter(nonEmptyString).map(normalizedText) : [];
+  const openQuestions = Array.isArray(payload.openQuestions) ? payload.openQuestions.filter(nonEmptyString).map(normalizedText) : [];
+  const identities = new Set<string>();
+  for (const disclosure of disclosures) {
+    const identity = `${String(disclosure.sourceType ?? '')}:${String(disclosure.sourceId ?? '')}`;
+    if (identities.has(identity)) issues.risk_consistency.push(`duplicate risk identity ${identity}`);
+    identities.add(identity);
+    if (!nonEmptyString(disclosure.statement)) {
+      issues.risk_consistency.push(`risk disclosure ${identity} has no statement`);
+      continue;
+    }
+    const destination = disclosure.disposition === 'open_question' ? openQuestions : limitations;
+    if (!destination.includes(normalizedText(disclosure.statement))) {
+      issues.risk_consistency.push(`risk disclosure ${identity} is absent from its report destination`);
+    }
+  }
+  const envelopeRisks = Array.isArray(report.risksAndOpenIssues) ? report.risksAndOpenIssues.filter(nonEmptyString) : [];
+  for (const risk of envelopeRisks) {
+    const matching = disclosures.find((disclosure) => (
+      disclosure.sourceType === 'envelope_risk'
+      && nonEmptyString(disclosure.statement)
+      && normalizedText(disclosure.statement) === normalizedText(risk)
+    ));
+    if (!matching) issues.risk_consistency.push(`envelope risk is omitted: ${risk}`);
+  }
+  for (const ambiguity of input.requirement?.ambiguities ?? []) {
+    const identity = `requirement_ambiguity:${ambiguity.id}`;
+    const matching = disclosures.find((disclosure) => `${String(disclosure.sourceType ?? '')}:${String(disclosure.sourceId ?? '')}` === identity);
+    if (!matching || !nonEmptyString(matching.statement) || normalizedText(matching.statement) !== normalizedText(ambiguity.statement)) {
+      issues.risk_consistency.push(`requirement ambiguity is omitted: ${ambiguity.id}`);
+    }
+  }
+}
+
+function deterministicDimensions(
+  input: ReportReviewInput,
+  deliverable: unknown,
+  dimensionIds: readonly ReportReviewDimensionId[],
+): ReportReviewDimension[] {
+  const issues = Object.fromEntries(
+    REPORT_REVIEW_V2_DIMENSION_IDS.map((id) => [id, [] as string[]]),
+  ) as Record<ReportReviewDimensionId, string[]>;
   const report = record(deliverable);
   if (!report) {
     issues.reasoning_quality.push('deliverable must be an object');
-    return REPORT_REVIEW_DIMENSION_IDS.map((id) => issueDimension(id, issues[id]));
+    return dimensionIds.map((id) => issueDimension(id, issues[id]));
   }
   if (report.taskId !== input.task.id) issues.reasoning_quality.push('deliverable task identity mismatch');
   if (report.planVersionId !== input.plan.id) issues.reasoning_quality.push('deliverable plan identity mismatch');
@@ -218,15 +332,34 @@ function deterministicDimensions(input: ReportReviewInput, deliverable: unknown)
     if (roots.length === 0) issues.recommendation_quality.push(`recommendation ${String(value?.id ?? '')} has no summary root`);
     for (const summaryId of roots) if (typeof summaryId !== 'string' || !summaryIds.has(summaryId)) issues.recommendation_quality.push(`recommendation ${String(value?.id ?? '')} references unknown summary`);
   }
-  return REPORT_REVIEW_DIMENSION_IDS.map((id) => issueDimension(id, issues[id]));
+  if (dimensionIds.includes('direct_answer_coverage')) answerQualityDimensionIssues(input, report, issues);
+  return dimensionIds.map((id) => issueDimension(id, issues[id]));
 }
 
 function deterministicFailure(dimensions: readonly ReportReviewDimension[]): boolean {
-  return dimensions.some((dimension) => (
-    dimension.id === 'requirement_coverage' || dimension.id === 'question_coverage'
-      || dimension.id === 'evidence_coverage' || dimension.id === 'reasoning_quality'
-      || dimension.id === 'recommendation_quality'
-  ) && !dimension.passed);
+  const blocking = new Set<ReportReviewDimensionId>([
+    'requirement_coverage',
+    'question_coverage',
+    'evidence_coverage',
+    'reasoning_quality',
+    'recommendation_quality',
+    ...ANSWER_QUALITY_REVIEW_DIMENSION_IDS,
+  ]);
+  return dimensions.some((dimension) => blocking.has(dimension.id) && !dimension.passed);
+}
+
+function assertRubricDimensionContract(
+  contract: DeliverableContractResources,
+  requiredDimensionIds: readonly ReportReviewDimensionId[],
+): void {
+  const rubric = record(contract.reviewRubric);
+  const dimensions = Array.isArray(rubric?.dimensions) ? rubric.dimensions.map(record).filter(Boolean) as Record<string, unknown>[] : [];
+  const ids = dimensions.map(({ id }) => id);
+  if (
+    ids.length !== requiredDimensionIds.length
+    || ids.some((id, index) => id !== requiredDimensionIds[index])
+    || dimensions.some(({ required }) => required !== true)
+  ) throw new Error(`review rubric ${contract.entry.id} does not match ${requiredDimensionIds.length}-dimension review contract`);
 }
 
 export class ReportReviewService {
@@ -239,18 +372,23 @@ export class ReportReviewService {
   async review(input: ReportReviewInput, composerOverride?: DeliverableComposer): Promise<ReportReviewResult> {
     if (input.activeLease.taskId !== input.task.id || input.activeLease.planVersionId !== input.plan.id || input.activeLease.attemptId !== input.attempt.id) throw new Error('review lease identity does not match input');
     const contract = activeDeliverableContract(input.deliverable);
+    const reviewVersion: ReportReviewArtifact['version'] = contract.entry.id === 'research_strategy_report'
+      ? 'report-review-v2'
+      : 'report-review-v1';
+    const requiredDimensionIds = reviewDimensionIds(reviewVersion);
+    if (reviewVersion === 'report-review-v2') assertRubricDimensionContract(contract, requiredDimensionIds);
     const round = input.revisionRound ?? 0;
-    const dimensions = deterministicDimensions(input, input.deliverable);
+    const dimensions = deterministicDimensions(input, input.deliverable, requiredDimensionIds);
     if (this.dependencies.evidence?.validate && !deterministicFailure(dimensions)) await this.dependencies.evidence.validate({
       taskId: input.task.id, planVersionId: input.plan.id, attemptId: input.attempt.id,
       deliverable: input.deliverable, evidenceIds: input.evidenceIds,
     });
     if (deterministicFailure(dimensions)) return this.seal(input, {
-      version: 'report-review-v1', taskId: input.task.id, planVersionId: input.plan.id,
+      version: reviewVersion, taskId: input.task.id, planVersionId: input.plan.id,
       attemptId: input.attempt.id, deliverableArtifactId: input.deliverableArtifactId,
       verdict: 'block', dimensions, revisionRound: round,
     }, 'paused');
-    const artifact = await this.semanticReview(input, dimensions, round, contract);
+    const artifact = await this.semanticReview(input, dimensions, round, contract, reviewVersion, requiredDimensionIds);
     if (artifact.verdict === 'pass') return this.seal(input, artifact, 'completed');
     const composer = composerOverride ?? this.dependencies.composer;
     if (artifact.verdict === 'block' || round === 1 || !composer) return this.seal(input, artifact, 'paused');
@@ -266,9 +404,11 @@ export class ReportReviewService {
     dimensions: ReportReviewDimension[],
     revisionRound: 0 | 1,
     contract: DeliverableContractResources,
+    reviewVersion: ReportReviewArtifact['version'],
+    requiredDimensionIds: readonly ReportReviewDimensionId[],
   ): Promise<ReportReviewArtifact> {
     const generated = await this.dependencies.llm.generateStructured<Partial<ReportReviewArtifact>>({
-      prompt: 'Review the current deliverable against the selected Registry review rubric. Return only a report-review-v1 artifact.',
+      prompt: `Review the current deliverable against the selected Registry review rubric. Return only a ${reviewVersion} artifact with every required dimension exactly once.`,
       // An empty override makes the gateway load the canonical registry schema.
       schema: {},
       schemaName: 'report-review',
@@ -301,13 +441,13 @@ export class ReportReviewService {
       const passed = proposedPassed && issues.length === 0;
       return { id: candidate.id, passed, issues };
     });
-    const allDimensionsPass = projectedDimensions.length === REPORT_REVIEW_DIMENSION_IDS.length
+    const allDimensionsPass = projectedDimensions.length === requiredDimensionIds.length
       && projectedDimensions.every((dimension) => dimension.passed && dimension.issues.length === 0);
     const normalizedVerdict = value.verdict === 'pass' && !allDimensionsPass
       ? 'revise'
       : value.verdict;
     const artifact: ReportReviewArtifact = {
-      version: 'report-review-v1', taskId: input.task.id, planVersionId: input.plan.id,
+      version: reviewVersion, taskId: input.task.id, planVersionId: input.plan.id,
       attemptId: input.attempt.id, deliverableArtifactId: input.deliverableArtifactId,
       verdict: normalizedVerdict, dimensions: projectedDimensions as ReportReviewDimension[], revisionRound,
     };
@@ -322,7 +462,7 @@ export class ReportReviewService {
     const sealed = await this.dependencies.artifacts.writeJson({
       taskId: input.task.id, planVersionId: input.plan.id, attemptId: input.attempt.id,
       kind: 'report_review', relativePath: `reports/review-r${artifact.revisionRound}.json`, value: artifact,
-      schemaVersion: 'report-review-v1', sensitivity: 'internal', redactionPolicyVersion: 'v1', activeLease: input.activeLease,
+      schemaVersion: artifact.version, sensitivity: 'internal', redactionPolicyVersion: 'v1', activeLease: input.activeLease,
     });
     if (sealed.state !== 'SEALED') throw new Error('review artifact was not sealed');
     return { ...artifact, status, artifactId: sealed.id };

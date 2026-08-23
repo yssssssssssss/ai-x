@@ -209,10 +209,16 @@ export class CurrentReportPackageReader {
         binding,
         'Review',
       );
-      if (verifiedReview.artifact.schemaVersion !== 'report-review-v1') {
+      if (
+        verifiedReview.artifact.schemaVersion !== 'report-review-v1'
+        && verifiedReview.artifact.schemaVersion !== 'report-review-v2'
+      ) {
         throw new Error('Review Artifact schema version is invalid');
       }
       assertValidReportReviewArtifact(verifiedReview.value, this.schemaValidator);
+      if (verifiedReview.artifact.schemaVersion !== verifiedReview.value.version) {
+        throw new Error('Review Artifact schema version does not match its value');
+      }
       const reviewRecord = record(verifiedReview.value);
       if (!reviewRecord) throw new Error('Review JSON schema is invalid');
       assertJsonIdentity(reviewRecord, binding, 'Review');
@@ -255,6 +261,14 @@ export class CurrentReportPackageReader {
       throw new Error('deliverable JSON schema is invalid');
     }
     assertJsonIdentity(deliverable, binding, 'deliverable');
+    if (review) {
+      const expectedReviewVersion = deliverable.deliverableType === 'research_strategy_report'
+        ? 'report-review-v2'
+        : 'report-review-v1';
+      if (review.version !== expectedReviewVersion) {
+        throw new Error(`deliverable ${String(deliverable.deliverableType)} requires ${expectedReviewVersion}`);
+      }
+    }
     if (typeof deliverable.evidenceManifestArtifactId !== 'string') {
       throw new Error('deliverable is missing its Evidence Manifest Artifact reference');
     }
@@ -497,6 +511,8 @@ export class CurrentReportPackageReader {
       assertValidReportDocument(reportDocument, {
         requiredQuestionIds: currentDeliverable.coverage.questionBindings.map(({ questionId }) => questionId),
         evidenceIds: evidenceManifest.entries.map(({ id }) => id),
+        findingIds: currentDeliverable.findingGraph.findings.map(({ id }) => id),
+        summaryIds: currentDeliverable.findingGraph.subQuestionSummaries.map(({ id }) => id),
         visualAssets: [...visualReferences.values()],
         charts: chartReferences,
       });
