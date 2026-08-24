@@ -1,6 +1,6 @@
 # 通用多 Skill 组合编排底座 TodoList
 
-> 状态：实施中；Gate 0 已建立文档与领域基线，Multi-Skill writer 仍保持 inactive。
+> 状态：实施中；Gate 0、Phase 1、Phase 2 与 Milestone A 已完成，Multi-Skill writer 仍保持 inactive。
 >
 > 对应开发文档：`docs/plans/2026-08-24-universal-multi-skill-orchestration-development.md`
 >
@@ -55,7 +55,7 @@ Registry、Deliverable Registry、Tool Registry 和 Knowledge Index 均可读取
 - [ ] 不在每个文件修改或每个 checkbox 后运行验证。
 - [ ] 开发内环只在需要定位问题时运行单个测试文件/`--test-name-pattern`。
 - [ ] Phase 边界只运行直接受影响的定向测试。
-- [ ] Phase 1–2 完成后统一运行 Milestone A。
+- [x] Phase 1–2 完成后统一运行 Milestone A。
 - [ ] Phase 3–4 完成后统一运行 Milestone B。
 - [ ] Phase 5–6 完成后统一运行 Milestone C。
 - [ ] 全量 `pnpm test`、完整 Web build 和真实 E2E 只在最终 Activation Gate 运行。
@@ -154,61 +154,61 @@ Phase 1 合同定向测试：26 tests 通过，0 失败。
 
 ## 2.1 Registry 扩展
 
-- [ ] 增加 `composition.modes`。
-- [ ] 增加 `supported_outcomes`。
-- [ ] 增加 `compatible_deliverables`。
-- [ ] 增加 `contribution_types`。
-- [ ] 增加 `contribution_schema`。
-- [ ] 增加 required/optional input roles。
-- [ ] 无 composition 的旧 Skill 默认 standalone。
-- [ ] contributor 无 schema/type lint 失败。
-- [ ] synthesizer 无 deliverable/accepted schema lint 失败。
-- [ ] Registry 输出顺序/hash 稳定。
+- [x] 增加 `composition.modes`。
+- [x] 增加 `supported_outcomes`。
+- [x] 增加 `compatible_deliverables`。
+- [x] 增加 `contribution_types`。
+- [x] 增加 `contribution_schema`。
+- [x] 增加 required/optional input roles。
+- [x] 无 composition 的旧 Skill 默认 standalone。
+- [x] contributor 无 schema/type lint 失败。
+- [x] synthesizer 无 deliverable/accepted schema lint 失败。
+- [x] Registry 输出顺序/hash 稳定。
 
 ## 2.2 Deliverable Composition Policy
 
-- [ ] Deliverable Registry 增加 `composition.mode`。
-- [ ] 每个 `portfolio` Deliverable 声明唯一 `synthesizer_skill_id`。
-- [ ] 声明 accepted contribution types/schema。
-- [ ] 旧 Deliverable 可使用 `standalone_compat` 保持原路径。
-- [ ] 每个 active Deliverable 都有明确 policy；缺失时 lint 失败。
-- [ ] LLM 不得覆盖 Deliverable 的 Synthesizer owner。
+- [x] Deliverable Registry 增加 `composition.mode`。
+- [x] 每个 `portfolio` Deliverable 声明唯一 `synthesizer_skill_id`。
+- [x] 声明 accepted contribution types/schema。
+- [x] 旧 Deliverable 可使用 `standalone_compat` 保持原路径。
+- [x] 每个 active Deliverable 都有明确 policy；缺失时 lint 失败。
+- [x] LLM 不得覆盖 Deliverable 的 Synthesizer owner。
 
 ## 2.3 全量 Skill 分类
 
-- [ ] 生成所有 active Skill 的 composition audit 表。
-- [ ] `research-strategy-synthesis` 标记 synthesizer。
-- [ ] `generate-research-plan` 标记 synthesizer。
-- [ ] Competitive Skills 分类。
-- [ ] Persona/JTBD/Journey 分类。
-- [ ] Metrics/Funnel/Feature Adoption 分类。
-- [ ] VOC/Satisfaction/Qualitative 分类。
-- [ ] Design/Accessibility 分类。
-- [ ] 无法适配者明确 standalone + 原因。
-- [ ] 不通过简单添加 `research_synthesis` 绕过输入合同。
+- [x] 生成所有 active Skill 的 composition audit 表。
+- [x] `research-strategy-synthesis` 标记 synthesizer。
+- [x] `generate-research-plan` 标记 synthesizer。
+- [x] Competitive Skills 分类。
+- [x] Persona/JTBD/Journey 分类。
+- [x] Metrics/Funnel/Feature Adoption 分类。
+- [x] VOC/Satisfaction/Qualitative 分类。
+- [x] Design/Accessibility 分类。
+- [x] 无法适配者明确 standalone + 原因。
+- [x] 不通过简单添加 `research_synthesis` 绕过输入合同。
 
 ## 2.4 Portfolio Resolver
 
-- [ ] 新增 `capability-portfolio-resolver.ts`。
-- [ ] Hard Filter 检查 status/outcome/deliverable/input/tool/approval。
-- [ ] Semantic Recall 使用 demand、when_to_use、Question、Artifact、Domain。
-- [ ] Coverage Optimizer 选择最小 Skill 集。
-- [ ] 每题恰好一个 Primary Owner。
-- [ ] 每 demand 默认最多一个 Corroborator。
-- [ ] Contributor 数量与总步骤复用 ProfileSpec/Usage/Tool Budget。
-- [ ] 不新增重复的 Contributor/Step 数量配置。
-- [ ] Required Demand 超预算时 fail，不静默裁剪。
-- [ ] 保存每个选择/拒绝 reason code。
-- [ ] 保存 Coverage Matrix 与 Budget Estimate。
+- [x] 新增 `capability-portfolio-resolver.ts`。
+- [x] Hard Filter 检查 status/outcome/deliverable/input/tool/approval。
+- [x] Semantic Recall 使用 demand、when_to_use、Question、Artifact、Domain。
+- [x] Coverage Optimizer 选择最小 Skill 集。
+- [x] 每题恰好一个 Primary Owner。
+- [x] 每 demand 默认最多一个 Corroborator。
+- [ ] Contributor 数量与总步骤复用 ProfileSpec/Usage/Tool Budget。（已接入 `ProfileSpec.max_steps`；Usage/Tool Budget 随 Phase 3 执行接线完成。）
+- [x] 不新增重复的 Contributor/Step 数量配置。
+- [x] Required Demand 超预算时 fail，不静默裁剪。
+- [x] 保存每个选择/拒绝 reason code。
+- [x] 保存 Coverage Matrix 与 Budget Estimate。
 
 ## 2.5 移除隐式 Direct Bypass
 
-- [ ] 只有显式 `$skill`/direct invoke 使用 direct path。
-- [ ] 普通 `research_synthesis` 进入 Portfolio Resolver。
-- [ ] 删除默认 `research_synthesis → research-strategy-synthesis` 硬编码。
-- [ ] `planningProvenance.classification_method` 不再为 `direct_skill_bypass`。
-- [ ] Candidate Planner 只接收 validated Portfolio，但可包含多个 Skill。
-- [ ] rejected actor 仍禁止进入 Plan。
+- [x] 只有显式 `$skill`/direct invoke 使用 direct path。
+- [x] 普通 `research_synthesis` 进入 Portfolio Resolver（实现置于 inactive writer gate 后）。
+- [x] 删除默认 `research_synthesis → research-strategy-synthesis` 硬编码。
+- [x] `planningProvenance.classification_method` 不再为 `direct_skill_bypass`。
+- [x] Candidate Planner 只接收 validated Portfolio，但可包含多个 Skill（仅 active gate 路径）。
+- [x] rejected actor 仍禁止进入 Plan。
 
 ## Milestone A 验证（Phase 1–2）
 
@@ -225,11 +225,13 @@ pnpm lint:registry
 git diff --check
 ```
 
-- [ ] 单 Skill 充分覆盖 fixture 仍选择一个。
-- [ ] 京东众筹 fixture 选择多个 Contributor + 一个 Synthesizer。
-- [ ] 无匹配 Skill 返回明确 capability gap。
-- [ ] Phase 1–2 的合同、类型与 Registry 一次性验证通过。
-- [ ] 独立提交 Phase 2。
+- [x] 单 Skill 充分覆盖 fixture 仍选择一个。
+- [x] 京东众筹 fixture 选择多个 Contributor + 一个 Synthesizer。
+- [x] 无匹配 Skill 返回明确 capability gap。
+- [x] Phase 1–2 的合同、类型与 Registry 一次性验证通过。
+- [x] 独立提交 Phase 2。
+
+Milestone A：59 个清单定向测试通过；另有 52 个 Registry/Deliverable 回归与 55 个 PlanCompiler 回归通过；root/Web typecheck、Registry lint、`git diff --check` 通过。
 
 # Phase 3：跨 Invocation 编译、共享阶段与执行
 
@@ -563,18 +565,18 @@ git diff --check
 # 完成账本
 
 ```text
-architecture ADR                                  pending
-Capability Demand Graph v1                       pending
-CurrentExecutionPlan v3                          pending
-Registry composition metadata                    pending
-all active Skills classified                     pending
-Portfolio Resolver                               pending
-implicit direct_skill_bypass removed             pending
+architecture ADR                                  done
+Capability Demand Graph v1                       done (inactive planning contract)
+CurrentExecutionPlan v3                          done (reader/validator; writer inactive)
+Registry composition metadata                    done
+all active Skills classified                     done
+Portfolio Resolver                               done (active-gate wiring; writer inactive)
+implicit direct_skill_bypass removed             done
 cross-invocation DAG                             pending
 shared Tool/Knowledge dedup                      pending
-research-contribution-v1                         pending
+research-contribution-v1                         done (contract/validator; runtime sealing pending)
 virtual-user contributor                         pending
-contribution-ledger-v1                           pending
+contribution-ledger-v1                           done (contract/validator; report integration pending)
 cross-skill reviewer                             pending
 multi-skill fidelity                             pending
 Canonical/Report integration                     pending

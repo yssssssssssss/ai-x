@@ -18,6 +18,8 @@ export interface SystemCapabilitiesResponse {
     writePayloadSchema: string;
     readablePayloadSchemas: string[];
     synthesisMode: 'model_synthesis' | 'reviewed_skill_assembly';
+    compositionMode: 'portfolio' | 'standalone_compat';
+    synthesizerSkillId: string | null;
   }>;
   reportLayoutVersions: string[];
   compiledSkills: string[];

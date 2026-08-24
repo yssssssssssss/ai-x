@@ -28,6 +28,13 @@ skills:
       - virtual-user-lab
     cost_level: medium
     risk_level: low
+    composition:
+      modes: [standalone]
+      supported_outcomes: [plan, answer]
+      compatible_deliverables: [competitive_analysis_report, research_plan]
+      required_input_roles: [business_domain]
+      optional_input_roles: []
+      standalone_reason: Legacy composite payload and optional lab evidence have no deterministic Contribution mapping.
   - id: competitive-web-research
     name: 竞品分析·Web搜索
     path: skills/competitive-analysis/web-research/SKILL.md
@@ -52,6 +59,14 @@ skills:
       - playwright-page-capture
     cost_level: low
     risk_level: low
+    composition:
+      modes: [standalone, contributor]
+      supported_outcomes: [answer]
+      compatible_deliverables: [competitive_analysis_report, research_strategy_report]
+      contribution_types: [market_landscape, competitive_analysis]
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      required_input_roles: [research_goal]
+      optional_input_roles: [public_evidence]
   - id: competitive-app-analysis
     name: 竞品分析·App截图
     path: skills/competitive-analysis/app-analysis/SKILL.md
@@ -86,6 +101,13 @@ skills:
     output_schema: schemas/skill-result-envelope.schema.json
     cost_level: medium
     risk_level: low
+    composition:
+      modes: [standalone]
+      supported_outcomes: [answer]
+      compatible_deliverables: [competitive_analysis_report]
+      required_input_roles: [research_goal, competitor_screenshots]
+      optional_input_roles: []
+      standalone_reason: Visual analysis payload has no deterministic Research Contribution adapter.
   - id: design-experience-review
     name: 设计体验走查
     path: skills/design-review/SKILL.md
@@ -117,6 +139,13 @@ skills:
       - vision-brand-lab
     cost_level: low
     risk_level: low
+    composition:
+      modes: [standalone]
+      supported_outcomes: [plan, answer]
+      compatible_deliverables: [research_plan, design_audit_report]
+      required_input_roles: [designImage]
+      optional_input_roles: []
+      standalone_reason: Multi-lab visual review payload is not yet mapped to stable Contribution units.
   - id: accessibility-review
     name: accessibility-review
     path: knowledge-base/skills/accessibility-review
@@ -145,6 +174,14 @@ skills:
     required_tools:
       - tavily-web-search
     status: active
+    composition:
+      modes: [standalone, contributor]
+      supported_outcomes: [answer]
+      compatible_deliverables: [accessibility_audit_report, design_audit_report]
+      contribution_types: [accessibility]
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      required_input_roles: [research_goal]
+      optional_input_roles: [designImage, page_url]
   - id: analyze-satisfaction
     name: analyze-satisfaction
     path: knowledge-base/skills/analyze-satisfaction
@@ -169,6 +206,14 @@ skills:
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
     payload_schema: knowledge-base/skills/analyze-satisfaction/output.schema.json
+    composition:
+      modes: [standalone, contributor]
+      supported_outcomes: [answer]
+      compatible_deliverables: [voc_diagnosis_report, research_strategy_report]
+      contribution_types: [satisfaction]
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      required_input_roles: [analytics_dataset]
+      optional_input_roles: [research_goal]
   - id: build-experience-metrics
     name: build-experience-metrics
     path: knowledge-base/skills/build-experience-metrics
@@ -193,6 +238,14 @@ skills:
       - user_research_planning
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
+    composition:
+      modes: [standalone, contributor]
+      supported_outcomes: [plan, answer]
+      compatible_deliverables: [research_plan, research_strategy_report]
+      contribution_types: [metrics]
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      required_input_roles: [research_goal]
+      optional_input_roles: [analytics_dataset]
   - id: code-open-feedback
     name: code-open-feedback
     path: knowledge-base/skills/code-open-feedback
@@ -214,6 +267,14 @@ skills:
     required_tools:
       - tavily-web-search
     status: active
+    composition:
+      modes: [standalone, contributor]
+      supported_outcomes: [answer]
+      compatible_deliverables: [voc_diagnosis_report, research_strategy_report]
+      contribution_types: [voc]
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      required_input_roles: [user_materials]
+      optional_input_roles: [research_goal]
   - id: competitive-analysis
     name: competitive-analysis
     path: knowledge-base/skills/competitive-analysis
@@ -238,6 +299,14 @@ skills:
       - competitive_research
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
+    composition:
+      modes: [standalone, contributor]
+      supported_outcomes: [answer]
+      compatible_deliverables: [competitive_analysis_report, research_strategy_report]
+      contribution_types: [competitive_analysis]
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      required_input_roles: [research_goal]
+      optional_input_roles: [public_evidence, user_materials]
   - id: conversion-funnel-analysis
     name: conversion-funnel-analysis
     path: knowledge-base/skills/conversion-funnel-analysis
@@ -262,6 +331,14 @@ skills:
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
     payload_schema: knowledge-base/skills/conversion-funnel-analysis/output.schema.json
+    composition:
+      modes: [standalone, contributor]
+      supported_outcomes: [plan, answer]
+      compatible_deliverables: [research_plan, research_strategy_report]
+      contribution_types: [funnel]
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      required_input_roles: [research_goal]
+      optional_input_roles: [analytics_dataset]
   - id: feature-adoption-analysis
     name: feature-adoption-analysis
     path: knowledge-base/skills/feature-adoption-analysis
@@ -284,6 +361,14 @@ skills:
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
     payload_schema: knowledge-base/skills/feature-adoption-analysis/output.schema.json
+    composition:
+      modes: [standalone, contributor]
+      supported_outcomes: [plan, answer]
+      compatible_deliverables: [research_plan, research_strategy_report]
+      contribution_types: [feature_adoption]
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      required_input_roles: [research_goal]
+      optional_input_roles: [analytics_dataset]
   - id: generate-interview-guide
     name: generate-interview-guide
     path: knowledge-base/skills/generate-interview-guide
@@ -299,6 +384,13 @@ skills:
       - user_research_planning
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
+    composition:
+      modes: [standalone]
+      supported_outcomes: [plan]
+      compatible_deliverables: [research_plan]
+      required_input_roles: [research_goal]
+      optional_input_roles: [target_audience]
+      standalone_reason: Interview-guide payload is not yet mapped to the planning Contribution contract.
   - id: generate-persona
     name: generate-persona
     path: knowledge-base/skills/generate-persona
@@ -318,6 +410,14 @@ skills:
       - user_research_planning
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
+    composition:
+      modes: [standalone, contributor]
+      supported_outcomes: [answer]
+      compatible_deliverables: [research_strategy_report]
+      contribution_types: [persona]
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      required_input_roles: [research_goal]
+      optional_input_roles: [user_materials, qualitative_insights]
   - id: generate-research-plan
     name: generate-research-plan
     path: knowledge-base/skills/generate-research-plan
@@ -338,6 +438,14 @@ skills:
     required_tools:
       - tavily-web-search
     status: active
+    composition:
+      modes: [standalone, synthesizer]
+      supported_outcomes: [plan]
+      compatible_deliverables: [research_plan]
+      contribution_types: [research_method]
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      required_input_roles: [research_goal]
+      optional_input_roles: [contribution_bundle]
   - id: research-strategy-synthesis
     name: 研究策略综合
     path: skills/research-strategy-synthesis/SKILL.md
@@ -357,6 +465,14 @@ skills:
     execution_mode: compiled
     execution_contract: orchestrator/skill-executions/research-strategy-synthesis.yaml
     risk_level: low
+    composition:
+      modes: [standalone, synthesizer]
+      supported_outcomes: [answer]
+      compatible_deliverables: [research_strategy_report]
+      contribution_types: [strategy, action_plan]
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      required_input_roles: [research_goal]
+      optional_input_roles: [contribution_bundle]
   - id: generate-survey
     name: generate-survey
     path: knowledge-base/skills/generate-survey
@@ -373,6 +489,13 @@ skills:
       - user_research_planning
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
+    composition:
+      modes: [standalone]
+      supported_outcomes: [plan]
+      compatible_deliverables: [research_plan]
+      required_input_roles: [research_goal]
+      optional_input_roles: [target_audience]
+      standalone_reason: Survey payload has no deterministic planning Contribution adapter.
   - id: generate-usability-test
     name: generate-usability-test
     path: knowledge-base/skills/generate-usability-test
@@ -393,6 +516,13 @@ skills:
       - user_research_planning
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
+    composition:
+      modes: [standalone]
+      supported_outcomes: [plan, answer]
+      compatible_deliverables: [research_plan, design_audit_report]
+      required_input_roles: [research_goal]
+      optional_input_roles: [evaluation_target]
+      standalone_reason: Usability-test execution package is not yet a standard Research Contribution.
   - id: issue-prioritization
     name: issue-prioritization
     path: knowledge-base/skills/issue-prioritization
@@ -415,6 +545,14 @@ skills:
       - user_research_planning
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
+    composition:
+      modes: [standalone, contributor]
+      supported_outcomes: [answer]
+      compatible_deliverables: [research_strategy_report, voc_diagnosis_report, design_audit_report]
+      contribution_types: [prioritization]
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      required_input_roles: [issue_inventory]
+      optional_input_roles: [research_goal]
   - id: jobs-to-be-done
     name: jobs-to-be-done
     path: knowledge-base/skills/jobs-to-be-done
@@ -440,6 +578,14 @@ skills:
       - user_research_planning
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
+    composition:
+      modes: [standalone, contributor]
+      supported_outcomes: [answer]
+      compatible_deliverables: [research_strategy_report]
+      contribution_types: [jobs_to_be_done]
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      required_input_roles: [research_goal]
+      optional_input_roles: [user_materials, qualitative_insights]
   - id: journey-map
     name: journey-map
     path: knowledge-base/skills/journey-map
@@ -466,6 +612,14 @@ skills:
       - voc_diagnosis
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
+    composition:
+      modes: [standalone, contributor]
+      supported_outcomes: [answer]
+      compatible_deliverables: [research_strategy_report, voc_diagnosis_report]
+      contribution_types: [journey]
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      required_input_roles: [research_goal]
+      optional_input_roles: [user_materials, persona]
   - id: run-heuristic-evaluation
     name: run-heuristic-evaluation
     path: knowledge-base/skills/run-heuristic-evaluation
@@ -486,6 +640,14 @@ skills:
       - design_audit
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
+    composition:
+      modes: [standalone, contributor]
+      supported_outcomes: [answer]
+      compatible_deliverables: [design_audit_report]
+      contribution_types: [design_audit]
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      required_input_roles: [research_goal]
+      optional_input_roles: [designImage, page_url]
   - id: solution-generation
     name: solution-generation
     path: knowledge-base/skills/solution-generation
@@ -515,6 +677,13 @@ skills:
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
     payload_schema: knowledge-base/skills/structure-interview-transcript/output.schema.json
+    composition:
+      modes: [standalone]
+      supported_outcomes: [answer]
+      compatible_deliverables: [research_plan]
+      required_input_roles: [user_materials]
+      optional_input_roles: [research_goal]
+      standalone_reason: Single-session transcript summary is diagnostic input, not a portfolio Contribution yet.
   - id: synthesize-qualitative-insights
     name: synthesize-qualitative-insights
     path: knowledge-base/skills/synthesize-qualitative-insights
@@ -534,3 +703,11 @@ skills:
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
     payload_schema: knowledge-base/skills/synthesize-qualitative-insights/output.schema.json
+    composition:
+      modes: [standalone, contributor]
+      supported_outcomes: [answer]
+      compatible_deliverables: [research_strategy_report, voc_diagnosis_report]
+      contribution_types: [qualitative_insight]
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      required_input_roles: [user_materials]
+      optional_input_roles: [research_goal]

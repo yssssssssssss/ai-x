@@ -2,7 +2,14 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { parse as parseYaml } from 'yaml';
-import type { EvidenceClass } from '../../../../packages/api-contract/research-deliverable.ts';
+import {
+  CONTRIBUTION_TYPES,
+  type ContributionType,
+  type EvidenceClass,
+  type ResearchOutcomeMode,
+  type SkillCompositionContract,
+  type SkillCompositionMode,
+} from '../../../../packages/api-contract/plan.ts';
 
 // 配置层统一读取入口。配置是 git/YAML 真相源,不入 DB。
 // linter 与 skill-loader 共用此模块,避免重复解析逻辑。
@@ -271,6 +278,8 @@ export interface DecisionNode {
   risk_policy?: string;
 }
 
+export type SkillComposition = SkillCompositionContract;
+
 export interface SkillRegistryEntry {
   id: string;
   name: string;
@@ -294,6 +303,7 @@ export interface SkillRegistryEntry {
   execution_contract?: string;
   cost_level?: string;
   risk_level: 'low' | 'medium' | 'high';
+  composition?: SkillComposition;
 }
 
 const SKILL_REGISTRY_ENTRY_KEYS = new Set<keyof SkillRegistryEntry>([
@@ -319,10 +329,141 @@ const SKILL_REGISTRY_ENTRY_KEYS = new Set<keyof SkillRegistryEntry>([
   'execution_contract',
   'cost_level',
   'risk_level',
+  'composition',
 ]);
 
 export function unknownSkillRegistryFields(skill: SkillRegistryEntry): string[] {
   return Object.keys(skill).filter((key) => !SKILL_REGISTRY_ENTRY_KEYS.has(key as keyof SkillRegistryEntry));
+}
+
+const SKILL_COMPOSITION_FIELDS = new Set([
+  'modes',
+  'supported_outcomes',
+  'compatible_deliverables',
+  'contribution_types',
+  'contribution_schema',
+  'required_input_roles',
+  'optional_input_roles',
+  'standalone_reason',
+]);
+const SKILL_COMPOSITION_MODES = new Set<SkillCompositionMode>([
+  'standalone',
+  'contributor',
+  'synthesizer',
+]);
+const RESEARCH_OUTCOMES = new Set<ResearchOutcomeMode>(['plan', 'answer']);
+const CONTRIBUTION_TYPE_SET = new Set<ContributionType>(CONTRIBUTION_TYPES);
+const CANONICAL_COMPOSITION_ID = /^[a-z0-9]+(?:[-_][a-z0-9]+)*$/u;
+
+function canonicalUniqueStringArray(value: unknown, allowEmpty = false): value is string[] {
+  return Array.isArray(value)
+    && (allowEmpty || value.length > 0)
+    && value.every((item) => (
+      typeof item === 'string'
+      && item.length > 0
+      && item === item.trim()
+    ))
+    && new Set(value).size === value.length;
+}
+
+export function skillCompositionIssues(skill: unknown): string[] {
+  if (skill === null || typeof skill !== 'object' || Array.isArray(skill)) {
+    return ['skill registry entry must be an object'];
+  }
+  const skillRecord = skill as Record<string, unknown>;
+  if (skillRecord.composition === undefined) return [];
+  if (
+    skillRecord.composition === null
+    || typeof skillRecord.composition !== 'object'
+    || Array.isArray(skillRecord.composition)
+  ) return ['composition must be an object'];
+
+  const composition = skillRecord.composition as Record<string, unknown>;
+  const issues: string[] = [];
+  const unknownField = Object.keys(composition).find((field) => !SKILL_COMPOSITION_FIELDS.has(field));
+  if (unknownField) issues.push(`composition contains unsupported field ${unknownField}`);
+
+  const modes = composition.modes;
+  if (
+    !canonicalUniqueStringArray(modes)
+    || !modes.every((mode) => SKILL_COMPOSITION_MODES.has(mode as SkillCompositionMode))
+  ) issues.push('composition.modes must be a unique non-empty array of standalone|contributor|synthesizer');
+
+  const supportedOutcomes = composition.supported_outcomes;
+  if (
+    !canonicalUniqueStringArray(supportedOutcomes)
+    || !supportedOutcomes.every((outcome) => RESEARCH_OUTCOMES.has(outcome as ResearchOutcomeMode))
+  ) issues.push('composition.supported_outcomes must be a unique non-empty array of plan|answer');
+
+  const compatibleDeliverables = composition.compatible_deliverables;
+  if (
+    !canonicalUniqueStringArray(compatibleDeliverables)
+    || !compatibleDeliverables.every((id) => CANONICAL_COMPOSITION_ID.test(id))
+  ) issues.push('composition.compatible_deliverables must be a unique non-empty array of canonical ids');
+
+  for (const field of ['required_input_roles', 'optional_input_roles'] as const) {
+    if (!canonicalUniqueStringArray(composition[field], true)) {
+      issues.push(`composition.${field} must be a unique array of canonical non-empty roles`);
+    }
+  }
+  if (
+    Array.isArray(composition.required_input_roles)
+    && Array.isArray(composition.optional_input_roles)
+  ) {
+    const required = new Set(composition.required_input_roles);
+    const overlap = composition.optional_input_roles.find((role) => required.has(role));
+    if (overlap !== undefined) issues.push(`composition input roles overlap: ${String(overlap)}`);
+  }
+
+  const validModes = Array.isArray(modes) ? modes : [];
+  const contributes = validModes.includes('contributor');
+  const synthesizes = validModes.includes('synthesizer');
+  if (contributes) {
+    const contributionTypes = composition.contribution_types;
+    if (
+      !canonicalUniqueStringArray(contributionTypes)
+      || !contributionTypes.every((type) => CONTRIBUTION_TYPE_SET.has(type as ContributionType))
+    ) issues.push('contributor composition requires valid contribution_types');
+  } else if (composition.contribution_types !== undefined) {
+    if (
+      !canonicalUniqueStringArray(composition.contribution_types)
+      || !composition.contribution_types.every((type) => CONTRIBUTION_TYPE_SET.has(type as ContributionType))
+    ) issues.push('composition.contribution_types must contain supported values');
+  }
+  if (contributes || synthesizes) {
+    if (
+      typeof composition.contribution_schema !== 'string'
+      || !composition.contribution_schema.trim()
+    ) issues.push('contributor/synthesizer composition requires contribution_schema');
+  } else if (composition.contribution_schema !== undefined) {
+    issues.push('standalone composition must not declare contribution_schema');
+  }
+  if (synthesizes && (!Array.isArray(compatibleDeliverables) || compatibleDeliverables.length === 0)) {
+    issues.push('synthesizer composition requires compatible_deliverables');
+  }
+  if (
+    validModes.length === 1
+    && validModes[0] === 'standalone'
+    && (typeof composition.standalone_reason !== 'string' || !composition.standalone_reason.trim())
+  ) issues.push('explicit standalone-only composition requires standalone_reason');
+
+  return issues;
+}
+
+export function resolveSkillComposition(skill: SkillRegistryEntry): SkillComposition {
+  if (!skill.composition) {
+    return {
+      modes: ['standalone'],
+      supported_outcomes: ['plan', 'answer'],
+      compatible_deliverables: [],
+      required_input_roles: [...(skill.inputs ?? [])],
+      optional_input_roles: [],
+      standalone_reason: 'legacy registry entry without a composition contract',
+    };
+  }
+  const issues = skillCompositionIssues(skill);
+  if (issues.length > 0) throw new Error(`Skill ${skill.id} composition invalid: ${issues.join('; ')}`);
+  return structuredClone(skill.composition);
 }
 
 export function skillOptionalToolIssue(skill: SkillRegistryEntry): string | null {

@@ -15,7 +15,11 @@ import {
 import { hashPrompt } from '../runtime/llm-client.ts';
 import { searchKnowledge } from '../knowledge/index.ts';
 import type { GuidanceRef, PlanCandidate } from '../plan-types.ts';
-import type { PlanningProvenance, ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
+import type {
+  CapabilityDemandGraphV1,
+  PlanningProvenance,
+  ResearchTaskV2,
+} from '../../../../packages/api-contract/plan.ts';
 import type { PlanningGuidanceClarification } from '../../../../packages/api-contract/control-workflow.ts';
 import type {
   CurrentPlanStep,
@@ -50,6 +54,19 @@ import {
 } from './plan-compiler.ts';
 import { loadSchemaText, resolveSchema } from '../runtime/schema-registry.ts';
 import { SchemaValidationError, type SchemaValidator } from '../schema/validator.ts';
+import {
+  resolveDeliverable,
+  resolveDeliverableCompositionPolicy,
+} from '../report/deliverable-registry.ts';
+import {
+  deriveCapabilityDemandGraph,
+  validateCapabilityDemandGraph,
+} from './capability-demand-graph.ts';
+import {
+  CapabilityPortfolioResolver,
+  portfolioActorValidationIssues,
+  type SkillPortfolioDecision,
+} from './capability-portfolio-resolver.ts';
 import {
   resolvePlannerDirectionGate,
   resolvePlannerGuidance,
@@ -232,6 +249,8 @@ export interface CurrentPlanArtifacts {
   problemGraph: ProblemGraph;
   problemGraphProvenance: ProblemGraphProvenance;
   capabilityResolution: CapabilityResolution;
+  capabilityDemandGraph?: CapabilityDemandGraphV1;
+  portfolios?: Partial<Record<string, SkillPortfolioDecision>>;
   planningProvenance: PlanningProvenance;
 }
 
@@ -425,6 +444,7 @@ function routedCandidateValidationFeedback(input: {
   problemGraph: ProblemGraph;
   problemGraphProvenance: ProblemGraphProvenance;
   capabilityResolution: CapabilityResolution;
+  portfolios?: Partial<Record<string, SkillPortfolioDecision>>;
   evidenceRequirements: EvidenceRequirement[];
   activatedNodes: string[];
 }): string[] {
@@ -442,6 +462,13 @@ function routedCandidateValidationFeedback(input: {
       issues.push(
         `${candidate.id}: routed_step_limit_exceeded: actual=${candidate.steps.length}, max=${maxSteps}`,
       );
+    }
+    const portfolio = input.portfolios?.[candidate.id];
+    if (portfolio) {
+      const actorIssues = portfolioActorValidationIssues(candidate.steps, portfolio);
+      if (actorIssues.length > 0) {
+        issues.push(`${candidate.id}: portfolio_actor_mismatch: ${actorIssues.join(', ')}`);
+      }
     }
     try {
       compiler.compile({
@@ -693,6 +720,17 @@ export class RoutedPlanner implements PlanStrategy {
       evidenceRequirements,
       expectedActualModel: this.deps.expectedActualModel,
     }).build(ctx.requirement);
+    const deliverable = resolveDeliverable(
+      ctx.requirement.task_type,
+      ctx.requirement.expected_deliverables,
+    );
+    const compositionPolicy = resolveDeliverableCompositionPolicy(deliverable.id);
+    const portfolioEnabled = this.deps.multiSkillPortfolioMode === 'active'
+      && !ctx.direct
+      && compositionPolicy.mode === 'portfolio';
+    const capabilityDemandGraph = portfolioEnabled
+      ? deriveCapabilityDemandGraph(ctx.requirement, problemGraphResult.graph)
+      : undefined;
 
     const registeredTools = loadToolRegistry().tools;
     const manifests = registeredTools.map((tool) => loadToolManifest(tool.path));
@@ -742,6 +780,15 @@ export class RoutedPlanner implements PlanStrategy {
     if (ctx.requirement.constraints.length > 0) availableInputRoles.push('constraints');
     if (ctx.requirement.success_criteria.length > 0) availableInputRoles.push('success_criteria');
     if (ctx.requirement.expected_deliverables.length > 0) availableInputRoles.push('expected_deliverables');
+    if (capabilityDemandGraph) {
+      validateCapabilityDemandGraph({
+        task: ctx.requirement,
+        problemGraph: problemGraphResult.graph,
+        graph: capabilityDemandGraph,
+        availableInputRoles,
+        validator,
+      });
+    }
     const capabilityResolution = new CapabilityResolver().resolve({
       task: ctx.requirement,
       available_input_roles: availableInputRoles,
@@ -750,6 +797,17 @@ export class RoutedPlanner implements PlanStrategy {
       tool_states: toolStates,
       tool_manifests: manifests,
       approval_capabilities: approvalCapabilities,
+      ...(capabilityDemandGraph && compositionPolicy.mode === 'portfolio'
+        ? {
+            portfolio_context: {
+              outcome: ctx.requirement.outcome_mode
+                ?? (ctx.requirement.task_type === 'user_research_planning' ? 'plan' : 'answer'),
+              deliverable_id: deliverable.id,
+              demand_types: [...new Set(capabilityDemandGraph.demands.map(({ type }) => type))],
+              synthesizer_skill_id: compositionPolicy.synthesizer_skill_id,
+            },
+          }
+        : {}),
     });
     if (capabilityResolution.eligible.length === 0) {
       throw new Error(`Current planning has no eligible skill for ${ctx.requirement.task_type}`);
@@ -794,6 +852,23 @@ export class RoutedPlanner implements PlanStrategy {
     }
     if (planningGuidance.status === 'blocked') {
       throw new Error('Planning Guidance could not establish both baseline candidates');
+    }
+    let portfolios: Partial<Record<string, SkillPortfolioDecision>> | undefined;
+    if (capabilityDemandGraph && compositionPolicy.mode === 'portfolio') {
+      portfolios = {};
+      const portfolioResolver = new CapabilityPortfolioResolver();
+      for (const profile of planningGuidance.profiles) {
+        portfolios[profile.id] = portfolioResolver.resolve({
+          task: ctx.requirement,
+          problemGraph: problemGraphResult.graph,
+          capabilityDemandGraph,
+          deliverableId: deliverable.id,
+          compositionPolicy,
+          capabilityResolution,
+          profile: { id: profile.id, max_steps: profile.max_steps },
+          availableInputRoles,
+        });
+      }
     }
     if (ctx.direct) {
       const directDecision = capabilityResolution.eligible.find(
@@ -1021,7 +1096,15 @@ export class RoutedPlanner implements PlanStrategy {
       };
     }
 
-    const eligibleToolIds = new Set(capabilityResolution.eligible.flatMap((decision) => [
+    const portfolioSkillIds = portfolios
+      ? new Set(Object.values(portfolios).flatMap((portfolio) => (
+          portfolio?.invocations.map(({ skillId }) => skillId) ?? []
+        )))
+      : null;
+    const candidateCapabilityDecisions = portfolioSkillIds
+      ? capabilityResolution.eligible.filter(({ skill }) => portfolioSkillIds.has(skill.id))
+      : capabilityResolution.eligible;
+    const eligibleToolIds = new Set(candidateCapabilityDecisions.flatMap((decision) => [
       ...decision.skill.required_tools,
       ...decision.optional_tool_decisions
         .filter(({ status }) => status === 'available')
@@ -1047,8 +1130,10 @@ export class RoutedPlanner implements PlanStrategy {
       planning_input: ctx.originalInput ?? ctx.requirement.research_goal,
       problem_graph: problemGraphResult.graph,
       capability_resolution: capabilityResolution,
+      ...(capabilityDemandGraph ? { capability_demand_graph: capabilityDemandGraph } : {}),
+      ...(portfolios ? { portfolios_by_profile: portfolios } : {}),
       profile_specs: requestedProfiles,
-      skills: capabilityResolution.eligible.map((decision) => ({
+      skills: candidateCapabilityDecisions.map((decision) => ({
         id: decision.skill.id,
         when_to_use: decision.skill.when_to_use,
         inputs: decision.skill.inputs,
@@ -1085,6 +1170,9 @@ export class RoutedPlanner implements PlanStrategy {
         prompt:
         `基于 finalized ResearchTaskV2、ProblemGraph、Evidence Policy、eligible capability shortlist 与精确 ProfileSpec 填充候选。` +
         `只能按顺序返回 [${profiles.map(({ id }) => id).join(', ')}]，不得新增、删除、重排 Profile，也不得生成 recommended；步骤预算为 ${profileSummary}。` +
+        (portfolios
+          ? `每个候选必须且只能使用 context.portfolios_by_profile[候选 id].invocations 中列出的 Skill；每个 Contributor 与 Synthesizer 恰好出现一次，Synthesizer 位于全部 Contributor 之后。`
+          : '') +
         (profiles.length === 2 && profiles[0]?.id === 'depth' && profiles[1]?.id === 'speed'
           ? `depth 总步数不得超过 ${ROUTED_STEP_LIMITS.depth}，speed 总步数不得超过 ${ROUTED_STEP_LIMITS.speed}；`
           : '') +
@@ -1130,6 +1218,7 @@ export class RoutedPlanner implements PlanStrategy {
         problemGraph: problemGraphResult.graph,
         problemGraphProvenance: problemGraphResult.provenance,
         capabilityResolution,
+        ...(portfolios ? { portfolios } : {}),
         evidenceRequirements,
         activatedNodes: activatedNodeKeys,
       });
@@ -1257,6 +1346,8 @@ export class RoutedPlanner implements PlanStrategy {
       problemGraph: problemGraphResult.graph,
       problemGraphProvenance: problemGraphResult.provenance,
       capabilityResolution,
+      ...(capabilityDemandGraph ? { capabilityDemandGraph } : {}),
+      ...(portfolios ? { portfolios } : {}),
       planningProvenance,
     };
   }

@@ -1,14 +1,29 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
+import {
+  CONTRIBUTION_TYPES,
+  type ContributionType,
+  type ResearchTaskV2,
+} from '../../../../packages/api-contract/plan.ts';
 import {
   getConfigRoot,
   loadEvidencePolicy,
   loadReportTemplate,
+  loadSkillRegistry,
+  resolveSkillComposition,
   type EvidencePolicyEntry,
   type ReportTemplateConfig,
 } from '../runtime/config-loader.ts';
+
+export type DeliverableCompositionPolicy =
+  | { mode: 'standalone_compat' }
+  | {
+      mode: 'portfolio';
+      synthesizer_skill_id: string;
+      accepted_contribution_types: ContributionType[];
+      contribution_schema: string;
+    };
 
 export interface DeliverableRegistryEntry {
   id: string;
@@ -23,6 +38,7 @@ export interface DeliverableRegistryEntry {
   evidence_policy: string;
   report_template: string;
   aliases?: string[];
+  composition?: DeliverableCompositionPolicy;
 }
 
 export interface DeliverableRegistryDiagnostic {
@@ -59,6 +75,7 @@ const ENTRY_FIELDS = [
   'evidence_policy',
   'report_template',
   'aliases',
+  'composition',
 ] as const;
 const RESOURCE_PATH_FIELDS = ['payload_schema', 'synthesis_prompt', 'review_rubric'] as const;
 const SAFE_RESOURCE_ID = /^[a-z0-9]+(?:[-_][a-z0-9]+)*$/u;
@@ -70,6 +87,64 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function diagnostic(target: string, message: string): DeliverableRegistryDiagnostic {
   return { target, message };
+}
+
+const COMPOSITION_POLICY_FIELDS = new Set([
+  'mode',
+  'synthesizer_skill_id',
+  'accepted_contribution_types',
+  'contribution_schema',
+]);
+const CONTRIBUTION_TYPE_SET = new Set<ContributionType>(CONTRIBUTION_TYPES);
+
+function compositionPolicyIssues(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (!isRecord(value)) return ['composition must be an object'];
+  const issues: string[] = [];
+  const unknownField = Object.keys(value).find((field) => !COMPOSITION_POLICY_FIELDS.has(field));
+  if (unknownField) issues.push(`composition contains unsupported field "${unknownField}"`);
+  if (value.mode === 'standalone_compat') {
+    const extra = Object.keys(value).find((field) => field !== 'mode');
+    if (extra) issues.push(`standalone_compat composition must not declare "${extra}"`);
+    return issues;
+  }
+  if (value.mode !== 'portfolio') {
+    issues.push('composition.mode must be portfolio or standalone_compat');
+    return issues;
+  }
+  if (
+    typeof value.synthesizer_skill_id !== 'string'
+    || !SAFE_RESOURCE_ID.test(value.synthesizer_skill_id)
+  ) issues.push('portfolio composition requires a canonical synthesizer_skill_id');
+  if (
+    !Array.isArray(value.accepted_contribution_types)
+    || value.accepted_contribution_types.length === 0
+    || value.accepted_contribution_types.some((type) => (
+      typeof type !== 'string' || !CONTRIBUTION_TYPE_SET.has(type as ContributionType)
+    ))
+    || new Set(value.accepted_contribution_types).size !== value.accepted_contribution_types.length
+  ) issues.push('portfolio composition requires unique accepted_contribution_types');
+  if (typeof value.contribution_schema !== 'string' || !value.contribution_schema.trim()) {
+    issues.push('portfolio composition requires contribution_schema');
+  }
+  return issues;
+}
+
+export function validateDeliverableCompositionPolicy<
+  T extends Pick<DeliverableRegistryEntry, 'id' | 'composition'>,
+>(entry: T): string[] {
+  return compositionPolicyIssues(entry.composition);
+}
+
+function cloneCompositionPolicy(
+  policy: DeliverableCompositionPolicy,
+): DeliverableCompositionPolicy {
+  return policy.mode === 'standalone_compat'
+    ? { mode: 'standalone_compat' }
+    : {
+        ...policy,
+        accepted_contribution_types: [...policy.accepted_contribution_types],
+      };
 }
 
 function safeResourcePath(relativePath: string, field: string): string {
@@ -168,7 +243,7 @@ function validateEntry(value: unknown, index: number, diagnostics: DeliverableRe
   if (unexpectedField) diagnostics.push(diagnostic(target, `registry entry contains unsupported field "${unexpectedField}"`));
 
   for (const field of ENTRY_FIELDS) {
-    if (field === 'aliases' || field === 'read_payload_schemas' || field === 'synthesis_mode') continue;
+    if (field === 'aliases' || field === 'read_payload_schemas' || field === 'synthesis_mode' || field === 'composition') continue;
     if (value[field] === undefined || value[field] === null || value[field] === '') {
       diagnostics.push(diagnostic(target, `registry entry is missing required field "${field}"`));
     }
@@ -219,6 +294,8 @@ function validateEntry(value: unknown, index: number, diagnostics: DeliverableRe
   ) {
     diagnostics.push(diagnostic(target, 'synthesis_mode must be model_synthesis or reviewed_skill_assembly'));
   }
+  const compositionIssues = compositionPolicyIssues(value.composition);
+  for (const message of compositionIssues) diagnostics.push(diagnostic(target, message));
 
   for (const field of ['envelope_version', ...RESOURCE_PATH_FIELDS, 'evidence_policy', 'report_template'] as const) {
     if (typeof value[field] !== 'string' || !value[field].trim()) {
@@ -256,6 +333,7 @@ function validateEntry(value: unknown, index: number, diagnostics: DeliverableRe
       && new Set(value.read_payload_schemas).size === value.read_payload_schemas.length
     ))
     && (value.synthesis_mode === undefined || value.synthesis_mode === 'model_synthesis' || value.synthesis_mode === 'reviewed_skill_assembly')
+    && compositionIssues.length === 0
     && typeof value.envelope_version === 'string' && value.envelope_version.trim().length > 0
     && RESOURCE_PATH_FIELDS.every((field) => typeof value[field] === 'string' && value[field].trim().length > 0)
     && typeof value.evidence_policy === 'string' && SAFE_RESOURCE_ID.test(value.evidence_policy)
@@ -279,11 +357,30 @@ function validateEntry(value: unknown, index: number, diagnostics: DeliverableRe
     evidence_policy: value.evidence_policy as string,
     report_template: value.report_template as string,
     ...(value.aliases === undefined ? {} : { aliases: [...(value.aliases as string[])] }),
+    ...(value.composition === undefined
+      ? {}
+      : { composition: cloneCompositionPolicy(value.composition as DeliverableCompositionPolicy) }),
   };
 }
 
 function validateActiveResources(entry: DeliverableRegistryEntry, diagnostics: DeliverableRegistryDiagnostic[]): void {
   for (const field of RESOURCE_PATH_FIELDS) validateResourcePath(entry, field, diagnostics);
+  if (entry.composition?.mode === 'portfolio') {
+    const target = `deliverable:${entry.id}`;
+    try {
+      const path = safeResourcePath(entry.composition.contribution_schema, 'composition.contribution_schema');
+      if (!existsSync(path)) {
+        diagnostics.push(diagnostic(
+          target,
+          `composition contribution schema does not exist: ${entry.composition.contribution_schema}`,
+        ));
+      } else {
+        parseJsonObject(path, 'composition.contribution_schema');
+      }
+    } catch (error) {
+      diagnostics.push(diagnostic(target, error instanceof Error ? error.message : String(error)));
+    }
+  }
   for (const relativePath of entry.read_payload_schemas ?? [entry.payload_schema]) {
     const target = `deliverable:${entry.id}`;
     try {
@@ -366,6 +463,54 @@ function parseDeliverableRegistry(validateResources: boolean): {
     const parsed = validateEntry(entry, index, diagnostics);
     return parsed ? [parsed] : [];
   });
+  const activeEntries = entries.filter(({ status }) => status === 'active');
+  const explicitCompositionRequired = activeEntries.some(({ composition }) => composition !== undefined);
+  if (explicitCompositionRequired) {
+    for (const entry of activeEntries) {
+      if (!entry.composition) {
+        diagnostics.push(diagnostic(
+          `deliverable:${entry.id}`,
+          'active deliverable is missing an explicit composition policy',
+        ));
+      }
+    }
+  }
+  const registeredSkills = new Map(loadSkillRegistry().skills.map((skill) => [skill.id, skill]));
+  for (const entry of activeEntries) {
+    if (entry.composition?.mode !== 'portfolio') continue;
+    const target = `deliverable:${entry.id}`;
+    const synthesizer = registeredSkills.get(entry.composition.synthesizer_skill_id);
+    if (!synthesizer || synthesizer.status !== 'active') {
+      diagnostics.push(diagnostic(
+        target,
+        `portfolio synthesizer is not an active Skill: ${entry.composition.synthesizer_skill_id}`,
+      ));
+      continue;
+    }
+    try {
+      const skillComposition = resolveSkillComposition(synthesizer);
+      if (!skillComposition.modes.includes('synthesizer')) {
+        diagnostics.push(diagnostic(
+          target,
+          `portfolio owner ${synthesizer.id} is not classified as a synthesizer`,
+        ));
+      }
+      if (!skillComposition.compatible_deliverables.includes(entry.id)) {
+        diagnostics.push(diagnostic(
+          target,
+          `portfolio owner ${synthesizer.id} is incompatible with ${entry.id}`,
+        ));
+      }
+      if (skillComposition.contribution_schema !== entry.composition.contribution_schema) {
+        diagnostics.push(diagnostic(
+          target,
+          `portfolio owner ${synthesizer.id} contribution schema does not match the deliverable policy`,
+        ));
+      }
+    } catch (error) {
+      diagnostics.push(diagnostic(target, error instanceof Error ? error.message : String(error)));
+    }
+  }
   const ids = new Set<string>();
   const taskOwners = new Map<string, string>();
   const activeIdentifierOwners = new Map<string, string>();
@@ -428,6 +573,7 @@ function cloneEntry(entry: DeliverableRegistryEntry): DeliverableRegistryEntry {
   const clone = { ...entry, task_types: [...entry.task_types] };
   if (entry.aliases) clone.aliases = [...entry.aliases];
   if (entry.read_payload_schemas) clone.read_payload_schemas = [...entry.read_payload_schemas];
+  if (entry.composition) clone.composition = cloneCompositionPolicy(entry.composition);
   return clone;
 }
 
@@ -623,6 +769,15 @@ export function resolveExecutionDeliverableContract(
 ): DeliverableContractResources {
   const entry = resolveExecutionDeliverable(taskType, expectedDeliverables, declaredDeliverableId);
   return contractResources(entry, taskType);
+}
+
+export function resolveDeliverableCompositionPolicy(
+  deliverableId: string,
+): DeliverableCompositionPolicy {
+  const entry = resolveActiveDeliverableId(validatedEntries(), deliverableId);
+  return entry.composition
+    ? cloneCompositionPolicy(entry.composition)
+    : { mode: 'standalone_compat' };
 }
 
 export function resolveDeliverableContractById(deliverableId: string): DeliverableContractResources {

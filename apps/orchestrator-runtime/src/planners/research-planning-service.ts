@@ -5,6 +5,7 @@ import type {
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import type {
   CandidateProfile,
+  CapabilityDemandGraphV1,
   GuidanceRef,
   PlanCandidate,
   PlanProgress,
@@ -36,6 +37,7 @@ import {
 } from './routed-planner.ts';
 import type { ScenarioId } from './planning-guidance.ts';
 import type { CapabilityResolution } from './capability-resolver.ts';
+import type { SkillPortfolioDecision } from './capability-portfolio-resolver.ts';
 import type { ProblemGraphProvenance } from './problem-graph-planner.ts';
 import type {
   CurrentPlanCandidateProposal,
@@ -66,6 +68,8 @@ export interface CurrentResearchPlanningResult extends Omit<ResearchPlanningResu
   candidates: CurrentPlanCandidateProposal[];
   problemGraph: ProblemGraph;
   capabilityResolution: CapabilityResolution;
+  capabilityDemandGraph?: CapabilityDemandGraphV1;
+  portfolios?: Partial<Record<string, SkillPortfolioDecision>>;
   problemGraphProvenance: ProblemGraphProvenance;
   planningProvenance: PlanningProvenance;
 }
@@ -102,6 +106,10 @@ const TASK_UNDERSTANDING_PROMPT =
   `- a11y_audit:无障碍/可访问性审查。\n` +
   `【硬规则】用户明确说"不做竞品/对设计稿评估"时绝不选 competitive_research;有设计稿评估诉求优先 design_audit。\n` +
   `【缺失信息三级】可假设→assumptions(给默认值);需用户确认→confirmations;涉敏感/合规/授权→blocking_issues。\n`;
+
+export function resolveExplicitDirectInvoke(originalInput: string): DirectInvoke | null {
+  return parseDirectInvoke(originalInput);
+}
 
 export class ResearchPlanningService {
   private readonly dependencies: Readonly<PlannerDeps>;
@@ -218,10 +226,7 @@ export class ResearchPlanningService {
       pii_detected: canonicalRequirement.pii_detected,
     };
     const emit = onProgress ?? (() => {});
-    const direct = parseDirectInvoke(originalInput)
-      ?? (canonicalRequirement.task_type === 'research_synthesis'
-        ? { skillName: 'research-strategy-synthesis', rest: originalInput }
-        : null);
+    const direct = resolveExplicitDirectInvoke(originalInput);
     const taskProvenance: PlanProvenance = {
       modelName: this.dependencies.llm.identity.requestedModel,
       modelVersion: 'research-task-v2',
@@ -255,6 +260,10 @@ export class ResearchPlanningService {
       problemGraph: artifacts.problemGraph,
       problemGraphProvenance: artifacts.problemGraphProvenance,
       capabilityResolution: artifacts.capabilityResolution,
+      ...(artifacts.capabilityDemandGraph
+        ? { capabilityDemandGraph: artifacts.capabilityDemandGraph }
+        : {}),
+      ...(artifacts.portfolios ? { portfolios: artifacts.portfolios } : {}),
       planningProvenance: artifacts.planningProvenance,
     };
   }

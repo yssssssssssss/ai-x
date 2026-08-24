@@ -4,6 +4,7 @@ import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
 import type { ProblemGraph } from '../packages/api-contract/research-deliverable.ts';
 import {
   CapabilityDemandGraphValidationError,
+  deriveCapabilityDemandGraph,
   validateCapabilityDemandGraph,
   type CapabilityDemandGraphV1,
 } from '../apps/orchestrator-runtime/src/planners/capability-demand-graph.ts';
@@ -111,6 +112,25 @@ function expectDemandError(
     },
   );
 }
+
+test('deterministic demand derivation maps required questions and explicit virtual-user obligations', () => {
+  const virtualTask: ResearchTaskV2 = {
+    ...task,
+    research_goal: '结合市场和 AI 虚拟用户研究访问动机并输出策略地图',
+  };
+  const graph = deriveCapabilityDemandGraph(virtualTask, problemGraph);
+  assert.deepEqual(graph.demands.map(({ type }) => type), [
+    'competitive_analysis',
+    'jobs_to_be_done',
+    'virtual_user_hypothesis',
+  ]);
+  assert.deepEqual(graph.demands[0]!.requestedArtifactTypes, ['strategy_map']);
+  assert.doesNotThrow(() => validateCapabilityDemandGraph({
+    task: virtualTask,
+    problemGraph,
+    graph,
+  }));
+});
 
 test('capability demand graph schema is registered and rejects unknown demand types', () => {
   const spec = resolveSchema('capability-demand-graph-v1');

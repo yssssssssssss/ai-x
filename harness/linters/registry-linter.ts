@@ -5,6 +5,7 @@ import {
   loadToolManifest,
   fileExists,
   SKILL_RESULT_ENVELOPE_SCHEMA,
+  skillCompositionIssues,
   skillOptionalToolIssue,
   skillVisualInputIssue,
   unknownSkillRegistryFields,
@@ -62,6 +63,14 @@ function lintCapabilityArrays(skill: SkillRegistryEntry, target: string, issues:
 function lintSkills(issues: LintIssue[]): void {
   const { skills } = loadSkillRegistry();
   const toolsById = new Map(loadToolRegistry().tools.map((tool) => [tool.id, tool]));
+  const explicitCompositionRequired = skills.some((skill) => (
+    skill.status === 'active' && skill.composition !== undefined
+  ));
+  const activeDeliverableIds = new Set(
+    inspectDeliverableRegistry().entries
+      .filter(({ status }) => status === 'active')
+      .map(({ id }) => id),
+  );
 
   for (const s of skills) {
     const tgt = `skill:${s.id ?? '(no-id)'}`;
@@ -82,6 +91,28 @@ function lintSkills(issues: LintIssue[]): void {
       }
     }
     lintCapabilityArrays(s, tgt, issues);
+    if (explicitCompositionRequired && s.composition === undefined) {
+      issues.push({ level: 'error', target: tgt, message: 'active skill 缺 composition 分类' });
+    }
+    for (const message of skillCompositionIssues(s)) {
+      issues.push({ level: 'error', target: tgt, message });
+    }
+    if (s.composition?.contribution_schema && !fileExists(s.composition.contribution_schema)) {
+      issues.push({
+        level: 'error',
+        target: tgt,
+        message: `composition contribution_schema 不存在: ${s.composition.contribution_schema}`,
+      });
+    }
+    for (const deliverableId of s.composition?.compatible_deliverables ?? []) {
+      if (!activeDeliverableIds.has(deliverableId)) {
+        issues.push({
+          level: 'error',
+          target: tgt,
+          message: `composition 引用了非 active deliverable: ${deliverableId}`,
+        });
+      }
+    }
     const optionalToolIssue = skillOptionalToolIssue(s);
     if (optionalToolIssue) {
       issues.push({ level: 'error', target: tgt, message: `active skill 的 ${optionalToolIssue}` });

@@ -165,12 +165,19 @@ systemCapabilitiesRouter.get('/', (_req, res) => {
       reportDocumentVersions: reportDocumentVersions(),
       activeTaskTypes: [...new Set(activeDeliverables.flatMap(({ task_types }) => task_types))].sort(),
       activeDeliverables: activeDeliverables.map(({ id }) => id).sort(),
-      deliverableContracts: activeDeliverables.map((entry) => ({
-        id: entry.id,
-        writePayloadSchema: schemaIdentity(entry.payload_schema),
-        readablePayloadSchemas: (entry.read_payload_schemas ?? [entry.payload_schema]).map(schemaIdentity),
-        synthesisMode: entry.synthesis_mode ?? 'model_synthesis',
-      })).sort((left, right) => left.id.localeCompare(right.id)),
+      deliverableContracts: activeDeliverables.map((entry) => {
+        const composition = entry.composition ?? { mode: 'standalone_compat' as const };
+        return {
+          id: entry.id,
+          writePayloadSchema: schemaIdentity(entry.payload_schema),
+          readablePayloadSchemas: (entry.read_payload_schemas ?? [entry.payload_schema]).map(schemaIdentity),
+          synthesisMode: entry.synthesis_mode ?? 'model_synthesis',
+          compositionMode: composition.mode,
+          synthesizerSkillId: composition.mode === 'portfolio'
+            ? composition.synthesizer_skill_id
+            : null,
+        };
+      }).sort((left, right) => left.id.localeCompare(right.id)),
       reportLayoutVersions: ['report-layout-blueprint-v1'],
       compiledSkills: loadSkillRegistry().skills
         .filter(({ status, execution_mode }) => status === 'active' && execution_mode === 'compiled')

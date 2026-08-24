@@ -68,6 +68,88 @@ function acceptedEvidenceClasses(question: ResearchQuestion): Set<EvidenceClass>
   return new Set(question.evidence_requirements.flatMap(({ acceptedClasses }) => acceptedClasses));
 }
 
+const QUESTION_DEMAND_RULES: ReadonlyArray<{
+  type: CapabilityDemandGraphV1['demands'][number]['type'];
+  pattern: RegExp;
+}> = [
+  { type: 'accessibility', pattern: /(?:accessibility|a11y|无障碍|读屏|wcag)/iu },
+  { type: 'design_audit', pattern: /(?:heuristic|usability\s+inspection|设计走查|启发式|可用性问题)/iu },
+  { type: 'funnel', pattern: /(?:funnel|漏斗|分步转化|流失环节)/iu },
+  { type: 'feature_adoption', pattern: /(?:feature\s+adoption|功能采纳|功能留存)/iu },
+  { type: 'satisfaction', pattern: /(?:satisfaction|\bnps\b|\bnss\b|满意度)/iu },
+  { type: 'metrics', pattern: /(?:metric|measure|\buv\b|\bgmv\b|转化率|留存率|指标|度量)/iu },
+  { type: 'persona', pattern: /(?:persona|人物角色|用户画像|用户分层|用户分型)/iu },
+  { type: 'jobs_to_be_done', pattern: /(?:\bjtbd\b|jobs?\s+to\s+be\s+done|访问动机|核心动机|雇佣|用户任务)/iu },
+  { type: 'journey', pattern: /(?:journey|用户旅程|体验地图|端到端链路|触点)/iu },
+  { type: 'voc', pattern: /(?:\bvoc\b|用户之声|差评|用户反馈|工单)/iu },
+  { type: 'competitive_analysis', pattern: /(?:competitive|competitor|竞品|竞争对手|对标)/iu },
+  { type: 'market_landscape', pattern: /(?:market|市场|赛道|行业格局)/iu },
+  { type: 'prioritization', pattern: /(?:priority|prioritization|优先级|先做|排序)/iu },
+  { type: 'research_method', pattern: /(?:research\s+plan|method|研究方案|调研方案|研究方法)/iu },
+];
+
+function defaultDemandType(task: ResearchTaskV2): CapabilityDemandGraphV1['demands'][number]['type'] {
+  if (task.task_type === 'competitive_research') return 'competitive_analysis';
+  if (task.task_type === 'design_audit') return 'design_audit';
+  if (task.task_type === 'a11y_audit') return 'accessibility';
+  if (task.task_type === 'voc_diagnosis') return 'voc';
+  if (task.task_type === 'user_research_planning') return 'research_method';
+  return 'qualitative_insight';
+}
+
+function demandTypeForQuestion(
+  task: ResearchTaskV2,
+  question: ResearchQuestion,
+): CapabilityDemandGraphV1['demands'][number]['type'] {
+  const text = [question.statement, question.rationale, ...question.acceptance_criteria].join(' ');
+  return QUESTION_DEMAND_RULES.find(({ pattern }) => pattern.test(text))?.type
+    ?? defaultDemandType(task);
+}
+
+/** Deterministic fallback used until a model-suggested graph passes the same validator. */
+export function deriveCapabilityDemandGraph(
+  task: ResearchTaskV2,
+  problemGraph: ProblemGraph,
+): CapabilityDemandGraphV1 {
+  const demands: CapabilityDemandGraphV1['demands'] = problemGraph.questions.map((question) => {
+    const type = demandTypeForQuestion(task, question);
+    const requiredEvidenceClasses = [...acceptedEvidenceClasses(question)];
+    return {
+      id: `demand:${type}:${question.id}`,
+      type,
+      questionIds: [question.id],
+      requestedArtifactTypes: [],
+      requiredEvidenceClasses,
+      requiredInputRoles: [
+        'research_goal',
+        ...(type === 'metrics' && isQuantitativeFactQuestion(question) ? ['analytics_dataset'] : []),
+      ],
+      priority: question.priority,
+    };
+  });
+
+  const firstRequired = demands.find(({ priority }) => priority === 'required') ?? demands[0];
+  if (firstRequired) firstRequired.requestedArtifactTypes = [...(task.requested_artifacts ?? [])];
+
+  if (taskRequestsVirtualUsers(task)) {
+    const targetQuestion = problemGraph.questions.find(({ statement }) => (
+      /(?:用户|动机|persona|jtbd|user|motivation)/iu.test(statement)
+    )) ?? problemGraph.questions.find(({ priority }) => priority === 'required') ?? problemGraph.questions[0];
+    if (targetQuestion) {
+      demands.push({
+        id: `demand:virtual_user_hypothesis:${targetQuestion.id}`,
+        type: 'virtual_user_hypothesis',
+        questionIds: [targetQuestion.id],
+        requestedArtifactTypes: [],
+        requiredEvidenceClasses: ['simulation'],
+        requiredInputRoles: ['research_goal'],
+        priority: 'required',
+      });
+    }
+  }
+  return { version: 'capability-demand-graph-v1', demands };
+}
+
 export interface ValidateCapabilityDemandGraphInput {
   task: ResearchTaskV2;
   problemGraph: ProblemGraph;

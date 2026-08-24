@@ -150,6 +150,19 @@ export const CONTRIBUTION_TYPES = [
 
 export type ContributionType = typeof CONTRIBUTION_TYPES[number];
 
+export type SkillCompositionMode = 'standalone' | 'contributor' | 'synthesizer';
+
+export interface SkillCompositionContract {
+  modes: SkillCompositionMode[];
+  supported_outcomes: ResearchOutcomeMode[];
+  compatible_deliverables: string[];
+  contribution_types?: ContributionType[];
+  contribution_schema?: string;
+  required_input_roles: string[];
+  optional_input_roles: string[];
+  standalone_reason?: string;
+}
+
 export interface CapabilityDemand {
   id: string;
   type: ContributionType;

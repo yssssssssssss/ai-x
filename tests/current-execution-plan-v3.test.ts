@@ -174,7 +174,7 @@ test('CurrentExecutionPlan v3 schema is registered and accepted by the version-a
 
 test('CurrentExecutionPlan v3 requires invocations and complete shared-stage metadata', () => {
   const validator = new SchemaValidator();
-  const noInvocations = validPlan() as CurrentExecutionPlanV3 & { skill_invocations?: CurrentExecutionPlanV3['skill_invocations'] };
+  const noInvocations = structuredClone(validPlan()) as unknown as Record<string, unknown>;
   delete noInvocations.skill_invocations;
   assert.throws(
     () => validator.validateOrThrow('current-execution-plan-v3', noInvocations),

@@ -4,6 +4,7 @@ import type {
   EvidenceClass,
   PlanningProvenance,
   RequestedArtifact,
+  SkillCompositionContract,
 } from './plan.ts';
 
 export type { EvidenceClass } from './plan.ts';
@@ -182,11 +183,16 @@ export interface CurrentCapabilitySkill {
   execution_contract?: string;
   cost_level?: string;
   risk_level?: 'low' | 'medium' | 'high';
+  composition?: SkillCompositionContract;
 }
 
 export type CurrentCapabilityReasonCode =
   | 'skill_inactive'
   | 'task_type_mismatch'
+  | 'outcome_mismatch'
+  | 'deliverable_mismatch'
+  | 'composition_mode_mismatch'
+  | 'contribution_type_mismatch'
   | 'required_tool_missing'
   | 'required_tool_inactive'
   | 'required_tool_health_unknown'

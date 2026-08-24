@@ -1,6 +1,6 @@
 # 通用多 Skill 组合编排底座开发文档
 
-> 状态：实施中；用户已批准按本方案开发，Gate 0 文档与领域基线已建立，Multi-Skill writer 仍保持 inactive。
+> 状态：实施中；Gate 0、Phase 1 与 Phase 2 核心实现及 Milestone A 已完成，Multi-Skill writer 仍保持 inactive。
 >
 > 当前集成分支：`feat/research-answer-dynamic-reports`
 >

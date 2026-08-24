@@ -38,6 +38,8 @@ test('system capabilities expose live contract and registry identities without l
         'research-strategy-report-v2.schema.json',
       ],
       synthesisMode: 'reviewed_skill_assembly',
+      compositionMode: 'portfolio',
+      synthesizerSkillId: 'research-strategy-synthesis',
     });
     assert.ok((body.compiledSkills as string[]).includes('generate-research-plan'));
     assert.ok((body.compiledSkills as string[]).includes('research-strategy-synthesis'));
