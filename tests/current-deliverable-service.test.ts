@@ -1402,13 +1402,24 @@ test('repairs one invalid reviewed Content Draft without returning to full Deliv
   assert.equal((writes[0]?.value as { fallbackApplied?: boolean }).fallbackApplied, true);
 });
 
-test('canonicalizes a safe localized Question alias introduced by bounded Content Draft repair', async () => {
+test('normalizes missing Evidence and a safe Question alias introduced by bounded Content Draft repair', async () => {
   const invalid = openStrategyDraft();
   invalid.directAnswers[0]!.evidenceIds = ['unknown-evidence'];
   const repaired = openStrategyDraft();
+  repaired.directAnswers[0]!.answerStatus = 'provisional';
+  repaired.directAnswers[0]!.evidenceIds = [];
+  repaired.directAnswers[0]!.validationNeeded = 'Validate the answer.';
+  repaired.evidenceFindings[0]!.support.status = 'provisional';
+  repaired.evidenceFindings[0]!.support.evidenceIds = [];
+  repaired.evidenceFindings[0]!.support.validationNeeded = 'Validate the finding.';
   const narrative = repaired.contentBlocks[0]!;
   assert.equal(narrative.kind, 'narrative');
-  if (narrative.kind === 'narrative') narrative.support.questionIds = ['q1_系统'];
+  if (narrative.kind === 'narrative') {
+    narrative.support.questionIds = ['q1_系统'];
+    narrative.support.status = 'provisional';
+    narrative.support.evidenceIds = [];
+    narrative.support.validationNeeded = 'Validate the narrative.';
+  }
   const bindingSource: SynthesisMaterial = {
     stepNo: 3,
     actorType: 'llm',
@@ -1439,7 +1450,15 @@ test('canonicalizes a safe localized Question alias introduced by bounded Conten
   }]);
   const block = (result.deliverable.payload as unknown as ResearchStrategyReportPayloadV2).contentBlocks[0]!;
   assert.equal(block.kind, 'narrative');
-  if (block.kind === 'narrative') assert.deepEqual(block.support.questionIds, ['q1']);
+  if (block.kind === 'narrative') {
+    assert.deepEqual(block.support.questionIds, ['q1']);
+    assert.deepEqual(block.support.evidenceIds, ['E1']);
+    assert.equal(block.support.status, 'provisional');
+  }
+  assert.deepEqual(
+    (result.deliverable.payload as unknown as ResearchStrategyReportPayloadV2).directAnswers[0]?.evidenceIds,
+    ['E1'],
+  );
   assert.deepEqual(writes.map(({ kind }) => kind), ['deliverable_validation_diagnostic', 'deliverable']);
 });
 
