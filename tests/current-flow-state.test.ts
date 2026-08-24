@@ -177,10 +177,14 @@ interface ClarificationQuestion {
   key: string;
   question: string;
   rationale: string;
+  ambiguity_id?: string;
+  suggestion?: string;
+  options?: string[];
 }
 
 interface ClarificationRequirement {
   clarification_questions: ClarificationQuestion[];
+  ambiguities: Array<{ id: string; statement: string; blocking: boolean }>;
   assumptions: Array<{ key: string; value: string; editable: boolean }>;
 }
 
@@ -749,6 +753,7 @@ test('clarification submission contains only explicit answers and editable assum
   const { buildClarificationSubmission } = await loadCurrentFlowStateModule() as ClarificationStateModule;
   assert.deepEqual(buildClarificationSubmission({
     clarification_questions: [{ key: 'audience', question: 'Who?', rationale: 'Changes method' }],
+    ambiguities: [{ id: 'audience', statement: 'Audience is unknown', blocking: true }],
     assumptions: [{ key: 'scope', value: 'web', editable: true }],
   }, { audience: 'new users', ignored: 'nope' }, { scope: 'mobile', unknown: 'nope' }), {
     clarificationAnswers: { audience: 'new users' },
@@ -756,15 +761,53 @@ test('clarification submission contains only explicit answers and editable assum
   });
 });
 
-test('missing blocking clarification answers remain unresolved despite suggestions', async () => {
-  const { missingBlockingAnswers } = await loadCurrentFlowStateModule() as ClarificationStateModule;
-  assert.deepEqual(missingBlockingAnswers({
+test('only blocking clarification answers are required and suggestions stay explicit', async () => {
+  const {
+    buildClarificationSubmission,
+    missingBlockingAnswers,
+  } = await loadCurrentFlowStateModule() as ClarificationStateModule;
+  const requirement: ClarificationRequirement = {
     clarification_questions: [
-      { key: 'audience', question: 'Who?', rationale: 'Changes method' },
-      { key: 'scope', question: 'What?', rationale: 'Bounds work' },
+      {
+        key: 'audience',
+        ambiguity_id: 'audience',
+        question: 'Who?',
+        rationale: 'Changes method',
+        suggestion: 'product team',
+        options: ['product team', 'consumers'],
+      },
+      {
+        key: 'format',
+        ambiguity_id: 'format',
+        question: 'Which format?',
+        rationale: 'Changes presentation',
+        suggestion: 'report',
+      },
+      { key: 'legacy', question: 'Legacy?', rationale: 'Historical question' },
+      {
+        key: 'unknown',
+        ambiguity_id: 'missing',
+        question: 'Unknown mapping?',
+        rationale: 'Invalid mappings fail closed',
+      },
+    ],
+    ambiguities: [
+      { id: 'audience', statement: 'Audience is unknown', blocking: true },
+      { id: 'format', statement: 'Format can be decided later', blocking: false },
     ],
     assumptions: [],
-  }, { audience: 'new users' }), ['scope']);
+  };
+
+  assert.deepEqual(missingBlockingAnswers(requirement, {}), ['audience', 'legacy', 'unknown']);
+  assert.deepEqual(missingBlockingAnswers(requirement, {
+    audience: 'product team',
+    legacy: 'keep compatible',
+    unknown: 'answer required',
+  }), []);
+  assert.deepEqual(buildClarificationSubmission(requirement, {}, {}), {
+    clarificationAnswers: {},
+    assumptionEdits: {},
+  }, 'suggestions must not be submitted until the user explicitly adopts them');
 });
 
 test('one logical clarification payload uses one key and only one request while in flight', async () => {

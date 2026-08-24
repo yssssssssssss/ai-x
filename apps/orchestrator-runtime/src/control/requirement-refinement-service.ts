@@ -120,7 +120,7 @@ export class InvalidScenarioSelectionError extends Error {
   }
 }
 
-const REQUIREMENT_PROMPT = `把会话整理为 ResearchTaskV2。必须忠实保留用户目标、范围、成功标准和约束；竞品任务若明确列出对比维度，必须按原顺序写入 comparison_dimensions，未明确时不得自行补写；可安全推断的信息写入 assumptions；无法安全推断的信息写入 ambiguities 与 clarification_questions；敏感、授权或合规风险写入 blocking_issues。`;
+const REQUIREMENT_PROMPT = `把会话整理为 ResearchTaskV2。必须忠实保留用户目标、范围、成功标准和约束；竞品任务若明确列出对比维度，必须按原顺序写入 comparison_dimensions，未明确时不得自行补写；可安全推断的信息写入 assumptions；不确定信息写入 ambiguities，每个 clarification question 必须用 ambiguity_id 引用对应 ambiguity；blocking ambiguity 必须有问题，non-blocking ambiguity 可以没有问题；可提供 2 到 4 个 options 或一个安全的 suggestion，但 suggestion 只是待用户显式采用的建议，不能当作用户回答；涉及敏感数据、授权、合规、外部发布或不可逆操作时不得提供 suggestion，并写入 blocking_issues。`;
 
 const SCORING_MATRIX_MARKER = /(?:矩阵\s*采用[^。；;\n]{0,40}(?:分制|权重)|(?:评分|评价)(?:维度|矩阵)?\s*(?:及|与|和)?\s*权重|(?:评分|评价)?矩阵(?:维度)?\s*(?:及|与|和)?\s*权重|\b(?:scoring|evaluation)\s+(?:matrix|dimensions?)\b)/iu;
 const PERCENTAGE_ITEM = /(?:^|[、,，;；\n])\s*([^、,，;；\n]*?\S)\s*(\d+(?:\.\d+)?)\s*[%％]\s*[)）]?/gu;
@@ -165,6 +165,43 @@ function explicitWeightedMatrixDimensions(requirement: ResearchTaskV2): string[]
 function normalizeExplicitWeightedMatrix(requirement: ResearchTaskV2): ResearchTaskV2 {
   const dimensions = explicitWeightedMatrixDimensions(requirement);
   return dimensions ? { ...requirement, comparison_dimensions: dimensions } : requirement;
+}
+
+function normalizeClarificationGuidance(requirement: ResearchTaskV2): ResearchTaskV2 {
+  const ambiguityIds = new Set(requirement.ambiguities.map(({ id }) => id));
+  const protectedKeys = new Set(requirement.blocking_issues.map(({ key }) => key));
+  const suppressAllSuggestions = requirement.pii_detected || requirement.sensitivity === 'confidential';
+  const questions = requirement.clarification_questions.map((question) => {
+    const inferredAmbiguityId = question.ambiguity_id
+      ?? (ambiguityIds.has(question.key) ? question.key : undefined);
+    if (inferredAmbiguityId && !ambiguityIds.has(inferredAmbiguityId)) {
+      throw new Error(`clarification question ${question.key} references unknown ambiguity ${inferredAmbiguityId}`);
+    }
+    const options = question.options
+      ? [...new Set(question.options.map((option) => option.trim()).filter(Boolean))]
+      : undefined;
+    if (options && (options.length < 2 || options.length > 4)) {
+      throw new Error(`clarification question ${question.key} must contain 2-4 unique options`);
+    }
+    const suggestion = question.suggestion?.trim();
+    const suggestionAllowed = !suppressAllSuggestions && !protectedKeys.has(question.key);
+    return {
+      key: question.key,
+      question: question.question,
+      rationale: question.rationale,
+      ...(inferredAmbiguityId ? { ambiguity_id: inferredAmbiguityId } : {}),
+      ...(suggestion && suggestionAllowed ? { suggestion } : {}),
+      ...(options ? { options } : {}),
+    };
+  });
+  const coveredAmbiguities = new Set(questions.map(({ ambiguity_id }) => ambiguity_id).filter(Boolean));
+  const uncoveredBlocking = requirement.ambiguities
+    .filter(({ id, blocking }) => blocking && !coveredAmbiguities.has(id))
+    .map(({ id }) => id);
+  if (uncoveredBlocking.length > 0) {
+    throw new Error(`blocking ambiguities require clarification questions: ${uncoveredBlocking.join(', ')}`);
+  }
+  return { ...requirement, clarification_questions: questions };
 }
 
 function hasBlockingAmbiguity(requirement: ResearchTaskV2): boolean {
@@ -598,8 +635,8 @@ export class RequirementRefinementService {
       },
     });
     this.dependencies.validator.validateOrThrow('research-task-v2', generated.data);
-    const requirement = normalizeExplicitWeightedMatrix(
-      canonicalizeExpectedDeliverables(generated.data),
+    const requirement = normalizeClarificationGuidance(
+      normalizeExplicitWeightedMatrix(canonicalizeExpectedDeliverables(generated.data)),
     );
     const task = await this.dependencies.repository.getTaskDetail?.(input.taskId);
     const taskTypeBeforeRefinement = task?.structuredTask

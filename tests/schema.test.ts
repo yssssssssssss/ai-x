@@ -143,7 +143,14 @@ test('ResearchTaskV2 合法 fixture 通过校验并保持 snake_case 字段', ()
     expected_deliverables: ['research_report'],
     assumptions: [{ key: 'sample', value: '头部品牌', editable: true }],
     ambiguities: [{ id: 'a1', statement: '是否包含线下渠道', blocking: true }],
-    clarification_questions: [{ key: 'channel', question: '是否包含线下渠道？', rationale: '决定样本范围' }],
+    clarification_questions: [{
+      key: 'channel',
+      ambiguity_id: 'a1',
+      question: '是否包含线下渠道？',
+      rationale: '决定样本范围',
+      suggestion: '暂不包含线下渠道',
+      options: ['仅线上', '线上和线下'],
+    }],
     blocking_issues: [{ key: 'channel', reason: '渠道范围未确认', kind: 'scope' }],
     sensitivity: 'internal',
     pii_detected: false,
@@ -180,6 +187,45 @@ test('ResearchTaskV2 对比维度可选，但存在时必须至少两项、非�
     ['需求理解', '   '],
   ]) {
     assert.ok(v.validate('research-task-v2', { ...valid, comparison_dimensions }).length > 0);
+  }
+});
+
+test('ResearchTaskV2 澄清快捷项限制为 2-4 个唯一非空字符串', () => {
+  const valid = {
+    version: 'research-task-v2',
+    task_type: 'competitive_research',
+    business_domain: '电商',
+    research_goal: '比较购物助手',
+    target_audience: [],
+    scope: [],
+    constraints: [],
+    success_criteria: [{ id: 'sc1', statement: '完成对比' }],
+    expected_deliverables: ['competitive_analysis_report'],
+    assumptions: [],
+    ambiguities: [{ id: 'audience', statement: '受众未确定', blocking: true }],
+    clarification_questions: [{
+      key: 'audience',
+      ambiguity_id: 'audience',
+      question: '目标受众是谁？',
+      rationale: '影响研究方法',
+      suggestion: '消费者',
+      options: ['消费者', '产品团队'],
+    }],
+    blocking_issues: [],
+    sensitivity: 'public',
+    pii_detected: false,
+  };
+  assert.deepEqual(v.validate('research-task-v2', valid), []);
+  for (const options of [
+    ['消费者'],
+    ['消费者', '消费者'],
+    ['消费者', '产品团队', '运营团队', '设计团队', '管理层'],
+    ['消费者', '   '],
+  ]) {
+    assert.ok(v.validate('research-task-v2', {
+      ...valid,
+      clarification_questions: [{ ...valid.clarification_questions[0], options }],
+    }).length > 0);
   }
 });
 

@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
-import type { PlanProgress } from '../../../../packages/api-contract/plan.ts';
+import {
+  isExplicitClarificationAnswer,
+  missingRequiredClarificationAnswers,
+  type PlanProgress,
+  type ResearchTaskV2,
+} from '../../../../packages/api-contract/plan.ts';
 import type { VisualAssetManifest } from '../../../../packages/api-contract/research-deliverable.ts';
 import { ControlPlaneConflictError, type ControlPlaneRepository } from '../../../../database/control-plane.ts';
 import { getUserById } from '../../../../database/repository.ts';
@@ -69,6 +74,31 @@ function record(value: unknown): Record<string, unknown> | null {
 
 function string(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null;
+}
+
+function clarificationRequirement(value: unknown): ResearchTaskV2 | null {
+  const candidate = record(value);
+  if (
+    !candidate
+    || !Array.isArray(candidate.ambiguities)
+    || !candidate.ambiguities.every((ambiguity) => {
+      const item = record(ambiguity);
+      return item !== null && string(item.id) !== null && typeof item.blocking === 'boolean';
+    })
+    || !Array.isArray(candidate.clarification_questions)
+    || !candidate.clarification_questions.every((question) => {
+      const item = record(question);
+      return item !== null
+        && string(item.key) !== null
+        && (item.ambiguity_id === undefined || string(item.ambiguity_id) !== null);
+    })
+    || !Array.isArray(candidate.assumptions)
+    || !candidate.assumptions.every((assumption) => {
+      const item = record(assumption);
+      return item !== null && string(item.key) !== null && typeof item.editable === 'boolean';
+    })
+  ) return null;
+  return candidate as unknown as ResearchTaskV2;
 }
 
 function version(value: unknown): number | null {
@@ -273,6 +303,43 @@ async function prepareClarification(
   if (!task || task.ownerUserId !== actor.userId || task.conversationOwnerUserId !== actor.userId) {
     res.status(404).json({ error: '任务不存在' });
     return null;
+  }
+  if (task.state === 'awaiting_clarification') {
+    const requirement = clarificationRequirement(task.structuredTask);
+    if (!requirement) {
+      res.status(409).json({ error: `awaiting_clarification task ${task.id} has invalid clarification requirement` });
+      return null;
+    }
+    const questionKeys = new Set(requirement.clarification_questions.map(({ key: questionKey }) => questionKey));
+    const unknownAnswerKeys = Object.keys(clarificationAnswers).filter((answerKey) => !questionKeys.has(answerKey));
+    if (unknownAnswerKeys.length > 0) {
+      res.status(400).json({ error: 'clarificationAnswers contains unknown keys', unknown: unknownAnswerKeys });
+      return null;
+    }
+    const invalidAnswerKeys = Object.entries(clarificationAnswers)
+      .filter(([, value]) => !isExplicitClarificationAnswer(value))
+      .map(([answerKey]) => answerKey);
+    if (invalidAnswerKeys.length > 0) {
+      res.status(400).json({ error: 'clarificationAnswers contains empty values', invalid: invalidAnswerKeys });
+      return null;
+    }
+    const assumptions = new Map(requirement.assumptions.map((assumption) => [assumption.key, assumption]));
+    const invalidAssumptionKeys = Object.keys(assumptionEdits).filter((assumptionKey) => {
+      const assumption = assumptions.get(assumptionKey);
+      return !assumption?.editable;
+    });
+    if (invalidAssumptionKeys.length > 0) {
+      res.status(400).json({ error: 'assumptionEdits contains unknown or locked keys', invalid: invalidAssumptionKeys });
+      return null;
+    }
+    const missing = missingRequiredClarificationAnswers(requirement, clarificationAnswers);
+    if (missing.length > 0) {
+      res.status(422).json({
+        error: 'required clarification answers are missing',
+        unresolved: missing,
+      });
+      return null;
+    }
   }
   const requestHash = clarificationRequestHash({
     expectedVersion,

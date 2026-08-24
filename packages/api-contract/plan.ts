@@ -96,6 +96,9 @@ export interface ResearchTaskV2ClarificationQuestion {
   key: string;
   question: string;
   rationale: string;
+  ambiguity_id?: string;
+  suggestion?: string;
+  options?: string[];
 }
 
 export interface ResearchTaskV2BlockingIssue {
@@ -121,6 +124,32 @@ export interface ResearchTaskV2 {
   blocking_issues: ResearchTaskV2BlockingIssue[];
   sensitivity: 'public' | 'internal' | 'confidential';
   pii_detected: boolean;
+}
+
+export function isExplicitClarificationAnswer(value: unknown): boolean {
+  return value !== undefined
+    && value !== null
+    && (typeof value !== 'string' || value.trim().length > 0);
+}
+
+export function isClarificationQuestionRequired(
+  requirement: Pick<ResearchTaskV2, 'ambiguities'>,
+  question: ResearchTaskV2ClarificationQuestion,
+): boolean {
+  if (!question.ambiguity_id) return true;
+  return requirement.ambiguities.find(({ id }) => id === question.ambiguity_id)?.blocking ?? true;
+}
+
+export function missingRequiredClarificationAnswers(
+  requirement: Pick<ResearchTaskV2, 'ambiguities' | 'clarification_questions'>,
+  answers: Readonly<Record<string, unknown>>,
+): string[] {
+  return requirement.clarification_questions
+    .filter((question) => (
+      isClarificationQuestionRequired(requirement, question)
+      && !isExplicitClarificationAnswer(answers[question.key])
+    ))
+    .map(({ key }) => key);
 }
 
 export interface PendingUpload {

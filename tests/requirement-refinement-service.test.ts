@@ -49,8 +49,11 @@ const ambiguousRequirement = requirement({
   ambiguities: [{ id: 'audience', statement: 'target audience is unclear', blocking: true }],
   clarification_questions: [{
     key: 'audience',
+    ambiguity_id: 'audience',
     question: 'Who is the target audience?',
     rationale: 'The comparison depends on audience needs',
+    suggestion: 'product team',
+    options: ['product team', 'consumers'],
   }],
 });
 
@@ -298,8 +301,10 @@ test('non-blocking questions proceed to planning instead of creating an endless 
     ambiguities: [{ id: 'format', statement: 'report format can be confirmed later', blocking: false }],
     clarification_questions: [{
       key: 'format',
+      ambiguity_id: 'format',
       question: 'Which report format is preferred?',
       rationale: 'This changes presentation but does not block research.',
+      suggestion: 'research report',
     }],
   });
   const repository = makeRepository();
@@ -350,6 +355,72 @@ test('blocking issues proceed to planning and remain available for the approval 
 
   assert.equal(result.status, 'ready_to_plan');
   assert.deepEqual(plannedRequirements[0]?.blocking_issues, approvalRequired.blocking_issues);
+});
+
+test('clarification metadata is normalized and unsafe suggestions are removed', async () => {
+  const { RequirementRefinementService } = await loadModule();
+  const governed = requirement({
+    ambiguities: [{ id: 'access', statement: 'access approval is unknown', blocking: true }],
+    clarification_questions: [{
+      key: 'access',
+      ambiguity_id: 'access',
+      question: 'May the research access the authenticated page?',
+      rationale: 'Access requires explicit approval.',
+      suggestion: '  allow access  ',
+      options: ['allow', ' deny ', 'allow '],
+    }],
+    blocking_issues: [{ key: 'access', kind: 'authorization', reason: 'Explicit approval is required.' }],
+  });
+  const service = new RequirementRefinementService({
+    llm: new FixtureLLM([governed]),
+    validator: new SchemaValidator(),
+    repository: makeRepository(),
+    conversations: makeConversations(),
+  });
+
+  const result = await service.understand({
+    taskId,
+    conversationId,
+    ownerUserId,
+    originalInput: 'review an authenticated product page',
+  });
+
+  assert.equal(result.status, 'clarification_required');
+  assert.deepEqual(result.requirement.clarification_questions, [{
+    key: 'access',
+    ambiguity_id: 'access',
+    question: 'May the research access the authenticated page?',
+    rationale: 'Access requires explicit approval.',
+    options: ['allow', 'deny'],
+  }]);
+});
+
+test('unknown clarification ambiguity references fail closed before persistence', async () => {
+  const { RequirementRefinementService } = await loadModule();
+  const invalid = requirement({
+    ambiguities: [{ id: 'audience', statement: 'audience is unknown', blocking: true }],
+    clarification_questions: [{
+      key: 'audience',
+      ambiguity_id: 'missing',
+      question: 'Who is the target audience?',
+      rationale: 'The audience changes the method.',
+    }],
+  });
+  const repository = makeRepository();
+  const service = new RequirementRefinementService({
+    llm: new FixtureLLM([invalid]),
+    validator: new SchemaValidator(),
+    repository,
+    conversations: makeConversations(),
+  });
+
+  await assert.rejects(() => service.understand({
+    taskId,
+    conversationId,
+    ownerUserId,
+    originalInput: 'compare competitors',
+  }), /unknown ambiguity missing/);
+  assert.equal(repository.versions.length, 0);
 });
 
 test('ambiguous requirements return clarification_required without invoking planner', async () => {
@@ -877,6 +948,7 @@ test('clarification LLM output is canonicalized before Requirement v2 persistenc
     ambiguities: [{ id: 'audience', statement: 'target audience is unclear', blocking: true }],
     clarification_questions: [{
       key: 'audience',
+      ambiguity_id: 'audience',
       question: 'Who is the target audience?',
       rationale: 'The comparison depends on audience needs',
     }],

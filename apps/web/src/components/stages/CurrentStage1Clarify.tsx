@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { isClarificationQuestionRequired } from '../../../../../packages/api-contract/plan.ts';
 import type { ClarificationRequiredResponse, ClarifyControlTaskRequest } from '../../api/client.ts';
 import { buildClarificationSubmission, missingBlockingAnswers } from '../../current-flow-state.ts';
 import { Header } from './Stage1Understand.tsx';
@@ -17,6 +18,12 @@ export function CurrentStage1Clarify({
   const [assumptionEdits, setAssumptionEdits] = useState<Record<string, string>>(
     Object.fromEntries(response.structuredTask.assumptions.map((assumption) => [assumption.key, assumption.value])),
   );
+  useEffect(() => {
+    setAnswers({});
+    setAssumptionEdits(Object.fromEntries(
+      response.structuredTask.assumptions.map((assumption) => [assumption.key, assumption.value]),
+    ));
+  }, [response.task.id, response.task.stateVersion]);
   const missing = useMemo(
     () => missingBlockingAnswers(response.structuredTask, answers),
     [answers, response.structuredTask],
@@ -61,21 +68,62 @@ export function CurrentStage1Clarify({
         </div>
       )}
 
-      {response.structuredTask.clarification_questions.map((question) => (
-        <label key={question.key} style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
-          <span style={{ display: 'block', marginBottom: 4, fontWeight: 600 }}>{question.question}</span>
-          <span style={{ display: 'block', marginBottom: 5, color: 'var(--text-faint)', fontSize: 12 }}>为什么要问：{question.rationale}</span>
-          <input
-            className="clarification-field"
-            value={answers[question.key] ?? ''}
-            onChange={(event) => setAnswers((previous) => ({ ...previous, [question.key]: event.target.value }))}
-            disabled={disabled}
-            placeholder="请明确回答，系统建议不会自动代替你的回答"
-            aria-label={question.question}
-            style={{ width: '100%', boxSizing: 'border-box' }}
-          />
-        </label>
-      ))}
+      {response.structuredTask.clarification_questions.map((question, index) => {
+        const required = isClarificationQuestionRequired(response.structuredTask, question);
+        const answer = answers[question.key] ?? '';
+        const inputId = `clarification-answer-${index}`;
+        return (
+          <div key={question.key} className="clarification-question">
+            <div className="clarification-question-heading">
+              <label htmlFor={inputId}>{question.question}</label>
+              <span className={`clarification-requirement ${required ? 'is-required' : 'is-optional'}`}>
+                {required ? '必答' : '可选'}
+              </span>
+            </div>
+            <span className="clarification-rationale">为什么要问：{question.rationale}</span>
+            {question.suggestion && (
+              <div className="clarification-suggestion">
+                <span>系统建议：{question.suggestion}</span>
+                <button
+                  type="button"
+                  className="clarification-suggestion-action"
+                  onClick={() => setAnswers((previous) => ({ ...previous, [question.key]: question.suggestion! }))}
+                  disabled={disabled}
+                >
+                  采用建议
+                </button>
+                <small>不会自动提交</small>
+              </div>
+            )}
+            {question.options && question.options.length > 0 && (
+              <div className="clarification-options" aria-label={`${question.question}快捷选项`}>
+                {question.options.map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    className="clarification-option"
+                    aria-pressed={answer === option}
+                    onClick={() => setAnswers((previous) => ({ ...previous, [question.key]: option }))}
+                    disabled={disabled}
+                  >
+                    {option}
+                  </button>
+                ))}
+              </div>
+            )}
+            <input
+              id={inputId}
+              className="clarification-field"
+              value={answer}
+              onChange={(event) => setAnswers((previous) => ({ ...previous, [question.key]: event.target.value }))}
+              disabled={disabled}
+              placeholder={required ? '请输入答案，或采用上方建议' : '可选，可直接跳过'}
+              aria-required={required}
+              style={{ width: '100%', boxSizing: 'border-box' }}
+            />
+          </div>
+        );
+      })}
 
       {response.planningGuidance && (
         <fieldset disabled={disabled} style={{ border: 0, padding: 0, margin: '0 0 14px' }}>

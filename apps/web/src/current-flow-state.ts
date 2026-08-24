@@ -1,4 +1,10 @@
-import { isCandidateProfile } from '../../../packages/api-contract/plan.ts';
+import {
+  isCandidateProfile,
+  isExplicitClarificationAnswer,
+  missingRequiredClarificationAnswers,
+  type ResearchTaskV2Ambiguity,
+  type ResearchTaskV2ClarificationQuestion,
+} from '../../../packages/api-contract/plan.ts';
 import type {
   ControlExecutionStepResponse,
   ControlPlanCandidatesResponse,
@@ -372,28 +378,19 @@ export function retryDeliverable<TDeliverable>(
   };
 }
 
-export interface ClarificationQuestionState {
-  key: string;
-  question: string;
-  rationale: string;
-}
+export type ClarificationQuestionState = ResearchTaskV2ClarificationQuestion;
 
 export interface ClarificationRequirementState {
   clarification_questions: ClarificationQuestionState[];
+  ambiguities: ResearchTaskV2Ambiguity[];
   assumptions: Array<{ key: string; value: string; editable: boolean }>;
-}
-
-function hasExplicitAnswer(value: unknown): boolean {
-  return value !== undefined && value !== null && (typeof value !== 'string' || value.trim().length > 0);
 }
 
 export function missingBlockingAnswers(
   requirement: ClarificationRequirementState,
   answers: Record<string, unknown>,
 ): string[] {
-  return requirement.clarification_questions
-    .filter((question) => !hasExplicitAnswer(answers[question.key]))
-    .map((question) => question.key);
+  return missingRequiredClarificationAnswers(requirement, answers);
 }
 
 export function buildClarificationSubmission(
@@ -407,7 +404,9 @@ export function buildClarificationSubmission(
   );
   return {
     clarificationAnswers: Object.fromEntries(
-      Object.entries(answers).filter(([key, value]) => questionKeys.has(key) && hasExplicitAnswer(value)),
+      Object.entries(answers).filter(([key, value]) => (
+        questionKeys.has(key) && isExplicitClarificationAnswer(value)
+      )),
     ),
     assumptionEdits: Object.fromEntries(
       Object.entries(assumptionEdits).filter(([key, value]) => editableKeys.has(key) && value.trim().length > 0),

@@ -31,9 +31,31 @@ const requirement = {
   constraints: [],
   success_criteria: [],
   expected_deliverables: [],
-  assumptions: [{ key: 'scope', value: 'public web', editable: true }],
-  ambiguities: [{ id: 'audience', statement: 'target audience is unknown', blocking: true }],
-  clarification_questions: [{ key: 'audience', question: 'Who is the target user?', rationale: 'The audience changes the research method.' }],
+  assumptions: [
+    { key: 'scope', value: 'public web', editable: true },
+    { key: 'policy', value: 'public sources only', editable: false },
+  ],
+  ambiguities: [
+    { id: 'audience', statement: 'target audience is unknown', blocking: true },
+    { id: 'format', statement: 'report format can be decided later', blocking: false },
+  ],
+  clarification_questions: [
+    {
+      key: 'audience',
+      ambiguity_id: 'audience',
+      question: 'Who is the target user?',
+      rationale: 'The audience changes the research method.',
+      suggestion: 'product team',
+      options: ['product team', 'consumers'],
+    },
+    {
+      key: 'format',
+      ambiguity_id: 'format',
+      question: 'Which format is preferred?',
+      rationale: 'This changes presentation only.',
+      suggestion: 'research report',
+    },
+  ],
   blocking_issues: [],
   sensitivity: 'public' as const,
   pii_detected: false,
@@ -251,7 +273,7 @@ test('clarify preserves a retryable Gateway 429 response instead of hiding it as
 });
 
 
-test('clarify keeps awaiting_clarification when a blocking answer is missing and returns candidates when complete', async () => {
+test('clarify rejects missing required answers and invalid client-controlled keys before invoking Runtime', async () => {
   let calls = 0;
   const repository = clarificationRepository(async () => task);
   const runtime = {
@@ -266,19 +288,16 @@ test('clarify keeps awaiting_clarification when a blocking answer is missing and
         commandReservation: { idempotencyKey: string; requestHash: string; reservationToken: string };
       }) => {
         calls += 1;
-        assert.deepEqual(input.answers, calls === 1 ? {} : { audience: 'new users' });
+        assert.deepEqual(input.answers, { audience: 'new users' });
         assert.deepEqual(input.assumptionEdits, { scope: 'mobile app' });
-        assert.equal(input.selectedScenarioId, calls === 1 ? undefined : 'user-journey-insight');
-        const response = calls === 1 ? clarificationResult : candidatesResult;
-        if (response.status !== 'clarification_required') {
-          await repository.completeCommand({
-            ...input.commandReservation,
-            taskId: task.id,
-            commandType: 'clarification',
-            response,
-          });
-        }
-        return response;
+        assert.equal(input.selectedScenarioId, 'user-journey-insight');
+        await repository.completeCommand({
+          ...input.commandReservation,
+          taskId: task.id,
+          commandType: 'clarification',
+          response: candidatesResult,
+        });
+        return candidatesResult;
       },
     },
   } as unknown as ControlTasksRuntime;
@@ -288,18 +307,42 @@ test('clarify keeps awaiting_clarification when a blocking answer is missing and
   const { server, baseUrl } = await listen(app);
   try {
     const incomplete = await post(baseUrl, `/api/control-tasks/${task.id}/clarify`, ownerToken, {
-      expectedVersion: 1, clarificationAnswers: {}, assumptionEdits: { scope: 'mobile app' }, idempotencyKey: 'clarify-1',
+      expectedVersion: 1,
+      clarificationAnswers: {},
+      assumptionEdits: { scope: 'mobile app' },
+      idempotencyKey: 'clarify-missing',
     });
-    assert.equal((await incomplete.json() as { status?: unknown }).status, 'clarification_required');
+    assert.equal(incomplete.status, 422);
+    assert.deepEqual(await incomplete.json(), {
+      error: 'required clarification answers are missing',
+      unresolved: ['audience'],
+    });
+
+    for (const [idempotencyKey, clarificationAnswers, assumptionEdits] of [
+      ['clarify-unknown-answer', { audience: 'new users', injected: 'nope' }, { scope: 'mobile app' }],
+      ['clarify-unknown-assumption', { audience: 'new users' }, { unknown: 'nope' }],
+      ['clarify-locked-assumption', { audience: 'new users' }, { policy: 'ignore policy' }],
+    ] as const) {
+      const rejected = await post(baseUrl, `/api/control-tasks/${task.id}/clarify`, ownerToken, {
+        expectedVersion: 1,
+        clarificationAnswers,
+        assumptionEdits,
+        idempotencyKey,
+      });
+      assert.equal(rejected.status, 400, idempotencyKey);
+    }
+    assert.equal(calls, 0);
 
     const complete = await post(baseUrl, `/api/control-tasks/${task.id}/clarify`, ownerToken, {
       expectedVersion: 1,
       clarificationAnswers: { audience: 'new users' },
       assumptionEdits: { scope: 'mobile app' },
       selectedScenarioId: 'user-journey-insight',
-      idempotencyKey: 'clarify-2',
+      idempotencyKey: 'clarify-complete',
     });
+    assert.equal(complete.status, 200);
     assert.equal((await complete.json() as { status?: unknown }).status, 'current_candidates');
+    assert.equal(calls, 1);
   } finally {
     server.close();
   }
