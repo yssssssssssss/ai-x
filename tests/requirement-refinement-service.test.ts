@@ -459,6 +459,39 @@ test('ambiguous requirements return clarification_required without invoking plan
   assert.equal(plannerCalls, 0);
 });
 
+test('mixed request persists a coherent outcome gate instead of rejecting mismatched model deliverables', async () => {
+  const { RequirementRefinementService } = await loadModule();
+  const inconsistent = requirement({
+    task_type: 'research_synthesis',
+    expected_deliverables: ['competitive_analysis_report'],
+    requested_artifacts: ['strategy_map', 'mind_model', 'design_principles', 'opportunity_backlog', 'prioritized_actions'],
+  });
+  const llm = new FixtureLLM([inconsistent]);
+  const repository = makeRepository();
+  let plannerCalls = 0;
+  const service = new RequirementRefinementService({
+    llm,
+    validator: new SchemaValidator(),
+    repository,
+    conversations: makeConversations(),
+    planner: { async plan() { plannerCalls += 1; } },
+  });
+
+  const result = await service.understand({
+    taskId,
+    conversationId,
+    ownerUserId,
+    originalInput: '创建一个调研任务，核心解决宠物心智的设计表达策略全景，并输出策略地图与优先行动。',
+  });
+
+  assert.equal(result.status, 'clarification_required');
+  assert.equal(result.requirement.task_type, 'user_research_planning');
+  assert.deepEqual(result.requirement.expected_deliverables, ['research_plan']);
+  assert.equal(result.requirement.clarification_questions[0]?.key, 'outcome_mode');
+  assert.equal(repository.versions.length, 1);
+  assert.equal(plannerCalls, 0);
+});
+
 test('Planning Guidance direction selection is persisted and resumes planning without another requirement LLM call', async () => {
   const { InvalidScenarioSelectionError, RequirementRefinementService } = await loadModule();
   const finalized = requirement({

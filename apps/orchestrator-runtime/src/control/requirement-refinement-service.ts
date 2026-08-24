@@ -258,6 +258,8 @@ export function normalizeOutcomeRequirement(
     };
     return {
       ...requirement,
+      task_type: 'user_research_planning',
+      expected_deliverables: ['research_plan'],
       outcome_mode: undefined,
       requested_artifacts: requested,
       clarification_questions: [

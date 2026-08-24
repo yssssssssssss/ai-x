@@ -10,8 +10,28 @@ function requirement(): ResearchTaskV2 {
 test('ambiguous plan plus answer request requires an explicit outcome choice', () => {
   const value = normalizeOutcomeRequirement(requirement(), '创建一个调研任务，输出策略地图、心智模型和机会点', null);
   assert.equal(value.outcome_mode, undefined);
+  assert.equal(value.task_type, 'user_research_planning');
+  assert.deepEqual(value.expected_deliverables, ['research_plan']);
   assert.equal(value.clarification_questions[0]?.key, 'outcome_mode');
   assert.deepEqual(value.requested_artifacts, ['strategy_map', 'mind_model', 'opportunity_backlog']);
+});
+
+test('ambiguous outcome repairs an inconsistent model task and deliverable before persistence', () => {
+  const inconsistent: ResearchTaskV2 = {
+    ...requirement(),
+    task_type: 'research_synthesis',
+    expected_deliverables: ['competitive_analysis_report'],
+    requested_artifacts: ['strategy_map', 'mind_model', 'design_principles', 'opportunity_backlog', 'prioritized_actions'],
+  };
+  const value = normalizeOutcomeRequirement(
+    inconsistent,
+    '创建一个调研任务，核心解决宠物心智的设计表达策略全景，包含全链路业务品牌心智、品类特色心智、场域心智策略。',
+    null,
+  );
+  assert.equal(value.outcome_mode, undefined);
+  assert.equal(value.task_type, 'user_research_planning');
+  assert.deepEqual(value.expected_deliverables, ['research_plan']);
+  assert.equal(value.clarification_questions[0]?.key, 'outcome_mode');
 });
 
 test('mixed intent is gated independently of an incorrect model task type', () => {
@@ -26,6 +46,8 @@ test('mixed intent is gated independently of an incorrect model task type', () =
     null,
   );
   assert.equal(value.outcome_mode, undefined);
+  assert.equal(value.task_type, 'user_research_planning');
+  assert.deepEqual(value.expected_deliverables, ['research_plan']);
   assert.equal(value.clarification_questions[0]?.key, 'outcome_mode');
 
   const selected = normalizeOutcomeRequirement(misclassified, '创建调研任务并给出策略地图', { outcome_mode: 'plan' });
