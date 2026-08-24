@@ -1563,6 +1563,7 @@ test('production control runtime returns the revised final deliverable ID for pa
         { kind: 'evidence_manifest', state: 'SEALED' },
         { kind: 'report_package', state: 'SEALED' },
         { kind: 'report_review', state: 'SEALED' },
+        { kind: 'report_review', state: 'SEALED' },
       ],
     );
     const deliverableArtifacts = terminalArtifacts.rows.filter((row) => row.kind === 'deliverable');
@@ -1581,8 +1582,10 @@ test('production control runtime returns the revised final deliverable ID for pa
       terminalArtifacts.rows.find((row) => row.kind === 'evidence_manifest')?.id,
       execution.evidenceManifestArtifactId,
     );
+    const reviewArtifacts = terminalArtifacts.rows.filter((row) => row.kind === 'report_review');
+    assert.equal(reviewArtifacts.length, 2);
     assert.equal(
-      terminalArtifacts.rows.find((row) => row.kind === 'report_review')?.id,
+      reviewArtifacts.find((row) => String(row.storage_uri).endsWith('/reports/review-r1.json'))?.id,
       execution.reportReviewArtifactId,
     );
     const verifiedReportPackage = await new ReportPackageArtifactService(artifacts).verify({
@@ -1616,7 +1619,7 @@ test('production control runtime returns the revised final deliverable ID for pa
     );
     const toolArtifact = referencedArtifacts.rows.find((row) => row.kind === 'tool_output');
     const manifestArtifact = referencedArtifacts.rows.find((row) => row.kind === 'evidence_manifest');
-    const reviewArtifact = referencedArtifacts.rows.find((row) => row.kind === 'report_review');
+    const reviewArtifact = referencedArtifacts.rows.find((row) => row.id === execution.reportReviewArtifactId);
     assert.ok(toolArtifact);
     assert.ok(manifestArtifact);
     assert.ok(reviewArtifact);
@@ -1745,7 +1748,11 @@ test('production control runtime returns the revised final deliverable ID for pa
     const pausedDeliverables = terminalArtifacts.rows.filter((row) => row.kind === 'deliverable');
     assert.equal(pausedDeliverables.length, 2);
     assert.equal(new Set(pausedDeliverables.map((row) => row.id)).size, 2);
-    const finalReviewArtifact = terminalArtifacts.rows.find((row) => row.kind === 'report_review');
+    const reviewArtifacts = terminalArtifacts.rows.filter((row) => row.kind === 'report_review');
+    assert.equal(reviewArtifacts.length, 2);
+    const finalReviewArtifact = reviewArtifacts.find((row) => (
+      String(row.storage_uri).endsWith('/reports/review-r1.json')
+    ));
     assert.ok(finalReviewArtifact);
     assert.equal(finalReviewArtifact.id, pausedExecution.reportReviewArtifactId);
     const finalReview: unknown = JSON.parse(readFileSync(String(finalReviewArtifact.storage_uri), 'utf8'));
