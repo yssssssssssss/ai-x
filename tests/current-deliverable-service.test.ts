@@ -1339,6 +1339,48 @@ test('revises an open strategy report through one bounded Content Draft repair',
   ]);
 });
 
+test('deterministically restores empty provisional Evidence bindings before invoking repair', async () => {
+  const content = openStrategyDraft();
+  content.directAnswers[0]!.answerStatus = 'provisional';
+  content.directAnswers[0]!.evidenceIds = [];
+  content.directAnswers[0]!.validationNeeded = 'Validate the answer.';
+  content.evidenceFindings[0]!.support.status = 'provisional';
+  content.evidenceFindings[0]!.support.evidenceIds = [];
+  content.evidenceFindings[0]!.support.validationNeeded = 'Validate the finding.';
+  const narrative = content.contentBlocks[0]!;
+  assert.equal(narrative.kind, 'narrative');
+  if (narrative.kind === 'narrative') {
+    narrative.support.status = 'provisional';
+    narrative.support.evidenceIds = [];
+    narrative.support.validationNeeded = 'Validate the narrative.';
+  }
+  const bindingSource: SynthesisMaterial = {
+    stepNo: 3,
+    actorType: 'llm',
+    actorId: 'llm.openai.gpt-4o',
+    questionIds: ['q1'],
+    artifactId: 'evidence-inventory-1',
+    artifactContentSha256: `sha256:${'b'.repeat(64)}`,
+    semanticRole: 'inference',
+    value: { text: '## q1\nVerified source: E1.' },
+  };
+  const materializer = {
+    async materialize(): Promise<SynthesisMaterial[]> {
+      return [bindingSource, ...openStrategyMaterials(content)];
+    },
+  };
+  const { service, llm, writes } = await createHarness(openStrategyDraft(), materializer);
+
+  const result = await service.generate(generateInput(openStrategyInput()));
+
+  assert.equal(llm.structuredCalls.length, 0);
+  assert.deepEqual(
+    (result.deliverable.payload as unknown as ResearchStrategyReportPayloadV2).directAnswers[0]?.evidenceIds,
+    ['E1'],
+  );
+  assert.equal(writes[0]?.kind, 'deliverable');
+});
+
 test('repairs one invalid reviewed Content Draft without returning to full Deliverable synthesis', async () => {
   const invalid = openStrategyDraft();
   invalid.directAnswers[0]!.evidenceIds = ['unknown-evidence'];
@@ -1350,8 +1392,14 @@ test('repairs one invalid reviewed Content Draft without returning to full Deliv
   assert.equal(llm.structuredCalls.length, 1);
   assert.equal(llm.structuredCalls[0]?.receipt.stage, 'deliverable_repair');
   assert.equal((result.deliverable.payload as { schemaVersion?: string }).schemaVersion, 'research-strategy-content-v2');
-  assert.equal(writes.length, 1);
-  assert.equal(writes[0]?.kind, 'deliverable');
+  assert.deepEqual(writes.map(({ kind, relativePath }) => ({ kind, relativePath })), [{
+    kind: 'deliverable_validation_diagnostic',
+    relativePath: 'diagnostics/deliverable-validation-r0.json',
+  }, {
+    kind: 'deliverable',
+    relativePath: 'deliverables/final-r0.json',
+  }]);
+  assert.equal((writes[0]?.value as { fallbackApplied?: boolean }).fallbackApplied, true);
 });
 
 test('canonicalizes a safe localized Question alias introduced by bounded Content Draft repair', async () => {
@@ -1392,7 +1440,7 @@ test('canonicalizes a safe localized Question alias introduced by bounded Conten
   const block = (result.deliverable.payload as unknown as ResearchStrategyReportPayloadV2).contentBlocks[0]!;
   assert.equal(block.kind, 'narrative');
   if (block.kind === 'narrative') assert.deepEqual(block.support.questionIds, ['q1']);
-  assert.equal(writes[0]?.kind, 'deliverable');
+  assert.deepEqual(writes.map(({ kind }) => kind), ['deliverable_validation_diagnostic', 'deliverable']);
 });
 
 test('persists a sanitized diagnostic when reviewed Skill assembly and its bounded repair fail', async () => {
@@ -1403,8 +1451,14 @@ test('persists a sanitized diagnostic when reviewed Skill assembly and its bound
   await assert.rejects(() => service.generate(generateInput(openStrategyInput())), /unknown Evidence/);
 
   assert.equal(llm.structuredCalls.length, 1);
-  assert.equal(writes.length, 1);
-  assert.equal(writes[0]?.kind, 'deliverable_validation_diagnostic');
-  assert.equal(writes[0]?.schemaVersion, 'deliverable-validation-diagnostic-v1');
-  assert.doesNotMatch(JSON.stringify(writes[0]?.value), /api[_-]?key|authorization|bearer/iu);
+  assert.equal(writes.length, 2);
+  assert.deepEqual(writes.map(({ relativePath }) => relativePath), [
+    'diagnostics/deliverable-validation-r0.json',
+    'diagnostics/deliverable-validation-r1.json',
+  ]);
+  assert.ok(writes.every(({ kind }) => kind === 'deliverable_validation_diagnostic'));
+  assert.equal((writes[0]?.value as { fallbackApplied?: boolean }).fallbackApplied, true);
+  assert.equal((writes[1]?.value as { fallbackApplied?: boolean }).fallbackApplied, false);
+  assert.ok(writes.every(({ schemaVersion }) => schemaVersion === 'deliverable-validation-diagnostic-v1'));
+  assert.doesNotMatch(JSON.stringify(writes.map(({ value }) => value)), /api[_-]?key|authorization|bearer/iu);
 });

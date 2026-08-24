@@ -1263,6 +1263,42 @@ export class CurrentDeliverableService {
       let deliverable: ResearchDeliverableEnvelope<ResearchStrategyReportPayloadV2> | null = null;
       let draftOverride = input.strategyDraftOverride;
       const assemblyAttempts = draftOverride ? 1 : 2;
+      const persistAssemblyDiagnostic = async (
+        assemblyRound: number,
+        error: unknown,
+        fallbackApplied: boolean,
+      ): Promise<void> => {
+        const round = (input.revisionRound ?? 0) + assemblyRound;
+        const diagnostic = createDeliverableValidationDiagnostic({
+          taskId: input.task.id,
+          planVersionId: input.plan.id,
+          attemptId: input.attempt.id,
+          stage: 'canonical_assembly',
+          round,
+          error,
+          fallbackApplied,
+        });
+        this.dependencies.validator.validateFileOrThrow(
+          'schemas/deliverable-validation-diagnostic.schema.json',
+          diagnostic,
+        );
+        try {
+          await this.dependencies.artifacts.writeJson({
+            taskId: input.task.id,
+            planVersionId: input.plan.id,
+            attemptId: input.attempt.id,
+            kind: 'deliverable_validation_diagnostic',
+            relativePath: `diagnostics/deliverable-validation-r${round}.json`,
+            schemaVersion: diagnostic.version,
+            sensitivity: 'internal',
+            redactionPolicyVersion: 'v1',
+            activeLease: input.activeLease,
+            value: diagnostic,
+          });
+        } catch {
+          // Diagnostics are best-effort and must not hide the authoritative validation failure.
+        }
+      };
       for (let assemblyRound = 0; assemblyRound < assemblyAttempts; assemblyRound += 1) {
         try {
           deliverable = assembleResearchStrategyDeliverable({
@@ -1297,6 +1333,7 @@ export class CurrentDeliverableService {
             && error instanceof ResearchStrategyAssemblyError
             && !/Reviewer verdict|no final Reviewer/u.test(error.message);
           if (repairable) {
+            await persistAssemblyDiagnostic(assemblyRound, error, true);
             const originalDraft = extractResearchStrategyContentDraft(synthesisMaterials);
             const repaired = await this.dependencies.llm.generateStructured<ResearchStrategyContentDraftV2>({
               prompt: [
@@ -1338,34 +1375,7 @@ export class CurrentDeliverableService {
             draftOverride = repaired.data;
             continue;
           }
-          const diagnostic = createDeliverableValidationDiagnostic({
-            taskId: input.task.id,
-            planVersionId: input.plan.id,
-            attemptId: input.attempt.id,
-            stage: 'canonical_assembly',
-            round: assemblyRound,
-            error,
-          });
-          this.dependencies.validator.validateFileOrThrow(
-            'schemas/deliverable-validation-diagnostic.schema.json',
-            diagnostic,
-          );
-          try {
-            await this.dependencies.artifacts.writeJson({
-              taskId: input.task.id,
-              planVersionId: input.plan.id,
-              attemptId: input.attempt.id,
-              kind: 'deliverable_validation_diagnostic',
-              relativePath: `diagnostics/deliverable-validation-r${assemblyRound}.json`,
-              schemaVersion: diagnostic.version,
-              sensitivity: 'internal',
-              redactionPolicyVersion: 'v1',
-              activeLease: input.activeLease,
-              value: diagnostic,
-            });
-          } catch {
-            // Diagnostics are best-effort and must not hide the authoritative validation failure.
-          }
+          await persistAssemblyDiagnostic(assemblyRound, error, false);
           throw error;
         }
       }

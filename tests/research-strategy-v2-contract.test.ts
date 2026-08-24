@@ -459,7 +459,6 @@ test('assembler restores empty provisional bindings from question-indexed verifi
   }
 
   const result = assemble({
-    draftOverride: value,
     materials: [
       evidenceInventoryMaterial('## Q1｜Evidence inventory\nVerified market context: E1.'),
       ...materials(value),
@@ -487,7 +486,6 @@ test('assembler does not hydrate bindings from unknown upstream Evidence referen
 
   assert.throws(
     () => assemble({
-      draftOverride: value,
       materials: [
         evidenceInventoryMaterial('## Q1｜Evidence inventory\nUnknown source: E9-9.'),
         ...materials(value),

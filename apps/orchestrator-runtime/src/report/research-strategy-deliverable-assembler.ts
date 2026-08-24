@@ -427,6 +427,9 @@ function identifierOccursAt(source: string, identifier: string, index: number): 
   return !/[A-Za-z0-9_:-]/u.test(before) && !/[A-Za-z0-9_:-]/u.test(after);
 }
 
+// Recovery is intentionally narrow: only exact IDs that appear under an exact
+// ProblemGraph question heading and also exist in the sealed Manifest are eligible.
+// The referenced prose is never copied into the Canonical Deliverable.
 function questionEvidenceHints(input: {
   materials: readonly SynthesisMaterial[];
   problemGraph: ProblemGraph;
@@ -478,6 +481,8 @@ function questionEvidenceHints(input: {
   return new Map([...hints].map(([questionId, ids]) => [questionId, [...ids]]));
 }
 
+// Missing bindings may be restored only for explicitly provisional content. The
+// operation supplies factual context; it never upgrades an analysis to supported.
 function hydrateEmptyEvidenceBindings(input: {
   draft: ResearchStrategyContentDraftV2;
   materials: readonly SynthesisMaterial[];
@@ -603,21 +608,18 @@ export function assembleResearchStrategyDeliverable(input: {
   validator?: Pick<SchemaValidator, 'validateFileOrThrow'>;
 }): ResearchDeliverableEnvelope<ResearchStrategyReportPayloadV2> {
   const validator = input.validator ?? new SchemaValidator();
-  const normalizedDraft = canonicalizeQuestionAliases(
-    canonicalizeEvidenceAliases(
-      input.draftOverride ?? extractResearchStrategyContentDraft(input.materials),
-      input.evidenceManifest,
+  const draft = hydrateEmptyEvidenceBindings({
+    draft: canonicalizeQuestionAliases(
+      canonicalizeEvidenceAliases(
+        input.draftOverride ?? extractResearchStrategyContentDraft(input.materials),
+        input.evidenceManifest,
+      ),
+      input.problemGraph,
     ),
-    input.problemGraph,
-  );
-  const draft = input.draftOverride
-    ? hydrateEmptyEvidenceBindings({
-        draft: normalizedDraft,
-        materials: input.materials,
-        problemGraph: input.problemGraph,
-        evidenceManifest: input.evidenceManifest,
-      })
-    : normalizedDraft;
+    materials: input.materials,
+    problemGraph: input.problemGraph,
+    evidenceManifest: input.evidenceManifest,
+  });
   validator.validateFileOrThrow(DRAFT_SCHEMA, draft);
   validateSupportBindings({ draft, problemGraph: input.problemGraph, evidenceManifest: input.evidenceManifest });
 
