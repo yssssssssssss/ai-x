@@ -1462,6 +1462,26 @@ test('normalizes missing Evidence and a safe Question alias introduced by bounde
   assert.deepEqual(writes.map(({ kind }) => kind), ['deliverable_validation_diagnostic', 'deliverable']);
 });
 
+test('rejects a structural repair that rewrites reviewed semantic content', async () => {
+  const invalid = openStrategyDraft();
+  invalid.directAnswers[0]!.evidenceIds = ['unknown-evidence'];
+  const rewritten = openStrategyDraft();
+  rewritten.directAnswers[0]!.answer = 'A compressed replacement answer.';
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(invalid); } };
+  const { service, llm, writes } = await createHarness(rewritten, materializer);
+
+  await assert.rejects(
+    () => service.generate(generateInput(openStrategyInput())),
+    /content fidelity failed.*direct-answer:001/iu,
+  );
+
+  assert.equal(llm.structuredCalls.length, 1);
+  assert.deepEqual(writes.map(({ relativePath }) => relativePath), [
+    'diagnostics/deliverable-validation-r0.json',
+    'diagnostics/deliverable-validation-r1.json',
+  ]);
+});
+
 test('persists a sanitized diagnostic when reviewed Skill assembly and its bounded repair fail', async () => {
   const invalid = openStrategyDraft();
   invalid.directAnswers[0]!.evidenceIds = ['unknown-evidence'];

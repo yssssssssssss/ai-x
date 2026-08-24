@@ -42,6 +42,7 @@ import {
   ResearchStrategyAssemblyError,
 } from './research-strategy-deliverable-assembler.ts';
 import { createDeliverableValidationDiagnostic } from './deliverable-validation-diagnostic.ts';
+import { assertStructuralRepairFidelity } from './research-strategy-content-fidelity.ts';
 import {
   canonicalizeRequestedArtifactBindings,
   validateResearchStrategyAnswer,
@@ -1262,6 +1263,8 @@ export class CurrentDeliverableService {
       }
       let deliverable: ResearchDeliverableEnvelope<ResearchStrategyReportPayloadV2> | null = null;
       let draftOverride = input.strategyDraftOverride;
+      const sourceDraft = draftOverride ?? extractResearchStrategyContentDraft(synthesisMaterials);
+      let structuralRepairApplied = false;
       const assemblyAttempts = draftOverride ? 1 : 2;
       const persistAssemblyDiagnostic = async (
         assemblyRound: number,
@@ -1301,6 +1304,9 @@ export class CurrentDeliverableService {
       };
       for (let assemblyRound = 0; assemblyRound < assemblyAttempts; assemblyRound += 1) {
         try {
+          if (structuralRepairApplied && draftOverride) {
+            assertStructuralRepairFidelity(sourceDraft, draftOverride);
+          }
           deliverable = assembleResearchStrategyDeliverable({
             taskId: input.task.id,
             planVersionId: input.plan.id,
@@ -1334,7 +1340,7 @@ export class CurrentDeliverableService {
             && !/Reviewer verdict|no final Reviewer/u.test(error.message);
           if (repairable) {
             await persistAssemblyDiagnostic(assemblyRound, error, true);
-            const originalDraft = extractResearchStrategyContentDraft(synthesisMaterials);
+            const originalDraft = sourceDraft;
             const repaired = await this.dependencies.llm.generateStructured<ResearchStrategyContentDraftV2>({
               prompt: [
                 'Repair the reviewed research-strategy-content-draft-v2 without changing its substantive conclusions.',
@@ -1373,6 +1379,7 @@ export class CurrentDeliverableService {
               },
             });
             draftOverride = repaired.data;
+            structuralRepairApplied = true;
             continue;
           }
           await persistAssemblyDiagnostic(assemblyRound, error, false);
