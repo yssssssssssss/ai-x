@@ -716,6 +716,56 @@ test('reads only component IDs frozen by a verified Report Package', async () =>
   assert.equal(fixture.artifacts.reads.includes(alternateReviewId), false);
 });
 
+test('reads Knowledge Evidence from its sealed knowledge_output Artifact', async () => {
+  const fixture = setup();
+  const knowledgeArtifactId = 'knowledge-output-1';
+  const knowledgeHash = `sha256:${'4'.repeat(64)}`;
+  const knowledgeValue = { resources: [{ content: 'Verified research method.' }] };
+  fixture.artifacts.add(
+    artifact(knowledgeArtifactId, 'knowledge_output', 'knowledge-bundle-v1', {
+      contentSha256: knowledgeHash,
+    }),
+    knowledgeValue,
+  );
+  const storedManifest = fixture.artifacts.artifacts.get(manifestArtifactId);
+  assert.ok(storedManifest);
+  storedManifest.value = new EvidenceService().createManifest({
+    ...binding,
+    collectedAt: '2026-08-14T10:00:00.000Z',
+    entries: [
+      ...manifest().entries,
+      {
+        id: 'K2-1',
+        kind: 'knowledge_excerpt',
+        evidenceClass: 'knowledge',
+        artifactId: knowledgeArtifactId,
+        artifactContentSha256: knowledgeHash,
+        jsonPointer: '/resources/0/content',
+        stepNo: 2,
+        sensitivity: 'internal',
+        redaction: 'none',
+      },
+    ],
+  }, {
+    resolveArtifact: (artifactId) => artifactId === knowledgeArtifactId
+      ? {
+          artifact: { id: knowledgeArtifactId, contentSha256: knowledgeHash },
+          value: knowledgeValue,
+        }
+      : artifactId === evidenceArtifactId
+        ? {
+            artifact: { id: evidenceArtifactId, contentSha256: evidenceContentSha256 },
+            value: evidenceValue(),
+          }
+        : null,
+  });
+
+  const result = await fixture.reader.read(binding);
+
+  assert.equal(result?.presentationMode, 'current_text');
+  assert.ok(fixture.artifacts.reads.includes(knowledgeArtifactId));
+});
+
 test('reads screenshot and user-constraint Evidence from their concrete Artifact kinds', async () => {
   const fixture = setup();
   const screenshotArtifactId = 'screenshot-evidence-1';
