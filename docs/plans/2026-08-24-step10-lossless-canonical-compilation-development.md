@@ -1,6 +1,6 @@
 # Step 10 无损 Canonical Deliverable 编译与内容保真开发方案
 
-> 状态：源码实现完成；本地全量门禁、真实失败快照离线回放和独立代码审查均通过；最新真实 Gateway/数据库闭环与 live Zero 验收待完成
+> 状态：源码实现完成；本地全量门禁、真实 terminal rebuild、报告读取和独立代码审查均通过；fresh 全链 Gateway/数据库/Tavily 与 live Zero 验收待完成
 >
 > 日期：2026-08-24
 >
@@ -8,7 +8,7 @@
 >
 > 基线提交：`560457c7fa57e8475fae2f819032130e7d38512c`
 >
-> 实现提交：`2c3e80e`、`e32105e`、`0be6e0f`、`eab6ad5`、`7415bde`、`3e965b1`、`140a1ce`、`bf9ecdc`、`03011cb`、`034431b`
+> 实现提交：`2c3e80e`、`e32105e`、`0be6e0f`、`eab6ad5`、`7415bde`、`3e965b1`、`140a1ce`、`bf9ecdc`、`03011cb`、`034431b`、`5262605`
 >
 > 关联文档：
 > - `docs/adr/0004-separate-research-planning-from-answer-delivery.md`
@@ -830,8 +830,8 @@ push requires explicit authorization                      required
 当前本地门禁：
 
 ```text
-1723 tests
-1708 passed
+1724 tests
+1709 passed
 15 skipped
 0 failed
 TypeScript passed
@@ -852,9 +852,24 @@ PASS_WITHOUT_REPAIR
 14 Analyses
 ```
 
+真实 terminal rebuild Attempt `c344f12b-dbe7-4d11-ac12-864e70b697b5` 已完成：
+
+```text
+Task state: completed_with_gaps
+Steps 1–9: reused and resealed
+Canonical Deliverable: SEALED
+Report Review: pass / SEALED
+Layout Blueprint: SEALED
+ReportDocument v2: SEALED, 11 sections
+Report Package: SEALED
+Owner Deliverable API: HTTP 200
+```
+
+该运行同时暴露并修复了 Report Package Reader 将 `knowledge_excerpt` 错误映射为 Artifact kind 的读取缺陷；正确 Artifact kind 为 `knowledge_output`。
+
 仍待完成：
 
-- 新 HEAD 的真实 Gateway/数据库/Tavily 完整任务；
+- fresh 新任务的真实 Gateway/数据库/Tavily 完整执行（非 terminal rebuild）；
 - final Review、Layout、ReportDocument 和 Report Package 实际落盘验证；
 - live Zero，或明确外部门禁例外；
 - merge/restart 授权；
