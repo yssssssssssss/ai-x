@@ -2633,6 +2633,102 @@ test('inserts a failed step when the lease expires during checkpoint reseal befo
   );
 });
 
+test('terminal rebuild reuses every sealed plan output after deliverable validation failure', async () => {
+  const structuredTask = {
+    version: 'research-task-v2',
+    task_type: 'research_synthesis',
+    outcome_mode: 'answer',
+    business_domain: 'test',
+    research_goal: 'answer the strategy question',
+    target_audience: ['team'],
+    scope: ['test'],
+    constraints: [],
+    success_criteria: [{ id: 'SC1', statement: 'Answer the question' }],
+    expected_deliverables: ['research_strategy_report'],
+    requested_artifacts: ['executive_answers'],
+    assumptions: [],
+    ambiguities: [],
+    clarification_questions: [],
+    blocking_issues: [],
+    sensitivity: 'public',
+    pii_detected: false,
+  };
+  const first = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    planSteps,
+    {
+      deliverable_type: 'research_strategy_report',
+      evidence_requirements: [{
+        id: 'research-strategy-report', acceptedClasses: ['public_source'], minimumCount: 1, required: true,
+      }],
+    },
+    structuredTask,
+  );
+  const firstDeliverables = new RecordingDeliverablesFake(async () => {
+    throw new CurrentReportValidationError('first canonical assembly failed');
+  });
+  const firstResult = await buildEngine(
+    first.repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new CountingRealLLM(),
+    firstDeliverables,
+  ).execute({ lease: first.lease, expectedModel: 'pinned-model' });
+  assert.equal(firstResult.status, 'paused');
+  assert.equal(firstResult.failure?.kind, 'deliverable_validation');
+
+  const pausedTask = await first.repository.getTaskDetail(first.lease.taskId);
+  assert.ok(pausedTask);
+  const readyTask = await first.repository.retryPausedExecution({
+    taskId: first.lease.taskId,
+    attemptId: first.lease.attemptId,
+    expectedVersion: pausedTask.stateVersion,
+    failedStepNo: firstResult.failedStepNo,
+  });
+  assert.ok(readyTask);
+  const retryToken = randomUUID();
+  const retryClaim = await first.repository.claimExecution({
+    taskId: first.lease.taskId,
+    planVersionId: first.lease.planVersionId,
+    expectedVersion: readyTask.stateVersion,
+    idempotencyKey: randomUUID(),
+    requestHash: `sha256:${randomUUID()}`,
+    leaseOwner: 'terminal-rebuild-worker',
+    leaseTokenHash: leaseHash(retryToken),
+    leaseExpiresAt: new Date(Date.now() + 60_000),
+    retryOf: first.lease.attemptId,
+  });
+  const retryLease: ControlExecutionLease = {
+    taskId: first.lease.taskId,
+    planVersionId: first.lease.planVersionId,
+    attemptId: retryClaim.attemptId,
+    leaseOwner: 'terminal-rebuild-worker',
+    leaseToken: retryToken,
+    retryOf: first.lease.attemptId,
+  };
+  const retryTool = new CountingRealTavilyAdapter();
+  const retryLlm = new CountingRealLLM();
+  const retryDeliverables = new RecordingDeliverablesFake();
+
+  const retryResult = await buildEngine(
+    first.repository,
+    new ToolRouter().register(retryTool),
+    retryLlm,
+    retryDeliverables,
+  ).execute({ lease: retryLease, expectedModel: 'pinned-model' });
+
+  assert.equal(retryResult.status, 'completed');
+  assert.equal(retryTool.calls, 0);
+  assert.equal(retryLlm.calls, 0);
+  assert.equal(retryDeliverables.calls.length, 1);
+  const retrySteps = await first.repository.listExecutionSteps(retryLease.attemptId);
+  assert.equal(retrySteps.filter(({ state }) => state === 'succeeded').length, planSteps.length);
+  assert.ok(retrySteps.every((step) => {
+    if (step.actorType === 'tool') return typeof step.toolProvenance?.sourceArtifactId === 'string';
+    return typeof step.skillProvenance?.sourceArtifactId === 'string'
+      && step.skillProvenance?.terminalRebuild === true;
+  }));
+});
+
 test('orders parallel outputs by step number regardless of completion timing', async () => {
   const steps: CurrentPlanStep[] = [
     planSteps[0]!,

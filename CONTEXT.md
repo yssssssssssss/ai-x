@@ -91,3 +91,12 @@ _Avoid_: 章节标题不理想、布局模型不可用
 
 **布局降级**：布局蓝图不可用时，系统在不改变 Canonical Deliverable 内容的前提下采用确定性顺序完成报告展示。
 _Avoid_: 重新研究、静默丢弃内容、把降级误报为内容失败
+
+**无损 Canonical 编译**：Step 10 将已 Review 的语义 Draft 转换为 Canonical Deliverable 时，只能规范化引用、生成机器元数据和追加明确缺失的请求内容；不得删除、重排或隐式改写已有语义单元。
+_Avoid_: 为通过 Schema 压缩报告、第二次全文重写
+
+**类型化内容补丁**：结构修复或语义修订使用的显式操作清单；每项操作必须指向稳定 key，结构修复只能改绑定或追加缺失内容，不能修改正文。
+_Avoid_: 返回整份替换 Draft、自由 JSON Patch、无目标全文重写
+
+**审校草稿预览**：Canonical 门禁失败时向任务所有者展示的脱敏内容摘要；它明确不是正式报告、不可导出或发布，仅用于确认已有工作未丢失。
+_Avoid_: 将失败 Draft 当作 Canonical Deliverable、绕过 Evidence Gate 发布

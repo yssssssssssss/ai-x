@@ -23,6 +23,13 @@ test('workbench has one contained scroll chain and a non-scrolling bottom compos
   assert.match(composerSource, /className="composer"/u);
 });
 
+test('deliverable validation retry explains terminal rebuild before full retry fallback', async () => {
+  const source = await readFile(workbench, 'utf8');
+  assert.match(source, /failure\?\.kind === 'deliverable_validation'/u);
+  assert.match(source, /优先复用已验证的计划步骤，只重新构建 Canonical Deliverable/u);
+  assert.match(source, /复用校验失败时才回退为完整重试/u);
+});
+
 test('current conversation renders each user turn before assistant stages and isolates loading state', async () => {
   const [source, css] = await Promise.all([
     readFile(workbench, 'utf8'),

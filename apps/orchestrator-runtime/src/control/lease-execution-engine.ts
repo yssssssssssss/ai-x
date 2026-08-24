@@ -1549,7 +1549,13 @@ export class LeaseExecutionEngine {
       });
       throw preflightError;
     }
-    const reusable = await this.loadReusableExecutions(input.lease, plan, planVersion.planHash, researchGoal);
+    const reusable = await this.loadReusableExecutions(
+      input.lease,
+      plan,
+      planVersion.planHash,
+      researchGoal,
+      deliverableId,
+    );
     const outputs: EngineSealedStepOutput[] = [];
     const resolvedArtifacts = new Map<string, ResolvedEvidenceArtifact>();
     const visualAssetService = new VisualAssetService({ artifacts: this.dependencies.artifacts });
@@ -1650,7 +1656,7 @@ export class LeaseExecutionEngine {
               ...(step.actor_type === 'tool'
                 ? { toolProvenance: { ...checkpoint.provenance, outputArtifactId: resealed.id, sourceArtifactId: priorArtifact.id } }
                 : {}),
-              ...(step.actor_type === 'skill'
+              ...(step.actor_type !== 'tool'
                 ? {
                     skillProvenance: {
                       ...checkpoint.provenance,
@@ -2960,10 +2966,99 @@ export class LeaseExecutionEngine {
     plan: EnginePlan,
     planHash: string,
     researchGoal: string,
+    deliverableId: string,
   ): Promise<Map<number, ReusableExecution>> {
     const reusable = new Map<number, ReusableExecution>();
     if (!lease.retryOf) return reusable;
     const previous = await this.dependencies.repository.listExecutionSteps(lease.retryOf);
+    const finalPlanStepNo = Math.max(...plan.steps.map(({ step_no }) => step_no));
+    const authoritativeFailure = selectAuthoritativeFailedStep(previous.map((step) => ({
+      stepNo: step.stepNo,
+      state: step.state,
+      failure: step.failure,
+    })));
+    const terminalRebuildEligible = deliverableId === 'research_strategy_report'
+      && authoritativeFailure?.stepNo === finalPlanStepNo + 1
+      && authoritativeFailure.failure?.kind === 'deliverable_validation'
+      && plan.steps.every((step) => previous.some((prior) => (
+        prior.stepNo === step.step_no
+        && prior.actorType === step.actor_type
+        && prior.actorId === step.actor_id
+        && prior.state === 'succeeded'
+        && typeof prior.outputArtifactId === 'string'
+      )))
+      && !plan.steps.some(({ actor_id }) => actor_id === 'playwright-page-capture');
+    if (terminalRebuildEligible) {
+      try {
+        const modelCalls = await this.dependencies.repository.listModelCalls(lease.retryOf);
+        const terminalReusable = new Map<number, ReusableExecution>();
+        const expectedKinds: Record<EngineStep['actor_type'], StepArtifactKind> = {
+          knowledge: 'knowledge_output',
+          tool: 'tool_output',
+          skill: 'skill_output',
+          llm: 'llm_output',
+          reviewer: 'review_output',
+        };
+        for (const step of plan.steps) {
+          const prior = previous.find((candidate) => candidate.stepNo === step.step_no)!;
+          const artifact = await this.dependencies.repository.getArtifact(prior.outputArtifactId!);
+          if (
+            !artifact
+            || artifact.state !== 'SEALED'
+            || !artifact.contentSha256
+            || artifact.taskId !== lease.taskId
+            || artifact.planVersionId !== lease.planVersionId
+            || artifact.attemptId !== lease.retryOf
+            || artifact.kind !== expectedKinds[step.actor_type]
+          ) throw new Error(`terminal rebuild Artifact for step ${step.step_no} is not reusable`);
+          let provenance: Record<string, unknown> | null = null;
+          if (step.actor_type === 'tool') {
+            provenance = prior.toolProvenance;
+            if (
+              !provenance
+              || provenance.planHash !== planHash
+              || provenance.stepHash !== hashJson(step)
+            ) throw new Error(`terminal rebuild Tool provenance for step ${step.step_no} drifted`);
+          } else if (step.actor_type === 'knowledge' || step.actor_type === 'skill') {
+            provenance = prior.skillProvenance;
+            if (!provenance) throw new Error(`terminal rebuild provenance for step ${step.step_no} is missing`);
+          } else {
+            const call = modelCalls.find((candidate) => (
+              candidate.stepNo === step.step_no
+              && candidate.stage === step.actor_type
+              && candidate.status === 'succeeded'
+            ));
+            if (!call) throw new Error(`terminal rebuild Model receipt for step ${step.step_no} is missing`);
+            provenance = {
+              kind: 'model_reuse',
+              sourceModelCallId: call.id,
+              provider: call.provider,
+              endpointHost: call.endpointHost,
+              requestedModel: call.requestedModel,
+              actualModel: call.actualModel,
+              modelVersion: call.modelVersion,
+              promptHash: call.promptHash,
+              contextManifestHash: call.contextManifestHash,
+              traceId: call.traceId,
+              status: call.status,
+            };
+          }
+          const stored = await this.dependencies.artifacts.readVerifiedJson<Record<string, unknown>>(artifact.id);
+          const output = isRecord(stored.value) && 'output' in stored.value ? stored.value.output : stored.value;
+          terminalReusable.set(step.step_no, {
+            output,
+            outputArtifactId: artifact.id,
+            artifactValue: stored.value,
+            kind: artifact.kind as StepArtifactKind,
+            schemaVersion: artifact.schemaVersion,
+            provenance: { ...provenance, outputArtifactId: artifact.id, terminalRebuild: true },
+          });
+        }
+        if (terminalReusable.size === plan.steps.length) return terminalReusable;
+      } catch {
+        // Any lineage, receipt, or Artifact drift falls back to the ordinary retry path.
+      }
+    }
     let invalid = false;
     for (const step of plan.steps) {
       if (invalid) break;
