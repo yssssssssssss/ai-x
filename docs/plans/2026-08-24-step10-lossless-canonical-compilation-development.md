@@ -1,12 +1,14 @@
 # Step 10 无损 Canonical Deliverable 编译与内容保真开发方案
 
-> 状态：已批准，待实施
+> 状态：源码实现完成；本地全量门禁、真实失败快照离线回放和独立代码审查均通过；最新真实 Gateway/数据库闭环与 live Zero 验收待完成
 >
 > 日期：2026-08-24
 >
 > 实施分支：`feat/research-answer-dynamic-reports`
 >
 > 基线提交：`560457c7fa57e8475fae2f819032130e7d38512c`
+>
+> 实现提交：`2c3e80e`、`e32105e`、`0be6e0f`、`eab6ad5`、`7415bde`、`3e965b1`、`140a1ce`、`bf9ecdc`、`03011cb`、`034431b`
 >
 > 关联文档：
 > - `docs/adr/0004-separate-research-planning-from-answer-delivery.md`
@@ -808,3 +810,52 @@ live Zero passes or receives explicit exception           required
 main merge/restart requires explicit authorization        required
 push requires explicit authorization                      required
 ```
+
+## 21. 实施结果（2026-08-24）
+
+已完成：
+
+- 新增 Content Unit Inventory、semantic hash 与结构/语义 fidelity gate；
+- assembly structural repair 与 final semantic revision 均切换为 `research-strategy-content-patch-v1`；
+- Patch 合同禁止 remove，结构模式禁止正文改写与置信度提升；
+- 缺失 requested Block 只能追加，已有 Block 和 item 不得被删除或重排；
+- Canonical → ReportDocument 增加逐 Direct Answer、Finding、item/cell/node/edge 的 exact-once 覆盖；
+- 每轮成功编译持久化 `content-fidelity-diagnostic-v1`；
+- Canonical 失败向任务所有者提供脱敏、不可导出的 Reviewed Draft Preview；
+- `deliverable_validation` retry 在严格 lineage 条件满足时启用 terminal rebuild，复用并重新 seal 已验证计划输出；
+- 任一 Artifact、Plan、Receipt 或 lineage 检查失败时自动退回普通完整重试；
+- 独立代码审查最终结论：`READY`；三轮审查提出的 exact-once 覆盖、Review issue 授权、Patch Schema 验证、事实 Evidence、连续 terminal rebuild 和必需诊断问题均已关闭；
+- 新增 ADR-0006 和领域术语。
+
+当前本地门禁：
+
+```text
+1723 tests
+1708 passed
+15 skipped
+0 failed
+TypeScript passed
+Registry lint passed
+Knowledge lint passed
+Web production build passed
+git diff --check passed
+```
+
+真实失败快照 `7d9c6626-d389-4878-9330-3ac1966f3c29` 离线重放：
+
+```text
+PASS_WITHOUT_REPAIR
+7 Direct Answers
+7 Evidence Findings
+7 Content Blocks
+9 Fact roots
+14 Analyses
+```
+
+仍待完成：
+
+- 新 HEAD 的真实 Gateway/数据库/Tavily 完整任务；
+- final Review、Layout、ReportDocument 和 Report Package 实际落盘验证；
+- live Zero，或明确外部门禁例外；
+- merge/restart 授权；
+- push 授权。
