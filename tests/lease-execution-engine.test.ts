@@ -352,6 +352,29 @@ class CountingRealTavilyAdapter implements ToolAdapter {
   }
 }
 
+class MixedSchemeTavilyAdapter extends CountingRealTavilyAdapter {
+  override async invoke(options: { toolId: string; input: object; manifest: ToolManifest }): Promise<ToolInvokeResult> {
+    const result = await super.invoke(options);
+    const output = result.output as { results: Array<Record<string, unknown>> };
+    return {
+      ...result,
+      output: {
+        ...output,
+        results: [
+          ...output.results,
+          {
+            title: 'Non-addressable source',
+            url: 'http://source.test/not-verifiable',
+            snippet: 'This result must not receive an Evidence ID.',
+            score: 0.5,
+            published_date: null,
+          },
+        ],
+      },
+    };
+  }
+}
+
 const BROWSER_CAPTURE_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
   'base64',
@@ -2651,6 +2674,36 @@ test('orders parallel outputs by step number regardless of completion timing', a
   assert.deepEqual(
     (deliverables.calls[0]?.outputs as Array<{ stepNo: number }> | undefined)?.map(({ stepNo }) => stepNo),
     [1, 2, 3, 4],
+  );
+});
+
+test('does not advertise Evidence IDs for Tool results excluded from the final Manifest', async () => {
+  const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), planSteps);
+  const llm = new CountingRealLLM();
+  const deliverables = new RecordingDeliverablesFake();
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new MixedSchemeTavilyAdapter()),
+    llm,
+    deliverables,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed');
+  const skillContext = llm.contexts.find((context) => (
+    context !== null
+    && typeof context === 'object'
+    && !Array.isArray(context)
+    && (context as Record<string, unknown>).actor_id === 'digital-human-competitive-analysis'
+  )) as { prior_outputs?: Array<{ stepNo: number; evidenceIds?: string[] }> } | undefined;
+  assert.ok(skillContext);
+  const toolContext = skillContext.prior_outputs?.find(({ stepNo }) => stepNo === 1);
+  assert.deepEqual(toolContext?.evidenceIds, ['E1-1']);
+  assert.deepEqual(
+    deliverables.calls[0]?.evidenceManifest.value.entries
+      .filter(({ evidenceClass }) => evidenceClass === 'public_source')
+      .map(({ id }) => id),
+    ['E1-1'],
   );
 });
 

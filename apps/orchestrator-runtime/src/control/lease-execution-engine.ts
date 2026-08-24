@@ -1169,21 +1169,26 @@ function verifiedPriorOutputs(
     .sort((left, right) => left.stepNo - right.stepNo)
     .map(({ stepNo, actorId, kind, output, artifact }) => {
       const value = isRecord(output) ? output : null;
-      const evidenceCount = kind === 'tool_output' && Array.isArray(value?.results)
-        ? value.results.length
+      const evidenceIds = kind === 'tool_output'
+        ? sourceRefs(value)
+          .filter(({ sourceUrl }) => sourceUrl.startsWith('https://'))
+          .map(({ originalIndex }) => `E${stepNo}-${originalIndex + 1}`)
         : kind === 'knowledge_output' && Array.isArray(value?.resources)
-          ? value.resources.length
-          : 0;
-      const prefix = kind === 'knowledge_output' ? 'K' : 'E';
+          ? value.resources.flatMap((resource, index) => (
+              isRecord(resource)
+              && typeof resource.id === 'string'
+              && typeof resource.contentHash === 'string'
+                ? [`K${stepNo}-${index + 1}`]
+                : []
+            ))
+          : [];
       return {
         stepNo,
         actorId,
         kind,
         output,
         artifact,
-        ...(evidenceCount > 0
-          ? { evidenceIds: Array.from({ length: evidenceCount }, (_, index) => `${prefix}${stepNo}-${index + 1}`) }
-          : {}),
+        ...(evidenceIds.length > 0 ? { evidenceIds } : {}),
       };
     });
 }
@@ -3768,7 +3773,7 @@ export class LeaseExecutionEngine {
       ...stepContract(input.step),
     };
     const result = await this.llm.generateText({
-      prompt: `Execute plan step: ${input.step.step_name}. ${input.step.purpose ?? ''}\nContract: ${JSON.stringify(stepContract(input.step))}`, 
+      prompt: `Execute plan step: ${input.step.step_name}. ${input.step.purpose ?? ''}\nContract: ${JSON.stringify(stepContract(input.step))}\nEvidence IDs listed in prior_outputs[].evidenceIds are the exact runtime-issued IDs for those outputs. When such a list is present, cite only IDs from it; never infer an ID from an unaddressable result. IDs carried forward in bound upstream analysis remain candidates and will be verified against the final Evidence Manifest.`,
       context: llmContext,
       receipt: {
         stage: 'llm',

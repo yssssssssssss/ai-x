@@ -210,6 +210,19 @@ function material(value: ResearchStrategyContentDraftV2 = draft()): SynthesisMat
   };
 }
 
+function evidenceInventoryMaterial(text: string, questionIds: string[] = ['Q1']): SynthesisMaterial {
+  return {
+    stepNo: 3,
+    actorType: 'llm',
+    actorId: 'llm.openai.gpt-4o',
+    questionIds,
+    artifactId: 'inventory-artifact-1',
+    artifactContentSha256: `sha256:${'7'.repeat(64)}`,
+    value: { text },
+    semanticRole: 'inference',
+  };
+}
+
 function reviewerMaterial(verdict: 'pass' | 'pass_with_conditions' | 'block' = 'pass'): SynthesisMaterial {
   return {
     stepNo: 9,
@@ -423,6 +436,65 @@ test('assembler carries factual roots across provisional findings bound to the s
   });
   const methodAnalysis = result.findingGraph.analyses.find(({ id }) => id === 'analysis-evidence-finding-003');
   assert.deepEqual(methodAnalysis?.findingIds, ['evidence-finding-001']);
+});
+
+test('assembler restores empty provisional bindings from question-indexed verified Evidence hints', () => {
+  const value = draft();
+  value.directAnswers[0]!.answerStatus = 'provisional';
+  value.directAnswers[0]!.evidenceIds = [];
+  value.directAnswers[0]!.validationNeeded = 'Validate the interpretation.';
+  value.evidenceFindings[0]!.support.status = 'provisional';
+  value.evidenceFindings[0]!.support.evidenceIds = [];
+  value.evidenceFindings[0]!.support.validationNeeded = 'Validate the finding.';
+  for (const block of value.contentBlocks) {
+    const supports = block.kind === 'strategy_map' ? block.cells.map(({ support }) => support)
+      : block.kind === 'prioritized_actions' ? block.items.map(({ support }) => support)
+        : [];
+    assert.ok(supports.length > 0);
+    for (const itemSupport of supports) {
+      itemSupport.status = 'provisional';
+      itemSupport.evidenceIds = [];
+      itemSupport.validationNeeded = 'Validate this recommendation.';
+    }
+  }
+
+  const result = assemble({
+    draftOverride: value,
+    materials: [
+      evidenceInventoryMaterial('## Q1｜Evidence inventory\nVerified market context: E1.'),
+      ...materials(value),
+    ],
+  });
+  assert.deepEqual(result.payload.directAnswers[0]?.evidenceIds, ['E1']);
+  assert.deepEqual(result.payload.evidenceFindings[0]?.support.evidenceIds, ['E1']);
+  assert.equal(result.payload.evidenceFindings[0]?.support.status, 'provisional');
+  assert.ok(result.payload.contentBlocks.every((block) => JSON.stringify(block).includes('E1')));
+});
+
+test('assembler does not hydrate bindings from unknown upstream Evidence references', () => {
+  const value = draft();
+  value.directAnswers[0]!.answerStatus = 'provisional';
+  value.directAnswers[0]!.evidenceIds = [];
+  value.directAnswers[0]!.validationNeeded = 'Validate the interpretation.';
+  value.evidenceFindings[0]!.support.status = 'provisional';
+  value.evidenceFindings[0]!.support.evidenceIds = [];
+  value.evidenceFindings[0]!.support.validationNeeded = 'Validate the finding.';
+  const map = value.contentBlocks.find((block) => block.kind === 'strategy_map');
+  assert.ok(map && map.kind === 'strategy_map');
+  map.cells[0]!.support.status = 'provisional';
+  map.cells[0]!.support.evidenceIds = [];
+  map.cells[0]!.support.validationNeeded = 'Validate the map.';
+
+  assert.throws(
+    () => assemble({
+      draftOverride: value,
+      materials: [
+        evidenceInventoryMaterial('## Q1｜Evidence inventory\nUnknown source: E9-9.'),
+        ...materials(value),
+      ],
+    }),
+    (error: unknown) => error instanceof ResearchStrategyAssemblyError && /strategy_map has no Evidence/u.test(error.message),
+  );
 });
 
 test('assembler roots provisional findings in verified source-anchor facts without promoting the claim', () => {

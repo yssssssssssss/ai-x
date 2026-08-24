@@ -1253,6 +1253,9 @@ export class CurrentDeliverableService {
     const requiredCoverage = strictV2
       ? coverageRequirements(input.finalizedRequirement, input.problemGraph)
       : undefined;
+    const strategySkillStepNo = synthesisMaterials.find(({ actorType, actorId }) => (
+      actorType === 'skill' && actorId === 'research-strategy-synthesis'
+    ))?.stepNo ?? Number.POSITIVE_INFINITY;
     if (contract.synthesisMode === 'reviewed_skill_assembly') {
       if (!strategyRequirement || !requiredCoverage) {
         throw new Error('reviewed Skill assembly requires a finalized research strategy requirement');
@@ -1299,6 +1302,8 @@ export class CurrentDeliverableService {
               prompt: [
                 'Repair the reviewed research-strategy-content-draft-v2 without changing its substantive conclusions.',
                 'Use only the exact allowed Question and Evidence IDs supplied in context.',
+                'The allowedEvidence list is the authoritative final Evidence inventory. evidenceBindingSources contains upstream question-indexed citations; use it to restore missing bindings instead of claiming that the Evidence Manifest is unavailable.',
+                'Every non-unanswered Direct Answer, Evidence Finding, and requested content Block must retain relevant Evidence. Keep interpretive claims provisional even when attaching factual context.',
                 'Remove unsupported references, downgrade claims to provisional when necessary, and preserve every requested artifact as a typed content Block.',
                 `Correct this validation failure: ${redactString(error.message)}`,
               ].join('\n'),
@@ -1307,7 +1312,20 @@ export class CurrentDeliverableService {
               context: {
                 draft: redactSensitiveValue(originalDraft),
                 allowedQuestionIds: (input.problemGraph as ProblemGraph).questions.map(({ id }) => id),
-                allowedEvidence: evidenceManifest.entries.map(({ id, evidenceClass }) => ({ id, evidenceClass })),
+                allowedEvidence: evidenceManifest.entries.map(({ id, evidenceClass, sourceUrl }) => ({
+                  id,
+                  evidenceClass,
+                  ...(sourceUrl ? { sourceUrl } : {}),
+                })),
+                evidenceBindingSources: synthesisMaterials
+                  .filter(({ actorType, stepNo }) => actorType === 'llm' && stepNo < strategySkillStepNo)
+                  .sort((left, right) => left.stepNo - right.stepNo)
+                  .slice(0, 2)
+                  .map(({ stepNo, questionIds, value }) => ({
+                    stepNo,
+                    questionIds,
+                    value: redactSensitiveValue(value),
+                  })),
                 requestedArtifacts: strategyRequirement.requested_artifacts ?? [],
               },
               receipt: {

@@ -421,6 +421,102 @@ function canonicalizeQuestionAliases(
   return draft;
 }
 
+function identifierOccursAt(source: string, identifier: string, index: number): boolean {
+  const before = index === 0 ? '' : source[index - 1]!;
+  const after = source[index + identifier.length] ?? '';
+  return !/[A-Za-z0-9_:-]/u.test(before) && !/[A-Za-z0-9_:-]/u.test(after);
+}
+
+function questionEvidenceHints(input: {
+  materials: readonly SynthesisMaterial[];
+  problemGraph: ProblemGraph;
+  evidenceManifest: EvidenceManifest;
+}): Map<string, string[]> {
+  const questionIds = input.problemGraph.questions.map(({ id }) => id);
+  const evidenceIds = input.evidenceManifest.entries.map(({ id }) => id);
+  const hints = new Map(questionIds.map((questionId) => [questionId, new Set<string>()]));
+  const skillStepNo = input.materials
+    .filter(({ actorType, actorId }) => actorType === 'skill' && actorId === 'research-strategy-synthesis')
+    .reduce((lowest, { stepNo }) => Math.min(lowest, stepNo), Number.POSITIVE_INFINITY);
+  for (const material of input.materials) {
+    if (material.actorType !== 'llm' || material.stepNo >= skillStepNo) continue;
+    const materialRecord = record(material.value);
+    if (typeof materialRecord?.text !== 'string') continue;
+    let currentQuestionId: string | null = null;
+    for (const line of materialRecord.text.split(/\r?\n/u)) {
+      const trimmed = line.trim();
+      const headingQuestionId = questionIds.find((questionId) => {
+        const index = trimmed.indexOf(questionId);
+        if (index === -1 || !identifierOccursAt(trimmed, questionId, index)) return false;
+        return /^#{0,6}\s*$/u.test(trimmed.slice(0, index));
+      });
+      if (headingQuestionId) currentQuestionId = headingQuestionId;
+      if (!currentQuestionId) continue;
+      const selected = hints.get(currentQuestionId)!;
+      for (const evidenceId of evidenceIds) {
+        let cursor = 0;
+        while (cursor < line.length) {
+          const evidenceIndex = line.indexOf(evidenceId, cursor);
+          if (evidenceIndex === -1) break;
+          if (identifierOccursAt(line, evidenceId, evidenceIndex)) {
+            selected.add(evidenceId);
+            break;
+          }
+          cursor = evidenceIndex + evidenceId.length;
+        }
+      }
+    }
+    if (material.questionIds.length === 1) {
+      const selected = hints.get(material.questionIds[0]!);
+      if (!selected) continue;
+      for (const evidenceId of evidenceIds) {
+        const index = materialRecord.text.indexOf(evidenceId);
+        if (index !== -1 && identifierOccursAt(materialRecord.text, evidenceId, index)) selected.add(evidenceId);
+      }
+    }
+  }
+  return new Map([...hints].map(([questionId, ids]) => [questionId, [...ids]]));
+}
+
+function hydrateEmptyEvidenceBindings(input: {
+  draft: ResearchStrategyContentDraftV2;
+  materials: readonly SynthesisMaterial[];
+  problemGraph: ProblemGraph;
+  evidenceManifest: EvidenceManifest;
+}): ResearchStrategyContentDraftV2 {
+  const hints = questionEvidenceHints(input);
+  const evidenceFor = (questionIds: string[]): string[] => unique(
+    questionIds.flatMap((questionId) => hints.get(questionId) ?? []),
+  );
+  const hydrate = (support: {
+    questionIds: string[];
+    evidenceIds: string[];
+    status: 'supported' | 'provisional';
+  }): void => {
+    if (support.status !== 'provisional' || support.evidenceIds.length > 0) return;
+    support.evidenceIds = evidenceFor(support.questionIds);
+  };
+  for (const answer of input.draft.directAnswers) {
+    if (answer.answerStatus === 'provisional' && answer.evidenceIds.length === 0) {
+      answer.evidenceIds = evidenceFor([answer.questionId]);
+    }
+  }
+  for (const finding of input.draft.evidenceFindings) hydrate(finding.support);
+  for (const block of input.draft.contentBlocks) {
+    if (block.kind === 'narrative') hydrate(block.support);
+    else if (block.kind === 'comparison_matrix' || block.kind === 'strategy_map') {
+      for (const cell of block.cells) hydrate(cell.support);
+    } else if (block.kind === 'mind_model') {
+      for (const node of block.nodes) hydrate(node.support);
+    } else if ('items' in block) {
+      for (const item of block.items) hydrate(item.support);
+    } else {
+      fail(`unsupported content block kind ${(block as { kind?: unknown }).kind as string}`);
+    }
+  }
+  return input.draft;
+}
+
 function canonicalizeEvidenceAliases(
   source: ResearchStrategyContentDraftV2,
   manifest: EvidenceManifest,
@@ -507,13 +603,21 @@ export function assembleResearchStrategyDeliverable(input: {
   validator?: Pick<SchemaValidator, 'validateFileOrThrow'>;
 }): ResearchDeliverableEnvelope<ResearchStrategyReportPayloadV2> {
   const validator = input.validator ?? new SchemaValidator();
-  const draft = canonicalizeQuestionAliases(
+  const normalizedDraft = canonicalizeQuestionAliases(
     canonicalizeEvidenceAliases(
       input.draftOverride ?? extractResearchStrategyContentDraft(input.materials),
       input.evidenceManifest,
     ),
     input.problemGraph,
   );
+  const draft = input.draftOverride
+    ? hydrateEmptyEvidenceBindings({
+        draft: normalizedDraft,
+        materials: input.materials,
+        problemGraph: input.problemGraph,
+        evidenceManifest: input.evidenceManifest,
+      })
+    : normalizedDraft;
   validator.validateFileOrThrow(DRAFT_SCHEMA, draft);
   validateSupportBindings({ draft, problemGraph: input.problemGraph, evidenceManifest: input.evidenceManifest });
 

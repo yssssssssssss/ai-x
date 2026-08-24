@@ -1361,12 +1361,34 @@ test('canonicalizes a safe localized Question alias introduced by bounded Conten
   const narrative = repaired.contentBlocks[0]!;
   assert.equal(narrative.kind, 'narrative');
   if (narrative.kind === 'narrative') narrative.support.questionIds = ['q1_系统'];
-  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(invalid); } };
+  const bindingSource: SynthesisMaterial = {
+    stepNo: 3,
+    actorType: 'llm',
+    actorId: 'llm.openai.gpt-4o',
+    questionIds: ['q1'],
+    artifactId: 'evidence-inventory-1',
+    artifactContentSha256: `sha256:${'b'.repeat(64)}`,
+    semanticRole: 'inference',
+    value: { text: '## q1\nVerified source: E1.' },
+  };
+  const materializer = {
+    async materialize(): Promise<SynthesisMaterial[]> {
+      return [bindingSource, ...openStrategyMaterials(invalid)];
+    },
+  };
   const { service, llm, writes } = await createHarness(repaired, materializer);
 
   const result = await service.generate(generateInput(openStrategyInput()));
 
   assert.equal(llm.structuredCalls.length, 1);
+  const repairContext = llm.structuredCalls[0]?.context as {
+    evidenceBindingSources?: Array<{ stepNo: number; questionIds: string[]; value: unknown }>;
+  };
+  assert.deepEqual(repairContext.evidenceBindingSources, [{
+    stepNo: 3,
+    questionIds: ['q1'],
+    value: { text: '## q1\nVerified source: E1.' },
+  }]);
   const block = (result.deliverable.payload as unknown as ResearchStrategyReportPayloadV2).contentBlocks[0]!;
   assert.equal(block.kind, 'narrative');
   if (block.kind === 'narrative') assert.deepEqual(block.support.questionIds, ['q1']);
