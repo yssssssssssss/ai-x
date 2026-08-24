@@ -65,14 +65,24 @@ function sourceDraft() {
 function apply(
   patch: ResearchStrategyContentPatchV1,
   requestedArtifacts: readonly RequestedArtifact[] = ['executive_answers', 'strategy_map', 'prioritized_actions'],
+  overrides: {
+    evidenceManifest?: EvidenceManifest;
+    problemGraph?: ProblemGraph;
+    allowedReviewIssueTargets?: ReadonlyMap<string, ReadonlySet<string>>;
+  } = {},
 ) {
+  const allowedReviewIssueTargets = overrides.allowedReviewIssueTargets
+    ?? (patch.mode === 'semantic_revision'
+      ? new Map([['reasoning_quality:1', new Set(['Q1', 'content-block-001', 'content-block-002', 'limitations', 'openQuestions'])]])
+      : undefined);
   return applyResearchStrategyContentPatch({
     source: sourceDraft(),
     patch,
     mode: patch.mode,
-    problemGraph,
-    evidenceManifest: manifest,
+    problemGraph: overrides.problemGraph ?? problemGraph,
+    evidenceManifest: overrides.evidenceManifest ?? manifest,
     requestedArtifacts: [...requestedArtifacts],
+    ...(allowedReviewIssueTargets ? { allowedReviewIssueTargets } : {}),
   });
 }
 
@@ -105,6 +115,8 @@ test('structural patch cannot rewrite semantic text or increase confidence', () 
     mode: 'structural_repair',
     operations: [{
       op: 'replace_semantic_text',
+      reviewIssueId: 'reasoning_quality:1',
+      reason: 'This must be rejected in structural mode.',
       target: { entity: 'direct_answer', key: 'Q1', field: 'answer' },
       value: 'Compressed answer.',
     }],
@@ -136,6 +148,8 @@ test('semantic patch changes only its explicit target and preserves every other 
     mode: 'semantic_revision',
     operations: [{
       op: 'replace_semantic_text',
+      reviewIssueId: 'reasoning_quality:1',
+      reason: 'Weaken the answer identified by the Review.',
       target: { entity: 'direct_answer', key: 'Q1', field: 'answer' },
       value: 'Lead with qualified, verifiable trust signals.',
     }],
@@ -146,6 +160,161 @@ test('semantic patch changes only its explicit target and preserves every other 
   assert.equal(result.draft.directAnswers[0]?.answer, 'Lead with qualified, verifiable trust signals.');
   assert.deepEqual(result.changedSemanticUnitKeys, ['direct-answer:001']);
   assert.deepEqual(result.fidelity.removedUnitKeys, []);
+});
+
+test('structural patch appends a Direct Answer only for a missing required question', () => {
+  const q2 = {
+    ...problemGraph.questions[0]!,
+    id: 'Q2',
+    statement: 'What should follow?',
+  };
+  const patch: ResearchStrategyContentPatchV1 = {
+    version: 'research-strategy-content-patch-v1',
+    mode: 'structural_repair',
+    operations: [{
+      op: 'append_direct_answer',
+      answer: {
+        questionId: 'Q2',
+        question: 'What should follow?',
+        answer: 'Validate the next step.',
+        answerStatus: 'supported',
+        evidenceIds: ['E1'],
+        confidence: 0.7,
+        businessImplication: 'Reduce uncertainty.',
+        recommendedAction: 'Run the validation.',
+        validationNeeded: '',
+      },
+    }],
+  };
+  const requiredGraph: ProblemGraph = {
+    ...problemGraph,
+    questions: [...problemGraph.questions, q2],
+  };
+  const result = apply(
+    patch,
+    ['executive_answers', 'strategy_map', 'prioritized_actions'],
+    { problemGraph: requiredGraph },
+  );
+  assert.equal(result.draft.directAnswers.length, 2);
+
+  const optionalGraph: ProblemGraph = {
+    ...problemGraph,
+    questions: [...problemGraph.questions, { ...q2, priority: 'optional' }],
+  };
+  assert.throws(
+    () => apply(
+      patch,
+      ['executive_answers', 'strategy_map', 'prioritized_actions'],
+      { problemGraph: optionalGraph },
+    ),
+    /not a missing required question/u,
+  );
+});
+
+test('semantic patch rejects a target not authorized by its sealed Review issue', () => {
+  const patch: ResearchStrategyContentPatchV1 = {
+    version: 'research-strategy-content-patch-v1',
+    mode: 'semantic_revision',
+    operations: [{
+      op: 'replace_semantic_text',
+      reviewIssueId: 'reasoning_quality:1',
+      reason: 'Attempt an unrelated change.',
+      target: { entity: 'content_block', key: 'content-block-001', field: 'title' },
+      value: 'Unauthorized title',
+    }],
+  };
+
+  assert.throws(
+    () => apply(patch, ['executive_answers', 'strategy_map', 'prioritized_actions'], {
+      allowedReviewIssueTargets: new Map([['reasoning_quality:1', new Set(['Q1'])]]),
+    }),
+    /does not authorize target content-block-001/u,
+  );
+});
+
+test('semantic patch appends an item only to the Block authorized by the Review issue', () => {
+  const patch: ResearchStrategyContentPatchV1 = {
+    version: 'research-strategy-content-patch-v1',
+    mode: 'semantic_revision',
+    operations: [{
+      op: 'append_block_item',
+      reviewIssueId: 'recommendation_quality:1',
+      reason: 'Add the missing reviewed action.',
+      blockKey: 'content-block-002',
+      item: {
+        key: 'action-2',
+        priority: 'P1',
+        action: 'Add a second trust experiment.',
+        ownerType: 'research',
+        rationale: 'The Review identified a missing validation action.',
+        validationMethod: 'Run a moderated test.',
+        support: {
+          questionIds: ['Q1'], evidenceIds: ['E1'], confidence: 0.6,
+          status: 'provisional', validationNeeded: 'Validate the experiment outcome.',
+        },
+      },
+    }],
+  };
+
+  const result = apply(patch, ['executive_answers', 'strategy_map', 'prioritized_actions'], {
+    allowedReviewIssueTargets: new Map([['recommendation_quality:1', new Set(['content-block-002'])]]),
+  });
+  const actions = result.draft.contentBlocks.find(({ key }) => key === 'content-block-002');
+  assert.ok(actions?.kind === 'prioritized_actions');
+  assert.equal(actions.items.length, 2);
+  assert.ok(result.fidelity.addedUnitKeys.includes('content-block:content-block-002:item:action-2'));
+});
+
+test('supported bindings require factual Evidence instead of Knowledge alone', () => {
+  const knowledgeManifest = structuredClone(manifest);
+  knowledgeManifest.entries.push({
+    id: 'K2-1',
+    kind: 'knowledge_excerpt',
+    evidenceClass: 'knowledge',
+    artifactId: 'knowledge-1',
+    artifactContentSha256: `sha256:${'4'.repeat(64)}`,
+    jsonPointer: '/resources/0/content',
+    stepNo: 2,
+    sensitivity: 'internal',
+    redaction: 'none',
+  });
+  const patch: ResearchStrategyContentPatchV1 = {
+    version: 'research-strategy-content-patch-v1',
+    mode: 'structural_repair',
+    operations: [{
+      op: 'replace_direct_answer_binding',
+      questionId: 'Q1',
+      answerStatus: 'supported',
+      evidenceIds: ['K2-1'],
+      confidence: 0.7,
+      validationNeeded: '',
+    }],
+  };
+
+  assert.throws(
+    () => apply(patch, ['executive_answers', 'strategy_map', 'prioritized_actions'], { evidenceManifest: knowledgeManifest }),
+    /requires factual Evidence/u,
+  );
+});
+
+test('structural repair cannot append arbitrary Evidence Findings', () => {
+  const patch: ResearchStrategyContentPatchV1 = {
+    version: 'research-strategy-content-patch-v1',
+    mode: 'structural_repair',
+    operations: [{
+      op: 'append_evidence_finding',
+      finding: {
+        key: 'new-claim',
+        statement: 'An unrelated claim.',
+        support: {
+          questionIds: ['Q1'], evidenceIds: ['E1'], confidence: 0.8,
+          status: 'supported', validationNeeded: '',
+        },
+      },
+    }],
+  };
+
+  assert.throws(() => apply(patch), /cannot append Evidence Findings/u);
 });
 
 test('structural patch can append only a missing requested content Block', () => {
@@ -179,7 +348,7 @@ test('structural patch can append only a missing requested content Block', () =>
   assert.throws(
     () => apply(patch),
     (error: unknown) => error instanceof ResearchStrategyContentPatchError
-      && /was not requested/u.test(error.message),
+      && /does not satisfy a missing requested artifact/u.test(error.message),
   );
 });
 

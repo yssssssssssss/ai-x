@@ -173,6 +173,36 @@ function normalizedText(value: string): string {
   return value.normalize('NFKC').replace(/\s+/gu, ' ').trim().toLocaleLowerCase('en-US');
 }
 
+function reviewRevisionTargetIds(deliverable: unknown): string[] {
+  const report = record(deliverable);
+  const payload = record(report?.payload);
+  if (payload?.schemaVersion !== 'research-strategy-content-v2') return [];
+  const answers = Array.isArray(payload.directAnswers) ? payload.directAnswers.map(record).filter(Boolean) as Record<string, unknown>[] : [];
+  const findings = Array.isArray(payload.evidenceFindings) ? payload.evidenceFindings.map(record).filter(Boolean) as Record<string, unknown>[] : [];
+  const blocks = Array.isArray(payload.contentBlocks) ? payload.contentBlocks.map(record).filter(Boolean) as Record<string, unknown>[] : [];
+  return [...new Set([
+    'root',
+    'limitations',
+    'openQuestions',
+    ...answers.flatMap(({ questionId }) => typeof questionId === 'string' ? [questionId] : []),
+    ...findings.flatMap(({ id }) => typeof id === 'string' ? [id] : []),
+    ...blocks.flatMap((block) => {
+      const blockId = typeof block.id === 'string' ? [block.id] : [];
+      const children = Array.isArray(block.cells) ? block.cells
+        : Array.isArray(block.nodes) ? block.nodes
+          : Array.isArray(block.items) ? block.items
+            : [];
+      return [
+        ...blockId,
+        ...children.flatMap((candidate) => {
+          const id = record(candidate)?.id;
+          return typeof id === 'string' ? [id] : [];
+        }),
+      ];
+    }),
+  ])];
+}
+
 function answerQualityDimensionIssues(
   input: ReportReviewInput,
   report: Record<string, unknown>,
@@ -424,6 +454,8 @@ export class ReportReviewService {
     reviewVersion: ReportReviewArtifact['version'],
     requiredDimensionIds: readonly ReportReviewDimensionId[],
   ): Promise<ReportReviewArtifact> {
+    const revisionTargetIds = reviewRevisionTargetIds(input.deliverable);
+    const knownRevisionTargetIds = new Set(revisionTargetIds);
     const generated = await this.dependencies.llm.generateStructured<Partial<ReportReviewArtifact>>({
       prompt: [
         `Review the current deliverable against the selected Registry review rubric. Return only a ${reviewVersion} artifact with every required dimension exactly once.`,
@@ -431,6 +463,7 @@ export class ReportReviewService {
         'A best-available answer may pass with evidence gaps when it is explicitly provisional, states validationNeeded, and discloses the limitation; do not fail it merely for lacking future primary research.',
         'Do not require unrequested visuals, budgets, statistical-power calculations, owners for open questions, or other enhancements absent from the Requirement success criteria.',
         'Report only concrete must-fix contract or decision-safety failures as issues; optional improvements must not fail a dimension.',
+        'When verdict is revise or block, every failed semantic dimension must include targetNodeIds selected only from context.revisionTargetIndex. Use exact IDs; do not invent targets.',
         revisionRound === 1 ? 'This is the single bounded final revision. Return revise only when a concrete must-fix violation still remains.' : '',
       ].filter(Boolean).join('\n'),
       // An empty override makes the gateway load the canonical registry schema.
@@ -441,6 +474,7 @@ export class ReportReviewService {
         deliverable: redactSensitiveValue(input.deliverable), deterministicDimensions: dimensions,
         deliverableContractId: contract.entry.id,
         reviewRubric: contract.reviewRubric,
+        revisionTargetIndex: revisionTargetIds,
       },
       receipt: { stage: 'deliverable_review', attemptId: input.attempt.id, expectedModel: input.expectedModel },
     });
@@ -469,9 +503,33 @@ export class ReportReviewService {
       const issues = providedIssues
         ?? baseline?.issues
         ?? (proposedPassed ? [] : ['semantic review did not provide dimension issues']);
+      const providedTargets = Array.isArray(candidate.targetNodeIds)
+        ? candidate.targetNodeIds.filter((target): target is string => typeof target === 'string' && target.trim().length > 0)
+        : [];
+      if (
+        providedTargets.length !== new Set(providedTargets).size
+        || providedTargets.some((target) => !knownRevisionTargetIds.has(target))
+      ) throw new Error(`semantic review dimension ${String(candidate.id ?? '')} has invalid targetNodeIds`);
       const passed = proposedPassed && issues.length === 0;
-      return { id: candidate.id, passed, issues };
+      return {
+        id: candidate.id,
+        passed,
+        issues,
+        ...(providedTargets.length > 0 ? { targetNodeIds: providedTargets } : {}),
+      };
     });
+    if (reviewVersion === 'report-review-v2' && value.verdict !== 'pass') {
+      for (const dimension of projectedDimensions) {
+        if (
+          !dimension.passed
+          && MODEL_SEMANTIC_ANSWER_DIMENSION_IDS.has(dimension.id as ReportReviewDimensionId)
+          && dimension.issues.length > 0
+          && (!('targetNodeIds' in dimension) || !Array.isArray(dimension.targetNodeIds) || dimension.targetNodeIds.length === 0)
+        ) {
+          throw new Error(`semantic review dimension ${dimension.id} requires targetNodeIds`);
+        }
+      }
+    }
     const allDimensionsPass = projectedDimensions.length === requiredDimensionIds.length
       && projectedDimensions.every((dimension) => dimension.passed && dimension.issues.length === 0);
     const normalizedVerdict = value.verdict === 'pass' && !allDimensionsPass

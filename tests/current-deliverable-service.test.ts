@@ -1281,6 +1281,8 @@ function semanticRevisionPatch(): ResearchStrategyContentPatchV1 {
     mode: 'semantic_revision',
     operations: [{
       op: 'replace_semantic_text',
+      reviewIssueId: 'reasoning_quality:1',
+      reason: 'Weaken the exact answer named by the sealed Review issue.',
       target: { entity: 'direct_answer', key: 'q1', field: 'answer' },
       value: 'Lead with carefully qualified, verifiable trust signals.',
     }],
@@ -1399,7 +1401,12 @@ test('revises an open strategy report through one bounded Content Draft repair',
       version: 'report-review-v2', taskId, planVersionId, attemptId,
       deliverableArtifactId: initial.deliverableArtifactId,
       verdict: 'revise',
-      dimensions: [{ id: 'reasoning_quality', passed: false, issues: ['Weaken one unsupported claim.'] }],
+      dimensions: [{
+        id: 'reasoning_quality',
+        passed: false,
+        issues: ['Weaken one unsupported claim.'],
+        targetNodeIds: ['q1'],
+      }],
       revisionRound: 0,
     },
   });
@@ -1408,11 +1415,15 @@ test('revises an open strategy report through one bounded Content Draft repair',
   assert.equal(llm.structuredCalls[0]?.receipt.stage, 'deliverable_repair');
   assert.equal(revised.deliverableArtifactId, deliverableArtifactId);
   assert.deepEqual(writes.map(({ relativePath }) => relativePath), [
-    'deliverables/final-r0.json',
     'diagnostics/content-fidelity-r0.json',
-    'deliverables/final-r1.json',
+    'deliverables/final-r0.json',
     'diagnostics/content-fidelity-r1.json',
+    'deliverables/final-r1.json',
   ]);
+  const revisionFidelity = writes[2]?.value as { repairOperations?: string[]; removedUnitKeys?: string[] };
+  assert.match(revisionFidelity.repairOperations?.[0] ?? '', /reasoning_quality:1/u);
+  assert.match(revisionFidelity.repairOperations?.[0] ?? '', /direct_answer/u);
+  assert.deepEqual(revisionFidelity.removedUnitKeys, []);
 });
 
 test('deterministically restores empty provisional Evidence bindings before invoking repair', async () => {
@@ -1454,10 +1465,30 @@ test('deterministically restores empty provisional Evidence bindings before invo
     (result.deliverable.payload as unknown as ResearchStrategyReportPayloadV2).directAnswers[0]?.evidenceIds,
     ['E1'],
   );
-  assert.equal(writes[0]?.kind, 'deliverable');
-  assert.equal(writes[1]?.kind, 'content_fidelity_diagnostic');
-  assert.equal((writes[1]?.value as { mode?: string }).mode, 'none');
-  assert.equal((writes[1]?.value as { removedUnitKeys?: string[] }).removedUnitKeys?.length, 0);
+  assert.equal(writes[0]?.kind, 'content_fidelity_diagnostic');
+  assert.equal(writes[1]?.kind, 'deliverable');
+  assert.equal((writes[0]?.value as { mode?: string }).mode, 'none');
+  assert.equal((writes[0]?.value as { removedUnitKeys?: string[] }).removedUnitKeys?.length, 0);
+});
+
+test('requires the fidelity diagnostic before sealing a Canonical Deliverable', async () => {
+  const content = openStrategyDraft();
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(content); } };
+  const writes: ArtifactWriteInput[] = [];
+  const artifactWriter: ArtifactWriterLike = {
+    async writeJson(input) {
+      writes.push(input);
+      if (input.kind === 'content_fidelity_diagnostic') throw new Error('fidelity store unavailable');
+      return { id: deliverableArtifactId };
+    },
+  };
+  const { service } = await createHarness(validDeliverableDraft(), materializer, artifactWriter);
+
+  await assert.rejects(
+    () => service.generate(generateInput(openStrategyInput())),
+    /fidelity store unavailable/u,
+  );
+  assert.deepEqual(writes.map(({ kind }) => kind), ['content_fidelity_diagnostic']);
 });
 
 test('repairs one invalid reviewed Content Draft without returning to full Deliverable synthesis', async () => {
@@ -1475,13 +1506,22 @@ test('repairs one invalid reviewed Content Draft without returning to full Deliv
     kind: 'deliverable_validation_diagnostic',
     relativePath: 'diagnostics/deliverable-validation-r0.json',
   }, {
-    kind: 'deliverable',
-    relativePath: 'deliverables/final-r0.json',
-  }, {
     kind: 'content_fidelity_diagnostic',
     relativePath: 'diagnostics/content-fidelity-r0.json',
+  }, {
+    kind: 'deliverable',
+    relativePath: 'deliverables/final-r0.json',
   }]);
   assert.equal((writes[0]?.value as { fallbackApplied?: boolean }).fallbackApplied, true);
+  const fidelity = writes[1]?.value as {
+    sourceUnitCount?: number;
+    candidateUnitCount?: number;
+    removedUnitKeys?: string[];
+    repairOperations?: string[];
+  };
+  assert.equal(fidelity.sourceUnitCount, fidelity.candidateUnitCount);
+  assert.deepEqual(fidelity.removedUnitKeys, []);
+  assert.match(fidelity.repairOperations?.[0] ?? '', /replace_direct_answer_binding:q1/u);
 });
 
 test('normalizes missing Evidence and a safe Question alias introduced by bounded Content Draft repair', async () => {
@@ -1528,7 +1568,7 @@ test('normalizes missing Evidence and a safe Question alias introduced by bounde
   );
   assert.deepEqual(
     writes.map(({ kind }) => kind),
-    ['deliverable_validation_diagnostic', 'deliverable', 'content_fidelity_diagnostic'],
+    ['deliverable_validation_diagnostic', 'content_fidelity_diagnostic', 'deliverable'],
   );
 });
 
@@ -1540,6 +1580,8 @@ test('rejects a semantic rewrite operation in structural repair mode', async () 
     mode: 'structural_repair',
     operations: [{
       op: 'replace_semantic_text',
+      reviewIssueId: 'reasoning_quality:1',
+      reason: 'This operation is intentionally forbidden in structural mode.',
       target: { entity: 'direct_answer', key: 'q1', field: 'answer' },
       value: 'A compressed replacement answer.',
     }],
@@ -1563,6 +1605,7 @@ test('rejects a semantic rewrite operation in structural repair mode', async () 
   assert.deepEqual(writes.map(({ relativePath }) => relativePath), [
     'diagnostics/deliverable-validation-r0.json',
     'diagnostics/deliverable-validation-r1.json',
+    'diagnostics/content-fidelity-r1.json',
   ]);
 });
 
@@ -1574,14 +1617,20 @@ test('persists a sanitized diagnostic when reviewed Skill assembly and its bound
   await assert.rejects(() => service.generate(generateInput(openStrategyInput())), /unknown Evidence/);
 
   assert.equal(llm.structuredCalls.length, 1);
-  assert.equal(writes.length, 2);
+  assert.equal(writes.length, 3);
   assert.deepEqual(writes.map(({ relativePath }) => relativePath), [
     'diagnostics/deliverable-validation-r0.json',
     'diagnostics/deliverable-validation-r1.json',
+    'diagnostics/content-fidelity-r1.json',
   ]);
-  assert.ok(writes.every(({ kind }) => kind === 'deliverable_validation_diagnostic'));
+  assert.deepEqual(
+    writes.map(({ kind }) => kind),
+    ['deliverable_validation_diagnostic', 'deliverable_validation_diagnostic', 'content_fidelity_diagnostic'],
+  );
   assert.equal((writes[0]?.value as { fallbackApplied?: boolean }).fallbackApplied, true);
   assert.equal((writes[1]?.value as { fallbackApplied?: boolean }).fallbackApplied, false);
-  assert.ok(writes.every(({ schemaVersion }) => schemaVersion === 'deliverable-validation-diagnostic-v1'));
+  assert.equal(writes[0]?.schemaVersion, 'deliverable-validation-diagnostic-v1');
+  assert.equal(writes[1]?.schemaVersion, 'deliverable-validation-diagnostic-v1');
+  assert.equal(writes[2]?.schemaVersion, 'content-fidelity-diagnostic-v1');
   assert.doesNotMatch(JSON.stringify(writes.map(({ value }) => value)), /api[_-]?key|authorization|bearer/iu);
 });

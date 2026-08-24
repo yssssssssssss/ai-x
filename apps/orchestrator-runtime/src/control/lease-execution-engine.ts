@@ -3028,20 +3028,29 @@ export class LeaseExecutionEngine {
               && candidate.stage === step.actor_type
               && candidate.status === 'succeeded'
             ));
-            if (!call) throw new Error(`terminal rebuild Model receipt for step ${step.step_no} is missing`);
-            provenance = {
-              kind: 'model_reuse',
-              sourceModelCallId: call.id,
-              provider: call.provider,
-              endpointHost: call.endpointHost,
-              requestedModel: call.requestedModel,
-              actualModel: call.actualModel,
-              modelVersion: call.modelVersion,
-              promptHash: call.promptHash,
-              contextManifestHash: call.contextManifestHash,
-              traceId: call.traceId,
-              status: call.status,
-            };
+            if (call) {
+              provenance = {
+                kind: 'model_reuse',
+                sourceModelCallId: call.id,
+                provider: call.provider,
+                endpointHost: call.endpointHost,
+                requestedModel: call.requestedModel,
+                actualModel: call.actualModel,
+                modelVersion: call.modelVersion,
+                promptHash: call.promptHash,
+                contextManifestHash: call.contextManifestHash,
+                traceId: call.traceId,
+                status: call.status,
+              };
+            } else if (
+              prior.skillProvenance?.kind === 'model_reuse'
+              && typeof prior.skillProvenance.sourceModelCallId === 'string'
+              && prior.skillProvenance.status === 'succeeded'
+            ) {
+              provenance = { ...prior.skillProvenance };
+            } else {
+              throw new Error(`terminal rebuild Model receipt for step ${step.step_no} is missing`);
+            }
           }
           const stored = await this.dependencies.artifacts.readVerifiedJson<Record<string, unknown>>(artifact.id);
           const output = isRecord(stored.value) && 'output' in stored.value ? stored.value.output : stored.value;

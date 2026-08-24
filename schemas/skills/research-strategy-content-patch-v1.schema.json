@@ -19,6 +19,7 @@
           { "$ref": "#/$defs/appendDirectAnswer" },
           { "$ref": "#/$defs/appendEvidenceFinding" },
           { "$ref": "#/$defs/appendContentBlock" },
+          { "$ref": "#/$defs/appendBlockItem" },
           { "$ref": "#/$defs/appendLimitation" },
           { "$ref": "#/$defs/appendOpenQuestion" },
           { "$ref": "#/$defs/replaceSemanticText" }
@@ -243,6 +244,16 @@
         { "$ref": "#/$defs/channelBlock" }
       ]
     },
+    "blockItem": {
+      "oneOf": [
+        { "$ref": "#/$defs/matrixCell" },
+        { "$ref": "#/$defs/mindNode" },
+        { "$ref": "#/$defs/principle" },
+        { "$ref": "#/$defs/opportunity" },
+        { "$ref": "#/$defs/action" },
+        { "$ref": "#/$defs/channel" }
+      ]
+    },
     "supportTarget": {
       "oneOf": [
         {
@@ -279,7 +290,9 @@
         "answerStatus": { "enum": ["supported", "provisional", "unanswered"] },
         "evidenceIds": { "$ref": "#/$defs/ids" },
         "confidence": { "$ref": "#/$defs/confidence" },
-        "validationNeeded": { "type": "string" }
+        "validationNeeded": { "type": "string" },
+        "reviewIssueId": { "$ref": "#/$defs/text" },
+        "reason": { "$ref": "#/$defs/text" }
       }
     },
     "replaceSupport": {
@@ -289,7 +302,9 @@
       "properties": {
         "op": { "const": "replace_support" },
         "target": { "$ref": "#/$defs/supportTarget" },
-        "support": { "$ref": "#/$defs/support" }
+        "support": { "$ref": "#/$defs/support" },
+        "reviewIssueId": { "$ref": "#/$defs/text" },
+        "reason": { "$ref": "#/$defs/text" }
       }
     },
     "appendDirectAnswer": {
@@ -310,17 +325,39 @@
       "required": ["op", "block"],
       "properties": { "op": { "const": "append_content_block" }, "block": { "$ref": "#/$defs/contentBlock" } }
     },
+    "appendBlockItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "blockKey", "item", "reviewIssueId", "reason"],
+      "properties": {
+        "op": { "const": "append_block_item" },
+        "blockKey": { "$ref": "#/$defs/key" },
+        "item": { "$ref": "#/$defs/blockItem" },
+        "reviewIssueId": { "$ref": "#/$defs/text" },
+        "reason": { "$ref": "#/$defs/text" }
+      }
+    },
     "appendLimitation": {
       "type": "object",
       "additionalProperties": false,
       "required": ["op", "value"],
-      "properties": { "op": { "const": "append_limitation" }, "value": { "$ref": "#/$defs/text" } }
+      "properties": {
+        "op": { "const": "append_limitation" },
+        "value": { "$ref": "#/$defs/text" },
+        "reviewIssueId": { "$ref": "#/$defs/text" },
+        "reason": { "$ref": "#/$defs/text" }
+      }
     },
     "appendOpenQuestion": {
       "type": "object",
       "additionalProperties": false,
       "required": ["op", "value"],
-      "properties": { "op": { "const": "append_open_question" }, "value": { "$ref": "#/$defs/text" } }
+      "properties": {
+        "op": { "const": "append_open_question" },
+        "value": { "$ref": "#/$defs/text" },
+        "reviewIssueId": { "$ref": "#/$defs/text" },
+        "reason": { "$ref": "#/$defs/text" }
+      }
     },
     "semanticTarget": {
       "type": "object",
@@ -343,9 +380,11 @@
     "replaceSemanticText": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["op", "target", "value"],
+      "required": ["op", "target", "value", "reviewIssueId", "reason"],
       "properties": {
         "op": { "const": "replace_semantic_text" },
+        "reviewIssueId": { "$ref": "#/$defs/text" },
+        "reason": { "$ref": "#/$defs/text" },
         "target": { "$ref": "#/$defs/semanticTarget" },
         "value": {
           "oneOf": [

@@ -76,8 +76,13 @@ export function assertSemanticUnitProjectionCoverage(
   if (new Set(requiredUnitIds).size !== requiredUnitIds.length) {
     throw new Error('report semantic projection requirements contain duplicate unit ids');
   }
+  const required = new Set(requiredUnitIds);
+  const unexpected = [...counts].flatMap(([unitId]) => required.has(unitId) ? [] : [unitId]);
   const missing = requiredUnitIds.filter((unitId) => (counts.get(unitId) ?? 0) === 0);
   const duplicated = requiredUnitIds.filter((unitId) => (counts.get(unitId) ?? 0) > 1);
+  if (unexpected.length > 0) {
+    throw new Error(`report projection contains unexpected semantic units: ${unexpected.join(', ')}`);
+  }
   if (missing.length > 0) {
     throw new Error(`report projection omits semantic units: ${missing.join(', ')}`);
   }

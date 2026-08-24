@@ -121,6 +121,29 @@ function strategyReport(overrides: Record<string, unknown> = {}): Record<string,
   });
 }
 
+function openStrategyReport(): Record<string, unknown> {
+  return report({
+    deliverableType: 'research_strategy_report',
+    payload: researchStrategyPayloadV2(),
+    findingGraph: researchStrategyFindingGraphV2(),
+    recommendations: [{
+      id: 'recommendation-Q1', statement: 'Ship a source-backed trust card.', summaryIds: ['summary-Q1'],
+    }],
+    coverage: researchStrategyCoverageV2(),
+  });
+}
+
+function strategyRequirement(): NonNullable<ReportReviewInput['requirement']> {
+  return {
+    version: 'research-task-v2', task_type: 'research_synthesis', outcome_mode: 'answer',
+    requested_artifacts: ['strategy_map', 'prioritized_actions'], business_domain: 'test',
+    research_goal: 'answer Q1', target_audience: ['team'], scope: ['test'], constraints: [],
+    success_criteria: [{ id: 'SC1', statement: 'usable' }], expected_deliverables: ['research_strategy_report'],
+    assumptions: [], ambiguities: [], clarification_questions: [], blocking_issues: [],
+    sensitivity: 'internal', pii_detected: false,
+  };
+}
+
 function input(overrides: Partial<ReportReviewInput> = {}): ReportReviewInput {
   return {
     task: { id: lease.taskId },
@@ -275,6 +298,70 @@ test('answer review reads actionable items from open strategy content blocks', a
   assert.equal(result.verdict, 'pass');
   assert.equal(result.status, 'completed');
   assert.equal(llm.calls.length, 1);
+});
+
+test('semantic answer Review preserves only validated targetNodeIds for revision authorization', async () => {
+  const dimensions = passingAnswerReviewDimensions().map((dimension) => (
+    dimension.id === 'reasoning_quality'
+      ? {
+          ...dimension,
+          passed: false,
+          issues: ['Weaken the Q1 answer.'],
+          targetNodeIds: ['Q1'],
+        }
+      : dimension
+  ));
+  const review: ReportReviewArtifact = {
+    ...semantic('revise'),
+    version: 'report-review-v2',
+    dimensions,
+  };
+  const llm = new RecordingLlm([review]);
+  const artifacts = new RecordingArtifacts();
+
+  const result = await service(llm, artifacts).review(input({
+    deliverable: openStrategyReport(),
+    questionIds: ['Q1'],
+    successCriterionIds: ['SC1'],
+    evidenceIds: ['E1'],
+    requirement: strategyRequirement(),
+  }));
+
+  assert.equal(result.status, 'paused');
+  assert.deepEqual(result.dimensions.find(({ id }) => id === 'reasoning_quality')?.targetNodeIds, ['Q1']);
+  const context = llm.calls[0]?.context as { revisionTargetIndex?: string[] };
+  assert.ok(context.revisionTargetIndex?.includes('Q1'));
+  assert.ok(context.revisionTargetIndex?.includes('content-block-001'));
+});
+
+test('semantic answer Review rejects missing or unknown revision targets', async () => {
+  for (const targetNodeIds of [undefined, ['unknown-node']] as const) {
+    const dimensions = passingAnswerReviewDimensions().map((dimension) => (
+      dimension.id === 'reasoning_quality'
+        ? {
+            ...dimension,
+            passed: false,
+            issues: ['Weaken the Q1 answer.'],
+            ...(targetNodeIds ? { targetNodeIds: [...targetNodeIds] } : {}),
+          }
+        : dimension
+    ));
+    const review: ReportReviewArtifact = {
+      ...semantic('revise'),
+      version: 'report-review-v2',
+      dimensions,
+    };
+    await assert.rejects(
+      service(new RecordingLlm([review]), new RecordingArtifacts()).review(input({
+        deliverable: openStrategyReport(),
+        questionIds: ['Q1'],
+        successCriterionIds: ['SC1'],
+        evidenceIds: ['E1'],
+        requirement: strategyRequirement(),
+      })),
+      /requires targetNodeIds|invalid targetNodeIds/u,
+    );
+  }
 });
 
 test('answer review cannot overturn deterministic requested-artifact coverage', async () => {

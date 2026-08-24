@@ -2707,7 +2707,9 @@ test('terminal rebuild reuses every sealed plan output after deliverable validat
   };
   const retryTool = new CountingRealTavilyAdapter();
   const retryLlm = new CountingRealLLM();
-  const retryDeliverables = new RecordingDeliverablesFake();
+  const retryDeliverables = new RecordingDeliverablesFake(async () => {
+    throw new CurrentReportValidationError('second canonical assembly failed');
+  });
 
   const retryResult = await buildEngine(
     first.repository,
@@ -2716,13 +2718,63 @@ test('terminal rebuild reuses every sealed plan output after deliverable validat
     retryDeliverables,
   ).execute({ lease: retryLease, expectedModel: 'pinned-model' });
 
-  assert.equal(retryResult.status, 'completed');
+  assert.equal(retryResult.status, 'paused');
   assert.equal(retryTool.calls, 0);
   assert.equal(retryLlm.calls, 0);
   assert.equal(retryDeliverables.calls.length, 1);
   const retrySteps = await first.repository.listExecutionSteps(retryLease.attemptId);
   assert.equal(retrySteps.filter(({ state }) => state === 'succeeded').length, planSteps.length);
-  assert.ok(retrySteps.every((step) => {
+  assert.ok(retrySteps.filter(({ state }) => state === 'succeeded').every((step) => {
+    if (step.actorType === 'tool') return typeof step.toolProvenance?.sourceArtifactId === 'string';
+    return typeof step.skillProvenance?.sourceArtifactId === 'string'
+      && step.skillProvenance?.terminalRebuild === true;
+  }));
+
+  const secondPausedTask = await first.repository.getTaskDetail(first.lease.taskId);
+  assert.ok(secondPausedTask);
+  const secondReadyTask = await first.repository.retryPausedExecution({
+    taskId: first.lease.taskId,
+    attemptId: retryLease.attemptId,
+    expectedVersion: secondPausedTask.stateVersion,
+    failedStepNo: retryResult.failedStepNo,
+  });
+  assert.ok(secondReadyTask);
+  const secondRetryToken = randomUUID();
+  const secondRetryClaim = await first.repository.claimExecution({
+    taskId: first.lease.taskId,
+    planVersionId: first.lease.planVersionId,
+    expectedVersion: secondReadyTask.stateVersion,
+    idempotencyKey: randomUUID(),
+    requestHash: `sha256:${randomUUID()}`,
+    leaseOwner: 'terminal-rebuild-worker-2',
+    leaseTokenHash: leaseHash(secondRetryToken),
+    leaseExpiresAt: new Date(Date.now() + 60_000),
+    retryOf: retryLease.attemptId,
+  });
+  const secondRetryLease: ControlExecutionLease = {
+    taskId: first.lease.taskId,
+    planVersionId: first.lease.planVersionId,
+    attemptId: secondRetryClaim.attemptId,
+    leaseOwner: 'terminal-rebuild-worker-2',
+    leaseToken: secondRetryToken,
+    retryOf: retryLease.attemptId,
+  };
+  const secondRetryTool = new CountingRealTavilyAdapter();
+  const secondRetryLlm = new CountingRealLLM();
+  const finalDeliverables = new RecordingDeliverablesFake();
+  const finalResult = await buildEngine(
+    first.repository,
+    new ToolRouter().register(secondRetryTool),
+    secondRetryLlm,
+    finalDeliverables,
+  ).execute({ lease: secondRetryLease, expectedModel: 'pinned-model' });
+
+  assert.equal(finalResult.status, 'completed');
+  assert.equal(secondRetryTool.calls, 0);
+  assert.equal(secondRetryLlm.calls, 0);
+  assert.equal(finalDeliverables.calls.length, 1);
+  const finalSteps = await first.repository.listExecutionSteps(secondRetryLease.attemptId);
+  assert.ok(finalSteps.filter(({ state }) => state === 'succeeded').every((step) => {
     if (step.actorType === 'tool') return typeof step.toolProvenance?.sourceArtifactId === 'string';
     return typeof step.skillProvenance?.sourceArtifactId === 'string'
       && step.skillProvenance?.terminalRebuild === true;

@@ -730,12 +730,16 @@ export interface ResearchStrategyDirectAnswerBindingPatch {
   evidenceIds: string[];
   confidence: number;
   validationNeeded: string;
+  reviewIssueId?: string;
+  reason?: string;
 }
 
 export interface ResearchStrategySupportPatch {
   op: 'replace_support';
   target: ResearchStrategySupportPatchTarget;
   support: ResearchStrategySupportBindingV2;
+  reviewIssueId?: string;
+  reason?: string;
 }
 
 export interface ResearchStrategyAppendDirectAnswerPatch {
@@ -753,18 +757,40 @@ export interface ResearchStrategyAppendContentBlockPatch {
   block: ResearchStrategyContentBlockDraftV2;
 }
 
+export type ResearchStrategyBlockItemDraftV2 =
+  | ResearchStrategyMatrixCellDraftV2
+  | ResearchStrategyMindNodeDraftV2
+  | ResearchStrategyPrincipleDraftV2
+  | ResearchStrategyOpportunityDraftV2
+  | ResearchStrategyActionDraftV2
+  | ResearchStrategyChannelDraftV2;
+
+export interface ResearchStrategyAppendBlockItemPatch {
+  op: 'append_block_item';
+  blockKey: string;
+  item: ResearchStrategyBlockItemDraftV2;
+  reviewIssueId: string;
+  reason: string;
+}
+
 export interface ResearchStrategyAppendLimitationPatch {
   op: 'append_limitation';
   value: string;
+  reviewIssueId?: string;
+  reason?: string;
 }
 
 export interface ResearchStrategyAppendOpenQuestionPatch {
   op: 'append_open_question';
   value: string;
+  reviewIssueId?: string;
+  reason?: string;
 }
 
 export interface ResearchStrategySemanticTextPatch {
   op: 'replace_semantic_text';
+  reviewIssueId: string;
+  reason: string;
   target: {
     entity: 'draft' | 'direct_answer' | 'evidence_finding' | 'content_block' | 'content_item';
     key: string;
@@ -780,6 +806,7 @@ export type ResearchStrategyContentPatchOperationV1 =
   | ResearchStrategyAppendDirectAnswerPatch
   | ResearchStrategyAppendEvidenceFindingPatch
   | ResearchStrategyAppendContentBlockPatch
+  | ResearchStrategyAppendBlockItemPatch
   | ResearchStrategyAppendLimitationPatch
   | ResearchStrategyAppendOpenQuestionPatch
   | ResearchStrategySemanticTextPatch;

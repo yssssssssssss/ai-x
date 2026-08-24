@@ -46,7 +46,10 @@ test('projects model-directed section order without changing canonical content',
   assert.deepEqual(document.layoutWarnings, []);
   const action = document.sections[1]?.blocks[0];
   assert.equal(action?.type, 'answer');
-  if (action?.type === 'answer') assert.match(action.text, /strongest evidence/);
+  if (action?.type === 'answer') {
+    assert.match(action.title, /Priority actions/u);
+    assert.match(action.text, /strongest evidence/);
+  }
   const semanticUnitIds = researchStrategyProjectionUnitIds(researchStrategyPayloadV2());
   assert.doesNotThrow(() => assertSemanticUnitProjectionCoverage(semanticUnitIds, document));
   for (const unitId of semanticUnitIds) {
@@ -111,6 +114,36 @@ test('projects every mind-model edge as a distinct semantic source unit', () => 
   assert.doesNotThrow(() => assertSemanticUnitProjectionCoverage(required, document));
 });
 
+test('projects limitations, open questions, and risk disclosures as exact semantic units', () => {
+  const payload = researchStrategyPayloadV2();
+  payload.limitations = ['Evidence is directional.'];
+  payload.openQuestions = ['Will the effect persist?'];
+  payload.riskDisclosures = [{
+    id: 'risk-1',
+    sourceType: 'answer_uncertainty',
+    sourceId: 'Q1',
+    statement: 'Will the effect persist?',
+    disposition: 'open_question',
+  }];
+  const document = projectResearchStrategyReportV2({
+    payload,
+    blueprint: researchStrategyLayoutV1(),
+    layoutMode: 'model',
+    layoutWarnings: [],
+    deliverableArtifactId: 'deliverable-1',
+    payloadSchema,
+    evidenceIndex: ['E1: public_source'],
+    evidenceIds: ['E1'],
+    findingGraph: researchStrategyFindingGraphV2(),
+    coverage: researchStrategyCoverageV2(),
+  });
+  const required = researchStrategyProjectionUnitIds(payload);
+  assert.ok(required.includes('limitation-001'));
+  assert.ok(required.includes('open-question-001'));
+  assert.ok(required.includes('risk-1'));
+  assert.doesNotThrow(() => assertSemanticUnitProjectionCoverage(required, document));
+});
+
 test('semantic-unit coverage rejects omitted and duplicate projected units', () => {
   const document = projectResearchStrategyReportV2({
     payload: researchStrategyPayloadV2(),
@@ -132,6 +165,8 @@ test('semantic-unit coverage rejects omitted and duplicate projected units', () 
   assert.throws(() => assertSemanticUnitProjectionCoverage(required, document), /omits semantic units/u);
   answer.sourceNodeIds = ['Q1', 'Q1'];
   assert.throws(() => assertSemanticUnitProjectionCoverage(required, document), /duplicates semantic units/u);
+  answer.sourceNodeIds = ['Q1', 'unexpected-unit'];
+  assert.throws(() => assertSemanticUnitProjectionCoverage(required, document), /unexpected semantic units/u);
 });
 
 test('projector rejects a blueprint that omits canonical content', () => {

@@ -10,6 +10,7 @@ import type {
   ResearchStrategyReportPayload,
   ResearchStrategyReportPayloadV2,
   ResearchStrategyContentDraftV2,
+  ResearchStrategyContentPatchOperationV1,
   ResearchStrategyContentPatchV1,
   ResearchStrategyRiskDisclosure,
 } from '../../../../packages/api-contract/research-deliverable.ts';
@@ -45,7 +46,11 @@ import {
 import { createDeliverableValidationDiagnostic } from './deliverable-validation-diagnostic.ts';
 import { createContentFidelityDiagnostic } from './content-fidelity-diagnostic.ts';
 import {
+  assertSemanticRevisionFidelity,
+  assertStructuralRepairFidelity,
+  canonicalResearchStrategyDraftForFidelity,
   compareResearchStrategyContentFidelity,
+  ResearchStrategyContentFidelityError,
   type ResearchStrategyContentFidelityResult,
 } from './research-strategy-content-fidelity.ts';
 import { applyResearchStrategyContentPatch } from './research-strategy-content-patch.ts';
@@ -58,6 +63,25 @@ function researchStrategyPatchSchema(): object {
     join(getConfigRoot(), 'schemas/skills/research-strategy-content-patch-v1.schema.json'),
     'utf8',
   )) as object;
+}
+
+function patchOperationAudit(operation: ResearchStrategyContentPatchOperationV1): string {
+  const target = operation.op === 'replace_direct_answer_binding' ? operation.questionId
+    : operation.op === 'replace_support' ? JSON.stringify(operation.target)
+      : operation.op === 'replace_semantic_text' ? JSON.stringify(operation.target)
+        : operation.op === 'append_block_item' ? operation.blockKey
+          : operation.op === 'append_content_block' ? operation.block.key
+            : operation.op === 'append_direct_answer' ? operation.answer.questionId
+              : operation.op === 'append_evidence_finding' ? operation.finding.key
+                : operation.op === 'append_limitation' ? 'limitations'
+                  : 'openQuestions';
+  const reviewIssueId = 'reviewIssueId' in operation && operation.reviewIssueId
+    ? `:${operation.reviewIssueId}`
+    : '';
+  const reason = 'reason' in operation && operation.reason
+    ? `:${redactString(operation.reason).slice(0, 160)}`
+    : '';
+  return `${operation.op}:${target}${reviewIssueId}${reason}`;
 }
 
 function createDeliverableDraftSchema(payloadSchema: object, strictContract: boolean) {
@@ -373,6 +397,7 @@ export interface CurrentDeliverableGenerateInput {
   strategyDraftOverride?: ResearchStrategyContentDraftV2;
   strategyFidelity?: {
     mode: 'structural_repair' | 'semantic_revision';
+    sourceDraft: ResearchStrategyContentDraftV2;
     result: ResearchStrategyContentFidelityResult;
     repairOperations: string[];
   };
@@ -1346,6 +1371,7 @@ export class CurrentDeliverableService {
       const sourceDraft = draftOverride ?? extractResearchStrategyContentDraft(synthesisMaterials);
       let strategyFidelity = input.strategyFidelity ?? {
         mode: 'none' as const,
+        sourceDraft,
         result: compareResearchStrategyContentFidelity(sourceDraft, sourceDraft),
         repairOperations: [] as string[],
       };
@@ -1385,6 +1411,39 @@ export class CurrentDeliverableService {
         } catch {
           // Diagnostics are best-effort and must not hide the authoritative validation failure.
         }
+      };
+      const persistFidelityDiagnostic = async (inputDiagnostic: {
+        round: number;
+        mode: 'none' | 'structural_repair' | 'semantic_revision';
+        result: ResearchStrategyContentFidelityResult;
+        repairOperations: readonly string[];
+      }): Promise<void> => {
+        const diagnostic = createContentFidelityDiagnostic({
+          taskId: input.task.id,
+          planVersionId: input.plan.id,
+          attemptId: input.attempt.id,
+          round: inputDiagnostic.round,
+          mode: inputDiagnostic.mode,
+          result: inputDiagnostic.result,
+          normalizationOperations: ['deterministic_reference_and_binding_normalization'],
+          repairOperations: inputDiagnostic.repairOperations,
+        });
+        this.dependencies.validator.validateFileOrThrow(
+          'schemas/content-fidelity-diagnostic.schema.json',
+          diagnostic,
+        );
+        await this.dependencies.artifacts.writeJson({
+          taskId: input.task.id,
+          planVersionId: input.plan.id,
+          attemptId: input.attempt.id,
+          kind: 'content_fidelity_diagnostic',
+          relativePath: `diagnostics/content-fidelity-r${inputDiagnostic.round}.json`,
+          schemaVersion: diagnostic.version,
+          sensitivity: 'internal',
+          redactionPolicyVersion: 'v1',
+          activeLease: input.activeLease,
+          value: diagnostic,
+        });
       };
       for (let assemblyRound = 0; assemblyRound < assemblyAttempts; assemblyRound += 1) {
         try {
@@ -1473,21 +1532,55 @@ export class CurrentDeliverableService {
               });
             } catch (patchError) {
               await persistAssemblyDiagnostic(assemblyRound + 1, patchError, false);
+              await persistFidelityDiagnostic({
+                round: (input.revisionRound ?? 0) + assemblyRound + 1,
+                mode: 'structural_repair',
+                result: patchError instanceof ResearchStrategyContentFidelityError
+                  ? patchError.result
+                  : compareResearchStrategyContentFidelity(originalDraft, originalDraft),
+                repairOperations: repaired.data.operations.map(patchOperationAudit),
+              });
               throw new ResearchStrategyDeliverableValidationError(patchError, originalDraft);
             }
             draftOverride = applied.draft;
             strategyFidelity = {
               mode: 'structural_repair',
+              sourceDraft: originalDraft,
               result: applied.fidelity,
-              repairOperations: repaired.data.operations.map(({ op }) => op),
+              repairOperations: repaired.data.operations.map(patchOperationAudit),
             };
             continue;
           }
           await persistAssemblyDiagnostic(assemblyRound, error, false);
+          await persistFidelityDiagnostic({
+            round: (input.revisionRound ?? 0) + assemblyRound,
+            mode: strategyFidelity.mode,
+            result: strategyFidelity.result,
+            repairOperations: strategyFidelity.repairOperations,
+          });
           throw new ResearchStrategyDeliverableValidationError(error, draftOverride ?? sourceDraft);
         }
       }
       if (!deliverable) throw new Error('research strategy assembly exhausted without a validated result');
+      const canonicalDraft = canonicalResearchStrategyDraftForFidelity(
+        strategyFidelity.sourceDraft,
+        deliverable.payload,
+        deliverable.methodSummary,
+      );
+      const canonicalFidelity = strategyFidelity.mode === 'semantic_revision'
+        ? assertSemanticRevisionFidelity(
+            strategyFidelity.sourceDraft,
+            canonicalDraft,
+            new Set(strategyFidelity.result.changedSemanticUnitKeys),
+          )
+        : assertStructuralRepairFidelity(strategyFidelity.sourceDraft, canonicalDraft);
+      strategyFidelity = { ...strategyFidelity, result: canonicalFidelity };
+      await persistFidelityDiagnostic({
+        round: input.revisionRound ?? 0,
+        mode: strategyFidelity.mode,
+        result: strategyFidelity.result,
+        repairOperations: strategyFidelity.repairOperations,
+      });
       const artifact = await this.dependencies.artifacts.writeJson({
         taskId: input.task.id,
         planVersionId: input.plan.id,
@@ -1500,36 +1593,6 @@ export class CurrentDeliverableService {
         activeLease: input.activeLease,
         value: deliverable,
       });
-      const fidelityDiagnostic = createContentFidelityDiagnostic({
-        taskId: input.task.id,
-        planVersionId: input.plan.id,
-        attemptId: input.attempt.id,
-        round: input.revisionRound ?? 0,
-        mode: strategyFidelity.mode,
-        result: strategyFidelity.result,
-        normalizationOperations: ['deterministic_reference_and_binding_normalization'],
-        repairOperations: strategyFidelity.repairOperations,
-      });
-      this.dependencies.validator.validateFileOrThrow(
-        'schemas/content-fidelity-diagnostic.schema.json',
-        fidelityDiagnostic,
-      );
-      try {
-        await this.dependencies.artifacts.writeJson({
-          taskId: input.task.id,
-          planVersionId: input.plan.id,
-          attemptId: input.attempt.id,
-          kind: 'content_fidelity_diagnostic',
-          relativePath: `diagnostics/content-fidelity-r${input.revisionRound ?? 0}.json`,
-          schemaVersion: fidelityDiagnostic.version,
-          sensitivity: 'internal',
-          redactionPolicyVersion: 'v1',
-          activeLease: input.activeLease,
-          value: fidelityDiagnostic,
-        });
-      } catch {
-        // Fidelity diagnostics are best-effort and must not hide an otherwise valid Deliverable.
-      }
       return { deliverable, deliverableArtifactId: artifact.id };
     }
     const producerVisualInventory = visualInventory?.assets.map((asset) => ({
@@ -1765,12 +1828,24 @@ export class CurrentDeliverableService {
         input.currentDeliverable.payload,
         input.currentDeliverable.methodSummary,
       );
+      const reviewIssues = input.review.dimensions.flatMap((dimension) => (
+        dimension.issues.map((issue, index) => ({
+          id: `${dimension.id}:${index + 1}`,
+          dimensionId: dimension.id,
+          issue: redactString(issue),
+          targetNodeIds: [...(dimension.targetNodeIds ?? [])],
+        }))
+      ));
+      const allowedReviewIssueTargets = new Map(reviewIssues.map((issue) => (
+        [issue.id, new Set(issue.targetNodeIds)] as const
+      )));
       const patch = await this.dependencies.llm.generateStructured<ResearchStrategyContentPatchV1>({
         prompt: [
           'Return one research-strategy-content-patch-v1 in semantic_revision mode.',
           'Resolve only the final review issues through explicit patch operations; never return or rewrite the whole Draft.',
           'Use replace_semantic_text only for the exact semantic units that need weaker or more accurate wording.',
           'Use replace_direct_answer_binding or replace_support for Evidence, status, confidence, and validation changes.',
+          'Every semantic operation must include reviewIssueId and reason. Its target must be authorized by that exact context.reviewIssues item.',
           'Do not delete or reorder existing Direct Answers, findings, Blocks, or Block items. Preserve every requested typed content Block.',
           'Do not output Canonical IDs, Coverage, FindingGraph, risk identities, source pointers, or requestedArtifactBindings.',
           `Review issues: ${redactString(revisionInstruction)}`,
@@ -1787,9 +1862,7 @@ export class CurrentDeliverableService {
             ...(sourceUrl ? { sourceUrl } : {}),
           })),
           requestedArtifacts: (input.finalizedRequirement as ResearchTaskV2).requested_artifacts ?? [],
-          reviewIssues: input.review.dimensions.flatMap((dimension) => (
-            dimension.issues.map((issue) => ({ dimensionId: dimension.id, issue: redactString(issue) }))
-          )),
+          reviewIssues,
         },
         receipt: {
           stage: 'deliverable_repair',
@@ -1805,14 +1878,16 @@ export class CurrentDeliverableService {
         problemGraph: input.problemGraph as ProblemGraph,
         evidenceManifest: input.evidenceManifest.value,
         requestedArtifacts: (input.finalizedRequirement as ResearchTaskV2).requested_artifacts ?? [],
+        allowedReviewIssueTargets,
       });
       return this.generate({
         ...input,
         strategyDraftOverride: revised.draft,
         strategyFidelity: {
           mode: 'semantic_revision',
+          sourceDraft: currentDraft,
           result: revised.fidelity,
-          repairOperations: patch.data.operations.map(({ op }) => op),
+          repairOperations: patch.data.operations.map(patchOperationAudit),
         },
         revisionInstruction,
         revisionRound: 1,

@@ -30,6 +30,8 @@ export interface AppliedResearchStrategyContentPatch {
   fidelity: ResearchStrategyContentFidelityResult;
 }
 
+const FACTUAL_EVIDENCE_CLASSES = new Set(['public_source', 'screenshot', 'dataset']);
+
 const BLOCK_KIND_BY_ARTIFACT: Partial<Record<RequestedArtifact, ResearchStrategyContentBlockDraftV2['kind'][]>> = {
   research_report: ['narrative', 'comparison_matrix'],
   strategy_map: ['strategy_map'],
@@ -56,10 +58,13 @@ function normalizeQuestionIds(questionIds: string[], knownQuestionIds: readonly 
   )));
 }
 
-function validateEvidenceIds(evidenceIds: string[], knownEvidenceIds: ReadonlySet<string>): string[] {
+function validateEvidenceIds(
+  evidenceIds: string[],
+  evidenceClassById: ReadonlyMap<string, string>,
+): string[] {
   const normalized = unique(evidenceIds);
   for (const evidenceId of normalized) {
-    if (!knownEvidenceIds.has(evidenceId)) fail(`unknown Evidence ${evidenceId}`);
+    if (!evidenceClassById.has(evidenceId)) fail(`unknown Evidence ${evidenceId}`);
   }
   return normalized;
 }
@@ -69,7 +74,7 @@ function normalizedSupport(input: {
   previousStatus?: ResearchStrategySupportBindingV2['status'];
   previousConfidence?: number;
   knownQuestionIds: readonly string[];
-  knownEvidenceIds: ReadonlySet<string>;
+  evidenceClassById: ReadonlyMap<string, string>;
 }): ResearchStrategySupportBindingV2 {
   if (input.previousStatus === 'provisional' && input.support.status === 'supported') {
     fail('structural repair cannot promote provisional support to supported');
@@ -80,10 +85,13 @@ function normalizedSupport(input: {
   const support = {
     ...input.support,
     questionIds: normalizeQuestionIds(input.support.questionIds, input.knownQuestionIds),
-    evidenceIds: validateEvidenceIds(input.support.evidenceIds, input.knownEvidenceIds),
+    evidenceIds: validateEvidenceIds(input.support.evidenceIds, input.evidenceClassById),
   };
-  if (support.status === 'supported' && support.evidenceIds.length === 0) {
-    fail('supported content requires Evidence');
+  if (
+    support.status === 'supported'
+    && !support.evidenceIds.some((evidenceId) => FACTUAL_EVIDENCE_CLASSES.has(input.evidenceClassById.get(evidenceId) ?? ''))
+  ) {
+    fail('supported content requires factual Evidence');
   }
   if (support.status === 'provisional' && !support.validationNeeded.trim()) {
     fail('provisional content requires validationNeeded');
@@ -121,16 +129,23 @@ function validateAppendedAnswer(input: {
   answer: ResearchStrategyDirectAnswer;
   draft: ResearchStrategyContentDraftV2;
   knownQuestionIds: readonly string[];
-  knownEvidenceIds: ReadonlySet<string>;
+  requiredQuestionIds: ReadonlySet<string>;
+  evidenceClassById: ReadonlyMap<string, string>;
 }): ResearchStrategyDirectAnswer {
   const questionId = canonicalResearchQuestionId(input.answer.questionId, input.knownQuestionIds)
     ?? fail(`unknown Question ${input.answer.questionId}`);
+  if (!input.requiredQuestionIds.has(questionId)) {
+    fail(`Direct Answer ${questionId} is not a missing required question`);
+  }
   if (input.draft.directAnswers.some((answer) => answer.questionId === questionId)) {
     fail(`Direct Answer ${questionId} already exists`);
   }
-  const evidenceIds = validateEvidenceIds(input.answer.evidenceIds, input.knownEvidenceIds);
-  if (input.answer.answerStatus === 'supported' && evidenceIds.length === 0) {
-    fail(`supported Direct Answer ${questionId} requires Evidence`);
+  const evidenceIds = validateEvidenceIds(input.answer.evidenceIds, input.evidenceClassById);
+  if (
+    input.answer.answerStatus === 'supported'
+    && !evidenceIds.some((evidenceId) => FACTUAL_EVIDENCE_CLASSES.has(input.evidenceClassById.get(evidenceId) ?? ''))
+  ) {
+    fail(`supported Direct Answer ${questionId} requires factual Evidence`);
   }
   if (input.answer.answerStatus !== 'supported' && !input.answer.validationNeeded.trim()) {
     fail(`${input.answer.answerStatus} Direct Answer ${questionId} requires validationNeeded`);
@@ -142,7 +157,7 @@ function validateAppendedFinding(input: {
   finding: ResearchStrategyEvidenceFindingDraftV2;
   draft: ResearchStrategyContentDraftV2;
   knownQuestionIds: readonly string[];
-  knownEvidenceIds: ReadonlySet<string>;
+  evidenceClassById: ReadonlyMap<string, string>;
 }): ResearchStrategyEvidenceFindingDraftV2 {
   if (input.draft.evidenceFindings.some(({ key }) => key === input.finding.key)) {
     fail(`Evidence Finding ${input.finding.key} already exists`);
@@ -152,7 +167,7 @@ function validateAppendedFinding(input: {
     support: normalizedSupport({
       support: input.finding.support,
       knownQuestionIds: input.knownQuestionIds,
-      knownEvidenceIds: input.knownEvidenceIds,
+      evidenceClassById: input.evidenceClassById,
     }),
   };
 }
@@ -162,14 +177,17 @@ function validateAppendedBlock(input: {
   draft: ResearchStrategyContentDraftV2;
   requestedArtifacts: readonly RequestedArtifact[];
   knownQuestionIds: readonly string[];
-  knownEvidenceIds: ReadonlySet<string>;
+  evidenceClassById: ReadonlyMap<string, string>;
 }): ResearchStrategyContentBlockDraftV2 {
   if (input.draft.contentBlocks.some(({ key }) => key === input.block.key)) {
     fail(`Content Block ${input.block.key} already exists`);
   }
-  const allowedKinds = new Set(input.requestedArtifacts.flatMap((artifact) => BLOCK_KIND_BY_ARTIFACT[artifact] ?? []));
-  if (!allowedKinds.has(input.block.kind)) {
-    fail(`Content Block ${input.block.kind} was not requested`);
+  const missingRequestedKinds = new Set(input.requestedArtifacts.flatMap((artifact) => {
+    const kinds = BLOCK_KIND_BY_ARTIFACT[artifact] ?? [];
+    return kinds.some((kind) => input.draft.contentBlocks.some((block) => block.kind === kind)) ? [] : kinds;
+  }));
+  if (!missingRequestedKinds.has(input.block.kind)) {
+    fail(`Content Block ${input.block.kind} does not satisfy a missing requested artifact`);
   }
   if (input.draft.contentBlocks.some(({ kind }) => kind === input.block.kind)) {
     fail(`Content Block kind ${input.block.kind} is already materialized`);
@@ -179,7 +197,7 @@ function validateAppendedBlock(input: {
     Object.assign(support, normalizedSupport({
       support,
       knownQuestionIds: input.knownQuestionIds,
-      knownEvidenceIds: input.knownEvidenceIds,
+      evidenceClassById: input.evidenceClassById,
     }));
   }
   return block;
@@ -189,7 +207,7 @@ function replaceSupport(input: {
   draft: ResearchStrategyContentDraftV2;
   operation: Extract<ResearchStrategyContentPatchOperationV1, { op: 'replace_support' }>;
   knownQuestionIds: readonly string[];
-  knownEvidenceIds: ReadonlySet<string>;
+  evidenceClassById: ReadonlyMap<string, string>;
 }): void {
   const { target } = input.operation;
   let current: ResearchStrategySupportBindingV2 | null = null;
@@ -209,7 +227,7 @@ function replaceSupport(input: {
     previousStatus: current.status,
     previousConfidence: current.confidence,
     knownQuestionIds: input.knownQuestionIds,
-    knownEvidenceIds: input.knownEvidenceIds,
+    evidenceClassById: input.evidenceClassById,
   });
   Object.assign(current, replacement);
 }
@@ -277,16 +295,112 @@ function semanticTarget(input: {
   };
 }
 
+function reviewAuthorizationTarget(
+  operation: ResearchStrategyContentPatchOperationV1,
+): string | null {
+  if (operation.op === 'replace_direct_answer_binding') return operation.questionId;
+  if (operation.op === 'replace_support') return operation.target.key;
+  if (operation.op === 'replace_semantic_text') {
+    return operation.target.entity === 'draft' ? 'root' : operation.target.key;
+  }
+  if (operation.op === 'append_block_item') return operation.blockKey;
+  if (operation.op === 'append_limitation') return 'limitations';
+  if (operation.op === 'append_open_question') return 'openQuestions';
+  return null;
+}
+
+function assertModeAuthorization(input: {
+  operation: ResearchStrategyContentPatchOperationV1;
+  mode: ResearchStrategyContentPatchV1['mode'];
+  allowedReviewIssueTargets?: ReadonlyMap<string, ReadonlySet<string>>;
+}): void {
+  const { operation } = input;
+  if (input.mode === 'structural_repair') {
+    if (operation.op === 'replace_semantic_text') fail('structural repair cannot replace semantic text');
+    if (operation.op === 'append_evidence_finding') fail('structural repair cannot append Evidence Findings');
+    if (operation.op === 'append_block_item') fail('structural repair cannot append items to existing Blocks');
+    return;
+  }
+  if (
+    operation.op === 'append_direct_answer'
+    || operation.op === 'append_evidence_finding'
+    || operation.op === 'append_content_block'
+  ) fail(`semantic revision cannot use ${operation.op}`);
+  const reviewIssueId = 'reviewIssueId' in operation ? operation.reviewIssueId : undefined;
+  const reason = 'reason' in operation ? operation.reason : undefined;
+  if (typeof reviewIssueId !== 'string' || !reviewIssueId.trim() || typeof reason !== 'string' || !reason.trim()) {
+    fail(`semantic operation ${operation.op} requires reviewIssueId and reason`);
+  }
+  const target = reviewAuthorizationTarget(operation);
+  const allowedTargets = input.allowedReviewIssueTargets?.get(reviewIssueId);
+  if (!target || !allowedTargets?.has(target)) {
+    fail(`review issue ${reviewIssueId} does not authorize target ${String(target)}`);
+  }
+}
+
+function appendBlockItem(input: {
+  draft: ResearchStrategyContentDraftV2;
+  operation: Extract<ResearchStrategyContentPatchOperationV1, { op: 'append_block_item' }>;
+  knownQuestionIds: readonly string[];
+  evidenceClassById: ReadonlyMap<string, string>;
+}): void {
+  const block = input.draft.contentBlocks.find(({ key }) => key === input.operation.blockKey);
+  if (!block) fail(`Content Block ${input.operation.blockKey} does not exist`);
+  if (contentItem(block, input.operation.item.key)) {
+    fail(`Content item ${input.operation.item.key} already exists in ${block.key}`);
+  }
+  const item = structuredClone(input.operation.item);
+  const support = 'support' in item ? item.support : null;
+  if (!support) fail('appended content item has no support');
+  Object.assign(support, normalizedSupport({
+    support,
+    knownQuestionIds: input.knownQuestionIds,
+    evidenceClassById: input.evidenceClassById,
+  }));
+  if ((block.kind === 'comparison_matrix' || block.kind === 'strategy_map') && 'row' in item && 'column' in item && 'statement' in item) {
+    block.cells.push(item);
+    return;
+  }
+  if (block.kind === 'mind_model' && 'label' in item && 'description' in item) {
+    block.nodes.push(item);
+    return;
+  }
+  if (block.kind === 'design_principles' && 'title' in item && 'statement' in item && !('impact' in item)) {
+    block.items.push(item);
+    return;
+  }
+  if (block.kind === 'opportunity_backlog' && 'title' in item && 'statement' in item && 'impact' in item) {
+    block.items.push(item);
+    return;
+  }
+  if ((block.kind === 'prioritized_actions' || block.kind === 'action_plan') && 'priority' in item && 'action' in item) {
+    block.items.push(item);
+    return;
+  }
+  if (block.kind === 'channel_strategies' && 'channel' in item && 'role' in item && 'strategies' in item) {
+    block.items.push(item);
+    return;
+  }
+  fail(`appended item ${item.key} does not match Block kind ${block.kind}`);
+}
+
 function applyOperation(input: {
   draft: ResearchStrategyContentDraftV2;
   operation: ResearchStrategyContentPatchOperationV1;
   mode: ResearchStrategyContentPatchV1['mode'];
   knownQuestionIds: readonly string[];
-  knownEvidenceIds: ReadonlySet<string>;
+  requiredQuestionIds: ReadonlySet<string>;
+  evidenceClassById: ReadonlyMap<string, string>;
   requestedArtifacts: readonly RequestedArtifact[];
+  allowedReviewIssueTargets?: ReadonlyMap<string, ReadonlySet<string>>;
   changedSemanticUnitKeys: Set<string>;
 }): void {
   const { operation } = input;
+  assertModeAuthorization({
+    operation,
+    mode: input.mode,
+    ...(input.allowedReviewIssueTargets ? { allowedReviewIssueTargets: input.allowedReviewIssueTargets } : {}),
+  });
   if (operation.op === 'replace_direct_answer_binding') {
     const questionId = canonicalResearchQuestionId(operation.questionId, input.knownQuestionIds)
       ?? fail(`unknown Question ${operation.questionId}`);
@@ -296,9 +410,12 @@ function applyOperation(input: {
       fail('structural repair cannot promote a Direct Answer to supported');
     }
     if (operation.confidence > answer.confidence) fail('structural repair cannot increase Direct Answer confidence');
-    const evidenceIds = validateEvidenceIds(operation.evidenceIds, input.knownEvidenceIds);
-    if (operation.answerStatus === 'supported' && evidenceIds.length === 0) {
-      fail(`supported Direct Answer ${questionId} requires Evidence`);
+    const evidenceIds = validateEvidenceIds(operation.evidenceIds, input.evidenceClassById);
+    if (
+      operation.answerStatus === 'supported'
+      && !evidenceIds.some((evidenceId) => FACTUAL_EVIDENCE_CLASSES.has(input.evidenceClassById.get(evidenceId) ?? ''))
+    ) {
+      fail(`supported Direct Answer ${questionId} requires factual Evidence`);
     }
     if (operation.answerStatus !== 'supported' && !operation.validationNeeded.trim()) {
       fail(`${operation.answerStatus} Direct Answer ${questionId} requires validationNeeded`);
@@ -316,7 +433,7 @@ function applyOperation(input: {
       draft: input.draft,
       operation,
       knownQuestionIds: input.knownQuestionIds,
-      knownEvidenceIds: input.knownEvidenceIds,
+      evidenceClassById: input.evidenceClassById,
     });
     return;
   }
@@ -325,7 +442,8 @@ function applyOperation(input: {
       answer: operation.answer,
       draft: input.draft,
       knownQuestionIds: input.knownQuestionIds,
-      knownEvidenceIds: input.knownEvidenceIds,
+      requiredQuestionIds: input.requiredQuestionIds,
+      evidenceClassById: input.evidenceClassById,
     }));
     return;
   }
@@ -334,7 +452,7 @@ function applyOperation(input: {
       finding: operation.finding,
       draft: input.draft,
       knownQuestionIds: input.knownQuestionIds,
-      knownEvidenceIds: input.knownEvidenceIds,
+      evidenceClassById: input.evidenceClassById,
     }));
     return;
   }
@@ -344,8 +462,17 @@ function applyOperation(input: {
       draft: input.draft,
       requestedArtifacts: input.requestedArtifacts,
       knownQuestionIds: input.knownQuestionIds,
-      knownEvidenceIds: input.knownEvidenceIds,
+      evidenceClassById: input.evidenceClassById,
     }));
+    return;
+  }
+  if (operation.op === 'append_block_item') {
+    appendBlockItem({
+      draft: input.draft,
+      operation,
+      knownQuestionIds: input.knownQuestionIds,
+      evidenceClassById: input.evidenceClassById,
+    });
     return;
   }
   if (operation.op === 'append_limitation') {
@@ -356,7 +483,6 @@ function applyOperation(input: {
     if (!input.draft.openQuestions.includes(operation.value)) input.draft.openQuestions.push(operation.value);
     return;
   }
-  if (input.mode !== 'semantic_revision') fail('structural repair cannot replace semantic text');
   const target = semanticTarget({ draft: input.draft, operation });
   if (!target.allowedFields.has(operation.target.field)) {
     fail(`field ${operation.target.field} is not allowed for ${operation.target.entity}`);
@@ -376,13 +502,18 @@ export function applyResearchStrategyContentPatch(input: {
   problemGraph: ProblemGraph;
   evidenceManifest: EvidenceManifest;
   requestedArtifacts: readonly RequestedArtifact[];
+  allowedReviewIssueTargets?: ReadonlyMap<string, ReadonlySet<string>>;
 }): AppliedResearchStrategyContentPatch {
   if (input.patch.version !== 'research-strategy-content-patch-v1') fail('patch version is invalid');
   if (input.patch.mode !== input.mode) fail(`patch mode ${input.patch.mode} does not match ${input.mode}`);
   if (input.patch.operations.length === 0) fail('patch has no operations');
   const draft = structuredClone(input.source);
   const knownQuestionIds = input.problemGraph.questions.map(({ id }) => id);
-  const knownEvidenceIds = new Set(input.evidenceManifest.entries.map(({ id }) => id));
+  const requiredQuestionIds = new Set(input.problemGraph.questions
+    .filter(({ priority }) => priority === 'required')
+    .map(({ id }) => id)
+    .filter((questionId) => !input.source.directAnswers.some((answer) => answer.questionId === questionId)));
+  const evidenceClassById = new Map(input.evidenceManifest.entries.map(({ id, evidenceClass }) => [id, evidenceClass]));
   const operationKeys = new Set<string>();
   const changedSemanticUnitKeys = new Set<string>();
   for (const operation of input.patch.operations) {
@@ -400,8 +531,10 @@ export function applyResearchStrategyContentPatch(input: {
       operation,
       mode: input.mode,
       knownQuestionIds,
-      knownEvidenceIds,
+      requiredQuestionIds,
+      evidenceClassById,
       requestedArtifacts: input.requestedArtifacts,
+      ...(input.allowedReviewIssueTargets ? { allowedReviewIssueTargets: input.allowedReviewIssueTargets } : {}),
       changedSemanticUnitKeys,
     });
   }

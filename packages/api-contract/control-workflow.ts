@@ -228,6 +228,7 @@ export interface ReportReviewDimension {
   id: ReportReviewDimensionId;
   passed: boolean;
   issues: string[];
+  targetNodeIds?: string[];
 }
 
 export interface ReportReviewArtifact {

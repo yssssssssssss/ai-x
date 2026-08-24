@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import type {
   ResearchStrategyContentBlockDraftV2,
   ResearchStrategyContentDraftV2,
+  ResearchStrategyReportPayloadV2,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 
 export type ResearchStrategyContentUnitKind =
@@ -211,6 +212,85 @@ export function inventoryResearchStrategyContent(
   ];
   assertUniqueKeys(units);
   return units;
+}
+
+export function canonicalResearchStrategyDraftForFidelity(
+  source: ResearchStrategyContentDraftV2,
+  payload: ResearchStrategyReportPayloadV2,
+  methodSummary: string,
+): ResearchStrategyContentDraftV2 {
+  const draft: ResearchStrategyContentDraftV2 = {
+    schemaVersion: 'research-strategy-content-draft-v2',
+    title: payload.title,
+    decisionContext: payload.decisionContext,
+    executiveAnswer: payload.executiveAnswer,
+    methodSummary,
+    directAnswers: structuredClone(payload.directAnswers),
+    evidenceFindings: payload.evidenceFindings.map((finding, index) => {
+      const { id, ...content } = finding;
+      return { ...structuredClone(content), key: source.evidenceFindings[index]?.key ?? id };
+    }),
+    contentBlocks: payload.contentBlocks.map((block, blockIndex) => {
+      const sourceBlock = source.contentBlocks[blockIndex];
+      const key = sourceBlock?.key ?? block.id;
+      if (block.kind === 'narrative') {
+        const { id: _id, ...content } = block;
+        return { ...structuredClone(content), key };
+      }
+      if (block.kind === 'comparison_matrix' || block.kind === 'strategy_map') {
+        const { id: _id, cells, ...content } = block;
+        const sourceCells = sourceBlock?.kind === block.kind ? sourceBlock.cells : [];
+        return {
+          ...structuredClone(content),
+          key,
+          rows: sourceBlock?.kind === block.kind ? [...sourceBlock.rows] : [...block.rows],
+          columns: sourceBlock?.kind === block.kind ? [...sourceBlock.columns] : [...block.columns],
+          cells: cells.map(({ id, ...cell }, index) => ({
+            ...structuredClone(cell),
+            key: sourceCells[index]?.key ?? id,
+          })),
+        };
+      }
+      if (block.kind === 'mind_model') {
+        const { id: _id, nodes, ...content } = block;
+        const sourceNodes = sourceBlock?.kind === 'mind_model' ? sourceBlock.nodes : [];
+        const nodeKeyByCanonicalId = new Map(nodes.map((node, index) => (
+          [node.id, sourceNodes[index]?.key ?? node.id] as const
+        )));
+        return {
+          ...structuredClone(content),
+          key,
+          nodes: nodes.map(({ id, ...node }, index) => ({
+            ...structuredClone(node),
+            key: sourceNodes[index]?.key ?? id,
+          })),
+          edges: block.edges.map((edge) => ({
+            ...structuredClone(edge),
+            from: nodeKeyByCanonicalId.get(edge.from) ?? edge.from,
+            to: nodeKeyByCanonicalId.get(edge.to) ?? edge.to,
+          })),
+        };
+      }
+      if (!('items' in block)) {
+        throw new Error(`Unsupported canonical content Block ${(block as { kind?: unknown }).kind as string}`);
+      }
+      const { id: _id, items, ...content } = block;
+      const sourceItems: Array<{ key: string }> = sourceBlock && 'items' in sourceBlock && sourceBlock.kind === block.kind
+        ? sourceBlock.items
+        : [];
+      return {
+        ...structuredClone(content),
+        key,
+        items: items.map(({ id, ...item }, index) => ({
+          ...structuredClone(item),
+          key: sourceItems[index]?.key ?? id,
+        })),
+      } as ResearchStrategyContentBlockDraftV2;
+    }),
+    limitations: [...payload.limitations],
+    openQuestions: [...payload.openQuestions],
+  };
+  return draft;
 }
 
 export function compareResearchStrategyContentFidelity(

@@ -74,19 +74,24 @@ export function researchStrategyProjectionUnitIds(
     ...payload.directAnswers.map(({ questionId }) => questionId),
     ...payload.evidenceFindings.map(({ id }) => id),
     ...payload.contentBlocks.flatMap((block) => {
-      if (block.kind === 'narrative') return [block.id];
+      const parent = [block.id];
+      if (block.kind === 'narrative') return parent;
       if (block.kind === 'comparison_matrix' || block.kind === 'strategy_map') {
-        return block.cells.map(({ id }) => id);
+        return [...parent, ...block.cells.map(({ id }) => id)];
       }
       if (block.kind === 'mind_model') {
         return [
+          ...parent,
           ...block.nodes.map(({ id }) => id),
           ...block.edges.map((_, index) => mindEdgeProjectionId(block.id, index)),
         ];
       }
-      if ('items' in block) return block.items.map(({ id }) => id);
-      return [];
+      if ('items' in block) return [...parent, ...block.items.map(({ id }) => id)];
+      return parent;
     }),
+    ...payload.limitations.map((_, index) => `limitation-${String(index + 1).padStart(3, '0')}`),
+    ...payload.openQuestions.map((_, index) => `open-question-${String(index + 1).padStart(3, '0')}`),
+    ...payload.riskDisclosures.map(({ id }) => id),
   ];
 }
 
@@ -154,62 +159,62 @@ function projectedBlocks(input: {
     })];
   }
   if (block.kind === 'design_principles') {
-    return block.items.map((item) => create({
+    return block.items.map((item, index) => create({
       id: `report-${item.id}`,
       kind: 'design_principle',
-      title: item.title,
+      title: index === 0 ? `${block.title} · ${item.title}` : item.title,
       text: item.statement,
       items: [],
       questionIds: item.support.questionIds,
       evidenceIds: item.support.evidenceIds,
       confidence: item.support.confidence,
       sourcePointers: ['/contentBlocks'],
-      sourceNodeIds: [block.id, item.id],
+      sourceNodeIds: [...(index === 0 ? [block.id] : []), item.id],
     }));
   }
   if (block.kind === 'opportunity_backlog') {
-    return block.items.map((item) => create({
+    return block.items.map((item, index) => create({
       id: `report-${item.id}`,
       kind: 'opportunity',
-      title: item.title,
+      title: index === 0 ? `${block.title} · ${item.title}` : item.title,
       text: item.statement,
       items: [`影响：${item.impact}`, ...(item.support.validationNeeded ? [`验证：${item.support.validationNeeded}`] : [])],
       questionIds: item.support.questionIds,
       evidenceIds: item.support.evidenceIds,
       confidence: item.support.confidence,
       sourcePointers: ['/contentBlocks'],
-      sourceNodeIds: [block.id, item.id],
+      sourceNodeIds: [...(index === 0 ? [block.id] : []), item.id],
     }));
   }
   if (block.kind === 'prioritized_actions' || block.kind === 'action_plan') {
-    return block.items.map((item) => create({
+    return block.items.map((item, index) => create({
       id: `report-${item.id}`,
       kind: reportKind(block.kind),
-      title: `${item.priority} · ${item.action}`,
+      title: index === 0 ? `${block.title} · ${item.priority} · ${item.action}` : `${item.priority} · ${item.action}`,
       text: item.rationale,
       items: [`Owner：${item.ownerType}`, `验证：${item.validationMethod}`],
       questionIds: item.support.questionIds,
       evidenceIds: item.support.evidenceIds,
       confidence: item.support.confidence,
       sourcePointers: ['/contentBlocks'],
-      sourceNodeIds: [block.id, item.id],
+      sourceNodeIds: [...(index === 0 ? [block.id] : []), item.id],
       summary: item.priority === 'P0',
     }));
   }
   if (block.kind !== 'channel_strategies' || !('items' in block)) {
     throw new Error(`Unsupported research strategy Block ${(block as { kind?: unknown }).kind as string}`);
   }
-  return block.items.map((item) => create({
+  return block.items.map((item, index) => create({
     id: `report-${item.id}`,
     kind: 'comparison_matrix',
-    title: item.channel,
+    title: index === 0 ? `${block.title} · ${item.channel}` : item.channel,
     text: item.role,
     items: item.strategies,
     questionIds: item.support.questionIds,
     evidenceIds: item.support.evidenceIds,
     confidence: item.support.confidence,
     sourcePointers: ['/contentBlocks'],
-    sourceNodeIds: [block.id, item.id],
+    sourceNodeIds: [...(index === 0 ? [block.id] : []), item.id],
   }));
 }
 
@@ -325,7 +330,11 @@ export function projectResearchStrategyReportV2(input: {
       questionIds: [],
       evidenceIds: [],
       sourcePointers: ['/limitations', '/openQuestions', '/riskDisclosures'],
-      sourceNodeIds: input.payload.riskDisclosures.map(({ id }) => id),
+      sourceNodeIds: [
+        ...input.payload.limitations.map((_, index) => `limitation-${String(index + 1).padStart(3, '0')}`),
+        ...input.payload.openQuestions.map((_, index) => `open-question-${String(index + 1).padStart(3, '0')}`),
+        ...input.payload.riskDisclosures.map(({ id }) => id),
+      ],
     })],
   });
 
