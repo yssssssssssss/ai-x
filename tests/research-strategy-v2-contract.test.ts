@@ -176,6 +176,18 @@ function draft(): ResearchStrategyContentDraftV2 {
   };
 }
 
+function draftForQuestion(questionId: string): ResearchStrategyContentDraftV2 {
+  return JSON.parse(
+    JSON.stringify(draft()).replaceAll('"Q1"', JSON.stringify(questionId)),
+  ) as ResearchStrategyContentDraftV2;
+}
+
+function graphForQuestion(questionId: string): ProblemGraph {
+  const value = structuredClone(graph);
+  value.questions[0]!.id = questionId;
+  return value;
+}
+
 function material(value: ResearchStrategyContentDraftV2 = draft()): SynthesisMaterial {
   return {
     stepNo: 8,
@@ -303,6 +315,44 @@ test('assembler canonicalizes documented ordinal Evidence aliases to Manifest ID
   assert.deepEqual(result.payload.directAnswers[0]?.evidenceIds, ['E1-1']);
   assert.deepEqual(result.payload.evidenceFindings[0]?.support.evidenceIds, ['E1-1']);
   assert.ok(result.payload.contentBlocks.every((block) => JSON.stringify(block).includes('E1-1')));
+});
+
+test('assembler canonicalizes a uniquely identifiable localized Question ID alias', () => {
+  const canonicalQuestionId = 'Q6_design_principles_system';
+  const localizedAlias = 'Q6_design_principles系统';
+  const value = draftForQuestion(canonicalQuestionId);
+  value.directAnswers[0]!.questionId = localizedAlias;
+  value.evidenceFindings[0]!.support.questionIds = [localizedAlias];
+  const map = value.contentBlocks.find((block) => block.kind === 'strategy_map');
+  const actions = value.contentBlocks.find((block) => block.kind === 'prioritized_actions');
+  assert.ok(map && map.kind === 'strategy_map');
+  assert.ok(actions && actions.kind === 'prioritized_actions');
+  map.cells[0]!.support.questionIds = [localizedAlias];
+  actions.items[0]!.support.questionIds = [localizedAlias];
+
+  const result = assemble({
+    problemGraph: graphForQuestion(canonicalQuestionId),
+    materials: materials(value),
+  });
+  assert.equal(result.payload.directAnswers[0]?.questionId, canonicalQuestionId);
+  assert.deepEqual(result.payload.evidenceFindings[0]?.support.questionIds, [canonicalQuestionId]);
+  assert.ok(result.payload.contentBlocks.every((block) => JSON.stringify(block).includes(canonicalQuestionId)));
+});
+
+test('assembler rejects a Question ID with only a matching ordinal but unrelated semantics', () => {
+  const canonicalQuestionId = 'Q6_design_principles_system';
+  const value = draftForQuestion(canonicalQuestionId);
+  const map = value.contentBlocks.find((block) => block.kind === 'strategy_map');
+  assert.ok(map && map.kind === 'strategy_map');
+  map.cells[0]!.support.questionIds = ['Q6_unrelated_topic'];
+
+  assert.throws(
+    () => assemble({
+      problemGraph: graphForQuestion(canonicalQuestionId),
+      materials: materials(value),
+    }),
+    (error: unknown) => error instanceof ResearchStrategyAssemblyError && /unknown question Q6_unrelated_topic/u.test(error.message),
+  );
 });
 
 test('assembler maps source-step Evidence aliases and downgrades Knowledge-only findings', () => {

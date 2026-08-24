@@ -363,6 +363,64 @@ function graphAndCoverage(input: {
   };
 }
 
+function questionOrdinal(value: string): string | null {
+  const match = /^q0*(\d+)(?:[_-]|$)/iu.exec(normalizeText(value));
+  return match?.[1]?.replace(/^0+(?=\d)/u, '') ?? null;
+}
+
+function questionSkeleton(value: string): string {
+  return normalizeText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, '_')
+    .replace(/^_+|_+$/gu, '');
+}
+
+function canonicalizeQuestionAliases(
+  draft: ResearchStrategyContentDraftV2,
+  problemGraph: ProblemGraph,
+): ResearchStrategyContentDraftV2 {
+  const known = new Set(problemGraph.questions.map(({ id }) => id));
+  const byOrdinal = new Map<string, string | null>();
+  for (const questionId of known) {
+    const ordinal = questionOrdinal(questionId);
+    if (!ordinal) continue;
+    const existing = byOrdinal.get(ordinal);
+    byOrdinal.set(ordinal, existing === undefined || existing === questionId ? questionId : null);
+  }
+  const normalize = (questionId: string): string => {
+    if (known.has(questionId)) return questionId;
+    const ordinal = questionOrdinal(questionId);
+    const candidate = ordinal ? byOrdinal.get(ordinal) : null;
+    if (!candidate) return questionId;
+    const aliasSkeleton = questionSkeleton(questionId);
+    const candidateSkeleton = questionSkeleton(candidate);
+    const ordinalSkeleton = `q${ordinal}`;
+    const safelyEquivalent = aliasSkeleton === ordinalSkeleton
+      || aliasSkeleton === candidateSkeleton
+      || aliasSkeleton.startsWith(`${candidateSkeleton}_`)
+      || candidateSkeleton.startsWith(`${aliasSkeleton}_`);
+    return safelyEquivalent ? candidate : questionId;
+  };
+  const normalizeMany = (questionIds: string[]): string[] => unique(questionIds.map(normalize));
+  for (const answer of draft.directAnswers) answer.questionId = normalize(answer.questionId);
+  for (const finding of draft.evidenceFindings) {
+    finding.support.questionIds = normalizeMany(finding.support.questionIds);
+  }
+  for (const block of draft.contentBlocks) {
+    if (block.kind === 'narrative') block.support.questionIds = normalizeMany(block.support.questionIds);
+    else if (block.kind === 'comparison_matrix' || block.kind === 'strategy_map') {
+      for (const cell of block.cells) cell.support.questionIds = normalizeMany(cell.support.questionIds);
+    } else if (block.kind === 'mind_model') {
+      for (const node of block.nodes) node.support.questionIds = normalizeMany(node.support.questionIds);
+    } else if ('items' in block) {
+      for (const item of block.items) item.support.questionIds = normalizeMany(item.support.questionIds);
+    } else {
+      fail(`unsupported content block kind ${(block as { kind?: unknown }).kind as string}`);
+    }
+  }
+  return draft;
+}
+
 function canonicalizeEvidenceAliases(
   source: ResearchStrategyContentDraftV2,
   manifest: EvidenceManifest,
@@ -449,9 +507,12 @@ export function assembleResearchStrategyDeliverable(input: {
   validator?: Pick<SchemaValidator, 'validateFileOrThrow'>;
 }): ResearchDeliverableEnvelope<ResearchStrategyReportPayloadV2> {
   const validator = input.validator ?? new SchemaValidator();
-  const draft = canonicalizeEvidenceAliases(
-    input.draftOverride ?? extractResearchStrategyContentDraft(input.materials),
-    input.evidenceManifest,
+  const draft = canonicalizeQuestionAliases(
+    canonicalizeEvidenceAliases(
+      input.draftOverride ?? extractResearchStrategyContentDraft(input.materials),
+      input.evidenceManifest,
+    ),
+    input.problemGraph,
   );
   validator.validateFileOrThrow(DRAFT_SCHEMA, draft);
   validateSupportBindings({ draft, problemGraph: input.problemGraph, evidenceManifest: input.evidenceManifest });

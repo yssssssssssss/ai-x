@@ -9,6 +9,7 @@ import type {
   ResearchDeliverableEnvelope,
   ResearchPlanPayload,
   ResearchStrategyContentDraftV2,
+  ResearchStrategyReportPayloadV2,
 } from '../packages/api-contract/research-deliverable.ts';
 import { ArtifactNotSealedError, type ControlArtifact } from '../database/control-plane.ts';
 import { ControlArtifactStore, type ArtifactWriteInput } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
@@ -1350,6 +1351,25 @@ test('repairs one invalid reviewed Content Draft without returning to full Deliv
   assert.equal(llm.structuredCalls[0]?.receipt.stage, 'deliverable_repair');
   assert.equal((result.deliverable.payload as { schemaVersion?: string }).schemaVersion, 'research-strategy-content-v2');
   assert.equal(writes.length, 1);
+  assert.equal(writes[0]?.kind, 'deliverable');
+});
+
+test('canonicalizes a safe localized Question alias introduced by bounded Content Draft repair', async () => {
+  const invalid = openStrategyDraft();
+  invalid.directAnswers[0]!.evidenceIds = ['unknown-evidence'];
+  const repaired = openStrategyDraft();
+  const narrative = repaired.contentBlocks[0]!;
+  assert.equal(narrative.kind, 'narrative');
+  if (narrative.kind === 'narrative') narrative.support.questionIds = ['q1_系统'];
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(invalid); } };
+  const { service, llm, writes } = await createHarness(repaired, materializer);
+
+  const result = await service.generate(generateInput(openStrategyInput()));
+
+  assert.equal(llm.structuredCalls.length, 1);
+  const block = (result.deliverable.payload as unknown as ResearchStrategyReportPayloadV2).contentBlocks[0]!;
+  assert.equal(block.kind, 'narrative');
+  if (block.kind === 'narrative') assert.deepEqual(block.support.questionIds, ['q1']);
   assert.equal(writes[0]?.kind, 'deliverable');
 });
 
