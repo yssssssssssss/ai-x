@@ -63,6 +63,29 @@ export function assertProjectionCoverage(
   }
 }
 
+export function assertSemanticUnitProjectionCoverage(
+  requiredUnitIds: readonly string[],
+  document: ReportDocument,
+): void {
+  const counts = new Map<string, number>();
+  for (const unitId of document.sections.flatMap(({ blocks }) => blocks.flatMap((block) => (
+    block.type === 'answer' || block.type === 'projection-list' ? block.sourceNodeIds ?? [] : []
+  )))) {
+    counts.set(unitId, (counts.get(unitId) ?? 0) + 1);
+  }
+  if (new Set(requiredUnitIds).size !== requiredUnitIds.length) {
+    throw new Error('report semantic projection requirements contain duplicate unit ids');
+  }
+  const missing = requiredUnitIds.filter((unitId) => (counts.get(unitId) ?? 0) === 0);
+  const duplicated = requiredUnitIds.filter((unitId) => (counts.get(unitId) ?? 0) > 1);
+  if (missing.length > 0) {
+    throw new Error(`report projection omits semantic units: ${missing.join(', ')}`);
+  }
+  if (duplicated.length > 0) {
+    throw new Error(`report projection duplicates semantic units: ${duplicated.join(', ')}`);
+  }
+}
+
 function pointerValue(root: unknown, pointer: string): unknown {
   let current = root;
   for (const rawSegment of pointer.slice(1).split('/')) {

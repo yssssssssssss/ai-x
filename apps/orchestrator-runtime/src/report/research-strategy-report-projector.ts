@@ -10,7 +10,11 @@ import type {
   ReportDocument,
   ReportSection,
 } from './report-document-composer.ts';
-import { assertProjectionCoverage, requiredPayloadPointers } from './report-projection.ts';
+import {
+  assertProjectionCoverage,
+  assertSemanticUnitProjectionCoverage,
+  requiredPayloadPointers,
+} from './report-projection.ts';
 
 function unique<T>(values: readonly T[]): T[] {
   return [...new Set(values)];
@@ -57,6 +61,33 @@ function reportKind(kind: ResearchStrategyContentBlockV2['kind']): ReportAnswerB
   if (kind === 'prioritized_actions') return 'priority_matrix';
   if (kind === 'channel_strategies') return 'comparison_matrix';
   return kind;
+}
+
+function mindEdgeProjectionId(blockId: string, index: number): string {
+  return `${blockId}-edge-${String(index + 1).padStart(3, '0')}`;
+}
+
+export function researchStrategyProjectionUnitIds(
+  payload: ResearchStrategyReportPayloadV2,
+): string[] {
+  return [
+    ...payload.directAnswers.map(({ questionId }) => questionId),
+    ...payload.evidenceFindings.map(({ id }) => id),
+    ...payload.contentBlocks.flatMap((block) => {
+      if (block.kind === 'narrative') return [block.id];
+      if (block.kind === 'comparison_matrix' || block.kind === 'strategy_map') {
+        return block.cells.map(({ id }) => id);
+      }
+      if (block.kind === 'mind_model') {
+        return [
+          ...block.nodes.map(({ id }) => id),
+          ...block.edges.map((_, index) => mindEdgeProjectionId(block.id, index)),
+        ];
+      }
+      if ('items' in block) return block.items.map(({ id }) => id);
+      return [];
+    }),
+  ];
 }
 
 function projectedBlocks(input: {
@@ -115,7 +146,11 @@ function projectedBlocks(input: {
       evidenceIds,
       confidence: Math.min(...block.nodes.map(({ support }) => support.confidence)),
       sourcePointers: ['/contentBlocks'],
-      sourceNodeIds: [block.id, ...block.nodes.map(({ id }) => id)],
+      sourceNodeIds: [
+        block.id,
+        ...block.nodes.map(({ id }) => id),
+        ...block.edges.map((_, index) => mindEdgeProjectionId(block.id, index)),
+      ],
     })];
   }
   if (block.kind === 'design_principles') {
@@ -325,7 +360,7 @@ export function projectResearchStrategyReportV2(input: {
     coveredPointers,
     omittedPointers: [],
   });
-  return {
+  const document: ReportDocument = {
     version: 'report-document-v2',
     title: input.payload.title,
     subtitle: 'Evidence-bound model-directed research strategy report',
@@ -338,4 +373,6 @@ export function projectResearchStrategyReportV2(input: {
     layoutMode: input.layoutMode,
     layoutWarnings: input.layoutWarnings,
   };
+  assertSemanticUnitProjectionCoverage(researchStrategyProjectionUnitIds(input.payload), document);
+  return document;
 }
