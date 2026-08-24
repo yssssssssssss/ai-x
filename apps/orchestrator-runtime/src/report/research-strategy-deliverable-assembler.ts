@@ -16,6 +16,7 @@ import type { ResearchTaskV2, RequestedArtifact } from '../../../../packages/api
 import type { EvidenceManifest } from '../evidence/evidence-service.ts';
 import { SchemaValidator } from '../schema/validator.ts';
 import type { SynthesisMaterial } from './synthesis-materializer.ts';
+import { canonicalResearchQuestionId } from './research-strategy-reference-normalizer.ts';
 
 const DRAFT_SCHEMA = 'schemas/skills/research-strategy-content-draft-v2.schema.json';
 const PAYLOAD_SCHEMA = 'schemas/deliverables/research-strategy-report-v2.schema.json';
@@ -363,44 +364,14 @@ function graphAndCoverage(input: {
   };
 }
 
-function questionOrdinal(value: string): string | null {
-  const match = /^q0*(\d+)(?:[_-]|$)/iu.exec(normalizeText(value));
-  return match?.[1]?.replace(/^0+(?=\d)/u, '') ?? null;
-}
-
-function questionSkeleton(value: string): string {
-  return normalizeText(value)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/gu, '_')
-    .replace(/^_+|_+$/gu, '');
-}
-
 function canonicalizeQuestionAliases(
   draft: ResearchStrategyContentDraftV2,
   problemGraph: ProblemGraph,
 ): ResearchStrategyContentDraftV2 {
-  const known = new Set(problemGraph.questions.map(({ id }) => id));
-  const byOrdinal = new Map<string, string | null>();
-  for (const questionId of known) {
-    const ordinal = questionOrdinal(questionId);
-    if (!ordinal) continue;
-    const existing = byOrdinal.get(ordinal);
-    byOrdinal.set(ordinal, existing === undefined || existing === questionId ? questionId : null);
-  }
-  const normalize = (questionId: string): string => {
-    if (known.has(questionId)) return questionId;
-    const ordinal = questionOrdinal(questionId);
-    const candidate = ordinal ? byOrdinal.get(ordinal) : null;
-    if (!candidate) return questionId;
-    const aliasSkeleton = questionSkeleton(questionId);
-    const candidateSkeleton = questionSkeleton(candidate);
-    const ordinalSkeleton = `q${ordinal}`;
-    const safelyEquivalent = aliasSkeleton === ordinalSkeleton
-      || aliasSkeleton === candidateSkeleton
-      || aliasSkeleton.startsWith(`${candidateSkeleton}_`)
-      || candidateSkeleton.startsWith(`${aliasSkeleton}_`);
-    return safelyEquivalent ? candidate : questionId;
-  };
+  const knownQuestionIds = problemGraph.questions.map(({ id }) => id);
+  const normalize = (questionId: string): string => (
+    canonicalResearchQuestionId(questionId, knownQuestionIds) ?? questionId
+  );
   const normalizeMany = (questionIds: string[]): string[] => unique(questionIds.map(normalize));
   for (const answer of draft.directAnswers) answer.questionId = normalize(answer.questionId);
   for (const finding of draft.evidenceFindings) {

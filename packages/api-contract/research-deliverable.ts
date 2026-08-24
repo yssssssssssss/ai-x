@@ -718,6 +718,78 @@ export interface ResearchStrategyContentDraftV2 {
   openQuestions: string[];
 }
 
+export type ResearchStrategySupportPatchTarget =
+  | { entity: 'evidence_finding'; key: string }
+  | { entity: 'content_block'; key: string }
+  | { entity: 'content_item'; blockKey: string; key: string };
+
+export interface ResearchStrategyDirectAnswerBindingPatch {
+  op: 'replace_direct_answer_binding';
+  questionId: string;
+  answerStatus: ResearchAnswerStatus;
+  evidenceIds: string[];
+  confidence: number;
+  validationNeeded: string;
+}
+
+export interface ResearchStrategySupportPatch {
+  op: 'replace_support';
+  target: ResearchStrategySupportPatchTarget;
+  support: ResearchStrategySupportBindingV2;
+}
+
+export interface ResearchStrategyAppendDirectAnswerPatch {
+  op: 'append_direct_answer';
+  answer: ResearchStrategyDirectAnswer;
+}
+
+export interface ResearchStrategyAppendEvidenceFindingPatch {
+  op: 'append_evidence_finding';
+  finding: ResearchStrategyEvidenceFindingDraftV2;
+}
+
+export interface ResearchStrategyAppendContentBlockPatch {
+  op: 'append_content_block';
+  block: ResearchStrategyContentBlockDraftV2;
+}
+
+export interface ResearchStrategyAppendLimitationPatch {
+  op: 'append_limitation';
+  value: string;
+}
+
+export interface ResearchStrategyAppendOpenQuestionPatch {
+  op: 'append_open_question';
+  value: string;
+}
+
+export interface ResearchStrategySemanticTextPatch {
+  op: 'replace_semantic_text';
+  target: {
+    entity: 'draft' | 'direct_answer' | 'evidence_finding' | 'content_block' | 'content_item';
+    key: string;
+    parentKey?: string;
+    field: string;
+  };
+  value: string | string[];
+}
+
+export type ResearchStrategyContentPatchOperationV1 =
+  | ResearchStrategyDirectAnswerBindingPatch
+  | ResearchStrategySupportPatch
+  | ResearchStrategyAppendDirectAnswerPatch
+  | ResearchStrategyAppendEvidenceFindingPatch
+  | ResearchStrategyAppendContentBlockPatch
+  | ResearchStrategyAppendLimitationPatch
+  | ResearchStrategyAppendOpenQuestionPatch
+  | ResearchStrategySemanticTextPatch;
+
+export interface ResearchStrategyContentPatchV1 {
+  version: 'research-strategy-content-patch-v1';
+  mode: 'structural_repair' | 'semantic_revision';
+  operations: ResearchStrategyContentPatchOperationV1[];
+}
+
 export type ResearchStrategyContentBlockV2 =
   | (Omit<ResearchStrategyNarrativeBlockDraftV2, 'key'> & { id: string })
   | (Omit<ResearchStrategyMatrixBlockDraftV2, 'key' | 'cells'> & {

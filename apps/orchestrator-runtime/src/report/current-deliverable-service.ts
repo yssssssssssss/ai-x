@@ -10,6 +10,7 @@ import type {
   ResearchStrategyReportPayload,
   ResearchStrategyReportPayloadV2,
   ResearchStrategyContentDraftV2,
+  ResearchStrategyContentPatchV1,
   ResearchStrategyRiskDisclosure,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
@@ -42,14 +43,14 @@ import {
   ResearchStrategyAssemblyError,
 } from './research-strategy-deliverable-assembler.ts';
 import { createDeliverableValidationDiagnostic } from './deliverable-validation-diagnostic.ts';
-import { assertStructuralRepairFidelity } from './research-strategy-content-fidelity.ts';
+import { applyResearchStrategyContentPatch } from './research-strategy-content-patch.ts';
 import {
   canonicalizeRequestedArtifactBindings,
   validateResearchStrategyAnswer,
 } from './answer-quality-validator.ts';
-function researchStrategyDraftSchema(): object {
+function researchStrategyPatchSchema(): object {
   return JSON.parse(readFileSync(
-    join(getConfigRoot(), 'schemas/skills/research-strategy-content-draft-v2.schema.json'),
+    join(getConfigRoot(), 'schemas/skills/research-strategy-content-patch-v1.schema.json'),
     'utf8',
   )) as object;
 }
@@ -1264,7 +1265,6 @@ export class CurrentDeliverableService {
       let deliverable: ResearchDeliverableEnvelope<ResearchStrategyReportPayloadV2> | null = null;
       let draftOverride = input.strategyDraftOverride;
       const sourceDraft = draftOverride ?? extractResearchStrategyContentDraft(synthesisMaterials);
-      let structuralRepairApplied = false;
       const assemblyAttempts = draftOverride ? 1 : 2;
       const persistAssemblyDiagnostic = async (
         assemblyRound: number,
@@ -1304,9 +1304,6 @@ export class CurrentDeliverableService {
       };
       for (let assemblyRound = 0; assemblyRound < assemblyAttempts; assemblyRound += 1) {
         try {
-          if (structuralRepairApplied && draftOverride) {
-            assertStructuralRepairFidelity(sourceDraft, draftOverride);
-          }
           deliverable = assembleResearchStrategyDeliverable({
             taskId: input.task.id,
             planVersionId: input.plan.id,
@@ -1341,17 +1338,19 @@ export class CurrentDeliverableService {
           if (repairable) {
             await persistAssemblyDiagnostic(assemblyRound, error, true);
             const originalDraft = sourceDraft;
-            const repaired = await this.dependencies.llm.generateStructured<ResearchStrategyContentDraftV2>({
+            const repaired = await this.dependencies.llm.generateStructured<ResearchStrategyContentPatchV1>({
               prompt: [
-                'Repair the reviewed research-strategy-content-draft-v2 without changing its substantive conclusions.',
+                'Return one research-strategy-content-patch-v1 in structural_repair mode.',
+                'Repair the reviewed Content Draft without rewriting, deleting, or reordering existing semantic content.',
+                'Use replace_direct_answer_binding or replace_support for binding corrections. Use append operations only for genuinely missing required content.',
+                'Do not use replace_semantic_text in structural_repair mode.',
                 'Use only the exact allowed Question and Evidence IDs supplied in context.',
                 'The allowedEvidence list is the authoritative final Evidence inventory. evidenceBindingSources contains upstream question-indexed citations; use it to restore missing bindings instead of claiming that the Evidence Manifest is unavailable.',
                 'Every non-unanswered Direct Answer, Evidence Finding, and requested content Block must retain relevant Evidence. Keep interpretive claims provisional even when attaching factual context.',
-                'Remove unsupported references, downgrade claims to provisional when necessary, and preserve every requested artifact as a typed content Block.',
                 `Correct this validation failure: ${redactString(error.message)}`,
               ].join('\n'),
-              schema: researchStrategyDraftSchema(),
-              schemaName: 'research-strategy-content-draft-v2',
+              schema: researchStrategyPatchSchema(),
+              schemaName: 'research-strategy-content-patch-v1',
               context: {
                 draft: redactSensitiveValue(originalDraft),
                 allowedQuestionIds: (input.problemGraph as ProblemGraph).questions.map(({ id }) => id),
@@ -1378,8 +1377,21 @@ export class CurrentDeliverableService {
                 expectedModel: input.expectedModel,
               },
             });
-            draftOverride = repaired.data;
-            structuralRepairApplied = true;
+            let applied: ReturnType<typeof applyResearchStrategyContentPatch>;
+            try {
+              applied = applyResearchStrategyContentPatch({
+                source: originalDraft,
+                patch: repaired.data,
+                mode: 'structural_repair',
+                problemGraph: input.problemGraph as ProblemGraph,
+                evidenceManifest,
+                requestedArtifacts: strategyRequirement.requested_artifacts ?? [],
+              });
+            } catch (patchError) {
+              await persistAssemblyDiagnostic(assemblyRound + 1, patchError, false);
+              throw patchError;
+            }
+            draftOverride = applied.draft;
             continue;
           }
           await persistAssemblyDiagnostic(assemblyRound, error, false);
@@ -1634,20 +1646,31 @@ export class CurrentDeliverableService {
         input.currentDeliverable.payload,
         input.currentDeliverable.methodSummary,
       );
-      const repaired = await this.dependencies.llm.generateStructured<ResearchStrategyContentDraftV2>({
+      const patch = await this.dependencies.llm.generateStructured<ResearchStrategyContentPatchV1>({
         prompt: [
-          'Revise the research-strategy-content-draft-v2 only enough to resolve the final review issues.',
-          'Preserve supported conclusions and exact Evidence IDs. Weaken unsupported wording, update status or validationNeeded where required, and keep every requested typed content Block.',
+          'Return one research-strategy-content-patch-v1 in semantic_revision mode.',
+          'Resolve only the final review issues through explicit patch operations; never return or rewrite the whole Draft.',
+          'Use replace_semantic_text only for the exact semantic units that need weaker or more accurate wording.',
+          'Use replace_direct_answer_binding or replace_support for Evidence, status, confidence, and validation changes.',
+          'Do not delete or reorder existing Direct Answers, findings, Blocks, or Block items. Preserve every requested typed content Block.',
           'Do not output Canonical IDs, Coverage, FindingGraph, risk identities, source pointers, or requestedArtifactBindings.',
           `Review issues: ${redactString(revisionInstruction)}`,
         ].join('\n'),
-        schema: researchStrategyDraftSchema(),
-        schemaName: 'research-strategy-content-draft-v2',
+        schema: researchStrategyPatchSchema(),
+        schemaName: 'research-strategy-content-patch-v1',
         context: {
+          mode: 'semantic_revision',
           draft: redactSensitiveValue(currentDraft),
           allowedQuestionIds: (input.problemGraph as ProblemGraph).questions.map(({ id }) => id),
-          allowedEvidence: input.evidenceManifest.value.entries.map(({ id, evidenceClass }) => ({ id, evidenceClass })),
+          allowedEvidence: input.evidenceManifest.value.entries.map(({ id, evidenceClass, sourceUrl }) => ({
+            id,
+            evidenceClass,
+            ...(sourceUrl ? { sourceUrl } : {}),
+          })),
           requestedArtifacts: (input.finalizedRequirement as ResearchTaskV2).requested_artifacts ?? [],
+          reviewIssues: input.review.dimensions.flatMap((dimension) => (
+            dimension.issues.map((issue) => ({ dimensionId: dimension.id, issue: redactString(issue) }))
+          )),
         },
         receipt: {
           stage: 'deliverable_repair',
@@ -1656,9 +1679,17 @@ export class CurrentDeliverableService {
           expectedModel: input.expectedModel,
         },
       });
+      const revised = applyResearchStrategyContentPatch({
+        source: currentDraft,
+        patch: patch.data,
+        mode: 'semantic_revision',
+        problemGraph: input.problemGraph as ProblemGraph,
+        evidenceManifest: input.evidenceManifest.value,
+        requestedArtifacts: (input.finalizedRequirement as ResearchTaskV2).requested_artifacts ?? [],
+      });
       return this.generate({
         ...input,
-        strategyDraftOverride: repaired.data,
+        strategyDraftOverride: revised.draft,
         revisionInstruction,
         revisionRound: 1,
       });

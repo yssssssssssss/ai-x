@@ -9,6 +9,7 @@ import type {
   ResearchDeliverableEnvelope,
   ResearchPlanPayload,
   ResearchStrategyContentDraftV2,
+  ResearchStrategyContentPatchV1,
   ResearchStrategyReportPayloadV2,
 } from '../packages/api-contract/research-deliverable.ts';
 import { ArtifactNotSealedError, type ControlArtifact } from '../database/control-plane.ts';
@@ -1244,10 +1245,80 @@ function openStrategyDraft(): ResearchStrategyContentDraftV2 {
       answerStatus: 'supported', evidenceIds: ['E1'], confidence: 0.8,
       businessImplication: 'Reduce uncertainty.', recommendedAction: 'Ship the evidence card.', validationNeeded: '',
     }],
-    evidenceFindings: [{ key: 'fact', statement: 'The public source supports the decision.', support }],
-    contentBlocks: [{ key: 'narrative', kind: 'narrative', title: 'Why this works', content: 'The evidence supports the proposed direction.', support }],
+    evidenceFindings: [{
+      key: 'fact', statement: 'The public source supports the decision.', support: structuredClone(support),
+    }],
+    contentBlocks: [{
+      key: 'narrative', kind: 'narrative', title: 'Why this works',
+      content: 'The evidence supports the proposed direction.', support: structuredClone(support),
+    }],
     limitations: [],
     openQuestions: [],
+  };
+}
+
+function structuralEvidencePatch(evidenceIds: string[] = ['E1']): ResearchStrategyContentPatchV1 {
+  return {
+    version: 'research-strategy-content-patch-v1',
+    mode: 'structural_repair',
+    operations: [{
+      op: 'replace_direct_answer_binding',
+      questionId: 'q1',
+      answerStatus: evidenceIds.length > 0 ? 'supported' : 'provisional',
+      evidenceIds,
+      confidence: evidenceIds.length > 0 ? 0.8 : 0.6,
+      validationNeeded: evidenceIds.length > 0 ? '' : 'Validate the answer.',
+    }],
+  };
+}
+
+function semanticRevisionPatch(): ResearchStrategyContentPatchV1 {
+  return {
+    version: 'research-strategy-content-patch-v1',
+    mode: 'semantic_revision',
+    operations: [{
+      op: 'replace_semantic_text',
+      target: { entity: 'direct_answer', key: 'q1', field: 'answer' },
+      value: 'Lead with carefully qualified, verifiable trust signals.',
+    }],
+  };
+}
+
+function noOpStructuralPatch(): ResearchStrategyContentPatchV1 {
+  return {
+    version: 'research-strategy-content-patch-v1',
+    mode: 'structural_repair',
+    operations: [{ op: 'append_limitation', value: 'The invalid binding remains unresolved.' }],
+  };
+}
+
+function compoundedStructuralPatch(): ResearchStrategyContentPatchV1 {
+  const provisionalSupport = {
+    questionIds: ['q1_系统'],
+    evidenceIds: [],
+    confidence: 0.6,
+    status: 'provisional' as const,
+    validationNeeded: 'Validate against the verified source.',
+  };
+  return {
+    version: 'research-strategy-content-patch-v1',
+    mode: 'structural_repair',
+    operations: [{
+      op: 'replace_direct_answer_binding',
+      questionId: 'q1',
+      answerStatus: 'provisional',
+      evidenceIds: [],
+      confidence: 0.6,
+      validationNeeded: 'Validate the answer.',
+    }, {
+      op: 'replace_support',
+      target: { entity: 'evidence_finding', key: 'fact' },
+      support: provisionalSupport,
+    }, {
+      op: 'replace_support',
+      target: { entity: 'content_block', key: 'narrative' },
+      support: provisionalSupport,
+    }],
   };
 }
 
@@ -1315,7 +1386,7 @@ test('assembles a research strategy deliverable from the reviewed Skill output w
 test('revises an open strategy report through one bounded Content Draft repair', async () => {
   const content = openStrategyDraft();
   const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(content); } };
-  const { service, llm, writes } = await createHarness(content, materializer);
+  const { service, llm, writes } = await createHarness(semanticRevisionPatch(), materializer);
   const strategyInput = generateInput(openStrategyInput());
   const initial = await service.generate(strategyInput);
   const revised = await service.revise({
@@ -1385,7 +1456,7 @@ test('repairs one invalid reviewed Content Draft without returning to full Deliv
   const invalid = openStrategyDraft();
   invalid.directAnswers[0]!.evidenceIds = ['unknown-evidence'];
   const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(invalid); } };
-  const { service, llm, writes } = await createHarness(openStrategyDraft(), materializer);
+  const { service, llm, writes } = await createHarness(structuralEvidencePatch(), materializer);
 
   const result = await service.generate(generateInput(openStrategyInput()));
 
@@ -1405,21 +1476,6 @@ test('repairs one invalid reviewed Content Draft without returning to full Deliv
 test('normalizes missing Evidence and a safe Question alias introduced by bounded Content Draft repair', async () => {
   const invalid = openStrategyDraft();
   invalid.directAnswers[0]!.evidenceIds = ['unknown-evidence'];
-  const repaired = openStrategyDraft();
-  repaired.directAnswers[0]!.answerStatus = 'provisional';
-  repaired.directAnswers[0]!.evidenceIds = [];
-  repaired.directAnswers[0]!.validationNeeded = 'Validate the answer.';
-  repaired.evidenceFindings[0]!.support.status = 'provisional';
-  repaired.evidenceFindings[0]!.support.evidenceIds = [];
-  repaired.evidenceFindings[0]!.support.validationNeeded = 'Validate the finding.';
-  const narrative = repaired.contentBlocks[0]!;
-  assert.equal(narrative.kind, 'narrative');
-  if (narrative.kind === 'narrative') {
-    narrative.support.questionIds = ['q1_系统'];
-    narrative.support.status = 'provisional';
-    narrative.support.evidenceIds = [];
-    narrative.support.validationNeeded = 'Validate the narrative.';
-  }
   const bindingSource: SynthesisMaterial = {
     stepNo: 3,
     actorType: 'llm',
@@ -1435,7 +1491,7 @@ test('normalizes missing Evidence and a safe Question alias introduced by bounde
       return [bindingSource, ...openStrategyMaterials(invalid)];
     },
   };
-  const { service, llm, writes } = await createHarness(repaired, materializer);
+  const { service, llm, writes } = await createHarness(compoundedStructuralPatch(), materializer);
 
   const result = await service.generate(generateInput(openStrategyInput()));
 
@@ -1462,17 +1518,24 @@ test('normalizes missing Evidence and a safe Question alias introduced by bounde
   assert.deepEqual(writes.map(({ kind }) => kind), ['deliverable_validation_diagnostic', 'deliverable']);
 });
 
-test('rejects a structural repair that rewrites reviewed semantic content', async () => {
+test('rejects a semantic rewrite operation in structural repair mode', async () => {
   const invalid = openStrategyDraft();
   invalid.directAnswers[0]!.evidenceIds = ['unknown-evidence'];
-  const rewritten = openStrategyDraft();
-  rewritten.directAnswers[0]!.answer = 'A compressed replacement answer.';
+  const forbiddenPatch: ResearchStrategyContentPatchV1 = {
+    version: 'research-strategy-content-patch-v1',
+    mode: 'structural_repair',
+    operations: [{
+      op: 'replace_semantic_text',
+      target: { entity: 'direct_answer', key: 'q1', field: 'answer' },
+      value: 'A compressed replacement answer.',
+    }],
+  };
   const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(invalid); } };
-  const { service, llm, writes } = await createHarness(rewritten, materializer);
+  const { service, llm, writes } = await createHarness(forbiddenPatch, materializer);
 
   await assert.rejects(
     () => service.generate(generateInput(openStrategyInput())),
-    /content fidelity failed.*direct-answer:001/iu,
+    /structural repair cannot replace semantic text/iu,
   );
 
   assert.equal(llm.structuredCalls.length, 1);
@@ -1486,7 +1549,7 @@ test('persists a sanitized diagnostic when reviewed Skill assembly and its bound
   const invalid = openStrategyDraft();
   invalid.directAnswers[0]!.evidenceIds = ['unknown-evidence'];
   const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(invalid); } };
-  const { service, llm, writes } = await createHarness(invalid, materializer);
+  const { service, llm, writes } = await createHarness(noOpStructuralPatch(), materializer);
   await assert.rejects(() => service.generate(generateInput(openStrategyInput())), /unknown Evidence/);
 
   assert.equal(llm.structuredCalls.length, 1);
