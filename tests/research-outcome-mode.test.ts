@@ -33,6 +33,55 @@ test('mixed intent is gated independently of an incorrect model task type', () =
   assert.deepEqual(selected.expected_deliverables, ['research_plan']);
 });
 
+test('explicit answer signals recover an incorrectly competitive model classification', () => {
+  const misclassified: ResearchTaskV2 = {
+    ...requirement(),
+    task_type: 'competitive_research',
+    expected_deliverables: ['competitive_analysis_report'],
+    blocking_issues: [{
+      key: 'public-access',
+      kind: 'data_access_and_reproducibility_risk',
+      reason: '公开页面可能变化或需要登录，从而影响复现。',
+    }, {
+      key: 'platform-terms',
+      kind: 'compliance_and_authorization_risk',
+      reason: '若需自动化抓取或访问登录后内容，可能存在授权风险。',
+    }],
+  };
+  const value = normalizeOutcomeRequirement(
+    misclassified,
+    '请直接基于2025—2026年公开可访问资料回答，并输出策略地图、心智模型和优先行动。',
+    null,
+  );
+  assert.equal(value.task_type, 'research_synthesis');
+  assert.equal(value.outcome_mode, 'answer');
+  assert.deepEqual(value.expected_deliverables, ['research_strategy_report']);
+  assert.deepEqual(value.requested_artifacts, ['strategy_map', 'mind_model', 'prioritized_actions']);
+  assert.deepEqual(value.blocking_issues, []);
+  assert.deepEqual(value.clarification_questions, []);
+});
+
+test('public-only normalization keeps real access blockers instead of hiding them', () => {
+  const blocked: ResearchTaskV2 = {
+    ...requirement(),
+    task_type: 'competitive_research',
+    expected_deliverables: ['competitive_analysis_report'],
+    pii_detected: false,
+    blocking_issues: [{
+      key: 'actual-private-data',
+      kind: 'authorization_compliance',
+      reason: '当前需求明确包含未授权的内部交易明细，不能执行。',
+    }],
+  };
+  const value = normalizeOutcomeRequirement(
+    blocked,
+    '请直接基于公开可访问资料回答并输出策略地图。',
+    null,
+  );
+  assert.equal(value.task_type, 'research_synthesis');
+  assert.equal(value.blocking_issues.length, 1);
+});
+
 test('English plan and direct-answer signals normalize deterministically', () => {
   const plan = normalizeOutcomeRequirement(requirement(), 'Design a research plan and interview schedule.', null);
   assert.equal(plan.outcome_mode, 'plan');

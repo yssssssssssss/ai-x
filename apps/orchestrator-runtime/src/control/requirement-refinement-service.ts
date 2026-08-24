@@ -175,6 +175,11 @@ const PLAN_OUTCOME_SIGNALS = [
   /\b(?:research|study|interview|survey)\s+(?:plan|design|protocol|schedule)\b/iu,
   /\bhow\s+(?:should\s+we\s+|do\s+we\s+|to\s+)?(?:conduct|run|design|plan)\s+(?:the\s+)?(?:research|study)\b/iu,
 ] as const;
+const EXPLICIT_ANSWER_OVERRIDE_SIGNALS = [
+  /直接[\s\S]{0,120}(?:回答|给出|输出|结论|策略|行动)/u,
+  /(?:回答|告诉我)[\s\S]{0,60}(?:是什么|为什么|怎么做|如何做|当前结论)/u,
+  /\b(?:directly\s+answer|give\s+(?:me\s+)?a\s+direct\s+answer)\b/iu,
+] as const;
 const ANSWER_OUTCOME_SIGNALS = [
   /(?:直接|完成).{0,8}(?:研究|分析|回答|结论)/u,
   /(?:给出|输出|提出).{0,10}(?:结论|策略地图|心智模型|设计原则|机会点|优先级|行动建议)/u,
@@ -188,7 +193,7 @@ const REQUESTED_ARTIFACT_SIGNALS: Array<[RegExp, RequestedArtifact]> = [
   [/(?:心智模型|\b(?:mental|mind) model\b)/iu, 'mind_model'],
   [/(?:设计原则|\bdesign principles?\b)/iu, 'design_principles'],
   [/(?:机会点|\bopportunit(?:y|ies)(?: backlog)?\b)/iu, 'opportunity_backlog'],
-  [/(?:优先级|\bprioriti[sz]ed actions?\b)/iu, 'prioritized_actions'],
+  [/(?:(?:优先级|优先行动)|P0.{0,8}P1.{0,8}P2|\bprioriti[sz]ed actions?\b)/iu, 'prioritized_actions'],
   [/(?:(?:渠道|场域).{0,6}策略|\bchannel strateg(?:y|ies)\b)/iu, 'channel_strategies'],
   [/(?:(?:行动|落地).{0,6}(?:计划|路线)|\baction plan\b)/iu, 'action_plan'],
 ];
@@ -210,9 +215,11 @@ function actionableBlockingIssues(
   const publicOnly = /(?:公开可访问|公开资料|公开来源|publicly accessible|public sources?)/iu.test(originalInput);
   const requestsRestrictedData = /(?:平台后台数据|私域用户数据|非公开销量数据|个人身份信息|登录后数据|private data|personal data)/iu.test(originalInput);
   if (!publicOnly || requestsRestrictedData) return requirement.blocking_issues;
+  const hypotheticalRisk = /(?:^(?:若|如|如果|when\b|if\b)|可能|需逐项确认|may\b|might\b|would require)/iu;
+  const restrictedAccessRisk = /(?:privacy|compliance|authorization|access|reproducibility)/iu;
   return requirement.blocking_issues.filter((issue) => !(
-    (issue.kind === 'privacy' || issue.kind === 'compliance_access')
-    && /^(?:若|如|如果|when\b|if\b)/iu.test(issue.reason.trim())
+    restrictedAccessRisk.test(issue.kind)
+    && hypotheticalRisk.test(issue.reason)
   ));
 }
 
@@ -226,6 +233,7 @@ export function normalizeOutcomeRequirement(
   const planSignal = PLAN_OUTCOME_SIGNALS.some((pattern) => pattern.test(originalInput));
   const answerSignal = ANSWER_OUTCOME_SIGNALS.some((pattern) => pattern.test(originalInput))
     || (requirement.requested_artifacts?.some((item) => item !== 'research_report') ?? false);
+  const explicitAnswerOverride = EXPLICIT_ANSWER_OVERRIDE_SIGNALS.some((pattern) => pattern.test(originalInput));
   const ambiguous = selectedByUser === null && planSignal && answerSignal;
   const requested = [...new Set([
     ...(requirement.requested_artifacts ?? []),
@@ -233,7 +241,11 @@ export function normalizeOutcomeRequirement(
   ])];
   const supportsOutcomeMode = requirement.task_type === 'user_research_planning'
     || requirement.task_type === 'research_synthesis';
-  const appliesToOutcomeMode = supportsOutcomeMode || selectedByUser !== null || ambiguous;
+  const appliesToOutcomeMode = supportsOutcomeMode
+    || selectedByUser !== null
+    || ambiguous
+    || planSignal
+    || explicitAnswerOverride;
   if (!appliesToOutcomeMode) return requirement;
   if (selectedByUser === null && inferred === null && !planSignal && !answerSignal && requested.length === 0) {
     return requirement;
@@ -254,7 +266,8 @@ export function normalizeOutcomeRequirement(
       ],
     };
   }
-  const mode = selectedByUser ?? inferred ?? (answerSignal && !planSignal ? 'answer' : 'plan');
+  const mode = selectedByUser
+    ?? (answerSignal && !planSignal ? 'answer' : planSignal && !answerSignal ? 'plan' : inferred ?? 'plan');
   return {
     ...requirement,
     task_type: mode === 'answer' ? 'research_synthesis' : 'user_research_planning',
