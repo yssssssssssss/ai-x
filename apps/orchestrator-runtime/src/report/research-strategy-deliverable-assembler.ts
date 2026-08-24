@@ -218,6 +218,31 @@ function graphAndCoverage(input: {
       };
     });
   const evidenceById = new Map(input.evidenceManifest.entries.map((entry) => [entry.id, entry]));
+  const factualRootsForEvidence = (evidenceId: string): string[] => {
+    const existing = factIdsByEvidence.get(evidenceId) ?? [];
+    if (existing.length > 0) return existing;
+    const evidence = evidenceById.get(evidenceId);
+    if (!evidence || !FACTUAL_EVIDENCE_CLASSES.has(evidence.evidenceClass)) return [];
+    const anchorId = `evidence-anchor-${evidenceId}`;
+    if (!facts.some(({ id }) => id === anchorId)) {
+      facts.push({
+        id: anchorId,
+        kind: 'fact',
+        evidenceIds: [evidenceId],
+        statement: `Verified ${evidence.evidenceClass} Evidence ${evidenceId} was collected for this analysis.`,
+      });
+    }
+    factIdsByEvidence.set(evidenceId, [anchorId]);
+    return [anchorId];
+  };
+  for (const answer of input.draft.directAnswers) {
+    const roots = unique(answer.evidenceIds.flatMap(factualRootsForEvidence));
+    if (roots.length === 0) continue;
+    factIdsByQuestion.set(answer.questionId, unique([
+      ...(factIdsByQuestion.get(answer.questionId) ?? []),
+      ...roots,
+    ]));
+  }
   const provisionalAnalyses = input.findings
     .filter(({ support }) => support.status === 'provisional')
     .map((finding) => {
@@ -226,27 +251,15 @@ function graphAndCoverage(input: {
         ...finding.support.evidenceIds.flatMap((evidenceId) => factIdsByEvidence.get(evidenceId) ?? []),
       ]);
       if (relatedFacts.length === 0) {
-        for (const evidenceId of finding.support.evidenceIds) {
-          const evidence = evidenceById.get(evidenceId);
-          if (!evidence || !FACTUAL_EVIDENCE_CLASSES.has(evidence.evidenceClass)) continue;
-          const anchorId = `evidence-anchor-${evidenceId}`;
-          if (!facts.some(({ id }) => id === anchorId)) {
-            facts.push({
-              id: anchorId,
-              kind: 'fact',
-              evidenceIds: [evidenceId],
-              statement: `Verified ${evidence.evidenceClass} Evidence ${evidenceId} was collected for this analysis.`,
-            });
-          }
-          relatedFacts.push(anchorId);
-          factIdsByEvidence.set(evidenceId, unique([...(factIdsByEvidence.get(evidenceId) ?? []), anchorId]));
-          for (const questionId of finding.support.questionIds) {
-            factIdsByQuestion.set(questionId, unique([...(factIdsByQuestion.get(questionId) ?? []), anchorId]));
-          }
-        }
-        relatedFacts = unique(relatedFacts);
+        relatedFacts = unique(finding.support.evidenceIds.flatMap(factualRootsForEvidence));
       }
       if (relatedFacts.length === 0) fail(`provisional evidence finding ${finding.id} has no factual Evidence root`);
+      for (const questionId of finding.support.questionIds) {
+        factIdsByQuestion.set(questionId, unique([
+          ...(factIdsByQuestion.get(questionId) ?? []),
+          ...relatedFacts,
+        ]));
+      }
       return {
         id: `analysis-${finding.id}`,
         findingIds: relatedFacts,

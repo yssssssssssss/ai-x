@@ -79,6 +79,38 @@ const manifest: EvidenceManifest = {
   }],
 };
 
+function graphWithOptionalQ2(): ProblemGraph {
+  return {
+    ...graph,
+    questions: [...graph.questions, {
+      id: 'Q2',
+      statement: 'Which validation method should be used?',
+      rationale: 'Choose a method without promoting it to a factual claim.',
+      priority: 'optional',
+      success_criterion_ids: [],
+      evidence_requirements: [],
+      acceptance_criteria: ['Method is evidence-bound and provisional.'],
+      depends_on: ['Q1'],
+    }],
+  };
+}
+
+function manifestWithKnowledge(): EvidenceManifest {
+  const mixedManifest = structuredClone(manifest);
+  mixedManifest.entries.push({
+    id: 'K2-1',
+    kind: 'knowledge_excerpt',
+    evidenceClass: 'knowledge',
+    artifactId: 'knowledge-1',
+    artifactContentSha256: `sha256:${'6'.repeat(64)}`,
+    jsonPointer: '/resources/0/content',
+    stepNo: 2,
+    sensitivity: 'internal',
+    redaction: 'none',
+  });
+  return mixedManifest;
+}
+
 function support() {
   return {
     questionIds: ['Q1'],
@@ -280,23 +312,67 @@ test('assembler maps source-step Evidence aliases and downgrades Knowledge-only 
     statement: 'The method provides a useful strategy frame.',
     support: { ...support(), evidenceIds: ['E2-1'] },
   });
-  const mixedManifest = structuredClone(manifest);
-  mixedManifest.entries.push({
-    id: 'K2-1',
-    kind: 'knowledge_excerpt',
-    evidenceClass: 'knowledge',
-    artifactId: 'knowledge-1',
-    artifactContentSha256: `sha256:${'6'.repeat(64)}`,
-    jsonPointer: '/resources/0/content',
-    stepNo: 2,
-    sensitivity: 'internal',
-    redaction: 'none',
-  });
-  const result = assemble({ evidenceManifest: mixedManifest, materials: materials(value) });
+  const result = assemble({ evidenceManifest: manifestWithKnowledge(), materials: materials(value) });
   const method = result.payload.evidenceFindings[1]!;
   assert.deepEqual(method.support.evidenceIds, ['K2-1']);
   assert.equal(method.support.status, 'provisional');
   assert.match(method.support.validationNeeded, /factual validation/);
+});
+
+test('assembler roots a Knowledge-only finding in factual Direct Answer context for the same question', () => {
+  const value = draft();
+  value.directAnswers.push({
+    questionId: 'Q2',
+    question: 'Which validation method should be used?',
+    answer: 'Use a bounded validation method against the verified market context.',
+    answerStatus: 'provisional',
+    evidenceIds: ['E1'],
+    confidence: 0.65,
+    businessImplication: 'The method remains an analysis choice rather than a market fact.',
+    recommendedAction: 'Validate the recommendation before scaling it.',
+    validationNeeded: 'Confirm the method against live behavior data.',
+  });
+  value.evidenceFindings.push({
+    key: 'method-q2',
+    statement: 'The method can structure validation for this question.',
+    support: { ...support(), questionIds: ['Q2'], evidenceIds: ['E2-1'] },
+  });
+
+  const result = assemble({
+    problemGraph: graphWithOptionalQ2(),
+    evidenceManifest: manifestWithKnowledge(),
+    materials: materials(value),
+  });
+  const method = result.payload.evidenceFindings[1]!;
+  const analysis = result.findingGraph.analyses.find(({ id }) => id === 'analysis-evidence-finding-002');
+  assert.equal(method.support.status, 'provisional');
+  assert.deepEqual(analysis?.findingIds, ['evidence-finding-001']);
+});
+
+test('assembler carries factual roots across provisional findings bound to the same question', () => {
+  const value = draft();
+  value.evidenceFindings.push({
+    key: 'q2-context',
+    statement: 'The verified source supplies factual context for Q2.',
+    support: {
+      ...support(),
+      questionIds: ['Q2'],
+      status: 'provisional',
+      validationNeeded: 'Validate how the source context applies to Q2.',
+    },
+  }, {
+    key: 'q2-method',
+    statement: 'The method organizes the Q2 validation plan.',
+    support: { ...support(), questionIds: ['Q2'], evidenceIds: ['E2-1'] },
+  });
+
+  const result = assemble({
+    problemGraph: graphWithOptionalQ2(),
+    evidenceManifest: manifestWithKnowledge(),
+    materials: materials(value),
+  });
+  const methodAnalysis = result.findingGraph.analyses.find(({ id }) => id === 'analysis-evidence-finding-003');
+  assert.deepEqual(methodAnalysis?.findingIds, ['evidence-finding-001']);
 });
 
 test('assembler roots provisional findings in verified source-anchor facts without promoting the claim', () => {
