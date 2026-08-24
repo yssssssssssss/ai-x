@@ -54,6 +54,7 @@ export interface DeliverableComposer {
     attemptId: string;
     deliverable: unknown;
     review: ReportReviewArtifact;
+    reviewArtifactId: string;
     revisionRound: 1;
     activeLease: ControlExecutionLease;
   }): Promise<{ deliverable: unknown; deliverableArtifactId: string }>;
@@ -439,9 +440,11 @@ export class ReportReviewService {
     if (artifact.verdict === 'pass') return this.seal(input, artifact, 'completed');
     const composer = composerOverride ?? this.dependencies.composer;
     if (artifact.verdict === 'block' || round === 1 || !composer) return this.seal(input, artifact, 'paused');
+    const sealedReview = await this.seal(input, artifact, 'paused');
     const revised = await composer.revise({
       taskId: input.task.id, planVersionId: input.plan.id, attemptId: input.attempt.id,
-      deliverable: input.deliverable, review: artifact, revisionRound: 1, activeLease: input.activeLease,
+      deliverable: input.deliverable, review: artifact, reviewArtifactId: sealedReview.artifactId,
+      revisionRound: 1, activeLease: input.activeLease,
     });
     return this.review({ ...input, deliverable: revised.deliverable, deliverableArtifactId: revised.deliverableArtifactId, revisionRound: 1 }, composerOverride);
   }
@@ -463,7 +466,7 @@ export class ReportReviewService {
         'A best-available answer may pass with evidence gaps when it is explicitly provisional, states validationNeeded, and discloses the limitation; do not fail it merely for lacking future primary research.',
         'Do not require unrequested visuals, budgets, statistical-power calculations, owners for open questions, or other enhancements absent from the Requirement success criteria.',
         'Report only concrete must-fix contract or decision-safety failures as issues; optional improvements must not fail a dimension.',
-        'When verdict is revise or block, every failed semantic dimension must include targetNodeIds selected only from context.revisionTargetIndex. Use exact IDs; do not invent targets.',
+        'When verdict is revise or block, every failed semantic dimension must include revisionIssues. Each revision issue requires a stable id, a message, and its own targetNodeIds selected only from context.revisionTargetIndex.',,
         revisionRound === 1 ? 'This is the single bounded final revision. Return revise only when a concrete must-fix violation still remains.' : '',
       ].filter(Boolean).join('\n'),
       // An empty override makes the gateway load the canonical registry schema.
@@ -494,7 +497,30 @@ export class ReportReviewService {
       ) {
         return baseline;
       }
-      const providedIssues = Array.isArray(candidate.issues) ? candidate.issues.map(issueText) : null;
+      const providedRevisionIssues = Array.isArray(candidate.revisionIssues)
+        ? candidate.revisionIssues.map((value) => {
+            const issue = record(value);
+            const targetNodeIds = Array.isArray(issue?.targetNodeIds)
+              ? issue.targetNodeIds.filter((target): target is string => typeof target === 'string' && target.trim().length > 0)
+              : [];
+            if (
+              typeof issue?.id !== 'string'
+              || !issue.id.trim()
+              || typeof issue.message !== 'string'
+              || !issue.message.trim()
+              || targetNodeIds.length === 0
+              || targetNodeIds.length !== new Set(targetNodeIds).size
+              || targetNodeIds.some((target) => !knownRevisionTargetIds.has(target))
+            ) throw new Error(`semantic review dimension ${String(candidate.id ?? '')} has invalid revisionIssues`);
+            return { id: issue.id, message: issue.message, targetNodeIds };
+          })
+        : [];
+      if (new Set(providedRevisionIssues.map(({ id }) => id)).size !== providedRevisionIssues.length) {
+        throw new Error(`semantic review dimension ${String(candidate.id ?? '')} duplicates revision issue ids`);
+      }
+      const providedIssues = providedRevisionIssues.length > 0
+        ? providedRevisionIssues.map(({ message }) => message)
+        : Array.isArray(candidate.issues) ? candidate.issues.map(issueText) : null;
       const proposedPassed = typeof candidate.passed === 'boolean'
         ? candidate.passed
         : providedIssues
@@ -503,19 +529,14 @@ export class ReportReviewService {
       const issues = providedIssues
         ?? baseline?.issues
         ?? (proposedPassed ? [] : ['semantic review did not provide dimension issues']);
-      const providedTargets = Array.isArray(candidate.targetNodeIds)
-        ? candidate.targetNodeIds.filter((target): target is string => typeof target === 'string' && target.trim().length > 0)
-        : [];
-      if (
-        providedTargets.length !== new Set(providedTargets).size
-        || providedTargets.some((target) => !knownRevisionTargetIds.has(target))
-      ) throw new Error(`semantic review dimension ${String(candidate.id ?? '')} has invalid targetNodeIds`);
+      const providedTargets = [...new Set(providedRevisionIssues.flatMap(({ targetNodeIds }) => targetNodeIds))];
       const passed = proposedPassed && issues.length === 0;
       return {
         id: candidate.id,
         passed,
         issues,
         ...(providedTargets.length > 0 ? { targetNodeIds: providedTargets } : {}),
+        ...(providedRevisionIssues.length > 0 ? { revisionIssues: providedRevisionIssues } : {}),
       };
     });
     if (reviewVersion === 'report-review-v2' && value.verdict !== 'pass') {
@@ -524,9 +545,9 @@ export class ReportReviewService {
           !dimension.passed
           && MODEL_SEMANTIC_ANSWER_DIMENSION_IDS.has(dimension.id as ReportReviewDimensionId)
           && dimension.issues.length > 0
-          && (!('targetNodeIds' in dimension) || !Array.isArray(dimension.targetNodeIds) || dimension.targetNodeIds.length === 0)
+          && (!dimension.revisionIssues || dimension.revisionIssues.length === 0)
         ) {
-          throw new Error(`semantic review dimension ${dimension.id} requires targetNodeIds`);
+          throw new Error(`semantic review dimension ${dimension.id} requires revisionIssues`);
         }
       }
     }

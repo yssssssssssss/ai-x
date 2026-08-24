@@ -88,6 +88,7 @@ interface DeliverableGenerateResult {
 
 interface DeliverableRevisionInput extends DeliverableGenerateInput {
   review: ReportReviewArtifact;
+  reviewArtifactId: string;
   currentDeliverable?: ResearchDeliverableEnvelope<unknown>;
 }
 
@@ -877,6 +878,7 @@ test('writes round 0 and revised round 1 deliverables to distinct immutable path
       ],
       revisionRound: 0,
     },
+    reviewArtifactId: 'review-r0',
   });
   const round1Artifact = await registry.requireSealedArtifact(round1.deliverableArtifactId);
   assert.match(round0Artifact.storageUri, /deliverables\/final-r0\.json$/u);
@@ -1406,13 +1408,30 @@ test('revises an open strategy report through one bounded Content Draft repair',
         passed: false,
         issues: ['Weaken one unsupported claim.'],
         targetNodeIds: ['q1'],
+        revisionIssues: [{
+          id: 'reasoning_quality:1',
+          message: 'Weaken one unsupported claim.',
+          targetNodeIds: ['q1'],
+        }],
       }],
       revisionRound: 0,
     },
+    reviewArtifactId: 'review-r0',
   });
 
   assert.equal(llm.structuredCalls.length, 1);
   assert.equal(llm.structuredCalls[0]?.receipt.stage, 'deliverable_repair');
+  const revisionContext = llm.structuredCalls[0]?.context as {
+    authorizingReviewArtifactId?: string;
+    reviewIssues?: Array<{ id: string; targetNodeIds: string[] }>;
+  };
+  assert.equal(revisionContext.authorizingReviewArtifactId, 'review-r0');
+  assert.deepEqual(revisionContext.reviewIssues, [{
+    id: 'reasoning_quality:1',
+    dimensionId: 'reasoning_quality',
+    issue: 'Weaken one unsupported claim.',
+    targetNodeIds: ['q1'],
+  }]);
   assert.equal(revised.deliverableArtifactId, deliverableArtifactId);
   assert.deepEqual(writes.map(({ relativePath }) => relativePath), [
     'diagnostics/content-fidelity-r0.json',
@@ -1489,6 +1508,28 @@ test('requires the fidelity diagnostic before sealing a Canonical Deliverable', 
     /fidelity store unavailable/u,
   );
   assert.deepEqual(writes.map(({ kind }) => kind), ['content_fidelity_diagnostic']);
+});
+
+test('validates the production Patch response before applying operations', async () => {
+  const invalid = openStrategyDraft();
+  invalid.directAnswers[0]!.evidenceIds = ['unknown-evidence'];
+  const oversizedPatch: ResearchStrategyContentPatchV1 = {
+    version: 'research-strategy-content-patch-v1',
+    mode: 'structural_repair',
+    operations: Array.from({ length: 65 }, (_, index) => ({
+      op: 'append_limitation' as const,
+      value: `Limitation ${index + 1}`,
+    })),
+  };
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(invalid); } };
+  const { service, validator, llm } = await createHarness(oversizedPatch, materializer);
+
+  await assert.rejects(
+    () => service.generate(generateInput(openStrategyInput())),
+    /must NOT have more than 64 items|must have fewer than 65 items/iu,
+  );
+  assert.equal(llm.structuredCalls.length, 1);
+  assert.ok(validator.schemaCalls.some(({ label }) => label === 'research-strategy-content-patch-v1'));
 });
 
 test('repairs one invalid reviewed Content Draft without returning to full Deliverable synthesis', async () => {

@@ -410,6 +410,7 @@ export interface CurrentDeliverableGenerateResult {
 
 export interface CurrentDeliverableRevisionInput extends CurrentDeliverableGenerateInput {
   review: ReportReviewArtifact;
+  reviewArtifactId: string;
   currentDeliverable?: ResearchDeliverableEnvelope<unknown>;
 }
 
@@ -1522,6 +1523,11 @@ export class CurrentDeliverableService {
             });
             let applied: ReturnType<typeof applyResearchStrategyContentPatch>;
             try {
+              this.dependencies.validator.validateSchemaOrThrow(
+                researchStrategyPatchSchema(),
+                repaired.data,
+                'research-strategy-content-patch-v1',
+              );
               applied = applyResearchStrategyContentPatch({
                 source: originalDraft,
                 patch: repaired.data,
@@ -1817,6 +1823,9 @@ export class CurrentDeliverableService {
     if (input.review.revisionRound !== 0) {
       throw new Error('deliverable revision requires a round 0 Review');
     }
+    if (!input.reviewArtifactId.trim()) {
+      throw new Error('deliverable revision requires a sealed authorizing Review Artifact');
+    }
     const revisionInstruction = input.review.dimensions
       .flatMap((dimension) => dimension.issues)
       .join('; ');
@@ -1829,13 +1838,16 @@ export class CurrentDeliverableService {
         input.currentDeliverable.methodSummary,
       );
       const reviewIssues = input.review.dimensions.flatMap((dimension) => (
-        dimension.issues.map((issue, index) => ({
-          id: `${dimension.id}:${index + 1}`,
+        (dimension.revisionIssues ?? []).map((issue) => ({
+          id: issue.id,
           dimensionId: dimension.id,
-          issue: redactString(issue),
-          targetNodeIds: [...(dimension.targetNodeIds ?? [])],
+          issue: redactString(issue.message),
+          targetNodeIds: [...issue.targetNodeIds],
         }))
       ));
+      if (reviewIssues.length === 0) {
+        throw new Error('semantic revision requires sealed Review revisionIssues');
+      }
       const allowedReviewIssueTargets = new Map(reviewIssues.map((issue) => (
         [issue.id, new Set(issue.targetNodeIds)] as const
       )));
@@ -1854,6 +1866,7 @@ export class CurrentDeliverableService {
         schemaName: 'research-strategy-content-patch-v1',
         context: {
           mode: 'semantic_revision',
+          authorizingReviewArtifactId: input.reviewArtifactId,
           draft: redactSensitiveValue(currentDraft),
           allowedQuestionIds: (input.problemGraph as ProblemGraph).questions.map(({ id }) => id),
           allowedEvidence: input.evidenceManifest.value.entries.map(({ id, evidenceClass, sourceUrl }) => ({
@@ -1871,6 +1884,11 @@ export class CurrentDeliverableService {
           expectedModel: input.expectedModel,
         },
       });
+      this.dependencies.validator.validateSchemaOrThrow(
+        researchStrategyPatchSchema(),
+        patch.data,
+        'research-strategy-content-patch-v1',
+      );
       const revised = applyResearchStrategyContentPatch({
         source: currentDraft,
         patch: patch.data,

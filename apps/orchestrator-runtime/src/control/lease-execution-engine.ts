@@ -2667,6 +2667,7 @@ export class LeaseExecutionEngine {
               revise: (revision) => this.dependencies.deliverables.revise!({
                 ...deliverableInput,
                 review: revision.review,
+                reviewArtifactId: revision.reviewArtifactId,
                 currentDeliverable: revision.deliverable as ResearchDeliverableEnvelope<unknown>,
               }),
             }

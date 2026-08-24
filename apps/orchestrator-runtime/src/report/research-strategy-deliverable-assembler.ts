@@ -17,6 +17,7 @@ import type { EvidenceManifest } from '../evidence/evidence-service.ts';
 import { SchemaValidator } from '../schema/validator.ts';
 import type { SynthesisMaterial } from './synthesis-materializer.ts';
 import { canonicalResearchQuestionId } from './research-strategy-reference-normalizer.ts';
+import { contentBlockMatchesRequestedArtifact } from './research-strategy-artifact-coverage.ts';
 
 const DRAFT_SCHEMA = 'schemas/skills/research-strategy-content-draft-v2.schema.json';
 const PAYLOAD_SCHEMA = 'schemas/deliverables/research-strategy-report-v2.schema.json';
@@ -176,16 +177,10 @@ function contentBlockIdsForArtifact(
   artifact: RequestedArtifact,
   blocks: readonly ResearchStrategyContentBlockV2[],
 ): string[] {
-  if (artifact === 'research_report') return blocks.map(({ id }) => id);
-  const kind = artifact === 'strategy_map' ? 'strategy_map'
-    : artifact === 'mind_model' ? 'mind_model'
-      : artifact === 'design_principles' ? 'design_principles'
-        : artifact === 'opportunity_backlog' ? 'opportunity_backlog'
-          : artifact === 'prioritized_actions' ? 'prioritized_actions'
-            : artifact === 'channel_strategies' ? 'channel_strategies'
-              : artifact === 'action_plan' ? 'action_plan'
-                : null;
-  return kind ? blocks.filter((block) => block.kind === kind).map(({ id }) => id) : [];
+  if (artifact === 'executive_answers') return [];
+  return blocks
+    .filter((block) => contentBlockMatchesRequestedArtifact(artifact, block.kind))
+    .map(({ id }) => id);
 }
 
 function graphAndCoverage(input: {

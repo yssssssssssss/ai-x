@@ -224,11 +224,18 @@ export const REPORT_REVIEW_V2_DIMENSION_IDS = [
 ] as const;
 export type ReportReviewDimensionId = typeof REPORT_REVIEW_V2_DIMENSION_IDS[number];
 
+export interface ReportReviewIssue {
+  id: string;
+  message: string;
+  targetNodeIds: string[];
+}
+
 export interface ReportReviewDimension {
   id: ReportReviewDimensionId;
   passed: boolean;
   issues: string[];
   targetNodeIds?: string[];
+  revisionIssues?: ReportReviewIssue[];
 }
 
 export interface ReportReviewArtifact {

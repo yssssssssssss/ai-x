@@ -16,6 +16,10 @@ import {
   type ResearchStrategyContentFidelityResult,
 } from './research-strategy-content-fidelity.ts';
 import { canonicalResearchQuestionId } from './research-strategy-reference-normalizer.ts';
+import {
+  contentBlockMatchesRequestedArtifact,
+  requestedArtifactHasContentBlock,
+} from './research-strategy-artifact-coverage.ts';
 
 export class ResearchStrategyContentPatchError extends Error {
   constructor(message: string) {
@@ -31,17 +35,6 @@ export interface AppliedResearchStrategyContentPatch {
 }
 
 const FACTUAL_EVIDENCE_CLASSES = new Set(['public_source', 'screenshot', 'dataset']);
-
-const BLOCK_KIND_BY_ARTIFACT: Partial<Record<RequestedArtifact, ResearchStrategyContentBlockDraftV2['kind'][]>> = {
-  research_report: ['narrative', 'comparison_matrix'],
-  strategy_map: ['strategy_map'],
-  mind_model: ['mind_model'],
-  design_principles: ['design_principles'],
-  opportunity_backlog: ['opportunity_backlog'],
-  prioritized_actions: ['prioritized_actions'],
-  channel_strategies: ['channel_strategies'],
-  action_plan: ['action_plan'],
-};
 
 function fail(message: string): never {
   throw new ResearchStrategyContentPatchError(message);
@@ -182,11 +175,11 @@ function validateAppendedBlock(input: {
   if (input.draft.contentBlocks.some(({ key }) => key === input.block.key)) {
     fail(`Content Block ${input.block.key} already exists`);
   }
-  const missingRequestedKinds = new Set(input.requestedArtifacts.flatMap((artifact) => {
-    const kinds = BLOCK_KIND_BY_ARTIFACT[artifact] ?? [];
-    return kinds.some((kind) => input.draft.contentBlocks.some((block) => block.kind === kind)) ? [] : kinds;
-  }));
-  if (!missingRequestedKinds.has(input.block.kind)) {
+  const satisfiesMissingArtifact = input.requestedArtifacts.some((artifact) => (
+    !requestedArtifactHasContentBlock(artifact, input.draft.contentBlocks)
+    && contentBlockMatchesRequestedArtifact(artifact, input.block.kind)
+  ));
+  if (!satisfiesMissingArtifact) {
     fail(`Content Block ${input.block.kind} does not satisfy a missing requested artifact`);
   }
   if (input.draft.contentBlocks.some(({ kind }) => kind === input.block.kind)) {

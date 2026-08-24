@@ -352,6 +352,31 @@ test('structural patch can append only a missing requested content Block', () =>
   );
 });
 
+test('research_report is already materialized by any existing content Block', () => {
+  const patch: ResearchStrategyContentPatchV1 = {
+    version: 'research-strategy-content-patch-v1',
+    mode: 'structural_repair',
+    operations: [{
+      op: 'append_content_block',
+      block: {
+        key: 'redundant-narrative',
+        kind: 'narrative',
+        title: 'Redundant report',
+        content: 'This must not be appended.',
+        support: {
+          questionIds: ['Q1'], evidenceIds: ['E1'], confidence: 0.7,
+          status: 'provisional', validationNeeded: 'Validate.',
+        },
+      },
+    }],
+  };
+
+  assert.throws(
+    () => apply(patch, ['research_report']),
+    /does not satisfy a missing requested artifact/u,
+  );
+});
+
 test('patch rejects unknown Evidence and unsafe Question aliases', () => {
   const unknownEvidence: ResearchStrategyContentPatchV1 = {
     version: 'research-strategy-content-patch-v1',
