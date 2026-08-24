@@ -10,7 +10,6 @@ import type {
   ResearchStrategyReportPayload,
   ResearchStrategyReportPayloadV2,
   ResearchStrategyContentDraftV2,
-  ResearchStrategyContentPatchOperationV1,
   ResearchStrategyContentPatchV1,
   ResearchStrategyRiskDisclosure,
 } from '../../../../packages/api-contract/research-deliverable.ts';
@@ -68,22 +67,23 @@ function researchStrategyPatchSchema(): object {
   )) as object;
 }
 
-function patchOperationAudit(operation: ResearchStrategyContentPatchOperationV1): string {
-  const target = operation.op === 'replace_direct_answer_binding' ? operation.questionId
-    : operation.op === 'replace_support' ? JSON.stringify(operation.target)
-      : operation.op === 'replace_semantic_text' ? JSON.stringify(operation.target)
-        : operation.op === 'append_block_item' ? operation.blockKey
-          : operation.op === 'append_content_block' ? operation.block.key
-            : operation.op === 'append_direct_answer' ? operation.answer.questionId
-              : operation.op === 'append_limitation' ? 'limitations'
-                : 'openQuestions';
-  const reviewIssueId = 'reviewIssueId' in operation && operation.reviewIssueId
-    ? `:${operation.reviewIssueId}`
-    : '';
-  const reason = 'reason' in operation && operation.reason
-    ? `:${redactString(operation.reason).slice(0, 160)}`
-    : '';
-  return `${operation.op}:${target}${reviewIssueId}${reason}`;
+function patchOperationAudits(value: unknown): string[] {
+  const patch = unknownRecord(value);
+  if (!patch || !Array.isArray(patch.operations)) return ['invalid_patch:operations_missing'];
+  return patch.operations.map((candidate, index) => {
+    const operation = unknownRecord(candidate);
+    if (!operation || typeof operation.op !== 'string') return `invalid_patch_operation:${index + 1}`;
+    const rawTarget = operation.target
+      ?? operation.questionId
+      ?? operation.blockKey
+      ?? unknownRecord(operation.block)?.key
+      ?? unknownRecord(operation.answer)?.questionId
+      ?? (operation.op === 'append_limitation' ? 'limitations' : operation.op === 'append_open_question' ? 'openQuestions' : 'unknown');
+    const target = redactString(typeof rawTarget === 'string' ? rawTarget : JSON.stringify(rawTarget)).slice(0, 200);
+    const issue = typeof operation.reviewIssueId === 'string' ? `:${operation.reviewIssueId}` : '';
+    const reason = typeof operation.reason === 'string' ? `:${redactString(operation.reason).slice(0, 160)}` : '';
+    return `${operation.op}:${target}${issue}${reason}`;
+  });
 }
 
 function createDeliverableDraftSchema(payloadSchema: object, strictContract: boolean) {
@@ -1542,6 +1542,7 @@ export class CurrentDeliverableService {
                 expectedModel: input.expectedModel,
               },
             });
+            const repairOperations = patchOperationAudits(repaired.data);
             let applied: ReturnType<typeof applyResearchStrategyContentPatch>;
             try {
               this.dependencies.validator.validateSchemaOrThrow(
@@ -1565,7 +1566,7 @@ export class CurrentDeliverableService {
                 result: patchError instanceof ResearchStrategyContentFidelityError
                   ? patchError.result
                   : compareResearchStrategyContentFidelity(originalDraft, originalDraft),
-                repairOperations: repaired.data.operations.map(patchOperationAudit),
+                repairOperations,
               });
               throw new ResearchStrategyDeliverableValidationError(patchError, originalDraft);
             }
@@ -1574,7 +1575,7 @@ export class CurrentDeliverableService {
               mode: 'structural_repair',
               sourceDraft: originalDraft,
               result: applied.fidelity,
-              repairOperations: repaired.data.operations.map(patchOperationAudit),
+              repairOperations,
             };
             continue;
           }
@@ -1920,20 +1921,83 @@ export class CurrentDeliverableService {
           expectedModel: input.expectedModel,
         },
       });
-      this.dependencies.validator.validateSchemaOrThrow(
-        researchStrategyPatchSchema(),
-        patch.data,
-        'research-strategy-content-patch-v1',
-      );
-      const revised = applyResearchStrategyContentPatch({
-        source: currentDraft,
-        patch: patch.data,
-        mode: 'semantic_revision',
-        problemGraph: input.problemGraph as ProblemGraph,
-        evidenceManifest: input.evidenceManifest.value,
-        requestedArtifacts: (input.finalizedRequirement as ResearchTaskV2).requested_artifacts ?? [],
-        allowedReviewIssueTargets,
-      });
+      const repairOperations = patchOperationAudits(patch.data);
+      let revised: ReturnType<typeof applyResearchStrategyContentPatch>;
+      try {
+        this.dependencies.validator.validateSchemaOrThrow(
+          researchStrategyPatchSchema(),
+          patch.data,
+          'research-strategy-content-patch-v1',
+        );
+        revised = applyResearchStrategyContentPatch({
+          source: currentDraft,
+          patch: patch.data,
+          mode: 'semantic_revision',
+          problemGraph: input.problemGraph as ProblemGraph,
+          evidenceManifest: input.evidenceManifest.value,
+          requestedArtifacts: (input.finalizedRequirement as ResearchTaskV2).requested_artifacts ?? [],
+          allowedReviewIssueTargets,
+        });
+      } catch (patchError) {
+        const validationDiagnostic = createDeliverableValidationDiagnostic({
+          taskId: input.task.id,
+          planVersionId: input.plan.id,
+          attemptId: input.attempt.id,
+          stage: 'content_semantics',
+          round: 1,
+          error: patchError,
+          fallbackApplied: false,
+        });
+        this.dependencies.validator.validateFileOrThrow(
+          'schemas/deliverable-validation-diagnostic.schema.json',
+          validationDiagnostic,
+        );
+        try {
+          await this.dependencies.artifacts.writeJson({
+            taskId: input.task.id,
+            planVersionId: input.plan.id,
+            attemptId: input.attempt.id,
+            kind: 'deliverable_validation_diagnostic',
+            relativePath: 'diagnostics/deliverable-validation-r1.json',
+            schemaVersion: validationDiagnostic.version,
+            sensitivity: 'internal',
+            redactionPolicyVersion: 'v1',
+            activeLease: input.activeLease,
+            value: validationDiagnostic,
+          });
+        } catch {
+          // Preserve the authoritative semantic Patch failure.
+        }
+        const fidelityDiagnostic = createContentFidelityDiagnostic({
+          taskId: input.task.id,
+          planVersionId: input.plan.id,
+          attemptId: input.attempt.id,
+          round: 1,
+          mode: 'semantic_revision',
+          result: patchError instanceof ResearchStrategyContentFidelityError
+            ? patchError.result
+            : compareResearchStrategyContentFidelity(currentDraft, currentDraft),
+          normalizationOperations: [],
+          repairOperations,
+        });
+        this.dependencies.validator.validateFileOrThrow(
+          'schemas/content-fidelity-diagnostic.schema.json',
+          fidelityDiagnostic,
+        );
+        await this.dependencies.artifacts.writeJson({
+          taskId: input.task.id,
+          planVersionId: input.plan.id,
+          attemptId: input.attempt.id,
+          kind: 'content_fidelity_diagnostic',
+          relativePath: 'diagnostics/content-fidelity-r1.json',
+          schemaVersion: fidelityDiagnostic.version,
+          sensitivity: 'internal',
+          redactionPolicyVersion: 'v1',
+          activeLease: input.activeLease,
+          value: fidelityDiagnostic,
+        });
+        throw new ResearchStrategyDeliverableValidationError(patchError, currentDraft);
+      }
       return this.generate({
         ...input,
         strategyDraftOverride: revised.draft,
@@ -1941,7 +2005,7 @@ export class CurrentDeliverableService {
           mode: 'semantic_revision',
           sourceDraft: currentDraft,
           result: revised.fidelity,
-          repairOperations: patch.data.operations.map(patchOperationAudit),
+          repairOperations,
         },
         revisionInstruction,
         revisionRound: 1,

@@ -386,6 +386,63 @@ test('semantic answer Review rejects missing or unknown revision targets', async
   }
 });
 
+test('semantic answer Review rejects duplicate revision issue ids across dimensions', async () => {
+  const dimensions = passingAnswerReviewDimensions().map((dimension) => (
+    dimension.id === 'reasoning_quality' || dimension.id === 'recommendation_quality'
+      ? {
+          ...dimension,
+          passed: false,
+          issues: [`Fix ${dimension.id}.`],
+          revisionIssues: [{
+            id: 'duplicate-issue-id',
+            message: `Fix ${dimension.id}.`,
+            targetNodeIds: ['Q1'],
+          }],
+        }
+      : dimension
+  ));
+  const review: ReportReviewArtifact = {
+    ...semantic('revise'),
+    version: 'report-review-v2',
+    dimensions,
+  };
+
+  await assert.rejects(
+    service(new RecordingLlm([review]), new RecordingArtifacts()).review(input({
+      deliverable: openStrategyReport(),
+      questionIds: ['Q1'],
+      successCriterionIds: ['SC1'],
+      evidenceIds: ['E1'],
+      requirement: strategyRequirement(),
+    })),
+    /duplicates revision issue ids across dimensions/u,
+  );
+});
+
+test('provider pass normalized to revise still requires targeted revision issues', async () => {
+  const dimensions = passingAnswerReviewDimensions().map((dimension) => (
+    dimension.id === 'reasoning_quality'
+      ? { ...dimension, passed: false, issues: ['Fix Q1.'] }
+      : dimension
+  ));
+  const review: ReportReviewArtifact = {
+    ...semantic('pass'),
+    version: 'report-review-v2',
+    dimensions,
+  };
+
+  await assert.rejects(
+    service(new RecordingLlm([review]), new RecordingArtifacts()).review(input({
+      deliverable: openStrategyReport(),
+      questionIds: ['Q1'],
+      successCriterionIds: ['SC1'],
+      evidenceIds: ['E1'],
+      requirement: strategyRequirement(),
+    })),
+    /requires revisionIssues/u,
+  );
+});
+
 test('answer review cannot overturn deterministic requested-artifact coverage', async () => {
   const dimensions = passingAnswerReviewDimensions().map((dimension) => (
     dimension.id === 'requested_artifact_presence'

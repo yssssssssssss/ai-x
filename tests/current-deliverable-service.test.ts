@@ -1553,6 +1553,75 @@ test('validates the production Patch response before applying operations', async
   assert.ok(validator.schemaCalls.some(({ label }) => label === 'research-strategy-content-patch-v1'));
 });
 
+test('malformed structural Patch responses keep diagnostics and reviewed preview intact', async () => {
+  const invalid = openStrategyDraft();
+  invalid.directAnswers[0]!.evidenceIds = ['unknown-evidence'];
+  const malformedPatch = {
+    version: 'research-strategy-content-patch-v1',
+    mode: 'structural_repair',
+  };
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(invalid); } };
+  const { service, writes } = await createHarness(malformedPatch, materializer);
+
+  await assert.rejects(
+    () => service.generate(generateInput(openStrategyInput())),
+    (error: unknown) => error instanceof ResearchStrategyDeliverableValidationError
+      && /required property 'operations'/u.test(error.message)
+      && error.draftPreview.directAnswers.length === 1,
+  );
+  assert.deepEqual(writes.map(({ kind }) => kind), [
+    'deliverable_validation_diagnostic',
+    'deliverable_validation_diagnostic',
+    'content_fidelity_diagnostic',
+  ]);
+  assert.deepEqual(
+    (writes[2]?.value as { repairOperations?: string[] }).repairOperations,
+    ['invalid_patch:operations_missing'],
+  );
+});
+
+test('malformed semantic Patch responses keep diagnostics and reviewed preview intact', async () => {
+  const content = openStrategyDraft();
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(content); } };
+  const malformedPatch = {
+    version: 'research-strategy-content-patch-v1',
+    mode: 'semantic_revision',
+    operations: 'invalid',
+  };
+  const { service, writes } = await createHarness(malformedPatch, materializer);
+  const strategyInput = generateInput(openStrategyInput());
+  const initial = await service.generate(strategyInput);
+
+  await assert.rejects(
+    () => service.revise({
+      ...strategyInput,
+      currentDeliverable: initial.deliverable,
+      review: {
+        version: 'report-review-v2', taskId, planVersionId, attemptId,
+        deliverableArtifactId: initial.deliverableArtifactId,
+        verdict: 'revise',
+        dimensions: REPORT_REVIEW_V2_DIMENSION_IDS.map((id) => id === 'reasoning_quality'
+          ? {
+              id, passed: false, issues: ['Weaken one unsupported claim.'],
+              revisionIssues: [{
+                id: 'reasoning_quality:1', message: 'Weaken one unsupported claim.', targetNodeIds: ['q1'],
+              }],
+            }
+          : { id, passed: true, issues: [] }),
+        revisionRound: 0,
+      },
+      reviewArtifactId: 'review-r0',
+    }),
+    (error: unknown) => error instanceof ResearchStrategyDeliverableValidationError
+      && /operations must be array/u.test(error.message)
+      && error.draftPreview.contentBlocks.length === 1,
+  );
+  assert.deepEqual(writes.slice(-2).map(({ kind }) => kind), [
+    'deliverable_validation_diagnostic',
+    'content_fidelity_diagnostic',
+  ]);
+});
+
 test('repairs one invalid reviewed Content Draft without returning to full Deliverable synthesis', async () => {
   const invalid = openStrategyDraft();
   invalid.directAnswers[0]!.evidenceIds = ['unknown-evidence'];

@@ -553,8 +553,21 @@ export class ReportReviewService {
         ...(providedTargets.length > 0 ? { targetNodeIds: providedTargets } : {}),
         ...(providedRevisionIssues.length > 0 ? { revisionIssues: providedRevisionIssues } : {}),
       };
-    });
-    if (reviewVersion === 'report-review-v2' && value.verdict !== 'pass') {
+    }) as ReportReviewDimension[];
+    const allDimensionsPass = projectedDimensions.length === requiredDimensionIds.length
+      && projectedDimensions.every((dimension) => dimension.passed && dimension.issues.length === 0);
+    const normalizedVerdict = value.verdict === 'pass' && !allDimensionsPass
+      ? 'revise'
+      : value.verdict === 'revise' && revisionRound === 1 && allDimensionsPass
+        ? 'pass'
+        : value.verdict;
+    const revisionIssueIds = projectedDimensions.flatMap((dimension) => (
+      dimension.revisionIssues?.map(({ id }) => id) ?? []
+    ));
+    if (new Set(revisionIssueIds).size !== revisionIssueIds.length) {
+      throw new Error('semantic review duplicates revision issue ids across dimensions');
+    }
+    if (reviewVersion === 'report-review-v2' && normalizedVerdict === 'revise') {
       for (const dimension of projectedDimensions) {
         if (
           !dimension.passed
@@ -566,13 +579,6 @@ export class ReportReviewService {
         }
       }
     }
-    const allDimensionsPass = projectedDimensions.length === requiredDimensionIds.length
-      && projectedDimensions.every((dimension) => dimension.passed && dimension.issues.length === 0);
-    const normalizedVerdict = value.verdict === 'pass' && !allDimensionsPass
-      ? 'revise'
-      : value.verdict === 'revise' && revisionRound === 1 && allDimensionsPass
-        ? 'pass'
-        : value.verdict;
     const artifact: ReportReviewArtifact = {
       version: reviewVersion, taskId: input.task.id, planVersionId: input.plan.id,
       attemptId: input.attempt.id, deliverableArtifactId: input.deliverableArtifactId,
