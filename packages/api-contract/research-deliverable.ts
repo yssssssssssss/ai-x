@@ -747,11 +747,6 @@ export interface ResearchStrategyAppendDirectAnswerPatch {
   answer: ResearchStrategyDirectAnswer;
 }
 
-export interface ResearchStrategyAppendEvidenceFindingPatch {
-  op: 'append_evidence_finding';
-  finding: ResearchStrategyEvidenceFindingDraftV2;
-}
-
 export interface ResearchStrategyAppendContentBlockPatch {
   op: 'append_content_block';
   block: ResearchStrategyContentBlockDraftV2;
@@ -804,7 +799,6 @@ export type ResearchStrategyContentPatchOperationV1 =
   | ResearchStrategyDirectAnswerBindingPatch
   | ResearchStrategySupportPatch
   | ResearchStrategyAppendDirectAnswerPatch
-  | ResearchStrategyAppendEvidenceFindingPatch
   | ResearchStrategyAppendContentBlockPatch
   | ResearchStrategyAppendBlockItemPatch
   | ResearchStrategyAppendLimitationPatch

@@ -297,8 +297,8 @@ test('supported bindings require factual Evidence instead of Knowledge alone', (
   );
 });
 
-test('structural repair cannot append arbitrary Evidence Findings', () => {
-  const patch: ResearchStrategyContentPatchV1 = {
+test('Patch schema excludes arbitrary Evidence Finding append operations', () => {
+  const candidate = {
     version: 'research-strategy-content-patch-v1',
     mode: 'structural_repair',
     operations: [{
@@ -314,7 +314,13 @@ test('structural repair cannot append arbitrary Evidence Findings', () => {
     }],
   };
 
-  assert.throws(() => apply(patch), /cannot append Evidence Findings/u);
+  assert.throws(
+    () => new SchemaValidator().validateFileOrThrow(
+      'schemas/skills/research-strategy-content-patch-v1.schema.json',
+      candidate,
+    ),
+    /validation failed/u,
+  );
 });
 
 test('structural patch can append only a missing requested content Block', () => {

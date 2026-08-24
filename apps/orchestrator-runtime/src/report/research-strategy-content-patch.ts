@@ -5,7 +5,6 @@ import type {
   ResearchStrategyContentPatchV1,
   ResearchStrategyContentPatchOperationV1,
   ResearchStrategyDirectAnswer,
-  ResearchStrategyEvidenceFindingDraftV2,
   ResearchStrategySupportBindingV2,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { RequestedArtifact } from '../../../../packages/api-contract/plan.ts';
@@ -144,25 +143,6 @@ function validateAppendedAnswer(input: {
     fail(`${input.answer.answerStatus} Direct Answer ${questionId} requires validationNeeded`);
   }
   return { ...structuredClone(input.answer), questionId, evidenceIds };
-}
-
-function validateAppendedFinding(input: {
-  finding: ResearchStrategyEvidenceFindingDraftV2;
-  draft: ResearchStrategyContentDraftV2;
-  knownQuestionIds: readonly string[];
-  evidenceClassById: ReadonlyMap<string, string>;
-}): ResearchStrategyEvidenceFindingDraftV2 {
-  if (input.draft.evidenceFindings.some(({ key }) => key === input.finding.key)) {
-    fail(`Evidence Finding ${input.finding.key} already exists`);
-  }
-  return {
-    ...structuredClone(input.finding),
-    support: normalizedSupport({
-      support: input.finding.support,
-      knownQuestionIds: input.knownQuestionIds,
-      evidenceClassById: input.evidenceClassById,
-    }),
-  };
 }
 
 function validateAppendedBlock(input: {
@@ -310,13 +290,11 @@ function assertModeAuthorization(input: {
   const { operation } = input;
   if (input.mode === 'structural_repair') {
     if (operation.op === 'replace_semantic_text') fail('structural repair cannot replace semantic text');
-    if (operation.op === 'append_evidence_finding') fail('structural repair cannot append Evidence Findings');
     if (operation.op === 'append_block_item') fail('structural repair cannot append items to existing Blocks');
     return;
   }
   if (
     operation.op === 'append_direct_answer'
-    || operation.op === 'append_evidence_finding'
     || operation.op === 'append_content_block'
   ) fail(`semantic revision cannot use ${operation.op}`);
   const reviewIssueId = 'reviewIssueId' in operation ? operation.reviewIssueId : undefined;
@@ -436,15 +414,6 @@ function applyOperation(input: {
       draft: input.draft,
       knownQuestionIds: input.knownQuestionIds,
       requiredQuestionIds: input.requiredQuestionIds,
-      evidenceClassById: input.evidenceClassById,
-    }));
-    return;
-  }
-  if (operation.op === 'append_evidence_finding') {
-    input.draft.evidenceFindings.push(validateAppendedFinding({
-      finding: operation.finding,
-      draft: input.draft,
-      knownQuestionIds: input.knownQuestionIds,
       evidenceClassById: input.evidenceClassById,
     }));
     return;

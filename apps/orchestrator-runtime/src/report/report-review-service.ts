@@ -142,13 +142,28 @@ export function assertReportReviewInvariant(
     throw new Error('Review dimensions must contain every required dimension exactly once');
   }
   const seen = new Set<ReportReviewDimensionId>();
+  const revisionIssueIds = new Set<string>();
   for (const dimension of review.dimensions) {
     if (!requiredDimensionIds.includes(dimension.id) || !REPORT_REVIEW_DIMENSION_ID_SET.has(dimension.id) || seen.has(dimension.id)) {
       throw new Error('Review dimensions must contain every required dimension exactly once');
     }
     seen.add(dimension.id);
-    if (review.verdict === 'pass' && (!dimension.passed || dimension.issues.length !== 0)) {
-      throw new Error('Review verdict pass requires every dimension to pass without issues');
+    if (review.verdict === 'pass' && (!dimension.passed || dimension.issues.length !== 0 || (dimension.revisionIssues?.length ?? 0) > 0)) {
+      throw new Error('Review verdict pass requires every dimension to pass without issues or revision targets');
+    }
+    for (const issue of dimension.revisionIssues ?? []) {
+      if (revisionIssueIds.has(issue.id)) throw new Error(`Review revision issue id ${issue.id} is duplicated`);
+      revisionIssueIds.add(issue.id);
+    }
+    if (
+      review.version === 'report-review-v2'
+      && review.verdict !== 'pass'
+      && !dimension.passed
+      && MODEL_SEMANTIC_ANSWER_DIMENSION_IDS.has(dimension.id)
+      && dimension.issues.length > 0
+      && (dimension.revisionIssues?.length ?? 0) !== dimension.issues.length
+    ) {
+      throw new Error(`Review dimension ${dimension.id} requires one targeted revision issue per issue`);
     }
   }
 }

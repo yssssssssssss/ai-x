@@ -5,6 +5,7 @@ import { researchStrategyContentDraftFromPayload } from '../apps/orchestrator-ru
 import {
   assertSemanticRevisionFidelity,
   assertStructuralRepairFidelity,
+  canonicalResearchStrategyDraftForFidelity,
   compareResearchStrategyContentFidelity,
   inventoryResearchStrategyContent,
   ResearchStrategyContentFidelityError,
@@ -90,6 +91,23 @@ test('semantic revision fidelity permits only explicitly authorized semantic uni
     () => assertSemanticRevisionFidelity(source, candidate, new Set()),
     (error: unknown) => error instanceof ResearchStrategyContentFidelityError
       && /unauthorized units/u.test(error.message),
+  );
+});
+
+test('canonical fidelity detects a semantic unit omitted during assembly', () => {
+  const source = contentDraft();
+  const payload = researchStrategyPayloadV2();
+  payload.contentBlocks.pop();
+  const canonical = canonicalResearchStrategyDraftForFidelity(
+    source,
+    payload,
+    source.methodSummary,
+  );
+
+  assert.throws(
+    () => assertStructuralRepairFidelity(source, canonical),
+    (error: unknown) => error instanceof ResearchStrategyContentFidelityError
+      && error.result.removedUnitKeys.some((key) => key.includes('content-block-002')),
   );
 });
 

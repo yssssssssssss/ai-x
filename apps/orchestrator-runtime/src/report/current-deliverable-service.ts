@@ -28,7 +28,10 @@ import {
 } from './synthesis-materializer.ts';
 import { redactSensitiveValue, redactString } from '../runtime/redaction.ts';
 import { getConfigRoot } from '../runtime/config-loader.ts';
-import type { ReportReviewArtifact } from './report-review-service.ts';
+import {
+  assertValidReportReviewArtifact,
+  type ReportReviewArtifact,
+} from './report-review-service.ts';
 import {
   resolveDeliverableContractById,
   resolveExecutionDeliverableContract,
@@ -72,9 +75,8 @@ function patchOperationAudit(operation: ResearchStrategyContentPatchOperationV1)
         : operation.op === 'append_block_item' ? operation.blockKey
           : operation.op === 'append_content_block' ? operation.block.key
             : operation.op === 'append_direct_answer' ? operation.answer.questionId
-              : operation.op === 'append_evidence_finding' ? operation.finding.key
-                : operation.op === 'append_limitation' ? 'limitations'
-                  : 'openQuestions';
+              : operation.op === 'append_limitation' ? 'limitations'
+                : 'openQuestions';
   const reviewIssueId = 'reviewIssueId' in operation && operation.reviewIssueId
     ? `:${operation.reviewIssueId}`
     : '';
@@ -1370,11 +1372,11 @@ export class CurrentDeliverableService {
       let deliverable: ResearchDeliverableEnvelope<ResearchStrategyReportPayloadV2> | null = null;
       let draftOverride = input.strategyDraftOverride;
       const sourceDraft = draftOverride ?? extractResearchStrategyContentDraft(synthesisMaterials);
-      let strategyFidelity = input.strategyFidelity ?? {
-        mode: 'none' as const,
-        sourceDraft,
-        result: compareResearchStrategyContentFidelity(sourceDraft, sourceDraft),
-        repairOperations: [] as string[],
+      let strategyFidelity: {
+        mode: 'none' | 'structural_repair' | 'semantic_revision';
+        sourceDraft: ResearchStrategyContentDraftV2;
+        result: ResearchStrategyContentFidelityResult;
+        repairOperations: string[];
       };
       const assemblyAttempts = draftOverride ? 1 : 2;
       const persistAssemblyDiagnostic = async (
@@ -1446,6 +1448,25 @@ export class CurrentDeliverableService {
           value: diagnostic,
         });
       };
+      try {
+        strategyFidelity = input.strategyFidelity ?? {
+          mode: 'none',
+          sourceDraft,
+          result: compareResearchStrategyContentFidelity(sourceDraft, sourceDraft),
+          repairOperations: [],
+        };
+      } catch (fidelityError) {
+        if (fidelityError instanceof ResearchStrategyContentFidelityError) {
+          await persistAssemblyDiagnostic(0, fidelityError, false);
+          await persistFidelityDiagnostic({
+            round: input.revisionRound ?? 0,
+            mode: input.strategyFidelity?.mode ?? 'none',
+            result: fidelityError.result,
+            repairOperations: input.strategyFidelity?.repairOperations ?? [],
+          });
+        }
+        throw new ResearchStrategyDeliverableValidationError(fidelityError, sourceDraft);
+      }
       for (let assemblyRound = 0; assemblyRound < assemblyAttempts; assemblyRound += 1) {
         try {
           deliverable = assembleResearchStrategyDeliverable({
@@ -1573,13 +1594,27 @@ export class CurrentDeliverableService {
         deliverable.payload,
         deliverable.methodSummary,
       );
-      const canonicalFidelity = strategyFidelity.mode === 'semantic_revision'
-        ? assertSemanticRevisionFidelity(
-            strategyFidelity.sourceDraft,
-            canonicalDraft,
-            new Set(strategyFidelity.result.changedSemanticUnitKeys),
-          )
-        : assertStructuralRepairFidelity(strategyFidelity.sourceDraft, canonicalDraft);
+      let canonicalFidelity: ResearchStrategyContentFidelityResult;
+      try {
+        canonicalFidelity = strategyFidelity.mode === 'semantic_revision'
+          ? assertSemanticRevisionFidelity(
+              strategyFidelity.sourceDraft,
+              canonicalDraft,
+              new Set(strategyFidelity.result.changedSemanticUnitKeys),
+            )
+          : assertStructuralRepairFidelity(strategyFidelity.sourceDraft, canonicalDraft);
+      } catch (fidelityError) {
+        if (fidelityError instanceof ResearchStrategyContentFidelityError) {
+          await persistAssemblyDiagnostic(0, fidelityError, false);
+          await persistFidelityDiagnostic({
+            round: input.revisionRound ?? 0,
+            mode: strategyFidelity.mode,
+            result: fidelityError.result,
+            repairOperations: strategyFidelity.repairOperations,
+          });
+        }
+        throw new ResearchStrategyDeliverableValidationError(fidelityError, strategyFidelity.sourceDraft);
+      }
       strategyFidelity = { ...strategyFidelity, result: canonicalFidelity };
       await persistFidelityDiagnostic({
         round: input.revisionRound ?? 0,
@@ -1826,6 +1861,7 @@ export class CurrentDeliverableService {
     if (!input.reviewArtifactId.trim()) {
       throw new Error('deliverable revision requires a sealed authorizing Review Artifact');
     }
+    assertValidReportReviewArtifact(input.review);
     const revisionInstruction = input.review.dimensions
       .flatMap((dimension) => dimension.issues)
       .join('; ');

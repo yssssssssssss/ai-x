@@ -17,7 +17,6 @@
           { "$ref": "#/$defs/replaceDirectAnswerBinding" },
           { "$ref": "#/$defs/replaceSupport" },
           { "$ref": "#/$defs/appendDirectAnswer" },
-          { "$ref": "#/$defs/appendEvidenceFinding" },
           { "$ref": "#/$defs/appendContentBlock" },
           { "$ref": "#/$defs/appendBlockItem" },
           { "$ref": "#/$defs/appendLimitation" },
@@ -312,12 +311,6 @@
       "additionalProperties": false,
       "required": ["op", "answer"],
       "properties": { "op": { "const": "append_direct_answer" }, "answer": { "$ref": "#/$defs/directAnswer" } }
-    },
-    "appendEvidenceFinding": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["op", "finding"],
-      "properties": { "op": { "const": "append_evidence_finding" }, "finding": { "$ref": "#/$defs/evidenceFinding" } }
     },
     "appendContentBlock": {
       "type": "object",

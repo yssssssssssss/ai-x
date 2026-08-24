@@ -12,6 +12,7 @@ import type {
   ResearchStrategyContentPatchV1,
   ResearchStrategyReportPayloadV2,
 } from '../packages/api-contract/research-deliverable.ts';
+import { REPORT_REVIEW_V2_DIMENSION_IDS } from '../packages/api-contract/control-workflow.ts';
 import { ArtifactNotSealedError, type ControlArtifact } from '../database/control-plane.ts';
 import { ControlArtifactStore, type ArtifactWriteInput } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
 import {
@@ -1403,17 +1404,19 @@ test('revises an open strategy report through one bounded Content Draft repair',
       version: 'report-review-v2', taskId, planVersionId, attemptId,
       deliverableArtifactId: initial.deliverableArtifactId,
       verdict: 'revise',
-      dimensions: [{
-        id: 'reasoning_quality',
-        passed: false,
-        issues: ['Weaken one unsupported claim.'],
-        targetNodeIds: ['q1'],
-        revisionIssues: [{
-          id: 'reasoning_quality:1',
-          message: 'Weaken one unsupported claim.',
-          targetNodeIds: ['q1'],
-        }],
-      }],
+      dimensions: REPORT_REVIEW_V2_DIMENSION_IDS.map((id) => id === 'reasoning_quality'
+        ? {
+            id,
+            passed: false,
+            issues: ['Weaken one unsupported claim.'],
+            targetNodeIds: ['q1'],
+            revisionIssues: [{
+              id: 'reasoning_quality:1',
+              message: 'Weaken one unsupported claim.',
+              targetNodeIds: ['q1'],
+            }],
+          }
+        : { id, passed: true, issues: [] }),
       revisionRound: 0,
     },
     reviewArtifactId: 'review-r0',
@@ -1508,6 +1511,24 @@ test('requires the fidelity diagnostic before sealing a Canonical Deliverable', 
     /fidelity store unavailable/u,
   );
   assert.deepEqual(writes.map(({ kind }) => kind), ['content_fidelity_diagnostic']);
+});
+
+test('persists fidelity diagnostics and preview when the initial Draft inventory is invalid', async () => {
+  const invalid = openStrategyDraft();
+  invalid.contentBlocks.push(structuredClone(invalid.contentBlocks[0]!));
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(invalid); } };
+  const { service, writes } = await createHarness(structuralEvidencePatch(), materializer);
+
+  await assert.rejects(
+    () => service.generate(generateInput(openStrategyInput())),
+    (error: unknown) => error instanceof ResearchStrategyDeliverableValidationError
+      && /duplicate content unit/u.test(error.message)
+      && error.draftPreview.contentBlocks.length === 2,
+  );
+  assert.deepEqual(writes.map(({ kind }) => kind), [
+    'deliverable_validation_diagnostic',
+    'content_fidelity_diagnostic',
+  ]);
 });
 
 test('validates the production Patch response before applying operations', async () => {
