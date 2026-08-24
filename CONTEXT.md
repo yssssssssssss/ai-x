@@ -13,6 +13,35 @@ _Avoid_: 任务卡片、Skill 卡片
 **推荐方案**：系统根据用户表达在当前可见执行方案中标出的默认建议，只影响初始聚焦，不代替用户选择，也不决定方案是否可见。
 _Avoid_: 自动选择、隐藏其他方案
 
+**能力需求**：从必答问题、请求交付物、Evidence 约束和方法义务推导出的待覆盖责任；它描述任务需要什么能力，不预先指定由哪个 Skill 完成。
+_Avoid_: Skill 候选、Task Type、关键词标签
+
+**Skill Portfolio**：为一次任务冻结的一个或多个 Skill Invocation 集合，并记录各自角色、覆盖责任、依赖和失败策略；简单任务可以只有一个 Skill。
+_Avoid_: Skill 列表、强制多 Skill、运行时自由选 Skill
+
+**Analysis Owner**：对一个必答问题承担主要分析责任的唯一 Contributor Skill Invocation。
+_Avoid_: 多个共同主责、最终报告作者
+
+**Corroborator**：对已有 Analysis Owner 的问题提供独立佐证或反证的 Contributor Skill Invocation；它不取代主责。
+_Avoid_: 第二主责、重复执行
+
+## 组合编排
+
+**Contributor Skill**：针对限定问题域独立形成 Research Contribution 的 Skill；它不直接生成顶层正式报告。
+_Avoid_: 子报告生成器、隐藏 Agent
+
+**Synthesizer Skill**：由交付物组合策略唯一指定、负责把多个 Research Contribution 合成为一个待全局审校语义草稿的 Skill。
+_Avoid_: 临时汇总模型、多个最终作者
+
+**Research Contribution**：Contributor Skill 形成的、绑定问题、Evidence、置信度、限制和来源身份的独立研究贡献；它不是 Canonical Deliverable。
+_Avoid_: 最终报告、自由文本中间结果
+
+**Contribution Ledger**：逐项记录每个 Research Contribution 内容单元如何进入 Canonical Deliverable，或为何被合并、判定冲突或省略的审计账本。
+_Avoid_: 摘要清单、仅记录成功项
+
+**跨 Skill 评审**：在综合之后检查覆盖、冲突、重复、证据边界和方法不匹配，并授权贡献处置的全局评审。
+_Avoid_: Contributor 自检、版式检查
+
 ## 验收与交付
 
 **真实能力闭环**：以真实研究输入、真实 LLM 网关和至少一个真实 Tool 产生可追溯报告，并由研究员判定该报告可用于下一步研究或决策的端到端结果。
