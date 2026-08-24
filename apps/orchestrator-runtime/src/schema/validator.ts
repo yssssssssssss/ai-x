@@ -11,11 +11,21 @@ const schemasDir = join(process.cwd(), 'schemas');
 
 export type SchemaName =
   | 'research-task'
+  | 'research-task-v2'
   | 'decision-state'
+  | 'problem-graph'
+  | 'capability-demand-graph-v1'
   | 'execution-plan'
+  | 'current-execution-plan'
+  | 'current-execution-plan-v3'
+  | 'current-plan-candidates'
   | 'skill-manifest'
   | 'tool-manifest'
-  | 'research-report';
+  | 'research-report'
+  | 'research-contribution-v1'
+  | 'contribution-ledger-v1'
+  | 'scenario-guidance'
+  | 'report-review';
 
 // checkReportReferences 消费的最小形状(结构由 ajv 保证,此处只取引用完整性所需字段)。
 interface ResearchReportShape {
@@ -62,7 +72,14 @@ export class SchemaValidator {
 
   // 返回错误信息数组;空数组表示通过。
   validate(name: SchemaName | string, data: unknown): string[] {
-    const validate = this.load(name);
+    const schemaName = name === 'current-execution-plan'
+      && typeof data === 'object'
+      && data !== null
+      && 'execution_contract_version' in data
+      && data.execution_contract_version === 'current-execution-plan-v3'
+      ? 'current-execution-plan-v3'
+      : name;
+    const validate = this.load(schemaName);
     const structural = validate(data)
       ? []
       : (validate.errors ?? []).map(

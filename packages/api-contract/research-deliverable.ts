@@ -1,13 +1,12 @@
-import type { PlanningProvenance } from './plan.ts';
+import type {
+  CapabilityDemandGraphV1,
+  ContributionType,
+  EvidenceClass,
+  PlanningProvenance,
+  RequestedArtifact,
+} from './plan.ts';
 
-export type EvidenceClass =
-  | 'public_source'
-  | 'screenshot'
-  | 'user_input'
-  | 'knowledge'
-  | 'dataset'
-  | 'simulation'
-  | 'derived';
+export type { EvidenceClass } from './plan.ts';
 
 export type EvidenceKind = 'tool_output' | 'knowledge_excerpt' | 'user_constraint' | 'screenshot';
 
@@ -93,6 +92,62 @@ export interface CurrentSkillInvocation {
   resource_gaps: CurrentSkillResourceGap[];
   step_nos: number[];
 }
+
+export interface CurrentSkillInvocationV3Base {
+  invocation_id: string;
+  skill_id: string;
+  role: 'contributor' | 'synthesizer';
+  contribution_types: ContributionType[];
+  question_ids: string[];
+  requested_artifact_types: RequestedArtifact[];
+  depends_on_invocation_ids: string[];
+  output_contract: string;
+  required: boolean;
+  failure_policy: 'block' | 'gap';
+  step_nos: number[];
+}
+
+export interface CurrentCompiledSkillInvocationV3 extends CurrentSkillInvocationV3Base {
+  execution_mode: 'compiled';
+  contract_version: 'skill-execution-contract-v1';
+  contract_hash: string;
+  degraded_policy: 'block' | 'gap';
+  skill_reference_hashes: Array<{ path: string; hash: string }>;
+  knowledge_references: CurrentKnowledgeReference[];
+  resource_gaps: CurrentSkillResourceGap[];
+}
+
+export interface CurrentLegacySkillInvocationV3 extends CurrentSkillInvocationV3Base {
+  execution_mode: 'legacy_single_call';
+  contract_version?: never;
+  contract_hash?: never;
+  degraded_policy?: never;
+  skill_reference_hashes?: never;
+  knowledge_references?: never;
+  resource_gaps?: never;
+}
+
+export type CurrentSkillInvocationV3 =
+  | CurrentCompiledSkillInvocationV3
+  | CurrentLegacySkillInvocationV3;
+
+export interface PlanContributionRequirement {
+  id: string;
+  demand_type: ContributionType;
+  question_ids: string[];
+  requested_artifact_types: RequestedArtifact[];
+  owner_invocation_id: string;
+  corroborator_invocation_ids: string[];
+  required: boolean;
+}
+
+export interface SharedPlanStepMetadata {
+  shared_stage_key: string;
+  shared_by_invocation_ids: string[];
+  share_fingerprint: string;
+}
+
+export type CurrentPlanStepV3 = CurrentPlanStep & Partial<SharedPlanStepMetadata>;
 
 export interface CurrentKnowledgeReference {
   resourceId: string;
@@ -212,6 +267,90 @@ export interface CurrentExecutionPlan {
   };
   planning_provenance?: PlanningProvenance;
   activated_nodes: string[];
+}
+
+export interface CurrentExecutionPlanV3 extends Omit<
+  CurrentExecutionPlan,
+  'execution_contract_version' | 'skill_invocations' | 'steps'
+> {
+  execution_contract_version: 'current-execution-plan-v3';
+  capability_demand_graph: CapabilityDemandGraphV1;
+  skill_invocations: CurrentSkillInvocationV3[];
+  contribution_requirements: PlanContributionRequirement[];
+  steps: CurrentPlanStepV3[];
+}
+
+export type ReadableCurrentExecutionPlan = CurrentExecutionPlan | CurrentExecutionPlanV3;
+
+export const CONTRIBUTION_UNIT_KINDS = [
+  'observation',
+  'finding',
+  'insight',
+  'hypothesis',
+  'persona',
+  'job',
+  'journey_stage',
+  'metric',
+  'method',
+  'priority',
+  'recommendation',
+  'action',
+  'artifact_item',
+] as const;
+
+export type ContributionUnitKind = typeof CONTRIBUTION_UNIT_KINDS[number];
+
+export interface ResearchContributionSupport {
+  questionIds: string[];
+  evidenceIds: string[];
+  status: 'supported' | 'provisional';
+  confidence: number;
+  validationNeeded: string;
+}
+
+export interface ResearchContributionUnit {
+  key: string;
+  kind: ContributionUnitKind;
+  title: string;
+  statement: string;
+  businessImplication?: string;
+  recommendedAction?: string;
+  requestedArtifactTypes: RequestedArtifact[];
+  support: ResearchContributionSupport;
+}
+
+export interface ResearchContributionV1 {
+  version: 'research-contribution-v1';
+  taskId: string;
+  planVersionId: string;
+  attemptId: string;
+  invocationId: string;
+  skillId: string;
+  contributionTypes: ContributionType[];
+  units: ResearchContributionUnit[];
+  limitations: string[];
+  openQuestions: string[];
+}
+
+export type ContributionDisposition = 'included' | 'merged' | 'conflicted' | 'omitted';
+
+export interface ContributionLedgerEntry {
+  contributionArtifactId: string;
+  invocationId: string;
+  sourceUnitKey: string;
+  sourceSemanticHash: string;
+  disposition: ContributionDisposition;
+  canonicalNodeIds: string[];
+  reason?: string;
+  reviewIssueIds: string[];
+}
+
+export interface ContributionLedgerV1 {
+  version: 'contribution-ledger-v1';
+  taskId: string;
+  planVersionId: string;
+  attemptId: string;
+  entries: ContributionLedgerEntry[];
 }
 
 export interface PendingInput {

@@ -95,42 +95,42 @@ Registry、Deliverable Registry、Tool Registry 和 Knowledge Index 均可读取
 
 ## 1.1 Capability Demand Graph v1
 
-- [ ] 保留现有 ProblemGraph v1，不新增 ProblemGraph v2。
-- [ ] 新增 `schemas/capability-demand-graph-v1.schema.json`。
-- [ ] Capability Demand Graph 作为 Plan v3 必填规划对象。
-- [ ] 定义受控 `ContributionType` enum。
-- [ ] Required Question 缺 demand 失败。
-- [ ] unknown demand type 失败。
-- [ ] Demand 引用未知 Question/Artifact/Evidence class 失败。
-- [ ] virtual user Requirement 未生成 synthetic demand 失败。
-- [ ] 无量化数据却生成 quantitative fact demand 失败。
-- [ ] 保留 ProblemGraph v1 Reader。
+- [x] 保留现有 ProblemGraph v1，不新增 ProblemGraph v2。
+- [x] 新增 `schemas/capability-demand-graph-v1.schema.json`。
+- [x] Capability Demand Graph 作为 Plan v3 必填规划对象。
+- [x] 定义受控 `ContributionType` enum。
+- [x] Required Question 缺 demand 失败。
+- [x] unknown demand type 失败。
+- [x] Demand 引用未知 Question/Artifact/Evidence class 失败。
+- [x] virtual user Requirement 未生成 synthetic demand 失败。
+- [x] 无量化数据却生成 quantitative fact demand 失败。
+- [x] 保留 ProblemGraph v1 Reader。
 
 ## 1.2 CurrentExecutionPlan v3
 
-- [ ] 新增 `schemas/current-execution-plan-v3.schema.json`。
-- [ ] 增加 Invocation role、contribution types、question/artifact ownership。
-- [ ] 增加 invocation dependencies、output contract、required/failure policy。
-- [ ] 增加 Plan Contribution Requirements。
-- [ ] 增加 Shared Step metadata/fingerprint。
-- [ ] v3 无 skill invocations 失败。
-- [ ] v3 无 synthesizer 或多个 synthesizer 失败。
-- [ ] Required Demand 无 Owner 失败。
-- [ ] 更新共享 TypeScript contracts。
-- [ ] SystemCapabilities 暴露 v1/v2/v3。
-- [ ] v1/v2 schema 与 Reader 不变。
+- [x] 新增 `schemas/current-execution-plan-v3.schema.json`。
+- [x] 增加 Invocation role、contribution types、question/artifact ownership。
+- [x] 增加 invocation dependencies、output contract、required/failure policy。
+- [x] 增加 Plan Contribution Requirements。
+- [x] 增加 Shared Step metadata/fingerprint。
+- [x] v3 无 skill invocations 失败。
+- [x] v3 无 synthesizer 或多个 synthesizer 失败。
+- [x] Required Demand 无 Owner 失败。
+- [x] 更新共享 TypeScript contracts。
+- [x] SystemCapabilities 暴露 v1/v2/v3。
+- [x] v1/v2 schema 与 Reader 不变。
 
 ## 1.3 Contribution/Ledger Schema
 
-- [ ] 新增 `schemas/research-contribution-v1.schema.json`。
-- [ ] 新增 `schemas/contribution-ledger-v1.schema.json`。
-- [ ] Contribution Unit 缺 Question/Support 失败。
-- [ ] supported 无 factual Evidence 失败。
-- [ ] provisional 无 validationNeeded 失败。
-- [ ] synthetic supported 失败。
-- [ ] Ledger 重复/缺失 source unit 失败。
-- [ ] included 无 canonical target 失败。
-- [ ] merged/omitted/conflicted 无 Review issue 失败。
+- [x] 新增 `schemas/research-contribution-v1.schema.json`。
+- [x] 新增 `schemas/contribution-ledger-v1.schema.json`。
+- [x] Contribution Unit 缺 Question/Support 失败。
+- [x] supported 无 factual Evidence 失败。
+- [x] provisional 无 validationNeeded 失败。
+- [x] synthetic supported 失败。
+- [x] Ledger 重复/缺失 source unit 失败。
+- [x] included 无 canonical target 失败。
+- [x] merged/omitted/conflicted 无 Review issue 失败。
 
 ## Phase 1 定向测试
 
@@ -143,10 +143,12 @@ pnpm exec tsx --test \
   tests/system-capabilities.test.ts
 ```
 
-- [ ] 新合同保持 inactive，默认仍写旧 Plan。
-- [ ] 历史 Plan/Report fixtures 定向用例通过。
-- [ ] 不在此处重复 root typecheck、Registry lint 或 Web build；统一留到 Milestone A。
-- [ ] 独立提交 Phase 1。
+- [x] 新合同保持 inactive，默认仍写旧 Plan。
+- [x] 历史 Plan/Report fixtures 定向用例通过（113 tests）。
+- [x] 不在此处重复 root typecheck、Registry lint 或 Web build；统一留到 Milestone A。
+- [x] 独立提交 Phase 1。
+
+Phase 1 合同定向测试：26 tests 通过，0 失败。
 
 # Phase 2：Registry Composition 与 Portfolio Resolver
 

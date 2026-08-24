@@ -1,6 +1,7 @@
 import type { CandidateProfile, ResearchTaskData, ResearchTaskV2 } from './plan.ts';
 import type {
   CurrentExecutionPlan,
+  CurrentExecutionPlanV3,
   EvidenceManifest,
   LegacyResearchDeliverableEnvelope,
   PendingInput,
@@ -89,6 +90,12 @@ export interface CurrentPlanCandidate {
   plan: CurrentExecutionPlan;
   pendingInputs: PendingInput[];
 }
+
+export interface CurrentPlanCandidateV3 extends Omit<CurrentPlanCandidate, 'plan'> {
+  plan: CurrentExecutionPlanV3;
+}
+
+export type ReadableCurrentPlanCandidate = CurrentPlanCandidate | CurrentPlanCandidateV3;
 
 export interface ControlPlanCandidatesResponse {
   kind: 'current';

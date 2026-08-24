@@ -118,6 +118,53 @@ export const REQUESTED_ARTIFACTS = [
 export type RequestedArtifact = typeof REQUESTED_ARTIFACTS[number];
 export type ResearchOutcomeMode = 'plan' | 'answer';
 
+export type EvidenceClass =
+  | 'public_source'
+  | 'screenshot'
+  | 'user_input'
+  | 'knowledge'
+  | 'dataset'
+  | 'simulation'
+  | 'derived';
+
+export const CONTRIBUTION_TYPES = [
+  'market_landscape',
+  'competitive_analysis',
+  'persona',
+  'jobs_to_be_done',
+  'journey',
+  'qualitative_insight',
+  'voc',
+  'satisfaction',
+  'metrics',
+  'funnel',
+  'feature_adoption',
+  'design_audit',
+  'accessibility',
+  'research_method',
+  'prioritization',
+  'strategy',
+  'action_plan',
+  'virtual_user_hypothesis',
+] as const;
+
+export type ContributionType = typeof CONTRIBUTION_TYPES[number];
+
+export interface CapabilityDemand {
+  id: string;
+  type: ContributionType;
+  questionIds: string[];
+  requestedArtifactTypes: RequestedArtifact[];
+  requiredEvidenceClasses: EvidenceClass[];
+  requiredInputRoles: string[];
+  priority: 'required' | 'optional';
+}
+
+export interface CapabilityDemandGraphV1 {
+  version: 'capability-demand-graph-v1';
+  demands: CapabilityDemand[];
+}
+
 export interface ResearchTaskV2 {
   version: 'research-task-v2';
   task_type: 'competitive_research' | 'user_research_planning' | 'research_synthesis' | 'voc_diagnosis' | 'design_audit' | 'a11y_audit';

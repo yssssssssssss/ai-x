@@ -7,6 +7,9 @@ export interface SystemCapabilitiesResponse {
     configurationHash: string;
   };
   planContractVersions: string[];
+  capabilityDemandGraphVersions: string[];
+  researchContributionVersions: string[];
+  contributionLedgerVersions: string[];
   reportDocumentVersions: string[];
   activeTaskTypes: string[];
   activeDeliverables: string[];

@@ -30,13 +30,21 @@ function reportDocumentVersions(): string[] {
   return [...versions];
 }
 
-function planContractVersions(): string[] {
-  const schema = readJson('schemas/current-execution-plan.schema.json');
+function schemaConst(relativePath: string, property: string): string {
+  const schema = readJson(relativePath);
   const properties = schema.properties as Record<string, { const?: unknown }> | undefined;
-  const current = properties?.execution_contract_version?.const;
-  if (typeof current !== 'string') throw new Error('Current Plan schema does not declare its execution contract version');
+  const value = properties?.[property]?.const;
+  if (typeof value !== 'string') {
+    throw new Error(`${relativePath} does not declare ${property} const`);
+  }
+  return value;
+}
+
+function planContractVersions(): string[] {
+  const current = schemaConst('schemas/current-execution-plan.schema.json', 'execution_contract_version');
   const legacy = current.replace(/v\d+$/u, 'v1');
-  return legacy === current ? [current] : [legacy, current];
+  const portfolio = schemaConst('schemas/current-execution-plan-v3.schema.json', 'execution_contract_version');
+  return [...new Set([legacy, current, portfolio])];
 }
 
 function sourceRevision(): string | null {
@@ -113,6 +121,10 @@ systemCapabilitiesRouter.get('/', (_req, res) => {
     const deliverableRegistryHash = hashFile('orchestrator/deliverable-registry.yaml');
     const skillRegistryHash = hashFile('orchestrator/skill-registry.yaml');
     const planSchemaHash = hashFile('schemas/current-execution-plan.schema.json');
+    const planV3SchemaHash = hashFile('schemas/current-execution-plan-v3.schema.json');
+    const capabilityDemandSchemaHash = hashFile('schemas/capability-demand-graph-v1.schema.json');
+    const researchContributionSchemaHash = hashFile('schemas/research-contribution-v1.schema.json');
+    const contributionLedgerSchemaHash = hashFile('schemas/contribution-ledger-v1.schema.json');
     const reportSchemaHash = hashFile('schemas/report-document.schema.json');
     const layoutSchemaHash = hashFile('schemas/report-layout-blueprint.schema.json');
     const diagnosticSchemaHash = hashFile('schemas/deliverable-validation-diagnostic.schema.json');
@@ -127,6 +139,10 @@ systemCapabilitiesRouter.get('/', (_req, res) => {
       knowledgeIndexHash,
       toolRegistryHash,
       planSchemaHash,
+      planV3SchemaHash,
+      capabilityDemandSchemaHash,
+      researchContributionSchemaHash,
+      contributionLedgerSchemaHash,
       reportSchemaHash,
       layoutSchemaHash,
       diagnosticSchemaHash,
@@ -143,6 +159,9 @@ systemCapabilitiesRouter.get('/', (_req, res) => {
         configurationHash: configHash,
       },
       planContractVersions: planContractVersions(),
+      capabilityDemandGraphVersions: [schemaConst('schemas/capability-demand-graph-v1.schema.json', 'version')],
+      researchContributionVersions: [schemaConst('schemas/research-contribution-v1.schema.json', 'version')],
+      contributionLedgerVersions: [schemaConst('schemas/contribution-ledger-v1.schema.json', 'version')],
       reportDocumentVersions: reportDocumentVersions(),
       activeTaskTypes: [...new Set(activeDeliverables.flatMap(({ task_types }) => task_types))].sort(),
       activeDeliverables: activeDeliverables.map(({ id }) => id).sort(),
