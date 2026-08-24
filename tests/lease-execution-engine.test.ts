@@ -5178,6 +5178,58 @@ test('pauses execution when current deliverable validation fails', async () => {
   }
 });
 
+test('preserves a sanitized non-exportable reviewed Draft preview on deliverable failure', async () => {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]],
+    {
+      deliverable_type: 'competitive_analysis_report',
+      evidence_requirements: [{
+        id: 'one-public-source', acceptedClasses: ['public_source'], minimumCount: 1, required: true,
+      }],
+    },
+  );
+  const deliverables = new RecordingDeliverablesFake(async () => {
+    const error = new Error('canonical assembly failed') as Error & { draftPreview: Record<string, unknown> };
+    error.draftPreview = {
+      version: 'reviewed-strategy-draft-preview-v1',
+      canonical: false,
+      exportAllowed: false,
+      title: 'Reviewed draft',
+      executiveAnswer: 'Existing answer',
+      directAnswers: [],
+      contentBlocks: [],
+      evidenceFindingCount: 1,
+      limitationCount: 0,
+      openQuestionCount: 1,
+    };
+    throw error;
+  });
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new CountingRealLLM(),
+    deliverables,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'paused');
+  assert.deepEqual(result.failure?.draftPreview, {
+    version: 'reviewed-strategy-draft-preview-v1',
+    canonical: false,
+    exportAllowed: false,
+    title: 'Reviewed draft',
+    executiveAnswer: 'Existing answer',
+    directAnswers: [],
+    contentBlocks: [],
+    evidenceFindingCount: 1,
+    limitationCount: 0,
+    openQuestionCount: 1,
+  });
+  const failedStep = (await repository.listExecutionSteps(lease.attemptId)).find(({ state }) => state === 'failed');
+  assert.deepEqual(failedStep?.failure?.draftPreview, result.failure?.draftPreview);
+});
+
 test('keeps terminal publication invalidation failure authoritative and recoverable', async () => {
   const { repository, lease } = await claimedExecution(
     new Date(Date.now() + 60_000),

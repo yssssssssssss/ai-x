@@ -26,6 +26,7 @@ import { Stage3Execute } from '../components/stages/Stage3Execute.tsx';
 import { Stage4Report } from '../components/stages/Stage4Report.tsx';
 import { CurrentStage4Report } from '../components/stages/CurrentStage4Report.tsx';
 import { PlanProgressCard } from '../components/PlanningProgressCard.tsx';
+import { reviewedDraftPreviewFromFailure } from '../reviewed-draft-preview.ts';
 import { Labs } from './Labs.tsx';
 
 type View = 'task' | 'labs' | 'history';
@@ -413,14 +414,37 @@ function FailureActionCard({
   const canRetry = failure == null || executionFailureAllowsAction(failure, 'retry');
   const canReplan = failure != null && executionFailureAllowsAction(failure, 'replan');
   const canAbort = failure == null || executionFailureAllowsAction(failure, 'abort');
+  const draftPreview = reviewedDraftPreviewFromFailure(failure);
+  const visibleFailure = failure ? { ...failure } : undefined;
+  if (visibleFailure) delete visibleFailure.draftPreview;
   return (
     <section style={{ background: 'rgba(251,191,36,.08)', border: '1px solid rgba(251,191,36,.3)', borderRadius: 16, padding: 18, marginTop: 16 }}>
       <div style={{ color: 'var(--warn)', fontWeight: 600 }}>
         第 {stepNo ?? '?'} 步失败{stepName ? `：${stepName}` : ''}
       </div>
-      {failure && (
+      {draftPreview && (
+        <div style={{ margin: '12px 0', padding: 14, borderRadius: 12, border: '1px solid var(--border-soft)', background: 'var(--bg-card-hi)', color: 'var(--text)' }}>
+          <div style={{ fontWeight: 600 }}>已保留审校草稿 · 非正式报告</div>
+          <div style={{ marginTop: 4, color: 'var(--text-dim)', fontSize: 12 }}>
+            未通过 Canonical 交付门禁，当前内容不可导出或发布。
+          </div>
+          <div style={{ marginTop: 10, fontSize: 14 }}>{draftPreview.title}</div>
+          <p style={{ margin: '6px 0', color: 'var(--text-dim)', lineHeight: 1.6 }}>{draftPreview.executiveAnswer}</p>
+          <div style={{ color: 'var(--text-faint)', fontSize: 12 }}>
+            {draftPreview.directAnswerCount} 个直接答案 · {draftPreview.evidenceFindingCount} 个发现 · {draftPreview.contentBlocks.length} 个内容块 · {draftPreview.limitationCount} 个局限 · {draftPreview.openQuestionCount} 个待解决问题
+          </div>
+          {draftPreview.contentBlocks.length > 0 && (
+            <ul style={{ margin: '8px 0 0', paddingLeft: 20, color: 'var(--text-dim)', fontSize: 12 }}>
+              {draftPreview.contentBlocks.map((block) => (
+                <li key={block.key}>{block.title} · {block.kind} · {block.itemCount} 项</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+      {visibleFailure && (
         <pre style={{ whiteSpace: 'pre-wrap', color: 'var(--text-dim)', fontSize: 12, margin: '8px 0' }}>
-          {JSON.stringify(failure, null, 2)}
+          {JSON.stringify(visibleFailure, null, 2)}
         </pre>
       )}
       <p style={{ color: 'var(--text-dim)', fontSize: 13, margin: '6px 0 12px' }}>

@@ -43,6 +43,11 @@ import {
   ResearchStrategyAssemblyError,
 } from './research-strategy-deliverable-assembler.ts';
 import { createDeliverableValidationDiagnostic } from './deliverable-validation-diagnostic.ts';
+import { createContentFidelityDiagnostic } from './content-fidelity-diagnostic.ts';
+import {
+  compareResearchStrategyContentFidelity,
+  type ResearchStrategyContentFidelityResult,
+} from './research-strategy-content-fidelity.ts';
 import { applyResearchStrategyContentPatch } from './research-strategy-content-patch.ts';
 import {
   canonicalizeRequestedArtifactBindings,
@@ -270,6 +275,75 @@ interface SealedEvidenceManifest {
   value: EvidenceManifest;
 }
 
+export interface ReviewedStrategyDraftPreviewV1 {
+  version: 'reviewed-strategy-draft-preview-v1';
+  canonical: false;
+  exportAllowed: false;
+  title: string;
+  executiveAnswer: string;
+  directAnswers: Array<{
+    questionId: string;
+    question: string;
+    answer: string;
+    answerStatus: string;
+  }>;
+  contentBlocks: Array<{
+    key: string;
+    kind: string;
+    title: string;
+    itemCount: number;
+  }>;
+  evidenceFindingCount: number;
+  limitationCount: number;
+  openQuestionCount: number;
+}
+
+function boundedPreviewText(value: string, maxLength: number): string {
+  return redactString(value).replace(/\s+/gu, ' ').trim().slice(0, maxLength);
+}
+
+function reviewedDraftPreview(draft: ResearchStrategyContentDraftV2): ReviewedStrategyDraftPreviewV1 {
+  const itemCount = (block: ResearchStrategyContentDraftV2['contentBlocks'][number]): number => {
+    if (block.kind === 'narrative') return 1;
+    if (block.kind === 'comparison_matrix' || block.kind === 'strategy_map') return block.cells.length;
+    if (block.kind === 'mind_model') return block.nodes.length + block.edges.length;
+    if ('items' in block) return block.items.length;
+    return 0;
+  };
+  return {
+    version: 'reviewed-strategy-draft-preview-v1',
+    canonical: false,
+    exportAllowed: false,
+    title: boundedPreviewText(draft.title, 240),
+    executiveAnswer: boundedPreviewText(draft.executiveAnswer, 1_200),
+    directAnswers: draft.directAnswers.map((answer) => ({
+      questionId: answer.questionId,
+      question: boundedPreviewText(answer.question, 300),
+      answer: boundedPreviewText(answer.answer, 1_200),
+      answerStatus: answer.answerStatus,
+    })),
+    contentBlocks: draft.contentBlocks.map((block) => ({
+      key: block.key,
+      kind: block.kind,
+      title: boundedPreviewText(block.title, 240),
+      itemCount: itemCount(block),
+    })),
+    evidenceFindingCount: draft.evidenceFindings.length,
+    limitationCount: draft.limitations.length,
+    openQuestionCount: draft.openQuestions.length,
+  };
+}
+
+export class ResearchStrategyDeliverableValidationError extends Error {
+  readonly draftPreview: ReviewedStrategyDraftPreviewV1;
+
+  constructor(error: unknown, draft: ResearchStrategyContentDraftV2) {
+    super(error instanceof Error ? error.message : String(error));
+    this.name = 'ResearchStrategyDeliverableValidationError';
+    this.draftPreview = reviewedDraftPreview(draft);
+  }
+}
+
 export interface CurrentDeliverableGenerateInput {
   task: { id: string };
   plan: {
@@ -297,6 +371,11 @@ export interface CurrentDeliverableGenerateInput {
   visualAssets?: readonly VerifiedVisualAsset[];
   visualAnnotationBindings?: readonly VerifiedVisualAnnotationBinding[];
   strategyDraftOverride?: ResearchStrategyContentDraftV2;
+  strategyFidelity?: {
+    mode: 'structural_repair' | 'semantic_revision';
+    result: ResearchStrategyContentFidelityResult;
+    repairOperations: string[];
+  };
 }
 
 export interface CurrentDeliverableGenerateResult {
@@ -1265,6 +1344,11 @@ export class CurrentDeliverableService {
       let deliverable: ResearchDeliverableEnvelope<ResearchStrategyReportPayloadV2> | null = null;
       let draftOverride = input.strategyDraftOverride;
       const sourceDraft = draftOverride ?? extractResearchStrategyContentDraft(synthesisMaterials);
+      let strategyFidelity = input.strategyFidelity ?? {
+        mode: 'none' as const,
+        result: compareResearchStrategyContentFidelity(sourceDraft, sourceDraft),
+        repairOperations: [] as string[],
+      };
       const assemblyAttempts = draftOverride ? 1 : 2;
       const persistAssemblyDiagnostic = async (
         assemblyRound: number,
@@ -1389,13 +1473,18 @@ export class CurrentDeliverableService {
               });
             } catch (patchError) {
               await persistAssemblyDiagnostic(assemblyRound + 1, patchError, false);
-              throw patchError;
+              throw new ResearchStrategyDeliverableValidationError(patchError, originalDraft);
             }
             draftOverride = applied.draft;
+            strategyFidelity = {
+              mode: 'structural_repair',
+              result: applied.fidelity,
+              repairOperations: repaired.data.operations.map(({ op }) => op),
+            };
             continue;
           }
           await persistAssemblyDiagnostic(assemblyRound, error, false);
-          throw error;
+          throw new ResearchStrategyDeliverableValidationError(error, draftOverride ?? sourceDraft);
         }
       }
       if (!deliverable) throw new Error('research strategy assembly exhausted without a validated result');
@@ -1411,6 +1500,36 @@ export class CurrentDeliverableService {
         activeLease: input.activeLease,
         value: deliverable,
       });
+      const fidelityDiagnostic = createContentFidelityDiagnostic({
+        taskId: input.task.id,
+        planVersionId: input.plan.id,
+        attemptId: input.attempt.id,
+        round: input.revisionRound ?? 0,
+        mode: strategyFidelity.mode,
+        result: strategyFidelity.result,
+        normalizationOperations: ['deterministic_reference_and_binding_normalization'],
+        repairOperations: strategyFidelity.repairOperations,
+      });
+      this.dependencies.validator.validateFileOrThrow(
+        'schemas/content-fidelity-diagnostic.schema.json',
+        fidelityDiagnostic,
+      );
+      try {
+        await this.dependencies.artifacts.writeJson({
+          taskId: input.task.id,
+          planVersionId: input.plan.id,
+          attemptId: input.attempt.id,
+          kind: 'content_fidelity_diagnostic',
+          relativePath: `diagnostics/content-fidelity-r${input.revisionRound ?? 0}.json`,
+          schemaVersion: fidelityDiagnostic.version,
+          sensitivity: 'internal',
+          redactionPolicyVersion: 'v1',
+          activeLease: input.activeLease,
+          value: fidelityDiagnostic,
+        });
+      } catch {
+        // Fidelity diagnostics are best-effort and must not hide an otherwise valid Deliverable.
+      }
       return { deliverable, deliverableArtifactId: artifact.id };
     }
     const producerVisualInventory = visualInventory?.assets.map((asset) => ({
@@ -1690,6 +1809,11 @@ export class CurrentDeliverableService {
       return this.generate({
         ...input,
         strategyDraftOverride: revised.draft,
+        strategyFidelity: {
+          mode: 'semantic_revision',
+          result: revised.fidelity,
+          repairOperations: patch.data.operations.map(({ op }) => op),
+        },
         revisionInstruction,
         revisionRound: 1,
       });

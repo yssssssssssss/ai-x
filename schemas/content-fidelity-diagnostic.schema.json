@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "content-fidelity-diagnostic-v1",
+  "title": "Content fidelity diagnostic",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version", "taskId", "planVersionId", "attemptId", "round", "mode",
+    "sourceUnitCount", "candidateUnitCount", "preservedUnitCount",
+    "addedUnitKeys", "removedUnitKeys", "changedSemanticUnitKeys", "reorderedUnitKeys",
+    "normalizationOperations", "repairOperations"
+  ],
+  "properties": {
+    "version": { "const": "content-fidelity-diagnostic-v1" },
+    "taskId": { "$ref": "#/definitions/text" },
+    "planVersionId": { "$ref": "#/definitions/text" },
+    "attemptId": { "$ref": "#/definitions/text" },
+    "round": { "type": "integer", "minimum": 0 },
+    "mode": { "enum": ["none", "structural_repair", "semantic_revision"] },
+    "sourceUnitCount": { "type": "integer", "minimum": 0 },
+    "candidateUnitCount": { "type": "integer", "minimum": 0 },
+    "preservedUnitCount": { "type": "integer", "minimum": 0 },
+    "addedUnitKeys": { "$ref": "#/definitions/textList" },
+    "removedUnitKeys": { "$ref": "#/definitions/textList" },
+    "changedSemanticUnitKeys": { "$ref": "#/definitions/textList" },
+    "reorderedUnitKeys": { "$ref": "#/definitions/textList" },
+    "normalizationOperations": { "$ref": "#/definitions/textList" },
+    "repairOperations": { "$ref": "#/definitions/textList" }
+  },
+  "definitions": {
+    "text": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "textList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/definitions/text" }
+    }
+  }
+}

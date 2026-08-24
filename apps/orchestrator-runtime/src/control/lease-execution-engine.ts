@@ -1372,12 +1372,16 @@ function deliverableFailureFrom(error: unknown): Record<string, unknown> {
   ) {
     return failureFrom(error);
   }
+  const draftPreview = isRecord(error) && isRecord(error.draftPreview)
+    ? redactSensitiveValue(error.draftPreview)
+    : undefined;
   return {
     kind: 'deliverable_validation',
     retryable: true,
     message: error instanceof CurrentReportValidationError
       ? error.message
       : error instanceof Error ? error.message : String(error),
+    ...(draftPreview ? { draftPreview } : {}),
   };
 }
 

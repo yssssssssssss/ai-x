@@ -22,7 +22,10 @@ import {
 } from '../apps/orchestrator-runtime/src/evidence/evidence-service.ts';
 import type { MaterializeInput, SynthesisMaterial } from '../apps/orchestrator-runtime/src/report/synthesis-materializer.ts';
 import type { ReportReviewArtifact } from '../apps/orchestrator-runtime/src/report/report-review-service.ts';
-import type { CurrentDeliverableGenerateInput } from '../apps/orchestrator-runtime/src/report/current-deliverable-service.ts';
+import {
+  ResearchStrategyDeliverableValidationError,
+  type CurrentDeliverableGenerateInput,
+} from '../apps/orchestrator-runtime/src/report/current-deliverable-service.ts';
 import type {
   LLMClient,
   LLMProviderIdentity,
@@ -1406,7 +1409,9 @@ test('revises an open strategy report through one bounded Content Draft repair',
   assert.equal(revised.deliverableArtifactId, deliverableArtifactId);
   assert.deepEqual(writes.map(({ relativePath }) => relativePath), [
     'deliverables/final-r0.json',
+    'diagnostics/content-fidelity-r0.json',
     'deliverables/final-r1.json',
+    'diagnostics/content-fidelity-r1.json',
   ]);
 });
 
@@ -1450,6 +1455,9 @@ test('deterministically restores empty provisional Evidence bindings before invo
     ['E1'],
   );
   assert.equal(writes[0]?.kind, 'deliverable');
+  assert.equal(writes[1]?.kind, 'content_fidelity_diagnostic');
+  assert.equal((writes[1]?.value as { mode?: string }).mode, 'none');
+  assert.equal((writes[1]?.value as { removedUnitKeys?: string[] }).removedUnitKeys?.length, 0);
 });
 
 test('repairs one invalid reviewed Content Draft without returning to full Deliverable synthesis', async () => {
@@ -1469,6 +1477,9 @@ test('repairs one invalid reviewed Content Draft without returning to full Deliv
   }, {
     kind: 'deliverable',
     relativePath: 'deliverables/final-r0.json',
+  }, {
+    kind: 'content_fidelity_diagnostic',
+    relativePath: 'diagnostics/content-fidelity-r0.json',
   }]);
   assert.equal((writes[0]?.value as { fallbackApplied?: boolean }).fallbackApplied, true);
 });
@@ -1515,7 +1526,10 @@ test('normalizes missing Evidence and a safe Question alias introduced by bounde
     (result.deliverable.payload as unknown as ResearchStrategyReportPayloadV2).directAnswers[0]?.evidenceIds,
     ['E1'],
   );
-  assert.deepEqual(writes.map(({ kind }) => kind), ['deliverable_validation_diagnostic', 'deliverable']);
+  assert.deepEqual(
+    writes.map(({ kind }) => kind),
+    ['deliverable_validation_diagnostic', 'deliverable', 'content_fidelity_diagnostic'],
+  );
 });
 
 test('rejects a semantic rewrite operation in structural repair mode', async () => {
@@ -1535,7 +1549,14 @@ test('rejects a semantic rewrite operation in structural repair mode', async () 
 
   await assert.rejects(
     () => service.generate(generateInput(openStrategyInput())),
-    /structural repair cannot replace semantic text/iu,
+    (error: unknown) => {
+      assert.ok(error instanceof ResearchStrategyDeliverableValidationError);
+      assert.equal(error.draftPreview.canonical, false);
+      assert.equal(error.draftPreview.exportAllowed, false);
+      assert.equal(error.draftPreview.directAnswers.length, 1);
+      assert.equal(error.draftPreview.contentBlocks.length, 1);
+      return /structural repair cannot replace semantic text/iu.test(error.message);
+    },
   );
 
   assert.equal(llm.structuredCalls.length, 1);
