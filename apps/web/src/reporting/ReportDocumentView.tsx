@@ -1,4 +1,4 @@
-import { useId, useMemo, useReducer } from 'react';
+import { useEffect, useId, useMemo, useReducer, useRef } from 'react';
 import type { VisualAssetManifest } from '../../../../packages/api-contract/research-deliverable.ts';
 import type { ReportDocument } from '../../../orchestrator-runtime/src/report/report-document-composer.ts';
 import type { ChartTableAlternative } from '../../../orchestrator-runtime/src/report/chart-renderer.ts';
@@ -62,6 +62,88 @@ export interface ReportDocumentViewProps {
   loadAsset?: ReportAssetLoader;
   visibleSectionIds?: readonly string[];
   actions?: React.ReactNode;
+}
+
+const ANSWER_KIND_LABELS: Record<NonNullable<ReportViewBlock['answerKind']>, string> = {
+  direct_answer: '直接回答',
+  evidence_finding: '证据发现',
+  strategy_map: '策略地图',
+  mind_model: '心智模型',
+  comparison_matrix: '对比分析',
+  design_principle: '设计原则',
+  opportunity: '机会点',
+  priority_matrix: '优先行动',
+  action_plan: '行动计划',
+  risk: '风险提示',
+};
+
+const ANSWER_STATUS_LABELS: Record<NonNullable<ReportViewBlock['answerStatus']>, string> = {
+  supported: '证据支持',
+  provisional: '待验证',
+  unanswered: '尚待回答',
+};
+
+function AnswerDetailList({ items }: { items: string[] }) {
+  return (
+    <details className="report-answer-details">
+      <summary>展开详细要点 <span>{items.length}</span></summary>
+      <ul className="report-list">
+        {items.map((item) => {
+          const match = /^([^：:]{1,12})[：:]\s*(.+)$/u.exec(item);
+          return (
+            <li key={item}>
+              {match ? <><strong>{match[1]}</strong><span>{match[2]}</span></> : item}
+            </li>
+          );
+        })}
+      </ul>
+    </details>
+  );
+}
+
+function AnswerProvenance({ block }: { block: ReportViewBlock }) {
+  const findingIds = block.findingIds ?? [];
+  const summaryIds = block.summaryIds ?? [];
+  if (findingIds.length === 0 && summaryIds.length === 0) return null;
+  return (
+    <details className="report-answer-provenance">
+      <summary>内容溯源</summary>
+      <dl>
+        {findingIds.length > 0 ? (
+          <><dt>Findings</dt><dd>{findingIds.map((id) => <code key={id}>{id}</code>)}</dd></>
+        ) : null}
+        {summaryIds.length > 0 ? (
+          <><dt>Summaries</dt><dd>{summaryIds.map((id) => <code key={id}>{id}</code>)}</dd></>
+        ) : null}
+      </dl>
+    </details>
+  );
+}
+
+function QuestionBinding({ questionIds }: { questionIds: string[] }) {
+  return (
+    <details className="report-question-binding">
+      <summary>关联研究问题 {questionIds.length} 个</summary>
+      <p>{questionIds.map((id) => <code key={id}>{id}</code>)}</p>
+    </details>
+  );
+}
+
+function splitExecutiveSummary(summary: string): string[] {
+  const paragraphs = summary.split(/\n+/u).map((part) => part.trim()).filter(Boolean);
+  const lead = paragraphs[0];
+  if (!lead) return paragraphs;
+  const characters = Array.from(lead);
+  if (characters.length <= 96) return paragraphs;
+  let splitAt = -1;
+  for (let index = 56; index < Math.min(characters.length, 96); index += 1) {
+    if (/[，；。！？]/u.test(characters[index]!)) {
+      splitAt = index + 1;
+      break;
+    }
+  }
+  if (splitAt < 0) splitAt = Math.min(characters.length, 96);
+  return [characters.slice(0, splitAt).join(''), characters.slice(splitAt).join('').trim(), ...paragraphs.slice(1)].filter(Boolean);
 }
 
 function EvidenceBlock({
@@ -166,26 +248,31 @@ function ReportBlockView({
   }
   if (block.kind === 'list') return <ul className="report-list">{block.items?.map((item) => <li key={item}>{item}</li>)}</ul>;
   if (block.kind === 'answer') {
+    const answerKind = block.answerKind ?? 'direct_answer';
     return (
-      <article className={`report-answer report-answer-${block.answerKind ?? 'content'}`} data-block-id={block.id}>
+      <article className={`report-answer report-answer-${answerKind}`} data-block-id={block.id}>
         <div className="report-answer-meta">
-          <span>{(block.answerKind ?? 'answer').replaceAll('_', ' ')}</span>
-          {block.answerStatus ? <span>{block.answerStatus}</span> : null}
-          {typeof block.confidence === 'number' ? <span>置信度 {Math.round(block.confidence * 100)}%</span> : null}
+          <span className="report-answer-kind">{ANSWER_KIND_LABELS[answerKind]}</span>
+          {block.answerStatus ? (
+            <span className={`report-answer-status report-answer-status-${block.answerStatus}`}>
+              {ANSWER_STATUS_LABELS[block.answerStatus]}
+            </span>
+          ) : null}
+          {typeof block.confidence === 'number' ? (
+            <span className="report-answer-confidence">置信度 {Math.round(block.confidence * 100)}%</span>
+          ) : null}
         </div>
         <h3>{block.label}</h3>
-        <p>{block.text}</p>
-        {block.items && block.items.length > 0 ? <ul className="report-list">{block.items.map((item) => <li key={item}>{item}</li>)}</ul> : null}
-        {(block.findingIds?.length ?? 0) > 0 || (block.summaryIds?.length ?? 0) > 0 ? (
-          <p className="report-answer-provenance">
-            Finding：{block.findingIds?.join('、') || '—'} · Summary：{block.summaryIds?.join('、') || '—'}
-          </p>
-        ) : null}
-        <EvidenceDisclosure
-          evidenceIds={block.evidenceIds}
-          expanded={interaction.expandedEvidence.has(block.id)}
-          onToggle={() => dispatch({ type: 'toggle-evidence', blockId: block.id })}
-        />
+        <p className="report-answer-summary">{block.text}</p>
+        {block.items && block.items.length > 0 ? <AnswerDetailList items={block.items} /> : null}
+        <div className="report-answer-audit">
+          <EvidenceDisclosure
+            evidenceIds={block.evidenceIds}
+            expanded={interaction.expandedEvidence.has(block.id)}
+            onToggle={() => dispatch({ type: 'toggle-evidence', blockId: block.id })}
+          />
+          <AnswerProvenance block={block} />
+        </div>
       </article>
     );
   }
@@ -282,6 +369,34 @@ export function ReportDocumentView({
     return model.sections.filter(({ id }) => visible.has(id));
   }, [model.sections, visibleSectionIds]);
   const navigation = useMemo(() => visibleSections.map(({ id, title }) => ({ id, title })), [visibleSections]);
+  const executiveSummaryParts = useMemo(
+    () => splitExecutiveSummary(model.executiveSummary),
+    [model.executiveSummary],
+  );
+  const [executiveSummaryLead = '', ...executiveSummaryDetails] = executiveSummaryParts;
+  const showTableOfContents = navigation.length > 1;
+  const reportRef = useRef<HTMLElement>(null);
+  const printOpenedDetailsRef = useRef<HTMLDetailsElement[]>([]);
+  useEffect(() => {
+    const openDetailsForPrint = () => {
+      const root = reportRef.current;
+      if (!root || printOpenedDetailsRef.current.length > 0) return;
+      const closedDetails = Array.from(root.querySelectorAll<HTMLDetailsElement>('details:not([open])'));
+      printOpenedDetailsRef.current = closedDetails;
+      for (const detail of closedDetails) detail.open = true;
+    };
+    const restoreDetailsAfterPrint = () => {
+      for (const detail of printOpenedDetailsRef.current) detail.open = false;
+      printOpenedDetailsRef.current = [];
+    };
+    window.addEventListener('beforeprint', openDetailsForPrint);
+    window.addEventListener('afterprint', restoreDetailsAfterPrint);
+    return () => {
+      window.removeEventListener('beforeprint', openDetailsForPrint);
+      window.removeEventListener('afterprint', restoreDetailsAfterPrint);
+      restoreDetailsAfterPrint();
+    };
+  }, []);
   const [interaction, dispatch] = useReducer(
     reduceReportDocumentInteraction,
     undefined,
@@ -289,26 +404,34 @@ export function ReportDocumentView({
   );
 
   return (
-    <article className="report-document" aria-labelledby="report-title">
+    <article ref={reportRef} className="report-document" aria-labelledby="report-title">
       <header className="report-header" aria-hidden="true">{model.title}</header>
       <footer className="report-footer" aria-hidden="true">可信研究报告 · {taskId}</footer>
       <header className="report-cover" data-print-role="cover">
         <p className="report-kicker">研究报告</p>
         <h1 id="report-title">{model.title}</h1>
         <p className="report-subtitle">{model.subtitle}</p>
-        <p className="report-summary">{model.executiveSummary}</p>
+        <p className="report-summary">{executiveSummaryLead}</p>
+        {executiveSummaryDetails.length > 0 ? (
+          <details className="report-summary-details">
+            <summary>展开完整摘要</summary>
+            <p>{executiveSummaryDetails.join('\n')}</p>
+          </details>
+        ) : null}
         <div className="report-actions">{actions}</div>
       </header>
-      <div className="report-layout">
-        <nav className="report-toc" data-print-role="toc" aria-label="报告章节">
-          <h2>目录 / Contents</h2>
-          <ol>{navigation.map((item) => <li key={item.id}><a href={`#${item.id}`}>{item.title}</a></li>)}</ol>
-        </nav>
+      <div className={`report-layout${showTableOfContents ? '' : ' report-layout-single'}`}>
+        {showTableOfContents ? (
+          <nav className="report-toc" data-print-role="toc" aria-label="报告章节">
+            <h2>目录 / Contents</h2>
+            <ol>{navigation.map((item) => <li key={item.id}><a href={`#${item.id}`}>{item.title}</a></li>)}</ol>
+          </nav>
+        ) : null}
         <div className="report-body">
           {visibleSections.map((section) => (
             <section className="report-section" id={section.id} key={section.id}>
               <h2>{section.title}</h2>
-              {section.questionIds.length > 0 ? <p className="report-question-binding">覆盖问题：{section.questionIds.join('、')}</p> : null}
+              {section.questionIds.length > 0 ? <QuestionBinding questionIds={section.questionIds} /> : null}
               {section.blocks.map((block) => (
                 <ReportBlockView
                   key={block.id}

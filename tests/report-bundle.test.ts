@@ -748,6 +748,65 @@ test('ReportDocumentView exposes image Evidence toggles and print Evidence while
   assert.match(markup, /data-block-id="comparison-1"[\s\S]*?Original and annotated evidence[\s\S]*?查看证据（1）/u);
 });
 
+test('strategy answer reader keeps the answer visible while collapsing technical and supporting detail', async () => {
+  const { ReportDocumentView } = await loadReportDocumentViewModule();
+  const requireFromWeb = createRequire(new URL('../apps/web/package.json', import.meta.url));
+  const react = requireFromWeb('react') as {
+    createElement(component: unknown, props: Record<string, unknown>): unknown;
+  };
+  const { renderToStaticMarkup } = requireFromWeb('react-dom/server') as {
+    renderToStaticMarkup(element: unknown): string;
+  };
+  const document = reportDocument();
+  document.sections = [{
+    id: 'executive-answers',
+    title: '直接答案',
+    questionIds: ['Q1_scope'],
+    prominence: 'primary',
+    blocks: [{
+      id: 'answer-Q1',
+      type: 'answer',
+      kind: 'direct_answer',
+      title: '范围是否清晰？',
+      text: '范围已经收敛。',
+      items: ['业务含义：避免范围失控。', '建议行动：写清边界。'],
+      questionIds: ['Q1_scope'],
+      evidenceIds: ['evidence-1'],
+      findingIds: ['finding-1'],
+      summaryIds: ['summary-1'],
+      confidence: 0.7,
+      answerStatus: 'provisional',
+      sourcePointers: ['/directAnswers/0'],
+      summary: true,
+    }],
+  }];
+
+  const globals = globalThis as typeof globalThis & { React?: unknown };
+  const priorReact = globals.React;
+  globals.React = react;
+  let markup: string;
+  try {
+    markup = renderToStaticMarkup(react.createElement(ReportDocumentView, {
+      document,
+      visualAssetManifests: [],
+      taskId,
+    }));
+  } finally {
+    if (priorReact === undefined) delete globals.React;
+    else globals.React = priorReact;
+  }
+
+  assert.match(markup, /report-layout report-layout-single/u);
+  assert.doesNotMatch(markup, /class="report-toc"/u);
+  assert.match(markup, />直接回答</u);
+  assert.match(markup, />待验证</u);
+  assert.match(markup, /<details class="report-answer-details">[\s\S]*展开详细要点/u);
+  assert.match(markup, /<details class="report-answer-provenance">[\s\S]*内容溯源/u);
+  assert.match(markup, /<details class="report-question-binding">[\s\S]*关联研究问题 1 个/u);
+  assert.equal((markup.match(/范围已经收敛。/gu) ?? []).length, 1);
+  assert.equal((markup.match(/避免范围失控。/gu) ?? []).length, 1);
+});
+
 test('ReportDocumentView table shape uses sealed columns once with explicit row and cell associations', async () => {
   const { createReportTableShape } = await loadReportDocumentViewModule();
   const document = reportDocument();
@@ -824,6 +883,9 @@ test('print stylesheet covers A4, cover and TOC, fixed chrome, page breaks, SVG,
   assert.match(css, /svg[^\{]*\{[^}]*(?:break-inside|page-break-inside)\s*:\s*avoid/isu);
   assert.match(css, /thead[^\{]*\{[^}]*display\s*:\s*table-header-group/isu);
   assert.match(css, /(?:monochrome|grayscale|print-color-adjust|border-style|text-decoration)/iu);
+  assert.match(css, /\.report-answer\s*\{[^}]*background\s*:\s*var\(--report-card\)/isu);
+  assert.match(css, /@media\s*\(max-width:\s*860px\)[\s\S]*?\.report-cover\s*\{[^}]*min-height\s*:\s*0/isu);
+  assert.match(css, /\.report-answer-details\s*>\s*:not\(summary\)[^\{]*\{[^}]*display\s*:\s*block\s*!important/isu);
 });
 
 test('strategy report tabs expose answer-first, dynamic-topic, artifact, evidence, and analysis section groups', async () => {
@@ -835,11 +897,11 @@ test('strategy report tabs expose answer-first, dynamic-topic, artifact, evidenc
     'limitations', 'analysis-notes', 'evidence-appendix',
   ].map((id, index) => ({ ...document.sections[0]!, id, title: id, blocks: [{ id: `block-${index}`, type: 'paragraph' as const, text: id }] }));
 
-  assert.deepEqual(strategyReportSectionIds(document, 'answers'), ['executive-answers', 'priority-actions']);
-  assert.deepEqual(strategyReportSectionIds(document, 'topics'), ['topic-journey']);
-  assert.deepEqual(strategyReportSectionIds(document, 'artifacts'), [
-    'strategy-map', 'mind-model', 'design-principles', 'opportunities', 'channel-strategies',
+  assert.deepEqual(strategyReportSectionIds(document, 'answers'), ['executive-answers']);
+  assert.deepEqual(strategyReportSectionIds(document, 'topics'), [
+    'topic-journey', 'strategy-map', 'mind-model', 'design-principles', 'channel-strategies',
   ]);
+  assert.deepEqual(strategyReportSectionIds(document, 'artifacts'), ['priority-actions', 'opportunities']);
   assert.deepEqual(strategyReportSectionIds(document, 'evidence'), ['evidence-confidence', 'limitations', 'evidence-appendix']);
   assert.deepEqual(strategyReportSectionIds(document, 'analysis'), ['analysis-notes']);
 });
@@ -867,8 +929,8 @@ test('strategy report tabs classify model-directed sections by content instead o
   }];
 
   assert.deepEqual(strategyReportSectionIds(document, 'answers'), ['executive-answers']);
-  assert.deepEqual(strategyReportSectionIds(document, 'topics'), ['model-section-001', 'model-section-002']);
-  assert.deepEqual(strategyReportSectionIds(document, 'artifacts'), ['model-section-001']);
+  assert.deepEqual(strategyReportSectionIds(document, 'topics'), ['model-section-001']);
+  assert.deepEqual(strategyReportSectionIds(document, 'artifacts'), []);
   assert.deepEqual(strategyReportSectionIds(document, 'evidence'), ['evidence-confidence', 'limitations', 'evidence-appendix']);
   assert.deepEqual(strategyReportSectionIds(document, 'analysis'), ['model-section-002']);
 });

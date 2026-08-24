@@ -34,59 +34,73 @@ type GenericTextReportResponse = Exclude<
 
 type StrategyReportView = 'answers' | 'topics' | 'artifacts' | 'evidence' | 'analysis';
 
-const STRATEGY_ARTIFACT_SECTION_IDS = new Set([
+const STRATEGY_TOPIC_SECTION_IDS = new Set([
   'strategy-map',
   'mind-model',
   'design-principles',
-  'opportunities',
   'channel-strategies',
 ]);
 
-const STRATEGY_ARTIFACT_KINDS = new Set([
+const STRATEGY_ACTION_SECTION_IDS = new Set([
+  'opportunities',
+  'priority-actions',
+  'action-plan',
+]);
+
+const STRATEGY_EVIDENCE_SECTION_IDS = new Set([
+  'evidence-confidence',
+  'limitations',
+  'evidence-appendix',
+]);
+
+const STRATEGY_TOPIC_KINDS = new Set([
   'strategy_map',
   'mind_model',
+  'comparison_matrix',
   'design_principle',
+]);
+
+const STRATEGY_ACTION_KINDS = new Set([
   'opportunity',
   'priority_matrix',
   'action_plan',
 ]);
 
+const STRATEGY_REPORT_TABS: ReadonlyArray<{ id: StrategyReportView; label: string }> = [
+  { id: 'answers', label: '答案概览' },
+  { id: 'topics', label: '策略框架' },
+  { id: 'artifacts', label: '机会与行动' },
+  { id: 'evidence', label: '证据与局限' },
+  { id: 'analysis', label: '分析底稿' },
+];
+
 function sectionAnswerKinds(section: ReportDocument['sections'][number]): string[] {
   return section.blocks.flatMap((block) => block.type === 'answer' ? [block.kind] : []);
 }
 
+function strategyReportSectionView(section: ReportDocument['sections'][number]): StrategyReportView | undefined {
+  const kinds = sectionAnswerKinds(section);
+  if (section.id === 'executive-answers' || kinds.includes('direct_answer')) return 'answers';
+  if (STRATEGY_EVIDENCE_SECTION_IDS.has(section.id) || kinds.includes('risk')) return 'evidence';
+  if (section.id === 'analysis-notes' || kinds.includes('evidence_finding')) return 'analysis';
+  if (STRATEGY_ACTION_SECTION_IDS.has(section.id) || kinds.some((kind) => STRATEGY_ACTION_KINDS.has(kind))) {
+    return 'artifacts';
+  }
+  if (
+    STRATEGY_TOPIC_SECTION_IDS.has(section.id)
+    || section.id.startsWith('topic-')
+    || kinds.some((kind) => STRATEGY_TOPIC_KINDS.has(kind))
+    || section.id.startsWith('model-section-')
+  ) {
+    return 'topics';
+  }
+  return undefined;
+}
+
 export function strategyReportSectionIds(document: ReportDocument, view: StrategyReportView): string[] {
-  return document.sections.flatMap((section) => {
-    const kinds = sectionAnswerKinds(section);
-    if (view === 'answers') {
-      return section.id === 'executive-answers'
-        || section.id === 'priority-actions'
-        || kinds.includes('direct_answer')
-        || kinds.some((kind) => (kind === 'priority_matrix' || kind === 'action_plan') && section.prominence === 'primary')
-        ? [section.id]
-        : [];
-    }
-    if (view === 'topics') {
-      return section.id.startsWith('topic-') || section.id.startsWith('model-section-') ? [section.id] : [];
-    }
-    if (view === 'artifacts') {
-      return STRATEGY_ARTIFACT_SECTION_IDS.has(section.id)
-        || kinds.some((kind) => STRATEGY_ARTIFACT_KINDS.has(kind))
-        ? [section.id]
-        : [];
-    }
-    if (view === 'evidence') {
-      return ['evidence-confidence', 'limitations', 'evidence-appendix'].includes(section.id)
-        || kinds.includes('risk')
-        ? [section.id]
-        : [];
-    }
-    return section.id === 'analysis-notes'
-      || (section.id.startsWith('model-section-')
-        && kinds.some((kind) => kind === 'evidence_finding' || kind === 'comparison_matrix'))
-      ? [section.id]
-      : [];
-  });
+  return document.sections
+    .filter((section) => strategyReportSectionView(section) === view)
+    .map(({ id }) => id);
 }
 
 export function selectCurrentStage4Renderer(report: unknown): {
@@ -351,23 +365,26 @@ function MultimodalCurrentReport({
   }
 
   const isStrategyReport = report.deliverable.deliverableType === 'research_strategy_report';
+  const strategyTabs = useMemo(
+    () => isStrategyReport
+      ? STRATEGY_REPORT_TABS.filter(({ id }) => strategyReportSectionIds(report.reportDocument, id).length > 0)
+      : [],
+    [isStrategyReport, report.reportDocument],
+  );
+  const activeStrategyView = strategyTabs.some(({ id }) => id === strategyView)
+    ? strategyView
+    : strategyTabs[0]?.id ?? 'answers';
   const visibleSectionIds = useMemo(
-    () => isStrategyReport ? strategyReportSectionIds(report.reportDocument, strategyView) : undefined,
-    [isStrategyReport, report.reportDocument, strategyView],
+    () => isStrategyReport ? strategyReportSectionIds(report.reportDocument, activeStrategyView) : undefined,
+    [activeStrategyView, isStrategyReport, report.reportDocument],
   );
 
   return (
     <>
       {isStrategyReport ? (
-        <nav className="report-view-toggle" aria-label="研究答案视图">
-          {([
-            ['answers', '直接答案'],
-            ['topics', '动态专题'],
-            ['artifacts', '策略产物'],
-            ['evidence', '证据与局限'],
-            ['analysis', '分析底稿'],
-          ] as const).map(([id, label]) => (
-            <button key={id} type="button" className={strategyView === id ? 'is-active' : ''} aria-pressed={strategyView === id} onClick={() => setStrategyView(id)}>
+        <nav className="report-view-toggle" aria-label="研究报告内容导航">
+          {strategyTabs.map(({ id, label }) => (
+            <button key={id} type="button" className={activeStrategyView === id ? 'is-active' : ''} aria-pressed={activeStrategyView === id} onClick={() => setStrategyView(id)}>
               {label}
             </button>
           ))}
