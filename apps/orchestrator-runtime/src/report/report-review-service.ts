@@ -31,6 +31,9 @@ import {
 export interface ReportReviewResult extends ReportReviewArtifact {
   status: 'completed' | 'paused';
   artifactId: string;
+  crossSkillReviewArtifactId?: string;
+  contributionLedgerArtifactId?: string;
+  contributionSummaryArtifactId?: string;
 }
 
 export interface ReportReviewLlm {
@@ -57,7 +60,14 @@ export interface DeliverableComposer {
     reviewArtifactId: string;
     revisionRound: 1;
     activeLease: ControlExecutionLease;
-  }): Promise<{ deliverable: unknown; deliverableArtifactId: string }>;
+    cancellationSignal?: AbortSignal;
+  }): Promise<{
+    deliverable: unknown;
+    deliverableArtifactId: string;
+    crossSkillReviewArtifactId?: string;
+    contributionLedgerArtifactId?: string;
+    contributionSummaryArtifactId?: string;
+  }>;
 }
 
 export interface ReportReviewInput {
@@ -72,6 +82,7 @@ export interface ReportReviewInput {
   requirement?: ResearchTaskV2;
   expectedModel: string;
   activeLease: ControlExecutionLease;
+  cancellationSignal?: AbortSignal;
   revisionRound?: 0 | 1;
 }
 
@@ -460,8 +471,26 @@ export class ReportReviewService {
       taskId: input.task.id, planVersionId: input.plan.id, attemptId: input.attempt.id,
       deliverable: input.deliverable, review: artifact, reviewArtifactId: sealedReview.artifactId,
       revisionRound: 1, activeLease: input.activeLease,
+      ...(input.cancellationSignal ? { cancellationSignal: input.cancellationSignal } : {}),
     });
-    return this.review({ ...input, deliverable: revised.deliverable, deliverableArtifactId: revised.deliverableArtifactId, revisionRound: 1 }, composerOverride);
+    const finalReview = await this.review({
+      ...input,
+      deliverable: revised.deliverable,
+      deliverableArtifactId: revised.deliverableArtifactId,
+      revisionRound: 1,
+    }, composerOverride);
+  return {
+    ...finalReview,
+    ...(revised.crossSkillReviewArtifactId
+      ? { crossSkillReviewArtifactId: revised.crossSkillReviewArtifactId }
+      : {}),
+    ...(revised.contributionLedgerArtifactId
+      ? { contributionLedgerArtifactId: revised.contributionLedgerArtifactId }
+      : {}),
+    ...(revised.contributionSummaryArtifactId
+      ? { contributionSummaryArtifactId: revised.contributionSummaryArtifactId }
+      : {}),
+  };
   }
 
   private async semanticReview(
@@ -494,6 +523,7 @@ export class ReportReviewService {
         reviewRubric: contract.reviewRubric,
         revisionTargetIndex: revisionTargetIds,
       },
+      ...(input.cancellationSignal ? { signal: input.cancellationSignal } : {}),
       receipt: { stage: 'deliverable_review', attemptId: input.attempt.id, expectedModel: input.expectedModel },
     });
     const value = record(generated.data);

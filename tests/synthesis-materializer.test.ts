@@ -278,6 +278,32 @@ test('does not classify an unproven Tool as a fact source', async () => {
   assert.equal(materials.some((item) => item.semanticRole === 'fact_source'), false);
 });
 
+test('never classifies simulation Tool Evidence as a factual source', async () => {
+  const output = { reviews: [{ profileId: 'virtual-1', isSimulated: true }] };
+  const value = { output, redactedOutputHash: hash(output) };
+  const tool = artifact('artifact-virtual-user', 'tool_output', value);
+  const reader = new Reader(new Map());
+  const materials = await new SynthesisMaterializer(reader).materialize(toolOnlyInput(reader, tool, [{
+    id: 'SIM1-1',
+    kind: 'tool_output',
+    evidenceClass: 'simulation',
+    toolId: 'virtual-user-lab',
+    toolTier: 'optional',
+    artifactId: tool.artifact.id,
+    artifactContentSha256: tool.artifact.contentSha256!,
+    jsonPointer: '/output/reviews/0',
+    stepNo: 1,
+    toolProof: {
+      implementationId: 'virtual-user-real',
+      executionMode: 'real',
+      redactedOutputHash: value.redactedOutputHash,
+    },
+    sensitivity: 'internal',
+    redaction: 'none',
+  }]));
+  assert.deepEqual(materials, []);
+});
+
 test('consumes material content, not only artifact metadata', async () => {
   const reader = new Reader(new Map());
   const source = input(reader);

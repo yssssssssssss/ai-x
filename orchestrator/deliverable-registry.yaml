@@ -64,7 +64,10 @@ deliverables:
     evidence_policy: competitive-analysis-report
     report_template: competitive-analysis-report
     composition:
-      mode: standalone_compat
+      mode: portfolio
+      synthesizer_skill_id: competitive-analysis
+      accepted_contribution_types: [market_landscape, competitive_analysis]
+      contribution_schema: schemas/research-contribution-v1.schema.json
   - id: voc_diagnosis_report
     status: active
     task_types: [voc_diagnosis]
@@ -76,7 +79,10 @@ deliverables:
     evidence_policy: voc-diagnosis-report
     report_template: voc-diagnosis-report
     composition:
-      mode: standalone_compat
+      mode: portfolio
+      synthesizer_skill_id: synthesize-qualitative-insights
+      accepted_contribution_types: [voc, satisfaction, qualitative_insight, journey, prioritization]
+      contribution_schema: schemas/research-contribution-v1.schema.json
   - id: design_audit_report
     status: active
     task_types: [design_audit]
@@ -88,7 +94,10 @@ deliverables:
     evidence_policy: design-audit-report
     report_template: design-audit-report
     composition:
-      mode: standalone_compat
+      mode: portfolio
+      synthesizer_skill_id: run-heuristic-evaluation
+      accepted_contribution_types: [design_audit, accessibility, prioritization]
+      contribution_schema: schemas/research-contribution-v1.schema.json
   - id: accessibility_audit_report
     status: active
     task_types: [a11y_audit]
@@ -100,4 +109,7 @@ deliverables:
     evidence_policy: accessibility-audit-report
     report_template: accessibility-audit-report
     composition:
-      mode: standalone_compat
+      mode: portfolio
+      synthesizer_skill_id: accessibility-review
+      accepted_contribution_types: [accessibility, design_audit]
+      contribution_schema: schemas/research-contribution-v1.schema.json

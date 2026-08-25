@@ -191,10 +191,22 @@ class RevisionComposer {
   calls = 0;
   reviewArtifactId: string | undefined;
   constructor(private readonly revised: Record<string, unknown>) {}
-  async revise(input: { reviewArtifactId: string }): Promise<{ deliverable: Record<string, unknown>; deliverableArtifactId: string }> {
+  async revise(input: { reviewArtifactId: string }): Promise<{
+    deliverable: Record<string, unknown>;
+    deliverableArtifactId: string;
+    crossSkillReviewArtifactId: string;
+    contributionLedgerArtifactId: string;
+    contributionSummaryArtifactId: string;
+  }> {
     this.calls += 1;
     this.reviewArtifactId = input.reviewArtifactId;
-    return { deliverable: this.revised, deliverableArtifactId: 'deliverable-revised' };
+    return {
+      deliverable: this.revised,
+      deliverableArtifactId: 'deliverable-revised',
+      crossSkillReviewArtifactId: 'cross-skill-review-r1',
+      contributionLedgerArtifactId: 'contribution-ledger-r1',
+      contributionSummaryArtifactId: 'contribution-summary-r1',
+    };
   }
 }
 
@@ -641,6 +653,9 @@ test('revises exactly once and passes after re-running every gate', async () => 
   assert.equal(composer.reviewArtifactId, 'review-artifact-1');
   assert.equal(llm.calls.length, 2);
   assert.equal(result.deliverableArtifactId, 'deliverable-revised');
+  assert.equal(result.crossSkillReviewArtifactId, 'cross-skill-review-r1');
+  assert.equal(result.contributionLedgerArtifactId, 'contribution-ledger-r1');
+  assert.equal(result.contributionSummaryArtifactId, 'contribution-summary-r1');
   assert.equal(artifacts.writes.length, 2);
   assert.equal(artifacts.writes[0]?.relativePath, 'reports/review-r0.json');
   assert.equal(artifacts.writes[1]?.relativePath, 'reports/review-r1.json');

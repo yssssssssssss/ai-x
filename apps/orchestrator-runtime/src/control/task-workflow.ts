@@ -21,6 +21,7 @@ import {
   type DisabledExecutionResponse,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import { assertValidReportReviewArtifact } from '../report/report-review-service.ts';
+import { parseReportPackageArtifactValue } from '../report/report-package-artifact.ts';
 import {
   VisualInputDataUrlError,
 } from '../report/visual-input-data-url.ts';
@@ -75,6 +76,9 @@ export interface WorkflowExecutionDriver {
     evidenceManifestArtifactId?: string;
     reportReviewArtifactId?: string;
     reportPackageArtifactId?: string;
+    crossSkillReviewArtifactId?: string;
+    contributionLedgerArtifactId?: string;
+    contributionSummaryArtifactId?: string;
     reviewStatus?: 'completed' | 'paused';
     gapCount?: number;
     failedStepNo?: number;
@@ -453,10 +457,47 @@ export class TaskWorkflowService {
       throw new ControlPlaneConflictError('terminal Evidence Manifest cannot reconstruct execution result');
     }
 
+    let reportPackageArtifactId: string | undefined;
+    let crossSkillReviewArtifactId: string | undefined;
+    let contributionLedgerArtifactId: string | undefined;
+    let contributionSummaryArtifactId: string | undefined;
+    if (input.status !== 'paused') {
+      const packageArtifact = await this.repository.findSealedArtifact({
+        taskId: input.taskId,
+        attemptId: input.attemptId,
+        kind: 'report_package',
+      });
+      if (packageArtifact) {
+        const verifiedPackage = await this.terminalArtifacts.readVerifiedJson<unknown>(packageArtifact.id);
+        if (
+          verifiedPackage.artifact.id !== packageArtifact.id
+          || verifiedPackage.artifact.state !== 'SEALED'
+          || verifiedPackage.artifact.kind !== 'report_package'
+          || verifiedPackage.artifact.taskId !== input.taskId
+          || verifiedPackage.artifact.planVersionId !== input.planVersionId
+          || verifiedPackage.artifact.attemptId !== input.attemptId
+        ) throw new ControlPlaneConflictError('terminal Report Package cannot reconstruct execution result');
+        const packageValue = parseReportPackageArtifactValue(verifiedPackage.value);
+        if (
+          packageValue.deliverableArtifactId !== verifiedDeliverable.artifact.id
+          || packageValue.evidenceManifestArtifactId !== verifiedManifest.artifact.id
+          || packageValue.reportReviewArtifactId !== verifiedReview.artifact.id
+        ) throw new ControlPlaneConflictError('terminal Report Package binding cannot reconstruct execution result');
+        reportPackageArtifactId = packageArtifact.id;
+        crossSkillReviewArtifactId = packageValue.crossSkillReviewArtifactId;
+        contributionLedgerArtifactId = packageValue.contributionLedgerArtifactId;
+        contributionSummaryArtifactId = packageValue.contributionSummaryArtifactId;
+      }
+    }
+
     return {
       deliverableArtifactId: verifiedDeliverable.artifact.id,
       evidenceManifestArtifactId: verifiedManifest.artifact.id,
       reportReviewArtifactId: verifiedReview.artifact.id,
+      ...(reportPackageArtifactId ? { reportPackageArtifactId } : {}),
+      ...(crossSkillReviewArtifactId ? { crossSkillReviewArtifactId } : {}),
+      ...(contributionLedgerArtifactId ? { contributionLedgerArtifactId } : {}),
+      ...(contributionSummaryArtifactId ? { contributionSummaryArtifactId } : {}),
       reviewStatus: reviewValue.verdict === 'pass' ? 'completed' : 'paused',
     };
   }
@@ -856,6 +897,49 @@ export class TaskWorkflowService {
     return result;
   }
 
+  async cancel(input: {
+    taskId: string;
+    expectedVersion: number;
+    idempotencyKey: string;
+    actor: WorkflowActor;
+  }): Promise<CommandResult> {
+    const hash = requestHash(input);
+    const replay = await this.replay<CommandResult>(input.taskId, 'cancel', input.idempotencyKey, hash);
+    if (replay) return replay;
+    const task = await this.requireTask(input.taskId);
+    this.requireOwner(task, input.actor);
+    if (!task.currentAttemptId) throw new TaskWorkflowGateError(['cancel.attempt']);
+    if (
+      !['executing', 'reviewing', 'composing_report', 'paused'].includes(task.state)
+      || task.stateVersion !== input.expectedVersion
+    ) {
+      throw new ControlPlaneConflictError(`task ${task.id} is not cancellable at version ${input.expectedVersion}`);
+    }
+    let transitioned;
+    try {
+      transitioned = await this.repository.cancelExecution({
+        taskId: task.id,
+        attemptId: task.currentAttemptId,
+        expectedVersion: input.expectedVersion,
+        command: {
+          idempotencyKey: input.idempotencyKey,
+          requestHash: hash,
+          actorUserId: input.actor.userId,
+        },
+      });
+    } catch (error) {
+      const concurrentReplay = await this.replay<CommandResult>(
+        input.taskId,
+        'cancel',
+        input.idempotencyKey,
+        hash,
+      );
+      if (concurrentReplay) return concurrentReplay;
+      throw error;
+    }
+    return { state: transitioned.state, stateVersion: transitioned.stateVersion };
+  }
+
   async resume(input: {
     taskId: string;
     expectedVersion: number;
@@ -1076,6 +1160,9 @@ export class TaskWorkflowService {
         ...(driven.evidenceManifestArtifactId === undefined ? {} : { evidenceManifestArtifactId: driven.evidenceManifestArtifactId }),
         ...(driven.reportReviewArtifactId === undefined ? {} : { reportReviewArtifactId: driven.reportReviewArtifactId }),
         ...(driven.reportPackageArtifactId === undefined ? {} : { reportPackageArtifactId: driven.reportPackageArtifactId }),
+        ...(driven.crossSkillReviewArtifactId === undefined ? {} : { crossSkillReviewArtifactId: driven.crossSkillReviewArtifactId }),
+        ...(driven.contributionLedgerArtifactId === undefined ? {} : { contributionLedgerArtifactId: driven.contributionLedgerArtifactId }),
+        ...(driven.contributionSummaryArtifactId === undefined ? {} : { contributionSummaryArtifactId: driven.contributionSummaryArtifactId }),
         ...(driven.reviewStatus === undefined ? {} : { reviewStatus: driven.reviewStatus }),
         ...(driven.gapCount === undefined ? {} : { gapCount: driven.gapCount }),
         ...(driven.failedStepNo === undefined ? {} : { failedStepNo: driven.failedStepNo }),

@@ -25,6 +25,8 @@ export interface RealSmokeConfig {
   TAVILY_API_KEY?: string;
   PLAYWRIGHT_CAPTURE_ENABLED?: string;
   CURRENT_REQUIRE_BROWSER_EVIDENCE?: string;
+  MULTI_SKILL_PORTFOLIO_WRITER_ENABLED?: string;
+  VIRTUAL_USER_BASE_URL?: string;
 }
 
 type JsonScalar = string | number | boolean | null;
@@ -76,6 +78,9 @@ export interface SemanticGoldScenario {
   sensitivity: ResearchTaskV2['sensitivity'];
   piiDetected: boolean;
   variant?: 'clear' | 'ambiguous' | 'missing_input' | 'constraint_conflict' | 'pii';
+  requireMultiSkill?: boolean;
+  expectedContributorSkillIds?: string[];
+  requiredToolIds?: string[];
 }
 
 export interface SemanticGoldFixture {
@@ -873,6 +878,48 @@ export function assertSmokePlanApprovalPolicy(
   }
 }
 
+export function assertMultiSkillSmokePlan(
+  plan: Record<string, unknown>,
+  scenario: Pick<SemanticGoldScenario, 'requireMultiSkill' | 'expectedContributorSkillIds' | 'requiredToolIds'>,
+): void {
+  if (!scenario.requireMultiSkill) return;
+  if (plan.execution_contract_version !== 'current-execution-plan-v3') {
+    throw new Error('multi-Skill real smoke requires CurrentExecutionPlan v3');
+  }
+  const invocations = array(plan.skill_invocations, 'plan.skill_invocations').map((value, index) => (
+    record(value, `plan.skill_invocations[${index}]`)
+  ));
+  const contributors = invocations
+    .filter(({ role }) => role === 'contributor')
+    .map(({ skill_id }) => nonBlankString(skill_id, 'Contributor skill_id'))
+    .sort();
+  const expectedContributors = [...(scenario.expectedContributorSkillIds ?? [])].sort();
+  if (
+    invocations.filter(({ role }) => role === 'synthesizer').length !== 1
+    || contributors.length < 1
+    || expectedContributors.some((skillId) => !contributors.includes(skillId))
+  ) {
+    throw new Error('multi-Skill real smoke has an invalid Contributor/Synthesizer inventory');
+  }
+  const steps = array(plan.steps, 'plan.steps').map((value, index) => record(value, `plan.steps[${index}]`));
+  for (const toolId of scenario.requiredToolIds ?? []) {
+    if (!steps.some((step) => step.actor_type === 'tool' && step.actor_id === toolId)) {
+      throw new Error(`multi-Skill real smoke is missing required Tool ${toolId}`);
+    }
+  }
+  if (
+    (scenario.requiredToolIds ?? []).includes('tavily-web-search')
+    && !steps.some((step) => (
+      step.actor_id === 'tavily-web-search'
+      && typeof step.shared_stage_key === 'string'
+      && Array.isArray(step.shared_by_invocation_ids)
+      && step.shared_by_invocation_ids.length > 1
+    ))
+  ) throw new Error('multi-Skill real smoke requires one explicitly shared Tavily stage');
+  record(plan.portfolio_summary, 'plan.portfolio_summary');
+  array(plan.contribution_requirements, 'plan.contribution_requirements');
+}
+
 export function selectSmokeCandidate<
   T extends { candidateId: string; plan: { steps: SmokePlanStep[] } },
 >(candidates: T[]): T {
@@ -963,6 +1010,10 @@ async function executeRealSmoke(
     throw new Error(`real smoke plan deliverable drifted for ${scenario.profile}`);
   }
   assertSmokePlanApprovalPolicy(selectedCandidate.plan.steps, approvalMode);
+  assertMultiSkillSmokePlan(
+    selectedCandidate.plan as unknown as Record<string, unknown>,
+    scenario,
+  );
 
   const actor = { userId: seedUser.id, role: 'owner' as const };
   const taskId = nonBlankString(planned.task.id, 'taskId');
@@ -1075,6 +1126,22 @@ async function executeRealSmoke(
     execution.reportReviewArtifactId,
     'reportReviewArtifactId',
   );
+  const multiSkillArtifactIds = scenario.requireMultiSkill
+    ? {
+        crossSkillReviewArtifactId: nonBlankString(
+          execution.crossSkillReviewArtifactId,
+          'crossSkillReviewArtifactId',
+        ),
+        contributionLedgerArtifactId: nonBlankString(
+          execution.contributionLedgerArtifactId,
+          'contributionLedgerArtifactId',
+        ),
+        contributionSummaryArtifactId: nonBlankString(
+          execution.contributionSummaryArtifactId,
+          'contributionSummaryArtifactId',
+        ),
+      }
+    : null;
   const verifiedReportPackage = await new ReportPackageArtifactService(runtime.artifacts).verify({
     artifactId: reportPackageArtifactId,
     attemptId,
@@ -1085,6 +1152,11 @@ async function executeRealSmoke(
     || verifiedReportPackage.value.deliverableArtifactId !== deliverableArtifactId
     || verifiedReportPackage.value.evidenceManifestArtifactId !== evidenceManifestArtifactId
     || verifiedReportPackage.value.reportReviewArtifactId !== reportReviewArtifactId
+    || (multiSkillArtifactIds && (
+      verifiedReportPackage.value.crossSkillReviewArtifactId !== multiSkillArtifactIds.crossSkillReviewArtifactId
+      || verifiedReportPackage.value.contributionLedgerArtifactId !== multiSkillArtifactIds.contributionLedgerArtifactId
+      || verifiedReportPackage.value.contributionSummaryArtifactId !== multiSkillArtifactIds.contributionSummaryArtifactId
+    ))
     || (scenario.profile === 'research_synthesis' && !verifiedReportPackage.value.reportLayoutBlueprintArtifactId)
   ) {
     throw new Error('Report Package does not match the executed task components');
@@ -1093,6 +1165,11 @@ async function executeRealSmoke(
     await runtime.getDeliverable(taskId, seedUser.id),
     'deliverable response',
   );
+  if (scenario.requireMultiSkill) {
+    record(delivered.crossSkillReview, 'deliverable response.crossSkillReview');
+    record(delivered.contributionLedger, 'deliverable response.contributionLedger');
+    record(delivered.contributionSummary, 'deliverable response.contributionSummary');
+  }
   const deliverable = record(delivered.deliverable, 'deliverable');
   const manifest = record(delivered.evidenceManifest, 'evidenceManifest');
   const deliverableType = nonBlankString(deliverable.deliverableType, 'deliverable.deliverableType');
@@ -1181,6 +1258,38 @@ async function executeRealSmoke(
       && provenance.implementationId !== 'unknown';
   });
   if (!realToolStep?.toolProvenance) throw new Error('execution has no qualifying real Tavily Tool provenance');
+  if (scenario.requireMultiSkill) {
+    for (const toolId of scenario.requiredToolIds ?? []) {
+      const toolStep = steps.find((step) => (
+        step.actorType === 'tool'
+        && step.actorId === toolId
+        && step.state === 'succeeded'
+        && step.toolProvenance?.executionMode === 'real'
+        && typeof step.toolProvenance.implementationId === 'string'
+        && step.toolProvenance.implementationId !== 'unknown'
+      ));
+      if (!toolStep) throw new Error(`multi-Skill real smoke has no real ${toolId} receipt`);
+    }
+    const plan = selectedCandidate.plan as unknown as Record<string, unknown>;
+    const contributorSkillIds = array(plan.skill_invocations, 'plan.skill_invocations')
+      .map((value, index) => record(value, `plan.skill_invocations[${index}]`))
+      .filter(({ role }) => role === 'contributor')
+      .map(({ skill_id }) => nonBlankString(skill_id, 'Contributor skill_id'));
+    for (const skillId of contributorSkillIds) {
+      const outputStep = [...steps].reverse().find((step) => (
+        step.actorType === 'skill'
+        && step.actorId === skillId
+        && step.state === 'succeeded'
+        && typeof step.outputArtifactId === 'string'
+      ));
+      const artifact = outputStep?.outputArtifactId
+        ? await runtime.repository.getArtifact(outputStep.outputArtifactId)
+        : null;
+      if (!artifact || artifact.state !== 'SEALED' || artifact.kind !== 'research_contribution') {
+        throw new Error(`multi-Skill Contributor ${skillId} has no SEALED Research Contribution`);
+      }
+    }
+  }
 
   const configuredModel = nonBlankString(process.env.LLM_MODEL_NAME, 'LLM_MODEL_NAME');
   const expectedActualModel = nonBlankString(
@@ -1225,6 +1334,9 @@ async function executeRealSmoke(
     runtime.artifacts.verifySealed(deliverableArtifactId),
     runtime.artifacts.verifySealed(evidenceManifestArtifactId),
     runtime.artifacts.verifySealed(reportReviewArtifactId),
+    ...(multiSkillArtifactIds
+      ? Object.values(multiSkillArtifactIds).map((artifactId) => runtime.artifacts.verifySealed(artifactId))
+      : []),
     ...evidenceArtifactIds.map((artifactId) => runtime.artifacts.verifySealed(artifactId)),
   ]);
 
@@ -1395,6 +1507,14 @@ export async function runCurrentRealSmoke(input: SmokeRunInput): Promise<SmokeRe
       throw new Error(`real smoke profile ${profile} has no supported full-real contract`);
     }
     const scenario = selectSmokeScenario(fixture, profile, input.scenarioId);
+    if (scenario.requireMultiSkill) {
+      if (process.env.MULTI_SKILL_PORTFOLIO_WRITER_ENABLED !== 'true') {
+        throw new Error('multi-Skill real smoke requires MULTI_SKILL_PORTFOLIO_WRITER_ENABLED=true');
+      }
+      if (typeof process.env.VIRTUAL_USER_BASE_URL !== 'string' || !process.env.VIRTUAL_USER_BASE_URL.trim()) {
+        throw new Error('multi-Skill real smoke requires VIRTUAL_USER_BASE_URL');
+      }
+    }
     const browserEvidenceRequired = requireBrowserEvidence(
       process.env.CURRENT_REQUIRE_BROWSER_EVIDENCE,
     );

@@ -108,6 +108,7 @@ export interface ReportCompositionInput extends ReportBinding {
   activeLease: ControlExecutionLease;
   expectedModel?: string;
   layoutStepNo?: number;
+  cancellationSignal?: AbortSignal;
 }
 
 export interface ReportCompositionResult {
@@ -591,6 +592,7 @@ export class ReportCompositionService implements ReportCompositionPort {
             attemptId: input.attemptId,
             stepNo: input.layoutStepNo ?? 0,
             expectedModel: input.expectedModel,
+            ...(input.cancellationSignal ? { cancellationSignal: input.cancellationSignal } : {}),
           })
         : deterministicReportLayout(strategyPayload)
       : undefined;

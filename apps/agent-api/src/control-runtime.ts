@@ -314,6 +314,7 @@ export interface ControlRuntimeOverrides {
   artifacts?: ControlArtifactStore;
   expectedActualModel?: string;
   planningPolicy?: unknown;
+  multiSkillPortfolioMode?: 'inactive' | 'active';
   zeroMcp?: ZeroPublicationMcp;
   zeroPublicationEnabled?: boolean;
 }
@@ -420,6 +421,8 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     tools,
     approvalAuthorities: ['owner'],
     ...(overrides.planningPolicy === undefined ? {} : { planningPolicy: overrides.planningPolicy }),
+    multiSkillPortfolioMode: overrides.multiSkillPortfolioMode
+      ?? (process.env.MULTI_SKILL_PORTFOLIO_WRITER_ENABLED === 'true' ? 'active' : 'inactive'),
     expectedActualModel,
   });
   const planningSource: PlanningAdapter = overrides.planning ?? {
@@ -583,18 +586,35 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       if (!candidate) {
         throw new CandidateProfileNoLongerEligibleError(activePlan.candidateId);
       }
-      const compiled = new PlanCompiler(validator).compile({
-        candidate,
-        task: structuredTask,
-        deliverable_selection: deliverableSelection,
-        problem_graph: planningResult.problemGraph,
-        problem_graph_provenance: planningResult.problemGraphProvenance,
-        capability_resolution: planningResult.capabilityResolution,
-        evidence_requirements: deliverableSelection.evidenceRequirements,
-        activated_nodes: planningResult.activatedNodes,
-        planning_provenance: planningResult.planningProvenance,
-        requireCompetitiveWeightContract: true,
-      });
+      const portfolio = planningResult.portfolios?.[candidate.id];
+      const compiler = new PlanCompiler(validator);
+      const compiled = planningResult.capabilityDemandGraph && portfolio
+        ? compiler.compilePortfolio({
+            candidate,
+            task: structuredTask,
+            deliverable_selection: deliverableSelection,
+            problem_graph: planningResult.problemGraph,
+            problem_graph_provenance: planningResult.problemGraphProvenance,
+            capability_resolution: planningResult.capabilityResolution,
+            evidence_requirements: deliverableSelection.evidenceRequirements,
+            capability_demand_graph: planningResult.capabilityDemandGraph,
+            portfolio,
+            activated_nodes: planningResult.activatedNodes,
+            planning_provenance: planningResult.planningProvenance,
+            requireCompetitiveWeightContract: true,
+          })
+        : compiler.compile({
+            candidate,
+            task: structuredTask,
+            deliverable_selection: deliverableSelection,
+            problem_graph: planningResult.problemGraph,
+            problem_graph_provenance: planningResult.problemGraphProvenance,
+            capability_resolution: planningResult.capabilityResolution,
+            evidence_requirements: deliverableSelection.evidenceRequirements,
+            activated_nodes: planningResult.activatedNodes,
+            planning_provenance: planningResult.planningProvenance,
+            requireCompetitiveWeightContract: true,
+          });
       return {
         plan: { ...compiled.plan, task_id: task.id },
         pendingInputs: compiled.pending_inputs,
@@ -661,11 +681,24 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       ) {
         return null;
       }
-      return reportPackageReader.read({
+      const binding = {
         taskId: task.id,
         planVersionId: task.activePlanVersionId,
         attemptId: task.currentAttemptId,
+      };
+      const packageArtifact = await repository.findSealedArtifact({
+        taskId: task.id,
+        attemptId: task.currentAttemptId,
+        kind: 'report_package',
       });
+      if (packageArtifact) {
+        const frozen = await reportPackageArtifacts.verify({
+          artifactId: packageArtifact.id,
+          attemptId: task.currentAttemptId,
+        });
+        return reportPackageReader.read(binding, frozen.value);
+      }
+      return reportPackageReader.read(binding);
     },
     async readVisualAsset(input) {
       const task = await repository.getTaskDetail(input.taskId);

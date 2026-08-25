@@ -1,5 +1,6 @@
 import type {
   CapabilityDemandGraphV1,
+  CandidateProfile,
   ContributionType,
   EvidenceClass,
   PlanningProvenance,
@@ -48,6 +49,8 @@ export interface CurrentPlanInputBinding {
   target_pointer: string;
   source_step_no: number;
   source_pointer: string;
+  optional?: boolean;
+  include_artifact_identity?: boolean;
 }
 
 export interface CurrentPlanExpectedOutput {
@@ -131,6 +134,37 @@ export interface CurrentLegacySkillInvocationV3 extends CurrentSkillInvocationV3
 export type CurrentSkillInvocationV3 =
   | CurrentCompiledSkillInvocationV3
   | CurrentLegacySkillInvocationV3;
+
+export interface PlanPortfolioSummary {
+  profile_id: CandidateProfile;
+  selected: Array<{
+    invocation_id: string;
+    skill_id: string;
+    role: 'contributor' | 'synthesizer';
+    reason_codes: string[];
+    estimated_steps: number;
+  }>;
+  rejected: Array<{
+    skill_id: string;
+    reason_code: string;
+    related_ids: string[];
+  }>;
+  shared_prerequisites: Array<{
+    capability_type: 'tool' | 'knowledge';
+    capability_id: string;
+    consumer_skill_ids: string[];
+  }>;
+  estimated_budget: {
+    max_steps: number;
+    estimated_steps: number;
+    selected_contributor_count: number;
+    selected_skill_count: number;
+    required_demand_count: number;
+    optional_demand_count: number;
+    expanded_step_count: number;
+    expanded_step_limit: number;
+  };
+}
 
 export interface PlanContributionRequirement {
   id: string;
@@ -281,6 +315,7 @@ export interface CurrentExecutionPlanV3 extends Omit<
 > {
   execution_contract_version: 'current-execution-plan-v3';
   capability_demand_graph: CapabilityDemandGraphV1;
+  portfolio_summary: PlanPortfolioSummary;
   skill_invocations: CurrentSkillInvocationV3[];
   contribution_requirements: PlanContributionRequirement[];
   steps: CurrentPlanStepV3[];
@@ -336,6 +371,116 @@ export interface ResearchContributionV1 {
   units: ResearchContributionUnit[];
   limitations: string[];
   openQuestions: string[];
+}
+
+export interface ContributionSourceUnitMapping {
+  sourceUnitKey: string;
+  targetUnitKey: string;
+  sourceJsonPointer: string;
+  sourceSemanticHash: string;
+}
+
+export interface ResearchContributionArtifactV1 {
+  version: 'research-contribution-artifact-v1';
+  contribution: ResearchContributionV1;
+  source: {
+    artifactId: string;
+    artifactContentSha256: string;
+    schemaVersion: string;
+    adapterId: string;
+    adapterVersion: string;
+    adapterHash: string;
+    unitMappings: ContributionSourceUnitMapping[];
+    diagnosticFields: string[];
+  };
+}
+
+export interface ResearchContributionBundleEntry {
+  invocationId: string;
+  skillId: string;
+  artifactId: string;
+  artifactContentSha256: string;
+  contribution: ResearchContributionV1;
+}
+
+export interface ResearchContributionBundleGap {
+  invocationId: string;
+  skillId: string;
+  reason: string;
+}
+
+export interface ResearchContributionBundleV1 {
+  version: 'research-contribution-bundle-v1';
+  taskId: string;
+  planVersionId: string;
+  attemptId: string;
+  orderedInvocationIds: string[];
+  entries: ResearchContributionBundleEntry[];
+  gaps: ResearchContributionBundleGap[];
+}
+
+export const CROSS_SKILL_REVIEW_ISSUE_TYPES = [
+  'coverage',
+  'conflict',
+  'unsupported_claim',
+  'duplicate',
+  'method_mismatch',
+  'synthetic_overclaim',
+  'missing_artifact',
+  'priority_without_basis',
+] as const;
+
+export type CrossSkillReviewIssueType = typeof CROSS_SKILL_REVIEW_ISSUE_TYPES[number];
+
+export interface CrossSkillReviewIssue {
+  id: string;
+  type: CrossSkillReviewIssueType;
+  sourceUnitIds: string[];
+  targetNodeIds: string[];
+  message: string;
+  disposition: 'included' | 'merged' | 'conflicted' | 'omitted';
+}
+
+export interface CrossSkillReviewV1 {
+  version: 'cross-skill-review-v1';
+  taskId: string;
+  planVersionId: string;
+  attemptId: string;
+  synthesisArtifactId: string;
+  verdict: 'pass' | 'pass_with_conditions' | 'block';
+  issues: CrossSkillReviewIssue[];
+}
+
+export interface ContributionSummaryV1 {
+  version: 'contribution-summary-v1';
+  taskId: string;
+  planVersionId: string;
+  attemptId: string;
+  contributors: Array<{
+    invocationId: string;
+    skillId: string;
+    contributionTypes: ContributionType[];
+    unitCount: number;
+    limitations: string[];
+    units: Array<{
+      sourceArtifactId: string;
+      sourceUnitKey: string;
+      kind: ResearchContributionUnit['kind'];
+      title: string;
+      statement: string;
+      questionIds: string[];
+      evidenceIds: string[];
+      status: ResearchContributionSupport['status'];
+      confidence: number;
+      disposition: ContributionDisposition;
+      canonicalNodeIds: string[];
+    }>;
+    dispositions: Array<{
+      sourceUnitKey: string;
+      disposition: ContributionDisposition;
+      canonicalNodeIds: string[];
+    }>;
+  }>;
 }
 
 export type ContributionDisposition = 'included' | 'merged' | 'conflicted' | 'omitted';
@@ -658,6 +803,7 @@ export interface ResearchStrategyDirectAnswer {
   businessImplication: string;
   recommendedAction: string;
   validationNeeded: string;
+  sourceContributionUnitIds?: string[];
 }
 
 export interface ResearchStrategyRiskDisclosure {
@@ -726,6 +872,7 @@ export interface ResearchStrategySupportBindingV2 {
   confidence: number;
   status: ResearchStrategySupportStatus;
   validationNeeded: string;
+  sourceContributionUnitIds?: string[];
 }
 
 export interface ResearchStrategyEvidenceFindingDraftV2 {

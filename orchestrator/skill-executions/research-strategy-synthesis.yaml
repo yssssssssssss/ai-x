@@ -33,6 +33,7 @@ stages:
     title: 加载答案与证据规范
     actor_type: knowledge
     actor_id: knowledge.index
+    share_scope: plan
     depends_on: []
     input: {}
     input_bindings: []
@@ -46,6 +47,7 @@ stages:
     title: 检索直接回答所需公开证据
     actor_type: tool
     actor_id: tavily-web-search
+    share_scope: plan
     depends_on: []
     input:
       query: research goal direct answers official evidence
@@ -177,7 +179,9 @@ stages:
     actor_id: research-strategy-synthesis
     depends_on: [load-evidence-standards, inventory-evidence, synthesize-direct-answers, challenge-answer-claims, materialize-strategy, prioritize-actions]
     input:
-      instruction: Compose one research-strategy-content-draft-v2 with direct answers, evidence findings, and only useful typed content blocks. Choose content blocks from the requested artifacts and evidence; do not generate machine-owned IDs, coverage, risk identities, source pointers, or requestedArtifactBindings.
+      instruction: Compose one research-strategy-content-draft-v2 with direct answers, evidence findings, and only useful typed content blocks. When a research-contribution-bundle-v1 is present, explicitly cite every used source unit as `${entry.artifactId}:${unit.key}` in sourceContributionUnitIds; every required unit must be cited or the fidelity gate will reject the draft. Preserve source statements exactly when claiming direct inclusion, never invent source IDs, and do not repeat Contributor-owned analysis. Choose content blocks from the requested artifacts and evidence; do not generate machine-owned IDs, coverage, risk identities, source pointers, or requestedArtifactBindings.
+      contribution_bundle: null
+      contribution_order: []
       knowledge: null
       evidence_inventory: null
       direct_answers: null

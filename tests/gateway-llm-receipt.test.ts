@@ -34,6 +34,30 @@ function client(recorder: MemoryRecorder): ReceiptLLMClient {
   return new ReceiptLLMClient(new GatewayLLMClient({ timeoutMs: 50 }), recorder);
 }
 
+test('Gateway cancellation aborts an in-flight provider request', async () => {
+  globalThis.fetch = async (_input, init) => new Promise<Response>((_resolve, reject) => {
+    const signal = init?.signal;
+    if (!(signal instanceof AbortSignal)) throw new Error('missing abort signal');
+    signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+  });
+  const recorder = new MemoryRecorder();
+  const llm = client(recorder);
+  const controller = new AbortController();
+  const pending = llm.generateText({
+    prompt: 'cancel me',
+    signal: controller.signal,
+    receipt: { stage: 'synthesis', expectedModel: 'pinned-model' },
+  });
+  controller.abort(new Error('execution cancelled'));
+  await assert.rejects(
+    pending,
+    (error: unknown) => error instanceof LLMInvocationError
+      && error.kind === 'cancelled'
+      && error.retryable === false,
+  );
+  assert.equal(recorder.calls[0]?.failure?.kind, 'cancelled');
+});
+
 test('Gateway 5xx is a structured retryable failed receipt', async () => {
   globalThis.fetch = async () => new Response('upstream unavailable', { status: 503 });
   const recorder = new MemoryRecorder();

@@ -21,10 +21,10 @@ interface BundleAssetReadResult {
   mediaType: VisualAssetManifest['mediaType'];
 }
 
-type MultimodalReportPackage = Extract<CurrentReportPackageResponse, { presentationMode: 'multimodal' }>;
+type BundleReportPackage = Exclude<CurrentReportPackageResponse, { presentationMode: 'legacy_text' }>;
 
 export interface CreateReportBundleInput {
-  report: MultimodalReportPackage;
+  report: BundleReportPackage;
   readAsset(input: { taskId: string; assetId: string }): Promise<BundleAssetReadResult>;
 }
 
@@ -61,21 +61,11 @@ function assetReferences(document: ReportDocument): VisualAssetReference[] {
   return references;
 }
 
-function assertCompleteMultimodalPackage(report: MultimodalReportPackage): void {
-  if (report.presentationMode !== 'multimodal') {
-    throw new Error('report bundle requires multimodal presentation mode');
-  }
-  if (
-    !report.reportDocument
-    || (
-      report.reportDocument.version !== 'report-document-v1'
-      && report.reportDocument.version !== 'report-document-v2'
-    )
-  ) {
-    throw new Error('report bundle requires a complete ReportDocument');
-  }
-  if (!Array.isArray(report.visualAssetManifests)) {
-    throw new Error('report bundle requires visual Asset Manifests');
+function assertCompleteBundlePackage(
+  report: CurrentReportPackageResponse,
+): asserts report is BundleReportPackage {
+  if (report.presentationMode === 'legacy_text') {
+    throw new Error('report bundle requires the Current presentation mode');
   }
   const binding = report.deliverable;
   if (
@@ -87,6 +77,19 @@ function assertCompleteMultimodalPackage(report: MultimodalReportPackage): void 
     || report.reportReview.attemptId !== binding.attemptId
   ) {
     throw new Error('report package Task, Plan, and Attempt binding is inconsistent');
+  }
+  if (report.presentationMode === 'current_text') return;
+  if (
+    !report.reportDocument
+    || (
+      report.reportDocument.version !== 'report-document-v1'
+      && report.reportDocument.version !== 'report-document-v2'
+    )
+  ) {
+    throw new Error('report bundle requires a complete ReportDocument');
+  }
+  if (!Array.isArray(report.visualAssetManifests)) {
+    throw new Error('report bundle requires visual Asset Manifests');
   }
   const references = assetReferences(report.reportDocument);
   const referenceAssets = new Set(references.map(({ assetId }) => assetId));
@@ -119,7 +122,7 @@ function deterministicAssetPath(manifest: VisualAssetManifest): string {
   return `assets/${withoutExtension}${extension}`;
 }
 
-function safeDeliverable(deliverable: MultimodalReportPackage['deliverable']): Record<string, unknown> {
+function safeDeliverable(deliverable: BundleReportPackage['deliverable']): Record<string, unknown> {
   return {
     version: deliverable.version,
     taskId: deliverable.taskId,
@@ -154,7 +157,7 @@ function safeEvidenceManifest(manifest: EvidenceManifest): Record<string, unknow
   };
 }
 
-function safeReview(review: MultimodalReportPackage['reportReview']): Record<string, unknown> {
+function safeReview(review: BundleReportPackage['reportReview']): Record<string, unknown> {
   return {
     version: review.version,
     taskId: review.taskId,
@@ -426,11 +429,12 @@ function answerBlocksMarkdown(document: ReportDocument, includeAnalysis: boolean
 }
 
 export async function createReportBundle({ report, readAsset }: CreateReportBundleInput): Promise<Uint8Array> {
-  assertCompleteMultimodalPackage(report);
+  assertCompleteBundlePackage(report);
   const taskId = report.deliverable.taskId;
   if (typeof taskId !== 'string' || !taskId) throw new Error('report bundle requires a Task binding');
-  const manifests = [...report.visualAssetManifests]
-    .sort((left, right) => left.assetId.localeCompare(right.assetId));
+  const manifests = report.presentationMode === 'multimodal'
+    ? [...report.visualAssetManifests].sort((left, right) => left.assetId.localeCompare(right.assetId))
+    : [];
   const manifestByAsset = new Map(manifests.map((manifest) => [manifest.assetId, manifest]));
   const exportable = manifests.filter(({ exportPolicy }) => exportPolicy === 'allow' || exportPolicy === 'mask');
   const assetPaths = new Map<string, string>();
@@ -459,28 +463,42 @@ export async function createReportBundle({ report, readAsset }: CreateReportBund
   }));
   const evidenceIndexItems = report.evidenceManifest.entries.map((entry) =>
     `${entry.id}: ${entry.evidenceClass} Evidence.`);
-  const summaryMarkdown = reportMarkdown(
-    report.reportDocument,
-    manifestByAsset,
-    assetPaths,
-    evidenceIndexItems,
-  );
-  const fullMarkdown = report.deliverable.deliverableType === 'research_plan'
-    ? currentResearchPlanToMarkdown(report as unknown as CurrentResearchPlanResponse)
-    : summaryMarkdown;
+  const summaryMarkdown = report.presentationMode === 'multimodal'
+    ? reportMarkdown(
+        report.reportDocument,
+        manifestByAsset,
+        assetPaths,
+        evidenceIndexItems,
+      )
+    : report.deliverable.deliverableType === 'research_plan'
+      ? currentResearchPlanToMarkdown(report as unknown as CurrentResearchPlanResponse)
+      : `# ${report.deliverable.deliverableType}\n\n${report.deliverable.methodSummary}\n\n\`\`\`json\n${JSON.stringify(report.deliverable.payload, null, 2)}\n\`\`\`\n`;
+  const fullMarkdown = summaryMarkdown;
   const entries = new Map<string, Uint8Array>([
-    ['assets/', new Uint8Array()],
-    ...readAssets.map(({ path, bytes }) => [path, bytes] as const),
+    ...(report.presentationMode === 'multimodal'
+      ? [
+          ['assets/', new Uint8Array()] as const,
+          ...readAssets.map(({ path, bytes }) => [path, bytes] as const),
+        ]
+      : []),
     ['deliverable.json', jsonBytes(safeDeliverable(report.deliverable))],
     ['evidence-manifest.json', jsonBytes(safeEvidenceManifest(report.evidenceManifest))],
-    ['report-document.json', jsonBytes(safeReportDocument(
-      report.reportDocument,
-      new Set(exportable.map(({ assetId }) => assetId)),
-      evidenceIndexItems,
-    ))],
+    ...(report.presentationMode === 'multimodal'
+      ? [['report-document.json', jsonBytes(safeReportDocument(
+          report.reportDocument,
+          new Set(exportable.map(({ assetId }) => assetId)),
+          evidenceIndexItems,
+        ))] as const]
+      : []),
     ['report-review.json', jsonBytes(safeReview(report.reportReview))],
+    ...(report.contributionSummary
+      ? [['contribution-summary.json', jsonBytes(report.contributionSummary)] as const]
+      : []),
+    ...(report.contributionLedger
+      ? [['contribution-ledger.json', jsonBytes(report.contributionLedger)] as const]
+      : []),
     ['full-report.md', strToU8(fullMarkdown)],
-    ...(report.deliverable.deliverableType === 'research_strategy_report'
+    ...(report.presentationMode === 'multimodal' && report.deliverable.deliverableType === 'research_strategy_report'
       ? [
           ['direct-answers.md', strToU8(answerBlocksMarkdown(report.reportDocument, false))] as const,
           ['analysis-notes.md', strToU8(answerBlocksMarkdown(report.reportDocument, true))] as const,
@@ -488,7 +506,9 @@ export async function createReportBundle({ report, readAsset }: CreateReportBund
       : []),
     ['summary-report.md', strToU8(summaryMarkdown)],
     ['report.md', strToU8(fullMarkdown)],
-    ['visual-assets.json', jsonBytes(visualAssets)],
+    ...(report.presentationMode === 'multimodal'
+      ? [['visual-assets.json', jsonBytes(visualAssets)] as const]
+      : []),
   ]);
   const sortedEntries = Object.fromEntries([...entries].sort(([left], [right]) => left.localeCompare(right)));
   return zipSync(sortedEntries, { level: 9, mtime: new Date('1980-01-01T00:00:00.000Z') });

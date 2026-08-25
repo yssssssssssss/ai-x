@@ -342,8 +342,10 @@ const SKILL_COMPOSITION_FIELDS = new Set([
   'compatible_deliverables',
   'contribution_types',
   'contribution_schema',
+  'contribution_adapter',
   'required_input_roles',
   'optional_input_roles',
+  'shareable_prerequisites',
   'standalone_reason',
 ]);
 const SKILL_COMPOSITION_MODES = new Set<SkillCompositionMode>([
@@ -407,6 +409,14 @@ export function skillCompositionIssues(skill: unknown): string[] {
     }
   }
   if (
+    composition.shareable_prerequisites !== undefined
+    && (
+      !canonicalUniqueStringArray(composition.shareable_prerequisites, true)
+      || composition.shareable_prerequisites.some((id) => !CANONICAL_COMPOSITION_ID.test(id))
+      || composition.shareable_prerequisites.some((id) => !(skillRecord.required_tools as unknown[] | undefined)?.includes(id))
+    )
+  ) issues.push('composition.shareable_prerequisites must be a unique subset of required_tools');
+  if (
     Array.isArray(composition.required_input_roles)
     && Array.isArray(composition.optional_input_roles)
   ) {
@@ -424,6 +434,10 @@ export function skillCompositionIssues(skill: unknown): string[] {
       !canonicalUniqueStringArray(contributionTypes)
       || !contributionTypes.every((type) => CONTRIBUTION_TYPE_SET.has(type as ContributionType))
     ) issues.push('contributor composition requires valid contribution_types');
+    if (
+      typeof composition.contribution_adapter !== 'string'
+      || !composition.contribution_adapter.trim()
+    ) issues.push('contributor composition requires contribution_adapter');
   } else if (composition.contribution_types !== undefined) {
     if (
       !canonicalUniqueStringArray(composition.contribution_types)

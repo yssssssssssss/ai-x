@@ -188,7 +188,12 @@ export function validateCapabilityDemandGraph(input: ValidateCapabilityDemandGra
     }
 
     for (const evidenceClass of demand.requiredEvidenceClasses) {
-      if (!referencedQuestions.some((question) => acceptedEvidenceClasses(question).has(evidenceClass))) {
+      const syntheticVirtualEvidence = demand.type === 'virtual_user_hypothesis'
+        && evidenceClass === 'simulation';
+      if (
+        !syntheticVirtualEvidence
+        && !referencedQuestions.some((question) => acceptedEvidenceClasses(question).has(evidenceClass))
+      ) {
         demandError('unsupported_question_evidence', [
           demand.id,
           ...demand.questionIds,

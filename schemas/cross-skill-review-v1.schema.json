@@ -1,0 +1,34 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "cross-skill-review-v1.schema.json",
+  "title": "CrossSkillReviewV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "taskId", "planVersionId", "attemptId", "synthesisArtifactId", "verdict", "issues"],
+  "properties": {
+    "version": { "const": "cross-skill-review-v1" },
+    "taskId": { "$ref": "#/$defs/text" },
+    "planVersionId": { "$ref": "#/$defs/text" },
+    "attemptId": { "$ref": "#/$defs/text" },
+    "synthesisArtifactId": { "$ref": "#/$defs/text" },
+    "verdict": { "enum": ["pass", "pass_with_conditions", "block"] },
+    "issues": { "type": "array", "items": { "$ref": "#/$defs/issue" } }
+  },
+  "$defs": {
+    "text": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "ids": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/text" } },
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "sourceUnitIds", "targetNodeIds", "message", "disposition"],
+      "properties": {
+        "id": { "$ref": "#/$defs/text" },
+        "type": { "enum": ["coverage", "conflict", "unsupported_claim", "duplicate", "method_mismatch", "synthetic_overclaim", "missing_artifact", "priority_without_basis"] },
+        "sourceUnitIds": { "$ref": "#/$defs/ids" },
+        "targetNodeIds": { "$ref": "#/$defs/ids" },
+        "message": { "$ref": "#/$defs/text" },
+        "disposition": { "enum": ["included", "merged", "conflicted", "omitted"] }
+      }
+    }
+  }
+}

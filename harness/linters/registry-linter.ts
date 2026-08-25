@@ -14,6 +14,7 @@ import {
   type DecisionNode,
 } from '../../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 import { inspectDeliverableRegistry } from '../../apps/orchestrator-runtime/src/report/deliverable-registry.ts';
+import { CONTRIBUTION_ADAPTER_IDS } from '../../apps/orchestrator-runtime/src/skills/contribution-adapter-registry.ts';
 import { loadSkillExecutionContract } from '../../apps/orchestrator-runtime/src/skills/skill-execution-contract.ts';
 
 // registry linter(方案 §2.4 校验器之一 · P0-03 门禁):
@@ -96,6 +97,16 @@ function lintSkills(issues: LintIssue[]): void {
     }
     for (const message of skillCompositionIssues(s)) {
       issues.push({ level: 'error', target: tgt, message });
+    }
+    if (
+      s.composition?.contribution_adapter
+      && !(CONTRIBUTION_ADAPTER_IDS as readonly string[]).includes(s.composition.contribution_adapter)
+    ) {
+      issues.push({
+        level: 'error',
+        target: tgt,
+        message: `composition contribution_adapter 未注册: ${s.composition.contribution_adapter}`,
+      });
     }
     if (s.composition?.contribution_schema && !fileExists(s.composition.contribution_schema)) {
       issues.push({

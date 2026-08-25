@@ -12,7 +12,6 @@
     "attemptId": { "$ref": "#/$defs/text" },
     "entries": {
       "type": "array",
-      "minItems": 1,
       "items": { "$ref": "#/$defs/entry" }
     }
   },

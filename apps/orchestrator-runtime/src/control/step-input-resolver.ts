@@ -24,7 +24,7 @@ export class StepInputResolutionError extends Error {
   }
 }
 
-export type StepArtifactKind = 'knowledge_output' | 'tool_output' | 'skill_output' | 'llm_output' | 'review_output';
+export type StepArtifactKind = 'knowledge_output' | 'tool_output' | 'skill_output' | 'research_contribution' | 'llm_output' | 'review_output';
 
 export interface SealedStepOutput {
   stepNo: number;
@@ -100,6 +100,7 @@ function parseBindings(
       (sourceStepNo) => sourceStepNo === item.binding.source_step_no,
     ).length;
     if (sourceCount === 0) {
+      if (item.binding.optional === true) continue;
       throw new StepInputResolutionError(
         'unknown_source',
         `source step ${item.binding.source_step_no} is unavailable`,
@@ -229,7 +230,14 @@ export async function resolveStepInput(
   const parsedBindings = parseBindings(step, sealedOutputs.map((output) => output.stepNo));
   const verifiedByArtifactId = new Map<string, VerifiedStepArtifact>();
   for (const { binding, target, source: sourcePointer } of parsedBindings) {
-    const source = sealedOutputs.find((output) => output.stepNo === binding.source_step_no)!;
+    const source = sealedOutputs.find((output) => output.stepNo === binding.source_step_no);
+    if (!source && binding.optional === true) continue;
+    if (!source) {
+      throw new StepInputResolutionError(
+        'unknown_source',
+        `source step ${binding.source_step_no} is unavailable`,
+      );
+    }
     let verified = verifiedByArtifactId.get(source.artifact.id);
     if (!verified) {
       verified = await readVerifiedStepArtifact(source, artifactReader);
@@ -242,7 +250,17 @@ export async function resolveStepInput(
         `source pointer ${binding.source_pointer} does not exist on step ${binding.source_step_no}`,
       );
     }
-    writeObjectPointer(resolved, target, pointed.value);
+    writeObjectPointer(
+      resolved,
+      target,
+      binding.include_artifact_identity === true
+        ? {
+            artifactId: verified.artifact.id,
+            artifactContentSha256: verified.artifact.contentSha256,
+            contribution: pointed.value,
+          }
+        : pointed.value,
+    );
   }
   return resolved;
 }

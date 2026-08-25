@@ -7,9 +7,14 @@ export interface SystemCapabilitiesResponse {
     configurationHash: string;
   };
   planContractVersions: string[];
+  multiSkillPlanWriterEnabled: boolean;
   capabilityDemandGraphVersions: string[];
   researchContributionVersions: string[];
+  researchContributionArtifactVersions: string[];
+  researchContributionBundleVersions: string[];
+  crossSkillReviewVersions: string[];
   contributionLedgerVersions: string[];
+  contributionSummaryVersions: string[];
   reportDocumentVersions: string[];
   activeTaskTypes: string[];
   activeDeliverables: string[];

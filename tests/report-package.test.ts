@@ -666,6 +666,10 @@ test('Report Package preserves optional model-layout artifacts only with a Repor
     presentationMode: 'current_text',
     reportDocumentArtifactId: undefined,
   }), /layout artifacts without a ReportDocument|current text Report Package/);
+  assert.throws(() => parseReportPackageArtifactValue({
+    ...value,
+    contributionLedgerArtifactId: 'ledger-only',
+  }), /contribution component set is incomplete/);
 });
 
 test('returns a verified review-gated current_text package and reads every JSON Artifact', async () => {
@@ -714,6 +718,50 @@ test('reads only component IDs frozen by a verified Report Package', async () =>
   assert.equal(result?.presentationMode, 'current_text');
   assert.equal(fixture.artifacts.reads[0], reviewArtifactId);
   assert.equal(fixture.artifacts.reads.includes(alternateReviewId), false);
+});
+
+test('reads only frozen Multi-Skill review, ledger, and safe summary sidecars', async () => {
+  const fixture = setup();
+  const crossReviewId = 'cross-review-1';
+  const ledgerId = 'contribution-ledger-1';
+  const summaryId = 'contribution-summary-1';
+  const crossSkillReview = {
+    version: 'cross-skill-review-v1',
+    ...binding,
+    synthesisArtifactId: 'synthesis-1',
+    verdict: 'pass',
+    issues: [],
+  } as const;
+  const contributionLedger = {
+    version: 'contribution-ledger-v1',
+    ...binding,
+    entries: [],
+  } as const;
+  const contributionSummary = {
+    version: 'contribution-summary-v1',
+    ...binding,
+    contributors: [],
+  } as const;
+  fixture.artifacts.add(artifact(crossReviewId, 'cross_skill_review', 'cross-skill-review-v1'), crossSkillReview);
+  fixture.artifacts.add(artifact(ledgerId, 'contribution_ledger', 'contribution-ledger-v1'), contributionLedger);
+  fixture.artifacts.add(artifact(summaryId, 'contribution_summary', 'contribution-summary-v1'), contributionSummary);
+
+  const result = await fixture.reader.read(binding, {
+    version: 'report-package-v1',
+    ...binding,
+    presentationMode: 'current_text',
+    deliverableArtifactId,
+    evidenceManifestArtifactId: manifestArtifactId,
+    reportReviewArtifactId: reviewArtifactId,
+    crossSkillReviewArtifactId: crossReviewId,
+    contributionLedgerArtifactId: ledgerId,
+    contributionSummaryArtifactId: summaryId,
+  });
+
+  assert.deepEqual(result?.crossSkillReview, crossSkillReview);
+  assert.deepEqual(result?.contributionLedger, contributionLedger);
+  assert.deepEqual(result?.contributionSummary, contributionSummary);
+  assert.deepEqual(fixture.artifacts.reads.slice(0, 3), [crossReviewId, ledgerId, summaryId]);
 });
 
 test('reads Knowledge Evidence from its sealed knowledge_output Artifact', async () => {

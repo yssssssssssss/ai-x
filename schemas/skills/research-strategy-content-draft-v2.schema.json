@@ -31,7 +31,8 @@
         "evidenceIds": { "$ref": "#/$defs/ids" },
         "confidence": { "$ref": "#/$defs/confidence" },
         "status": { "enum": ["supported", "provisional"] },
-        "validationNeeded": { "type": "string" }
+        "validationNeeded": { "type": "string" },
+        "sourceContributionUnitIds": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/text" } }
       },
       "allOf": [
         {
@@ -57,7 +58,8 @@
         "confidence": { "$ref": "#/$defs/confidence" },
         "businessImplication": { "$ref": "#/$defs/text" },
         "recommendedAction": { "$ref": "#/$defs/text" },
-        "validationNeeded": { "type": "string" }
+        "validationNeeded": { "type": "string" },
+        "sourceContributionUnitIds": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/text" } }
       }
     },
     "evidenceFinding": {

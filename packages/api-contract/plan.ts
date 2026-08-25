@@ -158,8 +158,10 @@ export interface SkillCompositionContract {
   compatible_deliverables: string[];
   contribution_types?: ContributionType[];
   contribution_schema?: string;
+  contribution_adapter?: string;
   required_input_roles: string[];
   optional_input_roles: string[];
+  shareable_prerequisites?: string[];
   standalone_reason?: string;
 }
 

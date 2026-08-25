@@ -124,7 +124,11 @@ systemCapabilitiesRouter.get('/', (_req, res) => {
     const planV3SchemaHash = hashFile('schemas/current-execution-plan-v3.schema.json');
     const capabilityDemandSchemaHash = hashFile('schemas/capability-demand-graph-v1.schema.json');
     const researchContributionSchemaHash = hashFile('schemas/research-contribution-v1.schema.json');
+    const researchContributionArtifactSchemaHash = hashFile('schemas/research-contribution-artifact-v1.schema.json');
+    const researchContributionBundleSchemaHash = hashFile('schemas/research-contribution-bundle-v1.schema.json');
+    const crossSkillReviewSchemaHash = hashFile('schemas/cross-skill-review-v1.schema.json');
     const contributionLedgerSchemaHash = hashFile('schemas/contribution-ledger-v1.schema.json');
+    const contributionSummarySchemaHash = hashFile('schemas/contribution-summary-v1.schema.json');
     const reportSchemaHash = hashFile('schemas/report-document.schema.json');
     const layoutSchemaHash = hashFile('schemas/report-layout-blueprint.schema.json');
     const diagnosticSchemaHash = hashFile('schemas/deliverable-validation-diagnostic.schema.json');
@@ -142,7 +146,11 @@ systemCapabilitiesRouter.get('/', (_req, res) => {
       planV3SchemaHash,
       capabilityDemandSchemaHash,
       researchContributionSchemaHash,
+      researchContributionArtifactSchemaHash,
+      researchContributionBundleSchemaHash,
+      crossSkillReviewSchemaHash,
       contributionLedgerSchemaHash,
+      contributionSummarySchemaHash,
       reportSchemaHash,
       layoutSchemaHash,
       diagnosticSchemaHash,
@@ -159,9 +167,14 @@ systemCapabilitiesRouter.get('/', (_req, res) => {
         configurationHash: configHash,
       },
       planContractVersions: planContractVersions(),
+      multiSkillPlanWriterEnabled: process.env.MULTI_SKILL_PORTFOLIO_WRITER_ENABLED === 'true',
       capabilityDemandGraphVersions: [schemaConst('schemas/capability-demand-graph-v1.schema.json', 'version')],
       researchContributionVersions: [schemaConst('schemas/research-contribution-v1.schema.json', 'version')],
+      researchContributionArtifactVersions: [schemaConst('schemas/research-contribution-artifact-v1.schema.json', 'version')],
+      researchContributionBundleVersions: [schemaConst('schemas/research-contribution-bundle-v1.schema.json', 'version')],
+      crossSkillReviewVersions: [schemaConst('schemas/cross-skill-review-v1.schema.json', 'version')],
       contributionLedgerVersions: [schemaConst('schemas/contribution-ledger-v1.schema.json', 'version')],
+      contributionSummaryVersions: [schemaConst('schemas/contribution-summary-v1.schema.json', 'version')],
       reportDocumentVersions: reportDocumentVersions(),
       activeTaskTypes: [...new Set(activeDeliverables.flatMap(({ task_types }) => task_types))].sort(),
       activeDeliverables: activeDeliverables.map(({ id }) => id).sort(),

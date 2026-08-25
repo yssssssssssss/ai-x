@@ -11,7 +11,10 @@ export type ResearchContributionValidationKind =
   | 'unknown_question'
   | 'unknown_evidence'
   | 'supported_without_factual_evidence'
-  | 'synthetic_supported';
+  | 'synthetic_supported'
+  | 'frozen_identity_mismatch'
+  | 'contribution_type_mismatch'
+  | 'requested_artifact_mismatch';
 
 export class ResearchContributionValidationError extends Error {
   constructor(
@@ -35,7 +38,6 @@ function contributionError(
 const FACTUAL_ROOT_CLASSES = new Set<EvidenceClass>([
   'public_source',
   'screenshot',
-  'user_input',
   'dataset',
 ]);
 
@@ -43,6 +45,15 @@ export interface ValidateResearchContributionInput {
   contribution: ResearchContributionV1;
   allowedQuestionIds: readonly string[];
   evidenceManifest: EvidenceManifest;
+  expected?: {
+    taskId: string;
+    planVersionId: string;
+    attemptId: string;
+    invocationId: string;
+    skillId: string;
+    contributionTypes: readonly ResearchContributionV1['contributionTypes'][number][];
+    requestedArtifactTypes: readonly ResearchContributionV1['units'][number]['requestedArtifactTypes'][number][];
+  };
   validator?: SchemaValidator;
 }
 
@@ -56,6 +67,33 @@ export function validateResearchContribution(input: ValidateResearchContribution
     'research-contribution-v1',
     contribution,
   );
+  if (input.expected) {
+    const expected = input.expected;
+    if (
+      contribution.taskId !== expected.taskId
+      || contribution.planVersionId !== expected.planVersionId
+      || contribution.attemptId !== expected.attemptId
+      || contribution.invocationId !== expected.invocationId
+      || contribution.skillId !== expected.skillId
+    ) {
+      contributionError('frozen_identity_mismatch', [
+        contribution.taskId,
+        contribution.planVersionId,
+        contribution.attemptId,
+        contribution.invocationId,
+        contribution.skillId,
+      ]);
+    }
+    if (
+      contribution.contributionTypes.length !== expected.contributionTypes.length
+      || !contribution.contributionTypes.every((type) => expected.contributionTypes.includes(type))
+    ) contributionError('contribution_type_mismatch', contribution.contributionTypes);
+    const allowedArtifacts = new Set(expected.requestedArtifactTypes);
+    const unknownArtifact = contribution.units
+      .flatMap(({ requestedArtifactTypes }) => requestedArtifactTypes)
+      .find((artifact) => !allowedArtifacts.has(artifact));
+    if (unknownArtifact) contributionError('requested_artifact_mismatch', [unknownArtifact]);
+  }
 
   if (
     contribution.taskId !== evidenceManifest.taskId

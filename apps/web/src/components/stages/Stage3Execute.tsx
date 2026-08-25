@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import type { ExecLogRow } from '../../api/client.ts';
 import {
   buildExecutionFlowGraph,
+  groupExecutionSteps,
   type ExecutionFlowGraph,
   type ExecutionFlowPhase,
   type ExecutionFlowStatus,
@@ -118,6 +119,7 @@ export function Stage3Execute({
     [steps, log, phase],
   );
   const layout = useMemo(() => createGraphLayout(graph), [graph]);
+  const invocationGroups = useMemo(() => groupExecutionSteps(steps), [steps]);
   const ended = graph.summary.completed + graph.summary.skipped;
   const statusDetail = graph.summary.failed > 0
     ? `${graph.summary.failed} 个节点失败`
@@ -139,6 +141,16 @@ export function Stage3Execute({
         <span>{statusDetail}</span>
         {graph.usedSequentialFallback ? <span className="execution-flow-mode">线性回放</span> : null}
       </div>
+
+      {invocationGroups.some(({ id }) => id !== 'ungrouped') ? (
+        <div className="execution-invocation-groups" aria-label="Skill Invocation 分组" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+          {invocationGroups.map((group) => (
+            <span key={group.id} className="badge" title={group.consumerInvocationIds.join('、')}>
+              {group.label} · {group.stepNos.length} steps
+            </span>
+          ))}
+        </div>
+      ) : null}
 
       <div
         className="execution-flow-viewport"

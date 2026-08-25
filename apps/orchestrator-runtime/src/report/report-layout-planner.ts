@@ -65,6 +65,7 @@ export class ReportLayoutPlanner {
     attemptId: string;
     stepNo: number;
     expectedModel: string;
+    cancellationSignal?: AbortSignal;
   }): Promise<ReportLayoutPlanResult> {
     const fallback = fallbackBlueprint(input.payload);
     const validator = this.dependencies.validator ?? new SchemaValidator();
@@ -89,6 +90,7 @@ export class ReportLayoutPlanner {
             questionIds: [...new Set(supports(block).flatMap(({ questionIds }) => questionIds))],
           })),
         },
+        ...(input.cancellationSignal ? { signal: input.cancellationSignal } : {}),
         receipt: {
           stage: 'report_layout',
           attemptId: input.attemptId,
@@ -100,6 +102,9 @@ export class ReportLayoutPlanner {
       validateBlueprint(generated.data, input.payload);
       return { blueprint: generated.data, mode: 'model', warnings: [] };
     } catch (error) {
+      if (input.cancellationSignal?.aborted) {
+        throw input.cancellationSignal.reason ?? error;
+      }
       return {
         blueprint: fallback,
         mode: 'fallback',

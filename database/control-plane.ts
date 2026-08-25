@@ -11,6 +11,7 @@ import {
 import type {
   CurrentExecutionPlan,
   PendingInput,
+  ReadableCurrentExecutionPlan,
 } from '../packages/api-contract/research-deliverable.ts';
 import {
   isCandidateProfile,
@@ -646,7 +647,7 @@ export type ControlCandidateId = CandidateProfile;
 export interface ControlCandidatePlanVersionDetail
   extends Omit<ControlPlanVersionDetail, 'candidateId' | 'plan' | 'pendingInputs'> {
   candidateId: ControlCandidateId;
-  plan: CurrentExecutionPlan;
+  plan: ReadableCurrentExecutionPlan;
   pendingInputs: PendingInput[];
 }
 
@@ -694,7 +695,7 @@ export interface PersistClarificationCandidatesInput {
     title: string;
     rationale: string;
     tradeoffs: string;
-    plan: Omit<CurrentExecutionPlan, 'task_id'> & { task_id?: string };
+    plan: Omit<ReadableCurrentExecutionPlan, 'task_id'> & { task_id?: string };
     pendingInputs: PendingInput[];
   }>;
   command: {
@@ -1081,7 +1082,7 @@ export class ControlPlaneRepository {
     structuredTask: unknown;
     candidates: Array<{
       candidateId: ControlCandidateId;
-      plan: Omit<CurrentExecutionPlan, 'task_id'> & { task_id?: string };
+      plan: Omit<ReadableCurrentExecutionPlan, 'task_id'> & { task_id?: string };
       pendingInputs: PendingInput[];
     }>;
   }): Promise<{ task: ControlTask; candidates: ControlCandidatePlanVersionDetail[] }> {
@@ -1174,7 +1175,7 @@ export class ControlPlaneRepository {
     structuredTask: unknown;
     candidates: Array<{
       candidateId: ControlCandidateId;
-      plan: Omit<CurrentExecutionPlan, 'task_id'> & { task_id?: string };
+      plan: Omit<ReadableCurrentExecutionPlan, 'task_id'> & { task_id?: string };
       pendingInputs: PendingInput[];
     }>;
   }): Promise<{ task: ControlTask; candidates: ControlCandidatePlanVersionDetail[] }> {
@@ -1485,7 +1486,7 @@ export class ControlPlaneRepository {
           rationale: candidate.rationale,
           tradeoffs: candidate.tradeoffs,
           planHash: stored.planHash,
-          plan: stored.plan,
+          plan: stored.plan as CurrentExecutionPlan,
           pendingInputs: stored.pendingInputs,
         })),
       };
@@ -1912,19 +1913,24 @@ export class ControlPlaneRepository {
                    artifact.state = 'SEALED'
                    AND artifact.kind IN (
                      'evidence_manifest', 'deliverable', 'report_review', 'report_document',
-                     'report_package', 'visual_asset', 'visual_asset_manifest',
+                     'report_package', 'cross_skill_review', 'contribution_ledger', 'contribution_summary',
+                     'research_contribution_bundle',
+                     'visual_asset', 'visual_asset_manifest',
                      'image_annotation', 'chart_spec', 'chart_data'
                    )
                  )
                  OR (
                    artifact.state = 'SEALED'
-                   AND artifact.kind IN ('tool_output', 'skill_output', 'llm_output', 'review_output')
+                   AND artifact.kind IN ('knowledge_output', 'tool_output', 'skill_output', 'research_contribution', 'llm_output', 'review_output')
                    AND NOT EXISTS (
                      SELECT 1
                      FROM control_execution_steps AS step
                      WHERE step.attempt_id = attempt.id
                        AND step.state = 'succeeded'
-                       AND step.output_artifact_id = artifact.id
+                       AND (
+                         step.output_artifact_id = artifact.id
+                         OR step.skill_provenance->>'sourceArtifactId' = artifact.id::text
+                       )
                    )
                  )
                )
@@ -2372,7 +2378,9 @@ export class ControlPlaneRepository {
            AND attempt_id = $3
            AND kind IN (
              'evidence_manifest', 'deliverable', 'report_document', 'report_review', 'report_package',
-             'report_layout_blueprint', 'deliverable_validation_diagnostic',
+             'report_layout_blueprint', 'deliverable_validation_diagnostic', 'content_fidelity_diagnostic',
+             'cross_skill_review', 'contribution_ledger', 'contribution_summary',
+             'research_contribution_bundle',
              'visual_asset', 'visual_asset_manifest', 'image_annotation', 'chart_spec', 'chart_data'
            )
            AND state IN ('STAGING', 'SEALED')`,
@@ -4762,16 +4770,21 @@ export class ControlPlaneRepository {
                  AND (
                    artifact.kind IN (
                      'evidence_manifest', 'deliverable', 'report_review', 'report_document', 'report_package',
+                     'cross_skill_review', 'contribution_ledger', 'contribution_summary',
+                     'research_contribution_bundle',
                      'visual_asset', 'visual_asset_manifest', 'image_annotation', 'chart_spec', 'chart_data'
                    )
                    OR (
-                     artifact.kind IN ('tool_output', 'skill_output', 'llm_output', 'review_output')
+                     artifact.kind IN ('knowledge_output', 'tool_output', 'skill_output', 'research_contribution', 'llm_output', 'review_output')
                      AND NOT EXISTS (
                        SELECT 1
                        FROM control_execution_steps AS step
                        WHERE step.attempt_id = artifact.attempt_id
                          AND step.state = 'succeeded'
-                         AND step.output_artifact_id = artifact.id
+                         AND (
+                           step.output_artifact_id = artifact.id
+                           OR step.skill_provenance->>'sourceArtifactId' = artifact.id::text
+                         )
                      )
                    )
                  )
@@ -4806,6 +4819,73 @@ export class ControlPlaneRepository {
         activePlanVersionId: typeof row.active_plan_version_id === 'string' ? row.active_plan_version_id : null,
         currentAttemptId: typeof row.current_attempt_id === 'string' ? row.current_attempt_id : null,
       };
+    });
+  }
+
+  async cancelExecution(input: {
+    taskId: string;
+    attemptId: string;
+    expectedVersion: number;
+    command?: {
+      idempotencyKey: string;
+      requestHash: string;
+      actorUserId?: string;
+    };
+  }): Promise<ControlTask> {
+    return this.transaction(async (connection) => {
+      const activeStates = ['executing', 'reviewing', 'composing_report', 'paused'];
+      const lockedTask = await connection.query(
+        `SELECT state FROM control_tasks
+         WHERE id = $1 AND state = ANY($2::text[]) AND state_version = $3 AND current_attempt_id = $4
+         FOR UPDATE`,
+        [input.taskId, activeStates, input.expectedVersion, input.attemptId],
+      );
+      if (!lockedTask.rows[0]) {
+        throw new ControlPlaneConflictError(`task ${input.taskId} cannot cancel attempt ${input.attemptId}`);
+      }
+      const attempt = await connection.query(
+        `UPDATE control_execution_attempts
+         SET state = 'cancelled', finished_at = COALESCE(finished_at, now()), lease_expires_at = now()
+         WHERE id = $1 AND task_id = $2 AND state IN ('active', 'paused')
+         RETURNING id`,
+        [input.attemptId, input.taskId],
+      );
+      if (!attempt.rows[0]) throw new ControlPlaneConflictError(`attempt ${input.attemptId} is not cancellable`);
+      const task = await connection.query(
+        `UPDATE control_tasks
+         SET state = 'cancelled', state_version = state_version + 1, updated_at = now()
+         WHERE id = $1 AND state = ANY($2::text[]) AND state_version = $3 AND current_attempt_id = $4
+         RETURNING id, state, state_version, active_plan_version_id, current_attempt_id`,
+        [input.taskId, activeStates, input.expectedVersion, input.attemptId],
+      );
+      const row = task.rows[0];
+      if (!row) throw new ControlPlaneConflictError(`task ${input.taskId} cannot cancel attempt ${input.attemptId}`);
+      const transitioned = {
+        id: asString(row.id, 'id'),
+        state: asString(row.state, 'state') as ControlTaskState,
+        stateVersion: asNumber(row.state_version, 'state_version'),
+        activePlanVersionId: typeof row.active_plan_version_id === 'string' ? row.active_plan_version_id : null,
+        currentAttemptId: typeof row.current_attempt_id === 'string' ? row.current_attempt_id : null,
+      };
+      if (input.command) {
+        await connection.query(
+          `INSERT INTO control_commands
+           (task_id, command_type, idempotency_key, request_hash, expected_version,
+            state_before, state_after, response_json, actor_user_id)
+           VALUES ($1, 'cancel', $2, $3, $4, $5, $6, $7, $8)`,
+          [
+            input.taskId,
+            input.command.idempotencyKey,
+            input.command.requestHash,
+            input.expectedVersion,
+            asString(lockedTask.rows[0].state, 'state') as ControlTaskState,
+            transitioned.state,
+            JSON.stringify({ state: transitioned.state, stateVersion: transitioned.stateVersion }),
+            input.command.actorUserId ?? null,
+          ],
+        );
+      }
+      return transitioned;
     });
   }
 

@@ -5,7 +5,12 @@
 
 import type {
   CurrentPlanStep,
+  CurrentPlanStepV3,
+  CurrentCapabilityGap,
   CurrentSkillInvocation,
+  CurrentSkillInvocationV3,
+  PlanContributionRequirement,
+  PlanPortfolioSummary,
 } from './research-deliverable.ts';
 import type {
   CandidateProfile,
@@ -14,6 +19,7 @@ import type {
   PlanStep,
   PlanCandidate,
   Assumption,
+  CapabilityDemandGraphV1,
   PendingUpload,
 } from './plan.ts';
 
@@ -66,16 +72,22 @@ export interface ExecLogRow {
   actor_type: string;
   actor_id: string;
   status: string;
+  outputArtifactId?: string | null;
   skillProvenance: Record<string, unknown> | null;
   failure?: Record<string, unknown>;
 }
 
 // 已 finalize 的计划:steps + 激活节点 + 假设(select/execute 前的形态)。
 export interface FinalizedPlan {
-  steps: Array<PlanStep | CurrentPlanStep>;
+  execution_contract_version?: 'current-execution-plan-v2' | 'current-execution-plan-v3';
+  steps: Array<PlanStep | CurrentPlanStep | CurrentPlanStepV3>;
   activated_nodes: string[];
   assumptions: Assumption[];
-  skill_invocations?: CurrentSkillInvocation[];
+  skill_invocations?: Array<CurrentSkillInvocation | CurrentSkillInvocationV3>;
+  capability_demand_graph?: CapabilityDemandGraphV1;
+  contribution_requirements?: PlanContributionRequirement[];
+  portfolio_summary?: PlanPortfolioSummary;
+  capability_gaps?: CurrentCapabilityGap[];
 }
 
 export interface PlanCandidatesResponse {

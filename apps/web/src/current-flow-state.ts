@@ -250,6 +250,9 @@ export interface ExecutionPlanStepView {
   actor_type: string;
   actor_id: string;
   depends_on?: readonly number[];
+  skill_invocation_id?: string;
+  shared_stage_key?: string;
+  shared_by_invocation_ids?: readonly string[];
 }
 
 export function executionPlanStepsForTask(input: {
@@ -268,6 +271,11 @@ export function executionPlanStepsForTask(input: {
       actor_type: step.actor_type,
       actor_id: step.actor_id,
       ...(Array.isArray(step.depends_on) ? { depends_on: [...step.depends_on] } : {}),
+      ...(typeof step.skill_invocation_id === 'string' ? { skill_invocation_id: step.skill_invocation_id } : {}),
+      ...(typeof step.shared_stage_key === 'string' ? { shared_stage_key: step.shared_stage_key } : {}),
+      ...(Array.isArray(step.shared_by_invocation_ids)
+        ? { shared_by_invocation_ids: [...step.shared_by_invocation_ids] }
+        : {}),
     }));
   }
   return input.executionSteps.map((step) => ({
@@ -285,6 +293,7 @@ export function executionStepsToExecLog(steps: ControlExecutionStepResponse[]): 
     actor_type: step.actorType,
     actor_id: step.actorId,
     status: step.state,
+    ...(step.outputArtifactId ? { outputArtifactId: step.outputArtifactId } : {}),
     skillProvenance: step.skillProvenance,
     ...(step.failure ? { failure: step.failure } : {}),
   }));

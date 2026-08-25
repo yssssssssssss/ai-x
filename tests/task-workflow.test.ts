@@ -88,6 +88,25 @@ class SelectionCommandFailingDatabase implements MigrationDatabase {
   }
 }
 
+class CancelCommandFailingDatabase implements MigrationDatabase {
+  constructor(private readonly database: MigrationDatabase) {}
+
+  async connect(): Promise<MigrationConnection> {
+    const connection = await this.database.connect();
+    return {
+      async query(sql, values = []) {
+        if (/INSERT\s+INTO\s+control_commands[\s\S]*'cancel'/iu.test(sql)) {
+          throw new Error('simulated cancel command persistence failure');
+        }
+        return connection.query(sql, values);
+      },
+      release() {
+        connection.release();
+      },
+    };
+  }
+}
+
 class ConfirmationReplayRaceRepository extends ControlPlaneRepository {
   private commandReadSeen = false;
   private taskReadReleased = false;
@@ -2007,7 +2026,12 @@ test('Workflow owns the lease and invokes a real execution driver once per comma
       driverCalls += 1;
       await repository.requireActiveLease(lease);
       await repository.completeExecution(lease);
-      return { status: 'completed', attemptId: lease.attemptId };
+      return {
+        status: 'completed', attemptId: lease.attemptId,
+        crossSkillReviewArtifactId: 'cross-review-1',
+        contributionLedgerArtifactId: 'ledger-1',
+        contributionSummaryArtifactId: 'summary-1',
+      };
     },
   });
   const created = await createCandidateTask(repository, 'real', {
@@ -2043,6 +2067,9 @@ test('Workflow owns the lease and invokes a real execution driver once per comma
 
   assert.equal(execution.executionDisabled, false);
   assert.equal(execution.state, 'completed');
+  assert.equal(execution.crossSkillReviewArtifactId, 'cross-review-1');
+  assert.equal(execution.contributionLedgerArtifactId, 'ledger-1');
+  assert.equal(execution.contributionSummaryArtifactId, 'summary-1');
   assert.equal('leaseToken' in execution, false);
   assert.deepEqual(replay, execution);
   assert.equal(driverCalls, 1);
@@ -2461,6 +2488,71 @@ test('rejects a sealed hash-valid Review with an unknown verdict during paused r
   } finally {
     rmSync(artifactRoot, { recursive: true, force: true });
   }
+});
+
+test('owner can cancel an active execution and revoke its lease', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const workflow = new TaskWorkflowService(repository);
+  const task = await repository.createTask({
+    conversationId,
+    ownerUserId: ownerId,
+    originalInput: 'cancel active execution',
+    taskType: 'competitive_research',
+    structuredTask: currentTask(),
+    state: 'ready',
+  });
+  const plan = await repository.createPlanVersion({
+    taskId: task.id,
+    version: 1,
+    candidateId: 'speed',
+    plan: currentPlan(task.id, 'cancel-active', [
+      currentStep({ actor_type: 'tool', actor_id: 'tavily-web-search' }),
+    ]),
+    planHash: 'sha256:cancel-active-plan',
+    pendingInputs: [],
+  });
+  const leaseToken = randomUUID();
+  const claim = await repository.claimExecution({
+    taskId: task.id,
+    planVersionId: plan.id,
+    expectedVersion: task.stateVersion,
+    idempotencyKey: 'cancel-active-claim',
+    requestHash: 'sha256:cancel-active-claim',
+    leaseOwner: 'cancel-test',
+    leaseTokenHash: `sha256:${createHash('sha256').update(leaseToken).digest('hex')}`,
+  });
+
+  const cancelCommand = {
+    taskId: task.id,
+    expectedVersion: claim.stateVersion,
+    idempotencyKey: 'cancel-active-command',
+    actor: { userId: ownerId, role: 'owner' as const },
+  };
+  const failingWorkflow = new TaskWorkflowService(new ControlPlaneRepository(
+    new CancelCommandFailingDatabase(scopedDatabase),
+  ));
+  await assert.rejects(
+    () => failingWorkflow.cancel(cancelCommand),
+    /simulated cancel command persistence failure/u,
+  );
+  assert.equal((await repository.getTaskDetail(task.id))?.state, 'executing');
+  assert.equal((await repository.listAttempts(task.id))[0]?.state, 'active');
+
+  const cancelled = await workflow.cancel(cancelCommand);
+
+  assert.equal(cancelled.state, 'cancelled');
+  assert.deepEqual(await workflow.cancel(cancelCommand), cancelled);
+  assert.equal((await repository.listAttempts(task.id))[0]?.state, 'cancelled');
+  await assert.rejects(
+    () => repository.requireActiveLease({
+      taskId: task.id,
+      planVersionId: plan.id,
+      attemptId: claim.attemptId,
+      leaseOwner: 'cancel-test',
+      leaseToken,
+    }),
+    ControlPlaneConflictError,
+  );
 });
 
 async function createPausedTask(input: {

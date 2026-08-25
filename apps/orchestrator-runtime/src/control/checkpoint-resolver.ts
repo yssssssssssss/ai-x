@@ -70,6 +70,7 @@ export interface ResumeRequest {
   planVersionId: string;
   idempotencyKey: string;
   currentFingerprints: Record<string, StepFingerprint>;
+  targetStepKeys?: readonly string[];
 }
 
 export interface ResumeResult {
@@ -130,19 +131,39 @@ export function createCheckpointResolver(input: {
       const reusableCheckpoints: ReusableCheckpoint[] = [];
       const reusableOutputs: Record<string, unknown> = {};
       const executedStepKeys: string[] = [];
-      let firstInvalidStepKey: string | null = null;
-      const reusable = new Set<string>();
+      const artifactsByStep = new Map<string, CheckpointArtifact | null>();
+      const invalidated = new Set(request.targetStepKeys ?? []);
+      const knownStepKeys = new Set(prior.steps.map(({ key }) => key));
+      for (const target of invalidated) {
+        if (!knownStepKeys.has(target)) throw new Error(`target checkpoint step ${target} is unknown`);
+      }
       for (const priorStep of prior.steps) {
-        const currentFingerprint = request.currentFingerprints[priorStep.key];
-        const dependenciesReusable = priorStep.dependsOn.every((dependency) => reusable.has(dependency));
         const artifact = priorStep.outputArtifactId
           ? await input.checkpointStore.getArtifact(priorStep.outputArtifactId)
           : null;
-        const canReuse = firstInvalidStepKey == null
-          && priorStep.state === 'succeeded'
-          && dependenciesReusable
-          && sameFingerprint(priorStep.fingerprint, currentFingerprint)
-          && artifactIsReusable(priorStep, artifact);
+        artifactsByStep.set(priorStep.key, artifact);
+        if (
+          priorStep.state !== 'succeeded'
+          || !sameFingerprint(priorStep.fingerprint, request.currentFingerprints[priorStep.key])
+          || !artifactIsReusable(priorStep, artifact)
+        ) invalidated.add(priorStep.key);
+      }
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const priorStep of prior.steps) {
+          if (invalidated.has(priorStep.key)) continue;
+          if (priorStep.dependsOn.some((dependency) => invalidated.has(dependency))) {
+            invalidated.add(priorStep.key);
+            changed = true;
+          }
+        }
+      }
+      const firstInvalidStepKey = prior.steps.find(({ key }) => invalidated.has(key))?.key ?? null;
+      const reusable = new Set<string>();
+      for (const priorStep of prior.steps) {
+        const dependenciesReusable = priorStep.dependsOn.every((dependency) => reusable.has(dependency));
+        const canReuse = !invalidated.has(priorStep.key) && dependenciesReusable;
         if (canReuse) {
           reusable.add(priorStep.key);
           reusableOutputs[priorStep.key] = clone(priorStep.output);
@@ -154,7 +175,6 @@ export function createCheckpointResolver(input: {
           await input.checkpointStore.saveStep(retry.id, clone(priorStep));
           continue;
         }
-        firstInvalidStepKey ??= priorStep.key;
         const output = await input.executeStep(clone(priorStep), { reusableOutputs: clone(reusableOutputs) });
         reusableOutputs[priorStep.key] = clone(output);
         executedStepKeys.push(priorStep.key);

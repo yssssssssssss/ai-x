@@ -149,6 +149,12 @@
     "unresolved_items": []
   },
   {
+    "skill_id": "virtual-user-research",
+    "mode": "not_applicable",
+    "selected_source_ids": [],
+    "unresolved_items": []
+  },
+  {
     "skill_id": "generate-survey",
     "mode": "gold",
     "selected_source_ids": [

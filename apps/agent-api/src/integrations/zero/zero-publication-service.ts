@@ -10,7 +10,10 @@ import type {
   VisualAssetReference,
 } from '../../../../../packages/api-contract/research-deliverable.ts';
 import type { CurrentReportPackageReader } from '../../../../orchestrator-runtime/src/report/current-report-package-reader.ts';
-import type { ReportBlock } from '../../../../orchestrator-runtime/src/report/report-document-composer.ts';
+import type {
+  ReportBlock,
+  ReportDocument,
+} from '../../../../orchestrator-runtime/src/report/report-document-composer.ts';
 import type { VerifiedVisualAsset } from '../../../../orchestrator-runtime/src/report/visual-asset-service.ts';
 import type {
   ZeroIntegrationStatusResponse,
@@ -221,6 +224,49 @@ function assertMultimodal(
       'Zero publication requires a multimodal Report Package',
     );
   }
+}
+
+function reportDocumentWithContributionSummary(
+  report: Extract<CurrentReportPackageResponse, { presentationMode: 'multimodal' }>,
+): ReportDocument {
+  const summary = report.contributionSummary;
+  if (!summary) return report.reportDocument;
+  const contributors = summary.contributors;
+  const dispositionCounts = new Map<string, number>();
+  for (const contributor of contributors) {
+    for (const unit of contributor.units) {
+      dispositionCounts.set(unit.disposition, (dispositionCounts.get(unit.disposition) ?? 0) + 1);
+    }
+  }
+  const dispositionItems = [...dispositionCounts]
+    .filter(([, count]) => count > 0)
+    .map(([disposition, count]) => `${disposition}: ${count}`);
+  const items = [
+    `参与 Skill：${contributors.map(({ skillId }) => skillId).join('、') || '无'}`,
+    `贡献单元：${contributors.reduce((total, contributor) => total + contributor.unitCount, 0)}`,
+    ...(dispositionItems.length > 0 ? [`处置：${dispositionItems.join('；')}`] : []),
+    ...(contributors.some(({ contributionTypes }) => contributionTypes.includes('virtual_user_hypothesis'))
+      ? ['包含合成模拟证据；不代表真实用户研究。']
+      : []),
+    ...contributors.flatMap(({ limitations }) => limitations.map((limitation) => `局限：${limitation}`)),
+  ];
+  return {
+    ...report.reportDocument,
+    sections: [
+      ...report.reportDocument.sections,
+      {
+        id: 'multi-skill-contribution-summary',
+        title: 'Multi-Skill 贡献摘要',
+        questionIds: [],
+        prominence: 'appendix',
+        blocks: [{
+          id: 'multi-skill-contribution-summary-list',
+          type: 'list',
+          items,
+        }],
+      },
+    ],
+  };
 }
 
 export class ZeroPublicationService {
@@ -503,7 +549,7 @@ export class ZeroPublicationService {
       publication = await this.heartbeat(publication);
       publication = await this.update(publication, 'rendering_html', 30);
       const rendered = renderZeroReport({
-        document: report.reportDocument,
+        document: reportDocumentWithContributionSummary(report),
         publicationId: publication.id,
         visuals: transcoded.placements,
       });

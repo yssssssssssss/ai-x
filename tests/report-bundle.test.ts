@@ -41,7 +41,7 @@ interface MultimodalReportFixture {
 
 interface ReportBundleModule {
   createReportBundle(input: {
-    report: MultimodalReportFixture;
+    report: unknown;
     readAsset(input: { taskId: string; assetId: string }): Promise<{
       bytes: Uint8Array;
       mediaType: VisualAssetManifest['mediaType'];
@@ -505,6 +505,43 @@ test('Markdown bundle contains the complete safe report package and only exporta
   assert.equal(deliverable.secretToken, undefined, 'canonical export must whitelist reviewed Deliverable fields');
 });
 
+test('Multi-Skill ZIP adds only the reviewed Contribution Summary and Ledger sidecars', async () => {
+  const { createReportBundle } = await loadReportBundleModule();
+  const report = {
+    ...multimodalReport(),
+    crossSkillReview: {
+      version: 'cross-skill-review-v1' as const,
+      taskId,
+      planVersionId,
+      attemptId,
+      synthesisArtifactId: 'synthesis-1',
+      verdict: 'pass' as const,
+      issues: [],
+    },
+    contributionLedger: {
+      version: 'contribution-ledger-v1' as const,
+      taskId,
+      planVersionId,
+      attemptId,
+      entries: [],
+    },
+    contributionSummary: {
+      version: 'contribution-summary-v1' as const,
+      taskId,
+      planVersionId,
+      attemptId,
+      contributors: [],
+    },
+  };
+  const bundle = await unzip(await createReportBundle({ report, readAsset: assetReader([]) }));
+
+  assert.ok(bundle.entries['contribution-summary.json']);
+  assert.ok(bundle.entries['contribution-ledger.json']);
+  assert.equal(bundle.entries['raw-contributions.json'], undefined);
+  assert.deepEqual(JSON.parse(bundle.text('contribution-summary.json')), report.contributionSummary);
+  assert.deepEqual(JSON.parse(bundle.text('contribution-ledger.json')), report.contributionLedger);
+});
+
 test('Markdown uses deterministic relative image paths, sealed SVG references, and Chart table alternatives', async () => {
   const { createReportBundle } = await loadReportBundleModule();
   const bytes = await createReportBundle({ report: multimodalReport(), readAsset: assetReader([]) });
@@ -637,11 +674,55 @@ test('bundle bytes and filenames are deterministic across input manifest order a
   assert.deepEqual(entries, [...entries].sort(), 'ZIP entries must be emitted in stable lexical order');
 });
 
-test('bundle rejects non-multimodal and incomplete visual packages before reading assets', async () => {
+test('current-text research plan ZIP includes safe Contribution sidecars without visual assets', async () => {
+  const { createReportBundle } = await loadReportBundleModule();
+  const base = multimodalReport();
+  const reads: string[] = [];
+  const report = {
+    presentationMode: 'current_text',
+    deliverable: {
+      ...base.deliverable,
+      deliverableType: 'research_plan',
+      evidenceManifestArtifactId: 'evidence-manifest',
+      methodSummary: '使用可追溯材料设计研究计划。',
+      findingGraph: { findings: [], analyses: [], subQuestionSummaries: [], overallConclusions: [] },
+      recommendations: [],
+      coverage: { questionBindings: [], successCriterionBindings: [] },
+      risksAndOpenIssues: [],
+      capabilityProvenance: [],
+      payload: {
+        title: '研究计划', researchGoal: '验证购买障碍',
+        scope: { market: '中国', subjects: ['目标用户'], timeWindow: '本季度' },
+        competitorSampling: { strategy: '分层抽样', targetCount: 1, inclusionCriteria: ['可访问'], exclusionCriteria: [] },
+        researchQuestions: ['主要障碍是什么？'], comparisonDimensions: [], sourcePlan: [], executionPlan: [],
+        collectionTemplate: [], analysisMethods: [], deliverables: ['研究报告'], qualityChecks: [],
+      },
+    },
+    evidenceManifest: base.evidenceManifest,
+    reportReview: base.reportReview,
+    contributionSummary: {
+      version: 'contribution-summary-v1', taskId, planVersionId, attemptId,
+      contributors: [],
+    },
+    contributionLedger: {
+      version: 'contribution-ledger-v1', taskId, planVersionId, attemptId,
+      entries: [],
+    },
+  };
+  const bundle = await unzip(await createReportBundle({ report, readAsset: assetReader(reads) }));
+  assert.deepEqual(reads, []);
+  assert.equal(bundle.entries['report-document.json'], undefined);
+  assert.equal(bundle.entries['visual-assets.json'], undefined);
+  assert.ok(bundle.entries['contribution-summary.json']);
+  assert.ok(bundle.entries['contribution-ledger.json']);
+  assert.match(bundle.text('full-report.md'), /研究计划/u);
+});
+
+test('bundle rejects legacy and incomplete visual packages before reading assets', async () => {
   const { createReportBundle } = await loadReportBundleModule();
   const complete = multimodalReport();
 
-  for (const presentationMode of ['legacy_text', 'current_text'] as const) {
+  for (const presentationMode of ['legacy_text'] as const) {
     const reads: string[] = [];
     await assert.rejects(
       createReportBundle({
@@ -993,6 +1074,41 @@ test('Stage4 dispatches multimodal, research-plan text, and generic historical t
       assert.match(html, /历史结构化报告/u);
       assert.match(html, /Competitive Analysis Report/u);
       assert.match(html, /historical-competitive-payload/u);
+      if (presentationMode === 'current_text') {
+        const withContributions = {
+          ...historicalCompetitiveReport,
+          crossSkillReview: {
+            version: 'cross-skill-review-v1', taskId, planVersionId, attemptId,
+            synthesisArtifactId: 'synthesis-1', verdict: 'pass', issues: [],
+          },
+          contributionLedger: {
+            version: 'contribution-ledger-v1', taskId, planVersionId, attemptId, entries: [{
+              contributionArtifactId: 'contribution-1', invocationId: 'invocation-1',
+              sourceUnitKey: 'unit-1', sourceSemanticHash: `sha256:${'1'.repeat(64)}`,
+              disposition: 'included', canonicalNodeIds: ['summary-1'], reviewIssueIds: [],
+            }],
+          },
+          contributionSummary: {
+            version: 'contribution-summary-v1', taskId, planVersionId, attemptId, contributors: [{
+              invocationId: 'invocation-1', skillId: 'competitive-web-research',
+              contributionTypes: ['competitive_analysis'], unitCount: 1, limitations: [],
+              units: [{
+                sourceArtifactId: 'contribution-1', sourceUnitKey: 'unit-1', kind: 'finding',
+                title: 'Independent finding', statement: 'A reviewed independent conclusion.',
+                questionIds: ['question-1'], evidenceIds: ['E1'], status: 'supported', confidence: 0.8,
+                disposition: 'included', canonicalNodeIds: ['summary-1'],
+              }],
+              dispositions: [{ sourceUnitKey: 'unit-1', disposition: 'included', canonicalNodeIds: ['summary-1'] }],
+            }],
+          },
+        };
+        const contributionHtml = renderToStaticMarkup(react.createElement(CurrentStage4Report, {
+          report: withContributions,
+          taskState: 'completed',
+        }));
+        assert.match(contributionHtml, /Skill 独立贡献/u);
+        assert.match(contributionHtml, /A reviewed independent conclusion\./u);
+      }
     }
   } finally {
     if (priorReact === undefined) delete globals.React;

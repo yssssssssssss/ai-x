@@ -21,6 +21,46 @@ export interface ExecutionFlowStepInput {
   actor_type: string;
   actor_id: string;
   depends_on?: readonly number[];
+  skill_invocation_id?: string;
+  shared_stage_key?: string;
+  shared_by_invocation_ids?: readonly string[];
+}
+
+export interface ExecutionInvocationGroup {
+  id: string;
+  label: string;
+  shared: boolean;
+  stepNos: number[];
+  consumerInvocationIds: string[];
+}
+
+export function groupExecutionSteps(
+  steps: readonly ExecutionFlowStepInput[],
+): ExecutionInvocationGroup[] {
+  const groups = new Map<string, ExecutionInvocationGroup>();
+  for (const step of steps) {
+    const shared = typeof step.shared_stage_key === 'string';
+    const id = shared
+      ? step.shared_stage_key!
+      : step.skill_invocation_id ?? 'ungrouped';
+    const group = groups.get(id) ?? {
+      id,
+      label: shared
+        ? `Shared · ${step.actor_id}`
+        : step.skill_invocation_id ?? 'System / ungrouped',
+      shared,
+      stepNos: [],
+      consumerInvocationIds: [],
+    };
+    group.stepNos.push(step.step_no);
+    for (const invocationId of step.shared_by_invocation_ids ?? []) {
+      if (!group.consumerInvocationIds.includes(invocationId)) {
+        group.consumerInvocationIds.push(invocationId);
+      }
+    }
+    groups.set(id, group);
+  }
+  return [...groups.values()];
 }
 
 export interface ExecutionFlowLogInput {

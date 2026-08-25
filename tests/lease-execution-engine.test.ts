@@ -21,6 +21,10 @@ import {
   type LeaseExecutionResult,
 } from '../apps/orchestrator-runtime/src/control/lease-execution-engine.ts';
 import type {
+  CapabilityDemandGraphV1,
+  ResearchTaskV2,
+} from '../packages/api-contract/plan.ts';
+import type {
   ChartSpec,
   CurrentPlanStep,
   EvidenceRequirement,
@@ -41,6 +45,9 @@ import {
   type ReportReviewArtifact,
   type ReportReviewDimension,
 } from '../packages/api-contract/control-workflow.ts';
+import { PlanCompiler } from '../apps/orchestrator-runtime/src/planners/plan-compiler.ts';
+import type { CapabilityResolution } from '../apps/orchestrator-runtime/src/planners/capability-resolver.ts';
+import type { SkillPortfolioDecision } from '../apps/orchestrator-runtime/src/planners/capability-portfolio-resolver.ts';
 import { CurrentReportValidationError } from '../apps/orchestrator-runtime/src/evidence/report-evidence-validator.ts';
 import type {
   EvidenceArtifactResolver,
@@ -75,6 +82,7 @@ import {
 } from '../apps/orchestrator-runtime/src/report/report-composition-service.ts';
 import {
   LLMInvocationError,
+  MockLLMClient,
   type LLMClient,
   type LLMProviderIdentity,
   type LLMResult,
@@ -713,6 +721,88 @@ class ExpiringRealAdapter extends CountingRealTavilyAdapter {
   }
 }
 
+class RealSchemaFixtureLLM extends MockLLMClient {
+  readonly contexts: object[] = [];
+
+  constructor() {
+    super({
+      'reviewer-step-output': {
+        version: 'reviewer-step-output-v1',
+        review: 'No blocking conditions remain.',
+        verdict: 'pass',
+        conditions: [],
+      },
+    }, { name: 'pinned-model', version: 'pinned-model' });
+  }
+
+  override get identity(): LLMProviderIdentity {
+    return {
+      provider: 'gateway', endpointHost: 'llm.test', requestedModel: 'pinned-model',
+      mode: 'real', eligibleAsReal: true,
+    };
+  }
+
+  override async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
+    if (options.context) this.contexts.push(options.context);
+    const result = await super.generateStructured<T>(options);
+    if (options.schemaName === 'skill:research-strategy-synthesis') {
+      const support = {
+        questionIds: ['fixture-question'], evidenceIds: [], confidence: 0.6,
+        status: 'provisional', validationNeeded: 'Validate with primary users.',
+      };
+      return {
+        ...result,
+        data: {
+          version: 'skill-output-v2', status: 'succeeded', summary: 'Complete strategy draft.',
+          findings: [], assumptions: [], limitations: [], recommendations: [],
+          payload: {
+            schemaVersion: 'research-strategy-content-draft-v2',
+            title: 'Crowdfunding trust strategy', decisionContext: 'Choose the next product action.',
+            executiveAnswer: 'Lead with verifiable trust signals.',
+            methodSummary: 'Synthesized public evidence and a reviewed Contribution.',
+            directAnswers: [{
+              questionId: 'fixture-question', question: 'Which trust signals affect support decisions?',
+              answer: 'Trust signals should be explicit and verifiable.', answerStatus: 'provisional',
+              evidenceIds: [], confidence: 0.6, businessImplication: 'Reduce uncertainty.',
+              recommendedAction: 'Test a trust card.', validationNeeded: 'Validate with primary users.',
+            }],
+            evidenceFindings: [{
+              key: 'finding-trust', statement: 'Trust signals may affect support decisions.', support,
+            }],
+            contentBlocks: [{
+              key: 'map', kind: 'strategy_map', title: 'Trust strategy map',
+              rows: ['Trust'], columns: ['Support'], cells: [{
+                key: 'cell', row: 'Trust', column: 'Support',
+                statement: 'Expose verifiable trust evidence.', support,
+              }],
+            }],
+            limitations: ['Primary-user validation remains required.'], openQuestions: [],
+          },
+        } as T,
+      };
+    }
+    if (options.schemaName !== 'skill:competitive-web-research') return result;
+    return {
+      ...result,
+      data: {
+        version: 'skill-output-v2',
+        status: 'succeeded',
+        summary: 'Verified competitor contribution.',
+        findings: [{ id: 'market-1', statement: 'Crowdfunding trust signals affect support decisions.', confidence: 0.6 }],
+        assumptions: [],
+        limitations: ['Public evidence requires primary-user validation.'],
+        recommendations: ['Validate trust signals with target users.'],
+        payload: {},
+      } as T,
+    };
+  }
+
+  override async generateText(options: TextLLMCallOptions): Promise<TextLLMResult> {
+    if (options.context) this.contexts.push(options.context);
+    return super.generateText(options);
+  }
+}
+
 class CountingRealLLM implements LLMClient {
   readonly identity: LLMProviderIdentity = {
     provider: 'gateway',
@@ -1008,6 +1098,130 @@ const planSteps: CurrentPlanStep[] = [
   },
 ];
 
+function productionPortfolioFixture(): {
+  task: ResearchTaskV2;
+  plan: ReturnType<PlanCompiler['compilePortfolio']>['plan'];
+} {
+  const task: ResearchTaskV2 = {
+    version: 'research-task-v2', task_type: 'research_synthesis', outcome_mode: 'answer',
+    requested_artifacts: ['strategy_map'], business_domain: 'crowdfunding',
+    research_goal: 'Explain crowdfunding trust decisions.', target_audience: ['product team'],
+    scope: ['public sources'], constraints: [],
+    success_criteria: [{ id: 'fixture-criterion', statement: 'Answer the trust question.' }],
+    expected_deliverables: ['research_strategy_report'], assumptions: [], ambiguities: [],
+    clarification_questions: [], blocking_issues: [], sensitivity: 'public', pii_detected: false,
+  };
+  const problemGraph = {
+    version: 'problem-graph-v1' as const,
+    questions: [{
+      id: 'fixture-question', statement: 'Which trust signals affect support decisions?',
+      rationale: 'Decision support', priority: 'required' as const,
+      success_criterion_ids: ['fixture-criterion'],
+      evidence_requirements: [{
+        id: 'fixture-public-evidence', acceptedClasses: ['public_source' as const],
+        minimumCount: 1, required: true,
+      }],
+      acceptance_criteria: ['Use traceable public evidence.'], depends_on: [],
+    }],
+  };
+  const demandGraph: CapabilityDemandGraphV1 = {
+    version: 'capability-demand-graph-v1',
+    demands: [{
+      id: 'fixture-demand', type: 'competitive_analysis', questionIds: ['fixture-question'],
+      requestedArtifactTypes: ['strategy_map'], requiredEvidenceClasses: ['public_source'],
+      requiredInputRoles: ['research_goal'], priority: 'required',
+    }],
+  };
+  const skillLoader = new SkillLoader();
+  const web = skillLoader.listCapabilitySkills().find(({ id }) => id === 'competitive-web-research');
+  const synthesis = skillLoader.listCapabilitySkills().find(({ id }) => id === 'research-strategy-synthesis');
+  const synthesisContract = skillLoader.loadSkillExecution('research-strategy-synthesis');
+  assert.ok(web?.status === 'active' && synthesis?.status === 'active' && synthesisContract);
+  const sharedStage = synthesisContract.contract.stages.find(({ stage_id }) => stage_id === 'collect-public-evidence');
+  assert.ok(sharedStage?.actor_type === 'tool' && sharedStage.share_scope === 'plan');
+  const capabilityResolution: CapabilityResolution = {
+    eligible: [web, synthesis].map((skill) => ({
+      skill,
+      required_approvals: [],
+      reasons: [{ code: 'eligible' as const, message: 'fixture eligible' }],
+      pending_inputs: [],
+      optional_tool_decisions: [],
+    })),
+    rejected: [],
+  };
+  const portfolio: SkillPortfolioDecision = {
+    invocations: [{
+      invocationId: 'invocation:web', skillId: web.id, role: 'contributor',
+      demandIds: ['fixture-demand'], contributionTypes: ['competitive_analysis'],
+      questionIds: ['fixture-question'], requestedArtifactTypes: ['strategy_map'],
+      required: true, failurePolicy: 'block', estimatedSteps: 2,
+      reasonCodes: ['required_demand_coverage'],
+    }, {
+      invocationId: 'invocation:synthesis', skillId: synthesis.id, role: 'synthesizer',
+      demandIds: [], contributionTypes: ['strategy'], questionIds: ['fixture-question'],
+      requestedArtifactTypes: ['strategy_map'], required: true, failurePolicy: 'block',
+      estimatedSteps: 2, reasonCodes: ['deliverable_policy_owner'],
+    }],
+    demandCoverage: [{
+      demandId: 'fixture-demand', demandType: 'competitive_analysis', ownerSkillId: web.id,
+      corroboratorSkillIds: [], questionIds: ['fixture-question'],
+      requestedArtifactTypes: ['strategy_map'], required: true,
+    }],
+    rejected: [],
+    sharedPrerequisites: [{
+      capabilityType: 'tool', capabilityId: 'tavily-web-search',
+      consumerSkillIds: [web.id, synthesis.id],
+    }],
+    estimatedBudget: {
+      profileId: 'depth', maxSteps: 8, estimatedSteps: 3,
+      selectedContributorCount: 1, selectedSkillCount: 2,
+      requiredDemandCount: 1, optionalDemandCount: 0,
+    },
+  };
+  const steps: CurrentPlanStep[] = [{
+    step_no: 1, step_name: sharedStage.title, actor_type: sharedStage.actor_type,
+    actor_id: sharedStage.actor_id, question_ids: ['fixture-question'], depends_on: [],
+    input: structuredClone(sharedStage.input), input_bindings: [],
+    expected_outputs: structuredClone(sharedStage.expected_outputs),
+    acceptance_criteria: [...sharedStage.acceptance_criteria], requires_approval: false,
+    fallback_actor_ids: [],
+  }, {
+    step_no: 2, step_name: 'Competitive contribution', actor_type: 'skill', actor_id: web.id,
+    question_ids: ['fixture-question'], depends_on: [1], input: { research_goal: task.research_goal },
+    input_bindings: [], expected_outputs: [{ pointer: '/payload', description: 'Contribution' }],
+    acceptance_criteria: ['Produce a contribution.'], requires_approval: false, fallback_actor_ids: [],
+  }, {
+    step_no: 3, step_name: 'Strategy synthesis', actor_type: 'skill', actor_id: synthesis.id,
+    question_ids: ['fixture-question'], depends_on: [2], input: { research_goal: task.research_goal },
+    input_bindings: [], expected_outputs: [{ pointer: '/payload', description: 'Synthesis' }],
+    acceptance_criteria: ['Answer the question.'], requires_approval: false, fallback_actor_ids: [],
+  }];
+  const compiled = new PlanCompiler().compilePortfolio({
+    candidate: {
+      id: 'depth', title: 'Portfolio execution fixture', rationale: 'Exercise Plan v3.',
+      tradeoffs: 'Fixture', steps, assumptions: [], activated_nodes: [],
+    },
+    task,
+    deliverable_selection: {
+      deliverableId: 'research_strategy_report',
+      evidenceRequirements: [{
+        id: 'fixture-public-evidence', acceptedClasses: ['public_source'], minimumCount: 1, required: true,
+      }],
+    },
+    problem_graph: problemGraph,
+    problem_graph_provenance: {
+      receiptId: '11111111-1111-4111-8111-111111111111', modelName: 'fixture',
+      modelVersion: 'v1', promptHash: 'sha256:fixture', traceId: 'trace-fixture',
+    },
+    capability_resolution: capabilityResolution,
+    evidence_requirements: [{
+      id: 'fixture-public-evidence', acceptedClasses: ['public_source'], minimumCount: 1, required: true,
+    }],
+    capability_demand_graph: demandGraph, portfolio, activated_nodes: [], skillLoader,
+  });
+  return { task, plan: compiled.plan };
+}
+
 function browserCaptureStep(): CurrentPlanStep {
   return {
     step_no: 2,
@@ -1218,6 +1432,48 @@ async function expireLease(
   await repository.expireExecutionLease({ taskId: lease.taskId, attemptId: lease.attemptId });
 }
 
+
+test('Plan v3 executes a real shared Tool, seals a Contributor and Bundle, then runs the Synthesizer', async () => {
+  const fixture = productionPortfolioFixture();
+  const { task_id: _taskId, steps, ...planExtras } = fixture.plan;
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    steps,
+    planExtras,
+    fixture.task as unknown as Record<string, unknown>,
+  );
+  const adapter = new CountingRealTavilyAdapter();
+  const llm = new RealSchemaFixtureLLM();
+  const deliverables = new RecordingDeliverablesFake();
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(adapter),
+    llm,
+    deliverables,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed', JSON.stringify(result));
+  assert.equal(adapter.calls, 1, 'shared Tavily must execute once');
+  assert.equal(deliverables.calls.length, 1);
+  const executionSteps = await repository.listExecutionSteps(lease.attemptId);
+  const contributorStep = executionSteps.find(({ actorId }) => actorId === 'competitive-web-research');
+  assert.equal(contributorStep?.state, 'succeeded');
+  assert.ok(contributorStep?.outputArtifactId);
+  const contributionArtifact = await repository.getArtifact(contributorStep.outputArtifactId!);
+  assert.equal(contributionArtifact?.kind, 'research_contribution');
+  assert.equal(contributionArtifact?.state, 'SEALED');
+  const artifacts = await repository.listArtifactsForAttempt({
+    taskId: lease.taskId,
+    planVersionId: lease.planVersionId,
+    attemptId: lease.attemptId,
+  });
+  const bundle = artifacts.find(({ kind }) => kind === 'research_contribution_bundle');
+  assert.equal(bundle?.state, 'SEALED');
+  assert.match(JSON.stringify(llm.contexts), /contribution_bundle_artifact/u);
+  assert.ok(executionSteps.some(({ actorId, state }) => (
+    actorId === 'research-strategy-synthesis' && state === 'succeeded'
+  )));
+});
 
 test('rejects an invalid lease before Tool or LLM side effects', async () => {
   const { repository, lease } = await claimedExecution();

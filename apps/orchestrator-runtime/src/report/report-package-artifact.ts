@@ -20,6 +20,9 @@ export interface ReportPackageArtifactValue {
   reportDocumentArtifactId?: string;
   reportLayoutBlueprintArtifactId?: string;
   reportLayoutDiagnosticArtifactId?: string;
+  crossSkillReviewArtifactId?: string;
+  contributionLedgerArtifactId?: string;
+  contributionSummaryArtifactId?: string;
 }
 
 type ReportPackageArtifactStore = Pick<
@@ -76,12 +79,24 @@ export function parseReportPackageArtifactValue(value: unknown): ReportPackageAr
     ...(candidate.reportLayoutDiagnosticArtifactId === undefined
       ? {}
       : { reportLayoutDiagnosticArtifactId: nonBlank(candidate.reportLayoutDiagnosticArtifactId, 'reportLayoutDiagnosticArtifactId') }),
+    ...(candidate.crossSkillReviewArtifactId === undefined
+      ? {}
+      : { crossSkillReviewArtifactId: nonBlank(candidate.crossSkillReviewArtifactId, 'crossSkillReviewArtifactId') }),
+    ...(candidate.contributionLedgerArtifactId === undefined
+      ? {}
+      : { contributionLedgerArtifactId: nonBlank(candidate.contributionLedgerArtifactId, 'contributionLedgerArtifactId') }),
+    ...(candidate.contributionSummaryArtifactId === undefined
+      ? {}
+      : { contributionSummaryArtifactId: nonBlank(candidate.contributionSummaryArtifactId, 'contributionSummaryArtifactId') }),
   };
   if (presentationMode === 'legacy_text' && (
     parsed.reportReviewArtifactId !== undefined
     || parsed.reportDocumentArtifactId !== undefined
     || parsed.reportLayoutBlueprintArtifactId !== undefined
     || parsed.reportLayoutDiagnosticArtifactId !== undefined
+    || parsed.crossSkillReviewArtifactId !== undefined
+    || parsed.contributionLedgerArtifactId !== undefined
+    || parsed.contributionSummaryArtifactId !== undefined
   )) {
     throw new Error('legacy Report Package must not reference review-gated components');
   }
@@ -102,6 +117,14 @@ export function parseReportPackageArtifactValue(value: unknown): ReportPackageAr
     && parsed.reportDocumentArtifactId === undefined
   ) {
     throw new Error('Report Package cannot reference layout artifacts without a ReportDocument');
+  }
+  const contributionComponentCount = [
+    parsed.crossSkillReviewArtifactId,
+    parsed.contributionLedgerArtifactId,
+    parsed.contributionSummaryArtifactId,
+  ].filter((value) => value !== undefined).length;
+  if (contributionComponentCount !== 0 && contributionComponentCount !== 3) {
+    throw new Error('Report Package contribution component set is incomplete');
   }
   return parsed;
 }
@@ -138,6 +161,9 @@ export class ReportPackageArtifactService {
     reportDocumentArtifactId?: string;
     reportLayoutBlueprintArtifactId?: string;
     reportLayoutDiagnosticArtifactId?: string;
+    crossSkillReviewArtifactId?: string;
+    contributionLedgerArtifactId?: string;
+    contributionSummaryArtifactId?: string;
   }): Promise<ControlArtifact> {
     const value = parseReportPackageArtifactValue({
       version: REPORT_PACKAGE_SCHEMA_VERSION,
@@ -159,6 +185,15 @@ export class ReportPackageArtifactService {
       ...(input.reportLayoutDiagnosticArtifactId === undefined
         ? {}
         : { reportLayoutDiagnosticArtifactId: input.reportLayoutDiagnosticArtifactId }),
+      ...(input.crossSkillReviewArtifactId === undefined
+        ? {}
+        : { crossSkillReviewArtifactId: input.crossSkillReviewArtifactId }),
+      ...(input.contributionLedgerArtifactId === undefined
+        ? {}
+        : { contributionLedgerArtifactId: input.contributionLedgerArtifactId }),
+      ...(input.contributionSummaryArtifactId === undefined
+        ? {}
+        : { contributionSummaryArtifactId: input.contributionSummaryArtifactId }),
     });
     const artifact = await this.artifacts.writeJson({
       taskId: input.activeLease.taskId,
@@ -208,6 +243,15 @@ export class ReportPackageArtifactService {
       ...(value.reportLayoutDiagnosticArtifactId === undefined
         ? []
         : [{ artifactId: value.reportLayoutDiagnosticArtifactId, kind: 'deliverable_validation_diagnostic' }]),
+      ...(value.crossSkillReviewArtifactId === undefined
+        ? []
+        : [{ artifactId: value.crossSkillReviewArtifactId, kind: 'cross_skill_review' }]),
+      ...(value.contributionLedgerArtifactId === undefined
+        ? []
+        : [{ artifactId: value.contributionLedgerArtifactId, kind: 'contribution_ledger' }]),
+      ...(value.contributionSummaryArtifactId === undefined
+        ? []
+        : [{ artifactId: value.contributionSummaryArtifactId, kind: 'contribution_summary' }]),
     ];
     const verifiedComponents = await Promise.all(
       components.map(({ artifactId }) => this.artifacts.readVerifiedBoundJson<unknown>(artifactId)),
@@ -220,6 +264,33 @@ export class ReportPackageArtifactService {
         kind: expected.kind,
         binding: value,
       });
+      if (expected.kind === 'cross_skill_review') {
+        if (component.artifact.schemaVersion !== 'cross-skill-review-v1') {
+          throw new Error('Report Package Cross-Skill Review schema version is invalid');
+        }
+        PACKAGE_COMPONENT_VALIDATOR.validateFileOrThrow(
+          'schemas/cross-skill-review-v1.schema.json',
+          component.value,
+        );
+      }
+      if (expected.kind === 'contribution_ledger') {
+        if (component.artifact.schemaVersion !== 'contribution-ledger-v1') {
+          throw new Error('Report Package Contribution Ledger schema version is invalid');
+        }
+        PACKAGE_COMPONENT_VALIDATOR.validateFileOrThrow(
+          'schemas/contribution-ledger-v1.schema.json',
+          component.value,
+        );
+      }
+      if (expected.kind === 'contribution_summary') {
+        if (component.artifact.schemaVersion !== 'contribution-summary-v1') {
+          throw new Error('Report Package Contribution Summary schema version is invalid');
+        }
+        PACKAGE_COMPONENT_VALIDATOR.validateFileOrThrow(
+          'schemas/contribution-summary-v1.schema.json',
+          component.value,
+        );
+      }
       if (expected.kind === 'report_layout_blueprint') {
         if (component.artifact.schemaVersion !== 'report-layout-blueprint-v1') {
           throw new Error('Report Package layout Blueprint schema version is invalid');

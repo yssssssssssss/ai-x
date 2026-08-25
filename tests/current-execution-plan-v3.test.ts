@@ -58,6 +58,37 @@ function validPlan(): CurrentExecutionPlanV3 {
         priority: 'required',
       }],
     },
+    portfolio_summary: {
+      profile_id: 'depth',
+      selected: [
+        {
+          invocation_id: 'invocation-market',
+          skill_id: 'competitive-web-research',
+          role: 'contributor',
+          reason_codes: ['required_demand_coverage'],
+          estimated_steps: 1,
+        },
+        {
+          invocation_id: 'invocation-synthesis',
+          skill_id: 'research-strategy-synthesis',
+          role: 'synthesizer',
+          reason_codes: ['deliverable_policy_owner'],
+          estimated_steps: 1,
+        },
+      ],
+      rejected: [],
+      shared_prerequisites: [],
+      estimated_budget: {
+        max_steps: 8,
+        estimated_steps: 2,
+        selected_contributor_count: 1,
+        selected_skill_count: 2,
+        required_demand_count: 1,
+        optional_demand_count: 0,
+        expanded_step_count: 2,
+        expanded_step_limit: 8,
+      },
+    },
     capability_decisions: { eligible: [], rejected: [] },
     skill_invocations: [
       {
@@ -236,6 +267,54 @@ test('CurrentExecutionPlan v3 rejects unknown or inconsistent owners and duplica
   ]);
 });
 
+test('CurrentExecutionPlan v3 rejects unknown and cyclic invocation dependencies', () => {
+  const unknown = validPlan();
+  unknown.skill_invocations[0]!.depends_on_invocation_ids = ['invocation-missing'];
+  expectPlanError(unknown, 'unknown_invocation_dependency', [
+    'invocation-market',
+    'invocation-missing',
+  ]);
+
+  const cyclic = validPlan();
+  cyclic.skill_invocations[0]!.depends_on_invocation_ids = ['invocation-synthesis'];
+  expectPlanError(cyclic, 'invocation_dependency_cycle', [
+    'invocation-market',
+    'invocation-synthesis',
+  ]);
+});
+
+test('CurrentExecutionPlan v3 requires Synthesizer dependency on every required Contributor', () => {
+  const plan = validPlan();
+  plan.skill_invocations[1]!.depends_on_invocation_ids = [];
+  expectPlanError(plan, 'missing_required_contributor_dependency', [
+    'invocation-synthesis',
+    'invocation-market',
+  ]);
+});
+
+test('CurrentExecutionPlan v3 rejects binding, step ownership, and topology drift', () => {
+  const binding = validPlan();
+  binding.steps[1]!.depends_on = [];
+  expectPlanError(binding, 'invalid_binding_dependency', ['2', '1']);
+
+  const ownership = validPlan();
+  ownership.skill_invocations[0]!.step_nos = [2];
+  expectPlanError(ownership, 'invalid_invocation_step', ['invocation-market', '2']);
+
+  const topology = validPlan();
+  topology.steps[0]!.depends_on = [2];
+  expectPlanError(topology, 'invalid_step_topology', ['1']);
+});
+
+test('CurrentExecutionPlan v3 rejects forged shared-stage consumers and fingerprints', () => {
+  const plan = validPlan();
+  plan.steps[0]!.shared_stage_key = 'shared:tool:evidence';
+  plan.steps[0]!.shared_by_invocation_ids = ['invocation-market', 'invocation-synthesis'];
+  plan.steps[0]!.share_fingerprint = `sha256:${'0'.repeat(64)}`;
+  plan.skill_invocations[1]!.step_nos.push(1);
+  expectPlanError(plan, 'invalid_shared_stage', ['shared:tool:evidence', '1']);
+});
+
 test('CurrentExecutionPlan v3 requires blocking policy for required owners and the synthesizer', () => {
   const optionalOwner = validPlan();
   optionalOwner.skill_invocations[0]!.required = false;
@@ -255,5 +334,6 @@ test('legacy v1 and compiled v2 plans still use the existing schema', () => {
   delete legacy.skill_invocations;
   delete legacy.capability_demand_graph;
   delete legacy.contribution_requirements;
+  delete legacy.portfolio_summary;
   assert.deepEqual(validator.validate('current-execution-plan', legacy), []);
 });

@@ -65,8 +65,10 @@ skills:
       compatible_deliverables: [competitive_analysis_report, research_strategy_report]
       contribution_types: [market_landscape, competitive_analysis]
       contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
       required_input_roles: [research_goal]
       optional_input_roles: [public_evidence]
+      shareable_prerequisites: [tavily-web-search]
   - id: competitive-app-analysis
     name: 竞品分析·App截图
     path: skills/competitive-analysis/app-analysis/SKILL.md
@@ -175,13 +177,15 @@ skills:
       - tavily-web-search
     status: active
     composition:
-      modes: [standalone, contributor]
+      modes: [standalone, contributor, synthesizer]
       supported_outcomes: [answer]
       compatible_deliverables: [accessibility_audit_report, design_audit_report]
       contribution_types: [accessibility]
       contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
       required_input_roles: [research_goal]
       optional_input_roles: [designImage, page_url]
+      shareable_prerequisites: [tavily-web-search]
   - id: analyze-satisfaction
     name: analyze-satisfaction
     path: knowledge-base/skills/analyze-satisfaction
@@ -212,6 +216,7 @@ skills:
       compatible_deliverables: [voc_diagnosis_report, research_strategy_report]
       contribution_types: [satisfaction]
       contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
       required_input_roles: [analytics_dataset]
       optional_input_roles: [research_goal]
   - id: build-experience-metrics
@@ -244,6 +249,7 @@ skills:
       compatible_deliverables: [research_plan, research_strategy_report]
       contribution_types: [metrics]
       contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
       required_input_roles: [research_goal]
       optional_input_roles: [analytics_dataset]
   - id: code-open-feedback
@@ -273,8 +279,10 @@ skills:
       compatible_deliverables: [voc_diagnosis_report, research_strategy_report]
       contribution_types: [voc]
       contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
       required_input_roles: [user_materials]
       optional_input_roles: [research_goal]
+      shareable_prerequisites: [tavily-web-search]
   - id: competitive-analysis
     name: competitive-analysis
     path: knowledge-base/skills/competitive-analysis
@@ -300,11 +308,12 @@ skills:
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
     composition:
-      modes: [standalone, contributor]
+      modes: [standalone, contributor, synthesizer]
       supported_outcomes: [answer]
       compatible_deliverables: [competitive_analysis_report, research_strategy_report]
       contribution_types: [competitive_analysis]
       contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
       required_input_roles: [research_goal]
       optional_input_roles: [public_evidence, user_materials]
   - id: conversion-funnel-analysis
@@ -337,6 +346,7 @@ skills:
       compatible_deliverables: [research_plan, research_strategy_report]
       contribution_types: [funnel]
       contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
       required_input_roles: [research_goal]
       optional_input_roles: [analytics_dataset]
   - id: feature-adoption-analysis
@@ -367,6 +377,7 @@ skills:
       compatible_deliverables: [research_plan, research_strategy_report]
       contribution_types: [feature_adoption]
       contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
       required_input_roles: [research_goal]
       optional_input_roles: [analytics_dataset]
   - id: generate-interview-guide
@@ -416,6 +427,7 @@ skills:
       compatible_deliverables: [research_strategy_report]
       contribution_types: [persona]
       contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
       required_input_roles: [research_goal]
       optional_input_roles: [user_materials, qualitative_insights]
   - id: generate-research-plan
@@ -446,6 +458,32 @@ skills:
       contribution_schema: schemas/research-contribution-v1.schema.json
       required_input_roles: [research_goal]
       optional_input_roles: [contribution_bundle]
+      shareable_prerequisites: [tavily-web-search]
+  - id: virtual-user-research
+    name: 虚拟用户假设研究
+    path: skills/virtual-user-research/SKILL.md
+    when_to_use: 用户明确允许虚拟用户或 synthetic user 模拟，用于形成待真实用户验证的 Persona、动机、体验与策略假设。
+    owner: 用研团队
+    status: active
+    task_types:
+      - research_synthesis
+    inputs:
+      - research_goal
+    outputs:
+      - virtual_user_hypothesis
+    output_schema: schemas/skill-result-envelope.schema.json
+    required_tools:
+      - virtual-user-lab
+    risk_level: low
+    composition:
+      modes: [standalone, contributor]
+      supported_outcomes: [answer]
+      compatible_deliverables: [research_strategy_report]
+      contribution_types: [virtual_user_hypothesis]
+      contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: virtual-user-tool-v1
+      required_input_roles: [research_goal]
+      optional_input_roles: [target_audience]
   - id: research-strategy-synthesis
     name: 研究策略综合
     path: skills/research-strategy-synthesis/SKILL.md
@@ -469,10 +507,11 @@ skills:
       modes: [standalone, synthesizer]
       supported_outcomes: [answer]
       compatible_deliverables: [research_strategy_report]
-      contribution_types: [strategy, action_plan]
+      contribution_types: [qualitative_insight, strategy, action_plan]
       contribution_schema: schemas/research-contribution-v1.schema.json
       required_input_roles: [research_goal]
       optional_input_roles: [contribution_bundle]
+      shareable_prerequisites: [tavily-web-search]
   - id: generate-survey
     name: generate-survey
     path: knowledge-base/skills/generate-survey
@@ -551,6 +590,7 @@ skills:
       compatible_deliverables: [research_strategy_report, voc_diagnosis_report, design_audit_report]
       contribution_types: [prioritization]
       contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
       required_input_roles: [issue_inventory]
       optional_input_roles: [research_goal]
   - id: jobs-to-be-done
@@ -584,6 +624,7 @@ skills:
       compatible_deliverables: [research_strategy_report]
       contribution_types: [jobs_to_be_done]
       contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
       required_input_roles: [research_goal]
       optional_input_roles: [user_materials, qualitative_insights]
   - id: journey-map
@@ -618,6 +659,7 @@ skills:
       compatible_deliverables: [research_strategy_report, voc_diagnosis_report]
       contribution_types: [journey]
       contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
       required_input_roles: [research_goal]
       optional_input_roles: [user_materials, persona]
   - id: run-heuristic-evaluation
@@ -641,11 +683,12 @@ skills:
     output_schema: schemas/skill-result-envelope.schema.json
     status: active
     composition:
-      modes: [standalone, contributor]
+      modes: [standalone, contributor, synthesizer]
       supported_outcomes: [answer]
-      compatible_deliverables: [design_audit_report]
+      compatible_deliverables: [design_audit_report, accessibility_audit_report]
       contribution_types: [design_audit]
       contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
       required_input_roles: [research_goal]
       optional_input_roles: [designImage, page_url]
   - id: solution-generation
@@ -704,10 +747,11 @@ skills:
     status: active
     payload_schema: knowledge-base/skills/synthesize-qualitative-insights/output.schema.json
     composition:
-      modes: [standalone, contributor]
+      modes: [standalone, contributor, synthesizer]
       supported_outcomes: [answer]
       compatible_deliverables: [research_strategy_report, voc_diagnosis_report]
-      contribution_types: [qualitative_insight]
+      contribution_types: [voc, qualitative_insight]
       contribution_schema: schemas/research-contribution-v1.schema.json
+      contribution_adapter: skill-envelope-provisional-v1
       required_input_roles: [user_materials]
       optional_input_roles: [research_goal]

@@ -58,6 +58,7 @@ stages:
     title: 加载研究规范
     actor_type: knowledge
     actor_id: knowledge.index
+    share_scope: plan
     depends_on: []
     input: {}
     input_bindings: []
@@ -71,6 +72,7 @@ stages:
     title: 检索外部研究背景
     actor_type: tool
     actor_id: tavily-web-search
+    share_scope: plan
     depends_on: []
     input:
       query: research goal public evidence
@@ -155,7 +157,9 @@ stages:
     actor_id: generate-research-plan
     depends_on: [load-standards, external-context, align-brief, select-methods, design-sampling-and-schedule]
     input:
-      instruction: Compose the final structured research plan from verified stage outputs.
+      instruction: Compose the final structured research plan from verified stage outputs. When a research-contribution-bundle-v1 is present, preserve its method and measurement contributions and do not repeat Contributor-owned analysis.
+      contribution_bundle: null
+      contribution_order: []
       knowledge: null
       brief: null
       methods: null

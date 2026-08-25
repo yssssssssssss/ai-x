@@ -97,6 +97,7 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
     approvalSubmitting,
     planRecovery,
     revisionSubmitting,
+    cancelSubmitting,
   } = flow;
   useEffect(() => {
     if (stateVersion != null) refreshHistory();
@@ -236,7 +237,11 @@ export function Workbench({ user, capabilities, onLogout }: { user: User; capabi
                     {executionPlanSteps.length > 0 && (
                       <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase={phase} />
                     )}
-                    <RunningTaskNotice phase={phase} />
+                    <RunningTaskNotice
+                      phase={phase}
+                      cancelling={cancelSubmitting}
+                      onCancel={() => void flow.cancelExecution()}
+                    />
                     {error && <ErrorCard msg={error} />}
                   </>
                 )}
@@ -579,7 +584,15 @@ function PlanRecoveryNotice({
   );
 }
 
-function RunningTaskNotice({ phase }: { phase: 'executing' | 'reviewing' | 'composing-report' }) {
+function RunningTaskNotice({
+  phase,
+  cancelling,
+  onCancel,
+}: {
+  phase: 'executing' | 'reviewing' | 'composing-report';
+  cancelling: boolean;
+  onCancel: () => void;
+}) {
   const content = {
     executing: ['任务执行中', '正在按计划调用能力并记录执行结果。'],
     reviewing: ['质量复核中', '执行已完成，正在检查证据覆盖与报告质量。'],
@@ -589,10 +602,13 @@ function RunningTaskNotice({ phase }: { phase: 'executing' | 'reviewing' | 'comp
     <section className="stage-card" aria-live="polite">
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span className="spinner" />
-        <div>
+        <div style={{ flex: 1 }}>
           <h3 style={{ margin: 0, fontSize: 15 }}>{content[0]}</h3>
           <p style={{ margin: '3px 0 0', color: 'var(--text-dim)', fontSize: 13 }}>{content[1]}</p>
         </div>
+        <button type="button" className="btn-ghost" onClick={onCancel} disabled={cancelling}>
+          {cancelling ? '正在取消…' : '取消任务'}
+        </button>
       </div>
     </section>
   );

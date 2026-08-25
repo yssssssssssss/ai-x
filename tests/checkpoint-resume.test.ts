@@ -80,6 +80,7 @@ type ResumeRequest = {
   planVersionId: string;
   idempotencyKey: string;
   currentFingerprints: Record<string, StepFingerprint>;
+  targetStepKeys?: readonly string[];
 };
 
 type ResumeResult = {
@@ -318,6 +319,85 @@ test('reruns downstream dependants when a previously reusable dependency changes
   await resolver.resume(request(currentFingerprints));
 
   assert.deepEqual(calls.map((call) => call.key), ['collect', 'normalize', 'report']);
+});
+
+test('reuses an unaffected sibling branch and reruns only the invalid branch plus its descendants', async () => {
+  const { store } = fixture();
+  const prior: CheckpointAttempt = {
+    id: 'attempt-1',
+    taskId: 'task-23',
+    planVersionId: 'plan-1',
+    retryOf: null,
+    steps: [
+      checkpointStep('root', 'succeeded', { dependsOn: [] }),
+      checkpointStep('contributor-a', 'failed', { dependsOn: ['root'] }),
+      checkpointStep('contributor-b', 'succeeded', { dependsOn: ['root'] }),
+      checkpointStep('synthesis', 'pending', { dependsOn: ['contributor-a', 'contributor-b'] }),
+    ],
+  };
+  store.attempts.set(prior.id, prior);
+  for (const key of ['root', 'contributor-b']) {
+    store.artifacts.set(`artifact-${key}`, {
+      id: `artifact-${key}`,
+      state: 'SEALED',
+      contentSha256: `sha256:${key}`,
+      byteSize: 128,
+    });
+  }
+  const currentFingerprints = Object.fromEntries(
+    prior.steps.map((step) => [step.key, step.fingerprint]),
+  );
+  const calls: Array<{ key: string; context: StepExecutionContext }> = [];
+  const resolver = await loadResolver(store, calls);
+
+  const result = await resolver.resume(request(currentFingerprints));
+
+  assert.deepEqual(result.reusableCheckpoints.map(({ stepKey }) => stepKey), [
+    'root',
+    'contributor-b',
+  ]);
+  assert.deepEqual(result.executedStepKeys, ['contributor-a', 'synthesis']);
+});
+
+test('targeted retry invalidates only the selected Contributor and its descendants', async () => {
+  const { store } = fixture();
+  const prior: CheckpointAttempt = {
+    id: 'attempt-1',
+    taskId: 'task-23',
+    planVersionId: 'plan-1',
+    retryOf: null,
+    steps: [
+      checkpointStep('root', 'succeeded', { dependsOn: [] }),
+      checkpointStep('contributor-a', 'succeeded', { dependsOn: ['root'] }),
+      checkpointStep('contributor-b', 'succeeded', { dependsOn: ['root'] }),
+      checkpointStep('synthesis', 'succeeded', { dependsOn: ['contributor-a', 'contributor-b'] }),
+    ],
+  };
+  store.attempts.set(prior.id, prior);
+  for (const step of prior.steps) {
+    store.artifacts.set(`artifact-${step.key}`, {
+      id: `artifact-${step.key}`,
+      state: 'SEALED',
+      contentSha256: `sha256:${step.key}`,
+      byteSize: 128,
+    });
+  }
+  const currentFingerprints = Object.fromEntries(
+    prior.steps.map((step) => [step.key, step.fingerprint]),
+  );
+  const calls: Array<{ key: string; context: StepExecutionContext }> = [];
+  const resolver = await loadResolver(store, calls);
+
+  const result = await resolver.resume({
+    ...request(currentFingerprints),
+    targetStepKeys: ['contributor-a'],
+  });
+
+  assert.deepEqual(result.reusableCheckpoints.map(({ stepKey }) => stepKey), [
+    'root',
+    'contributor-b',
+  ]);
+  assert.deepEqual(result.executedStepKeys, ['contributor-a', 'synthesis']);
 });
 
 test('persists retry_of lineage on the new attempt', async () => {

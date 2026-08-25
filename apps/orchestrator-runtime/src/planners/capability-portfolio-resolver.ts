@@ -111,6 +111,7 @@ export interface CapabilityPortfolioResolveInput {
   profile: { id: CandidateProfile; max_steps: number };
   availableInputRoles: readonly string[];
   stepEstimates?: Readonly<Record<string, number>>;
+  shareableKnowledgeBySkill?: Readonly<Record<string, readonly string[]>>;
 }
 
 const TYPE_TERMS: Readonly<Partial<Record<ContributionType, readonly string[]>>> = {
@@ -227,6 +228,7 @@ function eligibleContributorCandidates(
     }
     if (
       !composition.modes.includes('contributor')
+      || !composition.contribution_adapter
       || !composition.supported_outcomes.includes(outcome(input.task))
       || !composition.compatible_deliverables.includes(input.deliverableId)
     ) {
@@ -356,23 +358,46 @@ function selectMinimumRequiredCoverage(
 
 function selectedSharedPrerequisites(
   selected: readonly ContributorCandidate[],
+  shareableKnowledgeBySkill: Readonly<Record<string, readonly string[]>> = {},
 ): SharedPrerequisiteDecision[] {
-  const consumersByTool = new Map<string, string[]>();
+  const consumersByCapability = new Map<string, { capabilityType: 'tool' | 'knowledge'; consumers: string[] }>();
+  const append = (capabilityType: 'tool' | 'knowledge', capabilityId: string, skillId: string): void => {
+    const key = `${capabilityType}:${capabilityId}`;
+    const entry = consumersByCapability.get(key) ?? { capabilityType, consumers: [] };
+    entry.consumers.push(skillId);
+    consumersByCapability.set(key, entry);
+  };
   for (const candidate of selected) {
+    const skillId = candidate.decision.skill.id;
+    const shareable = new Set(
+      resolveSkillComposition(candidate.decision.skill).shareable_prerequisites ?? [],
+    );
     for (const toolId of candidate.decision.skill.required_tools) {
-      const consumers = consumersByTool.get(toolId) ?? [];
-      consumers.push(candidate.decision.skill.id);
-      consumersByTool.set(toolId, consumers);
+      if (shareable.has(toolId)) append('tool', toolId, skillId);
+    }
+    for (const knowledgeId of shareableKnowledgeBySkill[skillId] ?? []) {
+      append('knowledge', knowledgeId, skillId);
     }
   }
-  return [...consumersByTool]
-    .filter(([, consumers]) => consumers.length > 1)
+  return [...consumersByCapability]
+    .filter(([, { consumers }]) => consumers.length > 1)
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(([capabilityId, consumerSkillIds]) => ({
-      capabilityType: 'tool' as const,
-      capabilityId,
-      consumerSkillIds: [...consumerSkillIds].sort((left, right) => left.localeCompare(right)),
+    .map(([key, { capabilityType, consumers }]) => ({
+      capabilityType,
+      capabilityId: key.slice(key.indexOf(':') + 1),
+      consumerSkillIds: [...consumers].sort((left, right) => left.localeCompare(right)),
     }));
+}
+
+function estimatedSelectionSteps(
+  selected: readonly ContributorCandidate[],
+  shareableKnowledgeBySkill: Readonly<Record<string, readonly string[]>> = {},
+): number {
+  const total = selected.reduce((sum, candidate) => sum + candidate.estimatedSteps, 0);
+  const sharedSavings = selectedSharedPrerequisites(selected, shareableKnowledgeBySkill)
+    .filter(({ capabilityType }) => capabilityType === 'tool')
+    .reduce((sum, prerequisite) => sum + Math.max(0, prerequisite.consumerSkillIds.length - 1), 0);
+  return total - sharedSavings;
 }
 
 export function portfolioActorValidationIssues(
@@ -462,8 +487,10 @@ export class CapabilityPortfolioResolver {
       }
     }
 
-    const synthesizerSteps = stepEstimate(input, synthesizer.skill.id);
-    let estimatedSteps = selected.reduce((sum, item) => sum + item.estimatedSteps, synthesizerSteps);
+    let estimatedSteps = estimatedSelectionSteps(
+      [...selected, synthesizerCoverage],
+      input.shareableKnowledgeBySkill,
+    );
     if (estimatedSteps > input.profile.max_steps) {
       portfolioError('profile_budget_exceeded', [
         input.profile.id,
@@ -480,7 +507,11 @@ export class CapabilityPortfolioResolver {
         ))
         .sort((left, right) => compareCandidates(left, right, new Set([demand.id])))[0];
       if (!optionalCandidate) continue;
-      if (estimatedSteps + optionalCandidate.estimatedSteps > input.profile.max_steps) {
+      const tentativeSteps = estimatedSelectionSteps(
+        [...selected, optionalCandidate, synthesizerCoverage],
+        input.shareableKnowledgeBySkill,
+      );
+      if (tentativeSteps > input.profile.max_steps) {
         rejected.push({
           skillId: optionalCandidate.decision.skill.id,
           reasonCode: 'optional_budget_exceeded',
@@ -490,7 +521,7 @@ export class CapabilityPortfolioResolver {
       }
       selected.push(optionalCandidate);
       ownerByDemand.set(demand.id, optionalCandidate);
-      estimatedSteps += optionalCandidate.estimatedSteps;
+      estimatedSteps = tentativeSteps;
     }
 
     const selectedIds = new Set(selected.map(({ decision }) => decision.skill.id));
@@ -555,7 +586,7 @@ export class CapabilityPortfolioResolver {
       requestedArtifactTypes: [...new Set(input.capabilityDemandGraph.demands.flatMap(({ requestedArtifactTypes }) => requestedArtifactTypes))],
       required: true,
       failurePolicy: 'block',
-      estimatedSteps: synthesizerSteps,
+      estimatedSteps: synthesizerCoverage.estimatedSteps,
       reasonCodes: synthesizerOwnedDemands.length > 0
         ? ['deliverable_policy_owner', 'single_skill_demand_coverage']
         : ['deliverable_policy_owner'],
@@ -565,7 +596,10 @@ export class CapabilityPortfolioResolver {
       invocations,
       demandCoverage,
       rejected,
-      sharedPrerequisites: selectedSharedPrerequisites(selected),
+      sharedPrerequisites: selectedSharedPrerequisites(
+        [...selected, synthesizerCoverage],
+        input.shareableKnowledgeBySkill,
+      ),
       estimatedBudget: {
         profileId: input.profile.id,
         maxSteps: input.profile.max_steps,

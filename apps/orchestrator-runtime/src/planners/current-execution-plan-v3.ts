@@ -4,6 +4,7 @@ import type {
   CurrentSkillInvocationV3,
   PlanContributionRequirement,
 } from '../../../../packages/api-contract/research-deliverable.ts';
+import { planShareFingerprint } from '../skills/portfolio-skill-plan-compiler.ts';
 import { SchemaValidator } from '../schema/validator.ts';
 
 export type CurrentExecutionPlanV3ValidationKind =
@@ -19,7 +20,17 @@ export type CurrentExecutionPlanV3ValidationKind =
   | 'multiple_primary_owners'
   | 'required_owner_may_gap'
   | 'synthesizer_may_gap'
-  | 'unknown_invocation_question';
+  | 'unknown_invocation_question'
+  | 'unknown_invocation_dependency'
+  | 'invocation_dependency_cycle'
+  | 'invalid_invocation_step'
+  | 'invalid_step_topology'
+  | 'invalid_binding_dependency'
+  | 'unauthorized_cross_invocation_binding'
+  | 'missing_required_contributor_dependency'
+  | 'invalid_shared_stage'
+  | 'invalid_output_contract'
+  | 'portfolio_summary_mismatch';
 
 export class CurrentExecutionPlanV3ValidationError extends Error {
   constructor(
@@ -86,6 +97,122 @@ export function validateCurrentExecutionPlanV3(
     planError('synthesizer_count', synthesizers.map(({ invocation_id }) => invocation_id));
   }
 
+  const summaryByInvocation = new Map(
+    plan.portfolio_summary.selected.map((item) => [item.invocation_id, item]),
+  );
+  if (
+    summaryByInvocation.size !== plan.skill_invocations.length
+    || plan.portfolio_summary.selected.length !== plan.skill_invocations.length
+    || plan.skill_invocations.some((invocation) => {
+      const summary = summaryByInvocation.get(invocation.invocation_id);
+      return !summary || summary.skill_id !== invocation.skill_id || summary.role !== invocation.role;
+    })
+    || plan.portfolio_summary.estimated_budget.selected_skill_count !== plan.skill_invocations.length
+    || plan.portfolio_summary.estimated_budget.selected_contributor_count
+      !== plan.skill_invocations.filter(({ role }) => role === 'contributor').length
+    || plan.portfolio_summary.estimated_budget.expanded_step_count !== plan.steps.length
+    || plan.portfolio_summary.estimated_budget.expanded_step_count
+      > plan.portfolio_summary.estimated_budget.expanded_step_limit
+  ) planError('portfolio_summary_mismatch', plan.skill_invocations.map(({ invocation_id }) => invocation_id));
+
+  for (const invocation of plan.skill_invocations) {
+    for (const dependencyId of invocation.depends_on_invocation_ids) {
+      if (dependencyId === invocation.invocation_id || !invocationsById.has(dependencyId)) {
+        planError('unknown_invocation_dependency', [invocation.invocation_id, dependencyId]);
+      }
+    }
+    if (invocation.role === 'contributor' && invocation.output_contract !== 'research-contribution-v1') {
+      planError('invalid_output_contract', [invocation.invocation_id, invocation.output_contract]);
+    }
+  }
+  const completeInvocations = new Set<string>();
+  const activeInvocations = new Set<string>();
+  const visitInvocation = (invocationId: string): void => {
+    if (completeInvocations.has(invocationId)) return;
+    if (activeInvocations.has(invocationId)) {
+      planError('invocation_dependency_cycle', [...activeInvocations, invocationId]);
+    }
+    activeInvocations.add(invocationId);
+    const invocation = invocationsById.get(invocationId)!;
+    for (const dependencyId of invocation.depends_on_invocation_ids) visitInvocation(dependencyId);
+    activeInvocations.delete(invocationId);
+    completeInvocations.add(invocationId);
+  };
+  for (const invocationId of invocationsById.keys()) visitInvocation(invocationId);
+
+  const synthesizer = synthesizers[0]!;
+  const requiredContributorIds = plan.skill_invocations
+    .filter(({ role, required }) => role === 'contributor' && required)
+    .map(({ invocation_id }) => invocation_id);
+  const missingRequiredDependency = requiredContributorIds.find((invocationId) => (
+    !synthesizer.depends_on_invocation_ids.includes(invocationId)
+  ));
+  if (missingRequiredDependency) {
+    planError('missing_required_contributor_dependency', [
+      synthesizer.invocation_id,
+      missingRequiredDependency,
+    ]);
+  }
+
+  const stepByNo = new Map(plan.steps.map((step) => [step.step_no, step]));
+  for (const [index, step] of plan.steps.entries()) {
+    if (step.step_no !== index + 1 || step.depends_on.some((dependency) => dependency >= step.step_no)) {
+      planError('invalid_step_topology', [String(step.step_no)]);
+    }
+    if (step.skill_invocation_id && !invocationsById.has(step.skill_invocation_id)) {
+      planError('invalid_invocation_step', [step.skill_invocation_id, String(step.step_no)]);
+    }
+    if (step.shared_stage_key) {
+      const consumers = step.shared_by_invocation_ids ?? [];
+      if (
+        consumers.length < 2
+        || consumers.some((invocationId) => !invocationsById.has(invocationId))
+        || step.share_fingerprint !== planShareFingerprint(step)
+      ) {
+        planError('invalid_shared_stage', [step.shared_stage_key, String(step.step_no)]);
+      }
+      for (const invocationId of consumers) {
+        if (!invocationsById.get(invocationId)!.step_nos.includes(step.step_no)) {
+          planError('invalid_shared_stage', [step.shared_stage_key, invocationId]);
+        }
+      }
+    }
+    for (const binding of step.input_bindings) {
+      if (!step.depends_on.includes(binding.source_step_no)) {
+        planError('invalid_binding_dependency', [String(step.step_no), String(binding.source_step_no)]);
+      }
+      const source = stepByNo.get(binding.source_step_no);
+      if (!source) planError('invalid_binding_dependency', [String(binding.source_step_no)]);
+      const targetInvocationId = step.skill_invocation_id;
+      const sourceInvocationIds = source.shared_by_invocation_ids
+        ?? (source.skill_invocation_id ? [source.skill_invocation_id] : []);
+      if (targetInvocationId) {
+        const target = invocationsById.get(targetInvocationId)!;
+        const unauthorized = sourceInvocationIds.find((sourceInvocationId) => (
+          sourceInvocationId !== targetInvocationId
+          && !target.depends_on_invocation_ids.includes(sourceInvocationId)
+        ));
+        if (unauthorized) {
+          planError('unauthorized_cross_invocation_binding', [
+            targetInvocationId,
+            unauthorized,
+            String(step.step_no),
+          ]);
+        }
+      }
+    }
+  }
+  for (const invocation of plan.skill_invocations) {
+    for (const stepNo of invocation.step_nos) {
+      const step = stepByNo.get(stepNo);
+      if (!step) planError('invalid_invocation_step', [invocation.invocation_id, String(stepNo)]);
+      const sharedOwner = step.shared_by_invocation_ids?.includes(invocation.invocation_id) === true;
+      if (step.skill_invocation_id !== invocation.invocation_id && !sharedOwner) {
+        planError('invalid_invocation_step', [invocation.invocation_id, String(stepNo)]);
+      }
+    }
+  }
+
   const questionIds = new Set(plan.problem_graph.questions.map(({ id }) => id));
   for (const invocation of plan.skill_invocations) {
     const unknownQuestion = invocation.question_ids.find((questionId) => !questionIds.has(questionId));
@@ -147,7 +274,6 @@ export function validateCurrentExecutionPlanV3(
     }
   }
 
-  const synthesizer = synthesizers[0]!;
   if (!synthesizer.required || synthesizer.failure_policy !== 'block') {
     planError('synthesizer_may_gap', [synthesizer.invocation_id]);
   }

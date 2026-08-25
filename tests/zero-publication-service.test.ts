@@ -160,12 +160,14 @@ class FakeZero implements ZeroPublicationMcp {
   finalized: Array<{ draftRootNodeId: string; updateRootNodeId?: string }> = [];
   placeholders = new Map<string, string>();
   draftName = '';
+  draftHtml = '';
   fills = new Map<string, string>();
 
   async getStatus() { return { available: this.available, authenticated: this.available, version: '3.12.8' }; }
   async getCurrentTarget() { return { fileKey: 'file-1', pageId: '30:1', pageName: '[p]demo' }; }
   async createHtmlDraft(input: { html: string; name: string }) {
     this.draftName = input.name;
+    this.draftHtml = input.html;
     const names = [...input.html.matchAll(/data-ai-alt="([^"]*zero:[^"]+)"/gu)].map((match) => match[1]!);
     names.forEach((name, index) => this.placeholders.set(name, `31:${100 + index}`));
     return { rootNodeId: '31:2', x: 0, y: 0, width: 1440, height: 5000 };
@@ -215,6 +217,23 @@ async function reportFixture(): Promise<{
       sections: [{ id: 'visual', title: '视觉证据', questionIds: [], blocks: [{ id: 'comparison', type: 'image-comparison', beforeAssetRef: { assetId: 'asset-original', manifestArtifactId: 'manifest-original' }, afterAssetRef: { assetId: 'asset-annotation', manifestArtifactId: 'manifest-annotation' }, caption: '对照', altText: '对照图' }] }],
     },
     visualAssetManifests: manifests,
+    contributionSummary: {
+      version: 'contribution-summary-v1', taskId, planVersionId, attemptId,
+      contributors: [{
+        invocationId: 'invocation:virtual',
+        skillId: 'virtual-user-research',
+        contributionTypes: ['virtual_user_hypothesis'],
+        unitCount: 1,
+        limitations: ['仅供真实研究验证。'],
+        units: [{
+          sourceArtifactId: 'contribution-1', sourceUnitKey: 'unit-1', kind: 'hypothesis',
+          title: '信任假设', statement: '用户可能需要更多可信度说明。',
+          questionIds: ['question-1'], evidenceIds: ['SIM1-1'], status: 'provisional', confidence: 0.4,
+          disposition: 'included', canonicalNodeIds: ['summary-1'],
+        }],
+        dispositions: [{ sourceUnitKey: 'unit-1', disposition: 'included', canonicalNodeIds: ['summary-1'] }],
+      }],
+    },
   } as unknown as CurrentReportPackageResponse;
   return {
     report,
@@ -257,6 +276,9 @@ test('Zero publication service creates and completes a multimodal publication wi
   assert.ok(artifacts.binary.every((artifact) => artifact.attemptId === undefined));
   assert.ok(artifacts.json.every((artifact) => artifact.attemptId === undefined));
   assert.equal(zero.cleanup.length, 0);
+  assert.match(zero.draftHtml, /Multi-Skill 贡献摘要/u);
+  assert.match(zero.draftHtml, /合成模拟证据/u);
+  assert.doesNotMatch(zero.draftHtml, /sourceUnitKey|artifactContentSha256/u);
   assert.equal(store.created, 1);
   assert.equal(store.claimOwners.length, 1);
   assert.match(store.claimOwners[0]!, /^test-zero-worker:[0-9a-f-]{36}$/u);

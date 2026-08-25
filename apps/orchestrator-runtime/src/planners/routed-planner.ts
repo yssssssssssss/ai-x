@@ -63,6 +63,7 @@ import {
   validateCapabilityDemandGraph,
 } from './capability-demand-graph.ts';
 import {
+  CapabilityPortfolioResolutionError,
   CapabilityPortfolioResolver,
   portfolioActorValidationIssues,
   type SkillPortfolioDecision,
@@ -857,17 +858,44 @@ export class RoutedPlanner implements PlanStrategy {
     if (capabilityDemandGraph && compositionPolicy.mode === 'portfolio') {
       portfolios = {};
       const portfolioResolver = new CapabilityPortfolioResolver();
+      const stepEstimates = Object.fromEntries(capabilitySkills
+        .filter(({ status }) => status === 'active')
+        .map((skill) => [skill.id!, 1 + skill.required_tools.length]));
+      const shareableKnowledgeBySkill = Object.fromEntries(capabilitySkills
+        .filter(({ status }) => status === 'active')
+        .map((skill) => {
+          const execution = skillLoader.loadSkillExecution(skill.id!);
+          return [
+            skill.id!,
+            execution?.contract.stages
+              .filter(({ actor_type, share_scope }) => actor_type === 'knowledge' && share_scope === 'plan')
+              .map(({ actor_id }) => actor_id) ?? [],
+          ];
+        }));
       for (const profile of planningGuidance.profiles) {
-        portfolios[profile.id] = portfolioResolver.resolve({
-          task: ctx.requirement,
-          problemGraph: problemGraphResult.graph,
-          capabilityDemandGraph,
-          deliverableId: deliverable.id,
-          compositionPolicy,
-          capabilityResolution,
-          profile: { id: profile.id, max_steps: profile.max_steps },
-          availableInputRoles,
-        });
+        try {
+          portfolios[profile.id] = portfolioResolver.resolve({
+            task: ctx.requirement,
+            problemGraph: problemGraphResult.graph,
+            capabilityDemandGraph,
+            deliverableId: deliverable.id,
+            compositionPolicy,
+            capabilityResolution,
+            profile: { id: profile.id, max_steps: profile.max_steps },
+            availableInputRoles,
+            stepEstimates,
+            shareableKnowledgeBySkill,
+          });
+        } catch (error) {
+          if (
+            error instanceof CapabilityPortfolioResolutionError
+            && error.kind === 'profile_budget_exceeded'
+          ) continue;
+          throw error;
+        }
+      }
+      if (Object.keys(portfolios).length < 2) {
+        throw new Error('Current multi-Skill planning has fewer than two budget-feasible Profiles');
       }
     }
     if (ctx.direct) {
@@ -1121,7 +1149,9 @@ export class RoutedPlanner implements PlanStrategy {
           input_schema: loadToolInputSchema(manifest.input_schema),
         };
       });
-    const requestedProfiles = planningGuidance.profiles;
+    const requestedProfiles = portfolios
+      ? planningGuidance.profiles.filter(({ id }) => portfolios?.[id] !== undefined)
+      : planningGuidance.profiles;
     const requestedProfileIds = requestedProfiles.map(({ id }) => id);
     const proposalSchema = currentPlanProposalSchemaFor(requestedProfileIds);
     const candidateContext = {
@@ -1319,7 +1349,9 @@ export class RoutedPlanner implements PlanStrategy {
     const resolverRecommendedId = requestedProfiles.find(({ recommended }) => recommended)?.id;
     const recommendedId = candidateEnvelope.candidates.some(({ id }) => id === resolverRecommendedId)
       ? resolverRecommendedId
-      : 'depth';
+      : candidateEnvelope.candidates.some(({ id }) => id === 'depth')
+        ? 'depth'
+        : candidateEnvelope.candidates[0]!.id;
     const candidates: CurrentPlanCandidateProposal[] = candidateEnvelope.candidates.map((candidate) => ({
       ...candidate,
       recommended: candidate.id === recommendedId,

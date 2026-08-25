@@ -23,6 +23,10 @@ export type SchemaName =
   | 'tool-manifest'
   | 'research-report'
   | 'research-contribution-v1'
+  | 'research-contribution-artifact-v1'
+  | 'research-contribution-bundle-v1'
+  | 'cross-skill-review-v1'
+  | 'contribution-summary-v1'
   | 'contribution-ledger-v1'
   | 'scenario-guidance'
   | 'report-review';

@@ -12,25 +12,26 @@
 | `competitive-web-research` | standalone, contributor | answer | competitive analysis, strategy report | market landscape, competitive analysis | 首批 Adapter 候选 |
 | `competitive-app-analysis` | standalone | answer | competitive analysis | — | 视觉 Payload 尚无确定性映射 |
 | `design-experience-review` | standalone | plan, answer | research plan, design audit | — | 多 Lab 视觉 Payload 尚无稳定 Unit |
-| `accessibility-review` | standalone, contributor | answer | accessibility/design audit | accessibility | 首批 Adapter 候选 |
+| `accessibility-review` | standalone, contributor, synthesizer | answer | accessibility/design audit | accessibility | `accessibility_audit_report` 唯一 Synthesizer；亦可作为 design Contributor |
 | `analyze-satisfaction` | standalone, contributor | answer | VOC, strategy report | satisfaction | 有数据输入时可组合 |
 | `build-experience-metrics` | standalone, contributor | plan, answer | research plan, strategy report | metrics | 首批 Adapter 候选 |
 | `code-open-feedback` | standalone, contributor | answer | VOC, strategy report | VOC | 有用户材料时可组合 |
-| `competitive-analysis` | standalone, contributor | answer | competitive analysis, strategy report | competitive analysis | 首批 Adapter 候选 |
+| `competitive-analysis` | standalone, contributor, synthesizer | answer | competitive analysis, strategy report | competitive analysis | `competitive_analysis_report` 唯一 Synthesizer；亦可供策略报告供稿 |
 | `conversion-funnel-analysis` | standalone, contributor | plan, answer | research plan, strategy report | funnel | 有数据时分析；无数据只允许测量方案 |
 | `feature-adoption-analysis` | standalone, contributor | plan, answer | research plan, strategy report | feature adoption | 有数据时分析；无数据只允许测量方案 |
 | `generate-interview-guide` | standalone | plan | research plan | — | 访谈提纲 Payload 尚未映射到 planning Contribution |
 | `generate-persona` | standalone, contributor | answer | strategy report | persona | 首批 Adapter 候选；无真实材料时 provisional |
 | `generate-research-plan` | standalone, synthesizer | plan | research plan | research method | `research_plan` 唯一 Synthesizer |
+| `virtual-user-research` | standalone, contributor | answer | strategy report | virtual user hypothesis | 强制 provisional；依赖真实 `virtual-user-lab` Tool receipt |
 | `research-strategy-synthesis` | standalone, synthesizer | answer | strategy report | strategy, action plan | `research_strategy_report` 唯一 Synthesizer |
 | `generate-survey` | standalone | plan | research plan | — | 问卷 Payload 尚未映射到 planning Contribution |
 | `generate-usability-test` | standalone | plan, answer | research plan, design audit | — | 测试执行包尚非标准 Contribution |
 | `issue-prioritization` | standalone, contributor | answer | strategy/VOC/design audit | prioritization | 有问题清单时可组合 |
 | `jobs-to-be-done` | standalone, contributor | answer | strategy report | jobs to be done | 首批 Adapter 候选；无真实材料时 provisional |
 | `journey-map` | standalone, contributor | answer | strategy/VOC report | journey | 有研究材料时可组合 |
-| `run-heuristic-evaluation` | standalone, contributor | answer | design audit | design audit | 首批 Adapter 候选 |
+| `run-heuristic-evaluation` | standalone, contributor, synthesizer | answer | design audit | design audit | `design_audit_report` 唯一 Synthesizer |
 | `structure-interview-transcript` | standalone | answer | research plan | — | 单场整理属于诊断输入，暂不直接供稿 |
-| `synthesize-qualitative-insights` | standalone, contributor | answer | strategy/VOC report | qualitative insight | 有多份定性材料时可组合 |
+| `synthesize-qualitative-insights` | standalone, contributor, synthesizer | answer | strategy/VOC report | qualitative insight | `voc_diagnosis_report` 唯一 Synthesizer；亦可供策略报告供稿 |
 
 ## Deliverable policy
 
@@ -38,9 +39,9 @@
 |---|---|---|
 | `research_plan` | portfolio | `generate-research-plan` |
 | `research_strategy_report` | portfolio | `research-strategy-synthesis` |
-| `competitive_analysis_report` | standalone_compat | — |
-| `voc_diagnosis_report` | standalone_compat | — |
-| `design_audit_report` | standalone_compat | — |
-| `accessibility_audit_report` | standalone_compat | — |
+| `competitive_analysis_report` | portfolio | `competitive-analysis` |
+| `voc_diagnosis_report` | portfolio | `synthesize-qualitative-insights` |
+| `design_audit_report` | portfolio | `run-heuristic-evaluation` |
+| `accessibility_audit_report` | portfolio | `accessibility-review` |
 
-`standalone_compat` 是显式兼容策略，不等同于遗漏分类。其 Deliverable 在专用 Synthesizer 与 Contributor Adapter 完成前继续走冻结的旧路径。
+所有 active Deliverable 均已有唯一组合策略。Multi-Skill writer 在最终 Activation 前仍保持关闭；未满足输入或 Adapter 条件的 Contributor 会返回显式 capability gap。

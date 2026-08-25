@@ -5,6 +5,9 @@ import type {
   PassedReportReviewArtifact,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import type {
+  ContributionLedgerV1,
+  ContributionSummaryV1,
+  CrossSkillReviewV1,
   LegacyResearchDeliverableEnvelope,
   ResearchDeliverableEnvelope,
   VisualAssetManifest,
@@ -190,6 +193,44 @@ export class CurrentReportPackageReader {
       || frozen.attemptId !== binding.attemptId
     )) {
       throw new Error('frozen Report Package binding is invalid');
+    }
+    const contributionSidecars: {
+      crossSkillReview?: CrossSkillReviewV1;
+      contributionLedger?: ContributionLedgerV1;
+      contributionSummary?: ContributionSummaryV1;
+    } = {};
+    if (frozen?.crossSkillReviewArtifactId) {
+      const verified = await this.dependencies.artifacts.readVerifiedJson<unknown>(
+        frozen.crossSkillReviewArtifactId,
+      );
+      assertArtifactBinding(verified.artifact, frozen.crossSkillReviewArtifactId, 'cross_skill_review', binding, 'Cross-Skill Review');
+      this.schemaValidator.validateOrThrow('cross-skill-review-v1', verified.value);
+      const reviewRecord = record(verified.value);
+      if (!reviewRecord) throw new Error('Cross-Skill Review JSON is invalid');
+      assertJsonIdentity(reviewRecord, binding, 'Cross-Skill Review');
+      contributionSidecars.crossSkillReview = verified.value as CrossSkillReviewV1;
+    }
+    if (frozen?.contributionLedgerArtifactId) {
+      const verified = await this.dependencies.artifacts.readVerifiedJson<unknown>(
+        frozen.contributionLedgerArtifactId,
+      );
+      assertArtifactBinding(verified.artifact, frozen.contributionLedgerArtifactId, 'contribution_ledger', binding, 'Contribution Ledger');
+      this.schemaValidator.validateOrThrow('contribution-ledger-v1', verified.value);
+      const ledgerRecord = record(verified.value);
+      if (!ledgerRecord) throw new Error('Contribution Ledger JSON is invalid');
+      assertJsonIdentity(ledgerRecord, binding, 'Contribution Ledger');
+      contributionSidecars.contributionLedger = verified.value as ContributionLedgerV1;
+    }
+    if (frozen?.contributionSummaryArtifactId) {
+      const verified = await this.dependencies.artifacts.readVerifiedJson<unknown>(
+        frozen.contributionSummaryArtifactId,
+      );
+      assertArtifactBinding(verified.artifact, frozen.contributionSummaryArtifactId, 'contribution_summary', binding, 'Contribution Summary');
+      this.schemaValidator.validateOrThrow('contribution-summary-v1', verified.value);
+      const summaryRecord = record(verified.value);
+      if (!summaryRecord) throw new Error('Contribution Summary JSON is invalid');
+      assertJsonIdentity(summaryRecord, binding, 'Contribution Summary');
+      contributionSidecars.contributionSummary = verified.value as ContributionSummaryV1;
     }
     const repositoryReview = frozen
       ? null
@@ -387,6 +428,7 @@ export class CurrentReportPackageReader {
           deliverable: deliverable as unknown as ResearchDeliverableEnvelope<unknown>,
           evidenceManifest,
           reportReview: review,
+          ...contributionSidecars,
         };
       }
       const verifiedDocument = await this.dependencies.artifacts.readVerifiedJson<unknown>(
@@ -529,6 +571,7 @@ export class CurrentReportPackageReader {
         reportReview: review,
         reportDocument,
         visualAssetManifests,
+        ...contributionSidecars,
       };
     }
     if (schemaVersion === LEGACY_DELIVERABLE_SCHEMA_VERSION) {

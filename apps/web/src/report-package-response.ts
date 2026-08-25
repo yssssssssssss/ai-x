@@ -1,7 +1,26 @@
 import type { CurrentReportPackageResponse } from '../../../packages/api-contract/control-workflow.ts';
-import type { VisualAssetManifest } from '../../../packages/api-contract/research-deliverable.ts';
+import type {
+  ContributionLedgerV1,
+  ContributionSummaryV1,
+  CrossSkillReviewV1,
+  VisualAssetManifest,
+} from '../../../packages/api-contract/research-deliverable.ts';
 
 export type ControlDeliverableResponse = CurrentReportPackageResponse<unknown>;
+
+export function hasCompleteContributionSidecars<T extends {
+  crossSkillReview?: unknown;
+  contributionLedger?: unknown;
+  contributionSummary?: unknown;
+}>(value: T): value is T & {
+  crossSkillReview: CrossSkillReviewV1;
+  contributionLedger: ContributionLedgerV1;
+  contributionSummary: ContributionSummaryV1;
+} {
+  return value.crossSkillReview !== undefined
+    && value.contributionLedger !== undefined
+    && value.contributionSummary !== undefined;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -315,6 +334,30 @@ function assertExactVisualManifests(
   }
 }
 
+function assertContributionSidecars(
+  value: Record<string, unknown>,
+  binding: PackageBinding,
+): void {
+  const sidecars = [value.crossSkillReview, value.contributionLedger, value.contributionSummary];
+  const count = sidecars.filter((item) => item !== undefined).length;
+  if (count !== 0 && count !== 3) throw new Error('report package contribution sidecars are incomplete');
+  for (const [index, candidate] of sidecars.entries()) {
+    if (candidate === undefined) continue;
+    if (!isRecord(candidate)) throw new Error('report package contribution sidecar is invalid');
+    const expectedVersion = [
+      'cross-skill-review-v1',
+      'contribution-ledger-v1',
+      'contribution-summary-v1',
+    ][index];
+    if (
+      candidate.version !== expectedVersion
+      || candidate.taskId !== binding.taskId
+      || candidate.planVersionId !== binding.planVersionId
+      || candidate.attemptId !== binding.attemptId
+    ) throw new Error('report package contribution sidecar binding is invalid');
+  }
+}
+
 export function parseControlDeliverableResponse(value: unknown): ControlDeliverableResponse {
   if (!isRecord(value)) throw new Error('report package response must be an object');
   if (hasOwn(value, 'visualAssetManifest')) {
@@ -322,6 +365,10 @@ export function parseControlDeliverableResponse(value: unknown): ControlDelivera
   }
   if (value.presentationMode === 'legacy_text') {
     assertNoMultimodalFields(value, 'legacy_text');
+    assertContributionSidecars(value, packageBinding(value));
+    if (value.contributionLedger !== undefined) {
+      throw new Error('legacy report package must not expose contribution sidecars');
+    }
     return value as unknown as ControlDeliverableResponse;
   }
   if (value.presentationMode !== 'current_text' && value.presentationMode !== 'multimodal') {
@@ -330,6 +377,7 @@ export function parseControlDeliverableResponse(value: unknown): ControlDelivera
   if (!isRecord(value.reportReview) || value.reportReview.verdict !== 'pass') {
     throw new Error('final report package Review verdict must be pass');
   }
+  assertContributionSidecars(value, packageBinding(value));
   if (value.presentationMode === 'current_text') {
     assertNoMultimodalFields(value, 'current_text');
     return value as unknown as ControlDeliverableResponse;

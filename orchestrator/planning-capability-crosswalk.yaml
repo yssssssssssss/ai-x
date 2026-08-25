@@ -91,6 +91,12 @@ capabilities:
     roles: [scope_expansion, focused_analysis, independent_method, decision_support]
     method_family: evidence_bound_strategy_synthesis
     evidence_paths: [public_web, knowledge_method, user_material, behavioral_dataset]
+  - id: virtual-user-research
+    task_types: [research_synthesis]
+    profile_support: [focused, mixed_method]
+    roles: [focused_analysis, independent_method]
+    method_family: synthetic_hypothesis_generation
+    evidence_paths: [simulated_user]
   - id: generate-survey
     task_types: [user_research_planning]
     profile_support: [breadth, mixed_method]

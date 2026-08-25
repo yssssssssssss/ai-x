@@ -1,0 +1,26 @@
+{
+  "skill_id": "virtual-user-research",
+  "title": "合成用户假设生成",
+  "research_goal": "在明确标注模拟证据边界的前提下，生成可供后续真实研究验证的用户动机与阻碍假设。",
+  "input_materials": {
+    "data_classification": "synthetic_evaluation_data",
+    "target_audience": "参与京东众筹消费决策的潜在用户",
+    "research_questions": [
+      "哪些动机可能推动用户支持众筹项目",
+      "哪些顾虑可能阻碍用户完成支持"
+    ],
+    "simulation_policy": "所有输出仅为合成用户假设，不得陈述为真实用户事实"
+  },
+  "tool_outputs": [],
+  "expected_deliverables": [
+    "明确的synthetic simulation免责声明",
+    "带provisional置信度的用户假设",
+    "每条假设关联simulation Evidence",
+    "建议后续真实研究验证的问题"
+  ],
+  "risk_checks": [
+    "不得将虚拟用户输出表述为真实用户发现",
+    "不得将simulation Evidence升级为supported事实",
+    "不得隐去合成数据局限"
+  ]
+}

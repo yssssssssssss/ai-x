@@ -20,9 +20,14 @@ test('system capabilities expose live contract and registry identities without l
       'current-execution-plan-v2',
       'current-execution-plan-v3',
     ]);
+    assert.equal(body.multiSkillPlanWriterEnabled, false);
     assert.deepEqual(body.capabilityDemandGraphVersions, ['capability-demand-graph-v1']);
     assert.deepEqual(body.researchContributionVersions, ['research-contribution-v1']);
+    assert.deepEqual(body.researchContributionArtifactVersions, ['research-contribution-artifact-v1']);
+    assert.deepEqual(body.researchContributionBundleVersions, ['research-contribution-bundle-v1']);
+    assert.deepEqual(body.crossSkillReviewVersions, ['cross-skill-review-v1']);
     assert.deepEqual(body.contributionLedgerVersions, ['contribution-ledger-v1']);
+    assert.deepEqual(body.contributionSummaryVersions, ['contribution-summary-v1']);
     assert.deepEqual(body.reportDocumentVersions, ['report-document-v1', 'report-document-v2']);
     assert.ok((body.activeDeliverables as string[]).includes('research_plan'));
     assert.ok((body.activeDeliverables as string[]).includes('research_strategy_report'));

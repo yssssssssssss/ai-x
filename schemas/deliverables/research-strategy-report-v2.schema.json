@@ -132,6 +132,9 @@
         },
         "validationNeeded": {
           "type": "string"
+        },
+        "sourceContributionUnitIds": {
+          "$ref": "#/$defs/ids"
         }
       },
       "allOf": [
@@ -220,6 +223,9 @@
         },
         "validationNeeded": {
           "type": "string"
+        },
+        "sourceContributionUnitIds": {
+          "$ref": "#/$defs/ids"
         }
       }
     },

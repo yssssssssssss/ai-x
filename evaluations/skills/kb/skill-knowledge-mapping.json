@@ -652,6 +652,16 @@
     "unresolved_items": []
   },
   {
+    "skill_id": "virtual-user-research",
+    "kb_mode": "not_applicable",
+    "required_sources": [],
+    "conditional_sources": [],
+    "optional_sources": [],
+    "retrieval_tags": [],
+    "source_status_policy": "not_applicable",
+    "unresolved_items": []
+  },
+  {
     "skill_id": "generate-survey",
     "kb_mode": "required",
     "required_sources": [

@@ -95,6 +95,7 @@ import type {
 
 export type {
   ApprovalControlPlanRequest,
+  CancelControlPlanRequest,
   ControlApprovalRequirement,
   ControlApprovalTaskSummary,
   ControlPlanRecovery,
@@ -135,6 +136,7 @@ export type {
 
 import type {
   ApprovalControlPlanRequest,
+  CancelControlPlanRequest,
   ControlApprovalTaskSummary,
   ConfirmControlPlanRequest,
   ControlCommandResponse,
@@ -341,6 +343,8 @@ export const api = {
     req<ReviseControlPlanResponse>(`/control-tasks/${taskId}/revise`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
   resumeControlPlan: (taskId: string, body: ResumeControlPlanRequest) =>
     req<ControlCommandResponse>(`/control-tasks/${taskId}/resume`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
+  cancelControlPlan: (taskId: string, body: CancelControlPlanRequest) =>
+    req<ControlCommandResponse>(`/control-tasks/${taskId}/cancel`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
   executeControlPlan: (taskId: string, body: ExecutionControlPlanRequest) =>
     req<ControlExecutionResult>(`/control-tasks/${taskId}/execute`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
   controlVisualAsset: async (taskId: string, assetId: string): Promise<ControlVisualAssetResponse> => {

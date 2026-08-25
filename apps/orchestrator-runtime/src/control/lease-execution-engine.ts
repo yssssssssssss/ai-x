@@ -11,10 +11,15 @@ import type {
   ControlExecutionLease,
   ControlPlaneRepository,
 } from '../../../../database/control-plane.ts';
-import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
+import type {
+  ContributionType,
+  RequestedArtifact,
+  ResearchTaskV2,
+} from '../../../../packages/api-contract/plan.ts';
 import type {
   ChartSpec,
   CurrentExecutionPlan,
+  CurrentExecutionPlanV3,
   CurrentPlanStep,
   EvidenceClass,
   EvidenceManifest,
@@ -47,6 +52,7 @@ import {
   ReceiptLLMClient,
 } from '../runtime/receipt-llm-client.ts';
 import { SkillLoader } from '../runtime/skill-loader.ts';
+import { stableJsonHash } from '../runtime/stable-json.ts';
 import {
   ToolInvocationError,
   ToolRouter,
@@ -70,6 +76,12 @@ import {
   assertCompiledSkillPlan,
   CompiledSkillPlanDriftError,
 } from '../skills/skill-plan-compiler.ts';
+import { buildResearchContributionBundle } from '../skills/research-contribution-bundle.ts';
+import { assertCompiledPortfolioPlan } from '../skills/portfolio-skill-plan-compiler.ts';
+import {
+  ContributionAdapterRegistry,
+  VIRTUAL_USER_TOOL_ADAPTER_ID,
+} from '../skills/contribution-adapter-registry.ts';
 import {
   evaluateSkillOutputStatus,
   SkillDegradedPolicyError,
@@ -99,8 +111,13 @@ import {
   type EvidenceEntry,
   type ResolvedEvidenceArtifact,
 } from '../evidence/evidence-service.ts';
+import { virtualUserSimulationEvidence } from '../evidence/virtual-user-evidence.ts';
 import { CurrentReportValidationError } from '../evidence/report-evidence-validator.ts';
-import type { CurrentDeliverableGenerateInput, CurrentDeliverableRevisionInput } from '../report/current-deliverable-service.ts';
+import type {
+  CurrentDeliverableGenerateInput,
+  CurrentDeliverableGenerateResult,
+  CurrentDeliverableRevisionInput,
+} from '../report/current-deliverable-service.ts';
 import type { DeliverableComposer, ReportReviewInput, ReportReviewResult } from '../report/report-review-service.ts';
 import {
   resolveDeliverableContractById,
@@ -138,6 +155,7 @@ import {
   type SealedStepOutput as BindingSealedStepOutput,
 } from './step-input-resolver.ts';
 import { ExecutionScheduler } from './execution-scheduler.ts';
+import { validateCurrentExecutionPlanV3 } from '../planners/current-execution-plan-v3.ts';
 import {
   VisualInputGateStore,
   valueForPendingInputTarget,
@@ -150,13 +168,29 @@ import {
 
 type EngineStep = CurrentPlanStep & { purpose?: string };
 
-interface EnginePlan {
+interface InvocationExecutionPolicy {
+  invocationId: string;
+  skillId: string;
+  role: 'contributor' | 'synthesizer';
+  contributionTypes: ContributionType[];
+  questionIds: string[];
+  requestedArtifactTypes: RequestedArtifact[];
+  dependsOnInvocationIds: string[];
+  required: boolean;
+  failurePolicy: 'block' | 'gap';
+  contributionAdapterId?: string;
+}
+
+export interface EnginePlan {
   taskId: string;
   evidence_requirements: EvidenceRequirement[];
   steps: EngineStep[];
   optionalToolStepNos: Set<number>;
   capabilityGaps: ExecutionGap[];
   frozenSkillExecutions: Map<number, FrozenSkillExecutionBinding>;
+  invocationPoliciesByStep: Map<number, InvocationExecutionPolicy[]>;
+  invocationPoliciesById: Map<string, InvocationExecutionPolicy>;
+  optionalInvocationStepNos: Set<number>;
 }
 
 interface FrozenSkillToolRoles {
@@ -202,17 +236,31 @@ const SUPPORTED_EVIDENCE_CLASSES: Record<EvidenceClass, true> = {
   derived: true,
 };
 
+export function invocationFailureCanBecomeGap(input: {
+  optionalInvocationStep: boolean;
+  failureKind: string | undefined;
+  artifactCleanupFailed: boolean;
+  integrityFailure: boolean;
+}): boolean {
+  return input.optionalInvocationStep
+    && !input.artifactCleanupFailed
+    && !input.integrityFailure
+    && input.failureKind !== 'safety'
+    && input.failureKind !== 'lease_lost';
+}
+
 interface ToolSourceRef {
   sourceUrl: string;
   originalIndex: number;
 }
 
-type StepArtifactKind = 'knowledge_output' | 'tool_output' | 'skill_output' | 'llm_output' | 'review_output';
+type StepArtifactKind = 'knowledge_output' | 'tool_output' | 'skill_output' | 'research_contribution' | 'llm_output' | 'review_output';
 
 const STEP_ARTIFACT_SCHEMA_VERSIONS: Record<StepArtifactKind, string> = {
   knowledge_output: 'knowledge-bundle-v1',
   tool_output: 'tool-output-v1',
   skill_output: 'skill-output-v2',
+  research_contribution: 'research-contribution-artifact-v1',
   llm_output: 'llm-output-v1',
   review_output: 'review-output-v1',
 };
@@ -387,6 +435,9 @@ export interface LeaseExecutionResult {
   evidenceManifestArtifactId?: string;
   reportReviewArtifactId?: string;
   reportPackageArtifactId?: string;
+  crossSkillReviewArtifactId?: string;
+  contributionLedgerArtifactId?: string;
+  contributionSummaryArtifactId?: string;
   reviewStatus?: ReportReviewResult['status'];
   gapCount?: number;
   failedStepNo?: number;
@@ -729,7 +780,7 @@ function resolvePlanDeliverableContract(
     plan.deliverable_type,
   );
 }
-function parsePlan(taskId: string, value: unknown, contract: DeliverableContractResources): EnginePlan {
+export function parseExecutionPlan(taskId: string, value: unknown, contract: DeliverableContractResources): EnginePlan {
   if (!isRecord(value) || !Array.isArray(value.steps)) {
     throw new ExecutionAuthenticityError('active plan is malformed');
   }
@@ -767,6 +818,8 @@ function parsePlan(taskId: string, value: unknown, contract: DeliverableContract
         target_pointer: binding.target_pointer,
         source_step_no: binding.source_step_no,
         source_pointer: binding.source_pointer,
+        ...(binding.optional === true ? { optional: true } : {}),
+        ...(binding.include_artifact_identity === true ? { include_artifact_identity: true } : {}),
       };
     });
     const approvalRole = item.approval_role;
@@ -841,6 +894,7 @@ function parsePlan(taskId: string, value: unknown, contract: DeliverableContract
     throw new ExecutionAuthenticityError('plan must include required evidence');
   }
   const frozenSkillToolRoles = new Map<string, FrozenSkillToolRoles>();
+  const contributionAdapterBySkill = new Map<string, string>();
   const seenOptionalDecisionIds = new Set<string>();
   const unavailableOptionalKeys = new Set<string>();
   const decisions = isRecord(value.capability_decisions)
@@ -874,6 +928,10 @@ function parsePlan(taskId: string, value: unknown, contract: DeliverableContract
       availableOptionalToolIds: new Set<string>(),
     };
     frozenSkillToolRoles.set(skillId, roles);
+    const composition = isRecord(candidate.skill.composition) ? candidate.skill.composition : null;
+    if (composition && typeof composition.contribution_adapter === 'string') {
+      contributionAdapterBySkill.set(skillId, composition.contribution_adapter);
+    }
     for (const optionalDecision of optionalDecisions) {
       if (
         !isRecord(optionalDecision)
@@ -948,40 +1006,99 @@ function parsePlan(taskId: string, value: unknown, contract: DeliverableContract
   }
   const resourceGaps: ExecutionGap[] = [];
   const frozenSkillExecutions = new Map<number, FrozenSkillExecutionBinding>();
+  const invocationPoliciesByStep = new Map<number, InvocationExecutionPolicy[]>();
+  const invocationPoliciesById = new Map<string, InvocationExecutionPolicy>();
+  const optionalInvocationStepNos = new Set<number>();
   const rawInvocations = value.skill_invocations ?? [];
   if (!Array.isArray(rawInvocations)) {
     throw new ExecutionAuthenticityError('plan Skill invocations are malformed');
   }
+  const portfolioPlan = value.execution_contract_version === 'current-execution-plan-v3';
   for (const [invocationIndex, invocation] of rawInvocations.entries()) {
     if (
       !isRecord(invocation)
       || typeof invocation.invocation_id !== 'string'
-      || typeof invocation.contract_hash !== 'string'
-      || (invocation.degraded_policy !== 'gap' && invocation.degraded_policy !== 'block')
-      || !Array.isArray(invocation.skill_reference_hashes)
-      || !invocation.skill_reference_hashes.every((reference) => (
-        isRecord(reference) && typeof reference.path === 'string' && typeof reference.hash === 'string'
-      ))
+      || typeof invocation.skill_id !== 'string'
       || !Array.isArray(invocation.step_nos)
-      || !Array.isArray(invocation.resource_gaps)
+      || !invocation.step_nos.every((candidate) => Number.isInteger(candidate))
     ) throw new ExecutionAuthenticityError(`plan Skill invocation ${invocationIndex + 1} is malformed`);
+
+    if (portfolioPlan) {
+      if (
+        (invocation.role !== 'contributor' && invocation.role !== 'synthesizer')
+        || !Array.isArray(invocation.contribution_types)
+        || !invocation.contribution_types.every((type) => typeof type === 'string')
+        || !Array.isArray(invocation.question_ids)
+        || !invocation.question_ids.every((questionId) => typeof questionId === 'string')
+        || !Array.isArray(invocation.requested_artifact_types)
+        || !invocation.requested_artifact_types.every((artifact) => typeof artifact === 'string')
+        || !Array.isArray(invocation.depends_on_invocation_ids)
+        || !invocation.depends_on_invocation_ids.every((dependency) => typeof dependency === 'string')
+        || typeof invocation.required !== 'boolean'
+        || (invocation.failure_policy !== 'block' && invocation.failure_policy !== 'gap')
+      ) throw new ExecutionAuthenticityError(`plan Skill invocation ${invocationIndex + 1} policy is malformed`);
+      const contributionAdapterId = contributionAdapterBySkill.get(invocation.skill_id);
+      if (invocation.role === 'contributor' && !contributionAdapterId) {
+        throw new ExecutionAuthenticityError(`Contributor ${invocation.invocation_id} has no frozen adapter`);
+      }
+      const policy: InvocationExecutionPolicy = {
+        invocationId: invocation.invocation_id,
+        skillId: invocation.skill_id,
+        role: invocation.role,
+        contributionTypes: invocation.contribution_types as ContributionType[],
+        questionIds: invocation.question_ids as string[],
+        requestedArtifactTypes: invocation.requested_artifact_types as RequestedArtifact[],
+        dependsOnInvocationIds: invocation.depends_on_invocation_ids as string[],
+        required: invocation.required,
+        failurePolicy: invocation.failure_policy,
+        ...(contributionAdapterId ? { contributionAdapterId } : {}),
+      };
+      if (invocationPoliciesById.has(policy.invocationId)) {
+        throw new ExecutionAuthenticityError(`plan Skill invocation ${policy.invocationId} is duplicated`);
+      }
+      invocationPoliciesById.set(policy.invocationId, policy);
+      for (const candidateStepNo of invocation.step_nos) {
+        const policies = invocationPoliciesByStep.get(candidateStepNo as number) ?? [];
+        policies.push(policy);
+        invocationPoliciesByStep.set(candidateStepNo as number, policies);
+      }
+    }
+
+    const compiledInvocation = invocation.execution_mode === 'compiled'
+      || (!portfolioPlan && invocation.execution_mode === undefined);
+    const resourceGapRows = invocation.resource_gaps ?? [];
+    if (!Array.isArray(resourceGapRows)) {
+      throw new ExecutionAuthenticityError(`plan Skill invocation ${invocationIndex + 1} resource gaps are malformed`);
+    }
+    if (compiledInvocation) {
+      if (
+        typeof invocation.contract_hash !== 'string'
+        || (invocation.degraded_policy !== 'gap' && invocation.degraded_policy !== 'block')
+        || !Array.isArray(invocation.skill_reference_hashes)
+        || !invocation.skill_reference_hashes.every((reference) => (
+          isRecord(reference) && typeof reference.path === 'string' && typeof reference.hash === 'string'
+        ))
+      ) throw new ExecutionAuthenticityError(`plan Skill invocation ${invocationIndex + 1} contract is malformed`);
+      for (const candidateStepNo of invocation.step_nos) {
+        const invocationStep = steps.find(({ step_no }) => step_no === candidateStepNo);
+        if (invocationStep?.actor_type !== 'skill') continue;
+        frozenSkillExecutions.set(candidateStepNo as number, {
+          contractHash: invocation.contract_hash,
+          referenceHashes: invocation.skill_reference_hashes.map((reference) => ({
+            path: String((reference as Record<string, unknown>).path),
+            hash: String((reference as Record<string, unknown>).hash),
+          })),
+          degradedPolicy: invocation.degraded_policy,
+        });
+      }
+    } else if (invocation.execution_mode !== 'legacy_single_call') {
+      throw new ExecutionAuthenticityError(`plan Skill invocation ${invocationIndex + 1} execution mode is malformed`);
+    }
+
     const stepNo = steps.find((step) => (
       step.skill_invocation_id === invocation.invocation_id && step.actor_type === 'knowledge'
     ))?.step_no ?? invocation.step_nos.find((candidate): candidate is number => Number.isInteger(candidate)) ?? 0;
-    for (const candidateStepNo of invocation.step_nos) {
-      if (!Number.isInteger(candidateStepNo)) continue;
-      const invocationStep = steps.find(({ step_no }) => step_no === candidateStepNo);
-      if (invocationStep?.actor_type !== 'skill') continue;
-      frozenSkillExecutions.set(candidateStepNo, {
-        contractHash: invocation.contract_hash,
-        referenceHashes: invocation.skill_reference_hashes.map((reference) => ({
-          path: String((reference as Record<string, unknown>).path),
-          hash: String((reference as Record<string, unknown>).hash),
-        })),
-        degradedPolicy: invocation.degraded_policy,
-      });
-    }
-    for (const [gapIndex, gap] of invocation.resource_gaps.entries()) {
+    for (const [gapIndex, gap] of resourceGapRows.entries()) {
       if (
         !isRecord(gap)
         || typeof gap.query_id !== 'string'
@@ -998,6 +1115,11 @@ function parsePlan(taskId: string, value: unknown, contract: DeliverableContract
       });
     }
   }
+  for (const [stepNo, policies] of invocationPoliciesByStep) {
+    if (policies.length > 0 && policies.every(({ failurePolicy }) => failurePolicy === 'gap')) {
+      optionalInvocationStepNos.add(stepNo);
+    }
+  }
   return {
     taskId,
     evidence_requirements: evidenceRequirements,
@@ -1005,6 +1127,9 @@ function parsePlan(taskId: string, value: unknown, contract: DeliverableContract
     optionalToolStepNos,
     capabilityGaps: [...capabilityGaps, ...resourceGaps],
     frozenSkillExecutions,
+    invocationPoliciesByStep,
+    invocationPoliciesById,
+    optionalInvocationStepNos,
   };
 }
 interface ReviewCoverageIds {
@@ -1146,6 +1271,62 @@ function sourceRefs(value: unknown): ToolSourceRef[] {
   });
 }
 
+
+export function rebindReusableArtifactValue(
+  kind: StepArtifactKind,
+  value: unknown,
+  binding: Pick<ControlExecutionLease, 'taskId' | 'planVersionId' | 'attemptId'>,
+): unknown {
+  if (kind !== 'research_contribution') return value;
+  if (
+    !isRecord(value)
+    || value.version !== 'research-contribution-artifact-v1'
+    || !isRecord(value.contribution)
+  ) {
+    throw new ExecutionAuthenticityError('reusable Contribution Artifact is malformed');
+  }
+  return {
+    ...structuredClone(value),
+    contribution: {
+      ...structuredClone(value.contribution),
+      taskId: binding.taskId,
+      planVersionId: binding.planVersionId,
+      attemptId: binding.attemptId,
+    },
+  };
+}
+
+function contributionEvidenceView(input: {
+  lease: ControlExecutionLease;
+  adapterId: string;
+  source?: EngineSealedStepOutput;
+}): EvidenceManifest {
+  const entries: EvidenceEntry[] = [];
+  if (
+    input.adapterId === VIRTUAL_USER_TOOL_ADAPTER_ID
+    && input.source
+    && input.source.actorId === 'virtual-user-lab'
+    && isRecord(input.source.output)
+    && Array.isArray(input.source.output.reviews)
+    && input.source.artifact.contentSha256
+  ) {
+    entries.push(...virtualUserSimulationEvidence({
+      stepNo: input.source.stepNo,
+      artifactId: input.source.artifact.id,
+      artifactContentSha256: input.source.artifact.contentSha256,
+      output: input.source.output,
+    }));
+  }
+  const draft = {
+    version: 'evidence-v1' as const,
+    taskId: input.lease.taskId,
+    planVersionId: input.lease.planVersionId,
+    attemptId: input.lease.attemptId,
+    collectedAt: '1970-01-01T00:00:00.000Z',
+    entries,
+  };
+  return { ...draft, manifestHash: stableJsonHash(draft) };
+}
 
 function verifiedPriorOutputs(
   outputs: readonly EngineSealedStepOutput[],
@@ -1395,18 +1576,13 @@ export class LeaseExecutionEngine {
     tools: ToolRouter;
     llm: LLMClient;
     skillLoader: SkillLoader;
+    contributionAdapters?: ContributionAdapterRegistry;
     validator: SchemaValidator;
     heartbeatMs: number;
     toolExecutionDeadlineMs?: number;
     deliverables: {
-      generate(input: CurrentDeliverableGenerateInput): Promise<{
-        deliverable: unknown;
-        deliverableArtifactId: string;
-      }>;
-      revise?(input: CurrentDeliverableRevisionInput): Promise<{
-        deliverable: unknown;
-        deliverableArtifactId: string;
-      }>;
+      generate(input: CurrentDeliverableGenerateInput): Promise<CurrentDeliverableGenerateResult>;
+      revise?(input: CurrentDeliverableRevisionInput): Promise<CurrentDeliverableGenerateResult>;
     };
     reportReview?: {
       review(input: ReportReviewInput, composer?: DeliverableComposer): Promise<ReportReviewResult>;
@@ -1455,13 +1631,22 @@ export class LeaseExecutionEngine {
       const deliverableContract = resolvePlanDeliverableContract(task.structuredTask, planVersion.plan);
       if (isRecord(planVersion.plan) && planVersion.plan.execution_contract_version === 'current-execution-plan-v2') {
         assertCompiledSkillPlan(
-        planVersion.plan as unknown as CurrentExecutionPlan,
-        this.dependencies.skillLoader,
-        task.structuredTask as ResearchTaskV2,
-      );
+          planVersion.plan as unknown as CurrentExecutionPlan,
+          this.dependencies.skillLoader,
+          task.structuredTask as ResearchTaskV2,
+        );
+      } else if (isRecord(planVersion.plan) && planVersion.plan.execution_contract_version === 'current-execution-plan-v3') {
+        validateCurrentExecutionPlanV3(
+          planVersion.plan as unknown as CurrentExecutionPlanV3,
+          this.dependencies.validator,
+        );
+        assertCompiledPortfolioPlan(
+          planVersion.plan as unknown as CurrentExecutionPlanV3,
+          this.dependencies.skillLoader,
+        );
       }
       deliverableId = deliverableContract.entry.id;
-      const parsedPlan = parsePlan(task.id, planVersion.plan, deliverableContract);
+      const parsedPlan = parseExecutionPlan(task.id, planVersion.plan, deliverableContract);
       const pendingInputs = parsePendingInputs(planVersion.pendingInputs);
       const resolvedInputs = await this.visualInputGates.resolve({
         taskId: input.lease.taskId,
@@ -1567,6 +1752,7 @@ export class LeaseExecutionEngine {
       if (!gaps.has(gap.key)) gaps.set(gap.key, gap);
     };
     const stepByKey = new Map(plan.steps.map((step) => [String(step.step_no), step]));
+    const skippedInvocationIds = new Set<string>();
     let wavePaused: LeaseExecutionResult | undefined;
     let cleanupRecoveryRequired = false;
     const scheduler = this.dependencies.scheduler ?? new ExecutionScheduler({
@@ -1580,7 +1766,8 @@ export class LeaseExecutionEngine {
       steps: plan.steps.map((step) => ({
         key: String(step.step_no),
         dependsOn: step.depends_on.map(String),
-        tier: step.actor_type === 'tool' && plan.optionalToolStepNos.has(step.step_no)
+        tier: (step.actor_type === 'tool' && plan.optionalToolStepNos.has(step.step_no))
+          || plan.optionalInvocationStepNos.has(step.step_no)
           ? 'optional'
           : 'core',
       })),
@@ -1590,6 +1777,37 @@ export class LeaseExecutionEngine {
       const waveResults = await Promise.allSettled(wave.map(async (stepKey) => {
         const step = stepByKey.get(stepKey);
         if (!step) throw new ExecutionAuthenticityError(`scheduler returned unknown step ${stepKey}`);
+        const invocationPolicies = plan.invocationPoliciesByStep.get(step.step_no) ?? [];
+        const skippedInvocation = invocationPolicies.find(({ invocationId }) => (
+          skippedInvocationIds.has(invocationId)
+        ));
+        if (skippedInvocation && invocationPolicies.every(({ failurePolicy }) => failurePolicy === 'gap')) {
+          const now = new Date();
+          const failure = {
+            kind: 'optional_contributor_skipped',
+            retryable: true,
+            message: `optional Contributor ${skippedInvocation.invocationId} was skipped after an earlier stage failed`,
+            invocationId: skippedInvocation.invocationId,
+            allowedActions: ['retry', 'abort'],
+          };
+          await this.dependencies.repository.recordExecutionStep({
+            ...input.lease,
+            stepNo: step.step_no,
+            stepName: step.step_name,
+            actorType: step.actor_type,
+            actorId: step.actor_id,
+            state: 'skipped',
+            failure,
+            startedAt: now,
+            finishedAt: now,
+          });
+          addGap({
+            key: `invocation:${skippedInvocation.invocationId}:step:${step.step_no}:skipped`,
+            stepNo: step.step_no,
+            message: redactString(failure.message),
+          });
+          return;
+        }
         const startedAt = new Date();
         let resolvedInput = structuredClone(step.input);
         let producedSkillOutputHash: string | undefined;
@@ -1605,9 +1823,12 @@ export class LeaseExecutionEngine {
         let frozenSkillExecution: FrozenSkillExecutionBinding | undefined;
         try {
           frozenSkillExecution = plan.frozenSkillExecutions.get(step.step_no);
-          skillDegradedPolicy = frozenSkillExecution?.degradedPolicy ?? (step.actor_type === 'skill'
-            ? this.dependencies.skillLoader.loadSkillExecution(step.actor_id)?.contract.degraded_policy
-            : undefined);
+          const invocationSkillPolicy = invocationPolicies.find(({ skillId }) => skillId === step.actor_id);
+          skillDegradedPolicy = invocationSkillPolicy?.failurePolicy
+            ?? frozenSkillExecution?.degradedPolicy
+            ?? (step.actor_type === 'skill'
+              ? this.dependencies.skillLoader.loadSkillExecution(step.actor_id)?.contract.degraded_policy
+              : undefined);
           const checkpoint = reusable.get(step.step_no);
           if (checkpoint) {
             active = await this.refreshLease(input.lease);
@@ -1615,13 +1836,24 @@ export class LeaseExecutionEngine {
             if (!priorArtifact || priorArtifact.state !== 'SEALED' || !priorArtifact.contentSha256) {
               throw new ExecutionAuthenticityError(`reusable step Artifact ${checkpoint.outputArtifactId} is unavailable`);
             }
+            const reusableArtifactValue = rebindReusableArtifactValue(
+              checkpoint.kind,
+              checkpoint.artifactValue,
+              input.lease,
+            );
+            if (checkpoint.kind === 'research_contribution') {
+              this.dependencies.validator.validateOrThrow(
+                'research-contribution-artifact-v1',
+                reusableArtifactValue,
+              );
+            }
             const resealed = await this.dependencies.artifacts.writeJson({
               taskId: input.lease.taskId,
               planVersionId: input.lease.planVersionId,
               attemptId: input.lease.attemptId,
               kind: checkpoint.kind,
               relativePath: `steps/${step.step_no}-${checkpoint.kind}.json`,
-              value: checkpoint.artifactValue,
+              value: reusableArtifactValue,
               schemaVersion: checkpoint.schemaVersion,
               activeLease: input.lease,
             });
@@ -1708,6 +1940,55 @@ export class LeaseExecutionEngine {
             }
             throw error;
           }
+          const synthesizerPolicy = invocationPolicies.find(({ role, skillId }) => (
+            role === 'synthesizer' && skillId === step.actor_id
+          ));
+          if (
+            synthesizerPolicy
+            && Array.isArray(resolvedInput.contribution_order)
+            && isRecord(resolvedInput.contribution_bundle)
+          ) {
+            const contributionBundle = buildResearchContributionBundle({
+              taskId: input.lease.taskId,
+              planVersionId: input.lease.planVersionId,
+              attemptId: input.lease.attemptId,
+              orderedInvocationIds: resolvedInput.contribution_order.filter(
+                (invocationId): invocationId is string => typeof invocationId === 'string',
+              ),
+              valuesByInvocationId: resolvedInput.contribution_bundle,
+              policiesByInvocationId: plan.invocationPoliciesById,
+              synthesizerInvocationId: synthesizerPolicy.invocationId,
+            });
+            this.dependencies.validator.validateOrThrow(
+              'research-contribution-bundle-v1',
+              contributionBundle,
+            );
+            publicationGroup = new ArtifactPublicationGroup(this.dependencies.artifacts);
+            const bundleArtifact = await this.dependencies.artifacts.writeJson({
+              taskId: input.lease.taskId,
+              planVersionId: input.lease.planVersionId,
+              attemptId: input.lease.attemptId,
+              kind: 'research_contribution_bundle',
+              relativePath: `steps/${step.step_no}-research-contribution-bundle.json`,
+              value: contributionBundle,
+              schemaVersion: 'research-contribution-bundle-v1',
+              activeLease: input.lease,
+            });
+            publicationGroup.track(bundleArtifact.id);
+            if (bundleArtifact.state !== 'SEALED' || !bundleArtifact.contentSha256) {
+              throw new ExecutionAuthenticityError(
+                `Contribution Bundle Artifact ${bundleArtifact.id} was not sealed`,
+              );
+            }
+            resolvedInput = {
+              ...resolvedInput,
+              contribution_bundle: contributionBundle,
+              contribution_bundle_artifact: {
+                id: bundleArtifact.id,
+                contentSha256: bundleArtifact.contentSha256,
+              },
+            };
+          }
           if (step.actor_type === 'tool') {
             toolScope = this.createToolExecutionScope();
             toolHeartbeat = this.startLeaseHeartbeat(
@@ -1728,7 +2009,7 @@ export class LeaseExecutionEngine {
             toolScope.assertActive(step.actor_id);
             toolHeartbeat.assertHealthy();
           } else {
-            actorResult = await this.withLeaseHeartbeat(input.lease, () => this.runStep({
+            actorResult = await this.withLeaseHeartbeat(input.lease, ({ signal }) => this.runStep({
               step,
               lease: input.lease,
               researchGoal,
@@ -1737,12 +2018,13 @@ export class LeaseExecutionEngine {
               expectedModel: input.expectedModel,
               optionalTool: false,
               frozenSkillExecution,
+              cancellationSignal: signal,
             }));
           }
           const actorOutputHash = actorResult.skillProvenance?.outputHash;
           if (typeof actorOutputHash === 'string') producedSkillOutputHash = actorOutputHash;
           toolAttemptReceipts = actorResult.toolAttemptReceipts;
-          const result = sanitizeStepResult(actorResult);
+          let result = sanitizeStepResult(actorResult);
           skillOutcome = step.actor_type === 'skill'
             ? evaluateSkillOutputStatus(result.output, skillDegradedPolicy)
             : null;
@@ -1757,11 +2039,16 @@ export class LeaseExecutionEngine {
                 isRecord(result.output) ? result.output.failures : successfulPageFailureRows,
               )
             : undefined;
+          const contributionPolicy = step.actor_type === 'skill'
+            ? invocationPolicies.find(({ role, skillId }) => (
+                role === 'contributor' && skillId === step.actor_id
+              ))
+            : undefined;
           const captureAttachments = step.actor_type === 'tool'
             ? browserCaptureAttachments(step.actor_id, result.output, result.mediaAttachments)
             : [];
-          if (captureAttachments.length > 0) {
-            publicationGroup = new ArtifactPublicationGroup(this.dependencies.artifacts);
+          if (captureAttachments.length > 0 || contributionPolicy) {
+            publicationGroup ??= new ArtifactPublicationGroup(this.dependencies.artifacts);
           }
           if (toolScope) {
             await this.requireActiveToolLease(
@@ -1793,7 +2080,7 @@ export class LeaseExecutionEngine {
           if (artifact.state !== 'SEALED' || !artifact.contentSha256) {
             throw new ExecutionAuthenticityError(`step Artifact ${artifact.id} was not sealed`);
           }
-          const sealedOutput: EngineSealedStepOutput = {
+          let sealedOutput: EngineSealedStepOutput = {
             stepNo: step.step_no,
             actorType: step.actor_type,
             questionIds: [...step.question_ids],
@@ -1809,7 +2096,79 @@ export class LeaseExecutionEngine {
               state: 'SEALED',
             },
           };
-          const verified = await readVerifiedStepArtifact(sealedOutput, this.dependencies.artifacts);
+          let verified = await readVerifiedStepArtifact(sealedOutput, this.dependencies.artifacts);
+          let sourceSkillArtifactId: string | undefined;
+          if (contributionPolicy) {
+            const adapterId = contributionPolicy.contributionAdapterId;
+            if (!adapterId) {
+              throw new ExecutionAuthenticityError(
+                `Contributor ${contributionPolicy.invocationId} has no adapter`,
+              );
+            }
+            const virtualSource = adapterId === VIRTUAL_USER_TOOL_ADAPTER_ID
+              ? [...outputs].reverse().find((output) => (
+                  output.actorId === 'virtual-user-lab'
+                  && output.stepNo < step.step_no
+                  && output.kind === 'tool_output'
+                ))
+              : undefined;
+            if (adapterId === VIRTUAL_USER_TOOL_ADAPTER_ID && !virtualSource) {
+              throw new ExecutionAuthenticityError(
+                `Contributor ${contributionPolicy.invocationId} has no virtual-user-lab source`,
+              );
+            }
+            const source = virtualSource ?? sealedOutput;
+            const contributionValue = (this.dependencies.contributionAdapters
+              ?? new ContributionAdapterRegistry()).adapt({
+              adapterId,
+              source: virtualSource?.output ?? verified.output,
+              sourceArtifact: {
+                id: source.artifact.id,
+                contentSha256: source.artifact.contentSha256!,
+                schemaVersion: STEP_ARTIFACT_SCHEMA_VERSIONS[source.kind],
+              },
+              taskId: input.lease.taskId,
+              planVersionId: input.lease.planVersionId,
+              attemptId: input.lease.attemptId,
+              invocationId: contributionPolicy.invocationId,
+              skillId: contributionPolicy.skillId,
+              contributionTypes: contributionPolicy.contributionTypes,
+              questionIds: contributionPolicy.questionIds,
+              requestedArtifactTypes: contributionPolicy.requestedArtifactTypes,
+              evidenceManifest: contributionEvidenceView({
+                lease: input.lease,
+                adapterId,
+                source: virtualSource,
+              }),
+            });
+            const contributionArtifact = await this.dependencies.artifacts.writeJson({
+              taskId: input.lease.taskId,
+              planVersionId: input.lease.planVersionId,
+              attemptId: input.lease.attemptId,
+              kind: 'research_contribution',
+              relativePath: `steps/${step.step_no}-research-contribution.json`,
+              value: contributionValue,
+              schemaVersion: STEP_ARTIFACT_SCHEMA_VERSIONS.research_contribution,
+              activeLease: input.lease,
+            });
+            publicationGroup?.track(contributionArtifact.id);
+            if (contributionArtifact.state !== 'SEALED' || !contributionArtifact.contentSha256) {
+              throw new ExecutionAuthenticityError(
+                `Contribution Artifact ${contributionArtifact.id} was not sealed`,
+              );
+            }
+            sourceSkillArtifactId = artifact.id;
+            sealedOutput = {
+              ...sealedOutput,
+              kind: 'research_contribution',
+              artifact: {
+                id: contributionArtifact.id,
+                contentSha256: contributionArtifact.contentSha256,
+                state: 'SEALED',
+              },
+            };
+            verified = await readVerifiedStepArtifact(sealedOutput, this.dependencies.artifacts);
+          }
           toolScope?.assertActive(step.actor_id);
           toolHeartbeat?.assertHealthy();
           for (const { captureIndex, attachment } of captureAttachments) {
@@ -1851,7 +2210,7 @@ export class LeaseExecutionEngine {
             actorType: step.actor_type,
             actorId: step.actor_id,
             state: 'succeeded',
-            outputArtifactId: artifact.id,
+            outputArtifactId: sealedOutput.artifact.id,
             toolProvenance: result.toolReceipt && result.toolResolution
               ? {
                   planHash: planVersion.planHash,
@@ -1880,7 +2239,10 @@ export class LeaseExecutionEngine {
             skillProvenance: result.skillProvenance
               ? {
                   ...result.skillProvenance,
-                  outputArtifactId: artifact.id,
+                  planHash: planVersion.planHash,
+                  stepHash: hashJson(step),
+                  outputArtifactId: sealedOutput.artifact.id,
+                  ...(sourceSkillArtifactId ? { sourceArtifactId: sourceSkillArtifactId } : {}),
                   status: skillOutcome?.status ?? 'succeeded',
                   ...(skillOutcome?.status === 'degraded'
                     ? { limitations: skillOutcome.limitations }
@@ -2086,6 +2448,45 @@ export class LeaseExecutionEngine {
                 : undefined,
             });
           }
+          const optionalInvocationPolicy = plan.optionalInvocationStepNos.has(step.step_no)
+            ? invocationPolicies.find(({ failurePolicy }) => failurePolicy === 'gap')
+            : undefined;
+          if (invocationFailureCanBecomeGap({
+            optionalInvocationStep: optionalInvocationPolicy !== undefined,
+            failureKind: typeof failure.kind === 'string' ? failure.kind : undefined,
+            artifactCleanupFailed,
+            integrityFailure: isIntegrityFailure(effectiveError),
+          }) && optionalInvocationPolicy) {
+            skippedInvocationIds.add(optionalInvocationPolicy.invocationId);
+            failure = {
+              ...failure,
+              kind: 'optional_contributor_failed',
+              retryable: true,
+              invocationId: optionalInvocationPolicy.invocationId,
+              allowedActions: ['retry', 'abort'],
+            };
+            await this.dependencies.repository.recordExecutionStep({
+              ...input.lease,
+              stepNo: step.step_no,
+              stepName: step.step_name,
+              actorType: step.actor_type,
+              actorId: step.actor_id,
+              state: 'skipped',
+              failure,
+              toolProvenance: failedToolProvenance,
+              skillProvenance: failedSkillProvenance,
+              startedAt,
+              finishedAt: new Date(),
+            });
+            addGap({
+              key: `invocation:${optionalInvocationPolicy.invocationId}:failed`,
+              stepNo: step.step_no,
+              message: redactString(
+                `Optional Contributor ${optionalInvocationPolicy.invocationId} failed: ${String(failure.message ?? 'unknown error')}`,
+              ),
+            });
+            return;
+          }
           if (artifactCleanupDeferred) {
             failure.artifactInvalidationPromotion = {
               version: ARTIFACT_INVALIDATION_PROMOTION_VERSION,
@@ -2257,6 +2658,28 @@ export class LeaseExecutionEngine {
           const refs = Array.isArray(proof?.sourceRefs)
             ? proof.sourceRefs.filter(isToolSourceRef).filter((ref) => ref.sourceUrl.startsWith('https://'))
             : [];
+          if (
+            step.actorType === 'tool'
+            && step.actorId === 'virtual-user-lab'
+            && step.state === 'succeeded'
+            && artifact
+            && executionMode === 'real'
+            && typeof implementationId === 'string'
+            && typeof redactedOutputHash === 'string'
+            && (toolTier === 'core' || toolTier === 'optional')
+            && isRecord(artifact.value)
+            && isRecord(artifact.value.output)
+            && Array.isArray(artifact.value.output.reviews)
+          ) {
+            return virtualUserSimulationEvidence({
+              stepNo: step.stepNo,
+              artifactId: artifact.artifact.id,
+              artifactContentSha256: artifact.artifact.contentSha256,
+              output: artifact.value.output,
+              implementationId,
+              redactedOutputHash,
+            });
+          }
           if (
             step.actorType !== 'tool'
             || step.state !== 'succeeded'
@@ -2647,8 +3070,13 @@ export class LeaseExecutionEngine {
         visualAssets: reportMaterials.visualAssets,
         visualAnnotationBindings: reportMaterials.visualAnnotationBindings ?? [],
       };
-      const deliverable = await this.withLeaseHeartbeat(input.lease, () => this.dependencies.deliverables.generate(deliverableInput));
+      const deliverable = await this.withLeaseHeartbeat(input.lease, ({ signal }) => (
+        this.dependencies.deliverables.generate({ ...deliverableInput, cancellationSignal: signal })
+      ));
       let deliverableArtifactId = deliverable.deliverableArtifactId;
+      let crossSkillReviewArtifactId = deliverable.crossSkillReviewArtifactId;
+      let contributionLedgerArtifactId = deliverable.contributionLedgerArtifactId;
+      let contributionSummaryArtifactId = deliverable.contributionSummaryArtifactId;
       let reportReviewArtifactId: string | undefined;
       let reportDocumentArtifactId: string | undefined;
       let reportLayoutBlueprintArtifactId: string | undefined;
@@ -2669,6 +3097,9 @@ export class LeaseExecutionEngine {
                 review: revision.review,
                 reviewArtifactId: revision.reviewArtifactId,
                 currentDeliverable: revision.deliverable as ResearchDeliverableEnvelope<unknown>,
+                ...(revision.cancellationSignal
+                  ? { cancellationSignal: revision.cancellationSignal }
+                  : {}),
               }),
             }
           : undefined;
@@ -2676,7 +3107,7 @@ export class LeaseExecutionEngine {
           throw new ExecutionAuthenticityError('report review coverage identifiers are unavailable');
         }
         const finalReviewCoverage = reviewCoverage;
-        const review = await this.withLeaseHeartbeat(input.lease, () => this.dependencies.reportReview!.review({
+        const review = await this.withLeaseHeartbeat(input.lease, ({ signal }) => this.dependencies.reportReview!.review({
           task: { id: task.id },
           plan: { id: planVersion.id },
           attempt: { id: input.lease.attemptId },
@@ -2688,10 +3119,14 @@ export class LeaseExecutionEngine {
           requirement: deliverableInput.finalizedRequirement as ResearchTaskV2,
           expectedModel: input.expectedModel,
           activeLease: input.lease,
+          cancellationSignal: signal,
         }, composer));
         reportReviewArtifactId = review.artifactId;
         reviewStatus = review.status;
         deliverableArtifactId = review.deliverableArtifactId;
+        crossSkillReviewArtifactId = review.crossSkillReviewArtifactId ?? crossSkillReviewArtifactId;
+        contributionLedgerArtifactId = review.contributionLedgerArtifactId ?? contributionLedgerArtifactId;
+        contributionSummaryArtifactId = review.contributionSummaryArtifactId ?? contributionSummaryArtifactId;
         if (review.status === 'paused') {
           const failure = {
             kind: 'report_review',
@@ -2724,6 +3159,9 @@ export class LeaseExecutionEngine {
             deliverableArtifactId,
             evidenceManifestArtifactId: sealedEvidenceManifest.artifact.id,
             reportReviewArtifactId,
+            ...(crossSkillReviewArtifactId === undefined ? {} : { crossSkillReviewArtifactId }),
+            ...(contributionLedgerArtifactId === undefined ? {} : { contributionLedgerArtifactId }),
+            ...(contributionSummaryArtifactId === undefined ? {} : { contributionSummaryArtifactId }),
             reviewStatus,
             failedStepNo,
             failure,
@@ -2757,7 +3195,7 @@ export class LeaseExecutionEngine {
             throw new ExecutionAuthenticityError('ReportDocument composition requires the final pass Review');
           }
           const materials = reportMaterials;
-          const composition = await this.withLeaseHeartbeat(input.lease, () =>
+          const composition = await this.withLeaseHeartbeat(input.lease, ({ signal }) =>
             this.dependencies.reportComposition!.composeAndStore({
               taskId: input.lease.taskId,
               planVersionId: input.lease.planVersionId,
@@ -2772,6 +3210,7 @@ export class LeaseExecutionEngine {
               expectedModel: input.expectedModel,
               layoutStepNo: plan.steps.length + 3,
               activeLease: input.lease,
+              cancellationSignal: signal,
             }));
           if (
             composition.artifact.state !== 'SEALED'
@@ -2811,6 +3250,9 @@ export class LeaseExecutionEngine {
             ...(reportDocumentArtifactId === undefined ? {} : { reportDocumentArtifactId }),
             ...(reportLayoutBlueprintArtifactId === undefined ? {} : { reportLayoutBlueprintArtifactId }),
             ...(reportLayoutDiagnosticArtifactId === undefined ? {} : { reportLayoutDiagnosticArtifactId }),
+            ...(crossSkillReviewArtifactId === undefined ? {} : { crossSkillReviewArtifactId }),
+            ...(contributionLedgerArtifactId === undefined ? {} : { contributionLedgerArtifactId }),
+            ...(contributionSummaryArtifactId === undefined ? {} : { contributionSummaryArtifactId }),
           });
       await this.dependencies.repository.requireActiveLease(input.lease);
       const status = gaps.size > 0 ? 'completed_with_gaps' : 'completed';
@@ -2822,6 +3264,9 @@ export class LeaseExecutionEngine {
         evidenceManifestArtifactId: sealedEvidenceManifest.artifact.id,
         ...(reportReviewArtifactId === undefined ? {} : { reportReviewArtifactId }),
         ...(reportPackage === undefined ? {} : { reportPackageArtifactId: reportPackage.id }),
+        ...(crossSkillReviewArtifactId === undefined ? {} : { crossSkillReviewArtifactId }),
+        ...(contributionLedgerArtifactId === undefined ? {} : { contributionLedgerArtifactId }),
+        ...(contributionSummaryArtifactId === undefined ? {} : { contributionSummaryArtifactId }),
         ...(reviewStatus === undefined ? {} : { reviewStatus }),
         gapCount: gaps.size,
       };
@@ -3003,6 +3448,13 @@ export class LeaseExecutionEngine {
         for (const step of plan.steps) {
           const prior = previous.find((candidate) => candidate.stepNo === step.step_no)!;
           const artifact = await this.dependencies.repository.getArtifact(prior.outputArtifactId!);
+          const contributorOutput = step.actor_type === 'skill'
+            && (plan.invocationPoliciesByStep.get(step.step_no) ?? []).some(({ role, skillId }) => (
+              role === 'contributor' && skillId === step.actor_id
+            ));
+          const expectedKind = contributorOutput
+            ? 'research_contribution'
+            : expectedKinds[step.actor_type];
           if (
             !artifact
             || artifact.state !== 'SEALED'
@@ -3010,7 +3462,7 @@ export class LeaseExecutionEngine {
             || artifact.taskId !== lease.taskId
             || artifact.planVersionId !== lease.planVersionId
             || artifact.attemptId !== lease.retryOf
-            || artifact.kind !== expectedKinds[step.actor_type]
+            || artifact.kind !== expectedKind
           ) throw new Error(`terminal rebuild Artifact for step ${step.step_no} is not reusable`);
           let provenance: Record<string, unknown> | null = null;
           if (step.actor_type === 'tool') {
@@ -3069,42 +3521,58 @@ export class LeaseExecutionEngine {
         // Any lineage, receipt, or Artifact drift falls back to the ordinary retry path.
       }
     }
-    let invalid = false;
+    const reusableStepNos = new Set<number>();
     for (const step of plan.steps) {
-      if (invalid) break;
       const prior = previous.find((candidate) => candidate.stepNo === step.step_no);
-      if (!prior || prior.state !== 'succeeded' || !prior.outputArtifactId || !prior.toolProvenance) {
-        invalid = true;
+      if (
+        !prior
+        || prior.state !== 'succeeded'
+        || !prior.outputArtifactId
+        || !step.depends_on.every((dependency) => reusableStepNos.has(dependency))
+      ) continue;
+
+      let provenance: Record<string, unknown> | null = null;
+      if (step.actor_type === 'tool') {
+        if (step.input_bindings.length > 0 || !prior.toolProvenance) continue;
+        const tool = this.dependencies.skillLoader.getTool(step.actor_id);
+        if (!tool) continue;
+        const manifest = loadToolManifest(tool.path);
+        const resolution = this.dependencies.tools.resolve(manifest);
+        const current = resolution ? {
+          planHash,
+          stepHash: hashJson(step),
+          inputHash: hashJson(step.input),
+          manifestHash: hashFile(tool.path),
+          inputSchemaHash: hashFile(manifest.input_schema),
+          outputSchemaHash: hashFile(manifest.output_schema),
+          configHash: toolConfigHash(manifest, resolution),
+        } : null;
+        const fields: Array<'planHash' | 'stepHash' | 'inputHash' | 'manifestHash' | 'inputSchemaHash' | 'outputSchemaHash' | 'configHash'> = [
+          'planHash', 'stepHash', 'inputHash', 'manifestHash', 'inputSchemaHash', 'outputSchemaHash', 'configHash',
+        ];
+        if (!current || !fields.every((field) => current[field] === prior.toolProvenance?.[field])) continue;
+        provenance = prior.toolProvenance;
+      } else if (step.actor_type === 'knowledge' || step.actor_type === 'skill') {
+        if (
+          !prior.skillProvenance
+          || prior.skillProvenance.planHash !== planHash
+          || prior.skillProvenance.stepHash !== hashJson(step)
+        ) continue;
+        provenance = prior.skillProvenance;
+      } else {
         continue;
       }
-      if (step.actor_type !== 'tool' || step.input_bindings.length > 0) {
-        invalid = true;
-        continue;
-      }
-      const tool = this.dependencies.skillLoader.getTool(step.actor_id);
-      if (!tool) {
-        invalid = true;
-        continue;
-      }
-      const manifest = loadToolManifest(tool.path);
-      const resolution = this.dependencies.tools.resolve(manifest);
-      const current = resolution ? {
-        planHash,
-        stepHash: hashJson(step),
-        inputHash: hashJson(step.input),
-        manifestHash: hashFile(tool.path),
-        inputSchemaHash: hashFile(manifest.input_schema),
-        outputSchemaHash: hashFile(manifest.output_schema),
-        configHash: toolConfigHash(manifest, resolution),
-      } : null;
-      const fields: Array<'planHash' | 'stepHash' | 'inputHash' | 'manifestHash' | 'inputSchemaHash' | 'outputSchemaHash' | 'configHash'> = [
-        'planHash', 'stepHash', 'inputHash', 'manifestHash', 'inputSchemaHash', 'outputSchemaHash', 'configHash',
-      ];
-      if (!current || !fields.every((field) => current[field] === prior.toolProvenance?.[field])) {
-        invalid = true;
-        continue;
-      }
+
       const artifact = await this.dependencies.repository.getArtifact(prior.outputArtifactId);
+      const contributorOutput = step.actor_type === 'skill'
+        && (plan.invocationPoliciesByStep.get(step.step_no) ?? []).some(({ role, skillId }) => (
+          role === 'contributor' && skillId === step.actor_id
+        ));
+      const expectedKind: StepArtifactKind = step.actor_type === 'tool'
+        ? 'tool_output'
+        : step.actor_type === 'knowledge'
+          ? 'knowledge_output'
+          : contributorOutput ? 'research_contribution' : 'skill_output';
       if (
         !artifact
         || artifact.state !== 'SEALED'
@@ -3112,10 +3580,8 @@ export class LeaseExecutionEngine {
         || artifact.taskId !== lease.taskId
         || artifact.planVersionId !== lease.planVersionId
         || artifact.attemptId !== lease.retryOf
-      ) {
-        invalid = true;
-        continue;
-      }
+        || artifact.kind !== expectedKind
+      ) continue;
       try {
         const stored = await this.dependencies.artifacts.readVerifiedJson<Record<string, unknown>>(artifact.id);
         const output = isRecord(stored.value) && 'output' in stored.value ? stored.value.output : stored.value;
@@ -3125,10 +3591,11 @@ export class LeaseExecutionEngine {
           artifactValue: stored.value,
           kind: artifact.kind as StepArtifactKind,
           schemaVersion: artifact.schemaVersion,
-          provenance: { ...prior.toolProvenance, outputArtifactId: artifact.id },
+          provenance: { ...provenance, outputArtifactId: artifact.id },
         });
+        reusableStepNos.add(step.step_no);
       } catch {
-        invalid = true;
+        // Invalidity propagates through dependencies because this step is not marked reusable.
       }
     }
     return reusable;
@@ -3256,7 +3723,7 @@ export class LeaseExecutionEngine {
         heartbeatFailure = error;
         onFailure?.(error);
       });
-    }, Math.max(1, Math.floor(this.dependencies.heartbeatMs / 2)));
+    }, Math.max(1, Math.min(1_000, Math.floor(this.dependencies.heartbeatMs / 2))));
     return {
       assertHealthy: () => {
         if (heartbeatFailure) throw heartbeatFailure;
@@ -3291,9 +3758,10 @@ export class LeaseExecutionEngine {
 
   private async withLeaseHeartbeat<T>(
     lease: ControlExecutionLease,
-    operation: (guard: { ensureActive: () => Promise<void> }) => Promise<T>,
+    operation: (guard: { ensureActive: () => Promise<void>; signal: AbortSignal }) => Promise<T>,
   ): Promise<T> {
-    const heartbeat = this.startLeaseHeartbeat(lease);
+    const controller = new AbortController();
+    const heartbeat = this.startLeaseHeartbeat(lease, (error) => controller.abort(error));
     const ensureActive = async (): Promise<void> => {
       heartbeat.assertHealthy();
       await this.dependencies.repository.requireActiveLease(lease);
@@ -3302,11 +3770,12 @@ export class LeaseExecutionEngine {
     let operationSucceeded = false;
     let operationResult: T | undefined;
     try {
-      operationResult = await operation({ ensureActive });
+      operationResult = await operation({ ensureActive, signal: controller.signal });
       operationSucceeded = true;
       await ensureActive();
       return operationResult as T;
     } catch (error) {
+      heartbeat.assertHealthy();
       if (operationSucceeded) attachToolAttemptReceipts(error, operationResult);
       throw error;
     } finally {
@@ -3333,6 +3802,7 @@ export class LeaseExecutionEngine {
     frozenSkillExecution?: FrozenSkillExecutionBinding;
     toolContext?: ToolInvocationContext;
     onToolLeaseLost?: () => void;
+    cancellationSignal?: AbortSignal;
   }): Promise<StepResult> {
     if (input.step.actor_type === 'tool') {
       if (!input.toolContext) throw new ExecutionAuthenticityError('tool execution context is missing');
@@ -3353,6 +3823,9 @@ export class LeaseExecutionEngine {
       );
     }
     await this.dependencies.repository.requireActiveLease(input.lease);
+    if (input.cancellationSignal?.aborted) {
+      throw input.cancellationSignal.reason ?? new Error('execution cancelled');
+    }
     switch (input.step.actor_type) {
       case 'knowledge':
         return this.runKnowledge(input);
@@ -3793,6 +4266,7 @@ export class LeaseExecutionEngine {
     resolvedInput: Record<string, unknown>;
     outputs: EngineSealedStepOutput[];
     expectedModel: string;
+    cancellationSignal?: AbortSignal;
     frozenSkillExecution?: FrozenSkillExecutionBinding;
   }): Promise<StepResult> {
     if (!this.dependencies.llm.identity.eligibleAsReal) {
@@ -3822,6 +4296,7 @@ export class LeaseExecutionEngine {
       schema: schemas.output ?? {},
       schemaName: `skill:${input.step.actor_id}`,
       context: skillContext,
+      ...(input.cancellationSignal ? { signal: input.cancellationSignal } : {}),
       receipt: {
         stage: 'skill',
         attemptId: input.lease.attemptId,
@@ -3871,6 +4346,7 @@ export class LeaseExecutionEngine {
     resolvedInput: Record<string, unknown>;
     outputs: EngineSealedStepOutput[];
     expectedModel: string;
+    cancellationSignal?: AbortSignal;
   }): Promise<StepResult> {
     if (!this.dependencies.llm.identity.eligibleAsReal) {
       throw new ExecutionAuthenticityError('LLM provider is not eligible as real');
@@ -3884,6 +4360,7 @@ export class LeaseExecutionEngine {
     const result = await this.llm.generateText({
       prompt: `Execute plan step: ${input.step.step_name}. ${input.step.purpose ?? ''}\nContract: ${JSON.stringify(stepContract(input.step))}\nEvidence IDs listed in prior_outputs[].evidenceIds are the exact runtime-issued IDs for those outputs. When such a list is present, cite only IDs from it; never infer an ID from an unaddressable result. IDs carried forward in bound upstream analysis remain candidates and will be verified against the final Evidence Manifest.`,
       context: llmContext,
+      ...(input.cancellationSignal ? { signal: input.cancellationSignal } : {}),
       receipt: {
         stage: 'llm',
         attemptId: input.lease.attemptId,
@@ -3902,6 +4379,7 @@ export class LeaseExecutionEngine {
     resolvedInput: Record<string, unknown>;
     outputs: EngineSealedStepOutput[];
     expectedModel: string;
+    cancellationSignal?: AbortSignal;
   }): Promise<StepResult> {
     if (!this.dependencies.llm.identity.eligibleAsReal) {
       throw new ExecutionAuthenticityError('reviewer LLM provider is not eligible as real');
@@ -3917,6 +4395,7 @@ export class LeaseExecutionEngine {
       schema: REVIEWER_STEP_OUTPUT_SCHEMA,
       schemaName: 'reviewer-step-output',
       context: reviewerContext,
+      ...(input.cancellationSignal ? { signal: input.cancellationSignal } : {}),
       receipt: {
         stage: 'reviewer',
         attemptId: input.lease.attemptId,

@@ -570,6 +570,7 @@ router.get('/:id', async (req, res) => {
         actorType: step.actorType,
         actorId: step.actorId,
         state: step.state,
+        outputArtifactId: step.outputArtifactId,
         toolProvenance: step.toolProvenance,
         skillProvenance: step.skillProvenance,
         failure: step.failure,
@@ -708,6 +709,29 @@ router.post('/:id/revise', async (req, res) => {
       idempotencyKey: key,
       actor,
       revisionInstruction,
+    }));
+  } catch (error) {
+    responseError(res, error);
+  }
+});
+
+router.post('/:id/cancel', async (req, res) => {
+  const body = record(req.body);
+  const actor = await authenticatedActor(req, res);
+  const key = idempotencyKey(req);
+  const expectedVersion = version(body?.expectedVersion);
+  if (!actor) return;
+  if (!await ensureOwnedTask(runtime, req, res, actor)) return;
+  if (expectedVersion == null || !key) {
+    res.status(400).json({ error: 'expectedVersion、Idempotency-Key 必填' });
+    return;
+  }
+  try {
+    res.json(await workflow.cancel({
+      taskId: req.params.id,
+      expectedVersion,
+      idempotencyKey: key,
+      actor,
     }));
   } catch (error) {
     responseError(res, error);

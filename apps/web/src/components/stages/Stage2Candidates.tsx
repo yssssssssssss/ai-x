@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState, type KeyboardEvent } from 'react';
 import useEmblaCarousel from 'embla-carousel-react';
 import type { CandidateProfile } from '../../../../../packages/api-contract/plan.ts';
+import type { FinalizedPlan } from '../../../../../packages/api-contract/http.ts';
 import type { CurrentPlanCandidate } from '../../api/client.ts';
 import { candidateInitialIndex } from '../../current-flow-state.ts';
+import { MultiSkillPlanSummary } from '../MultiSkillPlanSummary.tsx';
 import { Header } from './Stage1Understand.tsx';
 
 function ArrowIcon({ direction }: { direction: 'previous' | 'next' }) {
@@ -184,6 +186,7 @@ export function Stage2Candidates({
                     <div className="candidate-tradeoffs">
                       <span>代价</span>{candidate.tradeoffs}
                     </div>
+                    <MultiSkillPlanSummary plan={candidate.plan as unknown as FinalizedPlan} compact />
                     <ol className="candidate-steps">
                       {steps.map((step, index) => (
                         <li key={step.step_no ?? index}>

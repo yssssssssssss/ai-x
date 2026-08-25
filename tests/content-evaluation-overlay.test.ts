@@ -93,7 +93,7 @@ test('existing KB evaluation dry-run reports the overlay and rejects production-
     contentVariant: 'enhanced',
   });
   assert.equal(report.status, 'ready');
-  assert.equal(report.selectedSkillIds.length, 23);
+  assert.equal(report.selectedSkillIds.length, 24);
   assert.equal(report.contentEvaluation.promotionSet.knowledgeCandidateIds.length, 15);
   assert.equal(report.contentEvaluation.promotionSet.assetCandidateIds.length, 1);
   assert.equal(report.contentEvaluation.promotionSet.draftSkillIds.length, 1);

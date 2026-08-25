@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import {
   assertGatewayModelReceipts,
+  assertMultiSkillSmokePlan,
   assertRealSmokeConfig,
   assertSmokePlanApprovalPolicy,
   assertSmokeReceiptMinimums,
@@ -25,6 +26,52 @@ import {
   verifySmokeHistoryReread,
 } from '../scripts/current-real-smoke.ts';
 import { parseModelRoutes } from '../apps/orchestrator-runtime/src/runtime/gateway-llm-client.ts';
+test('JD crowdfunding real-smoke contract requires Plan v3, exact Contributors, and real Tool stages', () => {
+  const fixture = JSON.parse(readFileSync(
+    join(process.cwd(), 'tests/fixtures/jd-crowdfunding-multi-skill-real-smoke.json'),
+    'utf8',
+  )) as { scenarios: Array<{
+    requireMultiSkill: boolean;
+    expectedContributorSkillIds: string[];
+    requiredToolIds: string[];
+  }> };
+  const scenario = fixture.scenarios[0]!;
+  const contributorInvocations = scenario.expectedContributorSkillIds.map((skillId, index) => ({
+    invocation_id: `contributor-${index}`,
+    skill_id: skillId,
+    role: 'contributor',
+  }));
+  const plan = {
+    execution_contract_version: 'current-execution-plan-v3',
+    skill_invocations: [
+      ...contributorInvocations,
+      { invocation_id: 'synth', skill_id: 'research-strategy-synthesis', role: 'synthesizer' },
+    ],
+    contribution_requirements: contributorInvocations.map((invocation, index) => ({
+      id: `demand-${index}`,
+      owner_invocation_id: invocation.invocation_id,
+    })),
+    portfolio_summary: { selected: [] },
+    steps: [
+      {
+        actor_type: 'tool', actor_id: 'tavily-web-search',
+        shared_stage_key: 'shared:tool:tavily-web-search',
+        shared_by_invocation_ids: ['contributor-0', 'synth'],
+      },
+      { actor_type: 'tool', actor_id: 'virtual-user-lab' },
+    ],
+  };
+  assert.doesNotThrow(() => assertMultiSkillSmokePlan(plan, scenario));
+  assert.throws(
+    () => assertMultiSkillSmokePlan({ ...plan, execution_contract_version: 'current-execution-plan-v2' }, scenario),
+    /Plan v3/u,
+  );
+  assert.throws(
+    () => assertMultiSkillSmokePlan({ ...plan, skill_invocations: plan.skill_invocations.slice(1) }, scenario),
+    /Contributor\/Synthesizer inventory/u,
+  );
+});
+
 const REQUIRED_REAL_PROVIDER_ENV = [
   'ALLOW_REAL_PROVIDER',
   'LLM_PROVIDER',

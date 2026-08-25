@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "contribution-summary-v1.schema.json",
+  "title": "ContributionSummaryV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "taskId", "planVersionId", "attemptId", "contributors"],
+  "properties": {
+    "version": { "const": "contribution-summary-v1" },
+    "taskId": { "$ref": "#/$defs/text" },
+    "planVersionId": { "$ref": "#/$defs/text" },
+    "attemptId": { "$ref": "#/$defs/text" },
+    "contributors": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/contributor" }
+    }
+  },
+  "$defs": {
+    "text": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "contributionType": {
+      "enum": ["market_landscape", "competitive_analysis", "persona", "jobs_to_be_done", "journey", "qualitative_insight", "voc", "satisfaction", "metrics", "funnel", "feature_adoption", "design_audit", "accessibility", "research_method", "prioritization", "strategy", "action_plan", "virtual_user_hypothesis"]
+    },
+    "unit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceArtifactId", "sourceUnitKey", "kind", "title", "statement", "questionIds", "evidenceIds", "status", "confidence", "disposition", "canonicalNodeIds"],
+      "properties": {
+        "sourceArtifactId": { "$ref": "#/$defs/text" },
+        "sourceUnitKey": { "$ref": "#/$defs/text" },
+        "kind": { "enum": ["finding", "insight", "persona", "job", "journey_stage", "metric", "method", "priority", "recommendation", "strategy", "action", "hypothesis", "artifact_item"] },
+        "title": { "$ref": "#/$defs/text" },
+        "statement": { "$ref": "#/$defs/text" },
+        "questionIds": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/text" } },
+        "evidenceIds": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/text" } },
+        "status": { "enum": ["supported", "provisional"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "disposition": { "enum": ["included", "merged", "conflicted", "omitted"] },
+        "canonicalNodeIds": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/text" } }
+      }
+    },
+    "disposition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceUnitKey", "disposition", "canonicalNodeIds"],
+      "properties": {
+        "sourceUnitKey": { "$ref": "#/$defs/text" },
+        "disposition": { "enum": ["included", "merged", "conflicted", "omitted"] },
+        "canonicalNodeIds": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/text" } }
+      }
+    },
+    "contributor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["invocationId", "skillId", "contributionTypes", "unitCount", "limitations", "units", "dispositions"],
+      "properties": {
+        "invocationId": { "$ref": "#/$defs/text" },
+        "skillId": { "$ref": "#/$defs/text" },
+        "contributionTypes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/contributionType" } },
+        "unitCount": { "type": "integer", "minimum": 0 },
+        "limitations": { "type": "array", "items": { "$ref": "#/$defs/text" } },
+        "units": { "type": "array", "maxItems": 1024, "items": { "$ref": "#/$defs/unit" } },
+        "dispositions": { "type": "array", "items": { "$ref": "#/$defs/disposition" } }
+      }
+    }
+  }
+}

@@ -18,8 +18,10 @@ import {
   type ZeroPublicationRequestIdentity,
   type ZeroPublicationUiState,
 } from '../../zero-publication-ui.ts';
+import { hasCompleteContributionSidecars } from '../../report-package-response.ts';
 import { createReportBundle } from '../../reporting/report-bundle.ts';
 import { ReportDocumentView } from '../../reporting/ReportDocumentView.tsx';
+import { SkillContributionView } from '../SkillContributionView.tsx';
 import { Header } from './Stage1Understand.tsx';
 
 type MultimodalReportResponse = Extract<
@@ -144,18 +146,42 @@ export function CurrentStage4Report({
   taskState: 'completed' | 'completed_with_gaps';
 }) {
   const selected = selectCurrentStage4Renderer(report);
+  const contributionView = hasCompleteContributionSidecars(report)
+    ? (
+        <SkillContributionView
+          summary={report.contributionSummary}
+          ledger={report.contributionLedger}
+          review={report.crossSkillReview}
+        />
+      )
+    : null;
   if (selected.component === 'CurrentTextReport') {
-    return report.presentationMode === 'multimodal'
-      ? <MultimodalResearchPlanReport report={report as MultimodalReportResponse & ResearchPlanResponse} taskState={taskState} />
-      : <CurrentTextReport report={report as ResearchPlanResponse} />;
+    return (
+      <>
+        {report.presentationMode === 'multimodal'
+          ? <MultimodalResearchPlanReport report={report as MultimodalReportResponse & ResearchPlanResponse} taskState={taskState} />
+          : <CurrentTextReport report={report as ResearchPlanResponse} />}
+        {contributionView}
+      </>
+    );
   }
   if (selected.component === 'ReportDocumentView' && report.presentationMode === 'multimodal') {
-    return <MultimodalCurrentReport report={report} taskState={taskState} />;
+    return (
+      <>
+        <MultimodalCurrentReport report={report} taskState={taskState} />
+        {contributionView}
+      </>
+    );
   }
   if (report.presentationMode === 'multimodal') {
     throw new Error('multimodal report package has no ReportDocument renderer');
   }
-  return <GenericTextReport report={report} />;
+  return (
+    <>
+      <GenericTextReport report={report} />
+      {contributionView}
+    </>
+  );
 }
 
 function MultimodalResearchPlanReport({
@@ -479,6 +505,32 @@ function MultimodalCurrentReport({
 function CurrentTextReport({ report }: { report: ResearchPlanResponse }) {
   const { deliverable, evidenceManifest } = report;
   const { payload, findingGraph } = deliverable;
+  const [bundleStatus, setBundleStatus] = useState<'idle' | 'working' | 'error'>('idle');
+
+  async function downloadBundle() {
+    setBundleStatus('working');
+    try {
+      if (report.presentationMode !== 'current_text') {
+        throw new Error('ZIP report packages require the Current report format');
+      }
+      const bytes = await createReportBundle({
+        report,
+        async readAsset() { throw new Error('current-text report cannot reference visual assets'); },
+      });
+      const ownedBytes = new Uint8Array(bytes.byteLength);
+      ownedBytes.set(bytes);
+      const url = URL.createObjectURL(new Blob([ownedBytes.buffer], { type: 'application/zip' }));
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `research-report-${deliverable.taskId}.zip`;
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      setBundleStatus('idle');
+    } catch {
+      setBundleStatus('error');
+    }
+  }
 
   function download() {
     const blob = new Blob([currentResearchPlanToMarkdown(report)], { type: 'text/markdown;charset=utf-8' });
@@ -638,6 +690,12 @@ function CurrentTextReport({ report }: { report: ResearchPlanResponse }) {
       <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
         <button type="button" className="btn-ghost" onClick={() => window.print()}>打印 / PDF</button>
         <button type="button" className="btn-secondary" onClick={download}>导出 Markdown</button>
+        {report.presentationMode === 'current_text' ? (
+          <button type="button" className="btn-secondary" onClick={() => void downloadBundle()} disabled={bundleStatus === 'working'}>
+            {bundleStatus === 'working' ? '正在打包…' : '下载报告包 (.zip)'}
+          </button>
+        ) : null}
+        {bundleStatus === 'error' ? <span role="alert">报告包生成失败，请重试</span> : null}
       </div>
     </article>
   );

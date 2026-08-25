@@ -361,12 +361,18 @@
           "items": { "$ref": "#/$defs/contributionType" }
         },
         "contribution_schema": { "type": "string", "minLength": 1 },
+        "contribution_adapter": { "type": "string", "minLength": 1 },
         "required_input_roles": {
           "type": "array",
           "uniqueItems": true,
           "items": { "type": "string", "minLength": 1 }
         },
         "optional_input_roles": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "shareable_prerequisites": {
           "type": "array",
           "uniqueItems": true,
           "items": { "type": "string", "minLength": 1 }
@@ -506,7 +512,9 @@
       "properties": {
         "target_pointer": { "type": "string", "pattern": "^/" },
         "source_step_no": { "type": "integer", "minimum": 1 },
-        "source_pointer": { "type": "string", "pattern": "^/" }
+        "source_pointer": { "type": "string", "pattern": "^/" },
+        "optional": { "type": "boolean" },
+        "include_artifact_identity": { "type": "boolean" }
       }
     },
     "expectedOutput": {

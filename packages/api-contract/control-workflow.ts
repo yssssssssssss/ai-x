@@ -1,10 +1,14 @@
 import type { CandidateProfile, ResearchTaskData, ResearchTaskV2 } from './plan.ts';
 import type {
+  ContributionLedgerV1,
+  ContributionSummaryV1,
+  CrossSkillReviewV1,
   CurrentExecutionPlan,
   CurrentExecutionPlanV3,
   EvidenceManifest,
   LegacyResearchDeliverableEnvelope,
   PendingInput,
+  ReadableCurrentExecutionPlan,
   ResearchDeliverableEnvelope,
   VisualAssetManifest,
 } from './research-deliverable.ts';
@@ -95,7 +99,9 @@ export interface CurrentPlanCandidateV3 extends Omit<CurrentPlanCandidate, 'plan
   plan: CurrentExecutionPlanV3;
 }
 
-export type ReadableCurrentPlanCandidate = CurrentPlanCandidate | CurrentPlanCandidateV3;
+export interface ReadableCurrentPlanCandidate extends Omit<CurrentPlanCandidate, 'plan'> {
+  plan: ReadableCurrentExecutionPlan;
+}
 
 export interface ControlPlanCandidatesResponse {
   kind: 'current';
@@ -152,6 +158,11 @@ export interface ExecutionControlPlanRequest {
   idempotencyKey: string;
 }
 
+export interface CancelControlPlanRequest {
+  expectedVersion: number;
+  idempotencyKey: string;
+}
+
 export interface ResumeControlPlanRequest {
   expectedVersion: number;
   idempotencyKey: string;
@@ -201,6 +212,9 @@ export interface ControlExecutionResult {
   evidenceManifestArtifactId?: string;
   reportReviewArtifactId?: string;
   reportPackageArtifactId?: string;
+  crossSkillReviewArtifactId?: string;
+  contributionLedgerArtifactId?: string;
+  contributionSummaryArtifactId?: string;
   reviewStatus?: 'completed' | 'paused';
   gapCount?: number;
   failedStepNo?: number;
@@ -261,6 +275,9 @@ export type PassedReportReviewArtifact = ReportReviewArtifact & { verdict: 'pass
 interface CoreReportPackageResponse<TDeliverable> {
   deliverable: TDeliverable;
   evidenceManifest: EvidenceManifest;
+  crossSkillReview?: CrossSkillReviewV1;
+  contributionLedger?: ContributionLedgerV1;
+  contributionSummary?: ContributionSummaryV1;
 }
 
 export type CurrentReportPackageResponse<TPayload = unknown> =

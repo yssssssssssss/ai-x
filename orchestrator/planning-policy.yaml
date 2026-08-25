@@ -16,7 +16,7 @@ signal_catalog:
   sha256: sha256:d51b1fc8cc0c62420e9d18aed846395a5b5a544098a919a9e421780b28c18eaa
 capability_crosswalk:
   version: planning-capability-crosswalk-v1
-  sha256: sha256:0cfc7d63a5708596f83a07a7ec2ba5bef66d9c2957981e7f48432bb188e4ce69
+  sha256: sha256:e11f9b4b1579b9345112761d8163655f02bde6310181ce21e8fd50d25285b70f
 candidate_contract:
   min_items: 2
   max_items: 4

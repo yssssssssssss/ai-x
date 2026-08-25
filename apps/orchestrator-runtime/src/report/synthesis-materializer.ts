@@ -85,6 +85,7 @@ const SCHEMAS_BY_KIND: Record<string, readonly string[]> = {
   knowledge_output: ['knowledge-bundle-v1'],
   tool_output: ['tool-output-v1'],
   skill_output: ['skill-output-v1', 'skill-output-v2'],
+  research_contribution: ['research-contribution-artifact-v1'],
   llm_output: ['llm-output-v1'],
   review_output: ['review-output-v1'],
 };
@@ -92,7 +93,11 @@ const EVIDENCE_SERVICE = new EvidenceService();
 
 function isRealToolEvidence(entry: EvidenceEntry): boolean {
   return entry.kind === 'tool_output'
-    && entry.evidenceClass !== 'derived'
+    && (
+      entry.evidenceClass === 'public_source'
+      || entry.evidenceClass === 'screenshot'
+      || entry.evidenceClass === 'dataset'
+    )
     && entry.sensitivity !== 'sensitive'
     && entry.redaction !== 'blocked'
     && entry.toolProof?.executionMode === 'real'
@@ -126,6 +131,8 @@ function redactMaterialValue(value: unknown, key = ''): unknown {
 }
 
 function assertValidStep(output: MaterializeStepOutput, input: MaterializeInput): void {
+  const kindMatchesActor = output.kind === KIND_BY_ACTOR[output.actorType]
+    || (output.actorType === 'skill' && output.kind === 'research_contribution');
   if (
     output.state !== 'succeeded'
     || output.artifact.state !== 'SEALED'
@@ -134,7 +141,7 @@ function assertValidStep(output: MaterializeStepOutput, input: MaterializeInput)
     || output.planVersionId !== input.planVersionId
     || output.attemptId !== input.attemptId
     || output.artifact.id.length === 0
-    || output.kind !== KIND_BY_ACTOR[output.actorType]
+    || !kindMatchesActor
   ) {
     throw new SynthesisMaterializationError(
       'invalid_step_output',

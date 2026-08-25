@@ -8,6 +8,7 @@ import type {
   CurrentExecutionPlan,
   EvidenceRequirement,
   PendingInput,
+  ReadableCurrentExecutionPlan,
 } from '../packages/api-contract/research-deliverable.ts';
 import type { CapabilityResolution } from '../apps/orchestrator-runtime/src/planners/capability-resolver.ts';
 import type { ProblemGraph } from '../apps/orchestrator-runtime/src/planners/problem-graph-planner.ts';
@@ -885,7 +886,7 @@ interface CurrentResearchPlanningFixture {
 
 interface PreparedCandidate {
   candidateId: PlanCandidate['id'];
-  plan: Omit<CurrentExecutionPlan, 'task_id'> & { task_id?: '' };
+  plan: Omit<ReadableCurrentExecutionPlan, 'task_id'> & { task_id?: '' };
   pendingInputs: PendingInput[];
 }
 
@@ -960,7 +961,7 @@ function planningServiceHarness(result: CurrentResearchPlanningFixture) {
             taskId: input.taskId,
             version: index + 1,
             candidateId: candidate.candidateId,
-            plan: { ...candidate.plan, task_id: input.taskId } as CurrentExecutionPlan,
+            plan: { ...candidate.plan, task_id: input.taskId } as ReadableCurrentExecutionPlan,
             planHash: `sha256:${String(index + 1).repeat(64)}`,
             pendingInputs: candidate.pendingInputs,
           })),

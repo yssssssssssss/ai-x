@@ -133,8 +133,12 @@ function skill(
       compatible_deliverables: ['research_strategy_report'],
       ...(contributionTypes.length > 0 ? { contribution_types: contributionTypes } : {}),
       contribution_schema: 'schemas/research-contribution-v1.schema.json',
+      contribution_adapter: modes.includes('contributor')
+        ? 'skill-envelope-provisional-v1'
+        : undefined,
       required_input_roles: ['research_goal'],
       optional_input_roles: [],
+      ...(requiredTools.length > 0 ? { shareable_prerequisites: [...requiredTools] } : {}),
     },
   };
 }
@@ -182,6 +186,7 @@ function resolve(input: {
   capabilityResolution?: CapabilityResolution;
   maxSteps?: number;
   stepEstimates?: Record<string, number>;
+  shareableKnowledgeBySkill?: Record<string, string[]>;
 } = {}) {
   return new CapabilityPortfolioResolver().resolve({
     task,
@@ -199,6 +204,7 @@ function resolve(input: {
       'jobs-to-be-done': 1,
       'research-strategy-synthesis': 2,
     },
+    shareableKnowledgeBySkill: input.shareableKnowledgeBySkill,
   });
 }
 
@@ -403,11 +409,27 @@ test('Portfolio Resolver fails when required coverage exceeds the exact ProfileS
   );
 });
 
+test('Portfolio Resolver discovers explicitly shareable Knowledge stages across compiled Skills', () => {
+  const portfolio = resolve({
+    shareableKnowledgeBySkill: {
+      'competitive-web-research': ['research-wiki'],
+      'generate-persona': ['research-wiki'],
+      'research-strategy-synthesis': ['research-wiki'],
+    },
+  });
+  assert.ok(portfolio.sharedPrerequisites.some((item) => (
+    item.capabilityType === 'knowledge'
+    && item.capabilityId === 'research-wiki'
+    && item.consumerSkillIds.length >= 2
+  )));
+});
+
 test('Portfolio Resolver deduplicates shared required Tool prerequisites', () => {
   const withSharedTool = resolution();
   const persona = withSharedTool.eligible.find(({ skill: entry }) => entry.id === 'generate-persona');
   assert.ok(persona);
   persona.skill.required_tools = ['tavily-web-search'];
+  persona.skill.composition!.shareable_prerequisites = ['tavily-web-search'];
   const portfolio = resolve({ capabilityResolution: withSharedTool });
   assert.deepEqual(portfolio.sharedPrerequisites, [{
     capabilityType: 'tool',

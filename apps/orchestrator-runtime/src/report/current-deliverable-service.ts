@@ -5,6 +5,12 @@ import type { ControlExecutionLease } from '../../../../database/control-plane.t
 import type {
   EvidenceEntry,
   CurrentExecutionPlan,
+  CurrentExecutionPlanV3,
+  ContributionLedgerV1,
+  ContributionSummaryV1,
+  CrossSkillReviewV1,
+  ResearchContributionArtifactV1,
+  ResearchContributionBundleV1,
   ResearchDeliverableEnvelope,
   ProblemGraph,
   ResearchStrategyReportPayload,
@@ -20,6 +26,16 @@ import type {
   EvidenceService,
 } from '../evidence/evidence-service.ts';
 import { ReportEvidenceValidator } from '../evidence/report-evidence-validator.ts';
+import {
+  buildResearchContributionBundle,
+  type ContributionBundleInvocationPolicy,
+} from '../skills/research-contribution-bundle.ts';
+import {
+  buildContributionSummary,
+  buildGenericReviewedContributionLedger,
+  buildReviewedContributionLedger,
+} from './multi-skill-content-fidelity.ts';
+import { validateContributionLedger } from './contribution-ledger.ts';
 import {
   type MaterializeStepOutput,
   type SynthesisMaterial,
@@ -263,6 +279,7 @@ interface StructuredLlm {
     schema: object;
     schemaName: string;
     context?: object;
+    signal?: AbortSignal;
     receipt: {
       stage: string;
       attemptId?: string;
@@ -375,6 +392,9 @@ export interface CurrentDeliverableGenerateInput {
   plan: {
     id: string;
     plan: Pick<CurrentExecutionPlan, 'deliverable_type'> & {
+      execution_contract_version?: 'current-execution-plan-v2' | 'current-execution-plan-v3';
+      skill_invocations?: CurrentExecutionPlanV3['skill_invocations'];
+      contribution_requirements?: CurrentExecutionPlanV3['contribution_requirements'];
       steps?: unknown[];
       capability_decisions?: unknown;
       capability_gaps?: unknown;
@@ -394,6 +414,7 @@ export interface CurrentDeliverableGenerateInput {
   revisionInstruction?: string;
   revisionRound?: 0 | 1;
   activeLease?: ControlExecutionLease;
+  cancellationSignal?: AbortSignal;
   visualAssets?: readonly VerifiedVisualAsset[];
   visualAnnotationBindings?: readonly VerifiedVisualAnnotationBinding[];
   strategyDraftOverride?: ResearchStrategyContentDraftV2;
@@ -408,6 +429,9 @@ export interface CurrentDeliverableGenerateInput {
 export interface CurrentDeliverableGenerateResult {
   deliverable: DeliverableEnvelope;
   deliverableArtifactId: string;
+  crossSkillReviewArtifactId?: string;
+  contributionLedgerArtifactId?: string;
+  contributionSummaryArtifactId?: string;
 }
 
 export interface CurrentDeliverableRevisionInput extends CurrentDeliverableGenerateInput {
@@ -1156,6 +1180,7 @@ function assertRequiredCoverage(
 const CAPABILITY_TYPE_BY_OUTPUT_KIND: Record<string, string> = {
   tool_output: 'tool',
   skill_output: 'skill',
+  research_contribution: 'skill',
   llm_output: 'llm',
   review_output: 'reviewer',
 };
@@ -1278,6 +1303,68 @@ export function collectRequiredRiskDisclosures(input: {
   return [...unique.values()];
 }
 
+function contributionBundleForPlan(input: {
+  taskId: string;
+  planVersionId: string;
+  attemptId: string;
+  plan: CurrentDeliverableGenerateInput['plan']['plan'];
+  materials: readonly SynthesisMaterial[];
+}): {
+  bundle: ResearchContributionBundleV1;
+  requirements: CurrentExecutionPlanV3['contribution_requirements'];
+  synthesisArtifactId: string;
+} | null {
+  if (input.plan.execution_contract_version !== 'current-execution-plan-v3') return null;
+  const invocations = input.plan.skill_invocations ?? [];
+  const policies = new Map<string, ContributionBundleInvocationPolicy>(invocations.map((invocation) => [
+    invocation.invocation_id,
+    {
+      invocationId: invocation.invocation_id,
+      skillId: invocation.skill_id,
+      role: invocation.role,
+      required: invocation.required,
+      failurePolicy: invocation.failure_policy,
+      dependsOnInvocationIds: [...invocation.depends_on_invocation_ids],
+    },
+  ]));
+  const synthesizer = invocations.find(({ role }) => role === 'synthesizer');
+  if (!synthesizer) throw new Error('Plan v3 has no Synthesizer invocation');
+  const synthesisMaterial = input.materials.find(({ actorType, actorId }) => (
+    actorType === 'skill' && actorId === synthesizer.skill_id
+  ));
+  if (!synthesisMaterial) throw new Error('Plan v3 has no sealed Synthesizer material');
+  const orderedInvocationIds = invocations
+    .filter(({ role }) => role === 'contributor')
+    .map(({ invocation_id }) => invocation_id);
+  const valuesByInvocationId = Object.fromEntries(orderedInvocationIds.map((invocationId) => {
+    const material = input.materials.find(({ value }) => {
+      const artifact = unknownRecord(value) as ResearchContributionArtifactV1 | null;
+      return artifact?.version === 'research-contribution-artifact-v1'
+        && artifact.contribution.invocationId === invocationId;
+    });
+    if (!material) return [invocationId, null];
+    const artifact = material.value as ResearchContributionArtifactV1;
+    return [invocationId, {
+      artifactId: material.artifactId,
+      artifactContentSha256: material.artifactContentSha256,
+      contribution: artifact.contribution,
+    }];
+  }));
+  return {
+    bundle: buildResearchContributionBundle({
+      taskId: input.taskId,
+      planVersionId: input.planVersionId,
+      attemptId: input.attemptId,
+      orderedInvocationIds,
+      valuesByInvocationId,
+      policiesByInvocationId: policies,
+      synthesizerInvocationId: synthesizer.invocation_id,
+    }),
+    requirements: input.plan.contribution_requirements ?? [],
+    synthesisArtifactId: synthesisMaterial.artifactId,
+  };
+}
+
 export class CurrentDeliverableService {
   private readonly reportValidator: ReportEvidenceValidator;
 
@@ -1336,6 +1423,13 @@ export class CurrentDeliverableService {
           evidenceEntries: evidenceManifest.entries,
         })
       : [];
+    const portfolioContribution = contributionBundleForPlan({
+      taskId: input.task.id,
+      planVersionId: input.plan.id,
+      attemptId: input.attempt.id,
+      plan: input.plan.plan,
+      materials: synthesisMaterials,
+    });
     const strategyRequirement = contract.entry.id === 'research_strategy_report'
       ? input.finalizedRequirement as ResearchTaskV2
       : null;
@@ -1371,7 +1465,8 @@ export class CurrentDeliverableService {
       }
       let deliverable: ResearchDeliverableEnvelope<ResearchStrategyReportPayloadV2> | null = null;
       let draftOverride = input.strategyDraftOverride;
-      const sourceDraft = draftOverride ?? extractResearchStrategyContentDraft(synthesisMaterials);
+      const extractedDraft = draftOverride ?? extractResearchStrategyContentDraft(synthesisMaterials);
+      const sourceDraft = extractedDraft;
       let strategyFidelity: {
         mode: 'none' | 'structural_repair' | 'semantic_revision';
         sourceDraft: ResearchStrategyContentDraftV2;
@@ -1478,7 +1573,9 @@ export class CurrentDeliverableService {
             problemGraph: input.problemGraph as ProblemGraph,
             evidenceManifest,
             materials: synthesisMaterials,
-            ...(draftOverride ? { draftOverride } : {}),
+            ...(draftOverride || portfolioContribution
+              ? { draftOverride: draftOverride ?? sourceDraft }
+              : {}),
             requiredRiskDisclosures: preSynthesisRiskDisclosures,
             capabilityProvenance: outputData.provenance,
             validator: this.dependencies.validator,
@@ -1535,6 +1632,7 @@ export class CurrentDeliverableService {
                   })),
                 requestedArtifacts: strategyRequirement.requested_artifacts ?? [],
               },
+              ...(input.cancellationSignal ? { signal: input.cancellationSignal } : {}),
               receipt: {
                 stage: 'deliverable_repair',
                 attemptId: input.attempt.id,
@@ -1623,6 +1721,76 @@ export class CurrentDeliverableService {
         result: strategyFidelity.result,
         repairOperations: strategyFidelity.repairOperations,
       });
+      let crossSkillReviewArtifactId: string | undefined;
+      let contributionLedgerArtifactId: string | undefined;
+      let contributionSummaryArtifactId: string | undefined;
+      if (portfolioContribution) {
+        const reviewed = buildReviewedContributionLedger({
+          bundle: portfolioContribution.bundle,
+          canonical: deliverable.payload,
+          contributionRequirements: portfolioContribution.requirements,
+          synthesisArtifactId: portfolioContribution.synthesisArtifactId,
+        });
+        this.dependencies.validator.validateFileOrThrow(
+          'schemas/cross-skill-review-v1.schema.json',
+          reviewed.review,
+        );
+        this.dependencies.validator.validateFileOrThrow(
+          'schemas/contribution-ledger-v1.schema.json',
+          reviewed.ledger,
+        );
+        validateContributionLedger({
+          ledger: reviewed.ledger,
+          sources: portfolioContribution.bundle.entries.map((entry) => ({
+            contributionArtifactId: entry.artifactId,
+            contribution: entry.contribution,
+          })),
+        });
+        const summary = buildContributionSummary(portfolioContribution.bundle, reviewed.ledger);
+        this.dependencies.validator.validateFileOrThrow(
+          'schemas/contribution-summary-v1.schema.json',
+          summary,
+        );
+        const crossSkillReviewArtifact = await this.dependencies.artifacts.writeJson({
+          taskId: input.task.id,
+          planVersionId: input.plan.id,
+          attemptId: input.attempt.id,
+          kind: 'cross_skill_review',
+          relativePath: `reviews/cross-skill-review-r${input.revisionRound ?? 0}.json`,
+          schemaVersion: reviewed.review.version,
+          sensitivity: 'internal',
+          redactionPolicyVersion: 'v1',
+          activeLease: input.activeLease,
+          value: reviewed.review,
+        });
+        const ledgerArtifact = await this.dependencies.artifacts.writeJson({
+          taskId: input.task.id,
+          planVersionId: input.plan.id,
+          attemptId: input.attempt.id,
+          kind: 'contribution_ledger',
+          relativePath: `deliverables/contribution-ledger-r${input.revisionRound ?? 0}.json`,
+          schemaVersion: reviewed.ledger.version,
+          sensitivity: 'internal',
+          redactionPolicyVersion: 'v1',
+          activeLease: input.activeLease,
+          value: reviewed.ledger,
+        });
+        const summaryArtifact = await this.dependencies.artifacts.writeJson({
+          taskId: input.task.id,
+          planVersionId: input.plan.id,
+          attemptId: input.attempt.id,
+          kind: 'contribution_summary',
+          relativePath: `deliverables/contribution-summary-r${input.revisionRound ?? 0}.json`,
+          schemaVersion: summary.version,
+          sensitivity: 'internal',
+          redactionPolicyVersion: 'v1',
+          activeLease: input.activeLease,
+          value: summary,
+        });
+        crossSkillReviewArtifactId = crossSkillReviewArtifact.id;
+        contributionLedgerArtifactId = ledgerArtifact.id;
+        contributionSummaryArtifactId = summaryArtifact.id;
+      }
       const artifact = await this.dependencies.artifacts.writeJson({
         taskId: input.task.id,
         planVersionId: input.plan.id,
@@ -1635,7 +1803,13 @@ export class CurrentDeliverableService {
         activeLease: input.activeLease,
         value: deliverable,
       });
-      return { deliverable, deliverableArtifactId: artifact.id };
+      return {
+        deliverable,
+        deliverableArtifactId: artifact.id,
+        ...(crossSkillReviewArtifactId ? { crossSkillReviewArtifactId } : {}),
+        ...(contributionLedgerArtifactId ? { contributionLedgerArtifactId } : {}),
+        ...(contributionSummaryArtifactId ? { contributionSummaryArtifactId } : {}),
+      };
     }
     const producerVisualInventory = visualInventory?.assets.map((asset) => ({
       assetId: asset.artifact.id,
@@ -1721,6 +1895,9 @@ export class CurrentDeliverableService {
                     + (displayableInventory.length > 0
                       ? ' Select at least one visualEvidence item from context.displayableVisualInventory. Each item must use existing competitor sample ids, an exact dimensionMatrix dimension, and include both one listed screenshotEvidenceId and one listed publicSourceEvidenceId for that Asset.'
                       : ' No Asset has both exact screenshot and matching public-source Evidence, so return an empty visualEvidence array.')))
+          + (portfolioContribution
+            ? '\nThis is a multi-Skill synthesis. Preserve every required Contribution unit statement verbatim in a FindingGraph node reachable from the matching coverage.questionBindings summary; otherwise the exact-once fidelity gate will reject the draft.'
+            : '')
           + (input.revisionInstruction ? '\nAddress the review issues in the revision instruction.' : '')
           + (validationFeedback.length > 0
             ? `\nThe previous draft failed schema validation. Correct every issue: ${validationFeedback.join('; ')}`
@@ -1730,6 +1907,7 @@ export class CurrentDeliverableService {
         context: validationFeedback.length > 0
           ? { ...context, validationFeedback }
           : context,
+        ...(input.cancellationSignal ? { signal: input.cancellationSignal } : {}),
         receipt: {
           stage: 'deliverable',
           attemptId: input.attempt.id,
@@ -1838,6 +2016,77 @@ export class CurrentDeliverableService {
     }
     if (!deliverable) throw new Error('deliverable generation exhausted without a validated result');
 
+    let crossSkillReviewArtifactId: string | undefined;
+    let contributionLedgerArtifactId: string | undefined;
+    let contributionSummaryArtifactId: string | undefined;
+    if (portfolioContribution) {
+      const reviewed = buildGenericReviewedContributionLedger({
+        bundle: portfolioContribution.bundle,
+        deliverable,
+        contributionRequirements: portfolioContribution.requirements,
+        synthesisArtifactId: portfolioContribution.synthesisArtifactId,
+      });
+      this.dependencies.validator.validateFileOrThrow(
+        'schemas/cross-skill-review-v1.schema.json',
+        reviewed.review,
+      );
+      this.dependencies.validator.validateFileOrThrow(
+        'schemas/contribution-ledger-v1.schema.json',
+        reviewed.ledger,
+      );
+      validateContributionLedger({
+        ledger: reviewed.ledger,
+        sources: portfolioContribution.bundle.entries.map((entry) => ({
+          contributionArtifactId: entry.artifactId,
+          contribution: entry.contribution,
+        })),
+      });
+      const summary = buildContributionSummary(portfolioContribution.bundle, reviewed.ledger);
+      this.dependencies.validator.validateFileOrThrow(
+        'schemas/contribution-summary-v1.schema.json',
+        summary,
+      );
+      const reviewArtifact = await this.dependencies.artifacts.writeJson({
+        taskId: input.task.id,
+        planVersionId: input.plan.id,
+        attemptId: input.attempt.id,
+        kind: 'cross_skill_review',
+        relativePath: `reviews/cross-skill-review-r${input.revisionRound ?? 0}.json`,
+        schemaVersion: reviewed.review.version,
+        sensitivity: 'internal',
+        redactionPolicyVersion: 'v1',
+        activeLease: input.activeLease,
+        value: reviewed.review,
+      });
+      const ledgerArtifact = await this.dependencies.artifacts.writeJson({
+        taskId: input.task.id,
+        planVersionId: input.plan.id,
+        attemptId: input.attempt.id,
+        kind: 'contribution_ledger',
+        relativePath: `deliverables/contribution-ledger-r${input.revisionRound ?? 0}.json`,
+        schemaVersion: reviewed.ledger.version,
+        sensitivity: 'internal',
+        redactionPolicyVersion: 'v1',
+        activeLease: input.activeLease,
+        value: reviewed.ledger,
+      });
+      const summaryArtifact = await this.dependencies.artifacts.writeJson({
+        taskId: input.task.id,
+        planVersionId: input.plan.id,
+        attemptId: input.attempt.id,
+        kind: 'contribution_summary',
+        relativePath: `deliverables/contribution-summary-r${input.revisionRound ?? 0}.json`,
+        schemaVersion: summary.version,
+        sensitivity: 'internal',
+        redactionPolicyVersion: 'v1',
+        activeLease: input.activeLease,
+        value: summary,
+      });
+      crossSkillReviewArtifactId = reviewArtifact.id;
+      contributionLedgerArtifactId = ledgerArtifact.id;
+      contributionSummaryArtifactId = summaryArtifact.id;
+    }
+
     const artifact = await this.dependencies.artifacts.writeJson({
       taskId: input.task.id,
       planVersionId: input.plan.id,
@@ -1853,6 +2102,9 @@ export class CurrentDeliverableService {
     return {
       deliverable,
       deliverableArtifactId: artifact.id,
+      ...(crossSkillReviewArtifactId ? { crossSkillReviewArtifactId } : {}),
+      ...(contributionLedgerArtifactId ? { contributionLedgerArtifactId } : {}),
+      ...(contributionSummaryArtifactId ? { contributionSummaryArtifactId } : {}),
     };
   }
   async revise(input: CurrentDeliverableRevisionInput): Promise<CurrentDeliverableGenerateResult> {
@@ -1914,6 +2166,7 @@ export class CurrentDeliverableService {
           requestedArtifacts: (input.finalizedRequirement as ResearchTaskV2).requested_artifacts ?? [],
           reviewIssues,
         },
+        ...(input.cancellationSignal ? { signal: input.cancellationSignal } : {}),
         receipt: {
           stage: 'deliverable_repair',
           attemptId: input.attempt.id,

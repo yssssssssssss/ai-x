@@ -101,6 +101,35 @@ test('execution contract rejects missing output stages and dependency cycles', (
   }
 });
 
+test('execution contract permits plan sharing only for explicit Tool or Knowledge stages', () => {
+  const originalRoot = getConfigRoot();
+  const root = mkdtempSync(join(tmpdir(), 'skill-contract-share-'));
+  const path = 'orchestrator/skill-executions/generate-research-plan.yaml';
+  mkdirSync(join(root, 'orchestrator/skill-executions'), { recursive: true });
+  const source = readFileSync(join(originalRoot, path), 'utf8');
+  setConfigRoot(root);
+  try {
+    const shareableKnowledge = source;
+    writeFileSync(join(root, path), shareableKnowledge, 'utf8');
+    assert.equal(
+      loadSkillExecutionContract(path, 'generate-research-plan').contract.stages[0]!.share_scope,
+      'plan',
+    );
+
+    const invalidLlm = shareableKnowledge.replace(
+      '    actor_type: knowledge',
+      '    actor_type: llm',
+    );
+    writeFileSync(join(root, path), invalidLlm, 'utf8');
+    assert.throws(
+      () => loadSkillExecutionContract(path, 'generate-research-plan'),
+      /share_scope only for Tool or Knowledge/u,
+    );
+  } finally {
+    setConfigRoot(originalRoot);
+  }
+});
+
 test('execution contract loader rejects symlink components and non-regular files', () => {
   const originalRoot = getConfigRoot();
   const root = mkdtempSync(join(tmpdir(), 'skill-contract-containment-'));

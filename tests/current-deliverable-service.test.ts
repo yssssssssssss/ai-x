@@ -85,6 +85,9 @@ interface DeliverableGenerateInput {
 interface DeliverableGenerateResult {
   deliverable: DeliverableEnvelope;
   deliverableArtifactId: string;
+  crossSkillReviewArtifactId?: string;
+  contributionLedgerArtifactId?: string;
+  contributionSummaryArtifactId?: string;
 }
 
 interface DeliverableRevisionInput extends DeliverableGenerateInput {
@@ -1389,6 +1392,110 @@ test('assembles a research strategy deliverable from the reviewed Skill output w
   assert.equal(llm.structuredCalls.length, 0);
   assert.equal((result.deliverable.payload as { schemaVersion?: string }).schemaVersion, 'research-strategy-content-v2');
   assert.deepEqual(result.deliverable.coverage.questionBindings, [{ questionId: 'q1', summaryIds: ['summary-q1'] }]);
+});
+
+test('Plan v3 seals Cross-Skill Review, Ledger, and safe Summary before the Canonical Deliverable', async () => {
+  const content = openStrategyDraft();
+  const contributionArtifactId = 'contribution-market-1';
+  content.evidenceFindings[0]!.support.sourceContributionUnitIds = [
+    `${contributionArtifactId}:market-1`,
+  ];
+  const contributionMaterial: SynthesisMaterial = {
+    stepNo: 2,
+    actorType: 'skill',
+    actorId: 'competitive-analysis',
+    questionIds: ['q1'],
+    artifactId: contributionArtifactId,
+    artifactContentSha256: `sha256:${'c'.repeat(64)}`,
+    semanticRole: 'analysis',
+    value: {
+      version: 'research-contribution-artifact-v1',
+      contribution: {
+        version: 'research-contribution-v1',
+        taskId,
+        planVersionId,
+        attemptId,
+        invocationId: 'invocation:market',
+        skillId: 'competitive-analysis',
+        contributionTypes: ['competitive_analysis'],
+        units: [{
+          key: 'market-1', kind: 'finding', title: 'Market', statement: 'The public source supports the decision.',
+          requestedArtifactTypes: [],
+          support: {
+            questionIds: ['q1'], evidenceIds: ['E1'], status: 'supported',
+            confidence: 0.8, validationNeeded: '',
+          },
+        }],
+        limitations: [], openQuestions: [],
+      },
+      source: {
+        artifactId: 'source-skill-1', artifactContentSha256: `sha256:${'d'.repeat(64)}`,
+        schemaVersion: 'skill-output-v2', adapterId: 'skill-envelope-provisional-v1',
+        adapterVersion: '1.0.0', adapterHash: `sha256:${'e'.repeat(64)}`,
+        unitMappings: [{
+          sourceUnitKey: 'market-1', targetUnitKey: 'market-1', sourceJsonPointer: '/findings/0',
+          sourceSemanticHash: `sha256:${'f'.repeat(64)}`,
+        }],
+        diagnosticFields: ['/summary'],
+      },
+    },
+  };
+  const materializer = {
+    async materialize(): Promise<SynthesisMaterial[]> {
+      return [contributionMaterial, ...openStrategyMaterials(content)];
+    },
+  };
+  const { service, writes } = await createHarness(validDeliverableDraft(), materializer);
+  const base = openStrategyInput();
+  const result = await service.generate(generateInput({
+    ...base,
+    plan: {
+      id: planVersionId,
+      plan: {
+        deliverable_type: 'research_strategy_report',
+        execution_contract_version: 'current-execution-plan-v3',
+        skill_invocations: [
+          {
+            invocation_id: 'invocation:market', skill_id: 'competitive-analysis', role: 'contributor',
+            contribution_types: ['competitive_analysis'], question_ids: ['q1'], requested_artifact_types: [],
+            depends_on_invocation_ids: [], output_contract: 'research-contribution-v1', required: true,
+            failure_policy: 'block', execution_mode: 'legacy_single_call', step_nos: [2],
+          },
+          {
+            invocation_id: 'invocation:synthesis', skill_id: 'research-strategy-synthesis', role: 'synthesizer',
+            contribution_types: ['strategy'], question_ids: ['q1'], requested_artifact_types: [],
+            depends_on_invocation_ids: ['invocation:market'], output_contract: 'reviewed-synthesis-draft-v1', required: true,
+            failure_policy: 'block', execution_mode: 'legacy_single_call', step_nos: [8],
+          },
+        ],
+        contribution_requirements: [{
+          id: 'demand-market', demand_type: 'competitive_analysis', question_ids: ['q1'],
+          requested_artifact_types: [], owner_invocation_id: 'invocation:market',
+          corroborator_invocation_ids: [], required: true,
+        }],
+      },
+    },
+  }));
+
+  assert.ok(result.crossSkillReviewArtifactId);
+  assert.ok(result.contributionLedgerArtifactId);
+  assert.ok(result.contributionSummaryArtifactId);
+  assert.deepEqual(writes.map(({ kind }) => kind), [
+    'content_fidelity_diagnostic',
+    'cross_skill_review',
+    'contribution_ledger',
+    'contribution_summary',
+    'deliverable',
+  ]);
+  assert.deepEqual(
+    writes.filter(({ kind }) => ['cross_skill_review', 'contribution_ledger', 'contribution_summary'].includes(kind))
+      .map(({ relativePath }) => relativePath),
+    [
+      'reviews/cross-skill-review-r0.json',
+      'deliverables/contribution-ledger-r0.json',
+      'deliverables/contribution-summary-r0.json',
+    ],
+  );
 });
 
 test('revises an open strategy report through one bounded Content Draft repair', async () => {

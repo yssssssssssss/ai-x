@@ -5,6 +5,7 @@
   "description": "虚拟用户模拟入参(POST /api/simulate,body 原样透传)。用数字人格评审产品/设计。",
   "type": "object",
   "additionalProperties": false,
+  "required": ["scenario"],
   "definitions": {
     "persona": {
       "type": "object",
@@ -19,7 +20,7 @@
     }
   },
   "properties": {
-    "scenario": { "type": "string" },
+    "scenario": { "type": "string", "minLength": 1, "pattern": "\\S" },
     "productDescription": { "type": "string" },
     "artifactText": { "type": "string" },
     "targetUserGroups": { "type": "array", "items": { "type": "string" } },

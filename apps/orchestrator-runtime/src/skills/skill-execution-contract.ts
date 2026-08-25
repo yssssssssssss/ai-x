@@ -34,6 +34,7 @@ export interface SkillExecutionStage {
   expected_outputs: Array<{ pointer: string; description: string }>;
   acceptance_criteria: string[];
   failure_policy: SkillFailurePolicy;
+  share_scope?: 'plan';
 }
 
 export interface SkillExecutionResourceQuery {
@@ -105,6 +106,9 @@ function validateGraph(contract: SkillExecutionContract): void {
   const stages = new Map<string, SkillExecutionStage>();
   for (const stage of contract.stages) {
     if (stages.has(stage.stage_id)) throw new Error(`duplicate Skill stage ${stage.stage_id}`);
+    if (stage.share_scope === 'plan' && stage.actor_type !== 'tool' && stage.actor_type !== 'knowledge') {
+      throw new Error(`Skill stage ${stage.stage_id} may declare share_scope only for Tool or Knowledge`);
+    }
     if ((stage.frozen_input_fields?.length ?? 0) > 0 && stage.actor_type !== 'tool') {
       throw new Error(`Skill stage ${stage.stage_id} may declare frozen_input_fields only for Tool input`);
     }
