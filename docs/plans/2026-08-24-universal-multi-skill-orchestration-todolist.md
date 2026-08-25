@@ -1,6 +1,6 @@
 # 通用多 Skill 组合编排底座 TodoList
 
-> 状态：实施中；Gate 0、Phase 1、Phase 2 与 Milestone A 已完成，Multi-Skill writer 仍保持 inactive。
+> 状态：实现收敛；Gate 0、Phase 1–6 与 Phase 7 fixture matrix/自动化门禁/独立复审已完成，Multi-Skill writer 仍保持 inactive；真实京东众筹 E2E、live Zero 与 Activation 待完成。
 >
 > 对应开发文档：`docs/plans/2026-08-24-universal-multi-skill-orchestration-development.md`
 >
@@ -56,8 +56,8 @@ Registry、Deliverable Registry、Tool Registry 和 Knowledge Index 均可读取
 - [ ] 开发内环只在需要定位问题时运行单个测试文件/`--test-name-pattern`。
 - [ ] Phase 边界只运行直接受影响的定向测试。
 - [x] Phase 1–2 完成后统一运行 Milestone A。
-- [ ] Phase 3–4 完成后统一运行 Milestone B。
-- [ ] Phase 5–6 完成后统一运行 Milestone C。
+- [x] Phase 3–4 完成后统一运行 Milestone B。
+- [x] Phase 5–6 完成后统一运行 Milestone C。
 - [ ] 全量 `pnpm test`、完整 Web build 和真实 E2E 只在最终 Activation Gate 运行。
 - [ ] 最终全量失败时只复跑失败项及直接依赖；修复收敛后再做一次最终全量确认。
 - [ ] Zero 未改变 payload/transport 时只跑自动化回归，不做 live Zero。
@@ -195,7 +195,7 @@ Phase 1 合同定向测试：26 tests 通过，0 失败。
 - [x] Coverage Optimizer 选择最小 Skill 集。
 - [x] 每题恰好一个 Primary Owner。
 - [x] 每 demand 默认最多一个 Corroborator。
-- [ ] Contributor 数量与总步骤复用 ProfileSpec/Usage/Tool Budget。（已接入 `ProfileSpec.max_steps`；Usage/Tool Budget 随 Phase 3 执行接线完成。）
+- [x] Contributor 数量与总步骤复用 ProfileSpec/Usage/Tool Budget。（Profile `max_steps` 约束逻辑步骤；Plan v3 同时冻结并校验展开步骤数/上限。）
 - [x] 不新增重复的 Contributor/Step 数量配置。
 - [x] Required Demand 超预算时 fail，不静默裁剪。
 - [x] 保存每个选择/拒绝 reason code。
@@ -237,44 +237,44 @@ Milestone A：59 个清单定向测试通过；另有 52 个 Registry/Deliverabl
 
 ## 3.1 Compiler
 
-- [ ] 扩展 `SkillPlanCompiler` 处理 Invocation role。
-- [ ] 保留高层 Skill 对外部 Invocation 的 dependencies。
-- [ ] 将 invocation dependency 映射到上游 output stage。
-- [ ] 支持跨 Skill output pointer binding。
-- [ ] Synthesizer 依赖全部 Required Contributor outputs。
-- [ ] 编译前后 Contribution Coverage 等价。
-- [ ] 检测 Invocation/Step cycle。
-- [ ] 检测 dangling dependency/pointer/contract。
-- [ ] Plan hash 包含 Portfolio 与共享指纹。
+- [x] 扩展 `SkillPlanCompiler` 处理 Invocation role。
+- [x] 保留高层 Skill 对外部 Invocation 的 dependencies。
+- [x] 将 invocation dependency 映射到上游 output stage。
+- [x] 支持跨 Skill output pointer binding。
+- [x] Synthesizer 依赖全部 Required Contributor outputs。
+- [x] 编译前后 Contribution Coverage 等价。
+- [x] 检测 Invocation/Step cycle。
+- [x] 检测 dangling dependency/pointer/contract。
+- [x] Plan hash 包含 Portfolio 与共享指纹。
 
 ## 3.2 Shared Tool/Knowledge
 
-- [ ] Execution Contract 支持 `share_scope: plan`。
-- [ ] 计算 Tool share fingerprint。
-- [ ] 计算 Knowledge Bundle fingerprint。
-- [ ] 完全相同的 shareable stage 合并。
-- [ ] Tool input、approval、policy 任一不同不得合并。
-- [ ] shared step 记录所有 consumer invocation IDs。
-- [ ] Evidence Artifact 只生成一次并可被多个 Contributor 引用。
+- [x] Execution Contract 支持 `share_scope: plan`。
+- [x] 计算 Tool share fingerprint。
+- [x] 计算 Knowledge Bundle fingerprint。
+- [x] 完全相同的 shareable stage 合并。
+- [x] Tool input、approval、policy 任一不同不得合并。
+- [x] shared step 记录所有 consumer invocation IDs。
+- [x] Evidence Artifact 只生成一次并可被多个 Contributor 引用。
 
 ## 3.3 Step Input Resolver
 
-- [ ] 解析 Contribution Artifact binding。
-- [ ] Synthesizer 接收有序 Contribution Bundle。
-- [ ] Contributor 只接收 scoped Question/Evidence。
-- [ ] 禁止读取非依赖 Invocation Artifact。
-- [ ] 绑定 Task/Plan/Attempt/Artifact hash。
+- [x] 解析 Contribution Artifact binding。
+- [x] Synthesizer 接收有序 Contribution Bundle。
+- [x] Contributor 只接收 scoped Question/Evidence。
+- [x] 禁止读取非依赖 Invocation Artifact。
+- [x] 绑定 Task/Plan/Attempt/Artifact hash。
 
 ## 3.4 Scheduler/Lease
 
-- [ ] 独立 Contributor 可并行。
-- [ ] Required Contributor failure block。
-- [ ] Optional Contributor failure/degraded 生成 Gap。
-- [ ] Contributor 单独 retry。
-- [ ] worker loss 只恢复受影响分支。
-- [ ] Synthesizer failure 复用已 SEALED Contributions。
-- [ ] 用户取消传播到所有分支。
-- [ ] 保持 per-call timeout，无 whole-task timeout。
+- [x] 独立 Contributor 可并行。
+- [x] Required Contributor failure block。
+- [x] Optional Contributor failure/degraded 生成 Gap。
+- [x] Contributor 单独 retry。
+- [x] worker loss 只恢复受影响分支。
+- [x] Synthesizer failure 复用已 SEALED Contributions。
+- [x] 用户取消传播到所有分支。
+- [x] 保持 per-call timeout，无 whole-task timeout。
 
 ## Phase 3 定向测试
 
@@ -288,52 +288,52 @@ pnpm exec tsx --test \
   tests/skill-execution-contract.test.ts
 ```
 
-- [ ] 三 Contributor 并行 + Synthesizer fixture 通过。
-- [ ] Shared Tavily 只调用一次。
-- [ ] Required/Optional failure 路径通过。
-- [ ] 不在此处重复 root typecheck；统一留到 Milestone B。
+- [x] 三 Contributor 并行 + Synthesizer fixture 通过。
+- [x] Shared Tavily 只调用一次。
+- [x] Required/Optional failure 路径通过。
+- [x] 不在此处重复 root typecheck；统一留到 Milestone B。
 - [ ] 独立提交 Phase 3。
 
 # Phase 4：Contribution Runtime 与 Skill 迁移
 
 ## 4.1 Runtime
 
-- [ ] 新增 `research-contribution.ts`。
-- [ ] 新增 Adapter Registry。
-- [ ] Adapter 不调用 LLM。
-- [ ] Adapter 保留 source pointer/hash。
-- [ ] Skill Envelope metadata 显式映射或标为 diagnostic。
-- [ ] Contribution Artifact SEALED 后才能给 Synthesizer。
-- [ ] Contribution status/gap 传播。
+- [x] 新增 `research-contribution.ts`。
+- [x] 新增 Adapter Registry。
+- [x] Adapter 不调用 LLM。
+- [x] Adapter 保留 source pointer/hash。
+- [x] Skill Envelope metadata 显式映射或标为 diagnostic。
+- [x] Contribution Artifact SEALED 后才能给 Synthesizer。
+- [x] Contribution status/gap 传播。
 
 ## 4.2 首批 Contributor
 
-- [ ] Market/Competitive Contributor。
-- [ ] Virtual User Contributor。
-- [ ] Persona Contributor。
-- [ ] JTBD/Motivation Contributor。
-- [ ] Metrics Contributor。
-- [ ] 根据输入条件决定 native schema 修改或 deterministic adapter。
-- [ ] 无输入时 fail/gap，不编造。
+- [x] Market/Competitive Contributor。
+- [x] Virtual User Contributor。
+- [x] Persona Contributor。
+- [x] JTBD/Motivation Contributor。
+- [x] Metrics Contributor。
+- [x] 根据输入条件决定 native schema 修改或 deterministic adapter。
+- [x] 无输入时 fail/gap，不编造。
 
 ## 4.3 Virtual User
 
-- [ ] 新增/适配 `virtual-user-research` Skill。
-- [ ] 冻结 `virtual-user-lab` Tool stage。
-- [ ] synthetic Evidence class/metadata。
-- [ ] 所有结论强制 provisional。
-- [ ] 报告强制免责声明。
-- [ ] Tool unavailable 的 required/gap 行为。
-- [ ] 后续真实验证计划必填。
+- [x] 新增/适配 `virtual-user-research` Skill。
+- [x] 冻结 `virtual-user-lab` Tool stage。
+- [x] synthetic Evidence class/metadata。
+- [x] 所有结论强制 provisional。
+- [x] 报告强制免责声明。
+- [x] Tool unavailable 的 required/gap 行为。
+- [x] 后续真实验证计划必填。
 
 ## 4.4 Synthesizer
 
-- [ ] `research-strategy-synthesis` 接收 Contribution Bundle。
-- [ ] 不重复执行 Contributor 已负责分析。
-- [ ] 输出 source contribution unit IDs。
-- [ ] 保留当前 direct answer、typed blocks、risk 规则。
-- [ ] `generate-research-plan` 支持 planning Contribution Bundle。
-- [ ] 其他 Deliverable Synthesizer 建立明确 owner。
+- [x] `research-strategy-synthesis` 接收 Contribution Bundle。
+- [x] 不重复执行 Contributor 已负责分析。
+- [x] 输出 source contribution unit IDs。
+- [x] 保留当前 direct answer、typed blocks、risk 规则。
+- [x] `generate-research-plan` 支持 planning Contribution Bundle。
+- [x] 其他 Deliverable Synthesizer 建立明确 owner。
 
 ## Milestone B 验证（Phase 3–4）
 
@@ -351,49 +351,51 @@ pnpm lint:knowledge
 git diff --check
 ```
 
-- [ ] 所有 active Skill 完成 composition 分类审计。
-- [ ] 首批可组合 Contributor 完成适配；其余明确 standalone。
-- [ ] 首批 Contributor 无空/伪造 Evidence。
-- [ ] Compiler/Runtime/Registry/Knowledge 一次性集成验证通过。
+- [x] 所有 active Skill 完成 composition 分类审计。
+- [x] 首批可组合 Contributor 完成适配；其余明确 standalone。
+- [x] 首批 Contributor 无空/伪造 Evidence。
+- [x] Compiler/Runtime/Registry/Knowledge 一次性集成验证通过。
 - [ ] 独立提交 Phase 4。
+
+Milestone B：Plan v3 生产合同编译、Lease Engine 端到端共享 Tavily/Contribution/Bundle/Synthesizer、adapter、virtual-user、retry/cancel 定向回归通过；root/Web typecheck、Registry/Knowledge lint 与 `git diff --check` 通过。
 
 # Phase 5：Cross-Skill Review、Ledger 与 Fidelity
 
 ## 5.1 Conflict Review
 
-- [ ] 定义 Conflict Set。
-- [ ] Reviewer 输出 source unit IDs/target IDs/disposition。
-- [ ] supported/provisional 冲突不自动升级。
-- [ ] synthetic/public fact 冲突显式披露。
-- [ ] 未解决冲突进入 openQuestions。
-- [ ] 无授权不得 omitted/semantic rewrite。
+- [x] 定义 Conflict Set。
+- [x] Reviewer 输出 source unit IDs/target IDs/disposition。
+- [x] supported/provisional 冲突不自动升级。
+- [x] synthetic/public fact 冲突显式披露。
+- [x] 未解决冲突进入 openQuestions。
+- [x] 无授权不得 omitted/semantic rewrite。
 
 ## 5.2 Contribution Ledger
 
-- [ ] 生成 pre-synthesis Ledger。
-- [ ] 生成 final Ledger。
-- [ ] included/merged/conflicted/omitted exact-one。
-- [ ] Required Owner unit 不得 omitted。
-- [ ] 每个 canonical node 反查 source contribution IDs。
-- [ ] Ledger 在 Deliverable 前 SEALED。
-- [ ] Ledger Artifact 身份进入 Report Package。
+- [x] 生成 pre-synthesis Ledger。（SEALED `research-contribution-bundle-v1` 作为综合前 source inventory/ledger。）
+- [x] 生成 final Ledger。
+- [x] included/merged/conflicted/omitted exact-one。
+- [x] Required Owner unit 不得 omitted。
+- [x] 每个 canonical node 反查 source contribution IDs。
+- [x] Ledger 在 Deliverable 前 SEALED。
+- [x] Ledger Artifact 身份进入 Report Package。
 
 ## 5.3 Fidelity
 
-- [ ] Contributor source inventory/fingerprint。
-- [ ] Contributor → Synthesis mapping completeness。
-- [ ] unauthorized deletion/rewrite/reorder fail。
-- [ ] Synthesis → Canonical 继续 lossless。
-- [ ] Canonical → Report exact-once。
-- [ ] typed patch 绑定 Cross-Skill Review issue。
-- [ ] malformed repair 保存 diagnostics/preview。
+- [x] Contributor source inventory/fingerprint。
+- [x] Contributor → Synthesis mapping completeness。
+- [x] unauthorized deletion/rewrite/reorder fail。
+- [x] Synthesis → Canonical 继续 lossless。
+- [x] Canonical → Report exact-once。
+- [x] typed patch 绑定 Cross-Skill Review issue。
+- [x] malformed repair 保存 diagnostics/preview。
 
 ## 5.4 Risk/Provenance
 
-- [ ] capabilityProvenance 包含 Knowledge 与所有 Contributor Skill。
-- [ ] Skill degraded/Contributor failure/Requirement ambiguity 全部传播。
-- [ ] Evidence class 与 factual root 继续严格。
-- [ ] Contribution omissions 在 owner trace 可见。
+- [x] capabilityProvenance 包含 Knowledge 与所有 Contributor Skill。
+- [x] Skill degraded/Contributor failure/Requirement ambiguity 全部传播。
+- [x] Evidence class 与 factual root 继续严格。
+- [x] Contribution omissions 在 owner trace 可见。
 
 ## Phase 5 定向测试
 
@@ -407,54 +409,54 @@ pnpm exec tsx --test \
   tests/research-strategy-report-projector.test.ts
 ```
 
-- [ ] 多来源遗漏/重复/冲突测试通过。
-- [ ] 旧单 Skill Fidelity 定向回归通过。
-- [ ] 不在此处重复 typecheck；统一留到 Milestone C。
+- [x] 多来源遗漏/重复/冲突测试通过。
+- [x] 旧单 Skill Fidelity 定向回归通过。
+- [x] 不在此处重复 typecheck；统一留到 Milestone C。
 - [ ] 独立提交 Phase 5。
 
 # Phase 6：Web、API、Markdown、ZIP、Zero
 
 ## 6.1 API
 
-- [ ] Plan API 返回 Portfolio、Coverage、Budget、Reasons。
-- [ ] Task API 返回 Skill Group 状态。
-- [ ] Owner API 返回 Contribution Ledger/summary。
-- [ ] 非 owner 不可读取 Contributor Artifact。
-- [ ] SystemCapabilities 返回 Plan v3/Contribution versions。
+- [x] Plan API 返回 Portfolio、Coverage、Budget、Reasons。
+- [x] Task API 返回 Skill Group 状态。
+- [x] Owner API 返回 Contribution Ledger/summary。
+- [x] 非 owner 不可读取 Contributor Artifact。
+- [x] SystemCapabilities 返回 Plan v3/Contribution versions。
 
 ## 6.2 Plan UI
 
-- [ ] 显示 Contributor 数量和 Synthesizer。
-- [ ] 显示每个 Skill 覆盖问题/产物。
-- [ ] 显示选择理由与 rejected/gap。
-- [ ] 显示 Tool 和 synthetic 提示。
-- [ ] 显示 Speed/Depth 真实差异。
-- [ ] Required Demand 未覆盖时不能确认。
+- [x] 显示 Contributor 数量和 Synthesizer。
+- [x] 显示每个 Skill 覆盖问题/产物。
+- [x] 显示选择理由与 rejected/gap。
+- [x] 显示 Tool 和 synthetic 提示。
+- [x] 显示 Speed/Depth 真实差异。
+- [x] Required Demand 未覆盖时不能确认。
 
 ## 6.3 Execution UI
 
-- [ ] Shared Evidence Group。
-- [ ] 每个 Invocation Group。
-- [ ] 内部 stages 可折叠。
-- [ ] 并行/依赖关系可读。
-- [ ] Required/Optional/Gap/Failure 状态明确。
-- [ ] Retry 只作用目标 Invocation/下游。
+- [x] Shared Evidence Group。
+- [x] 每个 Invocation Group。
+- [x] 内部 stages 可折叠。
+- [x] 并行/依赖关系可读。
+- [x] Required/Optional/Gap/Failure 状态明确。
+- [x] Retry 只作用目标 Invocation/下游。
 
 ## 6.4 Contribution View
 
-- [ ] 显示独立结论、Evidence、confidence、限制。
-- [ ] 显示 Final mapping。
-- [ ] 显示 merged/conflicted/omitted 理由。
-- [ ] 明确 owner-only、non-canonical。
-- [ ] 不泄露 blocked/sensitive 内容。
+- [x] 显示独立结论、Evidence、confidence、限制。
+- [x] 显示 Final mapping。
+- [x] 显示 merged/conflicted/omitted 理由。
+- [x] 明确 owner-only、non-canonical。
+- [x] 不泄露 blocked/sensitive 内容。
 
 ## 6.5 Export
 
-- [ ] Markdown full report 保持 Canonical。
-- [ ] ZIP 增加安全 Contribution Summary 与 Ledger JSON。
-- [ ] Zero 只接收 Review 通过的 Canonical/安全摘要。
-- [ ] Print 展开必要内容。
-- [ ] 历史 bundle/package 保持可读。
+- [x] Markdown full report 保持 Canonical。
+- [x] ZIP 增加安全 Contribution Summary 与 Ledger JSON。
+- [x] Zero 只接收 Review 通过的 Canonical/安全摘要。
+- [x] Print 展开必要内容。
+- [x] 历史 bundle/package 保持可读。
 
 ## Milestone C 验证（Phase 5–6）
 
@@ -474,27 +476,31 @@ pnpm --dir apps/web build
 git diff --check
 ```
 
-- [ ] 375px/desktop 浏览器目标矩阵执行一次并通过。
-- [ ] Plan v1/v2、Report v1/v2 UI 回归通过。
-- [ ] Report/API/UI/Export 一次性集成验证通过。
+- [x] 375px/desktop 浏览器目标矩阵执行一次并通过。（2026-08-24：1440×900 与 375×812，无横向溢出，composer 均在视口内。）
+- [x] Plan v1/v2、Report v1/v2 UI 回归通过。
+- [x] Report/API/UI/Export 一次性集成验证通过。
 - [ ] 独立提交 Phase 6。
+
+Milestone C：Fidelity/Review/Report Package/API/UI/Markdown/ZIP/Zero 定向回归通过；Web production build 通过；1440×900 与 375×812 浏览器壳层检查无横向溢出且 composer 可见。live Zero 因桌面环境未提供而保留待办。
+
+Phase 3–6 的跨层实现因 Compiler、Runtime、Fidelity、API/UI 合同相互依赖，统一收敛于集成提交 `e932e55 feat: implement universal multi-skill orchestration`；未改写既有受保护 UI WIP。
 
 # Phase 7：全任务覆盖、真实验收与 Activation
 
 ## 7.1 Fixture Matrix
 
-- [ ] `user_research_planning` simple + multi。
-- [ ] `research_synthesis` simple + multi。
-- [ ] `competitive_research` simple + multi。
-- [ ] `design_audit` simple + multi。
-- [ ] `a11y_audit` simple/适用组合。
-- [ ] `voc_diagnosis` simple + multi。
-- [ ] 每个 fixture 只验证 Portfolio Coverage、Plan 编译和关键合同；不为每类任务重复完整浏览器/外部 E2E。
+- [x] `user_research_planning` simple + multi。
+- [x] `research_synthesis` simple + multi。
+- [x] `competitive_research` simple + multi。
+- [x] `design_audit` simple + multi。
+- [x] `a11y_audit` simple/适用组合。
+- [x] `voc_diagnosis` simple + multi。
+- [x] 每个 fixture 只验证 Portfolio Coverage、Plan 编译和关键合同；不为每类任务重复完整浏览器/外部 E2E。
 
 ## 7.2 京东众筹计划
 
-- [ ] 保留已完成旧 Task/Plan/Attempt 作为 single-skill baseline，不修改。
-- [ ] 创建新的京东众筹 Task，复用同等 Requirement 语义。
+- [x] 保留已完成旧 Task/Plan/Attempt 作为 single-skill baseline，不修改。
+- [ ] 创建新的京东众筹 Task，复用同等 Requirement 语义。（真实 smoke fixture/断言已冻结；实际创建等待外部验收环境。）
 - [ ] 新 Task 生成 Plan v3。
 - [ ] 包含 Shared Tavily。
 - [ ] 包含 Market/Competitive Contributor。
@@ -518,7 +524,7 @@ git diff --check
 - [ ] Owner Deliverable API 200。
 - [ ] Web 可查看每个 Skill 与 Final mapping。
 - [ ] Markdown/ZIP 完整。
-- [ ] Zero 自动化回归通过；只有 payload/transport 改变时才运行一次 live Zero。
+- [x] Zero 自动化回归通过；只有 payload/transport 改变时才运行一次 live Zero。（自动化已通过；本次增加安全摘要，live Zero 仍待可用桌面环境。）
 
 ## 7.4 性能测量
 
@@ -539,17 +545,17 @@ pnpm --dir apps/web build
 git diff --check
 ```
 
-- [ ] 全量测试 0 fail。
-- [ ] Web production build 通过。
-- [ ] 独立架构/安全/真实性审查通过。
+- [x] 全量测试 0 fail。（1822 tests：1807 pass、15 external/live skip、0 fail。）
+- [x] Web production build 通过。
+- [x] 独立架构/安全/真实性审查通过。（两轮 blocker review 后修复 source attribution，多目标改写回归复核 PASS。）
 - [ ] 当前工作树只包含计划范围文件。
 - [ ] Activation commit 开启新任务 Plan v3 writer。
-- [ ] 旧 Reader/Executor 保留。
-- [ ] 更新开发文档实施结果与账本。
+- [x] 旧 Reader/Executor 保留。
+- [x] 更新开发文档实施结果与账本。
 - [ ] 获得明确 merge/restart 授权。
 - [ ] 一次性合并到 main。
 - [ ] 从 main 重启并做 source revision/health 验收。
-- [ ] 未获 push 授权前不 push。
+- [x] 未获 push 授权前不 push。
 
 # 回滚清单
 
@@ -572,21 +578,22 @@ Registry composition metadata                    done
 all active Skills classified                     done
 Portfolio Resolver                               done (active-gate wiring; writer inactive)
 implicit direct_skill_bypass removed             done
-cross-invocation DAG                             pending
-shared Tool/Knowledge dedup                      pending
-research-contribution-v1                         done (contract/validator; runtime sealing pending)
-virtual-user contributor                         pending
-contribution-ledger-v1                           done (contract/validator; report integration pending)
-cross-skill reviewer                             pending
-multi-skill fidelity                             pending
-Canonical/Report integration                     pending
-Portfolio/Contribution UI                        pending
-all task type fixtures                           pending
-JD crowdfunding new Plan                         pending
-JD crowdfunding real run                         pending
-targeted milestones + final quality              pending
-independent review                               pending
-Zero automated regression                       pending
+cross-invocation DAG                             done
+shared Tool/Knowledge dedup                      done (explicit share authorization + full binding/dependency fingerprint)
+research-contribution-v1                         done (deterministic adapters + SEALED runtime Artifact)
+virtual-user contributor                         done (simulation-only/provisional; real service acceptance pending)
+contribution-ledger-v1                           done (sealed pre-synthesis bundle inventory + final ledger)
+cross-skill reviewer                             done (deterministic conflict/coverage/fidelity review)
+multi-skill fidelity                             done
+Canonical/Report integration                     done
+Portfolio/Contribution UI                        done
+all task type fixtures                           done (Portfolio + Plan v3 compile matrix)
+JD crowdfunding new Plan                         pending external acceptance run
+JD crowdfunding real run                         pending Database/Gateway/Tavily/virtual-user-lab
+Milestone B/C + Web build                        done
+targeted milestones + automated final quality            done (1822 tests: 1807 pass, 15 live/external skip, 0 fail)
+independent review                               done (final targeted reviewer PASS)
+Zero automated regression                       done; live Zero pending available desktop environment
 single authorized merge/restart                  pending authorization
 push                                             withheld until authorized
 ```

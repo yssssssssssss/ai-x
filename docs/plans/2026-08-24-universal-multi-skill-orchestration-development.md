@@ -1,6 +1,6 @@
 # 通用多 Skill 组合编排底座开发文档
 
-> 状态：实施中；Gate 0、Phase 1 与 Phase 2 核心实现及 Milestone A 已完成，Multi-Skill writer 仍保持 inactive。
+> 状态：Gate 0、Phase 1–6 与 Phase 7 fixture/自动化门禁已完成；Multi-Skill writer 仍保持 inactive，真实京东众筹 E2E、live Zero、Activation 与授权后的 merge/restart/push 待完成。
 >
 > 当前集成分支：`feat/research-answer-dynamic-reports`
 >
@@ -1127,25 +1127,29 @@ Activation 前只要求一次代表性真实链路：
 ## 37. 完成定义
 
 ```text
-original multi-skill architecture restored            done
-all active task types portfolio-capable               done
+original multi-skill architecture restored            done (writer inactive)
+all active task types portfolio-capable               done (fixture/compile matrix)
 non-explicit direct_skill_bypass removed               done
-Capability Demand Graph v1                         done
-CurrentExecutionPlan v3                               done
+Capability Demand Graph v1                            done
+CurrentExecutionPlan v3                               done (writer inactive)
 multi-invocation dependencies and bindings            done
-shared Tool/Knowledge dedup                           done
+shared Tool/Knowledge dedup                            done
 research-contribution-v1                              done
 contribution-ledger-v1                                done
 contributor → canonical fidelity                      done
 canonical → report exact-once                         done
 multi-LLM behavior preserved                          done
 all active Skills composition-classified              done
-JD crowdfunding multi-skill plan                      done
-JD crowdfunding real execution                        done
+JD crowdfunding multi-skill acceptance contract       done
+JD crowdfunding new Plan                              pending external acceptance environment
+JD crowdfunding real execution                        pending external acceptance environment
 all task type fixtures                                done
-targeted milestones + final quality                  done
-independent review                                    done
+targeted milestones + Web build                       done
+final automated quality                               done (1822 tests: 1807 pass, 15 live/external skip, 0 fail; Web build green)
+independent review                                    done (final targeted reviewer PASS)
 Zero automated regression                            done
+live Zero acceptance                                  pending available desktop environment
+Activation commit                                     pending real E2E + final gates
 single authorized merge/restart                       pending authorization
 push                                                   withheld until authorized
 ```
