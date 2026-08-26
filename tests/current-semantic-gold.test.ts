@@ -366,7 +366,7 @@ function service(): GoldBatchService {
   return new GoldBatchService(new MemoryGoldStore(), dependencies);
 }
 
-test('semantic Gold fixture contains exactly 27 scenarios and distinct digital-human fixtures', () => {
+test('semantic Gold fixture contains exactly 27 scenarios and a distinct crowdfunding Gold target', () => {
   assert.equal(fixture.version, 1);
   assert.deepEqual(fixture.profiles, [...TASK_TYPES]);
   assert.equal(fixture.scenarios.length, 27);
@@ -382,13 +382,17 @@ test('semantic Gold fixture contains exactly 27 scenarios and distinct digital-h
   );
 
   const ambiguous = fixture.scenarios.find(({ id }) => id === 'competitive-digital-human');
-  const gold = fixture.scenarios.find(({ id }) => id === 'competitive-digital-human-gold');
+  const gold = fixture.scenarios.find(({ id }) => id === 'competitive-jd-crowdfunding-channel-gold');
   assert.ok(ambiguous);
   assert.ok(gold);
   assert.equal(ambiguous.variant, 'ambiguous');
   assert.deepEqual(ambiguous.clarificationKeys, ['scope', 'audience']);
   assert.equal(gold.variant, 'clear');
   assert.equal(gold.profile, 'competitive_research');
+  assert.equal(gold.businessDomain, 'jd_crowdfunding');
+  assert.equal(gold.minPublicSources, 5);
+  assert.match(gold.input, /硬件、文创、本地生活/u);
+  assert.match(gold.input, /已证事实、策略推断和待验证假设/u);
   assert.equal(gold.piiDetected, false);
   assert.deepEqual(gold.clarificationKeys, []);
 });

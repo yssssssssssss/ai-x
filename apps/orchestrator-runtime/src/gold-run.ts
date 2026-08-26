@@ -28,7 +28,7 @@ import {
 } from '../../../scripts/current-real-smoke.ts';
 
 const GOLD_PROFILE = 'competitive_research';
-export const GOLD_SCENARIO_ID = 'competitive-digital-human-gold';
+export const GOLD_SCENARIO_ID = 'competitive-jd-crowdfunding-channel-gold';
 const DEFAULT_FIXTURE = 'tests/fixtures/current-semantic-gold.json';
 
 type GoldCommand =
