@@ -1,0 +1,48 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "editorial-report-fidelity.schema.json",
+  "title": "Editorial Report Fidelity Review Plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "checks"],
+  "properties": {
+    "version": { "const": "editorial-fidelity-plan-v1" },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 240,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["copyPointer", "materialUnitIds", "verdict"],
+        "properties": {
+          "copyPointer": {
+            "type": "string",
+            "maxLength": 256,
+            "pattern": "^(?:/(?:[\\u0020-\\u002e\\u0030-\\u007d]|~[01])*)+$"
+          },
+          "materialUnitIds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^emu_[0-9a-f]{64}$"
+            }
+          },
+          "verdict": {
+            "enum": [
+              "faithful",
+              "narrower",
+              "unsupported",
+              "certainty_upgraded",
+              "numeric_drift",
+              "qualification_lost"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

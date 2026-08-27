@@ -49,7 +49,7 @@ export class ReceiptLLMClient implements LLMClient {
         opts.receipt,
         error,
         startedAt,
-        hashPrompt(opts.prompt, opts.context, opts.schemaName),
+        hashPrompt(opts.prompt, opts.context, opts.schemaName, opts.systemPrompt),
       );
       throw error;
     }

@@ -66,7 +66,10 @@ const CSS = `
 export class EditorialRendererError extends Error {
   readonly name = 'EditorialRendererError';
 
-  constructor(readonly code: 'EDITORIAL_HTML_UNSAFE' | 'SOURCE_NOT_RENDERABLE', message: string) {
+  constructor(
+    readonly code: 'EDITORIAL_HTML_UNSAFE' | 'EDITORIAL_RENDER_TRACE_INVALID' | 'SOURCE_NOT_RENDERABLE',
+    message: string,
+  ) {
     super(`${code}: ${message}`);
   }
 }
@@ -488,10 +491,10 @@ export function renderEditorialReport(input: {
   assertEditorialHtmlSafe(result.htmlBytes);
   const eligible = new Set(result.trace.eligibleCompositionKinds);
   if (result.trace.renderedCompositionKinds.some((kind) => !eligible.has(kind))) {
-    throw new EditorialRendererError('SOURCE_NOT_RENDERABLE', 'Renderer emitted an ineligible composition kind');
+    throw new EditorialRendererError('EDITORIAL_RENDER_TRACE_INVALID', 'Renderer emitted an ineligible composition kind');
   }
   if (eligible.size >= 5 && result.trace.renderedCompositionKinds.length < 5) {
-    throw new EditorialRendererError('SOURCE_NOT_RENDERABLE', 'Renderer did not render five eligible composition kinds');
+    throw new EditorialRendererError('EDITORIAL_RENDER_TRACE_INVALID', 'Renderer did not render five eligible composition kinds');
   }
   return result;
 }

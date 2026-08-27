@@ -1,0 +1,1923 @@
+{
+  "version": "editorial-fidelity-golden-v1",
+  "cases": [
+    {
+      "caseId": "faithful-01",
+      "expected": "faithful",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+        "deliverableType": "research_plan",
+        "units": [
+          {
+            "id": "emu_00000000000000000000000000000000000000000000000000000000000003e9",
+            "value": "首次访问的参与者通常先阅读项目说明，再决定是否继续了解。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-faithful-01"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "参与者首次访问时通常会先看项目说明，然后再决定是否继续了解。",
+        "materialUnitIds": [
+          "emu_00000000000000000000000000000000000000000000000000000000000003e9"
+        ]
+      }
+    },
+    {
+      "caseId": "faithful-02",
+      "expected": "faithful",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "deliverableType": "competitive_analysis_report",
+        "units": [
+          {
+            "id": "emu_00000000000000000000000000000000000000000000000000000000000003ea",
+            "value": "受访者把配送进度和售后入口都视为重要信息。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-faithful-02"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "配送进度与售后入口都是受访者重视的信息。",
+        "materialUnitIds": [
+          "emu_00000000000000000000000000000000000000000000000000000000000003ea"
+        ]
+      }
+    },
+    {
+      "caseId": "faithful-03",
+      "expected": "faithful",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000003",
+        "deliverableType": "voc_diagnosis_report",
+        "units": [
+          {
+            "id": "emu_00000000000000000000000000000000000000000000000000000000000003eb",
+            "value": "现有观察提示，清晰的风险说明可能减少决策犹豫。",
+            "role": "claim",
+            "epistemicStatus": "inference",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-faithful-03"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "从现有观察看，清楚说明风险或许能减少决策犹豫。",
+        "materialUnitIds": [
+          "emu_00000000000000000000000000000000000000000000000000000000000003eb"
+        ]
+      }
+    },
+    {
+      "caseId": "faithful-04",
+      "expected": "faithful",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
+        "deliverableType": "design_audit_report",
+        "units": [
+          {
+            "id": "emu_00000000000000000000000000000000000000000000000000000000000003ec",
+            "value": "尚不确定不同城市的用户是否有相同偏好。",
+            "role": "risk",
+            "epistemicStatus": "unknown",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-faithful-04"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "不同城市用户的偏好是否一致，目前仍不确定。",
+        "materialUnitIds": [
+          "emu_00000000000000000000000000000000000000000000000000000000000003ec"
+        ]
+      }
+    },
+    {
+      "caseId": "faithful-05",
+      "expected": "faithful",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000005",
+        "deliverableType": "accessibility_audit_report",
+        "units": [
+          {
+            "id": "emu_00000000000000000000000000000000000000000000000000000000000003ed",
+            "value": "建议先验证项目说明的可读性，再扩大入口曝光。",
+            "role": "recommendation",
+            "epistemicStatus": "inference",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-faithful-05"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "应先检验项目说明是否易读，之后再扩大入口曝光。",
+        "materialUnitIds": [
+          "emu_00000000000000000000000000000000000000000000000000000000000003ed"
+        ]
+      }
+    },
+    {
+      "caseId": "faithful-06",
+      "expected": "faithful",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000006",
+        "deliverableType": "research_plan",
+        "units": [
+          {
+            "id": "emu_00000000000000000000000000000000000000000000000000000000000003ee",
+            "value": "需要通过可用性测试确认关键按钮是否容易发现。",
+            "role": "validation",
+            "epistemicStatus": "unknown",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-faithful-06"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "关键按钮是否容易被发现，需要用可用性测试验证。",
+        "materialUnitIds": [
+          "emu_00000000000000000000000000000000000000000000000000000000000003ee"
+        ]
+      }
+    },
+    {
+      "caseId": "faithful-07",
+      "expected": "faithful",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000007",
+        "deliverableType": "competitive_analysis_report",
+        "units": [
+          {
+            "id": "emu_00000000000000000000000000000000000000000000000000000000000003ef",
+            "value": "本轮校准材料仅用于验证报告保真判断。",
+            "role": "context",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-faithful-07"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "这些校准材料只用于检验报告的保真判断。",
+        "materialUnitIds": [
+          "emu_00000000000000000000000000000000000000000000000000000000000003ef"
+        ]
+      }
+    },
+    {
+      "caseId": "faithful-08",
+      "expected": "faithful",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000008",
+        "deliverableType": "voc_diagnosis_report",
+        "units": [
+          {
+            "id": "emu_00000000000000000000000000000000000000000000000000000000000003f0",
+            "value": "在本次合成样本中，移动端参与者更常查看进度信息。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-faithful-08"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "仅就本次合成样本而言，移动端参与者查看进度信息更频繁。",
+        "materialUnitIds": [
+          "emu_00000000000000000000000000000000000000000000000000000000000003f0"
+        ]
+      }
+    },
+    {
+      "caseId": "faithful-09",
+      "expected": "faithful",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000009",
+        "deliverableType": "design_audit_report",
+        "units": [
+          {
+            "id": "emu_00000000000000000000000000000000000000000000000000000000000003f1",
+            "value": "参与者会比较项目目标、交付时间和风险说明。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-faithful-09"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "项目目标、交付时间与风险说明都会被参与者拿来比较。",
+        "materialUnitIds": [
+          "emu_00000000000000000000000000000000000000000000000000000000000003f1"
+        ]
+      }
+    },
+    {
+      "caseId": "faithful-10",
+      "expected": "faithful",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:000000000000000000000000000000000000000000000000000000000000000a",
+        "deliverableType": "accessibility_audit_report",
+        "units": [
+          {
+            "id": "emu_00000000000000000000000000000000000000000000000000000000000003f2",
+            "value": "访谈线索表明，明确说明退款边界可能提升理解。",
+            "role": "claim",
+            "epistemicStatus": "inference",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-faithful-10"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "根据访谈线索，讲清退款边界或许有助于理解。",
+        "materialUnitIds": [
+          "emu_00000000000000000000000000000000000000000000000000000000000003f2"
+        ]
+      }
+    },
+    {
+      "caseId": "narrower-01",
+      "expected": "narrower",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:000000000000000000000000000000000000000000000000000000000000000b",
+        "deliverableType": "research_plan",
+        "units": [
+          {
+            "id": "emu_00000000000000000000000000000000000000000000000000000000000003f3",
+            "value": "参与者同时关注项目进度和售后响应。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-narrower-01"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "参与者关注售后响应。",
+        "materialUnitIds": [
+          "emu_00000000000000000000000000000000000000000000000000000000000003f3"
+        ]
+      }
+    },
+    {
+      "caseId": "narrower-02",
+      "expected": "narrower",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:000000000000000000000000000000000000000000000000000000000000000c",
+        "deliverableType": "competitive_analysis_report",
+        "units": [
+          {
+            "id": "emu_00000000000000000000000000000000000000000000000000000000000003f4",
+            "value": "首次访问包含了解规则、比较方案和查看风险三个步骤。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-narrower-02"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "首次访问包含了解规则和比较方案。",
+        "materialUnitIds": [
+          "emu_00000000000000000000000000000000000000000000000000000000000003f4"
+        ]
+      }
+    },
+    {
+      "caseId": "narrower-03",
+      "expected": "narrower",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:000000000000000000000000000000000000000000000000000000000000000d",
+        "deliverableType": "voc_diagnosis_report",
+        "units": [
+          {
+            "id": "emu_00000000000000000000000000000000000000000000000000000000000003f5",
+            "value": "建议先优化说明结构，并补充常见问题入口。",
+            "role": "recommendation",
+            "epistemicStatus": "inference",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-narrower-03"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "建议先优化说明结构。",
+        "materialUnitIds": [
+          "emu_00000000000000000000000000000000000000000000000000000000000003f5"
+        ]
+      }
+    },
+    {
+      "caseId": "narrower-04",
+      "expected": "narrower",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:000000000000000000000000000000000000000000000000000000000000000e",
+        "deliverableType": "design_audit_report",
+        "units": [
+          {
+            "id": "emu_00000000000000000000000000000000000000000000000000000000000003f6",
+            "value": "当前风险包括信息过载和关键条件不醒目。",
+            "role": "risk",
+            "epistemicStatus": "unknown",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-narrower-04"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "当前存在信息过载风险。",
+        "materialUnitIds": [
+          "emu_00000000000000000000000000000000000000000000000000000000000003f6"
+        ]
+      }
+    },
+    {
+      "caseId": "narrower-05",
+      "expected": "narrower",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:000000000000000000000000000000000000000000000000000000000000000f",
+        "deliverableType": "accessibility_audit_report",
+        "units": [
+          {
+            "id": "emu_00000000000000000000000000000000000000000000000000000000000003f7",
+            "value": "需要用访谈和可用性测试共同验证理解偏差。",
+            "role": "validation",
+            "epistemicStatus": "unknown",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-narrower-05"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "需要用可用性测试验证理解偏差。",
+        "materialUnitIds": [
+          "emu_00000000000000000000000000000000000000000000000000000000000003f7"
+        ]
+      }
+    },
+    {
+      "caseId": "narrower-06",
+      "expected": "narrower",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000010",
+        "deliverableType": "research_plan",
+        "units": [
+          {
+            "id": "emu_00000000000000000000000000000000000000000000000000000000000003f8",
+            "value": "现有线索提示，新访客和回访者可能采用不同的比较方式。",
+            "role": "claim",
+            "epistemicStatus": "inference",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-narrower-06"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "现有线索提示，新访客可能有自己的比较方式。",
+        "materialUnitIds": [
+          "emu_00000000000000000000000000000000000000000000000000000000000003f8"
+        ]
+      }
+    },
+    {
+      "caseId": "narrower-07",
+      "expected": "narrower",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000011",
+        "deliverableType": "competitive_analysis_report",
+        "units": [
+          {
+            "id": "emu_00000000000000000000000000000000000000000000000000000000000003f9",
+            "value": "尚不清楚入口位置与说明长度分别会产生多大影响。",
+            "role": "risk",
+            "epistemicStatus": "unknown",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-narrower-07"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "尚不清楚入口位置会产生多大影响。",
+        "materialUnitIds": [
+          "emu_00000000000000000000000000000000000000000000000000000000000003f9"
+        ]
+      }
+    },
+    {
+      "caseId": "narrower-08",
+      "expected": "narrower",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000012",
+        "deliverableType": "voc_diagnosis_report",
+        "units": [
+          {
+            "id": "emu_00000000000000000000000000000000000000000000000000000000000003fa",
+            "value": "本轮材料覆盖信息架构与视觉层级两个范围。",
+            "role": "context",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-narrower-08"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "本轮材料覆盖信息架构。",
+        "materialUnitIds": [
+          "emu_00000000000000000000000000000000000000000000000000000000000003fa"
+        ]
+      }
+    },
+    {
+      "caseId": "narrower-09",
+      "expected": "narrower",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000013",
+        "deliverableType": "design_audit_report",
+        "units": [
+          {
+            "id": "emu_00000000000000000000000000000000000000000000000000000000000003fb",
+            "value": "参与者重视目标说明、交付承诺和退出规则。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-narrower-09"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "参与者重视目标说明和交付承诺。",
+        "materialUnitIds": [
+          "emu_00000000000000000000000000000000000000000000000000000000000003fb"
+        ]
+      }
+    },
+    {
+      "caseId": "narrower-10",
+      "expected": "narrower",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000014",
+        "deliverableType": "accessibility_audit_report",
+        "units": [
+          {
+            "id": "emu_00000000000000000000000000000000000000000000000000000000000003fc",
+            "value": "说明页提供流程概览、风险提示与问题反馈入口。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-narrower-10"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "说明页提供风险提示。",
+        "materialUnitIds": [
+          "emu_00000000000000000000000000000000000000000000000000000000000003fc"
+        ]
+      }
+    },
+    {
+      "caseId": "unsupported-01",
+      "expected": "unsupported",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000015",
+        "deliverableType": "research_plan",
+        "units": [
+          {
+            "id": "emu_00000000000000000000000000000000000000000000000000000000000003fd",
+            "value": "参与者询问项目进度。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-unsupported-01"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "会员参与者询问项目进度。",
+        "materialUnitIds": [
+          "emu_00000000000000000000000000000000000000000000000000000000000003fd"
+        ]
+      }
+    },
+    {
+      "caseId": "unsupported-02",
+      "expected": "unsupported",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000016",
+        "deliverableType": "competitive_analysis_report",
+        "units": [
+          {
+            "id": "emu_00000000000000000000000000000000000000000000000000000000000003fe",
+            "value": "样本关注方案说明是否清楚。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-unsupported-02"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "该方案的说明清晰度位居行业第一。",
+        "materialUnitIds": [
+          "emu_00000000000000000000000000000000000000000000000000000000000003fe"
+        ]
+      }
+    },
+    {
+      "caseId": "unsupported-03",
+      "expected": "unsupported",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000017",
+        "deliverableType": "voc_diagnosis_report",
+        "units": [
+          {
+            "id": "emu_00000000000000000000000000000000000000000000000000000000000003ff",
+            "value": "说明页列出了交付步骤。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-unsupported-03"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "交付步骤会直接提升支持转化率。",
+        "materialUnitIds": [
+          "emu_00000000000000000000000000000000000000000000000000000000000003ff"
+        ]
+      }
+    },
+    {
+      "caseId": "unsupported-04",
+      "expected": "unsupported",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000018",
+        "deliverableType": "design_audit_report",
+        "units": [
+          {
+            "id": "emu_0000000000000000000000000000000000000000000000000000000000000400",
+            "value": "部分参与者从站内入口进入说明页。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-unsupported-04"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "部分参与者从短视频入口进入说明页。",
+        "materialUnitIds": [
+          "emu_0000000000000000000000000000000000000000000000000000000000000400"
+        ]
+      }
+    },
+    {
+      "caseId": "unsupported-05",
+      "expected": "unsupported",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000019",
+        "deliverableType": "accessibility_audit_report",
+        "units": [
+          {
+            "id": "emu_0000000000000000000000000000000000000000000000000000000000000401",
+            "value": "参与者比较了两个匿名方案。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-unsupported-05"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "参与者认为平台甲比平台乙更可靠。",
+        "materialUnitIds": [
+          "emu_0000000000000000000000000000000000000000000000000000000000000401"
+        ]
+      }
+    },
+    {
+      "caseId": "unsupported-06",
+      "expected": "unsupported",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:000000000000000000000000000000000000000000000000000000000000001a",
+        "deliverableType": "research_plan",
+        "units": [
+          {
+            "id": "emu_0000000000000000000000000000000000000000000000000000000000000402",
+            "value": "团队计划复核入口文案。",
+            "role": "recommendation",
+            "epistemicStatus": "inference",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-unsupported-06"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "团队将在下季度完成入口文案复核。",
+        "materialUnitIds": [
+          "emu_0000000000000000000000000000000000000000000000000000000000000402"
+        ]
+      }
+    },
+    {
+      "caseId": "unsupported-07",
+      "expected": "unsupported",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:000000000000000000000000000000000000000000000000000000000000001b",
+        "deliverableType": "competitive_analysis_report",
+        "units": [
+          {
+            "id": "emu_0000000000000000000000000000000000000000000000000000000000000403",
+            "value": "参与者查看了项目详情。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-unsupported-07"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "参与者查看详情后会主动分享给好友。",
+        "materialUnitIds": [
+          "emu_0000000000000000000000000000000000000000000000000000000000000403"
+        ]
+      }
+    },
+    {
+      "caseId": "unsupported-08",
+      "expected": "unsupported",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:000000000000000000000000000000000000000000000000000000000000001c",
+        "deliverableType": "voc_diagnosis_report",
+        "units": [
+          {
+            "id": "emu_0000000000000000000000000000000000000000000000000000000000000404",
+            "value": "合成样本包含首次访问者。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-unsupported-08"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "合成样本中的高收入用户主要是首次访问者。",
+        "materialUnitIds": [
+          "emu_0000000000000000000000000000000000000000000000000000000000000404"
+        ]
+      }
+    },
+    {
+      "caseId": "unsupported-09",
+      "expected": "unsupported",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:000000000000000000000000000000000000000000000000000000000000001d",
+        "deliverableType": "design_audit_report",
+        "units": [
+          {
+            "id": "emu_0000000000000000000000000000000000000000000000000000000000000405",
+            "value": "参与者讨论了退款说明。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-unsupported-09"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "退款说明将显著带来复购。",
+        "materialUnitIds": [
+          "emu_0000000000000000000000000000000000000000000000000000000000000405"
+        ]
+      }
+    },
+    {
+      "caseId": "unsupported-10",
+      "expected": "unsupported",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:000000000000000000000000000000000000000000000000000000000000001e",
+        "deliverableType": "accessibility_audit_report",
+        "units": [
+          {
+            "id": "emu_0000000000000000000000000000000000000000000000000000000000000406",
+            "value": "参与者担心费用说明不透明。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-unsupported-10"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "应向参与者发放现金补贴。",
+        "materialUnitIds": [
+          "emu_0000000000000000000000000000000000000000000000000000000000000406"
+        ]
+      }
+    },
+    {
+      "caseId": "certainty_upgraded-01",
+      "expected": "certainty_upgraded",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:000000000000000000000000000000000000000000000000000000000000001f",
+        "deliverableType": "research_plan",
+        "units": [
+          {
+            "id": "emu_0000000000000000000000000000000000000000000000000000000000000407",
+            "value": "现有观察提示，简化导航可能减少查找成本。",
+            "role": "claim",
+            "epistemicStatus": "inference",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-certainty_upgraded-01"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "简化导航会减少查找成本。",
+        "materialUnitIds": [
+          "emu_0000000000000000000000000000000000000000000000000000000000000407"
+        ]
+      }
+    },
+    {
+      "caseId": "certainty_upgraded-02",
+      "expected": "certainty_upgraded",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000020",
+        "deliverableType": "competitive_analysis_report",
+        "units": [
+          {
+            "id": "emu_0000000000000000000000000000000000000000000000000000000000000408",
+            "value": "受访者倾向于认为风险说明有帮助。",
+            "role": "claim",
+            "epistemicStatus": "inference",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-certainty_upgraded-02"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "风险说明一定有帮助。",
+        "materialUnitIds": [
+          "emu_0000000000000000000000000000000000000000000000000000000000000408"
+        ]
+      }
+    },
+    {
+      "caseId": "certainty_upgraded-03",
+      "expected": "certainty_upgraded",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000021",
+        "deliverableType": "voc_diagnosis_report",
+        "units": [
+          {
+            "id": "emu_0000000000000000000000000000000000000000000000000000000000000409",
+            "value": "尚无法确认提醒是否会改变决策。",
+            "role": "risk",
+            "epistemicStatus": "unknown",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-certainty_upgraded-03"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "提醒已经被确认会改变决策。",
+        "materialUnitIds": [
+          "emu_0000000000000000000000000000000000000000000000000000000000000409"
+        ]
+      }
+    },
+    {
+      "caseId": "certainty_upgraded-04",
+      "expected": "certainty_upgraded",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000022",
+        "deliverableType": "design_audit_report",
+        "units": [
+          {
+            "id": "emu_000000000000000000000000000000000000000000000000000000000000040a",
+            "value": "初步线索提示，分组展示或许更易理解。",
+            "role": "claim",
+            "epistemicStatus": "inference",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-certainty_upgraded-04"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "现有证据证明分组展示更易理解。",
+        "materialUnitIds": [
+          "emu_000000000000000000000000000000000000000000000000000000000000040a"
+        ]
+      }
+    },
+    {
+      "caseId": "certainty_upgraded-05",
+      "expected": "certainty_upgraded",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000023",
+        "deliverableType": "accessibility_audit_report",
+        "units": [
+          {
+            "id": "emu_000000000000000000000000000000000000000000000000000000000000040b",
+            "value": "存在项目说明被误读的可能性。",
+            "role": "risk",
+            "epistemicStatus": "unknown",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-certainty_upgraded-05"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "项目说明必然会被误读。",
+        "materialUnitIds": [
+          "emu_000000000000000000000000000000000000000000000000000000000000040b"
+        ]
+      }
+    },
+    {
+      "caseId": "certainty_upgraded-06",
+      "expected": "certainty_upgraded",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000024",
+        "deliverableType": "research_plan",
+        "units": [
+          {
+            "id": "emu_000000000000000000000000000000000000000000000000000000000000040c",
+            "value": "需要验证新入口是否容易被发现。",
+            "role": "validation",
+            "epistemicStatus": "unknown",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-certainty_upgraded-06"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "新入口已经被证实容易发现。",
+        "materialUnitIds": [
+          "emu_000000000000000000000000000000000000000000000000000000000000040c"
+        ]
+      }
+    },
+    {
+      "caseId": "certainty_upgraded-07",
+      "expected": "certainty_upgraded",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000025",
+        "deliverableType": "competitive_analysis_report",
+        "units": [
+          {
+            "id": "emu_000000000000000000000000000000000000000000000000000000000000040d",
+            "value": "当前材料只能推测用户或许偏好更短的说明。",
+            "role": "claim",
+            "epistemicStatus": "inference",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-certainty_upgraded-07"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "用户必定偏好更短的说明。",
+        "materialUnitIds": [
+          "emu_000000000000000000000000000000000000000000000000000000000000040d"
+        ]
+      }
+    },
+    {
+      "caseId": "certainty_upgraded-08",
+      "expected": "certainty_upgraded",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000026",
+        "deliverableType": "voc_diagnosis_report",
+        "units": [
+          {
+            "id": "emu_000000000000000000000000000000000000000000000000000000000000040e",
+            "value": "目前不清楚不同设备上的行为是否一致。",
+            "role": "risk",
+            "epistemicStatus": "unknown",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-certainty_upgraded-08"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "不同设备上的行为明确一致。",
+        "materialUnitIds": [
+          "emu_000000000000000000000000000000000000000000000000000000000000040e"
+        ]
+      }
+    },
+    {
+      "caseId": "certainty_upgraded-09",
+      "expected": "certainty_upgraded",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000027",
+        "deliverableType": "design_audit_report",
+        "units": [
+          {
+            "id": "emu_000000000000000000000000000000000000000000000000000000000000040f",
+            "value": "有限观察看起来支持先展示核心信息。",
+            "role": "claim",
+            "epistemicStatus": "inference",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-certainty_upgraded-09"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "研究结论就是必须先展示核心信息。",
+        "materialUnitIds": [
+          "emu_000000000000000000000000000000000000000000000000000000000000040f"
+        ]
+      }
+    },
+    {
+      "caseId": "certainty_upgraded-10",
+      "expected": "certainty_upgraded",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000028",
+        "deliverableType": "accessibility_audit_report",
+        "units": [
+          {
+            "id": "emu_0000000000000000000000000000000000000000000000000000000000000410",
+            "value": "访谈迹象表明，提醒文案可能缓解顾虑。",
+            "role": "claim",
+            "epistemicStatus": "inference",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-certainty_upgraded-10"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "提醒文案肯定能缓解顾虑。",
+        "materialUnitIds": [
+          "emu_0000000000000000000000000000000000000000000000000000000000000410"
+        ]
+      }
+    },
+    {
+      "caseId": "numeric_drift-01",
+      "expected": "numeric_drift",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000029",
+        "deliverableType": "research_plan",
+        "units": [
+          {
+            "id": "emu_0000000000000000000000000000000000000000000000000000000000000411",
+            "value": "合成测试计划招募20名参与者。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-numeric_drift-01"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "合成测试计划招募30名参与者。",
+        "materialUnitIds": [
+          "emu_0000000000000000000000000000000000000000000000000000000000000411"
+        ]
+      }
+    },
+    {
+      "caseId": "numeric_drift-02",
+      "expected": "numeric_drift",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:000000000000000000000000000000000000000000000000000000000000002a",
+        "deliverableType": "competitive_analysis_report",
+        "units": [
+          {
+            "id": "emu_0000000000000000000000000000000000000000000000000000000000000412",
+            "value": "5名参与者中有3名查看了风险说明。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-numeric_drift-02"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "5名参与者中有4名查看了风险说明。",
+        "materialUnitIds": [
+          "emu_0000000000000000000000000000000000000000000000000000000000000412"
+        ]
+      }
+    },
+    {
+      "caseId": "numeric_drift-03",
+      "expected": "numeric_drift",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:000000000000000000000000000000000000000000000000000000000000002b",
+        "deliverableType": "voc_diagnosis_report",
+        "units": [
+          {
+            "id": "emu_0000000000000000000000000000000000000000000000000000000000000413",
+            "value": "任务完成时间集中在8到12分钟。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-numeric_drift-03"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "任务完成时间集中在10到14分钟。",
+        "materialUnitIds": [
+          "emu_0000000000000000000000000000000000000000000000000000000000000413"
+        ]
+      }
+    },
+    {
+      "caseId": "numeric_drift-04",
+      "expected": "numeric_drift",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:000000000000000000000000000000000000000000000000000000000000002c",
+        "deliverableType": "design_audit_report",
+        "units": [
+          {
+            "id": "emu_0000000000000000000000000000000000000000000000000000000000000414",
+            "value": "验证周期设定为2周。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-numeric_drift-04"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "验证周期设定为3周。",
+        "materialUnitIds": [
+          "emu_0000000000000000000000000000000000000000000000000000000000000414"
+        ]
+      }
+    },
+    {
+      "caseId": "numeric_drift-05",
+      "expected": "numeric_drift",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:000000000000000000000000000000000000000000000000000000000000002d",
+        "deliverableType": "accessibility_audit_report",
+        "units": [
+          {
+            "id": "emu_0000000000000000000000000000000000000000000000000000000000000415",
+            "value": "合成样本中的完成比例为25%。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-numeric_drift-05"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "合成样本中的完成比例为30%。",
+        "materialUnitIds": [
+          "emu_0000000000000000000000000000000000000000000000000000000000000415"
+        ]
+      }
+    },
+    {
+      "caseId": "numeric_drift-06",
+      "expected": "numeric_drift",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:000000000000000000000000000000000000000000000000000000000000002e",
+        "deliverableType": "research_plan",
+        "units": [
+          {
+            "id": "emu_0000000000000000000000000000000000000000000000000000000000000416",
+            "value": "本轮整理了100条匿名反馈。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-numeric_drift-06"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "本轮整理了120条匿名反馈。",
+        "materialUnitIds": [
+          "emu_0000000000000000000000000000000000000000000000000000000000000416"
+        ]
+      }
+    },
+    {
+      "caseId": "numeric_drift-07",
+      "expected": "numeric_drift",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:000000000000000000000000000000000000000000000000000000000000002f",
+        "deliverableType": "competitive_analysis_report",
+        "units": [
+          {
+            "id": "emu_0000000000000000000000000000000000000000000000000000000000000417",
+            "value": "测试方案中的示例费用为5元。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-numeric_drift-07"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "测试方案中的示例费用为8元。",
+        "materialUnitIds": [
+          "emu_0000000000000000000000000000000000000000000000000000000000000417"
+        ]
+      }
+    },
+    {
+      "caseId": "numeric_drift-08",
+      "expected": "numeric_drift",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000030",
+        "deliverableType": "voc_diagnosis_report",
+        "units": [
+          {
+            "id": "emu_0000000000000000000000000000000000000000000000000000000000000418",
+            "value": "观察窗口设为2025年第一季度。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-numeric_drift-08"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "观察窗口设为2025年第二季度。",
+        "materialUnitIds": [
+          "emu_0000000000000000000000000000000000000000000000000000000000000418"
+        ]
+      }
+    },
+    {
+      "caseId": "numeric_drift-09",
+      "expected": "numeric_drift",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000031",
+        "deliverableType": "design_audit_report",
+        "units": [
+          {
+            "id": "emu_0000000000000000000000000000000000000000000000000000000000000419",
+            "value": "该入口在合成排序中位列第二。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-numeric_drift-09"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "该入口在合成排序中位列第一。",
+        "materialUnitIds": [
+          "emu_0000000000000000000000000000000000000000000000000000000000000419"
+        ]
+      }
+    },
+    {
+      "caseId": "numeric_drift-10",
+      "expected": "numeric_drift",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000032",
+        "deliverableType": "accessibility_audit_report",
+        "units": [
+          {
+            "id": "emu_000000000000000000000000000000000000000000000000000000000000041a",
+            "value": "响应时间目标为48小时。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-numeric_drift-10"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "响应时间目标为24小时。",
+        "materialUnitIds": [
+          "emu_000000000000000000000000000000000000000000000000000000000000041a"
+        ]
+      }
+    },
+    {
+      "caseId": "qualification_lost-01",
+      "expected": "qualification_lost",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000033",
+        "deliverableType": "research_plan",
+        "units": [
+          {
+            "id": "emu_000000000000000000000000000000000000000000000000000000000000041b",
+            "value": "在本次合成样本中，参与者更关注风险说明。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-qualification_lost-01"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "参与者更关注风险说明。",
+        "materialUnitIds": [
+          "emu_000000000000000000000000000000000000000000000000000000000000041b"
+        ]
+      }
+    },
+    {
+      "caseId": "qualification_lost-02",
+      "expected": "qualification_lost",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000034",
+        "deliverableType": "competitive_analysis_report",
+        "units": [
+          {
+            "id": "emu_000000000000000000000000000000000000000000000000000000000000041c",
+            "value": "该观察仅针对首次访问的新用户。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-qualification_lost-02"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "该观察针对用户。",
+        "materialUnitIds": [
+          "emu_000000000000000000000000000000000000000000000000000000000000041c"
+        ]
+      }
+    },
+    {
+      "caseId": "qualification_lost-03",
+      "expected": "qualification_lost",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000035",
+        "deliverableType": "voc_diagnosis_report",
+        "units": [
+          {
+            "id": "emu_000000000000000000000000000000000000000000000000000000000000041d",
+            "value": "截至观察当日，入口文案保持不变。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-qualification_lost-03"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "入口文案保持不变。",
+        "materialUnitIds": [
+          "emu_000000000000000000000000000000000000000000000000000000000000041d"
+        ]
+      }
+    },
+    {
+      "caseId": "qualification_lost-04",
+      "expected": "qualification_lost",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000036",
+        "deliverableType": "design_audit_report",
+        "units": [
+          {
+            "id": "emu_000000000000000000000000000000000000000000000000000000000000041e",
+            "value": "在库存充足的条件下，参与者可以继续提交。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-qualification_lost-04"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "参与者可以继续提交。",
+        "materialUnitIds": [
+          "emu_000000000000000000000000000000000000000000000000000000000000041e"
+        ]
+      }
+    },
+    {
+      "caseId": "qualification_lost-05",
+      "expected": "qualification_lost",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000037",
+        "deliverableType": "accessibility_audit_report",
+        "units": [
+          {
+            "id": "emu_000000000000000000000000000000000000000000000000000000000000041f",
+            "value": "对于高频访问者，快捷入口更容易被发现。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-qualification_lost-05"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "快捷入口更容易被发现。",
+        "materialUnitIds": [
+          "emu_000000000000000000000000000000000000000000000000000000000000041f"
+        ]
+      }
+    },
+    {
+      "caseId": "qualification_lost-06",
+      "expected": "qualification_lost",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000038",
+        "deliverableType": "research_plan",
+        "units": [
+          {
+            "id": "emu_0000000000000000000000000000000000000000000000000000000000000420",
+            "value": "在三次探索性访谈中，参与者提到说明较长。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-qualification_lost-06"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "参与者提到说明较长。",
+        "materialUnitIds": [
+          "emu_0000000000000000000000000000000000000000000000000000000000000420"
+        ]
+      }
+    },
+    {
+      "caseId": "qualification_lost-07",
+      "expected": "qualification_lost",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:0000000000000000000000000000000000000000000000000000000000000039",
+        "deliverableType": "competitive_analysis_report",
+        "units": [
+          {
+            "id": "emu_0000000000000000000000000000000000000000000000000000000000000421",
+            "value": "样本内的偏好差异不代表全部目标人群。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-qualification_lost-07"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "目标人群存在偏好差异。",
+        "materialUnitIds": [
+          "emu_0000000000000000000000000000000000000000000000000000000000000421"
+        ]
+      }
+    },
+    {
+      "caseId": "qualification_lost-08",
+      "expected": "qualification_lost",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:000000000000000000000000000000000000000000000000000000000000003a",
+        "deliverableType": "voc_diagnosis_report",
+        "units": [
+          {
+            "id": "emu_0000000000000000000000000000000000000000000000000000000000000422",
+            "value": "在桌面端测试中，导航标签容易识别。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-qualification_lost-08"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "导航标签容易识别。",
+        "materialUnitIds": [
+          "emu_0000000000000000000000000000000000000000000000000000000000000422"
+        ]
+      }
+    },
+    {
+      "caseId": "qualification_lost-09",
+      "expected": "qualification_lost",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:000000000000000000000000000000000000000000000000000000000000003b",
+        "deliverableType": "design_audit_report",
+        "units": [
+          {
+            "id": "emu_0000000000000000000000000000000000000000000000000000000000000423",
+            "value": "只有完成身份校验后，参与者才能进入下一步。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-qualification_lost-09"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "参与者能进入下一步。",
+        "materialUnitIds": [
+          "emu_0000000000000000000000000000000000000000000000000000000000000423"
+        ]
+      }
+    },
+    {
+      "caseId": "qualification_lost-10",
+      "expected": "qualification_lost",
+      "modelContext": {
+        "version": "editorial-model-context-v1",
+        "materialHash": "sha256:000000000000000000000000000000000000000000000000000000000000003c",
+        "deliverableType": "accessibility_audit_report",
+        "units": [
+          {
+            "id": "emu_0000000000000000000000000000000000000000000000000000000000000424",
+            "value": "在公开页面可见范围内，没有发现费用说明。",
+            "role": "claim",
+            "epistemicStatus": "fact",
+            "metricEligible": false,
+            "basisUnitIds": [],
+            "questionIds": [
+              "synthetic-qualification_lost-10"
+            ],
+            "requiredInOutput": true,
+            "requiredInBody": true
+          }
+        ],
+        "assets": []
+      },
+      "paraphrase": {
+        "copyPointer": "/deck",
+        "text": "没有发现费用说明。",
+        "materialUnitIds": [
+          "emu_0000000000000000000000000000000000000000000000000000000000000424"
+        ]
+      }
+    }
+  ]
+}

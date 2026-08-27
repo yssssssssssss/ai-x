@@ -7,19 +7,24 @@ import { mkdtemp, rm } from 'node:fs/promises';
 
 import {
   buildDeterministicEditorialBlueprint,
+  buildEditorialFidelityReview,
   buildPhase1PublishedDiagnostic,
+  buildPhase2PublishedDiagnostic,
   canonicalJsonBytes,
   createEditorialGenerationId,
   createEditorialMaterialUnitId,
   createEditorialRequestKey,
   evaluateEditorialModelEgress,
+  enumerateEditorialParaphrases,
   hashBytes,
   NO_EDITORIAL_MODEL_PORT,
   projectEditorialModelContext,
   type EditorialBlueprint,
   type EditorialDiagnostic,
+  type EditorialGatewayConfiguration,
   type EditorialMaterial,
   type EditorialMaterialUnit,
+  type EditorialModelPort,
   type EditorialReport,
 } from '../apps/orchestrator-runtime/src/report/editorial-report-contract.ts';
 import {
@@ -229,8 +234,8 @@ function bundle(
       modelContextHash: modelContext.hash,
       blueprintPlanVersion: 'editorial-blueprint-plan-v1',
       blueprintVersion: 'editorial-blueprint-v1',
-      promptVersion: 'editorial-blueprint-prompt-v1',
-      fidelityPromptVersion: 'editorial-fidelity-prompt-v1',
+      promptVersion: 'editorial-blueprint-prompt-v2',
+      fidelityPromptVersion: 'editorial-fidelity-prompt-v2',
       fallbackVersion: 'editorial-fallback-v1',
       rendererVersion: 'editorial-html-v1',
       storeVersion: 'editorial-store-v1',
@@ -262,6 +267,316 @@ function bundle(
     assertStillCurrent: async () => {},
     ...overrides,
   };
+}
+
+function configuredFailureBundle(): EditorialStorePublishInput {
+  const configurationBody = {
+    provider: 'gateway',
+    endpointHost: 'llm-gw.jd.local',
+    endpointUrl: 'http://llm-gw.jd.local/v1/chat/completions',
+    mode: 'real' as const,
+    eligibleAsReal: true,
+    redirectMode: 'error' as const,
+    routes: [{
+      requestedModel: 'route-a',
+      expectedActualModel: 'actual-a',
+      expectedActualModelExplicit: true as const,
+    }],
+    limits: {
+      overallTimeoutMs: 90_000 as const,
+      maxHttpAttempts: 3 as const,
+      maxRetryAfterMs: 5_000 as const,
+      maxResponseBytes: 1_048_576 as const,
+      maxOutputTokens: 8_000 as const,
+    },
+  };
+  const configuration: EditorialGatewayConfiguration = {
+    ...configurationBody,
+    gatewayConfigurationHash: hashBytes(canonicalJsonBytes(configurationBody)),
+  };
+  const modelPort: EditorialModelPort = {
+    client: {
+      configurationIdentity: {
+        provider: configuration.provider,
+        endpointHost: configuration.endpointHost,
+        endpointUrl: configuration.endpointUrl,
+        mode: configuration.mode,
+        eligibleAsReal: configuration.eligibleAsReal,
+        routes: configuration.routes,
+      },
+      async generateStructured<T>(): Promise<never> {
+        throw new Error('not called');
+      },
+    },
+    configuration,
+  };
+
+  return rewriteBundle(bundle(), (draft) => {
+    const materialBytes = canonicalJsonBytes(draft.material);
+    const materialHash = hashBytes(materialBytes);
+    const modelContext = projectEditorialModelContext(draft.material);
+    const modelEgress = evaluateEditorialModelEgress({
+      sourcePolicyMetadata: draft.material.sourceArtifacts.map((artifact) => ({
+        artifactId: artifact.artifactId,
+        contentSha256: artifact.contentSha256,
+        sensitivity: 'internal',
+        redactionPolicyVersion: 'v1',
+      })),
+      modelPort,
+    });
+    const requestKey = createEditorialRequestKey({
+      sourceReportPackageId: draft.material.sourceReportPackage.artifactId,
+      sourceReportPackageHash: draft.material.sourceReportPackage.contentSha256,
+      materialHash,
+      modelContextHash: modelContext.hash,
+      modelEgress,
+      gatewayConfiguration: configuration,
+    });
+    draft.blueprint = buildDeterministicEditorialBlueprint({ material: draft.material, requestKey });
+    const rendered = renderEditorialReport({
+      material: draft.material,
+      blueprint: draft.blueprint,
+      verifiedVisualAssets: [],
+    });
+    draft.htmlBytes = rendered.htmlBytes;
+    const blueprintHash = hashBytes(canonicalJsonBytes(draft.blueprint));
+    const generationId = createEditorialGenerationId({
+      requestKey,
+      mode: 'deterministic_fallback',
+      materialHash,
+      publishedBlueprintHash: blueprintHash,
+      exportedAssetHashes: rendered.exportedAssets,
+    });
+    const plannerCall = {
+      stage: 'editorial_blueprint' as const,
+      ordinal: 1 as const,
+      gatewayConfigurationHash: configuration.gatewayConfigurationHash,
+      modelContextHash: modelContext.hash,
+      modelContextByteSize: modelContext.byteSize,
+      promptVersion: 'editorial-blueprint-prompt-v2',
+      promptHash: `sha256:${'1'.repeat(16)}` as const,
+      status: 'failed' as const,
+      failureCode: 'LLM_SERVER',
+    };
+    const candidateAttempts = [{
+      ordinal: 1 as const,
+      plannerCall,
+      outcome: 'call_failed' as const,
+      issueCodes: ['LLM_SERVER'],
+    }];
+    draft.diagnostic = buildPhase2PublishedDiagnostic({
+      material: draft.material,
+      requestKey,
+      materialHash,
+      modelEgress,
+      gatewayConfigurationHash: configuration.gatewayConfigurationHash,
+      modelContextHash: modelContext.hash,
+      modelContextByteSize: modelContext.byteSize,
+      generationId,
+      publishedBlueprintHash: blueprintHash,
+      htmlHash: hashBytes(draft.htmlBytes),
+      status: 'degraded',
+      candidateAttempts,
+      rendererWarningCodes: rendered.warnings.map(({ code }) => code),
+      degradedReasonCodes: ['LLM_SERVER'],
+    });
+    draft.manifest = {
+      ...draft.manifest,
+      requestKey,
+      generationId,
+      pipeline: {
+        ...draft.manifest.pipeline,
+        modelContextHash: modelContext.hash,
+        modelEgress,
+        gatewayConfiguration: configuration,
+      },
+      modelCalls: [plannerCall],
+      exportedAssets: rendered.exportedAssets,
+    };
+  });
+}
+
+function blueprintPlanHash(blueprint: EditorialBlueprint): `sha256:${string}` {
+  return hashBytes(canonicalJsonBytes({
+    version: 'editorial-blueprint-plan-v1',
+    locale: blueprint.locale,
+    ...(blueprint.title === undefined ? {} : { title: blueprint.title }),
+    deck: blueprint.deck,
+    sections: blueprint.sections.slice(0, -1),
+  }));
+}
+
+function configuredReadyBundle(): EditorialStorePublishInput {
+  const rewritten = rewriteBundle(configuredFailureBundle(), (draft) => {
+    const configuration = draft.manifest.pipeline.gatewayConfiguration;
+    assert.ok(configuration);
+    const modelContext = projectEditorialModelContext(draft.material);
+    const materialHash = hashBytes(canonicalJsonBytes(draft.material));
+    const blueprintHash = hashBytes(canonicalJsonBytes(draft.blueprint));
+    const rendered = renderEditorialReport({
+      material: draft.material,
+      blueprint: draft.blueprint,
+      verifiedVisualAssets: [],
+    });
+    draft.htmlBytes = rendered.htmlBytes;
+    const generationId = createEditorialGenerationId({
+      requestKey: draft.manifest.requestKey,
+      mode: 'llm',
+      materialHash,
+      publishedBlueprintHash: blueprintHash,
+      exportedAssetHashes: rendered.exportedAssets,
+    });
+    const route = configuration.routes[0]!;
+    const plannerCall = {
+      stage: 'editorial_blueprint' as const,
+      ordinal: 1 as const,
+      gatewayConfigurationHash: configuration.gatewayConfigurationHash,
+      modelContextHash: modelContext.hash,
+      modelContextByteSize: modelContext.byteSize,
+      promptVersion: 'editorial-blueprint-prompt-v2',
+      promptHash: `sha256:${'1'.repeat(16)}` as const,
+      status: 'succeeded' as const,
+      provider: configuration.provider,
+      endpointHost: configuration.endpointHost,
+      requestedModel: route.requestedModel,
+      expectedModel: route.expectedActualModel,
+      actualModel: route.expectedActualModel,
+      modelVersion: route.expectedActualModel,
+      traceId: 'trace-ready-1',
+      responseHash: blueprintPlanHash(draft.blueprint),
+    };
+    const candidateAttempts = [{
+      ordinal: 1 as const,
+      blueprintHash,
+      plannerCall,
+      outcome: 'accepted' as const,
+      issueCodes: [],
+    }];
+    draft.diagnostic = buildPhase2PublishedDiagnostic({
+      material: draft.material,
+      requestKey: draft.manifest.requestKey,
+      materialHash,
+      modelEgress: draft.manifest.pipeline.modelEgress,
+      gatewayConfigurationHash: configuration.gatewayConfigurationHash,
+      modelContextHash: modelContext.hash,
+      modelContextByteSize: modelContext.byteSize,
+      generationId,
+      publishedBlueprintHash: blueprintHash,
+      htmlHash: hashBytes(draft.htmlBytes),
+      status: 'ready',
+      candidateAttempts,
+      rendererWarningCodes: rendered.warnings.map(({ code }) => code),
+    });
+    draft.manifest = {
+      ...draft.manifest,
+      generationId,
+      status: 'ready',
+      modelCalls: [plannerCall],
+      exportedAssets: rendered.exportedAssets,
+    };
+  });
+  return { ...rewritten, slot: 'ready' };
+}
+
+function configuredParaphraseReadyBundle(): EditorialStorePublishInput {
+  return rewriteBundle(configuredReadyBundle(), (draft) => {
+    const configuration = draft.manifest.pipeline.gatewayConfiguration;
+    assert.ok(configuration);
+    const decisionCover = draft.blueprint.sections
+      .flatMap(({ blocks }) => blocks)
+      .find(({ kind }) => kind === 'decision-cover');
+    assert.ok(decisionCover?.kind === 'decision-cover');
+    decisionCover.summary = { ...decisionCover.summary, mode: 'paraphrase' };
+    const materialHash = hashBytes(canonicalJsonBytes(draft.material));
+    const blueprintHash = hashBytes(canonicalJsonBytes(draft.blueprint));
+    const paraphrases = enumerateEditorialParaphrases(draft.blueprint);
+    assert.equal(paraphrases.length, 1);
+    const fidelityReview = buildEditorialFidelityReview({
+      plan: {
+        version: 'editorial-fidelity-plan-v1',
+        checks: paraphrases.map(({ copyPointer, materialUnitIds }) => ({
+          copyPointer,
+          materialUnitIds,
+          verdict: 'faithful' as const,
+        })),
+      },
+      materialHash,
+      blueprint: draft.blueprint,
+    });
+    const modelContext = projectEditorialModelContext(draft.material);
+    const route = configuration.routes[0]!;
+    const plannerCall = draft.diagnostic.candidateAttempts[0]!.plannerCall;
+    assert.equal(plannerCall.status, 'succeeded');
+    plannerCall.responseHash = blueprintPlanHash(draft.blueprint);
+    const fidelityPlan = {
+      version: 'editorial-fidelity-plan-v1' as const,
+      checks: fidelityReview.checks,
+    };
+    const fidelityCall = {
+      stage: 'editorial_fidelity_review' as const,
+      ordinal: 1 as const,
+      gatewayConfigurationHash: configuration.gatewayConfigurationHash,
+      modelContextHash: modelContext.hash,
+      modelContextByteSize: modelContext.byteSize,
+      promptVersion: 'editorial-fidelity-prompt-v2',
+      promptHash: `sha256:${'3'.repeat(16)}` as const,
+      status: 'succeeded' as const,
+      provider: configuration.provider,
+      endpointHost: configuration.endpointHost,
+      requestedModel: route.requestedModel,
+      expectedModel: route.expectedActualModel,
+      actualModel: route.expectedActualModel,
+      modelVersion: route.expectedActualModel,
+      traceId: 'trace-fidelity-1',
+      responseHash: hashBytes(canonicalJsonBytes(fidelityPlan)),
+      inputBlueprintHash: blueprintHash,
+    };
+    const candidateAttempts = [{
+      ordinal: 1 as const,
+      blueprintHash,
+      plannerCall,
+      fidelityCall,
+      fidelityReviewHash: hashBytes(canonicalJsonBytes(fidelityReview)),
+      fidelityReview,
+      outcome: 'accepted' as const,
+      issueCodes: [],
+    }];
+    const rendered = renderEditorialReport({
+      material: draft.material,
+      blueprint: draft.blueprint,
+      verifiedVisualAssets: [],
+    });
+    draft.htmlBytes = rendered.htmlBytes;
+    const generationId = createEditorialGenerationId({
+      requestKey: draft.manifest.requestKey,
+      mode: 'llm',
+      materialHash,
+      publishedBlueprintHash: blueprintHash,
+      exportedAssetHashes: rendered.exportedAssets,
+    });
+    draft.diagnostic = buildPhase2PublishedDiagnostic({
+      material: draft.material,
+      requestKey: draft.manifest.requestKey,
+      materialHash,
+      modelEgress: draft.manifest.pipeline.modelEgress,
+      gatewayConfigurationHash: configuration.gatewayConfigurationHash,
+      modelContextHash: modelContext.hash,
+      modelContextByteSize: modelContext.byteSize,
+      generationId,
+      publishedBlueprintHash: blueprintHash,
+      htmlHash: hashBytes(draft.htmlBytes),
+      status: 'ready',
+      candidateAttempts,
+      rendererWarningCodes: rendered.warnings.map(({ code }) => code),
+    });
+    const { inputBlueprintHash: _inputBlueprintHash, ...manifestFidelityCall } = fidelityCall;
+    draft.manifest = {
+      ...draft.manifest,
+      generationId,
+      modelCalls: [plannerCall, manifestFidelityCall],
+      exportedAssets: rendered.exportedAssets,
+    };
+  });
 }
 
 interface BundleDraft {
@@ -482,6 +797,23 @@ test('publishes manifest-last into an immutable owner-only slot and verifies eve
   assert.equal(await lease.release(), true);
 });
 
+test('persists and rereads a configured model-call failure as a verified degraded bundle', async (t) => {
+  const root = await temporaryRoot(t);
+  const reports = store(root);
+  const input = configuredFailureBundle();
+  const coordinates = bundleCoordinates(input);
+  const lease = await reports.acquire(coordinates);
+
+  const published = await lease.publish(input);
+  const reread = await reports.readSlot({ ...coordinates, slot: 'fallback' });
+
+  assert.equal(published.manifest.status, 'degraded');
+  assert.equal(published.manifest.pipeline.modelEgress.decision, 'allow');
+  assert.equal(published.manifest.modelCalls[0]?.status, 'failed');
+  assert.deepEqual(reread?.manifest, published.manifest);
+  assert.equal(await lease.release(), true);
+});
+
 test('rejects a mutated file and a symlink instead of trusting manifest presence', async (t) => {
   const root = await temporaryRoot(t);
   const reports = store(root);
@@ -647,6 +979,100 @@ test('rejects a synchronized Diagnostic and manifest file-hash rewrite', async (
     originalManifest.files.diagnostic.contentSha256,
   );
   await assertInstalledBundleRejected(root, store(root), forged);
+});
+
+test('rebuilds a ready Diagnostic and rejects a synchronized warning rewrite', async (t) => {
+  const root = await temporaryRoot(t);
+  const validRoot = join(root, 'valid');
+  const valid = configuredReadyBundle();
+  const validReports = store(validRoot);
+  const lease = await validReports.acquire(bundleCoordinates(valid));
+  const published = await lease.publish(valid);
+  assert.equal(published.manifest.status, 'ready');
+  await lease.release();
+  assert.equal((await validReports.readSlot({
+    ...bundleCoordinates(valid),
+    slot: 'ready',
+  }))?.manifest.status, 'ready');
+
+  const forged = rewriteBundle(valid, (draft) => {
+    draft.diagnostic.issues.push({
+      code: 'FORGED_READY_WARNING',
+      severity: 'warning',
+      message: 'This schema-valid warning was added after publication.',
+    });
+  });
+  const forgedRoot = join(root, 'forged');
+  await assertInstalledBundleRejected(forgedRoot, store(forgedRoot), forged);
+});
+
+test('rejects a ready paraphrase whose Fidelity evidence was synchronously removed', async (t) => {
+  const root = await temporaryRoot(t);
+  const valid = configuredParaphraseReadyBundle();
+  const validRoot = join(root, 'valid');
+  const validReports = store(validRoot);
+  const lease = await validReports.acquire(bundleCoordinates(valid));
+  assert.equal((await lease.publish(valid)).manifest.status, 'ready');
+  await lease.release();
+
+  const forged = rewriteBundle(valid, (draft) => {
+    const configuration = draft.manifest.pipeline.gatewayConfiguration;
+    assert.ok(configuration);
+    const accepted = draft.diagnostic.candidateAttempts.find(({ outcome }) => outcome === 'accepted');
+    assert.ok(accepted);
+    const mutableAttempt = accepted as unknown as Record<string, unknown>;
+    delete mutableAttempt.fidelityCall;
+    delete mutableAttempt.fidelityReviewHash;
+    delete mutableAttempt.fidelityReview;
+    const materialHash = hashBytes(canonicalJsonBytes(draft.material));
+    const modelContext = projectEditorialModelContext(draft.material);
+    const rendered = renderEditorialReport({
+      material: draft.material,
+      blueprint: draft.blueprint,
+      verifiedVisualAssets: [],
+    });
+    draft.diagnostic = buildPhase2PublishedDiagnostic({
+      material: draft.material,
+      requestKey: draft.manifest.requestKey,
+      materialHash,
+      modelEgress: draft.manifest.pipeline.modelEgress,
+      gatewayConfigurationHash: configuration.gatewayConfigurationHash,
+      modelContextHash: modelContext.hash,
+      modelContextByteSize: modelContext.byteSize,
+      generationId: draft.manifest.generationId,
+      publishedBlueprintHash: hashBytes(canonicalJsonBytes(draft.blueprint)),
+      htmlHash: hashBytes(draft.htmlBytes),
+      status: 'ready',
+      candidateAttempts: draft.diagnostic.candidateAttempts,
+      rendererWarningCodes: rendered.warnings.map(({ code }) => code),
+    });
+    draft.manifest.modelCalls = draft.manifest.modelCalls.filter(
+      ({ stage }) => stage === 'editorial_blueprint',
+    );
+  });
+  const forgedRoot = join(root, 'forged');
+  await assertInstalledBundleRejected(forgedRoot, store(forgedRoot), forged);
+});
+
+test('rejects ready response hashes that do not bind their persisted Planner and Fidelity plans', async (t) => {
+  const root = await temporaryRoot(t);
+  const valid = configuredParaphraseReadyBundle();
+  for (const [index, stage] of ['editorial_blueprint', 'editorial_fidelity_review'].entries()) {
+    const forged = rewriteBundle(valid, (draft) => {
+      const accepted = draft.diagnostic.candidateAttempts.find(({ outcome }) => outcome === 'accepted');
+      assert.ok(accepted);
+      const call = stage === 'editorial_blueprint'
+        ? accepted.plannerCall
+        : accepted.fidelityCall;
+      assert.ok(call?.status === 'succeeded');
+      call.responseHash = `sha256:${String(index + 7).repeat(64)}`;
+      const manifestCall = draft.manifest.modelCalls.find((candidate) => candidate.stage === stage);
+      assert.ok(manifestCall?.status === 'succeeded');
+      manifestCall.responseHash = call.responseHash;
+    });
+    const forgedRoot = join(root, String(index));
+    await assertInstalledBundleRejected(forgedRoot, store(forgedRoot), forged);
+  }
 });
 
 test('uses source Asset IDs, not internal Material Asset IDs, for export closure', async (t) => {

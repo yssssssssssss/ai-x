@@ -21,6 +21,7 @@
     "spike:execute": "tsx apps/orchestrator-runtime/src/spike-execute.ts",
     "gold:run": "tsx apps/orchestrator-runtime/src/gold-run.ts",
     "editorial:report": "tsx apps/orchestrator-runtime/src/editorial-report.ts",
+    "editorial:calibrate": "tsx scripts/editorial-report-phase2-calibration.ts",
     "api:dev": "tsx watch apps/agent-api/src/server.ts",
     "cutover:prepare": "tsx apps/orchestrator-runtime/src/cutover/cutover-cli.ts prepare",
     "cutover:verify": "tsx apps/orchestrator-runtime/src/cutover/cutover-cli.ts verify",

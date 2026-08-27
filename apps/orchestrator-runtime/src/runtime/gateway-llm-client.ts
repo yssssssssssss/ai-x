@@ -1,8 +1,10 @@
 import {
   type LegacyStructuredLLMCallOptions,
   type LegacyTextLLMCallOptions,
+  type LLMCallLimits,
   type LLMClient,
   type LLMProviderIdentity,
+  GatewayConfigurationError,
   LLMInvocationError,
   type LLMResult,
   type TextLLMResult,
@@ -18,6 +20,7 @@ import { resolveSchema, loadSchemaText, type SchemaSpec } from './schema-registr
 export interface GatewayModelRoute {
   requestedModel: string;
   expectedActualModel: string;
+  expectedActualModelExplicit?: boolean;
 }
 
 interface GatewayConfig {
@@ -25,6 +28,33 @@ interface GatewayConfig {
   apiKey: string;
   modelRoutes: GatewayModelRoute[];
   timeoutMs: number;
+}
+
+interface ResolvedGatewayModelRoute {
+  readonly requestedModel: string;
+  readonly expectedActualModel: string;
+  readonly expectedActualModelExplicit: boolean;
+}
+
+interface ResolvedGatewayConfig {
+  readonly apiKey: string;
+  readonly modelRoutes: readonly ResolvedGatewayModelRoute[];
+  readonly timeoutMs: number;
+  readonly endpointHost: string;
+  readonly canonicalRequestUrl: string;
+}
+
+export interface GatewayConfigurationIdentity {
+  readonly provider: 'gateway';
+  readonly endpointHost: string;
+  readonly endpointUrl: string;
+  readonly mode: 'real';
+  readonly eligibleAsReal: true;
+  readonly routes: ReadonlyArray<{
+    readonly requestedModel: string;
+    readonly expectedActualModel: string;
+    readonly expectedActualModelExplicit: boolean;
+  }>;
 }
 
 class RateLimitError extends LLMInvocationError {
@@ -39,29 +69,159 @@ class RateLimitError extends LLMInvocationError {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+interface GatewayCallControls {
+  readonly limits?: Readonly<LLMCallLimits>;
+  readonly redirectMode?: 'error';
+}
+
+interface GatewayCallBudget {
+  readonly limits: Readonly<LLMCallLimits>;
+  readonly deadlineAt: number;
+  httpAttempts: number;
+}
+
+function timeoutError(): LLMInvocationError {
+  return new LLMInvocationError('timeout', true, null, 'gateway request timed out');
+}
+
+function callControls(
+  limits: LLMCallLimits | undefined,
+  redirectMode: 'error' | undefined,
+): GatewayCallControls {
+  if (redirectMode !== undefined && redirectMode !== 'error') {
+    throw new LLMInvocationError('configuration', false, null, 'gateway redirect mode is invalid');
+  }
+  if (!limits) return Object.freeze({ redirectMode });
+  const values: Array<[keyof LLMCallLimits, number, boolean]> = [
+    ['overallTimeoutMs', limits.overallTimeoutMs, false],
+    ['maxHttpAttempts', limits.maxHttpAttempts, false],
+    ['maxRetryAfterMs', limits.maxRetryAfterMs, true],
+    ['maxResponseBytes', limits.maxResponseBytes, false],
+    ['maxOutputTokens', limits.maxOutputTokens, false],
+  ];
+  for (const [, value, allowZero] of values) {
+    if (!Number.isSafeInteger(value) || (allowZero ? value < 0 : value <= 0)) {
+      throw new LLMInvocationError('configuration', false, null, 'gateway call limits are invalid');
+    }
+  }
+  return Object.freeze({
+    limits: Object.freeze({ ...limits }),
+    redirectMode,
+  });
+}
+
+function assertNoReceiptId(options: object): void {
+  if ('receiptId' in options) {
+    throw new LLMInvocationError(
+      'configuration',
+      false,
+      null,
+      'gateway request receiptId is not allowed',
+    );
+  }
+}
+
+function throwIfDeadlineExpired(budget: GatewayCallBudget | undefined): void {
+  if (budget && Date.now() >= budget.deadlineAt) throw timeoutError();
+}
+
+async function readChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  if (signal.aborted) throw new DOMException('aborted', 'AbortError');
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(new DOMException('aborted', 'AbortError'));
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([reader.read(), aborted]);
+  } finally {
+    if (onAbort) signal.removeEventListener('abort', onAbort);
+  }
+}
+
+async function readBoundedResponseText(
+  response: Response,
+  maxBytes: number,
+  signal: AbortSignal,
+): Promise<string> {
+  if (!response.body) return '';
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let text = '';
+  try {
+    while (true) {
+      const chunk = await readChunk(reader, signal);
+      if (chunk.done) break;
+      bytes += chunk.value.byteLength;
+      if (bytes > maxBytes) {
+        void reader.cancel().catch(() => undefined);
+        throw new LLMInvocationError(
+          'capability',
+          false,
+          null,
+          'gateway response exceeded byte limit',
+        );
+      }
+      text += decoder.decode(chunk.value, { stream: true });
+    }
+    return text + decoder.decode();
+  } finally {
+    if (signal.aborted) void reader.cancel().catch(() => undefined);
+    try {
+      reader.releaseLock();
+    } catch {
+      // An aborted stream may still have a pending read. The request signal owns cleanup.
+    }
+  }
+}
+
 export function parseModelRoutes(
   raw: string | undefined,
   fallbackModel: string | undefined,
   fallbackExpectedActualModel = process.env.LLM_EXPECTED_ACTUAL_MODEL,
 ): GatewayModelRoute[] {
   if (!raw?.trim()) {
-    if (!fallbackModel) throw new Error('GatewayLLMClient: 缺少 LLM_MODEL_NAME');
+    if (!fallbackModel?.trim()) {
+      throw new GatewayConfigurationError(
+        'GATEWAY_ROUTE_INVALID',
+        'GatewayLLMClient: 缺少 LLM_MODEL_NAME',
+      );
+    }
+    const requestedModel = fallbackModel.trim();
+    const explicitExpectedActualModel = fallbackExpectedActualModel?.trim();
+    const expectedActualModel = explicitExpectedActualModel || requestedModel;
     return [{
-      requestedModel: fallbackModel,
-      expectedActualModel: fallbackExpectedActualModel?.trim() || fallbackModel,
+      requestedModel,
+      expectedActualModel,
+      expectedActualModelExplicit: Boolean(explicitExpectedActualModel),
     }];
   }
   const routes = raw.split(',').map((entry) => {
     const separator = entry.indexOf('=');
+    const hasExtraSeparator = separator >= 0 && entry.indexOf('=', separator + 1) >= 0;
     const requestedModel = separator > 0 ? entry.slice(0, separator).trim() : '';
     const expectedActualModel = separator > 0 ? entry.slice(separator + 1).trim() : '';
-    if (!requestedModel || !expectedActualModel) {
-      throw new Error('GatewayLLMClient: LLM_MODEL_ROUTES 需为 requested=expectedActual 逗号列表');
+    if (
+      !requestedModel
+      || !expectedActualModel
+      || hasExtraSeparator
+    ) {
+      throw new GatewayConfigurationError(
+        'GATEWAY_ROUTE_INVALID',
+        'GatewayLLMClient: LLM_MODEL_ROUTES 需为 requested=expectedActual 逗号列表',
+      );
     }
-    return { requestedModel, expectedActualModel };
+    return { requestedModel, expectedActualModel, expectedActualModelExplicit: true };
   });
   if (new Set(routes.map(({ requestedModel }) => requestedModel)).size !== routes.length) {
-    throw new Error('GatewayLLMClient: LLM_MODEL_ROUTES 包含重复 requested model');
+    throw new GatewayConfigurationError(
+      'GATEWAY_ROUTE_INVALID',
+      'GatewayLLMClient: LLM_MODEL_ROUTES 包含重复 requested model',
+    );
   }
   return routes;
 }
@@ -69,8 +229,18 @@ export function parseModelRoutes(
 function readConfig(): GatewayConfig {
   const baseUrl = process.env.LLM_GATEWAY_BASE_URL;
   const apiKey = process.env.LLM_GATEWAY_API_KEY;
-  if (!baseUrl) throw new Error('GatewayLLMClient: 缺少 LLM_GATEWAY_BASE_URL');
-  if (!apiKey) throw new Error('GatewayLLMClient: 缺少 LLM_GATEWAY_API_KEY');
+  if (!baseUrl?.trim()) {
+    throw new GatewayConfigurationError(
+      'GATEWAY_BASE_URL_MISSING',
+      'GatewayLLMClient: 缺少 LLM_GATEWAY_BASE_URL',
+    );
+  }
+  if (!apiKey?.trim()) {
+    throw new GatewayConfigurationError(
+      'GATEWAY_API_KEY_MISSING',
+      'GatewayLLMClient: 缺少 LLM_GATEWAY_API_KEY',
+    );
+  }
   return {
     baseUrl,
     apiKey,
@@ -81,6 +251,64 @@ function readConfig(): GatewayConfig {
     ),
     timeoutMs: Number(process.env.LLM_GATEWAY_TIMEOUT_MS ?? 30000),
   };
+}
+
+function canonicalGatewayEndpoint(baseUrl: string): { endpointHost: string; requestUrl: string } {
+  try {
+    const endpoint = new URL(baseUrl);
+    if (
+      (endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:')
+      || baseUrl.includes('?')
+      || baseUrl.includes('#')
+      || endpoint.username
+      || endpoint.password
+      || endpoint.search
+      || endpoint.hash
+    ) {
+      throw new Error('unsafe endpoint');
+    }
+    endpoint.pathname = `${endpoint.pathname.replace(/\/+$/u, '')}/chat/completions`;
+    return {
+      endpointHost: endpoint.host.toLowerCase(),
+      requestUrl: endpoint.toString(),
+    };
+  } catch {
+    throw new GatewayConfigurationError(
+      'GATEWAY_ENDPOINT_INVALID',
+      'GatewayLLMClient: LLM_GATEWAY_BASE_URL 无法安全解析',
+    );
+  }
+}
+
+function freezeModelRoutes(routes: readonly GatewayModelRoute[]): readonly ResolvedGatewayModelRoute[] {
+  if (routes.length === 0) {
+    throw new GatewayConfigurationError(
+      'GATEWAY_ROUTE_INVALID',
+      'GatewayLLMClient: model route 列表不能为空',
+    );
+  }
+  const normalized = routes.map((route) => {
+    const requestedModel = route.requestedModel?.trim();
+    const expectedActualModel = route.expectedActualModel?.trim();
+    if (!requestedModel || !expectedActualModel) {
+      throw new GatewayConfigurationError(
+        'GATEWAY_ROUTE_INVALID',
+        'GatewayLLMClient: model route 必须包含 requested model 与 expected actual model',
+      );
+    }
+    return Object.freeze({
+      requestedModel,
+      expectedActualModel,
+      expectedActualModelExplicit: route.expectedActualModelExplicit ?? true,
+    });
+  });
+  if (new Set(normalized.map(({ requestedModel }) => requestedModel)).size !== normalized.length) {
+    throw new GatewayConfigurationError(
+      'GATEWAY_ROUTE_INVALID',
+      'GatewayLLMClient: model route 包含重复 requested model',
+    );
+  }
+  return Object.freeze(normalized);
 }
 
 function rateLimitMessage(body: string): string {
@@ -115,45 +343,82 @@ interface ChatResponse {
 }
 
 export class GatewayLLMClient implements LLMClient {
-  private readonly cfg: GatewayConfig;
+  private readonly cfg: ResolvedGatewayConfig;
   private nextModelIndex = 0;
 
   constructor(cfg?: Partial<GatewayConfig>) {
     const defaults = readConfig();
-    this.cfg = {
+    const merged = {
       ...defaults,
       ...cfg,
       modelRoutes: cfg?.modelRoutes ?? defaults.modelRoutes,
     };
+    const endpoint = canonicalGatewayEndpoint(merged.baseUrl);
+    this.cfg = Object.freeze({
+      apiKey: merged.apiKey,
+      modelRoutes: freezeModelRoutes(merged.modelRoutes),
+      timeoutMs: merged.timeoutMs,
+      endpointHost: endpoint.endpointHost,
+      canonicalRequestUrl: endpoint.requestUrl,
+    });
   }
 
   get identity(): LLMProviderIdentity {
     return this.identityFor(this.cfg.modelRoutes[0]);
   }
 
-  private identityFor(route: GatewayModelRoute): LLMProviderIdentity {
+  get configurationIdentity(): GatewayConfigurationIdentity {
+    const routes = Object.freeze(this.cfg.modelRoutes.map((route) => Object.freeze({
+      requestedModel: route.requestedModel,
+      expectedActualModel: route.expectedActualModel,
+      expectedActualModelExplicit: route.expectedActualModelExplicit,
+    })));
+    return Object.freeze({
+      provider: 'gateway',
+      endpointHost: this.cfg.endpointHost,
+      endpointUrl: this.cfg.canonicalRequestUrl,
+      mode: 'real',
+      eligibleAsReal: true,
+      routes,
+    });
+  }
+
+  private identityFor(route: ResolvedGatewayModelRoute): LLMProviderIdentity {
     return {
       provider: 'gateway',
-      endpointHost: new URL(this.cfg.baseUrl).host,
+      endpointHost: this.cfg.endpointHost,
       requestedModel: route.requestedModel,
       mode: 'real',
       eligibleAsReal: true,
     };
   }
 
-  private async call(messages: object[], jsonMode: boolean): Promise<{
+  private async call(
+    messages: object[],
+    jsonMode: boolean,
+    controls: GatewayCallControls = {},
+  ): Promise<{
     content: string;
     resp: ChatResponse;
-    route: GatewayModelRoute;
+    route: ResolvedGatewayModelRoute;
   }> {
     const routes = this.cfg.modelRoutes;
     const startIndex = this.nextModelIndex;
     this.nextModelIndex = (this.nextModelIndex + 1) % routes.length;
+    const budget = controls.limits
+      ? {
+          limits: controls.limits,
+          deadlineAt: Date.now() + controls.limits.overallTimeoutMs,
+          httpAttempts: 0,
+        }
+      : undefined;
     let lastError: unknown;
     for (let offset = 0; offset < routes.length; offset += 1) {
+      throwIfDeadlineExpired(budget);
+      if (budget && budget.httpAttempts >= budget.limits.maxHttpAttempts) break;
       const route = routes[(startIndex + offset) % routes.length];
       try {
-        const response = await this.callRoute(route, messages, jsonMode);
+        const response = await this.callRoute(route, messages, jsonMode, controls, budget);
         return { ...response, route };
       } catch (error) {
         lastError = error;
@@ -162,23 +427,44 @@ export class GatewayLLMClient implements LLMClient {
         if (!switchable || routes.length === 1) throw error;
       }
     }
+    throwIfDeadlineExpired(budget);
     throw lastError ?? new Error('GatewayLLMClient: model pool exhausted without an error');
   }
 
   private async callRoute(
-    route: GatewayModelRoute,
+    route: ResolvedGatewayModelRoute,
     messages: object[],
     jsonMode: boolean,
+    controls: GatewayCallControls,
+    budget: GatewayCallBudget | undefined,
   ): Promise<{ content: string; resp: ChatResponse }> {
-    const maxAttempts = this.cfg.modelRoutes.length === 1 ? 3 : 1;
+    const routeAttempts = this.cfg.modelRoutes.length === 1 ? 3 : 1;
+    const maxAttempts = budget
+      ? Math.min(routeAttempts, budget.limits.maxHttpAttempts - budget.httpAttempts)
+      : routeAttempts;
     let lastError: unknown;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
-        return await this.callOnce(route.requestedModel, messages, jsonMode);
+        return await this.callOnce(route.requestedModel, messages, jsonMode, controls, budget);
       } catch (error) {
         lastError = error;
         if (error instanceof RateLimitError && attempt < maxAttempts) {
-          await sleep(error.retryAfterMs ?? attempt * 5000);
+          if (budget && budget.httpAttempts >= budget.limits.maxHttpAttempts) throw error;
+          const retryDelayMs = budget
+            ? Math.min(error.retryAfterMs ?? attempt * 5000, budget.limits.maxRetryAfterMs)
+            : error.retryAfterMs ?? attempt * 5000;
+          if (budget) {
+            const remainingMs = budget.deadlineAt - Date.now();
+            if (remainingMs <= 0) throw timeoutError();
+            if (retryDelayMs >= remainingMs) {
+              await sleep(remainingMs);
+              throw timeoutError();
+            }
+            await sleep(retryDelayMs);
+            throwIfDeadlineExpired(budget);
+          } else {
+            await sleep(retryDelayMs);
+          }
           continue;
         }
         throw error;
@@ -187,11 +473,30 @@ export class GatewayLLMClient implements LLMClient {
     throw lastError;
   }
 
-  private async callOnce(model: string, messages: object[], jsonMode: boolean): Promise<{ content: string; resp: ChatResponse }> {
+  private async callOnce(
+    model: string,
+    messages: object[],
+    jsonMode: boolean,
+    controls: GatewayCallControls,
+    budget: GatewayCallBudget | undefined,
+  ): Promise<{ content: string; resp: ChatResponse }> {
+    throwIfDeadlineExpired(budget);
+    if (budget) {
+      if (budget.httpAttempts >= budget.limits.maxHttpAttempts) {
+        throw new LLMInvocationError(
+          'capability',
+          false,
+          null,
+          'gateway HTTP attempt limit exceeded',
+        );
+      }
+      budget.httpAttempts += 1;
+    }
     const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), this.cfg.timeoutMs);
+    const remainingMs = budget ? Math.max(1, budget.deadlineAt - Date.now()) : this.cfg.timeoutMs;
+    const timer = setTimeout(() => ac.abort(), Math.min(this.cfg.timeoutMs, remainingMs));
     try {
-      const res = await fetch(`${this.cfg.baseUrl}/chat/completions`, {
+      const res = await fetch(this.cfg.canonicalRequestUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -202,11 +507,16 @@ export class GatewayLLMClient implements LLMClient {
           messages,
           stream: false,
           ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
+          ...(controls.limits ? { max_tokens: controls.limits.maxOutputTokens } : {}),
         }),
         signal: ac.signal,
+        ...(controls.redirectMode ? { redirect: controls.redirectMode } : {}),
       });
+      const boundedBody = controls.limits
+        ? await readBoundedResponseText(res, controls.limits.maxResponseBytes, ac.signal)
+        : undefined;
       if (res.status === 429) {
-        const body = await res.text();
+        const body = boundedBody ?? await res.text();
         const exhausted = res.headers.get('x-quota-exhausted') === 'true' || res.headers.get('x-quota-remaining') === '0';
         if (exhausted) throw new LLMInvocationError('quota', false, 429, 'gateway quota exhausted');
         const retryAfter = Number(res.headers.get('retry-after')) * 1000;
@@ -221,15 +531,18 @@ export class GatewayLLMClient implements LLMClient {
           : res.status >= 500 ? 'server' : 'unknown';
         throw new LLMInvocationError(kind, res.status >= 500, res.status, `gateway HTTP ${res.status}`);
       }
-      const resp = (await res.json()) as ChatResponse;
+      const resp = (boundedBody === undefined
+        ? await res.json()
+        : JSON.parse(boundedBody)) as ChatResponse;
       if (resp.error) throw new LLMInvocationError('capability', false, null, 'gateway returned an error payload');
       const content = resp.choices?.[0]?.message?.content;
       if (content == null) throw new LLMInvocationError('capability', false, null, 'gateway response missing content');
+      throwIfDeadlineExpired(budget);
       return { content, resp };
     } catch (error) {
       if (error instanceof LLMInvocationError) throw error;
       if (error instanceof DOMException && error.name === 'AbortError') {
-        throw new LLMInvocationError('timeout', true, null, 'gateway request timed out');
+        throw timeoutError();
       }
       throw new LLMInvocationError('network', true, null, 'gateway network request failed');
     } finally {
@@ -246,6 +559,8 @@ export class GatewayLLMClient implements LLMClient {
   }
 
   async generateStructured<T>(opts: LegacyStructuredLLMCallOptions): Promise<LLMResult<T>> {
+    assertNoReceiptId(opts);
+    const controls = callControls(opts.limits, opts.redirectMode);
     const spec = resolveSchema(opts.schemaName);
     const messages = [
       {
@@ -254,7 +569,10 @@ export class GatewayLLMClient implements LLMClient {
         // looking for the lowercase token "json" in the prompt. Keep the human
         // instruction and the protocol marker together so all supported routes
         // receive the same contract.
-        content: `你是用研任务编排器。只输出 JSON（json object）,不要任何解释或 markdown 代码块。\n${schemaHint(spec, opts.schema)}`,
+        content: [
+          opts.systemPrompt?.trim(),
+          `你是用研任务编排器。只输出 JSON（json object）,不要任何解释或 markdown 代码块。\n${schemaHint(spec, opts.schema)}`,
+        ].filter(Boolean).join('\n'),
       },
       {
         role: 'user',
@@ -263,7 +581,7 @@ export class GatewayLLMClient implements LLMClient {
           : opts.prompt,
       },
     ];
-    const { content, resp, route } = await this.call(messages, true);
+    const { content, resp, route } = await this.call(messages, true, controls);
 
     let parsed: unknown;
     try {
@@ -279,7 +597,7 @@ export class GatewayLLMClient implements LLMClient {
 
     return {
       data: typedData,
-      promptHash: hashPrompt(opts.prompt, opts.context, opts.schemaName),
+      promptHash: hashPrompt(opts.prompt, opts.context, opts.schemaName, opts.systemPrompt),
       modelName: resp.model ?? 'unknown',
       modelVersion: resp.model ?? 'unknown',
       traceId: resp.id ?? 'gateway-no-id',
@@ -290,6 +608,7 @@ export class GatewayLLMClient implements LLMClient {
   }
 
   async generateText(opts: LegacyTextLLMCallOptions): Promise<TextLLMResult> {
+    assertNoReceiptId(opts);
     const messages = [
       {
         role: 'user',

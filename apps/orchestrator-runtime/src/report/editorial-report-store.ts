@@ -17,13 +17,17 @@ import { join, resolve } from 'node:path';
 import { root as openFsSafeRoot, type Root } from '@openclaw/fs-safe';
 import {
   buildDeterministicEditorialBlueprint,
+  buildEditorialFidelityReview,
   buildPhase1PublishedDiagnostic,
+  buildPhase2PublishedDiagnostic,
   canonicalJsonBytes,
   createEditorialGenerationId,
   createEditorialRequestKey,
+  EDITORIAL_MAX_MODEL_CONTEXT_BYTES,
   EDITORIAL_MAX_DIAGNOSTIC_BYTES,
   EDITORIAL_MAX_JSON_BYTES,
   EDITORIAL_MAX_MANIFEST_BYTES,
+  enumerateEditorialParaphrases,
   hashBytes,
   parseEditorialBlueprint,
   parseEditorialDiagnostic,
@@ -521,6 +525,66 @@ function assertModelClosure(input: {
   }
 }
 
+function modelContextExceedsExecutionBudget(
+  projected: ReturnType<typeof projectEditorialModelContext>,
+): boolean {
+  const textCodePoints = projected.context.units.reduce((count, unit) => (
+    count + Array.from(String(unit.value)).length
+  ), 0);
+  return projected.context.units.length > 400
+    || textCodePoints > 120_000
+    || projected.byteSize > EDITORIAL_MAX_MODEL_CONTEXT_BYTES;
+}
+
+function assertReadyFidelityClosure(input: {
+  materialHash: Sha256;
+  blueprint: ReturnType<typeof parseEditorialBlueprint>;
+  diagnostic: Extract<EditorialDiagnostic, { status: 'pass' }>;
+}): void {
+  const accepted = input.diagnostic.candidateAttempts.filter(({ outcome }) => outcome === 'accepted');
+  if (accepted.length !== 1) throw storeError('EDITORIAL_SIDECAR_CORRUPT');
+  const attempt = accepted[0]!;
+  const auditSection = input.blueprint.sections.at(-1);
+  if (auditSection?.role !== 'audit') throw storeError('EDITORIAL_SIDECAR_CORRUPT');
+  const blueprintPlan = {
+    version: 'editorial-blueprint-plan-v1' as const,
+    locale: input.blueprint.locale,
+    ...(input.blueprint.title === undefined ? {} : { title: input.blueprint.title }),
+    deck: input.blueprint.deck,
+    sections: input.blueprint.sections.slice(0, -1),
+  };
+  if (attempt.plannerCall.responseHash !== hashBytes(canonicalJsonBytes(blueprintPlan))) {
+    throw storeError('EDITORIAL_SIDECAR_CORRUPT');
+  }
+  const paraphrases = enumerateEditorialParaphrases(input.blueprint);
+  const fidelityReview = 'fidelityReview' in attempt ? attempt.fidelityReview : undefined;
+  const fidelityCall = 'fidelityCall' in attempt ? attempt.fidelityCall : undefined;
+  if (paraphrases.length === 0) {
+    if (fidelityCall !== undefined || fidelityReview !== undefined) {
+      throw storeError('EDITORIAL_SIDECAR_CORRUPT');
+    }
+    return;
+  }
+  if (fidelityCall?.status !== 'succeeded' || fidelityReview === undefined) {
+    throw storeError('EDITORIAL_SIDECAR_CORRUPT');
+  }
+  const fidelityPlan = {
+    version: 'editorial-fidelity-plan-v1' as const,
+    checks: fidelityReview.checks,
+  };
+  if (fidelityCall.responseHash !== hashBytes(canonicalJsonBytes(fidelityPlan))) {
+    throw storeError('EDITORIAL_SIDECAR_CORRUPT');
+  }
+  const rebuilt = verifyDerivedValue(() => buildEditorialFidelityReview({
+    plan: fidelityPlan,
+    materialHash: input.materialHash,
+    blueprint: input.blueprint,
+  }));
+  if (!sameCanonicalValue(rebuilt, fidelityReview)) {
+    throw storeError('EDITORIAL_SIDECAR_CORRUPT');
+  }
+}
+
 function validateGeneration(input: {
   slot: EditorialReportSlot;
   coordinates: RequestCoordinates;
@@ -617,6 +681,13 @@ function validateGeneration(input: {
     modelContextByteSize: modelContext.byteSize,
     blueprintHash,
   });
+  if (expectedMode === 'llm') {
+    assertReadyFidelityClosure({
+      materialHash,
+      blueprint,
+      diagnostic: diagnostic as Extract<EditorialDiagnostic, { status: 'pass' }>,
+    });
+  }
   const requestKey = verifyDerivedValue(() => createEditorialRequestKey({
     sourceReportPackageId: material.sourceReportPackage.artifactId,
     sourceReportPackageHash: material.sourceReportPackage.contentSha256,
@@ -662,16 +733,65 @@ function validateGeneration(input: {
     throw storeError('EDITORIAL_SIDECAR_CORRUPT');
   }
   if (expectedMode === 'deterministic_fallback') {
-    const expectedDiagnostic = verifyDerivedValue(() => buildPhase1PublishedDiagnostic({
+    const isPhase1 = manifest.pipeline.gatewayConfiguration === null;
+    const modelBudgetExceeded = manifest.pipeline.modelEgress.decision === 'allow'
+      && modelContextExceedsExecutionBudget(modelContext);
+    if (
+      !isPhase1
+      && manifest.pipeline.modelEgress.decision === 'allow'
+      && diagnostic.candidateAttempts.length === 0
+      && !modelBudgetExceeded
+    ) {
+      throw storeError('EDITORIAL_SIDECAR_CORRUPT');
+    }
+    const expectedDiagnostic = verifyDerivedValue(() => isPhase1
+      ? buildPhase1PublishedDiagnostic({
+          material,
+          requestKey,
+          materialHash,
+          modelEgress: manifest.pipeline.modelEgress,
+          modelContextHash: modelContext.hash,
+          modelContextByteSize: modelContext.byteSize,
+          generationId,
+          publishedBlueprintHash: blueprintHash,
+          htmlHash,
+          rendererWarningCodes: replayed.warnings.map(({ code }) => code),
+        })
+      : buildPhase2PublishedDiagnostic({
+          material,
+          requestKey,
+          materialHash,
+          modelEgress: manifest.pipeline.modelEgress,
+          gatewayConfigurationHash: manifest.pipeline.gatewayConfiguration!.gatewayConfigurationHash,
+          modelContextHash: modelContext.hash,
+          modelContextByteSize: modelContext.byteSize,
+          generationId,
+          publishedBlueprintHash: blueprintHash,
+          htmlHash,
+          status: 'degraded',
+          candidateAttempts: diagnostic.candidateAttempts,
+          rendererWarningCodes: replayed.warnings.map(({ code }) => code),
+          ...(modelBudgetExceeded ? { degradedReasonCodes: ['MATERIAL_BUDGET_EXCEEDED'] } : {}),
+        }));
+    if (!sameBytes(canonicalJsonBytes(expectedDiagnostic), input.diagnosticBytes)) {
+      throw storeError('EDITORIAL_SIDECAR_CORRUPT');
+    }
+  } else {
+    const configuration = manifest.pipeline.gatewayConfiguration;
+    if (configuration === null) throw storeError('EDITORIAL_SIDECAR_CORRUPT');
+    const expectedDiagnostic = verifyDerivedValue(() => buildPhase2PublishedDiagnostic({
       material,
       requestKey,
       materialHash,
       modelEgress: manifest.pipeline.modelEgress,
+      gatewayConfigurationHash: configuration.gatewayConfigurationHash,
       modelContextHash: modelContext.hash,
       modelContextByteSize: modelContext.byteSize,
       generationId,
       publishedBlueprintHash: blueprintHash,
       htmlHash,
+      status: 'ready',
+      candidateAttempts: diagnostic.candidateAttempts,
       rendererWarningCodes: replayed.warnings.map(({ code }) => code),
     }));
     if (!sameBytes(canonicalJsonBytes(expectedDiagnostic), input.diagnosticBytes)) {

@@ -6,6 +6,7 @@ import {
   EDITORIAL_MODEL_EGRESS_POLICY,
   NO_EDITORIAL_MODEL_PORT,
   canonicalEditorialJson,
+  canonicalSha256,
   computeEligibleCompositionKinds,
   createEditorialGenerationId,
   createEditorialMaterialUnitId,
@@ -19,10 +20,14 @@ import {
   parseEditorialBlueprint,
   parseEditorialBlueprintPlan,
   parseEditorialDiagnostic,
+  parseEditorialFidelityReview,
+  parseEditorialFidelityReviewPlan,
   parseEditorialMaterial,
   parseEditorialReport,
   projectEditorialModelContext,
   buildDeterministicEditorialBlueprint,
+  buildEditorialFidelityReview,
+  enumerateEditorialParaphrases,
   validateEditorialBlueprint,
   validateEditorialRenderTrace,
   type EditorialBlueprint,
@@ -571,6 +576,7 @@ test('sensitive-token scanner conservatively catches numbers, money, ratios, Evi
     assert.equal(hasEditorialSensitiveToken(text, evidenceIds), true, text);
   }
   assert.equal(hasEditorialSensitiveToken('这是不含敏感标记的改写', evidenceIds), false);
+  assert.equal(hasEditorialSensitiveToken('依据可信材料形成报告', evidenceIds), false);
 });
 
 test('ratio rendering shifts the canonical decimal without floating-point rounding', () => {
@@ -609,6 +615,23 @@ test('Blueprint Plan schema and parser reject control fields and unknown nested 
   (nested.sections[0]!.blocks[0] as Record<string, unknown>).html = '<b>bad</b>';
   assert.equal(validate(nested), false);
   assert.throws(() => parseEditorialBlueprintPlan(nested), /unknown field.*html/i);
+
+  for (const field of ['impact', 'response'] as const) {
+    const riskPlan = structuredClone(plan) as unknown as {
+      sections: Array<{ role: string; blocks: Array<Record<string, unknown>> }>;
+    };
+    riskPlan.sections[0]!.role = 'risk';
+    riskPlan.sections[0]!.blocks = [{
+      id: 'risk-register',
+      kind: 'risk-register',
+      items: [{ risk: copy('已知风险', ['unit-1']), [field]: copy('不受支持', ['unit-1']) }],
+    }];
+    assert.equal(validate(riskPlan), false, `${field} must be rejected by the LLM output Schema`);
+    assert.throws(
+      () => parseEditorialBlueprintPlan(riskPlan),
+      new RegExp(`unknown field.*${field}`, 'iu'),
+    );
+  }
 });
 
 test('fallback Blueprint validation enforces audit closure, body coverage, status and sensitive-token rules', () => {
@@ -1013,6 +1036,55 @@ test('risk register rejects impact and response fields without V1 source semanti
   }
 });
 
+test('Fidelity Review Plan parser rejects an empty check set', () => {
+  assert.throws(() => parseEditorialFidelityReviewPlan({
+    version: 'editorial-fidelity-plan-v1',
+    checks: [],
+  }), /checks must contain between 1 and 240 entries/u);
+});
+
+test('final Fidelity Review parser cannot fold an empty check set to pass', () => {
+  assert.throws(() => parseEditorialFidelityReview({
+    version: 'editorial-fidelity-v1',
+    materialHash: ONE_HASH,
+    blueprintHash: TWO_HASH,
+    verdict: 'pass',
+    checks: [],
+  }), /checks must contain between 1 and 240 entries/u);
+});
+
+test('Fidelity Review requires checks in canonical Blueprint order', () => {
+  const material = materialFixture();
+  const blueprint = buildDeterministicEditorialBlueprint({
+    material,
+    requestKey: `erq_${'f'.repeat(64)}`,
+  });
+  blueprint.deck = { ...blueprint.deck, mode: 'paraphrase' };
+  const decisionCover = blueprint.sections
+    .flatMap(({ blocks }) => blocks)
+    .find(({ kind }) => kind === 'decision-cover');
+  assert.ok(decisionCover?.kind === 'decision-cover');
+  decisionCover.summary = { ...decisionCover.summary, mode: 'paraphrase' };
+  const materialHash = editorialCanonicalHash(material);
+  const checks = enumerateEditorialParaphrases(blueprint).map(({ copyPointer, materialUnitIds }) => ({
+    copyPointer,
+    materialUnitIds,
+    verdict: 'faithful' as const,
+  }));
+  assert.equal(checks.length, 2);
+
+  assert.doesNotThrow(() => buildEditorialFidelityReview({
+    plan: { version: 'editorial-fidelity-plan-v1', checks },
+    materialHash,
+    blueprint,
+  }));
+  assert.throws(() => buildEditorialFidelityReview({
+    plan: { version: 'editorial-fidelity-plan-v1', checks: [...checks].reverse() },
+    materialHash,
+    blueprint,
+  }), /canonical Blueprint order/u);
+});
+
 test('Diagnostic and manifest parsers reject unknown fields and inconsistent status modes', () => {
   const material = parseEditorialMaterial(materialFixture());
   const modelContext = projectEditorialModelContext(material);
@@ -1105,8 +1177,8 @@ test('Diagnostic and manifest parsers reject unknown fields and inconsistent sta
       modelContextHash: modelContext.hash,
       blueprintPlanVersion: 'editorial-blueprint-plan-v1',
       blueprintVersion: 'editorial-blueprint-v1',
-      promptVersion: 'editorial-blueprint-prompt-v1',
-      fidelityPromptVersion: 'editorial-fidelity-prompt-v1',
+      promptVersion: 'editorial-blueprint-prompt-v2',
+      fidelityPromptVersion: 'editorial-fidelity-prompt-v2',
       fallbackVersion: 'editorial-fallback-v1',
       rendererVersion: 'editorial-html-v1',
       storeVersion: 'editorial-store-v1',

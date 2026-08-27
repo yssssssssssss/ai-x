@@ -20,8 +20,8 @@ export const EDITORIAL_BLUEPRINT_PLAN_VERSION = 'editorial-blueprint-plan-v1' as
 export const EDITORIAL_BLUEPRINT_VERSION = 'editorial-blueprint-v1' as const;
 export const EDITORIAL_DIAGNOSTIC_VERSION = 'editorial-diagnostic-v1' as const;
 export const EDITORIAL_REPORT_VERSION = 'editorial-report-v1' as const;
-export const EDITORIAL_BLUEPRINT_PROMPT_VERSION = 'editorial-blueprint-prompt-v1' as const;
-export const EDITORIAL_FIDELITY_PROMPT_VERSION = 'editorial-fidelity-prompt-v1' as const;
+export const EDITORIAL_BLUEPRINT_PROMPT_VERSION = 'editorial-blueprint-prompt-v2' as const;
+export const EDITORIAL_FIDELITY_PROMPT_VERSION = 'editorial-fidelity-prompt-v2' as const;
 export const EDITORIAL_FALLBACK_VERSION = 'editorial-fallback-v1' as const;
 export const EDITORIAL_RENDERER_VERSION = 'editorial-html-v1' as const;
 export const EDITORIAL_STORE_VERSION = 'editorial-store-v1' as const;
@@ -431,6 +431,7 @@ export interface EditorialStructuredModelClient {
   };
   generateStructured<T>(options: {
     prompt: string;
+    systemPrompt: string;
     schema: object;
     schemaName: 'editorial-report-blueprint' | 'editorial-report-fidelity';
     context: object;
@@ -1529,9 +1530,14 @@ export function parseEditorialGatewayConfiguration(
     if (parsed.expectedActualModelExplicit !== true) {
       fail('MODEL_IDENTITY_INVALID', 'Gateway route requires an explicit actual-model pin', 'model_identity', routePath);
     }
+    const requestedModel = stringValue(parsed.requestedModel, `${routePath}/requestedModel`);
+    const expectedActualModel = stringValue(parsed.expectedActualModel, `${routePath}/expectedActualModel`);
+    if (expectedActualModel.trim().toLowerCase() === 'unknown') {
+      fail('MODEL_IDENTITY_INVALID', 'Gateway actual-model pin must not be unknown', 'model_identity', routePath);
+    }
     return {
-      requestedModel: stringValue(parsed.requestedModel, `${routePath}/requestedModel`),
-      expectedActualModel: stringValue(parsed.expectedActualModel, `${routePath}/expectedActualModel`),
+      requestedModel,
+      expectedActualModel,
       expectedActualModelExplicit: true as const,
     };
   });
@@ -1709,7 +1715,7 @@ export function createEditorialGenerationId(input: EditorialGenerationIdInput): 
 
 const CHINESE_NUMBER_PATTERN = /[〇零一二两兩三四五六七八九十百千万萬亿億兆壹贰貳叁參肆伍陆陸柒捌玖拾佰仟廿卅卌]/u;
 const DECIMAL_NUMBER_PATTERN = /\p{Nd}/u;
-const MONEY_OR_RATIO_PATTERN = /[¥￥$€£%％]|百分之|千分之|[成折]|(?:^|[^A-Za-z])(?:CNY|RMB|USD|EUR|GBP)(?=$|[^A-Za-z])/iu;
+const MONEY_OR_RATIO_PATTERN = /[¥￥$€£%％]|百分之|千分之|(?:^|[^A-Za-z])(?:CNY|RMB|USD|EUR|GBP)(?=$|[^A-Za-z])/iu;
 const URL_CANDIDATE_PATTERN = /https?:\/\/[^\s\u0000-\u001f<>"'()[\]{}（）【】]+/giu;
 const TRAILING_URL_PUNCTUATION = /[.,;:!?，。；：！？]+$/u;
 
@@ -1965,7 +1971,7 @@ function parseBlueprintBlock(
       const items = nonEmptyArray(candidate.items, `${path}/items`).map((item, index) => {
         const itemPath = `${path}/items/${index}`;
         const parsed = record(item, itemPath);
-        exactKeys(parsed, ['risk', 'impact', 'response'], itemPath);
+        exactKeys(parsed, allowAudit ? ['risk', 'impact', 'response'] : ['risk'], itemPath);
         requiredKeys(parsed, ['risk'], itemPath);
         return {
           risk: parseBudgetedCopy(parsed.risk, `${itemPath}/risk`, budget),
@@ -2122,6 +2128,243 @@ export function parseEditorialBlueprint(value: unknown): EditorialBlueprint {
     fail('SCHEMA_INTEGRITY', 'Blueprint canonical JSON exceeds 8 MiB', 'schema_integrity');
   }
   return parsed;
+}
+
+export function assembleEditorialBlueprint(input: {
+  plan: unknown;
+  material: EditorialMaterial;
+  requestKey: string;
+}): EditorialBlueprint {
+  const plan = parseEditorialBlueprintPlan(input.plan);
+  const material = parseEditorialMaterial(input.material);
+  if (!REQUEST_KEY_PATTERN.test(input.requestKey)) {
+    fail('SCHEMA_INTEGRITY', 'requestKey is invalid', 'schema_integrity', '/requestKey');
+  }
+  const requiredUnits = material.units.filter(({ requiredInOutput }) => requiredInOutput);
+  const requiredEvidence = new Set(requiredUnits.flatMap(({ evidenceIds }) => evidenceIds));
+  const auditQuestionIds = canonicalIdUnion(requiredUnits.flatMap(({ questionIds }) => questionIds));
+  const blueprint: EditorialBlueprint = {
+    version: EDITORIAL_BLUEPRINT_VERSION,
+    taskId: material.taskId,
+    planVersionId: material.planVersionId,
+    attemptId: material.attemptId,
+    requestKey: input.requestKey,
+    materialHash: canonicalSha256(material),
+    locale: plan.locale,
+    ...(plan.title === undefined ? {} : { title: plan.title }),
+    deck: plan.deck,
+    sections: [
+      ...plan.sections,
+      {
+        id: 'audit',
+        role: 'audit',
+        questionIds: auditQuestionIds,
+        blocks: [{
+          id: 'audit-appendix',
+          kind: 'audit-appendix',
+          unitIds: requiredUnits.map(({ id }) => id),
+          evidenceIds: material.evidence.filter(({ id }) => requiredEvidence.has(id)).map(({ id }) => id),
+        }],
+      },
+    ],
+  };
+  return validateEditorialBlueprint({ blueprint, material, mode: 'llm' });
+}
+
+export interface EditorialParaphraseReference {
+  copyPointer: string;
+  text: string;
+  materialUnitIds: string[];
+}
+
+export function enumerateEditorialParaphrases(
+  blueprintInput: EditorialBlueprint,
+): EditorialParaphraseReference[] {
+  const blueprint = parseEditorialBlueprint(blueprintInput);
+  const result: EditorialParaphraseReference[] = [];
+  const append = (copy: EditorialCopy | undefined, pointer: string): void => {
+    if (copy?.mode === 'paraphrase') {
+      result.push({ copyPointer: pointer, text: copy.text, materialUnitIds: [...copy.materialUnitIds] });
+    }
+  };
+  append(blueprint.title, '/title');
+  append(blueprint.deck, '/deck');
+  blueprint.sections.forEach((section, sectionIndex) => {
+    const sectionPath = `/sections/${sectionIndex}`;
+    append(section.title, `${sectionPath}/title`);
+    append(section.lead, `${sectionPath}/lead`);
+    section.blocks.forEach((block, blockIndex) => {
+      const blockPath = `${sectionPath}/blocks/${blockIndex}`;
+      switch (block.kind) {
+        case 'narrative':
+          block.paragraphs.forEach((copy, index) => append(copy, `${blockPath}/paragraphs/${index}`));
+          break;
+        case 'decision-cover':
+          append(block.summary, `${blockPath}/summary`);
+          append(block.boundary, `${blockPath}/boundary`);
+          break;
+        case 'metric-cards':
+          block.items.forEach((item, index) => {
+            if ('label' in item) append(item.label, `${blockPath}/items/${index}/label`);
+          });
+          break;
+        case 'card-grid':
+          block.cards.forEach((card, index) => {
+            append(card.title, `${blockPath}/cards/${index}/title`);
+            append(card.body, `${blockPath}/cards/${index}/body`);
+          });
+          break;
+        case 'flow':
+          block.steps.forEach((step, index) => {
+            append(step.label, `${blockPath}/steps/${index}/label`);
+            append(step.body, `${blockPath}/steps/${index}/body`);
+          });
+          break;
+        case 'strategy-matrix':
+          block.columns.forEach((copy, index) => append(copy, `${blockPath}/columns/${index}`));
+          block.rows.forEach((row, rowIndex) => {
+            append(row.label, `${blockPath}/rows/${rowIndex}/label`);
+            row.cells.forEach((copy, cellIndex) => append(copy, `${blockPath}/rows/${rowIndex}/cells/${cellIndex}`));
+          });
+          break;
+        case 'roadmap':
+          block.lanes.forEach((lane, laneIndex) => {
+            append(lane.label, `${blockPath}/lanes/${laneIndex}/label`);
+            lane.items.forEach((copy, itemIndex) => append(copy, `${blockPath}/lanes/${laneIndex}/items/${itemIndex}`));
+          });
+          break;
+        case 'validation-gates':
+          block.gates.forEach((gate, index) => {
+            append(gate.label, `${blockPath}/gates/${index}/label`);
+            append(gate.method, `${blockPath}/gates/${index}/method`);
+            append(gate.successCriterion, `${blockPath}/gates/${index}/successCriterion`);
+          });
+          break;
+        case 'risk-register':
+          block.items.forEach((item, index) => {
+            append(item.risk, `${blockPath}/items/${index}/risk`);
+            append(item.impact, `${blockPath}/items/${index}/impact`);
+            append(item.response, `${blockPath}/items/${index}/response`);
+          });
+          break;
+        case 'truth-triad':
+        case 'visual-gallery':
+        case 'audit-appendix':
+          break;
+      }
+    });
+  });
+  return result;
+}
+
+export function parseEditorialFidelityReviewPlan(value: unknown): EditorialFidelityReviewPlan {
+  const candidate = record(value, '');
+  exactKeys(candidate, ['version', 'checks'], '');
+  requiredKeys(candidate, ['version', 'checks'], '');
+  if (candidate.version !== 'editorial-fidelity-plan-v1') {
+    fail('SCHEMA_INTEGRITY', 'Fidelity Review Plan version is invalid', 'schema_integrity', '/version');
+  }
+  if (
+    !Array.isArray(candidate.checks)
+    || candidate.checks.length < 1
+    || candidate.checks.length > EDITORIAL_MAX_LLM_COPIES
+  ) {
+    fail(
+      'SCHEMA_INTEGRITY',
+      `Fidelity Review Plan checks must contain between 1 and ${EDITORIAL_MAX_LLM_COPIES} entries`,
+      'schema_integrity',
+      '/checks',
+    );
+  }
+  const checks = candidate.checks.map((value, index) => {
+    const path = `/checks/${index}`;
+    const item = record(value, path);
+    exactKeys(item, ['copyPointer', 'materialUnitIds', 'verdict'], path);
+    requiredKeys(item, ['copyPointer', 'materialUnitIds', 'verdict'], path);
+    const copyPointer = stringValue(item.copyPointer, `${path}/copyPointer`, 256);
+    if (!JSON_POINTER_PATTERN.test(copyPointer) || !/^[\x20-\x7e]+$/u.test(copyPointer)) {
+      fail('SCHEMA_INTEGRITY', 'Fidelity copyPointer must be bounded ASCII RFC 6901', 'schema_integrity', `${path}/copyPointer`);
+    }
+    return {
+      copyPointer,
+      materialUnitIds: stringArray(item.materialUnitIds, `${path}/materialUnitIds`, { minimum: 1, maximum: 16 }),
+      verdict: enumValue(item.verdict, [
+        'faithful', 'narrower', 'unsupported', 'certainty_upgraded', 'numeric_drift', 'qualification_lost',
+      ], `${path}/verdict`),
+    } satisfies EditorialFidelityCheck;
+  });
+  if (new Set(checks.map(({ copyPointer }) => copyPointer)).size !== checks.length) {
+    fail('CONTENT_FIDELITY', 'Fidelity Review Plan contains duplicate copyPointer values', 'content_fidelity', '/checks');
+  }
+  return { version: 'editorial-fidelity-plan-v1', checks };
+}
+
+export function buildEditorialFidelityReview(input: {
+  plan: unknown;
+  materialHash: Sha256;
+  blueprint: EditorialBlueprint;
+}): EditorialFidelityReview {
+  assertSha256(input.materialHash, '/materialHash');
+  const blueprint = parseEditorialBlueprint(input.blueprint);
+  if (blueprint.materialHash !== input.materialHash) {
+    fail('CONTENT_FIDELITY', 'Fidelity material hash does not match Blueprint', 'content_fidelity', '/materialHash');
+  }
+  const plan = parseEditorialFidelityReviewPlan(input.plan);
+  const expected = enumerateEditorialParaphrases(blueprint);
+  const actualByPointer = new Map(plan.checks.map((check) => [check.copyPointer, check]));
+  if (actualByPointer.size !== expected.length) {
+    fail('CONTENT_FIDELITY', 'Fidelity checks must cover every paraphrase exactly once', 'content_fidelity', '/checks');
+  }
+  if (plan.checks.some((check, index) => check.copyPointer !== expected[index]?.copyPointer)) {
+    fail('CONTENT_FIDELITY', 'Fidelity checks must follow canonical Blueprint order', 'content_fidelity', '/checks');
+  }
+  const checks = expected.map((copy) => {
+    const actual = actualByPointer.get(copy.copyPointer);
+    if (
+      !actual
+      || canonicalEditorialJson(actual.materialUnitIds) !== canonicalEditorialJson(copy.materialUnitIds)
+    ) {
+      fail('CONTENT_FIDELITY', 'Fidelity check binding does not match the candidate Copy', 'content_fidelity', copy.copyPointer);
+    }
+    return actual;
+  });
+  const blueprintHash = canonicalSha256(blueprint);
+  return {
+    version: 'editorial-fidelity-v1',
+    materialHash: input.materialHash,
+    blueprintHash,
+    verdict: checks.every(({ verdict }) => verdict === 'faithful' || verdict === 'narrower') ? 'pass' : 'block',
+    checks,
+  };
+}
+
+export function parseEditorialFidelityReview(value: unknown): EditorialFidelityReview {
+  const candidate = record(value, '');
+  exactKeys(candidate, ['version', 'materialHash', 'blueprintHash', 'verdict', 'checks'], '');
+  requiredKeys(candidate, ['version', 'materialHash', 'blueprintHash', 'verdict', 'checks'], '');
+  if (candidate.version !== 'editorial-fidelity-v1') {
+    fail('SCHEMA_INTEGRITY', 'Fidelity Review version is invalid', 'schema_integrity', '/version');
+  }
+  assertSha256(candidate.materialHash, '/materialHash');
+  assertSha256(candidate.blueprintHash, '/blueprintHash');
+  const checks = parseEditorialFidelityReviewPlan({
+    version: 'editorial-fidelity-plan-v1',
+    checks: candidate.checks,
+  }).checks;
+  const verdict = enumValue(candidate.verdict, ['pass', 'block'], '/verdict');
+  const expectedVerdict = checks.every((check) => check.verdict === 'faithful' || check.verdict === 'narrower')
+    ? 'pass'
+    : 'block';
+  if (verdict !== expectedVerdict) {
+    fail('CONTENT_FIDELITY', 'Fidelity Review verdict does not match its checks', 'content_fidelity', '/verdict');
+  }
+  return {
+    version: 'editorial-fidelity-v1',
+    materialHash: candidate.materialHash,
+    blueprintHash: candidate.blueprintHash,
+    verdict,
+    checks,
+  };
 }
 
 function blockCopies(block: EditorialBlueprintBlock): EditorialCopy[] {
@@ -3293,6 +3536,128 @@ export function buildPhase1PublishedDiagnostic(input: {
   }) as Extract<EditorialDiagnostic, { status: 'degraded' }>;
 }
 
+function phase2IssueCheckId(code: string): EditorialCheckId | null {
+  if (
+    code.includes('IDENTITY')
+    || code.includes('METADATA')
+    || code.includes('MODEL_PORT')
+    || code === 'MODEL_DRIFT'
+  ) return 'model_identity';
+  if (code.includes('SCHEMA')) return 'schema_integrity';
+  if (code.includes('REFERENCE')) return 'reference_integrity';
+  if (code.includes('COMPONENT')) return 'component_relation';
+  if (code.includes('EPISTEMIC') || code.includes('CERTAINTY')) return 'epistemic_integrity';
+  if (code.includes('NUMERIC')) return 'numeric_integrity';
+  if (code.includes('FIDELITY') || code.includes('QUALIFICATION')) return 'content_fidelity';
+  if (code.includes('COVERAGE')) return 'content_coverage';
+  if (code.includes('COMPOSITION') || code === 'SOURCE_NOT_RENDERABLE') return 'composition_quality';
+  if (code.includes('HTML')) return 'html_safety';
+  return null;
+}
+
+function phase2Warning(code: string): EditorialDiagnosticIssue {
+  return {
+    code,
+    severity: 'warning',
+    message: 'The LLM candidate was not publishable; the verified deterministic fallback was used.',
+  };
+}
+
+export function buildPhase2PublishedDiagnostic(input: {
+  material: EditorialMaterial;
+  requestKey: string;
+  materialHash: Sha256;
+  modelEgress: EditorialModelEgressDecision;
+  gatewayConfigurationHash: Sha256 | null;
+  modelContextHash: Sha256;
+  modelContextByteSize: number;
+  generationId: string;
+  publishedBlueprintHash: Sha256;
+  htmlHash: Sha256;
+  status: 'ready' | 'degraded';
+  candidateAttempts: EditorialCandidateAttempt[];
+  rendererWarningCodes: readonly string[];
+  degradedReasonCodes?: readonly string[];
+}): Extract<EditorialDiagnostic, { status: 'pass' | 'degraded' }> {
+  const material = parseEditorialMaterial(input.material);
+  if (input.materialHash !== canonicalSha256(material)) {
+    fail('SCHEMA_INTEGRITY', 'Phase 2 Diagnostic material hash is inconsistent', 'schema_integrity');
+  }
+  const candidateIssueCodes = input.candidateAttempts.flatMap(({ issueCodes }) => issueCodes);
+  const reasonCodes = [...new Set([
+    ...candidateIssueCodes,
+    ...(input.degradedReasonCodes ?? []),
+  ])].sort(compareUnicodeCodePoints);
+  if (reasonCodes.length > 64 || reasonCodes.some((code) => !/^[A-Z][A-Z0-9_]{0,63}$/u.test(code))) {
+    fail('SCHEMA_INTEGRITY', 'Phase 2 Diagnostic reason codes are invalid', 'schema_integrity');
+  }
+  const egressIssues = input.modelEgress.decision === 'deny'
+    ? [createPhase1EgressWarning(input.modelEgress.reasonCode)]
+    : [];
+  const candidateIssues = reasonCodes.map(phase2Warning);
+  const visualWarnings = [
+    ...material.materializationWarningCodes.map(createEditorialVisualWarning),
+    ...input.rendererWarningCodes.map((code) => createEditorialVisualWarning(code as EditorialRendererWarningCode)),
+  ];
+  const issues = [...egressIssues, ...candidateIssues, ...visualWarnings];
+  if (issues.length > 128) {
+    fail('SCHEMA_INTEGRITY', 'Phase 2 Diagnostic issues exceed their limit', 'schema_integrity');
+  }
+  const failedChecks = new Map<EditorialCheckId, EditorialDiagnosticIssue[]>();
+  for (const issue of candidateIssues) {
+    const id = phase2IssueCheckId(issue.code);
+    if (id !== null) failedChecks.set(id, [...(failedChecks.get(id) ?? []), issue]);
+  }
+  const calls = input.candidateAttempts.flatMap((attempt) => [
+    attempt.plannerCall,
+    ...('fidelityCall' in attempt && attempt.fidelityCall !== undefined ? [attempt.fidelityCall] : []),
+  ]);
+  const successfulFidelity = input.candidateAttempts.some((attempt) => (
+    'fidelityReview' in attempt && attempt.fidelityReview !== undefined && attempt.fidelityReview.verdict === 'pass'
+  ));
+  const checks = EDITORIAL_CHECK_IDS.map((id): EditorialDiagnosticCheck => {
+    if (input.status === 'ready') return phase1DiagnosticCheck(id, 'passed', id === 'visual_policy' ? visualWarnings : []);
+    const failures = failedChecks.get(id);
+    if (failures && failures.length > 0) return phase1DiagnosticCheck(id, 'failed', failures);
+    if (id === 'model_identity') {
+      return phase1DiagnosticCheck(id, calls.some(({ status }) => status === 'succeeded') ? 'passed' : 'not_run');
+    }
+    if (id === 'content_fidelity') {
+      return phase1DiagnosticCheck(id, successfulFidelity ? 'passed' : 'not_run');
+    }
+    return phase1DiagnosticCheck(id, 'passed', id === 'model_egress'
+      ? egressIssues
+      : id === 'visual_policy' ? visualWarnings : []);
+  });
+  const rejectedResponseHashes = input.candidateAttempts.flatMap((attempt) => (
+    attempt.outcome === 'rejected' && attempt.plannerCall.status === 'succeeded'
+      ? [attempt.plannerCall.responseHash]
+      : []
+  ));
+  return parseEditorialDiagnostic({
+    version: EDITORIAL_DIAGNOSTIC_VERSION,
+    taskId: material.taskId,
+    planVersionId: material.planVersionId,
+    attemptId: material.attemptId,
+    sourceReportPackage: material.sourceReportPackage,
+    gatewayConfigurationHash: input.gatewayConfigurationHash,
+    candidateAttempts: input.candidateAttempts,
+    rejectedResponseHashes,
+    checks,
+    issues,
+    status: input.status === 'ready' ? 'pass' : 'degraded',
+    mode: input.status === 'ready' ? 'llm' : 'deterministic_fallback',
+    requestKey: input.requestKey,
+    materialHash: input.materialHash,
+    modelEgress: input.modelEgress,
+    modelContextHash: input.modelContextHash,
+    modelContextByteSize: input.modelContextByteSize,
+    generationId: input.generationId,
+    publishedBlueprintHash: input.publishedBlueprintHash,
+    htmlHash: input.htmlHash,
+  }) as Extract<EditorialDiagnostic, { status: 'pass' | 'degraded' }>;
+}
+
 function orderedKinds<T extends string>(values: readonly T[], order: readonly T[]): T[] {
   const present = new Set(values);
   return order.filter((value) => present.has(value));
@@ -3688,6 +4053,118 @@ function parseModelCall(value: unknown, path: string): EditorialModelCallRecord 
   };
 }
 
+function parseFidelityCall(
+  value: unknown,
+  path: string,
+): (EditorialModelCallRecord & { stage: 'editorial_fidelity_review'; inputBlueprintHash: Sha256 }) {
+  const candidate = record(value, path);
+  if (!Object.hasOwn(candidate, 'inputBlueprintHash')) {
+    fail('SCHEMA_INTEGRITY', 'Fidelity call requires inputBlueprintHash', 'schema_integrity', `${path}/inputBlueprintHash`);
+  }
+  assertSha256(candidate.inputBlueprintHash, `${path}/inputBlueprintHash`);
+  const { inputBlueprintHash, ...callValue } = candidate;
+  const call = parseModelCall(callValue, path);
+  if (call.stage !== 'editorial_fidelity_review') {
+    fail('SCHEMA_INTEGRITY', 'Fidelity call stage is invalid', 'schema_integrity', `${path}/stage`);
+  }
+  return { ...call, stage: 'editorial_fidelity_review', inputBlueprintHash: inputBlueprintHash as Sha256 };
+}
+
+function parseEditorialCandidateAttempt(value: unknown, path: string): EditorialCandidateAttempt {
+  const candidate = record(value, path);
+  exactKeys(candidate, [
+    'ordinal', 'blueprintHash', 'plannerCall', 'outcome', 'issueCodes',
+    'fidelityCall', 'fidelityReviewHash', 'fidelityReview',
+  ], path);
+  requiredKeys(candidate, ['ordinal', 'plannerCall', 'outcome', 'issueCodes'], path);
+  if (candidate.ordinal !== 1 && candidate.ordinal !== 2) {
+    fail('SCHEMA_INTEGRITY', 'candidate ordinal must be 1 or 2', 'schema_integrity', `${path}/ordinal`);
+  }
+  const ordinal = candidate.ordinal;
+  const outcome = enumValue(candidate.outcome, ['accepted', 'rejected', 'call_failed'], `${path}/outcome`);
+  const plannerCall = parseModelCall(candidate.plannerCall, `${path}/plannerCall`);
+  if (plannerCall.stage !== 'editorial_blueprint' || plannerCall.ordinal !== ordinal) {
+    fail('SCHEMA_INTEGRITY', 'planner call binding is invalid', 'schema_integrity', `${path}/plannerCall`);
+  }
+  const issueCodes = stringArray(candidate.issueCodes, `${path}/issueCodes`, { maximum: 64 });
+  if (
+    issueCodes.some((code) => !/^[A-Z][A-Z0-9_]{0,63}$/u.test(code))
+    || canonicalEditorialJson(issueCodes) !== canonicalEditorialJson([...new Set(issueCodes)].sort(compareUnicodeCodePoints))
+  ) {
+    fail('SCHEMA_INTEGRITY', 'candidate issueCodes must be unique canonical safe codes', 'schema_integrity', `${path}/issueCodes`);
+  }
+  const blueprintHash = candidate.blueprintHash === undefined ? undefined : candidate.blueprintHash;
+  if (blueprintHash !== undefined) assertSha256(blueprintHash, `${path}/blueprintHash`);
+
+  const hasFidelityCall = candidate.fidelityCall !== undefined;
+  const hasFidelityReviewHash = candidate.fidelityReviewHash !== undefined;
+  const hasFidelityReview = candidate.fidelityReview !== undefined;
+  let fidelity: EditorialFidelityAttempt = {};
+  if (hasFidelityCall) {
+    const fidelityCall = parseFidelityCall(candidate.fidelityCall, `${path}/fidelityCall`);
+    if (fidelityCall.ordinal !== ordinal || blueprintHash === undefined || fidelityCall.inputBlueprintHash !== blueprintHash) {
+      fail('CONTENT_FIDELITY', 'Fidelity call does not bind the candidate Blueprint', 'content_fidelity', `${path}/fidelityCall`);
+    }
+    if (fidelityCall.status === 'failed') {
+      if (hasFidelityReviewHash || hasFidelityReview) {
+        fail('SCHEMA_INTEGRITY', 'failed Fidelity call cannot include a Review', 'schema_integrity', path);
+      }
+      fidelity = { fidelityCall };
+    } else {
+      if (!hasFidelityReviewHash || !hasFidelityReview) {
+        fail('SCHEMA_INTEGRITY', 'successful Fidelity call requires a bound Review', 'schema_integrity', path);
+      }
+      assertSha256(candidate.fidelityReviewHash, `${path}/fidelityReviewHash`);
+      const fidelityReview = parseEditorialFidelityReview(candidate.fidelityReview);
+      if (
+        fidelityReview.materialHash === undefined
+        || fidelityReview.blueprintHash !== blueprintHash
+        || candidate.fidelityReviewHash !== canonicalSha256(fidelityReview)
+      ) {
+        fail('CONTENT_FIDELITY', 'Fidelity Review binding or hash is invalid', 'content_fidelity', path);
+      }
+      fidelity = {
+        fidelityCall,
+        fidelityReviewHash: candidate.fidelityReviewHash as Sha256,
+        fidelityReview,
+      };
+    }
+  } else if (hasFidelityReviewHash || hasFidelityReview) {
+    fail('SCHEMA_INTEGRITY', 'Fidelity Review requires a Fidelity call', 'schema_integrity', path);
+  }
+
+  if (outcome === 'call_failed') {
+    if (plannerCall.status !== 'failed' || blueprintHash !== undefined || hasFidelityCall || issueCodes.length === 0) {
+      fail('SCHEMA_INTEGRITY', 'call_failed candidate shape is invalid', 'schema_integrity', path);
+    }
+  } else {
+    if (plannerCall.status !== 'succeeded') {
+      fail('SCHEMA_INTEGRITY', `${outcome} candidate requires a successful planner call`, 'schema_integrity', path);
+    }
+    if (outcome === 'accepted') {
+      if (
+        blueprintHash === undefined
+        || issueCodes.length !== 0
+        || ('fidelityCall' in fidelity && fidelity.fidelityCall?.status === 'failed')
+        || ('fidelityReview' in fidelity && fidelity.fidelityReview?.verdict !== 'pass')
+      ) {
+        fail('SCHEMA_INTEGRITY', 'accepted candidate shape is invalid', 'schema_integrity', path);
+      }
+    } else if (issueCodes.length === 0) {
+      fail('SCHEMA_INTEGRITY', 'rejected candidate requires at least one issue code', 'schema_integrity', path);
+    }
+  }
+
+  return {
+    ordinal,
+    ...(blueprintHash === undefined ? {} : { blueprintHash: blueprintHash as Sha256 }),
+    plannerCall: { ...plannerCall, stage: 'editorial_blueprint' },
+    outcome,
+    issueCodes,
+    ...fidelity,
+  } as EditorialCandidateAttempt;
+}
+
 function parseDiagnosticCheck(value: unknown, path: string): EditorialDiagnosticCheck {
   const candidate = record(value, path);
   exactKeys(candidate, ['id', 'status', 'method', 'issues'], path);
@@ -3731,12 +4208,25 @@ export function parseEditorialDiagnostic(value: unknown): EditorialDiagnostic {
   if (!Array.isArray(candidate.candidateAttempts) || candidate.candidateAttempts.length > 2) {
     fail('SCHEMA_INTEGRITY', 'candidateAttempts exceeds two entries', 'schema_integrity', '/candidateAttempts');
   }
-  if (candidate.candidateAttempts.length > 0) {
-    // Phase 2 owns the candidate parser. Reject opaque content in Phase 1 instead of accepting it unchecked.
-    fail('SCHEMA_INTEGRITY', 'candidateAttempts are not supported by the Phase 1 contract parser', 'schema_integrity', '/candidateAttempts');
+  const candidateAttempts = candidate.candidateAttempts.map((attempt, index) => (
+    parseEditorialCandidateAttempt(attempt, `/candidateAttempts/${index}`)
+  ));
+  if (candidateAttempts.some(({ ordinal }, index) => ordinal !== index + 1)) {
+    fail('SCHEMA_INTEGRITY', 'candidateAttempts must use canonical ordinal order', 'schema_integrity', '/candidateAttempts');
   }
-  const rejectedResponseHashes = stringArray(candidate.rejectedResponseHashes, '/rejectedResponseHashes', { maximum: 2 }) as Sha256[];
+  const rejectedResponseHashes = stringArray(candidate.rejectedResponseHashes, '/rejectedResponseHashes', {
+    maximum: 2,
+    unique: false,
+  }) as Sha256[];
   rejectedResponseHashes.forEach((hash, index) => assertSha256(hash, `/rejectedResponseHashes/${index}`));
+  const expectedRejectedHashes = candidateAttempts.flatMap((attempt) => (
+    attempt.outcome === 'rejected' && attempt.plannerCall.status === 'succeeded'
+      ? [attempt.plannerCall.responseHash]
+      : []
+  ));
+  if (canonicalEditorialJson(rejectedResponseHashes) !== canonicalEditorialJson(expectedRejectedHashes)) {
+    fail('SCHEMA_INTEGRITY', 'rejectedResponseHashes do not match rejected candidates', 'schema_integrity', '/rejectedResponseHashes');
+  }
   if (!Array.isArray(candidate.checks) || candidate.checks.length !== EDITORIAL_CHECK_IDS.length) {
     fail('SCHEMA_INTEGRITY', 'Diagnostic must contain every check exactly once', 'schema_integrity', '/checks');
   }
@@ -3758,12 +4248,15 @@ export function parseEditorialDiagnostic(value: unknown): EditorialDiagnostic {
     attemptId: stringValue(candidate.attemptId, '/attemptId'),
     sourceReportPackage: parseEditorialSourceArtifactRef(candidate.sourceReportPackage, '/sourceReportPackage'),
     gatewayConfigurationHash: candidate.gatewayConfigurationHash as Sha256 | null,
-    candidateAttempts: [],
+    candidateAttempts,
     rejectedResponseHashes,
     checks,
     issues,
   };
   if (!prepared) {
+    if (candidateAttempts.length !== 0 || rejectedResponseHashes.length !== 0) {
+      fail('SCHEMA_INTEGRITY', 'mode=none cannot contain model attempts', 'schema_integrity');
+    }
     const parsed: EditorialDiagnostic = { ...base, status: 'fail', mode: 'none' };
     if (canonicalJsonBytes(parsed).byteLength > EDITORIAL_MAX_DIAGNOSTIC_BYTES) {
       fail('SCHEMA_INTEGRITY', 'Diagnostic exceeds 2 MiB', 'schema_integrity');
@@ -3782,6 +4275,32 @@ export function parseEditorialDiagnostic(value: unknown): EditorialDiagnostic {
     modelContextHash: candidate.modelContextHash,
     modelContextByteSize: integerValue(candidate.modelContextByteSize, '/modelContextByteSize'),
   };
+  if (preparedFields.modelEgress.decision === 'deny' && candidateAttempts.length !== 0) {
+    fail('MODEL_EGRESS_INVALID', 'denied model egress cannot contain candidate attempts', 'model_egress');
+  }
+  for (const [attemptIndex, attempt] of candidateAttempts.entries()) {
+    const calls = [
+      attempt.plannerCall,
+      ...('fidelityCall' in attempt && attempt.fidelityCall !== undefined ? [attempt.fidelityCall] : []),
+    ];
+    for (const call of calls) {
+      if (
+        candidate.gatewayConfigurationHash === null
+        || call.gatewayConfigurationHash !== candidate.gatewayConfigurationHash
+        || call.modelContextHash !== preparedFields.modelContextHash
+        || call.modelContextByteSize !== preparedFields.modelContextByteSize
+      ) {
+        fail('SCHEMA_INTEGRITY', 'candidate model call binding is invalid', 'schema_integrity', `/candidateAttempts/${attemptIndex}`);
+      }
+    }
+    if (
+      'fidelityReview' in attempt
+      && attempt.fidelityReview !== undefined
+      && attempt.fidelityReview.materialHash !== preparedFields.materialHash
+    ) {
+      fail('CONTENT_FIDELITY', 'candidate Fidelity Review material hash is invalid', 'content_fidelity', `/candidateAttempts/${attemptIndex}/fidelityReview/materialHash`);
+    }
+  }
   let parsed: EditorialDiagnostic;
   if (published) {
     if (typeof candidate.generationId !== 'string' || !GENERATION_ID_PATTERN.test(candidate.generationId)) {
@@ -3809,8 +4328,15 @@ export function parseEditorialDiagnostic(value: unknown): EditorialDiagnostic {
   if (parsed.status === 'pass' && (
     parsed.issues.some(({ severity }) => severity === 'error')
     || parsed.checks.some(({ status: checkStatus }) => checkStatus !== 'passed')
+    || parsed.candidateAttempts.filter(({ outcome }) => outcome === 'accepted').length !== 1
   )) {
     fail('SCHEMA_INTEGRITY', 'passing Diagnostic contains an incomplete or failed check', 'schema_integrity');
+  }
+  if (
+    parsed.status === 'degraded'
+    && parsed.candidateAttempts.some(({ outcome }) => outcome === 'accepted')
+  ) {
+    fail('SCHEMA_INTEGRITY', 'degraded Diagnostic cannot contain an accepted candidate', 'schema_integrity');
   }
   if (parsed.mode !== 'none' && parsed.gatewayConfigurationHash === null && (
     parsed.modelEgress.evaluated.provider !== null

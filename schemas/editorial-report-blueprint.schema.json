@@ -336,9 +336,7 @@
             "additionalProperties": false,
             "required": ["risk"],
             "properties": {
-              "risk": { "$ref": "#/$defs/copy" },
-              "impact": { "$ref": "#/$defs/copy" },
-              "response": { "$ref": "#/$defs/copy" }
+              "risk": { "$ref": "#/$defs/copy" }
             }
           }
         }

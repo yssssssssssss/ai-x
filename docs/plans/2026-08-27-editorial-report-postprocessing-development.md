@@ -1,8 +1,10 @@
 # Editorial Report 后置编排能力开发文档
 
-> 状态：Phase 1 已实现并完成定向验收；Phase 2 尚未开始，本文第 30 节所定义的完整 V1 因此尚未完成。
+> 状态：Phase 1 已在 main 完成；Phase 2 工程实现已完成但尚未通过真实 Gateway、真实 corpus、人工视觉
+> rubric 与全量质量门禁，因此仍处于“可测试、不可发布”状态，不能宣称第 30 节定义的完整 V1 已完成。
 >
-> 基线：`main@5465e62`（2026-08-27）。本文只描述该基线，不引用其他分支实现。
+> Phase 2 开发基线：`main@49e4b7f`（2026-08-27，标签 `单skill版本-报告优化-0827`）。本轮实现只基于
+> main，不切换或吸收其他分支代码。
 >
 > 参考样例：`/Users/heyunshen/work/PROJECT/jdc/ai-x-answer-reports/run-workspaces/current-control/tasks/055a2658-8b6c-4bd7-9078-43636feb9df7/attempts/105dbbe2-1e92-47a0-8062-0e2da78fea4e/reports/crowdfunding-editorial-report-demo.html`。
 >
@@ -10,7 +12,7 @@
 
 ## 0. Phase 1 实施记录（2026-08-27）
 
-本轮实现严格基于 `main@5465e62`，没有切换或吸收其他分支代码。已交付的是第 22 节 Phase 1：
+Phase 1 当时以 `main@5465e62` 为开发起点，最终交付在 `main@49e4b7f`。该阶段完成了第 22 节 Phase 1：
 对 main 已完成并封存的 `report-package-v1` 做只读解析、确定性 Material 化、组件编排、安全渲染和
 sidecar 原子发布。正式入口为：
 
@@ -20,8 +22,8 @@ pnpm editorial:report -- --task-id <UUID>
 
 Phase 1 的 `EditorialModelPort` 固定为 `{client:null, configuration:null}`，模型调用数必须为 0；输出
 状态为 `degraded / deterministic_fallback` 是设计语义，不代表生成失败。自适应 LLM Blueprint、
-独立 Fidelity Review、真实 Gateway 准入和 `editorial:calibrate` 均属于尚未实施的 Phase 2，不能把
-本阶段描述成已经具备完整 LLM 编辑能力。
+独立 Fidelity Review、真实 Gateway 准入和 `editorial:calibrate` 在 Phase 1 交付时尚未实施；当前虽已
+完成 Phase 2 工程代码，仍不能把 Phase 1 的历史验收描述成完整 LLM 编辑能力验收。
 
 ### 0.1 已落地能力
 
@@ -83,12 +85,78 @@ report:       run-workspaces/editorial-reports/tasks/e16880e3-21c2-4541-9e38-fc7
 
 ### 0.4 尚未解除的非 Editorial 门禁
 
-Node 22.22.1 下的 `pnpm quality` 测试阶段仍有三项既有失败：第 23.4 节记录的两项
-`control-api-integration`，以及早于本实现存在的 ignored
-`wiki/user-research/01-task-任务/.DS_Store` 与 checked-in Hub snapshot hash 不一致。对应测试文件均无
-本次 diff，且没有 Editorial 新增测试失败。两项主链失败仍须按第 22 节取得完整书面豁免或在独立
-基线修复；Hub snapshot 漂移应由知识库维护流程单独修复，不能在 Editorial 变更中顺手重写。因此
-Phase 1 可作为已实现里程碑交付，但当前工作区不能被表述为 `pnpm quality` 全绿或完整 V1 已完成。
+Node 22.22.1 下，2026-08-28 的最新 `pnpm quality` 共发现 1741 tests：1725 pass、3 fail、13 skip。三项失败为：
+
+1. `control-api-integration`：`failed clarification releases its pending command so a retry can complete`
+   （期望 500，实际 422）。
+2. `control-api-integration`：`post-activation clarification failure reclaims the same command without another requirement version`
+   （期望 200，实际 400，unknown key `audience`）。
+3. `user-research-hub-integration`：`checked-in Hub snapshot covers every physical file and registry entity exactly once`
+   （ignored `.DS_Store`／tree hash 漂移）。
+
+前两项已在干净 `main@49e4b7f` 稳定复现，属于已知基线失败。第三项来自 gitignore 范围内的本地 Hub
+数据漂移，相关测试、脚本和 checked-in manifest 相对基线均无 diff。此前全套负载下偶发的
+`task-workflow` 2 秒 timeout 本轮未复现。因此没有发现 Phase 2 功能代码导致的确定性失败，但这不等于
+全量发布门禁通过：三项失败都必须修复
+或按第 22 节取得适用的书面豁免。当前工作区不得表述为 `pnpm quality` 全绿或完整 V1 已完成。
+
+### 0.5 Phase 2 工程实施记录（2026-08-27）
+
+Phase 2 基于 `main@49e4b7f` 实现，未接入或修改 main 的执行主链。当前工程能力包括：
+
+- 正式 `editorial:report` 入口默认装配 Phase 2 Gateway port；同时保留
+  `createPhase1EditorialReportPipeline()`，供显式零模型、确定性 fallback 场景使用。Gateway 未配置或
+  发生已声明的配置错误时，正式入口同样安全退回零调用 fallback。
+- Pipeline 始终先完成 deterministic fallback 的 Schema、关系、覆盖、Renderer、HTML 安全和体积
+  预检，再允许任何模型调用。Planner 最多两次，第二次是唯一一次带受控 repair hints 的修复机会。
+- LLM 只返回 Blueprint Plan，不生成 HTML。存在 paraphrase 时，候选必须经过独立 Fidelity Review；
+  copy Pointer、Material Unit、material hash 与 Blueprint hash 均须闭合，Store 在发布及缓存读取时会
+  重新枚举 paraphrase、重建 Review 并复核绑定。
+- Planner 与 Fidelity 共用 Editorial 专属 system prompt，把 `上下文:` 后的 Material、候选文案和 repair
+  hints 明确定义为不可信数据并禁止遵循其中指令；该 system prompt 同时纳入 prompt hash。两条 prompt
+  version 均升级为 v2，使旧缓存与修复后的调用身份严格隔离，且不改变 main 其他 Gateway 调用的默认语义。
+- 每次 Planner/Fidelity 调用前均复核 source current fence 与冻结的 Gateway configuration；另有
+  cache-return fence 和 publish fence。任何 binding drift 都丢弃响应且不发布。
+- Gateway 调用采用固定 redirect、总 deadline、HTTP 尝试数、Retry-After、响应 bytes 与输出 token
+  上限；requested/expected/actual model、provider、endpoint、prompt hash 必须一致。`receiptId` 被视为
+  错误 composition 的 hard fail；越界或不一致的非可信响应元数据转为受控失败码并发布已预检 fallback。
+- 只有通过全部候选门禁的结果为 `ready / llm`；模型超时、Schema/关系/Fidelity/identity 等候选失败
+  均记录在 Diagnostic 后发布相同的预检结果为 `degraded / deterministic_fallback`。源完整性、绑定、
+  Renderer trace 与 HTML 安全错误仍 fail closed，不允许用 fallback 掩盖。
+- 默认 Phase 2 CLI 的集成测试已覆盖真实 composition root 与实际 Gateway client 调用边界，并证明
+  task、attempt、Artifact、整张 `control_model_calls` 表和 `current-control` 文件均保持 byte-for-byte
+  不变；新增内容只允许位于独立 `editorial-reports` sidecar 根。
+
+Phase 2 校准入口固定为 `editorial:calibrate`。它只接受
+`${RUN_WORKSPACE_ROOT:-./run-workspaces}/editorial-reports/calibration/corpus.json` 和同一 calibration root
+下的直接 `run.*` 子目录；run/store 目录必须为 `0700`，输入输出文件必须为 `0600`。collect 只能在
+空 Store 中运行，并生成 canonical `phase2-calibration.evidence.json`、draft、reference HTML、manifest、
+两张截图、PDF 和预绑定 rubric。`evidenceHash` 同时进入 draft、rubric 与最终 result，`draftHash` 绑定
+完整 draft；finalize/verify 会重读 canonical summary evidence 并与 draft 全量逐值比对，重验 fixture
+中的 `caseId/expected`、唯一 reference 的 manifest/HTML/captures，再从已绑定摘要重算分布、gate 与
+resultHash。V1 不保存或重放 golden 原始模型响应，也不重读非 reference 样本的 Store bundle；这属于
+trusted operator 边界内的已知 P2，不能把 summary evidence 表述为可独立重放的 raw evidence。
+runner 在第一条 Fidelity golden 调用前即用该 fixture 的文件 hash、`internal/v1` 分类和冻结的 Gateway
+configuration 执行同一固定 egress policy；非白名单 endpoint 必须零调用并以固定错误码终止。
+
+校准还要求工作树干净、当前 HEAD 包含固定 Phase 1 基线 `49e4b7f`，并在 collect/finalize/verify 的
+持久化边界重复执行 commit fence，防止一次校准跨越实现版本。该机制面向 trusted operator 和意外／
+局部篡改检测；同一操作系统 owner 若主动同步重写 evidence、draft 与 rubric，无法在没有外部签名密钥
+或不可变审计服务的本地模型下被密码学阻止，不属于 V1 防篡改承诺。
+
+工程实现完成不等于发布验收完成。当前仍缺真实 Gateway ready+Fidelity、60 条 golden 实跑、至少
+10 个真实 SEALED 包的分布门禁、reference 人工 rubric，以及第 22 节要求的主链／quality 全绿或有效
+豁免；在这些证据齐备前，Phase 2 必须保持“不可发布”。
+
+| Phase 2 工程检查 | 当前结果 |
+|---|---|
+| Phase 2 十三个测试文件定向门禁 | 264 tests：263 pass、0 fail、1 个默认关闭的 Playwright skip |
+| 其中 calibration runner 定向测试 | 12/12 pass |
+| 其中 Store 定向测试 | 32/32 pass |
+| 独立 Chromium 合同 | 13/13 pass，覆盖 1440px、390px、键盘、离线与 A4 |
+| `pnpm typecheck` | 通过 |
+| `git diff --check` | 通过 |
+| `pnpm quality` | 1741 tests：1725 pass、3 fail、13 skip；失败与处理状态见第 0.4 节，当前阻塞发布 |
 
 ## 1. 决策摘要
 
@@ -1345,7 +1413,7 @@ interface EditorialFidelityReview {
   `EditorialFidelityReviewPlan`，模型不接收也不回显 `blueprintHash`。
 - Validator 先枚举候选 Blueprint 中全部 `mode=paraphrase` 的 `EditorialCopy` JSON Pointer。
   Review Plan 必须对这些 Pointer 建立严格一一对应：每个 Pointer 恰好一条、不得缺失或额外增加，
-  且 `materialUnitIds` 必须与该 Copy 的有序数组完全一致。
+  必须保持该枚举的 canonical 顺序，且 `materialUnitIds` 必须与该 Copy 的有序数组完全一致。
 - Pipeline 只在上述校验通过后，用当前 `materialHash`、当前候选 canonical `blueprintHash` 和 Review
   Plan checks 组装最终 Review；最终 Review 的 `blueprintHash`、调用记录的 `inputBlueprintHash` 和当前
   候选 hash 必须三者相等。调用记录同时绑定 provider、endpoint host、请求／实际 model、prompt
@@ -1386,8 +1454,8 @@ interface EditorialReport {
     modelContextHash: Sha256;
     blueprintPlanVersion: 'editorial-blueprint-plan-v1';
     blueprintVersion: 'editorial-blueprint-v1';
-    promptVersion: 'editorial-blueprint-prompt-v1';
-    fidelityPromptVersion: 'editorial-fidelity-prompt-v1';
+    promptVersion: 'editorial-blueprint-prompt-v2';
+    fidelityPromptVersion: 'editorial-fidelity-prompt-v2';
     fallbackVersion: 'editorial-fallback-v1';
     rendererVersion: 'editorial-html-v1';
     storeVersion: 'editorial-store-v1';
@@ -2320,8 +2388,10 @@ expected actual model），因此策略、出境目标或模型路由变化不�
 - 锁所有者若 LLM 路径失败，只能发布／复用 preflight 已证明可用的同 key fallback slot 并返回 degraded。
   只有该 owner 可以把本轮失败分类为 degradable。之后启动的新调用仍先查 ready；没有 ready 才重新
   竞争锁，并在获锁后把 valid fallback 仅作为 preflight bundle，继续尝试生成 ready。
-- 复用既有 fallback 时不得改写其 manifest/Diagnostic；本次失败调用只进入脱敏进程日志，CLI
-  stdout 明确返回既有 generation ID。
+- 复用既有 fallback 时不得改写其 manifest/Diagnostic；本次失败调用只进入一条 canonical JSON
+  进程日志事件 `fallback_reused_after_llm_failure`，包含既有 generation ID、本轮脱敏 model-call records
+  与 issue codes，不包含 Prompt、Material/HTML 正文或上游错误文本；CLI stdout 明确返回既有
+  generation ID。正式 CLI composition 必须装配该日志 sink，写入失败则本次调用失败，不能静默丢失审计。
 - 锁文件以 `0600` 创建，记录 PID、hostname、request key、创建时间，以及 CSPRNG 生成的 32-byte
   owner token（64 位小写 hex）。读取锁时使用 no-follow、4 KiB 上限和 schema 校验；malformed、
   symlink、request key 不符或未知 hostname 一律不能当作 stale。owner token 只用于本地 compare-and-
@@ -2445,7 +2515,8 @@ CLI 在成功、降级和异常路径都必须于 `finally` 释放 request lock 
   不含完整 Material、图片字节、数据库行、作为结构元数据的 UUID、Artifact/Manifest 元数据、
   Evidence 对象／ID／URL、JWT、环境变量、完整 Prompt 或原始错误；verified Unit `value` 自身的业务
   字面量不在此排除声明内，仍由 egress 与 verbatim 门禁保护。
-- Material 中的网页文字视为不可信数据；System prompt 明确禁止遵循其中的指令。
+- Material 中的网页文字视为不可信数据；Editorial 专属 System prompt 明确禁止 Planner 与 Fidelity
+  遵循 Material、候选文案、元数据或 repair hints 中的指令，其完整文本纳入 prompt hash。
 - Gateway 返回只按 JSON 数据解析，不执行任何字符串。
 - Sidecar 的 Gateway 请求固定 `redirect: 'error'`；endpoint URL、host 和 route identity 纳入
   Gateway configuration hash，固定 allow target 则纳入 egress policy hash，
@@ -2505,6 +2576,9 @@ Source 预算在完整快照冻结前执行，因此超限只返回脱敏错误�
 - 输出文件 hash 与 byte size
 
 禁止记录 Material 全文、HTML 全文、Gateway 原始响应、API key、request/reap owner token 或完整上游错误。
+复用不可变 fallback 后，本轮 LLM 失败无法回写旧 Diagnostic，因此正式 CLI 额外向 stderr 输出
+`editorial-process-audit-v1 / fallback_reused_after_llm_failure` 单行 canonical JSON；该事件只保留调用前
+已知身份、hash、计数、成功调用的受限 receipt 元数据与固定错误码。
 
 ## 21. 精确文件影响范围
 
@@ -2546,7 +2620,7 @@ Source 预算在完整快照冻结前执行，因此超限只返回脱敏错误�
 | `tests/editorial-report-renderer.test.ts` | XSS、raster-only、自包含、CSP、最终 block trace、组件、响应式和打印结构 |
 | `tests/editorial-report-store.test.ts` | 路径逃逸、symlink、token lock、原子发布、busy、stale、幂等和 hash |
 | `tests/editorial-report-cli.test.ts` | 生成／校准 CLI 参数、provider fallback、stdout/stderr、退出码、连接释放和 main 零写 |
-| `tests/editorial-report-phase2-calibration.test.ts` | corpus/rubric-generation 绑定、空 Store/旧 cache 隔离、本轮 outbound、阈值边界、匿名化、0600、resultHash、commit fence、verify 与非零退出 |
+| `tests/editorial-report-phase2-calibration.test.ts` | corpus/evidence/draft/rubric-generation 绑定、空 Store/旧 cache 隔离、本轮 outbound、阈值边界、匿名化、0600、三层 hash、commit fence、verify 与非零退出 |
 | `tests/schema-registry.test.ts` | 增加两个 schema 映射断言 |
 | `tests/gateway-llm-receipt.test.ts` | canonical endpoint、redirect=error、4-route identity、可选 limits、总 deadline 与既有默认行为 |
 | `tests/fixtures/editorial-fidelity-golden.json` | 60 条固定 Fidelity 校准样本；不包含真实任务 UUID、URL 或敏感正文 |
@@ -2613,6 +2687,9 @@ git diff --check
 
 ### Phase 2：受控 LLM 编排与独立保真评审
 
+> 实施状态（2026-08-27）：下列工程交付已在 `main@49e4b7f` 基础上完成开发与定向测试；真实发布
+> 准入证据尚未采集，且全量 quality 仍有第 0.4 节所列三项失败，因此本阶段尚未完成发布验收。
+
 交付：
 
 - `editorial-report-fidelity.schema.json`（Review Plan），并把 Phase 1 Blueprint Plan Schema 与 Fidelity
@@ -2654,10 +2731,11 @@ Phase 2 进入发布前必须同时提供以下证据，任何一项缺失都不
    `renderedCompositionKinds`、独立 risk section/risk-register，并通过第 24.3 节视觉 rubric；这样
    “丰富、多元、专业”不是由 fallback 数量替代。可导出 raster 只要求 corpus 中至少一个样本具备，
    不错误绑定到本身没有图片的参考案例。
-4. **main 回归无伪绿**：第 23.4 节六文件命令与 `pnpm quality` 原则上必须通过。基线已有两条
-   `control-api-integration` 失败必须先修复；若无法在本范围修复，唯一替代是取得书面豁免，至少写明 owner、原因、与本改动无关
-   的证据、适用 commit、到期日和跟踪 issue。存在豁免时发布记录必须明确写“带豁免”，不得声称
-   “全部门禁通过”。
+4. **main 回归无伪绿**：第 23.4 节六文件命令与 `pnpm quality` 原则上必须通过。当前三项失败均阻塞
+   发布：两条 `control-api-integration` 已在干净 `main@49e4b7f` 稳定复现；Hub snapshot 失败来自
+   gitignore 范围内的本地 `.DS_Store` 哈希漂移。若无法在本范围修复，唯一替代是取得书面豁免，至少写明 owner、原因、与本
+   改动无关的证据、适用 commit、到期日和跟踪 issue。存在豁免时发布记录必须明确写“带豁免”，不得
+   声称“全部门禁通过”。
 
 上述 #1～#3 只允许由同一个 runner 采集，不能分别手抄结果拼接。真实 corpus manifest 固定位于
 `${RUN_WORKSPACE_ROOT:-./run-workspaces}/editorial-reports/calibration/corpus.json`，属于 gitignore
@@ -2667,12 +2745,27 @@ Phase 2 进入发布前必须同时提供以下证据，任何一项缺失都不
 
 `--collect` 必须在 owner-only 的全新空目录内构造独立 Editorial sidecar Store，禁止读取默认 Store 或
 调用前已有的 ready/fallback；model client boundary 直接计数本轮 outbound，不能从旧 manifest
-反推。它同时为唯一 reference generation 生成 1440×1000、390×844 截图和 A4 PDF，保存 bytes/hash，
-再生成已预填 `sampleKey + generationId + htmlHash + 三个 capture hash` 的
-`reference-rubric.json`。人工只填写第 24.3 节的布尔 rubric、reviewer 与 reviewedAt，不能修改绑定
-字段。`--finalize` 重读本轮 ready manifest/HTML/capture bytes，逐项重算并匹配 rubric 后才生成最终
-result；旧 generation、旧 HTML、旧截图/PDF 或另一个 task 的 rubric 一律拒绝。corpus、rubric、
-captures、draft 与 result 文件均为 `0600`，run/store 目录均为 `0700`，不提交真实 UUID、正文或截图。
+反推。它把本轮 golden、corpus 和 reference 机器观测固化为 canonical
+`phase2-calibration.evidence.json`，并以 `evidenceHash` 绑定 draft、rubric 和最终 result；draft 另由
+`draftHash` 绑定到 rubric。它同时为唯一 reference generation 生成 1440×1000、390×844 截图和 A4
+PDF，保存 bytes/hash，再生成已预填 `evidenceHash + draftHash + sampleKey + generationId + htmlHash +
+三个 capture hash` 的 `reference-rubric.json`。人工只填写第 24.3 节的布尔 rubric、reviewer 与
+reviewedAt，不能修改绑定字段。
+
+`--finalize` 与 `--verify` 都必须重读 canonical summary evidence、提交内 golden fixture，以及唯一
+reference 的本轮 ready manifest/HTML/capture bytes；它们把 evidence 与 draft 中的 golden/corpus/
+reference 摘要全量逐值比对，重验 fixture 的 `caseId/expected` 和 reference 文件绑定，再从这些已绑定
+摘要计算分布、gate 与最终 result。V1 不保存或重放 golden 原始模型响应，也不重读非 reference 样本的
+Store bundle；旧 generation、旧 HTML、旧截图/PDF、另一个 task 的 rubric，或只同步修改 draft/rubric
+的尝试一律拒绝。只有固定 calibration root、实时 clean-HEAD/commit fence 均由正式 CLI 执行的结果才是
+发布准入证据；直接调用测试用 finalize/verify 导出 API 不构成发布证明。corpus、evidence、rubric、
+captures、draft 与 result 文件均为 `0600`，run/store 目录均为
+`0700`，不提交真实 UUID、正文或截图。该本地机制假定 trusted operator；没有外部签名密钥时，不承诺
+抵御同一 OS owner 主动同步重写 evidence、draft 与 rubric。
+
+真实校准必须从干净工作树启动；当前 HEAD 必须包含固定 Phase 1 基线 `49e4b7f`。collect、finalize、
+verify 在关键持久化边界重复检查 HEAD，发现工作树 dirty、基线不是 ancestor 或运行中 commit 漂移均
+非零退出。
 
 唯一准入入口采用以下 collect → 人工评审 → finalize/verify 流程：
 
@@ -2694,19 +2787,22 @@ pnpm editorial:calibrate -- --finalize \
 pnpm editorial:calibrate -- --verify "$CALIBRATION_RUN_DIR/phase2-calibration.json"
 ```
 
-输出采用 `editorial-phase2-calibration-v1`：记录 `baseMainCommit=5465e62…`、当前
-`implementationCommit`、Pipeline/prompt/fixture hash、
+输出采用 `editorial-phase2-calibration-v1`：记录 `baseMainCommit=49e4b7f…`、当前
+`implementationCommit`、`evidenceHash`、Pipeline/prompt/fixture hash、
 `gatewayConfigurationHash`、60 条逐例预期/实际 verdict 与混淆计数、真实样本的匿名
 `sha256(taskId)` key、验证得到的 deliverable/multimodal/raster 属性、egress/status/cache-hit/本轮 outbound/
 paraphrase/Fidelity/degraded reason、五项资源分布、reference trace/risk/rubric，以及
 `gate={passed,failedCodes}`。文件末尾 `resultHash` 对排除自身后的 canonical JSON 计算。runner 发现
 阈值不满足必须非零退出；其 `--verify` 模式还必须重算 result hash、要求记录的
-`implementationCommit` 等于当前 `HEAD`，重读同一 run 目录的 reference ready manifest/HTML、rubric
-与三个 capture 并复核全部 hash 和阈值，禁止人工编辑或复用旧结果后过门禁。
+`implementationCommit` 等于当前 `HEAD`，重读同一 run 目录的 evidence、draft、reference ready
+manifest/HTML、rubric 与三个 capture 并复核全部 hash 和阈值，禁止只编辑汇总结果或复用旧结果后
+过门禁。
 
 ```ts
 interface EditorialReferenceRubric {
   version: 'editorial-reference-rubric-v1';
+  evidenceHash: Sha256;
+  draftHash: Sha256;
   sampleKey: Sha256;
   generationId: string;
   htmlHash: Sha256;
@@ -2729,6 +2825,7 @@ interface EditorialReferenceRubric {
 
 interface EditorialPhase2CalibrationResult {
   version: 'editorial-phase2-calibration-v1';
+  evidenceHash: Sha256;
   baseMainCommit: string;
   implementationCommit: string;
   pipelineVersion: string;
@@ -2772,7 +2869,7 @@ interface EditorialPhase2CalibrationResult {
       modelIdentities: Array<{ requestedModel: string; expectedModel: string; actualModel: string }>;
       paraphraseCount: number;
       fidelityPassed: boolean;
-      degradedReason?: string;
+      reasonCodes?: string[]; // 非 ready 的全部规范化原因；去重并按字典序排列
       generationId?: string;
       htmlHash?: Sha256;
       renderedCompositionKinds: EditorialCompositionKind[];
@@ -2907,6 +3004,7 @@ Schema 或“所有 ID 都存在”测试代替：
 | Fidelity 缺少／重复／额外 copy Pointer 或 Unit 列表不一致 | deterministic fallback，degraded |
 | Fidelity Plan 试图输出 materialHash/blueprintHash 或 top-level verdict | Schema 拒绝；Pipeline 只对合格 checks 注入当前 hash 并确定性 fold verdict |
 | Gateway 返回 unknown 或非 expected model | `MODEL_IDENTITY_INVALID`／`MODEL_DRIFT`，degraded |
+| Material 或候选 paraphrase 包含 prompt injection 文本 | Planner/Fidelity 请求均携带 Editorial 专属 system prompt；system prompt 变化必须改变 prompt hash/version |
 | egress matrix 的 allow 行 | fallback preflight 后才调用；policy/configuration/context hash 在 request/Diagnostic/manifest 一致 |
 | 零调用 deny/unconfigured fallback | Diagnostic 顶层 configuration hash 与 request/manifest 一致或同为 null，modelCalls 为空 |
 | provider 未配置或 typed Gateway config error | Diagnostic `gatewayConfigurationHash=null`、零调用 fallback；普通 Error/TypeError 必须继续抛出 |
@@ -2931,13 +3029,15 @@ Schema 或“所有 ID 都存在”测试代替：
 | 参数化地在第 1～3 次 outbound call 后、下一次 Fidelity／repair pre-model fence 前切换 current | 不发下一次 outbound call，`SOURCE_BINDING_CHANGED`，丢弃已有响应且不发布 |
 | model 完成后、publish fence 前切换 current | `SOURCE_BINDING_CHANGED`，丢弃 staging，不发布 ready/fallback |
 | valid ready cache 命中但 cache-return fence 已切换 current | 不返回旧 cache、不创建新输出、不改写既有 Diagnostic，`SOURCE_BINDING_CHANGED` |
+| 复用既有 fallback 时在异步审计写入期间切换 current | 审计写入后再次执行 cache-return fence；不返回旧 generation，`SOURCE_BINDING_CHANGED` |
 | 同 request 并发竞争锁 | 一个 owner 继续；loser 一次 stale check 后立即 `EDITORIAL_REQUEST_BUSY`、零等待、零 LLM |
 | owner 发布 ready 后启动的新调用 | ready fast-path 完整校验并通过 cache-return fence 后复用同一 generation |
 | owner 发布 degraded 或 unsafe hard fail | 并发 loser 结果仍为 busy；后续新调用无 ready 时重新竞争，旧 fallback 不掩盖 hard fail |
 | Pipeline dependencies 类型检查 | 不具备 main 写接口 |
 | 校准 `N_allow=5` 且 ready=4／3 | 4 通过 80% 下限，3 非零退出；budget degraded 同时按 `floor(0.20*N_allow)` 独立判定 |
+| Fidelity golden 配置为非白名单 endpoint | 首条 golden 前固定 egress deny，model call/fetch spy 为 0，runner 非零退出 |
 | 校准 corpus 少于 10、五类覆盖不全、reference 为 0/2 项、hard-fail>0 或 reference 非 ready | 各自固定 failedCode，runner 非零退出 |
-| calibration result 被改写、resultHash 错误或 implementationCommit 非当前 HEAD | `--verify` 非零退出 |
+| calibration evidence/draft/result 被改写、evidenceHash/draftHash/resultHash 错误或 implementationCommit 非当前 HEAD | `--finalize`／`--verify` 非零退出 |
 | calibration 输入／输出权限或匿名化检查 | 非 0600 拒绝；结果不含 task UUID、源正文、URL、owner token 或截图 bytes |
 | 默认 Store 预置同 request 的旧 ready 后执行 collect | 使用新建空 run Store，`cacheHit=false`，ready 证据必须观测到本轮真实 outbound/response |
 | rubric 来自同 task 的旧 generation/HTML，或任一 desktop/mobile/PDF hash 不同 | finalize 非零退出，不生成可通过 verify 的 result |
@@ -3000,21 +3100,22 @@ pnpm exec tsx --test \
 pnpm quality
 ```
 
-另加一条 Editorial CLI 集成回归：运行前后分别快照 task、attempt、artifact、整张
+另加一条 Editorial CLI 集成回归：分别运行显式 Phase 1 零调用 factory，以及默认 Phase 2 composition
+root 的实际 Gateway client 调用路径；运行前后分别快照 task、attempt、artifact、整张
 `control_model_calls` 表（含 `attempt_id IS NULL` 的行）以及 `run-workspaces/current-control/tasks/{taskId}` 的文件 hash；断言所有
 快照 byte-for-byte 不变，且唯一新增路径位于 `run-workspaces/editorial-reports/`。这条测试才是
 “不影响 main”的自动化证据，不能用单纯重跑既有测试替代。
 
-文档终审时，上述前三个现有 seam 回归已在 `main@5465e62` 重新运行，结果为 91/91 通过。
-实现后必须重新执行全部门禁，不能沿用该基线结果作为实现验收。
+Phase 1 文档终审时，上述前三个现有 seam 回归曾在其开发起点 `main@5465e62` 运行，结果为
+91/91 通过；该数字只保留为历史记录，不能替代当前 `main@49e4b7f` 上的 Phase 2 实现验收。
 
-同一基线上同时运行本节六文件完整命令时，结果为 226 tests：223 pass、2 fail、1 skip；两条失败
+当前 `main@49e4b7f` 工作树同时运行本节六文件完整命令时，结果为 227 tests：224 pass、2 fail、1 skip；两条失败
 均来自 `tests/control-api-integration.test.ts`，分别是
 `failed clarification releases its pending command so a retry can complete`（期望 500，实际 422）和
 `post-activation clarification failure reclaims the same command without another requirement version`
-（期望 200，实际 400，unknown key `audience`）。单独复跑该文件仍为 17 pass／2 fail，证明不是本次
-并行命令偶发现象；本文没有修改任何生产或测试代码。实施者必须在独立基线修复或得到明确的既有
-失败豁免后再使用“全部门禁通过”作为合并结论，不能把这两项误归因于 Editorial 代码，也不能静默忽略。
+（期望 200，实际 400，unknown key `audience`）。两项均已在干净 `main@49e4b7f` 单独复现，且对应
+路由、测试与持久化代码不在 Phase 2 diff 中。实施者必须在独立基线修复或得到明确的既有失败豁免后
+再使用“全部门禁通过”作为合并结论，不能把这两项误归因于 Editorial 代码，也不能静默忽略。
 豁免必须满足第 22 节的 owner/commit/issue/到期日合同；没有这份书面记录时，两条既有失败仍是发布
 阻断项，而不是“已知所以忽略”。
 
@@ -3146,7 +3247,7 @@ ReportDocument 已经包含足够完整、结构化且正确绑定的内容，�
 - Phase 1 与 Phase 2 分别合并，均要求定向测试、typecheck 和 `git diff --check` 通过。
 - Phase 2 完成后执行 `pnpm quality`，并完整满足第 22 节四组准入证据；“一次能调用 Gateway”不能
   替代 identity、golden、真实包分布与主链回归门禁。identity、golden、真实包分布等发布阈值不允许
-  豁免；仅第 23.4 节已记录的两项既有基线失败可按第 22 节的完整书面豁免合同继续，且发布结论必须
+  豁免；仅第 0.4、22 节已记录的三项非 Editorial 失败可按第 22 节的完整书面豁免合同继续，且发布结论必须
   明确标注“带豁免”。
 - 首次发布不自动调用；由操作者显式运行 CLI。
 - 真实验收记录 manifest 路径、generation ID、源 Report Package hash、egress/configuration hash、
@@ -3194,8 +3295,8 @@ ReportDocument 已经包含足够完整、结构化且正确绑定的内容，�
 - 参考任务达到约定的信息层次与组件多样性，但未复制其手工证据修正。
 - Phase 2 的真实 Gateway ready+Fidelity、60 条 Fidelity golden、至少 10 个真实 SEALED 包、allow
   ready-rate、全原因降级分布、预算阈值和 reference rubric 均由同一校准结果证明达标。
-- 主链回归、typecheck、`pnpm quality` 与真实验收全部通过；唯一例外是第 22/23.4 节已记录的既有
-  基线失败取得完整书面豁免，此时完成状态和发布记录必须明确标注“带豁免”，不得写“全部通过”。
+- 主链回归、typecheck、`pnpm quality` 与真实验收全部通过；唯一例外是第 0.4/22 节已记录的三项
+  非 Editorial 失败取得完整书面豁免，此时完成状态和发布记录必须明确标注“带豁免”，不得写“全部通过”。
 - main 的数据库状态、Control Artifact、运行目录和原报告在生成前后完全不变。
 
 ## 31. 开发准入结论

@@ -46,6 +46,25 @@ export class LLMInvocationError extends Error {
   }
 }
 
+export type GatewayConfigurationErrorCode =
+  | 'PROVIDER_UNCONFIGURED'
+  | 'GATEWAY_BASE_URL_MISSING'
+  | 'GATEWAY_API_KEY_MISSING'
+  | 'GATEWAY_ENDPOINT_INVALID'
+  | 'GATEWAY_ROUTE_INVALID'
+  | 'GATEWAY_ACTUAL_MODEL_PIN_MISSING';
+
+export class GatewayConfigurationError extends Error {
+  readonly name = 'GatewayConfigurationError';
+
+  constructor(
+    readonly code: GatewayConfigurationErrorCode,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 export interface LLMReceiptContext {
   stage: string;
   attemptId?: string;
@@ -62,12 +81,23 @@ export interface LLMProviderIdentity {
   eligibleAsReal: boolean;
 }
 
+export interface LLMCallLimits {
+  overallTimeoutMs: number;
+  maxHttpAttempts: number;
+  maxRetryAfterMs: number;
+  maxResponseBytes: number;
+  maxOutputTokens: number;
+}
+
 export interface StructuredLLMCallOptions {
   prompt: string;
+  systemPrompt?: string;
   schema: object;
   schemaName: string;
   context?: object;
   receipt: LLMReceiptContext;
+  limits?: LLMCallLimits;
+  redirectMode?: 'error';
 }
 
 export interface TextLLMCallOptions {
@@ -113,12 +143,21 @@ export interface LLMClient {
 }
 
 // 确定性 hash:同输入同输出,便于测试与复盘对齐。
-// schemaId 纳入 hash:同一段 prompt 用于不同 schema 时溯源不冲撞(issue #5)。
-export function hashPrompt(prompt: string, context?: object, schemaId?: string): string {
+// schemaId 与可选 system prompt 纳入 hash：同一 user prompt 在不同执行约束下不复用指纹。
+export function hashPrompt(
+  prompt: string,
+  context?: object,
+  schemaId?: string,
+  systemPrompt?: string,
+): string {
   const h = createHash('sha256');
   h.update(prompt);
   if (context) h.update(JSON.stringify(context));
   if (schemaId) h.update(schemaId);
+  if (systemPrompt) {
+    h.update('\0system\0');
+    h.update(systemPrompt);
+  }
   return 'sha256:' + h.digest('hex').slice(0, 16);
 }
 
@@ -229,7 +268,7 @@ export class MockLLMClient implements LLMClient {
     out = injectToolResultFinding(opts.schemaName, opts.context, out);
     return {
       data: out,
-      promptHash: hashPrompt(opts.prompt, opts.context, opts.schemaName),
+      promptHash: hashPrompt(opts.prompt, opts.context, opts.schemaName, opts.systemPrompt),
       modelName: this.model.name,
       modelVersion: this.model.version,
       traceId: traceFrom(opts.prompt, opts.schemaName),

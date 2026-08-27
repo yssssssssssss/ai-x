@@ -17,7 +17,9 @@ import { Pool } from 'pg';
 
 import {
   EditorialReportCliError,
+  createEditorialModelPort,
   createPhase1EditorialReportPipeline,
+  createEditorialReportPipeline,
   parseEditorialReportArgs,
   runEditorialReportCli,
   type EditorialReportCliPipeline,
@@ -26,6 +28,12 @@ import { ControlArtifactStore } from '../apps/orchestrator-runtime/src/control/a
 import { EvidenceService } from '../apps/orchestrator-runtime/src/evidence/evidence-service.ts';
 import { EditorialPipelineError } from '../apps/orchestrator-runtime/src/report/editorial-report-pipeline.ts';
 import { EditorialSourceError } from '../apps/orchestrator-runtime/src/report/editorial-report-source-reader.ts';
+import {
+  NO_EDITORIAL_MODEL_PORT,
+  parseEditorialGatewayConfiguration,
+  type EditorialStructuredModelClient,
+} from '../apps/orchestrator-runtime/src/report/editorial-report-contract.ts';
+import { GatewayConfigurationError } from '../apps/orchestrator-runtime/src/runtime/llm-client.ts';
 import { ControlPlaneRepository } from '../database/control-plane.ts';
 import {
   runMigrations,
@@ -621,17 +629,134 @@ test('editorial report CLI closes the pool on argument, pipeline construction, a
   assert.deepEqual(closeFailure.stderr, ['EDITORIAL_REPORT_FAILED']);
 });
 
-test('official Phase 1 CLI composition has no main writer or model client', () => {
+function editorialGatewayClient(
+  expectedActualModelExplicit = true,
+): EditorialStructuredModelClient {
+  return {
+    configurationIdentity: {
+      provider: 'gateway',
+      endpointHost: 'llm-gw.jd.local',
+      endpointUrl: 'http://llm-gw.jd.local/v1/chat/completions',
+      mode: 'real',
+      eligibleAsReal: true,
+      routes: [{
+        requestedModel: 'editorial-model',
+        expectedActualModel: 'editorial-model-v1',
+        expectedActualModelExplicit,
+      }],
+    },
+    generateStructured: async () => {
+      throw new Error('not called by the composition test');
+    },
+  };
+}
+
+test('Editorial model port binds one Gateway identity to a frozen, hash-valid configuration', () => {
+  const client = editorialGatewayClient();
+  const port = createEditorialModelPort({
+    provider: 'gateway',
+    createGatewayClient: () => client,
+  });
+
+  assert.equal(port.client, client);
+  assert.notEqual(port.configuration, null);
+  assert.deepEqual(parseEditorialGatewayConfiguration(port.configuration), port.configuration);
+  assert.equal(Object.isFrozen(port), true);
+  assert.equal(Object.isFrozen(port.configuration), true);
+  assert.equal(Object.isFrozen(port.configuration!.routes), true);
+  assert.equal(Object.isFrozen(port.configuration!.routes[0]), true);
+  assert.equal(Object.isFrozen(port.configuration!.limits), true);
+  assert.deepEqual(port.configuration!.limits, {
+    overallTimeoutMs: 90_000,
+    maxHttpAttempts: 3,
+    maxRetryAfterMs: 5_000,
+    maxResponseBytes: 1_048_576,
+    maxOutputTokens: 8_000,
+  });
+});
+
+test('Editorial model port normalizes only the six declared Gateway configuration errors', () => {
+  let factoryCalls = 0;
+  assert.equal(createEditorialModelPort({
+    provider: 'mock',
+    createGatewayClient: () => {
+      factoryCalls += 1;
+      return editorialGatewayClient();
+    },
+  }), NO_EDITORIAL_MODEL_PORT);
+  assert.equal(factoryCalls, 0);
+
+  assert.equal(createEditorialModelPort({
+    provider: 'gateway',
+    createGatewayClient: () => editorialGatewayClient(false),
+  }), NO_EDITORIAL_MODEL_PORT);
+
+  const unknownActualModelClient: EditorialStructuredModelClient = {
+    ...editorialGatewayClient(),
+    configurationIdentity: {
+      ...editorialGatewayClient().configurationIdentity,
+      routes: [{
+        requestedModel: 'editorial-model',
+        expectedActualModel: 'unknown',
+        expectedActualModelExplicit: true,
+      }],
+    },
+  };
+  assert.equal(createEditorialModelPort({
+    provider: 'gateway',
+    createGatewayClient: () => unknownActualModelClient,
+  }), NO_EDITORIAL_MODEL_PORT);
+
+  const oversizedIdentityClient: EditorialStructuredModelClient = {
+    ...editorialGatewayClient(),
+    configurationIdentity: {
+      ...editorialGatewayClient().configurationIdentity,
+      routes: Array.from({ length: 16 }, (_, index) => ({
+        requestedModel: `model-${index}-${'\u0001'.repeat(76)}`,
+        expectedActualModel: `actual-${index}-${'\u0001'.repeat(76)}`,
+        expectedActualModelExplicit: true,
+      })),
+    },
+  };
+  assert.equal(createEditorialModelPort({
+    provider: 'gateway',
+    createGatewayClient: () => oversizedIdentityClient,
+  }), NO_EDITORIAL_MODEL_PORT);
+
+  for (const code of [
+    'PROVIDER_UNCONFIGURED',
+    'GATEWAY_BASE_URL_MISSING',
+    'GATEWAY_API_KEY_MISSING',
+    'GATEWAY_ENDPOINT_INVALID',
+    'GATEWAY_ROUTE_INVALID',
+    'GATEWAY_ACTUAL_MODEL_PIN_MISSING',
+  ] as const) {
+    assert.equal(createEditorialModelPort({
+      provider: 'gateway',
+      createGatewayClient: () => { throw new GatewayConfigurationError(code, 'sanitized'); },
+    }), NO_EDITORIAL_MODEL_PORT);
+  }
+
+  assert.throws(
+    () => createEditorialModelPort({
+      provider: 'gateway',
+      createGatewayClient: () => { throw new TypeError('programmer error'); },
+    }),
+    TypeError,
+  );
+});
+
+test('official CLI keeps an explicit zero-model Phase 1 composition and a Phase 2 default', () => {
   const source = readFileSync(
     new URL('../apps/orchestrator-runtime/src/editorial-report.ts', import.meta.url),
     'utf8',
   );
   assert.equal(source.includes('buildControlRuntime'), false);
   assert.equal(source.includes('ReceiptLLMClient'), false);
-  assert.equal(source.includes('LLM_PROVIDER'), false);
-  assert.equal(source.includes('LLM_GATEWAY_'), false);
-  assert.equal(source.includes('LLM_MODEL_'), false);
-  assert.match(source, /modelPort:\s*NO_EDITORIAL_MODEL_PORT/u);
+  assert.equal(source.includes('ALLOW_REAL_PROVIDER'), false);
+  assert.match(source, /createEditorialReportPipelineWithPort\(NO_EDITORIAL_MODEL_PORT, options\)/u);
+  assert.match(source, /createEditorialReportPipelineWithPort\(createEditorialModelPort\(\), options\)/u);
+  assert.match(source, /dependencies\.createPipeline \?\? createEditorialReportPipeline/u);
   assert.match(source, /root:\s*join\(workspaceRoot, 'current-control'\)/u);
   assert.match(source, /root:\s*join\(workspaceRoot, 'editorial-reports'\)/u);
   for (const forbidden of [
@@ -670,7 +795,7 @@ test('official Phase 1 composition performs no main write when source lookup fai
   assert.equal(queries.every((sql) => sql.trimStart().startsWith('SELECT ')), true);
 });
 
-test('successful official Phase 1 CLI generation leaves every main byte unchanged', async () => {
+test('official Phase 1 and default Phase 2 CLI generation leave every main byte unchanged', async () => {
   const schema = `editorial_cli_${randomUUID().replaceAll('-', '')}`;
   const workspaceRoot = mkdtempSync(join(tmpdir(), 'editorial-cli-sidecar-'));
   const database = new Pool({
@@ -754,6 +879,89 @@ test('successful official Phase 1 CLI generation leaves every main byte unchange
       )),
       true,
       `unexpected additions: ${added.map((entry) => entry.path).join(', ')}`,
+    );
+
+    const phase2WorkspaceBefore = snapshotTree(workspaceRoot);
+    const originalFetch = globalThis.fetch;
+    const gatewayEnvironment = [
+      'LLM_PROVIDER',
+      'LLM_GATEWAY_BASE_URL',
+      'LLM_GATEWAY_API_KEY',
+      'LLM_MODEL_NAME',
+      'LLM_EXPECTED_ACTUAL_MODEL',
+      'LLM_MODEL_ROUTES',
+    ] as const;
+    const originalGatewayEnvironment = Object.fromEntries(
+      gatewayEnvironment.map((key) => [key, process.env[key]]),
+    ) as Record<(typeof gatewayEnvironment)[number], string | undefined>;
+    let outboundCalls = 0;
+    try {
+      process.env.LLM_PROVIDER = 'gateway';
+      process.env.LLM_GATEWAY_BASE_URL = 'http://llm-gw.jd.local/v1';
+      process.env.LLM_GATEWAY_API_KEY = 'editorial-cli-test-secret';
+      process.env.LLM_MODEL_NAME = 'editorial-model';
+      process.env.LLM_EXPECTED_ACTUAL_MODEL = 'editorial-model-v1';
+      delete process.env.LLM_MODEL_ROUTES;
+      globalThis.fetch = async () => {
+        outboundCalls += 1;
+        return new Response(JSON.stringify({
+          id: `phase2-cli-${outboundCalls}`,
+          model: 'editorial-model-v1',
+          choices: [{ message: { content: '{}' } }],
+          usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      };
+
+      const phase2Pipeline = createEditorialReportPipeline({ database: scopedDatabase, workspaceRoot });
+      const phase2Captured = capture({ pipeline: phase2Pipeline });
+      const phase2ExitCode = await runEditorialReportCli(['--task-id', TASK_ID], phase2Captured.dependencies);
+
+      assert.equal(phase2ExitCode, 0);
+      assert.deepEqual(phase2Captured.stderr, []);
+      assert.equal(phase2Captured.stdout.length, 1);
+      const phase2Result = JSON.parse(phase2Captured.stdout[0]!) as typeof RESULT;
+      assert.equal(phase2Result.status, 'degraded');
+      assert.equal(outboundCalls, 2, 'default Phase 2 must execute the bounded Planner repair path');
+      const phase2Manifest = JSON.parse(readFileSync(phase2Result.manifestPath, 'utf8')) as {
+        modelCalls: Array<{ stage?: unknown; status?: unknown }>;
+      };
+      assert.deepEqual(
+        phase2Manifest.modelCalls.map(({ stage, status }) => ({ stage, status })),
+        [
+          { stage: 'editorial_blueprint', status: 'succeeded' },
+          { stage: 'editorial_blueprint', status: 'succeeded' },
+        ],
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      for (const key of gatewayEnvironment) {
+        const value = originalGatewayEnvironment[key];
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+
+    const databaseAfterPhase2 = await snapshotMainDatabase(scopedDatabase, TASK_ID);
+    const currentControlAfterPhase2 = fileHashes(currentTaskRoot);
+    const workspaceAfterPhase2 = snapshotTree(workspaceRoot);
+    assert.deepEqual(databaseAfterPhase2, databaseBefore, 'Phase 2 changed main database bytes');
+    assert.deepEqual(currentControlAfterPhase2, currentControlBefore, 'Phase 2 changed current-control bytes');
+    const phase2BeforeByPath = new Map(phase2WorkspaceBefore.map((entry) => [entry.path, entry]));
+    const phase2AfterByPath = new Map(workspaceAfterPhase2.map((entry) => [entry.path, entry]));
+    assert.deepEqual(
+      phase2WorkspaceBefore.filter((entry) => {
+        const after = phase2AfterByPath.get(entry.path);
+        return after === undefined || JSON.stringify(after) !== JSON.stringify(entry);
+      }),
+      [],
+      'Phase 2 changed or deleted a pre-existing workspace entry',
+    );
+    const phase2Added = workspaceAfterPhase2.filter((entry) => !phase2BeforeByPath.has(entry.path));
+    assert.ok(phase2Added.length > 0, 'Phase 2 must publish its isolated sidecar result');
+    assert.equal(
+      phase2Added.every((entry) => entry.path.startsWith('editorial-reports/')),
+      true,
+      `unexpected Phase 2 additions: ${phase2Added.map((entry) => entry.path).join(', ')}`,
     );
   } finally {
     await database.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);

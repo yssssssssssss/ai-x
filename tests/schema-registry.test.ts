@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import Ajv from 'ajv';
 import {
   resolveSchema,
   loadSchemaText,
@@ -8,10 +9,49 @@ import { hashPrompt } from '../apps/orchestrator-runtime/src/runtime/llm-client.
 
 // issue #5:schemaName 命名空间收敛到 registry。测试锁定三类语义 + hashPrompt 溯源。
 
+const FIDELITY_PLAN_VERSION = 'editorial-fidelity-plan-v1';
+
+function materialUnitId(index = 10): string {
+  return `emu_${index.toString(16).padStart(64, '0')}`;
+}
+
+function fidelityCheck(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    copyPointer: '/sections/0/blocks/0/summary',
+    materialUnitIds: [materialUnitId()],
+    verdict: 'faithful',
+    ...overrides,
+  };
+}
+
+function fidelityPlan(checks: unknown[] = [fidelityCheck()]): Record<string, unknown> {
+  return { version: FIDELITY_PLAN_VERSION, checks };
+}
+
+function compileFidelitySchema() {
+  const text = loadSchemaText(resolveSchema('editorial-report-fidelity'));
+  assert.ok(text, '应读到 Fidelity Review Plan schema');
+  return new Ajv({ allErrors: true, strict: true }).compile(JSON.parse(text));
+}
+
 test('resolveSchema:项目 schema 名映射到 schemas/ 文件', () => {
   const spec = resolveSchema('research-task');
   assert.equal(spec.id, 'research-task');
   assert.equal(spec.file, 'research-task.schema.json');
+  assert.ok(!spec.isArrayEnvelope);
+});
+
+test('resolveSchema:editorial Blueprint 使用固定 Registry key', () => {
+  const spec = resolveSchema('editorial-report-blueprint');
+  assert.equal(spec.id, 'editorial-report-blueprint');
+  assert.equal(spec.file, 'editorial-report-blueprint.schema.json');
+  assert.ok(!spec.isArrayEnvelope);
+});
+
+test('resolveSchema:editorial Fidelity 使用固定 Registry key', () => {
+  const spec = resolveSchema('editorial-report-fidelity');
+  assert.equal(spec.id, 'editorial-report-fidelity');
+  assert.equal(spec.file, 'editorial-report-fidelity.schema.json');
   assert.ok(!spec.isArrayEnvelope);
 });
 
@@ -47,6 +87,109 @@ test('loadSchemaText:decision-states 加载数组项 schema 文本', () => {
   const spec = resolveSchema('decision-states');
   const text = loadSchemaText(spec);
   assert.ok(text && text.includes('node_key'), '应读到 decision-state 项 schema');
+});
+
+test('editorial Fidelity schema 接受最小 Review Plan', () => {
+  const validate = compileFidelitySchema();
+  assert.equal(validate(fidelityPlan()), true, JSON.stringify(validate.errors));
+});
+
+test('editorial Fidelity schema 拒绝 Pipeline 控制字段和未知 check 字段', () => {
+  const validate = compileFidelitySchema();
+  const plan = fidelityPlan();
+  for (const [field, value] of [
+    ['materialHash', `sha256:${'b'.repeat(64)}`],
+    ['blueprintHash', `sha256:${'c'.repeat(64)}`],
+    ['verdict', 'pass'],
+  ] as const) {
+    assert.equal(validate({ ...plan, [field]: value }), false, field);
+  }
+  assert.equal(validate(fidelityPlan([
+    fidelityCheck({ message: 'model-authored prose is forbidden' }),
+  ])), false, 'check unknown field');
+});
+
+test('editorial Fidelity schema 要求完整的 Plan 和 check 字段', () => {
+  const validate = compileFidelitySchema();
+  const check = fidelityCheck();
+  assert.equal(validate({ checks: [check] }), false, 'version is required');
+  assert.equal(validate({ version: FIDELITY_PLAN_VERSION }), false, 'checks is required');
+  for (const field of Object.keys(check)) {
+    const incomplete = { ...check } as Record<string, unknown>;
+    delete incomplete[field];
+    assert.equal(validate(fidelityPlan([incomplete])), false, field);
+  }
+});
+
+test('editorial Fidelity schema 固定版本并限制 verdict 词表', () => {
+  const validate = compileFidelitySchema();
+  const makePlan = (verdict: unknown, version = FIDELITY_PLAN_VERSION) => ({
+    version,
+    checks: [fidelityCheck({ verdict })],
+  });
+  for (const verdict of [
+    'faithful',
+    'narrower',
+    'unsupported',
+    'certainty_upgraded',
+    'numeric_drift',
+    'qualification_lost',
+  ]) {
+    assert.equal(validate(makePlan(verdict)), true, verdict);
+  }
+  assert.equal(validate(makePlan('pass')), false, 'pass is Pipeline-owned, not a check verdict');
+  assert.equal(validate(makePlan('faithful', 'editorial-fidelity-v1')), false, 'final review version');
+});
+
+test('editorial Fidelity schema 将 Review Plan 限制为 1 到 240 个 check', () => {
+  const validate = compileFidelitySchema();
+  const makeChecks = (count: number) => Array.from(
+    { length: count },
+    (_, index) => fidelityCheck({ copyPointer: `/sections/0/blocks/${index}/summary` }),
+  );
+  assert.equal(validate(fidelityPlan([])), false);
+  assert.equal(validate(fidelityPlan(makeChecks(240))), true, JSON.stringify(validate.errors));
+  assert.equal(validate(fidelityPlan(makeChecks(241))), false);
+});
+
+test('editorial Fidelity schema 只接受最多 256 字符的 ASCII JSON Pointer', () => {
+  const validate = compileFidelitySchema();
+  const makePlan = (copyPointer: unknown) => fidelityPlan([fidelityCheck({ copyPointer })]);
+  for (const pointer of [
+    '/sections/0/blocks/0/summary',
+    '/escaped~0tilde/~1slash',
+    `/${'a'.repeat(255)}`,
+  ]) {
+    assert.equal(validate(makePlan(pointer)), true, pointer);
+  }
+  for (const pointer of [
+    '',
+    'sections/0/blocks/0/summary',
+    '/bad~2escape',
+    '/非-ASCII',
+    `/${'a'.repeat(256)}`,
+  ]) {
+    assert.equal(validate(makePlan(pointer)), false, pointer || '(empty)');
+  }
+});
+
+test('editorial Fidelity schema 只接受 1 到 16 个唯一 Material Unit ID', () => {
+  const validate = compileFidelitySchema();
+  const makePlan = (materialUnitIds: unknown) => fidelityPlan([
+    fidelityCheck({ materialUnitIds }),
+  ]);
+  assert.equal(validate(makePlan([materialUnitId(0)])), true, JSON.stringify(validate.errors));
+  assert.equal(validate(makePlan(Array.from({ length: 16 }, (_, index) => materialUnitId(index)))), true);
+  for (const materialUnitIds of [
+    [],
+    Array.from({ length: 17 }, (_, index) => materialUnitId(index)),
+    [materialUnitId(0), materialUnitId(0)],
+    ['unit-1'],
+    [`emu_${'A'.repeat(64)}`],
+    [`emu_${'a'.repeat(63)}`],
+  ]) {
+    assert.equal(validate(makePlan(materialUnitIds)), false, JSON.stringify(materialUnitIds));
+  }
 });
 
 test('loadSchemaText:无文件 spec(skill:*)返回 null', () => {
