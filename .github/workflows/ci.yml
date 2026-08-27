@@ -25,8 +25,8 @@ jobs:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
       - run: pnpm exec playwright install --with-deps chromium
-      - name: Run about-blank in-memory Chromium contract
-        run: pnpm exec tsx --test tests/playwright-page-capture-adapter.test.ts
+      - name: Run in-memory Chromium contracts
+        run: pnpm exec tsx --test tests/playwright-page-capture-adapter.test.ts tests/editorial-report-renderer.test.ts
 
   quality:
     runs-on: ubuntu-latest

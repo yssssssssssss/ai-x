@@ -5,8 +5,14 @@ import {
   ArtifactInvalidationError,
   ArtifactPublicationGroup,
 } from '../apps/orchestrator-runtime/src/control/artifact-publication-group.ts';
-import { ArtifactIntegrityError } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
-import { VisualAssetService } from '../apps/orchestrator-runtime/src/report/visual-asset-service.ts';
+import {
+  ArtifactIntegrityError,
+  type TrustedBinaryMetadata,
+} from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
+import {
+  VerifiedVisualAssetReader,
+  VisualAssetService,
+} from '../apps/orchestrator-runtime/src/report/visual-asset-service.ts';
 import type { ToolMediaAttachment } from '../apps/orchestrator-runtime/src/runtime/tool-adapter.ts';
 import type { ControlExecutionLease } from '../database/control-plane.ts';
 
@@ -84,7 +90,7 @@ function rehashedManifest(manifest: Record<string, unknown>): Record<string, unk
   return { ...draft, manifestHash: digest(JSON.stringify(stable(draft))) };
 }
 
-function sniff(bytes: Buffer): { contentType: string; width: number; height: number } {
+function sniff(bytes: Buffer): Pick<TrustedBinaryMetadata, 'contentType' | 'width' | 'height'> {
   if (bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
     return { contentType: 'image/png', width: 1, height: 1 };
   }
@@ -158,7 +164,7 @@ class FakeArtifactStore {
   async readVerifiedBinary(artifactId: string): Promise<{
     artifact: FakeArtifact;
     bytes: Buffer;
-    metadata: { contentType: string; byteSize: number; width: number; height: number };
+    metadata: TrustedBinaryMetadata;
   }> {
     const artifact = this.requireSealed(artifactId);
     const bytes = this.binaryValues.get(artifactId);
@@ -234,7 +240,7 @@ class CorruptChartBinaryReadStore extends FakeArtifactStore {
       return { ...result, bytes: Buffer.concat([result.bytes, Buffer.from('tampered')]) };
     }
     if (this.corruption === 'mediaType') {
-      return { ...result, metadata: { ...result.metadata, contentType: 'image/png' } };
+      return { ...result, metadata: { ...result.metadata, contentType: 'image/png' as const } };
     }
     return { ...result, metadata: { ...result.metadata, width: result.metadata.width + 1 } };
   }
@@ -1351,6 +1357,31 @@ test('readVerified binds verified bytes to an untampered manifest hash and asset
     }),
     /manifest hash|integrity/i,
   );
+});
+
+test('VerifiedVisualAssetReader exposes the same verification through a read-only Artifact port', async () => {
+  const fixture = harness();
+  const ingested = await fixture.service.ingest({
+    ...binding,
+    source: { kind: 'user_upload', fileName: 'read-only.png', bytes: PNG },
+    exportPolicy: 'allow',
+  });
+  const binaryWrites = fixture.artifacts.binaryWrites.length;
+  const jsonWrites = fixture.artifacts.jsonWrites.length;
+  const reader = new VerifiedVisualAssetReader({
+    readVerifiedBinary: (artifactId) => fixture.artifacts.readVerifiedBinary(artifactId),
+    readVerifiedJson: <T>(artifactId: string) => fixture.artifacts.readVerifiedJson<T>(artifactId),
+  });
+
+  const verified = await reader.readVerified({
+    assetId: ingested.assetArtifact.id,
+    manifestArtifactId: ingested.manifestArtifact.id,
+  });
+
+  assert.deepEqual(verified.bytes, PNG);
+  assert.equal(verified.manifest.manifestHash, expectedManifestHash(verified.manifest));
+  assert.equal(fixture.artifacts.binaryWrites.length, binaryWrites);
+  assert.equal(fixture.artifacts.jsonWrites.length, jsonWrites);
 });
 
 test('rejects recomputed-hash SEALED Manifests that violate schema or Artifact schemaVersion', async () => {
