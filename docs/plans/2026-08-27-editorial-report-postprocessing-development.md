@@ -1,9 +1,10 @@
 # Editorial Report 后置编排能力开发文档
 
 > 状态：Phase 1 已在 main 完成；Phase 2 工程实现、真实 Gateway ready+Fidelity 冒烟和桌面／移动／A4
-> 视觉 QA 已完成，Node 22 本地主链与全量 quality 已通过。正式 calibration 仍因真实 corpus 数量、类型
-> 覆盖和 source-policy deny 样本不足而未完成，远端 workflow 也尚未产生有效 jobs。因此当前仍是
-> “可测试、不可发布”，不能宣称第 30 节定义的完整 V1 已完成。
+> 视觉 QA 已完成，Node 22 本地主链与全量 quality 已通过，验证分支也已产生非空且全部成功的远端
+> CI jobs。正式 calibration 仍因真实 corpus 数量、类型覆盖和 source-policy deny 样本不足而未完成，
+> 且这些提交尚未整合到 `origin/main`。因此当前仍是“可测试、不可发布”，不能宣称第 30 节定义的完整
+> V1 已完成。
 >
 > Phase 2 开发基线：`main@49e4b7f`（2026-08-27，标签 `单skill版本-报告优化-0827`）。本轮实现只基于
 > main，不切换或吸收其他分支代码。
@@ -102,7 +103,8 @@ Node 22.22.1 下，2026-08-28 的最新 `pnpm quality` 共发现 1761 tests：17
 首次解除上述三项后，全量并发测试又暴露 `tool-retry-policy` 在 deadline timer 与 lease check 边界把
 中断和真实 `false` 都折叠为 `false` 的竞态；`leaseActive()` 现保留 `deadline_exceeded|lease_lost`
 原因，不再依赖返回后的 `Date.now()` 猜测。对应定向测试、主链六文件和全量 quality 均已通过。
-这只证明当前本地工作树；远端仍必须由目标 commit 的非空 CI jobs 独立复核，不能把本地绿灯冒充发布完成。
+远端验证分支已对同一代码产生 Playwright、quality 与无 secrets smoke gate 三个非空 job 并全部成功；
+这证明 workflow 解析和当前 CI 路径已恢复，但不代表提交已整合到 `origin/main` 或正式 calibration 已完成。
 
 ### 0.5 Phase 2 工程实施记录（2026-08-27）
 
@@ -170,9 +172,9 @@ gitignore 的本地 Editorial sidecar；同一结果已检查 1440×1000、390×
 工程实现完成不等于发布验收完成。当前 main 工作区仅有 6 个可用真实 SEALED V1 包且只覆盖 2 类
 deliverable，未达到至少 10 个、覆盖 5 类的硬门槛，也没有已证明可用于同次 collect 的合法
 source-policy deny 包；因此尚不能运行可通过的正式 calibration collect。仍缺 calibration 绑定的
-60 条 golden 实跑、正式真实 Gateway/corpus 汇总、reference rubric，以及非空且全部通过的远端 CI
-jobs；主链六文件和全量 quality 已在当前 Node 22 本地工作树通过，但尚未由远端目标 commit 的 jobs
-复核。在这些证据齐备前，Phase 2 必须保持“不可发布”。
+60 条 golden 实跑、正式真实 Gateway/corpus 汇总和 reference rubric；主链、全量 quality 与远端验证
+分支的非空 CI jobs 已通过，但当前提交尚未整合到 `origin/main`。在 calibration 与最终整合证据齐备前，
+Phase 2 必须保持“不可发布”。
 
 | Phase 2 工程检查 | 当前结果 |
 |---|---|
@@ -182,7 +184,7 @@ jobs；主链六文件和全量 quality 已在当前 Node 22 本地工作树通�
 | 独立 Chromium 合同 | 13/13 pass，覆盖 1440px、390px、键盘、离线与 A4 |
 | `pnpm typecheck` | 通过 |
 | `git diff --check` | 通过 |
-| `pnpm quality` | 1761 tests：1748 pass、0 fail、13 skip；Node 22 本地通过，远端 CI 仍待复核 |
+| `pnpm quality` | 1761 tests：1748 pass、0 fail、13 skip；Node 22 本地与远端验证分支均通过 |
 
 ## 1. 决策摘要
 
@@ -2777,8 +2779,9 @@ git diff --check
 ### Phase 2：受控 LLM 文案编辑与独立保真评审
 
 > 实施状态（2026-08-28）：下列工程交付已在 `main@49e4b7f` 基础上完成开发、真实 Gateway
-> ready+Fidelity 冒烟和视觉 QA；Node 22 本地主链与全量 quality 已通过。正式 calibration 仍受
-> 6 个包／2 类 deliverable 的 corpus 缺口阻塞，远端 workflow 尚无有效 jobs，因此本阶段尚未完成发布验收。
+> ready+Fidelity 冒烟和视觉 QA；Node 22 本地主链、全量 quality 与远端验证分支的非空 CI jobs 已通过。
+> 正式 calibration 仍受 6 个包／2 类 deliverable 的 corpus 缺口阻塞，且提交尚未整合到 `origin/main`，
+> 因此本阶段尚未完成发布验收。
 
 交付：
 
@@ -3404,10 +3407,10 @@ ReportDocument 已经包含足够完整、结构化且正确绑定的内容，�
   `origin/main`；单独 `git rev-parse origin/main` 只读取可能过期的 remote-tracking ref。若
   `origin/main` 与最近一次冻结 SHA 不同，立即停止，既有整合与 calibration 结论失效。不得使用
   `--force` 或 `--force-with-lease`；重新整合必须取得当前用户授权，并在新 HEAD 上重跑全部门禁。
-- 远端 workflow 必须先由其明确 owner 在独立、获授权的变更中修复并证明能够创建非空 jobs；
-  `.github/workflows/ci.yml` 不属于 Phase 2 提交。workflow-file failure 或 `jobs=[]` 均视为
-  发布前置依赖未解除，不能把当前归属未知的本地 workflow diff 混入本阶段。该修复只解除 workflow
-  解析／空 jobs 阻塞，不代表 `pnpm quality` 已通过。
+- 远端 workflow 已由独立 CI 修复把 job-level 不可用的 `runner.temp` 下移到 step-level env，并将
+  sandboxed Chromium 合同固定到支持该安全边界的 `ubuntu-22.04`；验证分支已证明能够创建三个非空
+  jobs 且全部成功。`.github/workflows/ci.yml` 不属于 Phase 2 功能提交，最终整合仍须保留独立 commit，
+  且不得把当前归属未知的 Web diff 混入。
 - Phase 2 完成后执行 `pnpm quality`，并完整满足第 22 节四组准入证据；“一次能调用 Gateway”不能
   替代 identity、golden、真实包分布与主链回归门禁。identity、golden、真实包分布等发布阈值不允许
   豁免；第 0.4 节的本地非 Editorial 阻塞已修复并通过 Node 22 quality，但仍须由独立可审查变更和目标
@@ -3463,8 +3466,8 @@ ReportDocument 已经包含足够完整、结构化且正确绑定的内容，�
 - Phase 2 的真实 Gateway ready+Fidelity、60 条 Fidelity golden、至少 10 个真实 SEALED 包、真实
   source-policy deny 零调用、allow ready-rate、全原因降级分布、预算阈值和 reference rubric 均由
   同一校准结果证明达标。
-- 主链回归、typecheck、`pnpm quality` 与真实验收全部通过；当前本地主链、typecheck 和 quality 已通过，
-  但正式 calibration、真实验收及目标 commit 的远端非空 CI jobs 仍未完成。
+- 主链回归、typecheck、`pnpm quality` 与真实验收全部通过；当前本地主链、typecheck、quality 和
+  远端验证分支 CI 已通过，但正式 calibration、真实验收及向 `origin/main` 的最终整合仍未完成。
 - 发布所依据的 `origin/main` 已通过显式 fetch 刷新；Phase 2 目标 commit 的远端 CI run head SHA 与
   该 commit 一致，jobs 非空且全部成功；书面 quality 豁免不替代该门禁。不存在
   未经授权的 force push 或混入 Phase 2 的 workflow 修复。
