@@ -234,10 +234,15 @@ async function runWithinToolScope<T>(
   const interrupted = new Promise<never>((_resolve, reject) => {
     onAbort = () => reject(toolAbortError(toolId, context.signal, context.deadlineAt));
     context.signal.addEventListener('abort', onAbort, { once: true });
-    timer = setTimeout(
-      () => reject(toolAbortError(toolId, context.signal, context.deadlineAt)),
-      remainingMs,
-    );
+    const settleAtDeadline = () => {
+      const remaining = context.deadlineAt - Date.now();
+      if (remaining > 0) {
+        timer = setTimeout(settleAtDeadline, remaining);
+        return;
+      }
+      reject(toolAbortError(toolId, context.signal, context.deadlineAt));
+    };
+    timer = setTimeout(settleAtDeadline, remainingMs);
     if (context.signal.aborted) onAbort();
   });
   try {
