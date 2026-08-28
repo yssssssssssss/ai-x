@@ -2505,7 +2505,11 @@ test('failed clarification releases its pending command so a retry can complete'
   } as unknown as ControlTasksRuntime;
   const first = await listenLocalApp(controlTasksApp(runtime));
   const second = await listenLocalApp(controlTasksApp(runtime));
-  const requestBody = { expectedVersion: created.stateVersion, clarificationAnswers: {}, assumptionEdits: {} };
+  const requestBody = {
+    expectedVersion: created.stateVersion,
+    clarificationAnswers: { audience: '产品团队' },
+    assumptionEdits: {},
+  };
   const key = `release-${randomUUID()}`;
   try {
     const failed = await postJson(first.baseUrl, `/api/control-tasks/${created.id}/clarify`, token, requestBody, key);
@@ -2592,6 +2596,20 @@ test('post-activation clarification failure reclaims the same command without an
     } finally {
       afterFailure.release();
     }
+
+    const freshKey = `post-activation-fresh-${randomUUID()}`;
+    const freshRetry = await postJson(
+      app.baseUrl,
+      `/api/control-tasks/${planned.task.id}/clarify`,
+      token,
+      requestBody,
+      freshKey,
+    );
+    assert.equal(freshRetry.status, 400);
+    assert.deepEqual(await freshRetry.json(), {
+      error: 'clarificationAnswers contains unknown keys',
+      unknown: ['audience'],
+    });
 
     const retried = await postJson(
       app.baseUrl,

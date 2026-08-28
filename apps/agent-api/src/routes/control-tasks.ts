@@ -304,7 +304,19 @@ async function prepareClarification(
     res.status(404).json({ error: '任务不存在' });
     return null;
   }
-  if (task.state === 'awaiting_clarification') {
+  const requestHash = clarificationRequestHash({
+    expectedVersion,
+    clarificationAnswers,
+    assumptionEdits,
+    ...(selectedScenarioId ? { selectedScenarioId } : {}),
+  });
+  const existing = await runtime.repository.getCommand(task.id, 'clarification', key);
+  if (existing && existing.requestHash !== requestHash) {
+    res.status(409).json({ error: `idempotency key ${key} was reused with a different request` });
+    return null;
+  }
+  const resumesExistingRequest = existing?.requestHash === requestHash;
+  if (task.state === 'awaiting_clarification' && !resumesExistingRequest) {
     const requirement = clarificationRequirement(task.structuredTask);
     if (!requirement) {
       res.status(409).json({ error: `awaiting_clarification task ${task.id} has invalid clarification requirement` });
@@ -341,18 +353,9 @@ async function prepareClarification(
       return null;
     }
   }
-  const requestHash = clarificationRequestHash({
-    expectedVersion,
-    clarificationAnswers,
-    assumptionEdits,
-    ...(selectedScenarioId ? { selectedScenarioId } : {}),
-  });
-  if (task.state !== 'awaiting_clarification') {
-    const existing = await runtime.repository.getCommand(task.id, 'clarification', key);
-    if (!existing || existing.requestHash !== requestHash) {
-      res.status(409).json({ error: `task ${task.id} is not awaiting_clarification` });
-      return null;
-    }
+  if (task.state !== 'awaiting_clarification' && !resumesExistingRequest) {
+    res.status(409).json({ error: `task ${task.id} is not awaiting_clarification` });
+    return null;
   }
   return {
     clarification: runtime.clarification,
