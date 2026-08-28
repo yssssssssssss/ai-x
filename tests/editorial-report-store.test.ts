@@ -36,6 +36,7 @@ import {
   renderEditorialReport,
   type EditorialRenderableVisualAsset,
 } from '../apps/orchestrator-runtime/src/report/editorial-report-renderer.ts';
+import { prepareEditorialCopyEditSession } from '../apps/orchestrator-runtime/src/report/editorial-copy-edit-session.ts';
 
 const TASK_ID = '11111111-1111-4111-8111-111111111111';
 const PLAN_ID = '22222222-2222-4222-8222-222222222222';
@@ -217,7 +218,7 @@ function bundle(
     mediaType: 'application/json' | 'text/html',
   ) => ({ relativePath, contentSha256: hashBytes(bytes), byteSize: bytes.byteLength, mediaType });
   const manifest: EditorialReport = {
-    version: 'editorial-report-v1',
+    version: 'editorial-report-v2',
     authority: 'derived',
     taskId: TASK_ID,
     planVersionId: PLAN_ID,
@@ -232,13 +233,14 @@ function bundle(
       materialVersion: 'editorial-material-v1',
       modelContextVersion: 'editorial-model-context-v1',
       modelContextHash: modelContext.hash,
-      blueprintPlanVersion: 'editorial-blueprint-plan-v1',
+      copyEditRequestVersion: 'editorial-copy-edit-request-v1',
+      copyEditPlanVersion: 'editorial-copy-edit-plan-v1',
       blueprintVersion: 'editorial-blueprint-v1',
-      promptVersion: 'editorial-blueprint-prompt-v2',
+      copyEditPromptVersion: 'editorial-copy-edit-prompt-v1',
       fidelityPromptVersion: 'editorial-fidelity-prompt-v2',
       fallbackVersion: 'editorial-fallback-v1',
       rendererVersion: 'editorial-html-v1',
-      storeVersion: 'editorial-store-v1',
+      storeVersion: 'editorial-store-v2',
       modelEgress,
       gatewayConfiguration: null,
     },
@@ -353,7 +355,7 @@ function configuredFailureBundle(): EditorialStorePublishInput {
       gatewayConfigurationHash: configuration.gatewayConfigurationHash,
       modelContextHash: modelContext.hash,
       modelContextByteSize: modelContext.byteSize,
-      promptVersion: 'editorial-blueprint-prompt-v2',
+      promptVersion: 'editorial-copy-edit-prompt-v1',
       promptHash: `sha256:${'1'.repeat(16)}` as const,
       status: 'failed' as const,
       failureCode: 'LLM_SERVER',
@@ -396,97 +398,19 @@ function configuredFailureBundle(): EditorialStorePublishInput {
   });
 }
 
-function blueprintPlanHash(blueprint: EditorialBlueprint): `sha256:${string}` {
-  return hashBytes(canonicalJsonBytes({
-    version: 'editorial-blueprint-plan-v1',
-    locale: blueprint.locale,
-    ...(blueprint.title === undefined ? {} : { title: blueprint.title }),
-    deck: blueprint.deck,
-    sections: blueprint.sections.slice(0, -1),
-  }));
-}
-
-function configuredReadyBundle(): EditorialStorePublishInput {
-  const rewritten = rewriteBundle(configuredFailureBundle(), (draft) => {
-    const configuration = draft.manifest.pipeline.gatewayConfiguration;
-    assert.ok(configuration);
-    const modelContext = projectEditorialModelContext(draft.material);
-    const materialHash = hashBytes(canonicalJsonBytes(draft.material));
-    const blueprintHash = hashBytes(canonicalJsonBytes(draft.blueprint));
-    const rendered = renderEditorialReport({
-      material: draft.material,
-      blueprint: draft.blueprint,
-      verifiedVisualAssets: [],
-    });
-    draft.htmlBytes = rendered.htmlBytes;
-    const generationId = createEditorialGenerationId({
-      requestKey: draft.manifest.requestKey,
-      mode: 'llm',
-      materialHash,
-      publishedBlueprintHash: blueprintHash,
-      exportedAssetHashes: rendered.exportedAssets,
-    });
-    const route = configuration.routes[0]!;
-    const plannerCall = {
-      stage: 'editorial_blueprint' as const,
-      ordinal: 1 as const,
-      gatewayConfigurationHash: configuration.gatewayConfigurationHash,
-      modelContextHash: modelContext.hash,
-      modelContextByteSize: modelContext.byteSize,
-      promptVersion: 'editorial-blueprint-prompt-v2',
-      promptHash: `sha256:${'1'.repeat(16)}` as const,
-      status: 'succeeded' as const,
-      provider: configuration.provider,
-      endpointHost: configuration.endpointHost,
-      requestedModel: route.requestedModel,
-      expectedModel: route.expectedActualModel,
-      actualModel: route.expectedActualModel,
-      modelVersion: route.expectedActualModel,
-      traceId: 'trace-ready-1',
-      responseHash: blueprintPlanHash(draft.blueprint),
-    };
-    const candidateAttempts = [{
-      ordinal: 1 as const,
-      blueprintHash,
-      plannerCall,
-      outcome: 'accepted' as const,
-      issueCodes: [],
-    }];
-    draft.diagnostic = buildPhase2PublishedDiagnostic({
-      material: draft.material,
-      requestKey: draft.manifest.requestKey,
-      materialHash,
-      modelEgress: draft.manifest.pipeline.modelEgress,
-      gatewayConfigurationHash: configuration.gatewayConfigurationHash,
-      modelContextHash: modelContext.hash,
-      modelContextByteSize: modelContext.byteSize,
-      generationId,
-      publishedBlueprintHash: blueprintHash,
-      htmlHash: hashBytes(draft.htmlBytes),
-      status: 'ready',
-      candidateAttempts,
-      rendererWarningCodes: rendered.warnings.map(({ code }) => code),
-    });
-    draft.manifest = {
-      ...draft.manifest,
-      generationId,
-      status: 'ready',
-      modelCalls: [plannerCall],
-      exportedAssets: rendered.exportedAssets,
-    };
-  });
-  return { ...rewritten, slot: 'ready' };
-}
-
 function configuredParaphraseReadyBundle(): EditorialStorePublishInput {
-  return rewriteBundle(configuredReadyBundle(), (draft) => {
+  const rewritten = rewriteBundle(configuredFailureBundle(), (draft) => {
     const configuration = draft.manifest.pipeline.gatewayConfiguration;
     assert.ok(configuration);
     const decisionCover = draft.blueprint.sections
       .flatMap(({ blocks }) => blocks)
       .find(({ kind }) => kind === 'decision-cover');
     assert.ok(decisionCover?.kind === 'decision-cover');
-    decisionCover.summary = { ...decisionCover.summary, mode: 'paraphrase' };
+    decisionCover.summary = {
+      ...decisionCover.summary,
+      text: '该事项仍需后续核验',
+      mode: 'paraphrase',
+    };
     const materialHash = hashBytes(canonicalJsonBytes(draft.material));
     const blueprintHash = hashBytes(canonicalJsonBytes(draft.blueprint));
     const paraphrases = enumerateEditorialParaphrases(draft.blueprint);
@@ -505,9 +429,28 @@ function configuredParaphraseReadyBundle(): EditorialStorePublishInput {
     });
     const modelContext = projectEditorialModelContext(draft.material);
     const route = configuration.routes[0]!;
-    const plannerCall = draft.diagnostic.candidateAttempts[0]!.plannerCall;
-    assert.equal(plannerCall.status, 'succeeded');
-    plannerCall.responseHash = blueprintPlanHash(draft.blueprint);
+    const editPlan = prepareEditorialCopyEditSession({
+      material: draft.material,
+      requestKey: draft.blueprint.requestKey,
+    }).replay(draft.blueprint);
+    const plannerCall = {
+      stage: 'editorial_blueprint' as const,
+      ordinal: 1 as const,
+      gatewayConfigurationHash: configuration.gatewayConfigurationHash,
+      modelContextHash: modelContext.hash,
+      modelContextByteSize: modelContext.byteSize,
+      promptVersion: 'editorial-copy-edit-prompt-v1',
+      promptHash: `sha256:${'1'.repeat(16)}` as const,
+      status: 'succeeded' as const,
+      provider: configuration.provider,
+      endpointHost: configuration.endpointHost,
+      requestedModel: route.requestedModel,
+      expectedModel: route.expectedActualModel,
+      actualModel: route.expectedActualModel,
+      modelVersion: route.expectedActualModel,
+      traceId: 'trace-ready-1',
+      responseHash: hashBytes(canonicalJsonBytes(editPlan)),
+    };
     const fidelityPlan = {
       version: 'editorial-fidelity-plan-v1' as const,
       checks: fidelityReview.checks,
@@ -573,10 +516,12 @@ function configuredParaphraseReadyBundle(): EditorialStorePublishInput {
     draft.manifest = {
       ...draft.manifest,
       generationId,
+      status: 'ready',
       modelCalls: [plannerCall, manifestFidelityCall],
       exportedAssets: rendered.exportedAssets,
     };
   });
+  return { ...rewritten, slot: 'ready' };
 }
 
 interface BundleDraft {
@@ -784,7 +729,7 @@ test('publishes manifest-last into an immutable owner-only slot and verifies eve
     assertStillCurrent: async () => { fenceCalls += 1; },
   }));
 
-  assert.equal(fenceCalls, 1);
+  assert.equal(fenceCalls, 2);
   assert.equal(published.manifest.status, 'degraded');
   assert.equal(published.reportPath, join(published.slotPath, 'editorial-report.html'));
   assert.deepEqual((await reports.readSlot({
@@ -984,7 +929,7 @@ test('rejects a synchronized Diagnostic and manifest file-hash rewrite', async (
 test('rebuilds a ready Diagnostic and rejects a synchronized warning rewrite', async (t) => {
   const root = await temporaryRoot(t);
   const validRoot = join(root, 'valid');
-  const valid = configuredReadyBundle();
+  const valid = configuredParaphraseReadyBundle();
   const validReports = store(validRoot);
   const lease = await validReports.acquire(bundleCoordinates(valid));
   const published = await lease.publish(valid);
@@ -1016,36 +961,12 @@ test('rejects a ready paraphrase whose Fidelity evidence was synchronously remov
   await lease.release();
 
   const forged = rewriteBundle(valid, (draft) => {
-    const configuration = draft.manifest.pipeline.gatewayConfiguration;
-    assert.ok(configuration);
     const accepted = draft.diagnostic.candidateAttempts.find(({ outcome }) => outcome === 'accepted');
     assert.ok(accepted);
     const mutableAttempt = accepted as unknown as Record<string, unknown>;
     delete mutableAttempt.fidelityCall;
     delete mutableAttempt.fidelityReviewHash;
     delete mutableAttempt.fidelityReview;
-    const materialHash = hashBytes(canonicalJsonBytes(draft.material));
-    const modelContext = projectEditorialModelContext(draft.material);
-    const rendered = renderEditorialReport({
-      material: draft.material,
-      blueprint: draft.blueprint,
-      verifiedVisualAssets: [],
-    });
-    draft.diagnostic = buildPhase2PublishedDiagnostic({
-      material: draft.material,
-      requestKey: draft.manifest.requestKey,
-      materialHash,
-      modelEgress: draft.manifest.pipeline.modelEgress,
-      gatewayConfigurationHash: configuration.gatewayConfigurationHash,
-      modelContextHash: modelContext.hash,
-      modelContextByteSize: modelContext.byteSize,
-      generationId: draft.manifest.generationId,
-      publishedBlueprintHash: hashBytes(canonicalJsonBytes(draft.blueprint)),
-      htmlHash: hashBytes(draft.htmlBytes),
-      status: 'ready',
-      candidateAttempts: draft.diagnostic.candidateAttempts,
-      rendererWarningCodes: rendered.warnings.map(({ code }) => code),
-    });
     draft.manifest.modelCalls = draft.manifest.modelCalls.filter(
       ({ stage }) => stage === 'editorial_blueprint',
     );
@@ -1146,7 +1067,7 @@ test('writes a fenced failure Diagnostic once with owner-only permissions', asyn
     assertStillCurrent: async () => { fenceCalls += 1; },
   });
 
-  assert.equal(fenceCalls, 1);
+  assert.equal(fenceCalls, 2);
   assert.match(
     written.diagnosticPath,
     new RegExp(`/tasks/${TASK_ID}/failures/[0-9a-f]{32}/editorial-diagnostic\\.json$`, 'u'),
@@ -1214,6 +1135,29 @@ test('failure Diagnostic revalidates staged bytes after the binding fence', asyn
     (error: unknown) => error instanceof EditorialStoreError && error.code === 'EDITORIAL_STORE_WRITE_FAILED',
   );
 
+  assert.deepEqual(await readdir(failuresPath), []);
+});
+
+test('failure Diagnostic rechecks the current binding after staged validation and before rename', async (t) => {
+  const root = await temporaryRoot(t);
+  const failuresPath = join(root, 'tasks', TASK_ID, 'failures');
+  const reports = store(root);
+  let fenceCalls = 0;
+
+  await assert.rejects(
+    reports.writeFailureDiagnostic({
+      taskId: TASK_ID,
+      expected: FAILURE_EXPECTED,
+      diagnosticBytes: failureDiagnosticBytes(),
+      assertStillCurrent: async () => {
+        fenceCalls += 1;
+        if (fenceCalls === 2) throw new Error('source changed after failure staging validation');
+      },
+    }),
+    /source changed after failure staging validation/u,
+  );
+
+  assert.equal(fenceCalls, 2);
   assert.deepEqual(await readdir(failuresPath), []);
 });
 
@@ -1447,7 +1391,7 @@ test('publish rechecks the current binding after the final asynchronous hook', a
   await lease.release();
 });
 
-test('publish keeps the request lock owned while the final binding fence is in flight', async (t) => {
+test('publish keeps the request lock owned across staged validation and both binding fences', async (t) => {
   const root = await temporaryRoot(t);
   const owner = store(root, { now: new Date('2026-08-27T05:00:00.000Z'), pid: 1001 });
   const lease = await owner.acquire({ taskId: TASK_ID, attemptId: ATTEMPT_ID, requestKey: REQUEST_KEY });
@@ -1468,7 +1412,7 @@ test('publish keeps the request lock owned while the final binding fence is in f
     },
   }));
 
-  assert.equal(fenceCalls, 1);
+  assert.equal(fenceCalls, 2);
   assert.equal(published.slot, 'fallback');
   assert.equal(await lease.release(), true);
 });
@@ -1513,6 +1457,64 @@ test('publish revalidates every staged byte after the binding fence', async (t) 
 
   assert.equal(await reports.readSlot({ ...coordinates, slot: 'fallback' }), null);
   assert.deepEqual(await readdir(stagingRoot), []);
+  assert.equal(await lease.release(), true);
+});
+
+test('publish rechecks the current binding after staged validation and immediately before rename', async (t) => {
+  const root = await temporaryRoot(t);
+  const reports = store(root);
+  const coordinates = { taskId: TASK_ID, attemptId: ATTEMPT_ID, requestKey: REQUEST_KEY };
+  const lease = await reports.acquire(coordinates);
+  let fenceCalls = 0;
+
+  await assert.rejects(
+    lease.publish(bundle('fallback', {
+      assertStillCurrent: async () => {
+        fenceCalls += 1;
+        if (fenceCalls === 2) throw new Error('source changed after staged validation');
+      },
+    })),
+    /source changed after staged validation/u,
+  );
+
+  assert.equal(fenceCalls, 2);
+  assert.equal(await reports.readSlot({ ...coordinates, slot: 'fallback' }), null);
+  assert.equal(await lease.release(), true);
+});
+
+test('publish linearizes at the final database observation when the source switches before the fence Promise returns', async (t) => {
+  const root = await temporaryRoot(t);
+  const reports = store(root);
+  const coordinates = { taskId: TASK_ID, attemptId: ATTEMPT_ID, requestKey: REQUEST_KEY };
+  const lease = await reports.acquire(coordinates);
+  let sourceVersion: 'S0' | 'S1' = 'S0';
+  let fenceCalls = 0;
+  let releaseFinalObservation!: () => void;
+  const finalObservationCanReturn = new Promise<void>((resolve) => { releaseFinalObservation = resolve; });
+  let reportFinalObservation!: () => void;
+  const finalObservationReached = new Promise<void>((resolve) => { reportFinalObservation = resolve; });
+
+  const publishing = lease.publish(bundle('fallback', {
+    assertStillCurrent: async () => {
+      fenceCalls += 1;
+      const observedVersion = sourceVersion;
+      if (observedVersion !== 'S0') throw new Error('source changed before final observation');
+      if (fenceCalls === 2) {
+        reportFinalObservation();
+        await finalObservationCanReturn;
+      }
+    },
+  }));
+
+  await finalObservationReached;
+  sourceVersion = 'S1';
+  assert.equal(await reports.readSlot({ ...coordinates, slot: 'fallback' }), null);
+  releaseFinalObservation();
+
+  const published = await publishing;
+  assert.equal(fenceCalls, 2);
+  assert.equal(published.slot, 'fallback');
+  assert.equal((await reports.readSlot({ ...coordinates, slot: 'fallback' }))?.generationId, published.generationId);
   assert.equal(await lease.release(), true);
 });
 

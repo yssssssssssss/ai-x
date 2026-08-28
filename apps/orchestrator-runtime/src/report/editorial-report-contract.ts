@@ -16,23 +16,25 @@ export type EpistemicStatus = 'fact' | 'inference' | 'unknown';
 
 export const EDITORIAL_MATERIAL_VERSION = 'editorial-material-v1' as const;
 export const EDITORIAL_MODEL_CONTEXT_VERSION = 'editorial-model-context-v1' as const;
-export const EDITORIAL_BLUEPRINT_PLAN_VERSION = 'editorial-blueprint-plan-v1' as const;
+export const EDITORIAL_COPY_EDIT_REQUEST_VERSION = 'editorial-copy-edit-request-v1' as const;
+export const EDITORIAL_COPY_EDIT_PLAN_VERSION = 'editorial-copy-edit-plan-v1' as const;
 export const EDITORIAL_BLUEPRINT_VERSION = 'editorial-blueprint-v1' as const;
 export const EDITORIAL_DIAGNOSTIC_VERSION = 'editorial-diagnostic-v1' as const;
-export const EDITORIAL_REPORT_VERSION = 'editorial-report-v1' as const;
-export const EDITORIAL_BLUEPRINT_PROMPT_VERSION = 'editorial-blueprint-prompt-v2' as const;
+export const EDITORIAL_REPORT_VERSION = 'editorial-report-v2' as const;
+export const EDITORIAL_COPY_EDIT_PROMPT_VERSION = 'editorial-copy-edit-prompt-v1' as const;
 export const EDITORIAL_FIDELITY_PROMPT_VERSION = 'editorial-fidelity-prompt-v2' as const;
 export const EDITORIAL_FALLBACK_VERSION = 'editorial-fallback-v1' as const;
 export const EDITORIAL_RENDERER_VERSION = 'editorial-html-v1' as const;
-export const EDITORIAL_STORE_VERSION = 'editorial-store-v1' as const;
+export const EDITORIAL_STORE_VERSION = 'editorial-store-v2' as const;
 export const EDITORIAL_MODEL_EGRESS_VERSION = 'editorial-model-egress-v1' as const;
 
 export const EDITORIAL_PIPELINE_VERSIONS = Object.freeze({
   materialVersion: EDITORIAL_MATERIAL_VERSION,
   modelContextVersion: EDITORIAL_MODEL_CONTEXT_VERSION,
-  blueprintPlanVersion: EDITORIAL_BLUEPRINT_PLAN_VERSION,
+  copyEditRequestVersion: EDITORIAL_COPY_EDIT_REQUEST_VERSION,
+  copyEditPlanVersion: EDITORIAL_COPY_EDIT_PLAN_VERSION,
   blueprintVersion: EDITORIAL_BLUEPRINT_VERSION,
-  blueprintPromptVersion: EDITORIAL_BLUEPRINT_PROMPT_VERSION,
+  copyEditPromptVersion: EDITORIAL_COPY_EDIT_PROMPT_VERSION,
   fidelityPromptVersion: EDITORIAL_FIDELITY_PROMPT_VERSION,
   fallbackVersion: EDITORIAL_FALLBACK_VERSION,
   rendererVersion: EDITORIAL_RENDERER_VERSION,
@@ -340,23 +342,6 @@ export type EditorialBlueprintBlock =
   | (EditorialBlockBase & { kind: 'visual-gallery'; assetIds: string[] })
   | (EditorialBlockBase & { kind: 'audit-appendix'; unitIds: string[]; evidenceIds: string[] });
 
-export type EditorialPlannedBlock = Exclude<EditorialBlueprintBlock, { kind: 'audit-appendix' }>;
-
-export interface EditorialBlueprintPlan {
-  version: typeof EDITORIAL_BLUEPRINT_PLAN_VERSION;
-  locale: 'zh-CN';
-  title?: EditorialCopy;
-  deck: EditorialCopy;
-  sections: Array<{
-    id: string;
-    role: Exclude<EditorialSectionRole, 'audit'>;
-    questionIds: string[];
-    title?: EditorialCopy;
-    lead?: EditorialCopy;
-    blocks: EditorialPlannedBlock[];
-  }>;
-}
-
 export interface EditorialBlueprint {
   version: typeof EDITORIAL_BLUEPRINT_VERSION;
   taskId: string;
@@ -433,7 +418,7 @@ export interface EditorialStructuredModelClient {
     prompt: string;
     systemPrompt: string;
     schema: object;
-    schemaName: 'editorial-report-blueprint' | 'editorial-report-fidelity';
+    schemaName: 'editorial-report-copy-edits' | 'editorial-report-fidelity';
     context: object;
     limits: EditorialLLMLimits;
     redirectMode: 'error';
@@ -657,9 +642,10 @@ export interface EditorialReport {
     materialVersion: typeof EDITORIAL_MATERIAL_VERSION;
     modelContextVersion: typeof EDITORIAL_MODEL_CONTEXT_VERSION;
     modelContextHash: Sha256;
-    blueprintPlanVersion: typeof EDITORIAL_BLUEPRINT_PLAN_VERSION;
+    copyEditRequestVersion: typeof EDITORIAL_COPY_EDIT_REQUEST_VERSION;
+    copyEditPlanVersion: typeof EDITORIAL_COPY_EDIT_PLAN_VERSION;
     blueprintVersion: typeof EDITORIAL_BLUEPRINT_VERSION;
-    promptVersion: typeof EDITORIAL_BLUEPRINT_PROMPT_VERSION;
+    copyEditPromptVersion: typeof EDITORIAL_COPY_EDIT_PROMPT_VERSION;
     fidelityPromptVersion: typeof EDITORIAL_FIDELITY_PROMPT_VERSION;
     fallbackVersion: typeof EDITORIAL_FALLBACK_VERSION;
     rendererVersion: typeof EDITORIAL_RENDERER_VERSION;
@@ -1807,7 +1793,6 @@ function parseBlueprintBlock(
   value: unknown,
   path: string,
   budget: BlueprintParseBudget,
-  allowAudit: boolean,
 ): EditorialBlueprintBlock {
   const candidate = record(value, path);
   requiredKeys(candidate, ['id', 'kind'], path);
@@ -1820,9 +1805,6 @@ function parseBlueprintBlock(
     'strategy-matrix', 'roadmap', 'validation-gates', 'risk-register', 'visual-gallery',
     'audit-appendix',
   ], `${path}/kind`);
-  if (!allowAudit && kind === 'audit-appendix') {
-    fail('SCHEMA_INTEGRITY', 'Blueprint Plan cannot contain audit-appendix', 'schema_integrity', path);
-  }
   budget.blocks += 1;
   switch (kind) {
     case 'narrative': {
@@ -1971,7 +1953,7 @@ function parseBlueprintBlock(
       const items = nonEmptyArray(candidate.items, `${path}/items`).map((item, index) => {
         const itemPath = `${path}/items/${index}`;
         const parsed = record(item, itemPath);
-        exactKeys(parsed, allowAudit ? ['risk', 'impact', 'response'] : ['risk'], itemPath);
+        exactKeys(parsed, ['risk', 'impact', 'response'], itemPath);
         requiredKeys(parsed, ['risk'], itemPath);
         return {
           risk: parseBudgetedCopy(parsed.risk, `${itemPath}/risk`, budget),
@@ -2003,7 +1985,6 @@ function parseSection(
   value: unknown,
   path: string,
   budget: BlueprintParseBudget,
-  allowAudit: boolean,
 ): EditorialBlueprint['sections'][number] {
   const candidate = record(value, path);
   exactKeys(candidate, ['id', 'role', 'questionIds', 'title', 'lead', 'blocks'], path);
@@ -2016,11 +1997,8 @@ function parseSection(
     'decision', 'positioning', 'audience', 'motivation', 'journey', 'strategy', 'opportunity',
     'roadmap', 'validation', 'risk', 'boundary', 'audit',
   ], `${path}/role`);
-  if (!allowAudit && role === 'audit') {
-    fail('SCHEMA_INTEGRITY', 'Blueprint Plan cannot contain an audit section', 'schema_integrity', path);
-  }
   const blocks = nonEmptyArray(candidate.blocks, `${path}/blocks`, EDITORIAL_MAX_BLUEPRINT_BLOCKS)
-    .map((block, index) => parseBlueprintBlock(block, `${path}/blocks/${index}`, budget, allowAudit));
+    .map((block, index) => parseBlueprintBlock(block, `${path}/blocks/${index}`, budget));
   return {
     id,
     role,
@@ -2048,44 +2026,16 @@ function assertUniqueBlueprintIds(sections: EditorialBlueprint['sections']): voi
   }
 }
 
-function assertBlueprintBudget(budget: BlueprintParseBudget, mode: 'llm' | 'fallback'): void {
-  const copyLimit = mode === 'llm' ? EDITORIAL_MAX_LLM_COPIES : EDITORIAL_MAX_FALLBACK_COPIES;
-  const textLimit = mode === 'llm' ? 60_000 : 600_000;
+function assertBlueprintBudget(budget: BlueprintParseBudget): void {
   if (budget.blocks > EDITORIAL_MAX_BLUEPRINT_BLOCKS) {
     fail('SCHEMA_INTEGRITY', `Blueprint exceeds ${EDITORIAL_MAX_BLUEPRINT_BLOCKS} blocks`, 'schema_integrity');
   }
-  if (budget.copies > copyLimit) {
-    fail('SCHEMA_INTEGRITY', `Blueprint exceeds ${copyLimit} EditorialCopy values`, 'schema_integrity');
+  if (budget.copies > EDITORIAL_MAX_FALLBACK_COPIES) {
+    fail('SCHEMA_INTEGRITY', `Blueprint exceeds ${EDITORIAL_MAX_FALLBACK_COPIES} EditorialCopy values`, 'schema_integrity');
   }
-  if (budget.copyCodePoints > textLimit) {
-    fail('SCHEMA_INTEGRITY', `Blueprint copy exceeds ${textLimit} code points`, 'schema_integrity');
+  if (budget.copyCodePoints > 600_000) {
+    fail('SCHEMA_INTEGRITY', 'Blueprint copy exceeds 600000 code points', 'schema_integrity');
   }
-}
-
-export function parseEditorialBlueprintPlan(value: unknown): EditorialBlueprintPlan {
-  const candidate = record(value, '');
-  exactKeys(candidate, ['version', 'locale', 'title', 'deck', 'sections'], '');
-  requiredKeys(candidate, ['version', 'locale', 'deck', 'sections'], '');
-  if (candidate.version !== EDITORIAL_BLUEPRINT_PLAN_VERSION) {
-    fail('SCHEMA_INTEGRITY', `version must be ${EDITORIAL_BLUEPRINT_PLAN_VERSION}`, 'schema_integrity', '/version');
-  }
-  if (candidate.locale !== 'zh-CN') fail('SCHEMA_INTEGRITY', 'locale must be zh-CN', 'schema_integrity', '/locale');
-  if (!Array.isArray(candidate.sections) || candidate.sections.length === 0 || candidate.sections.length > EDITORIAL_MAX_BLUEPRINT_SECTIONS) {
-    fail('SCHEMA_INTEGRITY', `sections must contain 1..${EDITORIAL_MAX_BLUEPRINT_SECTIONS} entries`, 'schema_integrity', '/sections');
-  }
-  const budget: BlueprintParseBudget = { blocks: 0, copies: 0, copyCodePoints: 0 };
-  const parsed: EditorialBlueprintPlan = {
-    version: EDITORIAL_BLUEPRINT_PLAN_VERSION,
-    locale: 'zh-CN',
-    ...(candidate.title === undefined ? {} : { title: parseBudgetedCopy(candidate.title, '/title', budget) }),
-    deck: parseBudgetedCopy(candidate.deck, '/deck', budget),
-    sections: candidate.sections.map((section, index) => (
-      parseSection(section, `/sections/${index}`, budget, false) as EditorialBlueprintPlan['sections'][number]
-    )),
-  };
-  assertUniqueBlueprintIds(parsed.sections);
-  assertBlueprintBudget(budget, 'llm');
-  return parsed;
 }
 
 export function parseEditorialBlueprint(value: unknown): EditorialBlueprint {
@@ -2120,55 +2070,14 @@ export function parseEditorialBlueprint(value: unknown): EditorialBlueprint {
     locale: 'zh-CN',
     ...(candidate.title === undefined ? {} : { title: parseBudgetedCopy(candidate.title, '/title', budget) }),
     deck: parseBudgetedCopy(candidate.deck, '/deck', budget),
-    sections: candidate.sections.map((section, index) => parseSection(section, `/sections/${index}`, budget, true)),
+    sections: candidate.sections.map((section, index) => parseSection(section, `/sections/${index}`, budget)),
   };
   assertUniqueBlueprintIds(parsed.sections);
-  assertBlueprintBudget(budget, 'fallback');
+  assertBlueprintBudget(budget);
   if (canonicalJsonBytes(parsed).byteLength > EDITORIAL_MAX_JSON_BYTES) {
     fail('SCHEMA_INTEGRITY', 'Blueprint canonical JSON exceeds 8 MiB', 'schema_integrity');
   }
   return parsed;
-}
-
-export function assembleEditorialBlueprint(input: {
-  plan: unknown;
-  material: EditorialMaterial;
-  requestKey: string;
-}): EditorialBlueprint {
-  const plan = parseEditorialBlueprintPlan(input.plan);
-  const material = parseEditorialMaterial(input.material);
-  if (!REQUEST_KEY_PATTERN.test(input.requestKey)) {
-    fail('SCHEMA_INTEGRITY', 'requestKey is invalid', 'schema_integrity', '/requestKey');
-  }
-  const requiredUnits = material.units.filter(({ requiredInOutput }) => requiredInOutput);
-  const requiredEvidence = new Set(requiredUnits.flatMap(({ evidenceIds }) => evidenceIds));
-  const auditQuestionIds = canonicalIdUnion(requiredUnits.flatMap(({ questionIds }) => questionIds));
-  const blueprint: EditorialBlueprint = {
-    version: EDITORIAL_BLUEPRINT_VERSION,
-    taskId: material.taskId,
-    planVersionId: material.planVersionId,
-    attemptId: material.attemptId,
-    requestKey: input.requestKey,
-    materialHash: canonicalSha256(material),
-    locale: plan.locale,
-    ...(plan.title === undefined ? {} : { title: plan.title }),
-    deck: plan.deck,
-    sections: [
-      ...plan.sections,
-      {
-        id: 'audit',
-        role: 'audit',
-        questionIds: auditQuestionIds,
-        blocks: [{
-          id: 'audit-appendix',
-          kind: 'audit-appendix',
-          unitIds: requiredUnits.map(({ id }) => id),
-          evidenceIds: material.evidence.filter(({ id }) => requiredEvidence.has(id)).map(({ id }) => id),
-        }],
-      },
-    ],
-  };
-  return validateEditorialBlueprint({ blueprint, material, mode: 'llm' });
 }
 
 export interface EditorialParaphraseReference {
@@ -2177,84 +2086,108 @@ export interface EditorialParaphraseReference {
   materialUnitIds: string[];
 }
 
+export interface EditorialCopySlot {
+  copyPointer: string;
+  copy: EditorialCopy;
+  audit: boolean;
+}
+
+function visitEditorialBlockCopies(
+  block: EditorialBlueprintBlock,
+  blockPath: string,
+  visit: (copy: EditorialCopy | undefined, copyPointer: string) => void,
+): void {
+  switch (block.kind) {
+    case 'narrative':
+      block.paragraphs.forEach((copy, index) => visit(copy, `${blockPath}/paragraphs/${index}`));
+      break;
+    case 'decision-cover':
+      visit(block.summary, `${blockPath}/summary`);
+      visit(block.boundary, `${blockPath}/boundary`);
+      break;
+    case 'metric-cards':
+      block.items.forEach((item, index) => {
+        if ('label' in item) visit(item.label, `${blockPath}/items/${index}/label`);
+      });
+      break;
+    case 'card-grid':
+      block.cards.forEach((card, index) => {
+        visit(card.title, `${blockPath}/cards/${index}/title`);
+        visit(card.body, `${blockPath}/cards/${index}/body`);
+      });
+      break;
+    case 'flow':
+      block.steps.forEach((step, index) => {
+        visit(step.label, `${blockPath}/steps/${index}/label`);
+        visit(step.body, `${blockPath}/steps/${index}/body`);
+      });
+      break;
+    case 'strategy-matrix':
+      block.columns.forEach((copy, index) => visit(copy, `${blockPath}/columns/${index}`));
+      block.rows.forEach((row, rowIndex) => {
+        visit(row.label, `${blockPath}/rows/${rowIndex}/label`);
+        row.cells.forEach((copy, cellIndex) => visit(copy, `${blockPath}/rows/${rowIndex}/cells/${cellIndex}`));
+      });
+      break;
+    case 'roadmap':
+      block.lanes.forEach((lane, laneIndex) => {
+        visit(lane.label, `${blockPath}/lanes/${laneIndex}/label`);
+        lane.items.forEach((copy, itemIndex) => visit(copy, `${blockPath}/lanes/${laneIndex}/items/${itemIndex}`));
+      });
+      break;
+    case 'validation-gates':
+      block.gates.forEach((gate, index) => {
+        visit(gate.label, `${blockPath}/gates/${index}/label`);
+        visit(gate.method, `${blockPath}/gates/${index}/method`);
+        visit(gate.successCriterion, `${blockPath}/gates/${index}/successCriterion`);
+      });
+      break;
+    case 'risk-register':
+      block.items.forEach((item, index) => {
+        visit(item.risk, `${blockPath}/items/${index}/risk`);
+        visit(item.impact, `${blockPath}/items/${index}/impact`);
+        visit(item.response, `${blockPath}/items/${index}/response`);
+      });
+      break;
+    case 'truth-triad':
+    case 'visual-gallery':
+    case 'audit-appendix':
+      break;
+  }
+}
+
+export function indexEditorialBlueprintCopies(blueprint: EditorialBlueprint): EditorialCopySlot[] {
+  const result: EditorialCopySlot[] = [];
+  const append = (copy: EditorialCopy | undefined, copyPointer: string, audit: boolean): void => {
+    if (copy !== undefined) result.push({ copyPointer, copy, audit });
+  };
+  append(blueprint.title, '/title', false);
+  append(blueprint.deck, '/deck', false);
+  blueprint.sections.forEach((section, sectionIndex) => {
+    const sectionPath = `/sections/${sectionIndex}`;
+    const audit = section.role === 'audit';
+    append(section.title, `${sectionPath}/title`, audit);
+    append(section.lead, `${sectionPath}/lead`, audit);
+    section.blocks.forEach((block, blockIndex) => {
+      visitEditorialBlockCopies(
+        block,
+        `${sectionPath}/blocks/${blockIndex}`,
+        (copy, copyPointer) => append(copy, copyPointer, audit),
+      );
+    });
+  });
+  return result;
+}
+
 export function enumerateEditorialParaphrases(
   blueprintInput: EditorialBlueprint,
 ): EditorialParaphraseReference[] {
   const blueprint = parseEditorialBlueprint(blueprintInput);
-  const result: EditorialParaphraseReference[] = [];
-  const append = (copy: EditorialCopy | undefined, pointer: string): void => {
-    if (copy?.mode === 'paraphrase') {
-      result.push({ copyPointer: pointer, text: copy.text, materialUnitIds: [...copy.materialUnitIds] });
-    }
-  };
-  append(blueprint.title, '/title');
-  append(blueprint.deck, '/deck');
-  blueprint.sections.forEach((section, sectionIndex) => {
-    const sectionPath = `/sections/${sectionIndex}`;
-    append(section.title, `${sectionPath}/title`);
-    append(section.lead, `${sectionPath}/lead`);
-    section.blocks.forEach((block, blockIndex) => {
-      const blockPath = `${sectionPath}/blocks/${blockIndex}`;
-      switch (block.kind) {
-        case 'narrative':
-          block.paragraphs.forEach((copy, index) => append(copy, `${blockPath}/paragraphs/${index}`));
-          break;
-        case 'decision-cover':
-          append(block.summary, `${blockPath}/summary`);
-          append(block.boundary, `${blockPath}/boundary`);
-          break;
-        case 'metric-cards':
-          block.items.forEach((item, index) => {
-            if ('label' in item) append(item.label, `${blockPath}/items/${index}/label`);
-          });
-          break;
-        case 'card-grid':
-          block.cards.forEach((card, index) => {
-            append(card.title, `${blockPath}/cards/${index}/title`);
-            append(card.body, `${blockPath}/cards/${index}/body`);
-          });
-          break;
-        case 'flow':
-          block.steps.forEach((step, index) => {
-            append(step.label, `${blockPath}/steps/${index}/label`);
-            append(step.body, `${blockPath}/steps/${index}/body`);
-          });
-          break;
-        case 'strategy-matrix':
-          block.columns.forEach((copy, index) => append(copy, `${blockPath}/columns/${index}`));
-          block.rows.forEach((row, rowIndex) => {
-            append(row.label, `${blockPath}/rows/${rowIndex}/label`);
-            row.cells.forEach((copy, cellIndex) => append(copy, `${blockPath}/rows/${rowIndex}/cells/${cellIndex}`));
-          });
-          break;
-        case 'roadmap':
-          block.lanes.forEach((lane, laneIndex) => {
-            append(lane.label, `${blockPath}/lanes/${laneIndex}/label`);
-            lane.items.forEach((copy, itemIndex) => append(copy, `${blockPath}/lanes/${laneIndex}/items/${itemIndex}`));
-          });
-          break;
-        case 'validation-gates':
-          block.gates.forEach((gate, index) => {
-            append(gate.label, `${blockPath}/gates/${index}/label`);
-            append(gate.method, `${blockPath}/gates/${index}/method`);
-            append(gate.successCriterion, `${blockPath}/gates/${index}/successCriterion`);
-          });
-          break;
-        case 'risk-register':
-          block.items.forEach((item, index) => {
-            append(item.risk, `${blockPath}/items/${index}/risk`);
-            append(item.impact, `${blockPath}/items/${index}/impact`);
-            append(item.response, `${blockPath}/items/${index}/response`);
-          });
-          break;
-        case 'truth-triad':
-        case 'visual-gallery':
-        case 'audit-appendix':
-          break;
-      }
-    });
-  });
-  return result;
+  return indexEditorialBlueprintCopies(blueprint).flatMap(({ copyPointer, copy }) => (
+    copy.mode === 'paraphrase'
+      ? [{ copyPointer, text: copy.text, materialUnitIds: [...copy.materialUnitIds] }]
+      : []
+  ));
 }
 
 export function parseEditorialFidelityReviewPlan(value: unknown): EditorialFidelityReviewPlan {
@@ -2368,27 +2301,11 @@ export function parseEditorialFidelityReview(value: unknown): EditorialFidelityR
 }
 
 function blockCopies(block: EditorialBlueprintBlock): EditorialCopy[] {
-  switch (block.kind) {
-    case 'narrative': return block.paragraphs;
-    case 'decision-cover': return [block.summary, ...(block.boundary ? [block.boundary] : [])];
-    case 'metric-cards': return block.items.flatMap((item) => ('label' in item && item.label ? [item.label] : []));
-    case 'truth-triad':
-    case 'visual-gallery':
-    case 'audit-appendix': return [];
-    case 'card-grid': return block.cards.flatMap(({ title, body }) => [title, body]);
-    case 'flow': return block.steps.flatMap(({ label, body }) => [label, body]);
-    case 'strategy-matrix': return [
-      ...block.columns,
-      ...block.rows.flatMap(({ label, cells }) => [label, ...cells]),
-    ];
-    case 'roadmap': return block.lanes.flatMap(({ label, items }) => [label, ...items]);
-    case 'validation-gates': return block.gates.flatMap(({ label, method, successCriterion }) => (
-      [label, method, ...(successCriterion ? [successCriterion] : [])]
-    ));
-    case 'risk-register': return block.items.flatMap(({ risk, impact, response }) => (
-      [risk, ...(impact ? [impact] : []), ...(response ? [response] : [])]
-    ));
-  }
+  const copies: EditorialCopy[] = [];
+  visitEditorialBlockCopies(block, '', (copy) => {
+    if (copy !== undefined) copies.push(copy);
+  });
+  return copies;
 }
 
 function blockDirectUnitIds(block: EditorialBlueprintBlock): string[] {
@@ -2784,7 +2701,9 @@ export function validateEditorialBlueprint(input: {
     copies: allCopies.length,
     copyCodePoints: allCopies.reduce((count, { copy }) => count + Array.from(copy.text).length, 0),
   };
-  assertBlueprintBudget(budget, input.mode === 'llm' ? 'llm' : 'fallback');
+  // The LLM returns a bounded Copy Edit Plan rather than a full Blueprint.
+  // Every persisted Blueprint therefore uses the same deterministic size budget.
+  assertBlueprintBudget(budget);
   if (material.titleUnitId !== undefined) {
     if (!blueprint.title || !blueprint.title.materialUnitIds.includes(material.titleUnitId)) {
       fail('CONTENT_COVERAGE', 'Blueprint title must cover titleUnitId', 'content_coverage', '/title');
@@ -4142,11 +4061,16 @@ function parseEditorialCandidateAttempt(value: unknown, path: string): Editorial
       fail('SCHEMA_INTEGRITY', `${outcome} candidate requires a successful planner call`, 'schema_integrity', path);
     }
     if (outcome === 'accepted') {
+      const fidelityPassed = (
+        'fidelityCall' in fidelity
+        && fidelity.fidelityCall?.status === 'succeeded'
+        && 'fidelityReview' in fidelity
+        && fidelity.fidelityReview?.verdict === 'pass'
+      );
       if (
         blueprintHash === undefined
         || issueCodes.length !== 0
-        || ('fidelityCall' in fidelity && fidelity.fidelityCall?.status === 'failed')
-        || ('fidelityReview' in fidelity && fidelity.fidelityReview?.verdict !== 'pass')
+        || !fidelityPassed
       ) {
         fail('SCHEMA_INTEGRITY', 'accepted candidate shape is invalid', 'schema_integrity', path);
       }
@@ -4398,21 +4322,22 @@ export function parseEditorialReport(value: unknown): EditorialReport {
   const status = enumValue(candidate.status, ['ready', 'degraded'], '/status');
   const pipeline = record(candidate.pipeline, '/pipeline');
   exactKeys(pipeline, [
-    'materialVersion', 'modelContextVersion', 'modelContextHash', 'blueprintPlanVersion',
-    'blueprintVersion', 'promptVersion', 'fidelityPromptVersion', 'fallbackVersion',
+    'materialVersion', 'modelContextVersion', 'modelContextHash', 'copyEditRequestVersion',
+    'copyEditPlanVersion', 'blueprintVersion', 'copyEditPromptVersion', 'fidelityPromptVersion', 'fallbackVersion',
     'rendererVersion', 'storeVersion', 'modelEgress', 'gatewayConfiguration',
   ], '/pipeline');
   requiredKeys(pipeline, [
-    'materialVersion', 'modelContextVersion', 'modelContextHash', 'blueprintPlanVersion',
-    'blueprintVersion', 'promptVersion', 'fidelityPromptVersion', 'fallbackVersion',
+    'materialVersion', 'modelContextVersion', 'modelContextHash', 'copyEditRequestVersion',
+    'copyEditPlanVersion', 'blueprintVersion', 'copyEditPromptVersion', 'fidelityPromptVersion', 'fallbackVersion',
     'rendererVersion', 'storeVersion', 'modelEgress', 'gatewayConfiguration',
   ], '/pipeline');
   const expectedVersions: Record<string, string> = {
     materialVersion: EDITORIAL_MATERIAL_VERSION,
     modelContextVersion: EDITORIAL_MODEL_CONTEXT_VERSION,
-    blueprintPlanVersion: EDITORIAL_BLUEPRINT_PLAN_VERSION,
+    copyEditRequestVersion: EDITORIAL_COPY_EDIT_REQUEST_VERSION,
+    copyEditPlanVersion: EDITORIAL_COPY_EDIT_PLAN_VERSION,
     blueprintVersion: EDITORIAL_BLUEPRINT_VERSION,
-    promptVersion: EDITORIAL_BLUEPRINT_PROMPT_VERSION,
+    copyEditPromptVersion: EDITORIAL_COPY_EDIT_PROMPT_VERSION,
     fidelityPromptVersion: EDITORIAL_FIDELITY_PROMPT_VERSION,
     fallbackVersion: EDITORIAL_FALLBACK_VERSION,
     rendererVersion: EDITORIAL_RENDERER_VERSION,
@@ -4485,9 +4410,10 @@ export function parseEditorialReport(value: unknown): EditorialReport {
       materialVersion: EDITORIAL_MATERIAL_VERSION,
       modelContextVersion: EDITORIAL_MODEL_CONTEXT_VERSION,
       modelContextHash: pipeline.modelContextHash,
-      blueprintPlanVersion: EDITORIAL_BLUEPRINT_PLAN_VERSION,
+      copyEditRequestVersion: EDITORIAL_COPY_EDIT_REQUEST_VERSION,
+      copyEditPlanVersion: EDITORIAL_COPY_EDIT_PLAN_VERSION,
       blueprintVersion: EDITORIAL_BLUEPRINT_VERSION,
-      promptVersion: EDITORIAL_BLUEPRINT_PROMPT_VERSION,
+      copyEditPromptVersion: EDITORIAL_COPY_EDIT_PROMPT_VERSION,
       fidelityPromptVersion: EDITORIAL_FIDELITY_PROMPT_VERSION,
       fallbackVersion: EDITORIAL_FALLBACK_VERSION,
       rendererVersion: EDITORIAL_RENDERER_VERSION,

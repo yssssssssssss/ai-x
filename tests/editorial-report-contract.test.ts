@@ -1,7 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import Ajv from 'ajv';
 import {
   EDITORIAL_MODEL_EGRESS_POLICY,
   NO_EDITORIAL_MODEL_PORT,
@@ -18,7 +16,6 @@ import {
   hasEditorialSensitiveToken,
   normalizeEditorialScalar,
   parseEditorialBlueprint,
-  parseEditorialBlueprintPlan,
   parseEditorialDiagnostic,
   parseEditorialFidelityReview,
   parseEditorialFidelityReviewPlan,
@@ -586,54 +583,6 @@ test('ratio rendering shifts the canonical decimal without floating-point roundi
   );
 });
 
-test('Blueprint Plan schema and parser reject control fields and unknown nested fields', () => {
-  const schema = JSON.parse(readFileSync(
-    new URL('../schemas/editorial-report-blueprint.schema.json', import.meta.url),
-    'utf8',
-  )) as object;
-  const validate = new Ajv({ allErrors: true, strict: false }).compile(schema);
-  const plan = {
-    version: 'editorial-blueprint-plan-v1',
-    locale: 'zh-CN',
-    deck: copy('核心结论', ['unit-1']),
-    sections: [{
-      id: 'decision',
-      role: 'decision',
-      questionIds: [],
-      blocks: [{
-        id: 'decision-cover',
-        kind: 'decision-cover',
-        summary: copy('核心结论', ['unit-1']),
-      }],
-    }],
-  };
-  assert.equal(validate(plan), true, JSON.stringify(validate.errors));
-  assert.deepEqual(parseEditorialBlueprintPlan(plan), plan);
-  assert.equal(validate({ ...plan, taskId: 'forbidden' }), false);
-  assert.throws(() => parseEditorialBlueprintPlan({ ...plan, taskId: 'forbidden' }), /unknown field.*taskId/i);
-  const nested = structuredClone(plan);
-  (nested.sections[0]!.blocks[0] as Record<string, unknown>).html = '<b>bad</b>';
-  assert.equal(validate(nested), false);
-  assert.throws(() => parseEditorialBlueprintPlan(nested), /unknown field.*html/i);
-
-  for (const field of ['impact', 'response'] as const) {
-    const riskPlan = structuredClone(plan) as unknown as {
-      sections: Array<{ role: string; blocks: Array<Record<string, unknown>> }>;
-    };
-    riskPlan.sections[0]!.role = 'risk';
-    riskPlan.sections[0]!.blocks = [{
-      id: 'risk-register',
-      kind: 'risk-register',
-      items: [{ risk: copy('已知风险', ['unit-1']), [field]: copy('不受支持', ['unit-1']) }],
-    }];
-    assert.equal(validate(riskPlan), false, `${field} must be rejected by the LLM output Schema`);
-    assert.throws(
-      () => parseEditorialBlueprintPlan(riskPlan),
-      new RegExp(`unknown field.*${field}`, 'iu'),
-    );
-  }
-});
-
 test('fallback Blueprint validation enforces audit closure, body coverage, status and sensitive-token rules', () => {
   const material = parseEditorialMaterial(materialFixture());
   const blueprint = parseEditorialBlueprint(blueprintFixture(material));
@@ -1153,6 +1102,56 @@ test('Diagnostic and manifest parsers reject unknown fields and inconsistent sta
   assert.throws(() => parseEditorialDiagnostic({ ...diagnostic, extra: true }), /unknown field.*extra/i);
   assert.throws(() => parseEditorialDiagnostic({ ...diagnostic, status: 'ready' }), /status|mode/i);
 
+  const acceptedWithoutFidelity = {
+    ordinal: 1,
+    blueprintHash,
+    plannerCall: {
+      stage: 'editorial_blueprint',
+      ordinal: 1,
+      gatewayConfigurationHash: ONE_HASH,
+      modelContextHash: modelContext.hash,
+      modelContextByteSize: modelContext.byteSize,
+      promptVersion: 'editorial-copy-edit-prompt-v1',
+      promptHash: `sha256:${'1'.repeat(16)}`,
+      status: 'succeeded',
+      provider: 'gateway',
+      endpointHost: 'llm-gw.jd.local',
+      requestedModel: 'editorial-model',
+      expectedModel: 'editorial-model-v1',
+      actualModel: 'editorial-model-v1',
+      modelVersion: 'editorial-model-v1',
+      traceId: 'trace-accepted-without-fidelity',
+      responseHash: TWO_HASH,
+    },
+    outcome: 'accepted',
+    issueCodes: [],
+  };
+  const readyWithoutFidelity = {
+    ...diagnostic,
+    gatewayConfigurationHash: ONE_HASH,
+    candidateAttempts: [acceptedWithoutFidelity],
+    checks: diagnostic.checks.map((check) => ({ ...check, status: 'passed', issues: [] })),
+    modelEgress: {
+      ...modelEgress,
+      decision: 'allow',
+      reasonCode: 'EGRESS_ALLOWED',
+      evaluated: {
+        ...modelEgress.evaluated,
+        provider: 'gateway',
+        mode: 'real',
+        endpointHost: 'llm-gw.jd.local',
+        endpointUrl: 'http://llm-gw.jd.local/v1/chat/completions',
+        redirectMode: 'error',
+      },
+    },
+    status: 'pass',
+    mode: 'llm',
+  };
+  assert.throws(
+    () => parseEditorialDiagnostic(readyWithoutFidelity),
+    /accepted candidate shape is invalid/u,
+  );
+
   const jsonRef = (relativePath: string, contentSha256: string) => ({
     relativePath,
     contentSha256,
@@ -1160,7 +1159,7 @@ test('Diagnostic and manifest parsers reject unknown fields and inconsistent sta
     mediaType: 'application/json',
   });
   const manifest = {
-    version: 'editorial-report-v1',
+    version: 'editorial-report-v2',
     authority: 'derived',
     taskId: material.taskId,
     planVersionId: material.planVersionId,
@@ -1175,13 +1174,14 @@ test('Diagnostic and manifest parsers reject unknown fields and inconsistent sta
       materialVersion: 'editorial-material-v1',
       modelContextVersion: 'editorial-model-context-v1',
       modelContextHash: modelContext.hash,
-      blueprintPlanVersion: 'editorial-blueprint-plan-v1',
+      copyEditRequestVersion: 'editorial-copy-edit-request-v1',
+      copyEditPlanVersion: 'editorial-copy-edit-plan-v1',
       blueprintVersion: 'editorial-blueprint-v1',
-      promptVersion: 'editorial-blueprint-prompt-v2',
+      copyEditPromptVersion: 'editorial-copy-edit-prompt-v1',
       fidelityPromptVersion: 'editorial-fidelity-prompt-v2',
       fallbackVersion: 'editorial-fallback-v1',
       rendererVersion: 'editorial-html-v1',
-      storeVersion: 'editorial-store-v1',
+      storeVersion: 'editorial-store-v2',
       modelEgress,
       gatewayConfiguration: null,
     },
@@ -1203,6 +1203,10 @@ test('Diagnostic and manifest parsers reject unknown fields and inconsistent sta
     generatedAt: '2026-08-27T00:00:00.000Z',
   };
   assert.deepEqual(parseEditorialReport(manifest), manifest);
+  assert.throws(
+    () => parseEditorialReport({ ...manifest, version: 'editorial-report-v1' }),
+    /version or authority is invalid/i,
+  );
   const badManifest = structuredClone(manifest);
   (badManifest.pipeline as Record<string, unknown>).extra = true;
   assert.throws(() => parseEditorialReport(badManifest), /unknown field.*extra/i);

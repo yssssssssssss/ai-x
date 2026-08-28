@@ -1,7 +1,9 @@
 # Editorial Report 后置编排能力开发文档
 
-> 状态：Phase 1 已在 main 完成；Phase 2 工程实现已完成但尚未通过真实 Gateway、真实 corpus、人工视觉
-> rubric 与全量质量门禁，因此仍处于“可测试、不可发布”状态，不能宣称第 30 节定义的完整 V1 已完成。
+> 状态：Phase 1 已在 main 完成；Phase 2 工程实现、真实 Gateway ready+Fidelity 冒烟和桌面／移动／A4
+> 视觉 QA 已完成，Node 22 本地主链与全量 quality 已通过。正式 calibration 仍因真实 corpus 数量、类型
+> 覆盖和 source-policy deny 样本不足而未完成，远端 workflow 也尚未产生有效 jobs。因此当前仍是
+> “可测试、不可发布”，不能宣称第 30 节定义的完整 V1 已完成。
 >
 > Phase 2 开发基线：`main@49e4b7f`（2026-08-27，标签 `单skill版本-报告优化-0827`）。本轮实现只基于
 > main，不切换或吸收其他分支代码。
@@ -21,7 +23,7 @@ pnpm editorial:report -- --task-id <UUID>
 ```
 
 Phase 1 的 `EditorialModelPort` 固定为 `{client:null, configuration:null}`，模型调用数必须为 0；输出
-状态为 `degraded / deterministic_fallback` 是设计语义，不代表生成失败。自适应 LLM Blueprint、
+状态为 `degraded / deterministic_fallback` 是设计语义，不代表生成失败。受控 LLM Copy Edit、
 独立 Fidelity Review、真实 Gateway 准入和 `editorial:calibrate` 在 Phase 1 交付时尚未实施；当前虽已
 完成 Phase 2 工程代码，仍不能把 Phase 1 的历史验收描述成完整 LLM 编辑能力验收。
 
@@ -76,29 +78,31 @@ report:       run-workspaces/editorial-reports/tasks/e16880e3-21c2-4541-9e38-fc7
 
 该真实报告最终渲染了 `decision-cover`、`metric-cards`、`truth-triad`、`narrative`、`card-grid`、
 `flow`、`roadmap` 与 `audit-appendix`。它说明 Phase 1 已能把现有结果变成更多元的专业页面，但不应
-与 Phase 2 的材料自适应 LLM 叙事混为一谈。
+与 Phase 2 的受控 LLM 文案编辑混为一谈。
 
 参考 Demo 对应任务 `055a2658-8b6c-4bd7-9078-43636feb9df7` 的已封存输入来自另一工作区，采用
 `report-review-v2` / `report-document-v2`；固定 main 只定义 V1，因此当前入口按合同返回
 `SOURCE_INTEGRITY_INVALID`，且不会为追随其他分支而放宽 main 的输入边界。参考 Demo 仍只作为
 视觉和阅读节奏样板。
 
-### 0.4 尚未解除的非 Editorial 门禁
+### 0.4 已解除的本地非 Editorial 门禁
 
-Node 22.22.1 下，2026-08-28 的最新 `pnpm quality` 共发现 1741 tests：1725 pass、3 fail、13 skip。三项失败为：
+Node 22.22.1 下，2026-08-28 的最新 `pnpm quality` 共发现 1761 tests：1748 pass、0 fail、13 skip。
+此前三项阻塞按独立、非 Editorial 变更处理：
 
-1. `control-api-integration`：`failed clarification releases its pending command so a retry can complete`
-   （期望 500，实际 422）。
-2. `control-api-integration`：`post-activation clarification failure reclaims the same command without another requirement version`
-   （期望 200，实际 400，unknown key `audience`）。
-3. `user-research-hub-integration`：`checked-in Hub snapshot covers every physical file and registry entity exactly once`
-   （ignored `.DS_Store`／tree hash 漂移）。
+1. `failed clarification releases its pending command so a retry can complete` 的 fixture 补齐当前合同要求的
+   `audience` 必答项，使测试真正进入 command reservation 和失败恢复路径。
+2. `prepareClarification()` 先用 `Idempotency-Key + requestHash` 识别同 payload 的既有 command，再只对
+   新请求应用当前 requirement 的 answer/assumption 校验。这样已激活新 requirement 后的同 key 重试可
+   reclaim 原 command，而 fresh key 携带旧 `audience` 仍返回 400，同 key 不同 payload 仍返回 409。
+3. ignored Hub source mount 的 `01-task-任务/.DS_Store` 从同一项目群的只读快照副本恢复为 manifest 绑定的
+   `sha256:6f019bf92f3f9fc66a975dec3c54ed9e2ec45b949423f5c7e7d4dce0e5df705b`；未修改 scanner、manifest
+   或快照计数。该文件属于本地 immutable source mount，不进入 Git，后续必须避免 Finder 再次改写。
 
-前两项已在干净 `main@49e4b7f` 稳定复现，属于已知基线失败。第三项来自 gitignore 范围内的本地 Hub
-数据漂移，相关测试、脚本和 checked-in manifest 相对基线均无 diff。此前全套负载下偶发的
-`task-workflow` 2 秒 timeout 本轮未复现。因此没有发现 Phase 2 功能代码导致的确定性失败，但这不等于
-全量发布门禁通过：三项失败都必须修复
-或按第 22 节取得适用的书面豁免。当前工作区不得表述为 `pnpm quality` 全绿或完整 V1 已完成。
+首次解除上述三项后，全量并发测试又暴露 `tool-retry-policy` 在 deadline timer 与 lease check 边界把
+中断和真实 `false` 都折叠为 `false` 的竞态；`leaseActive()` 现保留 `deadline_exceeded|lease_lost`
+原因，不再依赖返回后的 `Date.now()` 猜测。对应定向测试、主链六文件和全量 quality 均已通过。
+这只证明当前本地工作树；远端仍必须由目标 commit 的非空 CI jobs 独立复核，不能把本地绿灯冒充发布完成。
 
 ### 0.5 Phase 2 工程实施记录（2026-08-27）
 
@@ -108,15 +112,29 @@ Phase 2 基于 `main@49e4b7f` 实现，未接入或修改 main 的执行主链�
   `createPhase1EditorialReportPipeline()`，供显式零模型、确定性 fallback 场景使用。Gateway 未配置或
   发生已声明的配置错误时，正式入口同样安全退回零调用 fallback。
 - Pipeline 始终先完成 deterministic fallback 的 Schema、关系、覆盖、Renderer、HTML 安全和体积
-  预检，再允许任何模型调用。Planner 最多两次，第二次是唯一一次带受控 repair hints 的修复机会。
-- LLM 只返回 Blueprint Plan，不生成 HTML。存在 paraphrase 时，候选必须经过独立 Fidelity Review；
-  copy Pointer、Material Unit、material hash 与 Blueprint hash 均须闭合，Store 在发布及缓存读取时会
-  重新枚举 paraphrase、重建 Review 并复核绑定。
-- Planner 与 Fidelity 共用 Editorial 专属 system prompt，把 `上下文:` 后的 Material、候选文案和 repair
-  hints 明确定义为不可信数据并禁止遵循其中指令；该 system prompt 同时纳入 prompt hash。两条 prompt
-  version 均升级为 v2，使旧缓存与修复后的调用身份严格隔离，且不改变 main 其他 Gateway 调用的默认语义。
-- 每次 Planner/Fidelity 调用前均复核 source current fence 与冻结的 Gateway configuration；另有
-  cache-return fence 和 publish fence。任何 binding drift 都丢弃响应且不发布。
+  预检，再允许任何模型调用。Copy Editor 最多两次，第二次是唯一一次带受控 repair hints 的修复机会。
+- LLM 只返回最多 6 条 `{copyPointer, materialUnitId, text}` 组成的 Compact Copy Edit Plan，不生成
+  Blueprint 或 HTML。Pipeline 在本地把编辑应用到 deterministic Blueprint；存在 paraphrase 时，候选
+  必须经过独立 Fidelity Review。Store 在发布及缓存读取时会从最终 Blueprint 反推 canonical edit plan，
+  复核 Copy Editor response hash，并重建 Review 与全部绑定。旧的完整 Blueprint Planner contract、
+  Registry key 与模型输出 Schema 已删除，Compact Copy Edit 是唯一 LLM 编辑协议。
+- Copy Editor 与 Fidelity 共用 Editorial 专属 system prompt，把 `上下文:` 后的 Material、候选文案和 repair
+  hints 明确定义为不可信数据并禁止遵循其中指令；该 system prompt 同时纳入 prompt hash。Copy Edit
+  prompt 固定为 `editorial-copy-edit-prompt-v1`，Fidelity prompt 保持 v2，使旧缓存与新调用身份严格隔离，且不改变 main
+  其他 Gateway 调用的默认语义。
+- Copy Editor 只接收最小 `modelContext` 和版本化 `copyEditRequest.targets`；每个 target 仅包含
+  `copyPointer`、单一 `materialUnitId` 与当前 verbatim 文本。模型看不到完整 Blueprint scaffold，也不能
+  输出结构字段；Pipeline 只接受按 canonical 顺序选择的 1～6 条编辑，并在本地拒绝数字、URL、Evidence
+  ID 等受保护 token、危险控制／默认不可见 Unicode 字符，以及只改变 NFC 或空白形式的伪改写。
+- Phase 2 的持久化 manifest 使用 `editorial-report-v2` / `editorial-store-v2`，并显式记录
+  `copyEditRequestVersion`、`copyEditPlanVersion` 和 `copyEditPromptVersion`。Phase 1 已生成的 V1 文件
+  不迁移、不覆盖，也不会被新代码以同名 V1 语义重新解释。
+- 每次 Copy Edit/Fidelity 调用前均复核 source current fence 与冻结的 Gateway configuration；另有
+  cache-return fence 和 publish fence。发布时先在 fence 后完整重读 staging，再执行紧邻原子 rename
+  的最终 source-binding fence；相应 fence 的最后数据库观察若发现 binding drift，就丢弃响应且不发布。
+  该观察之后才提交的 source 切换不追溯否定已经线性化的操作。失败 Diagnostic 使用同一双 fence 顺序。
+  barrier 回归分别锁定了观察前切换必须 hard fail、观察后但 Promise 返回前切换允许完成 S0，以及下一次
+  调用必须重读 S1；仅 task state/stateVersion 改变且内容身份不变时可在新 fence 后复用同一 generation。
 - Gateway 调用采用固定 redirect、总 deadline、HTTP 尝试数、Retry-After、响应 bytes 与输出 token
   上限；requested/expected/actual model、provider、endpoint、prompt hash 必须一致。`receiptId` 被视为
   错误 composition 的 hard fail；越界或不一致的非可信响应元数据转为受控失败码并发布已预检 fallback。
@@ -139,32 +157,40 @@ trusted operator 边界内的已知 P2，不能把 summary evidence 表述为可
 runner 在第一条 Fidelity golden 调用前即用该 fixture 的文件 hash、`internal/v1` 分类和冻结的 Gateway
 configuration 执行同一固定 egress policy；非白名单 endpoint 必须零调用并以固定错误码终止。
 
+2026-08-28 已完成一次独立真实 Gateway 冒烟：结果为 `ready / llm`，Copy Edit 与 Fidelity 两次调用均
+`succeeded`，唯一候选含 6 个 paraphrase，Fidelity Review 为 `pass`，最终页面包含 8 类 block。报告保存在
+gitignore 的本地 Editorial sidecar；同一结果已检查 1440×1000、390×844 与 48 页 A4 输出，QA 产物
+保存在 `tmp/pdfs/phase2-v2-*`。该冒烟不在 clean calibration collect 中，不能替代下述正式准入证据。
+
 校准还要求工作树干净、当前 HEAD 包含固定 Phase 1 基线 `49e4b7f`，并在 collect/finalize/verify 的
 持久化边界重复执行 commit fence，防止一次校准跨越实现版本。该机制面向 trusted operator 和意外／
 局部篡改检测；同一操作系统 owner 若主动同步重写 evidence、draft 与 rubric，无法在没有外部签名密钥
 或不可变审计服务的本地模型下被密码学阻止，不属于 V1 防篡改承诺。
 
-工程实现完成不等于发布验收完成。当前仍缺真实 Gateway ready+Fidelity、60 条 golden 实跑、至少
-10 个真实 SEALED 包的分布门禁、reference 人工 rubric，以及第 22 节要求的主链／quality 全绿或有效
-豁免；在这些证据齐备前，Phase 2 必须保持“不可发布”。
+工程实现完成不等于发布验收完成。当前 main 工作区仅有 6 个可用真实 SEALED V1 包且只覆盖 2 类
+deliverable，未达到至少 10 个、覆盖 5 类的硬门槛，也没有已证明可用于同次 collect 的合法
+source-policy deny 包；因此尚不能运行可通过的正式 calibration collect。仍缺 calibration 绑定的
+60 条 golden 实跑、正式真实 Gateway/corpus 汇总、reference rubric，以及非空且全部通过的远端 CI
+jobs；主链六文件和全量 quality 已在当前 Node 22 本地工作树通过，但尚未由远端目标 commit 的 jobs
+复核。在这些证据齐备前，Phase 2 必须保持“不可发布”。
 
 | Phase 2 工程检查 | 当前结果 |
 |---|---|
-| Phase 2 十三个测试文件定向门禁 | 264 tests：263 pass、0 fail、1 个默认关闭的 Playwright skip |
+| Phase 2 十四文件完整门禁 | 284 tests：283 pass、0 fail、1 个默认关闭的 Playwright skip |
 | 其中 calibration runner 定向测试 | 12/12 pass |
-| 其中 Store 定向测试 | 32/32 pass |
+| 其中 Store 定向测试 | 35/35 pass |
 | 独立 Chromium 合同 | 13/13 pass，覆盖 1440px、390px、键盘、离线与 A4 |
 | `pnpm typecheck` | 通过 |
 | `git diff --check` | 通过 |
-| `pnpm quality` | 1741 tests：1725 pass、3 fail、13 skip；失败与处理状态见第 0.4 节，当前阻塞发布 |
+| `pnpm quality` | 1761 tests：1748 pass、0 fail、13 skip；Node 22 本地通过，远端 CI 仍待复核 |
 
 ## 1. 决策摘要
 
 V1 新增一个独立的 **Editorial Report（编辑化派生报告）** 后处理能力。它读取 main 已完成任务的
 SEALED Report Package，将其中已经评审通过的内容确定性地整理为本地 Editorial Material；LLM 只接收
-经 egress policy 许可的最小 Context 并生成受 JSON Schema 约束的 Blueprint Plan，Pipeline 再注入
-绑定与审计闭包。最终 Blueprint 经过引用、证据等级、覆盖和内容保真检查后，由确定性 Renderer
-生成自包含 HTML。
+经 egress policy 许可的最小 Context 与可编辑 Copy 目标，并返回受 JSON Schema 约束的 Compact Copy
+Edit Plan。Pipeline 在本地应用编辑并保留 deterministic scaffold 的全部结构、引用与审计闭包。最终 Blueprint 经过引用、证据等级、覆盖和内容
+保真检查后，由确定性 Renderer 生成自包含 HTML。
 
 推荐链路：
 
@@ -173,8 +199,8 @@ main 已完成并封存的 Report Package（只读）
   -> Editorial Material（确定性来源索引）
   -> Deterministic Fallback Preflight（先证明保底结果可发布）
   -> 最小 Model Context + Egress Gate
-  -> Editorial Blueprint Plan（LLM 只做叙事与版式规划）
-  -> Final Blueprint（Pipeline 注入绑定与审计附件）
+  -> Compact Copy Edit Plan（LLM 只返回 1～6 条白名单文本替换）
+  -> Final Blueprint（Pipeline 在本地应用编辑；结构与审计附件不出境）
   -> Schema / 引用 / 证据等级 / 内容保真校验
   -> 固定 HTML Renderer
   -> Editorial Report sidecar（独立派生文件）
@@ -198,7 +224,7 @@ main 已完成并封存的 Report Package（只读）
   不修改或重新生成 main 的视觉产物。未知 media type、非法 export policy 或声明／签名不一致仍是
   source-integrity hard fail，不能用“省略”掩盖损坏输入。
 - 在任何 LLM 调用前，必须先构造、完整校验并实际渲染 Deterministic Blueprint；只有保底结果已证明可发布，才允许尝试 LLM。
-- LLM 不可用或两次 Blueprint 校验仍失败时，直接发布已预检的确定性结果；源完整性、保底可渲染性或安全校验失败时不调用／不继续调用 LLM，也不发布派生报告，原报告始终可用。
+- LLM 不可用或两次 Copy Edit 候选校验仍失败时，直接发布已预检的确定性结果；源完整性、保底可渲染性或安全校验失败时不调用／不继续调用 LLM，也不发布派生报告，原报告始终可用。
 
 ## 2. 背景与问题陈述
 
@@ -290,10 +316,13 @@ ProblemGraph 的 question 只是任务内部覆盖单元，最终 Deliverable �
   `accessibility_audit_report`；registry 后续新增但尚无 projector 的 type 必须明确拒绝。
 - 读取期间重新验证 Report Package、Deliverable、Evidence Manifest、Review，以及存在时的
   ReportDocument 和视觉资产的 ID、hash、schema 与 task/plan/attempt 绑定。
-- 调用开始冻结 `task/current Attempt/report package ID+hash`；每一次 Planner/Fidelity 出站前、返回
-  ready cache 前和原子发布前都必须重验同一绑定，任何切换统一以 `SOURCE_BINDING_CHANGED` hard
-  fail，不能继续出站、返回或发布旧结果。
-- main 的数据库状态和 `current-control` 文件哈希在运行前后完全不变。
+- 调用开始冻结 `task/current Attempt/report package ID+hash`；每一次 Copy Edit/Fidelity 出站前、返回
+  ready cache 前和原子发布前都必须重验同一绑定。每道 fence 以其为预期 binding 比较提供依据的最后一次
+  数据库观察为线性化点：该观察发现切换时以 `SOURCE_BINDING_CHANGED` hard fail；观察之后才提交的
+  切换不追溯否定已经线性化的出站、cache return 或 publish，也不承诺 Promise 完成、rename 或函数返回时
+  数据库仍保持旧 binding。下一次调用必须重新读取并校验届时的 current binding。
+- 在没有外部 writer 的隔离验收中，main 的数据库状态和 `current-control` 文件哈希在运行前后完全
+  不变；并发验收通过只读端口和 write spy 证明 Editorial 自身零写，不能把外部合法更新误判为 Editorial 写入。
 - 每段实质性新文案都能回链一个或多个 Material Unit。
 - 任意事实卡、指标、图表和引用都不能脱离源证据。
 - HTML 不含脚本、事件属性、远程样式、远程字体或运行时资源请求。
@@ -345,14 +374,19 @@ V1 明确不做：
 **Editorial Blueprint**：Pipeline 组装并持久化的结构化编辑方案，只描述章节、允许的组件、材料引用
 和受约束的改写文案；不包含任何渲染代码。
 
-**Editorial Blueprint Plan**：LLM 实际输出的最小编辑计划，不含 task/attempt、request key、material
-hash 或审计附件；Pipeline 验证后确定性组装为可落盘的 Editorial Blueprint。
+**Editorial Copy Edit Request**：Pipeline 从已校验的 deterministic Blueprint 生成的只读候选列表。
+每项只含 `copyPointer`、唯一 `materialUnitId` 和 `currentText`；不包含 Blueprint 结构、审计附件或
+task/attempt 等控制字段。
+
+**Editorial Copy Edit Plan**：LLM 返回的最小编辑结果，固定为
+`{version, edits:[{copyPointer, materialUnitId, text}]}`，每次最多 6 条。Pipeline 验证目标成员、顺序、
+Unit 绑定、敏感 token 与内容差异后，才在本地把 `verbatim` Copy 改为 `paraphrase`。
 
 **Content Fidelity Review**：独立于 Blueprint 生成的第二次结构化判断。LLM 只返回逐项 checks 的
 Review Plan；Pipeline 本地绑定 Material/Blueprint hash 并 fold 最终 verdict，用于检查改写是否忠于
 引用材料，是否发生数字漂移、限定条件丢失或事实等级升级。
 
-**Deterministic Blueprint**：不改写原文、按固定规则组织 Material 的保底方案。LLM 不可用或 LLM Blueprint 不合格时使用。
+**Deterministic Blueprint**：不改写原文、按固定规则组织 Material 的保底方案。LLM 不可用或 Copy Edit Plan 不合格时使用。
 
 **Fallback Preflight**：在任何 LLM 调用前，对 Deterministic Blueprint 执行完整确定性校验、真实渲染、HTML 安全／覆盖／体积检查并缓存不可变结果。它把“LLM 失败可降级”从补救意图变成调用前已证明的事实。
 
@@ -387,8 +421,8 @@ PostgreSQL + current-control Artifact Root
        | minimal Model Context + egress allow             | LLM skipped / failed /
        | + pre-model fence/port check before every call   |
        v                                                  | candidate rejected
-  LLM structured Blueprint Plan                          |
-       | -> deterministic final Blueprint assembly        |
+  LLM structured Copy Edit Plan                         |
+       | -> apply to local deterministic Blueprint        |
        | -> deterministic validation                      |
        | -> independent LLM fidelity review               |
        | -> render + final trace gates                     |
@@ -397,7 +431,7 @@ PostgreSQL + current-control Artifact Root
                  \                                  /
                   +---------------+------------------+
                                   v
-                    publish fence: source still current
+                    publish fence: final DB observation matches source
                                   |
                                   v
                     EditorialReportStore
@@ -502,9 +536,15 @@ projector 的 type 一律 hard fail，不能落入猜字段的通用路径。不
 Attempt、report package ID/hash 并与
 起始 binding 逐字段比较；不相等即 `SOURCE_BINDING_CHANGED`，丢弃快照且不创建 Diagnostic。该
 start fence 防止一次调用混读两个 Attempt。`assertStillCurrent()` 使用同一读取和比较算法，供每次
-Planner/Fidelity 出站前的 pre-model、ready cache 返回前的 cache-return，以及原子发布前的 publish
-fence 复用；“current”在本文中明确表示调用开始、每次出站和结果提交／返回都指向同一个 package，
-而不是“调用开始时曾经 current”。
+Copy Edit/Fidelity 出站前的 pre-model、ready cache 返回前的 cache-return，以及原子发布前的 publish
+fence 复用。
+
+每道 fence 成功的线性化点，是 `currentBinding()` 中为预期 binding 逐字段比较提供依据的最后一次
+数据库观察；当前实现对应末次 task metadata 读取。它不是 `assertStillCurrent()` Promise 完成、
+sidecar `rename()` 或 `generate()` 返回。该观察发现不一致时必须以
+`SOURCE_BINDING_CHANGED` 终止；外部事务在该观察之后才提交 S1，不否定已线性化的 S0 出站、
+cache return 或 publish。下一次调用必须重新读取 current binding。V1 不引入数据库锁或跨数据库／文件系统
+事务来扩大这一保证。
 
 传给 `CurrentReportPackageReader` 的 Artifact reader 必须在单次 `readCurrent()` 内按
 `读取方法 + artifactId` memoize Promise。同一 Evidence Artifact 被多条 entry 引用时只读取、解析
@@ -551,13 +591,17 @@ Control Artifact 写入能力。TypeScript 证明内部业务链路拿不到写�
    composition kind
    和 checks 冻结为 in-memory fallback bundle；valid fallback slot 可以在完整复核后提供等价 bytes，
    但不能让调用提前返回 degraded。
-10. 只有 fallback bundle 已就绪、egress decision 为 allow 且 Model Context 未超过 LLM 预算，才允许
-    进入模型阶段。每一次 Planner/Fidelity `generateStructured()` 都必须紧邻调用前重新执行
+10. 只有 fallback bundle 已就绪、egress decision 为 allow、存在 eligible Copy target，且完整
+    `modelContext + copyEditRequest` 未超过 LLM 预算，才允许
+    进入模型阶段。每一次 Copy Edit/Fidelity `generateStructured()` 都必须紧邻调用前重新执行
     `assertStillCurrent()`、model-port deep comparison 和 egress check。policy deny、超预算、provider
-    缺失或身份不合格保持零次调用并选择 fallback；任意一次 pre-model fence drift 都 hard fail，禁止
+    缺失或身份不合格保持零次调用并选择 fallback；任意一次 pre-model fence 观察到 drift 都 hard fail，禁止
     本次及后续调用，已完成的较早响应丢弃。
-11. 将候选 Plan 确定性组装为 final Blueprint 并运行同一校验，再对允许 `paraphrase` 的文案发起
-    独立 Content Fidelity Review；初次候选不合格时，只把脱敏诊断交给 Planner 修复一次。
+11. 逐项校验 Copy Edit Plan 的 target 成员、canonical 顺序、唯一性、Unit 绑定、文本长度与敏感
+    token，并拒绝危险控制／默认不可见 Unicode 字符和 NFC／空白等价的伪改写；只允许 1～6 个 Copy
+    从 `verbatim` 改为 `paraphrase`。通过后在本地 deterministic Blueprint
+    上应用编辑并运行同一完整校验，然后对全部 `paraphrase` 发起独立 Content Fidelity Review；
+    初次候选不合格时，只把脱敏诊断交给 Copy Editor 修复一次。
 12. 对通过 Fidelity 的候选实际渲染并按最终可导出资产和非空 block 重算组件门禁。unsafe HTML
     或未分类 Renderer 异常 hard fail；仅候选 coverage、最终 composition 或 8 MiB 失败时拒绝候选并
     选择已预检 fallback。
@@ -565,17 +609,20 @@ Control Artifact 写入能力。TypeScript 证明内部业务链路拿不到写�
     不得重新构造或重新渲染一个“保底”结果。
 14. 根据获胜 Blueprint 与 `exportedAssets` 计算 `generationId`；Store 在 `.staging` 写完 Material、
     Blueprint、Diagnostic、HTML 与 manifest 并核对 hash。
-15. 原子 rename 前立即 `assertStillCurrent()`；已切换则删除本进程 staging、释放锁并以
-    `SOURCE_BINDING_CHANGED` hard fail，不发布旧结果。目标 slot 已被先到者发布时也只能在完整校验
-    且 publish fence 仍通过后采用。
-16. 返回任何 ready/degraded generation 前再保证本次最近的 publish/cache-return fence 已通过；CLI
-    输出结果 JSON。若没有可发布报告则返回非零退出码，原报告始终是唯一事实源。
+15. Store 在 publish guard 内先执行一次 `assertStillCurrent()`，完整重读并验证 staging 的目录、文件
+    bytes、权限与 manifest，再执行第二次 `assertStillCurrent()`；第二次 fence 与原子 rename 之间不得
+    插入其他 awaited work。任一 fence 的最后数据库观察发现切换都删除本进程 staging、释放锁并以
+    `SOURCE_BINDING_CHANGED` hard fail。最终观察之后才提交的切换不阻止已经线性化的 S0 rename。
+    目标 slot 已被先到者发布时也只能在完整校验且 cache-return fence 仍通过后采用。
+16. 返回任何 ready/degraded generation 前，必须已有一次适用于该结果且成功的 publish/cache-return fence；
+    该结果线性化于 fence 的最后数据库观察，不承诺 CLI 返回时仍是数据库最新 binding。若没有可发布报告则
+    返回非零退出码，原报告始终是唯一事实源。
 
 ## 9. 数据契约
 
-四个主契约均版本化、不可变、拒绝未知字段。源 Artifact 与派生文件使用不同引用类型，避免把 sidecar 文件伪装成 Control Artifact。
-两个 `generateStructured()` 调用的 Registry key 固定为 `editorial-report-blueprint` 和
-`editorial-report-fidelity`；前者映射不含 binding/审计附件的 `EditorialBlueprintPlan` Schema，后者
+主契约均版本化、不可变、拒绝未知字段。源 Artifact 与派生文件使用不同引用类型，避免把 sidecar 文件伪装成 Control Artifact。
+两个 `generateStructured()` 调用的 Registry key 固定为 `editorial-report-copy-edits` 和
+`editorial-report-fidelity`；前者映射 Compact Copy Edit Plan Schema，后者
 映射 Fidelity Review Plan Schema。prompt、调用记录和测试都不得另起别名；最终 `EditorialBlueprint`
 与 `EditorialFidelityReview` 均由本地
 contract parser 校验，不直接接受模型输出。
@@ -820,7 +867,7 @@ Material 不变量：
 #### 9.2.1 最小模型上下文
 
 完整 `EditorialMaterial` 只在本地校验和渲染链路使用，不直接发送给模型。Materializer 另做一个
-确定性、无自由裁量的最小投影；Planner 与 Fidelity Reviewer 必须共用同一份 exact bytes：
+确定性、无自由裁量的最小投影；Copy Editor 与 Fidelity Reviewer 必须共用同一份 exact bytes：
 
 ```ts
 interface EditorialModelContext {
@@ -855,17 +902,23 @@ interface EditorialModelContext {
 `sourceArtifacts`、`sourceRefs`、SourcePointer、Evidence 对象／ID／URL、tool provenance、图片
 bytes、文件路径和数据库字段；它不承诺删除 verified Unit `value` 本身包含的 URL、UUID 或其他业务
 字面量，这些值仍受固定 egress policy 与下文敏感 token verbatim 规则约束。模型不负责
-构造审计附件：Pipeline 在 Planner 响应通过后，确定性写入 task/plan/attempt/requestKey/materialHash
-envelope，并按第 9.3 节规则追加唯一 audit section；这样不必为了让模型回显固定 ID 而扩大出境数据。
+构造或改写审计附件：这些绑定与唯一 audit section 始终只存在于本地 deterministic Blueprint 中；
+这样不必为了让模型回显固定 ID 或完整结构而扩大出境数据。
 
 `EditorialModelContext` 使用同一 canonical serializer，记录 `modelContextHash` 与实际 byte size；两次
-Planner 和两次 Fidelity 调用都必须绑定同一 hash。Fidelity 额外只接收当前候选中 paraphrase 的
-`copyPointer/text/materialUnitIds` 列表，不接收最终 HTML、Evidence 或 source metadata。投影结果超过
-512 KiB 时不调用模型，使用已经预检的 fallback。
+Copy Editor 和两次 Fidelity 调用都必须绑定同一 hash。Copy Editor 的调用 envelope 额外只包含
+`copyEditRequest`：它由 deterministic Blueprint 中非审计、单 Unit、verbatim、600 code points 以内且
+不含敏感 token 的 Copy 生成，并按 Blueprint traversal 顺序固定。完整 Blueprint、section/block 结构、
+mode、审计附件和不可编辑 Copy 均不发送给模型。
 
-第二次 Planner 不回传被拒绝的完整响应或自由文本错误，只在同一 Context 外增加最多 32 条
+模型必须从 request targets 中按原顺序选择 1～6 项，只返回相同的 `copyPointer`、`materialUnitId` 与
+replacement `text`。该约束使 LLM 负责编辑表达，而不重新猜测 Validator 才掌握的结构关系。
+Fidelity 额外只接收当前候选中 paraphrase 的 `copyPointer/text/materialUnitIds` 列表，不接收最终 HTML、
+Evidence 或 source metadata。投影结果超过 512 KiB 时不调用模型，使用已经预检的 fallback。
+
+第二次 Copy Editor 不回传被拒绝的完整响应或自由文本错误，只在同一 request envelope 中增加最多 32 条
 `{code,jsonPointer?,materialUnitIds?}` repair hint；code 来自固定目录，Pointer 和 Unit ID 必须已通过
-长度／成员校验。Planner 初稿、Planner repair、Fidelity 三类实际 request context envelope 都按
+长度／成员校验。Copy Edit 初稿、repair、Fidelity 三类实际 request context envelope 都按
 canonical UTF-8 bytes 分别执行 512 KiB 上限；`modelContextHash/ByteSize` 始终只绑定上述共同基础
 Context，call-specific envelope 仍由现有 `promptHash` 与候选 `inputBlueprintHash` 关联。
 
@@ -984,8 +1037,6 @@ type EditorialBlueprintBlock =
       kind: 'risk-register';
       items: Array<{
         risk: EditorialCopy;
-        impact?: EditorialCopy;
-        response?: EditorialCopy;
       }>;
     })
   | (EditorialBlockBase & {
@@ -998,24 +1049,22 @@ type EditorialBlueprintBlock =
       evidenceIds: string[];
     });
 
-type EditorialPlannedBlock = Exclude<
-  EditorialBlueprintBlock,
-  { kind: 'audit-appendix' }
->;
-
-interface EditorialBlueprintPlan {
-  version: 'editorial-blueprint-plan-v1';
-  locale: 'zh-CN';
-  title?: EditorialCopy;
-  deck: EditorialCopy;
-  sections: Array<{
-    id: string;
-    role: Exclude<EditorialSectionRole, 'audit'>;
-    questionIds: string[];
-    title?: EditorialCopy;
-    lead?: EditorialCopy;
-    blocks: EditorialPlannedBlock[];
+interface EditorialCopyEditRequest {
+  version: 'editorial-copy-edit-request-v1';
+  targets: Array<{
+    copyPointer: string;
+    materialUnitId: string;
+    currentText: string;
   }>;
+}
+
+interface EditorialCopyEditPlan {
+  version: 'editorial-copy-edit-plan-v1';
+  edits: Array<{
+    copyPointer: string;
+    materialUnitId: string;
+    text: string;
+  }>; // 1..6，且按 request target 的 canonical 顺序
 }
 
 interface EditorialBlueprint {
@@ -1039,15 +1088,15 @@ interface EditorialBlueprint {
 }
 ```
 
-`editorial-report-blueprint.schema.json` 约束模型返回的 `EditorialBlueprintPlan`，不是可直接落盘的最终
-Blueprint。Pipeline 校验 Plan 后才注入冻结 binding、request key、material hash，并确定性追加唯一
-`role=audit` section 与 `audit-appendix` block，得到上面的 `EditorialBlueprint`。模型不能看到或输出
-这些被排除的控制标识，也不能决定审计闭包；Diagnostic 的 Planner `responseHash` 对原始 Plan
-canonical bytes 计算，`blueprintHash` 对组装后的最终 Blueprint bytes 计算，两者不得混用。
+`editorial-report-copy-edits.schema.json` 约束模型返回的 `EditorialCopyEditPlan`，不是可直接落盘的最终
+Blueprint。Pipeline 先构造并校验完整 deterministic Blueprint，再将通过校验的编辑逐项应用；模型不能
+看到或输出结构、绑定和审计闭包。Diagnostic 的 Copy Editor `responseHash` 对原始 Copy Edit Plan canonical
+bytes 计算，`blueprintHash` 对应用编辑后的最终 Blueprint bytes 计算，两者不得混用。Store 从最终
+Blueprint 反推同一 canonical plan 并复核 response hash，拒绝结构漂移或未授权编辑。
 
-最终 `EditorialBlueprintBlock` 在本地 contract parser 中按 `kind` 判别；模型 JSON Schema 只接受
-`EditorialPlannedBlock`，两者都拒绝未知字段。各组件的最小数据形状如下，其中 `audit-appendix`
-只由 Pipeline 确定性追加：
+最终 `EditorialBlueprintBlock` 仅由本地 contract parser 按 `kind` 判别；模型 JSON Schema 只接受
+包含 1～6 条受控 edit 的 `EditorialCopyEditPlan`，两者都拒绝未知字段。各组件的最小数据形状如下，
+其中 `audit-appendix` 只由 Pipeline 确定性追加：
 
 | kind | 必需结构 | 约束 |
 |---|---|---|
@@ -1060,12 +1109,12 @@ canonical bytes 计算，`blueprintHash` 对组装后的最终 Blueprint bytes �
 | `strategy-matrix` | `columns`, `rows[{label,cells}]` | 每行 cell 数严格等于 columns 数 |
 | `roadmap` | `lanes[{label,items}]` | 不得创造来源中不存在的优先级或周期 |
 | `validation-gates` | `gates[{label,method,successCriterion?}]` | 各字段必须来自同一显式 validation group |
-| `risk-register` | `items[{risk,impact?,response?}]` | risk 保留 unknown；源没有影响／响应时不得补写 |
+| `risk-register` | `items[{risk}]` | V1 只呈现 source-backed risk，并保留 unknown 状态；不得补写影响或响应 |
 | `visual-gallery` | `assetIds` | 只能引用 Material assets；caption/alt 由 Renderer 从 Asset 的 Unit 引用取得 |
 | `audit-appendix` | `unitIds`, `evidenceIds` | 覆盖所有 required unit |
 
-表中的 `title`、`label`、`summary`、`boundary`、`body`、`method`、`successCriterion`、`impact`、
-`response`、matrix column/cell 和 roadmap item 等所有非固定文案字段，类型一律是
+表中的 `title`、`label`、`summary`、`boundary`、`body`、`method`、`successCriterion`、
+matrix column/cell、roadmap item 和 `risk` 等所有非固定文案字段，类型一律是
 `EditorialCopy`，不能退化成裸 string。`valueUnitId`、`unitIds`、`evidenceIds` 和 `assetIds`
 是引用字段，Renderer 只从 Material 读取其值。每个 LLM candidate 的
 `EditorialCopy.materialUnitIds` 最多 16 个；deterministic `verbatim` copy 固定恰好 1 个。
@@ -1088,7 +1137,7 @@ metric item 必须使用 source-backed `EditorialCopy` label。Validator 同时�
 | `strategy-matrix` | V1 只允许 competitive dimension×sample；row label 必须引用该行 dimension Unit，column 必须引用该列 sample name Unit，每个 cell Unit 的 basis 必须同时可达二者，且矩形完整 |
 | `roadmap` | lane label 必须引用源 priority/phase Unit；每个 item 所在 group 必须含值相同的该 priority，或由同一 executionPlan phase 显式绑定 |
 | `validation-gates` | label/method/criterion 必须同 projector group 或由 basis 相连；不得跨 action/issue 拼接 |
-| `risk-register` | risk/impact/response 必须同 group 或有显式 basis；无关系的可选 impact/response 必须省略 |
+| `risk-register` | V1 只允许 risk 字段，且必须引用 `role=risk` 的 Unit 并保持 unknown 状态 |
 | `visual-gallery` | 只渲染声明 assetIds；每个 Asset 只能解析自身 `captionUnitId/altTextUnitId`，不能与另一 Asset 交换；comparison pair 必须保持相邻和原 before/after 顺序 |
 | `audit-appendix` | Unit 必须等于 required closure 的 canonical 无重复序列，Evidence 必须等于这些 Unit 的直接 Evidence canonical 并集；basis 只能按 Material 原图展开 |
 
@@ -1107,6 +1156,12 @@ Blueprint 不变量：
   这些 fixed UI copy 不需要 Material 引用，也不进入 Fidelity。
 - `verbatim` 只能引用一个 Unit，按第 9.1 节规范化后必须完全一致；其 `text` 上限等于合法源
   string 叶子的 16,000 code point。number/boolean 使用其 canonical JSON 文本。
+- Copy Edit parser 与其 JSON Schema 都拒绝除 HT/LF/CR 外的 C0、全部 C1、Unicode
+  `Default_Ignorable_Code_Point`（包括 bidi control、ZWJ、variation selector 与 astral tag）、全部
+  `General_Category=Cf` 以及 `U+2800 BRAILLE PATTERN BLANK`。这是 V1 宁可误拒绝的安全策略：这些字符
+  在 token scanner 之前即以 `SCHEMA_INTEGRITY` fail closed，不能用于拆分或视觉伪装 URL、标识与专有
+  名词；普通中文、HT/LF/CR 和普通非 BMP 字符仍允许。候选若只在 Unicode NFC 或空白折叠后与源文案
+  等价，则以 `CONTENT_FIDELITY` 拒绝，不能把排版噪声伪装成一次有效改写。
 - `paraphrase` 可以引用多个 Unit，`text` 最多 600 code point，但采用版本化、宁可误报的 V1 token
   scanner。只要任一引用 Unit 的规范化值或候选 `text` 命中下列任一类，Validator 就要求该 Copy 为
   单 Unit `verbatim`，否则拒绝候选：
@@ -1326,17 +1381,17 @@ Diagnostic 不变量：
   丢失配置裁决。
 - Diagnostic 的唯一 `source_integrity` check 只持久化创建该 Diagnostic 时已经完成的 source
   verification，不虚构“事件列表”。四类调用级 fence 固定为 start、每次 outbound call 前的
-  pre-model、ready cache 返回前的 cache-return、原子发布前的 publish；任一 drift 都立即停止后续
-  模型／返回／发布。cache-return 命中的是不可变的既有 generation，publish fence 又发生在最终提交
-  前，因此失败只返回 `SOURCE_BINDING_CHANGED` 并写脱敏结构化进程日志／失败结果，不改写既有已发布
-  Diagnostic，也不把未通过 fence 的 staging Diagnostic 当成成功审计记录。ready cache drift 不返回
-  旧 cache，也不创建任何新输出。
+  pre-model、ready cache 返回前的 cache-return、原子发布前的 publish；任一 fence 的最后数据库观察
+  发现 drift 都立即停止后续模型／返回／发布。cache-return 命中的是不可变的既有 generation，
+  publish fence 又发生在最终提交前，因此失败只返回 `SOURCE_BINDING_CHANGED` 并写脱敏结构化
+  进程日志／失败结果，不改写既有已发布 Diagnostic，也不把未通过 fence 的 staging Diagnostic 当成
+  成功审计记录。最后数据库观察之后才提交的切换按第 7.2 节排序，不追溯改写 Diagnostic。
 - `model_egress` 是 deterministic check：allow 时 passed；deny 时也以受控 warning 记为 passed，表示
   默认拒绝策略已正确执行而不是系统错误。deny 时 `candidateAttempts=[]`、model call 为 0，最终只
   能在 fallback preflight 通过后发布 degraded。policy version/hash/decision/reason 必须与 request
   key、manifest 一致。
 - `pass` 不得含 error、failed 或必需检查的 `not_run`；允许记录不影响完整性的视觉省略等 warning。
-- `degraded` 表示 LLM 未配置、因预算跳过、调用失败或候选被拒后，Deterministic Blueprint
+- `degraded` 表示 LLM 未配置、无 eligible Copy、因预算跳过、调用失败或候选被拒后，Deterministic Blueprint
   成功发布；所有适用于 fallback 的发布硬检查仍必须 passed，LLM-only 检查可以 failed/not_run。
 - fallback preflight 失败时使用 `status=fail/mode=deterministic_fallback`，顶层 issue code 固定为
   `SOURCE_NOT_RENDERABLE`，并保留具体的受控子 code；此时 `candidateAttempts=[]`，证明没有调用 LLM。
@@ -1345,15 +1400,17 @@ Diagnostic 不变量：
   必须带 request key 与 material hash。该分支固定 `candidateAttempts=[]`、
   `rejectedResponseHashes=[]`、`model_egress=not_run`，且没有 model context 字段；类型联合禁止非法
   status/mode 组合。
-- 每次 Planner 逻辑调用都有一个 attempt。只有 `generateStructured()` 成功返回 parsed Plan 时，
+- 每次 Copy Edit 逻辑调用都有一个 attempt。只有 `generateStructured()` 成功返回 parsed Plan 时，
   才对其 canonical JSON 计算 `responseHash`；JSON 解析前抛错时不伪造响应 hash。Plan 通过 Schema、
-  被确定性组装为 final Blueprint 且通过 envelope 校验后，才对 final bytes 计算 `blueprintHash`。
-  所有且仅 `outcome=rejected` 的成功 Planner
+  被确定性应用到 final Blueprint 且通过 envelope 校验后，才对 final bytes 计算 `blueprintHash`。
+  所有且仅 `outcome=rejected` 的成功 Copy Edit
   响应 hash 必须出现在 `rejectedResponseHashes`；`call_failed` 没有可伪造的 hash。
-- `outcome=call_failed` 当且仅当 planner call 为 failed；accepted/rejected 必须有 succeeded call，
-  accepted 还必须有 Blueprint hash，并且最多一个 candidate accepted。只有 Fidelity、render coverage、
-  最终 component trace、HTML safety 和 byte-size 全部通过的候选才可 accepted；通过 Fidelity 但候选
-  coverage/composition/size 失败时是 rejected，Renderer 漏渲染非空 block 或伪造 trace 则是 hard fail。
+- `outcome=call_failed` 当且仅当 planner call 为 failed；accepted/rejected 必须有 succeeded planner
+  call，accepted 还必须有 Blueprint hash、`status=succeeded` 的 Fidelity call、完整 Fidelity Review，
+  且该 Review 的本地 fold verdict 必须为 `pass`。最多一个 candidate accepted。只有上述合同与 render
+  coverage、最终 component trace、HTML safety 和 byte-size 全部通过的候选才可 accepted；Fidelity
+  缺失／失败／block 一律不得 accepted。通过 Fidelity 但候选 coverage/composition/size 失败时是
+  rejected，Renderer 漏渲染非空 block 或伪造 trace 则是 hard fail。
 - `publishedBlueprintHash` 必须等于 manifest 引用的 Blueprint 文件 hash；ready 时它还必须等于
   唯一 `accepted` candidate 的 `blueprintHash`。降级 Blueprint 不伪装成 LLM candidate。
 - main 当前的 `LLMInvocationError` 不携带实际 route、expected model 或 trace；失败调用只记录
@@ -1408,7 +1465,7 @@ interface EditorialFidelityReview {
 
 规则：
 
-- Fidelity Review Plan 与 Blueprint Plan 是不同的 `generateStructured()` 调用，使用不同 schema name、
+- Fidelity Review Plan 与 Copy Edit Plan 是不同的 `generateStructured()` 调用，使用不同 schema name、
   prompt version 和 trace；`editorial-report-fidelity.schema.json` 只接受
   `EditorialFidelityReviewPlan`，模型不接收也不回显 `blueprintHash`。
 - Validator 先枚举候选 Blueprint 中全部 `mode=paraphrase` 的 `EditorialCopy` JSON Pointer。
@@ -1421,8 +1478,8 @@ interface EditorialFidelityReview {
 - 对实际进入 Review 的候选，`fidelityCall` 必须存在；调用成功时还必须保存完整、无自由文本的
   `fidelityReview` 及其 canonical hash。成功 call 的 `responseHash` 只等于模型原始 Review Plan 的
   canonical hash；`fidelityReviewHash` 等于本地注入 hash 和 fold 后最终 Review 的 canonical hash，
-  两者不得冒充相等。调用失败时不得伪造 Review。未通过前置确定性校验或没有
-  paraphrase 的候选不创建 Fidelity 调用记录。
+  两者不得冒充相等。调用失败时不得伪造 Review。未通过前置确定性校验的响应不创建 Fidelity 调用记录；
+  所有成功应用的 Copy Edit 候选都至少包含一个 paraphrase，并必须进入 Fidelity Review。
 - Reviewer 只判断，不得回写或修复 Blueprint。
 - 专有名词新增、替换或张冠李戴归为 `unsupported`；语义确定性升级归为 `certainty_upgraded`；限定条件
   丢失归为 `qualification_lost`。这些是 Reviewer 的语义判断，不得宣称由 deterministic token scanner
@@ -1430,14 +1487,14 @@ interface EditorialFidelityReview {
 - 最终 Review 的 top-level `verdict` 由 Pipeline 根据 checks 确定性 fold：只有 checks 与全部
   paraphrase 一一对应且每项均为 `faithful` 或 `narrower` 时才是 `pass`，否则为 `block`；Review Plan
   根本没有可供模型自报的 top-level verdict。
-- 候选没有任何 paraphrase 时不调用 Reviewer，`content_fidelity` 由确定性检查记为 passed。
+- 没有 eligible target 时直接发布 deterministic fallback，不形成候选，也不把 `content_fidelity` 伪记为 passed。
 - LLM 判定不能覆盖确定性失败；任意 deterministic error 都直接 block。
 
 ### 9.6 Editorial Report manifest
 
 ```ts
 interface EditorialReport {
-  version: 'editorial-report-v1';
+  version: 'editorial-report-v2';
   authority: 'derived';
   taskId: string;
   planVersionId: string;
@@ -1452,13 +1509,14 @@ interface EditorialReport {
     materialVersion: 'editorial-material-v1';
     modelContextVersion: 'editorial-model-context-v1';
     modelContextHash: Sha256;
-    blueprintPlanVersion: 'editorial-blueprint-plan-v1';
+    copyEditRequestVersion: 'editorial-copy-edit-request-v1';
+    copyEditPlanVersion: 'editorial-copy-edit-plan-v1';
     blueprintVersion: 'editorial-blueprint-v1';
-    promptVersion: 'editorial-blueprint-prompt-v2';
+    copyEditPromptVersion: 'editorial-copy-edit-prompt-v1';
     fidelityPromptVersion: 'editorial-fidelity-prompt-v2';
     fallbackVersion: 'editorial-fallback-v1';
     rendererVersion: 'editorial-html-v1';
-    storeVersion: 'editorial-store-v1';
+    storeVersion: 'editorial-store-v2';
     modelEgress: EditorialModelEgressDecision;
     gatewayConfiguration: EditorialGatewayConfiguration | null;
   };
@@ -1740,15 +1798,17 @@ name/assistiveTechnology/browser 与 component；selector 只进入附件。
 
 ### 11.1 可以做
 
-- 选择决策优先的章节顺序。
-- 在组件白名单中选择最合适的表达形式。
-- 将相关 Material Unit 聚类为人群卡、路径、矩阵、路线图或验证 Gate。
-- 为章节生成短标题、导语和受来源约束的精炼表述。
-- 把详细内容下沉到审计附件，同时保证 required unit 不丢失。
+- 在 `copyEditRequest.targets` 中按 canonical 顺序选择 1～6 项进行编辑。
+- 仅返回所选目标的替换 `text`；`copyPointer` 与 `materialUnitId` 必须逐字复制，`mode=paraphrase`
+  由 Pipeline 在本地设置。
+- 在不改变含义、确定性、限定条件和专有名词的前提下，精炼既有短文案。
+- targets 为空时零模型调用，发布带 `NO_ELIGIBLE_COPY_TARGETS` 原因的 deterministic fallback。
 
 ### 11.2 不可以做
 
 - 输出 HTML、CSS、JavaScript、SVG、Markdown HTML 或组件代码。
+- 新增、删除、重排或复制 section/block，修改组件类型、ID、role、questionIds、直接 Unit 引用或
+  assetIds。
 - 新增事实、指标、数字、日期、专有名词、证据 ID、URL 或视觉资产。
 - 把推断或未知写成事实，把建议写成已经验证的效果。
 - 修改 sourceRefs、evidenceIds、questionIds 或 epistemic status。
@@ -1847,7 +1907,7 @@ interface EditorialStructuredModelClient {
   generateStructured<T>(options: {
     prompt: string;
     schema: object;
-    schemaName: 'editorial-report-blueprint' | 'editorial-report-fidelity';
+    schemaName: 'editorial-report-copy-edits' | 'editorial-report-fidelity';
     context: object;
     limits: EditorialLLMLimits;
     redirectMode: 'error';
@@ -1934,7 +1994,7 @@ Gateway 原始 client 仍需在 runtime 拒绝任何意外 `receiptId`，避免�
 URL、完整有序 route 及其 pin 是否显式；绝不暴露 API key。constructor 对解析结果逐层 copy/freeze，
 getter 返回独立的 deep-copy/deep-freeze snapshot，不暴露内部 `cfg` 或可变 route 对象。该 snapshot
 必须来自将被调用的同一个 Gateway 实例，不能重新解析一次环境变量后假设二者相同。CLI 用它构造并
-deep-freeze `EditorialGatewayConfiguration`；Pipeline 紧邻**每一次** Planner/Fidelity outbound call
+deep-freeze `EditorialGatewayConfiguration`；Pipeline 紧邻**每一次** Copy Edit/Fidelity outbound call
 前重新取得 client snapshot，逐字段 deep-equal configuration 的 provider、host、URL、mode、eligibility
 与有序 routes，并重算 configuration hash。任一不等以 `EDITORIAL_MODEL_PORT_MISMATCH` hard fail，
 该次调用不得发出，不能退化为 fallback 掩盖错误装配。
@@ -1949,7 +2009,7 @@ Gateway 配置解析新增上述 `GatewayConfigurationError`，或提供返回�
 显式提供等价 adapter，否则 composition root 将 client/configuration 一并归一为 `null`，只能走
 fallback；不允许“有 client、无 configuration”的半配置状态。
 
-- Blueprint 最多两次逻辑调用：一次初稿，一次带诊断修复。
+- Copy Editor 最多两次逻辑调用：一次初稿，一次带诊断修复。
 - 每个合格候选最多一次 Fidelity Review；修复后的候选再评审一次。
 - Gateway configuration 必须保留 main 配置的完整有序 route pool；当前 `.env.example` 的标准 4 条
   route 必须合格，不能因 sidecar 自设三条上限而无条件降级。为限制恶意配置，完整 configuration
@@ -1961,7 +2021,7 @@ fallback；不允许“有 client、无 configuration”的半配置状态。
   `max_tokens=8000`；对成功和错误响应都以流式计数方式在 1 MiB 处终止读取，禁止先无界
   `res.json()`／`res.text()`；并为 sidecar 调用固定 `fetch(..., {redirect: 'error'})`，任何 3xx 都按
   调用失败降级，禁止把携带 Material 的 POST body 自动转发。未传 limits 的既有 main 调用保持原行为。
-- Pipeline 不在 Gateway 之外叠加重试；最多两次 Blueprint 与每候选一次 Fidelity 的逻辑上限
+- Pipeline 不在 Gateway 之外叠加重试；最多两次 Copy Edit 与每候选一次 Fidelity 的逻辑上限
   和上述 HTTP 上限共同约束时间、内存与费用。
 - Pipeline 实现 sidecar-only model receipt gate，不使用会写 `control_model_calls` 的
   `ReceiptLLMClient`。每次响应必须同时满足：响应 `providerIdentity.mode=real`、
@@ -1969,19 +2029,24 @@ fallback；不允许“有 client、无 configuration”的半配置状态。
   `MODEL_IDENTITY_INVALID` 或 `MODEL_DRIFT` 并进入确定性降级。响应出现 `receiptId` 同样以
   `EDITORIAL_RECEIPT_CLIENT_FORBIDDEN` hard fail 且不发布 sidecar；这是对错误装配的最后诊断，不能
   回滚已经发生的写入，真正的零写保证来自专用端口、官方 CLI composition root 与全表集成快照。
-- Egress decision 必须在任何 `generateStructured()` 前为 allow；Planner 和 Fidelity 共用同一个冻结
-  decision，不得在两次调用间重新放宽。每一次 Planner/Fidelity 请求都必须在紧邻调用前依次完成
+- Egress decision 必须在任何 `generateStructured()` 前为 allow；Copy Edit 和 Fidelity 共用同一个冻结
+  decision，不得在两次调用间重新放宽。每一次 Copy Edit/Fidelity 请求都必须在紧邻调用前依次完成
   `assertStillCurrent()`、client/configuration deep comparison 和 egress allow 检查；前一次调用成功
-  不能授权下一次调用。若 source binding 在发布前变化，已完成的模型响应全部丢弃，
-  以 `SOURCE_BINDING_CHANGED` hard fail，不发布 fallback 或候选。
+  不能授权下一次调用。若任一后续 fence 的最后数据库观察发现 source binding 已变化，已完成的模型响应
+  全部丢弃，以 `SOURCE_BINDING_CHANGED` hard fail，不发布 fallback 或候选；观察之后才提交的变化
+  适用第 7.2 节的线性化语义。
 - Material 超过 400 个 Unit 或 120,000 个文本字符时，在 fallback preflight 通过后跳过 LLM，
   直接发布确定性降级。
-- Planner 初稿的完整 `EditorialModelContext`、Planner repair 的同一 Context 加 bounded repair hints，
-  以及 Fidelity 的同一 Context 加候选 copy 列表，各自 request context envelope 不超过 512 KiB；按
-  实际 canonical UTF-8 bytes 计数，任一超限不调用对应 LLM 并使用 fallback。
-- LLM 候选最多 12 节、48 个 block、240 个 `EditorialCopy`、60,000 个总文案 code point；
-  `paraphrase` 单项最多 600，`verbatim` 单项最多 16,000 且必须精确匹配 Unit。Deterministic
-  Blueprint 不受 LLM 输出预算约束，但仍最多 48 个 block、1,200 个 `EditorialCopy` 和 600,000
+- Copy Editor 初稿只接收完整 `EditorialModelContext` 与 compact `copyEditRequest.targets`，repair
+  在同一 envelope 中追加 bounded hints；Fidelity 使用同一 Context 加候选 paraphrase 列表。三类
+  request context envelope 均不超过 512 KiB；按实际
+  canonical UTF-8 bytes 计数，任一超限不调用对应 LLM 并使用 fallback。
+- Copy Edit Plan 最多 6 条编辑，每条 replacement 最多 600 code points；完整 Blueprint 从不由模型
+  输出。replacement 在本地解析边界拒绝除 TAB/LF/CR 外的 C0/C1 控制字符、Unicode
+  `Default_Ignorable_Code_Point`（包括零宽、双向文本控制、variation selector）、全部
+  `General_Category=Cf` 与 `U+2800 BRAILLE PATTERN BLANK`。这是宁可误拒绝的安全策略；普通中文、
+  TAB/LF/CR 和普通非 BMP 字符继续允许，仅增加空白或不可见字符也不构成有效编辑。Deterministic
+  Blueprint 最多 48 个 block、1,200 个 `EditorialCopy` 和 600,000
   个总文案 code point。narrative paragraph、card、flow step、matrix row、roadmap item、gate 和 risk
   item 每个 block 最多 24 个，matrix 最多 8 列，gallery 最多 6 个 asset；唯一 audit appendix 的
   `unitIds/evidenceIds` 与 truth-triad 的三类直接 ID 合计分别可到 Material hard limit 1,000。
@@ -1996,10 +2061,10 @@ fallback；不允许“有 client、无 configuration”的半配置状态。
    cache-return 与 publish 四类 current-binding fence。
 2. **Model egress**：按固定默认拒绝策略裁决本次最小 Model Context 是否可发送；deny 是零调用降级路径。
 3. **Model identity**：每个 LLM 响应的 provider identity 合格，实际 model 与 expected model 完全一致。
-4. **Schema integrity**：Blueprint Plan 与 Fidelity 两类 LLM 响应分别通过 JSON Schema，拒绝未知字段。
+4. **Schema integrity**：Copy Edit Plan 与 Fidelity 两类 LLM 响应分别通过 JSON Schema，拒绝未知字段。
 5. **Reference integrity**：所有 Material、Asset、Evidence 和 question 引用存在且绑定一致。
 6. **Component relation**：按第 9.3 节逐 kind 验证 label/value、title/body、row/column/cell、
-   lane/item、risk/response 与 asset/caption 的显式 group/basis/projector 关系。
+   lane/item、risk 与 asset/caption 的显式 group/basis/projector 关系。
 7. **Epistemic integrity**：输出状态不得比最保守来源更强。
 8. **Numeric integrity**：敏感 token 必须 verbatim，ratio 必须用 decimal-string 算法显示。
 9. **Content coverage**：同时满足第 12.1 节的正文覆盖，以及唯一 audit appendix 对所有 required
@@ -2125,7 +2190,7 @@ Fallback preflight 是一次真正的发布演练，不是“调用失败后再�
 
 - LLM provider 未配置或不可用。
 - Editorial model egress policy 拒绝本次数据出境。
-- Blueprint 调用超时、限流或返回无效 Schema。
+- Copy Edit 调用超时、限流或返回无效 Schema。
 - Blueprint 引用、证据等级、数字或覆盖校验失败。
 - LLM 候选自身的 render coverage 或 8 MiB 体积门禁失败。
 - Fidelity Review 不通过或不可用。
@@ -2134,7 +2199,8 @@ Fallback preflight 是一次真正的发布演练，不是“调用失败后再�
 必须硬失败且不发布的情况：
 
 - task 未完成或当前 binding 不完整。
-- start、任一次 pre-model、ready cache-return 或 publish fence 发现 current binding 已变化。
+- start、任一次 pre-model、ready cache-return 或 publish fence 的最后数据库观察发现 current binding
+  已变化。
 - Report Package 缺失、未 SEALED、hash 不一致或组件绑定错误。
 - Review 不为 pass，或输入为 `legacy_text`。
 - deliverable type 不在 V1 显式 projector 清单、inactive，或 payload 未通过 registry schema。
@@ -2212,7 +2278,8 @@ V1 `editorial-html-v1` 的视觉基线固定，不留给 LLM 或实现者临场�
 这些值借鉴参考 Demo 的阅读气质，但移除了其 JavaScript 交互并把状态语义收紧为本文契约。任何视觉
 调整必须提升 `rendererVersion` 并重跑截图、打印、对比度和黑白状态辨识门禁。
 
-组件资格由 Validator 根据 Material 确定，LLM 只能在 eligible 集合中选择：
+组件资格由 Validator 根据 Material 确定，deterministic scaffold 只编入 eligible 组件；LLM 不得改变
+组件集合、结构或顺序：
 
 | 组件 | 最小资格 |
 |---|---|
@@ -2303,9 +2370,10 @@ ${RUN_WORKSPACE_ROOT:-./run-workspaces}/editorial-reports/
   modelContextHash,
   materialVersion,
   modelContextVersion,
-  blueprintPlanVersion,
+  copyEditRequestVersion,
+  copyEditPlanVersion,
   blueprintVersion,
-  blueprintPromptVersion,
+  copyEditPromptVersion,
   fidelityPromptVersion,
   fallbackVersion,
   rendererVersion,
@@ -2345,6 +2413,12 @@ ${RUN_WORKSPACE_ROOT:-./run-workspaces}/editorial-reports/
 `modelContextHash` 全部参与 key；`gatewayConfigurationHash` 来自 canonical endpoint URL、redirect、
 limits 与完整有序、无凭证的模型路由配置（含 requested 与
 expected actual model），因此策略、出境目标或模型路由变化不会错误复用旧 ready 结果。
+
+`taskState` 和 `taskStateVersion` 是 current-binding fence 字段，不是 `requestKey` 的内容身份。
+若新调用只观察到 task state/stateVersion 变化，而 Attempt、plan、Report Package ID/hash、Material、
+Model Context、egress/Gateway 配置及全部版本输入均未变化，则它生成相同 `requestKey`，并可在
+针对新冻结 binding 通过 cache-return fence 后复用内容等价的 generation。Attempt、plan、package、
+内容或其他 key 输入变化时必须进入不同的 request identity；不得声称任何 source 更新都会产生新 key。
 
 同一个 `requestKey` 有相互独立的 `ready` 与 `fallback` result slot。新调用只把 ready
 目录视为完成缓存；已有 fallback 目录不会阻止它重新尝试 LLM。锁所有者可以在 LLM 前完整验证
@@ -2419,13 +2493,18 @@ expected actual model），因此策略、出境目标或模型路由变化不�
 1. 获得 request lock，并在同一父目录的 `.staging` 建立随机临时目录。
 2. 以 `mode 0600` 写入内容文件，逐一重新读取并校验 hash 与 byte size。
 3. 最后写入并校验 `manifest.json`。
-4. 立即调用 `assertStillCurrent()`；通过后不再执行模型、渲染或其他可延迟操作，使用同文件系统原子 rename 将完整目录直接移动到
-   `requests/{requestKey}/{ready|fallback}`；这一次 rename 同时提交 generation 与其可发现性，
-   不存在“generation 已发布但 pointer 未写”的第二个 crash window。
-5. 目标 slot 已存在时验证并返回先到的完整赢家，不比较本进程 staging 的 Diagnostic、trace 或
+4. 在 publish guard 内调用第一次 `assertStillCurrent()`，随后完整重读 staging 目录和五个文件，复核
+   文件集合、类型、权限、hardlink/symlink、exact bytes/hash 及 manifest 全合同。
+5. staging 复核完成后立即调用第二次 `assertStillCurrent()`，并把同文件系统原子 rename 作为下一项
+   awaited 操作，将完整目录直接移动到 `requests/{requestKey}/{ready|fallback}`。这道最终 fence 防止
+   staging 复核期间已经提交且能被其最后数据库观察看到的 source 切换；该观察是 publish 的线性化点。
+   观察之后才提交的切换可以先于 Promise 完成或 rename 的实际时刻发生，但不追溯否定 S0 publish。
+   rename 同时提交 generation 与其可发现性，不存在“generation 已发布但 pointer 未写”的第二个 crash
+   window。失败 Diagnostic 也按“首次 fence → staging 复核 → 最终 fence → rename”执行。
+6. 目标 slot 已存在时验证并返回先到的完整赢家，不比较本进程 staging 的 Diagnostic、trace 或
    `generatedAt` 是否逐字节相同。
-6. 成功后将目录和文件权限保持为 owner-only；CLI 只打印绝对路径，不复制内容。
-7. `finally` 以 no-follow 重新读取 lock，只有 schema、request key、owner token 和预期 inode 全部
+7. 成功后将目录和文件权限保持为 owner-only；CLI 只打印绝对路径，不复制内容。
+8. `finally` 以 no-follow 重新读取 lock，只有 schema、request key、owner token 和预期 inode 全部
    匹配才 unlink；旧 owner 的 finally 永不删除新 owner lock。捕获失败时只删除本进程创建且仍位于
    `.staging` 的目录；进程崩溃遗留的 staging 不被读取为结果。
 
@@ -2434,7 +2513,9 @@ expected actual model），因此策略、出境目标或模型路由变化不�
 ### 15.4 生命周期
 
 - Canonical Artifact 生命周期完全不变。
-- Published slot 永不原地修改；输入或版本变化产生新 request key 和新目录。
+- Published slot 永不原地修改；第 15.2 节列出的 `requestKey` canonical 输入或 Pipeline 版本变化
+  产生新 key 和新目录。仅 task state/stateVersion 变化且内容身份不变时允许同 key 复用，但新调用仍须
+  冻结新 binding 并通过 cache-return fence。
 - `manifest.json` 缺失、hash 不符、源 Report Package 失效或 cache-return fence 不通过时，该 slot 不可消费。
 - failure diagnostic 仅用于本地排障，不是成功报告。
 - 获锁后清理同 request、超过 24 小时且不属于活跃 owner 的 staging；其他进程的 staging 不碰。
@@ -2480,9 +2561,9 @@ CLI 在成功、降级和异常路径都必须于 `finally` 释放 request lock 
 | task 不存在或 binding 不完整 | hard fail | 不变 | 无 sidecar，仅脱敏 stderr |
 | task 未完成 | hard fail | 不变、继续可读 | 无 sidecar，仅脱敏 stderr |
 | Report Package/组件/hash 无效或源预算超限 | hard fail | 不变；提示先修复主链 | 无 sidecar，仅脱敏 stderr |
-| start 或第一次 outbound 前的 pre-model fence 发现 task/current Attempt/package ID/hash 已切换 | `SOURCE_BINDING_CHANGED` hard fail；LLM 调用数为 0 | 不变 | 无 manifest，不返回旧 cache |
-| 较早 model call 后、下一次 pre-model fence 发现 binding 已切换 | `SOURCE_BINDING_CHANGED` hard fail；不发下一次调用，丢弃既有响应 | 不变 | 无 manifest，不发布 fallback |
-| ready cache-return fence 发现 binding 已切换 | `SOURCE_BINDING_CHANGED` hard fail；不返回旧 cache、不创建新输出 | 不变 | 既有 slot 不改写 |
+| start 或第一次 outbound 前的 pre-model fence 最后数据库观察发现 task/current Attempt/package ID/hash 已切换 | `SOURCE_BINDING_CHANGED` hard fail；LLM 调用数为 0 | 不变 | 无 manifest，不返回旧 cache |
+| 较早 model call 后、下一次 pre-model fence 最后数据库观察发现 binding 已切换 | `SOURCE_BINDING_CHANGED` hard fail；不发下一次调用，丢弃既有响应 | 不变 | 无 manifest，不发布 fallback |
+| ready cache-return fence 最后数据库观察发现 binding 已切换 | `SOURCE_BINDING_CHANGED` hard fail；不返回旧 cache、不创建新输出 | 不变 | 既有 slot 不改写 |
 | Review 非 pass 或 legacy | hard fail | 不变 | 无 sidecar，仅脱敏 stderr |
 | deliverable type 无 projector 或 payload schema 不合格 | hard fail | 不变 | 无 sidecar，仅脱敏 stderr |
 | Material 单叶子／Unit／文本超过发布 hard limit | hard fail | 不变 | 仅 failure diagnostic，不发布 manifest |
@@ -2491,12 +2572,14 @@ CLI 在成功、降级和异常路径都必须于 `finally` 释放 request lock 
 | LLM 超时、限流、配置缺失 | deterministic fallback | 不变 | 发布 `degraded` |
 | 非 typed Gateway 配置异常或 client/configuration snapshot 不一致 | hard fail；不发该次及后续调用 | 不变 | 不发布；不得用 fallback 掩盖错误装配 |
 | egress policy 因 sensitivity/redaction/provider/mode/endpoint 拒绝 | fallback preflight 后零次 LLM 降级 | 不变 | 发布 `degraded`，记录 policy version/hash/reason |
+| 没有满足单 Unit、非审计、非敏感、长度限制的 Copy target | 零次 LLM 降级 | 不变 | 发布 `degraded`，记录 `NO_ELIGIBLE_COPY_TARGETS` |
+| 完整 `modelContext + copyEditRequest` 超过 512 KiB | 零次 LLM 降级 | 不变 | 发布 `degraded`，记录 `MATERIAL_BUDGET_EXCEEDED` |
 | 错误注入 Receipt client／响应出现 receiptId | hard fail + 集成门禁失败 | 零写合同已被破坏，需修复装配 | 不发布 |
-| Blueprint Schema/引用失败两次 | deterministic fallback | 不变 | 发布 `degraded` |
+| Copy Edit Schema/引用失败两次 | deterministic fallback | 不变 | 发布 `degraded` |
 | Fidelity Review block 或不可用 | deterministic fallback | 不变 | 发布 `degraded` |
 | 已通过 Fidelity 的候选仅 final coverage/composition 失败或超过 8 MiB | deterministic fallback | 不变 | 丢弃候选，发布预检缓存的 `degraded` |
 | Renderer 漏掉非空 block、伪造 block trace 或输出 unsafe HTML | hard fail | 不变 | 不发布；不得用 fallback 掩盖 Renderer 信任边界故障 |
-| publish fence 发现 current binding 已切换 | `SOURCE_BINDING_CHANGED` hard fail；丢弃已完成候选/staging | 不变 | 不发布旧 ready/fallback |
+| publish fence 最后数据库观察发现 current binding 已切换 | `SOURCE_BINDING_CHANGED` hard fail；丢弃已完成候选/staging | 不变 | 不发布旧 ready/fallback |
 | 合法视觉资产为 `mask`、`block` 或 verified SVG | 按各自受控 warning 省略 | 不变 | 可发布；不得转码或清洗后内联 |
 | 未知 media type、非法 export policy、视觉资产损坏／签名不符或绑定不符 | hard fail | 不变 | 不发布 |
 | 单图或总图像超预算 | 省略超限资产并警告 | 不变 | 可发布 |
@@ -2510,12 +2593,13 @@ CLI 在成功、降级和异常路径都必须于 `finally` 释放 request lock 
 - `EditorialModelEgressPolicy` 在生产代码中固定且默认拒绝；只允许 `public|internal`、`v1`、real
   Gateway 与精确 canonical endpoint 的固定组合。policy deny 不能被环境变量、CLI 或测试 adapter
   在生产装配中覆盖。
-- LLM context 只包含第 9.2.1 节的最小 `EditorialModelContext`、第二次 Planner 的 bounded repair hints，
-  以及 Fidelity 必需的候选 copy 列表，
+- LLM context 只包含第 9.2.1 节的最小 `EditorialModelContext`、Copy Editor 使用的
+  `copyEditRequest.targets`、第二次调用的 bounded repair hints，以及
+  Fidelity 必需的候选 copy 列表，
   不含完整 Material、图片字节、数据库行、作为结构元数据的 UUID、Artifact/Manifest 元数据、
   Evidence 对象／ID／URL、JWT、环境变量、完整 Prompt 或原始错误；verified Unit `value` 自身的业务
   字面量不在此排除声明内，仍由 egress 与 verbatim 门禁保护。
-- Material 中的网页文字视为不可信数据；Editorial 专属 System prompt 明确禁止 Planner 与 Fidelity
+- Material 中的网页文字视为不可信数据；Editorial 专属 System prompt 明确禁止 Copy Editor 与 Fidelity
   遵循 Material、候选文案、元数据或 repair hints 中的指令，其完整文本纳入 prompt hash。
 - Gateway 返回只按 JSON 数据解析，不执行任何字符串。
 - Sidecar 的 Gateway 请求固定 `redirect: 'error'`；endpoint URL、host 和 route identity 纳入
@@ -2582,7 +2666,8 @@ Source 预算在完整快照冻结前执行，因此超限只返回脱敏错误�
 
 ## 21. 精确文件影响范围
 
-预计影响 **26 个文件**，明确超过 8 个；通过两个独立可合并阶段控制审查面。没有数据库迁移、部署服务、第三方依赖、Skill 或新凭证。
+预计影响 **28 个文件**（11 个新增生产文件、5 个修改生产文件、12 个测试／fixture 文件），明确超过
+8 个；通过两个独立可合并阶段控制审查面。没有数据库迁移、部署服务、第三方依赖、Skill 或新凭证。
 
 ### 21.1 新增生产文件
 
@@ -2595,7 +2680,8 @@ Source 预算在完整快照冻结前执行，因此超限只返回脱敏错误�
 | `apps/orchestrator-runtime/src/report/editorial-report-renderer.ts` | 白名单组件到固定 HTML/CSS 的纯 Renderer |
 | `apps/orchestrator-runtime/src/report/editorial-report-store.ts` | 隔离根、路径校验、hash、幂等和原子目录发布 |
 | `apps/orchestrator-runtime/src/editorial-report.ts` | CLI 参数解析与最小依赖装配 |
-| `schemas/editorial-report-blueprint.schema.json` | Blueprint Plan LLM 输出 Schema |
+| `apps/orchestrator-runtime/src/report/editorial-copy-edit-session.ts` | 生成 bounded targets、应用 Copy Edit Plan，并从最终 Blueprint 确定性 replay canonical plan |
+| `schemas/editorial-report-copy-edits.schema.json` | Compact Copy Edit Plan LLM 输出 Schema |
 | `schemas/editorial-report-fidelity.schema.json` | Fidelity Review Plan LLM 输出 Schema；hash/verdict 由 Pipeline 注入 |
 | `scripts/editorial-report-phase2-calibration.ts` | 唯一 Phase 2 校准入口；运行 golden、真实 SEALED corpus、参考样本与准入汇总 |
 
@@ -2603,7 +2689,7 @@ Source 预算在完整快照冻结前执行，因此超限只返回脱敏错误�
 
 | 文件 | 改动 |
 |---|---|
-| `apps/orchestrator-runtime/src/runtime/schema-registry.ts` | 注册两个新 schema name，供 Gateway 提示使用 |
+| `apps/orchestrator-runtime/src/runtime/schema-registry.ts` | 注册 Copy Edit 与 Fidelity schema name，供 Gateway 提示使用 |
 | `apps/orchestrator-runtime/src/runtime/llm-client.ts` | 为结构化调用增加可选资源 limits 与 redirectMode；既有调用默认行为不变 |
 | `apps/orchestrator-runtime/src/runtime/gateway-llm-client.ts` | typed 配置错误、由 identity/hash/fetch 共用的单一 canonical request URL、无凭证 deep-frozen route identity 与显式 actual-model pin；opt-in 执行 redirect=error、总 deadline、HTTP 尝试数、Retry-After、输出 token 和响应 byte 上限 |
 | `apps/orchestrator-runtime/src/report/visual-asset-service.ts` | 抽出只读 `VerifiedVisualAssetReader`，原读取入口委托且行为不变 |
@@ -2613,10 +2699,11 @@ Source 预算在完整快照冻结前执行，因此超限只返回脱敏错误�
 
 | 文件 | 覆盖 |
 |---|---|
-| `tests/editorial-report-contract.test.ts` | Plan/final Schema、Unit ID、敏感 token、ratio、引用、等级、覆盖与拒绝未知字段 |
+| `tests/editorial-copy-edit-session.test.ts` | target 选择、Plan 应用、顺序／绑定校验与最终 Blueprint replay |
+| `tests/editorial-report-contract.test.ts` | Blueprint/final Schema、Unit ID、敏感 token、ratio、引用、等级、覆盖与拒绝未知字段 |
 | `tests/editorial-report-source-reader.test.ts` | 只读端口、start/current fence、source policy metadata、Artifact 预算与 Evidence/视觉绑定 |
 | `tests/editorial-report-materializer.test.ts` | 五类 projector、Model Context 最小投影、确定性、脱敏、三类状态、question 传播、视觉策略 |
-| `tests/editorial-report-pipeline.test.ts` | egress/current fence、调用上限、Plan 组装、Fidelity、修复、降级、hard fail 与只读保证 |
+| `tests/editorial-report-pipeline.test.ts` | egress/current fence、调用上限、Copy Edit 应用、Fidelity、修复、降级、hard fail 与只读保证 |
 | `tests/editorial-report-renderer.test.ts` | XSS、raster-only、自包含、CSP、最终 block trace、组件、响应式和打印结构 |
 | `tests/editorial-report-store.test.ts` | 路径逃逸、symlink、token lock、原子发布、busy、stale、幂等和 hash |
 | `tests/editorial-report-cli.test.ts` | 生成／校准 CLI 参数、provider fallback、stdout/stderr、退出码、连接释放和 main 零写 |
@@ -2637,6 +2724,7 @@ apps/agent-api/src/control-runtime.ts
 apps/agent-api/src/routes/control-tasks.ts
 apps/agent-api/src/server.ts
 apps/web/**
+.github/workflows/**
 database/control-plane.ts
 database/migrations/**
 orchestrator/skill-registry.yaml
@@ -2655,7 +2743,8 @@ knowledge-base/skills/**
 - 确定性 `EditorialModelContext` 投影、固定 egress policy，以及 Phase 1 强制
   `{client:null, configuration:null}` 的 `EditorialModelPort`；据此生成完整 request key、Diagnostic 和
   manifest，`gatewayConfigurationHash=null`、model call 为 0。
-- `editorial-report-blueprint.schema.json`、Deterministic Blueprint 及 fallback mode 校验器。
+- 最终 `EditorialBlueprint` 本地 contract parser、Deterministic Blueprint 及 fallback mode 校验器；
+  不再保留或注册可由模型输出完整 Blueprint 的旧 Planner Schema。
 - LLM 调用前的 fallback preflight、受控 render trace 与不可变 bundle。
 - 固定 HTML Renderer。
 - sidecar Store 与 manifest。
@@ -2685,24 +2774,27 @@ pnpm typecheck
 git diff --check
 ```
 
-### Phase 2：受控 LLM 编排与独立保真评审
+### Phase 2：受控 LLM 文案编辑与独立保真评审
 
-> 实施状态（2026-08-27）：下列工程交付已在 `main@49e4b7f` 基础上完成开发与定向测试；真实发布
-> 准入证据尚未采集，且全量 quality 仍有第 0.4 节所列三项失败，因此本阶段尚未完成发布验收。
+> 实施状态（2026-08-28）：下列工程交付已在 `main@49e4b7f` 基础上完成开发、真实 Gateway
+> ready+Fidelity 冒烟和视觉 QA；Node 22 本地主链与全量 quality 已通过。正式 calibration 仍受
+> 6 个包／2 类 deliverable 的 corpus 缺口阻塞，远端 workflow 尚无有效 jobs，因此本阶段尚未完成发布验收。
 
 交付：
 
-- `editorial-report-fidelity.schema.json`（Review Plan），并把 Phase 1 Blueprint Plan Schema 与 Fidelity
-  Review Plan Schema 注册到 Registry。
+- `editorial-report-copy-edits.schema.json`（Compact Copy Edit Plan）与
+  `editorial-report-fidelity.schema.json`（Review Plan），并注册到 Registry。
 - `GatewayConfigurationError`、同实例 canonical request URL/configuration identity、真实
-  `EditorialModelPort` factory、Blueprint Planner 与一次修复机制；复用 Phase 1 已落地的最小 Context
+  `EditorialModelPort` factory、Copy Editor 与一次修复机制；复用 Phase 1 已落地的最小 Context
   与固定 egress policy。
 - 独立 Fidelity Review。
 - 仅在 Phase 1 fallback bundle 已通过且 egress allow 后调用 LLM；只有可降级的候选失败才发布缓存
-  bundle，binding drift、Renderer trace/HTML safety 或 receipt 装配错误仍须 hard fail。
-- 对参考类任务启用多元组件选择。
+  bundle；任一适用 fence 的最后数据库观察发现 binding drift、Renderer trace/HTML safety 或 receipt
+  装配错误仍须 hard fail。
+- 使用 deterministic scaffold 固定多元组件组合，Copy Editor 只做 1～6 个白名单 Copy 的受控编辑。
 
-Phase 2 完成后，报告具有材料自适应的叙事和组件组合；Phase 1 的确定性结果继续作为可靠 fallback。
+Phase 2 完成后，报告沿用材料驱动的确定性组件组合，并增加受独立 Fidelity Review 约束的文案优化；
+Phase 1 的确定性结果继续作为可靠 fallback。
 `LLMClient` limits/redirectMode 是可选字段，现有 main 调用不传该字段，必须由既有 Gateway 回归证明行为不变。
 
 Phase 2 进入发布前必须同时提供以下证据，任何一项缺失都不能把该阶段标记为完成：
@@ -2711,11 +2803,12 @@ Phase 2 进入发布前必须同时提供以下证据，任何一项缺失都不
    `configurationIdentity.provider/endpointUrl/requestedModel`、route 的 `expectedActualModel`、响应
    `providerIdentity` 和 `modelName` 必须逐项一致，且 manifest/Diagnostic 中的
    `gatewayConfigurationHash` 可重算。这一 ready 必须来自本次 calibration collect 的独立空 Store，
-   `cacheHit=false`，并由 model client boundary 观测到本次至少 2 个真实 outbound/response（Planner
+   `cacheHit=false`，并由 model client boundary 观测到本次至少 2 个真实 outbound/response（Copy Edit
    与其 Fidelity）；它还必须至少包含
    一个 paraphrase，并有成功且绑定同一 Blueprint 的 Fidelity Review，证明不是复用旧 ready 或
-   “只调用了 Gateway 但仍全量 fallback”。另用 egress-deny
-   集成 fixture 证明零次 model call 仍发布 degraded。mock、draft 或手写 fake 不能替代 ready 证据。
+   “只调用了 Gateway 但仍全量 fallback”。egress-deny 集成 fixture 继续证明工程路径零调用并发布
+   degraded，但不能替代下述正式 corpus 中的真实 deny 样本。mock、draft 或手写 fake 不能替代 ready
+   或真实 deny 证据。
 2. **Fidelity golden 校准**：冻结 60 条 fixture，六类 verdict 各 10 条，覆盖 `faithful`、`narrower`、
    `unsupported`、`certainty_upgraded`、`numeric_drift`、`qualification_lost`。后四类 40 条的错误放行数
    必须为 0；前两类 20 条合计最多允许 1 条误 block。fixture、prompt version、实际 model、逐条结果
@@ -2723,25 +2816,76 @@ Phase 2 进入发布前必须同时提供以下证据，任何一项缺失都不
 3. **真实 SEALED 包预算校准**：至少选择 10 个通过 source/fallback 门禁的真实包，覆盖五种 active
    deliverable type（每类至少 1 个），且至少 2 个 multimodal、1 个含最终可导出 raster asset。
    对 Unit 数、规范化文本 code point、`EditorialModelContext` bytes、最终 HTML bytes 和 exported
-   asset 数记录 min/p50/p95/max。至少 5 个样本必须为 egress allow，所有真实样本 hard-fail 数必须为
-   0；allow 样本的 ready 数必须不少于 `ceil(0.80 * N_allow)`，并分别统计 Blueprint、Fidelity、identity、
-   budget 等 degraded 原因，不能只约束其中一种。因 Material/context budget 被迫 degraded 的比例还
-   不得超过 20%（允许数为 `floor(0.20 * N_allow)`）。任一阈值失败即暂停 Phase 2 发布并重新评审。
+   asset 数记录 min/p50/p95/max。至少 5 个样本必须为 egress allow；还必须至少有 1 个在同一真实
+   Gateway collect 中因 source policy 得到 deny、且 `actualOutboundCallCount=0` 的真实样本。所有
+   真实样本 hard-fail 数必须为 0；allow 样本的 ready 数必须不少于
+   `ceil(0.80 * N_allow)`，并分别统计 Blueprint、Fidelity、identity、budget 等 degraded 原因，
+   不能只约束其中一种。因 Material/context budget 被迫 degraded 的比例还不得超过 20%（允许数为
+   `floor(0.20 * N_allow)`）。任一阈值失败即暂停 Phase 2 发布并重新评审。
    其中至少一个标记为 reference case 的样本必须 ready、含成功 paraphrase/Fidelity、最终至少五类
    `renderedCompositionKinds`、独立 risk section/risk-register，并通过第 24.3 节视觉 rubric；这样
    “丰富、多元、专业”不是由 fallback 数量替代。可导出 raster 只要求 corpus 中至少一个样本具备，
    不错误绑定到本身没有图片的参考案例。
-4. **main 回归无伪绿**：第 23.4 节六文件命令与 `pnpm quality` 原则上必须通过。当前三项失败均阻塞
-   发布：两条 `control-api-integration` 已在干净 `main@49e4b7f` 稳定复现；Hub snapshot 失败来自
-   gitignore 范围内的本地 `.DS_Store` 哈希漂移。若无法在本范围修复，唯一替代是取得书面豁免，至少写明 owner、原因、与本
-   改动无关的证据、适用 commit、到期日和跟踪 issue。存在豁免时发布记录必须明确写“带豁免”，不得
-   声称“全部门禁通过”。
+4. **main 回归无伪绿**：第 23.4 节六文件命令与 `pnpm quality` 必须通过。当前 Node 22 本地工作树
+   已分别达到 227 tests：226 pass、0 fail、1 skip，以及 1761 tests：1748 pass、0 fail、13 skip。
+   第 0.4 节的 clarification 修复属于独立非 Editorial 变更；Hub snapshot 依赖本地 ignored immutable
+   mount 的精确 bytes，不能靠修改 checked-in manifest 伪造通过。发布仍只接受目标 commit 的远端
+   run head SHA 完全一致、jobs 非空且全部成功的结果；本地通过不能替代该远端门禁。
 
 上述 #1～#3 只允许由同一个 runner 采集，不能分别手抄结果拼接。真实 corpus manifest 固定位于
 `${RUN_WORKSPACE_ROOT:-./run-workspaces}/editorial-reports/calibration/corpus.json`，属于 gitignore
 目录，格式固定为 `{version:'editorial-calibration-corpus-v1', samples:[{taskId, referenceCase}]}`，且
 `referenceCase=true` 必须恰好一项；0 项或多项都拒绝。runner 从数据库重验实际 deliverable type、
 状态和 binding，不信任 manifest 自报。
+
+正式 corpus 的输入准备是 `--collect` 之前的显式操作步骤，不由 runner 猜测或补造：
+
+- 真实 smoke 必须使用 Node 22，并在启动前确认 `DATABASE_URL`、`JWT_SECRET`、
+  `LLM_GATEWAY_BASE_URL`、`LLM_GATEWAY_API_KEY`、`LLM_MODEL_NAME`、
+  `LLM_EXPECTED_ACTUAL_MODEL`、`TAVILY_API_KEY` 均为非空；不得把数据库连接串、JWT 或 API key 的值写入
+  方案、receipt 或命令输出，endpoint/model identity 只按既有证据合同记录。
+  目标数据库还必须已经存在 active development seed user；缺失时停止。`pnpm db:seed` 会修改数据库，
+  只有当前用户明确授权且已确认目标是可写开发数据库时才能运行，不能把它当作无副作用的 smoke
+  前置检查。所有不需要 browser evidence 的 smoke 都必须显式设置 `PLAYWRIGHT_CAPTURE_ENABLED=0`，
+  避免继承调用者 shell 中的旧值。
+  Tool/lab 环境也必须已获批准且正在运行：首次先执行 `pnpm labs:install`，随后在独立终端运行
+  `pnpm labs:dev -- --server`（等价于 `node scripts/start-labs.mjs --server`），确认后端可用后再跑 smoke。
+- 经当前用户明确授权后，样本负责人复用既有 main 真实 smoke，而不是新增第二套生成器。
+  `pnpm smoke:current:real` 已支持
+  `voc_diagnosis/voc-checkout`、`design_audit/design-product-detail` 和
+  `a11y_audit/a11y-mobile-checkout`；design 样本传入已批准图片的绝对路径。需要 browser evidence
+  的 multimodal 样本复用已支持的
+  `competitive_research/competitive-ai-shopping-assistant`，不得在 a11y profile 上强开该门禁：
+  当前 smoke 的 browser-history 复核要求 chart，而生产链只为 competitive report 生成 chart。每次只
+  保存 receipt 中的 task ID，再由 calibration
+  操作员重验 completed state、current Attempt 与 SEALED `report-package-v1`。不得手改数据库、
+  Artifact、manifest 或既有完成任务。
+- 当前 safe smoke 只接受 clear、无 PII 的场景，正常生成的 source policy 为
+  `public|internal + v1`，不能证明真实 deny。正式 collect 使用同一个真实 Gateway model port 和全新
+  Store，因此预先用 `LLM_PROVIDER=fake` 生成的 fallback、全局取消 provider 或旧 cache 都不能满足
+  deny gate。必须选取一个经数据 owner 批准、其真实 source metadata 会被固定 policy 拒绝的 SEALED
+  package；若当前数据库没有这种合法样本，立即停止并取得数据生成／架构授权。不得放宽 safe smoke
+  selector、伪造 sensitivity/redaction metadata 或使用 confidential/PII 场景绕过审批。
+- 在开始 collect 前，当前用户必须明确指定样本负责人、calibration 操作员与独立评审人，并在发布证据
+  中记录真实 corpus/run 的保留截止日和删除责任人；角色或处置规则缺失时不运行真实 collect。V1 不新增
+  自动清理服务，到期只按精确 `run.<id>` 目录处理，不递归清理 `current-control` 或整个
+  workspace root。
+- 收齐 receipt 后，calibration 操作员必须用其中的真实 `taskId` 显式创建 `corpus.json`，而不是直接
+  检查一个尚不存在的文件。顶层只能是
+  `{version:"editorial-calibration-corpus-v1",samples:[{taskId,referenceCase}]}`；`samples` 必须含
+  10～100 个互不重复的合法 UUID，且恰有一项 `referenceCase:true`，其余全部为 `false`。写入后设置
+  `0600`，再交给 runner 重验。
+
+detached clean worktree 不包含 gitignored 的 main Artifact。创建它之前固定并在整个
+collect/finalize/verify 期间复用同一个绝对路径；当前仓库对应：
+
+```bash
+export RUN_WORKSPACE_ROOT=/Users/heyunshen/work/PROJECT/jdc/ai-x/run-workspaces
+test -d "$RUN_WORKSPACE_ROOT/current-control"
+test -f "$RUN_WORKSPACE_ROOT/editorial-reports/calibration/corpus.json"
+```
+
+禁止在 clean worktree 中静默回退到其空的 `./run-workspaces`。
 
 `--collect` 必须在 owner-only 的全新空目录内构造独立 Editorial sidecar Store，禁止读取默认 Store 或
 调用前已有的 ready/fallback；model client boundary 直接计数本轮 outbound，不能从旧 manifest
@@ -2829,7 +2973,7 @@ interface EditorialPhase2CalibrationResult {
   baseMainCommit: string;
   implementationCommit: string;
   pipelineVersion: string;
-  blueprintPromptVersion: string;
+  copyEditPromptVersion: string;
   fidelityPromptVersion: string;
   fixtureHash: Sha256;
   gatewayConfigurationHash: Sha256;
@@ -2899,6 +3043,7 @@ interface EditorialPhase2CalibrationResult {
 ```bash
 pnpm exec tsx --test \
   tests/editorial-report-contract.test.ts \
+  tests/editorial-copy-edit-session.test.ts \
   tests/editorial-report-source-reader.test.ts \
   tests/editorial-report-materializer.test.ts \
   tests/editorial-report-pipeline.test.ts \
@@ -2977,7 +3122,7 @@ Schema 或“所有 ID 都存在”测试代替：
 | `strategy-matrix` | cell 换到错误 row/column，或其 basis 缺 row dimension／column sample 任一端 |
 | `roadmap` | item 放入来源 priority/phase 不同的 lane |
 | `validation-gates` | label、method、criterion 跨 action/issue group |
-| `risk-register` | risk 拼接无 basis 的 impact/response |
+| `risk-register` | 出现 V1 未支持的 impact/response 字段，或 risk 引用了非 risk Unit |
 | `visual-gallery` | Asset 交换了另一 Asset 的 caption/alt，或 comparison 顺序反转 |
 | `audit-appendix` | Unit/Evidence 不等于 required canonical closure，或加入不存在的 basis 边 |
 
@@ -2985,8 +3130,13 @@ Schema 或“所有 ID 都存在”测试代替：
 
 | 场景 | 预期 |
 |---|---|
-| 合格 Blueprint + fidelity pass | ready |
-| 合格 `EditorialBlueprintPlan` | Pipeline 确定性注入 binding/request/material envelope 和唯一 audit appendix；模型响应中不得出现这些控制字段 |
+| 合格 Copy Edit Plan + fidelity pass | ready |
+| 合格 `EditorialCopyEditPlan` | Pipeline 只在本地 Blueprint 应用白名单文本替换；模型响应中不得出现结构或控制字段 |
+| Copy Edit Plan 含第 7 条编辑、重复／乱序／未知 Pointer 或 Unit 绑定不符 | Schema/引用门禁拒绝；最多一次修复后 fallback |
+| Copy Edit 只改变 NFC／空白形式 | `CONTENT_FIDELITY` 拒绝，不计为有效候选 |
+| Copy Edit 含 C0/C1、任意 Default-Ignorable Unicode、任意 `General_Category=Cf` 或 `U+2800` | parser 与 Schema 均以 `SCHEMA_INTEGRITY` 拒绝；这是宁可误拒绝的安全策略，不得借 ZWJ/bidi/variation selector/astral tag/空白盲文绕过 token 检查；普通中文、HT/LF/CR 和普通非 BMP 字符仍允许 |
+| 无 eligible target | 零模型调用，发布带 `NO_ELIGIBLE_COPY_TARGETS` 的 degraded fallback |
+| 完整 Copy Edit envelope 超过 512 KiB | 零模型调用且不伪造 attempt，发布带 `MATERIAL_BUDGET_EXCEEDED` 的 degraded fallback |
 | fallback preflight 完成与首次 model call 的事件序列 | 所有 deterministic/HTML/byte gate 先 passed，随后才能调用 model |
 | fallback preflight 任一关系／覆盖／组合／8 MiB 门禁失败 | `SOURCE_NOT_RENDERABLE` hard fail，model call spy 为 0，无 manifest |
 | fallback preflight 通过后强制 LLM 失败 | 直接发布相同 blueprint/html hash 的缓存 bundle；Renderer spy 证明 fallback 只渲染一次 |
@@ -2995,16 +3145,16 @@ Schema 或“所有 ID 都存在”测试代替：
 | dangling Material ID | deterministic fallback，degraded |
 | 数字、日期或证据编号漂移 | deterministic fallback，degraded |
 | certainty upgrade | deterministic fallback，degraded |
-| 首次候选为任一 block relation 错配、第二次修复正确 | 第一次 rejected 且 issue=`component_relation`，第二次 ready |
-| 两次候选为任一 block relation 错配 | 发布已预检 fallback，degraded |
-| 最终 `eligibleCompositionKinds` ≥5、两次候选的 `renderedCompositionKinds` 均不足 5 | 已预检 fallback 必须在最终 trace 选满 5 类，degraded |
+| deterministic Blueprint 任一 block relation 错配 | fallback preflight hard fail，模型调用数为 0 |
+| 最终 `eligibleCompositionKinds` ≥5、Renderer 的 `renderedCompositionKinds` 不足 5 | hard fail；Copy Edit 不得改变结构来掩盖 Renderer 错误 |
 | 原先恰好 5 类含 gallery，全部图片被预算过滤且最终 eligible <5 | 空 gallery 不渲染、不计数；不为凑五类 hard fail |
 | gallery 过滤后最终仍有 ≥5 个非视觉 eligible kind，但实际只渲染 4 类 | LLM 候选拒绝；fallback 同样情形为 `SOURCE_NOT_RENDERABLE` |
 | 最终 eligible composition 少于 5，但 trace 注入任一 ineligible kind | 仍拒绝；subset 不变量不受五类阈值条件控制 |
 | Fidelity 缺少／重复／额外 copy Pointer 或 Unit 列表不一致 | deterministic fallback，degraded |
+| candidate 标为 accepted 但无 succeeded Fidelity call、完整 Review 或 Review verdict=pass | 合同拒绝；Store 不发布也不复用该 ready slot |
 | Fidelity Plan 试图输出 materialHash/blueprintHash 或 top-level verdict | Schema 拒绝；Pipeline 只对合格 checks 注入当前 hash 并确定性 fold verdict |
 | Gateway 返回 unknown 或非 expected model | `MODEL_IDENTITY_INVALID`／`MODEL_DRIFT`，degraded |
-| Material 或候选 paraphrase 包含 prompt injection 文本 | Planner/Fidelity 请求均携带 Editorial 专属 system prompt；system prompt 变化必须改变 prompt hash/version |
+| Material 或候选 paraphrase 包含 prompt injection 文本 | Copy Edit/Fidelity 请求均携带 Editorial 专属 system prompt；system prompt 变化必须改变 prompt hash/version |
 | egress matrix 的 allow 行 | fallback preflight 后才调用；policy/configuration/context hash 在 request/Diagnostic/manifest 一致 |
 | 零调用 deny/unconfigured fallback | Diagnostic 顶层 configuration hash 与 request/manifest 一致或同为 null，modelCalls 为空 |
 | provider 未配置或 typed Gateway config error | Diagnostic `gatewayConfigurationHash=null`、零调用 fallback；普通 Error/TypeError 必须继续抛出 |
@@ -3025,11 +3175,14 @@ Schema 或“所有 ID 都存在”测试代替：
 | 1,000 条 Evidence entry 重复引用同一 Artifact | 该 Artifact 只读取和解析一次，预算按唯一 ID 计 |
 | 重复 screenshot Evidence 引用同一 asset/manifest pair | 视觉验证和 bytes 拷贝各一次 |
 | 未完成 task/legacy/non-pass Review | hard fail，无 manifest |
-| start fence 或第一次 pre-model fence 前切换 current Attempt/package | `SOURCE_BINDING_CHANGED`，model call spy 为 0，无 manifest |
-| 参数化地在第 1～3 次 outbound call 后、下一次 Fidelity／repair pre-model fence 前切换 current | 不发下一次 outbound call，`SOURCE_BINDING_CHANGED`，丢弃已有响应且不发布 |
-| model 完成后、publish fence 前切换 current | `SOURCE_BINDING_CHANGED`，丢弃 staging，不发布 ready/fallback |
-| valid ready cache 命中但 cache-return fence 已切换 current | 不返回旧 cache、不创建新输出、不改写既有 Diagnostic，`SOURCE_BINDING_CHANGED` |
-| 复用既有 fallback 时在异步审计写入期间切换 current | 审计写入后再次执行 cache-return fence；不返回旧 generation，`SOURCE_BINDING_CHANGED` |
+| start fence 或第一次 pre-model fence 的最后数据库观察前切换 current Attempt/package | `SOURCE_BINDING_CHANGED`，model call spy 为 0，无 manifest |
+| 参数化地在第 1～3 次 outbound call 后、下一次 Fidelity／repair pre-model fence 的最后数据库观察前切换 current | 不发下一次 outbound call，`SOURCE_BINDING_CHANGED`，丢弃已有响应且不发布 |
+| model 完成后、publish fence 的最后数据库观察前切换 current | `SOURCE_BINDING_CHANGED`，丢弃 staging，不发布 ready/fallback |
+| valid ready cache 命中且切换在 cache-return fence 的最后数据库观察前已提交 | 不返回旧 cache、不创建新输出、不改写既有 Diagnostic，`SOURCE_BINDING_CHANGED` |
+| 复用既有 fallback 时在异步审计写入期间切换，并在后续 cache-return fence 的最后数据库观察前提交 | 不返回旧 generation，`SOURCE_BINDING_CHANGED` |
+| cache-return fence 最后数据库观察读到 S0，S1 在 Promise 完成／return 前提交 | 允许返回线性化于该观察的 S0；下一次调用必须重新读取并 fence S1 |
+| 下一次调用的 Attempt、plan、package ID/hash、Material 或其他 key 输入变化 | 不得命中 S0 key/slot，使用新的 request identity |
+| 下一次调用仅 task state/stateVersion 变化，全部 key 输入不变 | 先冻结 S1 并通过 cache-return fence；允许复用同一 requestKey/generation，零新增模型调用 |
 | 同 request 并发竞争锁 | 一个 owner 继续；loser 一次 stale check 后立即 `EDITORIAL_REQUEST_BUSY`、零等待、零 LLM |
 | owner 发布 ready 后启动的新调用 | ready fast-path 完整校验并通过 cache-return fence 后复用同一 generation |
 | owner 发布 degraded 或 unsafe hard fail | 并发 loser 结果仍为 busy；后续新调用无 ready 时重新竞争，旧 fallback 不掩盖 hard fail |
@@ -3037,6 +3190,7 @@ Schema 或“所有 ID 都存在”测试代替：
 | 校准 `N_allow=5` 且 ready=4／3 | 4 通过 80% 下限，3 非零退出；budget degraded 同时按 `floor(0.20*N_allow)` 独立判定 |
 | Fidelity golden 配置为非白名单 endpoint | 首条 golden 前固定 egress deny，model call/fetch spy 为 0，runner 非零退出 |
 | 校准 corpus 少于 10、五类覆盖不全、reference 为 0/2 项、hard-fail>0 或 reference 非 ready | 各自固定 failedCode，runner 非零退出 |
+| 校准 corpus 没有真实 deny，或任一 deny 样本 `actualOutboundCallCount>0` | `EGRESS_DENY_ZERO_CALL_EVIDENCE_MISSING`，runner 非零退出 |
 | calibration evidence/draft/result 被改写、evidenceHash/draftHash/resultHash 错误或 implementationCommit 非当前 HEAD | `--finalize`／`--verify` 非零退出 |
 | calibration 输入／输出权限或匿名化检查 | 非 0600 拒绝；结果不含 task UUID、源正文、URL、owner token 或截图 bytes |
 | 默认 Store 预置同 request 的旧 ready 后执行 collect | 使用新建空 run Store，`cacheHit=false`，ready 证据必须观测到本轮真实 outbound/response |
@@ -3056,7 +3210,7 @@ Schema 或“所有 ID 都存在”测试代替：
 | URL 为 `javascript:`、`data:text/html` 或非 HTTPS | 不生成链接 |
 | HTML 扫描 | 无 script、事件属性、外部资源 |
 | `exportPolicy=allow` + verified PNG/JPEG/WebP | 预算内可内联，data URI MIME 与 bytes 一致 |
-| 合法 `exportPolicy=mask|block` | 永不内联；分别记录 `VISUAL_MASK_OMITTED`／`VISUAL_BLOCKED_OMITTED` warning |
+| 合法 `exportPolicy=mask` / `exportPolicy=block` | 永不内联；分别记录 `VISUAL_MASK_OMITTED`／`VISUAL_BLOCKED_OMITTED` warning |
 | comparison pair 任一侧为 mask/block/SVG 或超预算 | 两侧一起省略，不输出误导性的半组 before/after |
 | verified SVG，或伪装成 PNG MIME 的恶意 SVG/XML bytes | 前者 warning 省略；后者 media/signature mismatch hard fail；HTML 均无 SVG/XML/`data:image/svg+xml` |
 | 未知 media type、非法 export policy 或 manifest schema | source-integrity hard fail；不得降级成省略 warning |
@@ -3070,6 +3224,8 @@ Schema 或“所有 ID 都存在”测试代替：
 | Store 遇到 `..`、绝对路径或 symlink | 拒绝 |
 | manifest 完成前失败 | 无 final slot，仅可有 staging |
 | final directory rename 后立即崩溃 | slot 已完整发布，下次校验后直接复用 |
+| publish/failure staging 首次 fence 后、复核 bytes 期间 source 切换 | 最终 fence 必须捕获切换并拒绝 rename，不产生旧 binding slot |
+| 最终 fence 的最后数据库观察读到 S0，S1 在 Promise 完成／rename 前提交 | 允许原子发布线性化于该观察的 S0；下一次调用重新读取 S1，不增加 post-rename DB fence |
 | manifest/file hash 被篡改 | 拒绝读取或复用 |
 | manifest authority/sensitivity/redaction policy 与冻结源不一致 | 拒绝读取或复用 |
 | 活锁存在且不满足 stale 条件 | 立即 busy；fake timer/poll spy 证明没有等待、sleep 或轮询 |
@@ -3109,15 +3265,11 @@ root 的实际 Gateway client 调用路径；运行前后分别快照 task、att
 Phase 1 文档终审时，上述前三个现有 seam 回归曾在其开发起点 `main@5465e62` 运行，结果为
 91/91 通过；该数字只保留为历史记录，不能替代当前 `main@49e4b7f` 上的 Phase 2 实现验收。
 
-当前 `main@49e4b7f` 工作树同时运行本节六文件完整命令时，结果为 227 tests：224 pass、2 fail、1 skip；两条失败
-均来自 `tests/control-api-integration.test.ts`，分别是
-`failed clarification releases its pending command so a retry can complete`（期望 500，实际 422）和
-`post-activation clarification failure reclaims the same command without another requirement version`
-（期望 200，实际 400，unknown key `audience`）。两项均已在干净 `main@49e4b7f` 单独复现，且对应
-路由、测试与持久化代码不在 Phase 2 diff 中。实施者必须在独立基线修复或得到明确的既有失败豁免后
-再使用“全部门禁通过”作为合并结论，不能把这两项误归因于 Editorial 代码，也不能静默忽略。
-豁免必须满足第 22 节的 owner/commit/issue/到期日合同；没有这份书面记录时，两条既有失败仍是发布
-阻断项，而不是“已知所以忽略”。
+当前工作树同时运行本节六文件完整命令，结果为 227 tests：226 pass、0 fail、1 skip。此前两条
+`control-api-integration` 基线失败已按第 0.4 节作为独立非 Editorial 变更修复：失败恢复测试提供当前
+合同要求的必答项；同 key、同 request hash 的 post-activation retry 在当前 requirement 校验前识别并
+reclaim 原 command，而 fresh key 和不同 payload 仍分别保持 400/409。该修复不得混入 Editorial 语义
+解释，但必须与目标整合 commit 一起接受主链和远端 CI 复核。
 
 ## 24. 真实验收
 
@@ -3168,10 +3320,12 @@ LLM_PROVIDER=gateway pnpm editorial:report -- --task-id "$EDITORIAL_TASK_ID"
 
 ### 24.4 不影响 main 的验收
 
-运行前后比较并确认：
+在没有外部 writer 的隔离验收中，运行前后比较并确认下列状态不变；并发 barrier 场景另以只读端口、
+write spy 与审计日志证明 Editorial 自身没有写 main，不能要求外部合法更新也停止：
 
 - task state、stateVersion、activePlanVersionId、currentAttemptId 不变；
-- manifest/CLI 返回的 report package ID/hash 与调用开始及返回／发布 fence 读取的 current binding 一致；
+- manifest/CLI 返回的 report package ID/hash 与最终适用 cache-return/publish fence 在线性化点观察到的
+  current binding 一致；不承诺 Promise 完成、rename 或 CLI 返回时仍是数据库最新 binding；
 - `control_execution_attempts` 不新增、不更新；
 - `control_artifacts` 不新增、不更新、不失效；
 - `control_model_calls` 全表行数和内容均不变，包括 `attempt_id IS NULL` 的记录；
@@ -3190,7 +3344,7 @@ LLM_PROVIDER=gateway pnpm editorial:report -- --task-id "$EDITORIAL_TASK_ID"
 | mask/block/SVG 被误当成安全可内联资产 | Editorial 仅允许 allow+raster；合法 mask/block/SVG 分码告警省略，未知类型或损坏输入 hard fail，不改变 main 既有语义 |
 | 敏感或未知脱敏版本被发送给模型 | 固定默认拒绝 egress policy 检查全部贡献 source；最小 model context；deny 时零调用 fallback |
 | Gateway 同 host 重定向或异 path 外传 | 精确 canonical endpoint 进入 hash，sidecar 固定 redirect=error |
-| 生成期间 task current 已切换 | start/每次 pre-model/cache-return/publish 四类 fence；变化即 `SOURCE_BINDING_CHANGED`，不继续出站、不发布/返回旧结果 |
+| 生成期间 task current 切换 | start/每次 pre-model/cache-return/publish 四类 fence；最后数据库观察发现变化即 `SOURCE_BINDING_CHANGED`；观察后切换不追溯否定已线性化操作，下一次调用重新读 current |
 | LLM 或 Gateway 中断 | LLM 前先通过 fallback preflight；bounded retry 后直接发布缓存 bundle，main 不受影响 |
 | opt-in Gateway limits/redirectMode 意外改变既有调用 | 两者保持可选；默认路径回归测试必须 byte/行为兼容 |
 | 大报告超出上下文 | 超预算不分块、不截断；fallback preflight 通过才发布 deterministic fallback，否则 fail closed |
@@ -3234,7 +3388,8 @@ ReportDocument 已经包含足够完整、结构化且正确绑定的内容，�
 
 ### 27.6 只做固定模板、不使用 LLM
 
-这是最小可行方案，也是 V1 的 Deterministic Blueprint fallback；但它无法根据内容形成参考样例那样的叙事和组件组合，因此不作为最终推荐形态。
+这是最小可行方案，也是 V1 的 Deterministic Blueprint fallback；它已经能按材料关系形成多元组件，
+但不会优化符合白名单条件的短文案，因此不作为最终推荐形态。
 
 ### 27.7 将派生结果登记为 plan-bound Control Artifact
 
@@ -3245,10 +3400,20 @@ ReportDocument 已经包含足够完整、结构化且正确绑定的内容，�
 ### 28.1 发布
 
 - Phase 1 与 Phase 2 分别合并，均要求定向测试、typecheck 和 `git diff --check` 通过。
+- 开始整合、正式 calibration、push 或 tag 前必须运行 `git fetch --prune origin` 并记录实际
+  `origin/main`；单独 `git rev-parse origin/main` 只读取可能过期的 remote-tracking ref。若
+  `origin/main` 与最近一次冻结 SHA 不同，立即停止，既有整合与 calibration 结论失效。不得使用
+  `--force` 或 `--force-with-lease`；重新整合必须取得当前用户授权，并在新 HEAD 上重跑全部门禁。
+- 远端 workflow 必须先由其明确 owner 在独立、获授权的变更中修复并证明能够创建非空 jobs；
+  `.github/workflows/ci.yml` 不属于 Phase 2 提交。workflow-file failure 或 `jobs=[]` 均视为
+  发布前置依赖未解除，不能把当前归属未知的本地 workflow diff 混入本阶段。该修复只解除 workflow
+  解析／空 jobs 阻塞，不代表 `pnpm quality` 已通过。
 - Phase 2 完成后执行 `pnpm quality`，并完整满足第 22 节四组准入证据；“一次能调用 Gateway”不能
   替代 identity、golden、真实包分布与主链回归门禁。identity、golden、真实包分布等发布阈值不允许
-  豁免；仅第 0.4、22 节已记录的三项非 Editorial 失败可按第 22 节的完整书面豁免合同继续，且发布结论必须
-  明确标注“带豁免”。
+  豁免；第 0.4 节的本地非 Editorial 阻塞已修复并通过 Node 22 quality，但仍须由独立可审查变更和目标
+  commit 的远端 CI 复核，不能沿用本地工作树结果直接发布。
+- 推送 Phase 2 后记录目标 commit 的完整 SHA；只接受 run head SHA 与该 SHA 完全一致的远端 CI，且
+  jobs 必须非空并全部成功。书面 quality 豁免不能把失败的远端 job 视为绿色；该 CI 条件是独立硬门禁。
 - 首次发布不自动调用；由操作者显式运行 CLI。
 - 真实验收记录 manifest 路径、generation ID、源 Report Package hash、egress/configuration hash、
   最终 render trace 摘要、状态和 PDF 截图，不提交包含真实内容的生成物。
@@ -3270,7 +3435,7 @@ ReportDocument 已经包含足够完整、结构化且正确绑定的内容，�
 - `ControlArtifactStore` 的只读方法、`CurrentReportPackageReader` 和抽出的
   `VerifiedVisualAssetReader`：验证源内容；不实例化 `ReportPackageArtifactService` 或完整
   `VisualAssetService`。
-- `LLMClient` / `GatewayLLMClient`：结构化 Blueprint 和 Fidelity Review。
+- `LLMClient` / `GatewayLLMClient`：结构化 Copy Edit Plan 和 Fidelity Review。
 - `SchemaValidator` / AJV：Schema 校验。
 - Node.js `crypto`、`fs`、`path` 与现有 `@openclaw/fs-safe`：hash 和安全文件发布。
 
@@ -3282,9 +3447,11 @@ ReportDocument 已经包含足够完整、结构化且正确绑定的内容，�
 
 - 两个 Phase 的代码和测试均已合并。
 - CLI 只能消费当前完成任务的 verified SEALED Report Package。
-- start、每次 pre-model、cache-return、publish 四类 current fence 全部生效；绑定变化不会继续模型
-  调用、返回 cache 或发布旧 generation。
-- Material、最小 Model Context、Blueprint Plan/final Blueprint、Diagnostic、HTML 和 manifest 均符合本文契约。
+- start、每次 pre-model、cache-return、publish 四类 current fence 全部生效；任一 fence 的最后数据库
+  观察发现绑定变化时不会继续模型调用、返回 cache 或发布 staging。观察之后才提交的变化不追溯否定
+  已线性化操作，下一次调用必须重读 current；state/stateVersion-only 且内容身份不变的调用可在新
+  binding fence 后复用同一 generation。
+- Material、最小 Model Context、Copy Edit Request/Plan、final Blueprint、Diagnostic、HTML 和 manifest 均符合本文契约。
 - LLM 从未生成或控制 HTML/CSS/JavaScript。
 - 只有固定 egress policy allow 的最小 Context 可发送；所有 deny 路径模型调用数为 0。
 - 所有实质文案、数字、状态、视觉和引用均可追溯。
@@ -3293,26 +3460,32 @@ ReportDocument 已经包含足够完整、结构化且正确绑定的内容，�
 - HTML 自包含、可离线阅读、适配窄屏并可打印为 A4 PDF。
 - 最终非空 render trace 满足组件多样性；risk 有独立风险区；mask/block/SVG 不进入 HTML。
 - 参考任务达到约定的信息层次与组件多样性，但未复制其手工证据修正。
-- Phase 2 的真实 Gateway ready+Fidelity、60 条 Fidelity golden、至少 10 个真实 SEALED 包、allow
-  ready-rate、全原因降级分布、预算阈值和 reference rubric 均由同一校准结果证明达标。
-- 主链回归、typecheck、`pnpm quality` 与真实验收全部通过；唯一例外是第 0.4/22 节已记录的三项
-  非 Editorial 失败取得完整书面豁免，此时完成状态和发布记录必须明确标注“带豁免”，不得写“全部通过”。
-- main 的数据库状态、Control Artifact、运行目录和原报告在生成前后完全不变。
+- Phase 2 的真实 Gateway ready+Fidelity、60 条 Fidelity golden、至少 10 个真实 SEALED 包、真实
+  source-policy deny 零调用、allow ready-rate、全原因降级分布、预算阈值和 reference rubric 均由
+  同一校准结果证明达标。
+- 主链回归、typecheck、`pnpm quality` 与真实验收全部通过；当前本地主链、typecheck 和 quality 已通过，
+  但正式 calibration、真实验收及目标 commit 的远端非空 CI jobs 仍未完成。
+- 发布所依据的 `origin/main` 已通过显式 fetch 刷新；Phase 2 目标 commit 的远端 CI run head SHA 与
+  该 commit 一致，jobs 非空且全部成功；书面 quality 豁免不替代该门禁。不存在
+  未经授权的 force push 或混入 Phase 2 的 workflow 修复。
+- 在无外部 writer 的隔离验收中，main 的数据库状态、Control Artifact、运行目录和原报告在生成前后
+  完全不变；这里的零写断言针对 Editorial 生成本身。经授权的 corpus smoke 会在此前新增自己的任务和
+  产物，但不得改写既有 source；并发场景另以 write spy／审计证明 Editorial 不写 main。
 
 ## 31. 开发准入结论
 
-该能力值得实现，但必须被定位为 **canonical report 之后的只读、显式、可失败、可回退的派生展示层**。Durable domain entity delta 为 `+0 / -0`；公开工具表面新增 1 个生成 CLI 和 1 个仅用于发布准入的校准 CLI，文件接口新增 4 个版本化主契约，以及 Model Context、Blueprint Plan、Fidelity Review Plan 三个模型边界契约；最终 Fidelity Review 是 Pipeline 本地注入 hash 并 fold verdict 的审计子契约。它们不改变 main 的业务真相源。
+该能力值得实现，但必须被定位为 **canonical report 之后的只读、显式、可失败、可回退的派生展示层**。Durable domain entity delta 为 `+0 / -0`；公开工具表面新增 1 个生成 CLI 和 1 个仅用于发布准入的校准 CLI，文件接口新增版本化主契约，以及 Model Context、Copy Edit Request/Plan、Fidelity Review Plan 三个模型边界契约；最终 Fidelity Review 是 Pipeline 本地注入 hash 并 fold verdict 的审计子契约。它们不改变 main 的业务真相源。
 
 本设计的最小安全边界是：
 
 ```text
-LLM 只接收最小 Context 并规划 Blueprint Plan
+LLM 只接收最小 Context 与 bounded Copy targets，并返回 Compact Copy Edit Plan
 + 固定 egress policy 默认拒绝
 + 所有内容必须引用 Material
 + Fidelity 独立校验
 + LLM 前先证明 fallback 可发布
 + Renderer 确定性生成 HTML
-+ current binding 在每次出站、返回／发布前重验
++ current binding 以每道 fence 的最后数据库观察线性化；下一次调用重新读取
 + Sidecar 与 main 物理隔离
 + 任意失败回到原 Report Package
 ```

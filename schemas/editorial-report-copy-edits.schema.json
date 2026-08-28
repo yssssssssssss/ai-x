@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "editorial-report-copy-edits.schema.json",
+  "title": "Editorial Report Copy Edit Plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "edits"],
+  "properties": {
+    "version": { "const": "editorial-copy-edit-plan-v1" },
+    "edits": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["copyPointer", "materialUnitId", "text"],
+        "properties": {
+          "copyPointer": {
+            "type": "string",
+            "maxLength": 256,
+            "pattern": "^(?:/(?:[\\u0020-\\u002e\\u0030-\\u007d]|~[01])*)+$"
+          },
+          "materialUnitId": {
+            "type": "string",
+            "pattern": "^emu_[0-9a-f]{64}$"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600,
+            "pattern": "^(?![\\s\\S]*[\\p{Default_Ignorable_Code_Point}\\p{Cf}\\u2800])[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*$"
+          }
+        }
+      }
+    }
+  }
+}

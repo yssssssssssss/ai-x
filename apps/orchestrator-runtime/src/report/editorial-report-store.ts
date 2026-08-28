@@ -23,10 +23,10 @@ import {
   canonicalJsonBytes,
   createEditorialGenerationId,
   createEditorialRequestKey,
-  EDITORIAL_MAX_MODEL_CONTEXT_BYTES,
   EDITORIAL_MAX_DIAGNOSTIC_BYTES,
   EDITORIAL_MAX_JSON_BYTES,
   EDITORIAL_MAX_MANIFEST_BYTES,
+  EDITORIAL_REPORT_VERSION,
   enumerateEditorialParaphrases,
   hashBytes,
   parseEditorialBlueprint,
@@ -42,6 +42,10 @@ import {
   type Sha256,
   type SourceArtifactRef,
 } from './editorial-report-contract.ts';
+import {
+  editorialCopyEditInputWithinBudget,
+  prepareEditorialCopyEditSession,
+} from './editorial-copy-edit-session.ts';
 import {
   assertEditorialHtmlSafe,
   replayEditorialReport,
@@ -501,7 +505,7 @@ function assertModelClosure(input: {
   }
   for (const call of calls) {
     const expectedPromptVersion = call.stage === 'editorial_blueprint'
-      ? pipeline.promptVersion
+      ? pipeline.copyEditPromptVersion
       : pipeline.fidelityPromptVersion;
     if (
       configurationHash === null
@@ -525,18 +529,8 @@ function assertModelClosure(input: {
   }
 }
 
-function modelContextExceedsExecutionBudget(
-  projected: ReturnType<typeof projectEditorialModelContext>,
-): boolean {
-  const textCodePoints = projected.context.units.reduce((count, unit) => (
-    count + Array.from(String(unit.value)).length
-  ), 0);
-  return projected.context.units.length > 400
-    || textCodePoints > 120_000
-    || projected.byteSize > EDITORIAL_MAX_MODEL_CONTEXT_BYTES;
-}
-
 function assertReadyFidelityClosure(input: {
+  material: EditorialMaterial;
   materialHash: Sha256;
   blueprint: ReturnType<typeof parseEditorialBlueprint>;
   diagnostic: Extract<EditorialDiagnostic, { status: 'pass' }>;
@@ -544,16 +538,12 @@ function assertReadyFidelityClosure(input: {
   const accepted = input.diagnostic.candidateAttempts.filter(({ outcome }) => outcome === 'accepted');
   if (accepted.length !== 1) throw storeError('EDITORIAL_SIDECAR_CORRUPT');
   const attempt = accepted[0]!;
-  const auditSection = input.blueprint.sections.at(-1);
-  if (auditSection?.role !== 'audit') throw storeError('EDITORIAL_SIDECAR_CORRUPT');
-  const blueprintPlan = {
-    version: 'editorial-blueprint-plan-v1' as const,
-    locale: input.blueprint.locale,
-    ...(input.blueprint.title === undefined ? {} : { title: input.blueprint.title }),
-    deck: input.blueprint.deck,
-    sections: input.blueprint.sections.slice(0, -1),
-  };
-  if (attempt.plannerCall.responseHash !== hashBytes(canonicalJsonBytes(blueprintPlan))) {
+  const copyEditing = verifyDerivedValue(() => prepareEditorialCopyEditSession({
+    material: input.material,
+    requestKey: input.blueprint.requestKey,
+  }));
+  const editPlan = verifyDerivedValue(() => copyEditing.replay(input.blueprint));
+  if (attempt.plannerCall.responseHash !== hashBytes(canonicalJsonBytes(editPlan))) {
     throw storeError('EDITORIAL_SIDECAR_CORRUPT');
   }
   const paraphrases = enumerateEditorialParaphrases(input.blueprint);
@@ -610,7 +600,7 @@ function validateGeneration(input: {
   const diagnostic = parseStoredContract(input.diagnosticBytes, parseEditorialDiagnostic);
   const manifest = parseStoredContract(input.manifestBytes, parseEditorialReport);
   if (
-    manifest.version !== 'editorial-report-v1'
+    manifest.version !== EDITORIAL_REPORT_VERSION
     || manifest.authority !== 'derived'
     || manifest.taskId !== coordinates.taskId
     || manifest.attemptId !== coordinates.attemptId
@@ -683,6 +673,7 @@ function validateGeneration(input: {
   });
   if (expectedMode === 'llm') {
     assertReadyFidelityClosure({
+      material,
       materialHash,
       blueprint,
       diagnostic: diagnostic as Extract<EditorialDiagnostic, { status: 'pass' }>,
@@ -734,13 +725,26 @@ function validateGeneration(input: {
   }
   if (expectedMode === 'deterministic_fallback') {
     const isPhase1 = manifest.pipeline.gatewayConfiguration === null;
-    const modelBudgetExceeded = manifest.pipeline.modelEgress.decision === 'allow'
-      && modelContextExceedsExecutionBudget(modelContext);
+    const copyEditing = manifest.pipeline.modelEgress.decision === 'allow'
+      ? verifyDerivedValue(() => prepareEditorialCopyEditSession({ material, requestKey }))
+      : null;
+    const noEligibleCopyTargets = copyEditing !== null
+      && copyEditing.requestContext.targets.length === 0;
+    const modelBudgetExceeded = copyEditing !== null
+      && !editorialCopyEditInputWithinBudget({
+        modelContext: modelContext.context,
+        modelContextByteSize: modelContext.byteSize,
+        copyEditRequest: copyEditing.requestContext,
+      });
+    const preflightReasonCodes = modelBudgetExceeded
+      ? ['MATERIAL_BUDGET_EXCEEDED']
+      : noEligibleCopyTargets ? ['NO_ELIGIBLE_COPY_TARGETS'] : [];
     if (
       !isPhase1
       && manifest.pipeline.modelEgress.decision === 'allow'
       && diagnostic.candidateAttempts.length === 0
       && !modelBudgetExceeded
+      && !noEligibleCopyTargets
     ) {
       throw storeError('EDITORIAL_SIDECAR_CORRUPT');
     }
@@ -771,7 +775,7 @@ function validateGeneration(input: {
           status: 'degraded',
           candidateAttempts: diagnostic.candidateAttempts,
           rendererWarningCodes: replayed.warnings.map(({ code }) => code),
-          ...(modelBudgetExceeded ? { degradedReasonCodes: ['MATERIAL_BUDGET_EXCEEDED'] } : {}),
+          ...(preflightReasonCodes.length === 0 ? {} : { degradedReasonCodes: preflightReasonCodes }),
         }));
     if (!sameBytes(canonicalJsonBytes(expectedDiagnostic), input.diagnosticBytes)) {
       throw storeError('EDITORIAL_SIDECAR_CORRUPT');
@@ -1331,6 +1335,13 @@ export class EditorialReportStore {
         ) {
           throw storeError('EDITORIAL_STORE_WRITE_FAILED');
         }
+      } catch (error) {
+        if (error instanceof EditorialStoreError) throw error;
+        throw storeError('EDITORIAL_STORE_WRITE_FAILED', error);
+      }
+
+      await input.assertStillCurrent();
+      try {
         await rename(stagingPath, failurePath);
         published = true;
       } catch (error) {
@@ -1423,10 +1434,10 @@ export class EditorialReportStore {
       if (!publishGuard) throw storeError('EDITORIAL_LOCK_NOT_OWNED');
       try {
         // release() and stale reaping use the same guard. Holding it closes the lock-loss
-        // window while the binding fence is in flight; the fence remains the final awaited
-        // predicate before the atomic publish rename.
+        // window while staged bytes are revalidated and the final binding fence runs.
         await assertLockOwned();
         await input.assertStillCurrent();
+        let stagedManifest: EditorialReport;
         try {
           const directory = await root.stat(stagingRelative);
           const names = await root.list(stagingRelative);
@@ -1453,7 +1464,18 @@ export class EditorialReportStore {
               bytes.manifestBytes,
             ),
           };
-          const stagedManifest = validateGeneration({ slot: input.slot, coordinates, ...stagedBytes });
+          stagedManifest = validateGeneration({ slot: input.slot, coordinates, ...stagedBytes });
+        } catch (error) {
+          const winner = await this.readSlot({ ...coordinates, slot: input.slot });
+          if (!winner) throw storeError('EDITORIAL_STORE_PUBLISH_FAILED', error);
+          await input.assertStillCurrent();
+          return winner;
+        }
+
+        // No awaited work may separate this fence from the atomic rename. Otherwise a
+        // source switch during staged-byte validation can publish an obsolete generation.
+        await input.assertStillCurrent();
+        try {
           await rename(stagingPath, targetPath);
           published = true;
           const result = await this.readSlot({ ...coordinates, slot: input.slot });

@@ -25,7 +25,7 @@ type ProjectSchemaName =
   | 'problem-graph'
   | 'scenario-guidance'
   | 'report-review'
-  | 'editorial-report-blueprint'
+  | 'editorial-report-copy-edits'
   | 'editorial-report-fidelity';
 
 const PROJECT_SCHEMAS: readonly ProjectSchemaName[] = [
@@ -41,7 +41,7 @@ const PROJECT_SCHEMAS: readonly ProjectSchemaName[] = [
   'tool-manifest',
   'research-report',
   'report-review',
-  'editorial-report-blueprint',
+  'editorial-report-copy-edits',
   'editorial-report-fidelity',
 ];
 

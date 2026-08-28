@@ -11,7 +11,7 @@ import { ControlArtifactStore } from '../apps/orchestrator-runtime/src/control/a
 import { createEditorialModelPort } from '../apps/orchestrator-runtime/src/editorial-report.ts';
 
 import {
-  EDITORIAL_BLUEPRINT_PROMPT_VERSION,
+  EDITORIAL_COPY_EDIT_PROMPT_VERSION,
   EDITORIAL_FIDELITY_PROMPT_VERSION,
   canonicalEditorialJson,
   canonicalSha256,
@@ -142,7 +142,7 @@ export interface EditorialCalibrationDraft {
   baseMainCommit: string;
   implementationCommit: string;
   pipelineVersion: string;
-  blueprintPromptVersion: string;
+  copyEditPromptVersion: string;
   fidelityPromptVersion: string;
   fixtureHash: Sha256;
   gatewayConfigurationHash: Sha256;
@@ -223,7 +223,7 @@ export interface EditorialPhase2CalibrationResult {
   baseMainCommit: string;
   implementationCommit: string;
   pipelineVersion: string;
-  blueprintPromptVersion: string;
+  copyEditPromptVersion: string;
   fidelityPromptVersion: string;
   fixtureHash: Sha256;
   gatewayConfigurationHash: Sha256;
@@ -482,7 +482,7 @@ function calibrationResultBody(
     baseMainCommit: draft.baseMainCommit,
     implementationCommit: draft.implementationCommit,
     pipelineVersion: draft.pipelineVersion,
-    blueprintPromptVersion: draft.blueprintPromptVersion,
+    copyEditPromptVersion: draft.copyEditPromptVersion,
     fidelityPromptVersion: draft.fidelityPromptVersion,
     fixtureHash: draft.fixtureHash,
     gatewayConfigurationHash: draft.gatewayConfigurationHash,
@@ -739,7 +739,7 @@ async function persistCalibrationCollection(input: {
     baseMainCommit: BASE_MAIN_COMMIT,
     implementationCommit: input.implementationCommit,
     pipelineVersion: CALIBRATION_PIPELINE_VERSION,
-    blueprintPromptVersion: EDITORIAL_BLUEPRINT_PROMPT_VERSION,
+    copyEditPromptVersion: EDITORIAL_COPY_EDIT_PROMPT_VERSION,
     fidelityPromptVersion: EDITORIAL_FIDELITY_PROMPT_VERSION,
     fixtureHash: input.collection.fixtureHash,
     gatewayConfigurationHash: input.collection.gatewayConfigurationHash,
@@ -1336,7 +1336,7 @@ function parseCaptureHashes(value: unknown): EditorialReferenceCaptureHashes {
 export function parseEditorialCalibrationDraft(value: unknown): EditorialCalibrationDraft {
   const candidate = strictRecord(value, [
     'version', 'evidenceHash', 'baseMainCommit', 'implementationCommit', 'pipelineVersion',
-    'blueprintPromptVersion', 'fidelityPromptVersion', 'fixtureHash',
+    'copyEditPromptVersion', 'fidelityPromptVersion', 'fixtureHash',
     'gatewayConfigurationHash', 'runId', 'golden', 'corpus', 'reference',
   ]);
   if (candidate.version !== 'editorial-phase2-calibration-draft-v1') {
@@ -1347,7 +1347,7 @@ export function parseEditorialCalibrationDraft(value: unknown): EditorialCalibra
   }
   if (
     candidate.pipelineVersion !== CALIBRATION_PIPELINE_VERSION
-    || candidate.blueprintPromptVersion !== EDITORIAL_BLUEPRINT_PROMPT_VERSION
+    || candidate.copyEditPromptVersion !== EDITORIAL_COPY_EDIT_PROMPT_VERSION
     || candidate.fidelityPromptVersion !== EDITORIAL_FIDELITY_PROMPT_VERSION
     || typeof candidate.runId !== 'string'
     || !/^run_[0-9a-f]{32}$/u.test(candidate.runId)
@@ -1386,7 +1386,7 @@ export function parseEditorialCalibrationDraft(value: unknown): EditorialCalibra
     baseMainCommit: commitHash(candidate.baseMainCommit),
     implementationCommit: commitHash(candidate.implementationCommit),
     pipelineVersion: boundedString(candidate.pipelineVersion),
-    blueprintPromptVersion: boundedString(candidate.blueprintPromptVersion),
+    copyEditPromptVersion: boundedString(candidate.copyEditPromptVersion),
     fidelityPromptVersion: boundedString(candidate.fidelityPromptVersion),
     fixtureHash: sha256(candidate.fixtureHash),
     gatewayConfigurationHash: sha256(candidate.gatewayConfigurationHash),
@@ -1412,7 +1412,7 @@ function parseEditorialCalibrationEvidence(value: unknown): EditorialCalibration
       baseMainCommit: BASE_MAIN_COMMIT,
       implementationCommit: '0'.repeat(40),
       pipelineVersion: CALIBRATION_PIPELINE_VERSION,
-      blueprintPromptVersion: EDITORIAL_BLUEPRINT_PROMPT_VERSION,
+      copyEditPromptVersion: EDITORIAL_COPY_EDIT_PROMPT_VERSION,
       fidelityPromptVersion: EDITORIAL_FIDELITY_PROMPT_VERSION,
       fixtureHash: candidate.fixtureHash,
       gatewayConfigurationHash: candidate.gatewayConfigurationHash,
@@ -1551,7 +1551,7 @@ export function parseEditorialCalibrationCorpus(value: unknown): EditorialCalibr
 }
 
 interface CalibrationModelObservation {
-  schemaName: 'editorial-report-blueprint' | 'editorial-report-fidelity';
+  schemaName: 'editorial-report-copy-edits' | 'editorial-report-fidelity';
   response?: {
     provider?: string;
     endpointHost?: string;

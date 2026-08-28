@@ -9,6 +9,7 @@ import {
   EditorialRendererError,
   renderEditorialReport,
 } from '../apps/orchestrator-runtime/src/report/editorial-report-renderer.ts';
+import { prepareEditorialCopyEditSession } from '../apps/orchestrator-runtime/src/report/editorial-copy-edit-session.ts';
 import { EditorialSourceError } from '../apps/orchestrator-runtime/src/report/editorial-report-source-reader.ts';
 import {
   EDITORIAL_MODEL_SYSTEM_PROMPT,
@@ -23,6 +24,7 @@ import type {
   EditorialStoredGeneration,
 } from '../apps/orchestrator-runtime/src/report/editorial-report-store.ts';
 import {
+  EDITORIAL_MAX_MODEL_CONTEXT_BYTES,
   buildDeterministicEditorialBlueprint,
   canonicalJsonBytes,
   canonicalSha256,
@@ -104,7 +106,7 @@ function fixture(): { source: FrozenEditorialSource; material: EditorialMaterial
 function materializeResult(material: EditorialMaterial) {
   const materialBytes = canonicalJsonBytes(material);
   const context = projectEditorialModelContext(material);
-  return { material, materialBytes, materialHash: canonicalSha256(material), modelContext: context.context, modelContextBytes: Buffer.from(context.bytes), modelContextHash: context.hash, modelContextByteSize: context.byteSize, sourcePolicyMetadata: [{ artifactId: PACKAGE_ID, contentSha256: HASH, sensitivity: 'internal', redactionPolicyVersion: 'v1' }], warnings: [] };
+  return { material, materialBytes, materialHash: canonicalSha256(material), modelContext: context.context, modelContextBytes: Buffer.from(context.bytes), modelContextHash: context.hash, modelContextByteSize: context.byteSize, sourcePolicyMetadata: [{ artifactId: material.sourceReportPackage.artifactId, contentSha256: material.sourceReportPackage.contentSha256, sensitivity: 'internal', redactionPolicyVersion: 'v1' }], warnings: [] };
 }
 
 const MODEL_LIMITS = {
@@ -136,25 +138,53 @@ function modelConfiguration(
   return { ...body, gatewayConfigurationHash: canonicalSha256(body) };
 }
 
-function blueprintPlan(material: EditorialMaterial) {
-  const fallback = buildDeterministicEditorialBlueprint({
-    material,
-    requestKey: `erq_${'a'.repeat(64)}`,
-  });
+function copyEditPlan(material: EditorialMaterial) {
   return {
-    version: 'editorial-blueprint-plan-v1',
-    locale: 'zh-CN',
-    deck: {
+    version: 'editorial-copy-edit-plan-v1',
+    edits: [{
+      copyPointer: '/deck',
+      materialUnitId: material.methodSummaryUnitId,
       text: '依据可信的封存材料形成编辑化报告',
-      mode: 'paraphrase',
-      materialUnitIds: [material.methodSummaryUnitId],
-    },
-    sections: fallback.sections.filter(({ role }) => role !== 'audit'),
+    }],
   };
 }
 
+function unchangedCopyEditPlan(material: EditorialMaterial) {
+  const method = material.units.find(({ id }) => id === material.methodSummaryUnitId)!;
+  return {
+    version: 'editorial-copy-edit-plan-v1' as const,
+    edits: [{
+      copyPointer: '/deck',
+      materialUnitId: material.methodSummaryUnitId,
+      text: String(method.value),
+    }],
+  };
+}
+
+function makeCopyTargetsIneligible(material: EditorialMaterial): void {
+  const sensitiveMethod = materialUnit({ pointer: '/methodSummary', value: '基于三份材料', role: 'context' });
+  const sensitiveFact = materialUnit({
+    pointer: '/findingGraph/findings/0/statement',
+    value: '已有一项事实',
+    role: 'claim',
+    evidenceIds: ['evidence-1'],
+    questionIds: ['question-1'],
+  });
+  const sensitiveRisk = materialUnit({
+    pointer: '/risksAndOpenIssues/0',
+    value: '仍有一项待验证',
+    role: 'risk',
+  });
+  const auditOnly = {
+    ...materialUnit({ pointer: '/auditContext', value: '仅供审计', role: 'context' }),
+    requiredInBody: false,
+  };
+  material.methodSummaryUnitId = sensitiveMethod.id;
+  material.units = [sensitiveMethod, sensitiveFact, sensitiveRisk, auditOnly];
+}
+
 class QueueEditorialClient implements EditorialStructuredModelClient {
-  readonly calls: Array<{ schemaName: string; systemPrompt: string; context: object }> = [];
+  readonly calls: Array<{ prompt: string; schemaName: string; systemPrompt: string; context: object }> = [];
   private identityReads = 0;
   private readonly baseIdentity = {
     provider: 'gateway',
@@ -191,12 +221,13 @@ class QueueEditorialClient implements EditorialStructuredModelClient {
     prompt: string;
     systemPrompt: string;
     schema: object;
-    schemaName: 'editorial-report-blueprint' | 'editorial-report-fidelity';
+    schemaName: 'editorial-report-copy-edits' | 'editorial-report-fidelity';
     context: object;
     limits: typeof MODEL_LIMITS;
     redirectMode: 'error';
   }): Promise<Omit<LLMResult<T>, 'receiptId'>> {
     this.calls.push({
+      prompt: options.prompt,
       schemaName: options.schemaName,
       systemPrompt: options.systemPrompt,
       context: structuredClone(options.context),
@@ -240,26 +271,31 @@ class MemoryStore implements EditorialPipelineStore {
   releaseError: Error | undefined;
   constructor(private readonly fence: () => Promise<void>) {}
 
-  async readSlot(input: { slot: 'ready' | 'fallback' }): Promise<EditorialStoredGeneration | null> {
+  async readSlot(input: { requestKey: string; slot: 'ready' | 'fallback' }): Promise<EditorialStoredGeneration | null> {
     this.events.push(`read:${input.slot}`);
-    return this.stored?.slot === input.slot ? this.stored : null;
+    return this.stored?.slot === input.slot && this.stored.requestKey === input.requestKey
+      ? this.stored
+      : null;
   }
 
-  async acquire(): Promise<EditorialPipelineLease> {
+  async acquire(input: { requestKey: string }): Promise<EditorialPipelineLease> {
     this.events.push('acquire');
     return {
       readSlot: async (slot) => {
         this.events.push(`lease-read:${slot}`);
-        return this.stored?.slot === slot ? this.stored : null;
+        return this.stored?.slot === slot && this.stored.requestKey === input.requestKey
+          ? this.stored
+          : null;
       },
-      publish: async (input: EditorialStorePublishInput) => {
+      publish: async (publishInput: EditorialStorePublishInput) => {
         this.events.push('publish');
-        await input.assertStillCurrent();
-        const manifest = parseEditorialReport(JSON.parse(Buffer.from(input.manifestBytes).toString('utf8')));
-        parseEditorialDiagnostic(JSON.parse(Buffer.from(input.diagnosticBytes).toString('utf8')));
+        await publishInput.assertStillCurrent();
+        const manifest = parseEditorialReport(JSON.parse(Buffer.from(publishInput.manifestBytes).toString('utf8')));
+        assert.equal(manifest.requestKey, input.requestKey);
+        parseEditorialDiagnostic(JSON.parse(Buffer.from(publishInput.diagnosticBytes).toString('utf8')));
         this.stored = {
-          slot: input.slot, slotPath: '/tmp/fallback', reportPath: '/tmp/fallback/editorial-report.html', manifestPath: '/tmp/fallback/manifest.json', requestKey: manifest.requestKey, generationId: manifest.generationId, manifest,
-          materialBytes: Buffer.from(input.materialBytes), blueprintBytes: Buffer.from(input.blueprintBytes), diagnosticBytes: Buffer.from(input.diagnosticBytes), htmlBytes: Buffer.from(input.htmlBytes), manifestBytes: Buffer.from(input.manifestBytes),
+          slot: publishInput.slot, slotPath: '/tmp/fallback', reportPath: '/tmp/fallback/editorial-report.html', manifestPath: '/tmp/fallback/manifest.json', requestKey: manifest.requestKey, generationId: manifest.generationId, manifest,
+          materialBytes: Buffer.from(publishInput.materialBytes), blueprintBytes: Buffer.from(publishInput.blueprintBytes), diagnosticBytes: Buffer.from(publishInput.diagnosticBytes), htmlBytes: Buffer.from(publishInput.htmlBytes), manifestBytes: Buffer.from(publishInput.manifestBytes),
         };
         return this.stored;
       },
@@ -519,6 +555,225 @@ test('cache return is fenced and does not acquire a request lock', async () => {
   assert.equal(fences, 3);
 });
 
+test('ready cache return rejects a source switch committed before its final database observation', async () => {
+  const { source, material } = fixture();
+  const seededModel = modelPort([
+    copyEditPlan(material),
+    {
+      version: 'editorial-fidelity-plan-v1',
+      checks: [{
+        copyPointer: '/deck',
+        materialUnitIds: [material.methodSummaryUnitId],
+        verdict: 'faithful',
+      }],
+    },
+  ]);
+  const stableVerifier = {
+    readCurrent: async () => source,
+    assertStillCurrent: async () => undefined,
+  };
+  const store = new MemoryStore(stableVerifier.assertStillCurrent);
+  await new EditorialReportPipeline({
+    source: stableVerifier,
+    store,
+    modelPort: seededModel.port,
+    materialize: () => materializeResult(material),
+  }).generate({ taskId: TASK_ID });
+
+  const nextSource = structuredClone(source);
+  nextSource.binding.taskStateVersion += 1;
+  let currentSource = source;
+  const cachedModel = modelPort([]);
+  const verifier = {
+    readCurrent: async () => {
+      const frozen = currentSource;
+      currentSource = nextSource;
+      return frozen;
+    },
+    assertStillCurrent: async (expected: FrozenEditorialSource['binding']) => {
+      if (currentSource.binding.taskStateVersion !== expected.taskStateVersion) {
+        throw new EditorialSourceError('SOURCE_BINDING_CHANGED');
+      }
+    },
+  };
+  store.events.length = 0;
+
+  await assert.rejects(
+    new EditorialReportPipeline({
+      source: verifier,
+      store,
+      modelPort: cachedModel.port,
+      materialize: () => materializeResult(material),
+    }).generate({ taskId: TASK_ID }),
+    (error: unknown) => error instanceof EditorialPipelineError
+      && error.code === 'SOURCE_BINDING_CHANGED',
+  );
+
+  assert.deepEqual(store.events, ['read:ready']);
+  assert.equal(cachedModel.client.calls.length, 0);
+});
+
+test('ready cache return linearizes at the final database observation and the next call fences the new stateVersion', async () => {
+  const { source, material } = fixture();
+  const seededModel = modelPort([
+    copyEditPlan(material),
+    {
+      version: 'editorial-fidelity-plan-v1',
+      checks: [{
+        copyPointer: '/deck',
+        materialUnitIds: [material.methodSummaryUnitId],
+        verdict: 'faithful',
+      }],
+    },
+  ]);
+  const stableVerifier = {
+    readCurrent: async () => source,
+    assertStillCurrent: async () => undefined,
+  };
+  const store = new MemoryStore(stableVerifier.assertStillCurrent);
+  const first = await new EditorialReportPipeline({
+    source: stableVerifier,
+    store,
+    modelPort: seededModel.port,
+    materialize: () => materializeResult(material),
+  }).generate({ taskId: TASK_ID });
+
+  const nextSource = structuredClone(source);
+  nextSource.binding.taskStateVersion += 1;
+  let currentSource = source;
+  let releaseFinalObservation!: () => void;
+  const finalObservationCanReturn = new Promise<void>((resolve) => { releaseFinalObservation = resolve; });
+  let reportFinalObservation!: () => void;
+  const finalObservationReached = new Promise<void>((resolve) => { reportFinalObservation = resolve; });
+  let blockFirstCacheFence = true;
+  const readVersions: number[] = [];
+  const verifier = {
+    readCurrent: async () => {
+      readVersions.push(currentSource.binding.taskStateVersion);
+      return currentSource;
+    },
+    assertStillCurrent: async (expected: FrozenEditorialSource['binding']) => {
+      const observed = currentSource.binding;
+      assert.deepEqual(observed, expected);
+      if (blockFirstCacheFence) {
+        blockFirstCacheFence = false;
+        reportFinalObservation();
+        await finalObservationCanReturn;
+      }
+    },
+  };
+  const cachedModel = modelPort([]);
+  const pipeline = new EditorialReportPipeline({
+    source: verifier,
+    store,
+    modelPort: cachedModel.port,
+    materialize: () => materializeResult(material),
+  });
+  store.events.length = 0;
+
+  const linearizedAtS0 = pipeline.generate({ taskId: TASK_ID });
+  await finalObservationReached;
+  currentSource = nextSource;
+  releaseFinalObservation();
+  const second = await linearizedAtS0;
+  const third = await pipeline.generate({ taskId: TASK_ID });
+
+  assert.deepEqual(second, first);
+  assert.deepEqual(third, first);
+  assert.deepEqual(readVersions, [4, 5]);
+  assert.deepEqual(store.events, ['read:ready', 'read:ready']);
+  assert.equal(cachedModel.client.calls.length, 0);
+});
+
+test('a changed Report Package identity cannot reuse the previous ready request', async () => {
+  const firstCase = fixture();
+  const firstModel = modelPort([
+    copyEditPlan(firstCase.material),
+    {
+      version: 'editorial-fidelity-plan-v1',
+      checks: [{
+        copyPointer: '/deck',
+        materialUnitIds: [firstCase.material.methodSummaryUnitId],
+        verdict: 'faithful',
+      }],
+    },
+  ]);
+  const stableVerifier = {
+    readCurrent: async () => firstCase.source,
+    assertStillCurrent: async () => undefined,
+  };
+  const store = new MemoryStore(stableVerifier.assertStillCurrent);
+  const first = await new EditorialReportPipeline({
+    source: stableVerifier,
+    store,
+    modelPort: firstModel.port,
+    materialize: () => materializeResult(firstCase.material),
+  }).generate({ taskId: TASK_ID });
+
+  const nextPackageId = '55555555-5555-4555-8555-555555555555';
+  const nextPackageHash = `sha256:${'5'.repeat(64)}` as Sha256;
+  const nextMaterial = structuredClone(firstCase.material);
+  nextMaterial.sourceReportPackage = {
+    ...nextMaterial.sourceReportPackage,
+    artifactId: nextPackageId,
+    contentSha256: nextPackageHash,
+  };
+  nextMaterial.sourceArtifacts = nextMaterial.sourceArtifacts.map((artifact) => (
+    artifact.artifactId === PACKAGE_ID
+      ? { ...artifact, artifactId: nextPackageId, contentSha256: nextPackageHash }
+      : artifact
+  ));
+  const nextSource = structuredClone(firstCase.source);
+  nextSource.binding = {
+    ...nextSource.binding,
+    taskStateVersion: nextSource.binding.taskStateVersion + 1,
+    reportPackageArtifactId: nextPackageId,
+    reportPackageContentSha256: nextPackageHash,
+  };
+  nextSource.reportPackage.artifact = {
+    ...nextSource.reportPackage.artifact,
+    id: nextPackageId,
+    contentSha256: nextPackageHash,
+  };
+  nextSource.sourceArtifacts = nextMaterial.sourceArtifacts;
+  nextSource.sourcePolicyMetadata = [{
+    artifactId: nextPackageId,
+    contentSha256: nextPackageHash,
+    sensitivity: 'internal',
+    redactionPolicyVersion: 'v1',
+  }];
+  const nextModel = modelPort([
+    copyEditPlan(nextMaterial),
+    {
+      version: 'editorial-fidelity-plan-v1',
+      checks: [{
+        copyPointer: '/deck',
+        materialUnitIds: [nextMaterial.methodSummaryUnitId],
+        verdict: 'faithful',
+      }],
+    },
+  ]);
+  const nextVerifier = {
+    readCurrent: async () => nextSource,
+    assertStillCurrent: async () => undefined,
+  };
+  store.events.length = 0;
+
+  const second = await new EditorialReportPipeline({
+    source: nextVerifier,
+    store,
+    modelPort: nextModel.port,
+    materialize: () => materializeResult(nextMaterial),
+  }).generate({ taskId: TASK_ID });
+
+  assert.notEqual(second.requestKey, first.requestKey);
+  assert.notEqual(second.generationId, first.generationId);
+  assert.equal(nextModel.client.calls.length, 2);
+  assert.deepEqual(store.events, [
+    'read:ready', 'acquire', 'lease-read:ready', 'lease-read:fallback', 'publish', 'release',
+  ]);
+});
+
 test('Pipeline rejects a malformed non-null model port before any outbound call', () => {
   const { source } = fixture();
   const modelPort = { client: {}, configuration: {} } as unknown as EditorialModelPort;
@@ -534,7 +789,7 @@ test('Pipeline rejects a malformed non-null model port before any outbound call'
 
 test('Phase 2 rejects unsafe fallback HTML before any model call or publication', async () => {
   const { source, material } = fixture();
-  const configured = modelPort([blueprintPlan(material)]);
+  const configured = modelPort([copyEditPlan(material)]);
   const verifier = { readCurrent: async () => source, assertStillCurrent: async () => undefined };
   const store = new MemoryStore(verifier.assertStillCurrent);
 
@@ -561,9 +816,9 @@ test('Phase 2 rejects unsafe fallback HTML before any model call or publication'
   assert.equal(store.failureDiagnostics[0]?.checks.find(({ id }) => id === 'html_safety')?.status, 'failed');
 });
 
-test('Phase 2 publishes a ready report only after Planner and independent Fidelity pass', async () => {
+test('Phase 2 publishes a ready report only after Copy Editor and independent Fidelity pass', async () => {
   const { source, material } = fixture();
-  const plan = blueprintPlan(material);
+  const plan = copyEditPlan(material);
   const { port, client } = modelPort([
     plan,
     {
@@ -594,7 +849,7 @@ test('Phase 2 publishes a ready report only after Planner and independent Fideli
   assert.equal(result.status, 'ready');
   assert.equal(store.stored?.slot, 'ready');
   assert.deepEqual(client.calls.map(({ schemaName }) => schemaName), [
-    'editorial-report-blueprint',
+    'editorial-report-copy-edits',
     'editorial-report-fidelity',
   ]);
   assert.deepEqual(
@@ -610,9 +865,233 @@ test('Phase 2 publishes a ready report only after Planner and independent Fideli
   assert.equal(diagnostic.candidateAttempts[0]?.fidelityReview?.verdict, 'pass');
 });
 
+test('Phase 2 gives the Copy Editor compact eligible targets without the full Blueprint scaffold', async () => {
+  const { source, material } = fixture();
+  const sensitiveMethod = materialUnit({
+    pointer: '/methodSummary',
+    value: '基于三份封存材料',
+    role: 'context',
+  });
+  material.units[0] = sensitiveMethod;
+  material.methodSummaryUnitId = sensitiveMethod.id;
+  const configured = modelPort([
+    new LLMInvocationError('timeout', true, null, 'gateway request timed out'),
+  ]);
+  const verifier = { readCurrent: async () => source, assertStillCurrent: async () => undefined };
+  const store = new MemoryStore(verifier.assertStillCurrent);
+
+  const result = await new EditorialReportPipeline({
+    source: verifier,
+    store,
+    modelPort: configured.port,
+    materialize: () => materializeResult(material),
+  }).generate({ taskId: TASK_ID });
+
+  assert.equal(result.status, 'degraded');
+  assert.equal(configured.client.calls.length, 1);
+  const call = configured.client.calls[0]!;
+  assert.match(call.prompt, /copyEditRequest/u);
+  assert.doesNotMatch(call.prompt, /plannerScaffold/u);
+  const context = call.context as {
+    modelContext: unknown;
+    copyEditRequest: {
+      version: string;
+      targets: Array<{ copyPointer: string; materialUnitId: string; currentText: string }>;
+    };
+  };
+  assert.deepEqual(context.modelContext, materializeResult(material).modelContext);
+  assert.equal(context.copyEditRequest.version, 'editorial-copy-edit-request-v1');
+  assert.equal(Object.hasOwn(context, 'plannerScaffold'), false);
+  assert.equal(context.copyEditRequest.targets.some(({ materialUnitId }) => materialUnitId === sensitiveMethod.id), false);
+  assert.deepEqual(
+    context.copyEditRequest.targets.map(({ materialUnitId }) => materialUnitId),
+    material.units.slice(1).map(({ id }) => id),
+  );
+});
+
+test('Phase 2 rejects an unchanged Copy edit when paraphrase is possible', async () => {
+  const { source, material } = fixture();
+  const unchanged = unchangedCopyEditPlan(material);
+  const whitespaceOnly = structuredClone(unchanged);
+  whitespaceOnly.edits[0]!.text = `  ${whitespaceOnly.edits[0]!.text}\n`;
+  const configured = modelPort([unchanged, whitespaceOnly]);
+  const verifier = { readCurrent: async () => source, assertStillCurrent: async () => undefined };
+  const store = new MemoryStore(verifier.assertStillCurrent);
+
+  const result = await new EditorialReportPipeline({
+    source: verifier,
+    store,
+    modelPort: configured.port,
+    materialize: () => materializeResult(material),
+  }).generate({ taskId: TASK_ID });
+
+  assert.equal(result.status, 'degraded');
+  assert.equal(configured.client.calls.length, 2);
+  const diagnostic = parseEditorialDiagnostic(JSON.parse(store.stored!.diagnosticBytes.toString('utf8')));
+  assert.deepEqual(diagnostic.candidateAttempts.map(({ issueCodes }) => issueCodes), [
+    ['CONTENT_FIDELITY'],
+    ['CONTENT_FIDELITY'],
+  ]);
+});
+
+test('Phase 2 rejects structural fields that a Copy Edit Plan cannot express', async () => {
+  const { source, material } = fixture();
+  const changedStructure = { ...copyEditPlan(material), sections: [] };
+  const configured = modelPort([changedStructure, changedStructure]);
+  const verifier = { readCurrent: async () => source, assertStillCurrent: async () => undefined };
+  const store = new MemoryStore(verifier.assertStillCurrent);
+
+  const result = await new EditorialReportPipeline({
+    source: verifier,
+    store,
+    modelPort: configured.port,
+    materialize: () => materializeResult(material),
+  }).generate({ taskId: TASK_ID });
+
+  assert.equal(result.status, 'degraded');
+  assert.deepEqual(
+    configured.client.calls.map(({ schemaName }) => schemaName),
+    ['editorial-report-copy-edits', 'editorial-report-copy-edits'],
+  );
+  const diagnostic = parseEditorialDiagnostic(JSON.parse(store.stored!.diagnosticBytes.toString('utf8')));
+  assert.equal(diagnostic.candidateAttempts[0]?.issueCodes[0], 'SCHEMA_INTEGRITY');
+});
+
+test('Phase 2 skips the model and publishes fallback when no body Copy is eligible', async () => {
+  const { source, material } = fixture();
+  makeCopyTargetsIneligible(material);
+  const configured = modelPort([unchangedCopyEditPlan(material)]);
+  const verifier = { readCurrent: async () => source, assertStillCurrent: async () => undefined };
+  const store = new MemoryStore(verifier.assertStillCurrent);
+
+  const result = await new EditorialReportPipeline({
+    source: verifier,
+    store,
+    modelPort: configured.port,
+    materialize: () => materializeResult(material),
+  }).generate({ taskId: TASK_ID });
+
+  assert.equal(result.status, 'degraded');
+  assert.equal(configured.client.calls.length, 0);
+  assert.equal(store.stored?.manifest.modelCalls.length, 0);
+  const diagnostic = parseEditorialDiagnostic(JSON.parse(store.stored!.diagnosticBytes.toString('utf8')));
+  assert.deepEqual(diagnostic.candidateAttempts, []);
+  assert.ok(diagnostic.issues.some(({ code }) => code === 'NO_ELIGIBLE_COPY_TARGETS'));
+});
+
+test('Phase 2 skips an oversized Copy Edit envelope without fabricating a model call', async () => {
+  const { source, material } = fixture();
+  material.units.push(...Array.from({ length: 300 }, (_, index) => materialUnit({
+    pointer: `/additionalContext/${index}`,
+    value: '补'.repeat(350),
+    role: 'context',
+  })));
+  const materialization = materializeResult(material);
+  const editing = prepareEditorialCopyEditSession({
+    material,
+    requestKey: `erq_${'a'.repeat(64)}`,
+  });
+  assert.ok(materialization.modelContextByteSize <= EDITORIAL_MAX_MODEL_CONTEXT_BYTES);
+  assert.ok(canonicalJsonBytes({
+    modelContext: materialization.modelContext,
+    copyEditRequest: editing.requestContext,
+  }).byteLength > EDITORIAL_MAX_MODEL_CONTEXT_BYTES);
+  const configured = modelPort([copyEditPlan(material)]);
+  const verifier = { readCurrent: async () => source, assertStillCurrent: async () => undefined };
+  const store = new MemoryStore(verifier.assertStillCurrent);
+
+  const result = await new EditorialReportPipeline({
+    source: verifier,
+    store,
+    modelPort: configured.port,
+    materialize: () => materialization,
+  }).generate({ taskId: TASK_ID });
+
+  assert.equal(result.status, 'degraded');
+  assert.equal(configured.client.calls.length, 0);
+  assert.equal(store.stored?.manifest.modelCalls.length, 0);
+  const diagnostic = parseEditorialDiagnostic(JSON.parse(store.stored!.diagnosticBytes.toString('utf8')));
+  assert.deepEqual(diagnostic.candidateAttempts, []);
+  assert.ok(diagnostic.issues.some(({ code }) => code === 'MATERIAL_BUDGET_EXCEEDED'));
+});
+
+test('Phase 2 rejects Copy Edit Plans with more than six edits', async () => {
+  const { source, material } = fixture();
+  material.units.push(...Array.from({ length: 5 }, (_, index) => materialUnit({
+    pointer: `/additionalContext/${index}`,
+    value: `补充语境 ${String.fromCharCode(65 + index)}`,
+    role: 'context',
+  })));
+  const editing = prepareEditorialCopyEditSession({ material, requestKey: `erq_${'a'.repeat(64)}` });
+  const edits = editing.requestContext.targets.slice(0, 7).map((target) => ({
+    copyPointer: target.copyPointer,
+    materialUnitId: target.materialUnitId,
+    text: `${target.currentText}（优化）`,
+  }));
+  assert.equal(edits.length, 7);
+  const plan = { version: 'editorial-copy-edit-plan-v1', edits };
+  const configured = modelPort([plan, plan]);
+  const verifier = { readCurrent: async () => source, assertStillCurrent: async () => undefined };
+  const store = new MemoryStore(verifier.assertStillCurrent);
+
+  const result = await new EditorialReportPipeline({
+    source: verifier,
+    store,
+    modelPort: configured.port,
+    materialize: () => materializeResult(material),
+  }).generate({ taskId: TASK_ID });
+
+  assert.equal(result.status, 'degraded');
+  assert.equal(configured.client.calls.length, 2);
+  const diagnostic = parseEditorialDiagnostic(JSON.parse(store.stored!.diagnosticBytes.toString('utf8')));
+  assert.deepEqual(diagnostic.candidateAttempts.map(({ issueCodes }) => issueCodes), [
+    ['SCHEMA_INTEGRITY'],
+    ['SCHEMA_INTEGRITY'],
+  ]);
+});
+
+test('Phase 2 can publish ready when the deterministic Blueprint exceeds the legacy LLM Copy budget', async () => {
+  const { source, material } = fixture();
+  material.units.push(...Array.from({ length: 241 }, (_, index) => materialUnit({
+    pointer: `/additionalContext/${index}`,
+    value: `补充语境 ${String.fromCharCode(65 + (index % 26))}`,
+    role: 'context',
+  })));
+  const configured = modelPort([
+    copyEditPlan(material),
+    {
+      version: 'editorial-fidelity-plan-v1',
+      checks: [{
+        copyPointer: '/deck',
+        materialUnitIds: [material.methodSummaryUnitId],
+        verdict: 'faithful',
+      }],
+    },
+  ]);
+  const verifier = { readCurrent: async () => source, assertStillCurrent: async () => undefined };
+  const store = new MemoryStore(verifier.assertStillCurrent);
+
+  const result = await new EditorialReportPipeline({
+    source: verifier,
+    store,
+    modelPort: configured.port,
+    materialize: () => materializeResult(material),
+  }).generate({ taskId: TASK_ID });
+
+  assert.equal(result.status, 'ready');
+  assert.equal(configured.client.calls.length, 2);
+  assert.equal(
+    (configured.client.calls[0]!.context as { copyEditRequest: { targets: unknown[] } })
+      .copyEditRequest.targets.length > 240,
+    true,
+  );
+  const diagnostic = parseEditorialDiagnostic(JSON.parse(store.stored!.diagnosticBytes.toString('utf8')));
+  assert.equal(diagnostic.candidateAttempts[0]?.outcome, 'accepted');
+});
+
 test('Phase 2 gives one bounded repair attempt after a rejected Blueprint', async () => {
   const { source, material } = fixture();
-  const plan = blueprintPlan(material);
+  const plan = copyEditPlan(material);
   const { port, client } = modelPort([
     {},
     plan,
@@ -640,6 +1119,39 @@ test('Phase 2 gives one bounded repair attempt after a rejected Blueprint', asyn
   const diagnostic = parseEditorialDiagnostic(JSON.parse(store.stored!.diagnosticBytes.toString('utf8')));
   assert.deepEqual(diagnostic.candidateAttempts.map(({ outcome }) => outcome), ['rejected', 'accepted']);
   assert.deepEqual(diagnostic.rejectedResponseHashes, [diagnostic.candidateAttempts[0]!.plannerCall.responseHash]);
+});
+
+test('Phase 2 sends a bounded JSON Pointer for a nested Copy Edit schema repair', async () => {
+  const { source, material } = fixture();
+  const plan = copyEditPlan(material);
+  const invalid = { ...plan, edits: [{ ...plan.edits[0], text: null }] };
+  const { port, client } = modelPort([
+    invalid,
+    plan,
+    {
+      version: 'editorial-fidelity-plan-v1',
+      checks: [{
+        copyPointer: '/deck',
+        materialUnitIds: [material.methodSummaryUnitId],
+        verdict: 'faithful',
+      }],
+    },
+  ]);
+  const verifier = { readCurrent: async () => source, assertStillCurrent: async () => undefined };
+  const store = new MemoryStore(verifier.assertStillCurrent);
+
+  const result = await new EditorialReportPipeline({
+    source: verifier,
+    store,
+    modelPort: port,
+    materialize: () => materializeResult(material),
+  }).generate({ taskId: TASK_ID });
+
+  assert.equal(result.status, 'ready');
+  assert.deepEqual(
+    (client.calls[1]!.context as { repairHints: unknown }).repairHints,
+    [{ code: 'SCHEMA_INTEGRITY', jsonPointer: '/edits/0/text' }],
+  );
 });
 
 test('Phase 2 publishes the preflighted fallback when the Gateway call fails', async () => {
@@ -766,7 +1278,7 @@ test('Phase 2 re-fences fallback reuse after asynchronous audit before returning
 
 test('Phase 2 treats a receiptId property as a hard wiring failure even when its value is undefined', async () => {
   const { source, material } = fixture();
-  const plan = blueprintPlan(material);
+  const plan = copyEditPlan(material);
   const { port, client } = modelPort(
     [plan],
     (result) => ({ ...result, receiptId: undefined }),
@@ -828,7 +1340,7 @@ test('Phase 2 records invalid provider identity and actual-model drift before us
   ];
   for (const scenario of cases) {
     const { source, material } = fixture();
-    const { port, client } = modelPort([blueprintPlan(material)], scenario.mutate);
+    const { port, client } = modelPort([copyEditPlan(material)], scenario.mutate);
     const verifier = { readCurrent: async () => source, assertStillCurrent: async () => undefined };
     const store = new MemoryStore(verifier.assertStillCurrent);
 
@@ -871,7 +1383,7 @@ test('Phase 2 degrades safely when Gateway receipt metadata is out of bounds', a
   ];
   for (const scenario of cases) {
     const { source, material } = fixture();
-    const { port, client } = modelPort([blueprintPlan(material)], scenario.mutate);
+    const { port, client } = modelPort([copyEditPlan(material)], scenario.mutate);
     const verifier = { readCurrent: async () => source, assertStillCurrent: async () => undefined };
     const store = new MemoryStore(verifier.assertStillCurrent);
 
@@ -898,7 +1410,7 @@ test('Phase 2 degrades safely when Gateway receipt metadata is out of bounds', a
 test('Phase 2 fences binding and client configuration immediately before every model call', async () => {
   const bindingCase = fixture();
   const bindingModel = modelPort([
-    blueprintPlan(bindingCase.material),
+    copyEditPlan(bindingCase.material),
     {
       version: 'editorial-fidelity-plan-v1',
       checks: [{
@@ -933,7 +1445,7 @@ test('Phase 2 fences binding and client configuration immediately before every m
 
   const portCase = fixture();
   const portModel = modelPort(
-    [blueprintPlan(portCase.material)],
+    [copyEditPlan(portCase.material)],
     undefined,
     (identity, readCount) => readCount === 1
       ? identity
@@ -962,7 +1474,7 @@ test('Phase 2 fences binding and client configuration immediately before every m
   const synchronousCase = fixture();
   let mutablePort: Extract<EditorialModelPort, { client: object }>;
   const synchronousModel = modelPort(
-    [blueprintPlan(synchronousCase.material)],
+    [copyEditPlan(synchronousCase.material)],
     undefined,
     (identity) => {
       mutablePort.configuration = modelConfiguration('replacement-model', 'replacement-model-v1');
@@ -1000,7 +1512,8 @@ test('Phase 2 fences binding and client configuration immediately before every m
 
 test('Phase 2 egress denial publishes fallback without calling the configured model', async () => {
   const { source, material } = fixture();
-  const configured = modelPort([blueprintPlan(material)]);
+  makeCopyTargetsIneligible(material);
+  const configured = modelPort([copyEditPlan(material)]);
   const materialization = materializeResult(material);
   materialization.sourcePolicyMetadata = materialization.sourcePolicyMetadata.map((entry) => ({
     ...entry,
@@ -1020,9 +1533,11 @@ test('Phase 2 egress denial publishes fallback without calling the configured mo
   assert.equal(configured.client.calls.length, 0);
   assert.equal(store.stored?.manifest.pipeline.modelEgress.reasonCode, 'EGRESS_SENSITIVITY_DENIED');
   assert.deepEqual(store.stored?.manifest.modelCalls, []);
+  const diagnostic = parseEditorialDiagnostic(JSON.parse(store.stored!.diagnosticBytes.toString('utf8')));
+  assert.equal(diagnostic.issues.some(({ code }) => code === 'NO_ELIGIBLE_COPY_TARGETS'), false);
 });
 
-test('Phase 2 performs only one repair after two rejected Planner candidates then publishes fallback', async () => {
+test('Phase 2 performs only one repair after two rejected Copy Edit candidates then publishes fallback', async () => {
   const { source, material } = fixture();
   const configured = modelPort([{}, {}]);
   const verifier = { readCurrent: async () => source, assertStillCurrent: async () => undefined };
@@ -1037,16 +1552,16 @@ test('Phase 2 performs only one repair after two rejected Planner candidates the
 
   assert.equal(result.status, 'degraded');
   assert.deepEqual(configured.client.calls.map(({ schemaName }) => schemaName), [
-    'editorial-report-blueprint',
-    'editorial-report-blueprint',
+    'editorial-report-copy-edits',
+    'editorial-report-copy-edits',
   ]);
   const diagnostic = parseEditorialDiagnostic(JSON.parse(store.stored!.diagnosticBytes.toString('utf8')));
   assert.deepEqual(diagnostic.candidateAttempts.map(({ outcome }) => outcome), ['rejected', 'rejected']);
 });
 
-test('Phase 2 never exceeds two Planner and two Fidelity calls', async () => {
+test('Phase 2 never exceeds two Copy Editor and two Fidelity calls', async () => {
   const { source, material } = fixture();
-  const plan = blueprintPlan(material);
+  const plan = copyEditPlan(material);
   const blockedReview = {
     version: 'editorial-fidelity-plan-v1',
     checks: [{
@@ -1068,16 +1583,16 @@ test('Phase 2 never exceeds two Planner and two Fidelity calls', async () => {
 
   assert.equal(result.status, 'degraded');
   assert.deepEqual(configured.client.calls.map(({ schemaName }) => schemaName), [
-    'editorial-report-blueprint',
+    'editorial-report-copy-edits',
     'editorial-report-fidelity',
-    'editorial-report-blueprint',
+    'editorial-report-copy-edits',
     'editorial-report-fidelity',
   ]);
 });
 
 test('Phase 2 never masks a hard candidate renderer failure with the preflighted fallback', async () => {
   const { source, material } = fixture();
-  const plan = blueprintPlan(material);
+  const plan = copyEditPlan(material);
   const configured = modelPort([
     plan,
     {
@@ -1123,7 +1638,7 @@ test('Phase 2 never masks a hard candidate renderer failure with the preflighted
 
 test('Phase 2 rejects an oversized candidate and publishes the preflighted fallback', async () => {
   const { source, material } = fixture();
-  const plan = blueprintPlan(material);
+  const plan = copyEditPlan(material);
   const review = {
     version: 'editorial-fidelity-plan-v1',
     checks: [{
@@ -1164,7 +1679,7 @@ test('Phase 2 rejects an oversized candidate and publishes the preflighted fallb
 test('Phase 2 hard-fails when the Renderer forges its composition trace', async () => {
   const { source, material } = fixture();
   const configured = modelPort([
-    blueprintPlan(material),
+    copyEditPlan(material),
     {
       version: 'editorial-fidelity-plan-v1',
       checks: [{
