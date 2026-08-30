@@ -7,7 +7,7 @@ on:
 jobs:
   playwright-contract:
     name: Playwright in-memory no-request contract
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     env:
       LLM_PROVIDER: mock
       TOOL_ADAPTER: fake
