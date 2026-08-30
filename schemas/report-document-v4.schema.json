@@ -1,0 +1,361 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "report-document-v4",
+  "title": "Editorial Report Document v4",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "title",
+    "subtitle",
+    "executiveSummary",
+    "style",
+    "density",
+    "copyMode",
+    "sections",
+    "sourceDeliverableArtifactId",
+    "sourceDeliverableContentSha256",
+    "projectionMode",
+    "layoutMode",
+    "traceIndex",
+    "semanticManifest",
+    "notices"
+  ],
+  "properties": {
+    "version": { "const": "report-document-v4" },
+    "title": { "$ref": "#/definitions/copyFragment" },
+    "subtitle": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+    "executiveSummary": { "$ref": "#/definitions/copyFragment" },
+    "style": { "enum": ["editorial", "analytical", "operational"] },
+    "density": { "enum": ["comfortable", "compact"] },
+    "copyMode": { "enum": ["model", "mixed", "fallback"] },
+    "sections": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/section" }
+    },
+    "sourceDeliverableArtifactId": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+    "sourceDeliverableContentSha256": { "$ref": "report-document-v3#/definitions/sha256" },
+    "projectionMode": { "const": "full" },
+    "layoutMode": { "enum": ["model", "fallback"] },
+    "traceIndex": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "report-document-v3#/definitions/trace" }
+    },
+    "semanticManifest": { "$ref": "#/definitions/semanticManifest" },
+    "auditAppendix": { "$ref": "report-document-v3#/definitions/auditAppendix" },
+    "notices": {
+      "type": "array",
+      "items": { "$ref": "report-document-v3#/definitions/notice" }
+    }
+  },
+  "definitions": {
+    "copyFragment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "provenance", "text", "sourceLeafIds"],
+      "properties": {
+        "id": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+        "provenance": { "enum": ["model", "canonical", "system"] },
+        "text": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+        "sourceLeafIds": { "$ref": "report-document-v3#/definitions/idList" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "provenance": { "const": "model" } } },
+          "then": { "properties": { "sourceLeafIds": { "minItems": 1 } } }
+        },
+        {
+          "if": { "properties": { "provenance": { "const": "system" } } },
+          "then": { "properties": { "sourceLeafIds": { "maxItems": 0 } } }
+        }
+      ]
+    },
+    "blockBase": {
+      "type": "object",
+      "required": ["id", "type", "visibility", "unitRefs", "leafRefs"],
+      "properties": {
+        "id": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+        "title": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+        "visibility": { "$ref": "report-document-v3#/definitions/visibility" },
+        "unitRefs": { "$ref": "report-document-v3#/definitions/nonEmptyIdList" },
+        "leafRefs": { "$ref": "report-document-v3#/definitions/nonEmptyIdList" },
+        "digest": { "$ref": "#/definitions/copyFragment" }
+      }
+    },
+    "paragraphBlock": {
+      "allOf": [
+        { "$ref": "#/definitions/blockBase" },
+        {
+          "required": ["leafRef", "text"],
+          "propertyNames": { "enum": ["id", "title", "type", "visibility", "unitRefs", "leafRefs", "digest", "leafRef", "text"] },
+          "properties": {
+            "type": { "const": "paragraph" },
+            "leafRef": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+            "text": { "$ref": "report-document-v3#/definitions/nonEmptyString" }
+          }
+        }
+      ]
+    },
+    "factBlock": {
+      "allOf": [
+        { "$ref": "#/definitions/blockBase" },
+        {
+          "required": ["leafRef", "text"],
+          "propertyNames": { "enum": ["id", "title", "type", "visibility", "unitRefs", "leafRefs", "digest", "leafRef", "text"] },
+          "properties": {
+            "type": { "const": "fact" },
+            "leafRef": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+            "text": { "$ref": "report-document-v3#/definitions/nonEmptyString" }
+          }
+        }
+      ]
+    },
+    "metricBlock": {
+      "allOf": [
+        { "$ref": "#/definitions/blockBase" },
+        {
+          "required": ["leafRef", "label", "value"],
+          "propertyNames": { "enum": ["id", "title", "type", "visibility", "unitRefs", "leafRefs", "digest", "leafRef", "label", "value", "unit"] },
+          "properties": {
+            "type": { "const": "metric" },
+            "leafRef": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+            "label": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+            "value": { "type": "number" },
+            "unit": { "$ref": "report-document-v3#/definitions/nonEmptyString" }
+          }
+        }
+      ]
+    },
+    "listBlock": {
+      "allOf": [
+        { "$ref": "#/definitions/blockBase" },
+        {
+          "required": ["ordered", "items"],
+          "propertyNames": { "enum": ["id", "title", "type", "visibility", "unitRefs", "leafRefs", "digest", "ordered", "items"] },
+          "properties": {
+            "type": { "const": "list" },
+            "ordered": { "type": "boolean" },
+            "items": { "type": "array", "minItems": 1, "items": { "$ref": "report-document-v3#/definitions/listItem" } }
+          }
+        }
+      ]
+    },
+    "answerBlock": {
+      "allOf": [
+        { "$ref": "#/definitions/blockBase" },
+        {
+          "required": ["kind", "textLeafRef", "text", "items"],
+          "propertyNames": { "enum": ["id", "title", "type", "visibility", "unitRefs", "leafRefs", "digest", "kind", "textLeafRef", "text", "items", "answerStatus"] },
+          "properties": {
+            "type": { "const": "answer" },
+            "kind": { "$ref": "report-document-v3#/definitions/answerBlock/properties/kind" },
+            "textLeafRef": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+            "text": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+            "items": { "type": "array", "items": { "$ref": "report-document-v3#/definitions/listItem" } },
+            "answerStatus": { "enum": ["supported", "provisional", "unanswered"] }
+          }
+        }
+      ]
+    },
+    "imageBlock": {
+      "allOf": [
+        { "$ref": "#/definitions/blockBase" },
+        {
+          "required": ["leafRef", "assetRef", "caption", "altText"],
+          "propertyNames": { "enum": ["id", "title", "type", "visibility", "unitRefs", "leafRefs", "digest", "leafRef", "assetRef", "caption", "altText"] },
+          "properties": {
+            "type": { "const": "image" },
+            "leafRef": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+            "assetRef": { "$ref": "report-document-v3#/definitions/assetRef" },
+            "caption": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+            "altText": { "$ref": "report-document-v3#/definitions/nonEmptyString" }
+          }
+        }
+      ]
+    },
+    "imageComparisonBlock": {
+      "allOf": [
+        { "$ref": "#/definitions/blockBase" },
+        {
+          "required": ["beforeLeafRef", "afterLeafRef", "beforeAssetRef", "afterAssetRef", "caption", "altText"],
+          "propertyNames": { "enum": ["id", "title", "type", "visibility", "unitRefs", "leafRefs", "digest", "beforeLeafRef", "afterLeafRef", "beforeAssetRef", "afterAssetRef", "caption", "altText"] },
+          "properties": {
+            "type": { "const": "image-comparison" },
+            "beforeLeafRef": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+            "afterLeafRef": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+            "beforeAssetRef": { "$ref": "report-document-v3#/definitions/assetRef" },
+            "afterAssetRef": { "$ref": "report-document-v3#/definitions/assetRef" },
+            "caption": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+            "altText": { "$ref": "report-document-v3#/definitions/nonEmptyString" }
+          }
+        }
+      ]
+    },
+    "chartBlock": {
+      "allOf": [
+        { "$ref": "#/definitions/blockBase" },
+        {
+          "required": ["leafRef", "chartRef", "specHash", "spec", "table", "caption", "altText"],
+          "propertyNames": { "enum": ["id", "title", "type", "visibility", "unitRefs", "leafRefs", "digest", "leafRef", "chartRef", "specHash", "spec", "table", "caption", "altText"] },
+          "properties": {
+            "type": { "const": "chart" },
+            "leafRef": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+            "chartRef": { "$ref": "report-document-v3#/definitions/chartRef" },
+            "specHash": { "$ref": "report-document-v3#/definitions/sha256" },
+            "spec": { "$ref": "report-document-v3#/definitions/chartSpec" },
+            "table": { "$ref": "report-document-v3#/definitions/chartTable" },
+            "caption": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+            "altText": { "$ref": "report-document-v3#/definitions/nonEmptyString" }
+          }
+        }
+      ]
+    },
+    "recordTableBlock": {
+      "allOf": [
+        { "$ref": "#/definitions/blockBase" },
+        {
+          "required": ["columns", "rows"],
+          "propertyNames": { "enum": ["id", "title", "type", "visibility", "unitRefs", "leafRefs", "digest", "columns", "rows"] },
+          "properties": {
+            "type": { "const": "record-table" },
+            "columns": { "$ref": "report-document-v3#/definitions/recordTableBlock/properties/columns" },
+            "rows": { "$ref": "report-document-v3#/definitions/recordTableBlock/properties/rows" }
+          }
+        }
+      ]
+    },
+    "graphBlock": {
+      "allOf": [
+        { "$ref": "#/definitions/blockBase" },
+        {
+          "required": ["variant", "nodes", "edges"],
+          "propertyNames": { "enum": ["id", "title", "type", "visibility", "unitRefs", "leafRefs", "digest", "variant", "nodes", "edges"] },
+          "properties": {
+            "type": { "const": "graph" },
+            "variant": { "enum": ["linear", "hub_spoke", "two_sided"] },
+            "nodes": { "$ref": "report-document-v3#/definitions/graphBlock/properties/nodes" },
+            "edges": { "$ref": "report-document-v3#/definitions/graphBlock/properties/edges" }
+          }
+        }
+      ]
+    },
+    "priorityBoardBlock": {
+      "allOf": [
+        { "$ref": "#/definitions/blockBase" },
+        {
+          "required": ["groups"],
+          "propertyNames": { "enum": ["id", "title", "type", "visibility", "unitRefs", "leafRefs", "digest", "groups"] },
+          "properties": {
+            "type": { "const": "priority-board" },
+            "groups": { "$ref": "report-document-v3#/definitions/priorityBoardBlock/properties/groups" }
+          }
+        }
+      ]
+    },
+    "cardGridBlock": {
+      "allOf": [
+        { "$ref": "#/definitions/blockBase" },
+        {
+          "required": ["cards"],
+          "propertyNames": { "enum": ["id", "title", "type", "visibility", "unitRefs", "leafRefs", "digest", "cards"] },
+          "properties": {
+            "type": { "const": "card-grid" },
+            "cards": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 50,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "title", "leafRefs"],
+                "properties": {
+                  "id": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+                  "title": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+                  "body": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+                  "status": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+                  "leafRefs": { "$ref": "report-document-v3#/definitions/nonEmptyIdList" }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "stageFlowBlock": {
+      "allOf": [
+        { "$ref": "#/definitions/blockBase" },
+        {
+          "required": ["stages"],
+          "propertyNames": { "enum": ["id", "title", "type", "visibility", "unitRefs", "leafRefs", "digest", "stages"] },
+          "properties": {
+            "type": { "const": "stage-flow" },
+            "stages": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 50,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "label", "leafRefs"],
+                "properties": {
+                  "id": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+                  "label": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+                  "description": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+                  "timeLabel": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+                  "leafRefs": { "$ref": "report-document-v3#/definitions/nonEmptyIdList" }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "block": {
+      "oneOf": [
+        { "$ref": "#/definitions/paragraphBlock" },
+        { "$ref": "#/definitions/factBlock" },
+        { "$ref": "#/definitions/metricBlock" },
+        { "$ref": "#/definitions/listBlock" },
+        { "$ref": "#/definitions/answerBlock" },
+        { "$ref": "#/definitions/imageBlock" },
+        { "$ref": "#/definitions/imageComparisonBlock" },
+        { "$ref": "#/definitions/chartBlock" },
+        { "$ref": "#/definitions/recordTableBlock" },
+        { "$ref": "#/definitions/graphBlock" },
+        { "$ref": "#/definitions/priorityBoardBlock" },
+        { "$ref": "#/definitions/cardGridBlock" },
+        { "$ref": "#/definitions/stageFlowBlock" }
+      ]
+    },
+    "section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "view", "prominence", "blocks"],
+      "properties": {
+        "id": { "$ref": "report-document-v3#/definitions/nonEmptyString" },
+        "title": { "$ref": "#/definitions/copyFragment" },
+        "lead": { "$ref": "#/definitions/copyFragment" },
+        "transition": { "$ref": "#/definitions/copyFragment" },
+        "view": { "enum": ["answers", "topics", "actions", "evidence", "analysis"] },
+        "prominence": { "enum": ["primary", "supporting", "appendix"] },
+        "blocks": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/block" } }
+      }
+    },
+    "semanticManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "presentationUnitIds", "leafUnitIds", "assetIds", "auditRecordIds", "noticeIds", "copyFragmentIds"],
+      "properties": {
+        "version": { "const": "report-semantic-manifest-v2" },
+        "presentationUnitIds": { "$ref": "report-document-v3#/definitions/nonEmptyIdList" },
+        "leafUnitIds": { "$ref": "report-document-v3#/definitions/nonEmptyIdList" },
+        "assetIds": { "$ref": "report-document-v3#/definitions/idList" },
+        "auditRecordIds": { "$ref": "report-document-v3#/definitions/idList" },
+        "noticeIds": { "$ref": "report-document-v3#/definitions/idList" },
+        "copyFragmentIds": { "$ref": "report-document-v3#/definitions/nonEmptyIdList" }
+      }
+    }
+  }
+}

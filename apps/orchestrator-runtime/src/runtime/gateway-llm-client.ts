@@ -141,7 +141,7 @@ export class GatewayLLMClient implements LLMClient {
     };
   }
 
-  private async call(messages: object[], jsonMode: boolean): Promise<{
+  private async call(messages: object[], jsonMode: boolean, signal?: AbortSignal): Promise<{
     content: string;
     resp: ChatResponse;
     route: GatewayModelRoute;
@@ -153,7 +153,8 @@ export class GatewayLLMClient implements LLMClient {
     for (let offset = 0; offset < routes.length; offset += 1) {
       const route = routes[(startIndex + offset) % routes.length];
       try {
-        const response = await this.callRoute(route, messages, jsonMode);
+        if (signal?.aborted) throw new LLMInvocationError('cancelled', false, null, 'gateway request cancelled');
+        const response = await this.callRoute(route, messages, jsonMode, signal);
         return { ...response, route };
       } catch (error) {
         lastError = error;
@@ -169,16 +170,19 @@ export class GatewayLLMClient implements LLMClient {
     route: GatewayModelRoute,
     messages: object[],
     jsonMode: boolean,
+    signal?: AbortSignal,
   ): Promise<{ content: string; resp: ChatResponse }> {
     const maxAttempts = this.cfg.modelRoutes.length === 1 ? 3 : 1;
     let lastError: unknown;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
-        return await this.callOnce(route.requestedModel, messages, jsonMode);
+        if (signal?.aborted) throw new LLMInvocationError('cancelled', false, null, 'gateway request cancelled');
+        return await this.callOnce(route.requestedModel, messages, jsonMode, signal);
       } catch (error) {
         lastError = error;
         if (error instanceof RateLimitError && attempt < maxAttempts) {
           await sleep(error.retryAfterMs ?? attempt * 5000);
+          if (signal?.aborted) throw new LLMInvocationError('cancelled', false, null, 'gateway request cancelled');
           continue;
         }
         throw error;
@@ -187,9 +191,21 @@ export class GatewayLLMClient implements LLMClient {
     throw lastError;
   }
 
-  private async callOnce(model: string, messages: object[], jsonMode: boolean): Promise<{ content: string; resp: ChatResponse }> {
+  private async callOnce(
+    model: string,
+    messages: object[],
+    jsonMode: boolean,
+    signal?: AbortSignal,
+  ): Promise<{ content: string; resp: ChatResponse }> {
     const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), this.cfg.timeoutMs);
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      ac.abort();
+    }, this.cfg.timeoutMs);
+    const cancel = (): void => ac.abort(signal?.reason);
+    if (signal?.aborted) cancel();
+    else signal?.addEventListener('abort', cancel, { once: true });
     try {
       const res = await fetch(`${this.cfg.baseUrl}/chat/completions`, {
         method: 'POST',
@@ -228,12 +244,16 @@ export class GatewayLLMClient implements LLMClient {
       return { content, resp };
     } catch (error) {
       if (error instanceof LLMInvocationError) throw error;
+      if (!timedOut && signal?.aborted) {
+        throw new LLMInvocationError('cancelled', false, null, 'gateway request cancelled');
+      }
       if (error instanceof DOMException && error.name === 'AbortError') {
         throw new LLMInvocationError('timeout', true, null, 'gateway request timed out');
       }
       throw new LLMInvocationError('network', true, null, 'gateway network request failed');
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', cancel);
     }
   }
 
@@ -263,7 +283,7 @@ export class GatewayLLMClient implements LLMClient {
           : opts.prompt,
       },
     ];
-    const { content, resp, route } = await this.call(messages, true);
+    const { content, resp, route } = await this.call(messages, true, opts.signal);
 
     let parsed: unknown;
     try {
@@ -296,7 +316,7 @@ export class GatewayLLMClient implements LLMClient {
         content: opts.context ? `${opts.prompt}\n\n上下文:\n${JSON.stringify(opts.context)}` : opts.prompt,
       },
     ];
-    const { content, resp, route } = await this.call(messages, false);
+    const { content, resp, route } = await this.call(messages, false, opts.signal);
     return {
       text: content,
       promptHash: hashPrompt(opts.prompt, opts.context),

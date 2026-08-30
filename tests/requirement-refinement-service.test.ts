@@ -58,7 +58,7 @@ const ambiguousRequirement = requirement({
 });
 
 class FixtureLLM implements LLMClient {
-  readonly calls: Array<{ context?: object; schemaName: string; prompt: string }> = [];
+  readonly calls: Array<{ context?: object; schemaName: string; prompt: string; schema: object }> = [];
   constructor(
     private readonly fixtures: ResearchTaskV2[],
     private readonly modelName = 'pinned-model',
@@ -70,7 +70,7 @@ class FixtureLLM implements LLMClient {
     };
   }
   async generateStructured<T>(opts: { context?: object; schemaName: string; prompt: string; schema: object; receipt: { expectedModel?: string } }): Promise<LLMResult<T>> {
-    this.calls.push({ context: opts.context, schemaName: opts.schemaName, prompt: opts.prompt });
+    this.calls.push({ context: opts.context, schemaName: opts.schemaName, prompt: opts.prompt, schema: opts.schema });
     const data = this.fixtures.shift();
     if (!data) throw new Error('fixture exhausted');
     return {
@@ -238,8 +238,121 @@ test('explicit requirements return ready_to_plan and invoke planner with finaliz
   assert.deepEqual(result.requirement, finalized);
   assert.deepEqual(planned, { originalInput: 'compare live-commerce competitors', requirement: finalized });
   assert.match(llm.calls[0]?.prompt ?? '', /原顺序.*comparison_dimensions/u);
+  assert.ok(Object.keys(llm.calls[0]?.schema ?? {}).length > 0, 'Gateway call must receive the current local ResearchTaskV2 schema');
   assert.deepEqual(progress, [planningProgress]);
   assert.deepEqual(repository.events, ['persist_activate']);
+});
+
+test('unwraps and projects a complete Requirement without accepting undeclared root fields', async () => {
+  const { RequirementRefinementService } = await loadModule();
+  const valid = requirement();
+  const wrapped = { result: { ...valid, provider_note: 'drop me' } } as unknown as ResearchTaskV2;
+  const llm = new FixtureLLM([wrapped]);
+  const repository = makeRepository();
+  const service = new RequirementRefinementService({
+    llm,
+    validator: new SchemaValidator(),
+    repository,
+    conversations: makeConversations(),
+    planner: { async plan() {} },
+  });
+
+  const result = await service.understand({ taskId, conversationId, ownerUserId, originalInput: 'compare live-commerce competitors' });
+
+  assert.equal(result.status, 'ready_to_plan');
+  assert.equal(llm.calls.length, 1);
+  assert.equal('provider_note' in result.requirement, false);
+  assert.equal(repository.versions.length, 1);
+});
+
+test('answer mode removes hypothetical private-data blockers when the user explicitly requires public sources', async () => {
+  const { normalizeOutcomeRequirement } = await loadModule();
+  const generated = requirement({
+    task_type: 'research_synthesis',
+    outcome_mode: 'answer',
+    expected_deliverables: ['research_strategy_report'],
+    requested_artifacts: ['strategy_map'],
+    pii_detected: false,
+    blocking_issues: [{
+      key: 'private-data',
+      kind: 'compliance_access',
+      reason: '若需要使用非公开销量数据，则需要额外授权。',
+    }],
+  });
+
+  const normalized = normalizeOutcomeRequirement(
+    generated,
+    '请直接基于公开可访问资料回答问题并输出策略地图。',
+    null,
+  );
+  assert.deepEqual(normalized.blocking_issues, []);
+
+  const privateRequest = normalizeOutcomeRequirement(
+    generated,
+    '请直接结合平台后台数据和公开资料回答问题。',
+    null,
+  );
+  assert.equal(privateRequest.blocking_issues.length, 1);
+});
+
+test('public-only synthetic research boundaries remain constraints instead of blocking execution', async () => {
+  const { normalizeOutcomeRequirement } = await loadModule();
+  const generated = requirement({
+    task_type: 'research_synthesis',
+    outcome_mode: 'answer',
+    expected_deliverables: ['research_strategy_report'],
+    pii_detected: false,
+    blocking_issues: [{
+      key: 'private-data', kind: 'authorization',
+      reason: '未授权访问内部用户行为数据，因此仅使用公开资料。',
+    }, {
+      key: 'synthetic-boundary', kind: 'research_validity',
+      reason: '虚拟用户模拟不能替代真实用户研究，相关结论只能作为 provisional 假设。',
+    }, {
+      key: 'public-source-access', kind: 'evidence_access',
+      reason: '若执行环境无法访问或核验公开资料来源，则无法满足证据可追溯要求。',
+    }, {
+      key: 'data-availability', kind: 'data_availability',
+      reason: '未提供京东内部业务数据，因此不能输出经内部数据验证的定量结论。',
+    }, {
+      key: 'internal-data', kind: 'data_access',
+      reason: '仅凭公开资料无法获得内部经营数据，相关指标只能作为建议指标或假设。',
+    }],
+  });
+  const normalized = normalizeOutcomeRequirement(
+    generated,
+    '请直接基于公开可访问资料回答；虚拟用户输出按 simulation Evidence 和 provisional 假设使用，并附真实用户验证计划。',
+    null,
+  );
+  assert.deepEqual(normalized.blocking_issues, []);
+});
+
+test('retries one structurally valid but semantically invalid Requirement with validation feedback', async () => {
+  const { RequirementRefinementService } = await loadModule();
+  const invalid = requirement({ expected_deliverables: [' '] });
+  const valid = requirement();
+  const llm = new FixtureLLM([invalid, valid]);
+  const repository = makeRepository();
+  const service = new RequirementRefinementService({
+    llm,
+    validator: new SchemaValidator(),
+    repository,
+    conversations: makeConversations(),
+    planner: { async plan() {} },
+  });
+
+  const result = await service.understand({
+    taskId,
+    conversationId,
+    ownerUserId,
+    originalInput: 'compare live-commerce competitors',
+  });
+
+  assert.equal(result.status, 'ready_to_plan');
+  assert.equal(llm.calls.length, 2);
+  assert.match(llm.calls[1]?.prompt ?? '', /上一次结构化需求未通过校验/u);
+  assert.match(JSON.stringify(llm.calls[1]?.context), /validation_feedback/u);
+  assert.equal(repository.versions.length, 1);
 });
 
 test('explicit weighted scoring matrix overrides unrelated LLM comparison dimensions before persistence', async () => {
@@ -295,7 +408,7 @@ test('explicit weighted scoring matrix overrides unrelated LLM comparison dimens
   assert.deepEqual(plannedRequirement?.comparison_dimensions, weightedDimensions);
 });
 
-test('non-blocking questions proceed to planning instead of creating an endless clarification loop', async () => {
+test('explicit clarification questions remain before planning even when ambiguities are non-blocking', async () => {
   const { RequirementRefinementService } = await loadModule();
   const nonBlocking = requirement({
     ambiguities: [{ id: 'format', statement: 'report format can be confirmed later', blocking: false }],
@@ -324,8 +437,8 @@ test('non-blocking questions proceed to planning instead of creating an endless 
     originalInput: 'compare competitors with screenshots',
   });
 
-  assert.equal(result.status, 'ready_to_plan');
-  assert.equal(plannerCalls, 1);
+  assert.equal(result.status, 'clarification_required');
+  assert.equal(plannerCalls, 0);
 });
 
 test('blocking issues proceed to planning and remain available for the approval gate', async () => {
@@ -448,6 +561,118 @@ test('ambiguous requirements return clarification_required without invoking plan
   assert.equal(result.requirement.ambiguities[0]?.blocking, true);
   assert.equal(plannerCalls, 0);
 });
+
+test('mixed request persists a coherent outcome gate instead of rejecting mismatched model deliverables', async () => {
+  const { RequirementRefinementService } = await loadModule();
+  const inconsistent = requirement({
+    task_type: 'research_synthesis',
+    expected_deliverables: ['competitive_analysis_report'],
+    requested_artifacts: ['strategy_map', 'mind_model', 'design_principles', 'opportunity_backlog', 'prioritized_actions'],
+  });
+  const llm = new FixtureLLM([inconsistent]);
+  const repository = makeRepository();
+  let plannerCalls = 0;
+  const service = new RequirementRefinementService({
+    llm,
+    validator: new SchemaValidator(),
+    repository,
+    conversations: makeConversations(),
+    planner: { async plan() { plannerCalls += 1; } },
+  });
+
+  const result = await service.understand({
+    taskId,
+    conversationId,
+    ownerUserId,
+    originalInput: '创建一个调研任务，核心解决宠物心智的设计表达策略全景，并输出策略地图与优先行动。',
+  });
+
+  assert.equal(result.status, 'clarification_required');
+  assert.equal(result.requirement.task_type, 'user_research_planning');
+  assert.deepEqual(result.requirement.expected_deliverables, ['research_plan']);
+  assert.equal(result.requirement.clarification_questions[0]?.key, 'outcome_mode');
+  assert.equal(repository.versions.length, 1);
+  assert.equal(plannerCalls, 0);
+});
+
+for (const selection of [
+  {
+    deliverableIntent: 'competitive_analysis_report',
+    taskType: 'competitive_research',
+  },
+  {
+    deliverableIntent: 'research_strategy_report',
+    taskType: 'research_synthesis',
+  },
+] as const) {
+  test(`deliverable clarification synchronizes ${selection.deliverableIntent} before planning`, async () => {
+    const { RequirementRefinementService } = await loadModule();
+    const generated = requirement({
+      task_type: 'competitive_research',
+      expected_deliverables: ['宠物品牌推广策略报告'],
+    });
+    const clarified = requirement({
+      task_type: 'competitive_research',
+      expected_deliverables: ['宠物品牌推广策略报告'],
+      ambiguities: [{
+        id: 'outcome-mode',
+        statement: '未明确本任务应输出研究规划（plan）还是直接研究结论（answer）。',
+        blocking: true,
+      }],
+      clarification_questions: [{
+        key: 'outcome_mode',
+        question: '你希望获得研究方案还是直接研究结论？',
+        rationale: '模型未将交付物选择识别为结果模式选择。',
+      }],
+    });
+    const llm = new FixtureLLM([generated, clarified]);
+    const repository = makeRepository();
+    const plannedRequirements: ResearchTaskV2[] = [];
+    const service = new RequirementRefinementService({
+      llm,
+      validator: new SchemaValidator(),
+      repository,
+      conversations: makeConversations(),
+      planner: {
+        async plan(input: { requirement: ResearchTaskV2 }) {
+          plannedRequirements.push(input.requirement);
+        },
+      },
+    });
+
+    const unresolved = await service.understand({
+      taskId,
+      conversationId,
+      ownerUserId,
+      originalInput: '请对比皇家和渴望的电商推广打法，并输出策略地图。',
+    });
+
+    assert.equal(unresolved.status, 'clarification_required');
+    assert.equal(unresolved.requirement.clarification_questions[0]?.key, 'deliverable_intent');
+    assert.equal(plannedRequirements.length, 0);
+
+    const resolved = await service.clarify({
+      taskId,
+      conversationId,
+      ownerUserId,
+      answers: { deliverable_intent: selection.deliverableIntent },
+    });
+
+    assert.equal(resolved.status, 'ready_to_plan');
+    assert.equal(resolved.requirement.task_type, selection.taskType);
+    assert.deepEqual(resolved.requirement.expected_deliverables, [selection.deliverableIntent]);
+    assert.equal(resolved.requirement.clarification_questions.some(({ key }) => key === 'deliverable_intent'), false);
+    assert.equal(repository.versions.at(-1)?.structuredTask.task_type, selection.taskType);
+    assert.deepEqual(
+      repository.versions.at(-1)?.structuredTask.expected_deliverables,
+      [selection.deliverableIntent],
+    );
+    assert.equal(plannedRequirements.length, 1);
+    assert.equal(plannedRequirements[0]?.task_type, selection.taskType);
+    assert.deepEqual(plannedRequirements[0]?.expected_deliverables, [selection.deliverableIntent]);
+    assert.equal(llm.calls.length, 2);
+  });
+}
 
 test('Planning Guidance direction selection is persisted and resumes planning without another requirement LLM call', async () => {
   const { InvalidScenarioSelectionError, RequirementRefinementService } = await loadModule();
@@ -676,7 +901,10 @@ test('Planning Guidance retries the same edited assumptions after post-activatio
 
 test('clarification answers persist a new v2 and clear blocking ambiguity before planning', async () => {
   const { RequirementRefinementService } = await loadModule();
-  const clearRequirement = requirement({ target_audience: ['enterprise buyers'] });
+  const clearRequirement = requirement({
+    target_audience: ['enterprise buyers'],
+    scope: ['global market including overseas'],
+  });
   const llm = new FixtureLLM([ambiguousRequirement, clearRequirement]);
   const repository = makeRepository();
   const conversations = makeConversations();
@@ -707,13 +935,18 @@ test('clarification answers persist a new v2 and clear blocking ambiguity before
     taskId,
     conversationId,
     ownerUserId,
-    answers: { audience: 'enterprise buyers' },
+    answers: { audience: 'enterprise buyers', geo_scope: 'include overseas markets' },
   }, (event) => progress.push(event));
 
   assert.equal(result.status, 'ready_to_plan');
   assert.equal(result.requirement.version, 'research-task-v2');
   assert.equal(result.requirement.ambiguities.some((item) => item.blocking), false);
   assert.equal(result.requirement.clarification_questions.length, 0);
+  assert.deepEqual(result.requirement.scope, ['global market including overseas']);
+  assert.deepEqual(
+    (llm.calls[1]?.context as { clarification?: unknown } | undefined)?.clarification,
+    { audience: 'enterprise buyers', geo_scope: 'include overseas markets' },
+  );
   assert.deepEqual(repository.versions.map((version) => version.version), [1, 2]);
   assert.deepEqual(events.slice(-2), ['persist_activate', 'plan']);
   assert.equal(plannedInput, 'raw original input from task');
@@ -882,6 +1115,72 @@ test('model drift fails closed before requirement activation', async () => {
   assert.equal(repository.activations.length, 0);
   assert.equal(recorder.calls[0]?.status, 'failed');
 });
+
+const NATURAL_LANGUAGE_DELIVERABLE_CASES: Array<{
+  name: string;
+  originalInput: string;
+  generated: ResearchTaskV2;
+  taskType: ResearchTaskV2['task_type'];
+  canonical: string;
+}> = [
+  {
+    name: 'generic promotion research screenshot request',
+    originalInput: '我想做一个关于“宠物食品在电商应该怎么做推广的调研”',
+    generated: requirement({
+      task_type: 'competitive_research',
+      expected_deliverables: ['宠物食品电商推广调研报告'],
+    }),
+    taskType: 'research_synthesis',
+    canonical: 'research_strategy_report',
+  },
+  {
+    name: 'explicit competitive request with a custom report title',
+    originalInput: '请对比皇家和渴望的电商推广打法，并给出宠物品牌推广研究报告。',
+    generated: requirement({
+      task_type: 'competitive_research',
+      expected_deliverables: ['宠物品牌推广研究报告'],
+    }),
+    taskType: 'competitive_research',
+    canonical: 'competitive_analysis_report',
+  },
+];
+
+for (const refinementCase of NATURAL_LANGUAGE_DELIVERABLE_CASES) {
+  test(`canonicalizes natural-language expected deliverable without retry: ${refinementCase.name}`, async () => {
+    const { RequirementRefinementService } = await loadModule();
+    const llm = new FixtureLLM([refinementCase.generated, refinementCase.generated]);
+    const repository = makeRepository();
+    const conversations = makeConversations();
+    let plannedInput: { originalInput: string; requirement: ResearchTaskV2 } | undefined;
+    const service = new RequirementRefinementService({
+      llm,
+      validator: new SchemaValidator(),
+      repository,
+      conversations,
+      planner: {
+        async plan(input) {
+          plannedInput = input;
+        },
+      },
+    });
+
+    const result = await service.understand({
+      taskId,
+      conversationId,
+      ownerUserId,
+      originalInput: refinementCase.originalInput,
+    });
+
+    assert.equal(result.status, 'ready_to_plan');
+    assert.equal(result.requirement.task_type, refinementCase.taskType);
+    assert.deepEqual(result.requirement.expected_deliverables, [refinementCase.canonical]);
+    assert.equal(repository.versions[0]?.structuredTask.task_type, refinementCase.taskType);
+    assert.deepEqual(repository.versions[0]?.structuredTask.expected_deliverables, [refinementCase.canonical]);
+    assert.equal(plannedInput?.originalInput, refinementCase.originalInput);
+    assert.deepEqual(plannedInput?.requirement.expected_deliverables, [refinementCase.canonical]);
+    assert.equal(llm.calls.length, 1);
+  });
+}
 
 const LOCALIZED_REFINEMENT_CASES: Array<{
   taskType: ResearchTaskV2['task_type'];

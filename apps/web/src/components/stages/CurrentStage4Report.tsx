@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ReportDocument } from '../../../../orchestrator-runtime/src/report/report-document-composer.ts';
+import {
+  isReportDocumentV3,
+  isReportDocumentV4,
+  type ReadableReportDocument,
+  type ReportDocumentV1V2,
+  type ReportViewIdV1,
+} from '../../../../../packages/api-contract/report-document.ts';
 import type { CurrentResearchPlanResponse } from '../../current-report-markdown.ts';
 import { currentResearchPlanToMarkdown } from '../../current-report-markdown.ts';
 import {
@@ -18,38 +24,103 @@ import {
   type ZeroPublicationRequestIdentity,
   type ZeroPublicationUiState,
 } from '../../zero-publication-ui.ts';
+import { hasCompleteContributionSidecars } from '../../report-package-response.ts';
 import { createReportBundle } from '../../reporting/report-bundle.ts';
 import { ReportDocumentView } from '../../reporting/ReportDocumentView.tsx';
+import { SkillContributionView } from '../SkillContributionView.tsx';
 import { Header } from './Stage1Understand.tsx';
 
 type MultimodalReportResponse = Extract<
   ControlDeliverableResponse,
   { presentationMode: 'multimodal' }
 >;
-type TextResearchPlanResponse = Extract<
-  CurrentResearchPlanResponse,
-  { presentationMode: 'legacy_text' | 'current_text' }
->;
+type ResearchPlanResponse = CurrentResearchPlanResponse;
 type GenericTextReportResponse = Exclude<
   ControlDeliverableResponse,
   { presentationMode: 'multimodal' }
 >;
 
+type LegacyStrategyReportView = Exclude<ReportViewIdV1, 'actions'> | 'artifacts';
+type StrategyReportView = ReportViewIdV1 | 'artifacts';
+
+const STRATEGY_TOPIC_SECTION_IDS = new Set([
+  'strategy-map',
+  'mind-model',
+  'design-principles',
+  'channel-strategies',
+]);
+
+const STRATEGY_ACTION_SECTION_IDS = new Set([
+  'opportunities',
+  'priority-actions',
+  'action-plan',
+]);
+
+const STRATEGY_EVIDENCE_SECTION_IDS = new Set([
+  'evidence-confidence',
+  'limitations',
+  'evidence-appendix',
+]);
+
+const STRATEGY_TOPIC_KINDS = new Set([
+  'strategy_map',
+  'mind_model',
+  'comparison_matrix',
+  'design_principle',
+]);
+
+const STRATEGY_ACTION_KINDS = new Set([
+  'opportunity',
+  'priority_matrix',
+  'action_plan',
+]);
+
+const STRATEGY_REPORT_TABS: ReadonlyArray<{ id: StrategyReportView; label: string }> = [
+  { id: 'answers', label: '答案概览' },
+  { id: 'topics', label: '策略框架' },
+  { id: 'actions', label: '机会与行动' },
+  { id: 'evidence', label: '证据与局限' },
+  { id: 'analysis', label: '分析底稿' },
+];
+
+function sectionAnswerKinds(section: ReportDocumentV1V2['sections'][number]): string[] {
+  return section.blocks.flatMap((block) => block.type === 'answer' ? [block.kind] : []);
+}
+
+function strategyReportSectionView(section: ReportDocumentV1V2['sections'][number]): LegacyStrategyReportView | undefined {
+  const kinds = sectionAnswerKinds(section);
+  if (section.id === 'executive-answers' || kinds.includes('direct_answer')) return 'answers';
+  if (STRATEGY_EVIDENCE_SECTION_IDS.has(section.id) || kinds.includes('risk')) return 'evidence';
+  if (section.id === 'analysis-notes' || kinds.includes('evidence_finding')) return 'analysis';
+  if (STRATEGY_ACTION_SECTION_IDS.has(section.id) || kinds.some((kind) => STRATEGY_ACTION_KINDS.has(kind))) {
+    return 'artifacts';
+  }
+  if (
+    STRATEGY_TOPIC_SECTION_IDS.has(section.id)
+    || section.id.startsWith('topic-')
+    || kinds.some((kind) => STRATEGY_TOPIC_KINDS.has(kind))
+    || section.id.startsWith('model-section-')
+  ) {
+    return 'topics';
+  }
+  return undefined;
+}
+
+export function strategyReportSectionIds(document: ReadableReportDocument, view: StrategyReportView): string[] {
+  if (isReportDocumentV3(document) || isReportDocumentV4(document)) {
+    const structuredView = view === 'artifacts' ? 'actions' : view;
+    return document.sections.filter((section) => section.view === structuredView).map(({ id }) => id);
+  }
+  const legacyView = view === 'actions' ? 'artifacts' : view;
+  return document.sections
+    .filter((section) => strategyReportSectionView(section) === legacyView)
+    .map(({ id }) => id);
+}
+
 export function selectCurrentStage4Renderer(report: unknown): {
   component: 'CurrentTextReport' | 'GenericTextReport' | 'ReportDocumentView';
-  reportDocument?: ReportDocument;
+  reportDocument?: ReadableReportDocument;
 } {
-  if (
-    report !== null
-    && typeof report === 'object'
-    && !Array.isArray(report)
-    && (report as Record<string, unknown>).presentationMode === 'multimodal'
-  ) {
-    const reportDocument = (report as Record<string, unknown>).reportDocument;
-    if (reportDocument !== null && typeof reportDocument === 'object' && !Array.isArray(reportDocument)) {
-      return { component: 'ReportDocumentView', reportDocument: reportDocument as ReportDocument };
-    }
-  }
   if (
     report !== null
     && typeof report === 'object'
@@ -65,6 +136,17 @@ export function selectCurrentStage4Renderer(report: unknown): {
       return { component: 'CurrentTextReport' };
     }
   }
+  if (
+    report !== null
+    && typeof report === 'object'
+    && !Array.isArray(report)
+    && (report as Record<string, unknown>).presentationMode === 'multimodal'
+  ) {
+    const reportDocument = (report as Record<string, unknown>).reportDocument;
+    if (reportDocument !== null && typeof reportDocument === 'object' && !Array.isArray(reportDocument)) {
+      return { component: 'ReportDocumentView', reportDocument: reportDocument as ReadableReportDocument };
+    }
+  }
   return { component: 'GenericTextReport' };
 }
 
@@ -76,16 +158,67 @@ export function CurrentStage4Report({
   taskState: 'completed' | 'completed_with_gaps';
 }) {
   const selected = selectCurrentStage4Renderer(report);
+  const contributionView = hasCompleteContributionSidecars(report)
+    ? (
+        <SkillContributionView
+          summary={report.contributionSummary}
+          ledger={report.contributionLedger}
+          review={report.crossSkillReview}
+        />
+      )
+    : null;
+  if (selected.component === 'CurrentTextReport') {
+    return (
+      <>
+        {report.presentationMode === 'multimodal'
+          ? <MultimodalResearchPlanReport report={report as MultimodalReportResponse & ResearchPlanResponse} taskState={taskState} />
+          : <CurrentTextReport report={report as ResearchPlanResponse} />}
+        {contributionView}
+      </>
+    );
+  }
   if (selected.component === 'ReportDocumentView' && report.presentationMode === 'multimodal') {
-    return <MultimodalCurrentReport report={report} taskState={taskState} />;
+    return (
+      <>
+        <MultimodalCurrentReport report={report} taskState={taskState} />
+        {contributionView}
+      </>
+    );
   }
   if (report.presentationMode === 'multimodal') {
     throw new Error('multimodal report package has no ReportDocument renderer');
   }
-  if (selected.component === 'CurrentTextReport') {
-    return <CurrentTextReport report={report as TextResearchPlanResponse} />;
-  }
-  return <GenericTextReport report={report} />;
+  return (
+    <>
+      <GenericTextReport report={report} />
+      {contributionView}
+    </>
+  );
+}
+
+function MultimodalResearchPlanReport({
+  report,
+  taskState,
+}: {
+  report: MultimodalReportResponse & ResearchPlanResponse;
+  taskState: 'completed' | 'completed_with_gaps';
+}) {
+  const [view, setView] = useState<'full' | 'summary'>('full');
+  return (
+    <>
+      <nav className="report-view-toggle" aria-label="报告视图">
+        <button type="button" className={view === 'full' ? 'is-active' : ''} onClick={() => setView('full')}>
+          完整方案
+        </button>
+        <button type="button" className={view === 'summary' ? 'is-active' : ''} onClick={() => setView('summary')}>
+          管理摘要
+        </button>
+      </nav>
+      {view === 'full'
+        ? <CurrentTextReport report={report} />
+        : <MultimodalCurrentReport report={report} taskState={taskState} />}
+    </>
+  );
 }
 
 function MultimodalCurrentReport({
@@ -96,6 +229,9 @@ function MultimodalCurrentReport({
   taskState: 'completed' | 'completed_with_gaps';
 }) {
   const [bundleStatus, setBundleStatus] = useState<'idle' | 'working' | 'error'>('idle');
+  const [htmlBundleStatus, setHtmlBundleStatus] = useState<'idle' | 'working' | 'error'>('idle');
+  const [showcaseStatus, setShowcaseStatus] = useState<'idle' | 'working' | 'error'>('idle');
+  const [strategyView, setStrategyView] = useState<StrategyReportView>('answers');
   const [zeroStatus, setZeroStatus] = useState<ZeroIntegrationStatusResponse | null>(null);
   const [zeroPublication, setZeroPublication] = useState<ZeroPublicationResponse | null>(null);
   const [zeroUiState, setZeroUiState] = useState<ZeroPublicationUiState>('idle');
@@ -104,6 +240,13 @@ function MultimodalCurrentReport({
   const [zeroError, setZeroError] = useState<string | null>(null);
   const zeroPublishButtonRef = useRef<HTMLButtonElement>(null);
   const taskId = report.deliverable.taskId;
+  const standaloneHtml = report.reportPackage?.version === 'report-package-v2'
+    ? report.reportPackage.standaloneHtml
+    : undefined;
+  const editorialShowcase = report.editorialShowcase?.showcase;
+  useEffect(() => {
+    setStrategyView('answers');
+  }, [taskId]);
   const loadVisualAsset = useMemo(() => {
     const cache = new Map<string, Promise<ControlVisualAssetResponse>>();
     return (assetId: string) => {
@@ -265,9 +408,70 @@ function MultimodalCurrentReport({
     }
   }
 
+  async function downloadHtmlBundle() {
+    setHtmlBundleStatus('working');
+    try {
+      const { blob } = await api.controlHtmlBundle(taskId, report.deliverable.attemptId);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `offline-html-report-${taskId}.zip`;
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      setHtmlBundleStatus('idle');
+    } catch {
+      setHtmlBundleStatus('error');
+    }
+  }
+
+  async function downloadEditorialShowcase() {
+    setShowcaseStatus('working');
+    try {
+      const { blob } = await api.controlEditorialShowcase(taskId, report.deliverable.attemptId);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `editorial-showcase-${taskId}.html`;
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      setShowcaseStatus('idle');
+    } catch {
+      setShowcaseStatus('error');
+    }
+  }
+
+  const isStrategyReport = report.deliverable.deliverableType === 'research_strategy_report';
+  const strategyTabs = useMemo(
+    () => isStrategyReport
+      ? STRATEGY_REPORT_TABS.filter(({ id }) => strategyReportSectionIds(report.reportDocument, id).length > 0)
+      : [],
+    [isStrategyReport, report.reportDocument],
+  );
+  const activeStrategyView = strategyTabs.some(({ id }) => id === strategyView)
+    ? strategyView
+    : strategyTabs[0]?.id ?? 'answers';
+  const visibleSectionIds = useMemo(
+    () => isStrategyReport ? strategyReportSectionIds(report.reportDocument, activeStrategyView) : undefined,
+    [activeStrategyView, isStrategyReport, report.reportDocument],
+  );
+
   return (
-    <ReportDocumentView
+    <>
+      {isStrategyReport ? (
+        <nav className="report-view-toggle" aria-label="研究报告内容导航">
+          {strategyTabs.map(({ id, label }) => (
+            <button key={id} type="button" className={activeStrategyView === id ? 'is-active' : ''} aria-pressed={activeStrategyView === id} onClick={() => setStrategyView(id)}>
+              {label}
+            </button>
+          ))}
+        </nav>
+      ) : null}
+      <ReportDocumentView
       document={report.reportDocument}
+      sourceReportDocumentContentSha256={report.reportDocumentContentSha256}
+      visibleSectionIds={visibleSectionIds}
       visualAssetManifests={report.visualAssetManifests}
       taskId={taskId}
       assetUrl={assetUrl}
@@ -278,6 +482,33 @@ function MultimodalCurrentReport({
           <button type="button" className="btn-ghost" onClick={() => void downloadBundle()} disabled={bundleStatus === 'working'}>
             {bundleStatus === 'working' ? '正在打包…' : '下载 Markdown ZIP'}
           </button>
+          {editorialShowcase?.status === 'ready' ? (
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => void downloadEditorialShowcase()}
+              disabled={showcaseStatus === 'working'}
+            >
+              {showcaseStatus === 'working' ? '正在下载…' : '下载编辑展示版'}
+            </button>
+          ) : null}
+          {standaloneHtml?.status === 'ready' ? (
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => void downloadHtmlBundle()}
+              disabled={htmlBundleStatus === 'working'}
+            >
+              {htmlBundleStatus === 'working' ? '正在下载…' : '下载离线 HTML'}
+            </button>
+          ) : standaloneHtml?.status === 'unavailable' ? (
+            <span
+              role="status"
+              style={{ alignSelf: 'center', color: 'var(--text-dim)', fontSize: 12 }}
+            >
+              离线 HTML 暂不可用，仍可下载 Markdown ZIP
+            </span>
+          ) : null}
           <button
             ref={zeroPublishButtonRef}
             type="button"
@@ -315,7 +546,9 @@ function MultimodalCurrentReport({
               }}
             >
               <h2 id="zero-publication-confirmation-title">确认发送到 Zero</h2>
-              <p>{report.reportDocument.title}</p>
+              <p>{isReportDocumentV4(report.reportDocument)
+                ? report.reportDocument.title.text
+                : report.reportDocument.title}</p>
               <dl>
                 <dt>目标文件</dt>
                 <dd>{zeroStatus?.currentFileKey ?? '当前 Zero 文件'}</dd>
@@ -344,15 +577,44 @@ function MultimodalCurrentReport({
             </section>
           ) : null}
           {bundleStatus === 'error' ? <span role="alert">报告包生成失败，请重试</span> : null}
+          {htmlBundleStatus === 'error' ? <span role="alert">离线 HTML 下载失败，请重试</span> : null}
+          {showcaseStatus === 'error' ? <span role="alert">编辑展示版下载失败，请重试</span> : null}
         </>
       )}
     />
+    </>
   );
 }
 
-function CurrentTextReport({ report }: { report: TextResearchPlanResponse }) {
+function CurrentTextReport({ report }: { report: ResearchPlanResponse }) {
   const { deliverable, evidenceManifest } = report;
   const { payload, findingGraph } = deliverable;
+  const [bundleStatus, setBundleStatus] = useState<'idle' | 'working' | 'error'>('idle');
+
+  async function downloadBundle() {
+    setBundleStatus('working');
+    try {
+      if (report.presentationMode !== 'current_text') {
+        throw new Error('ZIP report packages require the Current report format');
+      }
+      const bytes = await createReportBundle({
+        report,
+        async readAsset() { throw new Error('current-text report cannot reference visual assets'); },
+      });
+      const ownedBytes = new Uint8Array(bytes.byteLength);
+      ownedBytes.set(bytes);
+      const url = URL.createObjectURL(new Blob([ownedBytes.buffer], { type: 'application/zip' }));
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `research-report-${deliverable.taskId}.zip`;
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      setBundleStatus('idle');
+    } catch {
+      setBundleStatus('error');
+    }
+  }
 
   function download() {
     const blob = new Blob([currentResearchPlanToMarkdown(report)], { type: 'text/markdown;charset=utf-8' });
@@ -509,8 +771,15 @@ function CurrentTextReport({ report }: { report: TextResearchPlanResponse }) {
         </div>
       </ReportSection>
 
-      <div style={{ marginTop: 16 }}>
+      <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+        <button type="button" className="btn-ghost" onClick={() => window.print()}>打印 / PDF</button>
         <button type="button" className="btn-secondary" onClick={download}>导出 Markdown</button>
+        {report.presentationMode === 'current_text' ? (
+          <button type="button" className="btn-secondary" onClick={() => void downloadBundle()} disabled={bundleStatus === 'working'}>
+            {bundleStatus === 'working' ? '正在打包…' : '下载报告包 (.zip)'}
+          </button>
+        ) : null}
+        {bundleStatus === 'error' ? <span role="alert">报告包生成失败，请重试</span> : null}
       </div>
     </article>
   );

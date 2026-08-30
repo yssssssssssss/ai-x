@@ -102,7 +102,7 @@ test('ResearchPlanPayload 拒绝缺失 comparisonDimensions', () => {
   );
 });
 
-test('Evidence Policy 保留历史竞品方案并提供五类 canonical mappings', () => {
+test('Evidence Policy 保留历史竞品方案并提供六类 canonical mappings', () => {
   const policy = parseYaml(readFileSync(join(process.cwd(), 'orchestrator/evidence-policy.yaml'), 'utf8')) as {
     version: number;
     policies: Array<{
@@ -138,6 +138,16 @@ test('Evidence Policy 保留历史竞品方案并提供五类 canonical mappings
       requirements: [{
         id: 'research-plan',
         accepted_classes: ['user_input', 'knowledge', 'public_source'],
+        minimum_count: 1,
+        required: true,
+      }],
+    },
+    {
+      task_type: 'research_synthesis',
+      deliverable_type: 'research_strategy_report',
+      requirements: [{
+        id: 'research-strategy-report',
+        accepted_classes: ['public_source', 'knowledge', 'user_input', 'dataset'],
         minimum_count: 1,
         required: true,
       }],
@@ -185,7 +195,7 @@ test('Evidence Policy 保留历史竞品方案并提供五类 canonical mappings
   ]);
 });
 
-test('Deliverable Registry 将五类 active deliverable 绑定到冻结 payload schema', () => {
+test('Deliverable Registry 将六类 active deliverable 绑定到冻结 payload schema', () => {
   const registry = parseYaml(readFileSync(join(process.cwd(), 'orchestrator/deliverable-registry.yaml'), 'utf8')) as {
     version: number;
     deliverables: Array<{
@@ -208,6 +218,12 @@ test('Deliverable Registry 将五类 active deliverable 绑定到冻结 payload 
       status: 'active',
       envelope_version: 'research-deliverable-v1',
       payload_schema: 'schemas/deliverables/research-plan.schema.json',
+    },
+    {
+      id: 'research_strategy_report',
+      status: 'active',
+      envelope_version: 'research-deliverable-v1',
+      payload_schema: 'schemas/deliverables/research-strategy-report-v2.schema.json',
     },
     {
       id: 'competitive_analysis_report',

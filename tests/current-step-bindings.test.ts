@@ -166,6 +166,51 @@ test('reads array elements from the source without allowing target array mutatio
   );
 });
 
+test('leaves an optional Contribution binding placeholder when the Contributor has no sealed output', async () => {
+  const optional = step({
+    step_no: 3,
+    depends_on: [1],
+    input: { contribution_bundle: { 'invocation:optional': null } },
+    input_bindings: [{
+      target_pointer: '/contribution_bundle/invocation:optional',
+      source_step_no: 1,
+      source_pointer: '/payload',
+      optional: true,
+    }],
+  });
+  const artifacts = reader({ payload: { units: [] } });
+
+  const resolved = await resolveStepInput(optional, [], artifacts);
+
+  assert.deepEqual(resolved, {
+    contribution_bundle: { 'invocation:optional': null },
+  });
+  assert.deepEqual(artifacts.reads, []);
+});
+
+test('Contribution binding can retain sealed Artifact identity for the Synthesizer bundle', async () => {
+  const contribution = { version: 'research-contribution-v1', units: [{ key: 'u1' }] };
+  const resolved = await resolveStepInput(step({
+    input: { contribution_bundle: { 'invocation:market': null } },
+    input_bindings: [{
+      target_pointer: '/contribution_bundle/invocation:market',
+      source_step_no: 1,
+      source_pointer: '/contribution',
+      include_artifact_identity: true,
+    }],
+  }), [sealedOutput()], reader({ contribution }));
+
+  assert.deepEqual(resolved, {
+    contribution_bundle: {
+      'invocation:market': {
+        artifactId: 'artifact-1',
+        artifactContentSha256: 'sha256:sealed',
+        contribution,
+      },
+    },
+  });
+});
+
 test('unwraps the persisted Tool output envelope before resolving source pointers', async () => {
   const toolOutput = sealedOutput(1, { kind: 'tool_output' });
   const toolArtifact = artifact('artifact-1', { kind: 'tool_output', schemaVersion: 'tool-output-v1' });

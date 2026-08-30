@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ControlExecutionLease } from '../database/control-plane.ts';
+import {
+  ANSWER_QUALITY_REVIEW_DIMENSION_IDS,
+  REPORT_REVIEW_V2_DIMENSION_IDS,
+} from '../packages/api-contract/control-workflow.ts';
 import type { ArtifactWriteInput } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
 import { ModelDriftError, MissingModelReceiptError } from '../apps/orchestrator-runtime/src/runtime/receipt-llm-client.ts';
 import type { LLMResult, StructuredLLMCallOptions } from '../apps/orchestrator-runtime/src/runtime/llm-client.ts';
@@ -10,6 +14,11 @@ import {
   type ReportReviewInput,
 } from '../apps/orchestrator-runtime/src/report/report-review-service.ts';
 import { SchemaValidationError, SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
+import {
+  researchStrategyCoverageV2,
+  researchStrategyFindingGraphV2,
+  researchStrategyPayloadV2,
+} from './fixtures/research-strategy-v2.ts';
 
 const lease: ControlExecutionLease = {
   taskId: 'task-1',
@@ -30,6 +39,10 @@ const REQUIRED_REVIEW_DIMENSIONS = [
 
 function passingReviewDimensions(): ReportReviewArtifact['dimensions'] {
   return REQUIRED_REVIEW_DIMENSIONS.map((id) => ({ id, passed: true, issues: [] }));
+}
+
+function passingAnswerReviewDimensions(): ReportReviewArtifact['dimensions'] {
+  return REPORT_REVIEW_V2_DIMENSION_IDS.map((id) => ({ id, passed: true, issues: [] }));
 }
 
 const INVALID_PASS_DIMENSION_CASES: Array<{
@@ -92,6 +105,45 @@ function report(overrides: Record<string, unknown> = {}): Record<string, unknown
   };
 }
 
+function strategyReport(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return report({
+    deliverableType: 'research_strategy_report',
+    payload: {
+      directAnswers: [{
+        questionId: 'q-1', answer: 'Lead with verified fit evidence.', answerStatus: 'supported',
+        evidenceIds: ['e-1'], businessImplication: 'Reduce uncertainty', recommendedAction: 'Ship the fit card', validationNeeded: '',
+      }],
+      prioritizedActions: [{ id: 'action-1', action: 'Ship the fit card', ownerType: 'product', validationMethod: 'Task test' }],
+      requestedArtifactBindings: [{ artifactType: 'strategy_map', status: 'complete', blockIds: ['cell-1'] }],
+      riskDisclosures: [], limitations: [], openQuestions: [],
+    },
+    ...overrides,
+  });
+}
+
+function openStrategyReport(): Record<string, unknown> {
+  return report({
+    deliverableType: 'research_strategy_report',
+    payload: researchStrategyPayloadV2(),
+    findingGraph: researchStrategyFindingGraphV2(),
+    recommendations: [{
+      id: 'recommendation-Q1', statement: 'Ship a source-backed trust card.', summaryIds: ['summary-Q1'],
+    }],
+    coverage: researchStrategyCoverageV2(),
+  });
+}
+
+function strategyRequirement(): NonNullable<ReportReviewInput['requirement']> {
+  return {
+    version: 'research-task-v2', task_type: 'research_synthesis', outcome_mode: 'answer',
+    requested_artifacts: ['strategy_map', 'prioritized_actions'], business_domain: 'test',
+    research_goal: 'answer Q1', target_audience: ['team'], scope: ['test'], constraints: [],
+    success_criteria: [{ id: 'SC1', statement: 'usable' }], expected_deliverables: ['research_strategy_report'],
+    assumptions: [], ambiguities: [], clarification_questions: [], blocking_issues: [],
+    sensitivity: 'internal', pii_detected: false,
+  };
+}
+
 function input(overrides: Partial<ReportReviewInput> = {}): ReportReviewInput {
   return {
     task: { id: lease.taskId },
@@ -137,10 +189,24 @@ class RecordingArtifacts {
 
 class RevisionComposer {
   calls = 0;
+  reviewArtifactId: string | undefined;
   constructor(private readonly revised: Record<string, unknown>) {}
-  async revise(): Promise<{ deliverable: Record<string, unknown>; deliverableArtifactId: string }> {
+  async revise(input: { reviewArtifactId: string }): Promise<{
+    deliverable: Record<string, unknown>;
+    deliverableArtifactId: string;
+    crossSkillReviewArtifactId: string;
+    contributionLedgerArtifactId: string;
+    contributionSummaryArtifactId: string;
+  }> {
     this.calls += 1;
-    return { deliverable: this.revised, deliverableArtifactId: 'deliverable-revised' };
+    this.reviewArtifactId = input.reviewArtifactId;
+    return {
+      deliverable: this.revised,
+      deliverableArtifactId: 'deliverable-revised',
+      crossSkillReviewArtifactId: 'cross-skill-review-r1',
+      contributionLedgerArtifactId: 'contribution-ledger-r1',
+      contributionSummaryArtifactId: 'contribution-summary-r1',
+    };
   }
 }
 
@@ -186,6 +252,290 @@ for (const invalid of INVALID_PASS_DIMENSION_CASES) {
     );
   });
 }
+
+test('report-review-v2 requires all six answer-quality dimensions in addition to legacy dimensions', async () => {
+  const answerReview: ReportReviewArtifact = {
+    ...semantic('pass'),
+    version: 'report-review-v2',
+    dimensions: passingAnswerReviewDimensions(),
+  };
+  assert.doesNotThrow(() => new SchemaValidator().validateOrThrow('report-review', answerReview));
+  assert.deepEqual(
+    answerReview.dimensions.slice(REQUIRED_REVIEW_DIMENSIONS.length).map(({ id }) => id),
+    [...ANSWER_QUALITY_REVIEW_DIMENSION_IDS],
+  );
+
+  const llm = new RecordingLlm([answerReview]);
+  const artifacts = new RecordingArtifacts();
+  const result = await service(llm, artifacts).review(input({
+    deliverable: strategyReport(),
+    requirement: {
+      version: 'research-task-v2', task_type: 'research_synthesis', outcome_mode: 'answer', requested_artifacts: ['strategy_map'],
+      business_domain: 'test', research_goal: 'answer q-1', target_audience: ['team'], scope: ['test'], constraints: [],
+      success_criteria: [{ id: 'req-1', statement: 'usable' }], expected_deliverables: ['research_strategy_report'],
+      assumptions: [], ambiguities: [], clarification_questions: [], blocking_issues: [], sensitivity: 'internal', pii_detected: false,
+    },
+  }));
+  assert.equal(result.version, 'report-review-v2');
+  assert.deepEqual(result.dimensions.map(({ id }) => id), [...REPORT_REVIEW_V2_DIMENSION_IDS]);
+  assert.equal(artifacts.writes[0]?.schemaVersion, 'report-review-v2');
+});
+
+test('answer review reads actionable items from open strategy content blocks', async () => {
+  const answerReview: ReportReviewArtifact = {
+    ...semantic('pass'),
+    version: 'report-review-v2',
+    dimensions: passingAnswerReviewDimensions(),
+  };
+  const llm = new RecordingLlm([answerReview]);
+  const artifacts = new RecordingArtifacts();
+  const result = await service(llm, artifacts).review(input({
+    deliverable: report({
+      deliverableType: 'research_strategy_report',
+      payload: researchStrategyPayloadV2(),
+      findingGraph: researchStrategyFindingGraphV2(),
+      recommendations: [{ id: 'recommendation-Q1', statement: 'Ship a source-backed trust card.', summaryIds: ['summary-Q1'] }],
+      coverage: researchStrategyCoverageV2(),
+    }),
+    questionIds: ['Q1'],
+    successCriterionIds: ['SC1'],
+    evidenceIds: ['E1'],
+    requirement: {
+      version: 'research-task-v2', task_type: 'research_synthesis', outcome_mode: 'answer',
+      requested_artifacts: ['strategy_map', 'prioritized_actions'], business_domain: 'test',
+      research_goal: 'answer Q1', target_audience: ['team'], scope: ['test'], constraints: [],
+      success_criteria: [{ id: 'SC1', statement: 'usable' }], expected_deliverables: ['research_strategy_report'],
+      assumptions: [], ambiguities: [], clarification_questions: [], blocking_issues: [], sensitivity: 'internal', pii_detected: false,
+    },
+  }));
+
+  assert.equal(result.verdict, 'pass');
+  assert.equal(result.status, 'completed');
+  assert.equal(llm.calls.length, 1);
+});
+
+test('semantic answer Review preserves only validated targetNodeIds for revision authorization', async () => {
+  const dimensions = passingAnswerReviewDimensions().map((dimension) => (
+    dimension.id === 'reasoning_quality'
+      ? {
+          ...dimension,
+          passed: false,
+          issues: ['Weaken the Q1 answer.'],
+          targetNodeIds: ['Q1'],
+          revisionIssues: [{
+            id: 'reasoning_quality:weaken-q1',
+            message: 'Weaken the Q1 answer.',
+            targetNodeIds: ['Q1'],
+          }],
+        }
+      : dimension
+  ));
+  const review: ReportReviewArtifact = {
+    ...semantic('revise'),
+    version: 'report-review-v2',
+    dimensions,
+  };
+  const llm = new RecordingLlm([review]);
+  const artifacts = new RecordingArtifacts();
+
+  const result = await service(llm, artifacts).review(input({
+    deliverable: openStrategyReport(),
+    questionIds: ['Q1'],
+    successCriterionIds: ['SC1'],
+    evidenceIds: ['E1'],
+    requirement: strategyRequirement(),
+  }));
+
+  assert.equal(result.status, 'paused');
+  assert.deepEqual(
+    result.dimensions.find(({ id }) => id === 'reasoning_quality')?.revisionIssues,
+    [{
+      id: 'reasoning_quality:weaken-q1',
+      message: 'Weaken the Q1 answer.',
+      targetNodeIds: ['Q1'],
+    }],
+  );
+  const context = llm.calls[0]?.context as { revisionTargetIndex?: string[] };
+  assert.ok(context.revisionTargetIndex?.includes('Q1'));
+  assert.ok(context.revisionTargetIndex?.includes('content-block-001'));
+});
+
+test('semantic answer Review rejects missing or unknown revision targets', async () => {
+  const revisionIssueCases: Array<ReportReviewArtifact['dimensions'][number]['revisionIssues']> = [
+    undefined,
+    [{
+      id: 'reasoning_quality:bad-target',
+      message: 'Weaken the Q1 answer.',
+      targetNodeIds: ['unknown-node'],
+    }],
+  ];
+  for (const revisionIssues of revisionIssueCases) {
+    const dimensions = passingAnswerReviewDimensions().map((dimension) => (
+      dimension.id === 'reasoning_quality'
+        ? {
+            ...dimension,
+            passed: false,
+            issues: ['Weaken the Q1 answer.'],
+            ...(revisionIssues ? { revisionIssues: structuredClone(revisionIssues) } : {}),
+          }
+        : dimension
+    ));
+    const review: ReportReviewArtifact = {
+      ...semantic('revise'),
+      version: 'report-review-v2',
+      dimensions,
+    };
+    await assert.rejects(
+      service(new RecordingLlm([review]), new RecordingArtifacts()).review(input({
+        deliverable: openStrategyReport(),
+        questionIds: ['Q1'],
+        successCriterionIds: ['SC1'],
+        evidenceIds: ['E1'],
+        requirement: strategyRequirement(),
+      })),
+      /requires revisionIssues|invalid revisionIssues/u,
+    );
+  }
+});
+
+test('semantic answer Review rejects duplicate revision issue ids across dimensions', async () => {
+  const dimensions = passingAnswerReviewDimensions().map((dimension) => (
+    dimension.id === 'reasoning_quality' || dimension.id === 'recommendation_quality'
+      ? {
+          ...dimension,
+          passed: false,
+          issues: [`Fix ${dimension.id}.`],
+          revisionIssues: [{
+            id: 'duplicate-issue-id',
+            message: `Fix ${dimension.id}.`,
+            targetNodeIds: ['Q1'],
+          }],
+        }
+      : dimension
+  ));
+  const review: ReportReviewArtifact = {
+    ...semantic('revise'),
+    version: 'report-review-v2',
+    dimensions,
+  };
+
+  await assert.rejects(
+    service(new RecordingLlm([review]), new RecordingArtifacts()).review(input({
+      deliverable: openStrategyReport(),
+      questionIds: ['Q1'],
+      successCriterionIds: ['SC1'],
+      evidenceIds: ['E1'],
+      requirement: strategyRequirement(),
+    })),
+    /duplicates revision issue ids across dimensions/u,
+  );
+});
+
+test('provider pass normalized to revise still requires targeted revision issues', async () => {
+  const dimensions = passingAnswerReviewDimensions().map((dimension) => (
+    dimension.id === 'reasoning_quality'
+      ? { ...dimension, passed: false, issues: ['Fix Q1.'] }
+      : dimension
+  ));
+  const review: ReportReviewArtifact = {
+    ...semantic('pass'),
+    version: 'report-review-v2',
+    dimensions,
+  };
+
+  await assert.rejects(
+    service(new RecordingLlm([review]), new RecordingArtifacts()).review(input({
+      deliverable: openStrategyReport(),
+      questionIds: ['Q1'],
+      successCriterionIds: ['SC1'],
+      evidenceIds: ['E1'],
+      requirement: strategyRequirement(),
+    })),
+    /requires revisionIssues/u,
+  );
+});
+
+test('answer review cannot overturn deterministic requested-artifact coverage', async () => {
+  const dimensions = passingAnswerReviewDimensions().map((dimension) => (
+    dimension.id === 'requested_artifact_presence'
+      ? { ...dimension, passed: false, issues: ['Optional extra visualization requested by reviewer'] }
+      : dimension
+  ));
+  const review: ReportReviewArtifact = {
+    ...semantic('pass'),
+    version: 'report-review-v2',
+    dimensions,
+  };
+  const result = await service(new RecordingLlm([review]), new RecordingArtifacts()).review(input({
+    deliverable: strategyReport(),
+    requirement: {
+      version: 'research-task-v2', task_type: 'research_synthesis', outcome_mode: 'answer', requested_artifacts: ['strategy_map'],
+      business_domain: 'test', research_goal: 'answer q-1', target_audience: ['team'], scope: ['test'], constraints: [],
+      success_criteria: [{ id: 'req-1', statement: 'usable' }], expected_deliverables: ['research_strategy_report'],
+      assumptions: [], ambiguities: [], clarification_questions: [], blocking_issues: [], sensitivity: 'internal', pii_detected: false,
+    },
+  }));
+  assert.equal(result.verdict, 'pass');
+  assert.equal(result.dimensions.find(({ id }) => id === 'requested_artifact_presence')?.passed, true);
+});
+
+test('a bounded final revision passes when every normalized dimension passes', async () => {
+  const review: ReportReviewArtifact = {
+    ...semantic('revise', 1),
+    version: 'report-review-v2',
+    dimensions: passingAnswerReviewDimensions(),
+  };
+  const result = await service(new RecordingLlm([review]), new RecordingArtifacts()).review(input({
+    deliverable: strategyReport(),
+    revisionRound: 1,
+    requirement: {
+      version: 'research-task-v2', task_type: 'research_synthesis', outcome_mode: 'answer', requested_artifacts: ['strategy_map'],
+      business_domain: 'test', research_goal: 'answer q-1', target_audience: ['team'], scope: ['test'], constraints: [],
+      success_criteria: [{ id: 'req-1', statement: 'usable' }], expected_deliverables: ['research_strategy_report'],
+      assumptions: [], ambiguities: [], clarification_questions: [], blocking_issues: [], sensitivity: 'internal', pii_detected: false,
+    },
+  }));
+  assert.equal(result.verdict, 'pass');
+  assert.equal(result.status, 'completed');
+});
+
+test('answer-quality dimensions deterministically block missing direct answers before semantic review', async () => {
+  const llm = new RecordingLlm([]);
+  const artifacts = new RecordingArtifacts();
+  const missingAnswerReport = strategyReport();
+  (missingAnswerReport.payload as Record<string, unknown>).directAnswers = [];
+  const result = await service(llm, artifacts).review(input({
+    deliverable: missingAnswerReport,
+    requirement: {
+      version: 'research-task-v2', task_type: 'research_synthesis', outcome_mode: 'answer', requested_artifacts: [],
+      business_domain: 'test', research_goal: 'answer q-1', target_audience: ['team'], scope: ['test'], constraints: [],
+      success_criteria: [{ id: 'req-1', statement: 'usable' }], expected_deliverables: ['research_strategy_report'],
+      assumptions: [], ambiguities: [], clarification_questions: [], blocking_issues: [], sensitivity: 'internal', pii_detected: false,
+    },
+  }));
+  assert.equal(result.version, 'report-review-v2');
+  assert.equal(result.verdict, 'block');
+  assert.equal(result.dimensions.find(({ id }) => id === 'direct_answer_coverage')?.passed, false);
+  assert.equal(llm.calls.length, 0);
+});
+
+test('answer risk-consistency dimension blocks an undisclosed envelope risk', async () => {
+  const llm = new RecordingLlm([]);
+  const artifacts = new RecordingArtifacts();
+  const riskyReport = strategyReport({ risksAndOpenIssues: ['Skill degraded: missing behavioral data'] });
+  const result = await service(llm, artifacts).review(input({
+    deliverable: riskyReport,
+    requirement: {
+      version: 'research-task-v2', task_type: 'research_synthesis', outcome_mode: 'answer', requested_artifacts: [],
+      business_domain: 'test', research_goal: 'answer q-1', target_audience: ['team'], scope: ['test'], constraints: [],
+      success_criteria: [{ id: 'req-1', statement: 'usable' }], expected_deliverables: ['research_strategy_report'],
+      assumptions: [], ambiguities: [], clarification_questions: [], blocking_issues: [], sensitivity: 'internal', pii_detected: false,
+    },
+  }));
+  assert.equal(result.verdict, 'block');
+  assert.equal(result.dimensions.find(({ id }) => id === 'risk_consistency')?.passed, false);
+  assert.equal(llm.calls.length, 0);
+});
 
 test('passes a deliverable after deterministic gates and semantic review', async () => {
   const llm = new RecordingLlm([semantic('pass')]);
@@ -300,12 +650,21 @@ test('revises exactly once and passes after re-running every gate', async () => 
   assert.equal(result.revisionRound, 1);
   assert.equal(result.status, 'completed');
   assert.equal(composer.calls, 1);
+  assert.equal(composer.reviewArtifactId, 'review-artifact-1');
   assert.equal(llm.calls.length, 2);
   assert.equal(result.deliverableArtifactId, 'deliverable-revised');
-  assert.equal(artifacts.writes.length, 1);
-  assert.equal(artifacts.writes[0]?.relativePath, 'reports/review-r1.json');
+  assert.equal(result.crossSkillReviewArtifactId, 'cross-skill-review-r1');
+  assert.equal(result.contributionLedgerArtifactId, 'contribution-ledger-r1');
+  assert.equal(result.contributionSummaryArtifactId, 'contribution-summary-r1');
+  assert.equal(artifacts.writes.length, 2);
+  assert.equal(artifacts.writes[0]?.relativePath, 'reports/review-r0.json');
+  assert.equal(artifacts.writes[1]?.relativePath, 'reports/review-r1.json');
   assert.equal(
     (artifacts.writes[0]?.value as ReportReviewArtifact).deliverableArtifactId,
+    'deliverable-1',
+  );
+  assert.equal(
+    (artifacts.writes[1]?.value as ReportReviewArtifact).deliverableArtifactId,
     'deliverable-revised',
   );
 });

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type {
   TaskHistoryPreferencePatch,
+  SystemCapabilitiesResponse,
   User,
 } from '../api/client.ts';
 import {
@@ -27,6 +28,7 @@ function taskTitle(task: HistoryTaskSummary): string {
 // 左侧栏:新建任务 + 状态化历史 + 资源库入口 + 用户/登出。
 export function Sidebar({
   user,
+  capabilities,
   history,
   activeTaskId,
   onNewTask,
@@ -36,6 +38,7 @@ export function Sidebar({
   onLogout,
 }: {
   user: User;
+  capabilities: SystemCapabilitiesResponse | null;
   history: HistoryTaskSummary[];
   activeTaskId: string | null;
   onNewTask: () => void;
@@ -120,6 +123,21 @@ export function Sidebar({
 
       <div className="sidebar-account">
         <div>{user.display_name}</div>
+        {capabilities ? (
+          <details className="sidebar-capabilities">
+            <summary>运行能力</summary>
+            <span>App {capabilities.applicationVersion} · Build {capabilities.build.id}</span>
+            <span>Source {capabilities.build.sourceRevision?.slice(0, 12) ?? 'unavailable'}</span>
+            <span>Plan {capabilities.planContractVersions.join(', ')}</span>
+            <span>Report {capabilities.reportDocumentVersions.join(', ')}</span>
+            <span>Task types: {capabilities.activeTaskTypes.join(', ')}</span>
+            <span>Deliverables: {capabilities.activeDeliverables.join(', ')}</span>
+            <span>Compiled Skills: {capabilities.compiledSkills.join(', ')}</span>
+            <span>Config {capabilities.build.configurationHash.slice(0, 19)}…</span>
+            <span>Knowledge {capabilities.knowledgeIndexHash?.slice(0, 19) ?? 'unavailable'}…</span>
+            <span>Tools {capabilities.toolRegistryHash.slice(0, 19)}…</span>
+          </details>
+        ) : null}
         <button className="btn-ghost" type="button" onClick={onLogout}>登出</button>
       </div>
     </aside>

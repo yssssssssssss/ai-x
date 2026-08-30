@@ -8,11 +8,19 @@ import type {
 import type {
   ChartSpec,
   ResearchDeliverableEnvelope,
+  ResearchPlanPayload,
   VisualAssetManifest,
   VisualAssetManifestV2,
 } from '../packages/api-contract/research-deliverable.ts';
+import type { ReportDocumentV3, ReportDocumentV4 } from '../packages/api-contract/report-document.ts';
+import type { ReportPackageV2 } from '../packages/api-contract/report-package.ts';
 import type { ReportDocument } from '../apps/orchestrator-runtime/src/report/report-document-composer.ts';
+import {
+  projectResearchPlan,
+  researchPlanRequiredPointers,
+} from '../apps/orchestrator-runtime/src/report/report-projection.ts';
 import { ReportCompositionService } from '../apps/orchestrator-runtime/src/report/report-composition-service.ts';
+import { parseReportPackageArtifactValue } from '../apps/orchestrator-runtime/src/report/report-package-artifact.ts';
 import { ArtifactIntegrityError } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
 import {
   EvidenceService,
@@ -56,6 +64,10 @@ const annotationManifestArtifactId = 'manifest-annotation-1';
 const chartAssetId = 'asset-chart-1';
 const chartManifestArtifactId = 'manifest-chart-1';
 const evidenceContentSha256 = `sha256:${'1'.repeat(64)}`;
+const deliverableContentSha256 = `sha256:${'d'.repeat(64)}`;
+const reportDocumentContentSha256 = `sha256:${'a'.repeat(64)}`;
+const reportPackageV2ArtifactId = 'report-package-v2-1';
+const reportPackageV2ContentSha256 = `sha256:${'8'.repeat(64)}`;
 const REQUIRED_REVIEW_DIMENSIONS = [
   'requirement_coverage',
   'question_coverage',
@@ -147,6 +159,28 @@ function manifest(): EvidenceManifest {
   }, {
     resolveArtifact: (artifactId) => artifactId === evidenceArtifactId ? resolved : null,
   });
+}
+
+function researchPlanPayload(): ResearchPlanPayload {
+  return {
+    title: 'Verified report',
+    researchGoal: 'Answer the decision question',
+    scope: { market: 'global', subjects: ['cat'], timeWindow: 'five weeks' },
+    competitorSampling: {
+      strategy: 'stratified',
+      targetCount: 6,
+      inclusionCriteria: ['public evidence'],
+      exclusionCriteria: ['no evidence'],
+    },
+    researchQuestions: ['Q1'],
+    comparisonDimensions: [{ id: 'd1', name: 'Trust', purpose: 'compare trust', collectionFields: ['proof'] }],
+    sourcePlan: [{ evidenceClass: 'knowledge', sourceTypes: ['standard'], purpose: 'method basis' }],
+    executionPlan: [{ phase: 'week 1', activities: ['desk research'], duration: '1 week', outputs: ['matrix'] }],
+    collectionTemplate: [{ field: 'proof', description: 'source proof', evidenceRequired: true }],
+    analysisMethods: ['thematic analysis'],
+    deliverables: ['strategy map'],
+    qualityChecks: ['source traceability'],
+  };
 }
 
 function deliverable(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -257,6 +291,120 @@ function packageReportDocument(): ReportDocument {
       }],
     }],
   };
+}
+
+function packageReportDocumentV3(): ReportDocumentV3 {
+  return {
+    version: 'report-document-v3',
+    title: 'Verified editorial report',
+    subtitle: 'Evidence-bound v3 report',
+    executiveSummary: 'Verified evidence supports the conclusion.',
+    style: 'editorial',
+    density: 'comfortable',
+    sourceDeliverableArtifactId: deliverableArtifactId,
+    sourceDeliverableContentSha256: deliverableContentSha256,
+    projectionMode: 'full',
+    layoutMode: 'fallback',
+    sections: [{
+      id: 'section-answers',
+      title: 'Answers',
+      view: 'answers',
+      prominence: 'primary',
+      blocks: [{
+        id: 'block-answer',
+        type: 'paragraph',
+        visibility: 'always',
+        unitRefs: ['unit-answer'],
+        leafRefs: ['leaf-answer'],
+        leafRef: 'leaf-answer',
+        text: 'Verified answer.',
+      }],
+    }],
+    traceIndex: {
+      'leaf-answer': {
+        supportMode: 'direct',
+        origins: [{
+          artifactId: deliverableArtifactId,
+          contentSha256: deliverableContentSha256,
+          schemaVersion: REVIEW_GATED_DELIVERABLE_SCHEMA_VERSION,
+          jsonPointer: '/payload/title',
+          sourceNodeIds: ['node-answer'],
+          reviewState: 'passed',
+        }],
+        questionIds: ['question-1'],
+        evidenceIds: ['evidence-entry-1'],
+        findingIds: ['finding-1'],
+        summaryIds: ['summary-1'],
+        status: 'supported',
+      },
+    },
+    semanticManifest: {
+      version: 'report-semantic-manifest-v1',
+      presentationUnitIds: ['unit-answer'],
+      leafUnitIds: ['leaf-answer'],
+      assetIds: [],
+      auditRecordIds: [],
+      noticeIds: [],
+    },
+    notices: [],
+  };
+}
+
+function packageReportDocumentV4(): ReportDocumentV4 {
+  const base = packageReportDocumentV3();
+  return {
+    ...base,
+    version: 'report-document-v4',
+    title: {
+      id: 'copy-title',
+      provenance: 'model',
+      text: base.title,
+      sourceLeafIds: ['leaf-answer'],
+    },
+    executiveSummary: {
+      id: 'copy-summary',
+      provenance: 'model',
+      text: base.executiveSummary,
+      sourceLeafIds: ['leaf-answer'],
+    },
+    copyMode: 'model',
+    sections: base.sections.map((section) => ({
+      ...section,
+      title: {
+        id: `copy-section-${section.id}`,
+        provenance: 'model',
+        text: section.title,
+        sourceLeafIds: section.blocks.flatMap(({ leafRefs }) => leafRefs),
+      },
+      blocks: section.blocks,
+    })),
+    semanticManifest: {
+      ...base.semanticManifest,
+      version: 'report-semantic-manifest-v2',
+      copyFragmentIds: ['copy-title', 'copy-summary', 'copy-section-section-answers'],
+    },
+  };
+}
+
+function packageImageReportDocumentV3(): ReportDocumentV3 {
+  const document = packageReportDocumentV3();
+  document.sections[0]!.blocks = [{
+    id: 'block-image',
+    type: 'image',
+    visibility: 'always',
+    unitRefs: ['unit-image'],
+    leafRefs: ['leaf-answer'],
+    leafRef: 'leaf-answer',
+    assetRef: {
+      assetId: imageAssetId,
+      manifestArtifactId: imageManifestArtifactId,
+    },
+    caption: 'Verified source image',
+    altText: 'Verified source image.',
+  }];
+  document.semanticManifest.presentationUnitIds = ['unit-image'];
+  document.semanticManifest.assetIds = [imageAssetId];
+  return document;
 }
 
 function packageV2ChartReportDocument(): ReportDocument {
@@ -457,9 +605,16 @@ class FixtureArtifacts {
   readonly reads: string[] = [];
   readonly tampered = new Set<string>();
   readonly artifacts = new Map<string, { artifact: ControlArtifact; value: unknown }>();
+  readonly texts = new Map<string, { artifact: ControlArtifact; content: string }>();
+  textReads = 0;
+  binaryReads = 0;
 
   add(candidate: ControlArtifact, value: unknown): void {
     this.artifacts.set(candidate.id, { artifact: candidate, value });
+  }
+
+  addText(candidate: ControlArtifact, content: string): void {
+    this.texts.set(candidate.id, { artifact: candidate, content });
   }
 
   async readVerifiedJson<T>(artifactId: string): Promise<{ artifact: ControlArtifact; value: T }> {
@@ -468,6 +623,22 @@ class FixtureArtifacts {
     const candidate = this.artifacts.get(artifactId);
     if (!candidate) throw new Error(`missing fixture Artifact ${artifactId}`);
     return candidate as { artifact: ControlArtifact; value: T };
+  }
+
+  async readVerifiedBoundJson<T>(artifactId: string): Promise<{ artifact: ControlArtifact; value: T }> {
+    return this.readVerifiedJson<T>(artifactId);
+  }
+
+  async readVerifiedBoundText(artifactId: string): Promise<{ artifact: ControlArtifact; content: string }> {
+    this.textReads += 1;
+    const candidate = this.texts.get(artifactId);
+    if (!candidate) throw new Error(`missing fixture text Artifact ${artifactId}`);
+    return candidate;
+  }
+
+  async readVerifiedBinary(): Promise<never> {
+    this.binaryReads += 1;
+    throw new Error('unexpected binary Artifact read');
   }
 }
 
@@ -503,9 +674,11 @@ class FixtureRepository {
 
 function setup(options: {
   deliverableSchemaVersion?: string;
+  deliverable?: Record<string, unknown>;
   review?: ReportReviewArtifact | null;
   reviewArtifact?: ControlArtifact;
-  reportDocument?: ReportDocument | null;
+  reportDocument?: ReportDocument | ReportDocumentV3 | ReportDocumentV4 | null;
+  reportDocumentSchemaVersion?: 'report-document-v1' | 'report-document-v2' | 'report-document-v3' | 'report-document-v4';
   visualAssets?: FixtureVerifiedVisualAsset[];
 } = {}): {
   reader: CurrentReportPackageReader;
@@ -525,11 +698,14 @@ function setup(options: {
     deliverableArtifactId,
     'deliverable',
     options.deliverableSchemaVersion ?? REVIEW_GATED_DELIVERABLE_SCHEMA_VERSION,
-    { storageUri: '/artifacts/deliverables/final-r0.json' },
+    {
+      storageUri: '/artifacts/deliverables/final-r0.json',
+      contentSha256: deliverableContentSha256,
+    },
   );
   artifacts.add(evidenceArtifact, evidenceValue());
   artifacts.add(evidenceManifestArtifact, manifest());
-  artifacts.add(deliverableArtifact, deliverable());
+  artifacts.add(deliverableArtifact, options.deliverable ?? deliverable());
   repository.byKind.set('deliverable', deliverableArtifact);
   if (options.review !== null) {
     const reviewArtifact = options.reviewArtifact ?? artifact(reviewArtifactId, 'report_review', 'report-review-v1', {
@@ -542,7 +718,8 @@ function setup(options: {
     const reportDocumentArtifact = artifact(
       reportDocumentArtifactId,
       'report_document',
-      'report-document-v1',
+      options.reportDocumentSchemaVersion ?? 'report-document-v1',
+      { contentSha256: reportDocumentContentSha256 },
     );
     artifacts.add(reportDocumentArtifact, options.reportDocument);
     repository.byKind.set('report_document', reportDocumentArtifact);
@@ -553,6 +730,67 @@ function setup(options: {
     artifacts,
     repository,
     visualAssets,
+  };
+}
+
+function packageV2Value(overrides: Partial<ReportPackageV2> = {}): ReportPackageV2 {
+  return {
+    version: 'report-package-v2',
+    ...binding,
+    reportPublicationId: 'publication-1',
+    presentationMode: 'multimodal',
+    deliverableArtifactId,
+    evidenceManifestArtifactId: manifestArtifactId,
+    reportReviewArtifactId: reviewArtifactId,
+    sourceReportDocumentArtifactId: reportDocumentArtifactId,
+    sourceReportDocumentContentSha256: reportDocumentContentSha256,
+    layout: {
+      mode: 'fallback',
+      blueprintArtifactId: 'editorial-blueprint-1',
+      reasonCode: 'planner_disabled',
+    },
+    assetSnapshot: { assets: [], charts: [] },
+    standaloneHtml: { status: 'unavailable', reasonCode: 'artifact_write_failed' },
+    notices: [],
+    ...overrides,
+  };
+}
+
+function installPackageV2(
+  fixture: ReturnType<typeof setup>,
+  value: ReportPackageV2 = packageV2Value(),
+): { artifactId: string; contentSha256: string } {
+  fixture.artifacts.add(artifact(
+    'editorial-blueprint-1',
+    'report_editorial_blueprint',
+    'report-editorial-blueprint-v1',
+  ), {
+    version: 'report-editorial-blueprint-v1',
+    style: 'analytical',
+    density: 'comfortable',
+    sections: [{
+      headingMode: 'view_label',
+      view: 'answers',
+      prominence: 'primary',
+      blocks: [{
+        presentation: 'paragraph',
+        unitRefs: ['unit-answer'],
+        visibility: 'always',
+      }],
+    }],
+  });
+  fixture.artifacts.add(artifact(
+    reportPackageV2ArtifactId,
+    'report_package',
+    'report-package-v2',
+    {
+      contentSha256: reportPackageV2ContentSha256,
+      storageUri: '/artifacts/reports/report-package.json',
+    },
+  ), value);
+  return {
+    artifactId: reportPackageV2ArtifactId,
+    contentSha256: reportPackageV2ContentSha256,
   };
 }
 
@@ -617,6 +855,31 @@ function installV2ChartEvidence(
   return evidenceManifest;
 }
 
+test('Report Package preserves optional model-layout artifacts only with a ReportDocument', () => {
+  const value = parseReportPackageArtifactValue({
+    version: 'report-package-v1',
+    ...binding,
+    presentationMode: 'multimodal',
+    deliverableArtifactId,
+    evidenceManifestArtifactId: manifestArtifactId,
+    reportReviewArtifactId: reviewArtifactId,
+    reportDocumentArtifactId,
+    reportLayoutBlueprintArtifactId: 'layout-blueprint-1',
+    reportLayoutDiagnosticArtifactId: 'layout-diagnostic-1',
+  });
+  assert.equal(value.reportLayoutBlueprintArtifactId, 'layout-blueprint-1');
+  assert.equal(value.reportLayoutDiagnosticArtifactId, 'layout-diagnostic-1');
+  assert.throws(() => parseReportPackageArtifactValue({
+    ...value,
+    presentationMode: 'current_text',
+    reportDocumentArtifactId: undefined,
+  }), /layout artifacts without a ReportDocument|current text Report Package/);
+  assert.throws(() => parseReportPackageArtifactValue({
+    ...value,
+    contributionLedgerArtifactId: 'ledger-only',
+  }), /contribution component set is incomplete/);
+});
+
 test('returns a verified review-gated current_text package and reads every JSON Artifact', async () => {
   const fixture = setup();
   const result = await fixture.reader.read(binding);
@@ -663,6 +926,100 @@ test('reads only component IDs frozen by a verified Report Package', async () =>
   assert.equal(result?.presentationMode, 'current_text');
   assert.equal(fixture.artifacts.reads[0], reviewArtifactId);
   assert.equal(fixture.artifacts.reads.includes(alternateReviewId), false);
+});
+
+test('reads only frozen Multi-Skill review, ledger, and safe summary sidecars', async () => {
+  const fixture = setup();
+  const crossReviewId = 'cross-review-1';
+  const ledgerId = 'contribution-ledger-1';
+  const summaryId = 'contribution-summary-1';
+  const crossSkillReview = {
+    version: 'cross-skill-review-v1',
+    ...binding,
+    synthesisArtifactId: 'synthesis-1',
+    verdict: 'pass',
+    issues: [],
+  } as const;
+  const contributionLedger = {
+    version: 'contribution-ledger-v1',
+    ...binding,
+    entries: [],
+  } as const;
+  const contributionSummary = {
+    version: 'contribution-summary-v1',
+    ...binding,
+    contributors: [],
+  } as const;
+  fixture.artifacts.add(artifact(crossReviewId, 'cross_skill_review', 'cross-skill-review-v1'), crossSkillReview);
+  fixture.artifacts.add(artifact(ledgerId, 'contribution_ledger', 'contribution-ledger-v1'), contributionLedger);
+  fixture.artifacts.add(artifact(summaryId, 'contribution_summary', 'contribution-summary-v1'), contributionSummary);
+
+  const result = await fixture.reader.read(binding, {
+    version: 'report-package-v1',
+    ...binding,
+    presentationMode: 'current_text',
+    deliverableArtifactId,
+    evidenceManifestArtifactId: manifestArtifactId,
+    reportReviewArtifactId: reviewArtifactId,
+    crossSkillReviewArtifactId: crossReviewId,
+    contributionLedgerArtifactId: ledgerId,
+    contributionSummaryArtifactId: summaryId,
+  });
+
+  assert.deepEqual(result?.crossSkillReview, crossSkillReview);
+  assert.deepEqual(result?.contributionLedger, contributionLedger);
+  assert.deepEqual(result?.contributionSummary, contributionSummary);
+  assert.deepEqual(fixture.artifacts.reads.slice(0, 3), [crossReviewId, ledgerId, summaryId]);
+});
+
+test('reads Knowledge Evidence from its sealed knowledge_output Artifact', async () => {
+  const fixture = setup();
+  const knowledgeArtifactId = 'knowledge-output-1';
+  const knowledgeHash = `sha256:${'4'.repeat(64)}`;
+  const knowledgeValue = { resources: [{ content: 'Verified research method.' }] };
+  fixture.artifacts.add(
+    artifact(knowledgeArtifactId, 'knowledge_output', 'knowledge-bundle-v1', {
+      contentSha256: knowledgeHash,
+    }),
+    knowledgeValue,
+  );
+  const storedManifest = fixture.artifacts.artifacts.get(manifestArtifactId);
+  assert.ok(storedManifest);
+  storedManifest.value = new EvidenceService().createManifest({
+    ...binding,
+    collectedAt: '2026-08-14T10:00:00.000Z',
+    entries: [
+      ...manifest().entries,
+      {
+        id: 'K2-1',
+        kind: 'knowledge_excerpt',
+        evidenceClass: 'knowledge',
+        artifactId: knowledgeArtifactId,
+        artifactContentSha256: knowledgeHash,
+        jsonPointer: '/resources/0/content',
+        stepNo: 2,
+        sensitivity: 'internal',
+        redaction: 'none',
+      },
+    ],
+  }, {
+    resolveArtifact: (artifactId) => artifactId === knowledgeArtifactId
+      ? {
+          artifact: { id: knowledgeArtifactId, contentSha256: knowledgeHash },
+          value: knowledgeValue,
+        }
+      : artifactId === evidenceArtifactId
+        ? {
+            artifact: { id: evidenceArtifactId, contentSha256: evidenceContentSha256 },
+            value: evidenceValue(),
+          }
+        : null,
+  });
+
+  const result = await fixture.reader.read(binding);
+
+  assert.equal(result?.presentationMode, 'current_text');
+  assert.ok(fixture.artifacts.reads.includes(knowledgeArtifactId));
 });
 
 test('reads screenshot and user-constraint Evidence from their concrete Artifact kinds', async () => {
@@ -828,6 +1185,343 @@ test('returns multimodal only from a sealed ReportDocument and its exact verifie
     chartId: 'chart-1',
   }]);
   assert.equal(fixture.visualAssets.reads.some(({ assetId }) => assetId === extra.artifact.id), false);
+});
+
+test('reads a schema-valid ReportDocument v2 without breaking v1 packages', async () => {
+  const image = packageVerifiedVisualAsset(imageAssetId, imageManifestArtifactId, 'image/png');
+  const chart = packageVerifiedVisualAsset(chartAssetId, chartManifestArtifactId, 'image/svg+xml');
+  const payload = researchPlanPayload();
+  const projection = projectResearchPlan({
+    payload,
+    deliverableArtifactId,
+    requiredPointers: researchPlanRequiredPointers(),
+  });
+  const document: ReportDocument = {
+    ...packageReportDocument(),
+    version: 'report-document-v2',
+    sections: [...packageReportDocument().sections, ...projection.sections],
+    ...projection.coverage,
+  };
+  const fixture = setup({
+    deliverable: deliverable({ payload }),
+    reportDocument: document,
+    reportDocumentSchemaVersion: 'report-document-v2',
+    visualAssets: [image, chart],
+  });
+
+  const result = await fixture.reader.read(binding);
+  assert.equal(result?.presentationMode, 'multimodal');
+  if (result?.presentationMode !== 'multimodal') assert.fail('expected a multimodal package');
+  assert.equal(result.reportDocument.version, 'report-document-v2');
+  assert.equal(parseControlDeliverableResponse(result).presentationMode, 'multimodal');
+});
+
+test('reads and Web-parses a schema-valid ReportDocument v3 before its Writer is enabled', async () => {
+  const document = packageReportDocumentV3();
+  const fixture = setup({
+    reportDocument: document,
+    reportDocumentSchemaVersion: 'report-document-v3',
+  });
+
+  const result = await fixture.reader.read(binding);
+
+  assert.equal(result?.presentationMode, 'multimodal');
+  if (result?.presentationMode !== 'multimodal') assert.fail('expected a multimodal package');
+  assert.deepEqual(result.reportDocument, document);
+  assert.deepEqual(result.visualAssetManifests, []);
+  const parsed = parseControlDeliverableResponse(result);
+  assert.equal(parsed.presentationMode, 'multimodal');
+  if (parsed.presentationMode !== 'multimodal') assert.fail('expected a parsed multimodal package');
+  assert.equal(parsed.reportDocument.version, 'report-document-v3');
+});
+
+test('reads and Web-parses a schema-valid ReportDocument v4', async () => {
+  const document = packageReportDocumentV4();
+  const fixture = setup({
+    reportDocument: document,
+    reportDocumentSchemaVersion: 'report-document-v4',
+  });
+
+  const result = await fixture.reader.read(binding);
+
+  assert.equal(result?.presentationMode, 'multimodal');
+  if (result?.presentationMode !== 'multimodal') assert.fail('expected a multimodal package');
+  assert.deepEqual(result.reportDocument, document);
+  assert.equal(result.reportDocumentContentSha256, reportDocumentContentSha256);
+  const parsed = parseControlDeliverableResponse(result);
+  assert.equal(parsed.presentationMode, 'multimodal');
+  if (parsed.presentationMode !== 'multimodal') assert.fail('expected a parsed multimodal package');
+  assert.equal(parsed.reportDocument.version, 'report-document-v4');
+});
+
+test('reads a fixed Report Package v2 root and exposes its frozen publication metadata', async () => {
+  const fixture = setup({
+    reportDocument: packageReportDocumentV3(),
+    reportDocumentSchemaVersion: 'report-document-v3',
+  });
+  const root = installPackageV2(fixture);
+
+  const result = await fixture.reader.read(binding, root);
+
+  assert.equal(result?.presentationMode, 'multimodal');
+  if (result?.presentationMode !== 'multimodal') assert.fail('expected a multimodal package');
+  assert.deepEqual(result.reportPackage, {
+    version: 'report-package-v2',
+    reportPublicationId: 'publication-1',
+    layout: {
+      mode: 'fallback',
+      blueprintArtifactId: 'editorial-blueprint-1',
+      reasonCode: 'planner_disabled',
+    },
+    assetSnapshot: { assets: [], charts: [] },
+    standaloneHtml: { status: 'unavailable', reasonCode: 'artifact_write_failed' },
+    notices: [],
+  });
+  assert.equal(fixture.artifacts.textReads, 0, 'unavailable HTML must not be read');
+  assert.equal(fixture.artifacts.binaryReads, 0, 'an empty Asset snapshot must not read binaries');
+  assert.equal(parseControlDeliverableResponse(result).presentationMode, 'multimodal');
+});
+
+test('Web parser accepts bound Report Package v3 Showcase metadata beside the canonical report', async () => {
+  const fixture = setup({
+    reportDocument: packageReportDocumentV3(),
+    reportDocumentSchemaVersion: 'report-document-v3',
+  });
+  const root = installPackageV2(fixture);
+  const result = await fixture.reader.read(binding, root);
+  assert.equal(result?.presentationMode, 'multimodal');
+  if (result?.presentationMode !== 'multimodal') assert.fail('expected a multimodal package');
+
+  const withShowcase = {
+    ...result,
+    editorialShowcase: {
+      version: 'report-package-v3' as const,
+      ...binding,
+      reportPublicationId: 'publication-1',
+      canonicalPackageArtifactId: reportPackageV2ArtifactId,
+      canonicalPackageContentSha256: reportPackageV2ContentSha256,
+      preferredHtml: 'showcase' as const,
+      showcase: {
+        status: 'ready' as const,
+        specArtifactId: 'showcase-spec-1',
+        htmlArtifactId: 'showcase-html-1',
+        rendererVersion: 'editorial-showcase-html-v1',
+        profileId: 'editorial-showcase-v1' as const,
+        generationMode: 'model' as const,
+        showcaseOutlineSignature: `sha256:${'7'.repeat(64)}`,
+      },
+    },
+  };
+  const parsed = parseControlDeliverableResponse(withShowcase);
+  assert.equal(parsed.presentationMode, 'multimodal');
+  if (parsed.presentationMode !== 'multimodal') assert.fail('expected multimodal');
+  assert.equal(parsed.editorialShowcase?.showcase.status, 'ready');
+
+  assert.throws(() => parseControlDeliverableResponse({
+    ...withShowcase,
+    editorialShowcase: { ...withShowcase.editorialShowcase, attemptId: 'other-attempt' },
+  }), /Showcase package binding/u);
+});
+
+test('rejects a Report Package v2 root whose caller-pinned hash has drifted', async () => {
+  const fixture = setup({
+    reportDocument: packageReportDocumentV3(),
+    reportDocumentSchemaVersion: 'report-document-v3',
+  });
+  const root = installPackageV2(fixture);
+
+  await assert.rejects(
+    fixture.reader.read(binding, { ...root, contentSha256: `sha256:${'9'.repeat(64)}` }),
+    /root hash/i,
+  );
+});
+
+test('rejects Report Package v2 Document and Blueprint identity drift', async () => {
+  {
+    const fixture = setup({
+      reportDocument: packageReportDocumentV3(),
+      reportDocumentSchemaVersion: 'report-document-v3',
+    });
+    const root = installPackageV2(fixture, packageV2Value({
+      sourceReportDocumentContentSha256: `sha256:${'9'.repeat(64)}`,
+    }));
+    await assert.rejects(fixture.reader.read(binding, root), /ReportDocument hash/i);
+  }
+
+  {
+    const fixture = setup({
+      reportDocument: packageReportDocumentV3(),
+      reportDocumentSchemaVersion: 'report-document-v3',
+    });
+    const root = installPackageV2(fixture);
+    const blueprint = fixture.artifacts.artifacts.get('editorial-blueprint-1');
+    assert.ok(blueprint);
+    const value = blueprint.value as {
+      sections: Array<{ blocks: Array<{ unitRefs: string[] }> }>;
+    };
+    value.sections[0]!.blocks[0]!.unitRefs = ['unit-foreign'];
+    await assert.rejects(fixture.reader.read(binding, root), /Blueprint units/i);
+  }
+});
+
+test('rejects a Report Package v2 snapshot whose Manifest identity differs from the Document', async () => {
+  const fixture = setup({
+    reportDocument: packageImageReportDocumentV3(),
+    reportDocumentSchemaVersion: 'report-document-v3',
+  });
+  const root = installPackageV2(fixture, packageV2Value({
+    assetSnapshot: {
+      assets: [{
+        assetId: imageAssetId,
+        manifestArtifactId: 'manifest-image-foreign',
+        contentSha256: `sha256:${'4'.repeat(64)}`,
+        manifestHash: `sha256:${'5'.repeat(64)}`,
+        relativePath: 'assets/image.png',
+        mediaType: 'image/png',
+        sourceKind: 'visual_asset',
+        exportPolicy: 'allow',
+        leafIds: ['leaf-answer'],
+      }],
+      charts: [],
+    },
+  }));
+
+  await assert.rejects(fixture.reader.read(binding, root), /Manifest identity.*ReportDocument/i);
+});
+
+test('rejects ReportDocument v3 Artifact and body version drift', async () => {
+  const v3BodyWithV2Artifact = setup({
+    reportDocument: packageReportDocumentV3(),
+    reportDocumentSchemaVersion: 'report-document-v2',
+  });
+  await assert.rejects(
+    v3BodyWithV2Artifact.reader.read(binding),
+    /schema version does not match its value/i,
+  );
+
+  const v2BodyWithV3Artifact = setup({
+    reportDocument: packageReportDocument(),
+    reportDocumentSchemaVersion: 'report-document-v3',
+    visualAssets: [
+      packageVerifiedVisualAsset(imageAssetId, imageManifestArtifactId, 'image/png'),
+      packageVerifiedVisualAsset(chartAssetId, chartManifestArtifactId, 'image/svg+xml'),
+    ],
+  });
+  await assert.rejects(
+    v2BodyWithV3Artifact.reader.read(binding),
+    /schema version does not match its value/i,
+  );
+});
+
+test('rejects ReportDocument v3 source Deliverable id and hash drift', async () => {
+  for (const document of [
+    { ...packageReportDocumentV3(), sourceDeliverableArtifactId: 'deliverable-foreign' },
+    {
+      ...packageReportDocumentV3(),
+      sourceDeliverableContentSha256: `sha256:${'f'.repeat(64)}`,
+    },
+  ]) {
+    const fixture = setup({
+      reportDocument: document,
+      reportDocumentSchemaVersion: 'report-document-v3',
+    });
+    await assert.rejects(fixture.reader.read(binding), /source Deliverable identity/i);
+  }
+});
+
+test('rejects dangling or missing ReportDocument v3 Trace references', async () => {
+  const cases: Array<{
+    label: string;
+    mutate(document: ReportDocumentV3): void;
+    error: RegExp;
+  }> = [{
+    label: 'unknown required question',
+    mutate: (document) => document.traceIndex['leaf-answer']!.questionIds.push('question-missing'),
+    error: /question-missing/i,
+  }, {
+    label: 'missing required question coverage',
+    mutate: (document) => { document.traceIndex['leaf-answer']!.questionIds = []; },
+    error: /cover required question question-1/i,
+  }, {
+    label: 'unknown Evidence',
+    mutate: (document) => { document.traceIndex['leaf-answer']!.evidenceIds = ['evidence-missing']; },
+    error: /dangling Evidence evidence-missing/i,
+  }, {
+    label: 'unknown Finding',
+    mutate: (document) => { document.traceIndex['leaf-answer']!.findingIds = ['finding-missing']; },
+    error: /dangling Finding finding-missing/i,
+  }, {
+    label: 'unknown Summary',
+    mutate: (document) => { document.traceIndex['leaf-answer']!.summaryIds = ['summary-missing']; },
+    error: /dangling Summary summary-missing/i,
+  }];
+
+  for (const candidate of cases) {
+    const document = packageReportDocumentV3();
+    candidate.mutate(document);
+    const fixture = setup({
+      reportDocument: document,
+      reportDocumentSchemaVersion: 'report-document-v3',
+    });
+    await assert.rejects(fixture.reader.read(binding), candidate.error, candidate.label);
+  }
+});
+
+test('rejects blocked visual exports from a v3 Document, semantic Manifest, and package', async () => {
+  const image = packageVerifiedVisualAsset(imageAssetId, imageManifestArtifactId, 'image/png');
+  image.manifest.exportPolicy = 'block';
+  const document = packageImageReportDocumentV3();
+  const fixture = setup({
+    reportDocument: document,
+    reportDocumentSchemaVersion: 'report-document-v3',
+    visualAssets: [image],
+  });
+
+  await assert.rejects(fixture.reader.read(binding), /export policy|blocked/i);
+  assert.throws(
+    () => parseControlDeliverableResponse({
+      presentationMode: 'multimodal',
+      deliverable: deliverable(),
+      evidenceManifest: manifest(),
+      reportReview: review(),
+      reportDocument: document,
+      reportDocumentContentSha256,
+      visualAssetManifests: [image.manifest],
+    }),
+    /export policy|blocked/i,
+  );
+});
+
+test('reader rejects v2 projection identity and coverage metadata drift', async () => {
+  const image = packageVerifiedVisualAsset(imageAssetId, imageManifestArtifactId, 'image/png');
+  const chart = packageVerifiedVisualAsset(chartAssetId, chartManifestArtifactId, 'image/svg+xml');
+  const payload = researchPlanPayload();
+  const projection = projectResearchPlan({
+    payload,
+    deliverableArtifactId,
+    requiredPointers: researchPlanRequiredPointers(),
+  });
+  const baseDocument: ReportDocument = {
+    ...packageReportDocument(),
+    version: 'report-document-v2',
+    sections: [...packageReportDocument().sections, ...projection.sections],
+    ...projection.coverage,
+  };
+  const wrongSource = setup({
+    deliverable: deliverable({ payload }),
+    reportDocument: { ...baseDocument, sourceDeliverableArtifactId: 'wrong-deliverable' },
+    reportDocumentSchemaVersion: 'report-document-v2',
+    visualAssets: [image, chart],
+  });
+  await assert.rejects(wrongSource.reader.read(binding), /identity mismatch/u);
+
+  const falseCoverage = setup({
+    deliverable: deliverable({ payload }),
+    reportDocument: { ...baseDocument, coveredPointers: baseDocument.coveredPointers?.slice(1) },
+    reportDocumentSchemaVersion: 'report-document-v2',
+    visualAssets: [image, chart],
+  });
+  await assert.rejects(falseCoverage.reader.read(binding), /do not match projection block provenance/u);
 });
 
 test('reads a mixed V2 browser image and V1 Chart package without rewriting either Manifest', async () => {
@@ -1589,6 +2283,7 @@ test('types multimodal packages with required ReportDocument and exact plural Vi
   ];
   const multimodalPackage: CurrentReportPackageResponse = {
     presentationMode: 'multimodal',
+    reportDocumentContentSha256: `sha256:${'a'.repeat(64)}`,
     deliverable: fullDeliverable,
     evidenceManifest: manifest(),
     reportReview: review() as ReportReviewArtifact & { verdict: 'pass' },
@@ -1689,6 +2384,16 @@ test('runtime package client validates text modes and fail-closes multimodal pac
     () => parseControlDeliverableResponse({ ...current, reportReview: review({ verdict: 'revise' }) }),
     /pass|verdict|review/i,
   );
+  assert.throws(
+    () => parseControlDeliverableResponse({
+      ...current,
+      reportPackage: {
+        version: 'report-package-v2',
+        reportPublicationId: 'publication-1',
+      },
+    }),
+    /current_text.*reportPackage/i,
+  );
 
   const image = packageVisualManifest(imageAssetId, 'image/png');
   const chart = packageVisualManifest(chartAssetId, 'image/svg+xml');
@@ -1696,6 +2401,7 @@ test('runtime package client validates text modes and fail-closes multimodal pac
     ...current,
     presentationMode: 'multimodal',
     reportDocument: packageReportDocument(),
+    reportDocumentContentSha256,
     visualAssetManifests: [image, chart],
   };
   assert.equal(parseControlDeliverableResponse(multimodal).presentationMode, 'multimodal');
@@ -1776,6 +2482,7 @@ test('runtime package client accepts only null-lineage V2 chart_render Manifests
     evidenceManifest: manifest(),
     reportReview: review(),
     reportDocument: packageReportDocument(),
+    reportDocumentContentSha256,
     visualAssetManifests: [image, chart],
   };
 

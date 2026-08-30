@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ReadableCurrentExecutionPlan } from '../../../../packages/api-contract/research-deliverable.ts';
 import {
   api,
   type ClarificationRequiredResponse,
@@ -16,6 +17,7 @@ import {
   type Upload,
 } from '../api/client.ts';
 import {
+  approvalSubmissionAllowed,
   beginClarificationSubmission,
   buildConfirmationAnswers,
   createClarificationSubmissionState,
@@ -67,6 +69,7 @@ function planView(
   response: ControlPlanCandidatesResponse,
   candidate: CurrentPlanCandidate,
 ): PlanResponse {
+  const readablePlan = candidate.plan as unknown as ReadableCurrentExecutionPlan;
   return {
     conversationId: response.conversationId,
     taskId: response.task.id,
@@ -76,6 +79,24 @@ function planView(
       steps: candidate.plan.steps,
       activated_nodes: response.activatedNodes,
       assumptions: response.structuredTask.assumptions,
+      ...(readablePlan.execution_contract_version
+        ? { execution_contract_version: readablePlan.execution_contract_version }
+        : {}),
+      ...(readablePlan.skill_invocations
+        ? { skill_invocations: readablePlan.skill_invocations }
+        : {}),
+      ...('capability_demand_graph' in readablePlan
+        ? { capability_demand_graph: readablePlan.capability_demand_graph }
+        : {}),
+      ...('contribution_requirements' in readablePlan
+        ? { contribution_requirements: readablePlan.contribution_requirements }
+        : {}),
+      ...('portfolio_summary' in readablePlan
+        ? { portfolio_summary: readablePlan.portfolio_summary }
+        : {}),
+      ...(readablePlan.capability_gaps
+        ? { capability_gaps: readablePlan.capability_gaps }
+        : {}),
     },
     pendingUploads: candidate.pendingInputs,
   };
@@ -109,7 +130,7 @@ function upsertPlanningProgress(
   return next;
 }
 
-export function useTaskFlow(actorRole?: string) {
+export function useTaskFlow() {
   const [clarification, setClarification] = useState<ClarificationRequiredResponse | null>(null);
   const [phase, setPhase] = useState<Phase>('idle');
   const [candidatesResp, setCandidatesResp] = useState<ControlPlanCandidatesResponse | null>(null);
@@ -130,6 +151,7 @@ export function useTaskFlow(actorRole?: string) {
   const [approvalSubmitting, setApprovalSubmitting] = useState(false);
   const [planRecovery, setPlanRecovery] = useState<ControlPlanRecovery | null>(null);
   const [revisionSubmitting, setRevisionSubmitting] = useState(false);
+  const [cancelSubmitting, setCancelSubmitting] = useState(false);
   const clarificationSubmission = useRef(createClarificationSubmissionState());
   const restoreGeneration = useRef(0);
   const [clarificationSubmitting, setClarificationSubmitting] = useState(false);
@@ -297,6 +319,7 @@ export function useTaskFlow(actorRole?: string) {
     setApprovalRequirements([]);
     setPlanRecovery(null);
     setRevisionSubmitting(false);
+    setCancelSubmitting(false);
   }
 
   async function submitInput(text: string) {
@@ -312,6 +335,7 @@ export function useTaskFlow(actorRole?: string) {
     setCurrentTaskId(null);
     setStateVersion(null);
     setOriginalInput(text);
+    setCancelSubmitting(false);
     setExec(null);
     setExecutionSteps([]);
     setExecutionPlanSteps([]);
@@ -493,9 +517,9 @@ export function useTaskFlow(actorRole?: string) {
     setError('');
     try {
       const answers = buildConfirmationAnswers(
-        confirmationRequirements('confirmations' in candidatesResp.structuredTask
-          ? candidatesResp.structuredTask.confirmations
-          : candidatesResp.structuredTask.clarification_questions),
+        'confirmations' in candidatesResp.structuredTask
+          ? confirmationRequirements(candidatesResp.structuredTask.confirmations)
+          : [],
         userAnswers,
       );
       const uploadsByRole = new Map<string, Array<{ dataUrl: string }>>();
@@ -559,12 +583,7 @@ export function useTaskFlow(actorRole?: string) {
   async function approveTask(gateKey: string): Promise<void> {
     if (!currentTaskId || !selectedCandidate || stateVersion == null) return;
     const requirement = approvalRequirements.find((item) => item.gateKey === gateKey);
-    if (
-      !requirement
-      || requirement.decision !== 'pending'
-      || !requirement.canApprove
-      || (actorRole !== undefined && requirement.requiredAuthority !== actorRole)
-    ) return;
+    if (!approvalSubmissionAllowed(requirement)) return;
 
     setApprovalSubmitting(true);
     setError('');
@@ -581,6 +600,25 @@ export function useTaskFlow(actorRole?: string) {
       setError(message(cause, '审批提交失败'));
     } finally {
       setApprovalSubmitting(false);
+    }
+  }
+
+  async function cancelExecution(): Promise<void> {
+    if (!candidatesResp || stateVersion == null || cancelSubmitting) return;
+    setCancelSubmitting(true);
+    setError('');
+    try {
+      const cancelled = await api.cancelControlPlan(candidatesResp.task.id, {
+        expectedVersion: stateVersion,
+        idempotencyKey: createRequestId(),
+      });
+      setStateVersion(cancelled.stateVersion);
+      setPhase('cancelled');
+      await refreshExecutionSteps(candidatesResp.task.id);
+    } catch (cause) {
+      setError(message(cause, '取消执行失败'));
+    } finally {
+      setCancelSubmitting(false);
     }
   }
 
@@ -646,6 +684,7 @@ export function useTaskFlow(actorRole?: string) {
     approvalSubmitting,
     planRecovery,
     revisionSubmitting,
+    cancelSubmitting,
     reset,
     openTask,
     submitInput,
@@ -654,6 +693,7 @@ export function useTaskFlow(actorRole?: string) {
     revisePlan,
     approveTask,
     startExecution,
+    cancelExecution,
     resumeStep,
     retryDeliverable,
   };

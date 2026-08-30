@@ -135,21 +135,23 @@ function retryableFailure(info: RetryErrorInfo): boolean {
 async function leaseActive(
   check: () => Promise<boolean>,
   context: ToolInvocationContext,
-): Promise<boolean> {
+): Promise<'active' | 'inactive' | 'deadline_exceeded'> {
   const remainingMs = context.deadlineAt - Date.now();
-  if (context.signal.aborted || remainingMs <= 0) return false;
+  if (context.signal.aborted) return 'inactive';
+  if (remainingMs <= 0) return 'deadline_exceeded';
 
   let timer: NodeJS.Timeout | undefined;
   let onAbort: (() => void) | undefined;
-  const interrupted = new Promise<false>((resolve) => {
-    onAbort = () => resolve(false);
+  const interrupted = new Promise<'inactive' | 'deadline_exceeded'>((resolve) => {
+    onAbort = () => resolve('inactive');
     context.signal.addEventListener('abort', onAbort, { once: true });
-    timer = setTimeout(() => resolve(false), remainingMs);
+    timer = setTimeout(() => resolve('deadline_exceeded'), remainingMs);
     if (context.signal.aborted) onAbort();
   });
   try {
     return await Promise.race([
-      check().catch(() => false),
+      check().then((active) => active ? 'active' as const : 'inactive' as const)
+        .catch(() => 'inactive' as const),
       interrupted,
     ]);
   } finally {
@@ -216,6 +218,14 @@ function abortedResult<T>(
     if (result.status === 'failed') result.failure.abortReason = reason;
     return result;
   }
+  return deadlineExceeded(attempts, maxAttempts, attemptReceipts);
+}
+
+function deadlineExceeded<T>(
+  attempts: number,
+  maxAttempts: number,
+  attemptReceipts: ToolRetryAttemptReceipt[],
+): ToolRetryResult<T> {
   return {
     status: 'failed',
     failure: {
@@ -225,7 +235,7 @@ function abortedResult<T>(
       attempts,
       maxAttempts,
       lastFailure: 'tool execution deadline exceeded',
-      abortReason: reason,
+      abortReason: 'deadline_exceeded',
     },
     attemptReceipts,
   };
@@ -258,10 +268,13 @@ export async function invokeWithRetry<T = unknown>(input: ToolRetryInput<T>): Pr
 
   const abortedBeforeLease = abortedResult<T>(invocation, 0, maxAttempts, attemptReceipts);
   if (abortedBeforeLease) return abortedBeforeLease;
-  const initiallyActive = await leaseActive(input.isLeaseActive, invocation);
+  const initialLeaseState = await leaseActive(input.isLeaseActive, invocation);
   const abortedAfterInitialLease = abortedResult<T>(invocation, 0, maxAttempts, attemptReceipts);
   if (abortedAfterInitialLease) return abortedAfterInitialLease;
-  if (!initiallyActive) {
+  if (initialLeaseState === 'deadline_exceeded') {
+    return deadlineExceeded(0, maxAttempts, attemptReceipts);
+  }
+  if (initialLeaseState === 'inactive') {
     signalLeaseLost(input.onLeaseLost);
     return leaseLost(0, maxAttempts, attemptReceipts) as ToolRetryResult<T>;
   }
@@ -320,20 +333,26 @@ export async function invokeWithRetry<T = unknown>(input: ToolRetryInput<T>): Pr
           attemptReceipts,
         };
       }
-      const activeBeforeBackoff = await leaseActive(input.isLeaseActive, invocation);
+      const leaseStateBeforeBackoff = await leaseActive(input.isLeaseActive, invocation);
       const abortedBeforeBackoff = abortedResult<T>(invocation, attempt, maxAttempts, attemptReceipts);
       if (abortedBeforeBackoff) return abortedBeforeBackoff;
-      if (!activeBeforeBackoff) {
+      if (leaseStateBeforeBackoff === 'deadline_exceeded') {
+        return deadlineExceeded(attempt, maxAttempts, attemptReceipts);
+      }
+      if (leaseStateBeforeBackoff === 'inactive') {
         signalLeaseLost(input.onLeaseLost);
         return leaseLost(attempt, maxAttempts, attemptReceipts) as ToolRetryResult<T>;
       }
       await sleepUntilBackoffOrAbort(input.sleep, backoffMs, invocation.signal);
       const abortedAfterBackoff = abortedResult<T>(invocation, attempt, maxAttempts, attemptReceipts);
       if (abortedAfterBackoff) return abortedAfterBackoff;
-      const activeAfterBackoff = await leaseActive(input.isLeaseActive, invocation);
+      const leaseStateAfterBackoff = await leaseActive(input.isLeaseActive, invocation);
       const abortedAfterFinalLease = abortedResult<T>(invocation, attempt, maxAttempts, attemptReceipts);
       if (abortedAfterFinalLease) return abortedAfterFinalLease;
-      if (!activeAfterBackoff) {
+      if (leaseStateAfterBackoff === 'deadline_exceeded') {
+        return deadlineExceeded(attempt, maxAttempts, attemptReceipts);
+      }
+      if (leaseStateAfterBackoff === 'inactive') {
         signalLeaseLost(input.onLeaseLost);
         return leaseLost(attempt, maxAttempts, attemptReceipts) as ToolRetryResult<T>;
       }

@@ -1,9 +1,26 @@
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { ControlExecutionLease } from '../../../../database/control-plane.ts';
 import type {
   EvidenceEntry,
   CurrentExecutionPlan,
+  CurrentExecutionPlanV3,
+  ContributionLedgerV1,
+  ContributionSummaryV1,
+  CrossSkillReviewV1,
+  ResearchContributionArtifactV1,
+  ResearchContributionBundleV1,
   ResearchDeliverableEnvelope,
+  ProblemGraph,
+  ResearchStrategyReportPayload,
+  ResearchStrategyReportPayloadV2,
+  ResearchStrategyContentDraftV2,
+  ResearchStrategyContentPatchV1,
+  ResearchStrategySupportPatchTarget,
+  ResearchStrategyRiskDisclosure,
 } from '../../../../packages/api-contract/research-deliverable.ts';
+import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
 import type {
   EvidenceArtifactResolver,
   EvidenceManifest,
@@ -11,12 +28,27 @@ import type {
 } from '../evidence/evidence-service.ts';
 import { ReportEvidenceValidator } from '../evidence/report-evidence-validator.ts';
 import {
+  buildResearchContributionBundle,
+  type ContributionBundleInvocationPolicy,
+} from '../skills/research-contribution-bundle.ts';
+import { contextOnlyContributionUnitKeys } from '../skills/contribution-adapter-registry.ts';
+import {
+  buildContributionSummary,
+  buildGenericReviewedContributionLedger,
+  buildReviewedContributionLedger,
+} from './multi-skill-content-fidelity.ts';
+import { validateContributionLedger } from './contribution-ledger.ts';
+import {
   type MaterializeStepOutput,
   type SynthesisMaterial,
   type SynthesisMaterializerLike,
 } from './synthesis-materializer.ts';
 import { redactSensitiveValue, redactString } from '../runtime/redaction.ts';
-import type { ReportReviewArtifact } from './report-review-service.ts';
+import { getConfigRoot } from '../runtime/config-loader.ts';
+import {
+  assertValidReportReviewArtifact,
+  type ReportReviewArtifact,
+} from './report-review-service.ts';
 import {
   resolveDeliverableContractById,
   resolveExecutionDeliverableContract,
@@ -24,6 +56,117 @@ import {
 import { sameBrowserSourceUrl } from '../runtime/public-web-access-policy.ts';
 import type { VerifiedVisualAnnotationBinding } from './report-composition-service.ts';
 import type { VerifiedVisualAsset } from './visual-asset-service.ts';
+import {
+  assembleResearchStrategyDeliverable,
+  extractResearchStrategyContentDraft,
+  isResearchStrategyPayloadV2,
+  researchStrategyContentDraftFromPayload,
+  ResearchStrategyAssemblyError,
+} from './research-strategy-deliverable-assembler.ts';
+import { createDeliverableValidationDiagnostic } from './deliverable-validation-diagnostic.ts';
+import { createContentFidelityDiagnostic } from './content-fidelity-diagnostic.ts';
+import {
+  assertSemanticRevisionFidelity,
+  assertStructuralRepairFidelity,
+  canonicalResearchStrategyDraftForFidelity,
+  compareResearchStrategyContentFidelity,
+  ResearchStrategyContentFidelityError,
+  type ResearchStrategyContentFidelityResult,
+} from './research-strategy-content-fidelity.ts';
+import { applyResearchStrategyContentPatch } from './research-strategy-content-patch.ts';
+import {
+  canonicalizeRequestedArtifactBindings,
+  validateResearchStrategyAnswer,
+} from './answer-quality-validator.ts';
+
+function researchStrategySupportPatchTargets(
+  draft: ResearchStrategyContentDraftV2,
+): ResearchStrategySupportPatchTarget[] {
+  const targets: ResearchStrategySupportPatchTarget[] = draft.evidenceFindings.map(({ key }) => ({
+    entity: 'evidence_finding',
+    key,
+  }));
+  for (const block of draft.contentBlocks) {
+    if (block.kind === 'narrative') {
+      targets.push({ entity: 'content_block', key: block.key });
+      continue;
+    }
+    let keys: string[];
+    if (block.kind === 'comparison_matrix' || block.kind === 'strategy_map') {
+      keys = block.cells.map(({ key }) => key);
+    } else if (block.kind === 'mind_model') {
+      keys = block.nodes.map(({ key }) => key);
+    } else if ('items' in block) {
+      keys = block.items.map(({ key }) => key);
+    } else {
+      continue;
+    }
+    targets.push(...keys.map((key) => ({
+      entity: 'content_item' as const,
+      blockKey: block.key,
+      key,
+    })));
+  }
+  return targets;
+}
+
+function supportTargetSchema(target: ResearchStrategySupportPatchTarget): object {
+  if (target.entity === 'content_item') {
+    return {
+      type: 'object',
+      additionalProperties: false,
+      required: ['entity', 'blockKey', 'key'],
+      properties: {
+        entity: { const: target.entity },
+        blockKey: { const: target.blockKey },
+        key: { const: target.key },
+      },
+    };
+  }
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['entity', 'key'],
+    properties: {
+      entity: { const: target.entity },
+      key: { const: target.key },
+    },
+  };
+}
+
+function researchStrategyPatchSchema(draft?: ResearchStrategyContentDraftV2): object {
+  const schema = JSON.parse(readFileSync(
+    join(getConfigRoot(), 'schemas/skills/research-strategy-content-patch-v1.schema.json'),
+    'utf8',
+  )) as { $defs?: Record<string, unknown> };
+  if (draft && schema.$defs) {
+    const targets = researchStrategySupportPatchTargets(draft);
+    schema.$defs.supportTarget = targets.length > 0
+      ? { oneOf: targets.map(supportTargetSchema) }
+      : { not: {} };
+  }
+  return schema;
+}
+
+function patchOperationAudits(value: unknown): string[] {
+  const patch = unknownRecord(value);
+  if (!patch || !Array.isArray(patch.operations)) return ['invalid_patch:operations_missing'];
+  return patch.operations.map((candidate, index) => {
+    const operation = unknownRecord(candidate);
+    if (!operation || typeof operation.op !== 'string') return `invalid_patch_operation:${index + 1}`;
+    const rawTarget = operation.target
+      ?? operation.questionId
+      ?? operation.blockKey
+      ?? unknownRecord(operation.block)?.key
+      ?? unknownRecord(operation.answer)?.questionId
+      ?? (operation.op === 'append_limitation' ? 'limitations' : operation.op === 'append_open_question' ? 'openQuestions' : 'unknown');
+    const target = redactString(typeof rawTarget === 'string' ? rawTarget : JSON.stringify(rawTarget)).slice(0, 200);
+    const issue = typeof operation.reviewIssueId === 'string' ? `:${operation.reviewIssueId}` : '';
+    const reason = typeof operation.reason === 'string' ? `:${redactString(operation.reason).slice(0, 160)}` : '';
+    return `${operation.op}:${target}${issue}${reason}`;
+  });
+}
+
 function createDeliverableDraftSchema(payloadSchema: object, strictContract: boolean) {
   return {
     type: 'object',
@@ -201,6 +344,7 @@ interface StructuredLlm {
     schema: object;
     schemaName: string;
     context?: object;
+    signal?: AbortSignal;
     receipt: {
       stage: string;
       attemptId?: string;
@@ -239,11 +383,83 @@ interface SealedEvidenceManifest {
   value: EvidenceManifest;
 }
 
+export interface ReviewedStrategyDraftPreviewV1 {
+  version: 'reviewed-strategy-draft-preview-v1';
+  canonical: false;
+  exportAllowed: false;
+  title: string;
+  executiveAnswer: string;
+  directAnswers: Array<{
+    questionId: string;
+    question: string;
+    answer: string;
+    answerStatus: string;
+  }>;
+  contentBlocks: Array<{
+    key: string;
+    kind: string;
+    title: string;
+    itemCount: number;
+  }>;
+  evidenceFindingCount: number;
+  limitationCount: number;
+  openQuestionCount: number;
+}
+
+function boundedPreviewText(value: string, maxLength: number): string {
+  return redactString(value).replace(/\s+/gu, ' ').trim().slice(0, maxLength);
+}
+
+function reviewedDraftPreview(draft: ResearchStrategyContentDraftV2): ReviewedStrategyDraftPreviewV1 {
+  const itemCount = (block: ResearchStrategyContentDraftV2['contentBlocks'][number]): number => {
+    if (block.kind === 'narrative') return 1;
+    if (block.kind === 'comparison_matrix' || block.kind === 'strategy_map') return block.cells.length;
+    if (block.kind === 'mind_model') return block.nodes.length + block.edges.length;
+    if ('items' in block) return block.items.length;
+    return 0;
+  };
+  return {
+    version: 'reviewed-strategy-draft-preview-v1',
+    canonical: false,
+    exportAllowed: false,
+    title: boundedPreviewText(draft.title, 240),
+    executiveAnswer: boundedPreviewText(draft.executiveAnswer, 1_200),
+    directAnswers: draft.directAnswers.map((answer) => ({
+      questionId: answer.questionId,
+      question: boundedPreviewText(answer.question, 300),
+      answer: boundedPreviewText(answer.answer, 1_200),
+      answerStatus: answer.answerStatus,
+    })),
+    contentBlocks: draft.contentBlocks.map((block) => ({
+      key: block.key,
+      kind: block.kind,
+      title: boundedPreviewText(block.title, 240),
+      itemCount: itemCount(block),
+    })),
+    evidenceFindingCount: draft.evidenceFindings.length,
+    limitationCount: draft.limitations.length,
+    openQuestionCount: draft.openQuestions.length,
+  };
+}
+
+export class ResearchStrategyDeliverableValidationError extends Error {
+  readonly draftPreview: ReviewedStrategyDraftPreviewV1;
+
+  constructor(error: unknown, draft: ResearchStrategyContentDraftV2) {
+    super(error instanceof Error ? error.message : String(error));
+    this.name = 'ResearchStrategyDeliverableValidationError';
+    this.draftPreview = reviewedDraftPreview(draft);
+  }
+}
+
 export interface CurrentDeliverableGenerateInput {
   task: { id: string };
   plan: {
     id: string;
     plan: Pick<CurrentExecutionPlan, 'deliverable_type'> & {
+      execution_contract_version?: 'current-execution-plan-v2' | 'current-execution-plan-v3';
+      skill_invocations?: CurrentExecutionPlanV3['skill_invocations'];
+      contribution_requirements?: CurrentExecutionPlanV3['contribution_requirements'];
       steps?: unknown[];
       capability_decisions?: unknown;
       capability_gaps?: unknown;
@@ -263,16 +479,30 @@ export interface CurrentDeliverableGenerateInput {
   revisionInstruction?: string;
   revisionRound?: 0 | 1;
   activeLease?: ControlExecutionLease;
+  cancellationSignal?: AbortSignal;
   visualAssets?: readonly VerifiedVisualAsset[];
   visualAnnotationBindings?: readonly VerifiedVisualAnnotationBinding[];
+  strategyDraftOverride?: ResearchStrategyContentDraftV2;
+  strategyFidelity?: {
+    mode: 'structural_repair' | 'semantic_revision';
+    sourceDraft: ResearchStrategyContentDraftV2;
+    result: ResearchStrategyContentFidelityResult;
+    repairOperations: string[];
+  };
 }
 
 export interface CurrentDeliverableGenerateResult {
   deliverable: DeliverableEnvelope;
   deliverableArtifactId: string;
+  crossSkillReviewArtifactId?: string;
+  contributionLedgerArtifactId?: string;
+  contributionSummaryArtifactId?: string;
 }
+
 export interface CurrentDeliverableRevisionInput extends CurrentDeliverableGenerateInput {
   review: ReportReviewArtifact;
+  reviewArtifactId: string;
+  currentDeliverable?: ResearchDeliverableEnvelope<unknown>;
 }
 
 function unknownRecord(value: unknown): Record<string, unknown> | null {
@@ -1015,6 +1245,7 @@ function assertRequiredCoverage(
 const CAPABILITY_TYPE_BY_OUTPUT_KIND: Record<string, string> = {
   tool_output: 'tool',
   skill_output: 'skill',
+  research_contribution: 'skill',
   llm_output: 'llm',
   review_output: 'reviewer',
 };
@@ -1047,6 +1278,162 @@ function sealedOutputData(outputs: unknown[]): {
     provenance.push({ id: output.actorId, type });
   }
   return { references, provenance };
+}
+
+function riskKey(value: string): string {
+  return createHash('sha256').update(value.normalize('NFKC').trim()).digest('hex').slice(0, 16);
+}
+
+function reviewerConditionStatements(materials: readonly SynthesisMaterial[]): Array<{
+  sourceId: string;
+  conditionId: string;
+  statement: string;
+  disposition: 'limitation' | 'open_question';
+}> {
+  const result: Array<{
+    sourceId: string;
+    conditionId: string;
+    statement: string;
+    disposition: 'limitation' | 'open_question';
+  }> = [];
+  for (const material of materials.filter(({ semanticRole }) => semanticRole === 'review')) {
+    const review = unknownRecord(material.value);
+    if (review?.version !== 'reviewer-step-output-v1') continue;
+    if (!Array.isArray(review.conditions)) {
+      throw new Error(`structured reviewer Artifact ${material.artifactId} has no conditions array`);
+    }
+    for (const value of review.conditions) {
+      const condition = unknownRecord(value);
+      if (
+        !condition
+        || typeof condition.id !== 'string'
+        || !condition.id.trim()
+        || typeof condition.statement !== 'string'
+        || !condition.statement.trim()
+        || (condition.disposition !== 'limitation' && condition.disposition !== 'open_question')
+      ) {
+        throw new Error(`structured reviewer Artifact ${material.artifactId} has a malformed condition`);
+      }
+      result.push({
+        sourceId: material.artifactId,
+        conditionId: condition.id,
+        statement: condition.statement.trim(),
+        disposition: condition.disposition,
+      });
+    }
+  }
+  return result;
+}
+
+export function collectRequiredRiskDisclosures(input: {
+  requirement: ResearchTaskV2;
+  gaps: readonly string[];
+  materials: readonly SynthesisMaterial[];
+  envelopeRisks: readonly string[];
+  revisionInstruction?: string;
+}): ResearchStrategyRiskDisclosure[] {
+  const disclosures: ResearchStrategyRiskDisclosure[] = [];
+  for (const ambiguity of input.requirement.ambiguities) {
+    disclosures.push({
+      id: `risk-requirement-${ambiguity.id}`,
+      sourceType: 'requirement_ambiguity',
+      sourceId: ambiguity.id,
+      statement: ambiguity.statement,
+      disposition: ambiguity.blocking ? 'open_question' : 'limitation',
+    });
+  }
+  for (const gap of input.gaps) {
+    const sourceId = riskKey(gap);
+    disclosures.push({ id: `risk-gap-${sourceId}`, sourceType: 'skill_degraded_gap', sourceId, statement: gap, disposition: 'limitation' });
+  }
+  for (const condition of reviewerConditionStatements(input.materials)) {
+    disclosures.push({
+      id: `risk-reviewer-${riskKey(`${condition.sourceId}:${condition.conditionId}:${condition.statement}`)}`,
+      sourceType: 'reviewer_condition',
+      sourceId: `${condition.sourceId}:${condition.conditionId}`,
+      statement: condition.statement,
+      disposition: condition.disposition,
+    });
+  }
+  if (input.revisionInstruction?.trim()) {
+    const statement = input.revisionInstruction.trim();
+    const sourceId = riskKey(statement);
+    disclosures.push({ id: `risk-review-${sourceId}`, sourceType: 'reviewer_condition', sourceId, statement, disposition: 'limitation' });
+  }
+  for (const risk of input.envelopeRisks) {
+    const sourceId = riskKey(risk);
+    disclosures.push({ id: `risk-envelope-${sourceId}`, sourceType: 'envelope_risk', sourceId, statement: risk, disposition: 'limitation' });
+  }
+  const unique = new Map(disclosures.map((item) => [`${item.sourceType}:${item.sourceId}`, item]));
+  return [...unique.values()];
+}
+
+function contributionBundleForPlan(input: {
+  taskId: string;
+  planVersionId: string;
+  attemptId: string;
+  plan: CurrentDeliverableGenerateInput['plan']['plan'];
+  materials: readonly SynthesisMaterial[];
+}): {
+  bundle: ResearchContributionBundleV1;
+  requirements: CurrentExecutionPlanV3['contribution_requirements'];
+  synthesisArtifactId: string;
+  nonAttributableSourceUnitIds: ReadonlySet<string>;
+} | null {
+  if (input.plan.execution_contract_version !== 'current-execution-plan-v3') return null;
+  const invocations = input.plan.skill_invocations ?? [];
+  const policies = new Map<string, ContributionBundleInvocationPolicy>(invocations.map((invocation) => [
+    invocation.invocation_id,
+    {
+      invocationId: invocation.invocation_id,
+      skillId: invocation.skill_id,
+      role: invocation.role,
+      required: invocation.required,
+      failurePolicy: invocation.failure_policy,
+      dependsOnInvocationIds: [...invocation.depends_on_invocation_ids],
+    },
+  ]));
+  const synthesizer = invocations.find(({ role }) => role === 'synthesizer');
+  if (!synthesizer) throw new Error('Plan v3 has no Synthesizer invocation');
+  const synthesisMaterial = input.materials.find(({ actorType, actorId }) => (
+    actorType === 'skill' && actorId === synthesizer.skill_id
+  ));
+  if (!synthesisMaterial) throw new Error('Plan v3 has no sealed Synthesizer material');
+  const orderedInvocationIds = invocations
+    .filter(({ role }) => role === 'contributor')
+    .map(({ invocation_id }) => invocation_id);
+  const nonAttributableSourceUnitIds = new Set<string>();
+  const valuesByInvocationId = Object.fromEntries(orderedInvocationIds.map((invocationId) => {
+    const material = input.materials.find(({ value }) => {
+      const artifact = unknownRecord(value) as ResearchContributionArtifactV1 | null;
+      return artifact?.version === 'research-contribution-artifact-v1'
+        && artifact.contribution.invocationId === invocationId;
+    });
+    if (!material) return [invocationId, null];
+    const artifact = material.value as ResearchContributionArtifactV1;
+    for (const unitKey of contextOnlyContributionUnitKeys(artifact)) {
+      nonAttributableSourceUnitIds.add(`${material.artifactId}:${unitKey}`);
+    }
+    return [invocationId, {
+      artifactId: material.artifactId,
+      artifactContentSha256: material.artifactContentSha256,
+      contribution: artifact.contribution,
+    }];
+  }));
+  return {
+    bundle: buildResearchContributionBundle({
+      taskId: input.taskId,
+      planVersionId: input.planVersionId,
+      attemptId: input.attemptId,
+      orderedInvocationIds,
+      valuesByInvocationId,
+      policiesByInvocationId: policies,
+      synthesizerInvocationId: synthesizer.invocation_id,
+    }),
+    requirements: input.plan.contribution_requirements ?? [],
+    synthesisArtifactId: synthesisMaterial.artifactId,
+    nonAttributableSourceUnitIds,
+  };
 }
 
 export class CurrentDeliverableService {
@@ -1107,6 +1494,25 @@ export class CurrentDeliverableService {
           evidenceEntries: evidenceManifest.entries,
         })
       : [];
+    const portfolioContribution = contributionBundleForPlan({
+      taskId: input.task.id,
+      planVersionId: input.plan.id,
+      attemptId: input.attempt.id,
+      plan: input.plan.plan,
+      materials: synthesisMaterials,
+    });
+    const strategyRequirement = contract.entry.id === 'research_strategy_report'
+      ? input.finalizedRequirement as ResearchTaskV2
+      : null;
+    const preSynthesisRiskDisclosures = strategyRequirement
+      ? collectRequiredRiskDisclosures({
+          requirement: strategyRequirement,
+          gaps: sanitizedGaps,
+          materials: synthesisMaterials,
+          envelopeRisks: sanitizedGaps,
+          revisionInstruction: input.revisionInstruction,
+        })
+      : [];
     const matrixContract = strictV2 && contract.entry.id === 'competitive_analysis_report'
       ? competitiveMatrixContract(synthesisMaterials, input.plan.plan)
       : undefined;
@@ -1121,6 +1527,366 @@ export class CurrentDeliverableService {
     const requiredCoverage = strictV2
       ? coverageRequirements(input.finalizedRequirement, input.problemGraph)
       : undefined;
+    const strategySkillStepNo = synthesisMaterials.find(({ actorType, actorId }) => (
+      actorType === 'skill' && actorId === 'research-strategy-synthesis'
+    ))?.stepNo ?? Number.POSITIVE_INFINITY;
+    if (contract.synthesisMode === 'reviewed_skill_assembly') {
+      if (!strategyRequirement || !requiredCoverage) {
+        throw new Error('reviewed Skill assembly requires a finalized research strategy requirement');
+      }
+      let deliverable: ResearchDeliverableEnvelope<ResearchStrategyReportPayloadV2> | null = null;
+      let draftOverride = input.strategyDraftOverride;
+      const extractedDraft = draftOverride ?? extractResearchStrategyContentDraft(synthesisMaterials);
+      const sourceDraft = extractedDraft;
+      let strategyFidelity: {
+        mode: 'none' | 'structural_repair' | 'semantic_revision';
+        sourceDraft: ResearchStrategyContentDraftV2;
+        result: ResearchStrategyContentFidelityResult;
+        repairOperations: string[];
+      };
+      const assemblyAttempts = draftOverride ? 1 : 2;
+      const persistAssemblyDiagnostic = async (
+        assemblyRound: number,
+        error: unknown,
+        fallbackApplied: boolean,
+      ): Promise<void> => {
+        const round = (input.revisionRound ?? 0) + assemblyRound;
+        const diagnostic = createDeliverableValidationDiagnostic({
+          taskId: input.task.id,
+          planVersionId: input.plan.id,
+          attemptId: input.attempt.id,
+          stage: 'canonical_assembly',
+          round,
+          error,
+          fallbackApplied,
+        });
+        this.dependencies.validator.validateFileOrThrow(
+          'schemas/deliverable-validation-diagnostic.schema.json',
+          diagnostic,
+        );
+        try {
+          await this.dependencies.artifacts.writeJson({
+            taskId: input.task.id,
+            planVersionId: input.plan.id,
+            attemptId: input.attempt.id,
+            kind: 'deliverable_validation_diagnostic',
+            relativePath: `diagnostics/deliverable-validation-r${round}.json`,
+            schemaVersion: diagnostic.version,
+            sensitivity: 'internal',
+            redactionPolicyVersion: 'v1',
+            activeLease: input.activeLease,
+            value: diagnostic,
+          });
+        } catch {
+          // Diagnostics are best-effort and must not hide the authoritative validation failure.
+        }
+      };
+      const persistFidelityDiagnostic = async (inputDiagnostic: {
+        round: number;
+        mode: 'none' | 'structural_repair' | 'semantic_revision';
+        result: ResearchStrategyContentFidelityResult;
+        repairOperations: readonly string[];
+      }): Promise<void> => {
+        const diagnostic = createContentFidelityDiagnostic({
+          taskId: input.task.id,
+          planVersionId: input.plan.id,
+          attemptId: input.attempt.id,
+          round: inputDiagnostic.round,
+          mode: inputDiagnostic.mode,
+          result: inputDiagnostic.result,
+          normalizationOperations: ['deterministic_reference_and_binding_normalization'],
+          repairOperations: inputDiagnostic.repairOperations,
+        });
+        this.dependencies.validator.validateFileOrThrow(
+          'schemas/content-fidelity-diagnostic.schema.json',
+          diagnostic,
+        );
+        await this.dependencies.artifacts.writeJson({
+          taskId: input.task.id,
+          planVersionId: input.plan.id,
+          attemptId: input.attempt.id,
+          kind: 'content_fidelity_diagnostic',
+          relativePath: `diagnostics/content-fidelity-r${inputDiagnostic.round}.json`,
+          schemaVersion: diagnostic.version,
+          sensitivity: 'internal',
+          redactionPolicyVersion: 'v1',
+          activeLease: input.activeLease,
+          value: diagnostic,
+        });
+      };
+      try {
+        strategyFidelity = input.strategyFidelity ?? {
+          mode: 'none',
+          sourceDraft,
+          result: compareResearchStrategyContentFidelity(sourceDraft, sourceDraft),
+          repairOperations: [],
+        };
+      } catch (fidelityError) {
+        if (fidelityError instanceof ResearchStrategyContentFidelityError) {
+          await persistAssemblyDiagnostic(0, fidelityError, false);
+          await persistFidelityDiagnostic({
+            round: input.revisionRound ?? 0,
+            mode: input.strategyFidelity?.mode ?? 'none',
+            result: fidelityError.result,
+            repairOperations: input.strategyFidelity?.repairOperations ?? [],
+          });
+        }
+        throw new ResearchStrategyDeliverableValidationError(fidelityError, sourceDraft);
+      }
+      for (let assemblyRound = 0; assemblyRound < assemblyAttempts; assemblyRound += 1) {
+        try {
+          deliverable = assembleResearchStrategyDeliverable({
+            taskId: input.task.id,
+            planVersionId: input.plan.id,
+            attemptId: input.attempt.id,
+            evidenceManifestArtifactId: input.evidenceManifest.artifact.id,
+            requirement: strategyRequirement,
+            problemGraph: input.problemGraph as ProblemGraph,
+            evidenceManifest,
+            materials: synthesisMaterials,
+            ...(draftOverride || portfolioContribution
+              ? { draftOverride: draftOverride ?? sourceDraft }
+              : {}),
+            requiredRiskDisclosures: preSynthesisRiskDisclosures,
+            capabilityProvenance: outputData.provenance,
+            validator: this.dependencies.validator,
+          });
+          if (!isResearchStrategyPayloadV2(deliverable.payload)) {
+            throw new Error('reviewed Skill assembly did not produce research strategy payload v2');
+          }
+          assertRequiredCoverage(deliverable.coverage, requiredCoverage);
+          this.reportValidator.validate({
+            manifest: evidenceManifest,
+            report: deliverable,
+            resolver: input.evidenceResolver,
+            requireCoverage: true,
+            validatePayloadSchema: true,
+          });
+          break;
+        } catch (error) {
+          const repairable = assemblyRound === 0
+            && draftOverride === undefined
+            && error instanceof ResearchStrategyAssemblyError
+            && !/Reviewer verdict|no final Reviewer/u.test(error.message);
+          if (repairable) {
+            await persistAssemblyDiagnostic(assemblyRound, error, true);
+            const originalDraft = sourceDraft;
+            const allowedSupportTargets = researchStrategySupportPatchTargets(originalDraft);
+            const patchSchema = researchStrategyPatchSchema(originalDraft);
+            const repaired = await this.dependencies.llm.generateStructured<ResearchStrategyContentPatchV1>({
+              prompt: [
+                'Return one research-strategy-content-patch-v1 in structural_repair mode.',
+                'Repair the reviewed Content Draft without rewriting, deleting, or reordering existing semantic content.',
+                'Use replace_direct_answer_binding or replace_support for binding corrections. Use append operations only for genuinely missing required content.',
+                'Use replace_support only with an exact context.allowedSupportTargets entry. content_block is valid only for narrative Blocks; matrix cells, mind-model nodes, principles, opportunities, actions, and channels must use content_item with the exact blockKey and item key.',
+                'Do not use replace_semantic_text in structural_repair mode.',
+                'Use only the exact allowed Question and Evidence IDs supplied in context.',
+                'The allowedEvidence list is the authoritative final Evidence inventory. evidenceBindingSources contains upstream question-indexed citations; use it to restore missing bindings instead of claiming that the Evidence Manifest is unavailable.',
+                'Every non-unanswered Direct Answer, Evidence Finding, and requested content Block must retain relevant Evidence. Keep interpretive claims provisional even when attaching factual context.',
+                `Correct this validation failure: ${redactString(error.message)}`,
+              ].join('\n'),
+              schema: patchSchema,
+              schemaName: 'research-strategy-content-patch-v1',
+              context: {
+                draft: redactSensitiveValue(originalDraft),
+                allowedQuestionIds: (input.problemGraph as ProblemGraph).questions.map(({ id }) => id),
+                allowedEvidence: evidenceManifest.entries.map(({ id, evidenceClass, sourceUrl }) => ({
+                  id,
+                  evidenceClass,
+                  ...(sourceUrl ? { sourceUrl } : {}),
+                })),
+                evidenceBindingSources: synthesisMaterials
+                  .filter(({ actorType, stepNo }) => actorType === 'llm' && stepNo < strategySkillStepNo)
+                  .sort((left, right) => left.stepNo - right.stepNo)
+                  .slice(0, 2)
+                  .map(({ stepNo, questionIds, value }) => ({
+                    stepNo,
+                    questionIds,
+                    value: redactSensitiveValue(value),
+                  })),
+                requestedArtifacts: strategyRequirement.requested_artifacts ?? [],
+                allowedSupportTargets,
+              },
+              ...(input.cancellationSignal ? { signal: input.cancellationSignal } : {}),
+              receipt: {
+                stage: 'deliverable_repair',
+                attemptId: input.attempt.id,
+                stepNo: input.stepNo ?? (input.plan.plan.steps?.length ?? 0) + 1,
+                expectedModel: input.expectedModel,
+              },
+            });
+            const repairOperations = patchOperationAudits(repaired.data);
+            let applied: ReturnType<typeof applyResearchStrategyContentPatch>;
+            try {
+              this.dependencies.validator.validateSchemaOrThrow(
+                patchSchema,
+                repaired.data,
+                'research-strategy-content-patch-v1',
+              );
+              applied = applyResearchStrategyContentPatch({
+                source: originalDraft,
+                patch: repaired.data,
+                mode: 'structural_repair',
+                problemGraph: input.problemGraph as ProblemGraph,
+                evidenceManifest,
+                requestedArtifacts: strategyRequirement.requested_artifacts ?? [],
+              });
+            } catch (patchError) {
+              await persistAssemblyDiagnostic(assemblyRound + 1, patchError, false);
+              await persistFidelityDiagnostic({
+                round: (input.revisionRound ?? 0) + assemblyRound + 1,
+                mode: 'structural_repair',
+                result: patchError instanceof ResearchStrategyContentFidelityError
+                  ? patchError.result
+                  : compareResearchStrategyContentFidelity(originalDraft, originalDraft),
+                repairOperations,
+              });
+              throw new ResearchStrategyDeliverableValidationError(patchError, originalDraft);
+            }
+            draftOverride = applied.draft;
+            strategyFidelity = {
+              mode: 'structural_repair',
+              sourceDraft: originalDraft,
+              result: applied.fidelity,
+              repairOperations,
+            };
+            continue;
+          }
+          await persistAssemblyDiagnostic(assemblyRound, error, false);
+          await persistFidelityDiagnostic({
+            round: (input.revisionRound ?? 0) + assemblyRound,
+            mode: strategyFidelity.mode,
+            result: strategyFidelity.result,
+            repairOperations: strategyFidelity.repairOperations,
+          });
+          throw new ResearchStrategyDeliverableValidationError(error, draftOverride ?? sourceDraft);
+        }
+      }
+      if (!deliverable) throw new Error('research strategy assembly exhausted without a validated result');
+      const canonicalDraft = canonicalResearchStrategyDraftForFidelity(
+        strategyFidelity.sourceDraft,
+        deliverable.payload,
+        deliverable.methodSummary,
+      );
+      let canonicalFidelity: ResearchStrategyContentFidelityResult;
+      try {
+        canonicalFidelity = strategyFidelity.mode === 'semantic_revision'
+          ? assertSemanticRevisionFidelity(
+              strategyFidelity.sourceDraft,
+              canonicalDraft,
+              new Set(strategyFidelity.result.changedSemanticUnitKeys),
+            )
+          : assertStructuralRepairFidelity(strategyFidelity.sourceDraft, canonicalDraft);
+      } catch (fidelityError) {
+        if (fidelityError instanceof ResearchStrategyContentFidelityError) {
+          await persistAssemblyDiagnostic(0, fidelityError, false);
+          await persistFidelityDiagnostic({
+            round: input.revisionRound ?? 0,
+            mode: strategyFidelity.mode,
+            result: fidelityError.result,
+            repairOperations: strategyFidelity.repairOperations,
+          });
+        }
+        throw new ResearchStrategyDeliverableValidationError(fidelityError, strategyFidelity.sourceDraft);
+      }
+      strategyFidelity = { ...strategyFidelity, result: canonicalFidelity };
+      await persistFidelityDiagnostic({
+        round: input.revisionRound ?? 0,
+        mode: strategyFidelity.mode,
+        result: strategyFidelity.result,
+        repairOperations: strategyFidelity.repairOperations,
+      });
+      let crossSkillReviewArtifactId: string | undefined;
+      let contributionLedgerArtifactId: string | undefined;
+      let contributionSummaryArtifactId: string | undefined;
+      if (portfolioContribution) {
+        const reviewed = buildReviewedContributionLedger({
+          bundle: portfolioContribution.bundle,
+          canonical: deliverable.payload,
+          contributionRequirements: portfolioContribution.requirements,
+          synthesisArtifactId: portfolioContribution.synthesisArtifactId,
+          nonAttributableSourceUnitIds: portfolioContribution.nonAttributableSourceUnitIds,
+        });
+        this.dependencies.validator.validateFileOrThrow(
+          'schemas/cross-skill-review-v1.schema.json',
+          reviewed.review,
+        );
+        this.dependencies.validator.validateFileOrThrow(
+          'schemas/contribution-ledger-v1.schema.json',
+          reviewed.ledger,
+        );
+        validateContributionLedger({
+          ledger: reviewed.ledger,
+          sources: portfolioContribution.bundle.entries.map((entry) => ({
+            contributionArtifactId: entry.artifactId,
+            contribution: entry.contribution,
+          })),
+        });
+        const summary = buildContributionSummary(portfolioContribution.bundle, reviewed.ledger);
+        this.dependencies.validator.validateFileOrThrow(
+          'schemas/contribution-summary-v1.schema.json',
+          summary,
+        );
+        const crossSkillReviewArtifact = await this.dependencies.artifacts.writeJson({
+          taskId: input.task.id,
+          planVersionId: input.plan.id,
+          attemptId: input.attempt.id,
+          kind: 'cross_skill_review',
+          relativePath: `reviews/cross-skill-review-r${input.revisionRound ?? 0}.json`,
+          schemaVersion: reviewed.review.version,
+          sensitivity: 'internal',
+          redactionPolicyVersion: 'v1',
+          activeLease: input.activeLease,
+          value: reviewed.review,
+        });
+        const ledgerArtifact = await this.dependencies.artifacts.writeJson({
+          taskId: input.task.id,
+          planVersionId: input.plan.id,
+          attemptId: input.attempt.id,
+          kind: 'contribution_ledger',
+          relativePath: `deliverables/contribution-ledger-r${input.revisionRound ?? 0}.json`,
+          schemaVersion: reviewed.ledger.version,
+          sensitivity: 'internal',
+          redactionPolicyVersion: 'v1',
+          activeLease: input.activeLease,
+          value: reviewed.ledger,
+        });
+        const summaryArtifact = await this.dependencies.artifacts.writeJson({
+          taskId: input.task.id,
+          planVersionId: input.plan.id,
+          attemptId: input.attempt.id,
+          kind: 'contribution_summary',
+          relativePath: `deliverables/contribution-summary-r${input.revisionRound ?? 0}.json`,
+          schemaVersion: summary.version,
+          sensitivity: 'internal',
+          redactionPolicyVersion: 'v1',
+          activeLease: input.activeLease,
+          value: summary,
+        });
+        crossSkillReviewArtifactId = crossSkillReviewArtifact.id;
+        contributionLedgerArtifactId = ledgerArtifact.id;
+        contributionSummaryArtifactId = summaryArtifact.id;
+      }
+      const artifact = await this.dependencies.artifacts.writeJson({
+        taskId: input.task.id,
+        planVersionId: input.plan.id,
+        attemptId: input.attempt.id,
+        kind: 'deliverable',
+        relativePath: `deliverables/final-r${input.revisionRound ?? 0}.json`,
+        schemaVersion: `${contract.entry.envelope_version}-review-gated`,
+        sensitivity: 'internal',
+        redactionPolicyVersion: 'v1',
+        activeLease: input.activeLease,
+        value: deliverable,
+      });
+      return {
+        deliverable,
+        deliverableArtifactId: artifact.id,
+        ...(crossSkillReviewArtifactId ? { crossSkillReviewArtifactId } : {}),
+        ...(contributionLedgerArtifactId ? { contributionLedgerArtifactId } : {}),
+        ...(contributionSummaryArtifactId ? { contributionSummaryArtifactId } : {}),
+      };
+    }
     const producerVisualInventory = visualInventory?.assets.map((asset) => ({
       assetId: asset.artifact.id,
       role: visualInventory?.roles.get(asset.artifact.id),
@@ -1174,6 +1940,7 @@ export class CurrentDeliverableService {
       verifiedEvidence,
       synthesisMaterials,
       gaps: sanitizedGaps,
+      requiredRiskDisclosures: preSynthesisRiskDisclosures,
     };
     const lastEvidenceStep = evidenceManifest.entries.reduce(
       (maximum, entry) => Math.max(maximum, entry.stepNo ?? 0),
@@ -1204,6 +1971,9 @@ export class CurrentDeliverableService {
                     + (displayableInventory.length > 0
                       ? ' Select at least one visualEvidence item from context.displayableVisualInventory. Each item must use existing competitor sample ids, an exact dimensionMatrix dimension, and include both one listed screenshotEvidenceId and one listed publicSourceEvidenceId for that Asset.'
                       : ' No Asset has both exact screenshot and matching public-source Evidence, so return an empty visualEvidence array.')))
+          + (portfolioContribution
+            ? '\nThis is a multi-Skill synthesis. Preserve every required Contribution unit statement verbatim in a FindingGraph node reachable from the matching coverage.questionBindings summary; otherwise the exact-once fidelity gate will reject the draft.'
+            : '')
           + (input.revisionInstruction ? '\nAddress the review issues in the revision instruction.' : '')
           + (validationFeedback.length > 0
             ? `\nThe previous draft failed schema validation. Correct every issue: ${validationFeedback.join('; ')}`
@@ -1213,6 +1983,7 @@ export class CurrentDeliverableService {
         context: validationFeedback.length > 0
           ? { ...context, validationFeedback }
           : context,
+        ...(input.cancellationSignal ? { signal: input.cancellationSignal } : {}),
         receipt: {
           stage: 'deliverable',
           attemptId: input.attempt.id,
@@ -1243,7 +2014,18 @@ export class CurrentDeliverableService {
         : generatedDraft;
       try {
         this.dependencies.validator.validateSchemaOrThrow(draftSchema, contentDraft, schemaName);
-        const draft = contentDraft as DeliverableDraft;
+        const validatedDraft = contentDraft as DeliverableDraft;
+        let draft = validatedDraft;
+        if (strategyRequirement) {
+          draft = {
+            ...validatedDraft,
+            payload: canonicalizeRequestedArtifactBindings(
+              validatedDraft.payload as ResearchStrategyReportPayload,
+              strategyRequirement,
+            ),
+          };
+          this.dependencies.validator.validateSchemaOrThrow(draftSchema, draft, schemaName);
+        }
         if (strictV2 && requiredCoverage) assertRequiredCoverage(draft.coverage, requiredCoverage);
         if (strictV2) {
           assertPayloadVisualReferences(
@@ -1277,6 +2059,23 @@ export class CurrentDeliverableService {
           capabilityProvenance: outputData.provenance,
         };
         if (strictV2) this.dependencies.validator.validateFileOrThrow(contract.payloadSchemaPath, candidate.payload);
+        if (contract.entry.id === 'research_strategy_report') {
+          const expectedRiskDisclosures = collectRequiredRiskDisclosures({
+            requirement: input.finalizedRequirement as ResearchTaskV2,
+            gaps: sanitizedGaps,
+            materials: synthesisMaterials,
+            envelopeRisks: risksAndOpenIssues,
+            revisionInstruction: input.revisionInstruction,
+          });
+          validateResearchStrategyAnswer({
+            payload: candidate.payload as ResearchStrategyReportPayload,
+            requirement: input.finalizedRequirement as ResearchTaskV2,
+            problemGraph: input.problemGraph as ProblemGraph,
+            evidenceIds: evidenceManifest.entries.map(({ id }) => id),
+            risksAndOpenIssues,
+            requiredRiskDisclosures: expectedRiskDisclosures,
+          });
+        }
         this.reportValidator.validate({
           manifest: evidenceManifest,
           report: candidate,
@@ -1293,6 +2092,77 @@ export class CurrentDeliverableService {
     }
     if (!deliverable) throw new Error('deliverable generation exhausted without a validated result');
 
+    let crossSkillReviewArtifactId: string | undefined;
+    let contributionLedgerArtifactId: string | undefined;
+    let contributionSummaryArtifactId: string | undefined;
+    if (portfolioContribution) {
+      const reviewed = buildGenericReviewedContributionLedger({
+        bundle: portfolioContribution.bundle,
+        deliverable,
+        contributionRequirements: portfolioContribution.requirements,
+        synthesisArtifactId: portfolioContribution.synthesisArtifactId,
+      });
+      this.dependencies.validator.validateFileOrThrow(
+        'schemas/cross-skill-review-v1.schema.json',
+        reviewed.review,
+      );
+      this.dependencies.validator.validateFileOrThrow(
+        'schemas/contribution-ledger-v1.schema.json',
+        reviewed.ledger,
+      );
+      validateContributionLedger({
+        ledger: reviewed.ledger,
+        sources: portfolioContribution.bundle.entries.map((entry) => ({
+          contributionArtifactId: entry.artifactId,
+          contribution: entry.contribution,
+        })),
+      });
+      const summary = buildContributionSummary(portfolioContribution.bundle, reviewed.ledger);
+      this.dependencies.validator.validateFileOrThrow(
+        'schemas/contribution-summary-v1.schema.json',
+        summary,
+      );
+      const reviewArtifact = await this.dependencies.artifacts.writeJson({
+        taskId: input.task.id,
+        planVersionId: input.plan.id,
+        attemptId: input.attempt.id,
+        kind: 'cross_skill_review',
+        relativePath: `reviews/cross-skill-review-r${input.revisionRound ?? 0}.json`,
+        schemaVersion: reviewed.review.version,
+        sensitivity: 'internal',
+        redactionPolicyVersion: 'v1',
+        activeLease: input.activeLease,
+        value: reviewed.review,
+      });
+      const ledgerArtifact = await this.dependencies.artifacts.writeJson({
+        taskId: input.task.id,
+        planVersionId: input.plan.id,
+        attemptId: input.attempt.id,
+        kind: 'contribution_ledger',
+        relativePath: `deliverables/contribution-ledger-r${input.revisionRound ?? 0}.json`,
+        schemaVersion: reviewed.ledger.version,
+        sensitivity: 'internal',
+        redactionPolicyVersion: 'v1',
+        activeLease: input.activeLease,
+        value: reviewed.ledger,
+      });
+      const summaryArtifact = await this.dependencies.artifacts.writeJson({
+        taskId: input.task.id,
+        planVersionId: input.plan.id,
+        attemptId: input.attempt.id,
+        kind: 'contribution_summary',
+        relativePath: `deliverables/contribution-summary-r${input.revisionRound ?? 0}.json`,
+        schemaVersion: summary.version,
+        sensitivity: 'internal',
+        redactionPolicyVersion: 'v1',
+        activeLease: input.activeLease,
+        value: summary,
+      });
+      crossSkillReviewArtifactId = reviewArtifact.id;
+      contributionLedgerArtifactId = ledgerArtifact.id;
+      contributionSummaryArtifactId = summaryArtifact.id;
+    }
+
     const artifact = await this.dependencies.artifacts.writeJson({
       taskId: input.task.id,
       planVersionId: input.plan.id,
@@ -1308,15 +2178,172 @@ export class CurrentDeliverableService {
     return {
       deliverable,
       deliverableArtifactId: artifact.id,
+      ...(crossSkillReviewArtifactId ? { crossSkillReviewArtifactId } : {}),
+      ...(contributionLedgerArtifactId ? { contributionLedgerArtifactId } : {}),
+      ...(contributionSummaryArtifactId ? { contributionSummaryArtifactId } : {}),
     };
   }
   async revise(input: CurrentDeliverableRevisionInput): Promise<CurrentDeliverableGenerateResult> {
     if (input.review.revisionRound !== 0) {
       throw new Error('deliverable revision requires a round 0 Review');
     }
+    if (!input.reviewArtifactId.trim()) {
+      throw new Error('deliverable revision requires a sealed authorizing Review Artifact');
+    }
+    assertValidReportReviewArtifact(input.review);
     const revisionInstruction = input.review.dimensions
       .flatMap((dimension) => dimension.issues)
       .join('; ');
+    if (input.plan.plan.deliverable_type === 'research_strategy_report') {
+      if (!input.currentDeliverable || !isResearchStrategyPayloadV2(input.currentDeliverable.payload)) {
+        throw new Error('research strategy revision requires the current v2 Canonical Deliverable');
+      }
+      const currentDraft = researchStrategyContentDraftFromPayload(
+        input.currentDeliverable.payload,
+        input.currentDeliverable.methodSummary,
+      );
+      const reviewIssues = input.review.dimensions.flatMap((dimension) => (
+        (dimension.revisionIssues ?? []).map((issue) => ({
+          id: issue.id,
+          dimensionId: dimension.id,
+          issue: redactString(issue.message),
+          targetNodeIds: [...issue.targetNodeIds],
+        }))
+      ));
+      if (reviewIssues.length === 0) {
+        throw new Error('semantic revision requires sealed Review revisionIssues');
+      }
+      const allowedReviewIssueTargets = new Map(reviewIssues.map((issue) => (
+        [issue.id, new Set(issue.targetNodeIds)] as const
+      )));
+      const allowedSupportTargets = researchStrategySupportPatchTargets(currentDraft);
+      const patchSchema = researchStrategyPatchSchema(currentDraft);
+      const patch = await this.dependencies.llm.generateStructured<ResearchStrategyContentPatchV1>({
+        prompt: [
+          'Return one research-strategy-content-patch-v1 in semantic_revision mode.',
+          'Resolve only the final review issues through explicit patch operations; never return or rewrite the whole Draft.',
+          'Use replace_semantic_text only for the exact semantic units that need weaker or more accurate wording.',
+          'Use replace_direct_answer_binding or replace_support for Evidence, status, confidence, and validation changes.',
+          'Use replace_support only with an exact context.allowedSupportTargets entry. content_block is valid only for narrative Blocks; structured Block support must target its exact content_item.',
+          'Every semantic operation must include reviewIssueId and reason. Its target must be authorized by that exact context.reviewIssues item.',
+          'Do not delete or reorder existing Direct Answers, findings, Blocks, or Block items. Preserve every requested typed content Block.',
+          'Do not output Canonical IDs, Coverage, FindingGraph, risk identities, source pointers, or requestedArtifactBindings.',
+          `Review issues: ${redactString(revisionInstruction)}`,
+        ].join('\n'),
+        schema: patchSchema,
+        schemaName: 'research-strategy-content-patch-v1',
+        context: {
+          mode: 'semantic_revision',
+          authorizingReviewArtifactId: input.reviewArtifactId,
+          draft: redactSensitiveValue(currentDraft),
+          allowedQuestionIds: (input.problemGraph as ProblemGraph).questions.map(({ id }) => id),
+          allowedEvidence: input.evidenceManifest.value.entries.map(({ id, evidenceClass, sourceUrl }) => ({
+            id,
+            evidenceClass,
+            ...(sourceUrl ? { sourceUrl } : {}),
+          })),
+          requestedArtifacts: (input.finalizedRequirement as ResearchTaskV2).requested_artifacts ?? [],
+          reviewIssues,
+          allowedSupportTargets,
+        },
+        ...(input.cancellationSignal ? { signal: input.cancellationSignal } : {}),
+        receipt: {
+          stage: 'deliverable_repair',
+          attemptId: input.attempt.id,
+          stepNo: input.stepNo,
+          expectedModel: input.expectedModel,
+        },
+      });
+      const repairOperations = patchOperationAudits(patch.data);
+      let revised: ReturnType<typeof applyResearchStrategyContentPatch>;
+      try {
+        this.dependencies.validator.validateSchemaOrThrow(
+          patchSchema,
+          patch.data,
+          'research-strategy-content-patch-v1',
+        );
+        revised = applyResearchStrategyContentPatch({
+          source: currentDraft,
+          patch: patch.data,
+          mode: 'semantic_revision',
+          problemGraph: input.problemGraph as ProblemGraph,
+          evidenceManifest: input.evidenceManifest.value,
+          requestedArtifacts: (input.finalizedRequirement as ResearchTaskV2).requested_artifacts ?? [],
+          allowedReviewIssueTargets,
+        });
+      } catch (patchError) {
+        const validationDiagnostic = createDeliverableValidationDiagnostic({
+          taskId: input.task.id,
+          planVersionId: input.plan.id,
+          attemptId: input.attempt.id,
+          stage: 'content_semantics',
+          round: 1,
+          error: patchError,
+          fallbackApplied: false,
+        });
+        this.dependencies.validator.validateFileOrThrow(
+          'schemas/deliverable-validation-diagnostic.schema.json',
+          validationDiagnostic,
+        );
+        try {
+          await this.dependencies.artifacts.writeJson({
+            taskId: input.task.id,
+            planVersionId: input.plan.id,
+            attemptId: input.attempt.id,
+            kind: 'deliverable_validation_diagnostic',
+            relativePath: 'diagnostics/deliverable-validation-r1.json',
+            schemaVersion: validationDiagnostic.version,
+            sensitivity: 'internal',
+            redactionPolicyVersion: 'v1',
+            activeLease: input.activeLease,
+            value: validationDiagnostic,
+          });
+        } catch {
+          // Preserve the authoritative semantic Patch failure.
+        }
+        const fidelityDiagnostic = createContentFidelityDiagnostic({
+          taskId: input.task.id,
+          planVersionId: input.plan.id,
+          attemptId: input.attempt.id,
+          round: 1,
+          mode: 'semantic_revision',
+          result: patchError instanceof ResearchStrategyContentFidelityError
+            ? patchError.result
+            : compareResearchStrategyContentFidelity(currentDraft, currentDraft),
+          normalizationOperations: [],
+          repairOperations,
+        });
+        this.dependencies.validator.validateFileOrThrow(
+          'schemas/content-fidelity-diagnostic.schema.json',
+          fidelityDiagnostic,
+        );
+        await this.dependencies.artifacts.writeJson({
+          taskId: input.task.id,
+          planVersionId: input.plan.id,
+          attemptId: input.attempt.id,
+          kind: 'content_fidelity_diagnostic',
+          relativePath: 'diagnostics/content-fidelity-r1.json',
+          schemaVersion: fidelityDiagnostic.version,
+          sensitivity: 'internal',
+          redactionPolicyVersion: 'v1',
+          activeLease: input.activeLease,
+          value: fidelityDiagnostic,
+        });
+        throw new ResearchStrategyDeliverableValidationError(patchError, currentDraft);
+      }
+      return this.generate({
+        ...input,
+        strategyDraftOverride: revised.draft,
+        strategyFidelity: {
+          mode: 'semantic_revision',
+          sourceDraft: currentDraft,
+          result: revised.fidelity,
+          repairOperations,
+        },
+        revisionInstruction,
+        revisionRound: 1,
+      });
+    }
     return this.generate({
       ...input,
       revisionInstruction,

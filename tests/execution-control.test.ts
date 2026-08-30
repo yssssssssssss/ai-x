@@ -289,6 +289,64 @@ test('completes task and attempt only with the current active lease', async () =
   );
 });
 
+test('completion atomically fences the selected fixed-path Report Package root', async () => {
+  const { repository, lease } = await claimedLease();
+  const reportPackage = await repository.createStagingArtifact({
+    taskId: lease.taskId,
+    planVersionId: lease.planVersionId,
+    attemptId: lease.attemptId,
+    activeLease: lease,
+    kind: 'report_package',
+    storageUri: `/tmp/tasks/${lease.taskId}/attempts/${lease.attemptId}/reports/report-package.json`,
+    schemaVersion: 'report-package-v2',
+    sensitivity: 'internal',
+    redactionPolicyVersion: 'v1',
+  });
+  await repository.sealArtifact({
+    ...lease,
+    artifactId: reportPackage.id,
+    contentSha256: `sha256:${'2'.repeat(64)}`,
+    byteSize: 2,
+  });
+
+  const completed = await repository.completeExecution(lease, {
+    status: 'completed',
+    reportPackageArtifactId: reportPackage.id,
+  });
+
+  assert.equal(completed.state, 'completed');
+});
+
+test('completion rejects a Report Package outside the fixed report root without consuming the lease', async () => {
+  const { repository, lease } = await claimedLease();
+  const reportPackage = await repository.createStagingArtifact({
+    taskId: lease.taskId,
+    planVersionId: lease.planVersionId,
+    attemptId: lease.attemptId,
+    activeLease: lease,
+    kind: 'report_package',
+    storageUri: `/tmp/${lease.attemptId}-report-package.json`,
+    schemaVersion: 'report-package-v2',
+    sensitivity: 'internal',
+    redactionPolicyVersion: 'v1',
+  });
+  await repository.sealArtifact({
+    ...lease,
+    artifactId: reportPackage.id,
+    contentSha256: `sha256:${'3'.repeat(64)}`,
+    byteSize: 2,
+  });
+
+  await assert.rejects(
+    () => repository.completeExecution(lease, {
+      status: 'completed',
+      reportPackageArtifactId: reportPackage.id,
+    }),
+    ControlPlaneConflictError,
+  );
+  assert.equal((await repository.requireActiveLease(lease)).attemptId, lease.attemptId);
+});
+
 test('completes the task with gaps while the attempt remains completed', async () => {
   const { repository, lease } = await claimedLease();
   const completeExecution = repository.completeExecution.bind(repository) as unknown as (
@@ -1107,6 +1165,73 @@ test('worker-loss retry waits for sealed chart data cleanup', async () => {
   }))?.state, 'ready');
 });
 
+test('worker-loss retry waits for sealed Showcase Artifact cleanup', async () => {
+  const { repository, lease } = await claimedLease();
+  const showcaseArtifacts = await Promise.all([
+    ['report_editorial_showcase_spec', 'editorial-presentation-spec-v1'],
+    ['editorial_showcase_html', 'editorial-showcase-html-v1'],
+  ].map(async ([kind, schemaVersion]) => {
+    const staging = await repository.createStagingArtifact({
+      taskId: lease.taskId,
+      planVersionId: lease.planVersionId,
+      attemptId: lease.attemptId,
+      activeLease: lease,
+      kind: kind!,
+      storageUri: `/tmp/${randomUUID()}.json`,
+      schemaVersion: schemaVersion!,
+      sensitivity: 'internal',
+      redactionPolicyVersion: 'trusted-p0-v1',
+    });
+    return repository.sealArtifact({
+      ...lease,
+      artifactId: staging.id,
+      contentSha256: `sha256:${'5'.repeat(64)}`,
+      byteSize: 1,
+    });
+  }));
+  await repository.recordExecutionStep({
+    ...lease,
+    stepNo: 1,
+    stepName: 'interrupted Showcase publication',
+    actorType: 'system',
+    actorId: 'editorial-showcase-publication',
+    state: 'running',
+  });
+  const connection = await scopedDatabase.connect();
+  try {
+    await connection.query(
+      `UPDATE control_execution_attempts
+       SET lease_expires_at = now() - interval '1 second'
+       WHERE id = $1`,
+      [lease.attemptId],
+    );
+  } finally {
+    connection.release();
+  }
+  const paused = await repository.expireExecutionLease({ taskId: lease.taskId, attemptId: lease.attemptId });
+
+  assert.equal(
+    (await repository.listRecoverableExecutions()).some(({ attemptId }) => attemptId === lease.attemptId),
+    true,
+  );
+  assert.equal(await repository.retryPausedExecution({
+    taskId: lease.taskId,
+    attemptId: lease.attemptId,
+    expectedVersion: paused.stateVersion,
+    failedStepNo: 1,
+  }), null);
+
+  for (const artifact of showcaseArtifacts) {
+    await repository.invalidateArtifactPublication(artifact.id, 'worker-loss Showcase cleanup');
+  }
+  assert.equal((await repository.retryPausedExecution({
+    taskId: lease.taskId,
+    attemptId: lease.attemptId,
+    expectedVersion: paused.stateVersion,
+    failedStepNo: 1,
+  }))?.state, 'ready');
+});
+
 test('worker-loss retry waits for pending physical Artifact quarantine', async () => {
   const { repository, lease } = await claimedLease();
   const artifact = await createResidualArtifact(repository, lease);
@@ -1595,6 +1720,72 @@ test('persists Skill provenance independently from Tool provenance', async () =>
   assert.equal(steps[0].toolProvenance, null);
   assert.equal(steps[0].skillProvenance?.skillBodyHash, 'sha256:body');
   assert.equal(steps[0].skillProvenance?.modelReceiptId, '11111111-1111-4111-8111-111111111111');
+});
+
+test('legacy Skill output schema failures become retryable without weakening input failures', async () => {
+  const { repository, lease } = await claimedLease();
+  await repository.recordExecutionStep({
+    ...lease,
+    stepNo: 1,
+    stepName: 'legacy skill output schema failure',
+    actorType: 'skill',
+    actorId: 'research-strategy-synthesis',
+    state: 'failed',
+    failure: { kind: 'schema', retryable: false, allowedActions: ['abort'] },
+    skillProvenance: {
+      status: 'failed',
+      modelReceiptId: '11111111-1111-4111-8111-111111111111',
+      outputHash: `sha256:${'1'.repeat(64)}`,
+    },
+  });
+  const executing = await repository.getTaskDetail(lease.taskId);
+  assert.ok(executing);
+  const paused = await repository.pauseExecution({
+    taskId: lease.taskId,
+    attemptId: lease.attemptId,
+    expectedVersion: executing.stateVersion,
+    reason: 'schema',
+  });
+
+  const [step] = await repository.listExecutionSteps(lease.attemptId);
+  assert.equal(step?.failure?.retryable, true);
+  assert.deepEqual(step?.failure?.allowedActions, ['retry', 'abort']);
+  assert.equal((await repository.retryPausedExecution({
+    taskId: lease.taskId,
+    attemptId: lease.attemptId,
+    expectedVersion: paused.stateVersion,
+    failedStepNo: 1,
+  }))?.state, 'ready');
+
+  const inputCase = await claimedLease();
+  await inputCase.repository.recordExecutionStep({
+    ...inputCase.lease,
+    stepNo: 1,
+    stepName: 'skill input schema failure',
+    actorType: 'skill',
+    actorId: 'research-strategy-synthesis',
+    state: 'failed',
+    failure: { kind: 'schema', retryable: false, allowedActions: ['abort'] },
+    skillProvenance: { status: 'failed', modelReceiptId: null, outputHash: null },
+  });
+  const inputExecuting = await inputCase.repository.getTaskDetail(inputCase.lease.taskId);
+  assert.ok(inputExecuting);
+  const inputPaused = await inputCase.repository.pauseExecution({
+    taskId: inputCase.lease.taskId,
+    attemptId: inputCase.lease.attemptId,
+    expectedVersion: inputExecuting.stateVersion,
+    reason: 'schema',
+  });
+  assert.deepEqual(
+    (await inputCase.repository.listExecutionSteps(inputCase.lease.attemptId))[0]?.failure,
+    { kind: 'schema', retryable: false, allowedActions: ['abort'] },
+  );
+  assert.equal(await inputCase.repository.retryPausedExecution({
+    taskId: inputCase.lease.taskId,
+    attemptId: inputCase.lease.attemptId,
+    expectedVersion: inputPaused.stateVersion,
+    failedStepNo: 1,
+  }), null);
 });
 
 test('enforces monotonic execution step transitions', async () => {

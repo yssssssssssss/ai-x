@@ -18,6 +18,7 @@ import { SchemaValidationError, SchemaValidator } from '../apps/orchestrator-run
 import {
   ProblemGraphPlanner,
   ProblemGraphValidationError,
+  isPlanningQuestionForAnswerTask,
   validateProblemGraphCoverage,
   validateProblemGraphEvidenceCoverage,
   type ProblemGraph,
@@ -106,6 +107,19 @@ function expectGraphError(
     },
   );
 }
+
+test('answer-task anti-planning guard recognizes bilingual planning formulations', () => {
+  for (const wording of [
+    '如何构建研究框架？',
+    '制定研究框架',
+    '规划调研方法',
+    'How should we conduct the research?',
+    'Create a research methodology',
+  ]) assert.equal(isPlanningQuestionForAnswerTask(wording), true, wording);
+  for (const wording of ['用户当前心智是什么？', 'What should the product team do?']) {
+    assert.equal(isPlanningQuestionForAnswerTask(wording), false, wording);
+  }
+});
 
 test('problem-graph schema is registered and strictly rejects malformed questions', () => {
   const spec = resolveSchema('problem-graph');
@@ -294,6 +308,29 @@ test('planner never returns a structurally valid graph that fails coverage valid
       && error.kind === 'unknown_dependency'
       && error.issueIds.includes('question-missing'),
   );
+});
+
+test('answer-oriented graph deterministically adds missing requested-artifact acceptance', async () => {
+  const answerTask: ResearchTaskV2 = {
+    ...structuredClone(task),
+    task_type: 'research_synthesis',
+    outcome_mode: 'answer',
+    requested_artifacts: ['strategy_map'],
+    expected_deliverables: ['research_strategy_report'],
+  };
+  const answerGraph = validGraph();
+  for (const question of answerGraph.questions) {
+    question.acceptance_criteria = ['直接答案；证据或 provisional 状态；置信度；业务含义；行动'];
+  }
+  const { provider, planner } = buildPlanner(answerGraph);
+
+  const result = await planner.build(answerTask);
+
+  assert.equal(provider.calls.length, 1);
+  assert.ok(result.graph.questions[0]!.acceptance_criteria.includes('Requested Artifact: strategy_map'));
+  assert.ok(result.graph.questions.every(({ acceptance_criteria }) => (
+    acceptance_criteria.join(' ').includes('直接答案')
+  )));
 });
 
 test('planner repairs a graph that omits a required success criterion', async () => {

@@ -2,18 +2,126 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "virtual-user-lab/output.schema.json",
   "title": "VirtualUserSimulateOutput",
-  "description": "虚拟用户模拟结果(原样透传)。isSimulated 恒为 true,结果为模型推演非真实用户。",
+  "description": "虚拟用户模拟结果。所有内容均为 synthetic hypothesis，不代表真实用户研究。",
   "type": "object",
-  "additionalProperties": true,
-  "required": ["status"],
+  "additionalProperties": false,
+  "required": [
+    "status",
+    "isSimulated",
+    "summary",
+    "digitalPersonas",
+    "reviews",
+    "aggregate",
+    "recommendations",
+    "warnings",
+    "boundaryNotes"
+  ],
   "properties": {
-    "status": { "type": "string", "enum": ["available", "failed", "insufficient_inputs"] },
-    "isSimulated": { "type": "boolean" },
-    "summary": { "type": "string" },
-    "digitalPersonas": { "type": "array" },
-    "reviews": { "type": "array", "description": "各数字人格的评审与评分" },
-    "aggregate": { "type": "object" },
-    "recommendations": { "type": "array", "items": { "type": "string" } },
-    "warnings": { "type": "array", "items": { "type": "string" } }
+    "status": { "enum": ["available", "failed", "insufficient_inputs"] },
+    "isSimulated": { "const": true },
+    "summary": { "$ref": "#/$defs/text" },
+    "digitalPersonas": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/persona" }
+    },
+    "reviews": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/review" }
+    },
+    "aggregate": { "$ref": "#/$defs/aggregate" },
+    "recommendations": { "$ref": "#/$defs/textList" },
+    "warnings": { "$ref": "#/$defs/textList" },
+    "boundaryNotes": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/text" } }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "available" } }, "required": ["status"] },
+      "then": {
+        "properties": {
+          "digitalPersonas": { "minItems": 1 },
+          "reviews": { "minItems": 1 }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "text": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "textList": { "type": "array", "items": { "$ref": "#/$defs/text" } },
+    "score": { "type": "number", "minimum": 0, "maximum": 1 },
+    "persona": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "type", "description", "goals", "concerns"],
+      "properties": {
+        "id": { "$ref": "#/$defs/text" },
+        "name": { "$ref": "#/$defs/text" },
+        "type": { "$ref": "#/$defs/text" },
+        "description": { "$ref": "#/$defs/text" },
+        "goals": { "$ref": "#/$defs/textList" },
+        "concerns": { "$ref": "#/$defs/textList" }
+      }
+    },
+    "scores": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "usability": { "$ref": "#/$defs/score" },
+        "attractiveness": { "$ref": "#/$defs/score" },
+        "trust": { "$ref": "#/$defs/score" },
+        "conversionIntent": { "$ref": "#/$defs/score" },
+        "emotionalResonance": { "$ref": "#/$defs/score" }
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profileId",
+        "personaName",
+        "personaType",
+        "firstImpression",
+        "detailedExperience",
+        "scores",
+        "overallScore",
+        "topChangeRequest",
+        "stance",
+        "isSimulated"
+      ],
+      "properties": {
+        "profileId": { "$ref": "#/$defs/text" },
+        "personaName": { "$ref": "#/$defs/text" },
+        "personaType": { "$ref": "#/$defs/text" },
+        "firstImpression": { "$ref": "#/$defs/text" },
+        "detailedExperience": { "$ref": "#/$defs/text" },
+        "scores": { "$ref": "#/$defs/scores" },
+        "overallScore": { "$ref": "#/$defs/score" },
+        "topChangeRequest": { "$ref": "#/$defs/text" },
+        "stance": { "enum": ["positive", "mixed", "negative"] },
+        "isSimulated": { "const": true }
+      }
+    },
+    "scoreSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "usability": { "$ref": "#/$defs/score" },
+        "attractiveness": { "$ref": "#/$defs/score" },
+        "trust": { "$ref": "#/$defs/score" },
+        "conversionIntent": { "$ref": "#/$defs/score" },
+        "emotionalResonance": { "$ref": "#/$defs/score" }
+      }
+    },
+    "aggregate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scoreSummary", "sharedPainPoints", "sharedHighlights", "divergences", "churnRisks"],
+      "properties": {
+        "scoreSummary": { "$ref": "#/$defs/scoreSummary" },
+        "sharedPainPoints": { "$ref": "#/$defs/textList" },
+        "sharedHighlights": { "$ref": "#/$defs/textList" },
+        "divergences": { "$ref": "#/$defs/textList" },
+        "churnRisks": { "$ref": "#/$defs/textList" }
+      }
+    }
   }
 }

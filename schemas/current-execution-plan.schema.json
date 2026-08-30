@@ -17,6 +17,11 @@
   ],
   "properties": {
     "task_id": { "type": "string" },
+    "execution_contract_version": { "const": "current-execution-plan-v2" },
+    "skill_invocations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/skillInvocation" }
+    },
     "deliverable_type": {
       "type": "string",
       "minLength": 1,
@@ -57,7 +62,76 @@
       "uniqueItems": true
     }
   },
+  "allOf": [
+    {
+      "if": { "required": ["execution_contract_version"] },
+      "then": { "required": ["skill_invocations"] },
+      "else": { "not": { "required": ["skill_invocations"] } }
+    }
+  ],
   "$defs": {
+    "skillInvocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["invocation_id", "skill_id", "execution_mode", "contract_version", "contract_hash", "degraded_policy", "skill_reference_hashes", "knowledge_references", "resource_gaps", "step_nos"],
+      "properties": {
+        "invocation_id": { "type": "string", "minLength": 1 },
+        "skill_id": { "type": "string", "minLength": 1 },
+        "execution_mode": { "const": "compiled" },
+        "contract_version": { "const": "skill-execution-contract-v1" },
+        "contract_hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "degraded_policy": { "enum": ["block", "gap"] },
+        "skill_reference_hashes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "hash"],
+            "properties": {
+              "path": { "type": "string", "minLength": 1 },
+              "hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+            }
+          }
+        },
+        "knowledge_references": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/knowledgeReference" }
+        },
+        "resource_gaps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["query_id", "min_items", "selected_items", "failure_policy", "reason"],
+            "properties": {
+              "query_id": { "type": "string", "minLength": 1 },
+              "min_items": { "type": "integer", "minimum": 1 },
+              "selected_items": { "type": "integer", "minimum": 0 },
+              "failure_policy": { "const": "gap" },
+              "reason": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "step_nos": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "integer", "minimum": 1 } }
+      }
+    },
+    "knowledgeReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resourceId", "resourceType", "sourcePath", "status", "contentHash", "required", "failurePolicy"],
+      "properties": {
+        "resourceId": { "type": "string", "minLength": 1 },
+        "resourceType": { "type": "string", "minLength": 1 },
+        "sourcePath": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["approved", "draft"] },
+        "contentHash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "required": { "type": "boolean" },
+        "failurePolicy": { "enum": ["block", "gap"] },
+        "queryId": { "type": "string", "minLength": 1 }
+      }
+    },
     "candidateProfile": {
       "type": "string",
       "enum": ["speed", "depth", "breadth", "focused", "mixed_method", "decision", "remediation"]
@@ -205,6 +279,10 @@
           "enum": [
             "skill_inactive",
             "task_type_mismatch",
+            "outcome_mismatch",
+            "deliverable_mismatch",
+            "composition_mode_mismatch",
+            "contribution_type_mismatch",
             "required_tool_missing",
             "required_tool_inactive",
             "required_tool_health_unknown",
@@ -229,6 +307,77 @@
         "label": { "type": "string", "minLength": 1 },
         "multiple": { "type": "boolean" },
         "capability_id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "contributionType": {
+      "enum": [
+        "market_landscape",
+        "competitive_analysis",
+        "persona",
+        "jobs_to_be_done",
+        "journey",
+        "qualitative_insight",
+        "voc",
+        "satisfaction",
+        "metrics",
+        "funnel",
+        "feature_adoption",
+        "design_audit",
+        "accessibility",
+        "research_method",
+        "prioritization",
+        "strategy",
+        "action_plan",
+        "virtual_user_hypothesis"
+      ]
+    },
+    "skillComposition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modes", "supported_outcomes", "compatible_deliverables", "required_input_roles", "optional_input_roles"],
+      "properties": {
+        "modes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["standalone", "contributor", "synthesizer"] }
+        },
+        "supported_outcomes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["plan", "answer"] }
+        },
+        "compatible_deliverables": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "contribution_types": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/contributionType" }
+        },
+        "contribution_schema": { "type": "string", "minLength": 1 },
+        "contribution_adapter": { "type": "string", "minLength": 1 },
+        "required_input_roles": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "optional_input_roles": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "shareable_prerequisites": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "standalone_reason": { "type": "string", "minLength": 1 }
       }
     },
     "capabilitySkill": {
@@ -266,8 +415,11 @@
           "uniqueItems": true,
           "items": { "type": "string", "minLength": 1 }
         },
+        "execution_mode": { "enum": ["legacy_single_call", "compiled"] },
+        "execution_contract": { "type": "string", "minLength": 1 },
         "cost_level": { "type": "string" },
-        "risk_level": { "enum": ["low", "medium", "high"] }
+        "risk_level": { "enum": ["low", "medium", "high"] },
+        "composition": { "$ref": "#/$defs/skillComposition" }
       }
     },
     "capabilityApproval": {
@@ -360,7 +512,9 @@
       "properties": {
         "target_pointer": { "type": "string", "pattern": "^/" },
         "source_step_no": { "type": "integer", "minimum": 1 },
-        "source_pointer": { "type": "string", "pattern": "^/" }
+        "source_pointer": { "type": "string", "pattern": "^/" },
+        "optional": { "type": "boolean" },
+        "include_artifact_identity": { "type": "boolean" }
       }
     },
     "expectedOutput": {
@@ -392,7 +546,7 @@
       "properties": {
         "step_no": { "type": "integer", "minimum": 1 },
         "step_name": { "type": "string", "minLength": 1 },
-        "actor_type": { "enum": ["tool", "skill", "llm", "reviewer"] },
+        "actor_type": { "enum": ["knowledge", "tool", "skill", "llm", "reviewer"] },
         "actor_id": { "type": "string", "minLength": 1 },
         "question_ids": {
           "type": "array",
@@ -423,7 +577,9 @@
           "type": "array",
           "uniqueItems": true,
           "items": { "type": "string", "minLength": 1 }
-        }
+        },
+        "skill_invocation_id": { "type": "string", "minLength": 1 },
+        "skill_stage_id": { "type": "string", "minLength": 1 }
       },
       "allOf": [
         {

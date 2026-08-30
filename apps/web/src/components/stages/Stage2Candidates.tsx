@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState, type KeyboardEvent } from 'react';
 import useEmblaCarousel from 'embla-carousel-react';
 import type { CandidateProfile } from '../../../../../packages/api-contract/plan.ts';
+import type { FinalizedPlan } from '../../../../../packages/api-contract/http.ts';
 import type { CurrentPlanCandidate } from '../../api/client.ts';
 import { candidateInitialIndex } from '../../current-flow-state.ts';
+import { MultiSkillPlanSummary } from '../MultiSkillPlanSummary.tsx';
 import { Header } from './Stage1Understand.tsx';
 
 function ArrowIcon({ direction }: { direction: 'previous' | 'next' }) {
@@ -184,6 +186,7 @@ export function Stage2Candidates({
                     <div className="candidate-tradeoffs">
                       <span>代价</span>{candidate.tradeoffs}
                     </div>
+                    <MultiSkillPlanSummary plan={candidate.plan as unknown as FinalizedPlan} compact />
                     <ol className="candidate-steps">
                       {steps.map((step, index) => (
                         <li key={step.step_no ?? index}>
@@ -197,7 +200,12 @@ export function Stage2Candidates({
                     </ol>
                     <div className="candidate-meta">
                       <span>
-                        共 {steps.length} 步 · {steps.filter((step) => step.actor_type === 'skill').length} skill / {steps.filter((step) => step.actor_type === 'tool').length} tool
+                        共 {steps.length} 步 · {(candidate.plan.skill_invocations ?? []).length || steps.filter((step) => step.actor_type === 'skill').length} skill / {steps.filter((step) => step.actor_type === 'tool').length} tool
+                        {(candidate.plan.skill_invocations ?? []).length > 0
+                          ? ` · ${candidate.plan.skill_invocations!.reduce((count, invocation) => count + invocation.step_nos.length, 0)} skill stages`
+                          : steps.some((step) => step.actor_type === 'skill')
+                            ? ' · 单次 Skill 生成'
+                            : ''}
                       </span>
                       <span className="candidate-card-action" aria-hidden="true">
                         {readOnly ? '只读预览' : current ? '点击选择' : '点击查看'}

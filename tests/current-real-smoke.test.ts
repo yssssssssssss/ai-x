@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import {
   assertGatewayModelReceipts,
+  assertVirtualUserLabReady,
+  assertMultiSkillSmokePlan,
   assertRealSmokeConfig,
   assertSmokePlanApprovalPolicy,
   assertSmokeReceiptMinimums,
@@ -13,6 +15,7 @@ import {
   designSmokeInputValue,
   formatSmokeReceipt,
   mayAutoApproveSmoke,
+  resolveSmokeReportContract,
   resolveApprovalMode,
   resolveSmokeRequirement,
   requireActorCoverage,
@@ -20,11 +23,58 @@ import {
   safeSmokeErrorMessage,
   selectSmokeScenario,
   selectSmokeCandidate,
+  SmokeInfrastructureError,
   summarizeSmokeEvidence,
   verifySmokeGapSummaryHashes,
   verifySmokeHistoryReread,
 } from '../scripts/current-real-smoke.ts';
 import { parseModelRoutes } from '../apps/orchestrator-runtime/src/runtime/gateway-llm-client.ts';
+test('JD crowdfunding real-smoke contract requires Plan v3, exact Contributors, and real Tool stages', () => {
+  const fixture = JSON.parse(readFileSync(
+    join(process.cwd(), 'tests/fixtures/jd-crowdfunding-multi-skill-real-smoke.json'),
+    'utf8',
+  )) as { scenarios: Array<{
+    requireMultiSkill: boolean;
+    expectedContributorSkillIds: string[];
+    requiredToolIds: string[];
+  }> };
+  const scenario = fixture.scenarios[0]!;
+  const contributorInvocations = scenario.expectedContributorSkillIds.map((skillId, index) => ({
+    invocation_id: `contributor-${index}`,
+    skill_id: skillId,
+    role: 'contributor',
+  }));
+  const plan = {
+    execution_contract_version: 'current-execution-plan-v3',
+    skill_invocations: [
+      ...contributorInvocations,
+      { invocation_id: 'synth', skill_id: 'research-strategy-synthesis', role: 'synthesizer' },
+    ],
+    contribution_requirements: contributorInvocations.map((invocation, index) => ({
+      id: `demand-${index}`,
+      owner_invocation_id: invocation.invocation_id,
+    })),
+    portfolio_summary: { selected: [] },
+    steps: [
+      {
+        actor_type: 'tool', actor_id: 'tavily-web-search',
+        shared_stage_key: 'shared:tool:tavily-web-search',
+        shared_by_invocation_ids: ['contributor-0', 'synth'],
+      },
+      { actor_type: 'tool', actor_id: 'virtual-user-lab' },
+    ],
+  };
+  assert.doesNotThrow(() => assertMultiSkillSmokePlan(plan, scenario));
+  assert.throws(
+    () => assertMultiSkillSmokePlan({ ...plan, execution_contract_version: 'current-execution-plan-v2' }, scenario),
+    /Plan v3/u,
+  );
+  assert.throws(
+    () => assertMultiSkillSmokePlan({ ...plan, skill_invocations: plan.skill_invocations.slice(1) }, scenario),
+    /Contributor\/Synthesizer inventory/u,
+  );
+});
+
 const REQUIRED_REAL_PROVIDER_ENV = [
   'ALLOW_REAL_PROVIDER',
   'LLM_PROVIDER',
@@ -46,6 +96,7 @@ const realSmokeOptions = { skip: !realProviderConfigured };
 const realSmokeScenarios = [
   { profile: 'competitive_research', scenarioId: 'competitive-ai-shopping-assistant' },
   { profile: 'user_research_planning', scenarioId: 'planning-checkout-abandonment' },
+  { profile: 'research_synthesis', scenarioId: 'answer-pet-food-mindshare' },
   { profile: 'voc_diagnosis', scenarioId: 'voc-checkout' },
   { profile: 'design_audit', scenarioId: 'design-product-detail' },
   { profile: 'a11y_audit', scenarioId: 'a11y-mobile-checkout' },
@@ -99,7 +150,12 @@ async function runConfiguredRealSmokes(run: RealSmokeRunner): Promise<SmokeRecei
   const receipts: SmokeReceipt[] = [];
   for (const { profile, scenarioId } of realSmokeScenarios) {
     receipts.push(...await run({
-      fixturePath: join(process.cwd(), 'tests/fixtures/current-semantic-gold.json'),
+      fixturePath: join(
+        process.cwd(),
+        profile === 'research_synthesis'
+          ? 'tests/fixtures/research-synthesis-real-smoke.json'
+          : 'tests/fixtures/current-semantic-gold.json',
+      ),
       profiles: [profile],
       scenarioId,
     }));
@@ -209,6 +265,146 @@ test('real smoke configuration rejects mock and half-real provider modes', () =>
   assert.throws(() => assertRealSmokeConfig({ ...valid, TOOL_ADAPTER: 'fake' }), /exactly real/u);
 });
 
+test('research synthesis smoke selects the report contract from the publication flags', () => {
+  assert.deepEqual(resolveSmokeReportContract({
+    deliverableType: 'research_strategy_report',
+    reportV3WriterEnabled: false,
+    standaloneHtmlBundleV1Enabled: false,
+  }), {
+    reportDocumentVersion: 'report-document-v2',
+    reportPackageVersion: 'report-package-v1',
+    standaloneHtmlStatus: 'not_applicable',
+    showcaseStatus: 'not_applicable',
+    fixedPackageRoot: false,
+  });
+  assert.deepEqual(resolveSmokeReportContract({
+    deliverableType: 'research_strategy_report',
+    reportV3WriterEnabled: true,
+    standaloneHtmlBundleV1Enabled: true,
+  }), {
+    reportDocumentVersion: 'report-document-v3',
+    reportPackageVersion: 'report-package-v2',
+    standaloneHtmlStatus: 'ready',
+    showcaseStatus: 'not_applicable',
+    fixedPackageRoot: true,
+  });
+  assert.deepEqual(resolveSmokeReportContract({
+    deliverableType: 'research_strategy_report',
+    reportV3WriterEnabled: true,
+    standaloneHtmlBundleV1Enabled: true,
+    reportEditorialExperienceV1Enabled: true,
+    reportEditorialShowcaseV1Enabled: true,
+  }), {
+    reportDocumentVersion: 'report-document-v4',
+    reportPackageVersion: 'report-package-v3',
+    standaloneHtmlStatus: 'ready',
+    showcaseStatus: 'ready',
+    fixedPackageRoot: true,
+  });
+  assert.deepEqual(resolveSmokeReportContract({
+    deliverableType: 'competitive_analysis_report',
+    reportV3WriterEnabled: true,
+    standaloneHtmlBundleV1Enabled: true,
+  }), {
+    reportPackageVersion: 'report-package-v1',
+    standaloneHtmlStatus: 'not_applicable',
+    showcaseStatus: 'not_applicable',
+    fixedPackageRoot: false,
+  });
+});
+
+function validVirtualUserSimulationResponse(): Record<string, unknown> {
+  return {
+    status: 'available',
+    isSimulated: true,
+    summary: 'Synthetic readiness probe completed.',
+    digitalPersonas: [{
+      id: 'persona-1',
+      name: 'Readiness probe persona',
+      type: 'synthetic evaluator',
+      description: 'A synthetic persona used only to verify service readiness.',
+      goals: ['Evaluate the supplied scenario.'],
+      concerns: ['Simulation output is not real user evidence.'],
+    }],
+    reviews: [{
+      profileId: 'persona-1',
+      personaName: 'Readiness probe persona',
+      personaType: 'synthetic evaluator',
+      firstImpression: 'The scenario can be evaluated.',
+      detailedExperience: 'The service returned a complete synthetic review.',
+      scores: { usability: 0.8 },
+      overallScore: 0.8,
+      topChangeRequest: 'Keep the synthetic-evidence boundary explicit.',
+      stance: 'positive',
+      isSimulated: true,
+    }],
+    aggregate: {
+      scoreSummary: { usability: 0.8 },
+      sharedPainPoints: [],
+      sharedHighlights: ['The simulation contract is available.'],
+      divergences: [],
+      churnRisks: [],
+    },
+    recommendations: ['Use the result only as a synthetic hypothesis.'],
+    warnings: ['This is not real user research.'],
+    boundaryNotes: ['No factual user conclusion may be drawn from this probe.'],
+  };
+}
+
+test('virtual-user-lab preflight checks both liveness and the simulation contract', async () => {
+  const calls: string[] = [];
+  const fakeFetch: typeof fetch = async (input, init) => {
+    const url = String(input);
+    calls.push(`${init?.method ?? 'GET'} ${url}`);
+    if (url.endsWith('/api/health')) {
+      return Response.json({ ok: true, service: 'virtual-user-lab' });
+    }
+    return Response.json(validVirtualUserSimulationResponse());
+  };
+
+  await assertVirtualUserLabReady('http://127.0.0.1:8804/', fakeFetch);
+  assert.deepEqual(calls, [
+    'GET http://127.0.0.1:8804/api/health',
+    'POST http://127.0.0.1:8804/api/simulate',
+  ]);
+});
+
+test('virtual-user-lab preflight rejects output that only satisfies the legacy shallow checks', async () => {
+  await assert.rejects(
+    () => assertVirtualUserLabReady('http://127.0.0.1:8804', async (input) => (
+      String(input).endsWith('/api/health')
+        ? Response.json({ ok: true, service: 'virtual-user-lab' })
+        : Response.json({ status: 'available', isSimulated: true, reviews: [{ profileId: 'test' }] })
+    )),
+    (error: unknown) => error instanceof SmokeInfrastructureError
+      && error.message === 'virtual-user-lab preflight failed',
+  );
+});
+
+test('virtual-user-lab preflight classifies unreachable or degraded service as infrastructure failure', async () => {
+  await assert.rejects(
+    () => assertVirtualUserLabReady('http://127.0.0.1:8804', async () => {
+      throw new Error('connect ECONNREFUSED 127.0.0.1:8804');
+    }),
+    (error: unknown) => error instanceof Error
+      && error.name === 'SmokeInfrastructureError'
+      && error.message === 'virtual-user-lab preflight failed',
+  );
+  await assert.rejects(
+    () => assertVirtualUserLabReady('http://127.0.0.1:8804', async (input) => (
+      String(input).endsWith('/api/health')
+        ? Response.json({ ok: true, service: 'virtual-user-lab' })
+        : Response.json({
+            ...validVirtualUserSimulationResponse(),
+            status: 'insufficient_inputs',
+            digitalPersonas: [],
+            reviews: [],
+          })
+    )),
+    /virtual-user-lab simulation preflight failed/u,
+  );
+});
+
 test('formatted receipt rejects non-real or non-Tavily Tool proof', () => {
   const snapshot = visualSmokeSnapshot();
   const summary = verifySmokeHistoryReread({
@@ -248,10 +444,11 @@ test('formatted receipt rejects non-real or non-Tavily Tool proof', () => {
   }
 });
 
-test('current real smoke covers all five Current profiles', () => {
+test('current real smoke covers all six Current profiles', () => {
   assert.deepEqual(realProfiles, [
     'competitive_research',
     'user_research_planning',
+    'research_synthesis',
     'voc_diagnosis',
     'design_audit',
     'a11y_audit',
@@ -694,7 +891,7 @@ test('gateway model receipts validate every configured route independently', () 
 test('real smoke CLI failures expose only a stable message hash', () => {
   const credential = 'postgres://operator:secret-value@localhost:5432/smoke';
   const message = safeSmokeErrorMessage(new Error(`connection failed: ${credential}`));
-  assert.match(message, /^Current real smoke failed message_hash=[a-f0-9]{16}$/u);
+  assert.match(message, /^Current real smoke failed error_type=Error message_hash=[a-f0-9]{16}$/u);
   assert.doesNotMatch(message, /operator|secret-value|postgres:/u);
   assert.equal(message, safeSmokeErrorMessage(new Error(`connection failed: ${credential}`)));
 });
@@ -782,6 +979,27 @@ test('real smoke continues clarification until the requirement becomes ready', a
   assert.equal(result.status, 'ready_to_plan');
   assert.equal(answers.length, 2);
   assert.match(String(answers[0]?.scope), /^Controlled smoke decision:/);
+});
+
+test('real smoke finalizes a direction gate with no remaining requirement questions', async () => {
+  const answers: Array<Record<string, unknown>> = [];
+  const selectedScenarios: Array<string | undefined> = [];
+  const result = await resolveSmokeRequirement({
+    status: 'clarification_required',
+    requirement: { clarification_questions: [] },
+    planningGuidance: { options: [{ id: 'strategy-synthesis' }] },
+  }, async (roundAnswers, selectedScenarioId) => {
+    answers.push(roundAnswers);
+    selectedScenarios.push(selectedScenarioId);
+    return {
+      status: 'ready_to_plan',
+      requirement: { clarification_questions: [] },
+      planningResult: { id: 'plan' },
+    };
+  }, 'strategy-synthesis');
+  assert.equal(result.status, 'ready_to_plan');
+  assert.deepEqual(answers, [{}]);
+  assert.deepEqual(selectedScenarios, ['strategy-synthesis']);
 });
 
 test('real smoke bounds clarification to three rounds', async () => {

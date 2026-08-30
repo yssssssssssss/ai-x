@@ -44,6 +44,11 @@ export function buildIndex(entries: Array<{ relPath: string; md: string }>): {
       const requiredTools = Array.isArray(fm.required_tools)
         ? fm.required_tools.map(String)
         : undefined;
+      const composition = fm.composition !== null
+        && typeof fm.composition === 'object'
+        && !Array.isArray(fm.composition)
+        ? fm.composition as SkillRegistryEntry['composition']
+        : undefined;
       skills.push({
         id: fm.name as string,
         name: fm.name as string,
@@ -54,7 +59,14 @@ export function buildIndex(entries: Array<{ relPath: string; md: string }>): {
         risk_level: (fm.risk_level as SkillRegistryEntry['risk_level']) ?? 'low',
         task_types: (fm.task_types as string[]) ?? [],
         output_schema: SKILL_RESULT_ENVELOPE_SCHEMA,
+        ...(fm.execution_mode === 'compiled' || fm.execution_mode === 'legacy_single_call'
+          ? { execution_mode: fm.execution_mode }
+          : {}),
+        ...(typeof fm.execution_contract === 'string'
+          ? { execution_contract: fm.execution_contract }
+          : {}),
         ...(requiredTools === undefined ? {} : { required_tools: requiredTools }),
+        ...(composition === undefined ? {} : { composition }),
         status: toRegistryStatus(fm.status),
       });
     } else if (fm.id && fm.type !== 'asset') {

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type {
   ControlPlaneRepository,
   ControlTaskDetail,
@@ -7,8 +9,8 @@ import type {
   ControlRequirementVersion,
   PlanningGuidanceClarification,
 } from '../../../../packages/api-contract/control-workflow.ts';
-import type { PlanProgress, ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
-import { canonicalizeExpectedDeliverables } from '../report/deliverable-registry.ts';
+import type { PlanProgress, RequestedArtifact, ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
+import { canonicalizeGeneratedExpectedDeliverables } from '../report/deliverable-registry.ts';
 import {
   isPlanningGuidanceClarification,
   type CurrentResearchPlanningOutcome,
@@ -19,7 +21,52 @@ import type {
 } from '../planners/planning-guidance.ts';
 import type { LLMClient } from '../runtime/llm-client.ts';
 import { hashPrompt } from '../runtime/llm-client.ts';
+import { getConfigRoot } from '../runtime/config-loader.ts';
+import { redactString } from '../runtime/redaction.ts';
 import { SchemaValidator } from '../schema/validator.ts';
+
+function redactRequirementValidationError(error: unknown): string {
+  return redactString(error instanceof Error ? error.message : String(error)).replace(/\s+/gu, ' ').slice(0, 1000);
+}
+
+const RESEARCH_TASK_FIELDS = [
+  'version', 'task_type', 'outcome_mode', 'requested_artifacts', 'business_domain',
+  'research_goal', 'comparison_dimensions', 'target_audience', 'scope', 'constraints',
+  'success_criteria', 'expected_deliverables', 'assumptions', 'ambiguities',
+  'clarification_questions', 'blocking_issues', 'sensitivity', 'pii_detected',
+] as const;
+const RESEARCH_TASK_REQUIRED_FIELDS = RESEARCH_TASK_FIELDS.filter((field) => (
+  field !== 'outcome_mode' && field !== 'requested_artifacts' && field !== 'comparison_dimensions'
+));
+
+function researchTaskCandidate(value: unknown): unknown {
+  const queue: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }];
+  const seen = new Set<object>();
+  for (let index = 0; index < queue.length && index < 64; index += 1) {
+    const current = queue[index]!;
+    let candidate = current.value;
+    if (typeof candidate === 'string' && candidate.trim().startsWith('{')) {
+      try { candidate = JSON.parse(candidate) as unknown; } catch { /* validated below */ }
+    }
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) || seen.has(candidate)) continue;
+    seen.add(candidate);
+    const record = candidate as Record<string, unknown>;
+    if (RESEARCH_TASK_REQUIRED_FIELDS.every((field) => Object.hasOwn(record, field))) {
+      return Object.fromEntries(
+        Object.entries(record).filter(([field]) => RESEARCH_TASK_FIELDS.includes(field as typeof RESEARCH_TASK_FIELDS[number])),
+      );
+    }
+    if (current.depth >= 4) continue;
+    for (const child of Object.values(record)) queue.push({ value: child, depth: current.depth + 1 });
+  }
+  return value;
+}
+
+function researchTaskSchema(): object {
+  return JSON.parse(
+    readFileSync(join(getConfigRoot(), 'schemas', 'research-task-v2.schema.json'), 'utf8'),
+  ) as object;
+}
 
 export interface ConversationMessage {
   role: string;
@@ -120,7 +167,275 @@ export class InvalidScenarioSelectionError extends Error {
   }
 }
 
-const REQUIREMENT_PROMPT = `把会话整理为 ResearchTaskV2。必须忠实保留用户目标、范围、成功标准和约束；竞品任务若明确列出对比维度，必须按原顺序写入 comparison_dimensions，未明确时不得自行补写；可安全推断的信息写入 assumptions；不确定信息写入 ambiguities，每个 clarification question 必须用 ambiguity_id 引用对应 ambiguity；blocking ambiguity 必须有问题，non-blocking ambiguity 可以没有问题；可提供 2 到 4 个 options 或一个安全的 suggestion，但 suggestion 只是待用户显式采用的建议，不能当作用户回答；涉及敏感数据、授权、合规、外部发布或不可逆操作时不得提供 suggestion，并写入 blocking_issues。`;
+const REQUIREMENT_PROMPT = `把会话整理为 ResearchTaskV2。必须忠实保留用户目标、范围、成功标准和约束；区分研究规划(plan)与直接研究回答(answer)：规划回答如何研究，回答模式必须基于可用证据给出结论、策略与行动；无法判断时增加 key=outcome_mode 的澄清问题；竞品任务若明确列出对比维度，必须按原顺序写入 comparison_dimensions，未明确时不得自行补写；可安全推断的信息写入 assumptions；无法安全推断的信息写入 ambiguities，每个 clarification question 必须用 ambiguity_id 引用对应 ambiguity；blocking ambiguity 必须有问题，non-blocking ambiguity 可以没有问题；可提供 2 到 4 个 options 或一个安全的 suggestion，但 suggestion 只是待用户显式采用的建议，不能当作用户回答；涉及敏感数据、授权、合规、外部发布或不可逆操作时不得提供 suggestion，并写入 blocking_issues。`;
+
+const PLAN_OUTCOME_SIGNALS = [
+  /(?:创建|制定|设计|规划|生成|给出).{0,12}(?:调研任务|研究方案|调研方案|访谈方案|问卷方案|样本方案|研究排期)/u,
+  /(?:如何|怎么|怎样).{0,8}(?:开展|进行|设计|规划).{0,6}(?:研究|调研)/u,
+  /\b(?:research|study|interview|survey)\s+(?:plan|design|protocol|schedule)\b/iu,
+  /\bhow\s+(?:should\s+we\s+|do\s+we\s+|to\s+)?(?:conduct|run|design|plan)\s+(?:the\s+)?(?:research|study)\b/iu,
+] as const;
+const EXPLICIT_ANSWER_OVERRIDE_SIGNALS = [
+  /直接[\s\S]{0,120}(?:回答|给出|输出|结论|策略|行动)/u,
+  /(?:回答|告诉我)[\s\S]{0,60}(?:是什么|为什么|怎么做|如何做|当前结论)/u,
+  /\b(?:directly\s+answer|give\s+(?:me\s+)?a\s+direct\s+answer)\b/iu,
+] as const;
+const ANSWER_OUTCOME_SIGNALS = [
+  /(?:直接|完成).{0,8}(?:研究|分析|回答|结论)/u,
+  /(?:给出|输出|提出).{0,10}(?:结论|策略地图|心智模型|设计原则|机会点|优先级|行动建议)/u,
+  /(?:应该|应当).{0,6}(?:怎么|如何)/u,
+  /\b(?:direct\s+answer|answer\s+(?:the\s+)?questions?|findings?|conclusions?|strategy\s+map|mental\s+model|design\s+principles?|opportunities|prioriti[sz]ed\s+actions?)\b/iu,
+  /\bwhat\s+should\s+(?:we|the\s+(?:business|product|team))\s+do\b/iu,
+] as const;
+const REQUESTED_ARTIFACT_SIGNALS: Array<[RegExp, RequestedArtifact]> = [
+  [/(?:研究报告|\bresearch report\b)/iu, 'research_report'],
+  [/(?:策略地图|\bstrategy map\b)/iu, 'strategy_map'],
+  [/(?:心智模型|\b(?:mental|mind) model\b)/iu, 'mind_model'],
+  [/(?:设计原则|\bdesign principles?\b)/iu, 'design_principles'],
+  [/(?:机会点|\bopportunit(?:y|ies)(?: backlog)?\b)/iu, 'opportunity_backlog'],
+  [/(?:(?:优先级|优先行动)|P0.{0,8}P1.{0,8}P2|\bprioriti[sz]ed actions?\b)/iu, 'prioritized_actions'],
+  [/(?:(?:渠道|场域).{0,6}策略|\bchannel strateg(?:y|ies)\b)/iu, 'channel_strategies'],
+  [/(?:(?:行动|落地).{0,6}(?:计划|路线)|\baction plan\b)/iu, 'action_plan'],
+];
+
+const SPECIALIST_INTENT_SIGNALS: ReadonlyArray<{
+  taskType: ResearchTaskV2['task_type'];
+  patterns: readonly RegExp[];
+}> = [
+  {
+    taskType: 'competitive_research',
+    patterns: [
+      /(?:竞品|竞对|竞争对手|对标)/u,
+      /(?:比较|对比)[\s\S]{0,80}(?:品牌|产品|平台|商家|方案|打法)/u,
+      /(?:品牌|产品|平台|商家)[\s\S]{0,80}(?:比较|对比)/u,
+      /\b(?:competitive|competitor|benchmark(?:ing)?)\b/iu,
+    ],
+  },
+  {
+    taskType: 'voc_diagnosis',
+    patterns: [/(?:用户之声|用户反馈|评论分析|反馈诊断|\bVOC\b)/iu],
+  },
+  {
+    taskType: 'design_audit',
+    patterns: [/(?:设计走查|设计审计|界面走查|\bdesign audit\b)/iu],
+  },
+  {
+    taskType: 'a11y_audit',
+    patterns: [/(?:无障碍|可访问性|\baccessibility audit\b|\ba11y\b)/iu],
+  },
+];
+
+const STRATEGY_DELIVERABLE_SIGNAL = /(?:研究策略报告|综合策略报告|策略答案|策略地图|心智模型|设计原则|\bresearch strategy report\b|\bstrategy map\b|\bmental model\b|\bdesign principles?\b)/iu;
+
+type DeliverableIntent = 'competitive_analysis_report' | 'research_strategy_report';
+
+function clarificationDeliverableIntent(clarification: unknown): DeliverableIntent | null {
+  if (!clarification || typeof clarification !== 'object' || Array.isArray(clarification)) return null;
+  const value = String((clarification as Record<string, unknown>).deliverable_intent ?? '');
+  if (value === 'competitive_analysis_report' || /竞品分析/u.test(value)) return 'competitive_analysis_report';
+  if (value === 'research_strategy_report' || /(?:综合|研究)?策略报告|策略答案/u.test(value)) {
+    return 'research_strategy_report';
+  }
+  return null;
+}
+
+function isDeliverableIntentAmbiguity(
+  ambiguity: ResearchTaskV2['ambiguities'][number],
+): boolean {
+  if (/(?:^|[_-])(?:outcome[_-]?mode|deliverable[_-]?intent)(?:$|[_-])/iu.test(ambiguity.id)) {
+    return true;
+  }
+  const mentionsPlan = /(?:研究规划|研究方案|调研规划|调研方案|\bplan\b)/iu.test(ambiguity.statement);
+  const mentionsAnswer = /(?:直接研究结论|直接策略|直接答案|结论与行动|\banswer\b)/iu.test(ambiguity.statement);
+  return mentionsPlan && mentionsAnswer;
+}
+
+function resolveDeliverableIntentAmbiguities(
+  ambiguities: ResearchTaskV2['ambiguities'],
+): ResearchTaskV2['ambiguities'] {
+  return ambiguities.map((ambiguity) => (
+    ambiguity.blocking && isDeliverableIntentAmbiguity(ambiguity)
+      ? { ...ambiguity, blocking: false }
+      : ambiguity
+  ));
+}
+
+function explicitSpecialistTaskType(originalInput: string): ResearchTaskV2['task_type'] | null {
+  const matched = SPECIALIST_INTENT_SIGNALS
+    .filter(({ patterns }) => patterns.some((pattern) => pattern.test(originalInput)))
+    .map(({ taskType }) => taskType);
+  return matched.length === 1 ? matched[0]! : null;
+}
+
+function clarificationOutcomeMode(clarification: unknown): 'plan' | 'answer' | null {
+  if (!clarification || typeof clarification !== 'object' || Array.isArray(clarification)) return null;
+  const value = (clarification as Record<string, unknown>).outcome_mode;
+  if (value === 'plan' || /研究方案|如何研究|规划|research plan|study plan/iu.test(String(value ?? ''))) return 'plan';
+  if (value === 'answer' || /直接|策略答案|研究答案|给结论|direct answer|strategy answer/iu.test(String(value ?? ''))) return 'answer';
+  return null;
+}
+
+function actionableBlockingIssues(
+  requirement: ResearchTaskV2,
+  originalInput: string,
+  mode: 'plan' | 'answer',
+): ResearchTaskV2['blocking_issues'] {
+  if (mode !== 'answer' || requirement.pii_detected) return requirement.blocking_issues;
+  const publicOnly = /(?:公开可访问|公开资料|公开来源|publicly accessible|public sources?)/iu.test(originalInput);
+  const requestsRestrictedData = /(?:平台后台数据|私域用户数据|非公开销量数据|个人身份信息|登录后数据|private data|personal data)/iu.test(originalInput);
+  if (!publicOnly || requestsRestrictedData) return requirement.blocking_issues;
+  const hypotheticalRisk = /(?:^(?:若|如|如果|when\b|if\b)|可能|需逐项确认|may\b|might\b|would require)/iu;
+  const restrictedAccessRisk = /(?:privacy|compliance|authorization|access|reproducibility|evidence[_-]?limit|data[_-]?availability|未授权|未提供.*内部|内部.*数据|非公开.*数据)/iu;
+  const acceptsSyntheticBoundary = /(?:simulation\s+evidence|provisional|合成模拟|虚拟用户).*(?:真实用户|验证)|(?:真实用户|验证).*(?:simulation\s+evidence|provisional|合成模拟|虚拟用户)/iu.test(originalInput);
+  const syntheticBoundaryRisk = /(?:research[_-]?validity|research[_-]?integrity|synthetic|simulation|虚拟用户|合成模拟)/iu;
+  return requirement.blocking_issues.filter((issue) => {
+    const issueText = `${issue.kind} ${issue.reason}`;
+    const publicOnlyAccessWarning = restrictedAccessRisk.test(issueText)
+      && (
+        hypotheticalRisk.test(issue.reason)
+        || /未授权.*(?:仅使用|改用|不使用).*公开资料|未提供.*内部|不得把内部|cannot access|若.*公开资料|执行环境.*无法访问|仅凭公开资料无法|只能作为.*假设/iu.test(issue.reason)
+      );
+    const acceptedSyntheticWarning = acceptsSyntheticBoundary && syntheticBoundaryRisk.test(issueText);
+    return !publicOnlyAccessWarning && !acceptedSyntheticWarning;
+  });
+}
+
+export function normalizeOutcomeRequirement(
+  requirement: ResearchTaskV2,
+  originalInput: string,
+  clarification: unknown,
+): ResearchTaskV2 {
+  const selectedByUser = clarificationOutcomeMode(clarification);
+  const selectedDeliverable = clarificationDeliverableIntent(clarification);
+  const inferred = requirement.outcome_mode ?? null;
+  const planSignal = PLAN_OUTCOME_SIGNALS.some((pattern) => pattern.test(originalInput));
+  const requestedFromInput = REQUESTED_ARTIFACT_SIGNALS.flatMap(([pattern, artifact]) => (
+    pattern.test(originalInput) ? [artifact] : []
+  ));
+  const answerSignal = ANSWER_OUTCOME_SIGNALS.some((pattern) => pattern.test(originalInput))
+    || requestedFromInput.some((item) => item !== 'research_report');
+  const explicitAnswerOverride = EXPLICIT_ANSWER_OVERRIDE_SIGNALS.some((pattern) => pattern.test(originalInput));
+  const ambiguous = selectedByUser === null && planSignal && answerSignal;
+  const requested = [...new Set([
+    ...(requirement.requested_artifacts ?? []),
+    ...requestedFromInput,
+  ])];
+  const specialistTaskType = explicitSpecialistTaskType(originalInput);
+  const strongStrategySignal = STRATEGY_DELIVERABLE_SIGNAL.test(originalInput);
+  const supportsOutcomeMode = requirement.task_type === 'user_research_planning'
+    || requirement.task_type === 'research_synthesis';
+
+  if (selectedDeliverable) {
+    const strategy = selectedDeliverable === 'research_strategy_report';
+    return {
+      ...requirement,
+      task_type: strategy ? 'research_synthesis' : 'competitive_research',
+      outcome_mode: 'answer',
+      requested_artifacts: requested.length > 0
+        ? requested
+        : strategy
+          ? ['executive_answers', 'research_report', 'prioritized_actions']
+          : requirement.requested_artifacts,
+      expected_deliverables: [selectedDeliverable],
+      blocking_issues: strategy
+        ? actionableBlockingIssues(requirement, originalInput, 'answer')
+        : requirement.blocking_issues,
+      ambiguities: resolveDeliverableIntentAmbiguities(requirement.ambiguities),
+      clarification_questions: requirement.clarification_questions.filter(
+        ({ key }) => key !== 'deliverable_intent' && key !== 'outcome_mode',
+      ),
+    };
+  }
+  if (ambiguous) {
+    const question = {
+      key: 'outcome_mode',
+      question: '你需要“研究方案（如何开展研究）”，还是“直接策略答案（基于当前资料给出结论与行动）”？',
+      rationale: '两种结果使用不同的研究问题、能力编排、交付合同和验收标准。',
+    };
+    return {
+      ...requirement,
+      task_type: 'user_research_planning',
+      expected_deliverables: ['research_plan'],
+      outcome_mode: undefined,
+      requested_artifacts: requested,
+      clarification_questions: [
+        question,
+        ...requirement.clarification_questions.filter(({ key }) => key !== 'outcome_mode'),
+      ],
+    };
+  }
+
+  if (
+    selectedByUser === null
+    && !planSignal
+    && answerSignal
+    && specialistTaskType === 'competitive_research'
+    && strongStrategySignal
+  ) {
+    const question = {
+      key: 'deliverable_intent',
+      question: '你希望结果聚焦竞品对比，还是综合研究证据形成策略建议？',
+      rationale: '两种结果会采用不同的专业能力、证据合同和报告结构。',
+    };
+    return {
+      ...requirement,
+      task_type: specialistTaskType,
+      outcome_mode: 'answer',
+      requested_artifacts: requested,
+      clarification_questions: [
+        question,
+        ...requirement.clarification_questions.filter(
+          ({ key }) => key !== 'deliverable_intent' && key !== 'outcome_mode',
+        ),
+      ],
+    };
+  }
+
+  if (selectedByUser === null && !planSignal && specialistTaskType) {
+    return {
+      ...requirement,
+      task_type: specialistTaskType,
+      ...(answerSignal || explicitAnswerOverride ? { outcome_mode: 'answer' as const } : {}),
+      ...(requested.length > 0 ? { requested_artifacts: requested } : {}),
+    };
+  }
+
+  const appliesToOutcomeMode = supportsOutcomeMode
+    || selectedByUser !== null
+    || planSignal
+    || answerSignal
+    || explicitAnswerOverride;
+  if (!appliesToOutcomeMode) return requirement;
+  if (selectedByUser === null && inferred === null && !planSignal && !answerSignal && requested.length === 0) {
+    return requirement;
+  }
+  const mode = selectedByUser
+    ?? (answerSignal && !planSignal
+      ? 'answer'
+      : planSignal && !answerSignal
+        ? 'plan'
+        : inferred ?? (requirement.task_type === 'research_synthesis' ? 'answer' : 'plan'));
+  return {
+    ...requirement,
+    task_type: mode === 'answer' ? 'research_synthesis' : 'user_research_planning',
+    outcome_mode: mode,
+    requested_artifacts: requested.length > 0
+      ? requested
+      : mode === 'answer'
+        ? ['executive_answers', 'research_report', 'prioritized_actions']
+        : ['research_report'],
+    expected_deliverables: [mode === 'answer' ? 'research_strategy_report' : 'research_plan'],
+    blocking_issues: actionableBlockingIssues(requirement, originalInput, mode),
+    ambiguities: mode === 'answer'
+      ? requirement.ambiguities.map((ambiguity) => ({ ...ambiguity, blocking: false }))
+      : requirement.ambiguities,
+    clarification_questions: mode === 'answer'
+      ? []
+      : requirement.clarification_questions.filter(({ key }) => key !== 'outcome_mode'),
+  };
+}
+
+
 
 const SCORING_MATRIX_MARKER = /(?:矩阵\s*采用[^。；;\n]{0,40}(?:分制|权重)|(?:评分|评价)(?:维度|矩阵)?\s*(?:及|与|和)?\s*权重|(?:评分|评价)?矩阵(?:维度)?\s*(?:及|与|和)?\s*权重|\b(?:scoring|evaluation)\s+(?:matrix|dimensions?)\b)/iu;
 const PERCENTAGE_ITEM = /(?:^|[、,，;；\n])\s*([^、,，;；\n]*?\S)\s*(\d+(?:\.\d+)?)\s*[%％]\s*[)）]?/gu;
@@ -210,7 +525,7 @@ function hasBlockingAmbiguity(requirement: ResearchTaskV2): boolean {
 
 
 function needsClarification(requirement: ResearchTaskV2): boolean {
-  return hasBlockingAmbiguity(requirement);
+  return hasBlockingAmbiguity(requirement) || requirement.clarification_questions.length > 0;
 }
 
 function stableValue(value: unknown): unknown {
@@ -622,22 +937,47 @@ export class RequirementRefinementService {
       original_input: input.originalInput,
       clarification: input.clarification,
     };
-    const generated = await this.dependencies.llm.generateStructured<ResearchTaskV2>({
-      prompt: `${REQUIREMENT_PROMPT}\n用户当前输入:${input.originalInput}`,
-      schema: {},
-      schemaName: 'research-task-v2',
-      context,
-      receipt: {
-        stage: input.clarification === null ? 'requirement_understanding' : 'requirement_clarification',
-        contextManifestHash: hashPrompt('', context),
-        expectedModel: this.dependencies.expectedActualModel
-          ?? this.dependencies.llm.identity.requestedModel,
-      },
-    });
-    this.dependencies.validator.validateOrThrow('research-task-v2', generated.data);
-    const requirement = normalizeClarificationGuidance(
-      normalizeExplicitWeightedMatrix(canonicalizeExpectedDeliverables(generated.data)),
-    );
+    let requirement: ResearchTaskV2 | null = null;
+    let canonicalRequirement: ResearchTaskV2 | null = null;
+    let validationFeedback: string | null = null;
+    for (let round = 0; round < 2; round += 1) {
+      const attemptContext = validationFeedback
+        ? { ...context, validation_feedback: validationFeedback }
+        : context;
+      const generated = await this.dependencies.llm.generateStructured<ResearchTaskV2>({
+        prompt: `${REQUIREMENT_PROMPT}\n用户当前输入:${input.originalInput}`
+          + (validationFeedback ? `\n上一次结构化需求未通过校验，请只修正以下问题：${validationFeedback}` : ''),
+        schema: researchTaskSchema(),
+        schemaName: 'research-task-v2',
+        context: attemptContext,
+        receipt: {
+          stage: input.clarification === null ? 'requirement_understanding' : 'requirement_clarification',
+          contextManifestHash: hashPrompt('', attemptContext),
+          expectedModel: this.dependencies.expectedActualModel
+            ?? this.dependencies.llm.identity.requestedModel,
+        },
+      });
+      try {
+        const candidate = researchTaskCandidate(generated.data);
+        this.dependencies.validator.validateOrThrow('research-task-v2', candidate);
+        requirement = normalizeOutcomeRequirement(
+          normalizeExplicitWeightedMatrix(candidate as ResearchTaskV2),
+          input.originalInput,
+          input.clarification,
+        );
+        canonicalRequirement = canonicalizeGeneratedExpectedDeliverables(requirement);
+        break;
+      } catch (error) {
+        if (round === 1) throw error;
+        validationFeedback = redactRequirementValidationError(error);
+      }
+    }
+    if (!requirement || !canonicalRequirement) {
+      throw new Error('requirement refinement exhausted without a valid requirement');
+    }
+    canonicalRequirement = normalizeClarificationGuidance(canonicalRequirement);
+    requirement = canonicalRequirement;
+
     const task = await this.dependencies.repository.getTaskDetail?.(input.taskId);
     const taskTypeBeforeRefinement = task?.structuredTask
       && typeof task.structuredTask === 'object'
@@ -666,7 +1006,7 @@ export class RequirementRefinementService {
       expectedVersion,
       rawInputHash: hashPrompt(input.originalInput, context, 'research-task-v2'),
       clarification: persistedClarification,
-      structuredTask: requirement,
+      structuredTask: canonicalRequirement,
       modelCallId: null,
     });
     return this.finishRefinement({
@@ -674,7 +1014,7 @@ export class RequirementRefinementService {
       conversationId: input.conversationId,
       ownerUserId: input.ownerUserId,
       originalInput: input.originalInput,
-      requirement,
+      requirement: canonicalRequirement,
       requirementVersionId: activated.version.id,
       stateVersion: activated.task.stateVersion,
       rawInputHash: activated.version.rawInputHash,

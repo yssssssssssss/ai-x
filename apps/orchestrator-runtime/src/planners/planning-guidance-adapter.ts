@@ -24,6 +24,7 @@ const HASH_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const TASK_TYPES = new Set([
   'competitive_research',
   'user_research_planning',
+  'research_synthesis',
   'voc_diagnosis',
   'design_audit',
   'a11y_audit',

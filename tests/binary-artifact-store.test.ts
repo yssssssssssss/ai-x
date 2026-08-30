@@ -20,6 +20,7 @@ import { getFsSafeNativeConfig, root as openFsSafeRoot } from '@openclaw/fs-safe
 import {
   ArtifactIntegrityError,
   ControlArtifactStore,
+  TextArtifactValidationError,
 } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
 import { ArtifactInvalidationError } from '../apps/orchestrator-runtime/src/control/artifact-publication-group.ts';
 import {
@@ -267,6 +268,20 @@ function binaryInput(bytes: Uint8Array, relativePath = 'visuals/asset.bin') {
     relativePath,
     bytes,
     schemaVersion: 'visual-asset-v1',
+  };
+}
+
+function textInput(content: string, relativePath = 'reports/report.html') {
+  return {
+    taskId: ACTIVE_LEASE.taskId,
+    planVersionId: ACTIVE_LEASE.planVersionId,
+    attemptId: ACTIVE_LEASE.attemptId,
+    kind: 'standalone_html_report',
+    relativePath,
+    content,
+    mediaType: 'text/html; charset=utf-8' as const,
+    maxByteSize: 2 * 1024 * 1024,
+    schemaVersion: 'standalone-html-report-v1',
   };
 }
 
@@ -1169,4 +1184,93 @@ test('preserves legacy JSON sealing and verified reads with null media metadata'
   assert.deepEqual((await store.readVerifiedJson<typeof value>(sealed.id)).value, value);
   await assert.rejects(() => store.readVerifiedBoundJson<typeof value>(sealed.id));
   assert.equal(registry.sealInputs.length, 1);
+});
+
+test('seals and reads bound standalone HTML as exact UTF-8 text', async () => {
+  const { registry, store } = setup();
+  const content = '<!doctype html><html lang="zh-CN"><body>报告 🙂</body></html>';
+  const sealed = await store.writeText({
+    ...textInput(content),
+    maxByteSize: Buffer.byteLength(content, 'utf8'),
+  });
+
+  assert.equal(sealed.state, 'SEALED');
+  assert.equal(sealed.mediaType, 'text/html; charset=utf-8');
+  assert.equal(sealed.metadata, null);
+  assert.equal(sealed.byteSize, Buffer.byteLength(content, 'utf8'));
+  assert.equal(
+    sealed.contentSha256,
+    `sha256:${createHash('sha256').update(content, 'utf8').digest('hex')}`,
+  );
+  assert.match(sealed.storageUri, /tasks\/task-1\/attempts\/attempt-1\/reports\/report\.html$/u);
+  assert.equal(readFileSync(sealed.storageUri, 'utf8'), content);
+  assert.deepEqual(await store.readVerifiedBoundText(sealed.id), { artifact: sealed, content });
+  assert.equal(registry.sealInputs.length, 1);
+});
+
+test('rejects invalid standalone HTML text before creating STAGING state', async () => {
+  const { registry, store } = setup();
+  const invalidInputs = [
+    { ...textInput('<html>nul\0byte</html>') },
+    {
+      ...textInput('<html></html>'),
+      mediaType: 'text/html' as 'text/html; charset=utf-8',
+    },
+    { ...textInput('<html>\ud800</html>') },
+    { ...textInput('中'), maxByteSize: 2 },
+    { ...textInput('<html></html>'), maxByteSize: 0 },
+  ];
+
+  for (const input of invalidInputs) {
+    await assert.rejects(() => store.writeText(input), TextArtifactValidationError);
+  }
+  assert.equal(registry.artifacts.size, 0);
+
+  await assert.rejects(
+    () => store.writeText(textInput('<html></html>', '../report.html')),
+    /must stay under its versioned directory/u,
+  );
+  assert.equal(registry.artifacts.size, 0);
+});
+
+test('bound text reads reject media type, binding, byte-size, and hash mismatches', async () => {
+  {
+    const { registry, store } = setup();
+    const sealed = await store.writeText(textInput('<html>media</html>'));
+    registry.artifacts.set(sealed.id, { ...sealed, mediaType: 'text/plain; charset=utf-8' });
+    await assert.rejects(() => store.readVerifiedBoundText(sealed.id), ArtifactIntegrityError);
+  }
+  {
+    const { registry, store } = setup();
+    const sealed = await store.writeText(textInput('<html>binding</html>'));
+    registry.artifacts.set(sealed.id, { ...sealed, planVersionId: null });
+    await assert.rejects(() => store.readVerifiedBoundText(sealed.id));
+  }
+  {
+    const { registry, store } = setup();
+    const sealed = await store.writeText(textInput('<html>size</html>'));
+    registry.artifacts.set(sealed.id, { ...sealed, byteSize: sealed.byteSize! + 1 });
+    await assert.rejects(() => store.readVerifiedBoundText(sealed.id), ArtifactIntegrityError);
+  }
+  {
+    const { store } = setup();
+    const sealed = await store.writeText(textInput('<html>hash</html>'));
+    writeFileSync(sealed.storageUri, '<html>HASH</html>');
+    await assert.rejects(() => store.readVerifiedBoundText(sealed.id), ArtifactIntegrityError);
+  }
+});
+
+test('bound text reads reject checksummed invalid UTF-8 and NUL bytes', async () => {
+  for (const bytes of [Buffer.from([0xc3, 0x28]), Buffer.from('<html>nul\0byte</html>')]) {
+    const { registry, store } = setup();
+    const sealed = await store.writeText(textInput('<html>valid</html>'));
+    writeFileSync(sealed.storageUri, bytes);
+    registry.artifacts.set(sealed.id, {
+      ...sealed,
+      byteSize: bytes.byteLength,
+      contentSha256: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
+    });
+
+    await assert.rejects(() => store.readVerifiedBoundText(sealed.id), ArtifactIntegrityError);
+  }
 });

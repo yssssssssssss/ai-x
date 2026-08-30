@@ -1,13 +1,19 @@
 import type { CandidateProfile, ResearchTaskData, ResearchTaskV2 } from './plan.ts';
 import type {
+  ContributionLedgerV1,
+  ContributionSummaryV1,
+  CrossSkillReviewV1,
   CurrentExecutionPlan,
+  CurrentExecutionPlanV3,
   EvidenceManifest,
   LegacyResearchDeliverableEnvelope,
   PendingInput,
+  ReadableCurrentExecutionPlan,
   ResearchDeliverableEnvelope,
   VisualAssetManifest,
 } from './research-deliverable.ts';
-import type { ReportDocument } from '../../apps/orchestrator-runtime/src/report/report-document-composer.ts';
+import type { ReadableReportDocument } from './report-document.ts';
+import type { ReportPackageV2, ReportPackageV3 } from './report-package.ts';
 
 export type ControlWorkflowState =
   | 'awaiting_clarification'
@@ -90,6 +96,14 @@ export interface CurrentPlanCandidate {
   pendingInputs: PendingInput[];
 }
 
+export interface CurrentPlanCandidateV3 extends Omit<CurrentPlanCandidate, 'plan'> {
+  plan: CurrentExecutionPlanV3;
+}
+
+export interface ReadableCurrentPlanCandidate extends Omit<CurrentPlanCandidate, 'plan'> {
+  plan: ReadableCurrentExecutionPlan;
+}
+
 export interface ControlPlanCandidatesResponse {
   kind: 'current';
   conversationId: string;
@@ -145,6 +159,11 @@ export interface ExecutionControlPlanRequest {
   idempotencyKey: string;
 }
 
+export interface CancelControlPlanRequest {
+  expectedVersion: number;
+  idempotencyKey: string;
+}
+
 export interface ResumeControlPlanRequest {
   expectedVersion: number;
   idempotencyKey: string;
@@ -194,6 +213,9 @@ export interface ControlExecutionResult {
   evidenceManifestArtifactId?: string;
   reportReviewArtifactId?: string;
   reportPackageArtifactId?: string;
+  crossSkillReviewArtifactId?: string;
+  contributionLedgerArtifactId?: string;
+  contributionSummaryArtifactId?: string;
   reviewStatus?: 'completed' | 'paused';
   gapCount?: number;
   failedStepNo?: number;
@@ -210,16 +232,36 @@ export const REPORT_REVIEW_DIMENSION_IDS = [
   'visual_quality',
   'risk_disclosure',
 ] as const;
-export type ReportReviewDimensionId = typeof REPORT_REVIEW_DIMENSION_IDS[number];
+export const ANSWER_QUALITY_REVIEW_DIMENSION_IDS = [
+  'direct_answer_coverage',
+  'requested_artifact_presence',
+  'answer_evidence_strength',
+  'decision_usefulness',
+  'hypothesis_conclusion_clarity',
+  'risk_consistency',
+] as const;
+export const REPORT_REVIEW_V2_DIMENSION_IDS = [
+  ...REPORT_REVIEW_DIMENSION_IDS,
+  ...ANSWER_QUALITY_REVIEW_DIMENSION_IDS,
+] as const;
+export type ReportReviewDimensionId = typeof REPORT_REVIEW_V2_DIMENSION_IDS[number];
+
+export interface ReportReviewIssue {
+  id: string;
+  message: string;
+  targetNodeIds: string[];
+}
 
 export interface ReportReviewDimension {
   id: ReportReviewDimensionId;
   passed: boolean;
   issues: string[];
+  targetNodeIds?: string[];
+  revisionIssues?: ReportReviewIssue[];
 }
 
 export interface ReportReviewArtifact {
-  version: 'report-review-v1';
+  version: 'report-review-v1' | 'report-review-v2';
   taskId: string;
   planVersionId: string;
   attemptId: string;
@@ -234,7 +276,22 @@ export type PassedReportReviewArtifact = ReportReviewArtifact & { verdict: 'pass
 interface CoreReportPackageResponse<TDeliverable> {
   deliverable: TDeliverable;
   evidenceManifest: EvidenceManifest;
+  crossSkillReview?: CrossSkillReviewV1;
+  contributionLedger?: ContributionLedgerV1;
+  contributionSummary?: ContributionSummaryV1;
 }
+
+export type CurrentReportPackageV2Metadata = Pick<
+  ReportPackageV2,
+  | 'version'
+  | 'reportPublicationId'
+  | 'layout'
+  | 'assetSnapshot'
+  | 'standaloneHtml'
+  | 'notices'
+>;
+
+export type CurrentReportPackageV3Metadata = ReportPackageV3;
 
 export type CurrentReportPackageResponse<TPayload = unknown> =
   | CoreReportPackageResponse<LegacyResearchDeliverableEnvelope<TPayload>> & {
@@ -252,8 +309,11 @@ export type CurrentReportPackageResponse<TPayload = unknown> =
   | CoreReportPackageResponse<ResearchDeliverableEnvelope<TPayload>> & {
       presentationMode: 'multimodal';
       reportReview: PassedReportReviewArtifact;
-      reportDocument: ReportDocument;
+      reportDocument: ReadableReportDocument;
+      reportDocumentContentSha256: string;
       visualAssetManifests: VisualAssetManifest[];
+      reportPackage?: CurrentReportPackageV2Metadata;
+      editorialShowcase?: CurrentReportPackageV3Metadata;
     };
 
 

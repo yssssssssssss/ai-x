@@ -32,6 +32,7 @@ export type LLMFailureKind =
   | 'configuration'
   | 'schema'
   | 'capability'
+  | 'cancelled'
   | 'unknown';
 
 export class LLMInvocationError extends Error {
@@ -67,12 +68,14 @@ export interface StructuredLLMCallOptions {
   schema: object;
   schemaName: string;
   context?: object;
+  signal?: AbortSignal;
   receipt: LLMReceiptContext;
 }
 
 export interface TextLLMCallOptions {
   prompt: string;
   context?: object;
+  signal?: AbortSignal;
   receipt: LLMReceiptContext;
 }
 

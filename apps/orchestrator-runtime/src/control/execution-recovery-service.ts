@@ -38,9 +38,17 @@ const TERMINAL_ARTIFACT_KINDS = new Set([
   'deliverable',
   'report_review',
   'report_document',
+  'report_editorial_blueprint',
+  'standalone_html_report',
+  'report_editorial_showcase_spec',
+  'editorial_showcase_html',
   'report_package',
+  'cross_skill_review',
+  'contribution_ledger',
+  'contribution_summary',
+  'research_contribution_bundle',
 ]);
-const STEP_OUTPUT_ARTIFACT_KINDS = new Set(['tool_output', 'skill_output', 'llm_output', 'review_output']);
+const STEP_OUTPUT_ARTIFACT_KINDS = new Set(['knowledge_output', 'tool_output', 'skill_output', 'research_contribution', 'llm_output', 'review_output']);
 const VISUAL_COMPOSITE_ARTIFACT_KINDS = new Set([
   'visual_asset',
   'visual_asset_manifest',
@@ -179,8 +187,13 @@ export class ControlPlaneExecutionRecoveryStore implements ExecutionRecoveryStor
   }
   async listSucceededStepArtifactIds(attemptId: string): Promise<string[]> {
     return (await this.repository.listExecutionSteps(attemptId))
-      .filter((step) => step.state === 'succeeded' && step.outputArtifactId !== null)
-      .map((step) => step.outputArtifactId!);
+      .filter((step) => step.state === 'succeeded')
+      .flatMap((step) => [
+        ...(step.outputArtifactId ? [step.outputArtifactId] : []),
+        ...(typeof step.skillProvenance?.sourceArtifactId === 'string'
+          ? [step.skillProvenance.sourceArtifactId]
+          : []),
+      ]);
   }
   async quarantineArtifact(input: { artifactId: string }): Promise<void> {
     await this.artifacts.quarantineStagingArtifact(input.artifactId);

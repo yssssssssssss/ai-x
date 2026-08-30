@@ -5,6 +5,7 @@ import {
   loadToolManifest,
   fileExists,
   SKILL_RESULT_ENVELOPE_SCHEMA,
+  skillCompositionIssues,
   skillOptionalToolIssue,
   skillVisualInputIssue,
   unknownSkillRegistryFields,
@@ -13,6 +14,8 @@ import {
   type DecisionNode,
 } from '../../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 import { inspectDeliverableRegistry } from '../../apps/orchestrator-runtime/src/report/deliverable-registry.ts';
+import { CONTRIBUTION_ADAPTER_IDS } from '../../apps/orchestrator-runtime/src/skills/contribution-adapter-registry.ts';
+import { loadSkillExecutionContract } from '../../apps/orchestrator-runtime/src/skills/skill-execution-contract.ts';
 
 // registry linter(方案 §2.4 校验器之一 · P0-03 门禁):
 //   - status=active 的 skill/tool 必须字段完整、schema 文件存在、required_tools 存在
@@ -61,6 +64,14 @@ function lintCapabilityArrays(skill: SkillRegistryEntry, target: string, issues:
 function lintSkills(issues: LintIssue[]): void {
   const { skills } = loadSkillRegistry();
   const toolsById = new Map(loadToolRegistry().tools.map((tool) => [tool.id, tool]));
+  const explicitCompositionRequired = skills.some((skill) => (
+    skill.status === 'active' && skill.composition !== undefined
+  ));
+  const activeDeliverableIds = new Set(
+    inspectDeliverableRegistry().entries
+      .filter(({ status }) => status === 'active')
+      .map(({ id }) => id),
+  );
 
   for (const s of skills) {
     const tgt = `skill:${s.id ?? '(no-id)'}`;
@@ -81,6 +92,38 @@ function lintSkills(issues: LintIssue[]): void {
       }
     }
     lintCapabilityArrays(s, tgt, issues);
+    if (explicitCompositionRequired && s.composition === undefined) {
+      issues.push({ level: 'error', target: tgt, message: 'active skill 缺 composition 分类' });
+    }
+    for (const message of skillCompositionIssues(s)) {
+      issues.push({ level: 'error', target: tgt, message });
+    }
+    if (
+      s.composition?.contribution_adapter
+      && !(CONTRIBUTION_ADAPTER_IDS as readonly string[]).includes(s.composition.contribution_adapter)
+    ) {
+      issues.push({
+        level: 'error',
+        target: tgt,
+        message: `composition contribution_adapter 未注册: ${s.composition.contribution_adapter}`,
+      });
+    }
+    if (s.composition?.contribution_schema && !fileExists(s.composition.contribution_schema)) {
+      issues.push({
+        level: 'error',
+        target: tgt,
+        message: `composition contribution_schema 不存在: ${s.composition.contribution_schema}`,
+      });
+    }
+    for (const deliverableId of s.composition?.compatible_deliverables ?? []) {
+      if (!activeDeliverableIds.has(deliverableId)) {
+        issues.push({
+          level: 'error',
+          target: tgt,
+          message: `composition 引用了非 active deliverable: ${deliverableId}`,
+        });
+      }
+    }
     const optionalToolIssue = skillOptionalToolIssue(s);
     if (optionalToolIssue) {
       issues.push({ level: 'error', target: tgt, message: `active skill 的 ${optionalToolIssue}` });
@@ -100,6 +143,32 @@ function lintSkills(issues: LintIssue[]): void {
     }
     if (s.payload_schema && !fileExists(s.payload_schema)) {
       issues.push({ level: 'error', target: tgt, message: `payload_schema 不存在: ${s.payload_schema}` });
+    }
+    const executionMode = s.execution_mode ?? 'legacy_single_call';
+    if (executionMode === 'compiled') {
+      if (!s.execution_contract) {
+        issues.push({ level: 'error', target: tgt, message: 'compiled skill 缺 execution_contract' });
+      } else if (!fileExists(s.execution_contract)) {
+        issues.push({ level: 'error', target: tgt, message: `execution_contract 不存在: ${s.execution_contract}` });
+      } else {
+        try {
+          const loaded = loadSkillExecutionContract(s.execution_contract, s.id);
+          const allowedTools = new Set([...(s.required_tools ?? []), ...(s.optional_tools ?? [])]);
+          for (const stage of loaded.contract.stages) {
+            if (stage.actor_type === 'tool' && !allowedTools.has(stage.actor_id)) {
+              issues.push({
+                level: 'error',
+                target: tgt,
+                message: `execution_contract Tool 不属于该 Skill: ${stage.actor_id}`,
+              });
+            }
+          }
+        } catch (error) {
+          issues.push({ level: 'error', target: tgt, message: error instanceof Error ? error.message : String(error) });
+        }
+      }
+    } else if (s.execution_contract) {
+      issues.push({ level: 'error', target: tgt, message: 'legacy_single_call skill 不得声明 execution_contract' });
     }
     for (const t of s.required_tools ?? []) {
       if (!toolsById.has(t)) {

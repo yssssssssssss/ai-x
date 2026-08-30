@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { extname, isAbsolute } from 'node:path';
+import { extname, isAbsolute, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import type { ResearchTaskV2 } from '../packages/api-contract/plan.ts';
@@ -11,6 +11,9 @@ import {
 } from '../apps/orchestrator-runtime/src/runtime/gateway-llm-client.ts';
 import { requiredApprovals } from '../apps/orchestrator-runtime/src/control/task-workflow.ts';
 import { ReportPackageArtifactService } from '../apps/orchestrator-runtime/src/report/report-package-artifact.ts';
+import { ReportPackageV2ArtifactService } from '../apps/orchestrator-runtime/src/report/report-package-v2-artifact.ts';
+import { ReportPackageV3ArtifactService } from '../apps/orchestrator-runtime/src/report/report-package-v3-artifact.ts';
+import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 
 export interface RealSmokeConfig {
   ALLOW_REAL_PROVIDER?: string;
@@ -25,6 +28,8 @@ export interface RealSmokeConfig {
   TAVILY_API_KEY?: string;
   PLAYWRIGHT_CAPTURE_ENABLED?: string;
   CURRENT_REQUIRE_BROWSER_EVIDENCE?: string;
+  MULTI_SKILL_PORTFOLIO_WRITER_ENABLED?: string;
+  VIRTUAL_USER_BASE_URL?: string;
 }
 
 type JsonScalar = string | number | boolean | null;
@@ -76,6 +81,10 @@ export interface SemanticGoldScenario {
   sensitivity: ResearchTaskV2['sensitivity'];
   piiDetected: boolean;
   variant?: 'clear' | 'ambiguous' | 'missing_input' | 'constraint_conflict' | 'pii';
+  requireMultiSkill?: boolean;
+  expectedContributorSkillIds?: string[];
+  requiredToolIds?: string[];
+  planningScenarioId?: string;
 }
 
 export interface SemanticGoldFixture {
@@ -114,12 +123,64 @@ interface SmokeEvidenceStep {
 
 export type ApprovalMode = 'allow_owner' | 'forbid';
 
+export interface SmokeProgressEvent {
+  stage: 'starting' | 'requirement' | 'planning' | 'confirmation' | 'execution' | 'verification' | 'completed';
+  message: string;
+  taskId?: string;
+  attemptId?: string;
+  elapsedMs: number;
+}
+
 export interface SmokeRunInput {
   fixturePath: string;
   profiles: string[];
   scenarioId: string;
   designImagePath?: string;
   approvalMode?: ApprovalMode;
+  progress?: (event: SmokeProgressEvent) => void;
+}
+
+export interface SmokeReportContract {
+  reportDocumentVersion?: 'report-document-v2' | 'report-document-v3' | 'report-document-v4';
+  reportPackageVersion: 'report-package-v1' | 'report-package-v2' | 'report-package-v3';
+  standaloneHtmlStatus: 'not_applicable' | 'ready';
+  showcaseStatus: 'not_applicable' | 'ready';
+  fixedPackageRoot: boolean;
+}
+
+export function resolveSmokeReportContract(input: {
+  deliverableType: string;
+  reportV3WriterEnabled: boolean;
+  standaloneHtmlBundleV1Enabled: boolean;
+  reportEditorialExperienceV1Enabled?: boolean;
+  reportEditorialShowcaseV1Enabled?: boolean;
+}): SmokeReportContract {
+  const reportV3 = input.deliverableType === 'research_strategy_report'
+    && input.reportV3WriterEnabled;
+  const standaloneHtml = reportV3 && input.standaloneHtmlBundleV1Enabled;
+  const showcase = standaloneHtml
+    && input.reportEditorialExperienceV1Enabled === true
+    && input.reportEditorialShowcaseV1Enabled === true;
+  return {
+    ...(input.deliverableType === 'research_strategy_report'
+      ? { reportDocumentVersion: showcase
+          ? 'report-document-v4'
+          : reportV3 ? 'report-document-v3' : 'report-document-v2' }
+      : {}),
+    reportPackageVersion: showcase
+      ? 'report-package-v3'
+      : standaloneHtml ? 'report-package-v2' : 'report-package-v1',
+    standaloneHtmlStatus: standaloneHtml ? 'ready' : 'not_applicable',
+    showcaseStatus: showcase ? 'ready' : 'not_applicable',
+    fixedPackageRoot: standaloneHtml,
+  };
+}
+
+export class SmokeInfrastructureError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'SmokeInfrastructureError';
+  }
 }
 
 const REQUIRED_NON_BLANK_FIELDS = [
@@ -167,6 +228,7 @@ const REQUIRED_CAPABILITY_DESCRIPTION = [
 export const CURRENT_REAL_SMOKE_PROFILES = [
   'competitive_research',
   'user_research_planning',
+  'research_synthesis',
   'voc_diagnosis',
   'design_audit',
   'a11y_audit',
@@ -186,6 +248,51 @@ export function assertRealSmokeConfig(env: RealSmokeConfig): void {
     if (typeof env[field] !== 'string' || env[field].trim() === '') {
       throw new Error(`${field} must be non-empty`);
     }
+  }
+}
+
+export async function assertVirtualUserLabReady(
+  baseUrl: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  let root: URL;
+  try {
+    root = new URL(baseUrl);
+  } catch (cause) {
+    throw new SmokeInfrastructureError('virtual-user-lab preflight failed', { cause });
+  }
+  if (root.protocol !== 'http:' && root.protocol !== 'https:') {
+    throw new SmokeInfrastructureError('virtual-user-lab preflight failed');
+  }
+  const endpoint = (path: string): string => new URL(path, `${root.toString().replace(/\/+$/u, '')}/`).toString();
+  try {
+    const health = await fetchImpl(endpoint('api/health'), {
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!health.ok) throw new SmokeInfrastructureError('virtual-user-lab health preflight failed');
+    const healthBody = await health.json() as { ok?: unknown; service?: unknown };
+    if (healthBody.ok !== true || healthBody.service !== 'virtual-user-lab') {
+      throw new SmokeInfrastructureError('virtual-user-lab health preflight failed');
+    }
+
+    const simulation = await fetchImpl(endpoint('api/simulate'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ scenario: 'real smoke readiness probe' }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!simulation.ok) throw new SmokeInfrastructureError('virtual-user-lab simulation preflight failed');
+    const simulationBody: unknown = await simulation.json();
+    new SchemaValidator().validateFileOrThrow(
+      join(process.cwd(), 'tools/virtual-user-lab/output.schema.json'),
+      simulationBody,
+    );
+    if ((simulationBody as { status?: unknown }).status !== 'available') {
+      throw new SmokeInfrastructureError('virtual-user-lab simulation preflight failed');
+    }
+  } catch (cause) {
+    if (cause instanceof SmokeInfrastructureError) throw cause;
+    throw new SmokeInfrastructureError('virtual-user-lab preflight failed', { cause });
   }
 }
 
@@ -765,6 +872,13 @@ const CONTROLLED_SMOKE_DECISION = [
 ].join(' ');
 
 function explicitSmokeConfirmationAnswers(confirmations: unknown[]): Record<string, unknown> {
+  const answers: Record<string, string> = {
+    outcome_mode: 'answer',
+    app_definition: '包含品牌自有 App、垂直宠物 App 和综合电商平台 App，分别给出策略。',
+    product_scope: '覆盖干粮、湿粮、鲜粮、冻干和烘焙主粮，并明确共同点与差异。',
+    brand_price_segment: '覆盖国产与进口、中端与高端价格带，优先新手与精养宠物主人。',
+    key_findings_definition: '每个必答问题至少给出一条关键结论，置信度使用 0 到 1，设计原则至少五条。',
+  };
   return Object.fromEntries(confirmations.map((candidate, index) => {
     const confirmation = record(candidate, `structuredTask.clarification_questions[${index}]`);
     const key = nonBlankString(confirmation.key, `structuredTask.clarification_questions[${index}].key`);
@@ -772,7 +886,7 @@ function explicitSmokeConfirmationAnswers(confirmations: unknown[]): Record<stri
       confirmation.question,
       `structuredTask.clarification_questions[${index}].question`,
     );
-    return [key, `${CONTROLLED_SMOKE_DECISION} Resolved question: ${question}`];
+    return [key, answers[key] ?? `${CONTROLLED_SMOKE_DECISION} Resolved question: ${question}`];
   }));
 }
 
@@ -780,7 +894,11 @@ type SmokeRequirementResult<
   TRequirement extends { clarification_questions: unknown[] },
   TPlanning,
 > =
-  | { status: 'clarification_required'; requirement: TRequirement }
+  | {
+      status: 'clarification_required';
+      requirement: TRequirement;
+      planningGuidance?: { options: Array<{ id: string }> };
+    }
   | { status: 'ready_to_plan'; requirement: TRequirement; planningResult?: TPlanning };
 
 export async function resolveSmokeRequirement<
@@ -790,13 +908,20 @@ export async function resolveSmokeRequirement<
   initial: SmokeRequirementResult<TRequirement, TPlanning>,
   clarify: (
     answers: Record<string, unknown>,
+    selectedScenarioId?: string,
   ) => Promise<SmokeRequirementResult<TRequirement, TPlanning>>,
+  preferredScenarioId?: string,
 ): Promise<SmokeRequirementResult<TRequirement, TPlanning>> {
   let current = initial;
   for (let round = 0; round < 3 && current.status === 'clarification_required'; round += 1) {
     const confirmations = current.requirement.clarification_questions;
-    if (confirmations.length === 0) break;
-    current = await clarify(explicitSmokeConfirmationAnswers(confirmations));
+    const selectedScenarioId = confirmations.length === 0
+      ? preferredScenarioId ?? current.planningGuidance?.options[0]?.id
+      : undefined;
+    current = await clarify(
+      confirmations.length === 0 ? {} : explicitSmokeConfirmationAnswers(confirmations),
+      selectedScenarioId,
+    );
   }
   return current;
 }
@@ -856,6 +981,48 @@ export function assertSmokePlanApprovalPolicy(
   }
 }
 
+export function assertMultiSkillSmokePlan(
+  plan: Record<string, unknown>,
+  scenario: Pick<SemanticGoldScenario, 'requireMultiSkill' | 'expectedContributorSkillIds' | 'requiredToolIds'>,
+): void {
+  if (!scenario.requireMultiSkill) return;
+  if (plan.execution_contract_version !== 'current-execution-plan-v3') {
+    throw new Error('multi-Skill real smoke requires CurrentExecutionPlan v3');
+  }
+  const invocations = array(plan.skill_invocations, 'plan.skill_invocations').map((value, index) => (
+    record(value, `plan.skill_invocations[${index}]`)
+  ));
+  const contributors = invocations
+    .filter(({ role }) => role === 'contributor')
+    .map(({ skill_id }) => nonBlankString(skill_id, 'Contributor skill_id'))
+    .sort();
+  const expectedContributors = [...(scenario.expectedContributorSkillIds ?? [])].sort();
+  if (
+    invocations.filter(({ role }) => role === 'synthesizer').length !== 1
+    || contributors.length < 1
+    || expectedContributors.some((skillId) => !contributors.includes(skillId))
+  ) {
+    throw new Error('multi-Skill real smoke has an invalid Contributor/Synthesizer inventory');
+  }
+  const steps = array(plan.steps, 'plan.steps').map((value, index) => record(value, `plan.steps[${index}]`));
+  for (const toolId of scenario.requiredToolIds ?? []) {
+    if (!steps.some((step) => step.actor_type === 'tool' && step.actor_id === toolId)) {
+      throw new Error(`multi-Skill real smoke is missing required Tool ${toolId}`);
+    }
+  }
+  if (
+    (scenario.requiredToolIds ?? []).includes('tavily-web-search')
+    && !steps.some((step) => (
+      step.actor_id === 'tavily-web-search'
+      && typeof step.shared_stage_key === 'string'
+      && Array.isArray(step.shared_by_invocation_ids)
+      && step.shared_by_invocation_ids.length > 1
+    ))
+  ) throw new Error('multi-Skill real smoke requires one explicitly shared Tavily stage');
+  record(plan.portfolio_summary, 'plan.portfolio_summary');
+  array(plan.contribution_requirements, 'plan.contribution_requirements');
+}
+
 export function selectSmokeCandidate<
   T extends { candidateId: string; plan: { steps: SmokePlanStep[] } },
 >(candidates: T[]): T {
@@ -873,7 +1040,14 @@ async function executeRealSmoke(
   designImagePath?: string,
   requireBrowserEvidence = false,
   approvalMode: ApprovalMode = 'allow_owner',
+  progress: (event: SmokeProgressEvent) => void = () => {},
 ): Promise<SmokeReceipt> {
+  const startedAt = Date.now();
+  const reportProgress = (event: Omit<SmokeProgressEvent, 'elapsedMs'>) => progress({
+    ...event,
+    elapsedMs: Date.now() - startedAt,
+  });
+  reportProgress({ stage: 'starting', message: `starting ${scenario.profile}` });
   const [repositoryModule, seedModule, runtimeModule] = await Promise.all([
     import('../database/repository.ts'),
     import('../database/development-seed.ts'),
@@ -903,26 +1077,29 @@ async function executeRealSmoke(
     sensitivity: scenario.sensitivity,
     piiDetected: scenario.piiDetected,
   });
+  reportProgress({ stage: 'requirement', message: 'task created; refining requirement', taskId: created.id });
   const refined = await runtime.requirementRefinement.understand({
     taskId: created.id,
     conversationId: conversation.id,
     ownerUserId: seedUser.id,
     originalInput: scenario.input,
   });
-  const finalized = await resolveSmokeRequirement(refined, (answers) => (
+  const finalized = await resolveSmokeRequirement(refined, (answers, selectedScenarioId) => (
     runtime.requirementRefinement.clarify({
       taskId: created.id,
       conversationId: conversation.id,
       ownerUserId: seedUser.id,
       answers,
+      ...(selectedScenarioId ? { selectedScenarioId } : {}),
     })
-  ));
+  ), scenario.planningScenarioId);
   if (finalized.status !== 'ready_to_plan' || !finalized.planningResult) {
     throw new Error(`real smoke requirement did not become ready for ${scenario.profile}`);
   }
   if (finalized.requirement.task_type !== scenario.taskType) {
     throw new Error(`real smoke task type drifted for ${scenario.profile}`);
   }
+  reportProgress({ stage: 'planning', message: 'requirement finalized; planning execution', taskId: created.id });
   const finalizedTask = await runtime.repository.getTaskDetail(created.id);
   if (!finalizedTask) throw new Error(`real smoke task disappeared for ${scenario.profile}`);
   const planned = await runtime.controlPlanning.planExistingTask({
@@ -937,6 +1114,10 @@ async function executeRealSmoke(
     throw new Error(`real smoke plan deliverable drifted for ${scenario.profile}`);
   }
   assertSmokePlanApprovalPolicy(selectedCandidate.plan.steps, approvalMode);
+  assertMultiSkillSmokePlan(
+    selectedCandidate.plan as unknown as Record<string, unknown>,
+    scenario,
+  );
 
   const actor = { userId: seedUser.id, role: 'owner' as const };
   const taskId = nonBlankString(planned.task.id, 'taskId');
@@ -986,13 +1167,47 @@ async function executeRealSmoke(
   if (confirmed.state !== 'ready') {
     throw new Error(`confirmed task must be ready, received ${confirmed.state}`);
   }
+  reportProgress({ stage: 'confirmation', message: 'plan confirmed; starting execution', taskId });
 
-  const execution = await runtime.workflow.execute({
+  let progressBusy = false;
+  const executionProgress = setInterval(() => {
+    if (progressBusy) return;
+    progressBusy = true;
+    void runtime.repository.getTaskDetail(taskId).then(async (currentTask) => {
+      const currentAttemptId = currentTask?.currentAttemptId ?? undefined;
+      const steps = currentAttemptId ? await runtime.repository.listExecutionSteps(currentAttemptId) : [];
+      const succeeded = steps.filter(({ state }) => state === 'succeeded').length;
+      reportProgress({
+        stage: 'execution',
+        message: `state=${currentTask?.state ?? 'unknown'} succeeded_steps=${succeeded}/${steps.length}`,
+        taskId,
+        ...(currentAttemptId ? { attemptId: currentAttemptId } : {}),
+      });
+    }).catch(() => {
+      // Progress reporting is observational and must not interrupt the real execution.
+    }).finally(() => {
+      progressBusy = false;
+    });
+  }, 30_000);
+  executionProgress.unref();
+
+  let execution;
+  try {
+    execution = await runtime.workflow.execute({
     taskId,
     planVersionId: selected.planVersionId,
     expectedVersion: confirmed.stateVersion,
     idempotencyKey: `current-real-smoke:execute:${scenario.profile}:${taskId}`,
     actor,
+  });
+  } finally {
+    clearInterval(executionProgress);
+  }
+  reportProgress({
+    stage: 'verification',
+    message: `execution returned ${'status' in execution ? execution.status : execution.state}`,
+    taskId,
+    attemptId: execution.attemptId,
   });
   if (
     execution.executionDisabled
@@ -1015,23 +1230,114 @@ async function executeRealSmoke(
     execution.reportReviewArtifactId,
     'reportReviewArtifactId',
   );
-  const verifiedReportPackage = await new ReportPackageArtifactService(runtime.artifacts).verify({
-    artifactId: reportPackageArtifactId,
-    attemptId,
+  const multiSkillArtifactIds = scenario.requireMultiSkill
+    ? {
+        crossSkillReviewArtifactId: nonBlankString(
+          execution.crossSkillReviewArtifactId,
+          'crossSkillReviewArtifactId',
+        ),
+        contributionLedgerArtifactId: nonBlankString(
+          execution.contributionLedgerArtifactId,
+          'contributionLedgerArtifactId',
+        ),
+        contributionSummaryArtifactId: nonBlankString(
+          execution.contributionSummaryArtifactId,
+          'contributionSummaryArtifactId',
+        ),
+      }
+    : null;
+  const reportContract = resolveSmokeReportContract({
+    deliverableType: scenario.expectedDeliverableType,
+    reportV3WriterEnabled: process.env.REPORT_V3_WRITER_ENABLED === 'true',
+    standaloneHtmlBundleV1Enabled: process.env.STANDALONE_HTML_BUNDLE_V1_ENABLED === 'true',
+    reportEditorialExperienceV1Enabled: process.env.REPORT_EDITORIAL_EXPERIENCE_V1_ENABLED === 'true',
+    reportEditorialShowcaseV1Enabled: process.env.REPORT_EDITORIAL_SHOWCASE_V1_ENABLED === 'true',
   });
+  if (
+    (reportContract.reportPackageVersion === 'report-package-v2'
+      || reportContract.reportPackageVersion === 'report-package-v3')
+    && (
+      reportContract.standaloneHtmlStatus !== 'ready'
+      || reportContract.fixedPackageRoot !== true
+    )
+  ) {
+    throw new Error('Report Package smoke contract is internally inconsistent');
+  }
+  const canonicalPackageService = new ReportPackageV2ArtifactService(runtime.artifacts);
+  const verifiedShowcasePackage = reportContract.reportPackageVersion === 'report-package-v3'
+    ? await new ReportPackageV3ArtifactService({
+        artifacts: runtime.artifacts,
+        canonicalPackages: canonicalPackageService,
+      }).verify({
+        artifactId: reportPackageArtifactId,
+        taskId,
+        planVersionId: selected.planVersionId,
+        attemptId,
+      })
+    : null;
+  const verifiedReportPackage = verifiedShowcasePackage
+    ? await canonicalPackageService.verify({
+        artifactId: verifiedShowcasePackage.value.canonicalPackageArtifactId,
+        taskId,
+        planVersionId: selected.planVersionId,
+        attemptId,
+      })
+    : reportContract.reportPackageVersion === 'report-package-v2'
+      ? await canonicalPackageService.verify({
+          artifactId: reportPackageArtifactId,
+          taskId,
+          planVersionId: selected.planVersionId,
+          attemptId,
+        })
+      : await new ReportPackageArtifactService(runtime.artifacts).verify({
+          artifactId: reportPackageArtifactId,
+          attemptId,
+        });
+  const reportPackageDocumentArtifactId = verifiedReportPackage.value.version === 'report-package-v2'
+    ? verifiedReportPackage.value.sourceReportDocumentArtifactId
+    : verifiedReportPackage.value.reportDocumentArtifactId;
+  const reportPackageBlueprintArtifactId = verifiedReportPackage.value.version === 'report-package-v2'
+    ? verifiedReportPackage.value.layout.blueprintArtifactId
+    : verifiedReportPackage.value.reportLayoutBlueprintArtifactId;
   if (
     verifiedReportPackage.value.taskId !== taskId
     || verifiedReportPackage.value.planVersionId !== selected.planVersionId
     || verifiedReportPackage.value.deliverableArtifactId !== deliverableArtifactId
     || verifiedReportPackage.value.evidenceManifestArtifactId !== evidenceManifestArtifactId
     || verifiedReportPackage.value.reportReviewArtifactId !== reportReviewArtifactId
+    || (multiSkillArtifactIds && (
+      verifiedReportPackage.value.crossSkillReviewArtifactId !== multiSkillArtifactIds.crossSkillReviewArtifactId
+      || verifiedReportPackage.value.contributionLedgerArtifactId !== multiSkillArtifactIds.contributionLedgerArtifactId
+      || verifiedReportPackage.value.contributionSummaryArtifactId !== multiSkillArtifactIds.contributionSummaryArtifactId
+    ))
+    || (scenario.profile === 'research_synthesis' && !reportPackageBlueprintArtifactId)
   ) {
     throw new Error('Report Package does not match the executed task components');
+  }
+  if (
+    verifiedReportPackage.value.version === 'report-package-v2'
+    && verifiedReportPackage.value.standaloneHtml.status !== reportContract.standaloneHtmlStatus
+  ) {
+    throw new Error('Report Package v2 does not contain the required standalone HTML');
+  }
+  if (
+    reportContract.reportPackageVersion === 'report-package-v3'
+    && (
+      verifiedShowcasePackage?.value.showcase.status !== reportContract.showcaseStatus
+      || verifiedShowcasePackage.value.preferredHtml !== 'showcase'
+    )
+  ) {
+    throw new Error('Report Package v3 does not contain the required Editorial Showcase');
   }
   const delivered = record(
     await runtime.getDeliverable(taskId, seedUser.id),
     'deliverable response',
   );
+  if (scenario.requireMultiSkill) {
+    record(delivered.crossSkillReview, 'deliverable response.crossSkillReview');
+    record(delivered.contributionLedger, 'deliverable response.contributionLedger');
+    record(delivered.contributionSummary, 'deliverable response.contributionSummary');
+  }
   const deliverable = record(delivered.deliverable, 'deliverable');
   const manifest = record(delivered.evidenceManifest, 'evidenceManifest');
   const deliverableType = nonBlankString(deliverable.deliverableType, 'deliverable.deliverableType');
@@ -1062,6 +1368,77 @@ async function executeRealSmoke(
   ) {
     throw new Error('deliverable evidence manifest does not match the execution receipt');
   }
+  if (scenario.profile === 'research_synthesis') {
+    const payload = record(deliverable.payload, 'deliverable.payload');
+    const directAnswers = array(payload.directAnswers, 'deliverable.payload.directAnswers').map((value, index) => record(value, `directAnswers[${index}]`));
+    if (directAnswers.length === 0 || directAnswers.some((answer) => (
+      !nonBlankString(answer.questionId, 'directAnswer.questionId')
+      || !nonBlankString(answer.answer, 'directAnswer.answer')
+      || typeof answer.confidence !== 'number'
+      || !Array.isArray(answer.evidenceIds)
+      || typeof answer.validationNeeded !== 'string'
+    ))) throw new Error('research strategy direct answers are incomplete');
+    if (payload.schemaVersion !== 'research-strategy-content-v2') {
+      throw new Error('research strategy requires open content payload v2');
+    }
+    const contentBlocks = array(payload.contentBlocks, 'deliverable.payload.contentBlocks').map((value, index) => record(value, `contentBlocks[${index}]`));
+    const blocksByKind = new Map(contentBlocks.map((block) => [nonBlankString(block.kind, 'contentBlock.kind'), block]));
+    const strategyMap = blocksByKind.get('strategy_map');
+    const mindModel = blocksByKind.get('mind_model');
+    if (!strategyMap || array(strategyMap.cells, 'strategyMap.cells').length === 0 || !mindModel || array(mindModel.nodes, 'mindModel.nodes').length === 0) {
+      throw new Error('research strategy map or mind model is empty');
+    }
+    const principles = blocksByKind.get('design_principles');
+    if (!principles || array(principles.items, 'designPrinciples.items').length < 5) {
+      throw new Error('research strategy requires at least five design principles for the Gold scenario');
+    }
+    const opportunities = blocksByKind.get('opportunity_backlog');
+    if (!opportunities || array(opportunities.items, 'opportunityBacklog.items').length === 0) {
+      throw new Error('research strategy opportunities are empty');
+    }
+    const actionBlocks = contentBlocks.filter((block) => block.kind === 'prioritized_actions' || block.kind === 'action_plan');
+    const priorities = new Set(actionBlocks.flatMap((block, blockIndex) => (
+      array(block.items, `actionBlocks[${blockIndex}].items`).map((value, index) => (
+        nonBlankString(record(value, `actionItems[${index}]`).priority, `actionItems[${index}].priority`)
+      ))
+    )));
+    for (const priority of ['P0', 'P1', 'P2']) if (!priorities.has(priority)) throw new Error(`research strategy is missing ${priority} action`);
+    const reportDocument = record(delivered.reportDocument, 'reportDocument');
+    if (reportDocument.version !== reportContract.reportDocumentVersion) {
+      throw new Error(`research strategy requires ${reportContract.reportDocumentVersion}`);
+    }
+    if (reportDocument.layoutMode !== 'model' && reportDocument.layoutMode !== 'fallback') {
+      throw new Error('research strategy requires an explicit model or fallback layout mode');
+    }
+    const answerReview = record(delivered.reportReview, 'reportReview');
+    if (answerReview.version !== 'report-review-v2') throw new Error('research strategy requires ReportReview v2');
+    if (reportPackageDocumentArtifactId === undefined) {
+      throw new Error('research strategy Report Package is missing its ReportDocument');
+    }
+    if (verifiedReportPackage.value.version === 'report-package-v2') {
+      const packageHtml = verifiedReportPackage.value.standaloneHtml;
+      if (packageHtml.status !== 'ready') {
+        throw new Error('Report Package v2 does not contain the required standalone HTML');
+      }
+      const deliveredPackage = record(delivered.reportPackage, 'reportPackage');
+      if (
+        deliveredPackage.version !== verifiedReportPackage.value.version
+        || deliveredPackage.reportPublicationId !== verifiedReportPackage.value.reportPublicationId
+        || delivered.reportDocumentContentSha256
+          !== verifiedReportPackage.value.sourceReportDocumentContentSha256
+      ) {
+        throw new Error('Report Package v2 is not fixed to the delivered ReportDocument publication');
+      }
+      const deliveredHtml = record(deliveredPackage.standaloneHtml, 'reportPackage.standaloneHtml');
+      if (
+        deliveredHtml.status !== 'ready'
+        || deliveredHtml.artifactId !== packageHtml.artifactId
+        || deliveredHtml.rendererVersion !== packageHtml.rendererVersion
+      ) {
+        throw new Error('delivered Report Package does not preserve standalone HTML identity');
+      }
+    }
+  }
 
   const steps = await runtime.repository.listExecutionSteps(attemptId);
   requireActorCoverage(steps, selectedCandidate.plan.steps);
@@ -1077,6 +1454,38 @@ async function executeRealSmoke(
       && provenance.implementationId !== 'unknown';
   });
   if (!realToolStep?.toolProvenance) throw new Error('execution has no qualifying real Tavily Tool provenance');
+  if (scenario.requireMultiSkill) {
+    for (const toolId of scenario.requiredToolIds ?? []) {
+      const toolStep = steps.find((step) => (
+        step.actorType === 'tool'
+        && step.actorId === toolId
+        && step.state === 'succeeded'
+        && step.toolProvenance?.executionMode === 'real'
+        && typeof step.toolProvenance.implementationId === 'string'
+        && step.toolProvenance.implementationId !== 'unknown'
+      ));
+      if (!toolStep) throw new Error(`multi-Skill real smoke has no real ${toolId} receipt`);
+    }
+    const plan = selectedCandidate.plan as unknown as Record<string, unknown>;
+    const contributorSkillIds = array(plan.skill_invocations, 'plan.skill_invocations')
+      .map((value, index) => record(value, `plan.skill_invocations[${index}]`))
+      .filter(({ role }) => role === 'contributor')
+      .map(({ skill_id }) => nonBlankString(skill_id, 'Contributor skill_id'));
+    for (const skillId of contributorSkillIds) {
+      const outputStep = [...steps].reverse().find((step) => (
+        step.actorType === 'skill'
+        && step.actorId === skillId
+        && step.state === 'succeeded'
+        && typeof step.outputArtifactId === 'string'
+      ));
+      const artifact = outputStep?.outputArtifactId
+        ? await runtime.repository.getArtifact(outputStep.outputArtifactId)
+        : null;
+      if (!artifact || artifact.state !== 'SEALED' || artifact.kind !== 'research_contribution') {
+        throw new Error(`multi-Skill Contributor ${skillId} has no SEALED Research Contribution`);
+      }
+    }
+  }
 
   const configuredModel = nonBlankString(process.env.LLM_MODEL_NAME, 'LLM_MODEL_NAME');
   const expectedActualModel = nonBlankString(
@@ -1089,8 +1498,12 @@ async function executeRealSmoke(
     expectedActualModel,
   );
   const modelCalls = await runtime.repository.listModelCalls(attemptId);
-  assertGatewayModelReceipts({ modelRoutes, modelCalls });
-  const representativeModelCall = modelCalls[0]!;
+  const requiredModelCalls = modelCalls.filter((call) => call.stage !== 'report_layout' || call.status === 'succeeded');
+  assertGatewayModelReceipts({ modelRoutes, modelCalls: requiredModelCalls });
+  if (scenario.profile === 'research_synthesis' && modelCalls.some(({ stage }) => stage === 'deliverable')) {
+    throw new Error('research strategy execution must not rewrite the reviewed Skill output in a deliverable LLM stage');
+  }
+  const representativeModelCall = requiredModelCalls[0]!;
 
   const entries = array(manifest.entries, 'evidenceManifest.entries').map((entry, index) => (
     record(entry, `evidenceManifest.entries[${index}]`)
@@ -1117,6 +1530,9 @@ async function executeRealSmoke(
     runtime.artifacts.verifySealed(deliverableArtifactId),
     runtime.artifacts.verifySealed(evidenceManifestArtifactId),
     runtime.artifacts.verifySealed(reportReviewArtifactId),
+    ...(multiSkillArtifactIds
+      ? Object.values(multiSkillArtifactIds).map((artifactId) => runtime.artifacts.verifySealed(artifactId))
+      : []),
     ...evidenceArtifactIds.map((artifactId) => runtime.artifacts.verifySealed(artifactId)),
   ]);
 
@@ -1216,6 +1632,12 @@ async function executeRealSmoke(
     throw new Error('historical task state does not match its gapCount');
   }
   const provenance = realToolStep.toolProvenance;
+  reportProgress({
+    stage: 'completed',
+    message: 'real smoke completed and verified',
+    taskId,
+    attemptId,
+  });
   return formatSmokeReceipt({
     scenarioId: scenario.id,
     profile: scenario.profile,
@@ -1281,6 +1703,14 @@ export async function runCurrentRealSmoke(input: SmokeRunInput): Promise<SmokeRe
       throw new Error(`real smoke profile ${profile} has no supported full-real contract`);
     }
     const scenario = selectSmokeScenario(fixture, profile, input.scenarioId);
+    if (scenario.requireMultiSkill) {
+      if (process.env.MULTI_SKILL_PORTFOLIO_WRITER_ENABLED !== 'true') {
+        throw new Error('multi-Skill real smoke requires MULTI_SKILL_PORTFOLIO_WRITER_ENABLED=true');
+      }
+      if (typeof process.env.VIRTUAL_USER_BASE_URL !== 'string' || !process.env.VIRTUAL_USER_BASE_URL.trim()) {
+        throw new Error('multi-Skill real smoke requires VIRTUAL_USER_BASE_URL');
+      }
+    }
     const browserEvidenceRequired = requireBrowserEvidence(
       process.env.CURRENT_REQUIRE_BROWSER_EVIDENCE,
     );
@@ -1288,11 +1718,15 @@ export async function runCurrentRealSmoke(input: SmokeRunInput): Promise<SmokeRe
       throw new Error('required browser evidence needs PLAYWRIGHT_CAPTURE_ENABLED=1');
     }
     assertRealSmokeConfig(process.env);
+    if (scenario.requiredToolIds?.includes('virtual-user-lab')) {
+      await assertVirtualUserLabReady(process.env.VIRTUAL_USER_BASE_URL!);
+    }
     const receipt = await executeRealSmoke(
       scenario,
       input.designImagePath ?? process.env.CURRENT_DESIGN_SMOKE_IMAGE_PATH,
       browserEvidenceRequired,
       resolveApprovalMode(input.approvalMode),
+      (event) => input.progress?.(event),
     );
     assertSmokeReceiptMinimums(receipt, scenario);
     return [receipt];
@@ -1303,8 +1737,11 @@ export async function runCurrentRealSmoke(input: SmokeRunInput): Promise<SmokeRe
 
 export function safeSmokeErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
+  const errorType = error instanceof Error && /^[A-Za-z][A-Za-z0-9]*$/u.test(error.name)
+    ? error.name
+    : 'UnknownError';
   const messageHash = createHash('sha256').update(message).digest('hex').slice(0, 16);
-  return `Current real smoke failed message_hash=${messageHash}`;
+  return `Current real smoke failed error_type=${errorType} message_hash=${messageHash}`;
 }
 
 async function main(): Promise<void> {
@@ -1313,7 +1750,12 @@ async function main(): Promise<void> {
       ?? 'tests/fixtures/current-semantic-gold.json';
     const profile = process.env.CURRENT_SMOKE_PROFILE ?? CURRENT_REAL_SMOKE_PROFILES[0];
     const scenarioId = nonBlankString(process.env.CURRENT_SMOKE_SCENARIO, 'CURRENT_SMOKE_SCENARIO');
-    console.log(JSON.stringify(await runCurrentRealSmoke({ fixturePath, profiles: [profile], scenarioId })));
+    console.log(JSON.stringify(await runCurrentRealSmoke({
+      fixturePath,
+      profiles: [profile],
+      scenarioId,
+      progress: (event) => console.error(JSON.stringify({ type: 'current-real-smoke-progress', ...event })),
+    })));
   } catch (error) {
     console.error(safeSmokeErrorMessage(error));
     process.exitCode = 1;

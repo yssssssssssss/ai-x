@@ -26,7 +26,7 @@ function assertReference(ids: Set<string>, reference: string, type: string, owne
   }
 }
 
-function assertFindingGraphReferences(input: TextCurrentResearchPlanResponse): void {
+function assertFindingGraphReferences(input: CurrentResearchPlanResponse): void {
   const { findingGraph } = input.deliverable;
   const evidenceIds = new Set(input.evidenceManifest.entries.map((entry) => entry.id));
   const findingIds = new Set(findingGraph.findings.map((finding) => finding.id));
@@ -58,7 +58,6 @@ function assertFindingGraphReferences(input: TextCurrentResearchPlanResponse): v
 }
 
 export function currentResearchPlanToMarkdown(input: CurrentResearchPlanResponse): string {
-  assertCurrentReportTextMode(input);
   assertFindingGraphReferences(input);
   const { deliverable, evidenceManifest } = input;
   const { payload } = deliverable;

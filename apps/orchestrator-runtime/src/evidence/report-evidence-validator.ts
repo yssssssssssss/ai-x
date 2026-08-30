@@ -5,6 +5,7 @@ import type {
 import { SchemaValidator } from '../schema/validator.ts';
 import {
   resolveDeliverableContractById,
+  selectReadablePayloadSchema,
   type DeliverableContractResources,
 } from '../report/deliverable-registry.ts';
 
@@ -275,8 +276,9 @@ export class ReportEvidenceValidator {
     }
     if (deliverableContract && input.validatePayloadSchema === true) {
       try {
+        const readableSchema = selectReadablePayloadSchema(deliverableContract, report.payload);
         const payloadSchema = Object.fromEntries(
-          Object.entries(deliverableContract.payloadSchema)
+          Object.entries(readableSchema.schema)
             .filter(([key]) => key !== '$schema' && key !== '$id'),
         );
         this.schemas.validateSchemaOrThrow(

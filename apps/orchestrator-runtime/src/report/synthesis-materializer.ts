@@ -3,8 +3,8 @@ import type { EvidenceEntry } from '../../../../packages/api-contract/research-d
 import { EvidenceService } from '../evidence/evidence-service.ts';
 import { containsBlockedSensitiveData, redactSensitiveValue } from '../runtime/redaction.ts';
 
-export type SynthesisSemanticRole = 'fact_source' | 'analysis' | 'inference' | 'review';
-export type SynthesisActorType = 'tool' | 'skill' | 'llm' | 'reviewer';
+export type SynthesisSemanticRole = 'fact_source' | 'knowledge' | 'analysis' | 'inference' | 'review';
+export type SynthesisActorType = 'knowledge' | 'tool' | 'skill' | 'llm' | 'reviewer';
 
 export interface SynthesisMaterial {
   stepNo: number;
@@ -74,6 +74,7 @@ export class SynthesisMaterializationError extends Error {
 }
 
 const KIND_BY_ACTOR: Record<SynthesisActorType, string> = {
+  knowledge: 'knowledge_output',
   tool: 'tool_output',
   skill: 'skill_output',
   llm: 'llm_output',
@@ -81,8 +82,10 @@ const KIND_BY_ACTOR: Record<SynthesisActorType, string> = {
 };
 
 const SCHEMAS_BY_KIND: Record<string, readonly string[]> = {
+  knowledge_output: ['knowledge-bundle-v1'],
   tool_output: ['tool-output-v1'],
   skill_output: ['skill-output-v1', 'skill-output-v2'],
+  research_contribution: ['research-contribution-artifact-v1'],
   llm_output: ['llm-output-v1'],
   review_output: ['review-output-v1'],
 };
@@ -90,7 +93,11 @@ const EVIDENCE_SERVICE = new EvidenceService();
 
 function isRealToolEvidence(entry: EvidenceEntry): boolean {
   return entry.kind === 'tool_output'
-    && entry.evidenceClass !== 'derived'
+    && (
+      entry.evidenceClass === 'public_source'
+      || entry.evidenceClass === 'screenshot'
+      || entry.evidenceClass === 'dataset'
+    )
     && entry.sensitivity !== 'sensitive'
     && entry.redaction !== 'blocked'
     && entry.toolProof?.executionMode === 'real'
@@ -103,6 +110,7 @@ function roleFor(
   selectedToolEvidence: readonly EvidenceEntry[],
 ): SynthesisSemanticRole | null {
   if (output.actorType === 'tool') return selectedToolEvidence.length > 0 ? 'fact_source' : null;
+  if (output.actorType === 'knowledge') return 'knowledge';
   if (output.actorType === 'skill') return 'analysis';
   if (output.actorType === 'llm') return 'inference';
   return 'review';
@@ -110,7 +118,7 @@ function roleFor(
 
 function redactMaterialValue(value: unknown, key = ''): unknown {
   if (/^(?:prompt|fullPrompt|systemPrompt)$/iu.test(key)) return '[REDACTED_PROMPT]';
-  if (Array.isArray(value)) return value.map((item) => redactMaterialValue(item));
+  if (Array.isArray(value)) return value.map((item) => redactMaterialValue(item, key));
   if (value !== null && typeof value === 'object') {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>).map(([childKey, child]) => [
@@ -123,6 +131,8 @@ function redactMaterialValue(value: unknown, key = ''): unknown {
 }
 
 function assertValidStep(output: MaterializeStepOutput, input: MaterializeInput): void {
+  const kindMatchesActor = output.kind === KIND_BY_ACTOR[output.actorType]
+    || (output.actorType === 'skill' && output.kind === 'research_contribution');
   if (
     output.state !== 'succeeded'
     || output.artifact.state !== 'SEALED'
@@ -131,7 +141,7 @@ function assertValidStep(output: MaterializeStepOutput, input: MaterializeInput)
     || output.planVersionId !== input.planVersionId
     || output.attemptId !== input.attemptId
     || output.artifact.id.length === 0
-    || output.kind !== KIND_BY_ACTOR[output.actorType]
+    || !kindMatchesActor
   ) {
     throw new SynthesisMaterializationError(
       'invalid_step_output',

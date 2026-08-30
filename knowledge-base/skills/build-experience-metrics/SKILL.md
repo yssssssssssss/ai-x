@@ -25,6 +25,20 @@ title: Build Experience Metrics — 产品/系统 + 业务目标 → HEART 度�
   纵向追踪）（编排 wiki 正典）
 task_types:
   - user_research_planning
+required_tools:
+  - tavily-web-search
+execution_mode: compiled
+execution_contract: orchestrator/skill-executions/build-experience-metrics.yaml
+composition:
+  modes: [standalone, contributor]
+  supported_outcomes: [plan, answer]
+  compatible_deliverables: [research_plan, research_strategy_report]
+  contribution_types: [metrics]
+  contribution_schema: schemas/research-contribution-v1.schema.json
+  contribution_adapter: skill-envelope-provisional-v1
+  required_input_roles: [research_goal]
+  optional_input_roles: [analytics_dataset]
+  shareable_prerequisites: [tavily-web-search]
 inputs: []
 outputs: []
 status: approved

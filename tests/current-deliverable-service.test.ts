@@ -8,7 +8,11 @@ import { afterEach, test } from 'node:test';
 import type {
   ResearchDeliverableEnvelope,
   ResearchPlanPayload,
+  ResearchStrategyContentDraftV2,
+  ResearchStrategyContentPatchV1,
+  ResearchStrategyReportPayloadV2,
 } from '../packages/api-contract/research-deliverable.ts';
+import { REPORT_REVIEW_V2_DIMENSION_IDS } from '../packages/api-contract/control-workflow.ts';
 import { ArtifactNotSealedError, type ControlArtifact } from '../database/control-plane.ts';
 import { ControlArtifactStore, type ArtifactWriteInput } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
 import {
@@ -19,7 +23,10 @@ import {
 } from '../apps/orchestrator-runtime/src/evidence/evidence-service.ts';
 import type { MaterializeInput, SynthesisMaterial } from '../apps/orchestrator-runtime/src/report/synthesis-materializer.ts';
 import type { ReportReviewArtifact } from '../apps/orchestrator-runtime/src/report/report-review-service.ts';
-import type { CurrentDeliverableGenerateInput } from '../apps/orchestrator-runtime/src/report/current-deliverable-service.ts';
+import {
+  ResearchStrategyDeliverableValidationError,
+  type CurrentDeliverableGenerateInput,
+} from '../apps/orchestrator-runtime/src/report/current-deliverable-service.ts';
 import type {
   LLMClient,
   LLMProviderIdentity,
@@ -78,10 +85,15 @@ interface DeliverableGenerateInput {
 interface DeliverableGenerateResult {
   deliverable: DeliverableEnvelope;
   deliverableArtifactId: string;
+  crossSkillReviewArtifactId?: string;
+  contributionLedgerArtifactId?: string;
+  contributionSummaryArtifactId?: string;
 }
 
 interface DeliverableRevisionInput extends DeliverableGenerateInput {
   review: ReportReviewArtifact;
+  reviewArtifactId: string;
+  currentDeliverable?: ResearchDeliverableEnvelope<unknown>;
 }
 
 interface CurrentDeliverableServiceLike {
@@ -870,6 +882,7 @@ test('writes round 0 and revised round 1 deliverables to distinct immutable path
       ],
       revisionRound: 0,
     },
+    reviewArtifactId: 'review-r0',
   });
   const round1Artifact = await registry.requireSealedArtifact(round1.deliverableArtifactId);
   assert.match(round0Artifact.storageUri, /deliverables\/final-r0\.json$/u);
@@ -1224,3 +1237,740 @@ for (const invalid of invalidDraftCases) {
     assert.equal(writes.length, 0);
   });
 }
+
+function openStrategyDraft(): ResearchStrategyContentDraftV2 {
+  const support = {
+    questionIds: ['q1'], evidenceIds: ['E1'], confidence: 0.8,
+    status: 'supported' as const, validationNeeded: '',
+  };
+  return {
+    schemaVersion: 'research-strategy-content-draft-v2',
+    title: 'Open answer',
+    decisionContext: 'Choose the next action.',
+    executiveAnswer: 'Lead with verified evidence.',
+    methodSummary: 'Synthesized the verified evidence.',
+    directAnswers: [{
+      questionId: 'q1', question: 'What should change?', answer: 'Lead with verified evidence.',
+      answerStatus: 'supported', evidenceIds: ['E1'], confidence: 0.8,
+      businessImplication: 'Reduce uncertainty.', recommendedAction: 'Ship the evidence card.', validationNeeded: '',
+    }],
+    evidenceFindings: [{
+      key: 'fact', statement: 'The public source supports the decision.', support: structuredClone(support),
+    }],
+    contentBlocks: [{
+      key: 'narrative', kind: 'narrative', title: 'Why this works',
+      content: 'The evidence supports the proposed direction.', support: structuredClone(support),
+    }],
+    limitations: [],
+    openQuestions: [],
+  };
+}
+
+function structuralEvidencePatch(evidenceIds: string[] = ['E1']): ResearchStrategyContentPatchV1 {
+  return {
+    version: 'research-strategy-content-patch-v1',
+    mode: 'structural_repair',
+    operations: [{
+      op: 'replace_direct_answer_binding',
+      questionId: 'q1',
+      answerStatus: evidenceIds.length > 0 ? 'supported' : 'provisional',
+      evidenceIds,
+      confidence: evidenceIds.length > 0 ? 0.8 : 0.6,
+      validationNeeded: evidenceIds.length > 0 ? '' : 'Validate the answer.',
+    }],
+  };
+}
+
+function semanticRevisionPatch(): ResearchStrategyContentPatchV1 {
+  return {
+    version: 'research-strategy-content-patch-v1',
+    mode: 'semantic_revision',
+    operations: [{
+      op: 'replace_semantic_text',
+      reviewIssueId: 'reasoning_quality:1',
+      reason: 'Weaken the exact answer named by the sealed Review issue.',
+      target: { entity: 'direct_answer', key: 'q1', field: 'answer' },
+      value: 'Lead with carefully qualified, verifiable trust signals.',
+    }],
+  };
+}
+
+function noOpStructuralPatch(): ResearchStrategyContentPatchV1 {
+  return {
+    version: 'research-strategy-content-patch-v1',
+    mode: 'structural_repair',
+    operations: [{ op: 'append_limitation', value: 'The invalid binding remains unresolved.' }],
+  };
+}
+
+function compoundedStructuralPatch(): ResearchStrategyContentPatchV1 {
+  const provisionalSupport = {
+    questionIds: ['q1_系统'],
+    evidenceIds: [],
+    confidence: 0.6,
+    status: 'provisional' as const,
+    validationNeeded: 'Validate against the verified source.',
+  };
+  return {
+    version: 'research-strategy-content-patch-v1',
+    mode: 'structural_repair',
+    operations: [{
+      op: 'replace_direct_answer_binding',
+      questionId: 'q1',
+      answerStatus: 'provisional',
+      evidenceIds: [],
+      confidence: 0.6,
+      validationNeeded: 'Validate the answer.',
+    }, {
+      op: 'replace_support',
+      target: { entity: 'evidence_finding', key: 'fact' },
+      support: provisionalSupport,
+    }, {
+      op: 'replace_support',
+      target: { entity: 'content_block', key: 'narrative' },
+      support: provisionalSupport,
+    }],
+  };
+}
+
+function openStrategyMaterials(content: ResearchStrategyContentDraftV2): SynthesisMaterial[] {
+  return [{
+    stepNo: 8,
+    actorType: 'skill',
+    actorId: 'research-strategy-synthesis',
+    questionIds: ['q1'],
+    artifactId: 'skill-output-1',
+    artifactContentSha256: `sha256:${'8'.repeat(64)}`,
+    semanticRole: 'analysis',
+    value: {
+      version: 'skill-output-v2', status: 'succeeded', summary: 'Complete',
+      findings: [], assumptions: [], limitations: [], recommendations: [], payload: content,
+    },
+  }, {
+    stepNo: 9,
+    actorType: 'reviewer',
+    actorId: 'reviewer.research-lead',
+    questionIds: ['q1'],
+    artifactId: 'review-output-1',
+    artifactContentSha256: `sha256:${'a'.repeat(64)}`,
+    semanticRole: 'review',
+    value: { version: 'reviewer-step-output-v1', review: 'Pass.', verdict: 'pass', conditions: [] },
+  }];
+}
+
+function openStrategyInput(): Partial<DeliverableGenerateInput> {
+  return {
+    plan: { id: planVersionId, plan: { deliverable_type: 'research_strategy_report' } },
+    finalizedRequirement: {
+      version: 'research-task-v2', task_type: 'research_synthesis', outcome_mode: 'answer',
+      business_domain: 'test', research_goal: 'answer q1', target_audience: ['team'], scope: ['test'], constraints: [],
+      success_criteria: [{ id: 'criterion1', statement: 'Answer q1' }],
+      expected_deliverables: ['research_strategy_report'], requested_artifacts: ['executive_answers', 'research_report'],
+      assumptions: [], ambiguities: [], clarification_questions: [], blocking_issues: [], sensitivity: 'public', pii_detected: false,
+    },
+    problemGraph: {
+      version: 'problem-graph-v1',
+      questions: [{
+        id: 'q1', statement: 'What should change?', rationale: 'Decision', priority: 'required',
+        success_criterion_ids: ['criterion1'], evidence_requirements: [], acceptance_criteria: ['Direct answer'], depends_on: [],
+      }],
+    },
+    outputs: [{
+      stepNo: 8, actorType: 'skill', actorId: 'research-strategy-synthesis', kind: 'skill_output', state: 'succeeded',
+      taskId, planVersionId, attemptId,
+      artifact: { id: 'skill-output-1', contentSha256: `sha256:${'8'.repeat(64)}`, state: 'SEALED' },
+    }],
+  };
+}
+
+test('assembles a research strategy deliverable from the reviewed Skill output without another full-report LLM call', async () => {
+  const content = openStrategyDraft();
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(content); } };
+  const { service, llm } = await createHarness(validDeliverableDraft(), materializer);
+  const result = await service.generate(generateInput(openStrategyInput()));
+
+  assert.equal(llm.structuredCalls.length, 0);
+  assert.equal((result.deliverable.payload as { schemaVersion?: string }).schemaVersion, 'research-strategy-content-v2');
+  assert.deepEqual(result.deliverable.coverage.questionBindings, [{ questionId: 'q1', summaryIds: ['summary-q1'] }]);
+});
+
+test('Plan v3 seals Cross-Skill Review, Ledger, and safe Summary before the Canonical Deliverable', async () => {
+  const content = openStrategyDraft();
+  const contributionArtifactId = 'contribution-market-1';
+  const payloadSourceId = `${contributionArtifactId}:payload-001`;
+  content.evidenceFindings[0]!.support.sourceContributionUnitIds = [
+    `${contributionArtifactId}:market-1`,
+    payloadSourceId,
+  ];
+  const contributionMaterial: SynthesisMaterial = {
+    stepNo: 2,
+    actorType: 'skill',
+    actorId: 'competitive-analysis',
+    questionIds: ['q1'],
+    artifactId: contributionArtifactId,
+    artifactContentSha256: `sha256:${'c'.repeat(64)}`,
+    semanticRole: 'analysis',
+    value: {
+      version: 'research-contribution-artifact-v1',
+      contribution: {
+        version: 'research-contribution-v1',
+        taskId,
+        planVersionId,
+        attemptId,
+        invocationId: 'invocation:market',
+        skillId: 'competitive-analysis',
+        contributionTypes: ['competitive_analysis'],
+        units: [{
+          key: 'market-1', kind: 'finding', title: 'Market', statement: 'The public source supports the decision.',
+          requestedArtifactTypes: [],
+          support: {
+            questionIds: ['q1'], evidenceIds: ['E1'], status: 'supported',
+            confidence: 0.8, validationNeeded: '',
+          },
+        }, {
+          key: 'market-provisional', kind: 'finding', title: 'Market hypothesis',
+          statement: 'A provisional market hypothesis still needs validation.',
+          requestedArtifactTypes: [],
+          support: {
+            questionIds: ['q1'], evidenceIds: [], status: 'provisional',
+            confidence: 0.5, validationNeeded: 'Validate the market hypothesis.',
+          },
+        }, {
+          key: 'payload-001', kind: 'finding', title: 'contribution',
+          statement: '{"strategy":"context only"}',
+          requestedArtifactTypes: [],
+          support: {
+            questionIds: ['q1'], evidenceIds: [], status: 'provisional',
+            confidence: 0.5, validationNeeded: 'Validate the structured payload context.',
+          },
+        }],
+        limitations: [], openQuestions: [],
+      },
+      source: {
+        artifactId: 'source-skill-1', artifactContentSha256: `sha256:${'d'.repeat(64)}`,
+        schemaVersion: 'skill-output-v2', adapterId: 'skill-envelope-provisional-v1',
+        adapterVersion: '1.0.0', adapterHash: `sha256:${'e'.repeat(64)}`,
+        unitMappings: [{
+          sourceUnitKey: 'market-1', targetUnitKey: 'market-1', sourceJsonPointer: '/findings/0',
+          sourceSemanticHash: `sha256:${'f'.repeat(64)}`,
+        }, {
+          sourceUnitKey: 'market-provisional', targetUnitKey: 'market-provisional',
+          sourceJsonPointer: '/findings/1', sourceSemanticHash: `sha256:${'1'.repeat(64)}`,
+        }, {
+          sourceUnitKey: 'payload-001', targetUnitKey: 'payload-001',
+          sourceJsonPointer: '/payload/contribution',
+          sourceSemanticHash: `sha256:${createHash('sha256').update('{"strategy":"context only"}').digest('hex')}`,
+        }],
+        diagnosticFields: ['/summary'],
+      },
+    },
+  };
+  const materializer = {
+    async materialize(): Promise<SynthesisMaterial[]> {
+      return [contributionMaterial, ...openStrategyMaterials(content)];
+    },
+  };
+  const { service, writes } = await createHarness(validDeliverableDraft(), materializer);
+  const base = openStrategyInput();
+  const result = await service.generate(generateInput({
+    ...base,
+    plan: {
+      id: planVersionId,
+      plan: {
+        deliverable_type: 'research_strategy_report',
+        execution_contract_version: 'current-execution-plan-v3',
+        skill_invocations: [
+          {
+            invocation_id: 'invocation:market', skill_id: 'competitive-analysis', role: 'contributor',
+            contribution_types: ['competitive_analysis'], question_ids: ['q1'], requested_artifact_types: [],
+            depends_on_invocation_ids: [], output_contract: 'research-contribution-v1', required: true,
+            failure_policy: 'block', execution_mode: 'legacy_single_call', step_nos: [2],
+          },
+          {
+            invocation_id: 'invocation:synthesis', skill_id: 'research-strategy-synthesis', role: 'synthesizer',
+            contribution_types: ['strategy'], question_ids: ['q1'], requested_artifact_types: [],
+            depends_on_invocation_ids: ['invocation:market'], output_contract: 'reviewed-synthesis-draft-v1', required: true,
+            failure_policy: 'block', execution_mode: 'legacy_single_call', step_nos: [8],
+          },
+        ],
+        contribution_requirements: [{
+          id: 'demand-market', demand_type: 'competitive_analysis', question_ids: ['q1'],
+          requested_artifact_types: [], owner_invocation_id: 'invocation:market',
+          corroborator_invocation_ids: [], required: true,
+        }],
+      },
+    },
+  }));
+
+  assert.ok(result.crossSkillReviewArtifactId);
+  assert.ok(result.contributionLedgerArtifactId);
+  assert.ok(result.contributionSummaryArtifactId);
+  const crossSkillReview = writes.find(({ kind }) => kind === 'cross_skill_review')?.value as {
+    verdict?: string;
+    issues?: Array<{ disposition?: string }>;
+  } | undefined;
+  const contributionLedger = writes.find(({ kind }) => kind === 'contribution_ledger')?.value as {
+    entries?: Array<{ sourceUnitKey?: string; disposition?: string }>;
+  } | undefined;
+  assert.equal(crossSkillReview?.verdict, 'pass_with_conditions');
+  assert.equal(crossSkillReview?.issues?.[0]?.disposition, 'omitted');
+  assert.deepEqual(
+    contributionLedger?.entries?.map(({ sourceUnitKey, disposition }) => ({ sourceUnitKey, disposition })),
+    [
+      { sourceUnitKey: 'market-1', disposition: 'included' },
+      { sourceUnitKey: 'market-provisional', disposition: 'omitted' },
+      { sourceUnitKey: 'payload-001', disposition: 'omitted' },
+    ],
+  );
+  assert.deepEqual(
+    (result.deliverable.payload as unknown as ResearchStrategyReportPayloadV2)
+      .evidenceFindings[0]!.support.sourceContributionUnitIds,
+    [`${contributionArtifactId}:market-1`],
+  );
+  assert.deepEqual(writes.map(({ kind }) => kind), [
+    'content_fidelity_diagnostic',
+    'cross_skill_review',
+    'contribution_ledger',
+    'contribution_summary',
+    'deliverable',
+  ]);
+  assert.deepEqual(
+    writes.filter(({ kind }) => ['cross_skill_review', 'contribution_ledger', 'contribution_summary'].includes(kind))
+      .map(({ relativePath }) => relativePath),
+    [
+      'reviews/cross-skill-review-r0.json',
+      'deliverables/contribution-ledger-r0.json',
+      'deliverables/contribution-summary-r0.json',
+    ],
+  );
+});
+
+test('revises an open strategy report through one bounded Content Draft repair', async () => {
+  const content = openStrategyDraft();
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(content); } };
+  const { service, llm, writes } = await createHarness(semanticRevisionPatch(), materializer);
+  const strategyInput = generateInput(openStrategyInput());
+  const initial = await service.generate(strategyInput);
+  const revised = await service.revise({
+    ...strategyInput,
+    currentDeliverable: initial.deliverable,
+    review: {
+      version: 'report-review-v2', taskId, planVersionId, attemptId,
+      deliverableArtifactId: initial.deliverableArtifactId,
+      verdict: 'revise',
+      dimensions: REPORT_REVIEW_V2_DIMENSION_IDS.map((id) => id === 'reasoning_quality'
+        ? {
+            id,
+            passed: false,
+            issues: ['Weaken one unsupported claim.'],
+            targetNodeIds: ['q1'],
+            revisionIssues: [{
+              id: 'reasoning_quality:1',
+              message: 'Weaken one unsupported claim.',
+              targetNodeIds: ['q1'],
+            }],
+          }
+        : { id, passed: true, issues: [] }),
+      revisionRound: 0,
+    },
+    reviewArtifactId: 'review-r0',
+  });
+
+  assert.equal(llm.structuredCalls.length, 1);
+  assert.equal(llm.structuredCalls[0]?.receipt.stage, 'deliverable_repair');
+  const revisionContext = llm.structuredCalls[0]?.context as {
+    authorizingReviewArtifactId?: string;
+    reviewIssues?: Array<{ id: string; targetNodeIds: string[] }>;
+  };
+  assert.equal(revisionContext.authorizingReviewArtifactId, 'review-r0');
+  assert.deepEqual(revisionContext.reviewIssues, [{
+    id: 'reasoning_quality:1',
+    dimensionId: 'reasoning_quality',
+    issue: 'Weaken one unsupported claim.',
+    targetNodeIds: ['q1'],
+  }]);
+  assert.equal(revised.deliverableArtifactId, deliverableArtifactId);
+  assert.deepEqual(writes.map(({ relativePath }) => relativePath), [
+    'diagnostics/content-fidelity-r0.json',
+    'deliverables/final-r0.json',
+    'diagnostics/content-fidelity-r1.json',
+    'deliverables/final-r1.json',
+  ]);
+  const revisionFidelity = writes[2]?.value as { repairOperations?: string[]; removedUnitKeys?: string[] };
+  assert.match(revisionFidelity.repairOperations?.[0] ?? '', /reasoning_quality:1/u);
+  assert.match(revisionFidelity.repairOperations?.[0] ?? '', /direct_answer/u);
+  assert.deepEqual(revisionFidelity.removedUnitKeys, []);
+});
+
+test('deterministically restores empty provisional Evidence bindings before invoking repair', async () => {
+  const content = openStrategyDraft();
+  content.directAnswers[0]!.answerStatus = 'provisional';
+  content.directAnswers[0]!.evidenceIds = [];
+  content.directAnswers[0]!.validationNeeded = 'Validate the answer.';
+  content.evidenceFindings[0]!.support.status = 'provisional';
+  content.evidenceFindings[0]!.support.evidenceIds = [];
+  content.evidenceFindings[0]!.support.validationNeeded = 'Validate the finding.';
+  const narrative = content.contentBlocks[0]!;
+  assert.equal(narrative.kind, 'narrative');
+  if (narrative.kind === 'narrative') {
+    narrative.support.status = 'provisional';
+    narrative.support.evidenceIds = [];
+    narrative.support.validationNeeded = 'Validate the narrative.';
+  }
+  const bindingSource: SynthesisMaterial = {
+    stepNo: 3,
+    actorType: 'llm',
+    actorId: 'llm.openai.gpt-4o',
+    questionIds: ['q1'],
+    artifactId: 'evidence-inventory-1',
+    artifactContentSha256: `sha256:${'b'.repeat(64)}`,
+    semanticRole: 'inference',
+    value: { text: '## q1\nVerified source: E1.' },
+  };
+  const materializer = {
+    async materialize(): Promise<SynthesisMaterial[]> {
+      return [bindingSource, ...openStrategyMaterials(content)];
+    },
+  };
+  const { service, llm, writes } = await createHarness(openStrategyDraft(), materializer);
+
+  const result = await service.generate(generateInput(openStrategyInput()));
+
+  assert.equal(llm.structuredCalls.length, 0);
+  assert.deepEqual(
+    (result.deliverable.payload as unknown as ResearchStrategyReportPayloadV2).directAnswers[0]?.evidenceIds,
+    ['E1'],
+  );
+  assert.equal(writes[0]?.kind, 'content_fidelity_diagnostic');
+  assert.equal(writes[1]?.kind, 'deliverable');
+  assert.equal((writes[0]?.value as { mode?: string }).mode, 'none');
+  assert.equal((writes[0]?.value as { removedUnitKeys?: string[] }).removedUnitKeys?.length, 0);
+});
+
+test('requires the fidelity diagnostic before sealing a Canonical Deliverable', async () => {
+  const content = openStrategyDraft();
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(content); } };
+  const writes: ArtifactWriteInput[] = [];
+  const artifactWriter: ArtifactWriterLike = {
+    async writeJson(input) {
+      writes.push(input);
+      if (input.kind === 'content_fidelity_diagnostic') throw new Error('fidelity store unavailable');
+      return { id: deliverableArtifactId };
+    },
+  };
+  const { service } = await createHarness(validDeliverableDraft(), materializer, artifactWriter);
+
+  await assert.rejects(
+    () => service.generate(generateInput(openStrategyInput())),
+    /fidelity store unavailable/u,
+  );
+  assert.deepEqual(writes.map(({ kind }) => kind), ['content_fidelity_diagnostic']);
+});
+
+test('persists fidelity diagnostics and preview when the initial Draft inventory is invalid', async () => {
+  const invalid = openStrategyDraft();
+  invalid.contentBlocks.push(structuredClone(invalid.contentBlocks[0]!));
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(invalid); } };
+  const { service, writes } = await createHarness(structuralEvidencePatch(), materializer);
+
+  await assert.rejects(
+    () => service.generate(generateInput(openStrategyInput())),
+    (error: unknown) => error instanceof ResearchStrategyDeliverableValidationError
+      && /duplicate content unit/u.test(error.message)
+      && error.draftPreview.contentBlocks.length === 2,
+  );
+  assert.deepEqual(writes.map(({ kind }) => kind), [
+    'deliverable_validation_diagnostic',
+    'content_fidelity_diagnostic',
+  ]);
+});
+
+test('validates the production Patch response before applying operations', async () => {
+  const invalid = openStrategyDraft();
+  invalid.directAnswers[0]!.evidenceIds = ['unknown-evidence'];
+  const oversizedPatch: ResearchStrategyContentPatchV1 = {
+    version: 'research-strategy-content-patch-v1',
+    mode: 'structural_repair',
+    operations: Array.from({ length: 65 }, (_, index) => ({
+      op: 'append_limitation' as const,
+      value: `Limitation ${index + 1}`,
+    })),
+  };
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(invalid); } };
+  const { service, validator, llm } = await createHarness(oversizedPatch, materializer);
+
+  await assert.rejects(
+    () => service.generate(generateInput(openStrategyInput())),
+    /must NOT have more than 64 items|must have fewer than 65 items/iu,
+  );
+  assert.equal(llm.structuredCalls.length, 1);
+  assert.ok(validator.schemaCalls.some(({ label }) => label === 'research-strategy-content-patch-v1'));
+});
+
+test('malformed structural Patch responses keep diagnostics and reviewed preview intact', async () => {
+  const invalid = openStrategyDraft();
+  invalid.directAnswers[0]!.evidenceIds = ['unknown-evidence'];
+  const malformedPatch = {
+    version: 'research-strategy-content-patch-v1',
+    mode: 'structural_repair',
+  };
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(invalid); } };
+  const { service, writes } = await createHarness(malformedPatch, materializer);
+
+  await assert.rejects(
+    () => service.generate(generateInput(openStrategyInput())),
+    (error: unknown) => error instanceof ResearchStrategyDeliverableValidationError
+      && /required property 'operations'/u.test(error.message)
+      && error.draftPreview.directAnswers.length === 1,
+  );
+  assert.deepEqual(writes.map(({ kind }) => kind), [
+    'deliverable_validation_diagnostic',
+    'deliverable_validation_diagnostic',
+    'content_fidelity_diagnostic',
+  ]);
+  assert.deepEqual(
+    (writes[2]?.value as { repairOperations?: string[] }).repairOperations,
+    ['invalid_patch:operations_missing'],
+  );
+});
+
+test('malformed semantic Patch responses keep diagnostics and reviewed preview intact', async () => {
+  const content = openStrategyDraft();
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(content); } };
+  const malformedPatch = {
+    version: 'research-strategy-content-patch-v1',
+    mode: 'semantic_revision',
+    operations: 'invalid',
+  };
+  const { service, writes } = await createHarness(malformedPatch, materializer);
+  const strategyInput = generateInput(openStrategyInput());
+  const initial = await service.generate(strategyInput);
+
+  await assert.rejects(
+    () => service.revise({
+      ...strategyInput,
+      currentDeliverable: initial.deliverable,
+      review: {
+        version: 'report-review-v2', taskId, planVersionId, attemptId,
+        deliverableArtifactId: initial.deliverableArtifactId,
+        verdict: 'revise',
+        dimensions: REPORT_REVIEW_V2_DIMENSION_IDS.map((id) => id === 'reasoning_quality'
+          ? {
+              id, passed: false, issues: ['Weaken one unsupported claim.'],
+              revisionIssues: [{
+                id: 'reasoning_quality:1', message: 'Weaken one unsupported claim.', targetNodeIds: ['q1'],
+              }],
+            }
+          : { id, passed: true, issues: [] }),
+        revisionRound: 0,
+      },
+      reviewArtifactId: 'review-r0',
+    }),
+    (error: unknown) => error instanceof ResearchStrategyDeliverableValidationError
+      && /operations must be array/u.test(error.message)
+      && error.draftPreview.contentBlocks.length === 1,
+  );
+  assert.deepEqual(writes.slice(-2).map(({ kind }) => kind), [
+    'deliverable_validation_diagnostic',
+    'content_fidelity_diagnostic',
+  ]);
+});
+
+test('repair schema permits support only on exact leaf-owning targets', async () => {
+  const content = openStrategyDraft();
+  const support = structuredClone(content.evidenceFindings[0]!.support);
+  content.directAnswers[0]!.evidenceIds = ['unknown-evidence'];
+  content.contentBlocks.push({
+    key: 'mind-model',
+    kind: 'mind_model',
+    title: 'Mind model',
+    nodes: [{ key: 'trust', label: 'Trust', description: 'Verified trust.', support }],
+    edges: [],
+  });
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(content); } };
+  const { service, llm } = await createHarness(structuralEvidencePatch(), materializer);
+  const strategyInput = generateInput(openStrategyInput());
+  (strategyInput.finalizedRequirement as { requested_artifacts?: string[] }).requested_artifacts?.push('mind_model');
+
+  await service.generate(strategyInput);
+
+  const call = llm.structuredCalls[0]!;
+  const context = call.context as { allowedSupportTargets?: unknown[] };
+  assert.deepEqual(context.allowedSupportTargets, [{ entity: 'evidence_finding', key: 'fact' }, {
+    entity: 'content_block', key: 'narrative',
+  }, {
+    entity: 'content_item', blockKey: 'mind-model', key: 'trust',
+  }]);
+  const invalidBlockTarget: ResearchStrategyContentPatchV1 = {
+    version: 'research-strategy-content-patch-v1',
+    mode: 'structural_repair',
+    operations: [{
+      op: 'replace_support',
+      target: { entity: 'content_block', key: 'mind-model' },
+      support,
+    }],
+  };
+  assert.throws(
+    () => new SchemaValidator().validateSchemaOrThrow(
+      call.schema,
+      invalidBlockTarget,
+      'research-strategy-content-patch-v1',
+    ),
+    SchemaValidationError,
+  );
+  assert.doesNotThrow(() => new SchemaValidator().validateSchemaOrThrow(
+    call.schema,
+    {
+      ...invalidBlockTarget,
+      operations: [{
+        ...invalidBlockTarget.operations[0],
+        target: { entity: 'content_item', blockKey: 'mind-model', key: 'trust' },
+      }],
+    },
+    'research-strategy-content-patch-v1',
+  ));
+});
+
+test('repairs one invalid reviewed Content Draft without returning to full Deliverable synthesis', async () => {
+  const invalid = openStrategyDraft();
+  invalid.directAnswers[0]!.evidenceIds = ['unknown-evidence'];
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(invalid); } };
+  const { service, llm, writes } = await createHarness(structuralEvidencePatch(), materializer);
+
+  const result = await service.generate(generateInput(openStrategyInput()));
+
+  assert.equal(llm.structuredCalls.length, 1);
+  assert.equal(llm.structuredCalls[0]?.receipt.stage, 'deliverable_repair');
+  assert.equal((result.deliverable.payload as { schemaVersion?: string }).schemaVersion, 'research-strategy-content-v2');
+  assert.deepEqual(writes.map(({ kind, relativePath }) => ({ kind, relativePath })), [{
+    kind: 'deliverable_validation_diagnostic',
+    relativePath: 'diagnostics/deliverable-validation-r0.json',
+  }, {
+    kind: 'content_fidelity_diagnostic',
+    relativePath: 'diagnostics/content-fidelity-r0.json',
+  }, {
+    kind: 'deliverable',
+    relativePath: 'deliverables/final-r0.json',
+  }]);
+  assert.equal((writes[0]?.value as { fallbackApplied?: boolean }).fallbackApplied, true);
+  const fidelity = writes[1]?.value as {
+    sourceUnitCount?: number;
+    candidateUnitCount?: number;
+    removedUnitKeys?: string[];
+    repairOperations?: string[];
+  };
+  assert.equal(fidelity.sourceUnitCount, fidelity.candidateUnitCount);
+  assert.deepEqual(fidelity.removedUnitKeys, []);
+  assert.match(fidelity.repairOperations?.[0] ?? '', /replace_direct_answer_binding:q1/u);
+});
+
+test('normalizes missing Evidence and a safe Question alias introduced by bounded Content Draft repair', async () => {
+  const invalid = openStrategyDraft();
+  invalid.directAnswers[0]!.evidenceIds = ['unknown-evidence'];
+  const bindingSource: SynthesisMaterial = {
+    stepNo: 3,
+    actorType: 'llm',
+    actorId: 'llm.openai.gpt-4o',
+    questionIds: ['q1'],
+    artifactId: 'evidence-inventory-1',
+    artifactContentSha256: `sha256:${'b'.repeat(64)}`,
+    semanticRole: 'inference',
+    value: { text: '## q1\nVerified source: E1.' },
+  };
+  const materializer = {
+    async materialize(): Promise<SynthesisMaterial[]> {
+      return [bindingSource, ...openStrategyMaterials(invalid)];
+    },
+  };
+  const { service, llm, writes } = await createHarness(compoundedStructuralPatch(), materializer);
+
+  const result = await service.generate(generateInput(openStrategyInput()));
+
+  assert.equal(llm.structuredCalls.length, 1);
+  const repairContext = llm.structuredCalls[0]?.context as {
+    evidenceBindingSources?: Array<{ stepNo: number; questionIds: string[]; value: unknown }>;
+  };
+  assert.deepEqual(repairContext.evidenceBindingSources, [{
+    stepNo: 3,
+    questionIds: ['q1'],
+    value: { text: '## q1\nVerified source: E1.' },
+  }]);
+  const block = (result.deliverable.payload as unknown as ResearchStrategyReportPayloadV2).contentBlocks[0]!;
+  assert.equal(block.kind, 'narrative');
+  if (block.kind === 'narrative') {
+    assert.deepEqual(block.support.questionIds, ['q1']);
+    assert.deepEqual(block.support.evidenceIds, ['E1']);
+    assert.equal(block.support.status, 'provisional');
+  }
+  assert.deepEqual(
+    (result.deliverable.payload as unknown as ResearchStrategyReportPayloadV2).directAnswers[0]?.evidenceIds,
+    ['E1'],
+  );
+  assert.deepEqual(
+    writes.map(({ kind }) => kind),
+    ['deliverable_validation_diagnostic', 'content_fidelity_diagnostic', 'deliverable'],
+  );
+});
+
+test('rejects a semantic rewrite operation in structural repair mode', async () => {
+  const invalid = openStrategyDraft();
+  invalid.directAnswers[0]!.evidenceIds = ['unknown-evidence'];
+  const forbiddenPatch: ResearchStrategyContentPatchV1 = {
+    version: 'research-strategy-content-patch-v1',
+    mode: 'structural_repair',
+    operations: [{
+      op: 'replace_semantic_text',
+      reviewIssueId: 'reasoning_quality:1',
+      reason: 'This operation is intentionally forbidden in structural mode.',
+      target: { entity: 'direct_answer', key: 'q1', field: 'answer' },
+      value: 'A compressed replacement answer.',
+    }],
+  };
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(invalid); } };
+  const { service, llm, writes } = await createHarness(forbiddenPatch, materializer);
+
+  await assert.rejects(
+    () => service.generate(generateInput(openStrategyInput())),
+    (error: unknown) => {
+      assert.ok(error instanceof ResearchStrategyDeliverableValidationError);
+      assert.equal(error.draftPreview.canonical, false);
+      assert.equal(error.draftPreview.exportAllowed, false);
+      assert.equal(error.draftPreview.directAnswers.length, 1);
+      assert.equal(error.draftPreview.contentBlocks.length, 1);
+      return /structural repair cannot replace semantic text/iu.test(error.message);
+    },
+  );
+
+  assert.equal(llm.structuredCalls.length, 1);
+  assert.deepEqual(writes.map(({ relativePath }) => relativePath), [
+    'diagnostics/deliverable-validation-r0.json',
+    'diagnostics/deliverable-validation-r1.json',
+    'diagnostics/content-fidelity-r1.json',
+  ]);
+});
+
+test('persists a sanitized diagnostic when reviewed Skill assembly and its bounded repair fail', async () => {
+  const invalid = openStrategyDraft();
+  invalid.directAnswers[0]!.evidenceIds = ['unknown-evidence'];
+  const materializer = { async materialize(): Promise<SynthesisMaterial[]> { return openStrategyMaterials(invalid); } };
+  const { service, llm, writes } = await createHarness(noOpStructuralPatch(), materializer);
+  await assert.rejects(() => service.generate(generateInput(openStrategyInput())), /unknown Evidence/);
+
+  assert.equal(llm.structuredCalls.length, 1);
+  assert.equal(writes.length, 3);
+  assert.deepEqual(writes.map(({ relativePath }) => relativePath), [
+    'diagnostics/deliverable-validation-r0.json',
+    'diagnostics/deliverable-validation-r1.json',
+    'diagnostics/content-fidelity-r1.json',
+  ]);
+  assert.deepEqual(
+    writes.map(({ kind }) => kind),
+    ['deliverable_validation_diagnostic', 'deliverable_validation_diagnostic', 'content_fidelity_diagnostic'],
+  );
+  assert.equal((writes[0]?.value as { fallbackApplied?: boolean }).fallbackApplied, true);
+  assert.equal((writes[1]?.value as { fallbackApplied?: boolean }).fallbackApplied, false);
+  assert.equal(writes[0]?.schemaVersion, 'deliverable-validation-diagnostic-v1');
+  assert.equal(writes[1]?.schemaVersion, 'deliverable-validation-diagnostic-v1');
+  assert.equal(writes[2]?.schemaVersion, 'content-fidelity-diagnostic-v1');
+  assert.doesNotMatch(JSON.stringify(writes.map(({ value }) => value)), /api[_-]?key|authorization|bearer/iu);
+});

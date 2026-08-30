@@ -3,15 +3,28 @@ import type {
   CurrentOptionalToolDecision,
   PendingInput,
 } from '../../../../packages/api-contract/research-deliverable.ts';
-import type { ResearchTaskV2 } from '../../../../packages/api-contract/plan.ts';
+import type {
+  ContributionType,
+  ResearchOutcomeMode,
+  ResearchTaskV2,
+} from '../../../../packages/api-contract/plan.ts';
 import type { ToolManifest, ToolRegistryEntry } from '../runtime/config-loader.ts';
+import { resolveSkillComposition } from '../runtime/config-loader.ts';
 import type { CapabilitySkillRegistryEntry as LoadedCapabilitySkillRegistryEntry } from '../runtime/skill-loader.ts';
 
 export type CapabilitySkillRegistryEntry = LoadedCapabilitySkillRegistryEntry;
+export type ActiveCapabilitySkillRegistryEntry = Extract<
+  CapabilitySkillRegistryEntry,
+  { status: 'active' }
+>;
 export type CapabilityApprovalAuthority = CurrentCapabilityApproval['authority'];
 export type CapabilityReasonCode =
   | 'skill_inactive'
   | 'task_type_mismatch'
+  | 'outcome_mismatch'
+  | 'deliverable_mismatch'
+  | 'composition_mode_mismatch'
+  | 'contribution_type_mismatch'
   | 'required_tool_missing'
   | 'required_tool_inactive'
   | 'required_tool_health_unknown'
@@ -47,6 +60,17 @@ export interface CapabilityDecision {
   optional_tool_decisions: CurrentOptionalToolDecision[];
 }
 
+export interface CapabilityPortfolioContext {
+  outcome: ResearchOutcomeMode;
+  deliverable_id: string;
+  demand_types: readonly ContributionType[];
+  synthesizer_skill_id: string;
+}
+
+export interface EligibleCapabilityDecision extends CapabilityDecision {
+  skill: ActiveCapabilitySkillRegistryEntry;
+}
+
 export interface CapabilityResolveInput {
   task: ResearchTaskV2;
   available_input_roles: readonly string[];
@@ -55,10 +79,11 @@ export interface CapabilityResolveInput {
   tool_states: readonly CapabilityToolState[];
   tool_manifests: readonly ToolManifest[];
   approval_capabilities: readonly CapabilityApproval[];
+  portfolio_context?: CapabilityPortfolioContext;
 }
 
 export interface CapabilityResolution {
-  eligible: CapabilityDecision[];
+  eligible: EligibleCapabilityDecision[];
   rejected: CapabilityDecision[];
 }
 
@@ -206,12 +231,70 @@ function optionalToolDecisions(
   });
 }
 
+function compositionRejections(
+  skill: ActiveCapabilitySkillRegistryEntry,
+  input: CapabilityResolveInput,
+): CapabilityDecisionReason[] {
+  const context = input.portfolio_context;
+  if (!context) {
+    return skill.task_types.includes(input.task.task_type)
+      ? []
+      : [{
+          code: 'task_type_mismatch',
+          message: `skill ${skill.id} does not support task type ${input.task.task_type}`,
+          related_id: input.task.task_type,
+        }];
+  }
+
+  const composition = resolveSkillComposition(skill);
+  const designatedSynthesizer = skill.id === context.synthesizer_skill_id;
+  if (designatedSynthesizer && !composition.modes.includes('synthesizer')) {
+    return [{
+      code: 'composition_mode_mismatch',
+      message: `skill ${skill.id} is not a synthesizer`,
+      related_id: context.deliverable_id,
+    }];
+  }
+  if (!designatedSynthesizer && !composition.modes.includes('contributor')) {
+    return [{
+      code: 'composition_mode_mismatch',
+      message: `skill ${skill.id} is not a contributor`,
+      related_id: context.deliverable_id,
+    }];
+  }
+  if (!composition.supported_outcomes.includes(context.outcome)) {
+    return [{
+      code: 'outcome_mismatch',
+      message: `skill ${skill.id} does not support outcome ${context.outcome}`,
+      related_id: context.outcome,
+    }];
+  }
+  if (!composition.compatible_deliverables.includes(context.deliverable_id)) {
+    return [{
+      code: 'deliverable_mismatch',
+      message: `skill ${skill.id} is incompatible with deliverable ${context.deliverable_id}`,
+      related_id: context.deliverable_id,
+    }];
+  }
+  if (
+    !designatedSynthesizer
+    && !(composition.contribution_types ?? []).some((type) => context.demand_types.includes(type))
+  ) {
+    return [{
+      code: 'contribution_type_mismatch',
+      message: `skill ${skill.id} does not cover any required contribution type`,
+      related_id: context.demand_types.join(','),
+    }];
+  }
+  return [];
+}
+
 export function resolveCapabilities(input: CapabilityResolveInput): CapabilityResolution {
   const toolsById = new Map(input.tools.map((tool) => [tool.id, tool]));
   const manifestsById = new Map(input.tool_manifests.map((manifest) => [manifest.id, manifest]));
   const statesById = new Map(input.tool_states.map((state) => [state.tool_id, state]));
   const availableInputs = new Set(input.available_input_roles);
-  const eligible: CapabilityDecision[] = [];
+  const eligible: EligibleCapabilityDecision[] = [];
   const rejected: CapabilityDecision[] = [];
 
   for (const skill of input.skills) {
@@ -231,14 +314,8 @@ export function resolveCapabilities(input: CapabilityResolveInput): CapabilityRe
     }
 
     const requiredApprovals: CapabilityApproval[] = [];
-    const reasons: CapabilityDecisionReason[] = [];
-    if (!skill.task_types.includes(input.task.task_type)) {
-      reasons.push({
-        code: 'task_type_mismatch',
-        message: `skill ${skill.id} does not support task type ${input.task.task_type}`,
-        related_id: input.task.task_type,
-      });
-    } else {
+    const reasons = compositionRejections(skill, input);
+    if (reasons.length === 0) {
       if (skill.risk_level === 'high') {
         const approval = selectSkillApproval(skill.id, input.approval_capabilities);
         if (approval) {
@@ -272,7 +349,10 @@ export function resolveCapabilities(input: CapabilityResolveInput): CapabilityRe
       }
     }
 
-    const pendingInputs = skill.inputs
+    const requiredInputRoles = input.portfolio_context
+      ? resolveSkillComposition(skill).required_input_roles
+      : [];
+    const pendingInputs = [...new Set([...skill.inputs, ...requiredInputRoles])]
       .filter((role) => !availableInputs.has(role))
       .map((role): CapabilityPendingInput => ({
         kind: skill.visual_inputs?.includes(role) === true ? 'visual' : 'value',

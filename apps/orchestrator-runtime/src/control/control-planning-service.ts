@@ -5,7 +5,9 @@ import type {
 } from '../../../../packages/api-contract/control-workflow.ts';
 import type {
   CurrentExecutionPlan,
+  CurrentExecutionPlanV3,
   PendingInput,
+  ReadableCurrentExecutionPlan,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import {
   isCandidateProfile,
@@ -19,16 +21,16 @@ import {
 import { PlanCompiler } from '../planners/plan-compiler.ts';
 import type { ClarificationRecoveryContext } from './requirement-refinement-service.ts';
 
-type ProvisionalExecutionPlan = Omit<CurrentExecutionPlan, 'task_id'> & {
-  task_id?: '';
-};
+type ProvisionalExecutionPlan =
+  | (Omit<CurrentExecutionPlan, 'task_id'> & { task_id?: '' })
+  | (Omit<CurrentExecutionPlanV3, 'task_id'> & { task_id?: '' });
 
 interface PersistedPlanVersion {
   id: string;
   taskId: string;
   version: number;
   candidateId: PlanCandidate['id'];
-  plan: CurrentExecutionPlan;
+  plan: ReadableCurrentExecutionPlan;
   planHash: string;
   pendingInputs: PendingInput[];
 }
@@ -149,18 +151,34 @@ export class ControlPlanningService {
       planningResult.structuredTask,
     );
     return planningResult.candidates.map((candidate) => {
-      const compiled = this.compiler.compile({
-        candidate,
-        task: planningResult.structuredTask,
-        deliverable_selection: deliverableSelection,
-        problem_graph: planningResult.problemGraph,
-        problem_graph_provenance: planningResult.problemGraphProvenance,
-        capability_resolution: planningResult.capabilityResolution,
-        evidence_requirements: deliverableSelection.evidenceRequirements,
-        activated_nodes: planningResult.activatedNodes,
-        planning_provenance: planningResult.planningProvenance,
-        requireCompetitiveWeightContract: true,
-      });
+      const portfolio = planningResult.portfolios?.[candidate.id];
+      const compiled = planningResult.capabilityDemandGraph && portfolio
+        ? this.compiler.compilePortfolio({
+            candidate,
+            task: planningResult.structuredTask,
+            deliverable_selection: deliverableSelection,
+            problem_graph: planningResult.problemGraph,
+            problem_graph_provenance: planningResult.problemGraphProvenance,
+            capability_resolution: planningResult.capabilityResolution,
+            evidence_requirements: deliverableSelection.evidenceRequirements,
+            capability_demand_graph: planningResult.capabilityDemandGraph,
+            portfolio,
+            activated_nodes: planningResult.activatedNodes,
+            planning_provenance: planningResult.planningProvenance,
+            requireCompetitiveWeightContract: true,
+          })
+        : this.compiler.compile({
+            candidate,
+            task: planningResult.structuredTask,
+            deliverable_selection: deliverableSelection,
+            problem_graph: planningResult.problemGraph,
+            problem_graph_provenance: planningResult.problemGraphProvenance,
+            capability_resolution: planningResult.capabilityResolution,
+            evidence_requirements: deliverableSelection.evidenceRequirements,
+            activated_nodes: planningResult.activatedNodes,
+            planning_provenance: planningResult.planningProvenance,
+            requireCompetitiveWeightContract: true,
+          });
       return {
         candidateId: candidate.id,
         plan: compiled.plan,
@@ -187,7 +205,7 @@ export class ControlPlanningService {
         rationale: candidate.rationale,
         tradeoffs: candidate.tradeoffs,
         planHash: stored.planHash,
-        plan: stored.plan,
+        plan: stored.plan as CurrentExecutionPlan,
         pendingInputs: stored.pendingInputs,
       };
     });

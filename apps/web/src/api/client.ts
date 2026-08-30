@@ -95,6 +95,7 @@ import type {
 
 export type {
   ApprovalControlPlanRequest,
+  CancelControlPlanRequest,
   ControlApprovalRequirement,
   ControlApprovalTaskSummary,
   ControlPlanRecovery,
@@ -124,6 +125,9 @@ export type {
 } from '../../../../packages/api-contract/research-deliverable.ts';
 export type { ClarificationRequiredResponse, CurrentPlanningResponse } from '../../../agent-api/src/routes/control-planning.ts';
 export type {
+  SystemCapabilitiesResponse,
+} from '../../../../packages/api-contract/system-capabilities.ts';
+export type {
   ZeroIntegrationStatusResponse,
   ZeroPublicationResponse,
   ZeroPublicationStage,
@@ -132,6 +136,7 @@ export type {
 
 import type {
   ApprovalControlPlanRequest,
+  CancelControlPlanRequest,
   ControlApprovalTaskSummary,
   ConfirmControlPlanRequest,
   ControlCommandResponse,
@@ -147,6 +152,7 @@ import type {
 } from '../../../../packages/api-contract/control-workflow.ts';
 import type { PlanProgress } from '../../../../packages/api-contract/plan.ts';
 import type { VisualAssetManifest } from '../../../../packages/api-contract/research-deliverable.ts';
+import type { SystemCapabilitiesResponse } from '../../../../packages/api-contract/system-capabilities.ts';
 import type {
   CreateZeroPublicationRequest,
   ZeroIntegrationStatusResponse,
@@ -176,6 +182,10 @@ export interface ClarifyControlTaskRequest {
 export interface ControlVisualAssetResponse {
   blob: Blob;
   mediaType: VisualAssetManifest['mediaType'];
+}
+
+export interface ControlHtmlBundleResponse {
+  blob: Blob;
 }
 
 interface PlanningStreamHandlers {
@@ -263,6 +273,7 @@ async function postPlanningStream(
 }
 
 export const api = {
+  systemCapabilities: () => req<SystemCapabilitiesResponse>('/system/capabilities'),
   authMethods: () => req<{ quickLogin: boolean }>('/auth/methods'),
   quickLogin: () => req<{ token: string; user: User }>('/auth/quick-login', { method: 'POST' }),
   register: (b: { email: string; password: string; displayName: string }) =>
@@ -336,6 +347,8 @@ export const api = {
     req<ReviseControlPlanResponse>(`/control-tasks/${taskId}/revise`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
   resumeControlPlan: (taskId: string, body: ResumeControlPlanRequest) =>
     req<ControlCommandResponse>(`/control-tasks/${taskId}/resume`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
+  cancelControlPlan: (taskId: string, body: CancelControlPlanRequest) =>
+    req<ControlCommandResponse>(`/control-tasks/${taskId}/cancel`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
   executeControlPlan: (taskId: string, body: ExecutionControlPlanRequest) =>
     req<ControlExecutionResult>(`/control-tasks/${taskId}/execute`, { method: 'POST', body, headers: { 'Idempotency-Key': body.idempotencyKey } }),
   controlVisualAsset: async (taskId: string, assetId: string): Promise<ControlVisualAssetResponse> => {
@@ -352,6 +365,32 @@ export const api = {
       throw new ApiError(502, '视觉资产媒体类型无效');
     }
     return { blob: await response.blob(), mediaType };
+  },
+  controlHtmlBundle: async (
+    taskId: string,
+    attemptId: string,
+  ): Promise<ControlHtmlBundleResponse> => {
+    const response = await reqBlob(
+      `/control-tasks/${encodeURIComponent(taskId)}/reports/${encodeURIComponent(attemptId)}/html-bundle`,
+    );
+    const mediaType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
+    if (mediaType !== 'application/zip') {
+      throw new ApiError(502, '离线 HTML 报告包媒体类型无效');
+    }
+    return { blob: await response.blob() };
+  },
+  controlEditorialShowcase: async (
+    taskId: string,
+    attemptId: string,
+  ): Promise<ControlHtmlBundleResponse> => {
+    const response = await reqBlob(
+      `/control-tasks/${encodeURIComponent(taskId)}/reports/${encodeURIComponent(attemptId)}/editorial-showcase.html`,
+    );
+    const mediaType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
+    if (mediaType !== 'text/html') {
+      throw new ApiError(502, 'Editorial Showcase 媒体类型无效');
+    }
+    return { blob: await response.blob() };
   },
   controlDeliverable: async (taskId: string) => parseControlDeliverableResponse(
     await req<unknown>(`/control-tasks/${taskId}/deliverable`),

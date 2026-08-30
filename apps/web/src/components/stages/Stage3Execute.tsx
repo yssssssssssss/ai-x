@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import type { ExecLogRow } from '../../api/client.ts';
 import {
   buildExecutionFlowGraph,
+  groupExecutionSteps,
   type ExecutionFlowGraph,
   type ExecutionFlowPhase,
   type ExecutionFlowStatus,
@@ -31,6 +32,7 @@ const STATUS_LABELS: Record<ExecutionFlowStatus, string> = {
   pending: '等待',
   running: '运行中',
   succeeded: '完成',
+  degraded: '降级完成',
   failed: '失败',
   skipped: '已跳过',
 };
@@ -71,8 +73,8 @@ function createGraphLayout(graph: ExecutionFlowGraph): GraphLayout {
   return { width, height, positions };
 }
 
-function actorTone(actorType: string): 'llm' | 'skill' | 'tool' | 'reviewer' | 'system' {
-  if (actorType === 'llm' || actorType === 'skill' || actorType === 'tool' || actorType === 'reviewer') {
+function actorTone(actorType: string): 'llm' | 'skill' | 'tool' | 'reviewer' | 'knowledge' | 'system' {
+  if (actorType === 'llm' || actorType === 'skill' || actorType === 'tool' || actorType === 'reviewer' || actorType === 'knowledge') {
     return actorType;
   }
   return 'system';
@@ -84,6 +86,7 @@ function actorLabel(actorType: string): string {
     case 'skill': return 'SKILL';
     case 'tool': return 'TOOL';
     case 'reviewer': return 'REVIEW';
+    case 'knowledge': return 'KNOWLEDGE';
     case 'system': return 'SYSTEM';
   }
 }
@@ -116,6 +119,7 @@ export function Stage3Execute({
     [steps, log, phase],
   );
   const layout = useMemo(() => createGraphLayout(graph), [graph]);
+  const invocationGroups = useMemo(() => groupExecutionSteps(steps), [steps]);
   const ended = graph.summary.completed + graph.summary.skipped;
   const statusDetail = graph.summary.failed > 0
     ? `${graph.summary.failed} 个节点失败`
@@ -138,6 +142,16 @@ export function Stage3Execute({
         {graph.usedSequentialFallback ? <span className="execution-flow-mode">线性回放</span> : null}
       </div>
 
+      {invocationGroups.some(({ id }) => id !== 'ungrouped') ? (
+        <div className="execution-invocation-groups" aria-label="Skill Invocation 分组" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+          {invocationGroups.map((group) => (
+            <span key={group.id} className="badge" title={group.consumerInvocationIds.join('、')}>
+              {group.label} · {group.stepNos.length} steps
+            </span>
+          ))}
+        </div>
+      ) : null}
+
       <div
         className="execution-flow-viewport"
         role="img"
@@ -156,7 +170,7 @@ export function Stage3Execute({
             aria-hidden="true"
           >
             <defs>
-              {(['pending', 'running', 'succeeded', 'failed', 'skipped'] as const).map((status) => (
+              {(['pending', 'running', 'succeeded', 'degraded', 'failed', 'skipped'] as const).map((status) => (
                 <marker
                   key={status}
                   id={`execution-flow-arrow-${status}`}
@@ -235,7 +249,7 @@ export function Stage3Execute({
       </ol>
 
       <div className="execution-flow-legend" aria-hidden="true">
-        {(['running', 'succeeded', 'failed', 'skipped', 'pending'] as const).map((status) => (
+        {(['running', 'succeeded', 'degraded', 'failed', 'skipped', 'pending'] as const).map((status) => (
           <span key={status}><StatusMark status={status} />{STATUS_LABELS[status]}</span>
         ))}
       </div>
@@ -246,6 +260,7 @@ export function Stage3Execute({
 function StatusMark({ status }: { status: ExecutionFlowStatus }) {
   if (status === 'running') return <span className="spinner execution-flow-node-spinner" />;
   if (status === 'succeeded') return <span className="execution-flow-status-mark status-succeeded">✓</span>;
+  if (status === 'degraded') return <span className="execution-flow-status-mark status-degraded">!</span>;
   if (status === 'failed') return <span className="execution-flow-status-mark status-failed">×</span>;
   if (status === 'skipped') return <span className="execution-flow-status-mark status-skipped">↷</span>;
   return <span className="execution-flow-status-mark status-pending">○</span>;

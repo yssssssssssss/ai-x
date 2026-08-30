@@ -21,6 +21,8 @@ import {
   type DisabledExecutionResponse,
 } from '../../../../packages/api-contract/control-workflow.ts';
 import { assertValidReportReviewArtifact } from '../report/report-review-service.ts';
+import { parseReportPackageArtifactValue } from '../report/report-package-artifact.ts';
+import { parseReportPackageV2, parseReportPackageV3 } from '../../../../packages/api-contract/report-package.ts';
 import {
   VisualInputDataUrlError,
 } from '../report/visual-input-data-url.ts';
@@ -53,6 +55,7 @@ interface BlockingIssue {
 }
 
 interface WorkflowTaskShape {
+  version?: string;
   clarification_questions?: ConfirmationRequirement[];
   blocking_issues?: BlockingIssue[];
 }
@@ -74,6 +77,9 @@ export interface WorkflowExecutionDriver {
     evidenceManifestArtifactId?: string;
     reportReviewArtifactId?: string;
     reportPackageArtifactId?: string;
+    crossSkillReviewArtifactId?: string;
+    contributionLedgerArtifactId?: string;
+    contributionSummaryArtifactId?: string;
     reviewStatus?: 'completed' | 'paused';
     gapCount?: number;
     failedStepNo?: number;
@@ -146,11 +152,13 @@ function leaseTokenHash(token: string): string {
 
 function taskShape(task: ControlTaskDetail): WorkflowTaskShape {
   if (!isRecord(task.structuredTask)) throw new TaskWorkflowGateError(['structured_task']);
+  const version = task.structuredTask.version;
   const clarificationQuestions = task.structuredTask.clarification_questions;
   const blockingIssues = task.structuredTask.blocking_issues;
   if (clarificationQuestions !== undefined && !Array.isArray(clarificationQuestions)) throw new TaskWorkflowGateError(['structured_task.clarification_questions']);
   if (blockingIssues !== undefined && !Array.isArray(blockingIssues)) throw new TaskWorkflowGateError(['structured_task.blocking_issues']);
   return {
+    ...(typeof version === 'string' ? { version } : {}),
     clarification_questions: clarificationQuestions?.map((item) => {
       if (!isRecord(item) || typeof item.key !== 'string' || !item.key) throw new TaskWorkflowGateError(['structured_task.clarification_questions']);
       return { key: item.key, question: typeof item.question === 'string' ? item.question : undefined };
@@ -379,7 +387,10 @@ export class TaskWorkflowService {
       || verifiedReview.artifact.state !== 'SEALED'
       || !verifiedReview.artifact.contentSha256
       || verifiedReview.artifact.kind !== 'report_review'
-      || verifiedReview.artifact.schemaVersion !== 'report-review-v1'
+      || (
+        verifiedReview.artifact.schemaVersion !== 'report-review-v1'
+        && verifiedReview.artifact.schemaVersion !== 'report-review-v2'
+      )
       || verifiedReview.artifact.taskId !== input.taskId
       || verifiedReview.artifact.planVersionId !== input.planVersionId
       || verifiedReview.artifact.attemptId !== input.attemptId
@@ -393,7 +404,8 @@ export class TaskWorkflowService {
     }
     const reviewValue = verifiedReview.value;
     if (
-      reviewValue.taskId !== input.taskId
+      verifiedReview.artifact.schemaVersion !== reviewValue.version
+      || reviewValue.taskId !== input.taskId
       || reviewValue.planVersionId !== input.planVersionId
       || reviewValue.attemptId !== input.attemptId
       || basename(verifiedReview.artifact.storageUri) !== `review-r${reviewValue.revisionRound}.json`
@@ -446,10 +458,77 @@ export class TaskWorkflowService {
       throw new ControlPlaneConflictError('terminal Evidence Manifest cannot reconstruct execution result');
     }
 
+    let reportPackageArtifactId: string | undefined;
+    let crossSkillReviewArtifactId: string | undefined;
+    let contributionLedgerArtifactId: string | undefined;
+    let contributionSummaryArtifactId: string | undefined;
+    if (input.status !== 'paused') {
+      const packageArtifact = await this.repository.findSealedArtifact({
+        taskId: input.taskId,
+        attemptId: input.attemptId,
+        kind: 'report_package',
+      });
+      if (packageArtifact) {
+        const verifiedPackage = await this.terminalArtifacts.readVerifiedJson<unknown>(packageArtifact.id);
+        if (
+          verifiedPackage.artifact.id !== packageArtifact.id
+          || verifiedPackage.artifact.state !== 'SEALED'
+          || verifiedPackage.artifact.kind !== 'report_package'
+          || verifiedPackage.artifact.taskId !== input.taskId
+          || verifiedPackage.artifact.planVersionId !== input.planVersionId
+          || verifiedPackage.artifact.attemptId !== input.attemptId
+        ) throw new ControlPlaneConflictError('terminal Report Package cannot reconstruct execution result');
+        let packageValue;
+        if (verifiedPackage.artifact.schemaVersion === 'report-package-v3') {
+          const v3 = parseReportPackageV3(verifiedPackage.value);
+          const canonical = await this.terminalArtifacts.readVerifiedJson<unknown>(
+            v3.canonicalPackageArtifactId,
+          );
+          if (
+            canonical.artifact.id !== v3.canonicalPackageArtifactId
+            || canonical.artifact.state !== 'SEALED'
+            || canonical.artifact.kind !== 'report_package'
+            || canonical.artifact.schemaVersion !== 'report-package-v2'
+            || canonical.artifact.contentSha256 !== v3.canonicalPackageContentSha256
+            || canonical.artifact.taskId !== input.taskId
+            || canonical.artifact.planVersionId !== input.planVersionId
+            || canonical.artifact.attemptId !== input.attemptId
+          ) throw new ControlPlaneConflictError('terminal canonical Report Package cannot reconstruct execution result');
+          packageValue = parseReportPackageV2(canonical.value);
+          if (v3.reportPublicationId !== packageValue.reportPublicationId) {
+            throw new ControlPlaneConflictError('terminal Report Package publication cannot reconstruct execution result');
+          }
+        } else {
+          packageValue = verifiedPackage.artifact.schemaVersion === 'report-package-v2'
+            ? parseReportPackageV2(verifiedPackage.value)
+            : parseReportPackageArtifactValue(verifiedPackage.value);
+        }
+        if (
+          verifiedPackage.artifact.schemaVersion !== 'report-package-v3'
+          && verifiedPackage.artifact.schemaVersion !== packageValue.version
+        ) {
+          throw new ControlPlaneConflictError('terminal Report Package version cannot reconstruct execution result');
+        }
+        if (
+          packageValue.deliverableArtifactId !== verifiedDeliverable.artifact.id
+          || packageValue.evidenceManifestArtifactId !== verifiedManifest.artifact.id
+          || packageValue.reportReviewArtifactId !== verifiedReview.artifact.id
+        ) throw new ControlPlaneConflictError('terminal Report Package binding cannot reconstruct execution result');
+        reportPackageArtifactId = packageArtifact.id;
+        crossSkillReviewArtifactId = packageValue.crossSkillReviewArtifactId;
+        contributionLedgerArtifactId = packageValue.contributionLedgerArtifactId;
+        contributionSummaryArtifactId = packageValue.contributionSummaryArtifactId;
+      }
+    }
+
     return {
       deliverableArtifactId: verifiedDeliverable.artifact.id,
       evidenceManifestArtifactId: verifiedManifest.artifact.id,
       reportReviewArtifactId: verifiedReview.artifact.id,
+      ...(reportPackageArtifactId ? { reportPackageArtifactId } : {}),
+      ...(crossSkillReviewArtifactId ? { crossSkillReviewArtifactId } : {}),
+      ...(contributionLedgerArtifactId ? { contributionLedgerArtifactId } : {}),
+      ...(contributionSummaryArtifactId ? { contributionSummaryArtifactId } : {}),
       reviewStatus: reviewValue.verdict === 'pass' ? 'completed' : 'paused',
     };
   }
@@ -505,9 +584,23 @@ export class TaskWorkflowService {
       if (completed) return completed;
       throw new ControlPlaneConflictError(`task ${task.id} is not awaiting confirmation at version ${input.expectedVersion}`);
     }
-    const missingAnswers = (taskShape(task).clarification_questions ?? [])
-      .map((requirement) => requirement.key)
-      .filter((key) => !(key in input.confirmationAnswers));
+    const taskData = taskShape(task);
+    const clarificationQuestions = taskData.clarification_questions ?? [];
+    if (taskData.version === 'research-task-v2' && clarificationQuestions.length > 0) {
+      throw new ControlPlaneConflictError(
+        'planning integrity violation: ResearchTaskV2 clarification_questions must be resolved before confirmation',
+      );
+    }
+    const confirmationKeys = taskData.version === 'research-task-v2'
+      ? new Set<string>()
+      : new Set(clarificationQuestions.map((requirement) => requirement.key));
+    const missingAnswers = taskData.version === 'research-task-v2'
+      ? []
+      : clarificationQuestions
+          .map((requirement) => requirement.key)
+          .filter((key) => !(key in input.confirmationAnswers));
+    const extraAnswers = Object.keys(input.confirmationAnswers)
+      .filter((key) => !confirmationKeys.has(key));
     const pendingInputs = pendingInputRequirements(plan);
     const requiredInputRoles = new Set(pendingInputs.map(({ role }) => role));
     const extraInputs = Object.keys(input.inputValues).filter((key) => !requiredInputRoles.has(key));
@@ -515,8 +608,13 @@ export class TaskWorkflowService {
       !Object.prototype.hasOwnProperty.call(input.inputValues, key)
       || input.inputValues[key] === undefined
     ));
-    if (missingAnswers.length || missingInputs.length || extraInputs.length) {
-      throw new TaskWorkflowGateError([...missingAnswers, ...missingInputs, ...extraInputs]);
+    if (missingAnswers.length || extraAnswers.length || missingInputs.length || extraInputs.length) {
+      throw new TaskWorkflowGateError([
+        ...missingAnswers,
+        ...extraAnswers.map((key) => `confirmation:${key}`),
+        ...missingInputs,
+        ...extraInputs,
+      ]);
     }
     if (containsInlineImageData(input.confirmationAnswers)) {
       throw new TaskWorkflowGateError(['confirmation_answers.dataUrl']);
@@ -778,7 +876,7 @@ export class TaskWorkflowService {
     if (replay) return replay;
     const task = await this.requireTask(input.taskId);
     this.requireOwner(task, input.actor);
-    const revisableStates: ControlTaskState[] = ['awaiting_confirmation', 'awaiting_approval', 'ready'];
+    const revisableStates: ControlTaskState[] = ['awaiting_confirmation', 'awaiting_approval', 'ready', 'paused'];
     if (!revisableStates.includes(task.state) || task.stateVersion !== input.expectedVersion) {
       throw new ControlPlaneConflictError(`task ${task.id} cannot be revised at version ${input.expectedVersion}`);
     }
@@ -811,6 +909,7 @@ export class TaskWorkflowService {
       candidateId: activePlan.candidateId,
       plan: generated.plan,
       pendingInputs: generated.pendingInputs,
+      clearCurrentAttempt: task.state === 'paused',
     });
     const plan = revision.plan;
     const transitioned = revision.task;
@@ -827,6 +926,49 @@ export class TaskWorkflowService {
       actorUserId: input.actor.userId,
     });
     return result;
+  }
+
+  async cancel(input: {
+    taskId: string;
+    expectedVersion: number;
+    idempotencyKey: string;
+    actor: WorkflowActor;
+  }): Promise<CommandResult> {
+    const hash = requestHash(input);
+    const replay = await this.replay<CommandResult>(input.taskId, 'cancel', input.idempotencyKey, hash);
+    if (replay) return replay;
+    const task = await this.requireTask(input.taskId);
+    this.requireOwner(task, input.actor);
+    if (!task.currentAttemptId) throw new TaskWorkflowGateError(['cancel.attempt']);
+    if (
+      !['executing', 'reviewing', 'composing_report', 'paused'].includes(task.state)
+      || task.stateVersion !== input.expectedVersion
+    ) {
+      throw new ControlPlaneConflictError(`task ${task.id} is not cancellable at version ${input.expectedVersion}`);
+    }
+    let transitioned;
+    try {
+      transitioned = await this.repository.cancelExecution({
+        taskId: task.id,
+        attemptId: task.currentAttemptId,
+        expectedVersion: input.expectedVersion,
+        command: {
+          idempotencyKey: input.idempotencyKey,
+          requestHash: hash,
+          actorUserId: input.actor.userId,
+        },
+      });
+    } catch (error) {
+      const concurrentReplay = await this.replay<CommandResult>(
+        input.taskId,
+        'cancel',
+        input.idempotencyKey,
+        hash,
+      );
+      if (concurrentReplay) return concurrentReplay;
+      throw error;
+    }
+    return { state: transitioned.state, stateVersion: transitioned.stateVersion };
   }
 
   async resume(input: {
@@ -1049,6 +1191,9 @@ export class TaskWorkflowService {
         ...(driven.evidenceManifestArtifactId === undefined ? {} : { evidenceManifestArtifactId: driven.evidenceManifestArtifactId }),
         ...(driven.reportReviewArtifactId === undefined ? {} : { reportReviewArtifactId: driven.reportReviewArtifactId }),
         ...(driven.reportPackageArtifactId === undefined ? {} : { reportPackageArtifactId: driven.reportPackageArtifactId }),
+        ...(driven.crossSkillReviewArtifactId === undefined ? {} : { crossSkillReviewArtifactId: driven.crossSkillReviewArtifactId }),
+        ...(driven.contributionLedgerArtifactId === undefined ? {} : { contributionLedgerArtifactId: driven.contributionLedgerArtifactId }),
+        ...(driven.contributionSummaryArtifactId === undefined ? {} : { contributionSummaryArtifactId: driven.contributionSummaryArtifactId }),
         ...(driven.reviewStatus === undefined ? {} : { reviewStatus: driven.reviewStatus }),
         ...(driven.gapCount === undefined ? {} : { gapCount: driven.gapCount }),
         ...(driven.failedStepNo === undefined ? {} : { failedStepNo: driven.failedStepNo }),

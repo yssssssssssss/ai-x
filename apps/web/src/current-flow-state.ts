@@ -6,6 +6,7 @@ import {
   type ResearchTaskV2ClarificationQuestion,
 } from '../../../packages/api-contract/plan.ts';
 import type {
+  ControlApprovalRequirement,
   ControlExecutionStepResponse,
   ControlPlanCandidatesResponse,
   ControlWorkflowState,
@@ -57,6 +58,12 @@ export interface TaskStatePresentation {
   tone: TaskStateTone;
 }
 
+export function approvalSubmissionAllowed(
+  requirement: Pick<ControlApprovalRequirement, 'decision' | 'canApprove'> | undefined,
+): boolean {
+  return requirement?.decision === 'pending' && requirement.canApprove;
+}
+
 const TASK_STATE_PRESENTATIONS: Record<ControlWorkflowState, TaskStatePresentation> = {
   awaiting_clarification: { label: '待补充', group: 'pending', tone: 'action' },
   awaiting_selection: { label: '待选方案', group: 'pending', tone: 'action' },
@@ -87,6 +94,22 @@ export function historyTaskPresentation(task: HistoryTaskSummary): TaskStatePres
   if (task.kind === 'current') {
     if (task.status === 'awaiting_approval' && task.requiresAction) {
       return { label: '待审批', group: 'pending', tone: 'action' };
+    }
+    if (task.status === 'completed' || task.status === 'completed_with_gaps') {
+      if (task.task_type === 'research_synthesis') {
+        return {
+          label: task.status === 'completed_with_gaps' ? '研究答案已完成·有缺口' : '研究答案已完成',
+          group: 'completed',
+          tone: task.status === 'completed_with_gaps' ? 'warning' : 'success',
+        };
+      }
+      if (task.task_type === 'user_research_planning') {
+        return {
+          label: task.status === 'completed_with_gaps' ? '研究方案已生成·有缺口' : '研究方案已生成',
+          group: 'completed',
+          tone: task.status === 'completed_with_gaps' ? 'warning' : 'success',
+        };
+      }
     }
     try {
       return taskStatePresentation(task.status);
@@ -240,6 +263,9 @@ export interface ExecutionPlanStepView {
   actor_type: string;
   actor_id: string;
   depends_on?: readonly number[];
+  skill_invocation_id?: string;
+  shared_stage_key?: string;
+  shared_by_invocation_ids?: readonly string[];
 }
 
 export function executionPlanStepsForTask(input: {
@@ -258,6 +284,11 @@ export function executionPlanStepsForTask(input: {
       actor_type: step.actor_type,
       actor_id: step.actor_id,
       ...(Array.isArray(step.depends_on) ? { depends_on: [...step.depends_on] } : {}),
+      ...(typeof step.skill_invocation_id === 'string' ? { skill_invocation_id: step.skill_invocation_id } : {}),
+      ...(typeof step.shared_stage_key === 'string' ? { shared_stage_key: step.shared_stage_key } : {}),
+      ...(Array.isArray(step.shared_by_invocation_ids)
+        ? { shared_by_invocation_ids: [...step.shared_by_invocation_ids] }
+        : {}),
     }));
   }
   return input.executionSteps.map((step) => ({
@@ -275,6 +306,7 @@ export function executionStepsToExecLog(steps: ControlExecutionStepResponse[]): 
     actor_type: step.actorType,
     actor_id: step.actorId,
     status: step.state,
+    ...(step.outputArtifactId ? { outputArtifactId: step.outputArtifactId } : {}),
     skillProvenance: step.skillProvenance,
     ...(step.failure ? { failure: step.failure } : {}),
   }));
@@ -318,7 +350,20 @@ export function currentExecutionGapCount(input: {
       keys.add(`capability:${gap.capability_id}:${gap.code}`);
     }
   }
+  if (isRecord(input.plan) && Array.isArray(input.plan.skill_invocations)) {
+    for (const invocation of input.plan.skill_invocations) {
+      if (!isRecord(invocation) || typeof invocation.invocation_id !== 'string' || !Array.isArray(invocation.resource_gaps)) continue;
+      for (const gap of invocation.resource_gaps) {
+        if (!isRecord(gap) || typeof gap.query_id !== 'string' || gap.failure_policy !== 'gap') continue;
+        keys.add(`skill:${invocation.invocation_id}:resource:${gap.query_id}`);
+      }
+    }
+  }
   for (const step of input.executionSteps) {
+    const skillProvenance = step.skillProvenance;
+    if (isRecord(skillProvenance) && skillProvenance.status === 'degraded') {
+      keys.add(`step:${step.stepNo}:skill:${step.actorId}:degraded`);
+    }
     const provenance = step.toolProvenance;
     if (isRecord(provenance) && Object.prototype.hasOwnProperty.call(provenance, 'gapSummary')) {
       const summaryKeys = gapSummaryKeys(provenance.gapSummary);

@@ -18,10 +18,10 @@ const activeSkillFixture: SkillRegistryEntry = {
 };
 
 
-test('loads exactly 22 mappings in active registry order', () => {
+test('loads exactly 24 mappings in active registry order', () => {
   const activeSkills = loadSkillRegistry().skills.filter((skill) => skill.status === 'active');
   const mappings = loadSkillKnowledgeMappings(activeSkills);
-  assert.equal(mappings.size, 22);
+  assert.equal(mappings.size, 24);
   assert.deepEqual([...mappings.keys()], activeSkills.map((skill) => skill.id));
   assert.equal(mappings.get('competitive-web-research')?.kb_mode, 'not_applicable');
   assert.equal((mappings.get('generate-survey')?.required_sources.length ?? 0) > 0, true);
@@ -56,13 +56,17 @@ test('rejects unknown and missing mapping IDs', () => {
   assert.throws(() => loadSkillKnowledgeMappings(activeSkills, missingPath), /missing mapping/);
 });
 
-test('gold selections cover every Skill and keep native selections empty', () => {
+test('gold selections cover every Skill and preserve declared KB modes', () => {
   const activeSkills = loadSkillRegistry().skills.filter((skill) => skill.status === 'active');
   const selections = loadGoldSourceSelections(activeSkills);
   assert.equal(selections.size, activeSkills.length);
   assert.deepEqual(selections.get('competitive-web-research')?.selected_source_ids, []);
   assert.equal(selections.get('competitive-web-research')?.mode, 'not_applicable');
   assert.ok(selections.get('generate-survey')?.selected_source_ids.length);
+  assert.deepEqual(selections.get('research-strategy-synthesis')?.selected_source_ids, [
+    'standard_research_question_definition',
+    'standard_research_report_writing',
+  ]);
   assert.deepEqual(selections.get('structure-interview-transcript')?.selected_source_ids, ['toolbox_collection_interview_guide_design', 'toolbox_analysis_affinity_diagram', 'model_orid']);
 });
 

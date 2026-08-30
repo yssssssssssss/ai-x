@@ -88,6 +88,25 @@ class SelectionCommandFailingDatabase implements MigrationDatabase {
   }
 }
 
+class CancelCommandFailingDatabase implements MigrationDatabase {
+  constructor(private readonly database: MigrationDatabase) {}
+
+  async connect(): Promise<MigrationConnection> {
+    const connection = await this.database.connect();
+    return {
+      async query(sql, values = []) {
+        if (/INSERT\s+INTO\s+control_commands[\s\S]*'cancel'/iu.test(sql)) {
+          throw new Error('simulated cancel command persistence failure');
+        }
+        return connection.query(sql, values);
+      },
+      release() {
+        connection.release();
+      },
+    };
+  }
+}
+
 class ConfirmationReplayRaceRepository extends ControlPlaneRepository {
   private commandReadSeen = false;
   private taskReadReleased = false;
@@ -1629,6 +1648,37 @@ test('rejects any pre-existing gate on the active plan and invalidates newly sea
   }
 });
 
+test('confirmation rejects unresolved v2 clarification and post-plan answers', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const workflow = new TaskWorkflowService(repository);
+  const unresolved = await createCandidateTask(repository, 'unresolved-confirmation', {
+    structuredTask: currentTask({
+      clarification_questions: [{
+        key: 'competitors',
+        question: '竞品范围?',
+        rationale: '确认公开研究范围',
+      }],
+    }),
+  });
+  const selected = await workflow.select({
+    taskId: unresolved.task.id,
+    expectedVersion: unresolved.task.stateVersion,
+    idempotencyKey: 'unresolved-confirmation-select',
+    actor: { userId: ownerId, role: 'owner' },
+    planVersionId: unresolved.candidates[0]!.id,
+  });
+  await assert.rejects(() => workflow.confirm({
+    taskId: unresolved.task.id,
+    planVersionId: selected.planVersionId,
+    expectedVersion: selected.stateVersion,
+    idempotencyKey: 'unresolved-confirmation-confirm',
+    actor: { userId: ownerId, role: 'owner' },
+    confirmationAnswers: {},
+    inputValues: {},
+  }), (error: unknown) => error instanceof ControlPlaneConflictError
+    && /planning integrity/u.test(error.message));
+});
+
 test('confirmation, required input, role matrix, and plan revision gate ready state', async () => {
   const repository = new ControlPlaneRepository(scopedDatabase);
   const workflow = new TaskWorkflowService(repository, undefined, {
@@ -1641,11 +1691,7 @@ test('confirmation, required input, role matrix, and plan revision gate ready st
   });
   const created = await createCandidateTask(repository, 'workflow-gate', {
     structuredTask: currentTask({
-      clarification_questions: [{
-        key: 'competitors',
-        question: '竞品范围?',
-        rationale: '确认公开研究范围',
-      }],
+      clarification_questions: [],
       blocking_issues: [{ key: 'privacy', kind: 'privacy_compliance', reason: '敏感材料' }],
     }),
     plan: currentPlan('', 'workflow-gate', [currentStep({
@@ -1675,12 +1721,13 @@ test('confirmation, required input, role matrix, and plan revision gate ready st
       taskId: task.id,
       planVersionId: selection.planVersionId,
       expectedVersion: selection.stateVersion,
-      idempotencyKey: 'confirm-missing',
+      idempotencyKey: 'confirm-answer-not-allowed',
       actor: { userId: ownerId, role: 'owner' },
-      confirmationAnswers: {},
+      confirmationAnswers: { competitors: '头部三家' },
       inputValues: { brief: '研究简报' },
     }),
-    TaskWorkflowGateError,
+    (error: unknown) => error instanceof TaskWorkflowGateError
+      && error.unresolved.includes('confirmation:competitors'),
   );
   await assert.rejects(
     () => workflow.confirm({
@@ -1689,10 +1736,24 @@ test('confirmation, required input, role matrix, and plan revision gate ready st
       expectedVersion: selection.stateVersion,
       idempotencyKey: 'confirm-missing-input',
       actor: { userId: ownerId, role: 'owner' },
-      confirmationAnswers: { competitors: '头部三家' },
+      confirmationAnswers: {},
       inputValues: {},
     }),
     TaskWorkflowGateError,
+  );
+
+  await assert.rejects(
+    () => workflow.confirm({
+      taskId: task.id,
+      planVersionId: selection.planVersionId,
+      expectedVersion: selection.stateVersion,
+      idempotencyKey: 'confirm-extra-answer',
+      actor: { userId: ownerId, role: 'owner' },
+      confirmationAnswers: { geography: '海外市场' },
+      inputValues: { brief: '研究简报' },
+    }),
+    (error: unknown) => error instanceof TaskWorkflowGateError
+      && error.unresolved.includes('confirmation:geography'),
   );
 
   const confirmed = await workflow.confirm({
@@ -1701,7 +1762,7 @@ test('confirmation, required input, role matrix, and plan revision gate ready st
     expectedVersion: selection.stateVersion,
     idempotencyKey: 'confirm-1',
     actor: { userId: ownerId, role: 'owner' },
-    confirmationAnswers: { competitors: '头部三家' },
+    confirmationAnswers: {},
     inputValues: { brief: '研究简报' },
   });
   assert.equal(confirmed.state, 'awaiting_approval');
@@ -1753,7 +1814,7 @@ test('confirmation, required input, role matrix, and plan revision gate ready st
     expectedVersion: revision.stateVersion,
     idempotencyKey: 'confirm-revised-plan',
     actor: { userId: ownerId, role: 'owner' },
-    confirmationAnswers: { competitors: '头部三家' },
+    confirmationAnswers: {},
     inputValues: {},
   });
   assert.equal(reconfirmed.state, 'awaiting_approval');
@@ -1965,7 +2026,12 @@ test('Workflow owns the lease and invokes a real execution driver once per comma
       driverCalls += 1;
       await repository.requireActiveLease(lease);
       await repository.completeExecution(lease);
-      return { status: 'completed', attemptId: lease.attemptId };
+      return {
+        status: 'completed', attemptId: lease.attemptId,
+        crossSkillReviewArtifactId: 'cross-review-1',
+        contributionLedgerArtifactId: 'ledger-1',
+        contributionSummaryArtifactId: 'summary-1',
+      };
     },
   });
   const created = await createCandidateTask(repository, 'real', {
@@ -2001,6 +2067,9 @@ test('Workflow owns the lease and invokes a real execution driver once per comma
 
   assert.equal(execution.executionDisabled, false);
   assert.equal(execution.state, 'completed');
+  assert.equal(execution.crossSkillReviewArtifactId, 'cross-review-1');
+  assert.equal(execution.contributionLedgerArtifactId, 'ledger-1');
+  assert.equal(execution.contributionSummaryArtifactId, 'summary-1');
   assert.equal('leaseToken' in execution, false);
   assert.deepEqual(replay, execution);
   assert.equal(driverCalls, 1);
@@ -2421,6 +2490,71 @@ test('rejects a sealed hash-valid Review with an unknown verdict during paused r
   }
 });
 
+test('owner can cancel an active execution and revoke its lease', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const workflow = new TaskWorkflowService(repository);
+  const task = await repository.createTask({
+    conversationId,
+    ownerUserId: ownerId,
+    originalInput: 'cancel active execution',
+    taskType: 'competitive_research',
+    structuredTask: currentTask(),
+    state: 'ready',
+  });
+  const plan = await repository.createPlanVersion({
+    taskId: task.id,
+    version: 1,
+    candidateId: 'speed',
+    plan: currentPlan(task.id, 'cancel-active', [
+      currentStep({ actor_type: 'tool', actor_id: 'tavily-web-search' }),
+    ]),
+    planHash: 'sha256:cancel-active-plan',
+    pendingInputs: [],
+  });
+  const leaseToken = randomUUID();
+  const claim = await repository.claimExecution({
+    taskId: task.id,
+    planVersionId: plan.id,
+    expectedVersion: task.stateVersion,
+    idempotencyKey: 'cancel-active-claim',
+    requestHash: 'sha256:cancel-active-claim',
+    leaseOwner: 'cancel-test',
+    leaseTokenHash: `sha256:${createHash('sha256').update(leaseToken).digest('hex')}`,
+  });
+
+  const cancelCommand = {
+    taskId: task.id,
+    expectedVersion: claim.stateVersion,
+    idempotencyKey: 'cancel-active-command',
+    actor: { userId: ownerId, role: 'owner' as const },
+  };
+  const failingWorkflow = new TaskWorkflowService(new ControlPlaneRepository(
+    new CancelCommandFailingDatabase(scopedDatabase),
+  ));
+  await assert.rejects(
+    () => failingWorkflow.cancel(cancelCommand),
+    /simulated cancel command persistence failure/u,
+  );
+  assert.equal((await repository.getTaskDetail(task.id))?.state, 'executing');
+  assert.equal((await repository.listAttempts(task.id))[0]?.state, 'active');
+
+  const cancelled = await workflow.cancel(cancelCommand);
+
+  assert.equal(cancelled.state, 'cancelled');
+  assert.deepEqual(await workflow.cancel(cancelCommand), cancelled);
+  assert.equal((await repository.listAttempts(task.id))[0]?.state, 'cancelled');
+  await assert.rejects(
+    () => repository.requireActiveLease({
+      taskId: task.id,
+      planVersionId: plan.id,
+      attemptId: claim.attemptId,
+      leaseOwner: 'cancel-test',
+      leaseToken,
+    }),
+    ControlPlaneConflictError,
+  );
+});
+
 async function createPausedTask(input: {
   repository: ControlPlaneRepository;
   suffix: string;
@@ -2485,6 +2619,40 @@ async function createPausedTask(input: {
   });
   return { task, plan, paused };
 }
+
+test('paused Knowledge drift can replan and clears the obsolete execution attempt', async () => {
+  const repository = new ControlPlaneRepository(scopedDatabase);
+  const paused = await createPausedTask({
+    repository,
+    suffix: 'knowledge-drift-replan',
+    failedStepNo: 1,
+    steps: [currentStep({ actor_type: 'tool', actor_id: 'tavily-web-search' })],
+    allowedActions: ['replan', 'abort'],
+    failureKind: 'knowledge_configuration_drift',
+  });
+  const workflow = new TaskWorkflowService(repository, undefined, {
+    revise: async ({ activePlanVersionId }) => {
+      const active = await repository.getPlanVersionDetail(activePlanVersionId);
+      if (!active) throw new Error('active plan missing');
+      return {
+        plan: active.plan,
+        pendingInputs: Array.isArray(active.pendingInputs) ? active.pendingInputs : [],
+      };
+    },
+  });
+
+  const replanned = await workflow.revise({
+    taskId: paused.task.id,
+    expectedVersion: paused.paused.stateVersion,
+    idempotencyKey: 'knowledge-drift-replan-command',
+    actor: { userId: ownerId, role: 'owner' },
+    revisionInstruction: 'Refresh frozen Knowledge resources',
+  });
+  assert.equal(replanned.state, 'awaiting_confirmation');
+  const task = await repository.getTaskDetail(paused.task.id);
+  assert.equal(task?.currentAttemptId, null);
+  assert.notEqual(task?.activePlanVersionId, paused.plan.id);
+});
 
 test('worker-loss retry without failedStepNo validates recovery before accepting recovered state', async () => {
   const repository = new ControlPlaneRepository(scopedDatabase);

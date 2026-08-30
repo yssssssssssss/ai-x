@@ -7,12 +7,21 @@ import {
 } from '../../../../database/control-plane.ts';
 import type {
   ActiveExecutionLease,
+  ControlArtifact,
   ControlGateRecord,
   ControlExecutionLease,
+  ControlModelCall,
   ControlPlaneRepository,
 } from '../../../../database/control-plane.ts';
 import type {
+  ContributionType,
+  RequestedArtifact,
+  ResearchTaskV2,
+} from '../../../../packages/api-contract/plan.ts';
+import type {
   ChartSpec,
+  CurrentExecutionPlan,
+  CurrentExecutionPlanV3,
   CurrentPlanStep,
   EvidenceClass,
   EvidenceManifest,
@@ -26,7 +35,13 @@ import {
   selectAuthoritativeFailedStep,
   type PassedReportReviewArtifact,
 } from '../../../../packages/api-contract/control-workflow.ts';
-import { SchemaValidator } from '../schema/validator.ts';
+import type {
+  ReportDocumentV3,
+  ReportDocumentV4,
+  ReportNoticeV1,
+} from '../../../../packages/api-contract/report-document.ts';
+import type { ReportPackageLayoutV2 } from '../../../../packages/api-contract/report-package.ts';
+import { SchemaValidationError, SchemaValidator } from '../schema/validator.ts';
 import {
   CONFIG_PATHS,
   getConfigRoot,
@@ -45,6 +60,7 @@ import {
   ReceiptLLMClient,
 } from '../runtime/receipt-llm-client.ts';
 import { SkillLoader } from '../runtime/skill-loader.ts';
+import { stableJsonHash } from '../runtime/stable-json.ts';
 import {
   ToolInvocationError,
   ToolRouter,
@@ -59,11 +75,41 @@ import {
 import { invokeWithRetry, type ToolRetryAttemptReceipt } from './tool-retry-policy.ts';
 import {
   containsBlockedSensitiveData,
+  isMachineReferenceField,
+  machineReferencesPreserved,
   redactSensitiveValue,
   redactString,
   redactToolOutput,
 } from '../runtime/redaction.ts';
 import { compactLlmInput } from '../runtime/llm-input-compactor.ts';
+import {
+  assertCompiledSkillPlan,
+  CompiledSkillPlanDriftError,
+} from '../skills/skill-plan-compiler.ts';
+import { buildResearchContributionBundle } from '../skills/research-contribution-bundle.ts';
+import { assertCompiledPortfolioPlan } from '../skills/portfolio-skill-plan-compiler.ts';
+import {
+  ContributionAdapterRegistry,
+  VIRTUAL_USER_TOOL_ADAPTER_ID,
+} from '../skills/contribution-adapter-registry.ts';
+import {
+  evaluateSkillOutputStatus,
+  SkillDegradedPolicyError,
+  type SkillOutputOutcome,
+} from '../skills/skill-result-status.ts';
+import {
+  buildSkillExecutionPrompt,
+  prepareSkillExecution,
+  SkillRuntimeDriftError,
+  type FrozenSkillExecutionBinding,
+  type PreparedSkillExecution,
+} from '../skills/skill-runtime.ts';
+import {
+  KnowledgeBundleResolver,
+  RequiredKnowledgeUnavailableError,
+  type FrozenKnowledgeReference,
+  type KnowledgeResolutionGap,
+} from '../knowledge/knowledge-bundle-resolver.ts';
 import { ArtifactIntegrityError, ControlArtifactStore } from './artifact-store.ts';
 import {
   ArtifactInvalidationError,
@@ -76,16 +122,32 @@ import {
   type EvidenceEntry,
   type ResolvedEvidenceArtifact,
 } from '../evidence/evidence-service.ts';
+import { virtualUserSimulationEvidence } from '../evidence/virtual-user-evidence.ts';
 import { CurrentReportValidationError } from '../evidence/report-evidence-validator.ts';
-import type { CurrentDeliverableGenerateInput, CurrentDeliverableRevisionInput } from '../report/current-deliverable-service.ts';
+import type {
+  CurrentDeliverableGenerateInput,
+  CurrentDeliverableGenerateResult,
+  CurrentDeliverableRevisionInput,
+} from '../report/current-deliverable-service.ts';
 import type { DeliverableComposer, ReportReviewInput, ReportReviewResult } from '../report/report-review-service.ts';
 import {
   resolveDeliverableContractById,
   resolveExecutionDeliverableContract,
   type DeliverableContractResources,
 } from '../report/deliverable-registry.ts';
-import { ReportCompositionService, type ReportCompositionPort } from '../report/report-composition-service.ts';
+import {
+  ReportCompositionService,
+  type ReportCompositionPort,
+  type ReportCompositionResult,
+} from '../report/report-composition-service.ts';
+import type { ReportEditorialPlannerDataClassification } from '../report/report-editorial-planner.ts';
 import { ReportPackageArtifactService } from '../report/report-package-artifact.ts';
+import { ReportPackageV2ArtifactService } from '../report/report-package-v2-artifact.ts';
+import { ReportPackageV3ArtifactService } from '../report/report-package-v3-artifact.ts';
+import {
+  createReportPublicationId,
+  renderAndSealStandaloneHtml,
+} from '../report/report-v3-publication.ts';
 import {
   VisualAssetService,
   type VisualAssetResult,
@@ -115,6 +177,7 @@ import {
   type SealedStepOutput as BindingSealedStepOutput,
 } from './step-input-resolver.ts';
 import { ExecutionScheduler } from './execution-scheduler.ts';
+import { validateCurrentExecutionPlanV3 } from '../planners/current-execution-plan-v3.ts';
 import {
   VisualInputGateStore,
   valueForPendingInputTarget,
@@ -127,12 +190,29 @@ import {
 
 type EngineStep = CurrentPlanStep & { purpose?: string };
 
-interface EnginePlan {
+interface InvocationExecutionPolicy {
+  invocationId: string;
+  skillId: string;
+  role: 'contributor' | 'synthesizer';
+  contributionTypes: ContributionType[];
+  questionIds: string[];
+  requestedArtifactTypes: RequestedArtifact[];
+  dependsOnInvocationIds: string[];
+  required: boolean;
+  failurePolicy: 'block' | 'gap';
+  contributionAdapterId?: string;
+}
+
+export interface EnginePlan {
   taskId: string;
   evidence_requirements: EvidenceRequirement[];
   steps: EngineStep[];
   optionalToolStepNos: Set<number>;
   capabilityGaps: ExecutionGap[];
+  frozenSkillExecutions: Map<number, FrozenSkillExecutionBinding>;
+  invocationPoliciesByStep: Map<number, InvocationExecutionPolicy[]>;
+  invocationPoliciesById: Map<string, InvocationExecutionPolicy>;
+  optionalInvocationStepNos: Set<number>;
 }
 
 interface FrozenSkillToolRoles {
@@ -178,21 +258,71 @@ const SUPPORTED_EVIDENCE_CLASSES: Record<EvidenceClass, true> = {
   derived: true,
 };
 
+export function invocationFailureCanBecomeGap(input: {
+  optionalInvocationStep: boolean;
+  failureKind: string | undefined;
+  artifactCleanupFailed: boolean;
+  integrityFailure: boolean;
+}): boolean {
+  return input.optionalInvocationStep
+    && !input.artifactCleanupFailed
+    && !input.integrityFailure
+    && input.failureKind !== 'safety'
+    && input.failureKind !== 'lease_lost';
+}
+
 interface ToolSourceRef {
   sourceUrl: string;
   originalIndex: number;
 }
 
-const SKILL_PROMPT_PREFIX = 'Execute this Skill workflow using only supplied outputs.';
-
-type StepArtifactKind = 'tool_output' | 'skill_output' | 'llm_output' | 'review_output';
+type StepArtifactKind = 'knowledge_output' | 'tool_output' | 'skill_output' | 'research_contribution' | 'llm_output' | 'review_output';
 
 const STEP_ARTIFACT_SCHEMA_VERSIONS: Record<StepArtifactKind, string> = {
+  knowledge_output: 'knowledge-bundle-v1',
   tool_output: 'tool-output-v1',
   skill_output: 'skill-output-v2',
+  research_contribution: 'research-contribution-artifact-v1',
   llm_output: 'llm-output-v1',
   review_output: 'review-output-v1',
 };
+
+interface ReviewerStepCondition {
+  id: string;
+  statement: string;
+  disposition: 'limitation' | 'open_question';
+}
+
+interface ReviewerStepOutput {
+  version: 'reviewer-step-output-v1';
+  review: string;
+  verdict: 'pass' | 'pass_with_conditions' | 'revise' | 'block';
+  conditions: ReviewerStepCondition[];
+}
+
+export const REVIEWER_STEP_OUTPUT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['version', 'review', 'verdict', 'conditions'],
+  properties: {
+    version: { const: 'reviewer-step-output-v1' },
+    review: { type: 'string', minLength: 1, pattern: '\\S' },
+    verdict: { enum: ['pass', 'pass_with_conditions', 'revise', 'block'] },
+    conditions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'statement', 'disposition'],
+        properties: {
+          id: { type: 'string', minLength: 1, pattern: '^[A-Za-z0-9][A-Za-z0-9._-]*$' },
+          statement: { type: 'string', minLength: 1, pattern: '\\S' },
+          disposition: { enum: ['limitation', 'open_question'] },
+        },
+      },
+    },
+  },
+} as const;
 
 interface StepResult {
   output: unknown;
@@ -212,6 +342,7 @@ interface StepResult {
   configHash?: string;
   sourceRefs?: ToolSourceRef[];
   skillProvenance?: Record<string, unknown>;
+  knowledgeGaps?: KnowledgeResolutionGap[];
 }
 
 const TOOL_EXECUTION_DEADLINE_MS = 90_000;
@@ -326,6 +457,9 @@ export interface LeaseExecutionResult {
   evidenceManifestArtifactId?: string;
   reportReviewArtifactId?: string;
   reportPackageArtifactId?: string;
+  crossSkillReviewArtifactId?: string;
+  contributionLedgerArtifactId?: string;
+  contributionSummaryArtifactId?: string;
   reviewStatus?: ReportReviewResult['status'];
   gapCount?: number;
   failedStepNo?: number;
@@ -367,14 +501,61 @@ class SkillOutputSchemaError extends LLMInvocationError {
       outputSchemaHash: string;
       payloadSchemaHash: string | null;
     },
+    readonly schemaErrors: string[],
+    readonly repairAttempts: number,
+    readonly modelReceipt: { id: string; promptHash: string; traceId: string },
   ) {
-    super('schema', false, null, 'skill output failed schema validation');
+    super('schema', true, null, 'skill output failed schema validation after automatic repair');
     this.name = 'SkillOutputSchemaError';
   }
 }
 
+const MAX_PERSISTED_SKILL_SCHEMA_ERRORS = 20;
+const MAX_PERSISTED_SKILL_SCHEMA_ERROR_LENGTH = 500;
+
+function skillSchemaErrors(error: unknown): string[] {
+  if (!(error instanceof SchemaValidationError)) throw error;
+  return error.errors
+    .slice(0, MAX_PERSISTED_SKILL_SCHEMA_ERRORS)
+    .map((issue) => redactString(issue).slice(0, MAX_PERSISTED_SKILL_SCHEMA_ERROR_LENGTH));
+}
+
+function skillSchemaRepairPrompt(skillId: string, errors: readonly string[]): string {
+  return `Repair the supplied invalid JSON output for Skill ${skillId}. Return one complete replacement object that satisfies the supplied schema. Preserve existing supported content, use only claims and Evidence IDs already present in invalid_output, and do not add new analysis. Correct every listed issue:\n${errors.join('\n')}`;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function reportEditorialPlannerDataClassification(
+  structuredTask: unknown,
+  evidenceManifest: EvidenceManifest,
+): ReportEditorialPlannerDataClassification | undefined {
+  if (
+    !isRecord(structuredTask)
+    || structuredTask.version !== 'research-task-v2'
+    || (
+      structuredTask.sensitivity !== 'public'
+      && structuredTask.sensitivity !== 'internal'
+      && structuredTask.sensitivity !== 'confidential'
+    )
+    || typeof structuredTask.pii_detected !== 'boolean'
+  ) {
+    return undefined;
+  }
+  return {
+    taskSensitivity: structuredTask.sensitivity,
+    piiDetected: structuredTask.pii_detected,
+    hasSensitiveOrBlockedEvidence: evidenceManifest.entries.some(
+      ({ sensitivity, redaction }) => sensitivity === 'sensitive' || redaction === 'blocked',
+    ),
+  };
+}
+
+function skillDegradationMessage(step: EngineStep, outcome: SkillOutputOutcome): string {
+  const reason = outcome.limitations[0] ?? outcome.summary ?? 'Skill returned a degraded result';
+  return redactString(`Step ${step.step_no} (${step.actor_id}) degraded: ${reason}`);
 }
 
 function designAnnotationFindings(
@@ -448,6 +629,102 @@ function persistedJsonValue(value: unknown): unknown {
 
 function hashJson(value: unknown): string {
   return `sha256:${createHash('sha256').update(JSON.stringify(stableValue(value))).digest('hex')}`;
+}
+
+function synthesizerPolicyForStep(
+  plan: EnginePlan,
+  step: EngineStep,
+): InvocationExecutionPolicy | undefined {
+  return (plan.invocationPoliciesByStep.get(step.step_no) ?? []).find(({ role, skillId }) => (
+    role === 'synthesizer' && skillId === step.actor_id
+  ));
+}
+
+const REDACTION_MARKER = /\[REDACTED_[A-Z0-9_]+\]/u;
+
+function containsRedactedMachineReference(value: unknown, field = ''): boolean {
+  if (typeof value === 'string') {
+    return isMachineReferenceField(field) && REDACTION_MARKER.test(value);
+  }
+  if (Array.isArray(value)) {
+    return value.some((item) => containsRedactedMachineReference(item, field));
+  }
+  if (!isRecord(value)) return false;
+  return Object.entries(value).some(([key, child]) => (
+    containsRedactedMachineReference(child, key)
+  ));
+}
+
+function contributionBundleArtifactIdentity(
+  resolvedInput: Readonly<Record<string, unknown>>,
+): { id: string; contentSha256: string } | null {
+  const candidate = resolvedInput.contribution_bundle_artifact;
+  return isRecord(candidate)
+    && typeof candidate.id === 'string'
+    && typeof candidate.contentSha256 === 'string'
+    ? { id: candidate.id, contentSha256: candidate.contentSha256 }
+    : null;
+}
+
+function executionInputArtifacts(
+  outputs: readonly EngineSealedStepOutput[],
+  step: EngineStep,
+): Array<{ stepNo: number; artifactId: string; contentSha256: string }> {
+  const allowed = new Set([
+    ...step.depends_on,
+    ...step.input_bindings.map((binding) => binding.source_step_no),
+  ]);
+  return outputs
+    .filter((output) => allowed.has(output.stepNo) && output.artifact.contentSha256 !== null)
+    .sort((left, right) => left.stepNo - right.stepNo)
+    .map((output) => ({
+      stepNo: output.stepNo,
+      artifactId: output.artifact.id,
+      contentSha256: output.artifact.contentSha256!,
+    }));
+}
+
+interface SkillExecutionFingerprint {
+  skillBodyHash: string;
+  inputSchemaHash: string | null;
+  outputSchemaHash: string;
+  payloadSchemaHash: string | null;
+  skillReferenceHashes: Array<{ path: string; hash: string }>;
+  inputArtifacts: Array<{ stepNo: number; artifactId: string; contentSha256: string }>;
+  inputHash: string;
+  executionPromptHash: string;
+  contributionBundleArtifact?: { id: string; contentSha256: string };
+}
+
+function skillExecutionFingerprint(input: {
+  prepared: PreparedSkillExecution;
+  step: EngineStep;
+  resolvedInput: Record<string, unknown>;
+  outputs: EngineSealedStepOutput[];
+}): { executionPrompt: string; fingerprint: SkillExecutionFingerprint } {
+  const executionPrompt = buildSkillExecutionPrompt(
+    input.prepared.prompt,
+    input.step.expected_outputs.some(({ pointer }) => pointer === '/contribution'),
+  );
+  const contributionBundleArtifact = contributionBundleArtifactIdentity(input.resolvedInput);
+  return {
+    executionPrompt,
+    fingerprint: {
+      skillBodyHash: input.prepared.body.hash,
+      inputSchemaHash: input.prepared.schemaHashes.inputSchemaHash,
+      outputSchemaHash: input.prepared.schemaHashes.outputSchemaHash,
+      payloadSchemaHash: input.prepared.schemaHashes.payloadSchemaHash,
+      skillReferenceHashes: input.prepared.referenceHashes,
+      inputArtifacts: executionInputArtifacts(input.outputs, input.step),
+      inputHash: hashJson(input.resolvedInput),
+      executionPromptHash: hashPrompt(
+        executionPrompt,
+        input.prepared.context,
+        `skill:${input.step.actor_id}`,
+      ),
+      ...(contributionBundleArtifact ? { contributionBundleArtifact } : {}),
+    },
+  };
 }
 
 function pageFailureGaps(value: unknown): PageFailureGap[] {
@@ -541,12 +818,20 @@ function sanitizeStepResult(result: StepResult): StepResult {
   }
   if (result.kind === 'tool_output') return result;
   const output = redactSensitiveValue(result.output);
+  const artifactValue = result.artifactValue === undefined
+    ? undefined
+    : redactSensitiveValue(result.artifactValue);
+  if (
+    !machineReferencesPreserved(result.output, output)
+    || (
+      result.artifactValue !== undefined
+      && !machineReferencesPreserved(result.artifactValue, artifactValue)
+    )
+  ) throw new ExecutionSafetyError('step result redaction altered a machine reference');
   return {
     ...result,
     output,
-    ...(result.artifactValue === undefined
-      ? {}
-      : { artifactValue: redactSensitiveValue(result.artifactValue) }),
+    ...(artifactValue === undefined ? {} : { artifactValue }),
     ...(result.skillProvenance
       ? { skillProvenance: { ...result.skillProvenance, outputHash: hashJson(output) } }
       : {}),
@@ -663,7 +948,7 @@ function resolvePlanDeliverableContract(
     plan.deliverable_type,
   );
 }
-function parsePlan(taskId: string, value: unknown, contract: DeliverableContractResources): EnginePlan {
+export function parseExecutionPlan(taskId: string, value: unknown, contract: DeliverableContractResources): EnginePlan {
   if (!isRecord(value) || !Array.isArray(value.steps)) {
     throw new ExecutionAuthenticityError('active plan is malformed');
   }
@@ -681,7 +966,7 @@ function parsePlan(taskId: string, value: unknown, contract: DeliverableContract
       || stepNo !== index + 1
       || typeof stepName !== 'string'
       || typeof actorId !== 'string'
-      || (actorType !== 'tool' && actorType !== 'skill' && actorType !== 'llm' && actorType !== 'reviewer')
+      || (actorType !== 'knowledge' && actorType !== 'tool' && actorType !== 'skill' && actorType !== 'llm' && actorType !== 'reviewer')
       || (input !== undefined && !isRecord(input))
       || !Array.isArray(rawBindings)
     ) {
@@ -701,6 +986,8 @@ function parsePlan(taskId: string, value: unknown, contract: DeliverableContract
         target_pointer: binding.target_pointer,
         source_step_no: binding.source_step_no,
         source_pointer: binding.source_pointer,
+        ...(binding.optional === true ? { optional: true } : {}),
+        ...(binding.include_artifact_identity === true ? { include_artifact_identity: true } : {}),
       };
     });
     const approvalRole = item.approval_role;
@@ -731,6 +1018,8 @@ function parsePlan(taskId: string, value: unknown, contract: DeliverableContract
       fallback_actor_ids: Array.isArray(item.fallback_actor_ids)
         ? item.fallback_actor_ids.filter((actor): actor is string => typeof actor === 'string')
         : [],
+      ...(typeof item.skill_invocation_id === 'string' ? { skill_invocation_id: item.skill_invocation_id } : {}),
+      ...(typeof item.skill_stage_id === 'string' ? { skill_stage_id: item.skill_stage_id } : {}),
       ...(typeof item.purpose === 'string' ? { purpose: item.purpose } : {}),
     };
   });
@@ -773,6 +1062,7 @@ function parsePlan(taskId: string, value: unknown, contract: DeliverableContract
     throw new ExecutionAuthenticityError('plan must include required evidence');
   }
   const frozenSkillToolRoles = new Map<string, FrozenSkillToolRoles>();
+  const contributionAdapterBySkill = new Map<string, string>();
   const seenOptionalDecisionIds = new Set<string>();
   const unavailableOptionalKeys = new Set<string>();
   const decisions = isRecord(value.capability_decisions)
@@ -806,6 +1096,10 @@ function parsePlan(taskId: string, value: unknown, contract: DeliverableContract
       availableOptionalToolIds: new Set<string>(),
     };
     frozenSkillToolRoles.set(skillId, roles);
+    const composition = isRecord(candidate.skill.composition) ? candidate.skill.composition : null;
+    if (composition && typeof composition.contribution_adapter === 'string') {
+      contributionAdapterBySkill.set(skillId, composition.contribution_adapter);
+    }
     for (const optionalDecision of optionalDecisions) {
       if (
         !isRecord(optionalDecision)
@@ -878,12 +1172,132 @@ function parsePlan(taskId: string, value: unknown, contract: DeliverableContract
   if (unavailableOptionalKeys.size > 0) {
     throw new ExecutionAuthenticityError('plan optional tool decision has no capability gap');
   }
+  const resourceGaps: ExecutionGap[] = [];
+  const frozenSkillExecutions = new Map<number, FrozenSkillExecutionBinding>();
+  const invocationPoliciesByStep = new Map<number, InvocationExecutionPolicy[]>();
+  const invocationPoliciesById = new Map<string, InvocationExecutionPolicy>();
+  const optionalInvocationStepNos = new Set<number>();
+  const rawInvocations = value.skill_invocations ?? [];
+  if (!Array.isArray(rawInvocations)) {
+    throw new ExecutionAuthenticityError('plan Skill invocations are malformed');
+  }
+  const portfolioPlan = value.execution_contract_version === 'current-execution-plan-v3';
+  for (const [invocationIndex, invocation] of rawInvocations.entries()) {
+    if (
+      !isRecord(invocation)
+      || typeof invocation.invocation_id !== 'string'
+      || typeof invocation.skill_id !== 'string'
+      || !Array.isArray(invocation.step_nos)
+      || !invocation.step_nos.every((candidate) => Number.isInteger(candidate))
+    ) throw new ExecutionAuthenticityError(`plan Skill invocation ${invocationIndex + 1} is malformed`);
+
+    if (portfolioPlan) {
+      if (
+        (invocation.role !== 'contributor' && invocation.role !== 'synthesizer')
+        || !Array.isArray(invocation.contribution_types)
+        || !invocation.contribution_types.every((type) => typeof type === 'string')
+        || !Array.isArray(invocation.question_ids)
+        || !invocation.question_ids.every((questionId) => typeof questionId === 'string')
+        || !Array.isArray(invocation.requested_artifact_types)
+        || !invocation.requested_artifact_types.every((artifact) => typeof artifact === 'string')
+        || !Array.isArray(invocation.depends_on_invocation_ids)
+        || !invocation.depends_on_invocation_ids.every((dependency) => typeof dependency === 'string')
+        || typeof invocation.required !== 'boolean'
+        || (invocation.failure_policy !== 'block' && invocation.failure_policy !== 'gap')
+      ) throw new ExecutionAuthenticityError(`plan Skill invocation ${invocationIndex + 1} policy is malformed`);
+      const contributionAdapterId = contributionAdapterBySkill.get(invocation.skill_id);
+      if (invocation.role === 'contributor' && !contributionAdapterId) {
+        throw new ExecutionAuthenticityError(`Contributor ${invocation.invocation_id} has no frozen adapter`);
+      }
+      const policy: InvocationExecutionPolicy = {
+        invocationId: invocation.invocation_id,
+        skillId: invocation.skill_id,
+        role: invocation.role,
+        contributionTypes: invocation.contribution_types as ContributionType[],
+        questionIds: invocation.question_ids as string[],
+        requestedArtifactTypes: invocation.requested_artifact_types as RequestedArtifact[],
+        dependsOnInvocationIds: invocation.depends_on_invocation_ids as string[],
+        required: invocation.required,
+        failurePolicy: invocation.failure_policy,
+        ...(contributionAdapterId ? { contributionAdapterId } : {}),
+      };
+      if (invocationPoliciesById.has(policy.invocationId)) {
+        throw new ExecutionAuthenticityError(`plan Skill invocation ${policy.invocationId} is duplicated`);
+      }
+      invocationPoliciesById.set(policy.invocationId, policy);
+      for (const candidateStepNo of invocation.step_nos) {
+        const policies = invocationPoliciesByStep.get(candidateStepNo as number) ?? [];
+        policies.push(policy);
+        invocationPoliciesByStep.set(candidateStepNo as number, policies);
+      }
+    }
+
+    const compiledInvocation = invocation.execution_mode === 'compiled'
+      || (!portfolioPlan && invocation.execution_mode === undefined);
+    const resourceGapRows = invocation.resource_gaps ?? [];
+    if (!Array.isArray(resourceGapRows)) {
+      throw new ExecutionAuthenticityError(`plan Skill invocation ${invocationIndex + 1} resource gaps are malformed`);
+    }
+    if (compiledInvocation) {
+      if (
+        typeof invocation.contract_hash !== 'string'
+        || (invocation.degraded_policy !== 'gap' && invocation.degraded_policy !== 'block')
+        || !Array.isArray(invocation.skill_reference_hashes)
+        || !invocation.skill_reference_hashes.every((reference) => (
+          isRecord(reference) && typeof reference.path === 'string' && typeof reference.hash === 'string'
+        ))
+      ) throw new ExecutionAuthenticityError(`plan Skill invocation ${invocationIndex + 1} contract is malformed`);
+      for (const candidateStepNo of invocation.step_nos) {
+        const invocationStep = steps.find(({ step_no }) => step_no === candidateStepNo);
+        if (invocationStep?.actor_type !== 'skill') continue;
+        frozenSkillExecutions.set(candidateStepNo as number, {
+          contractHash: invocation.contract_hash,
+          referenceHashes: invocation.skill_reference_hashes.map((reference) => ({
+            path: String((reference as Record<string, unknown>).path),
+            hash: String((reference as Record<string, unknown>).hash),
+          })),
+          degradedPolicy: invocation.degraded_policy,
+        });
+      }
+    } else if (invocation.execution_mode !== 'legacy_single_call') {
+      throw new ExecutionAuthenticityError(`plan Skill invocation ${invocationIndex + 1} execution mode is malformed`);
+    }
+
+    const stepNo = steps.find((step) => (
+      step.skill_invocation_id === invocation.invocation_id && step.actor_type === 'knowledge'
+    ))?.step_no ?? invocation.step_nos.find((candidate): candidate is number => Number.isInteger(candidate)) ?? 0;
+    for (const [gapIndex, gap] of resourceGapRows.entries()) {
+      if (
+        !isRecord(gap)
+        || typeof gap.query_id !== 'string'
+        || !Number.isInteger(gap.min_items)
+        || !Number.isInteger(gap.selected_items)
+        || gap.failure_policy !== 'gap'
+        || typeof gap.reason !== 'string'
+        || !gap.reason.trim()
+      ) throw new ExecutionAuthenticityError(`plan Skill resource gap ${invocationIndex + 1}.${gapIndex + 1} is malformed`);
+      resourceGaps.push({
+        key: `skill:${invocation.invocation_id}:resource:${gap.query_id}`,
+        stepNo,
+        message: redactString(`Skill resource gap ${gap.query_id}: ${gap.reason}`),
+      });
+    }
+  }
+  for (const [stepNo, policies] of invocationPoliciesByStep) {
+    if (policies.length > 0 && policies.every(({ failurePolicy }) => failurePolicy === 'gap')) {
+      optionalInvocationStepNos.add(stepNo);
+    }
+  }
   return {
     taskId,
     evidence_requirements: evidenceRequirements,
     steps,
     optionalToolStepNos,
-    capabilityGaps,
+    capabilityGaps: [...capabilityGaps, ...resourceGaps],
+    frozenSkillExecutions,
+    invocationPoliciesByStep,
+    invocationPoliciesById,
+    optionalInvocationStepNos,
   };
 }
 interface ReviewCoverageIds {
@@ -1026,6 +1440,62 @@ function sourceRefs(value: unknown): ToolSourceRef[] {
 }
 
 
+export function rebindReusableArtifactValue(
+  kind: StepArtifactKind,
+  value: unknown,
+  binding: Pick<ControlExecutionLease, 'taskId' | 'planVersionId' | 'attemptId'>,
+): unknown {
+  if (kind !== 'research_contribution') return value;
+  if (
+    !isRecord(value)
+    || value.version !== 'research-contribution-artifact-v1'
+    || !isRecord(value.contribution)
+  ) {
+    throw new ExecutionAuthenticityError('reusable Contribution Artifact is malformed');
+  }
+  return {
+    ...structuredClone(value),
+    contribution: {
+      ...structuredClone(value.contribution),
+      taskId: binding.taskId,
+      planVersionId: binding.planVersionId,
+      attemptId: binding.attemptId,
+    },
+  };
+}
+
+function contributionEvidenceView(input: {
+  lease: ControlExecutionLease;
+  adapterId: string;
+  source?: EngineSealedStepOutput;
+}): EvidenceManifest {
+  const entries: EvidenceEntry[] = [];
+  if (
+    input.adapterId === VIRTUAL_USER_TOOL_ADAPTER_ID
+    && input.source
+    && input.source.actorId === 'virtual-user-lab'
+    && isRecord(input.source.output)
+    && Array.isArray(input.source.output.reviews)
+    && input.source.artifact.contentSha256
+  ) {
+    entries.push(...virtualUserSimulationEvidence({
+      stepNo: input.source.stepNo,
+      artifactId: input.source.artifact.id,
+      artifactContentSha256: input.source.artifact.contentSha256,
+      output: input.source.output,
+    }));
+  }
+  const draft = {
+    version: 'evidence-v1' as const,
+    taskId: input.lease.taskId,
+    planVersionId: input.lease.planVersionId,
+    attemptId: input.lease.attemptId,
+    collectedAt: '1970-01-01T00:00:00.000Z',
+    entries,
+  };
+  return { ...draft, manifestHash: stableJsonHash(draft) };
+}
+
 function verifiedPriorOutputs(
   outputs: readonly EngineSealedStepOutput[],
   step?: EngineStep,
@@ -1035,6 +1505,7 @@ function verifiedPriorOutputs(
   kind: StepArtifactKind;
   output: unknown;
   artifact: EngineSealedStepOutput['artifact'];
+  evidenceIds?: string[];
 }> {
   const allowed = step
     ? new Set([
@@ -1045,13 +1516,30 @@ function verifiedPriorOutputs(
   return [...outputs]
     .filter(({ stepNo }) => allowed === null || allowed.has(stepNo))
     .sort((left, right) => left.stepNo - right.stepNo)
-    .map(({ stepNo, actorId, kind, output, artifact }) => ({
-      stepNo,
-      actorId,
-      kind,
-      output,
-      artifact,
-    }));
+    .map(({ stepNo, actorId, kind, output, artifact }) => {
+      const value = isRecord(output) ? output : null;
+      const evidenceIds = kind === 'tool_output'
+        ? sourceRefs(value)
+          .filter(({ sourceUrl }) => sourceUrl.startsWith('https://'))
+          .map(({ originalIndex }) => `E${stepNo}-${originalIndex + 1}`)
+        : kind === 'knowledge_output' && Array.isArray(value?.resources)
+          ? value.resources.flatMap((resource, index) => (
+              isRecord(resource)
+              && typeof resource.id === 'string'
+              && typeof resource.contentHash === 'string'
+                ? [`K${stepNo}-${index + 1}`]
+                : []
+            ))
+          : [];
+      return {
+        stepNo,
+        actorId,
+        kind,
+        output,
+        artifact,
+        ...(evidenceIds.length > 0 ? { evidenceIds } : {}),
+      };
+    });
 }
 
 function stepContract(step: EngineStep): Record<string, unknown> {
@@ -1064,6 +1552,54 @@ function stepContract(step: EngineStep): Record<string, unknown> {
   };
 
 }
+
+function modelStepExecution(input: {
+  step: EngineStep;
+  researchGoal: string;
+  resolvedInput: Record<string, unknown>;
+  outputs: EngineSealedStepOutput[];
+}): {
+  prompt: string;
+  context: Record<string, unknown>;
+  schemaName?: string;
+  executionPromptHash: string;
+  contextManifestHash: string;
+  outputSchemaHash: string | null;
+  inputArtifacts: Array<{ stepNo: number; artifactId: string; contentSha256: string }>;
+} {
+  const context = {
+    research_goal: input.researchGoal,
+    input: input.resolvedInput,
+    prior_outputs: verifiedPriorOutputs(input.outputs, input.step),
+    ...stepContract(input.step),
+  };
+  if (input.step.actor_type === 'llm') {
+    const prompt = `Execute plan step: ${input.step.step_name}. ${input.step.purpose ?? ''}\nContract: ${JSON.stringify(stepContract(input.step))}\nEvidence IDs listed in prior_outputs[].evidenceIds are the exact runtime-issued IDs for those outputs. When such a list is present, cite only IDs from it; never infer an ID from an unaddressable result. IDs carried forward in bound upstream analysis remain candidates and will be verified against the final Evidence Manifest.`;
+    return {
+      prompt,
+      context,
+      executionPromptHash: hashPrompt(prompt, context),
+      contextManifestHash: hashJson(context),
+      outputSchemaHash: null,
+      inputArtifacts: executionInputArtifacts(input.outputs, input.step),
+    };
+  }
+  if (input.step.actor_type === 'reviewer') {
+    const prompt = `Review completed outputs for source support and gaps: ${input.step.step_name}. Return one reviewer-step-output-v1 object. Use verdict=pass with an empty conditions array only when no condition remains. Every limitation, unresolved question, lower-confidence dependency, requested revision, or delivery condition must be a separate conditions item, even when its wording does not contain words such as risk, gap, or missing. Contract: ${JSON.stringify(stepContract(input.step))}`;
+    const schemaName = 'reviewer-step-output';
+    return {
+      prompt,
+      context,
+      schemaName,
+      executionPromptHash: hashPrompt(prompt, context, schemaName),
+      contextManifestHash: hashJson(context),
+      outputSchemaHash: hashJson(REVIEWER_STEP_OUTPUT_SCHEMA),
+      inputArtifacts: executionInputArtifacts(input.outputs, input.step),
+    };
+  }
+  throw new Error(`step ${input.step.step_no} is not a model step`);
+}
+
 function detailsFrom(error: unknown): Record<string, unknown> {
   if (error instanceof ToolInvocationError) return error.details;
   return isRecord(error) && isRecord(error.details) ? error.details : {};
@@ -1112,7 +1648,7 @@ function leaseLostWithRetry(
   return error;
 }
 
-function failureFrom(error: unknown): Record<string, unknown> {
+export function failureFrom(error: unknown): Record<string, unknown> {
   if (error instanceof ArtifactInvalidationError) {
     return {
       kind: 'artifact_invalidation',
@@ -1131,12 +1667,50 @@ function failureFrom(error: unknown): Record<string, unknown> {
       receipt: error.receipt,
     };
   }
+  if (error instanceof SkillOutputSchemaError) {
+    return {
+      kind: error.kind,
+      retryable: error.retryable,
+      providerStatus: error.providerStatus,
+      message: error.sanitizedMessage,
+      schemaErrors: [...error.schemaErrors],
+      repairAttempts: error.repairAttempts,
+    };
+  }
   if (error instanceof LLMInvocationError) {
     return {
       kind: error.kind,
       retryable: error.retryable,
       providerStatus: error.providerStatus,
       message: error.sanitizedMessage,
+    };
+  }
+  if (error instanceof CompiledSkillPlanDriftError || error instanceof SkillRuntimeDriftError) {
+    return {
+      kind: 'skill_contract_drift',
+      retryable: false,
+      requiresReplan: true,
+      allowedActions: ['replan', 'abort'],
+      message: error.message,
+    };
+  }
+  if (error instanceof SkillDegradedPolicyError) {
+    return {
+      kind: 'skill_degraded_blocked',
+      retryable: false,
+      message: error.message,
+    };
+  }
+  if (error instanceof RequiredKnowledgeUnavailableError) {
+    const drift = error.code !== 'missing';
+    return {
+      kind: drift ? 'knowledge_configuration_drift' : 'required_knowledge_unavailable',
+      retryable: !drift,
+      resourceId: error.resourceId,
+      knowledgeFailureCode: error.code,
+      requiresReplan: drift,
+      allowedActions: drift ? ['replan', 'abort'] : ['retry', 'abort'],
+      message: error.message,
     };
   }
   if (error instanceof ExecutionSafetyError) {
@@ -1205,12 +1779,16 @@ function deliverableFailureFrom(error: unknown): Record<string, unknown> {
   ) {
     return failureFrom(error);
   }
+  const draftPreview = isRecord(error) && isRecord(error.draftPreview)
+    ? redactSensitiveValue(error.draftPreview)
+    : undefined;
   return {
     kind: 'deliverable_validation',
     retryable: true,
     message: error instanceof CurrentReportValidationError
       ? error.message
       : error instanceof Error ? error.message : String(error),
+    ...(draftPreview ? { draftPreview } : {}),
   };
 }
 
@@ -1224,23 +1802,20 @@ export class LeaseExecutionEngine {
     tools: ToolRouter;
     llm: LLMClient;
     skillLoader: SkillLoader;
+    contributionAdapters?: ContributionAdapterRegistry;
     validator: SchemaValidator;
     heartbeatMs: number;
     toolExecutionDeadlineMs?: number;
     deliverables: {
-      generate(input: CurrentDeliverableGenerateInput): Promise<{
-        deliverable: unknown;
-        deliverableArtifactId: string;
-      }>;
-      revise?(input: CurrentDeliverableRevisionInput): Promise<{
-        deliverable: unknown;
-        deliverableArtifactId: string;
-      }>;
+      generate(input: CurrentDeliverableGenerateInput): Promise<CurrentDeliverableGenerateResult>;
+      revise?(input: CurrentDeliverableRevisionInput): Promise<CurrentDeliverableGenerateResult>;
     };
     reportReview?: {
       review(input: ReportReviewInput, composer?: DeliverableComposer): Promise<ReportReviewResult>;
     };
     reportComposition?: ReportCompositionPort;
+    reportEditorialExperienceV1Enabled?: boolean;
+    standaloneHtmlBundleV1Enabled?: boolean;
     chartRenderer?: typeof renderAndSealChartSvg;
     scheduler?: ExecutionScheduler;
     visualInputMaterializer?: {
@@ -1282,8 +1857,24 @@ export class LeaseExecutionEngine {
         input.lease.planVersionId,
       );
       const deliverableContract = resolvePlanDeliverableContract(task.structuredTask, planVersion.plan);
+      if (isRecord(planVersion.plan) && planVersion.plan.execution_contract_version === 'current-execution-plan-v2') {
+        assertCompiledSkillPlan(
+          planVersion.plan as unknown as CurrentExecutionPlan,
+          this.dependencies.skillLoader,
+          task.structuredTask as ResearchTaskV2,
+        );
+      } else if (isRecord(planVersion.plan) && planVersion.plan.execution_contract_version === 'current-execution-plan-v3') {
+        validateCurrentExecutionPlanV3(
+          planVersion.plan as unknown as CurrentExecutionPlanV3,
+          this.dependencies.validator,
+        );
+        assertCompiledPortfolioPlan(
+          planVersion.plan as unknown as CurrentExecutionPlanV3,
+          this.dependencies.skillLoader,
+        );
+      }
       deliverableId = deliverableContract.entry.id;
-      const parsedPlan = parsePlan(task.id, planVersion.plan, deliverableContract);
+      const parsedPlan = parseExecutionPlan(task.id, planVersion.plan, deliverableContract);
       const pendingInputs = parsePendingInputs(planVersion.pendingInputs);
       const resolvedInputs = await this.visualInputGates.resolve({
         taskId: input.lease.taskId,
@@ -1319,7 +1910,9 @@ export class LeaseExecutionEngine {
       }
     } catch (error) {
       const failure = failureFrom(error);
-      failure.allowedActions = failure.retryable === true ? ['retry', 'abort'] : ['abort'];
+      failure.allowedActions = failure.requiresReplan === true
+        ? ['replan', 'abort']
+        : failure.retryable === true ? ['retry', 'abort'] : ['abort'];
       await this.recordFailedExecutionStep({
         ...input.lease,
         stepNo: 1,
@@ -1369,7 +1962,14 @@ export class LeaseExecutionEngine {
       });
       throw preflightError;
     }
-    const reusable = await this.loadReusableExecutions(input.lease, plan, planVersion.planHash, researchGoal);
+    const reusable = await this.loadReusableExecutions(
+      input.lease,
+      plan,
+      planVersion.planHash,
+      researchGoal,
+      deliverableId,
+      input.expectedModel,
+    );
     const outputs: EngineSealedStepOutput[] = [];
     const resolvedArtifacts = new Map<string, ResolvedEvidenceArtifact>();
     const visualAssetService = new VisualAssetService({ artifacts: this.dependencies.artifacts });
@@ -1381,6 +1981,7 @@ export class LeaseExecutionEngine {
       if (!gaps.has(gap.key)) gaps.set(gap.key, gap);
     };
     const stepByKey = new Map(plan.steps.map((step) => [String(step.step_no), step]));
+    const skippedInvocationIds = new Set<string>();
     let wavePaused: LeaseExecutionResult | undefined;
     let cleanupRecoveryRequired = false;
     const scheduler = this.dependencies.scheduler ?? new ExecutionScheduler({
@@ -1394,7 +1995,8 @@ export class LeaseExecutionEngine {
       steps: plan.steps.map((step) => ({
         key: String(step.step_no),
         dependsOn: step.depends_on.map(String),
-        tier: step.actor_type === 'tool' && plan.optionalToolStepNos.has(step.step_no)
+        tier: (step.actor_type === 'tool' && plan.optionalToolStepNos.has(step.step_no))
+          || plan.optionalInvocationStepNos.has(step.step_no)
           ? 'optional'
           : 'core',
       })),
@@ -1404,17 +2006,57 @@ export class LeaseExecutionEngine {
       const waveResults = await Promise.allSettled(wave.map(async (stepKey) => {
         const step = stepByKey.get(stepKey);
         if (!step) throw new ExecutionAuthenticityError(`scheduler returned unknown step ${stepKey}`);
+        const invocationPolicies = plan.invocationPoliciesByStep.get(step.step_no) ?? [];
+        const skippedInvocation = invocationPolicies.find(({ invocationId }) => (
+          skippedInvocationIds.has(invocationId)
+        ));
+        if (skippedInvocation && invocationPolicies.every(({ failurePolicy }) => failurePolicy === 'gap')) {
+          const now = new Date();
+          const failure = {
+            kind: 'optional_contributor_skipped',
+            retryable: true,
+            message: `optional Contributor ${skippedInvocation.invocationId} was skipped after an earlier stage failed`,
+            invocationId: skippedInvocation.invocationId,
+            allowedActions: ['retry', 'abort'],
+          };
+          await this.dependencies.repository.recordExecutionStep({
+            ...input.lease,
+            stepNo: step.step_no,
+            stepName: step.step_name,
+            actorType: step.actor_type,
+            actorId: step.actor_id,
+            state: 'skipped',
+            failure,
+            startedAt: now,
+            finishedAt: now,
+          });
+          addGap({
+            key: `invocation:${skippedInvocation.invocationId}:step:${step.step_no}:skipped`,
+            stepNo: step.step_no,
+            message: redactString(failure.message),
+          });
+          return;
+        }
         const startedAt = new Date();
         let resolvedInput = structuredClone(step.input);
         let producedSkillOutputHash: string | undefined;
+        let preparedSkillFingerprint: SkillExecutionFingerprint | undefined;
         let toolAttemptReceipts: ToolRetryAttemptReceipt[] | undefined;
         let actorResult: StepResult | undefined;
+        let skillOutcome: SkillOutputOutcome | null = null;
         let unpublishedArtifactId: string | undefined;
         let publicationGroup: ArtifactPublicationGroup | undefined;
         const pendingBrowserCaptures: CommittedBrowserCapture[] = [];
         let toolScope: ToolExecutionScope | undefined;
         let toolHeartbeat: LeaseHeartbeatHandle | undefined;
+        let skillDegradedPolicy: 'gap' | 'block' | undefined;
+        let frozenSkillExecution: FrozenSkillExecutionBinding | undefined;
         try {
+          frozenSkillExecution = plan.frozenSkillExecutions.get(step.step_no);
+          skillDegradedPolicy = frozenSkillExecution?.degradedPolicy
+            ?? (step.actor_type === 'skill'
+              ? this.dependencies.skillLoader.loadSkillExecution(step.actor_id)?.contract.degraded_policy
+              : undefined);
           const checkpoint = reusable.get(step.step_no);
           if (checkpoint) {
             active = await this.refreshLease(input.lease);
@@ -1422,13 +2064,24 @@ export class LeaseExecutionEngine {
             if (!priorArtifact || priorArtifact.state !== 'SEALED' || !priorArtifact.contentSha256) {
               throw new ExecutionAuthenticityError(`reusable step Artifact ${checkpoint.outputArtifactId} is unavailable`);
             }
+            const reusableArtifactValue = rebindReusableArtifactValue(
+              checkpoint.kind,
+              checkpoint.artifactValue,
+              input.lease,
+            );
+            if (checkpoint.kind === 'research_contribution') {
+              this.dependencies.validator.validateOrThrow(
+                'research-contribution-artifact-v1',
+                reusableArtifactValue,
+              );
+            }
             const resealed = await this.dependencies.artifacts.writeJson({
               taskId: input.lease.taskId,
               planVersionId: input.lease.planVersionId,
               attemptId: input.lease.attemptId,
               kind: checkpoint.kind,
               relativePath: `steps/${step.step_no}-${checkpoint.kind}.json`,
-              value: checkpoint.artifactValue,
+              value: reusableArtifactValue,
               schemaVersion: checkpoint.schemaVersion,
               activeLease: input.lease,
             });
@@ -1449,6 +2102,27 @@ export class LeaseExecutionEngine {
             };
             unpublishedArtifactId = resealed.id;
             const verified = await readVerifiedStepArtifact(sealedOutput, this.dependencies.artifacts);
+            let reusedSkillOutcome = step.actor_type === 'skill'
+              ? evaluateSkillOutputStatus(verified.output, skillDegradedPolicy)
+              : null;
+            if (
+              step.actor_type === 'skill'
+              && reusedSkillOutcome === null
+              && checkpoint.provenance.status === 'degraded'
+            ) {
+              reusedSkillOutcome = {
+                status: 'degraded',
+                limitations: Array.isArray(checkpoint.provenance.limitations)
+                  ? checkpoint.provenance.limitations.filter(
+                      (value): value is string => typeof value === 'string',
+                    )
+                  : [],
+                summary: 'Reused Skill checkpoint completed with limitations.',
+              };
+              if (skillDegradedPolicy === 'block') {
+                throw new SkillDegradedPolicyError(reusedSkillOutcome);
+              }
+            }
             await this.recordSucceededExecutionStep({
               ...input.lease,
               stepNo: step.step_no,
@@ -1457,11 +2131,33 @@ export class LeaseExecutionEngine {
               actorId: step.actor_id,
               state: 'succeeded',
               outputArtifactId: resealed.id,
-              toolProvenance: { ...checkpoint.provenance, outputArtifactId: resealed.id, sourceArtifactId: priorArtifact.id },
+              ...(step.actor_type === 'tool'
+                ? { toolProvenance: { ...checkpoint.provenance, outputArtifactId: resealed.id, sourceArtifactId: priorArtifact.id } }
+                : {}),
+              ...(step.actor_type !== 'tool'
+                ? {
+                    skillProvenance: {
+                      ...checkpoint.provenance,
+                      outputArtifactId: resealed.id,
+                      sourceArtifactId: priorArtifact.id,
+                      status: reusedSkillOutcome?.status ?? 'succeeded',
+                      ...(reusedSkillOutcome?.status === 'degraded'
+                        ? { limitations: reusedSkillOutcome.limitations }
+                        : {}),
+                    },
+                  }
+                : {}),
             });
+            if (reusedSkillOutcome?.status === 'degraded') {
+              addGap({
+                key: `step:${step.step_no}:skill:${step.actor_id}:degraded`,
+                stepNo: step.step_no,
+                message: skillDegradationMessage(step, reusedSkillOutcome),
+              });
+            }
             unpublishedArtifactId = undefined;
             outputs.push({ ...sealedOutput, output: verified.output });
-            if (step.actor_type === 'tool') {
+            if (step.actor_type === 'tool' || step.actor_type === 'knowledge') {
               resolvedArtifacts.set(resealed.id, {
                 artifact: { id: resealed.id, contentSha256: resealed.contentSha256 },
                 value: verified.value,
@@ -1490,6 +2186,53 @@ export class LeaseExecutionEngine {
             }
             throw error;
           }
+          const synthesizerPolicy = synthesizerPolicyForStep(plan, step);
+          if (
+            synthesizerPolicy
+            && Array.isArray(resolvedInput.contribution_order)
+            && isRecord(resolvedInput.contribution_bundle)
+          ) {
+            const contributionBundle = buildResearchContributionBundle({
+              taskId: input.lease.taskId,
+              planVersionId: input.lease.planVersionId,
+              attemptId: input.lease.attemptId,
+              orderedInvocationIds: resolvedInput.contribution_order.filter(
+                (invocationId): invocationId is string => typeof invocationId === 'string',
+              ),
+              valuesByInvocationId: resolvedInput.contribution_bundle,
+              policiesByInvocationId: plan.invocationPoliciesById,
+              synthesizerInvocationId: synthesizerPolicy.invocationId,
+            });
+            this.dependencies.validator.validateOrThrow(
+              'research-contribution-bundle-v1',
+              contributionBundle,
+            );
+            publicationGroup = new ArtifactPublicationGroup(this.dependencies.artifacts);
+            const bundleArtifact = await this.dependencies.artifacts.writeJson({
+              taskId: input.lease.taskId,
+              planVersionId: input.lease.planVersionId,
+              attemptId: input.lease.attemptId,
+              kind: 'research_contribution_bundle',
+              relativePath: `steps/${step.step_no}-research-contribution-bundle.json`,
+              value: contributionBundle,
+              schemaVersion: 'research-contribution-bundle-v1',
+              activeLease: input.lease,
+            });
+            publicationGroup.track(bundleArtifact.id);
+            if (bundleArtifact.state !== 'SEALED' || !bundleArtifact.contentSha256) {
+              throw new ExecutionAuthenticityError(
+                `Contribution Bundle Artifact ${bundleArtifact.id} was not sealed`,
+              );
+            }
+            resolvedInput = {
+              ...resolvedInput,
+              contribution_bundle: contributionBundle,
+              contribution_bundle_artifact: {
+                id: bundleArtifact.id,
+                contentSha256: bundleArtifact.contentSha256,
+              },
+            };
+          }
           if (step.actor_type === 'tool') {
             toolScope = this.createToolExecutionScope();
             toolHeartbeat = this.startLeaseHeartbeat(
@@ -1510,7 +2253,7 @@ export class LeaseExecutionEngine {
             toolScope.assertActive(step.actor_id);
             toolHeartbeat.assertHealthy();
           } else {
-            actorResult = await this.withLeaseHeartbeat(input.lease, () => this.runStep({
+            actorResult = await this.withLeaseHeartbeat(input.lease, ({ signal }) => this.runStep({
               step,
               lease: input.lease,
               researchGoal,
@@ -1518,12 +2261,20 @@ export class LeaseExecutionEngine {
               outputs,
               expectedModel: input.expectedModel,
               optionalTool: false,
+              frozenSkillExecution,
+              onSkillPrepared: (fingerprint) => {
+                preparedSkillFingerprint = fingerprint;
+              },
+              cancellationSignal: signal,
             }));
           }
           const actorOutputHash = actorResult.skillProvenance?.outputHash;
           if (typeof actorOutputHash === 'string') producedSkillOutputHash = actorOutputHash;
           toolAttemptReceipts = actorResult.toolAttemptReceipts;
-          const result = sanitizeStepResult(actorResult);
+          let result = sanitizeStepResult(actorResult);
+          skillOutcome = step.actor_type === 'skill'
+            ? evaluateSkillOutputStatus(result.output, skillDegradedPolicy)
+            : null;
           const successfulPageFailureRows = step.actor_id === 'playwright-page-capture'
             && isRecord(result.output)
             ? userVisiblePageFailures(result.output)
@@ -1535,11 +2286,16 @@ export class LeaseExecutionEngine {
                 isRecord(result.output) ? result.output.failures : successfulPageFailureRows,
               )
             : undefined;
+          const contributionPolicy = step.actor_type === 'skill'
+            ? invocationPolicies.find(({ role, skillId }) => (
+                role === 'contributor' && skillId === step.actor_id
+              ))
+            : undefined;
           const captureAttachments = step.actor_type === 'tool'
             ? browserCaptureAttachments(step.actor_id, result.output, result.mediaAttachments)
             : [];
-          if (captureAttachments.length > 0) {
-            publicationGroup = new ArtifactPublicationGroup(this.dependencies.artifacts);
+          if (captureAttachments.length > 0 || contributionPolicy) {
+            publicationGroup ??= new ArtifactPublicationGroup(this.dependencies.artifacts);
           }
           if (toolScope) {
             await this.requireActiveToolLease(
@@ -1571,7 +2327,7 @@ export class LeaseExecutionEngine {
           if (artifact.state !== 'SEALED' || !artifact.contentSha256) {
             throw new ExecutionAuthenticityError(`step Artifact ${artifact.id} was not sealed`);
           }
-          const sealedOutput: EngineSealedStepOutput = {
+          let sealedOutput: EngineSealedStepOutput = {
             stepNo: step.step_no,
             actorType: step.actor_type,
             questionIds: [...step.question_ids],
@@ -1587,7 +2343,79 @@ export class LeaseExecutionEngine {
               state: 'SEALED',
             },
           };
-          const verified = await readVerifiedStepArtifact(sealedOutput, this.dependencies.artifacts);
+          let verified = await readVerifiedStepArtifact(sealedOutput, this.dependencies.artifacts);
+          let sourceSkillArtifactId: string | undefined;
+          if (contributionPolicy) {
+            const adapterId = contributionPolicy.contributionAdapterId;
+            if (!adapterId) {
+              throw new ExecutionAuthenticityError(
+                `Contributor ${contributionPolicy.invocationId} has no adapter`,
+              );
+            }
+            const virtualSource = adapterId === VIRTUAL_USER_TOOL_ADAPTER_ID
+              ? [...outputs].reverse().find((output) => (
+                  output.actorId === 'virtual-user-lab'
+                  && output.stepNo < step.step_no
+                  && output.kind === 'tool_output'
+                ))
+              : undefined;
+            if (adapterId === VIRTUAL_USER_TOOL_ADAPTER_ID && !virtualSource) {
+              throw new ExecutionAuthenticityError(
+                `Contributor ${contributionPolicy.invocationId} has no virtual-user-lab source`,
+              );
+            }
+            const source = virtualSource ?? sealedOutput;
+            const contributionValue = (this.dependencies.contributionAdapters
+              ?? new ContributionAdapterRegistry()).adapt({
+              adapterId,
+              source: virtualSource?.output ?? verified.output,
+              sourceArtifact: {
+                id: source.artifact.id,
+                contentSha256: source.artifact.contentSha256!,
+                schemaVersion: STEP_ARTIFACT_SCHEMA_VERSIONS[source.kind],
+              },
+              taskId: input.lease.taskId,
+              planVersionId: input.lease.planVersionId,
+              attemptId: input.lease.attemptId,
+              invocationId: contributionPolicy.invocationId,
+              skillId: contributionPolicy.skillId,
+              contributionTypes: contributionPolicy.contributionTypes,
+              questionIds: contributionPolicy.questionIds,
+              requestedArtifactTypes: contributionPolicy.requestedArtifactTypes,
+              evidenceManifest: contributionEvidenceView({
+                lease: input.lease,
+                adapterId,
+                source: virtualSource,
+              }),
+            });
+            const contributionArtifact = await this.dependencies.artifacts.writeJson({
+              taskId: input.lease.taskId,
+              planVersionId: input.lease.planVersionId,
+              attemptId: input.lease.attemptId,
+              kind: 'research_contribution',
+              relativePath: `steps/${step.step_no}-research-contribution.json`,
+              value: contributionValue,
+              schemaVersion: STEP_ARTIFACT_SCHEMA_VERSIONS.research_contribution,
+              activeLease: input.lease,
+            });
+            publicationGroup?.track(contributionArtifact.id);
+            if (contributionArtifact.state !== 'SEALED' || !contributionArtifact.contentSha256) {
+              throw new ExecutionAuthenticityError(
+                `Contribution Artifact ${contributionArtifact.id} was not sealed`,
+              );
+            }
+            sourceSkillArtifactId = artifact.id;
+            sealedOutput = {
+              ...sealedOutput,
+              kind: 'research_contribution',
+              artifact: {
+                id: contributionArtifact.id,
+                contentSha256: contributionArtifact.contentSha256,
+                state: 'SEALED',
+              },
+            };
+            verified = await readVerifiedStepArtifact(sealedOutput, this.dependencies.artifacts);
+          }
           toolScope?.assertActive(step.actor_id);
           toolHeartbeat?.assertHealthy();
           for (const { captureIndex, attachment } of captureAttachments) {
@@ -1629,7 +2457,7 @@ export class LeaseExecutionEngine {
             actorType: step.actor_type,
             actorId: step.actor_id,
             state: 'succeeded',
-            outputArtifactId: artifact.id,
+            outputArtifactId: sealedOutput.artifact.id,
             toolProvenance: result.toolReceipt && result.toolResolution
               ? {
                   planHash: planVersion.planHash,
@@ -1656,7 +2484,17 @@ export class LeaseExecutionEngine {
                 }
               : undefined,
             skillProvenance: result.skillProvenance
-              ? { ...result.skillProvenance, outputArtifactId: artifact.id, status: 'succeeded' }
+              ? {
+                  ...result.skillProvenance,
+                  planHash: planVersion.planHash,
+                  stepHash: hashJson(step),
+                  outputArtifactId: sealedOutput.artifact.id,
+                  ...(sourceSkillArtifactId ? { sourceArtifactId: sourceSkillArtifactId } : {}),
+                  status: skillOutcome?.status ?? 'succeeded',
+                  ...(skillOutcome?.status === 'degraded'
+                    ? { limitations: skillOutcome.limitations }
+                    : {}),
+                }
               : undefined,
             latencyMs: result.toolReceipt?.latencyMs,
             startedAt,
@@ -1674,7 +2512,21 @@ export class LeaseExecutionEngine {
               ),
             });
           }
-          if (step.actor_type === 'tool') {
+          if (skillOutcome?.status === 'degraded') {
+            addGap({
+              key: `step:${step.step_no}:skill:${step.actor_id}:degraded`,
+              stepNo: step.step_no,
+              message: skillDegradationMessage(step, skillOutcome),
+            });
+          }
+          for (const knowledgeGap of result.knowledgeGaps ?? []) {
+            addGap({
+              key: `step:${step.step_no}:${knowledgeGap.key}`,
+              stepNo: step.step_no,
+              message: redactString(knowledgeGap.message),
+            });
+          }
+          if (step.actor_type === 'tool' || step.actor_type === 'knowledge') {
             resolvedArtifacts.set(verified.artifact.id, {
               artifact: {
                 id: verified.artifact.id,
@@ -1824,22 +2676,65 @@ export class LeaseExecutionEngine {
               ? ['abort']
               : ['retry', 'abort'];
           } else {
-            failure.allowedActions = failure.retryable === true ? ['retry', 'abort'] : ['abort'];
+            failure.allowedActions = failure.requiresReplan === true
+              ? ['replan', 'abort']
+              : failure.retryable === true ? ['retry', 'abort'] : ['abort'];
           }
           if (step.actor_type === 'skill') {
             failedSkillProvenance = await this.failedSkillProvenance({
               step,
               lease: input.lease,
-              researchGoal,
               resolvedInput,
-              priorOutputs: outputs,
               producedOutputHash: error instanceof SkillOutputSchemaError
                 ? error.outputHash
                 : producedSkillOutputHash,
               schemaHashes: error instanceof SkillOutputSchemaError
                 ? error.schemaHashes
                 : undefined,
+              preparedFingerprint: preparedSkillFingerprint,
+              ...(error instanceof SkillOutputSchemaError
+                ? { modelReceipt: error.modelReceipt }
+                : {}),
             });
+          }
+          const optionalInvocationPolicy = plan.optionalInvocationStepNos.has(step.step_no)
+            ? invocationPolicies.find(({ failurePolicy }) => failurePolicy === 'gap')
+            : undefined;
+          if (invocationFailureCanBecomeGap({
+            optionalInvocationStep: optionalInvocationPolicy !== undefined,
+            failureKind: typeof failure.kind === 'string' ? failure.kind : undefined,
+            artifactCleanupFailed,
+            integrityFailure: isIntegrityFailure(effectiveError),
+          }) && optionalInvocationPolicy) {
+            skippedInvocationIds.add(optionalInvocationPolicy.invocationId);
+            failure = {
+              ...failure,
+              kind: 'optional_contributor_failed',
+              retryable: true,
+              invocationId: optionalInvocationPolicy.invocationId,
+              allowedActions: ['retry', 'abort'],
+            };
+            await this.dependencies.repository.recordExecutionStep({
+              ...input.lease,
+              stepNo: step.step_no,
+              stepName: step.step_name,
+              actorType: step.actor_type,
+              actorId: step.actor_id,
+              state: 'skipped',
+              failure,
+              toolProvenance: failedToolProvenance,
+              skillProvenance: failedSkillProvenance,
+              startedAt,
+              finishedAt: new Date(),
+            });
+            addGap({
+              key: `invocation:${optionalInvocationPolicy.invocationId}:failed`,
+              stepNo: step.step_no,
+              message: redactString(
+                `Optional Contributor ${optionalInvocationPolicy.invocationId} failed: ${String(failure.message ?? 'unknown error')}`,
+              ),
+            });
+            return;
           }
           if (artifactCleanupDeferred) {
             failure.artifactInvalidationPromotion = {
@@ -1959,11 +2854,18 @@ export class LeaseExecutionEngine {
     let sealedEvidenceManifest!: CurrentDeliverableGenerateInput['evidenceManifest'];
     let evidenceResolver!: EvidenceArtifactResolver;
     let chartPublication: ArtifactPublicationGroup | undefined;
+    let reportPublication: ArtifactPublicationGroup | undefined;
     const compensateChartPublication = async (reason: string): Promise<void> => {
       if (!chartPublication) return;
       const publication = chartPublication;
       await publication.compensate(reason);
       chartPublication = undefined;
+    };
+    const compensateReportPublication = async (reason: string): Promise<void> => {
+      if (!reportPublication) return;
+      const publication = reportPublication;
+      await publication.compensate(reason);
+      reportPublication = undefined;
     };
     try {
       evidenceResolver = {
@@ -1972,6 +2874,37 @@ export class LeaseExecutionEngine {
       const evidenceEntries = (await this.dependencies.repository.listExecutionSteps(input.lease.attemptId))
         .flatMap((step): EvidenceEntry[] => {
           const proof = step.toolProvenance;
+          const knowledgeProof = step.skillProvenance;
+          const knowledgeOutputArtifactId = typeof knowledgeProof?.outputArtifactId === 'string'
+            ? knowledgeProof.outputArtifactId
+            : null;
+          const knowledgeArtifact = knowledgeOutputArtifactId
+            ? resolvedArtifacts.get(knowledgeOutputArtifactId)
+            : undefined;
+          if (
+            step.actorType === 'knowledge'
+            && step.state === 'succeeded'
+            && knowledgeArtifact
+            && Array.isArray(knowledgeProof?.resources)
+          ) {
+            return knowledgeProof.resources.flatMap((resource, index): EvidenceEntry[] => (
+              isRecord(resource)
+              && typeof resource.id === 'string'
+              && typeof resource.contentHash === 'string'
+                ? [{
+                    id: `K${step.stepNo}-${index + 1}`,
+                    kind: 'knowledge_excerpt',
+                    evidenceClass: 'knowledge',
+                    artifactId: knowledgeArtifact.artifact.id,
+                    artifactContentSha256: knowledgeArtifact.artifact.contentSha256,
+                    jsonPointer: `/resources/${index}/content`,
+                    stepNo: step.stepNo,
+                    sensitivity: 'internal',
+                    redaction: 'none',
+                  }]
+                : []
+            ));
+          }
           const outputArtifactId = typeof proof?.outputArtifactId === 'string' ? proof.outputArtifactId : null;
           const artifact = outputArtifactId ? resolvedArtifacts.get(outputArtifactId) : undefined;
           const executionMode = proof?.executionMode;
@@ -1981,6 +2914,28 @@ export class LeaseExecutionEngine {
           const refs = Array.isArray(proof?.sourceRefs)
             ? proof.sourceRefs.filter(isToolSourceRef).filter((ref) => ref.sourceUrl.startsWith('https://'))
             : [];
+          if (
+            step.actorType === 'tool'
+            && step.actorId === 'virtual-user-lab'
+            && step.state === 'succeeded'
+            && artifact
+            && executionMode === 'real'
+            && typeof implementationId === 'string'
+            && typeof redactedOutputHash === 'string'
+            && (toolTier === 'core' || toolTier === 'optional')
+            && isRecord(artifact.value)
+            && isRecord(artifact.value.output)
+            && Array.isArray(artifact.value.output.reviews)
+          ) {
+            return virtualUserSimulationEvidence({
+              stepNo: step.stepNo,
+              artifactId: artifact.artifact.id,
+              artifactContentSha256: artifact.artifact.contentSha256,
+              output: artifact.value.output,
+              implementationId,
+              redactedOutputHash,
+            });
+          }
           if (
             step.actorType !== 'tool'
             || step.state !== 'succeeded'
@@ -2371,10 +3326,24 @@ export class LeaseExecutionEngine {
         visualAssets: reportMaterials.visualAssets,
         visualAnnotationBindings: reportMaterials.visualAnnotationBindings ?? [],
       };
-      const deliverable = await this.withLeaseHeartbeat(input.lease, () => this.dependencies.deliverables.generate(deliverableInput));
+      const deliverable = await this.withLeaseHeartbeat(input.lease, ({ signal }) => (
+        this.dependencies.deliverables.generate({ ...deliverableInput, cancellationSignal: signal })
+      ));
       let deliverableArtifactId = deliverable.deliverableArtifactId;
+      let crossSkillReviewArtifactId = deliverable.crossSkillReviewArtifactId;
+      let contributionLedgerArtifactId = deliverable.contributionLedgerArtifactId;
+      let contributionSummaryArtifactId = deliverable.contributionSummaryArtifactId;
       let reportReviewArtifactId: string | undefined;
       let reportDocumentArtifactId: string | undefined;
+      let reportDocumentArtifact: ControlArtifact | undefined;
+      let editorialReportDocument: ReportDocumentV3 | ReportDocumentV4 | undefined;
+      let editorialBlueprintArtifactId: string | undefined;
+      let editorialLayout: ReportPackageLayoutV2 | undefined;
+      let sourceDeliverableContentSha256: string | undefined;
+      let sourceReviewContentSha256: string | undefined;
+      let editorialShowcase: ReportCompositionResult['editorialShowcase'];
+      let reportLayoutBlueprintArtifactId: string | undefined;
+      let reportLayoutDiagnosticArtifactId: string | undefined;
       let reviewStatus: ReportReviewResult['status'] | undefined;
       if (this.dependencies.reportReview) {
         const reviewingTask = await this.dependencies.repository.transitionTask({
@@ -2386,14 +3355,22 @@ export class LeaseExecutionEngine {
         active = { ...active, stateVersion: reviewingTask.stateVersion };
         const composer: DeliverableComposer | undefined = this.dependencies.deliverables.revise
           ? {
-              revise: (revision) => this.dependencies.deliverables.revise!({ ...deliverableInput, review: revision.review }),
+              revise: (revision) => this.dependencies.deliverables.revise!({
+                ...deliverableInput,
+                review: revision.review,
+                reviewArtifactId: revision.reviewArtifactId,
+                currentDeliverable: revision.deliverable as ResearchDeliverableEnvelope<unknown>,
+                ...(revision.cancellationSignal
+                  ? { cancellationSignal: revision.cancellationSignal }
+                  : {}),
+              }),
             }
           : undefined;
         if (!reviewCoverage) {
           throw new ExecutionAuthenticityError('report review coverage identifiers are unavailable');
         }
         const finalReviewCoverage = reviewCoverage;
-        const review = await this.withLeaseHeartbeat(input.lease, () => this.dependencies.reportReview!.review({
+        const review = await this.withLeaseHeartbeat(input.lease, ({ signal }) => this.dependencies.reportReview!.review({
           task: { id: task.id },
           plan: { id: planVersion.id },
           attempt: { id: input.lease.attemptId },
@@ -2402,12 +3379,17 @@ export class LeaseExecutionEngine {
           successCriterionIds: finalReviewCoverage.successCriterionIds,
           questionIds: finalReviewCoverage.questionIds,
           evidenceIds: sealedEvidenceManifest.value.entries.map((entry) => entry.id),
+          requirement: deliverableInput.finalizedRequirement as ResearchTaskV2,
           expectedModel: input.expectedModel,
           activeLease: input.lease,
+          cancellationSignal: signal,
         }, composer));
         reportReviewArtifactId = review.artifactId;
         reviewStatus = review.status;
         deliverableArtifactId = review.deliverableArtifactId;
+        crossSkillReviewArtifactId = review.crossSkillReviewArtifactId ?? crossSkillReviewArtifactId;
+        contributionLedgerArtifactId = review.contributionLedgerArtifactId ?? contributionLedgerArtifactId;
+        contributionSummaryArtifactId = review.contributionSummaryArtifactId ?? contributionSummaryArtifactId;
         if (review.status === 'paused') {
           const failure = {
             kind: 'report_review',
@@ -2440,6 +3422,9 @@ export class LeaseExecutionEngine {
             deliverableArtifactId,
             evidenceManifestArtifactId: sealedEvidenceManifest.artifact.id,
             reportReviewArtifactId,
+            ...(crossSkillReviewArtifactId === undefined ? {} : { crossSkillReviewArtifactId }),
+            ...(contributionLedgerArtifactId === undefined ? {} : { contributionLedgerArtifactId }),
+            ...(contributionSummaryArtifactId === undefined ? {} : { contributionSummaryArtifactId }),
             reviewStatus,
             failedStepNo,
             failure,
@@ -2452,8 +3437,17 @@ export class LeaseExecutionEngine {
           to: 'composing_report',
         });
         active = { ...active, stateVersion: composingTask.stateVersion };
-        if (this.dependencies.reportComposition) {
+        const shouldComposeReport = this.dependencies.reportComposition
+          && (
+            deliverableId !== 'research_plan'
+            || this.dependencies.reportEditorialExperienceV1Enabled === true
+            || reportMaterials.visualAssets.length > 0
+            || reportMaterials.charts.length > 0
+        );
+        if (shouldComposeReport) {
           await this.dependencies.repository.requireActiveLease(input.lease);
+          const publication = new ArtifactPublicationGroup(this.dependencies.artifacts);
+          reportPublication = publication;
           const [verifiedDeliverable, verifiedEvidenceManifest, verifiedReview] = await Promise.all([
             this.dependencies.artifacts.readVerifiedJson<ResearchDeliverableEnvelope<ResearchPlanPayload>>(
               deliverableArtifactId,
@@ -2467,7 +3461,11 @@ export class LeaseExecutionEngine {
             throw new ExecutionAuthenticityError('ReportDocument composition requires the final pass Review');
           }
           const materials = reportMaterials;
-          const composition = await this.withLeaseHeartbeat(input.lease, () =>
+          const editorialDataClassification = reportEditorialPlannerDataClassification(
+            task.structuredTask,
+            verifiedEvidenceManifest.value,
+          );
+          const composition = await this.withLeaseHeartbeat(input.lease, ({ signal }) =>
             this.dependencies.reportComposition!.composeAndStore({
               taskId: input.lease.taskId,
               planVersionId: input.lease.planVersionId,
@@ -2479,7 +3477,17 @@ export class LeaseExecutionEngine {
               review: verifiedReview,
               visualAssets: materials.visualAssets,
               charts: materials.charts,
+              expectedModel: input.expectedModel,
+              layoutStepNo: plan.steps.length + 3,
+              ...(editorialDataClassification
+                ? { editorialPlannerDataClassification: editorialDataClassification }
+                : {}),
               activeLease: input.lease,
+              ...(contributionLedgerArtifactId === undefined
+                ? {}
+                : { contributionLedgerArtifactId }),
+              onArtifactSealed: (artifact) => publication.track(artifact.id),
+              cancellationSignal: signal,
             }));
           if (
             composition.artifact.state !== 'SEALED'
@@ -2487,11 +3495,59 @@ export class LeaseExecutionEngine {
             || composition.artifact.planVersionId !== input.lease.planVersionId
             || composition.artifact.attemptId !== input.lease.attemptId
             || composition.artifact.kind !== 'report_document'
-            || composition.artifact.schemaVersion !== 'report-document-v1'
+            || composition.artifact.schemaVersion !== composition.document.version
+            || (
+              composition.artifact.schemaVersion !== 'report-document-v1'
+              && composition.artifact.schemaVersion !== 'report-document-v2'
+              && composition.artifact.schemaVersion !== 'report-document-v3'
+              && composition.artifact.schemaVersion !== 'report-document-v4'
+            )
           ) {
             throw new ExecutionAuthenticityError('ReportDocument composition did not return a sealed bound Artifact');
           }
           reportDocumentArtifactId = composition.artifact.id;
+          if (
+            composition.document.version === 'report-document-v3'
+            || composition.document.version === 'report-document-v4'
+          ) {
+            if (
+              !composition.editorialBlueprintArtifactId
+              || !composition.editorialLayout
+              || composition.editorialLayout.blueprintArtifactId !== composition.editorialBlueprintArtifactId
+            ) {
+              throw new ExecutionAuthenticityError(
+                'Editorial ReportDocument composition did not return a consistent layout binding',
+              );
+            }
+            if (
+              !verifiedDeliverable.artifact.contentSha256
+              || !verifiedReview.artifact.contentSha256
+              || !composition.artifact.contentSha256
+            ) {
+              throw new ExecutionAuthenticityError(
+                'Editorial ReportDocument publication inputs must have sealed content hashes',
+              );
+            }
+            reportDocumentArtifact = composition.artifact;
+            editorialReportDocument = composition.document;
+            editorialBlueprintArtifactId = composition.editorialBlueprintArtifactId;
+            editorialLayout = composition.editorialLayout;
+            sourceDeliverableContentSha256 = verifiedDeliverable.artifact.contentSha256;
+            sourceReviewContentSha256 = verifiedReview.artifact.contentSha256;
+            editorialShowcase = composition.editorialShowcase;
+            if (editorialShowcase?.showcase.status === 'unavailable') {
+              addGap({
+                key: `editorial-showcase:${editorialShowcase.showcase.reasonCode}`,
+                stepNo: plan.steps.length + 3,
+                message: `Editorial Showcase unavailable: ${editorialShowcase.showcase.reasonCode}`,
+              });
+            }
+          } else {
+            publication.commit();
+            reportPublication = undefined;
+            reportLayoutBlueprintArtifactId = composition.layoutBlueprintArtifactId;
+            reportLayoutDiagnosticArtifactId = composition.layoutDiagnosticArtifactId;
+          }
         }
       }
       await this.dependencies.repository.requireActiveLease(input.lease);
@@ -2499,19 +3555,125 @@ export class LeaseExecutionEngine {
         throw new ExecutionAuthenticityError('Report Package cannot bind a document without its Review Artifact');
       }
       const finalReviewArtifactId = reportReviewArtifactId;
-      const reportPackage = reportDocumentArtifactId === undefined
-        ? undefined
-        : await new ReportPackageArtifactService(this.dependencies.artifacts).seal({
+      const canSealTextPackage = finalReviewArtifactId !== undefined
+        && reportDocumentArtifactId === undefined
+        && this.dependencies.reportComposition !== undefined;
+      let reportPackage: ControlArtifact | undefined;
+      if (
+        finalReviewArtifactId !== undefined
+        && (reportDocumentArtifactId !== undefined || canSealTextPackage)
+      ) {
+        if (editorialReportDocument && this.dependencies.standaloneHtmlBundleV1Enabled === true) {
+          if (
+            !reportPublication
+            || !reportDocumentArtifact
+            || !reportDocumentArtifact.contentSha256
+            || !editorialBlueprintArtifactId
+            || !editorialLayout
+            || !sourceDeliverableContentSha256
+            || !sourceReviewContentSha256
+          ) {
+            throw new ExecutionAuthenticityError(
+              'Editorial ReportDocument publication inputs are incomplete',
+            );
+          }
+          const publication = reportPublication;
+          const reportPublicationId = createReportPublicationId({
+            taskId: input.lease.taskId,
+            planVersionId: input.lease.planVersionId,
+            attemptId: input.lease.attemptId,
+            deliverableContentSha256: sourceDeliverableContentSha256,
+            reportReviewContentSha256: sourceReviewContentSha256,
+            reportDocumentVersion: editorialReportDocument.version,
+          });
+          const htmlPublication = await renderAndSealStandaloneHtml({
+            artifacts: this.dependencies.artifacts,
             activeLease: input.lease,
-            presentationMode: 'multimodal',
+            reportDocumentArtifact,
+            document: editorialReportDocument,
+            onArtifactSealed: (artifact) => publication.track(artifact.id),
+          });
+          const notices: ReportNoticeV1[] = [...editorialReportDocument.notices];
+          if (
+            htmlPublication.standaloneHtml.status === 'unavailable'
+            && !notices.some(({ code }) => code === 'html_unavailable')
+          ) {
+            notices.push({
+              id: 'notice-html-unavailable',
+              code: 'html_unavailable',
+              severity: 'warning',
+              scope: 'export',
+              relatedUnitIds: [],
+            });
+          }
+          const canonicalPackageService = new ReportPackageV2ArtifactService(
+            this.dependencies.artifacts,
+          );
+          const canonicalPackage = await canonicalPackageService.seal({
+            activeLease: input.lease,
+            reportPublicationId,
             deliverableArtifactId,
             evidenceManifestArtifactId: sealedEvidenceManifest.artifact.id,
             reportReviewArtifactId: finalReviewArtifactId,
-            reportDocumentArtifactId,
+            sourceReportDocumentArtifactId: reportDocumentArtifact.id,
+            sourceReportDocumentContentSha256: reportDocumentArtifact.contentSha256,
+            ...(crossSkillReviewArtifactId === undefined ? {} : { crossSkillReviewArtifactId }),
+            ...(contributionLedgerArtifactId === undefined ? {} : { contributionLedgerArtifactId }),
+            ...(contributionSummaryArtifactId === undefined ? {} : { contributionSummaryArtifactId }),
+            layout: editorialLayout,
+            assetSnapshot: { assets: [], charts: [] },
+            standaloneHtml: htmlPublication.standaloneHtml,
+            notices,
+            onArtifactSealed: (artifact) => publication.track(artifact.id),
           });
+          reportPackage = canonicalPackage;
+          if (editorialShowcase) {
+            if (!canonicalPackage.contentSha256) {
+              throw new ExecutionAuthenticityError('Canonical Report Package has no sealed hash');
+            }
+            reportPackage = await new ReportPackageV3ArtifactService({
+              artifacts: this.dependencies.artifacts,
+              canonicalPackages: canonicalPackageService,
+            }).seal({
+              activeLease: input.lease,
+              canonicalPackageArtifactId: canonicalPackage.id,
+              canonicalPackageContentSha256: canonicalPackage.contentSha256,
+              reportPublicationId,
+              preferredHtml: editorialShowcase.showcase.status === 'ready'
+                ? 'showcase'
+                : 'canonical',
+              showcase: editorialShowcase.showcase,
+              onArtifactSealed: (artifact) => publication.track(artifact.id),
+            });
+          }
+        } else {
+          const publication = editorialReportDocument ? reportPublication : undefined;
+          reportPackage = await new ReportPackageArtifactService(this.dependencies.artifacts).seal({
+            activeLease: input.lease,
+            presentationMode: reportDocumentArtifactId === undefined ? 'current_text' : 'multimodal',
+            deliverableArtifactId,
+            evidenceManifestArtifactId: sealedEvidenceManifest.artifact.id,
+            reportReviewArtifactId: finalReviewArtifactId,
+            ...(reportDocumentArtifactId === undefined ? {} : { reportDocumentArtifactId }),
+            ...(reportLayoutBlueprintArtifactId === undefined ? {} : { reportLayoutBlueprintArtifactId }),
+            ...(reportLayoutDiagnosticArtifactId === undefined ? {} : { reportLayoutDiagnosticArtifactId }),
+            ...(crossSkillReviewArtifactId === undefined ? {} : { crossSkillReviewArtifactId }),
+            ...(contributionLedgerArtifactId === undefined ? {} : { contributionLedgerArtifactId }),
+            ...(contributionSummaryArtifactId === undefined ? {} : { contributionSummaryArtifactId }),
+            ...(publication === undefined
+              ? {}
+              : { onArtifactSealed: (artifact) => publication.track(artifact.id) }),
+          });
+        }
+      }
       await this.dependencies.repository.requireActiveLease(input.lease);
       const status = gaps.size > 0 ? 'completed_with_gaps' : 'completed';
-      await this.dependencies.repository.completeExecution(input.lease, { status });
+      await this.dependencies.repository.completeExecution(input.lease, {
+        status,
+        ...(reportPackage === undefined ? {} : { reportPackageArtifactId: reportPackage.id }),
+      });
+      reportPublication?.commit();
+      reportPublication = undefined;
       return {
         status,
         attemptId: input.lease.attemptId,
@@ -2519,11 +3681,14 @@ export class LeaseExecutionEngine {
         evidenceManifestArtifactId: sealedEvidenceManifest.artifact.id,
         ...(reportReviewArtifactId === undefined ? {} : { reportReviewArtifactId }),
         ...(reportPackage === undefined ? {} : { reportPackageArtifactId: reportPackage.id }),
+        ...(crossSkillReviewArtifactId === undefined ? {} : { crossSkillReviewArtifactId }),
+        ...(contributionLedgerArtifactId === undefined ? {} : { contributionLedgerArtifactId }),
+        ...(contributionSummaryArtifactId === undefined ? {} : { contributionSummaryArtifactId }),
         ...(reviewStatus === undefined ? {} : { reviewStatus }),
         gapCount: gaps.size,
       };
     } catch (error) {
-      if (error instanceof ControlPlaneConflictError) {
+      if (error instanceof ControlPlaneConflictError && !reportPublication) {
         await this.dependencies.repository.invalidateTerminalArtifacts({
           taskId: input.lease.taskId,
           planVersionId: input.lease.planVersionId,
@@ -2532,6 +3697,14 @@ export class LeaseExecutionEngine {
         });
       }
       let effectiveError = error;
+      try {
+        await compensateReportPublication('Report publication did not complete');
+      } catch (compensationError) {
+        effectiveError = effectiveError instanceof ArtifactInvalidationError
+          && compensationError instanceof ArtifactInvalidationError
+          ? mergeArtifactInvalidationErrors(effectiveError, compensationError)
+          : compensationError;
+      }
       try {
         await compensateChartPublication('Competitive weight Chart publication did not pass report material discovery');
       } catch (compensationError) {
@@ -2664,46 +3837,231 @@ export class LeaseExecutionEngine {
     plan: EnginePlan,
     planHash: string,
     researchGoal: string,
+    deliverableId: string,
+    expectedModel: string,
   ): Promise<Map<number, ReusableExecution>> {
     const reusable = new Map<number, ReusableExecution>();
     if (!lease.retryOf) return reusable;
     const previous = await this.dependencies.repository.listExecutionSteps(lease.retryOf);
-    let invalid = false;
+    const finalPlanStepNo = Math.max(...plan.steps.map(({ step_no }) => step_no));
+    const authoritativeFailure = selectAuthoritativeFailedStep(previous.map((step) => ({
+      stepNo: step.stepNo,
+      state: step.state,
+      failure: step.failure,
+    })));
+    const terminalRebuildEligible = deliverableId === 'research_strategy_report'
+      && authoritativeFailure?.stepNo === finalPlanStepNo + 1
+      && authoritativeFailure.failure?.kind === 'deliverable_validation'
+      && plan.steps.every((step) => previous.some((prior) => (
+        prior.stepNo === step.step_no
+        && prior.actorType === step.actor_type
+        && prior.actorId === step.actor_id
+        && prior.state === 'succeeded'
+        && typeof prior.outputArtifactId === 'string'
+      )))
+      && !plan.steps.some(({ actor_id }) => actor_id === 'playwright-page-capture');
+    if (terminalRebuildEligible) {
+      try {
+        const modelCalls = await this.dependencies.repository.listModelCalls(lease.retryOf);
+        const terminalReusable = new Map<number, ReusableExecution>();
+        const terminalReusableOutputs: EngineSealedStepOutput[] = [];
+        const expectedKinds: Record<EngineStep['actor_type'], StepArtifactKind> = {
+          knowledge: 'knowledge_output',
+          tool: 'tool_output',
+          skill: 'skill_output',
+          llm: 'llm_output',
+          reviewer: 'review_output',
+        };
+        for (const step of plan.steps) {
+          const prior = previous.find((candidate) => candidate.stepNo === step.step_no)!;
+          const artifact = await this.dependencies.repository.getArtifact(prior.outputArtifactId!);
+          const contributorOutput = step.actor_type === 'skill'
+            && (plan.invocationPoliciesByStep.get(step.step_no) ?? []).some(({ role, skillId }) => (
+              role === 'contributor' && skillId === step.actor_id
+            ));
+          const expectedKind = contributorOutput
+            ? 'research_contribution'
+            : expectedKinds[step.actor_type];
+          if (
+            !artifact
+            || artifact.state !== 'SEALED'
+            || !artifact.contentSha256
+            || artifact.taskId !== lease.taskId
+            || artifact.planVersionId !== lease.planVersionId
+            || artifact.attemptId !== lease.retryOf
+            || artifact.kind !== expectedKind
+          ) throw new Error(`terminal rebuild Artifact for step ${step.step_no} is not reusable`);
+          let provenance: Record<string, unknown> | null = null;
+          if (step.actor_type === 'tool') {
+            provenance = prior.toolProvenance;
+            if (
+              !provenance
+              || provenance.planHash !== planHash
+              || provenance.stepHash !== hashJson(step)
+            ) throw new Error(`terminal rebuild Tool provenance for step ${step.step_no} drifted`);
+          } else if (step.actor_type === 'knowledge' || step.actor_type === 'skill') {
+            provenance = await this.matchReusableSkillProvenance({
+              step,
+              priorProvenance: prior.skillProvenance,
+              plan,
+              planHash,
+              researchGoal,
+              outputs: terminalReusableOutputs,
+              lease,
+            });
+            if (!provenance) throw new Error(`terminal rebuild provenance for step ${step.step_no} drifted`);
+          } else {
+            const call = modelCalls.find((candidate) => (
+              candidate.stepNo === step.step_no
+              && candidate.stage === step.actor_type
+              && candidate.status === 'succeeded'
+            ));
+            const priorModelProvenance = prior.skillProvenance?.kind === 'model_execution'
+              || prior.skillProvenance?.kind === 'model_reuse'
+              ? prior.skillProvenance
+              : call ? {
+                kind: 'model_reuse',
+                planHash,
+                stepHash: hashJson(step),
+                sourceModelCallId: call.id,
+                provider: call.provider,
+                endpointHost: call.endpointHost,
+                requestedModel: call.requestedModel,
+                actualModel: call.actualModel,
+                modelVersion: call.modelVersion,
+                promptHash: call.promptHash,
+                contextManifestHash: call.contextManifestHash,
+                traceId: call.traceId,
+                status: call.status,
+              } : null;
+            if (!priorModelProvenance) {
+              throw new Error(`terminal rebuild Model receipt for step ${step.step_no} is missing`);
+            }
+            const receiptId = typeof priorModelProvenance.modelReceiptId === 'string'
+              ? priorModelProvenance.modelReceiptId
+              : typeof priorModelProvenance.sourceModelCallId === 'string'
+                ? priorModelProvenance.sourceModelCallId
+                : null;
+            const receipt = receiptId
+              ? await this.dependencies.repository.getModelCall(receiptId)
+              : null;
+            if (!receipt) {
+              throw new Error(`terminal rebuild Model receipt for step ${step.step_no} is missing`);
+            }
+            provenance = await this.matchReusableModelProvenance({
+              step,
+              priorProvenance: priorModelProvenance,
+              receipt,
+              planHash,
+              researchGoal,
+              outputs: terminalReusableOutputs,
+              expectedModel,
+            });
+            if (!provenance) {
+              throw new Error(`terminal rebuild Model provenance for step ${step.step_no} drifted`);
+            }
+          }
+          const stored = await this.dependencies.artifacts.readVerifiedJson<Record<string, unknown>>(artifact.id);
+          if (expectedKind === 'research_contribution') {
+            await this.assertReusableContributionSource(stored.value, lease);
+          }
+          const output = isRecord(stored.value) && 'output' in stored.value ? stored.value.output : stored.value;
+          if (
+            synthesizerPolicyForStep(plan, step)
+            && containsRedactedMachineReference(output)
+          ) throw new Error(`terminal rebuild Synthesizer checkpoint for step ${step.step_no} is contaminated`);
+          terminalReusable.set(step.step_no, {
+            output,
+            outputArtifactId: artifact.id,
+            artifactValue: stored.value,
+            kind: artifact.kind as StepArtifactKind,
+            schemaVersion: artifact.schemaVersion,
+            provenance: { ...provenance, outputArtifactId: artifact.id, terminalRebuild: true },
+          });
+          terminalReusableOutputs.push({
+            stepNo: step.step_no,
+            actorType: step.actor_type,
+            questionIds: [...step.question_ids],
+            actorId: step.actor_id,
+            kind: artifact.kind as StepArtifactKind,
+            state: 'succeeded',
+            taskId: artifact.taskId,
+            planVersionId: artifact.planVersionId,
+            attemptId: artifact.attemptId,
+            artifact: {
+              id: artifact.id,
+              contentSha256: artifact.contentSha256,
+              state: 'SEALED',
+            },
+            output,
+          });
+        }
+        if (terminalReusable.size === plan.steps.length) return terminalReusable;
+      } catch {
+        // Any lineage, receipt, or Artifact drift falls back to the ordinary retry path.
+      }
+    }
+    const reusableStepNos = new Set<number>();
+    const reusableOutputs: EngineSealedStepOutput[] = [];
     for (const step of plan.steps) {
-      if (invalid) break;
       const prior = previous.find((candidate) => candidate.stepNo === step.step_no);
-      if (!prior || prior.state !== 'succeeded' || !prior.outputArtifactId || !prior.toolProvenance) {
-        invalid = true;
+      if (
+        !prior
+        || prior.state !== 'succeeded'
+        || !prior.outputArtifactId
+        || !step.depends_on.every((dependency) => reusableStepNos.has(dependency))
+      ) continue;
+
+      let provenance: Record<string, unknown> | null = null;
+      if (step.actor_type === 'tool') {
+        if (step.input_bindings.length > 0 || !prior.toolProvenance) continue;
+        const tool = this.dependencies.skillLoader.getTool(step.actor_id);
+        if (!tool) continue;
+        const manifest = loadToolManifest(tool.path);
+        const resolution = this.dependencies.tools.resolve(manifest);
+        const current = resolution ? {
+          planHash,
+          stepHash: hashJson(step),
+          inputHash: hashJson(step.input),
+          manifestHash: hashFile(tool.path),
+          inputSchemaHash: hashFile(manifest.input_schema),
+          outputSchemaHash: hashFile(manifest.output_schema),
+          configHash: toolConfigHash(manifest, resolution),
+        } : null;
+        const fields: Array<'planHash' | 'stepHash' | 'inputHash' | 'manifestHash' | 'inputSchemaHash' | 'outputSchemaHash' | 'configHash'> = [
+          'planHash', 'stepHash', 'inputHash', 'manifestHash', 'inputSchemaHash', 'outputSchemaHash', 'configHash',
+        ];
+        if (!current || !fields.every((field) => current[field] === prior.toolProvenance?.[field])) continue;
+        provenance = prior.toolProvenance;
+      } else if (step.actor_type === 'knowledge' || step.actor_type === 'skill') {
+        try {
+          provenance = await this.matchReusableSkillProvenance({
+            step,
+            priorProvenance: prior.skillProvenance,
+            plan,
+            planHash,
+            researchGoal,
+            outputs: reusableOutputs,
+            lease,
+          });
+          if (!provenance) continue;
+        } catch {
+          continue;
+        }
+      } else {
         continue;
       }
-      if (step.actor_type !== 'tool' || step.input_bindings.length > 0) {
-        invalid = true;
-        continue;
-      }
-      const tool = this.dependencies.skillLoader.getTool(step.actor_id);
-      if (!tool) {
-        invalid = true;
-        continue;
-      }
-      const manifest = loadToolManifest(tool.path);
-      const resolution = this.dependencies.tools.resolve(manifest);
-      const current = resolution ? {
-        planHash,
-        stepHash: hashJson(step),
-        inputHash: hashJson(step.input),
-        manifestHash: hashFile(tool.path),
-        inputSchemaHash: hashFile(manifest.input_schema),
-        outputSchemaHash: hashFile(manifest.output_schema),
-        configHash: toolConfigHash(manifest, resolution),
-      } : null;
-      const fields: Array<'planHash' | 'stepHash' | 'inputHash' | 'manifestHash' | 'inputSchemaHash' | 'outputSchemaHash' | 'configHash'> = [
-        'planHash', 'stepHash', 'inputHash', 'manifestHash', 'inputSchemaHash', 'outputSchemaHash', 'configHash',
-      ];
-      if (!current || !fields.every((field) => current[field] === prior.toolProvenance?.[field])) {
-        invalid = true;
-        continue;
-      }
+
       const artifact = await this.dependencies.repository.getArtifact(prior.outputArtifactId);
+      const contributorOutput = step.actor_type === 'skill'
+        && (plan.invocationPoliciesByStep.get(step.step_no) ?? []).some(({ role, skillId }) => (
+          role === 'contributor' && skillId === step.actor_id
+        ));
+      const expectedKind: StepArtifactKind = step.actor_type === 'tool'
+        ? 'tool_output'
+        : step.actor_type === 'knowledge'
+          ? 'knowledge_output'
+          : contributorOutput ? 'research_contribution' : 'skill_output';
       if (
         !artifact
         || artifact.state !== 'SEALED'
@@ -2711,26 +4069,339 @@ export class LeaseExecutionEngine {
         || artifact.taskId !== lease.taskId
         || artifact.planVersionId !== lease.planVersionId
         || artifact.attemptId !== lease.retryOf
-      ) {
-        invalid = true;
-        continue;
-      }
+        || artifact.kind !== expectedKind
+      ) continue;
       try {
         const stored = await this.dependencies.artifacts.readVerifiedJson<Record<string, unknown>>(artifact.id);
+        if (expectedKind === 'research_contribution') {
+          await this.assertReusableContributionSource(stored.value, lease);
+        }
         const output = isRecord(stored.value) && 'output' in stored.value ? stored.value.output : stored.value;
+        if (
+          synthesizerPolicyForStep(plan, step)
+          && containsRedactedMachineReference(output)
+        ) throw new Error(`reusable Synthesizer checkpoint for step ${step.step_no} is contaminated`);
         reusable.set(step.step_no, {
           output,
           outputArtifactId: artifact.id,
           artifactValue: stored.value,
           kind: artifact.kind as StepArtifactKind,
           schemaVersion: artifact.schemaVersion,
-          provenance: { ...prior.toolProvenance, outputArtifactId: artifact.id },
+          provenance: { ...provenance, outputArtifactId: artifact.id },
+        });
+        reusableStepNos.add(step.step_no);
+        reusableOutputs.push({
+          stepNo: step.step_no,
+          actorType: step.actor_type,
+          questionIds: [...step.question_ids],
+          actorId: step.actor_id,
+          kind: artifact.kind as StepArtifactKind,
+          state: 'succeeded',
+          taskId: artifact.taskId,
+          planVersionId: artifact.planVersionId,
+          attemptId: artifact.attemptId,
+          artifact: {
+            id: artifact.id,
+            contentSha256: artifact.contentSha256,
+            state: 'SEALED',
+          },
+          output,
         });
       } catch {
-        invalid = true;
+        // Invalidity propagates through dependencies because this step is not marked reusable.
       }
     }
     return reusable;
+  }
+
+  private async assertReusableContributionSource(
+    value: unknown,
+    lease: ControlExecutionLease,
+  ): Promise<void> {
+    this.dependencies.validator.validateOrThrow('research-contribution-artifact-v1', value);
+    if (!isRecord(value) || !isRecord(value.source)) {
+      throw new Error('reusable Contribution source is malformed');
+    }
+    const source = value.source;
+    if (
+      typeof source.artifactId !== 'string'
+      || typeof source.artifactContentSha256 !== 'string'
+      || typeof source.schemaVersion !== 'string'
+    ) throw new Error('reusable Contribution source identity is malformed');
+    const verified = await this.dependencies.artifacts.readVerifiedJson<unknown>(source.artifactId);
+    if (
+      verified.artifact.state !== 'SEALED'
+      || verified.artifact.contentSha256 !== source.artifactContentSha256
+      || verified.artifact.schemaVersion !== source.schemaVersion
+      || verified.artifact.taskId !== lease.taskId
+      || verified.artifact.planVersionId !== lease.planVersionId
+    ) throw new Error(`reusable Contribution source Artifact ${source.artifactId} drifted`);
+  }
+
+  private async matchReusableModelProvenance(input: {
+    step: EngineStep;
+    priorProvenance: Record<string, unknown>;
+    receipt: ControlModelCall;
+    planHash: string;
+    researchGoal: string;
+    outputs: EngineSealedStepOutput[];
+    expectedModel: string;
+  }): Promise<Record<string, unknown> | null> {
+    const executionOutputs = await this.outputsForPriorExecution(
+      input.step,
+      input.outputs,
+      input.priorProvenance,
+    );
+    const resolvedInput = await resolveStepInput(
+      input.step,
+      executionOutputs,
+      this.dependencies.artifacts,
+    );
+    const execution = modelStepExecution({
+      step: input.step,
+      researchGoal: input.researchGoal,
+      resolvedInput,
+      outputs: executionOutputs,
+    });
+    const identity = this.dependencies.llm.identity;
+    const priorExecutionPromptHash = typeof input.priorProvenance.executionPromptHash === 'string'
+      ? input.priorProvenance.executionPromptHash
+      : input.priorProvenance.promptHash;
+    const receiptMatches = input.receipt.stage === input.step.actor_type
+      && input.receipt.stepNo === input.step.step_no
+      && input.receipt.provider === input.priorProvenance.provider
+      && input.receipt.endpointHost === input.priorProvenance.endpointHost
+      && input.receipt.requestedModel === input.priorProvenance.requestedModel
+      && input.receipt.actualModel === input.priorProvenance.actualModel
+      && input.receipt.modelVersion === input.priorProvenance.modelVersion
+      && input.receipt.promptHash === input.priorProvenance.promptHash
+      && input.receipt.contextManifestHash === input.priorProvenance.contextManifestHash
+      && input.receipt.traceId === (input.priorProvenance.traceId ?? null)
+      && input.receipt.status === 'succeeded'
+      && input.receipt.failure === null;
+    const fieldsMatch = input.priorProvenance.planHash === input.planHash
+      && input.priorProvenance.stepHash === hashJson(input.step)
+      && priorExecutionPromptHash === execution.executionPromptHash
+      && input.priorProvenance.contextManifestHash === execution.contextManifestHash
+      && input.priorProvenance.provider === identity.provider
+      && input.priorProvenance.endpointHost === identity.endpointHost
+      && input.priorProvenance.requestedModel === identity.requestedModel
+      && input.priorProvenance.actualModel === input.expectedModel
+      && input.priorProvenance.status === 'succeeded';
+    if (!receiptMatches || !fieldsMatch) return null;
+    if (
+      input.priorProvenance.outputSchemaHash !== undefined
+      && input.priorProvenance.outputSchemaHash !== execution.outputSchemaHash
+    ) return null;
+    return input.priorProvenance;
+  }
+
+  private async outputsForPriorExecution(
+    step: EngineStep,
+    outputs: EngineSealedStepOutput[],
+    provenance: Record<string, unknown>,
+  ): Promise<EngineSealedStepOutput[]> {
+    if (provenance.inputArtifacts === undefined) return outputs;
+    if (!Array.isArray(provenance.inputArtifacts)) {
+      throw new Error(`step ${step.step_no} input Artifact provenance is malformed`);
+    }
+    const identities = provenance.inputArtifacts.map((candidate) => {
+      if (
+        !isRecord(candidate)
+        || !Number.isInteger(candidate.stepNo)
+        || typeof candidate.artifactId !== 'string'
+        || typeof candidate.contentSha256 !== 'string'
+      ) throw new Error(`step ${step.step_no} input Artifact provenance is malformed`);
+      return {
+        stepNo: candidate.stepNo as number,
+        artifactId: candidate.artifactId,
+        contentSha256: candidate.contentSha256,
+      };
+    });
+    const relevantStepNos = new Set([
+      ...step.depends_on,
+      ...step.input_bindings.map((binding) => binding.source_step_no),
+    ]);
+    const relevantOutputs = outputs.filter(({ stepNo }) => relevantStepNos.has(stepNo));
+    if (
+      identities.length !== relevantOutputs.length
+      || new Set(identities.map(({ stepNo }) => stepNo)).size !== identities.length
+    ) throw new Error(`step ${step.step_no} input Artifact provenance does not match its dependencies`);
+
+    const restored: EngineSealedStepOutput[] = [];
+    for (const current of relevantOutputs) {
+      const identity = identities.find(({ stepNo }) => stepNo === current.stepNo);
+      if (!identity) {
+        throw new Error(`step ${step.step_no} input Artifact provenance is incomplete`);
+      }
+      const historical = await this.dependencies.repository.getArtifact(identity.artifactId);
+      if (
+        !historical
+        || historical.state !== 'SEALED'
+        || historical.contentSha256 !== identity.contentSha256
+        || !historical.planVersionId
+        || !historical.attemptId
+        || historical.taskId !== current.taskId
+        || historical.planVersionId !== current.planVersionId
+        || historical.kind !== current.kind
+      ) throw new Error(`step ${step.step_no} input Artifact ${identity.artifactId} is not reusable`);
+      const currentVerified = await readVerifiedStepArtifact(current, this.dependencies.artifacts);
+      const historicalOutput: EngineSealedStepOutput = {
+        ...current,
+        taskId: historical.taskId,
+        planVersionId: historical.planVersionId,
+        attemptId: historical.attemptId,
+        artifact: {
+          id: historical.id,
+          contentSha256: historical.contentSha256,
+          state: 'SEALED',
+        },
+      };
+      const historicalVerified = await readVerifiedStepArtifact(
+        historicalOutput,
+        this.dependencies.artifacts,
+      );
+      const rebound = rebindReusableArtifactValue(
+        current.kind,
+        historicalVerified.value,
+        {
+          taskId: current.taskId,
+          planVersionId: current.planVersionId,
+          attemptId: current.attemptId,
+        },
+      );
+      if (!isDeepStrictEqual(rebound, currentVerified.value)) {
+        throw new Error(`step ${step.step_no} input Artifact ${identity.artifactId} changed across retry`);
+      }
+      restored.push({ ...historicalOutput, output: historicalVerified.output });
+    }
+    return restored.sort((left, right) => left.stepNo - right.stepNo);
+  }
+
+  private async restoreReusableSynthesizerInput(input: {
+    step: EngineStep;
+    plan: EnginePlan;
+    lease: ControlExecutionLease;
+    priorProvenance: Record<string, unknown>;
+    resolvedInput: Record<string, unknown>;
+  }): Promise<Record<string, unknown>> {
+    const synthesizerPolicy = synthesizerPolicyForStep(input.plan, input.step);
+    if (
+      !synthesizerPolicy
+      || !Array.isArray(input.resolvedInput.contribution_order)
+      || !isRecord(input.resolvedInput.contribution_bundle)
+    ) return input.resolvedInput;
+
+    const identity = input.priorProvenance.contributionBundleArtifact;
+    if (
+      !isRecord(identity)
+      || typeof identity.id !== 'string'
+      || typeof identity.contentSha256 !== 'string'
+    ) throw new Error(`step ${input.step.step_no} Contribution Bundle provenance is missing`);
+    const artifact = await this.dependencies.repository.getArtifact(identity.id);
+    if (
+      !artifact
+      || artifact.state !== 'SEALED'
+      || artifact.contentSha256 !== identity.contentSha256
+      || artifact.taskId !== input.lease.taskId
+      || artifact.planVersionId !== input.lease.planVersionId
+      || typeof artifact.attemptId !== 'string'
+      || artifact.kind !== 'research_contribution_bundle'
+      || artifact.schemaVersion !== 'research-contribution-bundle-v1'
+    ) throw new Error(`step ${input.step.step_no} Contribution Bundle Artifact is not reusable`);
+
+    const stored = await this.dependencies.artifacts.readVerifiedJson<Record<string, unknown>>(artifact.id);
+    this.dependencies.validator.validateOrThrow('research-contribution-bundle-v1', stored.value);
+    const expected = buildResearchContributionBundle({
+      taskId: input.lease.taskId,
+      planVersionId: input.lease.planVersionId,
+      attemptId: artifact.attemptId,
+      orderedInvocationIds: input.resolvedInput.contribution_order.filter(
+        (invocationId): invocationId is string => typeof invocationId === 'string',
+      ),
+      valuesByInvocationId: input.resolvedInput.contribution_bundle,
+      policiesByInvocationId: input.plan.invocationPoliciesById,
+      synthesizerInvocationId: synthesizerPolicy.invocationId,
+      validator: this.dependencies.validator,
+    });
+    if (!isDeepStrictEqual(stored.value, expected)) {
+      throw new Error(`step ${input.step.step_no} Contribution Bundle content drifted`);
+    }
+    return {
+      ...input.resolvedInput,
+      contribution_bundle: stored.value,
+      contribution_bundle_artifact: {
+        id: artifact.id,
+        contentSha256: artifact.contentSha256,
+      },
+    };
+  }
+
+  private async matchReusableSkillProvenance(input: {
+    step: EngineStep;
+    priorProvenance: Record<string, unknown> | null;
+    plan: EnginePlan;
+    planHash: string;
+    researchGoal: string;
+    outputs: EngineSealedStepOutput[];
+    lease: ControlExecutionLease;
+  }): Promise<Record<string, unknown> | null> {
+    const prior = input.priorProvenance;
+    if (
+      !prior
+      || prior.planHash !== input.planHash
+      || prior.stepHash !== hashJson(input.step)
+    ) return null;
+    const executionOutputs = await this.outputsForPriorExecution(
+      input.step,
+      input.outputs,
+      prior,
+    );
+    let resolvedInput = await resolveStepInput(
+      input.step,
+      executionOutputs,
+      this.dependencies.artifacts,
+    );
+    if (input.step.actor_type === 'knowledge') {
+      const current = (await this.runKnowledge({
+        step: input.step,
+        lease: input.lease,
+        resolvedInput,
+      })).skillProvenance;
+      return current
+        && isDeepStrictEqual(prior.kind, current.kind)
+        && isDeepStrictEqual(prior.contractHash, current.contractHash)
+        && isDeepStrictEqual(prior.resources, current.resources)
+        ? prior
+        : null;
+    }
+    if (input.step.actor_type !== 'skill') return null;
+    resolvedInput = await this.restoreReusableSynthesizerInput({
+      step: input.step,
+      plan: input.plan,
+      lease: input.lease,
+      priorProvenance: prior,
+      resolvedInput,
+    });
+    const prepared = prepareSkillExecution({
+      skillId: input.step.actor_id,
+      researchGoal: input.researchGoal,
+      resolvedInput: compactLlmInput(resolvedInput) as Record<string, unknown>,
+      priorOutputs: verifiedPriorOutputs(executionOutputs, input.step),
+      stepContract: stepContract(input.step),
+      skillLoader: this.dependencies.skillLoader,
+      validator: this.dependencies.validator,
+      frozenExecution: input.plan.frozenSkillExecutions.get(input.step.step_no),
+    });
+    const current = skillExecutionFingerprint({
+      prepared,
+      step: input.step,
+      resolvedInput,
+      outputs: executionOutputs,
+    }).fingerprint;
+    return Object.entries(current).every(([field, value]) => (
+      isDeepStrictEqual(prior[field], value)
+    )) ? prior : null;
   }
 
   private async preflight(plan: EnginePlan, researchGoal: string): Promise<ExecutionAuthenticityError | null> {
@@ -2855,7 +4526,7 @@ export class LeaseExecutionEngine {
         heartbeatFailure = error;
         onFailure?.(error);
       });
-    }, Math.max(1, Math.floor(this.dependencies.heartbeatMs / 2)));
+    }, Math.max(1, Math.min(1_000, Math.floor(this.dependencies.heartbeatMs / 2))));
     return {
       assertHealthy: () => {
         if (heartbeatFailure) throw heartbeatFailure;
@@ -2890,9 +4561,10 @@ export class LeaseExecutionEngine {
 
   private async withLeaseHeartbeat<T>(
     lease: ControlExecutionLease,
-    operation: (guard: { ensureActive: () => Promise<void> }) => Promise<T>,
+    operation: (guard: { ensureActive: () => Promise<void>; signal: AbortSignal }) => Promise<T>,
   ): Promise<T> {
-    const heartbeat = this.startLeaseHeartbeat(lease);
+    const controller = new AbortController();
+    const heartbeat = this.startLeaseHeartbeat(lease, (error) => controller.abort(error));
     const ensureActive = async (): Promise<void> => {
       heartbeat.assertHealthy();
       await this.dependencies.repository.requireActiveLease(lease);
@@ -2901,11 +4573,12 @@ export class LeaseExecutionEngine {
     let operationSucceeded = false;
     let operationResult: T | undefined;
     try {
-      operationResult = await operation({ ensureActive });
+      operationResult = await operation({ ensureActive, signal: controller.signal });
       operationSucceeded = true;
       await ensureActive();
       return operationResult as T;
     } catch (error) {
+      heartbeat.assertHealthy();
       if (operationSucceeded) attachToolAttemptReceipts(error, operationResult);
       throw error;
     } finally {
@@ -2929,8 +4602,11 @@ export class LeaseExecutionEngine {
     outputs: EngineSealedStepOutput[];
     expectedModel: string;
     optionalTool: boolean;
+    frozenSkillExecution?: FrozenSkillExecutionBinding;
+    onSkillPrepared?: (fingerprint: SkillExecutionFingerprint) => void;
     toolContext?: ToolInvocationContext;
     onToolLeaseLost?: () => void;
+    cancellationSignal?: AbortSignal;
   }): Promise<StepResult> {
     if (input.step.actor_type === 'tool') {
       if (!input.toolContext) throw new ExecutionAuthenticityError('tool execution context is missing');
@@ -2951,7 +4627,12 @@ export class LeaseExecutionEngine {
       );
     }
     await this.dependencies.repository.requireActiveLease(input.lease);
+    if (input.cancellationSignal?.aborted) {
+      throw input.cancellationSignal.reason ?? new Error('execution cancelled');
+    }
     switch (input.step.actor_type) {
+      case 'knowledge':
+        return this.runKnowledge(input);
       case 'skill':
         return this.runSkill(input);
       case 'llm':
@@ -3026,25 +4707,32 @@ export class LeaseExecutionEngine {
   private async failedSkillProvenance(input: {
     step: EngineStep;
     lease: ControlExecutionLease;
-    researchGoal: string;
     resolvedInput: Record<string, unknown>;
-    priorOutputs: EngineSealedStepOutput[];
     producedOutputHash?: string;
     schemaHashes?: {
       inputSchemaHash: string | null;
       outputSchemaHash: string;
       payloadSchemaHash: string | null;
     };
+    preparedFingerprint?: SkillExecutionFingerprint;
+    modelReceipt?: { id: string; promptHash: string; traceId: string | null };
   }): Promise<Record<string, unknown>> {
-    let receipt: { id: string; promptHash: string; traceId: string | null } | undefined;
+    let receipt = input.modelReceipt;
+    let skillBodyHash: string | null = null;
+    let inputSchemaHash = input.schemaHashes?.inputSchemaHash ?? null;
+    let outputSchemaHash = input.schemaHashes?.outputSchemaHash ?? null;
+    let payloadSchemaHash = input.schemaHashes?.payloadSchemaHash ?? null;
     const fallback = (captureFailure: unknown): Record<string, unknown> => ({
-      skillBodyHash: null,
-      inputSchemaHash: input.schemaHashes?.inputSchemaHash ?? null,
-      outputSchemaHash: input.schemaHashes?.outputSchemaHash ?? null,
-      payloadSchemaHash: input.schemaHashes?.payloadSchemaHash ?? null,
-      inputHash: hashJson(input.resolvedInput),
+      ...(input.preparedFingerprint ?? {
+        skillBodyHash,
+        inputSchemaHash,
+        outputSchemaHash,
+        payloadSchemaHash,
+        inputHash: hashJson(input.resolvedInput),
+        executionPromptHash: null,
+      }),
       outputHash: input.producedOutputHash ?? null,
-      promptHash: receipt?.promptHash ?? null,
+      promptHash: receipt?.promptHash ?? input.preparedFingerprint?.executionPromptHash ?? null,
       traceId: receipt?.traceId ?? null,
       modelReceiptId: receipt?.id ?? null,
       outputArtifactId: null,
@@ -3052,31 +4740,41 @@ export class LeaseExecutionEngine {
       captureFailure: captureFailure instanceof Error ? captureFailure.message : String(captureFailure),
     });
     try {
-      const calls = await this.dependencies.repository.listModelCalls(input.lease.attemptId);
-      receipt = [...calls].reverse().find(
-        (call) => call.stage === 'skill' && call.stepNo === input.step.step_no,
-      );
+      if (!receipt) {
+        const calls = await this.dependencies.repository.listModelCalls(input.lease.attemptId);
+        const matching = [...calls].reverse().filter(
+          (call) => call.stepNo === input.step.step_no,
+        );
+        receipt = matching.find((call) => call.stage === 'skill_repair')
+          ?? matching.find((call) => call.stage === 'skill');
+      }
+      if (input.preparedFingerprint) {
+        return {
+          ...input.preparedFingerprint,
+          outputHash: input.producedOutputHash ?? null,
+          promptHash: receipt?.promptHash ?? input.preparedFingerprint.executionPromptHash,
+          traceId: receipt?.traceId ?? null,
+          modelReceiptId: receipt?.id ?? null,
+          outputArtifactId: null,
+          status: 'failed',
+        };
+      }
       const skill = this.dependencies.skillLoader.getSkill(input.step.actor_id);
       if (!skill) return fallback(new Error(`skill ${input.step.actor_id} unavailable during provenance capture`));
       const body = this.dependencies.skillLoader.loadSkillBody(input.step.actor_id);
-      const context = {
-        research_goal: input.researchGoal,
-        input: input.resolvedInput,
-        prior_outputs: verifiedPriorOutputs(input.priorOutputs, input.step),
-        ...stepContract(input.step),
-      };
-      const prompt = `${SKILL_PROMPT_PREFIX}\n${JSON.stringify(stepContract(input.step))}\n\n${body.body}`;
+      skillBodyHash = body.hash;
+      inputSchemaHash ??= skill.input_schema ? hashFile(skill.input_schema) : null;
+      outputSchemaHash ??= skill.output_schema ? hashFile(skill.output_schema) : null;
+      payloadSchemaHash ??= skill.payload_schema ? hashFile(skill.payload_schema) : null;
       return {
-        skillBodyHash: body.hash,
-        inputSchemaHash: input.schemaHashes?.inputSchemaHash
-          ?? (skill.input_schema ? hashFile(skill.input_schema) : null),
-        outputSchemaHash: input.schemaHashes?.outputSchemaHash
-          ?? (skill.output_schema ? hashFile(skill.output_schema) : null),
-        payloadSchemaHash: input.schemaHashes?.payloadSchemaHash
-          ?? (skill.payload_schema ? hashFile(skill.payload_schema) : null),
+        skillBodyHash,
+        inputSchemaHash,
+        outputSchemaHash,
+        payloadSchemaHash,
         inputHash: hashJson(input.resolvedInput),
         outputHash: input.producedOutputHash ?? null,
-        promptHash: receipt?.promptHash ?? hashPrompt(prompt, context, `skill:${input.step.actor_id}`),
+        promptHash: receipt?.promptHash ?? null,
+        executionPromptHash: null,
         traceId: receipt?.traceId ?? null,
         modelReceiptId: receipt?.id ?? null,
         outputArtifactId: null,
@@ -3331,6 +5029,57 @@ export class LeaseExecutionEngine {
     };
   }
 
+  private async runKnowledge(input: {
+    step: EngineStep;
+    lease: ControlExecutionLease;
+    resolvedInput: Record<string, unknown>;
+  }): Promise<StepResult> {
+    const references = input.resolvedInput.references;
+    const contractHash = input.resolvedInput.contractHash;
+    if (!Array.isArray(references) || typeof contractHash !== 'string') {
+      throw new ExecutionAuthenticityError('knowledge step has no frozen references or contract hash');
+    }
+    const parsedReferences: FrozenKnowledgeReference[] = references.map((reference) => {
+      if (
+        !isRecord(reference)
+        || typeof reference.resourceId !== 'string'
+        || typeof reference.resourceType !== 'string'
+        || typeof reference.sourcePath !== 'string'
+        || (reference.status !== 'approved' && reference.status !== 'draft')
+        || typeof reference.contentHash !== 'string'
+        || typeof reference.required !== 'boolean'
+        || (reference.failurePolicy !== 'block' && reference.failurePolicy !== 'gap')
+        || (reference.queryId !== undefined && typeof reference.queryId !== 'string')
+      ) {
+        throw new ExecutionAuthenticityError('knowledge step contains a malformed frozen reference');
+      }
+      return reference as unknown as FrozenKnowledgeReference;
+    });
+    const resolved = new KnowledgeBundleResolver(this.dependencies.validator).resolve({
+      taskId: input.lease.taskId,
+      planVersionId: input.lease.planVersionId,
+      attemptId: input.lease.attemptId,
+      stepNo: input.step.step_no,
+      contractHash,
+      references: parsedReferences,
+    });
+    return {
+      output: resolved.bundle,
+      kind: 'knowledge_output',
+      knowledgeGaps: resolved.gaps,
+      skillProvenance: {
+        kind: 'knowledge',
+        contractHash,
+        resources: resolved.bundle.resources.map(({ id, status, sourcePath, contentHash }) => ({
+          id,
+          status,
+          sourcePath,
+          contentHash,
+        })),
+      },
+    };
+  }
+
   private async runSkill(input: {
     step: EngineStep;
     lease: ControlExecutionLease;
@@ -3338,75 +5087,114 @@ export class LeaseExecutionEngine {
     resolvedInput: Record<string, unknown>;
     outputs: EngineSealedStepOutput[];
     expectedModel: string;
+    cancellationSignal?: AbortSignal;
+    frozenSkillExecution?: FrozenSkillExecutionBinding;
+    onSkillPrepared?: (fingerprint: SkillExecutionFingerprint) => void;
   }): Promise<StepResult> {
     if (!this.dependencies.llm.identity.eligibleAsReal) {
       throw new ExecutionAuthenticityError('skill LLM provider is not eligible as real');
     }
     const skill = this.dependencies.skillLoader.getSkill(input.step.actor_id);
     if (!skill) throw new ExecutionAuthenticityError(`skill ${input.step.actor_id} is not active`);
-    const body = this.dependencies.skillLoader.loadSkillBody(input.step.actor_id);
-    const schemas = this.dependencies.skillLoader.loadSkillSchemas(input.step.actor_id);
-    if (!skill.output_schema) throw new ExecutionAuthenticityError(`skill ${input.step.actor_id} has no output contract`);
-    const schemaHashes = {
-      inputSchemaHash: skill.input_schema ? hashFile(skill.input_schema) : null,
-      outputSchemaHash: hashFile(skill.output_schema),
-      payloadSchemaHash: skill.payload_schema ? hashFile(skill.payload_schema) : null,
-    };
-    if (skill.input_schema) {
-      try {
-        this.dependencies.validator.validateFileOrThrow(
-          join(getConfigRoot(), skill.input_schema),
-          input.resolvedInput,
-        );
-      } catch {
-        throw new LLMInvocationError('schema', false, null, 'skill input failed schema validation');
-      }
+    let prepared;
+    try {
+      prepared = prepareSkillExecution({
+        skillId: input.step.actor_id,
+        researchGoal: input.researchGoal,
+        resolvedInput: compactLlmInput(input.resolvedInput) as Record<string, unknown>,
+        priorOutputs: verifiedPriorOutputs(input.outputs, input.step),
+        stepContract: stepContract(input.step),
+        skillLoader: this.dependencies.skillLoader,
+        validator: this.dependencies.validator,
+        frozenExecution: input.frozenSkillExecution,
+      });
+    } catch (error) {
+      if (error instanceof SkillRuntimeDriftError) throw error;
+      throw new LLMInvocationError('schema', false, null, 'skill input failed schema validation');
     }
-    const skillContext = {
-      research_goal: input.researchGoal,
-      input: compactLlmInput(input.resolvedInput),
-      prior_outputs: verifiedPriorOutputs(input.outputs, input.step),
-      ...stepContract(input.step),
-    };
-    const prompt = `${SKILL_PROMPT_PREFIX}\n${JSON.stringify(stepContract(input.step))}\n\n${body.body}`;
-    const result = await this.llm.generateStructured<object>({
-      prompt,
-      schema: schemas.output ?? {},
-      schemaName: `skill:${input.step.actor_id}`,
-      context: skillContext,
-      receipt: {
-        stage: 'skill',
-        attemptId: input.lease.attemptId,
-        stepNo: input.step.step_no,
-        contextManifestHash: hashJson(skillContext),
-        expectedModel: input.expectedModel,
-      },
+    const { schemas, schemaHashes, context: skillContext } = prepared;
+    const execution = skillExecutionFingerprint({
+      prepared,
+      step: input.step,
+      resolvedInput: input.resolvedInput,
+      outputs: input.outputs,
     });
+    input.onSkillPrepared?.(execution.fingerprint);
+    const generate = (validationFeedback: string[] = [], invalidOutput?: unknown) => {
+      const repair = validationFeedback.length > 0;
+      const prompt = repair
+        ? skillSchemaRepairPrompt(input.step.actor_id, validationFeedback)
+        : execution.executionPrompt;
+      const context = repair
+        ? {
+            invalid_output: redactSensitiveValue(invalidOutput),
+            validation_feedback: validationFeedback,
+          }
+        : skillContext;
+      return this.llm.generateStructured<object>({
+        prompt,
+        schema: schemas.output ?? {},
+        schemaName: `skill:${input.step.actor_id}`,
+        context,
+        ...(input.cancellationSignal ? { signal: input.cancellationSignal } : {}),
+        receipt: {
+          stage: repair ? 'skill_repair' : 'skill',
+          attemptId: input.lease.attemptId,
+          stepNo: input.step.step_no,
+          contextManifestHash: hashJson(context),
+          expectedModel: input.expectedModel,
+        },
+      });
+    };
+    let result = await generate();
+    if (!result.receiptId) {
+      throw new MissingModelReceiptError(new Error('successful Skill call has no receipt ID'));
+    }
     try {
       this.dependencies.validator.validateSchemaOrThrow(
         schemas.output,
         result.data,
         `skill:${input.step.actor_id}`,
       );
-    } catch {
-      throw new SkillOutputSchemaError(
-        hashJson(redactSensitiveValue(result.data)),
-        schemaHashes,
-      );
-    }
-    if (!result.receiptId) {
-      throw new MissingModelReceiptError(new Error('successful Skill call has no receipt ID'));
+    } catch (error) {
+      const validationFeedback = skillSchemaErrors(error);
+      if (containsBlockedSensitiveData(result.data)) {
+        throw new ExecutionSafetyError('actor output blocked by sensitive business data policy');
+      }
+      if (input.cancellationSignal?.aborted) {
+        throw input.cancellationSignal.reason
+          ?? new LLMInvocationError('cancelled', false, null, 'skill schema repair cancelled');
+      }
+      result = await generate(validationFeedback, result.data);
+      if (!result.receiptId) {
+        throw new MissingModelReceiptError(new Error('successful Skill repair call has no receipt ID'));
+      }
+      try {
+        this.dependencies.validator.validateSchemaOrThrow(
+          schemas.output,
+          result.data,
+          `skill:${input.step.actor_id}`,
+        );
+      } catch (repairError) {
+        throw new SkillOutputSchemaError(
+          hashJson(redactSensitiveValue(result.data)),
+          schemaHashes,
+          skillSchemaErrors(repairError),
+          1,
+          {
+            id: result.receiptId,
+            promptHash: result.promptHash,
+            traceId: result.traceId,
+          },
+        );
+      }
     }
     return {
       output: result.data,
       kind: 'skill_output',
       outputHash: hashJson(redactSensitiveValue(result.data)),
       skillProvenance: {
-        skillBodyHash: body.hash,
-        inputSchemaHash: schemaHashes.inputSchemaHash,
-        outputSchemaHash: schemaHashes.outputSchemaHash,
-        payloadSchemaHash: schemaHashes.payloadSchemaHash,
-        inputHash: hashJson(input.resolvedInput),
+        ...execution.fingerprint,
         outputHash: hashJson(redactSensitiveValue(result.data)),
         promptHash: result.promptHash,
         traceId: result.traceId,
@@ -3422,28 +5210,43 @@ export class LeaseExecutionEngine {
     resolvedInput: Record<string, unknown>;
     outputs: EngineSealedStepOutput[];
     expectedModel: string;
+    cancellationSignal?: AbortSignal;
   }): Promise<StepResult> {
     if (!this.dependencies.llm.identity.eligibleAsReal) {
       throw new ExecutionAuthenticityError('LLM provider is not eligible as real');
     }
-    const llmContext = {
-      research_goal: input.researchGoal,
-      input: input.resolvedInput,
-      prior_outputs: verifiedPriorOutputs(input.outputs, input.step),
-      ...stepContract(input.step),
-    };
+    const execution = modelStepExecution(input);
     const result = await this.llm.generateText({
-      prompt: `Execute plan step: ${input.step.step_name}. ${input.step.purpose ?? ''}\nContract: ${JSON.stringify(stepContract(input.step))}`, 
-      context: llmContext,
+      prompt: execution.prompt,
+      context: execution.context,
+      ...(input.cancellationSignal ? { signal: input.cancellationSignal } : {}),
       receipt: {
         stage: 'llm',
         attemptId: input.lease.attemptId,
         stepNo: input.step.step_no,
-        contextManifestHash: hashJson(llmContext),
+        contextManifestHash: execution.contextManifestHash,
         expectedModel: input.expectedModel,
       },
     });
-    return { output: { text: result.text }, kind: 'llm_output' };
+    return {
+      output: { text: result.text },
+      kind: 'llm_output',
+      skillProvenance: {
+        kind: 'model_execution',
+        executionPromptHash: execution.executionPromptHash,
+        contextManifestHash: execution.contextManifestHash,
+        outputSchemaHash: execution.outputSchemaHash,
+        inputArtifacts: execution.inputArtifacts,
+        provider: this.dependencies.llm.identity.provider,
+        endpointHost: this.dependencies.llm.identity.endpointHost,
+        requestedModel: this.dependencies.llm.identity.requestedModel,
+        actualModel: result.modelName,
+        modelVersion: result.modelVersion,
+        promptHash: result.promptHash,
+        traceId: result.traceId,
+        modelReceiptId: result.receiptId,
+      },
+    };
   }
 
   private async runReviewer(input: {
@@ -3453,27 +5256,61 @@ export class LeaseExecutionEngine {
     resolvedInput: Record<string, unknown>;
     outputs: EngineSealedStepOutput[];
     expectedModel: string;
+    cancellationSignal?: AbortSignal;
   }): Promise<StepResult> {
     if (!this.dependencies.llm.identity.eligibleAsReal) {
       throw new ExecutionAuthenticityError('reviewer LLM provider is not eligible as real');
     }
-    const reviewerContext = {
-      research_goal: input.researchGoal,
-      input: input.resolvedInput,
-      prior_outputs: verifiedPriorOutputs(input.outputs, input.step),
-      ...stepContract(input.step),
-    };
-    const result = await this.llm.generateText({
-      prompt: `Review completed outputs for source support and gaps: ${input.step.step_name}. Contract: ${JSON.stringify(stepContract(input.step))}`, 
-      context: reviewerContext,
+    const execution = modelStepExecution(input);
+    const result = await this.llm.generateStructured<ReviewerStepOutput>({
+      prompt: execution.prompt,
+      schema: REVIEWER_STEP_OUTPUT_SCHEMA,
+      schemaName: execution.schemaName!,
+      context: execution.context,
+      ...(input.cancellationSignal ? { signal: input.cancellationSignal } : {}),
       receipt: {
         stage: 'reviewer',
         attemptId: input.lease.attemptId,
         stepNo: input.step.step_no,
-        contextManifestHash: hashJson(reviewerContext),
+        contextManifestHash: execution.contextManifestHash,
         expectedModel: input.expectedModel,
       },
     });
-    return { output: { review: result.text }, kind: 'review_output' };
+    this.dependencies.validator.validateSchemaOrThrow(
+      REVIEWER_STEP_OUTPUT_SCHEMA,
+      result.data,
+      'reviewer-step-output',
+    );
+    const hasConditions = result.data.conditions.length > 0;
+    if ((result.data.verdict === 'pass') === hasConditions) {
+      throw new LLMInvocationError(
+        'schema',
+        false,
+        null,
+        'reviewer output verdict and conditions are inconsistent',
+      );
+    }
+    if (new Set(result.data.conditions.map(({ id }) => id)).size !== result.data.conditions.length) {
+      throw new LLMInvocationError('schema', false, null, 'reviewer output condition ids are duplicated');
+    }
+    return {
+      output: result.data,
+      kind: 'review_output',
+      skillProvenance: {
+        kind: 'model_execution',
+        executionPromptHash: execution.executionPromptHash,
+        contextManifestHash: execution.contextManifestHash,
+        outputSchemaHash: execution.outputSchemaHash,
+        inputArtifacts: execution.inputArtifacts,
+        provider: this.dependencies.llm.identity.provider,
+        endpointHost: this.dependencies.llm.identity.endpointHost,
+        requestedModel: this.dependencies.llm.identity.requestedModel,
+        actualModel: result.modelName,
+        modelVersion: result.modelVersion,
+        promptHash: result.promptHash,
+        traceId: result.traceId,
+        modelReceiptId: result.receiptId,
+      },
+    };
   }
 }

@@ -94,6 +94,10 @@ interface TaskHistoryPreference {
 }
 
 interface CurrentFlowStateModule {
+  approvalSubmissionAllowed(requirement: {
+    decision: 'pending' | 'approved' | 'rejected';
+    canApprove: boolean;
+  } | undefined): boolean;
   buildConfirmationAnswers(
     requirements: ConfirmationRequirement[],
     userAnswers: Record<string, unknown>,
@@ -209,6 +213,7 @@ async function loadCurrentFlowStateModule(): Promise<CurrentFlowStateModule> {
   );
   const moduleExports = await import(currentFlowStateModulePath) as unknown as Record<string, unknown>;
   for (const exportName of [
+    'approvalSubmissionAllowed',
     'buildConfirmationAnswers',
     'executionStepsToExecLog',
     'currentExecutionGapCount',
@@ -230,6 +235,15 @@ async function loadCurrentFlowStateModule(): Promise<CurrentFlowStateModule> {
   }
   return moduleExports as unknown as CurrentFlowStateModule;
 }
+
+test('approval submission follows the server decision without reinterpreting the UI account role', async () => {
+  const { approvalSubmissionAllowed } = await loadCurrentFlowStateModule();
+
+  assert.equal(approvalSubmissionAllowed({ decision: 'pending', canApprove: true }), true);
+  assert.equal(approvalSubmissionAllowed({ decision: 'pending', canApprove: false }), false);
+  assert.equal(approvalSubmissionAllowed({ decision: 'approved', canApprove: true }), false);
+  assert.equal(approvalSubmissionAllowed(undefined), false);
+});
 
 test('selects one authoritative failed step independent of response order', async () => {
   const {
@@ -995,6 +1009,32 @@ test('currentExecutionGapCount counts every page in a valid multi-page gap summa
     ] as never,
   });
   assert.equal(count, 5);
+});
+
+test('currentExecutionGapCount includes frozen Skill resource gaps', async () => {
+  const { currentExecutionGapCount } = await loadCurrentFlowStateModule();
+  assert.equal(currentExecutionGapCount({
+    plan: {
+      skill_invocations: [{
+        invocation_id: 'skill:1',
+        resource_gaps: [{ query_id: 'scenario', failure_policy: 'gap' }],
+      }],
+    },
+    executionSteps: [],
+  }), 1);
+});
+
+test('currentExecutionGapCount counts degraded Skill outputs once', async () => {
+  const { currentExecutionGapCount } = await loadCurrentFlowStateModule();
+  assert.equal(currentExecutionGapCount({
+    plan: {},
+    executionSteps: [{
+      stepNo: 6,
+      actorId: 'generate-research-plan',
+      state: 'succeeded',
+      skillProvenance: { status: 'degraded', limitations: ['knowledge unavailable'] },
+    }] as never,
+  }), 1);
 });
 
 test('currentExecutionGapCount does not reinterpret a present malformed gapSummary as a legacy skipped gap', async () => {

@@ -1,0 +1,68 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "report-package-v3",
+  "title": "Report Package v3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version", "taskId", "planVersionId", "attemptId", "reportPublicationId",
+    "canonicalPackageArtifactId", "canonicalPackageContentSha256", "preferredHtml", "showcase"
+  ],
+  "properties": {
+    "version": { "const": "report-package-v3" },
+    "taskId": { "$ref": "#/definitions/nonEmptyString" },
+    "planVersionId": { "$ref": "#/definitions/nonEmptyString" },
+    "attemptId": { "$ref": "#/definitions/nonEmptyString" },
+    "reportPublicationId": { "$ref": "#/definitions/nonEmptyString" },
+    "canonicalPackageArtifactId": { "$ref": "#/definitions/nonEmptyString" },
+    "canonicalPackageContentSha256": { "$ref": "#/definitions/sha256" },
+    "preferredHtml": { "enum": ["showcase", "canonical"] },
+    "showcase": {
+      "oneOf": [
+        { "$ref": "#/definitions/readyShowcase" },
+        { "$ref": "#/definitions/unavailableShowcase" }
+      ]
+    }
+  },
+  "definitions": {
+    "nonEmptyString": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "sha256": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "readyShowcase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status", "specArtifactId", "htmlArtifactId", "rendererVersion", "profileId",
+        "generationMode", "showcaseOutlineSignature"
+      ],
+      "properties": {
+        "status": { "const": "ready" },
+        "specArtifactId": { "$ref": "#/definitions/nonEmptyString" },
+        "htmlArtifactId": { "$ref": "#/definitions/nonEmptyString" },
+        "rendererVersion": { "$ref": "#/definitions/nonEmptyString" },
+        "profileId": { "const": "editorial-showcase-v1" },
+        "generationMode": { "enum": ["model", "fallback"] },
+        "showcaseOutlineSignature": { "$ref": "#/definitions/sha256" }
+      }
+    },
+    "unavailableShowcase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reasonCode"],
+      "properties": {
+        "status": { "const": "unavailable" },
+        "reasonCode": {
+          "enum": [
+            "showcase_planner_disabled",
+            "showcase_data_policy_denied",
+            "showcase_material_budget_exceeded",
+            "showcase_provider_failure",
+            "showcase_invalid_intent",
+            "showcase_invalid_binding",
+            "showcase_renderer_failure",
+            "showcase_validation_failure"
+          ]
+        }
+      }
+    }
+  }
+}

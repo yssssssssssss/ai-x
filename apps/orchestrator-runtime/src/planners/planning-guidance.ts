@@ -355,6 +355,7 @@ const SIGNALS: readonly SignalDefinition[] = [
   { id: 'scenario.metrics-validation', scenario_id: 'metrics-validation', kind: 'scenario', source_paths: SCENARIO_SIGNAL_PATHS, terms: ['指标与验证计划', '验证计划', '验证指标', '成功指标', '指标设计'] },
   { id: 'task-type.competitive-research', task_type: 'competitive_research', kind: 'task_type', source_paths: ['task.task_type'], terms: ['competitive_research'] },
   { id: 'task-type.user-research-planning', task_type: 'user_research_planning', kind: 'task_type', source_paths: ['task.task_type'], terms: ['user_research_planning'] },
+  { id: 'task-type.research-synthesis', task_type: 'research_synthesis', kind: 'task_type', source_paths: ['task.task_type'], terms: ['research_synthesis'] },
   { id: 'task-type.voc-diagnosis', task_type: 'voc_diagnosis', kind: 'task_type', source_paths: ['task.task_type'], terms: ['voc_diagnosis'] },
   { id: 'task-type.design-audit', task_type: 'design_audit', kind: 'task_type', source_paths: ['task.task_type'], terms: ['design_audit'] },
   { id: 'task-type.a11y-audit', task_type: 'a11y_audit', kind: 'task_type', source_paths: ['task.task_type'], terms: ['a11y_audit'] },
@@ -387,6 +388,14 @@ const TASK_TYPE_SCENARIOS: Readonly<Record<ResearchTaskV2['task_type'], readonly
     'user-segmentation',
     'user-journey-insight',
     'root-cause-analysis',
+    'metrics-validation',
+  ],
+  research_synthesis: [
+    'trend-change-identification',
+    'competitor-benchmark-research',
+    'opportunity-direction-evaluation',
+    'strategy-synthesis',
+    'priority-roadmap',
     'metrics-validation',
   ],
   voc_diagnosis: [
@@ -892,10 +901,11 @@ export async function resolvePlanningGuidance(
     };
   }
 
-  if (
-    request.task.blocking_issues.length > 0
-    || request.task.ambiguities.some(({ blocking }) => blocking)
-  ) {
+  // Blocking issues are preserved on the frozen requirement and enforced by
+  // TaskWorkflow as approval gates after a plan is selected. Treating them as
+  // direction ambiguity here prevents a plan (and therefore its approval
+  // requirements) from ever being created.
+  if (request.task.ambiguities.some(({ blocking }) => blocking)) {
     const signals = recognizeSignals(request);
     return unresolvedResult({
       reason: 'task_blocking_ambiguity',

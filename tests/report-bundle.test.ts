@@ -4,6 +4,11 @@ import { createRequire } from 'node:module';
 import { test } from 'node:test';
 import type { ReportDocument } from '../apps/orchestrator-runtime/src/report/report-document-composer.ts';
 import type {
+  ReadableReportDocument,
+  ReportBlockV4,
+  ReportDocumentV4,
+} from '../packages/api-contract/report-document.ts';
+import type {
   ChartSpec,
   EvidenceManifest,
   VisualAssetManifest,
@@ -11,6 +16,9 @@ import type {
   VisualAssetManifestV2,
 } from '../packages/api-contract/research-deliverable.ts';
 import type { ChartTableAlternative } from '../apps/orchestrator-runtime/src/report/chart-renderer.ts';
+import { collectReportDocumentV4Semantics } from '../packages/report-rendering/report-document-visitor.ts';
+import { parseControlDeliverableResponse } from '../apps/web/src/report-package-response.ts';
+import { reportDocumentV3Fixture } from './fixtures/report-document-v3.ts';
 
 const taskId = 'task-report-bundle-1';
 const planVersionId = 'plan-report-bundle-1';
@@ -32,6 +40,7 @@ const CHART_SVG = new TextEncoder().encode(
 
 interface MultimodalReportFixture {
   presentationMode: 'multimodal';
+  reportDocumentContentSha256: string;
   deliverable: Record<string, unknown>;
   evidenceManifest: EvidenceManifest & Record<string, unknown>;
   reportReview: Record<string, unknown>;
@@ -41,7 +50,7 @@ interface MultimodalReportFixture {
 
 interface ReportBundleModule {
   createReportBundle(input: {
-    report: MultimodalReportFixture;
+    report: unknown;
     readAsset(input: { taskId: string; assetId: string }): Promise<{
       bytes: Uint8Array;
       mediaType: VisualAssetManifest['mediaType'];
@@ -57,6 +66,7 @@ type BundleAssetReader = (input: { taskId: string; assetId: string }) => Promise
 interface ViewBlock {
   id: string;
   kind: string;
+  digest?: { text: string };
   altText?: string;
   evidenceIds?: string[];
   spec?: ChartSpec;
@@ -76,12 +86,16 @@ interface ReportDocumentViewModule {
     }>;
   };
   createReportDocumentViewModel(input: {
-    document: ReportDocument;
+    document: ReadableReportDocument;
     visualAssetManifests: VisualAssetManifest[];
     assetUrl(input: { assetId: string }): string;
   }): {
+    title: string;
+    executiveSummary: string;
+    version?: string;
     navigation: Array<{ id: string; title: string }>;
     sections: Array<{ id: string; blocks: ViewBlock[] }>;
+    renderManifest?: { version: string; semantics: { copyFragmentIds?: string[] } };
   };
   createReportDocumentInteractionState(): {
     expandedEvidence: ReadonlySet<string>;
@@ -101,8 +115,9 @@ interface Stage4Module {
   CurrentStage4Report(props: { report: unknown }): unknown;
   selectCurrentStage4Renderer(report: unknown): {
     component: 'CurrentTextReport' | 'GenericTextReport' | 'ReportDocumentView';
-    reportDocument?: ReportDocument;
+    reportDocument?: ReadableReportDocument;
   };
+  strategyReportSectionIds(document: ReadableReportDocument, view: 'answers' | 'topics' | 'actions' | 'artifacts' | 'evidence' | 'analysis'): string[];
 }
 
 const reportBundleModulePath: string = '../apps/web/src/reporting/report-bundle.ts';
@@ -138,6 +153,7 @@ async function loadStage4Module(): Promise<Stage4Module> {
     'Stage4 must expose its presentation-mode dispatch decision',
   );
   assert.equal(typeof exports.CurrentStage4Report, 'function');
+  assert.equal(typeof exports.strategyReportSectionIds, 'function');
   return exports as unknown as Stage4Module;
 }
 
@@ -263,6 +279,119 @@ function reportDocument(): ReportDocument {
   };
 }
 
+function reportDocumentV4Fixture(): ReportDocumentV4 {
+  const v3 = reportDocumentV3Fixture();
+  const cardLeafIds = ['card-leaf-1', 'card-leaf-2'];
+  const stageLeafIds = ['stage-leaf-1', 'stage-leaf-2'];
+  const sections = v3.sections.map((section, index) => {
+    const blocks: ReportBlockV4[] = [...section.blocks];
+    if (index === 0) {
+      blocks.push({
+        id: 'block-card-grid-v4',
+        type: 'card-grid',
+        title: '机会卡片',
+        visibility: 'always',
+        unitRefs: ['unit-card-grid-v4'],
+        leafRefs: cardLeafIds,
+        digest: {
+          id: 'copy-card-digest-v4',
+          provenance: 'model',
+          text: '优先验证两类机会。',
+          sourceLeafIds: cardLeafIds,
+        },
+        cards: [
+          { id: 'card-1', title: '信任', body: '先补齐可信信息。', status: 'P0', leafRefs: ['card-leaf-1'] },
+          { id: 'card-2', title: '入口', body: '再验证频道入口。', leafRefs: ['card-leaf-2'] },
+        ],
+      });
+    }
+    if (index === 2) {
+      blocks.push({
+        id: 'block-stage-flow-v4',
+        type: 'stage-flow',
+        title: '验证阶段',
+        visibility: 'always',
+        unitRefs: ['unit-stage-flow-v4'],
+        leafRefs: stageLeafIds,
+        digest: {
+          id: 'copy-stage-digest-v4',
+          provenance: 'model',
+          text: '按阶段收敛验证风险。',
+          sourceLeafIds: stageLeafIds,
+        },
+        stages: [
+          { id: 'stage-1', label: '试点', description: '小流量验证', timeLabel: '第 1 周', leafRefs: ['stage-leaf-1'] },
+          { id: 'stage-2', label: '扩量', description: '复核关键指标', leafRefs: ['stage-leaf-2'] },
+        ],
+      });
+    }
+    const sectionLeafIds = blocks.flatMap(({ leafRefs }) => leafRefs);
+    return {
+      id: section.id,
+      title: {
+        id: `copy-title-${section.id}`,
+        provenance: 'model' as const,
+        text: section.title,
+        sourceLeafIds: sectionLeafIds,
+      },
+      ...(index === 0 ? {
+        lead: {
+          id: 'copy-lead-v4',
+          provenance: 'model' as const,
+          text: '从证据进入机会判断。',
+          sourceLeafIds: sectionLeafIds,
+        },
+      } : {}),
+      view: section.view,
+      prominence: section.prominence,
+      blocks,
+    };
+  });
+  const allLeafIds = sections.flatMap(({ blocks }) => blocks.flatMap(({ leafRefs }) => leafRefs));
+  const document: ReportDocumentV4 = {
+    version: 'report-document-v4',
+    title: { id: 'copy-report-title-v4', provenance: 'model', text: '模型编辑策略报告', sourceLeafIds: allLeafIds },
+    subtitle: v3.subtitle,
+    executiveSummary: {
+      id: 'copy-report-summary-v4',
+      provenance: 'model',
+      text: '围绕机会卡片与验证阶段组织受审结果。',
+      sourceLeafIds: allLeafIds,
+    },
+    style: v3.style,
+    density: v3.density,
+    copyMode: 'model',
+    sections,
+    sourceDeliverableArtifactId: v3.sourceDeliverableArtifactId,
+    sourceDeliverableContentSha256: v3.sourceDeliverableContentSha256,
+    projectionMode: 'full',
+    layoutMode: v3.layoutMode,
+    traceIndex: {
+      ...v3.traceIndex,
+      ...Object.fromEntries([...cardLeafIds, ...stageLeafIds].map((leafId) => [
+        leafId,
+        {
+          ...v3.traceIndex['matrix-c1']!,
+          origins: v3.traceIndex['matrix-c1']!.origins.map((origin) => ({ ...origin, jsonPointer: `/payload/${leafId}` })),
+        },
+      ])),
+    },
+    semanticManifest: {
+      version: 'report-semantic-manifest-v2',
+      presentationUnitIds: [],
+      leafUnitIds: [],
+      assetIds: [],
+      auditRecordIds: [],
+      noticeIds: [],
+      copyFragmentIds: [],
+    },
+    auditAppendix: v3.auditAppendix,
+    notices: v3.notices,
+  };
+  document.semanticManifest = collectReportDocumentV4Semantics(document);
+  return document;
+}
+
 function visualManifest(input: {
   assetId: string;
   mediaType: VisualAssetManifest['mediaType'];
@@ -386,6 +515,7 @@ function multimodalReport(): MultimodalReportFixture {
   };
   return {
     presentationMode: 'multimodal',
+    reportDocumentContentSha256: `sha256:${'a'.repeat(64)}`,
     deliverable: {
       version: 'research-deliverable-v1',
       taskId,
@@ -475,10 +605,13 @@ test('Markdown bundle contains the complete safe report package and only exporta
     'assets/asset-annotation.png',
     'assets/asset-chart.svg',
     'assets/asset-original.png',
+    'deliverable.json',
     'evidence-manifest.json',
+    'full-report.md',
     'report-document.json',
     'report-review.json',
     'report.md',
+    'summary-report.md',
     'visual-assets.json',
   ]);
   assert.deepEqual(reads.sort(), [annotationAssetId, chartAssetId, originalAssetId]);
@@ -494,6 +627,131 @@ test('Markdown bundle contains the complete safe report package and only exporta
   assert.equal(blockedAssetId in bundle.entries, false);
   assert.equal(reads.includes(blockedAssetId), false, 'blocked assets must be rejected before owner route reads');
   assert.deepEqual(bundle.entries['assets/asset-chart.svg'], CHART_SVG, 'bundle must carry the sealed SVG bytes');
+  assert.equal(bundle.text('report.md'), bundle.text('full-report.md'));
+  assert.match(bundle.text('summary-report.md'), /Verified market report/u);
+  const deliverable = JSON.parse(bundle.text('deliverable.json')) as Record<string, unknown>;
+  assert.equal(deliverable.secretToken, undefined, 'canonical export must whitelist reviewed Deliverable fields');
+});
+
+test('Multi-Skill ZIP exports only allowlisted Contribution audit metadata and redacts Review issues', async () => {
+  const { createReportBundle } = await loadReportBundleModule();
+  const reviewIssue = 'private-review-issue-must-not-export';
+  const contributionTitle = 'omitted-title-must-not-export';
+  const contributionStatement = 'omitted-statement-must-not-export';
+  const contributionLimitation = 'private-limitation-must-not-export';
+  const ledgerReason = 'private-ledger-reason-must-not-export';
+  const revisionIssueMessage = 'private-revision-instruction-must-not-export';
+  const base = multimodalReport();
+  const report = {
+    ...base,
+    reportReview: {
+      ...base.reportReview,
+      verdict: 'revise',
+      dimensions: (base.reportReview.dimensions as Array<Record<string, unknown>>).map((dimension, index) =>
+        index === 0 ? {
+          ...dimension,
+          passed: false,
+          issues: [reviewIssue],
+          targetNodeIds: ['private-target-node'],
+          revisionIssues: [{
+            id: 'revision-1',
+            message: revisionIssueMessage,
+            targetNodeIds: ['private-target-node'],
+          }],
+        } : dimension),
+      revisionRound: 1,
+    },
+    crossSkillReview: {
+      version: 'cross-skill-review-v1' as const,
+      taskId,
+      planVersionId,
+      attemptId,
+      synthesisArtifactId: 'synthesis-1',
+      verdict: 'pass' as const,
+      issues: [],
+    },
+    contributionLedger: {
+      version: 'contribution-ledger-v1' as const,
+      taskId,
+      planVersionId,
+      attemptId,
+      entries: [{
+        contributionArtifactId: 'contribution-1',
+        invocationId: 'invocation-1',
+        sourceUnitKey: 'unit-1',
+        sourceSemanticHash: `sha256:${'1'.repeat(64)}`,
+        disposition: 'omitted' as const,
+        canonicalNodeIds: [],
+        reason: ledgerReason,
+        reviewIssueIds: ['review-issue-1'],
+      }],
+    },
+    contributionSummary: {
+      version: 'contribution-summary-v1' as const,
+      taskId,
+      planVersionId,
+      attemptId,
+      contributors: [{
+        invocationId: 'invocation-1',
+        skillId: 'persona-skill',
+        contributionTypes: ['persona'] as const,
+        unitCount: 1,
+        limitations: [contributionLimitation],
+        units: [{
+          sourceArtifactId: 'contribution-1',
+          sourceUnitKey: 'unit-1',
+          kind: 'persona' as const,
+          title: contributionTitle,
+          statement: contributionStatement,
+          questionIds: ['question-1'],
+          evidenceIds: ['E1'],
+          status: 'provisional' as const,
+          confidence: 0.4,
+          disposition: 'omitted' as const,
+          canonicalNodeIds: [],
+        }],
+        dispositions: [{
+          sourceUnitKey: 'unit-1',
+          disposition: 'omitted' as const,
+          canonicalNodeIds: [],
+        }],
+      }],
+    },
+  };
+  const bundle = await unzip(await createReportBundle({ report, readAsset: assetReader([]) }));
+
+  assert.ok(bundle.entries['contribution-summary.json']);
+  assert.ok(bundle.entries['contribution-ledger.json']);
+  assert.equal(bundle.entries['raw-contributions.json'], undefined);
+  assert.deepEqual(JSON.parse(bundle.text('contribution-summary.json')), {
+    version: 'contribution-summary-v1', taskId, planVersionId, attemptId,
+    contributors: [{
+      invocationId: 'invocation-1', skillId: 'persona-skill', contributionTypes: ['persona'], unitCount: 1,
+      dispositions: [{ sourceUnitKey: 'unit-1', disposition: 'omitted', canonicalNodeIds: [] }],
+    }],
+  });
+  assert.deepEqual(JSON.parse(bundle.text('contribution-ledger.json')), {
+    version: 'contribution-ledger-v1', taskId, planVersionId, attemptId,
+    entries: [{
+      contributionArtifactId: 'contribution-1', invocationId: 'invocation-1', sourceUnitKey: 'unit-1',
+      sourceSemanticHash: `sha256:${'1'.repeat(64)}`, disposition: 'omitted', canonicalNodeIds: [],
+      reviewIssueIds: ['review-issue-1'],
+    }],
+  });
+  const exportedReview = JSON.parse(bundle.text('report-review.json')) as {
+    dimensions: Array<{ issues: string[] }>;
+  };
+  assert.deepEqual(exportedReview.dimensions[0]?.issues, ['Review issue details redacted from export.']);
+  const privateInputs = [
+    reviewIssue,
+    revisionIssueMessage,
+    contributionTitle,
+    contributionStatement,
+    contributionLimitation,
+    ledgerReason,
+  ];
+  assert.ok(privateInputs.every((value) => JSON.stringify(report).includes(value)));
+  assert.ok(privateInputs.every((value) => !allText(bundle.entries).includes(value)));
 });
 
 test('Markdown uses deterministic relative image paths, sealed SVG references, and Chart table alternatives', async () => {
@@ -532,6 +790,116 @@ test('Markdown uses deterministic relative image paths, sealed SVG references, a
   );
   assert.doesNotMatch(markdown, /(?:src|href)=|blob:|file:|https?:\/\/|\/private\//iu);
   assert.doesNotMatch(markdown, /asset-blocked|Blocked internal source image/u);
+});
+
+test('Markdown bundle reads ReportDocument v3 without collapsing typed structure or audit content', async () => {
+  const { createReportBundle } = await loadReportBundleModule();
+  const report = {
+    ...multimodalReport(),
+    reportDocument: reportDocumentV3Fixture(),
+    visualAssetManifests: [],
+  };
+  assert.equal(parseControlDeliverableResponse(report).presentationMode, 'multimodal');
+  const bundle = await unzip(await createReportBundle({ report, readAsset: assetReader([]) }));
+  const markdown = bundle.text('report.md');
+  assert.match(markdown, /\| 场景 \| 核心问题 \|/u);
+  assert.match(markdown, /触发.*新品兴趣/u);
+  assert.match(markdown, /#### P0/u);
+  assert.match(markdown, /建立可信项目档案/u);
+  assert.match(markdown, /## 分析审计附录/u);
+  const exported = JSON.parse(bundle.text('report-document.json')) as Record<string, unknown>;
+  assert.equal(exported.version, 'report-document-v3');
+  assert.equal((exported.unexpected as unknown), undefined);
+  const renderManifest = JSON.parse(bundle.text('render-manifest.json')) as Record<string, unknown>;
+  assert.equal(renderManifest.renderer, 'markdown');
+  assert.equal(renderManifest.sourceReportDocumentContentSha256, report.reportDocumentContentSha256);
+  assert.deepEqual(renderManifest.semantics, report.reportDocument.semanticManifest);
+});
+
+test('Markdown bundle reads ReportDocument v4 copy and editorial blocks without object coercion', async () => {
+  const { createReportBundle } = await loadReportBundleModule();
+  const reportDocumentV4 = reportDocumentV4Fixture();
+  const report = {
+    ...multimodalReport(),
+    reportDocument: reportDocumentV4,
+    visualAssetManifests: [],
+  };
+  const bundle = await unzip(await createReportBundle({ report, readAsset: assetReader([]) }));
+  const markdown = bundle.text('report.md');
+
+  assert.match(markdown, /^# 模型编辑策略报告$/mu);
+  assert.match(markdown, /围绕机会卡片与验证阶段组织受审结果。/u);
+  assert.match(markdown, /## 答案概览/u);
+  assert.match(markdown, /从证据进入机会判断。/u);
+  assert.match(markdown, /优先验证两类机会。/u);
+  assert.match(markdown, /#### 信任/u);
+  assert.match(markdown, /\*\*状态：\*\* P0/u);
+  assert.match(markdown, /1\. \*\*试点\*\* · 第 1 周 — 小流量验证/u);
+  assert.doesNotMatch(markdown, /\[object Object\]/u);
+
+  const exported = JSON.parse(bundle.text('report-document.json')) as {
+    version: string;
+    title: { text: string };
+  };
+  assert.equal(exported.version, 'report-document-v4');
+  assert.equal(exported.title.text, '模型编辑策略报告');
+  const renderManifest = JSON.parse(bundle.text('render-manifest.json')) as {
+    version: string;
+    rendererVersion: string;
+    semantics: { copyFragmentIds: string[] };
+  };
+  assert.equal(renderManifest.version, 'report-render-manifest-v2');
+  assert.equal(renderManifest.rendererVersion, 'markdown-bundle-v2');
+  assert.deepEqual(renderManifest.semantics.copyFragmentIds, reportDocumentV4.semanticManifest.copyFragmentIds);
+});
+
+test('React and Stage 4 read ReportDocument v4 using explicit views and copy text', async () => {
+  const { createReportDocumentViewModel, ReportDocumentView } = await loadReportDocumentViewModule();
+  const { strategyReportSectionIds } = await loadStage4Module();
+  const document = reportDocumentV4Fixture();
+  const model = createReportDocumentViewModel({
+    document,
+    visualAssetManifests: [],
+    assetUrl: ({ assetId }) => `/assets/${assetId}`,
+  });
+  const blocks = model.sections.flatMap(({ blocks: sectionBlocks }) => sectionBlocks);
+
+  assert.equal(model.version, 'report-document-v4');
+  assert.equal(model.title, document.title.text);
+  assert.equal(model.executiveSummary, document.executiveSummary.text);
+  assert.ok(blocks.some(({ kind }) => kind === 'card-grid'));
+  assert.ok(blocks.some(({ kind }) => kind === 'stage-flow'));
+  assert.equal(blocks.find(({ kind }) => kind === 'card-grid')?.digest?.text, '优先验证两类机会。');
+  assert.deepEqual(strategyReportSectionIds(document, 'answers'), ['section-answers-001']);
+  assert.deepEqual(strategyReportSectionIds(document, 'actions'), ['section-actions-001']);
+
+  const requireFromWeb = createRequire(new URL('../apps/web/package.json', import.meta.url));
+  const react = requireFromWeb('react') as {
+    createElement(component: unknown, props: Record<string, unknown>): unknown;
+  };
+  const { renderToStaticMarkup } = requireFromWeb('react-dom/server') as {
+    renderToStaticMarkup(element: unknown): string;
+  };
+  const globals = globalThis as typeof globalThis & { React?: unknown };
+  const priorReact = globals.React;
+  globals.React = react;
+  try {
+    const markup = renderToStaticMarkup(react.createElement(ReportDocumentView, {
+      document,
+      visualAssetManifests: [],
+      taskId,
+    }));
+    assert.match(markup, /data-report-version="report-document-v4"/u);
+    assert.match(markup, /data-copy-mode="model"/u);
+    assert.match(markup, /data-copy-provenance="model"/u);
+    assert.match(markup, /data-copy-fragment-id="copy-report-title-v4"/u);
+    assert.match(markup, /report-card-grid/u);
+    assert.match(markup, /report-stage-flow/u);
+    assert.match(markup, /模型编辑策略报告/u);
+  } finally {
+    if (priorReact === undefined) delete globals.React;
+    else globals.React = priorReact;
+  }
 });
 
 test('bundle JSON preserves optional image Evidence ids without breaking legacy image blocks', async () => {
@@ -628,11 +996,55 @@ test('bundle bytes and filenames are deterministic across input manifest order a
   assert.deepEqual(entries, [...entries].sort(), 'ZIP entries must be emitted in stable lexical order');
 });
 
-test('bundle rejects non-multimodal and incomplete visual packages before reading assets', async () => {
+test('current-text research plan ZIP includes safe Contribution sidecars without visual assets', async () => {
+  const { createReportBundle } = await loadReportBundleModule();
+  const base = multimodalReport();
+  const reads: string[] = [];
+  const report = {
+    presentationMode: 'current_text',
+    deliverable: {
+      ...base.deliverable,
+      deliverableType: 'research_plan',
+      evidenceManifestArtifactId: 'evidence-manifest',
+      methodSummary: '使用可追溯材料设计研究计划。',
+      findingGraph: { findings: [], analyses: [], subQuestionSummaries: [], overallConclusions: [] },
+      recommendations: [],
+      coverage: { questionBindings: [], successCriterionBindings: [] },
+      risksAndOpenIssues: [],
+      capabilityProvenance: [],
+      payload: {
+        title: '研究计划', researchGoal: '验证购买障碍',
+        scope: { market: '中国', subjects: ['目标用户'], timeWindow: '本季度' },
+        competitorSampling: { strategy: '分层抽样', targetCount: 1, inclusionCriteria: ['可访问'], exclusionCriteria: [] },
+        researchQuestions: ['主要障碍是什么？'], comparisonDimensions: [], sourcePlan: [], executionPlan: [],
+        collectionTemplate: [], analysisMethods: [], deliverables: ['研究报告'], qualityChecks: [],
+      },
+    },
+    evidenceManifest: base.evidenceManifest,
+    reportReview: base.reportReview,
+    contributionSummary: {
+      version: 'contribution-summary-v1', taskId, planVersionId, attemptId,
+      contributors: [],
+    },
+    contributionLedger: {
+      version: 'contribution-ledger-v1', taskId, planVersionId, attemptId,
+      entries: [],
+    },
+  };
+  const bundle = await unzip(await createReportBundle({ report, readAsset: assetReader(reads) }));
+  assert.deepEqual(reads, []);
+  assert.equal(bundle.entries['report-document.json'], undefined);
+  assert.equal(bundle.entries['visual-assets.json'], undefined);
+  assert.ok(bundle.entries['contribution-summary.json']);
+  assert.ok(bundle.entries['contribution-ledger.json']);
+  assert.match(bundle.text('full-report.md'), /研究计划/u);
+});
+
+test('bundle rejects legacy and incomplete visual packages before reading assets', async () => {
   const { createReportBundle } = await loadReportBundleModule();
   const complete = multimodalReport();
 
-  for (const presentationMode of ['legacy_text', 'current_text'] as const) {
+  for (const presentationMode of ['legacy_text'] as const) {
     const reads: string[] = [];
     await assert.rejects(
       createReportBundle({
@@ -739,6 +1151,65 @@ test('ReportDocumentView exposes image Evidence toggles and print Evidence while
   assert.match(markup, /data-block-id="comparison-1"[\s\S]*?Original and annotated evidence[\s\S]*?查看证据（1）/u);
 });
 
+test('strategy answer reader keeps the answer visible while collapsing technical and supporting detail', async () => {
+  const { ReportDocumentView } = await loadReportDocumentViewModule();
+  const requireFromWeb = createRequire(new URL('../apps/web/package.json', import.meta.url));
+  const react = requireFromWeb('react') as {
+    createElement(component: unknown, props: Record<string, unknown>): unknown;
+  };
+  const { renderToStaticMarkup } = requireFromWeb('react-dom/server') as {
+    renderToStaticMarkup(element: unknown): string;
+  };
+  const document = reportDocument();
+  document.sections = [{
+    id: 'executive-answers',
+    title: '直接答案',
+    questionIds: ['Q1_scope'],
+    prominence: 'primary',
+    blocks: [{
+      id: 'answer-Q1',
+      type: 'answer',
+      kind: 'direct_answer',
+      title: '范围是否清晰？',
+      text: '范围已经收敛。',
+      items: ['业务含义：避免范围失控。', '建议行动：写清边界。'],
+      questionIds: ['Q1_scope'],
+      evidenceIds: ['evidence-1'],
+      findingIds: ['finding-1'],
+      summaryIds: ['summary-1'],
+      confidence: 0.7,
+      answerStatus: 'provisional',
+      sourcePointers: ['/directAnswers/0'],
+      summary: true,
+    }],
+  }];
+
+  const globals = globalThis as typeof globalThis & { React?: unknown };
+  const priorReact = globals.React;
+  globals.React = react;
+  let markup: string;
+  try {
+    markup = renderToStaticMarkup(react.createElement(ReportDocumentView, {
+      document,
+      visualAssetManifests: [],
+      taskId,
+    }));
+  } finally {
+    if (priorReact === undefined) delete globals.React;
+    else globals.React = priorReact;
+  }
+
+  assert.match(markup, /report-layout report-layout-single/u);
+  assert.doesNotMatch(markup, /class="report-toc"/u);
+  assert.match(markup, />直接回答</u);
+  assert.match(markup, />待验证</u);
+  assert.match(markup, /<details class="report-answer-details">[\s\S]*展开详细要点/u);
+  assert.match(markup, /<details class="report-answer-provenance">[\s\S]*内容溯源/u);
+  assert.match(markup, /<details class="report-question-binding">[\s\S]*关联研究问题 1 个/u);
+  assert.equal((markup.match(/范围已经收敛。/gu) ?? []).length, 1);
+  assert.equal((markup.match(/避免范围失控。/gu) ?? []).length, 1);
+});
+
 test('ReportDocumentView table shape uses sealed columns once with explicit row and cell associations', async () => {
   const { createReportTableShape } = await loadReportDocumentViewModule();
   const document = reportDocument();
@@ -815,6 +1286,56 @@ test('print stylesheet covers A4, cover and TOC, fixed chrome, page breaks, SVG,
   assert.match(css, /svg[^\{]*\{[^}]*(?:break-inside|page-break-inside)\s*:\s*avoid/isu);
   assert.match(css, /thead[^\{]*\{[^}]*display\s*:\s*table-header-group/isu);
   assert.match(css, /(?:monochrome|grayscale|print-color-adjust|border-style|text-decoration)/iu);
+  assert.match(css, /\.report-answer\s*\{[^}]*background\s*:\s*var\(--report-card\)/isu);
+  assert.match(css, /@media\s*\(max-width:\s*860px\)[\s\S]*?\.report-cover\s*\{[^}]*min-height\s*:\s*0/isu);
+  assert.match(css, /\.report-answer-details\s*>\s*:not\(summary\)[^\{]*\{[^}]*display\s*:\s*block\s*!important/isu);
+});
+
+test('strategy report tabs expose answer-first, dynamic-topic, artifact, evidence, and analysis section groups', async () => {
+  const { strategyReportSectionIds } = await loadStage4Module();
+  const document = reportDocument();
+  document.sections = [
+    'executive-answers', 'priority-actions', 'topic-journey', 'strategy-map', 'mind-model',
+    'design-principles', 'opportunities', 'channel-strategies', 'evidence-confidence',
+    'limitations', 'analysis-notes', 'evidence-appendix',
+  ].map((id, index) => ({ ...document.sections[0]!, id, title: id, blocks: [{ id: `block-${index}`, type: 'paragraph' as const, text: id }] }));
+
+  assert.deepEqual(strategyReportSectionIds(document, 'answers'), ['executive-answers']);
+  assert.deepEqual(strategyReportSectionIds(document, 'topics'), [
+    'topic-journey', 'strategy-map', 'mind-model', 'design-principles', 'channel-strategies',
+  ]);
+  assert.deepEqual(strategyReportSectionIds(document, 'artifacts'), ['priority-actions', 'opportunities']);
+  assert.deepEqual(strategyReportSectionIds(document, 'evidence'), ['evidence-confidence', 'limitations', 'evidence-appendix']);
+  assert.deepEqual(strategyReportSectionIds(document, 'analysis'), ['analysis-notes']);
+});
+
+test('strategy report tabs classify model-directed sections by content instead of fixed ids', async () => {
+  const { strategyReportSectionIds } = await loadStage4Module();
+  const document = reportDocument();
+  const answer = {
+    id: 'answer-Q1', type: 'answer' as const, kind: 'direct_answer' as const, title: 'Q1', text: 'Answer', items: [],
+    questionIds: ['Q1'], evidenceIds: ['evidence-1'], findingIds: ['finding-1'], summaryIds: ['summary-1'],
+    confidence: 0.8, answerStatus: 'supported' as const, sourcePointers: ['/directAnswers'], summary: true,
+  };
+  const strategy = { ...answer, id: 'strategy', kind: 'strategy_map' as const, title: 'Map', answerStatus: undefined };
+  const narrative = { ...answer, id: 'narrative', kind: 'evidence_finding' as const, title: 'Why', answerStatus: undefined };
+  document.sections = [{ id: 'executive-answers', title: 'Answers', questionIds: ['Q1'], prominence: 'primary', blocks: [answer] }, {
+    id: 'model-section-001', title: 'Custom strategy', questionIds: ['Q1'], prominence: 'primary', blocks: [strategy],
+  }, {
+    id: 'model-section-002', title: 'Custom analysis', questionIds: ['Q1'], prominence: 'supporting', blocks: [narrative],
+  }, {
+    id: 'evidence-confidence', title: 'Evidence', questionIds: ['Q1'], prominence: 'supporting', blocks: [narrative],
+  }, {
+    id: 'limitations', title: 'Limits', questionIds: [], prominence: 'supporting', blocks: [{ ...narrative, id: 'risk', kind: 'risk' as const, questionIds: [], evidenceIds: [], findingIds: [], summaryIds: [] }],
+  }, {
+    id: 'evidence-appendix', title: 'Appendix', questionIds: [], prominence: 'appendix', blocks: [{ ...narrative, id: 'appendix', questionIds: [], evidenceIds: [], findingIds: [], summaryIds: [] }],
+  }];
+
+  assert.deepEqual(strategyReportSectionIds(document, 'answers'), ['executive-answers']);
+  assert.deepEqual(strategyReportSectionIds(document, 'topics'), ['model-section-001']);
+  assert.deepEqual(strategyReportSectionIds(document, 'artifacts'), []);
+  assert.deepEqual(strategyReportSectionIds(document, 'evidence'), ['evidence-confidence', 'limitations', 'evidence-appendix']);
+  assert.deepEqual(strategyReportSectionIds(document, 'analysis'), ['model-section-002']);
 });
 
 test('Stage4 dispatches multimodal, research-plan text, and generic historical text reports', async () => {
@@ -875,7 +1396,126 @@ test('Stage4 dispatches multimodal, research-plan text, and generic historical t
       assert.match(html, /历史结构化报告/u);
       assert.match(html, /Competitive Analysis Report/u);
       assert.match(html, /historical-competitive-payload/u);
+      if (presentationMode === 'current_text') {
+        const withContributions = {
+          ...historicalCompetitiveReport,
+          crossSkillReview: {
+            version: 'cross-skill-review-v1', taskId, planVersionId, attemptId,
+            synthesisArtifactId: 'synthesis-1', verdict: 'pass', issues: [],
+          },
+          contributionLedger: {
+            version: 'contribution-ledger-v1', taskId, planVersionId, attemptId, entries: [{
+              contributionArtifactId: 'contribution-1', invocationId: 'invocation-1',
+              sourceUnitKey: 'unit-1', sourceSemanticHash: `sha256:${'1'.repeat(64)}`,
+              disposition: 'included', canonicalNodeIds: ['summary-1'], reviewIssueIds: [],
+            }],
+          },
+          contributionSummary: {
+            version: 'contribution-summary-v1', taskId, planVersionId, attemptId, contributors: [{
+              invocationId: 'invocation-1', skillId: 'competitive-web-research',
+              contributionTypes: ['competitive_analysis'], unitCount: 1, limitations: [],
+              units: [{
+                sourceArtifactId: 'contribution-1', sourceUnitKey: 'unit-1', kind: 'finding',
+                title: 'Independent finding', statement: 'A reviewed independent conclusion.',
+                questionIds: ['question-1'], evidenceIds: ['E1'], status: 'supported', confidence: 0.8,
+                disposition: 'included', canonicalNodeIds: ['summary-1'],
+              }],
+              dispositions: [{ sourceUnitKey: 'unit-1', disposition: 'included', canonicalNodeIds: ['summary-1'] }],
+            }],
+          },
+        };
+        const contributionHtml = renderToStaticMarkup(react.createElement(CurrentStage4Report, {
+          report: withContributions,
+          taskState: 'completed',
+        }));
+        assert.match(contributionHtml, /Skill 独立贡献/u);
+        assert.match(contributionHtml, /A reviewed independent conclusion\./u);
+      }
     }
+  } finally {
+    if (priorReact === undefined) delete globals.React;
+    else globals.React = priorReact;
+  }
+});
+
+test('Stage4 offers the owner-bound offline HTML Bundle only when Report Package v2 marks it ready', async () => {
+  const { CurrentStage4Report } = await loadStage4Module();
+  const requireFromWeb = createRequire(new URL('../apps/web/package.json', import.meta.url));
+  const react = requireFromWeb('react') as {
+    createElement(component: unknown, props: Record<string, unknown>): unknown;
+  };
+  const { renderToStaticMarkup } = requireFromWeb('react-dom/server') as {
+    renderToStaticMarkup(element: unknown): string;
+  };
+  const packageBase = {
+    version: 'report-package-v2' as const,
+    reportPublicationId: 'publication-1',
+    layout: {
+      mode: 'fallback' as const,
+      blueprintArtifactId: 'blueprint-1',
+      reasonCode: 'planner_disabled' as const,
+    },
+    assetSnapshot: { assets: [], charts: [] },
+    notices: [],
+  };
+  const globals = globalThis as typeof globalThis & { React?: unknown };
+  const priorReact = globals.React;
+  globals.React = react;
+  try {
+    const readyReport = multimodalReport();
+    const readyHtml = renderToStaticMarkup(react.createElement(CurrentStage4Report, {
+      report: {
+        ...readyReport,
+        editorialShowcase: {
+          version: 'report-package-v3' as const,
+          taskId: readyReport.deliverable.taskId,
+          planVersionId: readyReport.deliverable.planVersionId,
+          attemptId: readyReport.deliverable.attemptId,
+          reportPublicationId: 'publication-1',
+          canonicalPackageArtifactId: 'package-v2-1',
+          canonicalPackageContentSha256: `sha256:${'8'.repeat(64)}`,
+          preferredHtml: 'showcase' as const,
+          showcase: {
+            status: 'ready' as const,
+            specArtifactId: 'showcase-spec-1',
+            htmlArtifactId: 'showcase-html-1',
+            rendererVersion: 'editorial-showcase-html-v1',
+            profileId: 'editorial-showcase-v1' as const,
+            generationMode: 'model' as const,
+            showcaseOutlineSignature: `sha256:${'7'.repeat(64)}`,
+          },
+        },
+        reportPackage: {
+          ...packageBase,
+          standaloneHtml: {
+            status: 'ready' as const,
+            artifactId: 'html-1',
+            rendererVersion: 'standalone-html-v1',
+          },
+        },
+      },
+      taskState: 'completed',
+    }));
+    assert.match(readyHtml, />下载编辑展示版</u);
+    assert.match(readyHtml, />下载离线 HTML</u);
+    assert.match(readyHtml, />下载 Markdown ZIP</u);
+
+    const unavailableHtml = renderToStaticMarkup(react.createElement(CurrentStage4Report, {
+      report: {
+        ...multimodalReport(),
+        reportPackage: {
+          ...packageBase,
+          standaloneHtml: {
+            status: 'unavailable' as const,
+            reasonCode: 'artifact_write_failed' as const,
+          },
+        },
+      },
+      taskState: 'completed_with_gaps',
+    }));
+    assert.doesNotMatch(unavailableHtml, />下载离线 HTML</u);
+    assert.match(unavailableHtml, /离线 HTML 暂不可用，仍可下载 Markdown ZIP/u);
+    assert.match(unavailableHtml, />下载 Markdown ZIP</u);
   } finally {
     if (priorReact === undefined) delete globals.React;
     else globals.React = priorReact;

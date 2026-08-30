@@ -5,10 +5,12 @@ import {
   type TaskDetail,
   type ExecLogRow,
   type ControlApprovalRequirement,
+  type SystemCapabilitiesResponse,
   type TaskHistoryPreferencePatch,
   ApiError,
 } from '../api/client.ts';
 import {
+  approvalSubmissionAllowed,
   applyTaskHistoryPreferences,
   executionFailureAllowsAction,
   mergeTaskHistory,
@@ -25,11 +27,12 @@ import { Stage3Execute } from '../components/stages/Stage3Execute.tsx';
 import { Stage4Report } from '../components/stages/Stage4Report.tsx';
 import { CurrentStage4Report } from '../components/stages/CurrentStage4Report.tsx';
 import { PlanProgressCard } from '../components/PlanningProgressCard.tsx';
+import { reviewedDraftPreviewFromFailure } from '../reviewed-draft-preview.ts';
 import { Labs } from './Labs.tsx';
 
 type View = 'task' | 'labs' | 'history';
 
-export function Workbench({ user, onLogout }: { user: User; onLogout: () => void }) {
+export function Workbench({ user, capabilities, onLogout }: { user: User; capabilities: SystemCapabilitiesResponse | null; onLogout: () => void }) {
   const [view, setView] = useState<View>('task');
   const [history, setHistory] = useState<HistoryTaskSummary[]>([]);
   const [detail, setDetail] = useState<TaskDetail | null>(null);
@@ -71,7 +74,7 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
   useEffect(refreshHistory, [refreshHistory]);
 
   // 新任务和 Current 历史走同一恢复主链；Legacy 历史保持只读。
-  const flow = useTaskFlow(user.role);
+  const flow = useTaskFlow();
   const {
     phase,
     clarification,
@@ -95,6 +98,7 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
     approvalSubmitting,
     planRecovery,
     revisionSubmitting,
+    cancelSubmitting,
   } = flow;
   useEffect(() => {
     if (stateVersion != null) refreshHistory();
@@ -139,6 +143,7 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
     <div className="workbench">
       <Sidebar
         user={user}
+        capabilities={capabilities}
         history={history}
         activeTaskId={currentTaskId}
         onNewTask={newTask}
@@ -233,7 +238,11 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
                     {executionPlanSteps.length > 0 && (
                       <Stage3Execute steps={executionPlanSteps} log={executionSteps} phase={phase} />
                     )}
-                    <RunningTaskNotice phase={phase} />
+                    <RunningTaskNotice
+                      phase={phase}
+                      cancelling={cancelSubmitting}
+                      onCancel={() => void flow.cancelExecution()}
+                    />
                     {error && <ErrorCard msg={error} />}
                   </>
                 )}
@@ -247,6 +256,7 @@ export function Workbench({ user, onLogout }: { user: User; onLogout: () => void
                       stepName={executionPlanSteps.find((step) => step.step_no === exec.failedStepNo)?.step_name}
                       failure={exec.failure}
                       onRetry={() => flow.resumeStep('retry')}
+                      onReplan={() => flow.revisePlan('知识或 Skill 合同已变化，请基于当前 Requirement 重新生成计划。')}
                       onAbort={() => flow.resumeStep('abort')}
                     />
                   </>
@@ -397,33 +407,64 @@ function FailureActionCard({
   stepName,
   failure,
   onRetry,
+  onReplan,
   onAbort,
 }: {
   stepNo?: number;
   stepName?: string;
   failure?: Record<string, unknown>;
   onRetry: () => void;
+  onReplan: () => void;
   onAbort: () => void;
 }) {
   const canRetry = failure == null || executionFailureAllowsAction(failure, 'retry');
+  const canReplan = failure != null && executionFailureAllowsAction(failure, 'replan');
   const canAbort = failure == null || executionFailureAllowsAction(failure, 'abort');
+  const draftPreview = reviewedDraftPreviewFromFailure(failure);
+  const visibleFailure = failure ? { ...failure } : undefined;
+  if (visibleFailure) delete visibleFailure.draftPreview;
   return (
     <section style={{ background: 'rgba(251,191,36,.08)', border: '1px solid rgba(251,191,36,.3)', borderRadius: 16, padding: 18, marginTop: 16 }}>
       <div style={{ color: 'var(--warn)', fontWeight: 600 }}>
         第 {stepNo ?? '?'} 步失败{stepName ? `：${stepName}` : ''}
       </div>
-      {failure && (
+      {draftPreview && (
+        <div style={{ margin: '12px 0', padding: 14, borderRadius: 12, border: '1px solid var(--border-soft)', background: 'var(--bg-card-hi)', color: 'var(--text)' }}>
+          <div style={{ fontWeight: 600 }}>已保留审校草稿 · 非正式报告</div>
+          <div style={{ marginTop: 4, color: 'var(--text-dim)', fontSize: 12 }}>
+            未通过 Canonical 交付门禁，当前内容不可导出或发布。
+          </div>
+          <div style={{ marginTop: 10, fontSize: 14 }}>{draftPreview.title}</div>
+          <p style={{ margin: '6px 0', color: 'var(--text-dim)', lineHeight: 1.6 }}>{draftPreview.executiveAnswer}</p>
+          <div style={{ color: 'var(--text-faint)', fontSize: 12 }}>
+            {draftPreview.directAnswerCount} 个直接答案 · {draftPreview.evidenceFindingCount} 个发现 · {draftPreview.contentBlocks.length} 个内容块 · {draftPreview.limitationCount} 个局限 · {draftPreview.openQuestionCount} 个待解决问题
+          </div>
+          {draftPreview.contentBlocks.length > 0 && (
+            <ul style={{ margin: '8px 0 0', paddingLeft: 20, color: 'var(--text-dim)', fontSize: 12 }}>
+              {draftPreview.contentBlocks.map((block) => (
+                <li key={block.key}>{block.title} · {block.kind} · {block.itemCount} 项</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+      {visibleFailure && (
         <pre style={{ whiteSpace: 'pre-wrap', color: 'var(--text-dim)', fontSize: 12, margin: '8px 0' }}>
-          {JSON.stringify(failure, null, 2)}
+          {JSON.stringify(visibleFailure, null, 2)}
         </pre>
       )}
       <p style={{ color: 'var(--text-dim)', fontSize: 13, margin: '6px 0 12px' }}>
-        {canRetry
-          ? '重试会通过 Current resume 将任务恢复到 ready，再以同一 planVersionId 重新执行；终止不会生成交付物。'
-          : '该失败不可重试；终止任务后不会生成交付物。'}
+        {canReplan
+          ? '当前计划绑定的知识或 Skill 合同已变化，必须重新生成并再次确认计划；终止不会生成交付物。'
+          : failure?.kind === 'deliverable_validation'
+            ? '重试会优先复用已验证的计划步骤，只重新构建 Canonical Deliverable 及后续报告；复用校验失败时才回退为完整重试。'
+            : canRetry
+              ? '重试会通过 Current resume 将任务恢复到 ready，再以同一 planVersionId 重新执行；终止不会生成交付物。'
+              : '该失败不可重试；终止任务后不会生成交付物。'}
       </p>
       <div style={{ display: 'flex', gap: 10 }}>
         {canRetry && <button type="button" className="btn-primary" onClick={onRetry}>重试失败执行</button>}
+        {canReplan && <button type="button" className="btn-primary" onClick={onReplan}>重新生成计划</button>}
         {canAbort && <button type="button" className="btn-ghost" onClick={onAbort}>终止任务</button>}
       </div>
     </section>
@@ -471,7 +512,6 @@ function AwaitingApprovalNotice({
           <div style={{ color: 'var(--text-faint)', fontSize: 12 }}>正在读取审批门禁…</div>
         )}
         {requirements.map((requirement) => {
-          const pending = requirement.decision === 'pending';
           const decisionLabel = requirement.decision === 'approved'
             ? '已批准'
             : requirement.decision === 'rejected' ? '已拒绝' : '待审批';
@@ -494,7 +534,7 @@ function AwaitingApprovalNotice({
                   {APPROVAL_AUTHORITY_LABELS[requirement.requiredAuthority]} · {decisionLabel}
                 </div>
               </div>
-              {pending && requirement.canApprove && (
+              {approvalSubmissionAllowed(requirement) && (
                 <button
                   type="button"
                   className="btn-primary"
@@ -544,7 +584,15 @@ function PlanRecoveryNotice({
   );
 }
 
-function RunningTaskNotice({ phase }: { phase: 'executing' | 'reviewing' | 'composing-report' }) {
+function RunningTaskNotice({
+  phase,
+  cancelling,
+  onCancel,
+}: {
+  phase: 'executing' | 'reviewing' | 'composing-report';
+  cancelling: boolean;
+  onCancel: () => void;
+}) {
   const content = {
     executing: ['任务执行中', '正在按计划调用能力并记录执行结果。'],
     reviewing: ['质量复核中', '执行已完成，正在检查证据覆盖与报告质量。'],
@@ -554,10 +602,13 @@ function RunningTaskNotice({ phase }: { phase: 'executing' | 'reviewing' | 'comp
     <section className="stage-card" aria-live="polite">
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span className="spinner" />
-        <div>
+        <div style={{ flex: 1 }}>
           <h3 style={{ margin: 0, fontSize: 15 }}>{content[0]}</h3>
           <p style={{ margin: '3px 0 0', color: 'var(--text-dim)', fontSize: 13 }}>{content[1]}</p>
         </div>
+        <button type="button" className="btn-ghost" onClick={onCancel} disabled={cancelling}>
+          {cancelling ? '正在取消…' : '取消任务'}
+        </button>
       </div>
     </section>
   );

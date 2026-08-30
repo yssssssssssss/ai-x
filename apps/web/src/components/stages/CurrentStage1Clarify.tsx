@@ -4,6 +4,28 @@ import type { ClarificationRequiredResponse, ClarifyControlTaskRequest } from '.
 import { buildClarificationSubmission, missingBlockingAnswers } from '../../current-flow-state.ts';
 import { Header } from './Stage1Understand.tsx';
 
+interface ClarificationChoice {
+  value: string;
+  label: string;
+  description: string;
+}
+
+function clarificationChoices(key: string): ClarificationChoice[] | null {
+  if (key === 'outcome_mode') {
+    return [
+      { value: 'plan', label: '研究方案', description: '告诉我后续如何开展研究' },
+      { value: 'answer', label: '直接策略答案', description: '基于当前资料给出结论、策略与行动' },
+    ];
+  }
+  if (key === 'deliverable_intent') {
+    return [
+      { value: 'competitive_analysis_report', label: '竞品分析报告', description: '聚焦品牌或产品对比、差异和机会点' },
+      { value: 'research_strategy_report', label: '综合策略报告', description: '综合多类研究证据形成策略与行动建议' },
+    ];
+  }
+  return null;
+}
+
 export function CurrentStage1Clarify({
   response,
   onSubmit,
@@ -72,10 +94,11 @@ export function CurrentStage1Clarify({
         const required = isClarificationQuestionRequired(response.structuredTask, question);
         const answer = answers[question.key] ?? '';
         const inputId = `clarification-answer-${index}`;
+        const choices = clarificationChoices(question.key);
         return (
           <div key={question.key} className="clarification-question">
             <div className="clarification-question-heading">
-              <label htmlFor={inputId}>{question.question}</label>
+              <span>{question.question}</span>
               <span className={`clarification-requirement ${required ? 'is-required' : 'is-optional'}`}>
                 {required ? '必答' : '可选'}
               </span>
@@ -95,32 +118,57 @@ export function CurrentStage1Clarify({
                 <small>不会自动提交</small>
               </div>
             )}
-            {question.options && question.options.length > 0 && (
-              <div className="clarification-options" aria-label={`${question.question}快捷选项`}>
-                {question.options.map((option) => (
-                  <button
-                    key={option}
-                    type="button"
-                    className="clarification-option"
-                    aria-pressed={answer === option}
-                    onClick={() => setAnswers((previous) => ({ ...previous, [question.key]: option }))}
-                    disabled={disabled}
-                  >
-                    {option}
-                  </button>
-                ))}
-              </div>
+            {choices ? (
+              <fieldset disabled={disabled} style={{ border: 0, padding: 0, margin: 0 }}>
+                <legend style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clipPath: 'inset(50%)' }}>
+                  {question.question}
+                </legend>
+                <div style={{ display: 'grid', gap: 8 }}>
+                  {choices.map((option) => (
+                    <label key={option.value} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '10px 12px', border: `1px solid ${answer === option.value ? 'var(--primary)' : 'var(--border)'}`, borderRadius: 8 }}>
+                      <input
+                        type="radio"
+                        name={`${question.key}-${response.task.id}`}
+                        value={option.value}
+                        checked={answer === option.value}
+                        onChange={(event) => setAnswers((previous) => ({ ...previous, [question.key]: event.target.value }))}
+                      />
+                      <span><b>{option.label}</b><span style={{ color: 'var(--text-faint)', marginLeft: 6 }}>{option.description}</span></span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            ) : (
+              <>
+                {question.options && question.options.length > 0 && (
+                  <div className="clarification-options" aria-label={`${question.question}快捷选项`}>
+                    {question.options.map((option) => (
+                      <button
+                        key={option}
+                        type="button"
+                        className="clarification-option"
+                        aria-pressed={answer === option}
+                        onClick={() => setAnswers((previous) => ({ ...previous, [question.key]: option }))}
+                        disabled={disabled}
+                      >
+                        {option}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <input
+                  id={inputId}
+                  className="clarification-field"
+                  value={answer}
+                  onChange={(event) => setAnswers((previous) => ({ ...previous, [question.key]: event.target.value }))}
+                  disabled={disabled}
+                  placeholder={required ? '请输入答案，或采用上方建议' : '可选，可直接跳过'}
+                  aria-label={question.question}
+                  aria-required={required}
+                  style={{ width: '100%', boxSizing: 'border-box' }}
+                />
+              </>
             )}
-            <input
-              id={inputId}
-              className="clarification-field"
-              value={answer}
-              onChange={(event) => setAnswers((previous) => ({ ...previous, [question.key]: event.target.value }))}
-              disabled={disabled}
-              placeholder={required ? '请输入答案，或采用上方建议' : '可选，可直接跳过'}
-              aria-required={required}
-              style={{ width: '100%', boxSizing: 'border-box' }}
-            />
           </div>
         );
       })}

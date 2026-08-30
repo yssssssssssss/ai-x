@@ -107,9 +107,87 @@ export interface ResearchTaskV2BlockingIssue {
   kind: string;
 }
 
+export const REQUESTED_ARTIFACTS = [
+  'executive_answers',
+  'research_report',
+  'strategy_map',
+  'mind_model',
+  'design_principles',
+  'opportunity_backlog',
+  'prioritized_actions',
+  'channel_strategies',
+  'action_plan',
+] as const;
+export type RequestedArtifact = typeof REQUESTED_ARTIFACTS[number];
+export type ResearchOutcomeMode = 'plan' | 'answer';
+
+export type EvidenceClass =
+  | 'public_source'
+  | 'screenshot'
+  | 'user_input'
+  | 'knowledge'
+  | 'dataset'
+  | 'simulation'
+  | 'derived';
+
+export const CONTRIBUTION_TYPES = [
+  'market_landscape',
+  'competitive_analysis',
+  'persona',
+  'jobs_to_be_done',
+  'journey',
+  'qualitative_insight',
+  'voc',
+  'satisfaction',
+  'metrics',
+  'funnel',
+  'feature_adoption',
+  'design_audit',
+  'accessibility',
+  'research_method',
+  'prioritization',
+  'strategy',
+  'action_plan',
+  'virtual_user_hypothesis',
+] as const;
+
+export type ContributionType = typeof CONTRIBUTION_TYPES[number];
+
+export type SkillCompositionMode = 'standalone' | 'contributor' | 'synthesizer';
+
+export interface SkillCompositionContract {
+  modes: SkillCompositionMode[];
+  supported_outcomes: ResearchOutcomeMode[];
+  compatible_deliverables: string[];
+  contribution_types?: ContributionType[];
+  contribution_schema?: string;
+  contribution_adapter?: string;
+  required_input_roles: string[];
+  optional_input_roles: string[];
+  shareable_prerequisites?: string[];
+  standalone_reason?: string;
+}
+
+export interface CapabilityDemand {
+  id: string;
+  type: ContributionType;
+  questionIds: string[];
+  requestedArtifactTypes: RequestedArtifact[];
+  requiredEvidenceClasses: EvidenceClass[];
+  requiredInputRoles: string[];
+  priority: 'required' | 'optional';
+}
+
+export interface CapabilityDemandGraphV1 {
+  version: 'capability-demand-graph-v1';
+  demands: CapabilityDemand[];
+}
+
 export interface ResearchTaskV2 {
   version: 'research-task-v2';
-  task_type: 'competitive_research' | 'user_research_planning' | 'voc_diagnosis' | 'design_audit' | 'a11y_audit';
+  task_type: 'competitive_research' | 'user_research_planning' | 'research_synthesis' | 'voc_diagnosis' | 'design_audit' | 'a11y_audit';
+  outcome_mode?: ResearchOutcomeMode;
+  requested_artifacts?: RequestedArtifact[];
   business_domain: string;
   research_goal: string;
   comparison_dimensions?: string[];

@@ -1,7 +1,11 @@
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { pool } from '../../../database/db.ts';
-import { ControlPlaneAuthorizationError, ControlPlaneRepository } from '../../../database/control-plane.ts';
+import {
+  ControlPlaneAuthorizationError,
+  ControlPlaneRepository,
+  type ControlArtifact,
+} from '../../../database/control-plane.ts';
 import { createConversation, getOwnedConversation, listMessages, writeMessage } from '../../../database/repository.ts';
 import { ControlArtifactStore } from '../../orchestrator-runtime/src/control/artifact-store.ts';
 import { ControlPlanningService } from '../../orchestrator-runtime/src/control/control-planning-service.ts';
@@ -45,7 +49,20 @@ import { SynthesisMaterializer } from '../../orchestrator-runtime/src/report/syn
 import { ReportReviewService } from '../../orchestrator-runtime/src/report/report-review-service.ts';
 import { CurrentReportPackageReader } from '../../orchestrator-runtime/src/report/current-report-package-reader.ts';
 import { ReportPackageArtifactService } from '../../orchestrator-runtime/src/report/report-package-artifact.ts';
+import { ReportPackageV2ArtifactService } from '../../orchestrator-runtime/src/report/report-package-v2-artifact.ts';
+import { ReportPackageV3ArtifactService } from '../../orchestrator-runtime/src/report/report-package-v3-artifact.ts';
 import { ReportCompositionService } from '../../orchestrator-runtime/src/report/report-composition-service.ts';
+import { EditorialShowcasePublicationService } from '../../orchestrator-runtime/src/report/report-editorial-showcase-publication.ts';
+import {
+  productionReportEditorialPlannerDataPolicy,
+  ReportEditorialPlanner,
+} from '../../orchestrator-runtime/src/report/report-editorial-planner.ts';
+import { ReportLayoutPlanner } from '../../orchestrator-runtime/src/report/report-layout-planner.ts';
+import {
+  HtmlBundleIntegrityError,
+  HtmlBundleUnavailableError,
+  StandaloneHtmlReportPackageService,
+} from '../../orchestrator-runtime/src/report/standalone-html-report-package.ts';
 import {
   ImageAnnotationService,
   type ImageAnnotationInput,
@@ -313,6 +330,7 @@ export interface ControlRuntimeOverrides {
   artifacts?: ControlArtifactStore;
   expectedActualModel?: string;
   planningPolicy?: unknown;
+  multiSkillPortfolioMode?: 'inactive' | 'active';
   zeroMcp?: ZeroPublicationMcp;
   zeroPublicationEnabled?: boolean;
 }
@@ -334,6 +352,16 @@ export interface ControlRuntime {
     assetId: string;
     ownerUserId: string;
   }): Promise<VerifiedVisualAsset | null>;
+  readHtmlBundle(input: {
+    taskId: string;
+    attemptId: string;
+    ownerUserId: string;
+  }): Promise<Uint8Array | null>;
+  readEditorialShowcaseHtml(input: {
+    taskId: string;
+    attemptId: string;
+    ownerUserId: string;
+  }): Promise<string | null>;
 }
 
 export function visualAssetManifestStorageUri(storageUri: string): string | null {
@@ -419,6 +447,8 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     tools,
     approvalAuthorities: ['owner'],
     ...(overrides.planningPolicy === undefined ? {} : { planningPolicy: overrides.planningPolicy }),
+    multiSkillPortfolioMode: overrides.multiSkillPortfolioMode
+      ?? (process.env.MULTI_SKILL_PORTFOLIO_WRITER_ENABLED === 'true' ? 'active' : 'inactive'),
     expectedActualModel,
   });
   const planningSource: PlanningAdapter = overrides.planning ?? {
@@ -490,7 +520,52 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
   });
   const evidence = new EvidenceService();
   const reportValidator: ReportEvidenceValidator = new ReportEvidenceValidator(evidence);
-  const reportComposition = new ReportCompositionService({ artifacts, visualAssets, repository });
+  const reportV3WriterEnabled = process.env.REPORT_V3_WRITER_ENABLED === 'true';
+  const reportEditorialPlannerV1Enabled = process.env.REPORT_EDITORIAL_PLANNER_V1_ENABLED === 'true';
+  const reportEditorialExperienceV1Enabled = process.env.REPORT_EDITORIAL_EXPERIENCE_V1_ENABLED === 'true';
+  const reportEditorialShowcaseV1Enabled = process.env.REPORT_EDITORIAL_SHOWCASE_V1_ENABLED === 'true';
+  const standaloneHtmlBundleV1Enabled = process.env.STANDALONE_HTML_BUNDLE_V1_ENABLED === 'true';
+  const editorialShowcasePublicationEnabled = reportEditorialShowcaseV1Enabled
+    && reportEditorialExperienceV1Enabled
+    && standaloneHtmlBundleV1Enabled;
+  const reportComposition = new ReportCompositionService({
+    artifacts,
+    visualAssets,
+    repository,
+    validator,
+    layoutPlanner: new ReportLayoutPlanner({
+      llm: new ReceiptLLMClient(llm, repository),
+      validator,
+    }),
+    ...(reportEditorialPlannerV1Enabled
+      || reportEditorialExperienceV1Enabled
+      || editorialShowcasePublicationEnabled
+      ? {
+          editorialPlanner: new ReportEditorialPlanner({
+            llm: new ReceiptLLMClient(llm, repository),
+            validator,
+            dataPolicy: productionReportEditorialPlannerDataPolicy,
+          }),
+        }
+      : {}),
+    ...(editorialShowcasePublicationEnabled
+      ? { showcasePublisher: new EditorialShowcasePublicationService({ artifacts, validator }) }
+      : {}),
+    reportV3Writer: {
+      enabled: reportV3WriterEnabled
+        || reportEditorialExperienceV1Enabled
+        || editorialShowcasePublicationEnabled,
+      editorialExperienceV1Enabled: reportEditorialExperienceV1Enabled
+        || editorialShowcasePublicationEnabled,
+      // The three rich writers stay closed until the required real-case
+      // inventory proves their source shapes. A-core still emits lossless v3.
+      verifiedPresentations: {
+        recordTable: false,
+        graph: false,
+        priorityBoard: false,
+      },
+    },
+  });
   const reportPackageReader = new CurrentReportPackageReader({
     artifacts,
     repository,
@@ -500,6 +575,103 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     visualAssets,
   });
   const reportPackageArtifacts = new ReportPackageArtifactService(artifacts);
+  const reportPackageV2Artifacts = new ReportPackageV2ArtifactService(artifacts);
+  const reportPackageV3Artifacts = new ReportPackageV3ArtifactService({
+    artifacts,
+    canonicalPackages: reportPackageV2Artifacts,
+    validator,
+  });
+  const standaloneHtmlBundles = new StandaloneHtmlReportPackageService({
+    artifacts,
+    reportPackages: reportPackageV2Artifacts,
+  });
+  const fixedReportPackageV2Root = async (binding: {
+    taskId: string;
+    planVersionId: string;
+    attemptId: string;
+  }): Promise<ControlArtifact | null> => {
+    const candidates = (await repository.listArtifactsForAttempt({
+      ...binding,
+      kinds: ['report_package'],
+    })).filter((artifact) => (
+      artifact.state === 'SEALED'
+      && artifact.schemaVersion === 'report-package-v2'
+      && artifact.storageUri.endsWith('/reports/report-package.json')
+    ));
+    if (candidates.length > 1) {
+      throw new HtmlBundleIntegrityError();
+    }
+    return candidates[0] ?? null;
+  };
+  const fixedReportPackageRoot = async (binding: {
+    taskId: string;
+    planVersionId: string;
+    attemptId: string;
+  }): Promise<ControlArtifact | null> => {
+    const candidates = (await repository.listArtifactsForAttempt({
+      ...binding,
+      kinds: ['report_package'],
+    })).filter((artifact) => (
+      artifact.state === 'SEALED'
+      && artifact.schemaVersion === 'report-package-v3'
+      && artifact.storageUri.endsWith('/reports/report-package-v3.json')
+    ));
+    if (candidates.length > 1) throw new HtmlBundleIntegrityError();
+    return candidates[0] ?? fixedReportPackageV2Root(binding);
+  };
+  const readFrozenReportPackage = async (input: {
+    artifact: ControlArtifact;
+    taskId: string;
+    planVersionId: string;
+    attemptId: string;
+    expectedContentSha256?: string;
+  }): Promise<CurrentReportPackageResponse | null> => {
+    const actualHash = input.artifact.contentSha256;
+    if (!actualHash || (
+      input.expectedContentSha256 !== undefined
+      && actualHash !== input.expectedContentSha256
+    )) {
+      throw new Error('frozen Report Package hash is invalid');
+    }
+    const binding = {
+      taskId: input.taskId,
+      planVersionId: input.planVersionId,
+      attemptId: input.attemptId,
+    };
+    if (input.artifact.schemaVersion === 'report-package-v1') {
+      const frozen = await reportPackageArtifacts.verify({
+        artifactId: input.artifact.id,
+        attemptId: input.attemptId,
+      });
+      return reportPackageReader.read(binding, frozen.value);
+    }
+    if (input.artifact.schemaVersion === 'report-package-v2') {
+      return reportPackageReader.read(binding, {
+        artifactId: input.artifact.id,
+        contentSha256: actualHash,
+      });
+    }
+    if (input.artifact.schemaVersion === 'report-package-v3') {
+      const frozen = await reportPackageV3Artifacts.verify({
+        artifactId: input.artifact.id,
+        taskId: input.taskId,
+        planVersionId: input.planVersionId,
+        attemptId: input.attemptId,
+      });
+      const canonical = await reportPackageReader.read(binding, {
+        artifactId: frozen.value.canonicalPackageArtifactId,
+        contentSha256: frozen.value.canonicalPackageContentSha256,
+      });
+      if (!canonical || canonical.presentationMode !== 'multimodal') {
+        throw new Error('Report Package v3 canonical report is unavailable');
+      }
+      return {
+        ...canonical,
+        editorialShowcase: frozen.value,
+      };
+    }
+    throw new Error(`Report Package schema version ${input.artifact.schemaVersion} is unsupported`);
+  };
   const deliverables = new CurrentDeliverableService({
     llm: new ReceiptLLMClient(llm, repository),
     validator,
@@ -523,6 +695,8 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
     deliverables,
     reportReview,
     reportComposition,
+    reportEditorialExperienceV1Enabled,
+    standaloneHtmlBundleV1Enabled,
     visualInputMaterializer: new VisualInputMaterializer({ visualAssets, imageAnnotations }),
     visualInputGates,
   });
@@ -574,18 +748,35 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       if (!candidate) {
         throw new CandidateProfileNoLongerEligibleError(activePlan.candidateId);
       }
-      const compiled = new PlanCompiler(validator).compile({
-        candidate,
-        task: structuredTask,
-        deliverable_selection: deliverableSelection,
-        problem_graph: planningResult.problemGraph,
-        problem_graph_provenance: planningResult.problemGraphProvenance,
-        capability_resolution: planningResult.capabilityResolution,
-        evidence_requirements: deliverableSelection.evidenceRequirements,
-        activated_nodes: planningResult.activatedNodes,
-        planning_provenance: planningResult.planningProvenance,
-        requireCompetitiveWeightContract: true,
-      });
+      const portfolio = planningResult.portfolios?.[candidate.id];
+      const compiler = new PlanCompiler(validator);
+      const compiled = planningResult.capabilityDemandGraph && portfolio
+        ? compiler.compilePortfolio({
+            candidate,
+            task: structuredTask,
+            deliverable_selection: deliverableSelection,
+            problem_graph: planningResult.problemGraph,
+            problem_graph_provenance: planningResult.problemGraphProvenance,
+            capability_resolution: planningResult.capabilityResolution,
+            evidence_requirements: deliverableSelection.evidenceRequirements,
+            capability_demand_graph: planningResult.capabilityDemandGraph,
+            portfolio,
+            activated_nodes: planningResult.activatedNodes,
+            planning_provenance: planningResult.planningProvenance,
+            requireCompetitiveWeightContract: true,
+          })
+        : compiler.compile({
+            candidate,
+            task: structuredTask,
+            deliverable_selection: deliverableSelection,
+            problem_graph: planningResult.problemGraph,
+            problem_graph_provenance: planningResult.problemGraphProvenance,
+            capability_resolution: planningResult.capabilityResolution,
+            evidence_requirements: deliverableSelection.evidenceRequirements,
+            activated_nodes: planningResult.activatedNodes,
+            planning_provenance: planningResult.planningProvenance,
+            requireCompetitiveWeightContract: true,
+          });
       return {
         plan: { ...compiled.plan, task_id: task.id },
         pendingInputs: compiled.pending_inputs,
@@ -609,22 +800,22 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       }),
       reportPackages: {
         async read(input) {
-          const frozen = await reportPackageArtifacts.verify({
-            artifactId: input.reportPackageArtifactId,
-            attemptId: input.attemptId,
-          });
+          const packageArtifact = await repository.getArtifact(input.reportPackageArtifactId);
           if (
-            frozen.artifact.contentSha256 !== input.reportPackageHash
-            || frozen.value.taskId !== input.taskId
-            || frozen.value.planVersionId !== input.planVersionId
+            !packageArtifact
+            || packageArtifact.taskId !== input.taskId
+            || packageArtifact.planVersionId !== input.planVersionId
+            || packageArtifact.attemptId !== input.attemptId
           ) {
             throw new Error('frozen Report Package identity is invalid');
           }
-          return reportPackageReader.read({
+          return readFrozenReportPackage({
+            artifact: packageArtifact,
             taskId: input.taskId,
             planVersionId: input.planVersionId,
             attemptId: input.attemptId,
-          }, frozen.value);
+            expectedContentSha256: input.reportPackageHash,
+          });
         },
       },
       readVisualAsset: (input) => visualAssets.readVerified(input),
@@ -652,11 +843,91 @@ export function buildControlRuntime(overrides: ControlRuntimeOverrides = {}): Co
       ) {
         return null;
       }
-      return reportPackageReader.read({
+      const binding = {
         taskId: task.id,
         planVersionId: task.activePlanVersionId,
         attemptId: task.currentAttemptId,
+      };
+      const packageArtifact = await fixedReportPackageRoot(binding);
+      if (packageArtifact) {
+        return readFrozenReportPackage({
+          artifact: packageArtifact,
+          taskId: binding.taskId,
+          planVersionId: binding.planVersionId,
+          attemptId: task.currentAttemptId,
+        });
+      }
+      return reportPackageReader.read(binding);
+    },
+    async readHtmlBundle(input) {
+      const task = await repository.getTaskDetail(input.taskId);
+      if (
+        !task
+        || task.ownerUserId !== input.ownerUserId
+        || task.conversationOwnerUserId !== input.ownerUserId
+        || (task.state !== 'completed' && task.state !== 'completed_with_gaps')
+        || !task.activePlanVersionId
+        || task.currentAttemptId !== input.attemptId
+      ) {
+        return null;
+      }
+      const packageArtifact = await fixedReportPackageV2Root({
+        taskId: task.id,
+        planVersionId: task.activePlanVersionId,
+        attemptId: input.attemptId,
       });
+      if (!packageArtifact) {
+        throw new HtmlBundleUnavailableError();
+      }
+      return standaloneHtmlBundles.create({
+        taskId: task.id,
+        planVersionId: task.activePlanVersionId,
+        attemptId: input.attemptId,
+        reportPackageArtifactId: packageArtifact.id,
+      });
+    },
+    async readEditorialShowcaseHtml(input) {
+      const task = await repository.getTaskDetail(input.taskId);
+      if (
+        !task
+        || task.ownerUserId !== input.ownerUserId
+        || task.conversationOwnerUserId !== input.ownerUserId
+        || (task.state !== 'completed' && task.state !== 'completed_with_gaps')
+        || !task.activePlanVersionId
+        || task.currentAttemptId !== input.attemptId
+      ) {
+        return null;
+      }
+      const binding = {
+        taskId: task.id,
+        planVersionId: task.activePlanVersionId,
+        attemptId: input.attemptId,
+      };
+      const packageArtifact = await fixedReportPackageRoot(binding);
+      if (!packageArtifact || packageArtifact.schemaVersion !== 'report-package-v3') {
+        throw new HtmlBundleUnavailableError();
+      }
+      const verified = await reportPackageV3Artifacts.verify({
+        artifactId: packageArtifact.id,
+        ...binding,
+      });
+      if (verified.value.showcase.status !== 'ready') {
+        throw new HtmlBundleUnavailableError();
+      }
+      const html = await artifacts.readVerifiedBoundText(
+        verified.value.showcase.htmlArtifactId,
+      );
+      if (
+        html.artifact.kind !== 'editorial_showcase_html'
+        || html.artifact.schemaVersion !== 'editorial-showcase-html-v1'
+        || html.artifact.mediaType !== 'text/html; charset=utf-8'
+        || html.artifact.taskId !== binding.taskId
+        || html.artifact.planVersionId !== binding.planVersionId
+        || html.artifact.attemptId !== binding.attemptId
+      ) {
+        throw new HtmlBundleIntegrityError();
+      }
+      return html.content;
     },
     async readVisualAsset(input) {
       const task = await repository.getTaskDetail(input.taskId);

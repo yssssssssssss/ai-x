@@ -4,6 +4,9 @@ import type { ReportReviewArtifact } from '../../../../packages/api-contract/con
 import type {
   ChartSpec,
   ResearchDeliverableEnvelope,
+  ResearchPlanPayload,
+  ResearchStrategyReportPayload,
+  ResearchStrategyReportPayloadV2,
   VisualAssetManifest,
   VisualAssetReference,
 } from '../../../../packages/api-contract/research-deliverable.ts';
@@ -26,6 +29,18 @@ import {
   type ChartEvidenceResolver,
 } from './chart-spec-validator.ts';
 import {
+  assertReportProjectionIntegrity,
+  projectResearchPlan,
+  requiredPayloadPointers,
+} from './report-projection.ts';
+import { composeResearchStrategyDocument } from './dynamic-report-composer.ts';
+import { isResearchStrategyPayloadV2 } from './research-strategy-deliverable-assembler.ts';
+import {
+  deterministicReportLayout,
+  type ReportLayoutPlanResult,
+} from './report-layout-planner.ts';
+import { projectResearchStrategyReportV2 } from './research-strategy-report-projector.ts';
+import {
   assertCompetitiveWeightChartBinding,
   parseCompetitiveWeightChartData,
   type CompetitiveWeightChartData,
@@ -33,6 +48,7 @@ import {
 import { assertValidReportReviewArtifact } from './report-review-service.ts';
 import {
   resolveDeliverableContractById,
+  selectReadablePayloadSchema,
   type DeliverableContractResources,
 } from './deliverable-registry.ts';
 import {
@@ -77,6 +93,33 @@ export interface ReportListBlock {
   items: string[];
 }
 
+export interface ReportProjectionListBlock {
+  id: string;
+  type: 'projection-list';
+  items: string[];
+  sourcePointers: string[];
+  sourceNodeIds?: string[];
+  summary: boolean;
+}
+
+export interface ReportAnswerBlock {
+  id: string;
+  type: 'answer';
+  kind: 'direct_answer' | 'evidence_finding' | 'strategy_map' | 'mind_model' | 'comparison_matrix' | 'design_principle' | 'opportunity' | 'priority_matrix' | 'action_plan' | 'risk';
+  title: string;
+  text: string;
+  items: string[];
+  questionIds: string[];
+  evidenceIds: string[];
+  findingIds: string[];
+  summaryIds: string[];
+  confidence?: number;
+  answerStatus?: 'supported' | 'provisional' | 'unanswered';
+  sourcePointers: string[];
+  sourceNodeIds?: string[];
+  summary: boolean;
+}
+
 export interface ReportImageBlock {
   id: string;
   type: 'image';
@@ -112,6 +155,8 @@ export type ReportBlock =
   | ReportFactBlock
   | ReportMetricBlock
   | ReportListBlock
+  | ReportProjectionListBlock
+  | ReportAnswerBlock
   | ReportImageBlock
   | ReportImageComparisonBlock
   | ReportChartBlock;
@@ -121,14 +166,21 @@ export interface ReportSection {
   title: string;
   questionIds: string[];
   blocks: ReportBlock[];
+  prominence?: 'primary' | 'supporting' | 'appendix';
 }
 
 export interface ReportDocument {
-  version: 'report-document-v1';
+  version: 'report-document-v1' | 'report-document-v2';
   title: string;
   subtitle: string;
   executiveSummary: string;
   sections: ReportSection[];
+  sourceDeliverableArtifactId?: string;
+  projectionMode?: 'full' | 'summary';
+  coveredPointers?: string[];
+  omittedPointers?: Array<{ pointer: string; reason: string }>;
+  layoutMode?: 'model' | 'fallback';
+  layoutWarnings?: string[];
 }
 
 interface ArtifactValue<T> {
@@ -159,11 +211,14 @@ export interface ComposeReportDocumentInput {
   review: ArtifactValue<ReportReviewArtifact>;
   visualAssets: VerifiedVisualAsset[];
   charts: VerifiedChart[];
+  layout?: ReportLayoutPlanResult;
 }
 
 export interface ReportDocumentReferenceContext {
   requiredQuestionIds: string[];
   evidenceIds: string[];
+  findingIds?: string[];
+  summaryIds?: string[];
   visualAssets: ReportAssetReference[];
   charts: ReportVerifiedChartReference[];
 }
@@ -353,7 +408,7 @@ function chartManifestSpecHash(asset: VerifiedVisualAsset): string {
   return derivation.specHash;
 }
 
-function assertCompositionInput(input: ComposeReportDocumentInput): {
+export function assertReportCompositionInput(input: ComposeReportDocumentInput): {
   binding: ArtifactBinding;
   contract: DeliverableContractResources;
 } {
@@ -382,8 +437,9 @@ function assertCompositionInput(input: ComposeReportDocumentInput): {
   );
   assertSealedJsonValue(input.deliverable.artifact, deliverable, 'Deliverable');
   assertValueBinding(deliverable, binding, 'Deliverable');
+  const readablePayload = selectReadablePayloadSchema(contract, deliverable.payload);
   const payloadSchema = Object.fromEntries(
-    Object.entries(contract.payloadSchema)
+    Object.entries(readablePayload.schema)
       .filter(([key]) => key !== '$schema' && key !== '$id'),
   );
   DOCUMENT_SCHEMA.validateSchemaOrThrow(
@@ -414,11 +470,17 @@ function assertCompositionInput(input: ComposeReportDocumentInput): {
     requireCoverage: true,
   });
 
-  assertSealedArtifact(input.review.artifact, binding, 'Review', 'report_review', ['report-review-v1']);
+  assertSealedArtifact(input.review.artifact, binding, 'Review', 'report_review', ['report-review-v1', 'report-review-v2']);
   assertSealedJsonValue(input.review.artifact, input.review.value, 'Review');
   assertValueBinding(input.review.value, binding, 'Review');
   assertValidReportReviewArtifact(input.review.value, DOCUMENT_SCHEMA);
-  if (input.review.value.version !== 'report-review-v1') fail('Review value version must be report-review-v1');
+  const expectedReviewVersion = contract.entry.id === 'research_strategy_report'
+    ? 'report-review-v2'
+    : 'report-review-v1';
+  if (input.review.value.version !== expectedReviewVersion) {
+    fail(`Review value version must be ${expectedReviewVersion} for ${contract.entry.id}`);
+  }
+  if (input.review.artifact.schemaVersion !== input.review.value.version) fail('Review Artifact schema version does not match its value');
   if (input.review.value.verdict !== 'pass') {
     fail(`Review verdict must be pass, received ${input.review.value.verdict}`);
   }
@@ -1420,14 +1482,34 @@ export function assertValidReportDocument(
   }
 
   const evidenceIds = new Set(references.evidenceIds);
+  const findingIds = new Set(references.findingIds ?? []);
+  const summaryIds = new Set(references.summaryIds ?? []);
   const visualReferences = new Set(references.visualAssets.map(assetReferenceKey));
   const chartReferences = new Set(references.charts.map(chartReferenceKey));
   for (const section of document.sections) {
+    if (document.version === 'report-document-v2' && section.blocks.length === 0) {
+      fail(`report-document-v2 section ${section.id} must contain at least one block`);
+    }
     assertUnique(section.questionIds, `question id in section ${section.id}`);
     for (const block of section.blocks) {
-      if (block.type === 'fact' || block.type === 'metric') {
+      if (block.type === 'fact' || block.type === 'metric' || block.type === 'answer') {
         for (const evidenceId of block.evidenceIds) {
           if (!evidenceIds.has(evidenceId)) fail(`${block.type} block ${block.id} references dangling Evidence ${evidenceId}`);
+        }
+        if (block.type === 'answer') {
+          for (const findingId of block.findingIds) {
+            if (!findingIds.has(findingId)) fail(`answer block ${block.id} references dangling Finding ${findingId}`);
+          }
+          for (const summaryId of block.summaryIds) {
+            if (!summaryIds.has(summaryId)) fail(`answer block ${block.id} references dangling Summary ${summaryId}`);
+          }
+          if (block.kind === 'direct_answer') {
+            if (!block.answerStatus) fail(`direct answer block ${block.id} has no typed answerStatus`);
+            if (block.summaryIds.length === 0) fail(`direct answer block ${block.id} has no Summary provenance`);
+          }
+          if (block.evidenceIds.length > 0 && block.findingIds.length === 0) {
+            fail(`answer block ${block.id} has Evidence without Finding provenance`);
+          }
         }
       } else if (block.type === 'image') {
         if (!visualReferences.has(assetReferenceKey(block.assetRef))) {
@@ -1473,25 +1555,109 @@ export function assertValidReportDocument(
 }
 
 export function composeReportDocument(input: ComposeReportDocumentInput): ReportDocument {
-  const { contract } = assertCompositionInput(input);
+  const { contract } = assertReportCompositionInput(input);
+  if (input.deliverable.value.deliverableType === 'research_strategy_report') {
+    const payload = input.deliverable.value.payload;
+    const readablePayload = selectReadablePayloadSchema(contract, payload);
+    const common = {
+      deliverableArtifactId: input.deliverable.artifact.id,
+      payloadSchema: readablePayload.schema,
+      evidenceIndex: input.evidenceManifest.value.entries.map((entry) => `${entry.id}: ${entry.evidenceClass}`),
+      evidenceIds: input.evidenceManifest.value.entries.map(({ id }) => id),
+      findingGraph: input.deliverable.value.findingGraph,
+      coverage: input.deliverable.value.coverage!,
+    };
+    const layout = isResearchStrategyPayloadV2(payload)
+      ? input.layout ?? deterministicReportLayout(payload as ResearchStrategyReportPayloadV2)
+      : null;
+    const document = isResearchStrategyPayloadV2(payload)
+      ? projectResearchStrategyReportV2({
+          ...common,
+          payload: payload as ResearchStrategyReportPayloadV2,
+          blueprint: layout!.blueprint,
+          layoutMode: layout!.mode,
+          layoutWarnings: layout!.warnings,
+        })
+      : composeResearchStrategyDocument({
+          ...common,
+          payload: payload as ResearchStrategyReportPayload,
+          envelopeRisksAndOpenIssues: input.deliverable.value.risksAndOpenIssues,
+        });
+    assertReportProjectionIntegrity({
+      document,
+      deliverableArtifactId: input.deliverable.artifact.id,
+      payload,
+      requiredPointers: requiredPayloadPointers(readablePayload.schema),
+    });
+    assertValidReportDocument(document, {
+      requiredQuestionIds: input.requiredQuestionIds,
+      evidenceIds: input.evidenceManifest.value.entries.map(({ id }) => id),
+      findingIds: input.deliverable.value.findingGraph.findings.map(({ id }) => id),
+      summaryIds: input.deliverable.value.findingGraph.subQuestionSummaries.map(({ id }) => id),
+      visualAssets: input.visualAssets.map(assetReference),
+      charts: input.charts.map(({ spec, asset }) => ({
+        chartId: spec.chartId,
+        ...assetReference(asset),
+        specHash: chartManifestSpecHash(asset),
+      })),
+    });
+    return document;
+  }
   const template = contract.reportTemplate;
   const executiveSummary = composeExecutiveSummary(input.deliverable.value);
+  const baseSections = template.sections.map((section): ReportSection => ({
+    id: section.id,
+    title: section.title,
+    questionIds: section.id === 'question-analysis' ? [...input.requiredQuestionIds] : [],
+    blocks: composeSectionBlocks(
+      section.id,
+      input,
+      executiveSummary,
+    ),
+  }));
+  const researchPlan = input.deliverable.value.deliverableType === 'research_plan'
+    ? projectResearchPlan({
+        payload: input.deliverable.value.payload as ResearchPlanPayload,
+        deliverableArtifactId: input.deliverable.artifact.id,
+        requiredPointers: requiredPayloadPointers(contract.payloadSchema),
+      })
+    : null;
+  const visibleBaseSections = researchPlan
+    ? baseSections.filter((section) => section.blocks.length > 0)
+    : baseSections;
+  const conclusionIndex = visibleBaseSections.findIndex(({ id }) => id === 'conclusion');
+  const sections = researchPlan
+    ? conclusionIndex < 0
+      ? [...visibleBaseSections, ...researchPlan.sections]
+      : [
+          ...visibleBaseSections.slice(0, conclusionIndex),
+          ...researchPlan.sections,
+          ...visibleBaseSections.slice(conclusionIndex),
+        ]
+    : visibleBaseSections;
   const document: ReportDocument = {
-    version: 'report-document-v1',
+    version: researchPlan ? 'report-document-v2' : 'report-document-v1',
     title: reportTitle(input.deliverable.value),
     subtitle: template.subtitle,
     executiveSummary,
-    sections: template.sections.map((section): ReportSection => ({
-      id: section.id,
-      title: section.title,
-      questionIds: section.id === 'question-analysis' ? [...input.requiredQuestionIds] : [],
-      blocks: composeSectionBlocks(
-        section.id,
-        input,
-        executiveSummary,
-      ),
-    })),
+    sections,
+    ...(researchPlan
+      ? {
+          sourceDeliverableArtifactId: researchPlan.coverage.sourceDeliverableArtifactId,
+          projectionMode: researchPlan.coverage.projectionMode,
+          coveredPointers: researchPlan.coverage.coveredPointers,
+          omittedPointers: researchPlan.coverage.omittedPointers,
+        }
+      : {}),
   };
+  if (researchPlan) {
+    assertReportProjectionIntegrity({
+      document,
+      deliverableArtifactId: input.deliverable.artifact.id,
+      payload: input.deliverable.value.payload,
+      requiredPointers: requiredPayloadPointers(contract.payloadSchema),
+    });
+  }
   assertValidReportDocument(document, {
     requiredQuestionIds: input.requiredQuestionIds,
     evidenceIds: input.evidenceManifest.value.entries.map(({ id }) => id),

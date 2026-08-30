@@ -40,6 +40,7 @@ const EDITORIAL_DELIVERABLE_TYPES = new Set<EditorialDeliverableType>([
 ]);
 
 type VerifiedJson<T = unknown> = { artifact: ControlArtifact; value: T };
+type VerifiedText = { artifact: ControlArtifact; content: string };
 
 interface EvidenceBudgetEntry {
   artifactId: string;
@@ -201,6 +202,7 @@ function assertReportPackageArtifact(
 class MemoizedEditorialArtifacts implements EditorialArtifactReader {
   private readonly json = new Map<string, Promise<VerifiedJson>>();
   private readonly boundJson = new Map<string, Promise<VerifiedJson>>();
+  private readonly boundText = new Map<string, Promise<VerifiedText>>();
   private readonly binary = new Map<string, ReturnType<EditorialArtifactReader['readVerifiedBinary']>>();
   private readonly metadata = new Map<string, Promise<ControlArtifact>>();
   private readonly verified = new Map<string, ControlArtifact>();
@@ -300,6 +302,26 @@ class MemoizedEditorialArtifacts implements EditorialArtifactReader {
       this.boundJson.set(artifactId, pending);
     }
     return pending as Promise<{ artifact: ControlArtifact; value: T }>;
+  }
+
+  readVerifiedBoundText(artifactId: string): Promise<VerifiedText> {
+    let pending = this.boundText.get(artifactId);
+    if (!pending) {
+      pending = this.preflightJson([artifactId])
+        .then(async () => {
+          const delegate = this.delegate as EditorialArtifactReader & {
+            readVerifiedBoundText?: (id: string) => Promise<VerifiedText>;
+          };
+          if (!delegate.readVerifiedBoundText) fail('SOURCE_INTEGRITY_INVALID');
+          const result = await delegate.readVerifiedBoundText(artifactId);
+          const metadata = await this.metadataFor(artifactId);
+          if (!artifactMetadataMatches(metadata, result.artifact)) fail('SOURCE_INTEGRITY_INVALID');
+          this.verified.set(result.artifact.id, result.artifact);
+          return result;
+        });
+      this.boundText.set(artifactId, pending);
+    }
+    return pending;
   }
 
   readVerifiedBinary(artifactId: string): ReturnType<EditorialArtifactReader['readVerifiedBinary']> {

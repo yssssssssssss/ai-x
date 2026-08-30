@@ -8,7 +8,7 @@ description: 吃一个研究需求（可能很碎、很模糊，甚至只有一�
 id: skill_generate_research_plan
 source: xingyun_wiki
 source_path: skills/generate-research-plan/SKILL.md
-content_hash: sha256:3b07113d20a872720ff6273292dbfe3c642ba2888d3a8ab94c484e1b4fafd19f
+content_hash: sha256:2e6dc9b242131ea3e54436044bebe356ab716bd7235bc012548ace9a48af5755
 guide_tags: []
 guide_stage: []
 type: skill
@@ -18,6 +18,8 @@ task_types:
   - user_research_planning
 required_tools:
   - tavily-web-search
+execution_mode: compiled
+execution_contract: orchestrator/skill-executions/generate-research-plan.yaml
 inputs: []
 outputs: []
 status: approved
@@ -25,7 +27,9 @@ status: approved
 
 # Generate Research Plan — 研究需求 →（对齐）研究 brief →（展开）可执行研究方案
 
-吃一个研究需求，交付一份**这次专用**的研究方案。真人研究员接到需求不会立刻写方案，而是**先把需求问清、对齐成 brief，再展开成方案**——本 skill 复刻这套「一份方案到底」的工作方式：一个 skill、两个内部阶段，中间留一道「需求不清就停下来」的闸门。本 skill 不发明研究方法，而是**实时编排**用研知识库（`research-wiki/`）里既有的正典——需求沟通规范、项目流程规范、采集/分析方法本体、场景打法、理论模型——把它们组装成贴合本次决策的执行方案。
+吃一个研究需求，交付一份**这次专用**的研究方案。真人研究员接到需求不会立刻写方案，而是**先把需求问清、对齐成 brief，再展开成方案**——本 skill 复刻这套「一份方案到底」的工作方式：一个 skill、两个内部阶段，中间留一道「需求不清就停下来」的闸门。本 skill 不发明研究方法，而是编排系统在确认前从受控 Knowledge 索引选定并冻结的正典——需求沟通规范、项目流程规范、采集/分析方法本体、场景打法、理论模型——把它们组装成贴合本次决策的执行方案。
+
+机器执行以 `orchestrator/skill-executions/generate-research-plan.yaml` 为唯一拓扑真相：确认前展开为 7 个可见阶段——外部上下文 Tool、Knowledge 加载、brief 对齐、方法选择、抽样与排期、方案合成、自审。本文“阶段一/阶段二”只是这 7 个节点的业务说明，不代表隐藏的二阶段执行。Tool 只能使用本 Skill Registry 声明并在冻结能力决策中授权的 `tavily-web-search`。
 
 ## 北极星与边界（先理解，再动手）
 
@@ -37,18 +41,18 @@ status: approved
 
 ## 四条纪律（本 skill 必须遵守，产出据此被信任）
 
-1. **数据源 = 当前 master 版 wiki，运行时实时读取。** 本 SKILL 只告诉你「去读哪些路径、抽什么」，**绝不把正典内容写死在这里或 references 里**。每次都从当前 wiki 现读，确保始终是最新版。
+1. **数据源 = 确认前冻结的受控 Knowledge 清单。** 只读取执行计划中可见的逻辑资源 ID；每项绑定索引状态、规范化相对路径和内容哈希。执行时必须重新计算正文哈希；资源缺失可重试，状态、路径或内容漂移必须重新生成并再次确认计划，绝不静默读取当前 master 或扫描任意路径。
 2. **产出末尾固定附《本次运行说明》**，让使用者知道这份方案（或 brief）建立在什么之上、哪里可能不牢。模板见 `references/run-notes-template.md`，五个部分一个都不能少。
 3. **在正文里就地声明局限**：基于 draft（未评审）正典的部分、抽样段在规范读不到时给的无背书通用建议、因未找到贴合场景而用通用方法兜底的部分，都在该处直接标注，别让使用者误以为处处有正典背书。
 4. **缺内容不编造。** 读不到的正典、空的目录、走空的链接——标「未找到 / 待补充」，绝不凭空生成看似正典的方法、规则或结论。宁可少给，不可误导。高风险处（尤其抽样）尤其如此。
 
-## 第 0 步：定位 wiki 根目录
+## 第 0 步：使用冻结的 Knowledge 绑定
 
-本 skill 安装后可能脱离仓库运行，所以先确认能读到正典：
+系统在计划确认前从 Knowledge 索引中按 Requirement 选择资源，并把逻辑 ID、规范化相对路径、状态与内容哈希显示在冻结计划中。执行阶段只消费这些已绑定资源：不得自行遍历文件系统、使用 Shell、glob 或任意路径读取补充材料。
 
-- 约定：下文所有正典路径都**相对 wiki 根**（即 `research-wiki/` 那一层，其下有 `methods/ models/ assets/`）。
-- 定位顺序：① 看当前工作目录下或其内是否有 `research-wiki/`；② 若当前已在该树内，向上找到含 `methods/ models/ assets/` 的那一层；③ 都不确定时，用 glob 搜锚文件 `**/methods/standards/research-project-workflow.md`，其所在的 `.../research-wiki/` 即根。
-- **找不到 wiki**：不要硬编一份方案糊弄。如实告诉用户「未能访问 research-wiki 正典」，请其确认知识库位置后再跑；确需先给草稿时，明确声明「未基于正典、仅通用经验」。
+- **资源临时缺失**：停止当前步骤并提供重试或终止。
+- **状态、路径或内容哈希漂移**：不得重试旧计划；要求重新生成并再次确认计划，或终止任务。
+- **低于资源查询最小数量**：按机器合同的 `failure_policy` 在确认前阻断，或以可见 `resource_gaps` 记录，不得静默缩减。
 
 ---
 
@@ -121,11 +125,11 @@ status: approved
 
 ## 2.2 方法选型（采集 + 分析）
 
-先读索引看清"货架上有什么"，再按 brief 的研究目的与内容挑方法：
+先使用冻结的 Knowledge 清单确认本次可用的方法，再按 brief 的研究目的与内容挑方法；不得在执行中扩大资源集合：
 
-- 读 `methods/toolbox/collection/index.md`（采集方法条目清单：文件 / 方法 / method_family / 何时用 / status）。
-- 读 `methods/toolbox/analysis/index.md`（分析技术条目清单，同上字段）。
-- 按"这个研究问题需要什么证据"挑选**采集 + 分析**的组合，再打开选中的那几篇方法本体抽要点（如怎么做、注意事项）。读到的每篇都记下相对路径与 `status`。
+- 采集方法由 `collection-methods` 查询绑定 2–3 篇。
+- 分析技术由 `analysis-methods` 查询绑定 3–5 篇。
+- 按“这个研究问题需要什么证据”选择**采集 + 分析**组合，并从已绑定本体抽取怎么做、注意事项、相对路径与 `status`。
 - **克制地只开你真要用的那几篇。** 先用索引的「何时用」列筛掉不相关的，再打开——通常一次方案用 2–3 篇采集 + 3–5 篇分析就够覆盖研究内容；不必把货架读遍。读了却不会写进方案的，就别打开，省时也省得方案堆砌。
 
 **选型必须给理由**：每个选用的方法说清"为什么它能回答本次的研究问题"；同时点名 1–2 个**排除的方法**及排除理由（如成本、时间、不匹配研究阶段）——这能体现方案是权衡过的，不是随手堆的。

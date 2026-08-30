@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import type { ControlArtifact } from '../database/control-plane.ts';
 import {
   REPORT_REVIEW_DIMENSION_IDS,
+  REPORT_REVIEW_V2_DIMENSION_IDS,
   type ReportReviewArtifact,
 } from '../packages/api-contract/control-workflow.ts';
 import type {
@@ -36,6 +37,12 @@ import {
   SchemaValidator,
 } from '../apps/orchestrator-runtime/src/schema/validator.ts';
 import { createReportDocumentViewModel } from '../apps/web/src/reporting/report-document-view-model.ts';
+import {
+  researchStrategyCoverageV2,
+  researchStrategyFindingGraphV2,
+  researchStrategyLayoutV1,
+  researchStrategyPayloadV2,
+} from './fixtures/research-strategy-v2.ts';
 import {
   COMPETITIVE_WEIGHT_CHART_DATA_VERSION,
   COMPETITIVE_WEIGHT_CHART_ID,
@@ -89,6 +96,28 @@ const REQUIRED_SECTION_IDS = [
   'risks',
   'appendix',
 ] as const;
+
+const RESEARCH_PLAN_DETAIL_SECTION_IDS = [
+  'plan-definition',
+  'research-questions',
+  'comparison-framework',
+  'evidence-plan',
+  'execution-roadmap',
+  'collection-template',
+  'analysis-methods',
+  'deliverables',
+  'quality-assurance',
+] as const;
+
+function expectedResearchPlanSections(hasVisuals: boolean): string[] {
+  const base = REQUIRED_SECTION_IDS.filter((id) => hasVisuals || (id !== 'visual-evidence' && id !== 'comparison'));
+  const conclusionIndex = base.indexOf('conclusion');
+  return [
+    ...base.slice(0, conclusionIndex),
+    ...RESEARCH_PLAN_DETAIL_SECTION_IDS,
+    ...base.slice(conclusionIndex),
+  ];
+}
 
 function sha(character: string): string {
   return `sha256:${character.repeat(64)}`;
@@ -1029,7 +1058,7 @@ test('composer omits visual blocks rather than generating placeholders when no v
 
   assert.equal(blocks.some(({ type }) => ['image', 'image-comparison', 'chart'].includes(type)), false);
   assert.equal(JSON.stringify(document).toLowerCase().includes('placeholder'), false);
-  assert.deepEqual(document.sections.map(({ id }) => id), [...REQUIRED_SECTION_IDS]);
+  assert.deepEqual(document.sections.map(({ id }) => id), expectedResearchPlanSections(false));
 });
 
 test('composer pairs an annotation with its original into a production-view image comparison', () => {
@@ -1081,7 +1110,13 @@ test('composer creates a schema-valid professional research-plan document with o
   assert.doesNotThrow(() => assertValidReportDocument(document, referenceContext()));
   assert.equal(document.title, input.deliverable.value.payload.title);
   assert.ok(document.executiveSummary.trim().length > 0);
-  assert.deepEqual(document.sections.map(({ id }) => id), [...REQUIRED_SECTION_IDS]);
+  assert.equal(document.version, 'report-document-v2');
+  assert.deepEqual(document.coveredPointers, [
+    '/title', '/researchGoal', '/scope', '/competitorSampling', '/researchQuestions',
+    '/comparisonDimensions', '/sourcePlan', '/executionPlan', '/collectionTemplate',
+    '/analysisMethods', '/deliverables', '/qualityChecks',
+  ]);
+  assert.deepEqual(document.sections.map(({ id }) => id), expectedResearchPlanSections(true));
   assert.ok(document.sections.some(({ questionIds }) => questionIds.includes('question-1')));
 
   const blocks = document.sections.flatMap(({ blocks }) => blocks);
@@ -1105,6 +1140,70 @@ test('composer creates a schema-valid professional research-plan document with o
     assetId: chartAssetId,
     manifestArtifactId: chartManifestArtifactId,
   });
+});
+
+test('composer validates and projects an open strategy payload with model-directed section order', () => {
+  const payload = researchStrategyPayloadV2();
+  const strategyDeliverable: ResearchDeliverableEnvelope<typeof payload> = {
+    version: 'research-deliverable-v1',
+    ...binding,
+    deliverableType: 'research_strategy_report',
+    evidenceManifestArtifactId,
+    methodSummary: 'Verified strategy synthesis.',
+    findingGraph: researchStrategyFindingGraphV2(),
+    payload,
+    recommendations: [{ id: 'recommendation-Q1', statement: 'Ship a source-backed trust card.', summaryIds: ['summary-Q1'] }],
+    coverage: researchStrategyCoverageV2(),
+    risksAndOpenIssues: [],
+    capabilityProvenance: [],
+  };
+  const strategyEvidence = new EvidenceService().createManifest({
+    ...binding,
+    collectedAt: '2026-08-23T00:00:00.000Z',
+    entries: [{
+      id: 'E1', kind: 'tool_output', evidenceClass: 'dataset', artifactId: evidenceArtifactId,
+      artifactContentSha256: sha('e'), jsonPointer: '/metrics/competitorScore', sensitivity: 'internal', redaction: 'none',
+    }],
+  }, evidenceArtifactResolver);
+  const strategyReview: ReportReviewArtifact = {
+    version: 'report-review-v2',
+    ...binding,
+    deliverableArtifactId,
+    verdict: 'pass',
+    dimensions: REPORT_REVIEW_V2_DIMENSION_IDS.map((id) => ({ id, passed: true, issues: [] })),
+    revisionRound: 0,
+  };
+  const document = composeReportDocument({
+    templateId: 'research-plan',
+    requiredQuestionIds: ['Q1'],
+    deliverable: {
+      artifact: sealedJsonArtifact(deliverableArtifactId, 'deliverable', 'research-deliverable-v1-review-gated', strategyDeliverable),
+      value: strategyDeliverable,
+    },
+    evidenceManifest: {
+      artifact: sealedJsonArtifact(evidenceManifestArtifactId, 'evidence_manifest', 'evidence-v1', strategyEvidence),
+      value: strategyEvidence,
+    },
+    evidenceArtifactResolver,
+    review: {
+      artifact: sealedJsonArtifact(reviewArtifactId, 'report_review', 'report-review-v2', strategyReview),
+      value: strategyReview,
+    },
+    visualAssets: [],
+    charts: [],
+    layout: { blueprint: researchStrategyLayoutV1(), mode: 'model', warnings: [] },
+  });
+
+  assert.equal(document.layoutMode, 'model');
+  assert.deepEqual(document.sections.slice(1, 3).map(({ title }) => title), ['Act first', 'Why it works']);
+  assert.doesNotThrow(() => schemaValidator.validateOrThrow('report-document', document));
+});
+
+test('report-document-v2 schema and reader validation reject empty sections', () => {
+  const document = composeReportDocument(composeInput());
+  document.sections[0]!.blocks = [];
+  assert.throws(() => schemaValidator.validateOrThrow('report-document', document), /blocks|fewer than 1/u);
+  assert.throws(() => assertValidReportDocument(document, referenceContext()), /must contain at least one block|blocks/u);
 });
 
 test('composer accepts production-realistic Manifest Artifact serialization distinct from canonical manifestHash', () => {

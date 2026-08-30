@@ -2,7 +2,12 @@ import type {
   EvidenceEntry,
   ResearchDeliverableEnvelope,
 } from '../../../../packages/api-contract/research-deliverable.ts';
-import type { ReportDocument } from './report-document-composer.ts';
+import type {
+  ReadableReportDocument,
+  ReportBlockV1V2,
+  ReportBlockV3,
+  ReportBlockV4,
+} from '../../../../packages/api-contract/report-document.ts';
 import type { VerifiedVisualAsset } from './visual-asset-service.ts';
 import {
   EDITORIAL_MATERIAL_VERSION,
@@ -433,6 +438,34 @@ function comparisonKey(beforeAssetId: string, afterAssetId: string): string {
   return `${beforeAssetId}\u0000${afterAssetId}`;
 }
 
+type AnyReportBlock = ReportBlockV1V2 | ReportBlockV3 | ReportBlockV4;
+
+function indexedReportBlocks(document: ReadableReportDocument): Array<{
+  block: AnyReportBlock;
+  sectionIndex: number;
+  blockIndex: number;
+}> {
+  const sections = document.sections as ReadonlyArray<{ blocks: readonly AnyReportBlock[] }>;
+  return sections.flatMap((section, sectionIndex) => section.blocks.map((block, blockIndex) => ({
+    block,
+    sectionIndex,
+    blockIndex,
+  })));
+}
+
+function reportBlockEvidenceIds(
+  document: ReadableReportDocument,
+  block: AnyReportBlock,
+): string[] {
+  if ('evidenceIds' in block && Array.isArray(block.evidenceIds)) {
+    return uniqueStrings(block.evidenceIds);
+  }
+  if (!('traceIndex' in document) || !('leafRefs' in block)) return [];
+  return uniqueStrings(block.leafRefs.flatMap((leafId) => (
+    document.traceIndex[leafId]?.evidenceIds ?? []
+  )));
+}
+
 function reportVisualBindings(builder: MaterialBuilder): ReportVisualBindings {
   const bindings: ReportVisualBindings = {
     standaloneAssetIds: new Set(),
@@ -440,7 +473,7 @@ function reportVisualBindings(builder: MaterialBuilder): ReportVisualBindings {
     comparisonAfterAssetIds: new Set(),
   };
   if (builder.source.current.presentationMode !== 'multimodal') return bindings;
-  for (const block of builder.source.current.reportDocument.sections.flatMap(({ blocks }) => blocks)) {
+  for (const { block } of indexedReportBlocks(builder.source.current.reportDocument)) {
     if (block.type === 'image') {
       bindings.standaloneAssetIds.add(block.assetRef.assetId);
     } else if (block.type === 'image-comparison') {
@@ -825,7 +858,7 @@ function visualKey(assetId: string, manifestArtifactId: string): string {
   return `${assetId}\u0000${manifestArtifactId}`;
 }
 
-function materializeVisualAssets(builder: MaterialBuilder, document: ReportDocument): void {
+function materializeVisualAssets(builder: MaterialBuilder, document: ReadableReportDocument): void {
   if (!builder.reportDocumentArtifact) fail('SOURCE_INTEGRITY', 'multimodal source has no ReportDocument Artifact');
   const verified = new Map(builder.source.verifiedVisualAssets.map((asset) => [
     visualKey(asset.artifact.id, asset.manifestArtifact.id),
@@ -885,19 +918,27 @@ function materializeVisualAssets(builder: MaterialBuilder, document: ReportDocum
     });
     return { captionUnitId, altTextUnitId };
   };
-  document.sections.forEach((section, sectionIndex) => section.blocks.forEach((block, blockIndex) => {
+  for (const { block, sectionIndex, blockIndex } of indexedReportBlocks(document)) {
     if (block.type === 'chart') {
       builder.warnings.push(createEditorialVisualWarning('VISUAL_SVG_OMITTED'));
-      return;
+      continue;
     }
     if (block.type === 'image') {
       const asset = verified.get(visualKey(block.assetRef.assetId, block.assetRef.manifestArtifactId));
       if (!asset) fail('SOURCE_INTEGRITY', `ReportDocument image ${block.id} has no frozen verified Asset`);
-      if (!accepted(asset)) return;
-      addAsset({ asset, sectionIndex, blockIndex, caption: block.caption, altText: block.altText, evidenceIds: block.evidenceIds ?? [], visualRole: 'standalone' });
-      return;
+      if (!accepted(asset)) continue;
+      addAsset({
+        asset,
+        sectionIndex,
+        blockIndex,
+        caption: block.caption,
+        altText: block.altText,
+        evidenceIds: reportBlockEvidenceIds(document, block),
+        visualRole: 'standalone',
+      });
+      continue;
     }
-    if (block.type !== 'image-comparison') return;
+    if (block.type !== 'image-comparison') continue;
     const before = verified.get(visualKey(block.beforeAssetRef.assetId, block.beforeAssetRef.manifestArtifactId));
     const after = verified.get(visualKey(block.afterAssetRef.assetId, block.afterAssetRef.manifestArtifactId));
     if (!before || !after) fail('SOURCE_INTEGRITY', `ReportDocument comparison ${block.id} has no frozen verified pair`);
@@ -913,10 +954,11 @@ function materializeVisualAssets(builder: MaterialBuilder, document: ReportDocum
     }
     const beforeAllowed = accepted(before);
     const afterAllowed = accepted(after);
-    if (!beforeAllowed || !afterAllowed) return;
-    const sharedCopy = addAsset({ asset: before, sectionIndex, blockIndex, caption: block.caption, altText: block.altText, evidenceIds: block.evidenceIds ?? [], visualRole: 'comparison-before', comparisonGroupId: block.id });
-    addAsset({ asset: after, sectionIndex, blockIndex, caption: block.caption, altText: block.altText, evidenceIds: block.evidenceIds ?? [], visualRole: 'comparison-after', comparisonGroupId: block.id, derivedFromAssetId: before.artifact.id, ...sharedCopy });
-  }));
+    if (!beforeAllowed || !afterAllowed) continue;
+    const evidenceIds = reportBlockEvidenceIds(document, block);
+    const sharedCopy = addAsset({ asset: before, sectionIndex, blockIndex, caption: block.caption, altText: block.altText, evidenceIds, visualRole: 'comparison-before', comparisonGroupId: block.id });
+    addAsset({ asset: after, sectionIndex, blockIndex, caption: block.caption, altText: block.altText, evidenceIds, visualRole: 'comparison-after', comparisonGroupId: block.id, derivedFromAssetId: before.artifact.id, ...sharedCopy });
+  }
 }
 
 function projectPayload(builder: MaterialBuilder, deliverable: ResearchDeliverableEnvelope<unknown>): void {

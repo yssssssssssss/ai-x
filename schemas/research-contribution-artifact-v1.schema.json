@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "research-contribution-artifact-v1.schema.json",
+  "title": "ResearchContributionArtifactV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "contribution", "source"],
+  "properties": {
+    "version": { "const": "research-contribution-artifact-v1" },
+    "contribution": {
+      "type": "object",
+      "required": ["version", "taskId", "planVersionId", "attemptId", "invocationId", "skillId", "contributionTypes", "units", "limitations", "openQuestions"],
+      "properties": { "version": { "const": "research-contribution-v1" } }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifactId", "artifactContentSha256", "schemaVersion", "adapterId", "adapterVersion", "adapterHash", "unitMappings", "diagnosticFields"],
+      "properties": {
+        "artifactId": { "$ref": "#/$defs/text" },
+        "artifactContentSha256": { "$ref": "#/$defs/hash" },
+        "schemaVersion": { "$ref": "#/$defs/text" },
+        "adapterId": { "$ref": "#/$defs/text" },
+        "adapterVersion": { "$ref": "#/$defs/text" },
+        "adapterHash": { "$ref": "#/$defs/hash" },
+        "unitMappings": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["sourceUnitKey", "targetUnitKey", "sourceJsonPointer", "sourceSemanticHash"],
+            "properties": {
+              "sourceUnitKey": { "$ref": "#/$defs/text" },
+              "targetUnitKey": { "$ref": "#/$defs/text" },
+              "sourceJsonPointer": { "type": "string", "pattern": "^/" },
+              "sourceSemanticHash": { "$ref": "#/$defs/hash" }
+            }
+          }
+        },
+        "diagnosticFields": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^/" } }
+      }
+    }
+  },
+  "$defs": {
+    "text": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+  }
+}

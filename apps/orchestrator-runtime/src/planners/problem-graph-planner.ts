@@ -167,7 +167,61 @@ const schemaText = loadSchemaText(resolveSchema('problem-graph'));
 if (!schemaText) throw new Error('problem-graph schema is not registered');
 const problemGraphSchema = JSON.parse(schemaText) as object;
 
-const PROBLEM_GRAPH_PROMPT = `Build a ProblemGraph for the finalized research task. Organize the work as questions, not tool calls. Every question must reference only supplied success criteria and dependencies. Required questions must include required evidence from the supplied Evidence Policy. Every required Evidence Policy requirement id must appear on at least one required question with matching accepted classes and minimum count.`;
+const PROBLEM_GRAPH_PROMPT = `Build a ProblemGraph for the finalized research task. Organize the work as questions, not tool calls. Every question must reference only supplied success criteria and dependencies. Required questions must include required evidence from the supplied Evidence Policy. Every required Evidence Policy requirement id must appear on at least one required question with matching accepted classes and minimum count. For task_type=research_synthesis, questions must ask what is true, why it matters, what to do, and what remains provisional; every required acceptance criteria set must demand a direct answer, Evidence or an explicit provisional status, confidence, business implication, and recommended action. Every requested_artifacts value must appear verbatim in the acceptance criteria of at least one required question. Requested artifacts are deliverable constraints, not research subjects: do not create a standalone report-format or packaging question; attach requested_artifacts to relevant business-question acceptance criteria. Do not replace an answer with a proposal for future research.`;
+const ANSWER_ARTIFACT_MARKERS: Partial<Record<NonNullable<ResearchTaskV2['requested_artifacts']>[number], readonly string[]>> = {
+  strategy_map: ['strategy_map', '策略地图'],
+  mind_model: ['mind_model', '心智模型'],
+  design_principles: ['design_principles', '设计原则'],
+  opportunity_backlog: ['opportunity_backlog', '机会点'],
+  prioritized_actions: ['prioritized_actions', '优先行动'],
+  channel_strategies: ['channel_strategies', '渠道策略', '场域策略'],
+  action_plan: ['action_plan', '行动计划'],
+};
+const ANSWER_PLANNING_QUESTION_PATTERNS = [
+  /如何(?:构建|开展|设计|规划|制定).{0,8}(?:研究|调研)/u,
+  /(?:制定|规划|设计|构建).{0,8}(?:研究|调研)(?:方案|框架|方法|计划)/u,
+  /(?:研究|调研)(?:方案|框架|方法|计划).{0,8}(?:如何|怎么|怎样)/u,
+  /\bhow\s+(?:should\s+we\s+|do\s+we\s+|to\s+)?(?:conduct|run|design|plan|structure)\s+(?:the\s+)?(?:research|study)\b/iu,
+  /\b(?:create|design|plan|build)\s+(?:a\s+)?(?:research|study)\s+(?:plan|framework|methodology|protocol)\b/iu,
+] as const;
+
+const ANSWER_ACCEPTANCE_MARKERS = [
+  ['直接答案', '答案', '回答', '结论', 'direct answer', 'answer', 'response', 'conclusion'],
+  ['证据', '依据', '来源', 'evidence', 'source', 'citation', 'support'],
+  ['置信度', 'confidence', 'certainty'],
+  ['业务含义', '业务影响', '决策含义', 'business implication', 'business impact', 'decision implication'],
+  ['行动', 'action', 'next step', 'recommendation'],
+] as const;
+
+export function isPlanningQuestionForAnswerTask(statement: string): boolean {
+  return ANSWER_PLANNING_QUESTION_PATTERNS.some((pattern) => pattern.test(statement));
+}
+
+function normalizeAnswerGraph(task: ResearchTaskV2, graph: ProblemGraph): ProblemGraph {
+  if (task.task_type !== 'research_synthesis') return graph;
+  const normalized = structuredClone(graph);
+  const requiredQuestions = normalized.questions.filter(({ priority }) => priority === 'required');
+  for (const question of requiredQuestions) {
+    const acceptance = question.acceptance_criteria.join(' ').toLocaleLowerCase('en-US');
+    if (ANSWER_ACCEPTANCE_MARKERS.some((markers) => !markers.some((marker) => acceptance.includes(marker.toLocaleLowerCase('en-US'))))) {
+      question.acceptance_criteria.push('Direct Answer / 直接答案；Evidence / 证据或provisional状态；Confidence / 置信度；Business Implication / 业务含义；Action / 行动');
+    }
+  }
+  const firstRequired = requiredQuestions[0];
+  if (firstRequired) {
+    let acceptance = requiredQuestions.flatMap(({ acceptance_criteria }) => acceptance_criteria).join(' ');
+    for (const artifact of task.requested_artifacts ?? []) {
+      const markers = ANSWER_ARTIFACT_MARKERS[artifact];
+      if (markers && !markers.some((marker) => acceptance.includes(marker))) {
+        const criterion = `Requested Artifact: ${artifact}`;
+        firstRequired.acceptance_criteria.push(criterion);
+        acceptance += ` ${criterion}`;
+      }
+    }
+  }
+  return normalized;
+}
+
 const MAX_GRAPH_REPAIRS = 2;
 const REPAIRABLE_GRAPH_ERRORS = new Set<ProblemGraphValidationKind>([
   'uncovered_success_criterion',
@@ -184,6 +238,29 @@ export class ProblemGraphPlanner {
   constructor(private readonly dependencies: ProblemGraphPlannerDependencies) {}
 
   private validateGeneratedGraph(task: ResearchTaskV2, graph: ProblemGraph): void {
+    if (task.task_type === 'research_synthesis') {
+      for (const question of graph.questions.filter(({ priority }) => priority === 'required')) {
+        const acceptance = question.acceptance_criteria.join(' ');
+        if (isPlanningQuestionForAnswerTask(question.statement)) {
+          throw new ProblemGraphValidationError('uncovered_success_criterion', [question.id, 'answer-oriented wording']);
+        }
+        for (const markers of ANSWER_ACCEPTANCE_MARKERS) {
+          if (!markers.some((marker) => acceptance.toLocaleLowerCase('en-US').includes(marker.toLocaleLowerCase('en-US')))) {
+            throw new ProblemGraphValidationError('uncovered_success_criterion', [question.id, markers[0]]);
+          }
+        }
+      }
+      const requiredAcceptance = graph.questions
+        .filter(({ priority }) => priority === 'required')
+        .flatMap(({ acceptance_criteria }) => acceptance_criteria)
+        .join(' ');
+      for (const artifact of task.requested_artifacts ?? []) {
+        const markers = ANSWER_ARTIFACT_MARKERS[artifact];
+        if (markers && !markers.some((marker) => requiredAcceptance.includes(marker))) {
+          throw new ProblemGraphValidationError('uncovered_success_criterion', [artifact, 'requested artifact']);
+        }
+      }
+    }
     try {
       validateProblemGraphCoverage(task, graph);
     } catch (error) {
@@ -225,6 +302,7 @@ export class ProblemGraphPlanner {
       );
     }
 
+    generated = { ...generated, data: normalizeAnswerGraph(task, generated.data) };
     this.dependencies.validator.validateSchemaOrThrow(
       problemGraphSchema,
       generated.data,
@@ -245,6 +323,7 @@ export class ProblemGraphPlanner {
             new Error('problem graph repair succeeded without a persisted receipt'),
           );
         }
+        generated = { ...generated, data: normalizeAnswerGraph(task, generated.data) };
         this.dependencies.validator.validateSchemaOrThrow(
           problemGraphSchema,
           generated.data,
@@ -253,6 +332,11 @@ export class ProblemGraphPlanner {
       }
     }
 
+    if (!generated.receiptId) {
+      throw new MissingModelReceiptError(
+        new Error('problem graph generation finished without a persisted receipt'),
+      );
+    }
     return {
       graph: generated.data,
       provenance: {

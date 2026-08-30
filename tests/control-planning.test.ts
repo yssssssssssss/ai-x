@@ -236,6 +236,48 @@ test('POST /api/control-tasks/plan plans Current candidates for the authenticate
   }
 });
 
+test('POST /api/control-tasks/plan does not expose internal deliverable contract errors', async () => {
+  process.env.JWT_SECRET = `control-planning-error-${randomUUID()}`;
+  const controlPlanning: PlannedAgentApiDependencies['controlPlanning'] = {
+    async plan() {
+      throw new Error('deliverable competitive_analysis_report is incompatible with expectedDeliverables');
+    },
+  };
+  let server: Server | undefined;
+
+  try {
+    const token = signToken({ userId: activeOwnerUserId, email: 'plan-error@test.local' });
+    const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
+    const createApp = createAgentApiApp as unknown as PlannedCreateAgentApiApp;
+    server = createServer(createApp({ controlPlanning }));
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/control-tasks/plan`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ originalInput: '生成宠物食品电商推广调研' }),
+    });
+    const body = await response.json() as { error: string };
+
+    assert.equal(response.status, 502);
+    assert.equal(body.error, '需求解析或规划未完成，请重试；如仍失败，请补充希望获得的结果类型。');
+    assert.doesNotMatch(JSON.stringify(body), /expectedDeliverables|competitive_analysis_report/u);
+  } finally {
+    if (server?.listening) {
+      await new Promise<void>((resolve, reject) => {
+        server?.close((error) => error ? reject(error) : resolve());
+      });
+    }
+    restoreJwtSecret();
+  }
+});
+
 interface ParsedSseEvent {
   event: string;
   data: unknown;
@@ -533,6 +575,10 @@ test('new-conversation SSE emits conversation before an error when planning fail
 
     assert.deepEqual(events.map((event) => event.event), ['conversation', 'error']);
     assert.deepEqual(events[0]?.data, { conversationId });
+    assert.deepEqual(events[1]?.data, {
+      error: '需求解析或规划未完成，请重试；如仍失败，请补充希望获得的结果类型。',
+    });
+    assert.doesNotMatch(JSON.stringify(events[1]?.data), /planning fixture failed/u);
   } finally {
     if (server?.listening) {
       await new Promise<void>((resolve, reject) => {

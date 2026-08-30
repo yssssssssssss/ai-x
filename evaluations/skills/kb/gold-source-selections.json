@@ -140,6 +140,21 @@
     ]
   },
   {
+    "skill_id": "research-strategy-synthesis",
+    "mode": "gold",
+    "selected_source_ids": [
+      "standard_research_question_definition",
+      "standard_research_report_writing"
+    ],
+    "unresolved_items": []
+  },
+  {
+    "skill_id": "virtual-user-research",
+    "mode": "not_applicable",
+    "selected_source_ids": [],
+    "unresolved_items": []
+  },
+  {
     "skill_id": "generate-survey",
     "mode": "gold",
     "selected_source_ids": [

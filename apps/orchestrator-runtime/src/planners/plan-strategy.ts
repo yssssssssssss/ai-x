@@ -52,6 +52,8 @@ export interface PlannerDeps {
   expectedActualModel?: string;
   tools?: ToolRouter;
   approvalAuthorities?: readonly CapabilityApprovalAuthority[];
+  /** Multi-Skill portfolio wiring is built behind an inactive writer gate until Activation. */
+  multiSkillPortfolioMode?: 'inactive' | 'active';
   /** Tests/evaluation may inject a complete policy; production loads the checked-in YAML. */
   planningPolicy?: unknown;
 }

@@ -11,11 +11,28 @@ const schemasDir = join(process.cwd(), 'schemas');
 
 export type SchemaName =
   | 'research-task'
+  | 'research-task-v2'
   | 'decision-state'
+  | 'problem-graph'
+  | 'capability-demand-graph-v1'
   | 'execution-plan'
+  | 'current-execution-plan'
+  | 'current-execution-plan-v3'
+  | 'current-plan-candidates'
   | 'skill-manifest'
   | 'tool-manifest'
-  | 'research-report';
+  | 'research-report'
+  | 'research-contribution-v1'
+  | 'research-contribution-artifact-v1'
+  | 'research-contribution-bundle-v1'
+  | 'cross-skill-review-v1'
+  | 'contribution-summary-v1'
+  | 'contribution-ledger-v1'
+  | 'scenario-guidance'
+  | 'report-review'
+  | 'report-editorial-intent-v2'
+  | 'editorial-presentation-spec-v1'
+  | 'report-package-v3';
 
 // checkReportReferences 消费的最小形状(结构由 ajv 保证,此处只取引用完整性所需字段)。
 interface ResearchReportShape {
@@ -42,8 +59,13 @@ export class SchemaValidator {
   private load(name: string): ValidateFunction {
     const cached = this.cache.get(name);
     if (cached) return cached;
+    if (name === 'report-document-v4' && !this.ajv.getSchema('report-document-v3')) {
+      const dependency = JSON.parse(readFileSync(join(this.dir, 'report-document-v3.schema.json'), 'utf8'));
+      this.ajv.addSchema(dependency);
+    }
     const raw = JSON.parse(readFileSync(join(this.dir, `${name}.schema.json`), 'utf8'));
-    const validate = this.ajv.compile(raw);
+    const validate = (typeof raw.$id === 'string' ? this.ajv.getSchema(raw.$id) : undefined)
+      ?? this.ajv.compile(raw);
     this.cache.set(name, validate);
     return validate;
   }
@@ -62,7 +84,20 @@ export class SchemaValidator {
 
   // 返回错误信息数组;空数组表示通过。
   validate(name: SchemaName | string, data: unknown): string[] {
-    const validate = this.load(name);
+    const schemaName = name === 'current-execution-plan'
+      && typeof data === 'object'
+      && data !== null
+      && 'execution_contract_version' in data
+      && data.execution_contract_version === 'current-execution-plan-v3'
+      ? 'current-execution-plan-v3'
+      : name === 'report-document'
+        && typeof data === 'object'
+        && data !== null
+        && 'version' in data
+        && (data.version === 'report-document-v3' || data.version === 'report-document-v4')
+        ? data.version
+        : name;
+    const validate = this.load(schemaName);
     const structural = validate(data)
       ? []
       : (validate.errors ?? []).map(

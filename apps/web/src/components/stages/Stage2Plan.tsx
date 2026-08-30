@@ -3,7 +3,10 @@ import {
   COMPETITIVE_WEIGHT_TITLE,
   extractCompetitiveScoringWeights,
 } from '../../../../orchestrator-runtime/src/report/competitive-weight-chart.ts';
+import type { CurrentPlanStep } from '../../../../../packages/api-contract/research-deliverable.ts';
 import type { PlanResponse, PlanStep, PendingUpload, Upload } from '../../api/client.ts';
+import { MultiSkillPlanSummary } from '../MultiSkillPlanSummary.tsx';
+import { multiSkillPlanViewModel } from '../../multi-skill-view-model.ts';
 import { Header } from './Stage1Understand.tsx';
 import { buildPlanConfirmationPayload } from './stage2-plan-confirmation.ts';
 
@@ -22,10 +25,16 @@ export function Stage2Plan({
   ) => void;
   onRevise: (instruction: string) => void;
 }) {
-  const confirmations = confirmationRequirements('confirmations' in plan.task
-    ? plan.task.confirmations
-    : plan.task.clarification_questions);
+  const confirmations = 'confirmations' in plan.task
+    ? confirmationRequirements(plan.task.confirmations)
+    : [];
   const scoringWeights = extractCompetitiveScoringWeights(plan.plan);
+  const resourceGaps = plan.plan.skill_invocations?.flatMap((invocation) => (
+    'resource_gaps' in invocation && Array.isArray(invocation.resource_gaps)
+      ? invocation.resource_gaps.map((gap) => ({ ...gap, skillId: invocation.skill_id }))
+      : []
+  )) ?? [];
+  const portfolio = multiSkillPlanViewModel(plan.plan);
   const [assumptions, setAssumptions] = useState(plan.task.assumptions);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [confirmed, setConfirmed] = useState(false);
@@ -53,7 +62,7 @@ export function Stage2Plan({
   }
 
   function confirm() {
-    if (missingAnswers.length > 0 || missingInputs.length > 0) return;
+    if (missingAnswers.length > 0 || missingInputs.length > 0 || (portfolio?.uncoveredRequiredDemandIds.length ?? 0) > 0) return;
     const payload = buildPlanConfirmationPayload({
       confirmationAnswers: answers,
       pending,
@@ -81,6 +90,8 @@ export function Stage2Plan({
     <section className="stage-card">
       <Header n="2" title="待执行计划" note={locked ? '计划内容已锁定' : '确认前不执行'} />
 
+      <MultiSkillPlanSummary plan={plan.plan} />
+
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {plan.plan.steps.map((s) => <StepRow key={s.step_no} step={s} />)}
       </div>
@@ -101,6 +112,17 @@ export function Stage2Plan({
               </div>
             ))}
           </dl>
+        </div>
+      )}
+
+      {resourceGaps.length > 0 && (
+        <div style={{ marginTop: 16, padding: '10px 12px', border: '1px solid rgba(251,191,36,.3)', borderRadius: 8, color: 'var(--warn)', fontSize: 12 }}>
+          <strong>知识资源缺口</strong>
+          {resourceGaps.map((gap) => (
+            <div key={`${gap.skillId}:${gap.query_id}`}>
+              {gap.skillId} · {gap.query_id}：已选 {gap.selected_items}，最低 {gap.min_items}。{gap.reason}
+            </div>
+          ))}
         </div>
       )}
 
@@ -213,7 +235,7 @@ export function Stage2Plan({
       {!locked && !confirmed && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8, marginTop: 18 }}>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn-primary" onClick={confirm} disabled={revising || missingAnswers.length > 0 || missingInputs.length > 0}>
+            <button className="btn-primary" onClick={confirm} disabled={revising || missingAnswers.length > 0 || missingInputs.length > 0 || (portfolio?.uncoveredRequiredDemandIds.length ?? 0) > 0}>
               ✓ 确认计划
             </button>
             <button
@@ -233,11 +255,13 @@ export function Stage2Plan({
             aria-label="计划调整要求"
             style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', padding: '7px 9px', fontSize: 13, resize: 'vertical' }}
           />
-          {(missingAnswers.length > 0 || missingInputs.length > 0) && (
+          {(missingAnswers.length > 0 || missingInputs.length > 0 || (portfolio?.uncoveredRequiredDemandIds.length ?? 0) > 0) && (
             <span role="alert" style={{ color: 'var(--warn)', fontSize: 12 }}>
               {missingAnswers.length > 0 && `请先回答全部确认项：${missingAnswers.map(({ question, key }) => question ?? key).join('、')}`}
-              {missingAnswers.length > 0 && missingInputs.length > 0 ? '；' : ''}
+              {missingAnswers.length > 0 && (missingInputs.length > 0 || (portfolio?.uncoveredRequiredDemandIds.length ?? 0) > 0) ? '；' : ''}
               {missingInputs.length > 0 && `请先补充全部输入：${missingInputs.map((input) => input.label).join('、')}`}
+              {missingInputs.length > 0 && (portfolio?.uncoveredRequiredDemandIds.length ?? 0) > 0 ? '；' : ''}
+              {(portfolio?.uncoveredRequiredDemandIds.length ?? 0) > 0 && `计划仍有未覆盖需求：${portfolio!.uncoveredRequiredDemandIds.join('、')}`}
             </span>
           )}
         </div>
@@ -274,18 +298,20 @@ function formatSuggestion(value: unknown): string {
   return JSON.stringify(value) ?? String(value);
 }
 
-function StepRow({ step }: { step: PlanStep }) {
+function StepRow({ step }: { step: PlanStep | CurrentPlanStep }) {
+  const purpose = 'purpose' in step ? step.purpose : undefined;
   const cls =
     step.actor_type === 'skill' ? 'badge-skill'
     : step.actor_type === 'tool' ? 'badge-tool'
     : step.actor_type === 'reviewer' ? 'badge-reviewer'
+    : step.actor_type === 'knowledge' ? 'badge-knowledge'
     : 'badge-llm';
   return (
     <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', padding: '8px 12px', background: 'var(--bg)', borderRadius: 8 }}>
       <span style={{ color: 'var(--text-faint)', fontFamily: 'var(--mono)', fontSize: 12 }}>{step.step_no}</span>
       <div style={{ flex: 1 }}>
         <div style={{ fontSize: 13 }}>{step.step_name}</div>
-        {step.purpose && <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>{step.purpose}</div>}
+        {purpose && <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>{purpose}</div>}
       </div>
       <span className={`badge ${cls}`}>{step.actor_type.toUpperCase()}</span>
       <code style={{ fontSize: 11, color: 'var(--text-faint)' }}>{step.actor_id}</code>

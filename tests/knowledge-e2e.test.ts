@@ -21,14 +21,14 @@ test('resolveSkill 能定位 generate-research-plan', () => {
   assert.match(r!.path, /generate-research-plan/);
 });
 
-// Registry 合并 KB Skill 与编排器原生 Skill；Phase-B 基线固定为 22 active，
+// Registry 合并 KB Skill 与编排器原生 Skill；multi-Skill activation 后基线固定为 24 active，
 // 另有 2 个 Hub candidate 只派生为 draft。
 test('listSkills 覆盖 KB + 原生全部 active skill', () => {
-  assert.equal(listSkills().length, 22);
+  assert.equal(listSkills().length, 24);
 });
 
 test('candidate/draft Skill 不进入生产 list/resolve 接口', () => {
-  assert.equal(listSkills().length, 22);
+  assert.equal(listSkills().length, 24);
   assert.equal(listSkills().some(({ id }) => id === 'solution-generation' || id === 'strategy-map-generation'), false);
   assert.equal(resolveSkill('solution-generation'), null);
   assert.equal(resolveSkill('strategy-map-generation'), null);

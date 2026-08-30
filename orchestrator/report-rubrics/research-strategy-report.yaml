@@ -1,0 +1,29 @@
+version: 1
+id: research-strategy-report
+dimensions:
+  - id: requirement_coverage
+    required: true
+  - id: question_coverage
+    required: true
+  - id: evidence_coverage
+    required: true
+  - id: reasoning_quality
+    required: true
+  - id: recommendation_quality
+    required: true
+  - id: visual_quality
+    required: true
+  - id: risk_disclosure
+    required: true
+  - id: direct_answer_coverage
+    required: true
+  - id: requested_artifact_presence
+    required: true
+  - id: answer_evidence_strength
+    required: true
+  - id: decision_usefulness
+    required: true
+  - id: hypothesis_conclusion_clarity
+    required: true
+  - id: risk_consistency
+    required: true

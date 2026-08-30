@@ -7,7 +7,7 @@ on:
 jobs:
   playwright-contract:
     name: Playwright in-memory no-request contract
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     env:
       LLM_PROVIDER: mock
       TOOL_ADAPTER: fake
@@ -26,7 +26,12 @@ jobs:
           key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
       - run: pnpm exec playwright install --with-deps chromium
       - name: Run in-memory Chromium contracts
-        run: pnpm exec tsx --test tests/playwright-page-capture-adapter.test.ts tests/editorial-report-renderer.test.ts
+        run: >-
+          pnpm exec tsx --test
+          tests/playwright-page-capture-adapter.test.ts
+          tests/editorial-report-renderer.test.ts
+          tests/report-editorial-showcase-chromium.test.ts
+          tests/standalone-html-report-chromium.test.ts
 
   quality:
     runs-on: ubuntu-latest
@@ -93,7 +98,6 @@ jobs:
       LLM_PROVIDER: gateway
       TOOL_ADAPTER: real
       CURRENT_DESIGN_SMOKE_IMAGE_PATH: ${{ github.workspace }}/knowledge-base/assets/playbooks/images/jingxi-img-01.png
-      RUN_WORKSPACE_ROOT: ${{ runner.temp }}/current-real-smoke
     steps:
       - name: Check real smoke secrets
         id: secret_gate
@@ -145,6 +149,8 @@ jobs:
       - name: Run five profiles sequentially
         if: steps.secret_gate.outputs.enabled == 'true'
         shell: bash
+        env:
+          RUN_WORKSPACE_ROOT: ${{ runner.temp }}/current-real-smoke
         run: |
           set -euo pipefail
           lab_pids=()
@@ -182,3 +188,8 @@ jobs:
               CURRENT_REQUIRE_BROWSER_EVIDENCE=0 \
               pnpm smoke:current:real
           done
+          CURRENT_REAL_SMOKE_FIXTURE=tests/fixtures/research-synthesis-real-smoke.json \
+            CURRENT_SMOKE_PROFILE=research_synthesis \
+            CURRENT_SMOKE_SCENARIO=answer-pet-food-mindshare \
+            CURRENT_REQUIRE_BROWSER_EVIDENCE=0 \
+            pnpm smoke:current:real

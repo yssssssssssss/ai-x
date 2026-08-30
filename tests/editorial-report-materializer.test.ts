@@ -191,7 +191,8 @@ function source(deliverableType: EditorialDeliverableType, payload: unknown): Fr
     ];
     current = {
       presentationMode: 'multimodal', deliverable, evidenceManifest, reportReview: review(),
-      reportDocument, visualAssetManifests: [originalManifest, annotationManifest],
+      reportDocument, reportDocumentContentSha256: reportHash,
+      visualAssetManifests: [originalManifest, annotationManifest],
     };
   }
   return {

@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { LoadedSkillExecutionContract } from '../skills/skill-execution-contract.ts';
+import { loadSkillExecutionContract } from '../skills/skill-execution-contract.ts';
 import {
   loadSkillRegistry,
   loadToolRegistry,
@@ -153,6 +155,22 @@ export class SkillLoader {
     const rel = entry.entry ?? entry.path;
     const body = readFileSync(join(getConfigRoot(), rel), 'utf8');
     return { body, hash: hashFile(rel), path: rel };
+  }
+
+  loadSkillExecution(id: string): LoadedSkillExecutionContract | null {
+    const entry = this.getSkill(id);
+    if (!entry) throw new Error(`skill 未找到或非 active: ${id}`);
+    const mode = entry.execution_mode ?? 'legacy_single_call';
+    if (mode === 'legacy_single_call') {
+      if (entry.execution_contract) {
+        throw new Error(`legacy Skill ${id} must not declare execution_contract`);
+      }
+      return null;
+    }
+    if (!entry.execution_contract) {
+      throw new Error(`compiled Skill ${id} is missing execution_contract`);
+    }
+    return loadSkillExecutionContract(entry.execution_contract, id);
   }
 
   // 第三层:执行期加载 Skill 输入与统一输出信封；有领域 payload 时内联为同一有效合同。

@@ -6,20 +6,26 @@ import type {
   CurrentCapabilityDecisions,
   CurrentCapabilityGap,
   CurrentExecutionPlan,
+  CurrentExecutionPlanV3,
   CurrentPlanStep,
   DeliverableType,
   EvidenceRequirement,
   PendingInput,
   ProblemGraph,
   ProblemGraphProvenance,
+  ReadableCurrentExecutionPlan,
 } from '../../../../packages/api-contract/research-deliverable.ts';
 import {
   isCandidateProfile,
   type PlanCandidate,
   type PlanningProvenance,
   type ResearchTaskV2,
+  type CapabilityDemandGraphV1,
 } from '../../../../packages/api-contract/plan.ts';
 import type { CapabilityResolution } from './capability-resolver.ts';
+import type { SkillPortfolioDecision } from './capability-portfolio-resolver.ts';
+import { validateCapabilityDemandGraph } from './capability-demand-graph.ts';
+import { validateCurrentExecutionPlanV3 } from './current-execution-plan-v3.ts';
 import { validateProblemGraphCoverage } from './problem-graph-planner.ts';
 import {
   StepInputResolutionError,
@@ -32,7 +38,16 @@ import {
   type ToolRegistryEntry,
 } from '../runtime/config-loader.ts';
 import { SchemaValidator } from '../schema/validator.ts';
+import type { SkillLoader } from '../runtime/skill-loader.ts';
 import { resolveCompetitiveScoringWeights } from '../report/competitive-weight-chart.ts';
+import {
+  assertCompiledSkillPlan,
+  compileSkillSteps,
+} from '../skills/skill-plan-compiler.ts';
+import {
+  assertCompiledPortfolioPlan,
+  compilePortfolioSkillSteps,
+} from '../skills/portfolio-skill-plan-compiler.ts';
 
 export interface CurrentPlanCandidateProposal extends Omit<PlanCandidate, 'steps'> {
   steps: CurrentPlanStep[];
@@ -54,10 +69,25 @@ export interface PlanCompileInput {
   activated_nodes: string[];
   planning_provenance?: PlanningProvenance;
   requireCompetitiveWeightContract?: boolean;
+  frozen_skill_invocations?: CurrentExecutionPlan['skill_invocations'];
+}
+
+export interface PortfolioPlanCompileInput extends Omit<
+  PlanCompileInput,
+  'frozen_skill_invocations'
+> {
+  capability_demand_graph: CapabilityDemandGraphV1;
+  portfolio: SkillPortfolioDecision;
+  skillLoader?: SkillLoader;
 }
 
 export interface CompiledPlan {
   plan: Omit<CurrentExecutionPlan, 'task_id'> & { task_id: '' };
+  pending_inputs: PendingInput[];
+}
+
+export interface CompiledPortfolioPlan {
+  plan: Omit<CurrentExecutionPlanV3, 'task_id'> & { task_id: '' };
   pending_inputs: PendingInput[];
 }
 
@@ -90,7 +120,9 @@ export type PlanCompilerValidationKind =
   | 'approval_role_mismatch'
   | 'pending_input_schema_invalid'
   | 'capability_decisions_invalid'
-  | 'competitive_weight_contract_invalid';
+  | 'skill_execution_contract_invalid'
+  | 'competitive_weight_contract_invalid'
+  | 'portfolio_step_limit_exceeded';
 
 export class PlanCompilerValidationError extends Error {
   constructor(
@@ -127,6 +159,8 @@ const STEP_KEYS = new Set([
   'requires_approval',
   'approval_role',
   'fallback_actor_ids',
+  'skill_invocation_id',
+  'skill_stage_id',
 ]);
 
 export const MAX_BROWSER_CAPTURE_COUNT = 6;
@@ -202,6 +236,8 @@ function copySteps(candidate: CurrentPlanCandidateProposal): CurrentPlanStep[] {
     requires_approval: step.requires_approval,
     ...(step.approval_role ? { approval_role: step.approval_role } : {}),
     fallback_actor_ids: [...step.fallback_actor_ids],
+    ...(step.skill_invocation_id ? { skill_invocation_id: step.skill_invocation_id } : {}),
+    ...(step.skill_stage_id ? { skill_stage_id: step.skill_stage_id } : {}),
   }));
 }
 
@@ -759,6 +795,7 @@ export function validateResolverCompatibleTargetPointers(
 function validateBindings(
   steps: CurrentPlanStep[],
   toolsById: ReadonlyMap<string, ToolRegistryEntry>,
+  requiredToolIds: ReadonlySet<string> = new Set(),
 ): void {
   const stepNos = steps.map((step) => step.step_no);
   for (const step of steps) {
@@ -782,11 +819,28 @@ function validateBindings(
       if (
         source.actor_type === 'tool'
         && (toolsById.get(source.actor_id)?.tier ?? 'optional') === 'optional'
+        && !requiredToolIds.has(source.actor_id)
       ) {
         fail('optional_binding_source', source.actor_id, String(source.step_no));
       }
     }
     validateResolverCompatibleTargetPointers(step, stepNos);
+  }
+}
+
+function validatePortfolioSkillOutputPointers(
+  steps: CurrentPlanStep[],
+  invocations: readonly CurrentExecutionPlanV3['skill_invocations'][number][],
+): void {
+  const byId = new Map(invocations.map((invocation) => [invocation.invocation_id, invocation]));
+  for (const step of steps) {
+    if (step.actor_type !== 'skill') continue;
+    const invocation = step.skill_invocation_id ? byId.get(step.skill_invocation_id) : undefined;
+    const expectedRoot = invocation?.role === 'contributor' ? '/contribution' : '/payload';
+    const invalid = step.expected_outputs.find((output) => (
+      output.pointer !== expectedRoot && !output.pointer.startsWith(`${expectedRoot}/`)
+    ));
+    if (invalid) fail('invalid_skill_output_pointer', String(step.step_no), invalid.pointer);
   }
 }
 
@@ -797,6 +851,38 @@ function validateSkillOutputPointers(steps: CurrentPlanStep[]): void {
       output.pointer !== '/payload' && !output.pointer.startsWith('/payload/')
     ));
     if (invalid) fail('invalid_skill_output_pointer', String(step.step_no), invalid.pointer);
+  }
+}
+
+function validateSkillInvocations(
+  steps: readonly CurrentPlanStep[],
+  invocations: NonNullable<CurrentExecutionPlan['skill_invocations']>,
+): void {
+  const ids = new Set<string>();
+  const assigned = new Set<number>();
+  for (const invocation of invocations) {
+    if (ids.has(invocation.invocation_id)) fail('skill_execution_contract_invalid', invocation.invocation_id);
+    ids.add(invocation.invocation_id);
+    let hasSkillOutput = false;
+    for (const stepNo of invocation.step_nos) {
+      if (assigned.has(stepNo)) fail('skill_execution_contract_invalid', invocation.invocation_id, String(stepNo));
+      assigned.add(stepNo);
+      const step = steps[stepNo - 1];
+      if (
+        !step
+        || step.skill_invocation_id !== invocation.invocation_id
+        || !step.skill_stage_id
+      ) {
+        fail('skill_execution_contract_invalid', invocation.invocation_id, String(stepNo));
+      }
+      if (step.actor_type === 'skill' && step.actor_id === invocation.skill_id) hasSkillOutput = true;
+    }
+    if (!hasSkillOutput) fail('skill_execution_contract_invalid', invocation.invocation_id, invocation.skill_id);
+  }
+  for (const step of steps) {
+    if ((step.skill_invocation_id || step.skill_stage_id) && !assigned.has(step.step_no)) {
+      fail('skill_execution_contract_invalid', String(step.step_no));
+    }
   }
 }
 
@@ -955,14 +1041,24 @@ export class PlanCompiler {
     const capabilityResolution = frozenCapabilityDecisions as CapabilityResolution;
     const frozenCapabilityGaps = capabilityGaps(capabilityResolution, toolsById);
     validateProposalShape(input.candidate);
+    const expandedSkills = input.frozen_skill_invocations
+      ? { steps: input.candidate.steps.map((step) => structuredClone(step)), invocations: structuredClone(input.frozen_skill_invocations) }
+      : compileSkillSteps(input.candidate.steps, input.task);
+    const candidate = { ...input.candidate, steps: expandedSkills.steps };
     this.validator.validateOrThrow('current-execution-plan', {
       task_id: '',
+      ...(expandedSkills.invocations.length > 0
+        ? {
+            execution_contract_version: 'current-execution-plan-v2',
+            skill_invocations: expandedSkills.invocations,
+          }
+        : {}),
       deliverable_type: deliverableSelection.deliverableId,
       evidence_requirements: deliverableSelection.evidenceRequirements,
       problem_graph: input.problem_graph,
       capability_decisions: frozenCapabilityDecisions,
       capability_gaps: frozenCapabilityGaps,
-      steps: input.candidate.steps,
+      steps: candidate.steps,
       candidate_metadata: {
         title: input.candidate.title,
         rationale: input.candidate.rationale,
@@ -978,7 +1074,7 @@ export class PlanCompiler {
       activated_nodes: input.activated_nodes,
     });
     validateProblemGraphCoverage(input.task, input.problem_graph);
-    const steps = copySteps(input.candidate);
+    const steps = copySteps(candidate);
     validateStepDependencies(steps);
     validateQuestions(steps, input.problem_graph);
     validateEvidencePolicy(input.problem_graph, deliverableSelection.evidenceRequirements);
@@ -989,11 +1085,22 @@ export class PlanCompiler {
     validatePendingInputSchemas(eligibleSkills);
     validateSkillOutputPointers(steps);
     validateFixedActorOutputPointers(steps);
-    validateBindings(steps, toolsById);
+    validateSkillInvocations(steps, expandedSkills.invocations);
+    validateBindings(
+      steps,
+      toolsById,
+      new Set([...eligibleSkills.values()].flatMap(({ skill }) => skill.required_tools)),
+    );
     if (input.requireCompetitiveWeightContract) validateCompetitiveWeightContract(steps, input.task);
 
     const plan: CompiledPlan['plan'] = {
       task_id: '',
+      ...(expandedSkills.invocations.length > 0
+        ? {
+            execution_contract_version: 'current-execution-plan-v2' as const,
+            skill_invocations: structuredClone(expandedSkills.invocations),
+          }
+        : {}),
       deliverable_type: deliverableSelection.deliverableId,
       evidence_requirements: structuredClone(deliverableSelection.evidenceRequirements),
       problem_graph: structuredClone(input.problem_graph),
@@ -1015,7 +1122,159 @@ export class PlanCompiler {
       activated_nodes: [...input.activated_nodes],
     };
     this.validator.validateOrThrow('current-execution-plan', plan);
+    assertCompiledSkillPlan(plan, undefined, input.task);
     return { plan, pending_inputs: derivePendingInputs(steps, eligibleSkills, toolsById) };
+  }
+
+  compilePortfolio(input: PortfolioPlanCompileInput): CompiledPortfolioPlan {
+    const deliverableSelection: FrozenDeliverableSelection = input.deliverable_selection
+      ? {
+          deliverableId: input.deliverable_selection.deliverableId,
+          evidenceRequirements: structuredClone(input.deliverable_selection.evidenceRequirements),
+        }
+      : {
+          deliverableId: 'research_plan',
+          evidenceRequirements: structuredClone(input.evidence_requirements),
+        };
+    if (
+      input.deliverable_selection
+      && !isDeepStrictEqual(input.evidence_requirements, deliverableSelection.evidenceRequirements)
+    ) {
+      throw new Error(
+        `Evidence requirements do not match frozen deliverable selection ${deliverableSelection.deliverableId}`,
+      );
+    }
+
+    validateProposalShape(input.candidate);
+    validateProblemGraphCoverage(input.task, input.problem_graph);
+    validateCapabilityDemandGraph({
+      task: input.task,
+      problemGraph: input.problem_graph,
+      graph: input.capability_demand_graph,
+      validator: this.validator,
+    });
+
+    const toolsById = new Map(loadToolRegistry().tools.map((tool) => [tool.id, tool]));
+    const frozenCapabilityDecisions = freezeCapabilityDecisions(input.capability_resolution);
+    const capabilityResolution = frozenCapabilityDecisions as CapabilityResolution;
+    const frozenCapabilityGaps = capabilityGaps(capabilityResolution, toolsById);
+    let compiledPortfolio: ReturnType<typeof compilePortfolioSkillSteps>;
+    try {
+      compiledPortfolio = compilePortfolioSkillSteps({
+        steps: input.candidate.steps,
+        task: input.task,
+        portfolio: input.portfolio,
+        ...(input.skillLoader ? { skillLoader: input.skillLoader } : {}),
+      });
+    } catch (error) {
+      if (error instanceof PlanCompilerValidationError) throw error;
+      fail(
+        'skill_execution_contract_invalid',
+        error instanceof Error ? error.message : 'unknown Portfolio compilation failure',
+      );
+    }
+    const steps = compiledPortfolio.steps.map((step): CurrentPlanStep => structuredClone(step));
+    const estimatedStepsByInvocation = new Map(input.portfolio.invocations.map((invocation) => (
+      [invocation.invocationId, invocation.estimatedSteps] as const
+    )));
+    const compiledExpansionAllowance = compiledPortfolio.invocations.reduce((total, invocation) => (
+      invocation.execution_mode === 'compiled'
+        ? total + Math.max(
+            0,
+            invocation.step_nos.length - (estimatedStepsByInvocation.get(invocation.invocation_id) ?? 1),
+          )
+        : total
+    ), 0);
+    const expandedStepLimit = input.portfolio.estimatedBudget.maxSteps + compiledExpansionAllowance;
+    if (steps.length > expandedStepLimit) {
+      fail(
+        'portfolio_step_limit_exceeded',
+        input.portfolio.estimatedBudget.profileId,
+        String(steps.length),
+        String(expandedStepLimit),
+      );
+    }
+
+    validateStepDependencies(steps);
+    validateQuestions(steps, input.problem_graph);
+    validateEvidencePolicy(input.problem_graph, deliverableSelection.evidenceRequirements);
+    const eligibleSkills = validateActors(steps, capabilityResolution);
+    validateApprovals(steps, capabilityResolution);
+    validateRequiredTools(steps, eligibleSkills);
+    validateOptionalTools(steps, eligibleSkills, input.task);
+    validatePendingInputSchemas(eligibleSkills);
+    validatePortfolioSkillOutputPointers(steps, compiledPortfolio.invocations);
+    validateFixedActorOutputPointers(steps);
+    validateBindings(
+      steps,
+      toolsById,
+      new Set([...eligibleSkills.values()].flatMap(({ skill }) => skill.required_tools)),
+    );
+    if (input.requireCompetitiveWeightContract) validateCompetitiveWeightContract(steps, input.task);
+
+    const plan: CompiledPortfolioPlan['plan'] = {
+      task_id: '',
+      execution_contract_version: 'current-execution-plan-v3',
+      capability_demand_graph: structuredClone(input.capability_demand_graph),
+      portfolio_summary: {
+        profile_id: input.portfolio.estimatedBudget.profileId,
+        selected: input.portfolio.invocations.map((invocation) => ({
+          invocation_id: invocation.invocationId,
+          skill_id: invocation.skillId,
+          role: invocation.role,
+          reason_codes: [...invocation.reasonCodes],
+          estimated_steps: invocation.estimatedSteps,
+        })),
+        rejected: input.portfolio.rejected.map((rejection) => ({
+          skill_id: rejection.skillId,
+          reason_code: rejection.reasonCode,
+          related_ids: [...rejection.relatedIds],
+        })),
+        shared_prerequisites: input.portfolio.sharedPrerequisites.map((prerequisite) => ({
+          capability_type: prerequisite.capabilityType,
+          capability_id: prerequisite.capabilityId,
+          consumer_skill_ids: [...prerequisite.consumerSkillIds],
+        })),
+        estimated_budget: {
+          max_steps: input.portfolio.estimatedBudget.maxSteps,
+          estimated_steps: input.portfolio.estimatedBudget.estimatedSteps,
+          expanded_step_count: steps.length,
+          expanded_step_limit: expandedStepLimit,
+          selected_contributor_count: input.portfolio.estimatedBudget.selectedContributorCount,
+          selected_skill_count: input.portfolio.estimatedBudget.selectedSkillCount,
+          required_demand_count: input.portfolio.estimatedBudget.requiredDemandCount,
+          optional_demand_count: input.portfolio.estimatedBudget.optionalDemandCount,
+        },
+      },
+      skill_invocations: structuredClone(compiledPortfolio.invocations),
+      contribution_requirements: structuredClone(compiledPortfolio.contributionRequirements),
+      deliverable_type: deliverableSelection.deliverableId,
+      evidence_requirements: structuredClone(deliverableSelection.evidenceRequirements),
+      problem_graph: structuredClone(input.problem_graph),
+      problem_graph_provenance: structuredClone(input.problem_graph_provenance),
+      capability_decisions: frozenCapabilityDecisions,
+      capability_gaps: frozenCapabilityGaps,
+      steps: compiledPortfolio.steps.map((step) => structuredClone(step)),
+      candidate_metadata: {
+        title: input.candidate.title,
+        rationale: input.candidate.rationale,
+        tradeoffs: input.candidate.tradeoffs,
+        ...(input.candidate.recommended === undefined
+          ? {}
+          : { recommended: input.candidate.recommended }),
+      },
+      ...(input.planning_provenance
+        ? { planning_provenance: structuredClone(input.planning_provenance) }
+        : {}),
+      activated_nodes: [...input.activated_nodes],
+    };
+    this.validator.validateOrThrow('current-execution-plan-v3', plan);
+    validateCurrentExecutionPlanV3(plan, this.validator);
+    assertCompiledPortfolioPlan(plan, input.skillLoader);
+    return {
+      plan,
+      pending_inputs: derivePendingInputs(steps, eligibleSkills, toolsById),
+    };
   }
 }
 export function validateCurrentPlanRevision(input: {
@@ -1024,10 +1283,38 @@ export function validateCurrentPlanRevision(input: {
   pending_inputs: unknown;
   task_id: string;
   candidate_id: PlanCandidate['id'];
-}, validator = new SchemaValidator()): CurrentExecutionPlan {
+}, validator = new SchemaValidator()): ReadableCurrentExecutionPlan {
   validator.validateOrThrow('research-task-v2', input.task);
   validator.validateOrThrow('current-execution-plan', input.plan);
   const task = input.task as ResearchTaskV2;
+  if (
+    input.plan !== null
+    && typeof input.plan === 'object'
+    && !Array.isArray(input.plan)
+    && (input.plan as { execution_contract_version?: unknown }).execution_contract_version === 'current-execution-plan-v3'
+  ) {
+    const plan = structuredClone(input.plan) as CurrentExecutionPlanV3;
+    validateCurrentExecutionPlanV3(plan, validator);
+    assertCompiledPortfolioPlan(plan);
+    if (plan.task_id !== input.task_id) {
+      fail('candidate_schema_invalid', 'task_id', plan.task_id, input.task_id);
+    }
+    const toolsById = new Map(loadToolRegistry().tools.map((tool) => [tool.id, tool]));
+    const eligibleSkills = validateActors(plan.steps, plan.capability_decisions as CapabilityResolution);
+    validateStepDependencies(plan.steps);
+    validateQuestions(plan.steps, plan.problem_graph);
+    validateEvidencePolicy(plan.problem_graph, plan.evidence_requirements);
+    validateBindings(
+      plan.steps,
+      toolsById,
+      new Set([...eligibleSkills.values()].flatMap(({ skill }) => skill.required_tools)),
+    );
+    const pendingInputs = derivePendingInputs(plan.steps, eligibleSkills, toolsById);
+    if (!isDeepStrictEqual(pendingInputs, input.pending_inputs)) {
+      fail('candidate_schema_invalid', 'pending_inputs_mismatch');
+    }
+    return plan;
+  }
   const plan = normalizeCurrentExecutionPlanOptionalFields(input.plan as CurrentExecutionPlan);
   validator.validateOrThrow('current-execution-plan', plan);
   if (plan.task_id !== input.task_id) {
@@ -1059,6 +1346,9 @@ export function validateCurrentPlanRevision(input: {
     activated_nodes: plan.activated_nodes,
     ...(plan.planning_provenance
       ? { planning_provenance: plan.planning_provenance }
+      : {}),
+    ...(plan.skill_invocations
+      ? { frozen_skill_invocations: plan.skill_invocations }
       : {}),
   });
   if (!isDeepStrictEqual(compiled.pending_inputs, input.pending_inputs)) {

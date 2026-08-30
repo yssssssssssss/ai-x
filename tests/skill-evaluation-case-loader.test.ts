@@ -203,7 +203,7 @@ test('real evaluation corpus covers every active Skill in registry order', () =>
   const activeSkills = new SkillLoader().listActiveSkills();
   const cases = loadEvaluationCases(activeSkills);
 
-  assert.equal(activeSkills.length, 22);
+  assert.equal(activeSkills.length, 24);
   assert.equal(cases.size, activeSkills.length);
   assert.deepEqual(
     [...cases.keys()],

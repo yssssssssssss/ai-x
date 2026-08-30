@@ -80,6 +80,7 @@ interface ControlRuntimeOverrides {
   skillLoader: SkillLoader;
   artifacts: ControlArtifactStore;
   expectedActualModel?: string;
+  multiSkillPortfolioMode?: 'inactive' | 'active';
 }
 
 interface ControlRuntimeHarness {
@@ -291,6 +292,13 @@ class OfflineEligibleRealLLM implements LLMClient {
         deliverableContext?.verifiedEvidence?.[0]?.evidenceId,
         deliverableContext?.coverageRequirements,
       );
+    } else if (options.schemaName === 'reviewer-step-output') {
+      data = {
+        version: 'reviewer-step-output-v1',
+        review: 'No conditions remain.',
+        verdict: 'pass',
+        conditions: [],
+      };
     } else if (options.schemaName === 'report-review') {
       const verdict = this.reviewVerdicts[this.reviewCall]
         ?? this.reviewVerdicts[this.reviewVerdicts.length - 1]
@@ -1403,7 +1411,7 @@ test('production control runtime returns the revised final deliverable ID for pa
   assert.equal(ownerDeliverableResponse.status, 200);
   const ownerDeliverableBody: unknown = await ownerDeliverableResponse.json();
   assertRecord(ownerDeliverableBody);
-  assert.equal(ownerDeliverableBody.presentationMode, 'multimodal');
+  assert.equal(ownerDeliverableBody.presentationMode, 'current_text');
   const envelope = ownerDeliverableBody.deliverable;
   assertRecord(envelope);
   assert.equal(envelope.taskId, planned.task.id);
@@ -1417,14 +1425,8 @@ test('production control runtime returns the revised final deliverable ID for pa
   assert.equal(reportReview.planVersionId, speed.planVersionId);
   assert.equal(reportReview.attemptId, execution.attemptId);
   assert.equal(reportReview.deliverableArtifactId, execution.deliverableArtifactId);
-  const reportDocument = ownerDeliverableBody.reportDocument;
-  assertRecord(reportDocument);
-  assert.equal(reportDocument.version, 'report-document-v1');
-  assert.equal(reportDocument.title, '宠物辅食竞品研究计划');
-  assert.ok(Array.isArray(reportDocument.sections));
-  assert.ok(reportDocument.sections.length > 0);
-  assert.doesNotMatch(JSON.stringify(reportDocument), /"type":"(?:image|image-comparison|chart)"/u);
-  assert.deepEqual(ownerDeliverableBody.visualAssetManifests, []);
+  assert.equal(Object.hasOwn(ownerDeliverableBody, 'reportDocument'), false);
+  assert.equal(Object.hasOwn(ownerDeliverableBody, 'visualAssetManifests'), false);
   assert.equal('visualAssetManifest' in ownerDeliverableBody, false);
   assert.match(JSON.stringify(ownerDeliverableBody), new RegExp(evidenceUrl.replaceAll('.', '\\.'), 'u'));
 
@@ -1560,8 +1562,8 @@ test('production control runtime returns the revised final deliverable ID for pa
         { kind: 'deliverable', state: 'SEALED' },
         { kind: 'deliverable', state: 'SEALED' },
         { kind: 'evidence_manifest', state: 'SEALED' },
-        { kind: 'report_document', state: 'SEALED' },
         { kind: 'report_package', state: 'SEALED' },
+        { kind: 'report_review', state: 'SEALED' },
         { kind: 'report_review', state: 'SEALED' },
       ],
     );
@@ -1581,17 +1583,12 @@ test('production control runtime returns the revised final deliverable ID for pa
       terminalArtifacts.rows.find((row) => row.kind === 'evidence_manifest')?.id,
       execution.evidenceManifestArtifactId,
     );
+    const reviewArtifacts = terminalArtifacts.rows.filter((row) => row.kind === 'report_review');
+    assert.equal(reviewArtifacts.length, 2);
     assert.equal(
-      terminalArtifacts.rows.find((row) => row.kind === 'report_review')?.id,
+      reviewArtifacts.find((row) => String(row.storage_uri).endsWith('/reports/review-r1.json'))?.id,
       execution.reportReviewArtifactId,
     );
-    const reportDocumentArtifact = terminalArtifacts.rows.find((row) => row.kind === 'report_document');
-    assert.ok(reportDocumentArtifact);
-    assert.ok(typeof reportDocumentArtifact.id === 'string');
-    assert.equal(reportDocumentArtifact.schema_version, 'report-document-v1');
-    assert.match(String(reportDocumentArtifact.storage_uri), /\/reports\/report-document\.json$/u);
-    const verifiedReportDocument = await artifacts.readVerifiedJson<unknown>(reportDocumentArtifact.id);
-    assert.deepEqual(verifiedReportDocument.value, ownerDeliverableBody.reportDocument);
     const verifiedReportPackage = await new ReportPackageArtifactService(artifacts).verify({
       artifactId: execution.reportPackageArtifactId,
       attemptId: execution.attemptId,
@@ -1601,7 +1598,8 @@ test('production control runtime returns the revised final deliverable ID for pa
     assert.equal(verifiedReportPackage.value.deliverableArtifactId, execution.deliverableArtifactId);
     assert.equal(verifiedReportPackage.value.evidenceManifestArtifactId, execution.evidenceManifestArtifactId);
     assert.equal(verifiedReportPackage.value.reportReviewArtifactId, execution.reportReviewArtifactId);
-    assert.equal(verifiedReportPackage.value.reportDocumentArtifactId, reportDocumentArtifact.id);
+    assert.equal(verifiedReportPackage.value.presentationMode, 'current_text');
+    assert.equal(verifiedReportPackage.value.reportDocumentArtifactId, undefined);
     const reportPackageStorageUri = verifiedReportPackage.artifact.storageUri;
     const originalReportPackageContent = readFileSync(reportPackageStorageUri, 'utf8');
     try {
@@ -1622,7 +1620,7 @@ test('production control runtime returns the revised final deliverable ID for pa
     );
     const toolArtifact = referencedArtifacts.rows.find((row) => row.kind === 'tool_output');
     const manifestArtifact = referencedArtifacts.rows.find((row) => row.kind === 'evidence_manifest');
-    const reviewArtifact = referencedArtifacts.rows.find((row) => row.kind === 'report_review');
+    const reviewArtifact = referencedArtifacts.rows.find((row) => row.id === execution.reportReviewArtifactId);
     assert.ok(toolArtifact);
     assert.ok(manifestArtifact);
     assert.ok(reviewArtifact);
@@ -1751,7 +1749,11 @@ test('production control runtime returns the revised final deliverable ID for pa
     const pausedDeliverables = terminalArtifacts.rows.filter((row) => row.kind === 'deliverable');
     assert.equal(pausedDeliverables.length, 2);
     assert.equal(new Set(pausedDeliverables.map((row) => row.id)).size, 2);
-    const finalReviewArtifact = terminalArtifacts.rows.find((row) => row.kind === 'report_review');
+    const reviewArtifacts = terminalArtifacts.rows.filter((row) => row.kind === 'report_review');
+    assert.equal(reviewArtifacts.length, 2);
+    const finalReviewArtifact = reviewArtifacts.find((row) => (
+      String(row.storage_uri).endsWith('/reports/review-r1.json')
+    ));
     assert.ok(finalReviewArtifact);
     assert.equal(finalReviewArtifact.id, pausedExecution.reportReviewArtifactId);
     const finalReview: unknown = JSON.parse(readFileSync(String(finalReviewArtifact.storage_uri), 'utf8'));
@@ -1820,7 +1822,7 @@ test('production API persists Scenario selection guidance and resumes planning a
   const runtime = buildControlRuntime({
     repository,
     conversations: conversationAdapter(),
-    tools: new ToolRouter(),
+    tools: new ToolRouter().register(new OfflineRealTavilyAdapter()),
     llm: new PlanningModelFixtureLLM(
       expectedModel,
       expectedModel,
@@ -1830,6 +1832,7 @@ test('production API persists Scenario selection guidance and resumes planning a
     skillLoader: new SkillLoader(),
     artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
     expectedActualModel: expectedModel,
+    multiSkillPortfolioMode: 'inactive',
   });
   const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
   const app = await listenLocalApp(
@@ -1837,7 +1840,7 @@ test('production API persists Scenario selection guidance and resumes planning a
   );
   const token = signToken({ userId: ownerUserId, email: 'owner@test.local' });
   const authorization = { authorization: `Bearer ${token}` };
-  const originalInput = '创建一个调研任务，核心解决“宠物心智的设计表达策略全景，包含：全链路业务品牌心智、品类特色心智、场域心智策略”';
+  const originalInput = '梳理宠物心智的设计表达策略全景';
   const expectedGuidance = {
     reasonCode: 'scenario_selection_required' as const,
     options: [
@@ -1963,6 +1966,7 @@ test('production Current planning rejects model drift before candidate persisten
     skillLoader: new SkillLoader(),
     artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
     expectedActualModel: expectedModel,
+    multiSkillPortfolioMode: 'inactive',
   });
   const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
   const app = await listenLocalApp(
@@ -2037,6 +2041,7 @@ test('production Current planning persists candidates only when every receipt ma
     skillLoader: new SkillLoader(),
     artifacts: new ControlArtifactStore({ root: artifactRoot, registry: repository }),
     expectedActualModel: expectedModel,
+    multiSkillPortfolioMode: 'inactive',
   });
   // Delayed import preserves the test-controlled DB/JWT environment used by this integration file.
   const { createAgentApiApp } = await import('../apps/agent-api/src/server.ts');
@@ -2505,7 +2510,11 @@ test('failed clarification releases its pending command so a retry can complete'
   } as unknown as ControlTasksRuntime;
   const first = await listenLocalApp(controlTasksApp(runtime));
   const second = await listenLocalApp(controlTasksApp(runtime));
-  const requestBody = { expectedVersion: created.stateVersion, clarificationAnswers: {}, assumptionEdits: {} };
+  const requestBody = {
+    expectedVersion: created.stateVersion,
+    clarificationAnswers: { audience: '产品团队' },
+    assumptionEdits: {},
+  };
   const key = `release-${randomUUID()}`;
   try {
     const failed = await postJson(first.baseUrl, `/api/control-tasks/${created.id}/clarify`, token, requestBody, key);

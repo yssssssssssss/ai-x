@@ -9,6 +9,8 @@ import {
   ArtifactIntegrityError,
   BinaryArtifactValidationError,
   ControlArtifactStore,
+  type ArtifactWriteInput,
+  type TextArtifactWriteInput,
 } from '../apps/orchestrator-runtime/src/control/artifact-store.ts';
 import {
   ArtifactInvalidationError,
@@ -21,10 +23,15 @@ import {
   type LeaseExecutionResult,
 } from '../apps/orchestrator-runtime/src/control/lease-execution-engine.ts';
 import type {
+  CapabilityDemandGraphV1,
+  ResearchTaskV2,
+} from '../packages/api-contract/plan.ts';
+import type {
   ChartSpec,
   CurrentPlanStep,
   EvidenceRequirement,
   ResearchDeliverableEnvelope,
+  ResearchStrategyReportPayloadV2,
   VisualAssetManifest,
 } from '../packages/api-contract/research-deliverable.ts';
 import type {
@@ -37,10 +44,14 @@ import type {
   ReportReviewResult,
 } from '../apps/orchestrator-runtime/src/report/report-review-service.ts';
 import {
+  REPORT_REVIEW_V2_DIMENSION_IDS,
   selectAuthoritativeFailedStep,
   type ReportReviewArtifact,
   type ReportReviewDimension,
 } from '../packages/api-contract/control-workflow.ts';
+import { PlanCompiler } from '../apps/orchestrator-runtime/src/planners/plan-compiler.ts';
+import type { CapabilityResolution } from '../apps/orchestrator-runtime/src/planners/capability-resolver.ts';
+import type { SkillPortfolioDecision } from '../apps/orchestrator-runtime/src/planners/capability-portfolio-resolver.ts';
 import { CurrentReportValidationError } from '../apps/orchestrator-runtime/src/evidence/report-evidence-validator.ts';
 import type {
   EvidenceArtifactResolver,
@@ -64,15 +75,24 @@ import {
 } from '../apps/orchestrator-runtime/src/report/chart-renderer.ts';
 import { chartSpecHash } from '../apps/orchestrator-runtime/src/report/chart-spec-validator.ts';
 import { CurrentReportPackageReader } from '../apps/orchestrator-runtime/src/report/current-report-package-reader.ts';
+import { compileSkillSteps } from '../apps/orchestrator-runtime/src/skills/skill-plan-compiler.ts';
+import { loadRuntimeKnowledgeIndex } from '../apps/orchestrator-runtime/src/knowledge/index.ts';
 import { ReportPackageArtifactService } from '../apps/orchestrator-runtime/src/report/report-package-artifact.ts';
+import { ReportPackageV2ArtifactService } from '../apps/orchestrator-runtime/src/report/report-package-v2-artifact.ts';
+import { ReportPackageV3ArtifactService } from '../apps/orchestrator-runtime/src/report/report-package-v3-artifact.ts';
+import { EditorialShowcasePublicationService } from '../apps/orchestrator-runtime/src/report/report-editorial-showcase-publication.ts';
 import {
   ReportCompositionService,
   type CompositionVerifiedChart,
   type ReportCompositionInput,
   type ReportCompositionResult,
 } from '../apps/orchestrator-runtime/src/report/report-composition-service.ts';
+import { createDeterministicReportEditorialBlueprintV1 } from '../apps/orchestrator-runtime/src/report/report-editorial-blueprint.ts';
+import type { ReportEditorialPlanResult } from '../apps/orchestrator-runtime/src/report/report-editorial-planner.ts';
 import {
+  hashPrompt,
   LLMInvocationError,
+  MockLLMClient,
   type LLMClient,
   type LLMProviderIdentity,
   type LLMResult,
@@ -100,6 +120,11 @@ import {
 } from '../apps/orchestrator-runtime/src/runtime/config-loader.ts';
 import { SkillLoader } from '../apps/orchestrator-runtime/src/runtime/skill-loader.ts';
 import { SchemaValidator } from '../apps/orchestrator-runtime/src/schema/validator.ts';
+import {
+  researchStrategyCoverageV2,
+  researchStrategyFindingGraphV2,
+  researchStrategyPayloadV2,
+} from './fixtures/research-strategy-v2.ts';
 import {
   ControlPlaneConflictError,
   ControlPlaneRepository,
@@ -345,6 +370,29 @@ class CountingRealTavilyAdapter implements ToolAdapter {
         endpointHost: this.endpointHost(),
         status: 'ok',
         latencyMs: 1,
+      },
+    };
+  }
+}
+
+class MixedSchemeTavilyAdapter extends CountingRealTavilyAdapter {
+  override async invoke(options: { toolId: string; input: object; manifest: ToolManifest }): Promise<ToolInvokeResult> {
+    const result = await super.invoke(options);
+    const output = result.output as { results: Array<Record<string, unknown>> };
+    return {
+      ...result,
+      output: {
+        ...output,
+        results: [
+          ...output.results,
+          {
+            title: 'Non-addressable source',
+            url: 'http://source.test/not-verifiable',
+            snippet: 'This result must not receive an Evidence ID.',
+            score: 0.5,
+            published_date: null,
+          },
+        ],
       },
     };
   }
@@ -688,6 +736,154 @@ class ExpiringRealAdapter extends CountingRealTavilyAdapter {
   }
 }
 
+class RealSchemaFixtureLLM extends MockLLMClient {
+  readonly contexts: object[] = [];
+  readonly prompts: Array<{ schemaName: string; prompt: string; context?: object }> = [];
+
+  constructor() {
+    super({
+      'reviewer-step-output': {
+        version: 'reviewer-step-output-v1',
+        review: 'No blocking conditions remain.',
+        verdict: 'pass',
+        conditions: [],
+      },
+    }, { name: 'pinned-model', version: 'pinned-model' });
+  }
+
+  override get identity(): LLMProviderIdentity {
+    return {
+      provider: 'gateway', endpointHost: 'llm.test', requestedModel: 'pinned-model',
+      mode: 'real', eligibleAsReal: true,
+    };
+  }
+
+  override async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
+    if (options.context) this.contexts.push(options.context);
+    this.prompts.push({
+      schemaName: options.schemaName,
+      prompt: options.prompt,
+      ...(options.context ? { context: options.context } : {}),
+    });
+    const result = await super.generateStructured<T>(options);
+    if (options.schemaName === 'skill:research-strategy-synthesis') {
+      const support = {
+        questionIds: ['fixture-question'], evidenceIds: [], confidence: 0.6,
+        status: 'provisional', validationNeeded: 'Validate with primary users.',
+      };
+      return {
+        ...result,
+        data: {
+          version: 'skill-output-v2', status: 'succeeded', summary: 'Complete strategy draft.',
+          findings: [], assumptions: [], limitations: [], recommendations: [],
+          payload: {
+            schemaVersion: 'research-strategy-content-draft-v2',
+            title: 'Crowdfunding trust strategy', decisionContext: 'Choose the next product action.',
+            executiveAnswer: 'Lead with verifiable trust signals.',
+            methodSummary: 'Synthesized public evidence and a reviewed Contribution.',
+            directAnswers: [{
+              questionId: 'fixture-question', question: 'Which trust signals affect support decisions?',
+              answer: 'Trust signals should be explicit and verifiable.', answerStatus: 'provisional',
+              evidenceIds: [], confidence: 0.6, businessImplication: 'Reduce uncertainty.',
+              recommendedAction: 'Test a trust card.', validationNeeded: 'Validate with primary users.',
+            }],
+            evidenceFindings: [{
+              key: 'finding-trust', statement: 'Trust signals may affect support decisions.', support,
+            }],
+            contentBlocks: [{
+              key: 'map', kind: 'strategy_map', title: 'Trust strategy map',
+              rows: ['Trust'], columns: ['Support'], cells: [{
+                key: 'cell', row: 'Trust', column: 'Support',
+                statement: 'Expose verifiable trust evidence.', support,
+              }],
+            }],
+            limitations: ['Primary-user validation remains required.'], openQuestions: [],
+          },
+        } as T,
+      };
+    }
+    if (options.schemaName !== 'skill:competitive-web-research') return result;
+    return {
+      ...result,
+      data: {
+        version: 'skill-output-v2',
+        status: 'succeeded',
+        summary: 'Verified competitor contribution.',
+        findings: [{ id: 'market-1', statement: 'Crowdfunding trust signals affect support decisions.', confidence: 0.6 }],
+        assumptions: [],
+        limitations: ['Public evidence requires primary-user validation.'],
+        recommendations: ['Validate trust signals with target users.'],
+        payload: {},
+      } as T,
+    };
+  }
+
+  override async generateText(options: TextLLMCallOptions): Promise<TextLLMResult> {
+    if (options.context) this.contexts.push(options.context);
+    return super.generateText(options);
+  }
+}
+
+class NarrativelyRedactedSynthesisLLM extends RealSchemaFixtureLLM {
+  override async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
+    const result = await super.generateStructured<T>(options);
+    if (options.schemaName !== 'skill:research-strategy-synthesis') return result;
+    return {
+      ...result,
+      data: {
+        ...(result.data as Record<string, unknown>),
+        summary: 'PII was removed from supporting prose: [REDACTED_EMAIL]',
+      } as T,
+    };
+  }
+}
+
+class RedactedMachineReferenceSynthesisLLM extends RealSchemaFixtureLLM {
+  override async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
+    const result = await super.generateStructured<T>(options);
+    if (options.schemaName !== 'skill:research-strategy-synthesis') return result;
+    const data = structuredClone(result.data) as {
+      summary: string;
+      payload: {
+        directAnswers: Array<Record<string, unknown>>;
+      };
+    };
+    data.summary = 'PII was removed from supporting prose: [REDACTED_EMAIL]';
+    data.payload.directAnswers[0]!.sourceContributionUnitIds = [
+      '41c1a424-dcf2-46b3-aef5-dbb[REDACTED_LANDLINE]a:F1',
+    ];
+    return { ...result, data: data as T };
+  }
+}
+
+class DegradedPortfolioContributorLLM extends RealSchemaFixtureLLM {
+  constructor(private readonly contributorSkillId = 'competitive-web-research') {
+    super();
+  }
+
+  override async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
+    const result = await super.generateStructured<T>(options);
+    if (options.schemaName !== `skill:${this.contributorSkillId}`) return result;
+    return {
+      ...result,
+      data: {
+        ...(result.data as Record<string, unknown>),
+        status: 'degraded',
+        summary: 'Completed with a disclosed evidence limitation.',
+        findings: [{
+          id: 'degraded-finding',
+          statement: 'A provisional specialist finding remains usable.',
+          confidence: 0.6,
+        }],
+        assumptions: [],
+        limitations: ['primary user evidence is unavailable'],
+        recommendations: ['Validate the provisional finding with primary users.'],
+        payload: {},
+      } as T,
+    };
+  }
+}
+
 class CountingRealLLM implements LLMClient {
   readonly identity: LLMProviderIdentity = {
     provider: 'gateway',
@@ -704,7 +900,14 @@ class CountingRealLLM implements LLMClient {
     this.calls += 1;
     const data = options.schemaName.startsWith('skill:')
       ? digitalHumanSkillOutput()
-      : { ok: true };
+      : options.schemaName === 'reviewer-step-output'
+        ? {
+            version: 'reviewer-step-output-v1',
+            review: 'No conditions remain.',
+            verdict: 'pass',
+            conditions: [],
+          }
+        : { ok: true };
     return {
       data: data as T,
       promptHash: `sha256:${createHash('sha256').update(options.prompt).digest('hex')}`,
@@ -729,6 +932,22 @@ class CountingRealLLM implements LLMClient {
   }
 }
 
+class DegradedSkillLLM extends CountingRealLLM {
+  override async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
+    const result = await super.generateStructured<T>(options);
+    if (!options.schemaName.startsWith('skill:')) return result;
+    return {
+      ...result,
+      data: {
+        ...digitalHumanSkillOutput(),
+        status: 'degraded',
+        summary: 'Completed with a knowledge gap.',
+        limitations: ['research wiki was unavailable'],
+      } as T,
+    };
+  }
+}
+
 class ReverseCompletionLLM extends CountingRealLLM {
   override async generateText(options: TextLLMCallOptions): Promise<TextLLMResult> {
     const result = await super.generateText(options);
@@ -748,6 +967,17 @@ const echoedSecrets = {
 class EchoingSensitiveRealLLM extends CountingRealLLM {
   override async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
     const result = await super.generateStructured<T>(options);
+    if (options.schemaName === 'reviewer-step-output') {
+      return {
+        ...result,
+        data: {
+          version: 'reviewer-step-output-v1',
+          review: echoedSecrets.reviewer,
+          verdict: 'pass',
+          conditions: [],
+        } as T,
+      };
+    }
     if (!options.schemaName.startsWith('skill:')) return result;
     return {
       ...result,
@@ -766,8 +996,7 @@ class EchoingSensitiveRealLLM extends CountingRealLLM {
 
   override async generateText(options: TextLLMCallOptions): Promise<TextLLMResult> {
     const result = await super.generateText(options);
-    const stage = options.receipt.stage === 'reviewer' ? 'reviewer' : 'llm';
-    return { ...result, text: echoedSecrets[stage] };
+    return { ...result, text: echoedSecrets.llm };
   }
 }
 
@@ -778,6 +1007,17 @@ class BlockedSensitiveStageLLM extends CountingRealLLM {
 
   override async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
     const result = await super.generateStructured<T>(options);
+    if (this.blockedStage === 'reviewer' && options.schemaName === 'reviewer-step-output') {
+      return {
+        ...result,
+        data: {
+          version: 'reviewer-step-output-v1',
+          review: 'confidential internal-only roadmap',
+          verdict: 'pass',
+          conditions: [],
+        } as T,
+      };
+    }
     if (this.blockedStage !== 'skill' || !options.schemaName.startsWith('skill:')) return result;
     return {
       ...result,
@@ -806,6 +1046,19 @@ class InvalidSkillOutputLLM extends CountingRealLLM {
   override async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
     const result = await super.generateStructured<T>(options);
     return { ...result, data: { comparison_matrix: [] } as T };
+  }
+}
+
+class InvalidThenValidSynthesisLLM extends RealSchemaFixtureLLM {
+  private synthesisCalls = 0;
+
+  override async generateStructured<T>(options: StructuredLLMCallOptions): Promise<LLMResult<T>> {
+    const result = await super.generateStructured<T>(options);
+    if (options.schemaName !== 'skill:research-strategy-synthesis') return result;
+    this.synthesisCalls += 1;
+    return this.synthesisCalls === 1
+      ? { ...result, data: { comparison_matrix: [] } as T }
+      : result;
   }
 }
 
@@ -938,6 +1191,141 @@ const planSteps: CurrentPlanStep[] = [
     fallback_actor_ids: [],
   },
 ];
+
+function productionPortfolioFixture(contributorSpec: {
+  skillId: string;
+  contributionType: CapabilityDemandGraphV1['demands'][number]['type'];
+  requestedArtifactTypes: CapabilityDemandGraphV1['demands'][number]['requestedArtifactTypes'];
+} = {
+  skillId: 'competitive-web-research',
+  contributionType: 'competitive_analysis',
+  requestedArtifactTypes: ['strategy_map'],
+}): {
+  task: ResearchTaskV2;
+  plan: ReturnType<PlanCompiler['compilePortfolio']>['plan'];
+} {
+  const task: ResearchTaskV2 = {
+    version: 'research-task-v2', task_type: 'research_synthesis', outcome_mode: 'answer',
+    requested_artifacts: ['strategy_map'], business_domain: 'crowdfunding',
+    research_goal: 'Explain crowdfunding trust decisions.', target_audience: ['product team'],
+    scope: ['public sources'], constraints: [],
+    success_criteria: [{ id: 'fixture-criterion', statement: 'Answer the trust question.' }],
+    expected_deliverables: ['research_strategy_report'], assumptions: [], ambiguities: [],
+    clarification_questions: [], blocking_issues: [], sensitivity: 'public', pii_detected: false,
+  };
+  const problemGraph = {
+    version: 'problem-graph-v1' as const,
+    questions: [{
+      id: 'fixture-question', statement: 'Which trust signals affect support decisions?',
+      rationale: 'Decision support', priority: 'required' as const,
+      success_criterion_ids: ['fixture-criterion'],
+      evidence_requirements: [{
+        id: 'fixture-public-evidence', acceptedClasses: ['public_source' as const],
+        minimumCount: 1, required: true,
+      }],
+      acceptance_criteria: ['Use traceable public evidence.'], depends_on: [],
+    }],
+  };
+  const demandGraph: CapabilityDemandGraphV1 = {
+    version: 'capability-demand-graph-v1',
+    demands: [{
+      id: 'fixture-demand', type: contributorSpec.contributionType, questionIds: ['fixture-question'],
+      requestedArtifactTypes: contributorSpec.requestedArtifactTypes,
+      requiredEvidenceClasses: ['public_source'],
+      requiredInputRoles: ['research_goal'], priority: 'required',
+    }],
+  };
+  const skillLoader = new SkillLoader();
+  const contributor = skillLoader.listCapabilitySkills().find(({ id }) => id === contributorSpec.skillId);
+  const synthesis = skillLoader.listCapabilitySkills().find(({ id }) => id === 'research-strategy-synthesis');
+  const synthesisContract = skillLoader.loadSkillExecution('research-strategy-synthesis');
+  assert.ok(contributor?.status === 'active' && synthesis?.status === 'active' && synthesisContract);
+  const sharedStage = synthesisContract.contract.stages.find(({ stage_id }) => stage_id === 'collect-public-evidence');
+  assert.ok(sharedStage?.actor_type === 'tool' && sharedStage.share_scope === 'plan');
+  const capabilityResolution: CapabilityResolution = {
+    eligible: [contributor, synthesis].map((skill) => ({
+      skill,
+      required_approvals: [],
+      reasons: [{ code: 'eligible' as const, message: 'fixture eligible' }],
+      pending_inputs: [],
+      optional_tool_decisions: [],
+    })),
+    rejected: [],
+  };
+  const portfolio: SkillPortfolioDecision = {
+    invocations: [{
+      invocationId: 'invocation:web', skillId: contributor.id, role: 'contributor',
+      demandIds: ['fixture-demand'], contributionTypes: [contributorSpec.contributionType],
+      questionIds: ['fixture-question'],
+      requestedArtifactTypes: contributorSpec.requestedArtifactTypes,
+      required: true, failurePolicy: 'block', estimatedSteps: 2,
+      reasonCodes: ['required_demand_coverage'],
+    }, {
+      invocationId: 'invocation:synthesis', skillId: synthesis.id, role: 'synthesizer',
+      demandIds: [], contributionTypes: ['strategy'], questionIds: ['fixture-question'],
+      requestedArtifactTypes: ['strategy_map'], required: true, failurePolicy: 'block',
+      estimatedSteps: 2, reasonCodes: ['deliverable_policy_owner'],
+    }],
+    demandCoverage: [{
+      demandId: 'fixture-demand', demandType: contributorSpec.contributionType,
+      ownerSkillId: contributor.id,
+      corroboratorSkillIds: [], questionIds: ['fixture-question'],
+      requestedArtifactTypes: contributorSpec.requestedArtifactTypes, required: true,
+    }],
+    rejected: [],
+    sharedPrerequisites: [{
+      capabilityType: 'tool', capabilityId: 'tavily-web-search',
+      consumerSkillIds: [contributor.id, synthesis.id],
+    }],
+    estimatedBudget: {
+      profileId: 'depth', maxSteps: 8, estimatedSteps: 3,
+      selectedContributorCount: 1, selectedSkillCount: 2,
+      requiredDemandCount: 1, optionalDemandCount: 0,
+    },
+  };
+  const steps: CurrentPlanStep[] = [{
+    step_no: 1, step_name: sharedStage.title, actor_type: sharedStage.actor_type,
+    actor_id: sharedStage.actor_id, question_ids: ['fixture-question'], depends_on: [],
+    input: structuredClone(sharedStage.input), input_bindings: [],
+    expected_outputs: structuredClone(sharedStage.expected_outputs),
+    acceptance_criteria: [...sharedStage.acceptance_criteria], requires_approval: false,
+    fallback_actor_ids: [],
+  }, {
+    step_no: 2, step_name: 'Specialist contribution', actor_type: 'skill', actor_id: contributor.id,
+    question_ids: ['fixture-question'], depends_on: [1], input: { research_goal: task.research_goal },
+    input_bindings: [], expected_outputs: [{ pointer: '/payload', description: 'Contribution' }],
+    acceptance_criteria: ['Produce a contribution.'], requires_approval: false, fallback_actor_ids: [],
+  }, {
+    step_no: 3, step_name: 'Strategy synthesis', actor_type: 'skill', actor_id: synthesis.id,
+    question_ids: ['fixture-question'], depends_on: [2], input: { research_goal: task.research_goal },
+    input_bindings: [], expected_outputs: [{ pointer: '/payload', description: 'Synthesis' }],
+    acceptance_criteria: ['Answer the question.'], requires_approval: false, fallback_actor_ids: [],
+  }];
+  const compiled = new PlanCompiler().compilePortfolio({
+    candidate: {
+      id: 'depth', title: 'Portfolio execution fixture', rationale: 'Exercise Plan v3.',
+      tradeoffs: 'Fixture', steps, assumptions: [], activated_nodes: [],
+    },
+    task,
+    deliverable_selection: {
+      deliverableId: 'research_strategy_report',
+      evidenceRequirements: [{
+        id: 'fixture-public-evidence', acceptedClasses: ['public_source'], minimumCount: 1, required: true,
+      }],
+    },
+    problem_graph: problemGraph,
+    problem_graph_provenance: {
+      receiptId: '11111111-1111-4111-8111-111111111111', modelName: 'fixture',
+      modelVersion: 'v1', promptHash: 'sha256:fixture', traceId: 'trace-fixture',
+    },
+    capability_resolution: capabilityResolution,
+    evidence_requirements: [{
+      id: 'fixture-public-evidence', acceptedClasses: ['public_source'], minimumCount: 1, required: true,
+    }],
+    capability_demand_graph: demandGraph, portfolio, activated_nodes: [], skillLoader,
+  });
+  return { task, plan: compiled.plan };
+}
 
 function browserCaptureStep(): CurrentPlanStep {
   return {
@@ -1093,6 +1481,43 @@ async function claimedExecution(
   };
 }
 
+async function claimRetryExecution(
+  repository: ControlPlaneRepository,
+  previousLease: ControlExecutionLease,
+  failedStepNo: number,
+): Promise<ControlExecutionLease> {
+  const pausedTask = await repository.getTaskDetail(previousLease.taskId);
+  assert.ok(pausedTask);
+  const readyTask = await repository.retryPausedExecution({
+    taskId: previousLease.taskId,
+    attemptId: previousLease.attemptId,
+    expectedVersion: pausedTask.stateVersion,
+    failedStepNo,
+  });
+  assert.ok(readyTask);
+  const leaseToken = randomUUID();
+  const leaseOwner = `ordinary-retry-worker-${randomUUID()}`;
+  const claim = await repository.claimExecution({
+    taskId: previousLease.taskId,
+    planVersionId: previousLease.planVersionId,
+    expectedVersion: readyTask.stateVersion,
+    idempotencyKey: randomUUID(),
+    requestHash: `sha256:${randomUUID()}`,
+    leaseOwner,
+    leaseTokenHash: leaseHash(leaseToken),
+    leaseExpiresAt: new Date(Date.now() + 60_000),
+    retryOf: previousLease.attemptId,
+  });
+  return {
+    taskId: previousLease.taskId,
+    planVersionId: previousLease.planVersionId,
+    attemptId: claim.attemptId,
+    leaseOwner,
+    leaseToken,
+    retryOf: previousLease.attemptId,
+  };
+}
+
 function buildEngine(
   repository: ControlPlaneRepository,
   tools: ToolRouter,
@@ -1149,6 +1574,354 @@ async function expireLease(
   await repository.expireExecutionLease({ taskId: lease.taskId, attemptId: lease.attemptId });
 }
 
+
+test('Plan v3 executes a real shared Tool, seals a Contributor and Bundle, then runs the Synthesizer', async () => {
+  const fixture = productionPortfolioFixture();
+  const { task_id: _taskId, steps, ...planExtras } = fixture.plan;
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    steps,
+    planExtras,
+    fixture.task as unknown as Record<string, unknown>,
+  );
+  const adapter = new CountingRealTavilyAdapter();
+  const llm = new RealSchemaFixtureLLM();
+  const deliverables = new RecordingDeliverablesFake();
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(adapter),
+    llm,
+    deliverables,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed', JSON.stringify(result));
+  assert.equal(adapter.calls, 1, 'shared Tavily must execute once');
+  assert.equal(deliverables.calls.length, 1);
+  const executionSteps = await repository.listExecutionSteps(lease.attemptId);
+  const contributorStep = executionSteps.find(({ actorId }) => actorId === 'competitive-web-research');
+  assert.equal(contributorStep?.state, 'succeeded');
+  assert.ok(contributorStep?.outputArtifactId);
+  const contributionArtifact = await repository.getArtifact(contributorStep.outputArtifactId!);
+  assert.equal(contributionArtifact?.kind, 'research_contribution');
+  assert.equal(contributionArtifact?.state, 'SEALED');
+  const artifacts = await repository.listArtifactsForAttempt({
+    taskId: lease.taskId,
+    planVersionId: lease.planVersionId,
+    attemptId: lease.attemptId,
+  });
+  const bundle = artifacts.find(({ kind }) => kind === 'research_contribution_bundle');
+  assert.equal(bundle?.state, 'SEALED');
+  assert.match(JSON.stringify(llm.contexts), /contribution_bundle_artifact/u);
+  const contributorPrompt = llm.prompts.find(({ schemaName }) => (
+    schemaName === 'skill:competitive-web-research'
+  ));
+  const synthesizerPrompt = llm.prompts.find(({ schemaName }) => (
+    schemaName === 'skill:research-strategy-synthesis'
+  ));
+  assert.match(contributorPrompt?.prompt ?? '', /Portfolio Contributor status describes execution completeness/u);
+  assert.doesNotMatch(synthesizerPrompt?.prompt ?? '', /Portfolio Contributor status describes execution completeness/u);
+  assert.ok(contributorPrompt?.context);
+  assert.equal(
+    contributorStep?.skillProvenance?.executionPromptHash,
+    hashPrompt(contributorPrompt.prompt, contributorPrompt.context, contributorPrompt.schemaName),
+  );
+  assert.ok(executionSteps.some(({ actorId, state }) => (
+    actorId === 'research-strategy-synthesis' && state === 'succeeded'
+  )));
+});
+
+test('Plan v3 honors a required compiled Contributor degraded_policy=gap', async () => {
+  const fixture = productionPortfolioFixture({
+    skillId: 'build-experience-metrics',
+    contributionType: 'metrics',
+    requestedArtifactTypes: ['strategy_map'],
+  });
+  const metricsInvocation = fixture.plan.skill_invocations.find(({ skill_id }) => (
+    skill_id === 'build-experience-metrics'
+  ));
+  assert.ok(metricsInvocation?.execution_mode === 'compiled');
+  assert.equal(metricsInvocation.required, true);
+  assert.equal(metricsInvocation.failure_policy, 'block');
+  assert.equal(metricsInvocation.degraded_policy, 'gap');
+
+  const { task_id: _taskId, steps, ...planExtras } = fixture.plan;
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    steps,
+    planExtras,
+    fixture.task as unknown as Record<string, unknown>,
+  );
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new DegradedPortfolioContributorLLM('build-experience-metrics'),
+    new RecordingDeliverablesFake(),
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed_with_gaps', JSON.stringify(result));
+  assert.equal(result.gapCount, 1);
+  const metricsStep = (await repository.listExecutionSteps(lease.attemptId))
+    .find(({ actorId }) => actorId === 'build-experience-metrics');
+  assert.equal(metricsStep?.state, 'succeeded');
+  assert.equal(metricsStep?.skillProvenance?.status, 'degraded');
+  assert.deepEqual(metricsStep?.skillProvenance?.limitations, [
+    'primary user evidence is unavailable',
+  ]);
+  assert.ok(metricsStep?.outputArtifactId);
+  assert.equal((await repository.getArtifact(metricsStep.outputArtifactId!))?.state, 'SEALED');
+});
+
+test('Plan v3 terminal rebuild reuses the exact Synthesizer checkpoint across retries', async () => {
+  const fixture = productionPortfolioFixture();
+  const { task_id: _taskId, steps, ...planExtras } = fixture.plan;
+  const first = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    steps,
+    planExtras,
+    fixture.task as unknown as Record<string, unknown>,
+  );
+  const firstResult = await buildEngine(
+    first.repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new NarrativelyRedactedSynthesisLLM(),
+    new RecordingDeliverablesFake(async () => {
+      throw new CurrentReportValidationError('first portfolio assembly failed');
+    }),
+  ).execute({ lease: first.lease, expectedModel: 'pinned-model' });
+  assert.equal(firstResult.status, 'paused');
+  assert.equal(firstResult.failure?.kind, 'deliverable_validation');
+
+  const retryLease = await claimRetryExecution(
+    first.repository,
+    first.lease,
+    firstResult.failedStepNo!,
+  );
+  const retryTool = new CountingRealTavilyAdapter();
+  const retryLlm = new RealSchemaFixtureLLM();
+  const retryResult = await buildEngine(
+    first.repository,
+    new ToolRouter().register(retryTool),
+    retryLlm,
+    new RecordingDeliverablesFake(async () => {
+      throw new CurrentReportValidationError('second portfolio assembly failed');
+    }),
+  ).execute({ lease: retryLease, expectedModel: 'pinned-model' });
+
+  assert.equal(retryResult.status, 'paused', JSON.stringify(retryResult));
+  assert.equal(retryTool.calls, 0);
+  assert.equal(
+    retryLlm.prompts.some(({ schemaName }) => schemaName === 'skill:competitive-web-research'),
+    false,
+  );
+  assert.equal(
+    retryLlm.prompts.some(({ schemaName }) => schemaName === 'skill:research-strategy-synthesis'),
+    false,
+  );
+  const firstSteps = await first.repository.listExecutionSteps(first.lease.attemptId);
+  const retrySteps = await first.repository.listExecutionSteps(retryLease.attemptId);
+  const firstSynthesizer = firstSteps.find(({ actorId }) => actorId === 'research-strategy-synthesis');
+  const contributor = retrySteps.find(({ actorId }) => actorId === 'competitive-web-research');
+  const synthesizer = retrySteps.find(({ actorId }) => actorId === 'research-strategy-synthesis');
+  assert.ok(firstSynthesizer?.skillProvenance?.contributionBundleArtifact);
+  assert.equal(typeof contributor?.skillProvenance?.sourceArtifactId, 'string');
+  assert.equal(typeof synthesizer?.skillProvenance?.sourceArtifactId, 'string');
+  assert.deepEqual(
+    synthesizer?.skillProvenance?.contributionBundleArtifact,
+    firstSynthesizer.skillProvenance.contributionBundleArtifact,
+  );
+
+  const secondRetryLease = await claimRetryExecution(
+    first.repository,
+    retryLease,
+    retryResult.failedStepNo!,
+  );
+  const secondRetryTool = new CountingRealTavilyAdapter();
+  const secondRetryLlm = new RealSchemaFixtureLLM();
+  const secondRetryResult = await buildEngine(
+    first.repository,
+    new ToolRouter().register(secondRetryTool),
+    secondRetryLlm,
+    new RecordingDeliverablesFake(),
+  ).execute({ lease: secondRetryLease, expectedModel: 'pinned-model' });
+
+  assert.equal(secondRetryResult.status, 'completed', JSON.stringify(secondRetryResult));
+  assert.equal(secondRetryTool.calls, 0);
+  assert.equal(secondRetryLlm.prompts.length, 0);
+  const secondRetrySteps = await first.repository.listExecutionSteps(secondRetryLease.attemptId);
+  const secondRetrySynthesizer = secondRetrySteps.find(
+    ({ actorId }) => actorId === 'research-strategy-synthesis',
+  );
+  assert.equal(typeof secondRetrySynthesizer?.skillProvenance?.sourceArtifactId, 'string');
+  assert.deepEqual(
+    secondRetrySynthesizer?.skillProvenance?.contributionBundleArtifact,
+    firstSynthesizer.skillProvenance.contributionBundleArtifact,
+  );
+});
+
+test('Plan v3 retry reruns a Synthesizer checkpoint with a redacted machine reference', async () => {
+  const fixture = productionPortfolioFixture();
+  const { task_id: _taskId, steps, ...planExtras } = fixture.plan;
+  const first = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    steps,
+    planExtras,
+    fixture.task as unknown as Record<string, unknown>,
+  );
+  const firstResult = await buildEngine(
+    first.repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new RedactedMachineReferenceSynthesisLLM(),
+    new RecordingDeliverablesFake(async () => {
+      throw new CurrentReportValidationError('force terminal retry');
+    }),
+  ).execute({ lease: first.lease, expectedModel: 'pinned-model' });
+  assert.equal(firstResult.status, 'paused');
+  assert.equal(firstResult.failure?.kind, 'deliverable_validation');
+
+  const retryLease = await claimRetryExecution(
+    first.repository,
+    first.lease,
+    firstResult.failedStepNo!,
+  );
+  const retryTool = new CountingRealTavilyAdapter();
+  const retryLlm = new RealSchemaFixtureLLM();
+  const retryResult = await buildEngine(
+    first.repository,
+    new ToolRouter().register(retryTool),
+    retryLlm,
+  ).execute({ lease: retryLease, expectedModel: 'pinned-model' });
+
+  assert.equal(retryResult.status, 'completed', JSON.stringify(retryResult));
+  assert.equal(retryTool.calls, 0);
+  assert.equal(
+    retryLlm.prompts.some(({ schemaName }) => schemaName === 'skill:competitive-web-research'),
+    false,
+  );
+  assert.equal(
+    retryLlm.prompts.filter(({ schemaName }) => (
+      schemaName === 'skill:research-strategy-synthesis'
+    )).length,
+    1,
+  );
+  const retrySteps = await first.repository.listExecutionSteps(retryLease.attemptId);
+  const contributor = retrySteps.find(({ actorId }) => actorId === 'competitive-web-research');
+  const synthesizer = retrySteps.find(({ actorId }) => actorId === 'research-strategy-synthesis');
+  assert.equal(typeof contributor?.skillProvenance?.sourceArtifactId, 'string');
+  assert.equal(synthesizer?.skillProvenance?.sourceArtifactId, undefined);
+});
+
+test('Plan v3 retry reruns a Contributor when its source Artifact is no longer sealed', async () => {
+  const fixture = productionPortfolioFixture();
+  const { task_id: _taskId, steps, ...planExtras } = fixture.plan;
+  const first = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    steps,
+    planExtras,
+    fixture.task as unknown as Record<string, unknown>,
+  );
+  const firstResult = await buildEngine(
+    first.repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new RealSchemaFixtureLLM(),
+    new RecordingDeliverablesFake(async () => {
+      throw new CurrentReportValidationError('force terminal retry');
+    }),
+  ).execute({ lease: first.lease, expectedModel: 'pinned-model' });
+  assert.equal(firstResult.status, 'paused');
+
+  const firstContributor = (await first.repository.listExecutionSteps(first.lease.attemptId))
+    .find(({ actorId }) => actorId === 'competitive-web-research');
+  const sourceArtifactId = firstContributor?.skillProvenance?.sourceArtifactId;
+  assert.ok(typeof sourceArtifactId === 'string');
+  const connection = await scopedDatabase.connect();
+  try {
+    await connection.query(
+      `UPDATE control_artifacts SET state = 'FAILED' WHERE id = $1`,
+      [sourceArtifactId],
+    );
+  } finally {
+    connection.release();
+  }
+
+  const retryLease = await claimRetryExecution(
+    first.repository,
+    first.lease,
+    firstResult.failedStepNo!,
+  );
+  const retryTool = new CountingRealTavilyAdapter();
+  const retryLlm = new RealSchemaFixtureLLM();
+  const retryResult = await buildEngine(
+    first.repository,
+    new ToolRouter().register(retryTool),
+    retryLlm,
+    new RecordingDeliverablesFake(),
+  ).execute({ lease: retryLease, expectedModel: 'pinned-model' });
+
+  assert.equal(retryResult.status, 'completed', JSON.stringify(retryResult));
+  assert.equal(retryTool.calls, 0);
+  assert.equal(
+    retryLlm.prompts.some(({ schemaName }) => schemaName === 'skill:competitive-web-research'),
+    true,
+  );
+  assert.equal(
+    retryLlm.prompts.some(({ schemaName }) => schemaName === 'skill:research-strategy-synthesis'),
+    true,
+  );
+});
+
+test('Plan v3 retry preserves a reused optional Contributor degraded status and gap', async () => {
+  const fixture = productionPortfolioFixture();
+  const contributorInvocation = fixture.plan.skill_invocations.find(({ role }) => role === 'contributor');
+  const contributionRequirement = fixture.plan.contribution_requirements[0];
+  assert.ok(contributorInvocation && contributionRequirement);
+  contributorInvocation.required = false;
+  contributorInvocation.failure_policy = 'gap';
+  contributionRequirement.required = false;
+  fixture.plan.capability_demand_graph.demands[0]!.priority = 'optional';
+  const { task_id: _taskId, steps, ...planExtras } = fixture.plan;
+  const first = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    steps,
+    planExtras,
+    fixture.task as unknown as Record<string, unknown>,
+  );
+  const firstResult = await buildEngine(
+    first.repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new DegradedPortfolioContributorLLM(),
+    new RecordingDeliverablesFake(async () => {
+      throw new CurrentReportValidationError('force terminal retry after degraded Contributor');
+    }),
+  ).execute({ lease: first.lease, expectedModel: 'pinned-model' });
+  assert.equal(firstResult.status, 'paused');
+  const firstContributor = (await first.repository.listExecutionSteps(first.lease.attemptId))
+    .find(({ actorId }) => actorId === 'competitive-web-research');
+  assert.equal(firstContributor?.skillProvenance?.status, 'degraded');
+
+  const retryLease = await claimRetryExecution(
+    first.repository,
+    first.lease,
+    firstResult.failedStepNo!,
+  );
+  const retryLlm = new RealSchemaFixtureLLM();
+  const retryResult = await buildEngine(
+    first.repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    retryLlm,
+    new RecordingDeliverablesFake(),
+  ).execute({ lease: retryLease, expectedModel: 'pinned-model' });
+
+  assert.equal(retryResult.status, 'completed_with_gaps');
+  assert.equal(retryResult.gapCount, 1);
+  assert.equal(
+    retryLlm.prompts.some(({ schemaName }) => schemaName === 'skill:competitive-web-research'),
+    false,
+  );
+  const retryContributor = (await first.repository.listExecutionSteps(retryLease.attemptId))
+    .find(({ actorId }) => actorId === 'competitive-web-research');
+  assert.equal(retryContributor?.skillProvenance?.status, 'degraded');
+  assert.deepEqual(retryContributor?.skillProvenance?.limitations, ['primary user evidence is unavailable']);
+});
 
 test('rejects an invalid lease before Tool or LLM side effects', async () => {
   const { repository, lease } = await claimedExecution();
@@ -2564,6 +3337,565 @@ test('inserts a failed step when the lease expires during checkpoint reseal befo
   );
 });
 
+test('ordinary retry reuses only an exact execution-defining Skill provenance match', async (t) => {
+  const cases: Array<{
+    name: string;
+    mutate: (provenance: Record<string, unknown>) => Record<string, unknown>;
+    reused: boolean;
+  }> = [
+    {
+      name: 'unchanged provenance',
+      mutate: (provenance) => provenance,
+      reused: true,
+    },
+    {
+      name: 'Skill body hash',
+      mutate: (provenance) => ({ ...provenance, skillBodyHash: `sha256:${'0'.repeat(64)}` }),
+      reused: false,
+    },
+    {
+      name: 'input schema hash',
+      mutate: (provenance) => ({ ...provenance, inputSchemaHash: `sha256:${'0'.repeat(64)}` }),
+      reused: false,
+    },
+    {
+      name: 'output schema hash',
+      mutate: (provenance) => ({ ...provenance, outputSchemaHash: `sha256:${'0'.repeat(64)}` }),
+      reused: false,
+    },
+    {
+      name: 'payload schema hash',
+      mutate: (provenance) => ({ ...provenance, payloadSchemaHash: `sha256:${'0'.repeat(64)}` }),
+      reused: false,
+    },
+    {
+      name: 'Skill reference hashes',
+      mutate: (provenance) => ({
+        ...provenance,
+        skillReferenceHashes: [{ path: 'tampered.md', hash: `sha256:${'0'.repeat(64)}` }],
+      }),
+      reused: false,
+    },
+    {
+      name: 'resolved input hash',
+      mutate: (provenance) => ({ ...provenance, inputHash: `sha256:${'0'.repeat(64)}` }),
+      reused: false,
+    },
+    {
+      name: 'execution Prompt hash',
+      mutate: (provenance) => ({ ...provenance, executionPromptHash: `sha256:${'0'.repeat(64)}` }),
+      reused: false,
+    },
+  ];
+
+  for (const candidate of cases) {
+    await t.test(candidate.name, async () => {
+      const first = await claimedExecution(new Date(Date.now() + 60_000), planSteps);
+      const firstLlm = new CountingRealLLM();
+      const firstGenerateText = firstLlm.generateText.bind(firstLlm);
+      firstLlm.generateText = async (options) => {
+        if (options.receipt.stepNo === 3) {
+          throw new LLMInvocationError('server', true, 503, 'pause after the Skill checkpoint');
+        }
+        return firstGenerateText(options);
+      };
+      const firstResult = await buildEngine(
+        first.repository,
+        new ToolRouter().register(new CountingRealTavilyAdapter()),
+        firstLlm,
+      ).execute({ lease: first.lease, expectedModel: 'pinned-model' });
+      assert.equal(firstResult.status, 'paused');
+      assert.equal(firstResult.failedStepNo, 3);
+
+      const priorSkill = (await first.repository.listExecutionSteps(first.lease.attemptId))
+        .find(({ stepNo }) => stepNo === 2);
+      assert.ok(priorSkill?.skillProvenance);
+      assert.match(String(priorSkill.skillProvenance.executionPromptHash), /^sha256:/u);
+      const connection = await scopedDatabase.connect();
+      try {
+        await connection.query(
+          `UPDATE control_execution_steps
+           SET skill_provenance = $3
+           WHERE attempt_id = $1 AND step_no = $2`,
+          [
+            first.lease.attemptId,
+            2,
+            JSON.stringify(candidate.mutate(priorSkill.skillProvenance)),
+          ],
+        );
+      } finally {
+        connection.release();
+      }
+
+      const retryLease = await claimRetryExecution(
+        first.repository,
+        first.lease,
+        firstResult.failedStepNo,
+      );
+      const retryTool = new CountingRealTavilyAdapter();
+      const retryLlm = new CountingRealLLM();
+      const retryResult = await buildEngine(
+        first.repository,
+        new ToolRouter().register(retryTool),
+        retryLlm,
+      ).execute({ lease: retryLease, expectedModel: 'pinned-model' });
+
+      assert.equal(retryResult.status, 'completed');
+      assert.equal(retryTool.calls, 0);
+      assert.equal(retryLlm.calls, candidate.reused ? 2 : 3);
+      const retrySteps = await first.repository.listExecutionSteps(retryLease.attemptId);
+      assert.equal(typeof retrySteps[0]?.toolProvenance?.sourceArtifactId, 'string');
+      assert.equal(
+        typeof retrySteps[1]?.skillProvenance?.sourceArtifactId,
+        candidate.reused ? 'string' : 'undefined',
+      );
+    });
+  }
+});
+
+test('ordinary retry reuses only an exact Knowledge provenance match', async (t) => {
+  const knowledge = loadRuntimeKnowledgeIndex().find(({ id }) => id === 'standard_sampling');
+  assert.ok(knowledge && (knowledge.status === 'approved' || knowledge.status === 'draft'));
+  const knowledgeStep: CurrentPlanStep = {
+    step_no: 2,
+    step_name: '加载抽样规范',
+    actor_type: 'knowledge',
+    actor_id: 'knowledge.index',
+    question_ids: ['question-1'],
+    depends_on: [],
+    input: {
+      contractHash: `sha256:${'a'.repeat(64)}`,
+      references: [{
+        resourceId: knowledge.id,
+        resourceType: knowledge.type,
+        sourcePath: knowledge.source_path,
+        status: knowledge.status,
+        contentHash: knowledge.content_hash,
+        required: true,
+        failurePolicy: 'block',
+      }],
+    },
+    input_bindings: [],
+    expected_outputs: [{ pointer: '/resources', description: 'knowledge' }],
+    acceptance_criteria: ['hash matches'],
+    requires_approval: false,
+    fallback_actor_ids: [],
+  };
+  const steps: CurrentPlanStep[] = [
+    planSteps[0]!,
+    knowledgeStep,
+    {
+      ...planSteps[1]!,
+      step_no: 3,
+      depends_on: [1, 2],
+    },
+    { ...planSteps[2]!, step_no: 4, depends_on: [3] },
+  ];
+  const cases: Array<{
+    name: string;
+    mutate: (provenance: Record<string, unknown>) => Record<string, unknown>;
+    reused: boolean;
+  }> = [
+    {
+      name: 'unchanged provenance',
+      mutate: (provenance) => provenance,
+      reused: true,
+    },
+    {
+      name: 'contract hash',
+      mutate: (provenance) => ({ ...provenance, contractHash: `sha256:${'0'.repeat(64)}` }),
+      reused: false,
+    },
+    {
+      name: 'resolved resources',
+      mutate: (provenance) => ({
+        ...provenance,
+        resources: [{
+          id: knowledge.id,
+          status: knowledge.status,
+          sourcePath: knowledge.source_path,
+          contentHash: `sha256:${'0'.repeat(64)}`,
+        }],
+      }),
+      reused: false,
+    },
+  ];
+
+  for (const candidate of cases) {
+    await t.test(candidate.name, async () => {
+      const first = await claimedExecution(new Date(Date.now() + 60_000), steps);
+      const firstLlm = new CountingRealLLM();
+      const firstGenerateText = firstLlm.generateText.bind(firstLlm);
+      firstLlm.generateText = async (options) => {
+        if (options.receipt.stepNo === 4) {
+          throw new LLMInvocationError('server', true, 503, 'pause after the Knowledge checkpoint');
+        }
+        return firstGenerateText(options);
+      };
+      const firstResult = await buildEngine(
+        first.repository,
+        new ToolRouter().register(new CountingRealTavilyAdapter()),
+        firstLlm,
+      ).execute({ lease: first.lease, expectedModel: 'pinned-model' });
+      assert.equal(firstResult.status, 'paused');
+      assert.equal(firstResult.failedStepNo, 4);
+
+      const priorKnowledge = (await first.repository.listExecutionSteps(first.lease.attemptId))
+        .find(({ stepNo }) => stepNo === 2);
+      assert.ok(priorKnowledge?.skillProvenance);
+      const connection = await scopedDatabase.connect();
+      try {
+        await connection.query(
+          `UPDATE control_execution_steps
+           SET skill_provenance = $3
+           WHERE attempt_id = $1 AND step_no = $2`,
+          [
+            first.lease.attemptId,
+            2,
+            JSON.stringify(candidate.mutate(priorKnowledge.skillProvenance)),
+          ],
+        );
+      } finally {
+        connection.release();
+      }
+
+      const retryLease = await claimRetryExecution(
+        first.repository,
+        first.lease,
+        firstResult.failedStepNo,
+      );
+      const retryTool = new CountingRealTavilyAdapter();
+      const retryLlm = new CountingRealLLM();
+      const retryResult = await buildEngine(
+        first.repository,
+        new ToolRouter().register(retryTool),
+        retryLlm,
+      ).execute({ lease: retryLease, expectedModel: 'pinned-model' });
+
+      assert.equal(retryResult.status, 'completed');
+      assert.equal(retryTool.calls, 0);
+      assert.equal(retryLlm.calls, candidate.reused ? 1 : 2);
+      const retrySteps = await first.repository.listExecutionSteps(retryLease.attemptId);
+      assert.equal(typeof retrySteps[0]?.toolProvenance?.sourceArtifactId, 'string');
+      assert.equal(
+        typeof retrySteps[1]?.skillProvenance?.sourceArtifactId,
+        candidate.reused ? 'string' : 'undefined',
+      );
+      assert.equal(
+        typeof retrySteps[2]?.skillProvenance?.sourceArtifactId,
+        candidate.reused ? 'string' : 'undefined',
+      );
+    });
+  }
+});
+
+test('terminal rebuild reuses exact checkpoints and falls back when model provenance drifts', async () => {
+  const structuredTask = {
+    version: 'research-task-v2',
+    task_type: 'research_synthesis',
+    outcome_mode: 'answer',
+    business_domain: 'test',
+    research_goal: 'answer the strategy question',
+    target_audience: ['team'],
+    scope: ['test'],
+    constraints: [],
+    success_criteria: [{ id: 'SC1', statement: 'Answer the question' }],
+    expected_deliverables: ['research_strategy_report'],
+    requested_artifacts: ['executive_answers'],
+    assumptions: [],
+    ambiguities: [],
+    clarification_questions: [],
+    blocking_issues: [],
+    sensitivity: 'public',
+    pii_detected: false,
+  };
+  const first = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    planSteps,
+    {
+      deliverable_type: 'research_strategy_report',
+      evidence_requirements: [{
+        id: 'research-strategy-report', acceptedClasses: ['public_source'], minimumCount: 1, required: true,
+      }],
+    },
+    structuredTask,
+  );
+  const firstDeliverables = new RecordingDeliverablesFake(async () => {
+    throw new CurrentReportValidationError('first canonical assembly failed');
+  });
+  const firstResult = await buildEngine(
+    first.repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new CountingRealLLM(),
+    firstDeliverables,
+  ).execute({ lease: first.lease, expectedModel: 'pinned-model' });
+  assert.equal(firstResult.status, 'paused');
+  assert.equal(firstResult.failure?.kind, 'deliverable_validation');
+
+  const pausedTask = await first.repository.getTaskDetail(first.lease.taskId);
+  assert.ok(pausedTask);
+  const readyTask = await first.repository.retryPausedExecution({
+    taskId: first.lease.taskId,
+    attemptId: first.lease.attemptId,
+    expectedVersion: pausedTask.stateVersion,
+    failedStepNo: firstResult.failedStepNo,
+  });
+  assert.ok(readyTask);
+  const retryToken = randomUUID();
+  const retryClaim = await first.repository.claimExecution({
+    taskId: first.lease.taskId,
+    planVersionId: first.lease.planVersionId,
+    expectedVersion: readyTask.stateVersion,
+    idempotencyKey: randomUUID(),
+    requestHash: `sha256:${randomUUID()}`,
+    leaseOwner: 'terminal-rebuild-worker',
+    leaseTokenHash: leaseHash(retryToken),
+    leaseExpiresAt: new Date(Date.now() + 60_000),
+    retryOf: first.lease.attemptId,
+  });
+  const retryLease: ControlExecutionLease = {
+    taskId: first.lease.taskId,
+    planVersionId: first.lease.planVersionId,
+    attemptId: retryClaim.attemptId,
+    leaseOwner: 'terminal-rebuild-worker',
+    leaseToken: retryToken,
+    retryOf: first.lease.attemptId,
+  };
+  const retryTool = new CountingRealTavilyAdapter();
+  const retryLlm = new CountingRealLLM();
+  const retryDeliverables = new RecordingDeliverablesFake(async () => {
+    throw new CurrentReportValidationError('second canonical assembly failed');
+  });
+
+  const retryResult = await buildEngine(
+    first.repository,
+    new ToolRouter().register(retryTool),
+    retryLlm,
+    retryDeliverables,
+  ).execute({ lease: retryLease, expectedModel: 'pinned-model' });
+
+  assert.equal(retryResult.status, 'paused');
+  assert.equal(retryTool.calls, 0);
+  assert.equal(retryLlm.calls, 0);
+  assert.equal(retryDeliverables.calls.length, 1);
+  const retrySteps = await first.repository.listExecutionSteps(retryLease.attemptId);
+  assert.equal(retrySteps.filter(({ state }) => state === 'succeeded').length, planSteps.length);
+  assert.ok(retrySteps.filter(({ state }) => state === 'succeeded').every((step) => {
+    if (step.actorType === 'tool') return typeof step.toolProvenance?.sourceArtifactId === 'string';
+    return typeof step.skillProvenance?.sourceArtifactId === 'string'
+      && step.skillProvenance?.terminalRebuild === true;
+  }));
+  const unchangedRetryLease = await claimRetryExecution(
+    first.repository,
+    retryLease,
+    retryResult.failedStepNo!,
+  );
+  const unchangedRetryTool = new CountingRealTavilyAdapter();
+  const unchangedRetryLlm = new CountingRealLLM();
+  const unchangedRetryDeliverables = new RecordingDeliverablesFake(async () => {
+    throw new CurrentReportValidationError('third canonical assembly failed');
+  });
+  const unchangedRetryResult = await buildEngine(
+    first.repository,
+    new ToolRouter().register(unchangedRetryTool),
+    unchangedRetryLlm,
+    unchangedRetryDeliverables,
+  ).execute({ lease: unchangedRetryLease, expectedModel: 'pinned-model' });
+
+  assert.equal(unchangedRetryResult.status, 'paused');
+  assert.equal(unchangedRetryTool.calls, 0);
+  assert.equal(unchangedRetryLlm.calls, 0);
+  assert.equal(unchangedRetryDeliverables.calls.length, 1);
+  const unchangedRetrySteps = await first.repository.listExecutionSteps(unchangedRetryLease.attemptId);
+  const terminalSkill = unchangedRetrySteps.find(({ stepNo }) => stepNo === 2);
+  assert.ok(terminalSkill?.skillProvenance);
+  const connection = await scopedDatabase.connect();
+  try {
+    await connection.query(
+      `UPDATE control_execution_steps
+       SET skill_provenance = $3
+       WHERE attempt_id = $1 AND step_no = $2`,
+      [
+        unchangedRetryLease.attemptId,
+        2,
+        JSON.stringify({
+          ...terminalSkill.skillProvenance,
+          executionPromptHash: `sha256:${'0'.repeat(64)}`,
+        }),
+      ],
+    );
+  } finally {
+    connection.release();
+  }
+
+  const secondPausedTask = await first.repository.getTaskDetail(first.lease.taskId);
+  assert.ok(secondPausedTask);
+  const secondReadyTask = await first.repository.retryPausedExecution({
+    taskId: first.lease.taskId,
+    attemptId: unchangedRetryLease.attemptId,
+    expectedVersion: secondPausedTask.stateVersion,
+    failedStepNo: unchangedRetryResult.failedStepNo,
+  });
+  assert.ok(secondReadyTask);
+  const secondRetryToken = randomUUID();
+  const secondRetryClaim = await first.repository.claimExecution({
+    taskId: first.lease.taskId,
+    planVersionId: first.lease.planVersionId,
+    expectedVersion: secondReadyTask.stateVersion,
+    idempotencyKey: randomUUID(),
+    requestHash: `sha256:${randomUUID()}`,
+    leaseOwner: 'terminal-rebuild-worker-2',
+    leaseTokenHash: leaseHash(secondRetryToken),
+    leaseExpiresAt: new Date(Date.now() + 60_000),
+    retryOf: unchangedRetryLease.attemptId,
+  });
+  const secondRetryLease: ControlExecutionLease = {
+    taskId: first.lease.taskId,
+    planVersionId: first.lease.planVersionId,
+    attemptId: secondRetryClaim.attemptId,
+    leaseOwner: 'terminal-rebuild-worker-2',
+    leaseToken: secondRetryToken,
+    retryOf: unchangedRetryLease.attemptId,
+  };
+  const secondRetryTool = new CountingRealTavilyAdapter();
+  const secondRetryLlm = new CountingRealLLM();
+  const finalDeliverables = new RecordingDeliverablesFake(async () => {
+    throw new CurrentReportValidationError('fourth canonical assembly failed');
+  });
+  const finalResult = await buildEngine(
+    first.repository,
+    new ToolRouter().register(secondRetryTool),
+    secondRetryLlm,
+    finalDeliverables,
+  ).execute({ lease: secondRetryLease, expectedModel: 'pinned-model' });
+
+  assert.equal(finalResult.status, 'paused');
+  assert.equal(secondRetryTool.calls, 0);
+  assert.equal(secondRetryLlm.calls, 3);
+  assert.equal(finalDeliverables.calls.length, 1);
+  const finalSteps = await first.repository.listExecutionSteps(secondRetryLease.attemptId);
+  assert.equal(typeof finalSteps[0]?.toolProvenance?.sourceArtifactId, 'string');
+  assert.equal(finalSteps[1]?.skillProvenance?.sourceArtifactId, undefined);
+  assert.match(String(finalSteps[1]?.skillProvenance?.executionPromptHash), /^sha256:/u);
+
+  const terminalModel = finalSteps.find(({ stepNo }) => stepNo === 3);
+  assert.ok(terminalModel?.skillProvenance);
+  const modelConnection = await scopedDatabase.connect();
+  try {
+    await modelConnection.query(
+      `UPDATE control_execution_steps
+       SET skill_provenance = $3
+       WHERE attempt_id = $1 AND step_no = $2`,
+      [
+        secondRetryLease.attemptId,
+        3,
+        JSON.stringify({
+          ...terminalModel.skillProvenance,
+          contextManifestHash: `sha256:${'0'.repeat(64)}`,
+        }),
+      ],
+    );
+  } finally {
+    modelConnection.release();
+  }
+
+  const modelDriftRetryLease = await claimRetryExecution(
+    first.repository,
+    secondRetryLease,
+    finalResult.failedStepNo!,
+  );
+  const modelDriftTool = new CountingRealTavilyAdapter();
+  const modelDriftLlm = new CountingRealLLM();
+  const modelDriftDeliverables = new RecordingDeliverablesFake();
+  const modelDriftResult = await buildEngine(
+    first.repository,
+    new ToolRouter().register(modelDriftTool),
+    modelDriftLlm,
+    modelDriftDeliverables,
+  ).execute({ lease: modelDriftRetryLease, expectedModel: 'pinned-model' });
+
+  assert.equal(modelDriftResult.status, 'completed');
+  assert.equal(modelDriftTool.calls, 0);
+  assert.equal(modelDriftLlm.calls, 2);
+  assert.equal(modelDriftDeliverables.calls.length, 1);
+  const modelDriftSteps = await first.repository.listExecutionSteps(modelDriftRetryLease.attemptId);
+  assert.equal(typeof modelDriftSteps[1]?.skillProvenance?.sourceArtifactId, 'string');
+  assert.equal(modelDriftSteps[2]?.skillProvenance?.sourceArtifactId, undefined);
+});
+
+test('terminal rebuild refuses a model checkpoint whose persisted receipt is missing', async () => {
+  const first = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    planSteps,
+    {
+      deliverable_type: 'research_strategy_report',
+      evidence_requirements: [{
+        id: 'research-strategy-report', acceptedClasses: ['public_source'], minimumCount: 1, required: true,
+      }],
+    },
+    {
+      version: 'research-task-v2',
+      task_type: 'research_synthesis',
+      outcome_mode: 'answer',
+      business_domain: 'test',
+      research_goal: 'answer the strategy question',
+      target_audience: ['team'],
+      scope: ['test'],
+      constraints: [],
+      success_criteria: [{ id: 'SC1', statement: 'Answer the question' }],
+      expected_deliverables: ['research_strategy_report'],
+      requested_artifacts: ['executive_answers'],
+      assumptions: [],
+      ambiguities: [],
+      clarification_questions: [],
+      blocking_issues: [],
+      sensitivity: 'public',
+      pii_detected: false,
+    },
+  );
+  const firstResult = await buildEngine(
+    first.repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new CountingRealLLM(),
+    new RecordingDeliverablesFake(async () => {
+      throw new CurrentReportValidationError('force terminal retry');
+    }),
+  ).execute({ lease: first.lease, expectedModel: 'pinned-model' });
+  assert.equal(firstResult.status, 'paused');
+
+  const reviewerReceipt = (await first.repository.listModelCalls(first.lease.attemptId))
+    .find(({ stage, stepNo }) => stage === 'reviewer' && stepNo === 4);
+  assert.ok(reviewerReceipt);
+  const connection = await scopedDatabase.connect();
+  try {
+    await connection.query('DELETE FROM control_model_calls WHERE id = $1', [reviewerReceipt.id]);
+  } finally {
+    connection.release();
+  }
+
+  const retryLease = await claimRetryExecution(
+    first.repository,
+    first.lease,
+    firstResult.failedStepNo!,
+  );
+  const retryTool = new CountingRealTavilyAdapter();
+  const retryLlm = new CountingRealLLM();
+  const retryResult = await buildEngine(
+    first.repository,
+    new ToolRouter().register(retryTool),
+    retryLlm,
+    new RecordingDeliverablesFake(),
+  ).execute({ lease: retryLease, expectedModel: 'pinned-model' });
+
+  assert.equal(retryResult.status, 'completed', JSON.stringify(retryResult));
+  assert.equal(retryTool.calls, 0);
+  assert.equal(retryLlm.calls, 2, 'missing receipt must force the LLM and Reviewer branch to rerun');
+  const retrySteps = await first.repository.listExecutionSteps(retryLease.attemptId);
+  assert.equal(typeof retrySteps[1]?.skillProvenance?.sourceArtifactId, 'string');
+  assert.equal(retrySteps[2]?.skillProvenance?.sourceArtifactId, undefined);
+  assert.equal(retrySteps[3]?.skillProvenance?.sourceArtifactId, undefined);
+});
+
 test('orders parallel outputs by step number regardless of completion timing', async () => {
   const steps: CurrentPlanStep[] = [
     planSteps[0]!,
@@ -2605,6 +3937,36 @@ test('orders parallel outputs by step number regardless of completion timing', a
   assert.deepEqual(
     (deliverables.calls[0]?.outputs as Array<{ stepNo: number }> | undefined)?.map(({ stepNo }) => stepNo),
     [1, 2, 3, 4],
+  );
+});
+
+test('does not advertise Evidence IDs for Tool results excluded from the final Manifest', async () => {
+  const { repository, lease } = await claimedExecution(new Date(Date.now() + 60_000), planSteps);
+  const llm = new CountingRealLLM();
+  const deliverables = new RecordingDeliverablesFake();
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new MixedSchemeTavilyAdapter()),
+    llm,
+    deliverables,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed');
+  const skillContext = llm.contexts.find((context) => (
+    context !== null
+    && typeof context === 'object'
+    && !Array.isArray(context)
+    && (context as Record<string, unknown>).actor_id === 'digital-human-competitive-analysis'
+  )) as { prior_outputs?: Array<{ stepNo: number; evidenceIds?: string[] }> } | undefined;
+  assert.ok(skillContext);
+  const toolContext = skillContext.prior_outputs?.find(({ stepNo }) => stepNo === 1);
+  assert.deepEqual(toolContext?.evidenceIds, ['E1-1']);
+  assert.deepEqual(
+    deliverables.calls[0]?.evidenceManifest.value.entries
+      .filter(({ evidenceClass }) => evidenceClass === 'public_source')
+      .map(({ id }) => id),
+    ['E1-1'],
   );
 });
 
@@ -3392,6 +4754,280 @@ test('executes the current plan with real Tool provenance and complete model rec
   assert.equal(skillProvenance.status, 'succeeded');
   const attempts = await repository.listAttempts(lease.taskId);
   assert.equal(attempts[0]?.state, 'completed');
+});
+
+test('executes frozen Knowledge before Skill and emits Knowledge Evidence', async () => {
+  const knowledge = loadRuntimeKnowledgeIndex().find(({ id }) => id === 'standard_sampling');
+  assert.ok(knowledge && (knowledge.status === 'approved' || knowledge.status === 'draft'));
+  const knowledgeStep: CurrentPlanStep = {
+    step_no: 1,
+    step_name: '加载抽样规范',
+    actor_type: 'knowledge',
+    actor_id: 'knowledge.index',
+    question_ids: ['question-1'],
+    depends_on: [],
+    input: {
+      contractHash: `sha256:${'a'.repeat(64)}`,
+      references: [{
+        resourceId: knowledge.id,
+        resourceType: knowledge.type,
+        sourcePath: knowledge.source_path,
+        status: knowledge.status,
+        contentHash: knowledge.content_hash,
+        required: true,
+        failurePolicy: 'block',
+      }],
+    },
+    input_bindings: [],
+    expected_outputs: [{ pointer: '/resources', description: 'knowledge' }],
+    acceptance_criteria: ['hash matches'],
+    requires_approval: false,
+    fallback_actor_ids: [],
+  };
+  const remapped: CurrentPlanStep[] = [
+    knowledgeStep,
+    { ...planSteps[0]!, step_no: 2 },
+    {
+      ...planSteps[1]!,
+      step_no: 3,
+      depends_on: [1, 2],
+      input_bindings: [{
+        target_pointer: '/business_domain',
+        source_step_no: 1,
+        source_pointer: '/resources/0/content',
+      }],
+    },
+    { ...planSteps[2]!, step_no: 4, depends_on: [3] },
+    { ...planSteps[3]!, step_no: 5, depends_on: [4] },
+  ];
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    remapped,
+    {
+      deliverable_type: 'competitive_analysis_report',
+      evidence_requirements: [{
+        id: 'competitive-analysis-report',
+        acceptedClasses: ['public_source', 'knowledge'],
+        minimumCount: 1,
+        required: true,
+      }],
+    },
+  );
+  const deliverables = new RecordingDeliverablesFake();
+  const engine = buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new CountingRealLLM(),
+    deliverables,
+  );
+
+  const result = await engine.execute({ lease, expectedModel: 'pinned-model' });
+  assert.equal(result.status, 'completed');
+  const input = deliverables.calls[0];
+  assert.ok(input);
+  const knowledgeEvidence = input.evidenceManifest.value.entries.find(({ kind }) => kind === 'knowledge_excerpt');
+  assert.ok(knowledgeEvidence);
+  assert.equal(knowledgeEvidence.evidenceClass, 'knowledge');
+  assert.equal(knowledgeEvidence.jsonPointer, '/resources/0/content');
+  const steps = await repository.listExecutionSteps(lease.attemptId);
+  assert.equal(steps[0]?.actorType, 'knowledge');
+  assert.equal(steps[0]?.skillProvenance?.kind, 'knowledge');
+});
+
+test('executes a compiled generate-research-plan invocation stage by stage', async () => {
+  const original: CurrentPlanStep[] = [
+    planSteps[0]!,
+    {
+      ...planSteps[1]!,
+      actor_id: 'generate-research-plan',
+      input: {},
+      input_bindings: [],
+      expected_outputs: [{ pointer: '/payload', description: 'research plan' }],
+    },
+    { ...planSteps[3]!, step_no: 3, depends_on: [2], actor_id: 'reviewer.research-lead' },
+  ];
+  const task = {
+    version: 'research-task-v2' as const,
+    task_type: 'user_research_planning' as const,
+    business_domain: 'pet services',
+    research_goal: 'plan a pet mindshare study',
+    target_audience: ['platform operations'],
+    scope: ['mobile app'], constraints: [],
+    success_criteria: [{ id: 'SC-1', statement: 'executable plan' }],
+    expected_deliverables: ['research_plan'], assumptions: [], ambiguities: [],
+    clarification_questions: [], blocking_issues: [], sensitivity: 'internal' as const, pii_detected: false,
+  };
+  const compiled = compileSkillSteps(original, task);
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    compiled.steps,
+    {
+      deliverable_type: 'research_plan',
+      evidence_requirements: [{ id: 'public-market-evidence', acceptedClasses: ['public_source', 'knowledge'], minimumCount: 1, required: true }],
+      execution_contract_version: 'current-execution-plan-v2',
+      skill_invocations: compiled.invocations,
+      capability_decisions: {
+        eligible: [{
+          skill: { id: 'generate-research-plan', required_tools: ['tavily-web-search'] },
+          optional_tool_decisions: [],
+        }],
+        excluded: [],
+      },
+    },
+    { task_type: 'competitive_research', research_goal: task.research_goal },
+  );
+  const deliverables = new RecordingDeliverablesFake();
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new CountingRealLLM(),
+    deliverables,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed');
+  const persisted = await repository.listExecutionSteps(lease.attemptId);
+  assert.equal(persisted.length, 7);
+  assert.deepEqual(persisted.map(({ actorType }) => actorType), [
+    'tool', 'knowledge', 'llm', 'llm', 'llm', 'skill', 'reviewer',
+  ]);
+  assert.ok(deliverables.calls[0]?.evidenceManifest.value.entries.some(({ kind }) => kind === 'knowledge_excerpt'));
+  const skillProvenance = persisted.find(({ actorType }) => actorType === 'skill')?.skillProvenance;
+  assert.ok(Array.isArray(skillProvenance?.skillReferenceHashes));
+  assert.deepEqual(
+    (skillProvenance?.skillReferenceHashes as Array<{ path: string }>).map(({ path }) => path),
+    ['references/brief-skeleton.md', 'references/plan-skeleton.md', 'references/run-notes-template.md'],
+  );
+
+  const tamperedInvocations = structuredClone(compiled.invocations);
+  tamperedInvocations[0]!.contract_hash = `sha256:${'0'.repeat(64)}`;
+  const tamperedExecution = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    compiled.steps,
+    {
+      deliverable_type: 'research_plan',
+      evidence_requirements: [{ id: 'public-market-evidence', acceptedClasses: ['public_source', 'knowledge'], minimumCount: 1, required: true }],
+      execution_contract_version: 'current-execution-plan-v2',
+      skill_invocations: tamperedInvocations,
+      capability_decisions: {
+        eligible: [{
+          skill: { id: 'generate-research-plan', required_tools: ['tavily-web-search'] },
+          optional_tool_decisions: [],
+        }],
+        excluded: [],
+      },
+    },
+    { task_type: 'competitive_research', research_goal: task.research_goal },
+  );
+  const tamperedTool = new CountingRealTavilyAdapter();
+  const tamperedLlm = new CountingRealLLM();
+  await assert.rejects(() => buildEngine(
+    tamperedExecution.repository,
+    new ToolRouter().register(tamperedTool),
+    tamperedLlm,
+  ).execute({ lease: tamperedExecution.lease, expectedModel: 'pinned-model' }), /contract hash drift/u);
+  assert.equal(tamperedTool.calls, 0);
+  assert.equal(tamperedLlm.calls, 0);
+  const preflightFailure = (await tamperedExecution.repository.listExecutionSteps(
+    tamperedExecution.lease.attemptId,
+  ))[0]?.failure;
+  assert.deepEqual(preflightFailure?.allowedActions, ['replan', 'abort']);
+  assert.equal(preflightFailure?.kind, 'skill_contract_drift');
+
+  class ResourceGapSkillLoader extends SkillLoader {
+    override loadSkillExecution(id: string) {
+      const loaded = super.loadSkillExecution(id);
+      if (!loaded || id !== 'generate-research-plan') return loaded;
+      return {
+        ...loaded,
+        contract: {
+          ...loaded.contract,
+          resource_queries: [
+            ...(loaded.contract.resource_queries ?? []),
+            {
+              query_id: 'unavailable-runtime-category',
+              types: ['not-a-real-type'],
+              min_items: 1,
+              max_items: 1,
+              accepted_statuses: ['approved'] as Array<'approved' | 'draft'>,
+              purpose: 'Exercise runtime gap propagation.',
+              failure_policy: 'gap' as const,
+            },
+          ],
+        },
+      };
+    }
+  }
+  const gapLoader = new ResourceGapSkillLoader();
+  const gapCompiled = compileSkillSteps(original, task, gapLoader);
+  assert.equal(gapCompiled.invocations[0]?.resource_gaps.length, 1);
+  const gapExecution = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    gapCompiled.steps,
+    {
+      deliverable_type: 'research_plan',
+      evidence_requirements: [{ id: 'public-market-evidence', acceptedClasses: ['public_source', 'knowledge'], minimumCount: 1, required: true }],
+      execution_contract_version: 'current-execution-plan-v2',
+      skill_invocations: gapCompiled.invocations,
+      capability_decisions: {
+        eligible: [{
+          skill: { id: 'generate-research-plan', required_tools: ['tavily-web-search'] },
+          optional_tool_decisions: [],
+        }],
+        excluded: [],
+      },
+    },
+    { task_type: 'competitive_research', research_goal: task.research_goal },
+  );
+  const gapDeliverables = new RecordingDeliverablesFake();
+  const gapResult = await buildEngine(
+    gapExecution.repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new CountingRealLLM(),
+    gapDeliverables,
+    undefined,
+    gapLoader,
+  ).execute({ lease: gapExecution.lease, expectedModel: 'pinned-model' });
+  assert.equal(gapResult.status, 'completed_with_gaps');
+  assert.equal(gapResult.gapCount, 1);
+  assert.match(gapDeliverables.calls[0]?.gaps[0] ?? '', /unavailable-runtime-category/u);
+  assert.deepEqual(gapDeliverables.calls[0]?.gapRefs, [{
+    key: 'skill:generate-research-plan:2:resource:unavailable-runtime-category',
+    stepNo: 2,
+  }]);
+});
+
+test('records a degraded Skill as a completed task with one visible gap', async () => {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    planSteps,
+    {
+      deliverable_type: 'competitive_analysis_report',
+      evidence_requirements: [{
+        id: 'competitive-analysis-report',
+        acceptedClasses: ['public_source'],
+        minimumCount: 1,
+        required: true,
+      }],
+    },
+  );
+  const deliverables = new RecordingDeliverablesFake();
+  const engine = buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new DegradedSkillLLM(),
+    deliverables,
+  );
+
+  const result = await engine.execute({ lease, expectedModel: 'pinned-model' });
+  assert.equal(result.status, 'completed_with_gaps');
+  assert.equal(result.gapCount, 1);
+  assert.equal(deliverables.calls[0]?.gaps.length, 1);
+  assert.match(deliverables.calls[0]?.gaps[0] ?? '', /research wiki was unavailable/u);
+
+  const skillStep = (await repository.listExecutionSteps(lease.attemptId))
+    .find(({ stepNo }) => stepNo === 2);
+  assert.equal(skillStep?.skillProvenance?.status, 'degraded');
+  assert.deepEqual(skillStep?.skillProvenance?.limitations, ['research wiki was unavailable']);
 });
 
 test('passes finalized success criteria and required ProblemGraph question IDs to report review', async () => {
@@ -4690,6 +6326,7 @@ test('validates resolved Skill input before the Skill LLM side effect', async ()
   const skillStep = (await repository.listExecutionSteps(lease.attemptId))[1];
   assert.equal(skillStep?.skillProvenance?.status, 'failed');
   assert.match(String(skillStep?.skillProvenance?.inputSchemaHash), /^sha256:/u);
+  assert.equal(skillStep?.skillProvenance?.executionPromptHash, null);
   assert.equal(skillStep?.skillProvenance?.modelReceiptId, null);
 });
 
@@ -4707,20 +6344,84 @@ test('persists failed Skill provenance and receipt when output schema validation
   assert.equal(result.status, 'paused');
   assert.equal(result.failure?.kind, 'schema');
   const calls = await repository.listModelCalls(lease.attemptId);
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
+  assert.equal(result.failure?.retryable, true);
+  assert.equal(result.failure?.repairAttempts, 1);
+  assert.deepEqual(result.failure?.allowedActions, ['retry', 'abort']);
+  assert.ok(Array.isArray(result.failure?.schemaErrors));
+  assert.match(JSON.stringify(result.failure?.schemaErrors), /required property 'version'/u);
   const skillStep = (await repository.listExecutionSteps(lease.attemptId))[1];
   assert.equal(skillStep?.skillProvenance?.status, 'failed');
-  assert.equal(skillStep?.skillProvenance?.modelReceiptId, calls[0]?.id);
+  assert.match(JSON.stringify(skillStep?.failure?.schemaErrors), /required property 'version'/u);
+  const repairReceipt = calls.find(({ traceId }) => traceId === 'trace-2');
+  assert.ok(repairReceipt);
+  assert.equal(repairReceipt.stage, 'skill_repair');
+  assert.equal(skillStep?.skillProvenance?.modelReceiptId, repairReceipt.id);
+  assert.equal(skillStep?.skillProvenance?.promptHash, repairReceipt.promptHash);
+  assert.equal(skillStep?.skillProvenance?.traceId, repairReceipt.traceId);
   assert.match(String(skillStep?.skillProvenance?.skillBodyHash), /^sha256:/u);
   assert.match(String(skillStep?.skillProvenance?.outputSchemaHash), /^sha256:/u);
   assert.match(String(skillStep?.skillProvenance?.payloadSchemaHash), /^sha256:/u);
+  assert.match(String(skillStep?.skillProvenance?.executionPromptHash), /^sha256:/u);
   assert.equal(
     skillStep?.skillProvenance?.outputHash,
     canonicalJsonHash({ comparison_matrix: [] }),
   );
 });
 
-test('Skill provenance capture failure preserves the actor failure and pauses the attempt', async () => {
+test('repairs one schema-invalid Synthesizer output without restarting the execution', async () => {
+  const fixture = productionPortfolioFixture();
+  const { task_id: _taskId, steps, ...planExtras } = fixture.plan;
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    steps,
+    planExtras,
+    fixture.task as unknown as Record<string, unknown>,
+  );
+  const llm = new InvalidThenValidSynthesisLLM();
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    llm,
+    new RecordingDeliverablesFake(),
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'completed', JSON.stringify(result));
+  const synthesisCalls = llm.prompts.filter(({ schemaName }) => (
+    schemaName === 'skill:research-strategy-synthesis'
+  ));
+  assert.equal(synthesisCalls.length, 2);
+  assert.doesNotMatch(synthesisCalls[0]?.prompt ?? '', /repair the supplied invalid JSON output/iu);
+  assert.match(synthesisCalls[1]?.prompt ?? '', /repair the supplied invalid JSON output/iu);
+  assert.match(JSON.stringify(synthesisCalls[1]?.context), /validation_feedback/u);
+  assert.deepEqual(
+    (synthesisCalls[1]?.context as { invalid_output?: unknown } | undefined)?.invalid_output,
+    { comparison_matrix: [] },
+  );
+
+  const synthesisStep = fixture.plan.steps.find(({ actor_id }) => (
+    actor_id === 'research-strategy-synthesis'
+  ));
+  assert.ok(synthesisStep);
+  const persisted = (await repository.listExecutionSteps(lease.attemptId))
+    .find(({ stepNo }) => stepNo === synthesisStep.step_no);
+  assert.equal(persisted?.state, 'succeeded');
+  const receipts = (await repository.listModelCalls(lease.attemptId))
+    .filter(({ stepNo }) => stepNo === synthesisStep.step_no);
+  assert.equal(receipts.length, 2);
+  assert.ok(receipts.every(({ status }) => status === 'succeeded'));
+  assert.deepEqual(new Set(receipts.map(({ stage }) => stage)), new Set(['skill', 'skill_repair']));
+  assert.equal(new Set(receipts.map(({ promptHash }) => promptHash)).size, 2);
+  assert.equal(new Set(receipts.map(({ contextManifestHash }) => contextManifestHash)).size, 2);
+  assert.equal(new Set(receipts.map(({ traceId }) => traceId)).size, 2);
+  const finalReceipt = receipts.find(({ id }) => id === persisted?.skillProvenance?.modelReceiptId);
+  assert.ok(finalReceipt);
+  assert.equal(persisted?.skillProvenance?.promptHash, finalReceipt.promptHash);
+  assert.equal(persisted?.skillProvenance?.traceId, finalReceipt.traceId);
+});
+
+test('Skill provenance captured before invocation survives post-call configuration drift', async () => {
   const { repository, lease } = await claimedExecution(
     new Date(Date.now() + 60_000),
     planSteps.slice(0, 2),
@@ -4746,7 +6447,9 @@ test('Skill provenance capture failure preserves the actor failure and pauses th
     assert.equal(skillStep?.skillProvenance?.modelReceiptId, calls[0]?.id);
     assert.equal(skillStep?.skillProvenance?.promptHash, calls[0]?.promptHash);
     assert.equal(skillStep?.skillProvenance?.traceId, calls[0]?.traceId);
-    assert.match(String(skillStep?.skillProvenance?.captureFailure), /ENOENT|no such file/iu);
+    assert.match(String(skillStep?.skillProvenance?.skillBodyHash), /^sha256:/u);
+    assert.match(String(skillStep?.skillProvenance?.executionPromptHash), /^sha256:/u);
+    assert.equal(skillStep?.skillProvenance?.captureFailure, undefined);
   } finally {
     setConfigRoot(originalRoot);
     rmSync(missingRoot, { recursive: true, force: true });
@@ -4803,6 +6506,58 @@ test('pauses execution when current deliverable validation fails', async () => {
   } finally {
     connection.release();
   }
+});
+
+test('preserves a sanitized non-exportable reviewed Draft preview on deliverable failure', async () => {
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    [planSteps[0]],
+    {
+      deliverable_type: 'competitive_analysis_report',
+      evidence_requirements: [{
+        id: 'one-public-source', acceptedClasses: ['public_source'], minimumCount: 1, required: true,
+      }],
+    },
+  );
+  const deliverables = new RecordingDeliverablesFake(async () => {
+    const error = new Error('canonical assembly failed') as Error & { draftPreview: Record<string, unknown> };
+    error.draftPreview = {
+      version: 'reviewed-strategy-draft-preview-v1',
+      canonical: false,
+      exportAllowed: false,
+      title: 'Reviewed draft',
+      executiveAnswer: 'Existing answer',
+      directAnswers: [],
+      contentBlocks: [],
+      evidenceFindingCount: 1,
+      limitationCount: 0,
+      openQuestionCount: 1,
+    };
+    throw error;
+  });
+
+  const result = await buildEngine(
+    repository,
+    new ToolRouter().register(new CountingRealTavilyAdapter()),
+    new CountingRealLLM(),
+    deliverables,
+  ).execute({ lease, expectedModel: 'pinned-model' });
+
+  assert.equal(result.status, 'paused');
+  assert.deepEqual(result.failure?.draftPreview, {
+    version: 'reviewed-strategy-draft-preview-v1',
+    canonical: false,
+    exportAllowed: false,
+    title: 'Reviewed draft',
+    executiveAnswer: 'Existing answer',
+    directAnswers: [],
+    contentBlocks: [],
+    evidenceFindingCount: 1,
+    limitationCount: 0,
+    openQuestionCount: 1,
+  });
+  const failedStep = (await repository.listExecutionSteps(lease.attemptId)).find(({ state }) => state === 'failed');
+  assert.deepEqual(failedStep?.failure?.draftPreview, result.failure?.draftPreview);
 });
 
 test('keeps terminal publication invalidation failure authoritative and recoverable', async () => {
@@ -6132,5 +7887,572 @@ test('one production Tool collector Manifest can satisfy every configured requir
         `${policy.task_type}/${policy.deliverable_type}/${requirement.id} must be achievable by collector output`,
       );
     }
+  }
+});
+
+class FailingStandaloneHtmlArtifactStore extends ControlArtifactStore {
+  override async writeText(input: TextArtifactWriteInput): Promise<ControlArtifact> {
+    if (input.kind === 'standalone_html_report') {
+      throw new Error('fixture standalone HTML write failed');
+    }
+    return super.writeText(input);
+  }
+}
+
+class FailingShowcaseHtmlArtifactStore extends ControlArtifactStore {
+  override async writeText(input: TextArtifactWriteInput): Promise<ControlArtifact> {
+    if (input.kind === 'editorial_showcase_html') {
+      throw new Error('fixture Showcase HTML write failed');
+    }
+    return super.writeText(input);
+  }
+}
+
+class FailingV1PackageReadbackArtifactStore extends ControlArtifactStore {
+  private packageArtifactId: string | undefined;
+
+  override async writeJson(input: ArtifactWriteInput): Promise<ControlArtifact> {
+    const artifact = await super.writeJson(input);
+    if (input.kind === 'report_package' && input.schemaVersion === 'report-package-v1') {
+      this.packageArtifactId = artifact.id;
+    }
+    return artifact;
+  }
+
+  override async readVerifiedBoundJson<T>(artifactId: string): Promise<{
+    artifact: ControlArtifact;
+    value: T;
+  }> {
+    if (artifactId === this.packageArtifactId) {
+      throw new Error('fixture Package v1 read-back failed');
+    }
+    return super.readVerifiedBoundJson<T>(artifactId);
+  }
+}
+
+function bindResearchStrategyFixture<T>(value: T, evidenceId: string): T {
+  const replace = (candidate: unknown): unknown => {
+    if (candidate === 'Q1') return 'fixture-question';
+    if (candidate === 'E1') return evidenceId;
+    if (candidate === 'SC1') return 'fixture-criterion';
+    if (Array.isArray(candidate)) return candidate.map(replace);
+    if (!candidate || typeof candidate !== 'object') return candidate;
+    return Object.fromEntries(
+      Object.entries(candidate).map(([key, child]) => [key, replace(child)]),
+    );
+  };
+  return replace(value) as T;
+}
+
+async function editorialV3LeaseFixture(options: {
+  standaloneHtmlBundleV1Enabled: boolean;
+  editorialPlannerMode?: 'model' | 'provider_failure';
+  showcaseEnabled?: boolean;
+  failShowcaseHtmlWrite?: boolean;
+  failHtmlWrite?: boolean;
+  failV1PackageReadback?: boolean;
+}): Promise<{
+  repository: ControlPlaneRepository;
+  lease: ControlExecutionLease;
+  store: ControlArtifactStore;
+  engine: LeaseExecutionEngine;
+  compositionInputs: ReportCompositionInput[];
+  componentIds: {
+    deliverableArtifactId?: string;
+    crossSkillReviewArtifactId?: string;
+    contributionLedgerArtifactId?: string;
+    contributionSummaryArtifactId?: string;
+    reportReviewArtifactId?: string;
+  };
+}> {
+  const fixture = productionPortfolioFixture();
+  const { task_id: _taskId, steps, ...planExtras } = fixture.plan;
+  const { repository, lease } = await claimedExecution(
+    new Date(Date.now() + 60_000),
+    steps,
+    planExtras,
+    fixture.task as unknown as Record<string, unknown>,
+  );
+  const store = options.failShowcaseHtmlWrite
+    ? new FailingShowcaseHtmlArtifactStore({ root: artifactRoot, registry: repository })
+    : options.failHtmlWrite
+      ? new FailingStandaloneHtmlArtifactStore({ root: artifactRoot, registry: repository })
+    : options.failV1PackageReadback
+      ? new FailingV1PackageReadbackArtifactStore({ root: artifactRoot, registry: repository })
+      : new ControlArtifactStore({ root: artifactRoot, registry: repository });
+  const componentIds: {
+    deliverableArtifactId?: string;
+    crossSkillReviewArtifactId?: string;
+    contributionLedgerArtifactId?: string;
+    contributionSummaryArtifactId?: string;
+    reportReviewArtifactId?: string;
+  } = {};
+  const deliverables = new RecordingDeliverablesFake(async (input) => {
+    const evidenceId = input.evidenceManifest.value.entries.find(
+      ({ evidenceClass }) => evidenceClass === 'public_source',
+    )?.id;
+    assert.ok(evidenceId);
+    const payload = bindResearchStrategyFixture<ResearchStrategyReportPayloadV2>(
+      researchStrategyPayloadV2(),
+      evidenceId,
+    );
+    const executiveAnswersBinding = payload.requestedArtifactBindings.find(
+      ({ sourceField }) => sourceField === '/directAnswers',
+    );
+    if (executiveAnswersBinding) executiveAnswersBinding.blockIds = ['answer-fixture-question'];
+    const value: ResearchDeliverableEnvelope<ResearchStrategyReportPayloadV2> = {
+      version: 'research-deliverable-v1',
+      taskId: input.task.id,
+      planVersionId: input.plan.id,
+      attemptId: input.attempt.id,
+      deliverableType: 'research_strategy_report',
+      evidenceManifestArtifactId: input.evidenceManifest.artifact.id,
+      methodSummary: 'Reviewed strategy synthesis.',
+      findingGraph: bindResearchStrategyFixture(researchStrategyFindingGraphV2(), evidenceId),
+      payload,
+      recommendations: [{
+        id: 'recommendation-Q1',
+        statement: 'Ship a source-backed trust card.',
+        summaryIds: ['summary-Q1'],
+      }],
+      coverage: bindResearchStrategyFixture(researchStrategyCoverageV2(), evidenceId),
+      risksAndOpenIssues: [],
+      capabilityProvenance: [],
+    };
+    const deliverableArtifact = await store.writeJson({
+      taskId: input.task.id,
+      planVersionId: input.plan.id,
+      attemptId: input.attempt.id,
+      kind: 'deliverable',
+      relativePath: 'deliverables/editorial-v3.json',
+      value,
+      schemaVersion: 'research-deliverable-v1-review-gated',
+      activeLease: input.activeLease,
+    });
+    const crossSkillReview = await store.writeJson({
+      taskId: input.task.id,
+      planVersionId: input.plan.id,
+      attemptId: input.attempt.id,
+      kind: 'cross_skill_review',
+      relativePath: 'reports/editorial-v3-cross-skill-review.json',
+      value: {
+        version: 'cross-skill-review-v1',
+        taskId: input.task.id,
+        planVersionId: input.plan.id,
+        attemptId: input.attempt.id,
+        synthesisArtifactId: deliverableArtifact.id,
+        verdict: 'pass',
+        issues: [],
+      },
+      schemaVersion: 'cross-skill-review-v1',
+      activeLease: input.activeLease,
+    });
+    const contributionLedger = await store.writeJson({
+      taskId: input.task.id,
+      planVersionId: input.plan.id,
+      attemptId: input.attempt.id,
+      kind: 'contribution_ledger',
+      relativePath: 'reports/editorial-v3-contribution-ledger.json',
+      value: {
+        version: 'contribution-ledger-v1',
+        taskId: input.task.id,
+        planVersionId: input.plan.id,
+        attemptId: input.attempt.id,
+        entries: [],
+      },
+      schemaVersion: 'contribution-ledger-v1',
+      activeLease: input.activeLease,
+    });
+    const contributionSummary = await store.writeJson({
+      taskId: input.task.id,
+      planVersionId: input.plan.id,
+      attemptId: input.attempt.id,
+      kind: 'contribution_summary',
+      relativePath: 'reports/editorial-v3-contribution-summary.json',
+      value: {
+        version: 'contribution-summary-v1',
+        taskId: input.task.id,
+        planVersionId: input.plan.id,
+        attemptId: input.attempt.id,
+        contributors: [],
+      },
+      schemaVersion: 'contribution-summary-v1',
+      activeLease: input.activeLease,
+    });
+    Object.assign(componentIds, {
+      deliverableArtifactId: deliverableArtifact.id,
+      crossSkillReviewArtifactId: crossSkillReview.id,
+      contributionLedgerArtifactId: contributionLedger.id,
+      contributionSummaryArtifactId: contributionSummary.id,
+    });
+    return {
+      deliverable: value,
+      deliverableArtifactId: deliverableArtifact.id,
+      crossSkillReviewArtifactId: crossSkillReview.id,
+      contributionLedgerArtifactId: contributionLedger.id,
+      contributionSummaryArtifactId: contributionSummary.id,
+    };
+  });
+  const reportReview = new RecordingReportReviewFake(async (input) => {
+    const value: ReportReviewArtifact & { verdict: 'pass' } = {
+      version: 'report-review-v2',
+      taskId: input.task.id,
+      planVersionId: input.plan.id,
+      attemptId: input.attempt.id,
+      deliverableArtifactId: input.deliverableArtifactId,
+      verdict: 'pass',
+      dimensions: REPORT_REVIEW_V2_DIMENSION_IDS.map((id) => ({ id, passed: true, issues: [] })),
+      revisionRound: 0,
+    };
+    const artifact = await store.writeJson({
+      taskId: input.task.id,
+      planVersionId: input.plan.id,
+      attemptId: input.attempt.id,
+      kind: 'report_review',
+      relativePath: 'reports/editorial-v3-review.json',
+      value,
+      schemaVersion: value.version,
+      activeLease: input.activeLease,
+    });
+    componentIds.reportReviewArtifactId = artifact.id;
+    return { ...value, status: 'completed', artifactId: artifact.id };
+  });
+  const productionComposition = new ReportCompositionService({
+    artifacts: store,
+    visualAssets: new VisualAssetService({ artifacts: store }),
+    repository,
+    ...(options.editorialPlannerMode
+      ? {
+          editorialPlanner: {
+            async plan({ material, presentationOptions }): Promise<ReportEditorialPlanResult> {
+              const blueprint = createDeterministicReportEditorialBlueprintV1(
+                material,
+                presentationOptions,
+              );
+              const diagnostics = {
+                plannerInputSha256: `sha256:${'7'.repeat(64)}`,
+                serializedInputBytes: 1_000,
+                presentationUnitCount: material.presentationUnits.length,
+                leafUnitCount: material.constraints.requiredLeafUnitIds.length,
+                estimatedPromptTokens: 1_000,
+                latencyMs: 20,
+              };
+              return options.editorialPlannerMode === 'model'
+                ? { blueprint, mode: 'model', warnings: [], diagnostics }
+                : {
+                    blueprint,
+                    mode: 'fallback',
+                    reasonCode: 'provider_failure',
+                    warnings: ['provider_failure'],
+                    diagnostics,
+                  };
+            },
+          },
+        }
+      : {}),
+    ...(options.showcaseEnabled
+      ? { showcasePublisher: new EditorialShowcasePublicationService({ artifacts: store }) }
+      : {}),
+    reportV3Writer: {
+      enabled: true,
+      editorialExperienceV1Enabled: options.showcaseEnabled ?? false,
+      verifiedPresentations: { recordTable: false, graph: false, priorityBoard: false },
+    },
+  });
+  const compositionInputs: ReportCompositionInput[] = [];
+  const reportComposition: TestReportComposition = {
+    async composeAndStore(input) {
+      compositionInputs.push(input);
+      return productionComposition.composeAndStore(input);
+    },
+  };
+  const engine = new ReportCompositionAwareLeaseExecutionEngine({
+    repository,
+    artifacts: store,
+    tools: new ToolRouter().register(new CountingRealTavilyAdapter()),
+    llm: new RealSchemaFixtureLLM(),
+    deliverables,
+    reportReview,
+    reportComposition,
+    standaloneHtmlBundleV1Enabled: options.standaloneHtmlBundleV1Enabled,
+    skillLoader: new SkillLoader(),
+    validator: new SchemaValidator(),
+    heartbeatMs: 60_000,
+  });
+  return { repository, lease, store, engine, compositionInputs, componentIds };
+}
+
+test('publishes ReportDocument v3 as a verified Package v2 with standalone HTML', async () => {
+  const fixture = await editorialV3LeaseFixture({ standaloneHtmlBundleV1Enabled: true });
+  const completeExecution = fixture.repository.completeExecution.bind(fixture.repository);
+  let completionOptions: Parameters<ControlPlaneRepository['completeExecution']>[1];
+  fixture.repository.completeExecution = async (lease, options) => {
+    completionOptions = options;
+    return completeExecution(lease, options);
+  };
+
+  const result = await fixture.engine.execute({
+    lease: fixture.lease,
+    expectedModel: 'pinned-model',
+  });
+
+  assert.equal(result.status, 'completed', JSON.stringify(result));
+  assert.ok(result.reportPackageArtifactId);
+  assert.equal(
+    fixture.compositionInputs[0]?.contributionLedgerArtifactId,
+    fixture.componentIds.contributionLedgerArtifactId,
+  );
+  assert.deepEqual(fixture.compositionInputs[0]?.editorialPlannerDataClassification, {
+    taskSensitivity: 'public',
+    piiDetected: false,
+    hasSensitiveOrBlockedEvidence: false,
+  });
+  assert.equal(typeof fixture.compositionInputs[0]?.onArtifactSealed, 'function');
+  assert.equal(completionOptions?.reportPackageArtifactId, result.reportPackageArtifactId);
+  const reportPackage = await new ReportPackageV2ArtifactService(fixture.store).verify({
+    artifactId: result.reportPackageArtifactId,
+    taskId: fixture.lease.taskId,
+    planVersionId: fixture.lease.planVersionId,
+    attemptId: fixture.lease.attemptId,
+  });
+  assert.equal(reportPackage.value.version, 'report-package-v2');
+  assert.equal(reportPackage.value.standaloneHtml.status, 'ready');
+  assert.equal(
+    reportPackage.value.contributionLedgerArtifactId,
+    fixture.componentIds.contributionLedgerArtifactId,
+  );
+  assert.equal(reportPackage.value.layout.mode, 'fallback');
+  assert.deepEqual(reportPackage.value.assetSnapshot, { assets: [], charts: [] });
+  const publicationArtifactIds = [
+    reportPackage.value.layout.blueprintArtifactId,
+    reportPackage.value.sourceReportDocumentArtifactId,
+    reportPackage.value.standaloneHtml.status === 'ready'
+      ? reportPackage.value.standaloneHtml.artifactId
+      : '',
+    reportPackage.artifact.id,
+  ];
+  for (const artifactId of publicationArtifactIds) {
+    assert.equal((await fixture.repository.getArtifact(artifactId))?.publicationId, null);
+  }
+});
+
+test('publishes a preferred Showcase as Report Package v3 while retaining Package v2', async () => {
+  const fixture = await editorialV3LeaseFixture({
+    standaloneHtmlBundleV1Enabled: true,
+    showcaseEnabled: true,
+  });
+
+  const result = await fixture.engine.execute({
+    lease: fixture.lease,
+    expectedModel: 'pinned-model',
+  });
+
+  assert.equal(result.status, 'completed', JSON.stringify(result));
+  assert.ok(result.reportPackageArtifactId);
+  const v3 = await new ReportPackageV3ArtifactService({
+    artifacts: fixture.store,
+    canonicalPackages: new ReportPackageV2ArtifactService(fixture.store),
+  }).verify({
+    artifactId: result.reportPackageArtifactId,
+    taskId: fixture.lease.taskId,
+    planVersionId: fixture.lease.planVersionId,
+    attemptId: fixture.lease.attemptId,
+  });
+  assert.equal(v3.value.version, 'report-package-v3');
+  assert.equal(v3.value.preferredHtml, 'showcase');
+  assert.equal(v3.value.showcase.status, 'ready');
+  const artifacts = await fixture.repository.listArtifactsForAttempt(fixture.lease);
+  assert.ok(artifacts.some(({ kind }) => kind === 'report_editorial_showcase_spec'));
+  assert.ok(artifacts.some(({ kind }) => kind === 'editorial_showcase_html'));
+  assert.ok(artifacts.some(({ schemaVersion }) => schemaVersion === 'report-package-v2'));
+});
+
+test('Showcase write failure keeps the canonical Package v2 and publishes unavailable Package v3', async () => {
+  const fixture = await editorialV3LeaseFixture({
+    standaloneHtmlBundleV1Enabled: true,
+    showcaseEnabled: true,
+    failShowcaseHtmlWrite: true,
+  });
+
+  const result = await fixture.engine.execute({
+    lease: fixture.lease,
+    expectedModel: 'pinned-model',
+  });
+
+  assert.equal(result.status, 'completed_with_gaps', JSON.stringify(result));
+  assert.equal(result.gapCount, 1);
+  assert.ok(result.reportPackageArtifactId);
+  const v3 = await new ReportPackageV3ArtifactService({
+    artifacts: fixture.store,
+    canonicalPackages: new ReportPackageV2ArtifactService(fixture.store),
+  }).verify({
+    artifactId: result.reportPackageArtifactId,
+    taskId: fixture.lease.taskId,
+    planVersionId: fixture.lease.planVersionId,
+    attemptId: fixture.lease.attemptId,
+  });
+  assert.equal(v3.value.preferredHtml, 'canonical');
+  assert.deepEqual(v3.value.showcase, {
+    status: 'unavailable',
+    reasonCode: 'showcase_renderer_failure',
+  });
+  const artifacts = await fixture.repository.listArtifactsForAttempt(fixture.lease);
+  assert.equal(
+    artifacts.some(({ kind, state }) => kind === 'report_editorial_showcase_spec' && state === 'SEALED'),
+    false,
+  );
+  assert.ok(artifacts.some(({ schemaVersion }) => schemaVersion === 'report-package-v2'));
+});
+
+test('publishes the actual Editorial Planner model mode in Report Package v2', async () => {
+  const fixture = await editorialV3LeaseFixture({
+    standaloneHtmlBundleV1Enabled: true,
+    editorialPlannerMode: 'model',
+  });
+
+  const result = await fixture.engine.execute({
+    lease: fixture.lease,
+    expectedModel: 'pinned-model',
+  });
+
+  assert.equal(result.status, 'completed', JSON.stringify(result));
+  assert.ok(result.reportPackageArtifactId);
+  const reportPackage = await new ReportPackageV2ArtifactService(fixture.store).verify({
+    artifactId: result.reportPackageArtifactId,
+    taskId: fixture.lease.taskId,
+    planVersionId: fixture.lease.planVersionId,
+    attemptId: fixture.lease.attemptId,
+  });
+  assert.deepEqual(reportPackage.value.layout, {
+    mode: 'model',
+    blueprintArtifactId: reportPackage.value.layout.blueprintArtifactId,
+  });
+  const reportDocument = await fixture.store.readVerifiedBoundJson<ReportDocument>(
+    reportPackage.value.sourceReportDocumentArtifactId,
+  );
+  assert.equal(reportDocument.value.version, 'report-document-v3');
+  assert.equal(reportDocument.value.layoutMode, 'model');
+});
+
+test('publishes the actual Editorial Planner fallback reason without failing Report Package v2', async () => {
+  const fixture = await editorialV3LeaseFixture({
+    standaloneHtmlBundleV1Enabled: true,
+    editorialPlannerMode: 'provider_failure',
+  });
+
+  const result = await fixture.engine.execute({
+    lease: fixture.lease,
+    expectedModel: 'pinned-model',
+  });
+
+  assert.equal(result.status, 'completed', JSON.stringify(result));
+  assert.ok(result.reportPackageArtifactId);
+  const reportPackage = await new ReportPackageV2ArtifactService(fixture.store).verify({
+    artifactId: result.reportPackageArtifactId,
+    taskId: fixture.lease.taskId,
+    planVersionId: fixture.lease.planVersionId,
+    attemptId: fixture.lease.attemptId,
+  });
+  assert.equal(reportPackage.value.layout.mode, 'fallback');
+  if (reportPackage.value.layout.mode !== 'fallback') assert.fail('expected fallback layout');
+  assert.equal(reportPackage.value.layout.reasonCode, 'provider_failure');
+  assert.ok(reportPackage.value.notices.some(({ code }) => code === 'layout_fallback'));
+});
+
+test('keeps Package v1 and omits standalone HTML when the v3 HTML bundle flag is disabled', async () => {
+  const fixture = await editorialV3LeaseFixture({ standaloneHtmlBundleV1Enabled: false });
+
+  const result = await fixture.engine.execute({
+    lease: fixture.lease,
+    expectedModel: 'pinned-model',
+  });
+
+  assert.equal(result.status, 'completed', JSON.stringify(result));
+  assert.ok(result.reportPackageArtifactId);
+  const reportPackageArtifact = await fixture.repository.getArtifact(result.reportPackageArtifactId);
+  assert.equal(reportPackageArtifact?.schemaVersion, 'report-package-v1');
+  assert.equal((await fixture.repository.listArtifactsForAttempt(fixture.lease))
+    .some(({ kind }) => kind === 'standalone_html_report'), false);
+});
+
+test('compensates a sealed Package v1 when its read-back fails for ReportDocument v3', async () => {
+  const fixture = await editorialV3LeaseFixture({
+    standaloneHtmlBundleV1Enabled: false,
+    failV1PackageReadback: true,
+  });
+
+  const result = await fixture.engine.execute({
+    lease: fixture.lease,
+    expectedModel: 'pinned-model',
+  });
+
+  assert.equal(result.status, 'paused', JSON.stringify(result));
+  const artifacts = await fixture.repository.listArtifactsForAttempt(fixture.lease);
+  const stateByKind = new Map(artifacts.map(({ kind, state }) => [kind, state]));
+  assert.equal(stateByKind.get('report_editorial_blueprint'), 'FAILED');
+  assert.equal(stateByKind.get('report_document'), 'FAILED');
+  assert.equal(stateByKind.get('report_package'), 'FAILED');
+  assert.equal(stateByKind.get('deliverable'), 'SEALED');
+  assert.equal(stateByKind.get('evidence_manifest'), 'SEALED');
+  assert.equal(stateByKind.get('report_review'), 'SEALED');
+});
+
+test('completes Package v2 with an HTML notice when standalone HTML is unavailable', async () => {
+  const fixture = await editorialV3LeaseFixture({
+    standaloneHtmlBundleV1Enabled: true,
+    failHtmlWrite: true,
+  });
+
+  const result = await fixture.engine.execute({
+    lease: fixture.lease,
+    expectedModel: 'pinned-model',
+  });
+
+  assert.equal(result.status, 'completed', JSON.stringify(result));
+  assert.ok(result.reportPackageArtifactId);
+  const reportPackage = await new ReportPackageV2ArtifactService(fixture.store).verify({
+    artifactId: result.reportPackageArtifactId,
+    taskId: fixture.lease.taskId,
+    planVersionId: fixture.lease.planVersionId,
+    attemptId: fixture.lease.attemptId,
+  });
+  assert.deepEqual(reportPackage.value.standaloneHtml, {
+    status: 'unavailable',
+    reasonCode: 'artifact_write_failed',
+  });
+  assert.ok(reportPackage.value.notices.some(({ code }) => code === 'html_unavailable'));
+});
+
+test('compensates only the v3 report publication when execution completion fails', async () => {
+  const fixture = await editorialV3LeaseFixture({ standaloneHtmlBundleV1Enabled: true });
+  fixture.repository.completeExecution = async () => {
+    throw new ControlPlaneConflictError('fixture completion fence failed');
+  };
+
+  const result = await fixture.engine.execute({
+    lease: fixture.lease,
+    expectedModel: 'pinned-model',
+  });
+
+  assert.equal(result.status, 'paused', JSON.stringify(result));
+  const artifacts = await fixture.repository.listArtifactsForAttempt(fixture.lease);
+  const stateByKind = new Map(artifacts.map(({ kind, state }) => [kind, state]));
+  for (const kind of [
+    'report_editorial_blueprint',
+    'report_document',
+    'standalone_html_report',
+    'report_package',
+  ]) {
+    assert.equal(stateByKind.get(kind), 'FAILED', kind);
+  }
+  for (const kind of [
+    'deliverable',
+    'evidence_manifest',
+    'report_review',
+    'cross_skill_review',
+    'contribution_ledger',
+    'contribution_summary',
+  ]) {
+    assert.equal(stateByKind.get(kind), 'SEALED', kind);
   }
 });
